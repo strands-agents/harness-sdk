@@ -282,6 +282,15 @@ function drawThemeFace(canvas: Canvas, transform: FrogTransform, deformation: Po
     fillCircle(canvas, orb.x - 0.4 * scale, orb.y - 0.5 * scale, 1.55 * scale, 'cyan', priority + 34)
     fillCircle(canvas, orb.x - 0.8 * scale, orb.y - 1.1 * scale, 0.6 * scale, 'white', priority + 35)
   }
+  if (canvas.theme === 'knicks') {
+    const ball = brandPoint({ x: -6, y: 5 }, transform, deformation)
+    const radius = 2.6 * transform.scale
+    fillCircle(canvas, ball.x, ball.y, radius + 0.5, 'ink', priority + 32)
+    fillCircle(canvas, ball.x, ball.y, radius, 'orange', priority + 33)
+    for (let offset = -radius; offset <= radius; offset += 0.5) {
+      canvas.setPixel(ball.x, ball.y + offset, 'ink', priority + 34)
+    }
+  }
   for (const x of [-5.5, 3.5]) {
     const color = canvas.theme === 'circuit' ? (x < 0 ? 'cyan' : 'red') : 'white'
     const eye = brandPoint({ x, y: -7.5 }, transform, deformation)
@@ -290,7 +299,7 @@ function drawThemeFace(canvas: Canvas, transform: FrogTransform, deformation: Po
 }
 
 function drawFrogAura(canvas: Canvas, transform: FrogTransform, elapsedMs: number, priority: number): void {
-  if (canvas.theme === 'green' || canvas.theme === 'minimal' || canvas.theme === 'kikker') {
+  if (['green', 'minimal', 'kikker', 'knicks'].includes(canvas.theme)) {
     return
   }
   const center = { x: transform.x, y: transform.y / 2 }

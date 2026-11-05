@@ -54,6 +54,7 @@ describe('appearance settings controller', () => {
           { label: 'Cyborg', value: 'circuit' },
           { label: 'Spectre', value: 'spectre' },
           { label: 'Solar', value: 'solar' },
+          { label: 'Knicks', value: 'knicks' },
           { label: 'Custom', value: 'custom' },
         ],
       },

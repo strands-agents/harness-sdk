@@ -612,6 +612,9 @@ function wordColor(canvas: Canvas, point: WordPoint): Color {
   if (canvas.theme === 'merlin') {
     return point.index % 23 === 0 ? 'white' : 'lime'
   }
+  if (canvas.theme === 'knicks') {
+    return 'orange'
+  }
   return 'lime'
 }
 

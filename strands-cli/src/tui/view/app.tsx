@@ -58,6 +58,7 @@ import {
   scrollDetail,
   scrollPanelViewport,
   scrollTranscript,
+  settingOptionFromBelow,
   shouldToggleVoiceMute,
   settingsLayout,
   settingsThemeLayout,
@@ -975,7 +976,7 @@ export function ChatApp({
               selected.value === 'frogTheme'
                 ? settingsThemeLayout(terminalWidth - 4)
                 : settingsLayout(terminalWidth - 4, selected.value)
-            const index = adjacentSettingOption(selected.control, key, columns)
+            const index = adjacentSettingOption(selected.control, key, columns, selected.value === 'frogTheme')
             const option = index === undefined ? undefined : selected.control.options[index]
             if (option) {
               if (!option.active) {
@@ -1052,13 +1053,8 @@ export function ChatApp({
                 row.value === 'frogTheme'
                   ? settingsThemeLayout(terminalWidth - 4)
                   : settingsLayout(terminalWidth - 4, row.value)
-              const options = row.control.options
-              const active = Math.max(
-                0,
-                options.findIndex((option) => option.active)
-              )
-              const lastRow = Math.floor((options.length - 1) / columns) * columns
-              const option = options[Math.min(options.length - 1, lastRow + (active % columns))]
+              const option =
+                row.control.options[settingOptionFromBelow(row.control, columns, row.value === 'frogTheme')]
               if (option && !option.active) {
                 void activateRow({ ...row, value: `${row.value}=${option.value}` })
               }

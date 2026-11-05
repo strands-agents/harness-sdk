@@ -102,6 +102,7 @@ describe('frog palettes', () => {
     ['circuit', [174, 182, 191]],
     ['spectre', [0, 0, 0]],
     ['solar', [255, 209, 102]],
+    ['knicks', [0, 107, 182]],
   ] as const)('retains the fixed %s identity color and adapts to light mode', (theme, rgb) => {
     const dark = renderFrogStartupLockup(98, true, 960, theme, false, { colorMode: 'dark' })
     const light = renderFrogStartupLockup(98, true, 960, theme, false, { colorMode: 'light' })
@@ -117,6 +118,18 @@ describe('frog palettes', () => {
     expect(cyborg).toContain(';2;92;218;255m')
     expect(cyborg).toContain(';2;255;54;72m')
     expect(spectre).toContain(';2;255;55;76m')
+  })
+
+  it('gives the Knicks frog an orange basketball and an orange wordmark', () => {
+    const orange = ';2;245;132;38m'
+    const frog = renderFrogAnimationRuns(98, 14, 'hop', 0.66, 960, true, 'knicks')
+      .map((run) => run.text)
+      .join('\n')
+    const wordmarkRow = renderFrogStartupLockup(98, true, 960, 'knicks').split('\n')[3]!
+
+    expect(frog).toContain(orange)
+    expect(wordmarkRow).toContain(orange)
+    expect(renderFrogStartupLockup(98, true, 960, 'green')).not.toContain(orange)
   })
 
   it('uses Classic for an unspecified Custom base and ignores invalid color strings', () => {

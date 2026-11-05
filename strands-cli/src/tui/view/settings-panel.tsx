@@ -3,7 +3,7 @@ import type { DOMElement } from 'ink'
 
 import type { ChatPanelRow } from '../chat/controller.js'
 import type { ChatSettings, FrogTheme } from '../chat/types.js'
-import { DEFAULT_CHAT_SETTINGS } from '../settings.js'
+import { DEFAULT_CHAT_SETTINGS, FROG_THEME_NOTES } from '../settings.js'
 import { panelControlTarget, settingsLayout, settingsThemeLayout } from './interaction.js'
 import { PanelItemHeader, PanelOverlay, PanelTitle, type PanelRowsProps } from './panel-components.js'
 import { Box, getTheme, Text, useTheme, type Theme } from './theme.js'
@@ -96,6 +96,7 @@ export function SettingsPanel({
             const selectedRow = index === selected
             const rowPressed = index === pressedRow
             const themeRow = settings && row.value === 'frogTheme'
+            const themeNote = themeRow && appearance ? FROG_THEME_NOTES[appearance.frogTheme] : undefined
             const {
               columns: themeColumns,
               optionWidth: themeOptionWidth,
@@ -170,6 +171,13 @@ export function SettingsPanel({
                       >
                         {row.label}
                       </Text>
+                      {themeNote ? (
+                        <Box marginLeft={2} flexGrow={1} flexBasis={0}>
+                          <Text dimColor wrap="truncate-end">
+                            {themeNote}
+                          </Text>
+                        </Box>
+                      ) : null}
                     </Box>
                   ) : (
                     <PanelItemHeader
