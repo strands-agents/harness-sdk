@@ -47,7 +47,8 @@ dependencies = [
 
 [project.optional-dependencies]
 anthropic = ["anthropic>=0.21.0,<3.0.0"]
-# Everything the nested BedrockModel classes need (Messages, ChatCompletions, Responses); 0.91.0 adds the mantle client.
+# The vendor SDKs behind BedrockModel.Messages/.ChatCompletions/.Responses. BedrockModel (Converse) needs no extra:
+# it uses boto3, a core dependency. anthropic 0.91.0 adds the bedrock-mantle client.
 bedrock = ["anthropic>=0.91.0,<3.0.0", "openai>=1.68.0,<4.0.0", "aws-bedrock-token-generator>=1.1.0,<2.0.0"]
 gemini = ["google-genai>=1.68.0,<3.0.0"]
 # Ceiling is the last known-good release rather than the major: 1.107.0 was a compromised
