@@ -12,7 +12,7 @@ tags:
 draft: false
 ---
 
-import BoxShipmentPolicy from '@components/BoxShipmentPolicy.astro'
+import Diagram from '@components/Diagram.astro'
 
 An agent can pick up a new issue or investigate an alert without waiting for someone to open a laptop. Running that work in the cloud means it can happen whenever it's needed, without someone approving every action. Before the agent starts, though, we need to define what it can access and what it's allowed to do, then enforce those limits as it works.
 
@@ -107,7 +107,10 @@ This rule works alongside the permit rules that allow the agent to contact the o
 
 The full example also includes a rule that blocks repeat shipments and refunds for five minutes after a confirmed shipment. The diagram follows a shipment request through both checks.
 
-<BoxShipmentPolicy />
+<Diagram
+  name="box-shipment-policy"
+  alt="An agent requests a shipment. If the order service has not confirmed eligibility for this order in the last five minutes, Box blocks the request. If eligibility was confirmed, Box checks whether the service has also confirmed a shipment for this order in that period. If so, Box blocks the request. Otherwise, Box forwards the request to the order service. The allowed path goes straight down. Both blocked paths branch to the right."
+/>
 
 The customer service example includes versions built with the Strands Harness SDK and LangChain. The framework runs the agent, and Box enforces the access limits and policies you set.
 
