@@ -230,17 +230,14 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
   private _client: Anthropic
   private _dropStaleThinkingModelId: string | undefined
   private _clientBetas: string[]
-  // Unknown for an injected client, whose headers are not readable; the API's own errors surface instead.
+  // Unknown for an injected client, which may not be this SDK's `Anthropic` (e.g. a Bedrock or Vertex client).
   private _apiVersion: string | undefined
-  private _apiVersionPinned: boolean
+  private _apiVersionOrigin = ''
 
   constructor(options?: AnthropicModelOptions) {
     super()
     const { apiKey, client, clientConfig, ...modelConfig } = options || {}
     this._clientBetas = headerBetas(clientConfig?.defaultHeaders)
-    const pinnedVersion = headerValues(clientConfig?.defaultHeaders, 'anthropic-version')[0]
-    this._apiVersionPinned = pinnedVersion !== undefined
-    this._apiVersion = client ? undefined : (pinnedVersion ?? sdkDefaultApiVersion())
 
     this._config = {
       modelId: MODEL_DEFAULTS.anthropic.modelId,
@@ -273,6 +270,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
         ...(apiKey ? { apiKey } : {}),
         ...clientConfig,
       })
+      this._resolveApiVersion(clientConfig)
     }
   }
 
@@ -608,6 +606,22 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
     return this._dropStaleThinkingModelId === this._config.modelId
   }
 
+  /** Resolves the `anthropic-version` the built client sends, and where it comes from for error messages. */
+  private _resolveApiVersion(clientConfig: ClientOptions | undefined): void {
+    // The SDK merges ANTHROPIC_CUSTOM_HEADERS into `_options.defaultHeaders`; fall back to clientConfig if that moves.
+    const sent =
+      (this._client as unknown as { _options?: ClientOptions })._options?.defaultHeaders ?? clientConfig?.defaultHeaders
+    const pinned = headerValues(sent, 'anthropic-version')[0]
+    this._apiVersion = pinned ?? sdkDefaultApiVersion()
+    if (pinned === undefined) {
+      this._apiVersionOrigin = `the default for @anthropic-ai/sdk ${ANTHROPIC_SDK_VERSION}`
+    } else if (headerValues(clientConfig?.defaultHeaders, 'anthropic-version').length > 0) {
+      this._apiVersionOrigin = "pinned by clientConfig.defaultHeaders['anthropic-version']"
+    } else {
+      this._apiVersionOrigin = 'pinned by the ANTHROPIC_CUSTOM_HEADERS environment variable'
+    }
+  }
+
   /** Whether the request goes to an API version that dropped the sampling params and assistant documents. */
   private _usesCurrentApiVersion(): boolean {
     return this._apiVersion !== undefined && this._apiVersion >= SAMPLING_PARAMS_REMOVED_VERSION
@@ -618,12 +632,9 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
     if (!this._usesCurrentApiVersion()) return
     const set = REMOVED_SAMPLING_PARAMS.filter((name) => request[name] !== undefined)
     if (set.length === 0) return
-    const origin = this._apiVersionPinned
-      ? "pinned by clientConfig.defaultHeaders['anthropic-version']"
-      : `the default for @anthropic-ai/sdk ${ANTHROPIC_SDK_VERSION}`
     throw new Error(
       `${set.join(', ')} ${set.length === 1 ? 'is' : 'are'} not supported by Anthropic API version ` +
-        `${this._apiVersion}, ${origin}. Remove the ${set.length === 1 ? 'param' : 'params'}, or pin API ` +
+        `${this._apiVersion}, ${this._apiVersionOrigin}. Remove the ${set.length === 1 ? 'param' : 'params'}, or pin API ` +
         `version 2023-06-01 for models that still honor them: ` +
         `clientConfig: { defaultHeaders: { 'anthropic-version': '2023-06-01' } }`
     )

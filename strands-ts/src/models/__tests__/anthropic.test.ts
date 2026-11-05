@@ -2570,6 +2570,12 @@ describe('AnthropicModel', () => {
   describe('API version compatibility', () => {
     const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
     const pdf = new DocumentBlock({ name: 'doc.pdf', format: 'pdf', source: { bytes: new Uint8Array([1, 2, 3]) } })
+    const helloRequest = {
+      model: 'm1',
+      max_tokens: 64000,
+      stream: true,
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'Hello' }] }],
+    }
 
     /** Captures the request the next client built from `clientConfig` sends. */
     const captureBuiltClient = () => {
@@ -2586,6 +2592,32 @@ describe('AnthropicModel', () => {
       })
       return captured
     }
+
+    /** Like `captureBuiltClient`, but builds a real SDK client so its `ANTHROPIC_CUSTOM_HEADERS` handling applies. */
+    const captureRealClient = async () => {
+      const { default: RealAnthropic } = await vi.importActual<typeof import('@anthropic-ai/sdk')>('@anthropic-ai/sdk')
+      const captured: { request: any } = { request: null }
+      vi.mocked(Anthropic).mockImplementationOnce(function (options) {
+        const client = new RealAnthropic(options)
+        client.messages.stream = vi.fn((req) => {
+          captured.request = req
+          return (async function* () {})()
+        }) as unknown as typeof client.messages.stream
+        return client
+      })
+      return captured
+    }
+
+    it.runIf(isNode)('rejects temperature when ANTHROPIC_CUSTOM_HEADERS pins the current API version', async () => {
+      vi.stubEnv('ANTHROPIC_CUSTOM_HEADERS', 'anthropic-version: 2026-10-21')
+      const captured = await captureRealClient()
+      const provider = new AnthropicModel({ apiKey: 'sk-test', modelId: 'm1', temperature: 0.2 })
+
+      await expect(collectIterator(provider.stream(messages))).rejects.toThrow(
+        'temperature is not supported by Anthropic API version 2026-10-21, pinned by the ANTHROPIC_CUSTOM_HEADERS environment variable'
+      )
+      expect(captured.request).toBeNull()
+    })
 
     it('leaves the check to the API for an injected client', async () => {
       const stream = vi.fn(() => (async function* () {})())
@@ -2649,7 +2681,17 @@ describe('AnthropicModel', () => {
 
         await collectIterator(provider.stream(messages))
 
-        expect(captured.request.temperature).toBe(0.2)
+        expect(captured.request).toStrictEqual({ ...helloRequest, temperature: 0.2 })
+      })
+
+      it.runIf(isNode)('sends temperature when ANTHROPIC_CUSTOM_HEADERS pins the previous API version', async () => {
+        vi.stubEnv('ANTHROPIC_CUSTOM_HEADERS', 'anthropic-version: 2023-06-01')
+        const captured = await captureRealClient()
+        const provider = new AnthropicModel({ apiKey: 'sk-test', modelId: 'm1', temperature: 0.2 })
+
+        await collectIterator(provider.stream(messages))
+
+        expect(captured.request).toStrictEqual({ ...helloRequest, temperature: 0.2 })
       })
 
       it('skips PDF documents in assistant messages', async () => {
@@ -2688,7 +2730,7 @@ describe('AnthropicModel', () => {
 
         await collectIterator(provider.stream(messages))
 
-        expect(captured.request).toMatchObject({ temperature: 0.2, top_k: 3 })
+        expect(captured.request).toStrictEqual({ ...helloRequest, temperature: 0.2, top_k: 3 })
       })
 
       it('keeps PDF documents in assistant messages', async () => {
@@ -2697,7 +2739,21 @@ describe('AnthropicModel', () => {
 
         await collectIterator(provider.stream([new Message({ role: 'assistant', content: [pdf] })]))
 
-        expect(captured.request.messages[0].content[0].type).toBe('document')
+        expect(captured.request).toStrictEqual({
+          ...helloRequest,
+          messages: [
+            {
+              role: 'assistant',
+              content: [
+                {
+                  type: 'document',
+                  title: 'doc.pdf',
+                  source: { type: 'base64', media_type: 'application/pdf', data: 'AQID' },
+                },
+              ],
+            },
+          ],
+        })
       })
     })
   })
