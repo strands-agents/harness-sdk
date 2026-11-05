@@ -5,8 +5,8 @@ from dataclasses import dataclass
 
 from ..config import doc_config
 
-# Example: "[Quickstart](https://strandsagents.com/.../index.md)"
-_MD_LINK = re.compile(r"\[([^\]]+)\]\((https?://[^\)]+)\)")
+# Example: "[Quickstart](https://strandsagents.com/.../index.md): Get an agent running."
+_MD_LINK = re.compile(r"\[([^\]]+)\]\((https?://[^\)]+)\)(?::[ \t]*([^\n]*))?")
 _HTML_BLOCK = re.compile(r"(?is)<(script|style|noscript).*?>.*?</\1>")
 _TAG = re.compile(r"(?s)<[^>]+>")
 _TITLE_TAG = re.compile(r"(?is)<title[^>]*>(.*?)</title>")
@@ -46,19 +46,20 @@ def _get(url: str) -> str:
         return r.read().decode("utf-8", errors="ignore")
 
 
-def parse_llms_txt(url: str) -> list[tuple[str, str]]:
+def parse_llms_txt(url: str) -> list[tuple[str, str, str]]:
     """Parse an llms.txt file and extract document links.
 
     Args:
         url: URL of the llms.txt file to parse
 
     Returns:
-        List of (title, url) tuples extracted from markdown links
+        List of (title, url, description) tuples extracted from markdown links; description is empty when absent
 
     """
     txt = _get(url)
     return [
-        (match.group(1).strip() or match.group(2).strip(), match.group(2).strip()) for match in _MD_LINK.finditer(txt)
+        (match.group(1).strip() or match.group(2).strip(), match.group(2).strip(), (match.group(3) or "").strip())
+        for match in _MD_LINK.finditer(txt)
     ]
 
 
