@@ -50,6 +50,9 @@ export class ModelProxy {
       // Usage the provider already reported is spent even though the call failed.
       this._record(streamedUsage, invocationContext)
       throw error
+    } finally {
+      // Closes the model stream when the consumer stops early, as `yield*` did. Some test doubles omit `return`.
+      await stream.return?.(undefined as never)
     }
   }
 

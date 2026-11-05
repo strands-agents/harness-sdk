@@ -11,7 +11,14 @@ from strands.agent.invocation_context import (
     _create_auxiliary_invocation_context,
     _create_invocation_context,
 )
-from strands.hooks import AfterInvocationEvent, BeforeInvocationEvent, BeforeModelCallEvent, MessageAddedEvent
+from strands.hooks import (
+    AfterInvocationEvent,
+    AfterModelCallEvent,
+    BeforeInvocationEvent,
+    BeforeModelCallEvent,
+    MessageAddedEvent,
+)
+from strands.middleware.stages import InvokeModelStage
 from strands.tools.executors import SequentialToolExecutor
 from strands.types.exceptions import ModelThrottledException
 from strands.types.tools import ToolContext
@@ -356,10 +363,24 @@ def _no_delay_retry():
     return ModelRetryStrategy(max_attempts=2, initial_delay=0, max_delay=0)
 
 
+async def _retry_on_throttle(context, next_fn):
+    try:
+        async for event in next_fn(context):
+            yield event
+    except ModelThrottledException:
+        async for event in next_fn(context):
+            yield event
+
+
 @pytest.mark.asyncio
-async def test_invoke_async_records_usage_streamed_before_a_retried_failure():
+@pytest.mark.parametrize("retry_in", ["retry_strategy", "wrap_middleware"])
+async def test_invoke_async_records_usage_streamed_before_a_retried_failure(retry_in):
     model = _ThrottledAfterMetadataModel(_usage(3, 4), [_text("done")], [_usage(10, 17)])
-    agent = Agent(model=model, retry_strategy=_no_delay_retry(), callback_handler=None)
+    if retry_in == "retry_strategy":
+        agent = Agent(model=model, retry_strategy=_no_delay_retry(), callback_handler=None)
+    else:
+        agent = Agent(model=model, retry_strategy=None, callback_handler=None)
+        agent.add_middleware(InvokeModelStage.Wrap, _retry_on_throttle)
 
     streamed = {"inputTokens": 0, "outputTokens": 0, "totalTokens": 0}
     result = None
@@ -372,6 +393,24 @@ async def test_invoke_async_records_usage_streamed_before_a_retried_failure():
     assert streamed == {"inputTokens": 13, "outputTokens": 21, "totalTokens": 34}
     assert result.invocation_context.usage == {"turns_taken": 1, **streamed}
     assert result.metrics.accumulated_usage == streamed
+
+
+@pytest.mark.asyncio
+async def test_invoke_async_meters_a_finished_call_whose_after_model_call_hook_raises():
+    agent = Agent(model=MockedModelProvider([_text("done")], [_usage(3, 4)]), callback_handler=None)
+    before_invocation = []
+    agent.hooks.add_callback(BeforeInvocationEvent, before_invocation.append)
+
+    def fail(_event):
+        raise RuntimeError("hook failed")
+
+    agent.hooks.add_callback(AfterModelCallEvent, fail)
+
+    with pytest.raises(RuntimeError, match="hook failed"):
+        await agent.invoke_async("go")
+
+    assert before_invocation[0].invocation_context.usage == {"turns_taken": 1, **_usage(3, 4)}
+    assert agent.event_loop_metrics.accumulated_usage == _usage(3, 4)
 
 
 @pytest.mark.asyncio

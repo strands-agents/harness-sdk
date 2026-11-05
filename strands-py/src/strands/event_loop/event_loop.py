@@ -625,7 +625,7 @@ async def _handle_model_execution(
     # Retry loop - actual retry logic is handled by retry_strategy hook
     # Hooks control when to stop retrying via the event.retry flag
     while True:
-        streamed_metadata: MetadataEvent | None = None
+        stop_event: ModelStopReason | None = None
         try:
             # Estimate input tokens for the upcoming model call (non-fatal)
             projected_input_tokens: int | None = None
@@ -733,7 +733,6 @@ async def _handle_model_execution(
 
             # Run through the middleware chain. The ModelStopReason is the stage result; middleware
             # may yield other events around it, so it is selected by type and the last one wins.
-            stop_event: ModelStopReason | None = None
             async for event in agent._middleware_registry.invoke(
                 InvokeModelStage,
                 middleware_context,
@@ -741,8 +740,6 @@ async def _handle_model_execution(
             ):
                 if isinstance(event, ModelStopReason):
                     stop_event = event
-                elif isinstance(event, ModelStreamChunkEvent) and "metadata" in event.chunk:
-                    streamed_metadata = event.chunk["metadata"]
                 yield event
 
             if stop_event is None:
@@ -805,10 +802,10 @@ async def _handle_model_execution(
         except InterruptException:
             raise
         except Exception as e:
-            if streamed_metadata is not None:
-                failed_usage, failed_metrics = extract_usage_metrics(streamed_metadata)
-                agent.event_loop_metrics.update_usage(failed_usage)
-                agent.event_loop_metrics.update_metrics(failed_metrics)
+            if stop_event is not None:
+                _, _, finished_usage, finished_metrics = stop_event["stop"]
+                agent.event_loop_metrics.update_usage(finished_usage)
+                agent.event_loop_metrics.update_metrics(finished_metrics)
 
             after_model_call_event = AfterModelCallEvent(
                 agent=agent,
@@ -904,6 +901,7 @@ def _make_invoke_model_terminal(
             system_prompt=system_prompt_str,
             system_prompt_content=system_prompt_content,
         )
+        streamed_metadata: MetadataEvent | None = None
         with trace_api.use_span(model_invoke_span, end_on_exit=False):
             try:
                 async for event in stream_messages(
@@ -921,11 +919,17 @@ def _make_invoke_model_terminal(
                     structured_output_model=structured_output_model,
                     invocation_context=invocation_context,
                 ):
+                    if isinstance(event, ModelStreamChunkEvent) and "metadata" in event.chunk:
+                        streamed_metadata = event.chunk["metadata"]
                     yield event
 
                 stop_reason, message, usage, metrics = event["stop"]
                 tracer.end_model_invoke_span(model_invoke_span, message, usage, metrics, stop_reason)
             except Exception as e:
+                if streamed_metadata is not None:
+                    failed_usage, failed_metrics = extract_usage_metrics(streamed_metadata)
+                    agent.event_loop_metrics.update_usage(failed_usage)
+                    agent.event_loop_metrics.update_metrics(failed_metrics)
                 tracer.end_span_with_error(model_invoke_span, str(e), e)
                 raise
 

@@ -526,7 +526,7 @@ async def process_stream(
 
 
 def _record_usage(invocation_context: InvocationContext | None, usage: Usage) -> None:
-    """Add a finished model call's usage to the request it ran in, if any."""
+    """Add a model call's reported usage to the request it ran in, if any."""
     if invocation_context is not None:
         invocation_context._record_usage(usage)
 

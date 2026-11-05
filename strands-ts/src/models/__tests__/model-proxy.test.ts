@@ -5,6 +5,7 @@ import { type ModelStreamEvent } from '../streaming.js'
 import { InvocationContextImpl } from '../../agent/invocation-context.js'
 import { anyTrackingId } from '../../__fixtures__/message-helpers.js'
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
+import { TestModelProvider } from '../../__fixtures__/model-test-helpers.js'
 import { Message, TextBlock, type ContentBlock } from '../../types/messages.js'
 
 function userMessage(text: string): Message {
@@ -101,6 +102,24 @@ describe('ModelProxy', () => {
   })
 
   describe('pass-through', () => {
+    it('closes the model stream when the consumer stops early', async () => {
+      let closed = false
+      const model = new TestModelProvider(async function* () {
+        try {
+          yield { type: 'modelMessageStartEvent', role: 'assistant' }
+          yield { type: 'modelMessageStopEvent', stopReason: 'endTurn' }
+        } finally {
+          closed = true
+        }
+      })
+
+      for await (const _event of new ModelProxy(model).streamAggregated([userMessage('go')])) {
+        break
+      }
+
+      expect(closed).toBe(true)
+    })
+
     it('yields the same events as the underlying model', async () => {
       const build = (): MockMessageModel =>
         new MockMessageModel().addTurn(

@@ -14,6 +14,7 @@ import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
 import { Message, TextBlock } from '../../types/messages.js'
 import { anyTrackingId } from '../../__fixtures__/message-helpers.js'
 import { ModelThrottledError } from '../../errors.js'
+import { InvokeModelStage } from '../../middleware/index.js'
 import { accumulateUsage } from '../../models/streaming.js'
 import { ConstantBackoff } from '../../retry/backoff-strategy.js'
 import { DefaultModelRetryStrategy } from '../../retry/default-model-retry-strategy.js'
@@ -139,33 +140,50 @@ describe('Agent request-wide limits', () => {
     })
   })
 
-  it('records the usage streamed before a retried failure, matching the streamed metadata', async () => {
-    const model = new MockMessageModel()
-      .addTurn(new ModelThrottledError('throttled'), { usage: { inputTokens: 3, outputTokens: 4, totalTokens: 7 } })
-      .addTurn({ type: 'textBlock', text: 'done' }, { usage: { inputTokens: 10, outputTokens: 17, totalTokens: 27 } })
-    const agent = new Agent({ model, retryStrategy: noDelayRetry(), printer: false })
-
-    const streamed = { inputTokens: 0, outputTokens: 0, totalTokens: 0 }
-    const stream = agent.stream('go')
-    let next = await stream.next()
-    while (!next.done) {
-      if (next.value.type === 'modelStreamUpdateEvent' && next.value.event.type === 'modelMetadataEvent') {
-        accumulateUsage(streamed, next.value.event.usage!)
+  it.each(['retryStrategy', 'wrapMiddleware'])(
+    'records the usage streamed before a failure retried by %s, matching the streamed metadata',
+    async (retryIn) => {
+      const model = new MockMessageModel()
+        .addTurn(new ModelThrottledError('throttled'), { usage: { inputTokens: 3, outputTokens: 4, totalTokens: 7 } })
+        .addTurn({ type: 'textBlock', text: 'done' }, { usage: { inputTokens: 10, outputTokens: 17, totalTokens: 27 } })
+      const agent = new Agent({
+        model,
+        retryStrategy: retryIn === 'retryStrategy' ? noDelayRetry() : null,
+        printer: false,
+      })
+      if (retryIn === 'wrapMiddleware') {
+        agent.addMiddleware(InvokeModelStage, async function* (context, next) {
+          try {
+            return yield* next(context)
+          } catch (error) {
+            if (!(error instanceof ModelThrottledError)) throw error
+            return yield* next(context)
+          }
+        })
       }
-      next = await stream.next()
-    }
-    const result = next.value
 
-    expect({
-      streamed,
-      requestUsage: result.invocationContext?.usage,
-      agentUsage: result.metrics?.accumulatedUsage,
-    }).toEqual({
-      streamed: { inputTokens: 13, outputTokens: 21, totalTokens: 34 },
-      requestUsage: { turnsTaken: 1, inputTokens: 13, outputTokens: 21, totalTokens: 34 },
-      agentUsage: expect.objectContaining({ inputTokens: 13, outputTokens: 21, totalTokens: 34 }),
-    })
-  })
+      const streamed = { inputTokens: 0, outputTokens: 0, totalTokens: 0 }
+      const stream = agent.stream('go')
+      let next = await stream.next()
+      while (!next.done) {
+        if (next.value.type === 'modelStreamUpdateEvent' && next.value.event.type === 'modelMetadataEvent') {
+          accumulateUsage(streamed, next.value.event.usage!)
+        }
+        next = await stream.next()
+      }
+      const result = next.value
+
+      expect({
+        streamed,
+        requestUsage: result.invocationContext?.usage,
+        agentUsage: result.metrics?.accumulatedUsage,
+      }).toEqual({
+        streamed: { inputTokens: 13, outputTokens: 21, totalTokens: 34 },
+        requestUsage: { turnsTaken: 1, inputTokens: 13, outputTokens: 21, totalTokens: 34 },
+        agentUsage: expect.objectContaining({ inputTokens: 13, outputTokens: 21, totalTokens: 34 }),
+      })
+    }
+  )
 
   it("records a nested agent's usage streamed before a retried failure", async () => {
     const inner = new Agent({
