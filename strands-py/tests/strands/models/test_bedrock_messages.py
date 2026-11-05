@@ -15,7 +15,7 @@ from strands import Agent
 from strands.models import BedrockModel
 from strands.models._bedrock_messages import BedrockMessagesModel
 from strands.models.anthropic import AnthropicModel
-from strands.types.exceptions import ModelThrottledException
+from strands.types.exceptions import ContextWindowOverflowException, ModelThrottledException
 
 SSE_TEXT_RESPONSE = "".join(
     f"event: {event}\ndata: {data}\n\n"
@@ -61,10 +61,16 @@ def _invoke_stream(events: list[str]) -> bytes:
 
 
 INVOKE_EVENTS = [line.removeprefix("data: ") for line in SSE_TEXT_RESPONSE.splitlines() if line.startswith("data: ")]
-THROTTLING_EVENT = _event_stream_message(
-    {":exception-type": "throttlingException", ":content-type": "application/json", ":message-type": "exception"},
-    b'{"message": "Too many requests, please wait before trying again."}',
-)
+
+
+def _exception_event(exception_type: str, message: str) -> bytes:
+    headers = {":exception-type": exception_type, ":content-type": "application/json", ":message-type": "exception"}
+    return _event_stream_message(headers, json.dumps({"message": message}).encode())
+
+
+THROTTLING_EVENT = _exception_event("throttlingException", "Too many requests, please wait before trying again.")
+OVERFLOW_EVENT = _exception_event("validationException", "Input is too long for requested model.")
+OTHER_ERROR_EVENT = _exception_event("internalServerException", "The system encountered an unexpected error.")
 
 # anthropic added its bedrock-mantle client in 0.91.0; older releases still cover the bedrock-runtime tests.
 requires_mantle_client = pytest.mark.skipif(
@@ -163,14 +169,26 @@ def test_runtime_url_encodes_arn_model_ids(captured_requests):
     )
 
 
-@pytest.mark.parametrize("invoke_body", [THROTTLING_EVENT])
+@pytest.mark.parametrize(
+    ("invoke_body", "expected"),
+    [
+        (THROTTLING_EVENT, ModelThrottledException),
+        (OVERFLOW_EVENT, ContextWindowOverflowException),
+        (OTHER_ERROR_EVENT, ValueError),
+    ],
+    ids=["throttling", "overflow", "other"],
+)
 @pytest.mark.asyncio
-async def test_runtime_throttling_mid_stream_raises_model_throttled():
+async def test_runtime_error_events_mid_stream_are_mapped(expected):
     model = BedrockModel.Messages(model_id="m", max_tokens=16, client_args={"max_retries": 0})
 
-    with pytest.raises(ModelThrottledException, match="throttlingException"):
+    with pytest.raises(expected) as raised:
         async for _ in model.stream([{"role": "user", "content": [{"text": "hello"}]}]):
             pass
+
+    if expected is ValueError:
+        assert type(raised.value) is ValueError
+        assert "internalServerException" in str(raised.value)
 
 
 @requires_mantle_client
