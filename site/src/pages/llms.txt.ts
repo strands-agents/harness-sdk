@@ -2,9 +2,11 @@ import type { APIRoute } from 'astro'
 import type { CollectionEntry } from 'astro:content'
 import { getCollection } from 'astro:content'
 import { siteLink } from '@util/links'
+import { isPublishedDoc } from '@util/published-docs'
 import { sortSampleGuides } from '@util/sample-guides'
 import { languageLabel } from '@util/source-links'
 import { getReleases, releaseSlug, type ChangelogRelease } from '@util/changelog'
+import { CATALOG_TYPES } from '../components/catalog/types'
 import { streamLabel } from '../config/changelog'
 import { loadSidebarFromConfig, type StarlightSidebarItem } from '../sidebar'
 import path from 'node:path'
@@ -19,6 +21,19 @@ function linkLine(label: string, url: string, description?: string, indent: stri
   const normalized = description?.replace(/\s+/g, ' ').trim()
   const suffix = normalized ? `: ${normalized}` : ''
   return `${indent}- [${label}](${url})${suffix}`
+}
+
+const INTEGRATIONS_PREFIX = 'docs/integrations/'
+
+function categoryLabel(directory: string): string {
+  const type = CATALOG_TYPES.find(({ value }) => directory === value || directory === `${value}s`)
+  return (
+    type?.labelPlural ??
+    directory
+      .split('-')
+      .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+      .join(' ')
+  )
 }
 
 /**
@@ -100,17 +115,29 @@ function buildLlmsTxt(
   }
 
   // Integration guides are not in the sidebar (they are reached through the
-  // /integrations/ catalog), so list them from the docs collection.
+  // /integrations/ catalog), so list them from the docs collection, grouped by
+  // directory like the sidebar-derived sections.
   const integrationDocs = docs
-    .filter((doc) => doc.id.startsWith('docs/integrations/') && !listedSlugs.has(doc.id))
+    .filter((doc) => doc.id.startsWith(INTEGRATIONS_PREFIX) && !listedSlugs.has(doc.id))
     .sort((a, b) => a.id.localeCompare(b.id))
 
   if (integrationDocs.length > 0) {
+    const byCategory = new Map<string, CollectionEntry<'docs'>[]>()
+    for (const doc of integrationDocs) {
+      const [first = '', ...rest] = doc.id.slice(INTEGRATIONS_PREFIX.length).split('/')
+      const category = rest.length > 0 ? first : ''
+      byCategory.set(category, [...(byCategory.get(category) ?? []), doc])
+    }
+
     lines.push(`## Integrations`)
     lines.push('')
-    for (const doc of integrationDocs) {
-      const url = siteLink(`/${doc.id}/index.md`)
-      lines.push(linkLine(doc.data.title || doc.id, url, doc.data.description))
+    for (const category of [...byCategory.keys()].sort((a, b) => a.localeCompare(b))) {
+      const indent = category ? '  ' : ''
+      if (category) lines.push(`- ${categoryLabel(category)}`)
+      for (const doc of byCategory.get(category) ?? []) {
+        const url = siteLink(`/${doc.id}/index.md`)
+        lines.push(linkLine(doc.data.title || doc.id, url, doc.data.description, indent))
+      }
     }
     lines.push('')
   }
@@ -192,10 +219,8 @@ function buildLlmsTxt(
 
 export const GET: APIRoute = async () => {
   const allDocs = await getCollection('docs', ({ data }) => !data.draft)
-  const excludedSlugs = new Set(
-    allDocs.filter(({ data }) => data.externalDocs?.status === 'preview').map((doc) => doc.id)
-  )
-  const docs = allDocs.filter((doc) => !excludedSlugs.has(doc.id))
+  const docs = allDocs.filter(isPublishedDoc)
+  const excludedSlugs = new Set(allDocs.filter((doc) => !isPublishedDoc(doc)).map((doc) => doc.id))
   const sidebar = loadSidebarFromConfig(path.resolve('./src/config/navigation.yml'), path.resolve('./src/content'))
 
   const sampleGuides = await getCollection('sampleGuides')
