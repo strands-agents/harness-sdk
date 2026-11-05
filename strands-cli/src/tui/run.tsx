@@ -2,7 +2,7 @@ import { relative } from 'node:path'
 import { createElement, type ComponentProps, type ReactElement } from 'react'
 import { render, useInput, type Instance } from 'ink'
 
-import { createReloader, type ReloadOutcome } from '../dev/reload.js'
+import { createReloader, type Reloader, type ReloadOutcome } from '../dev/reload.js'
 import type { DevStatus } from '../dev/status.js'
 import { watchSources } from '../dev/watch.js'
 import { ChatRoot, type ChatLaunch, type SetupBridge } from './view/chat-root.js'
@@ -12,6 +12,7 @@ import type { ChatControllerApi, ChatConversation } from './chat/controller.js'
 import type { CliConfigStore } from './config.js'
 import { configurationFromStore, type RequestSetup } from './agent-configuration.js'
 import { hardExitProcessTree } from './terminal/process-tree.js'
+import { errorMessage } from './terminal/sanitize.js'
 import { createInkOutputs, enterAlternateScreen } from './terminal/terminal.js'
 
 export interface DevChatOptions {
@@ -106,6 +107,8 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
     ? { entrypoint: relative(options.dev.root, options.dev.entrypoint), reload: { kind: 'watching' } }
     : undefined
   let stopDevReload: (() => void) | undefined
+  let devReloader: Reloader | undefined
+  const reloadFailureHandlers: NonNullable<ChatLaunch['onFailure']>[] = []
   const devWarnings: string[] = []
   let reloadInFlight = false
   let exiting = false
@@ -237,7 +240,7 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
       ...(trustRequest ? { trustRequest } : {}),
       ...(devStatus ? { devStatus } : {}),
       setupBridge,
-      onSetupComplete: completeSetup,
+      onSetupComplete: devSetupComplete,
       onCancelStartup: () => closeForExit(130),
     })
   const renderChat = (): void => {
@@ -300,7 +303,8 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
       onStatus: (reload) => {
         if (exiting || pendingExitCode !== undefined || !devStatus) return
         devStatus = { ...devStatus, reload }
-        if (reload.kind === 'failed') controller?.showError?.('Reload failed', reload.message)
+        if (reload.kind === 'failed') reportReloadFailure(reload.message)
+        if (reload.kind === 'reloaded') reloadFailureHandlers.length = 0
         instance?.rerender(chatRoot())
       },
     })
@@ -312,10 +316,29 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
         else devWarnings.push(message)
       },
     })
+    devReloader = reloader
     return () => {
+      devReloader = undefined
       watcher.close()
       reloader.close()
     }
+  }
+  const reportReloadFailure = (message: string): void => {
+    controller?.showError?.('Reload failed', message)
+    for (const onFailure of reloadFailureHandlers.splice(0)) {
+      void onFailure(message).catch((error: unknown) => {
+        controller?.showError?.('Reload failed', `${message}\nCould not save this notice: ${errorMessage(error)}`)
+      })
+    }
+  }
+  // In dev mode a source-only change, such as strands_config apply after a source edit, reloads like a save.
+  const devSetupComplete = (exitCode: 0 | 130, changed: boolean, launch?: ChatLaunch): void => {
+    if (!devReloader || !controller || exitCode !== 0 || !changed || launch?.configuration) {
+      completeSetup(exitCode, changed, launch)
+      return
+    }
+    if (launch?.onFailure) reloadFailureHandlers.push(launch.onFailure)
+    devReloader.request()
   }
 
   const onSigint = (): void => closeForExit(130)

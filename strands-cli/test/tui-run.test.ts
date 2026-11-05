@@ -44,7 +44,11 @@ type DevBuild = (
   signal: AbortSignal,
   confirm: ConfirmMcp
 ) => Promise<ChatControllerApi>
-type RenderedRoot = ReactElement<{ devStatus?: DevStatus; controller?: ChatControllerApi }>
+type RenderedRoot = ReactElement<{
+  devStatus?: DevStatus
+  controller?: ChatControllerApi
+  onSetupComplete?: (exitCode: 0 | 130, changed: boolean, launch?: SetupChange) => void
+}>
 
 const captureConversation = async (): Promise<ChatConversation['snapshot']> => ({
   scope: 'agent',
@@ -98,6 +102,7 @@ async function startDevChat(build: DevBuild) {
     exit,
     status: () => root()?.props.devStatus?.reload,
     shown: () => root()?.props.controller,
+    applySetup: (change: SetupChange) => root()?.props.onSetupComplete?.(0, true, change),
     save: (content: string) => writeFile(sourcePath, content),
     ready: () => vi.waitFor(() => expect(renderApp).toHaveBeenCalled(), { timeout: 5000 }),
     close: async (): Promise<void> => {
@@ -284,6 +289,42 @@ describe('runInkChat in dev mode', () => {
       chat.exit()
       await chat.running
       expect(chat.shown()).toBe(previous)
+    } finally {
+      await chat.close()
+    }
+  })
+
+  it('reloads in place when the agent applies a source change', async () => {
+    const previous = devController()
+    const replacement = devController()
+    const chat = await startDevChat(async (conversation) => (conversation ? replacement : previous))
+    try {
+      await chat.ready()
+      chat.applySetup({ agentProject: 'agent.ts' })
+      await vi.waitFor(() => expect(chat.status()).toEqual({ kind: 'reloaded' }), settled)
+      expect(chat.shown()).toBe(replacement)
+      expect(chat.rerender.mock.calls.every(([root]) => (root as RenderedRoot).props.controller !== undefined)).toBe(
+        true
+      )
+      expect(chat.source).toHaveBeenCalledTimes(2)
+    } finally {
+      await chat.close()
+    }
+  })
+
+  it('tells the agent when the reload for its source change fails', async () => {
+    const previous = devController()
+    const onFailure = vi.fn(async () => {})
+    const chat = await startDevChat(async (conversation) => {
+      if (conversation) throw new Error('Bad source edit')
+      return previous
+    })
+    try {
+      await chat.ready()
+      chat.applySetup({ onFailure })
+      await vi.waitFor(() => expect(onFailure).toHaveBeenCalledWith('Bad source edit'), settled)
+      expect(chat.shown()).toBe(previous)
+      expect(previous.getSnapshot().panel?.title).toBe('Reload failed')
     } finally {
       await chat.close()
     }
