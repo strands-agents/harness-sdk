@@ -23,9 +23,6 @@ _PREFETCH_LOCK = threading.Lock()
 
 SNIPPET_HYDRATE_MAX = 5  # how many top results to hydrate with content
 
-# Pages that concatenate other catalog pages; their bodies would match nearly every query.
-TITLE_ONLY_URLS = frozenset({"https://strandsagents.com/changelog/index.md"})
-
 # Environment variable to enable background prefetch (default: OFF)
 PREFETCH_ENV_VAR = "STRANDS_MCP_PREFETCH_ALL"
 
@@ -140,8 +137,8 @@ def ensure_page(url: str) -> doc_fetcher.Page | None:
     """Ensure a page is cached, fetching it if necessary.
 
     When a page is fetched, also updates the search index with the hydrated content
-    so that body-only terms become searchable. This operation is idempotent -
-    re-fetching an already-cached page has no effect.
+    so that body-only terms become searchable (except ``doc_config.title_only_urls``).
+    This operation is idempotent - re-fetching an already-cached page has no effect.
 
     Failure Handling:
         Indexing happens before caching. If ``update_content`` fails, the page is
@@ -178,7 +175,7 @@ def ensure_page(url: str) -> doc_fetcher.Page | None:
 
             # Update the search index with the hydrated content BEFORE caching.
             # If this raises, the page is left un-cached so a retry is possible.
-            if _INDEX is not None and url not in TITLE_ONLY_URLS:
+            if _INDEX is not None and url not in doc_config.title_only_urls:
                 _INDEX.update_content(url, raw.content)
 
             # Only cache after indexing succeeds
