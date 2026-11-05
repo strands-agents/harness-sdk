@@ -1,6 +1,7 @@
 """Tests for the integrations catalog feed and find_integrations."""
 
 import json
+import time
 import urllib.error
 from unittest.mock import patch
 
@@ -79,6 +80,7 @@ AGENTCORE_MEMORY = {
     "name": "AgentCore Memory",
     "description": "Long-term memory for Strands agents, backed by Amazon Bedrock AgentCore.",
     "type": "memory-store",
+    "sdk": "agents",
     "maintained_by": "aws",
     "languages": ["python", "typescript"],
     "packages": [
@@ -92,6 +94,7 @@ STRANDS_MEM = {
     "name": "strands-mem",
     "description": "Community memory store with AgentCore-compatible schema.",
     "type": "memory-store",
+    "sdk": "agents",
     "maintained_by": "community",
     "languages": ["python"],
     "packages": [
@@ -104,35 +107,52 @@ LANGFUSE = {
     "name": "Langfuse",
     "description": "Tracing and evaluation for Strands agents.",
     "type": "observability",
+    "sdk": "agents",
     "maintained_by": "partner",
     "languages": ["python"],
     "packages": [],
     "docs_url": "https://langfuse.com/integrations/frameworks/strands-agents",
     "github": "https://github.com/langfuse/langfuse",
 }
+FORMAT_ERROR = (
+    f"the integrations catalog at {doc_config.integrations_feed_url} is not in the expected format; retry later, "
+    "or use search_docs to find integration guides"
+)
 LOAD_ERROR = (
     f"could not load the integrations catalog from {doc_config.integrations_feed_url} ({{}}); retry later, "
     "or use search_docs to find integration guides"
 )
 
 
+def found(*results):
+    return {"total": len(results), "results": list(results)}
+
+
 class TestFind:
     def test_filters_by_type_and_language(self, feed_get):
-        assert integrations.find(integration_type="memory-store", language="typescript") == [AGENTCORE_MEMORY]
+        assert integrations.find(integration_type="memory-store", language="typescript") == found(AGENTCORE_MEMORY)
 
     def test_filters_by_maintainer(self, feed_get):
-        assert integrations.find(maintained_by="community") == [STRANDS_MEM]
+        assert integrations.find(maintained_by="community") == found(STRANDS_MEM)
+
+    def test_filters_by_sdk(self, feed_get):
+        feed = json.loads(json.dumps(FEED))
+        feed["integrations"][2]["sdk"] = "evals"
+        feed_get.return_value = json.dumps(feed)
+
+        assert integrations.find(sdk="evals") == found({**LANGFUSE, "sdk": "evals"})
+        assert integrations.find(sdk="agents") == found(AGENTCORE_MEMORY, STRANDS_MEM)
 
     def test_query_requires_every_term_and_ranks_name_matches_first(self, feed_get):
-        assert integrations.find("strands") == [STRANDS_MEM, AGENTCORE_MEMORY, LANGFUSE]
-        assert integrations.find("memory agentcore") == [AGENTCORE_MEMORY, STRANDS_MEM]
-        assert integrations.find("agentcore postgres") == []
+        assert integrations.find("strands") == found(STRANDS_MEM, AGENTCORE_MEMORY, LANGFUSE)
+        assert integrations.find("memory agentcore") == found(AGENTCORE_MEMORY, STRANDS_MEM)
+        assert integrations.find("agentcore postgres") == found()
 
-    def test_limit_caps_results(self, feed_get):
-        assert integrations.find(limit=2) == [AGENTCORE_MEMORY, STRANDS_MEM]
+    def test_limit_caps_results_and_total_counts_every_match(self, feed_get):
+        assert integrations.find(limit=2) == {"total": 3, "results": [AGENTCORE_MEMORY, STRANDS_MEM]}
 
     def test_guide_only_language_matches_language_filter(self, feed_get):
-        assert integrations.find("langfuse", language="python") == [LANGFUSE]
+        assert integrations.find("langfuse", language="python") == found(LANGFUSE)
 
     def test_unknown_feed_values_and_fields_are_passed_through(self, feed_get):
         feed = json.loads(json.dumps(FEED))
@@ -142,8 +162,8 @@ class TestFind:
         feed_get.return_value = json.dumps({**feed, "newTopLevel": []})
 
         evaluator = {**LANGFUSE, "type": "evaluator", "maintained_by": "foundation", "languages": ["python", "go"]}
-        assert integrations.find() == [AGENTCORE_MEMORY, STRANDS_MEM, evaluator]
-        assert integrations.find(integration_type="observability") == []
+        assert integrations.find() == found(AGENTCORE_MEMORY, STRANDS_MEM, evaluator)
+        assert integrations.find(integration_type="observability") == found()
 
 
 class TestFeedCache:
@@ -158,6 +178,16 @@ class TestFeedCache:
         integrations.find()
         integrations.find()
 
+        assert feed_get.call_count == 2
+
+    def test_failed_refetch_serves_cached_copy_for_another_ttl(self, feed_get, monkeypatch):
+        integrations.find()
+        expired = integrations._cached[0] + doc_config.integrations_feed_ttl
+        monkeypatch.setattr(time, "monotonic", lambda: expired)
+        feed_get.side_effect = urllib.error.URLError("down")
+
+        assert find_integrations() == found(AGENTCORE_MEMORY, STRANDS_MEM, LANGFUSE)
+        assert find_integrations() == found(AGENTCORE_MEMORY, STRANDS_MEM, LANGFUSE)
         assert feed_get.call_count == 2
 
 
@@ -187,6 +217,16 @@ class TestFeedErrors:
             find_integrations()
         assert str(exc_info.value) == LOAD_ERROR.format("Expecting value: line 1 column 1 (char 0)")
 
+    @pytest.mark.parametrize(
+        "body", [[], None, {"schemaVersion": 1}, {"schemaVersion": 1, "integrations": {}}, {"integrations": []}]
+    )
+    def test_wrong_shape_feed_is_a_tool_error(self, feed_get, body):
+        feed_get.return_value = json.dumps(body)
+
+        with pytest.raises(ToolError) as exc_info:
+            find_integrations()
+        assert str(exc_info.value) == FORMAT_ERROR
+
     def test_unsupported_schema_version_asks_for_upgrade(self, feed_get):
         feed_get.return_value = json.dumps({**FEED, "schemaVersion": 2})
 
@@ -202,8 +242,10 @@ class TestFeedErrors:
 
         with pytest.raises(ToolError):
             find_integrations()
-        assert find_integrations() == [AGENTCORE_MEMORY, STRANDS_MEM, LANGFUSE]
+        assert find_integrations() == found(AGENTCORE_MEMORY, STRANDS_MEM, LANGFUSE)
 
 
 def test_tool_passes_filters_through(feed_get):
-    assert find_integrations(query="", type="observability", language="python") == [LANGFUSE]
+    assert find_integrations(query="", type="observability", language="python", sdk="agents", limit=1) == found(
+        LANGFUSE
+    )

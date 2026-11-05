@@ -43,7 +43,7 @@ class TestServerMetadata:
         [
             ("search_docs", ["query", "k"]),
             ("fetch_doc", ["uri", "section"]),
-            ("find_integrations", ["query", "type", "language", "maintained_by", "limit"]),
+            ("find_integrations", ["query", "type", "language", "maintained_by", "sdk", "limit"]),
         ],
     )
     def test_parameters_are_described_in_schema(self, name, params):
