@@ -178,8 +178,12 @@ class TestLoadLinksIndexing:
     def test_url_path_words_are_searchable(self):
         results = cache._INDEX.search("evals quickstart")
 
-        assert results[0][1].uri == "https://strandsagents.com/docs/user-guide/evals-sdk/quickstart/index.md"
-        assert results[0][1].display_title == "quickstart"
+        assert results[0][1] == indexer.Doc(
+            uri="https://strandsagents.com/docs/user-guide/evals-sdk/quickstart/index.md",
+            display_title="quickstart",
+            content="",
+            index_title="quickstart docs user guide evals sdk quickstart Run your first evaluation.",
+        )
 
     def test_llms_txt_description_is_searchable(self):
         results = cache._INDEX.search("persist conversation")
@@ -196,5 +200,8 @@ class TestLoadLinksIndexing:
         ):
             page = cache.ensure_page(url)
 
-        assert page is not None
-        assert url not in [doc.uri for _, doc in cache._INDEX.search("quickstart")]
+        assert page == Page(url, "Changelog", "quickstart " * 100)
+        assert [doc.uri for _, doc in cache._INDEX.search("quickstart")] == [
+            "https://strandsagents.com/docs/user-guide/sdk/quickstart/python/index.md",
+            "https://strandsagents.com/docs/user-guide/evals-sdk/quickstart/index.md",
+        ]
