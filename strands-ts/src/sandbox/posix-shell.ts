@@ -10,7 +10,7 @@
 import { Sandbox } from './base.js'
 import type { ExecuteOptions } from './base.js'
 import { ENV_KEY_PATTERN, LANGUAGE_PATTERN, shellQuote } from './constants.js'
-import { SandboxPathNotFoundError } from './errors.js'
+import { SandboxIsADirectoryError, SandboxPathNotFoundError, SandboxPermissionError } from './errors.js'
 import type { ExecutionResult, FileInfo, StreamChunk } from './types.js'
 
 /**
@@ -89,12 +89,11 @@ export abstract class PosixShellSandbox extends Sandbox {
     if (result.exitCode === 77) {
       throw new SandboxPathNotFoundError(path)
     }
-    // Node-style `code`s match the errors NotASandboxLocalEnvironment surfaces from fs.
     if (result.exitCode === 78) {
-      throw Object.assign(new Error(`Is a directory: ${path}`), { code: 'EISDIR' })
+      throw new SandboxIsADirectoryError(path)
     }
     if (result.exitCode === 79) {
-      throw Object.assign(new Error(`Permission denied: ${path}`), { code: 'EACCES' })
+      throw new SandboxPermissionError(path)
     }
     if (result.exitCode !== 0) {
       throw new Error(result.stderr || `Failed to read file: ${path}`)
