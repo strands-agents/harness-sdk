@@ -162,7 +162,15 @@ function truncateShellResult(text: string, maxChars: number): string {
   const trailer = text.slice(trailerStart)
   const truncation = '\n\n[truncated]'
   const available = maxChars - truncation.length - trailer.length
-  if (available <= 0) return text.slice(0, maxChars)
+  if (available <= 0) {
+    const exitStart = text.lastIndexOf('\n\n[exit_code: ')
+    if (exitStart >= 0) {
+      const exitMarker = text.slice(exitStart + 2)
+      if (truncation.length + exitMarker.length <= maxChars) return `${truncation}${exitMarker}`
+      return exitMarker.slice(0, maxChars)
+    }
+    return text.slice(0, maxChars)
+  }
   return `${text.slice(0, available)}${truncation}${trailer}`
 }
 

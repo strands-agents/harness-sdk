@@ -149,6 +149,19 @@ describe('retrieval tool', () => {
     expect(result).toContain('[exit_code: 7]')
   })
 
+  it('keeps the exit code when stderr exceeds the retrieval budget', async () => {
+    const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+    const ref = await stash.store(
+      'tool-shell',
+      0,
+      encodeJSON({ json: { output: 'ok', error: 'e'.repeat(1000), exit_code: 23 } })
+    )
+    const retrievalTool = createRetrievalTool(stash, 8)
+
+    const result = (await invoke(retrievalTool, { reference: ref })) as string
+    expect(result).toContain('[exit_code: 23]')
+  })
+
   it('returns error for unknown reference', async () => {
     const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
     const retrievalTool = createRetrievalTool(stash)

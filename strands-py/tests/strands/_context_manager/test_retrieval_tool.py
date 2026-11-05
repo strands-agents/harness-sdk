@@ -145,6 +145,16 @@ class TestRetrievalTool:
         assert "[exit_code: 7]" in text
 
     @pytest.mark.asyncio
+    async def test_truncating_oversize_stderr_keeps_exit_code(self, stash):
+        ref = await _store_shell_output(stash, "ok", error="e" * 1000, exit_code=23)
+        tool = _create_retrieval_tool(stash, max_result_tokens=8)
+
+        result = await tool._tool_func({"toolUseId": "t1", "input": {"reference": ref}})
+        text = result["content"][0]["text"]
+
+        assert "[exit_code: 23]" in text
+
+    @pytest.mark.asyncio
     async def test_returns_error_for_unknown_reference(self, stash):
         tool = _create_retrieval_tool(stash)
         result = await tool._tool_func({"toolUseId": "t1", "input": {"reference": "nonexistent"}})

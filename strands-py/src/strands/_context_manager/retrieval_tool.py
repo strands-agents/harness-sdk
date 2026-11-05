@@ -86,6 +86,12 @@ def _truncate_shell_result(text: str, max_chars: int) -> str:
     truncation = "\n\n[truncated]"
     available = max_chars - len(truncation) - len(trailer)
     if available <= 0:
+        exit_start = text.rfind("\n\n[exit_code: ")
+        if exit_start >= 0:
+            exit_marker = text[exit_start + 2 :]
+            if len(truncation) + len(exit_marker) <= max_chars:
+                return truncation + exit_marker
+            return exit_marker[:max_chars]
         return text[:max_chars]
     return text[:available] + truncation + trailer
 
