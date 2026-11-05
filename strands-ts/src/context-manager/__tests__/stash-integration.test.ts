@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { Offload } from '../strategies/offload/index.js'
+import { EmergencyTruncateStrategy } from '../strategies/offload/truncate.js'
 import { Stash } from '../stash.js'
 import { ContextManager } from '../context-manager.js'
 import { createRetrievalTool, RETRIEVAL_TOOL_NAME } from '../retrieval-tool.js'
@@ -407,6 +408,29 @@ describe('Offload strategies with stash', () => {
       const acted = await strategy.apply(context)
 
       expect(acted).toBe(true)
+    })
+
+    it('emergency truncation does not cut retrieve_context results when stash is active', async () => {
+      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+      const retrieved = 'x'.repeat(40_000)
+      const messages = [
+        new Message({ role: 'user', content: [new TextBlock('task')] }),
+        new Message({
+          role: 'assistant',
+          content: [new ToolUseBlock({ toolUseId: 'r1', name: RETRIEVAL_TOOL_NAME, input: {} })],
+        }),
+        new Message({
+          role: 'user',
+          content: [new ToolResultBlock({ toolUseId: 'r1', status: 'success', content: [new TextBlock(retrieved)] })],
+        }),
+      ]
+      const strategy = new EmergencyTruncateStrategy()
+      const context = { ...makeContext(messages, stash, 1.1), overflow: true }
+      strategy.init(context.agent, stash)
+
+      expect(await strategy.apply(context)).toBe(false)
+      const block = messages[2]!.content[0] as ToolResultBlock
+      expect((block.content[0] as TextBlock).text).toBe(retrieved)
     })
   })
 })

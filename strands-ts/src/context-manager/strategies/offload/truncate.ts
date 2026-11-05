@@ -22,6 +22,7 @@ import { formatStashRefs } from '../../stash.js'
 import { isPinned } from '../../../conversation-manager/compression/pin-message.js'
 import {
   BaseOffloadStrategy,
+  buildToolNameMap,
   insertMarker,
   repairAlternation,
   spliceWithPairs,
@@ -182,9 +183,11 @@ export class EmergencyTruncateStrategy extends TruncateStrategy {
     const charsNow = totalTextSize(context.messages)
     let excessChars = charsNow - fitsChars
     // The model rejected the input, so the local count (messages only, no system prompt or tool specs, a
-    // heuristic tokenizer) is optimistic by an unknown margin: cut at least a quarter of the text per pass
-    // so the 3-retry cap cannot run out on a context the count undersells by 2x.
-    if (context.overflow) excessChars = Math.max(excessChars, charsNow * EMERGENCY_MIN_CUT)
+    // heuristic tokenizer) is optimistic by an unknown margin: remove at least a quarter of the text per pass,
+    // counting what the drop removed, so the 3-retry cap cannot run out on a context the count undersells by 2x.
+    if (context.overflow) {
+      excessChars = Math.max(excessChars, charsBefore * EMERGENCY_MIN_CUT - (charsBefore - charsNow))
+    }
     const truncated = await this._truncateLargestTextBlocks(context, excessChars)
     return dropped || truncated
   }
@@ -218,10 +221,12 @@ export class EmergencyTruncateStrategy extends TruncateStrategy {
    */
   private async _truncateLargestTextBlocks(context: ContextState, excessChars: number): Promise<boolean> {
     const { messages } = context
+    const toolNameMap = buildToolNameMap(messages)
     const candidates: { protected: number; size: number; index: number; blockIndex: number }[] = []
     messages.forEach((message, index) => {
       message.content.forEach((block, blockIndex) => {
         const size = textSize(block)
+        if (!this._blockMatchesTarget(block, message, toolNameMap)) return
         if (size > FULL_PREVIEW_CHARS || (size > 0 && !isTruncated(block))) {
           candidates.push({ protected: isProtected(messages, index, block) ? 1 : 0, size, index, blockIndex })
         }

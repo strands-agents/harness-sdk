@@ -1039,6 +1039,24 @@ describe('EmergencyTruncateStrategy', () => {
     expect(messages.map((m) => m.role)).toEqual(['user', 'assistant', 'user'])
     expect((messages[0]!.content[0] as TextBlock).text.startsWith('[Truncated: 1 block, ~10,000 tokens]')).toBe(true)
   })
+
+  it('keeps every block when the drop already removed a quarter of the text', async () => {
+    const paste = 'p'.repeat(30_000)
+    const messages = [
+      text('user', 'task'),
+      text('assistant', 'o'.repeat(40_000)),
+      text('user', 'u2'),
+      text('assistant', 'a3'),
+      text('user', 'u4'),
+      text('assistant', 'a5'),
+      text('user', paste),
+    ]
+
+    expect(await new EmergencyTruncateStrategy().apply(makeContext(messages, 1.03, true))).toBe(true)
+
+    expect(messages).toHaveLength(5)
+    expect((messages.at(-1)!.content[0] as TextBlock).text).toBe(paste)
+  })
 })
 
 describe('repeated message-level reduction', () => {

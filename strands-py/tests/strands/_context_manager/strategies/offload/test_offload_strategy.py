@@ -864,6 +864,26 @@ class TestEmergencyTruncateStrategy:
         assert [m["role"] for m in messages] == ["user", "assistant", "user"]
         assert messages[0]["content"][0]["text"].startswith("[Truncated: 1 block, ~10,000 tokens]")
 
+    @pytest.mark.asyncio
+    async def test_keeps_every_block_when_the_drop_already_removed_a_quarter_of_the_text(self, mock_agent):
+        strategy = EmergencyTruncateStrategy()
+        paste = "p" * 30_000
+        messages: Messages = [
+            Message(role="user", content=[ContentBlock(text="task")]),
+            Message(role="assistant", content=[ContentBlock(text="o" * 40_000)]),
+            Message(role="user", content=[ContentBlock(text="u2")]),
+            Message(role="assistant", content=[ContentBlock(text="a3")]),
+            Message(role="user", content=[ContentBlock(text="u4")]),
+            Message(role="assistant", content=[ContentBlock(text="a5")]),
+            Message(role="user", content=[ContentBlock(text=paste)]),
+        ]
+        context = ContextState(messages=messages, agent=mock_agent, utilization=1.03, overflow=True)
+
+        assert await strategy.apply(context) is True
+
+        assert len(messages) == 5
+        assert messages[-1]["content"][0]["text"] == paste
+
 
 class TestEagerHookRegistration:
     """Tests for BaseOffloadStrategy.init — eager hook registration."""

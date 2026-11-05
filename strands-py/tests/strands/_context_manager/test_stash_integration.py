@@ -10,6 +10,7 @@ from strands._context_manager.retrieval_tool import _create_retrieval_tool
 from strands._context_manager.stash import Stash
 from strands._context_manager.strategies.offload import Offload
 from strands._context_manager.strategies.offload.drop import DROPPED_MARKER
+from strands._context_manager.strategies.offload.truncate import EmergencyTruncateStrategy
 from strands._context_manager.types import ContextState
 from strands.storage.in_memory_storage import InMemoryStorage
 from strands.types.content import ContentBlock, Message, Messages
@@ -245,6 +246,29 @@ class TestRetrievalLoopPrevention:
         mock_agent.messages = messages
         context = ContextState(messages=messages, agent=mock_agent, utilization=0.5)
         assert await strategy.apply(context) is True
+
+    @pytest.mark.asyncio
+    async def test_emergency_truncation_skips_retrieve_context_results_when_stash_active(self, mock_agent, stash):
+        strategy = EmergencyTruncateStrategy()
+        strategy.init(mock_agent, stash)
+        retrieved = "x" * 40_000
+        messages: Messages = [
+            Message(role="user", content=[ContentBlock(text="task")]),
+            Message(
+                role="assistant",
+                content=[ContentBlock(toolUse=ToolUse(toolUseId="r1", name="retrieve_context", input={}))],
+            ),
+            Message(
+                role="user",
+                content=[
+                    ContentBlock(toolResult=ToolResult(toolUseId="r1", status="success", content=[{"text": retrieved}]))
+                ],
+            ),
+        ]
+        context = ContextState(messages=messages, agent=mock_agent, utilization=1.1, overflow=True, stash=stash)
+
+        assert await strategy.apply(context) is False
+        assert messages[2]["content"][0]["toolResult"]["content"][0]["text"] == retrieved
 
 
 class TestSummarizeWithStash:

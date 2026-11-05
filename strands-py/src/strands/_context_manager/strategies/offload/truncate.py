@@ -25,6 +25,7 @@ from .base import (
     OffloadConditions,
     OffloadTarget,
     _build_conditions,
+    _build_tool_name_map,
     _insert_marker,
     _repair_alternation,
     _splice_with_pairs,
@@ -205,9 +206,9 @@ class EmergencyTruncateStrategy(TruncateStrategy):
         excess_chars = chars_now - fits_chars
         if context.overflow:
             # The model rejected the input, so the local count (messages only, no system prompt or tool specs, a
-            # heuristic tokenizer) is optimistic by an unknown margin: cut at least a quarter of the text per pass
-            # so the 3-retry cap cannot run out on a context the count undersells by 2x.
-            excess_chars = max(excess_chars, chars_now * _EMERGENCY_MIN_CUT)
+            # heuristic tokenizer) is optimistic by an unknown margin: remove at least a quarter of the text per pass,
+            # counting what the drop removed, so the 3-retry cap cannot run out on a context the count undersells by 2x.
+            excess_chars = max(excess_chars, chars_before * _EMERGENCY_MIN_CUT - (chars_before - chars_now))
         truncated = await self._truncate_largest_text_blocks(context, excess_chars)
         return dropped or truncated
 
@@ -245,12 +246,14 @@ class EmergencyTruncateStrategy(TruncateStrategy):
         preview, so a block that merely starts with the marker cannot stall the recovery.
         """
         messages = context.messages
+        tool_name_map = _build_tool_name_map(messages)
         candidates = sorted(
             (
                 (_is_protected(messages, index, block), -_text_size(block), index, block_index)
                 for index, message in enumerate(messages)
                 for block_index, block in enumerate(message["content"])
-                if _text_size(block) > _FULL_PREVIEW_CHARS or (_text_size(block) > 0 and not _is_truncated(block))
+                if self._block_matches_target(block, message, tool_name_map)
+                and (_text_size(block) > _FULL_PREVIEW_CHARS or (_text_size(block) > 0 and not _is_truncated(block)))
             )
         )
         saved = 0
