@@ -213,9 +213,9 @@ describe('ModelProxy', () => {
       ])
     })
 
-    it('sends text to a custom provider serving a model that takes temporary messages', async () => {
+    it('sends text to a model whose info turns temporary messages off', async () => {
       const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'ok' })
-      model.updateConfig({ modelId: 'claude-opus-5-5' })
+      model.updateConfig({ modelId: 'claude-opus-5-5', modelInfo: { capabilities: { temporaryMessages: false } } })
       const streamSpy = vi.spyOn(model, 'stream')
       const messages = [
         new Message({

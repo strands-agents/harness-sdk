@@ -1311,9 +1311,9 @@ describe('countTokens', () => {
 })
 
 describe('info', () => {
-  it('knows only that temporary messages are off for a provider with no model id, and unknown stateful reads as false', () => {
+  it('is all unknown for a provider with no model id, and unknown stateful reads as false', () => {
     const provider = new TestModelProvider()
-    expect(provider.modelInfo).toEqual({ capabilities: { temporaryMessages: false } })
+    expect(provider.modelInfo).toEqual({})
     expect(provider.stateful).toBe(false)
   })
 
@@ -1325,10 +1325,10 @@ describe('info', () => {
     expect(provider.modelInfo.capabilities?.promptCaching).toBe('cachePoints')
   })
 
-  it('leaves temporary messages off for a model the shared data says takes them', () => {
+  it('reports temporary messages from the shared model info', () => {
     const provider = new TestModelProvider()
-    provider.updateConfig({ modelId: 'vertex.claude-opus-5-5' })
-    expect(provider.modelInfo.capabilities?.temporaryMessages).toBe(false)
+    provider.updateConfig({ modelId: 'claude-opus-5-5' })
+    expect(provider.modelInfo.capabilities?.temporaryMessages).toBe(true)
   })
 
   it('lets a provider put its facts over the shared model info, with the user override over both', () => {

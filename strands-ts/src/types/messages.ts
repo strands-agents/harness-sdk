@@ -993,8 +993,6 @@ export class GuardContentBlock
 
 /**
  * Data for an injected block.
- *
- * @experimental
  */
 export interface InjectedBlockData {
   /**
@@ -1020,8 +1018,6 @@ export interface InjectedBlockData {
  *
  * The text is kept under `injected`, the same shape as the saved data, so an InjectedBlock is never read as a
  * {@link TextBlock}.
- *
- * @experimental
  *
  * @example
  * ```typescript
