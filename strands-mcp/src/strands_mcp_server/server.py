@@ -324,21 +324,27 @@ def find_integrations(
             )
         ),
     ] = None,
+    sdk: Annotated[
+        integrations.Sdk | None,
+        Field(
+            description='Strands product the integration is for: "agents" (Strands Agents) or "evals" (Strands Evals).'
+        ),
+    ] = None,
     limit: Annotated[int, Field(ge=1, le=50, description="Maximum number of results to return.")] = 10,
-) -> List[Dict[str, Any]]:
+) -> Dict[str, Any]:
     """Find Strands integrations in the catalog published at https://strandsagents.com/integrations/.
 
-    Every keyword in query must appear in the name or description; name matches rank first. Each result has
-    name, description, type, maintained_by, languages, packages (each with language, package, and an install
-    command), docs_url, and github. A docs_url on strandsagents.com can be read with fetch_doc. An integration
-    listed for a language without a package is documented by a guide only. Returns an empty list when nothing
-    matches.
+    Every keyword in query must appear in the name or description; name matches rank first. Returns total, the
+    number of matching integrations, and results, the first limit of them; when total is larger, raise limit or
+    narrow the filters. Each result has name, description, type, sdk, maintained_by, languages, packages (each
+    with language, package, and an install command), docs_url, and github. A docs_url on strandsagents.com can be
+    read with fetch_doc. An integration listed for a language without a package is documented by a guide only.
 
-    The catalog is fetched on first use and refreshed every few minutes. If it cannot be loaded, the call fails
+    The catalog is fetched on first use and refreshed every few minutes. If it has never loaded, the call fails
     with a tool error; retry later or use search_docs.
     """
     try:
-        return integrations.find(query, type, language, maintained_by, limit)
+        return integrations.find(query, type, language, maintained_by, sdk, limit)
     except integrations.FeedUnavailableError as e:
         raise ToolError(str(e)) from e
 

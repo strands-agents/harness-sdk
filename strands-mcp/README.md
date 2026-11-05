@@ -62,9 +62,10 @@ This MCP server provides curated documentation access to your GenAI tools via ll
   the docs catalog (with the closest catalog URLs as `suggestions`), and unknown section IDs (with the valid
   `sections`); `section` is ignored when the full document is returned automatically. A catalog page that cannot be
   fetched is reported as a tool error (`isError: true`).
-- `find_integrations(query, type, language, maintained_by, limit)` filters the integrations catalog feed at
-  `https://strandsagents.com/integrations.json`, fetched on first use and cached for 10 minutes. Results carry the
-  maintainer, install commands, and a docs URL; on-site docs URLs can be passed to `fetch_doc`. An unreachable feed is
+- `find_integrations(query, type, language, maintained_by, sdk, limit)` filters the integrations catalog feed at
+  `https://strandsagents.com/integrations.json`, fetched on first use and cached for 10 minutes. It returns the total
+  match count and up to `limit` results carrying the maintainer, install commands, and a docs URL; on-site docs URLs
+  can be passed to `fetch_doc`. A failed refresh keeps serving the cached copy; a feed that has never loaded is
   reported as a tool error.
 - All tools are annotated read-only and idempotent, and the server sends `instructions` telling clients when to use
   it and in which order to call the tools.

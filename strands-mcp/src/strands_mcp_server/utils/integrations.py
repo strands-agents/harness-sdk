@@ -21,6 +21,7 @@ IntegrationType = Literal[
 ]
 Language = Literal["python", "typescript"]
 Maintainer = Literal["strands", "aws", "partner", "community"]
+Sdk = Literal["agents", "evals"]
 
 SUPPORTED_SCHEMA_VERSION = 1
 
@@ -42,10 +43,16 @@ def _fetch_feed() -> List[Dict[str, Any]]:
             f"could not load the integrations catalog from {url} ({e}); retry later, "
             "or use search_docs to find integration guides"
         ) from e
-    if feed.get("schemaVersion") != SUPPORTED_SCHEMA_VERSION:
+    version = feed.get("schemaVersion") if isinstance(feed, dict) else None
+    if version is not None and version != SUPPORTED_SCHEMA_VERSION:
         raise FeedUnavailableError(
-            f"the integrations catalog at {url} uses schemaVersion {feed.get('schemaVersion')!r}, "
+            f"the integrations catalog at {url} uses schemaVersion {version!r}, "
             f"this server supports {SUPPORTED_SCHEMA_VERSION}; upgrade strands-agents-mcp-server"
+        )
+    if version is None or not isinstance(feed.get("integrations"), list):
+        raise FeedUnavailableError(
+            f"the integrations catalog at {url} is not in the expected format; retry later, "
+            "or use search_docs to find integration guides"
         )
     return feed["integrations"]
 
@@ -53,12 +60,19 @@ def _fetch_feed() -> List[Dict[str, Any]]:
 def get_integrations() -> List[Dict[str, Any]]:
     """Return the catalog entries, refetching the feed once the cached copy is older than the TTL.
 
+    A failed refetch keeps serving the cached copy for another TTL.
+
     Raises:
-        FeedUnavailableError: If the feed cannot be fetched or has an unsupported schemaVersion.
+        FeedUnavailableError: If the feed cannot be loaded and no earlier copy is cached.
     """
     global _cached
     if _cached is None or time.monotonic() - _cached[0] >= doc_config.integrations_feed_ttl:
-        _cached = (time.monotonic(), _fetch_feed())
+        try:
+            _cached = (time.monotonic(), _fetch_feed())
+        except FeedUnavailableError:
+            if _cached is None:
+                raise
+            _cached = (time.monotonic(), _cached[1])
     return _cached[1]
 
 
@@ -68,12 +82,14 @@ def _matches(
     integration_type: str | None,
     language: str | None,
     maintained_by: str | None,
+    sdk: str | None,
 ) -> bool:
     text = f"{entry['name']} {entry['description']}".lower()
     return (
         (integration_type is None or entry["integrationType"] == integration_type)
         and (language is None or language in entry["languages"])
         and (maintained_by is None or entry["maintainedBy"] == maintained_by)
+        and (sdk is None or entry["sdk"] == sdk)
         and all(term in text for term in terms)
     )
 
@@ -96,6 +112,7 @@ def _to_result(entry: Dict[str, Any]) -> Dict[str, Any]:
         "name": entry["name"],
         "description": entry["description"],
         "type": entry["integrationType"],
+        "sdk": entry["sdk"],
         "maintained_by": entry["maintainedBy"],
         "languages": list(entry["languages"]),
         "packages": packages,
@@ -109,14 +126,17 @@ def find(
     integration_type: str | None = None,
     language: str | None = None,
     maintained_by: str | None = None,
+    sdk: str | None = None,
     limit: int = 10,
-) -> List[Dict[str, Any]]:
+) -> Dict[str, Any]:
     """Filter catalog entries; entries whose name contains every query term rank first.
 
+    Returns the number of matches as total and the first limit of them as results.
+
     Raises:
-        FeedUnavailableError: If the feed cannot be fetched or has an unsupported schemaVersion.
+        FeedUnavailableError: If the feed cannot be loaded and no earlier copy is cached.
     """
     terms = query.lower().split()
-    matches = [e for e in get_integrations() if _matches(e, terms, integration_type, language, maintained_by)]
+    matches = [e for e in get_integrations() if _matches(e, terms, integration_type, language, maintained_by, sdk)]
     matches.sort(key=lambda e: not all(term in e["name"].lower() for term in terms))
-    return [_to_result(e) for e in matches[:limit]]
+    return {"total": len(matches), "results": [_to_result(e) for e in matches[:limit]]}
