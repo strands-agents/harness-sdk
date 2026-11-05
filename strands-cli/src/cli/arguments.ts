@@ -6,6 +6,7 @@ import { readCliVersion } from '../tui/package-version.js'
 
 export interface ParsedArgs {
   update: boolean
+  dev: boolean
   request: string | undefined
   oneShot: boolean
   acpServer: boolean
@@ -33,17 +34,26 @@ export interface ParsedArgs {
 export type CliRunMode = 'acp' | 'ink' | 'plain' | 'print'
 
 const DIRECT_CONFIG_FLAGS = ['name', 'description', 'effort', 'instructions', 'interventions'] as const
+const DEV_DESCRIPTION = 'Chat with the agent in this project. Reload the agent when you save a source file.'
+const COMMANDS_HELP = [
+  '',
+  'Commands:',
+  '  dev [request]             chat with the agent in this project and reload it on save',
+  '  update                    update the globally installed CLI',
+  '',
+].join('\n')
 
 export function parseArgs(argv: string[]): ParsedArgs {
   if (argv[0] === 'update') {
     return parseUpdateArgs(argv.slice(1))
   }
 
+  const dev = argv[0] === 'dev'
   const collect = (value: string, previous: string[]): string[] => [...previous, value]
   const program = new Command()
   program
-    .name('strands')
-    .description('Chat with a Strands harness agent.')
+    .name(dev ? 'strands dev' : 'strands')
+    .description(dev ? DEV_DESCRIPTION : 'Chat with a Strands harness agent.')
     .version(readCliVersion())
     .argument('[request]', 'an initial request to answer')
     .option('-p, --print', 'answer the request and exit, without entering the chat loop')
@@ -73,15 +83,19 @@ export function parseArgs(argv: string[]): ParsedArgs {
     .option('--mcp-config <path>', 'additional MCP configuration file (repeatable)', collect, [])
     .allowExcessArguments(false)
     .exitOverride()
-    .addHelpText('after', '\nCommands:\n  update                    update the globally installed CLI\n')
+    .addHelpText('after', COMMANDS_HELP)
 
-  program.parse(argv, { from: 'user' })
+  program.parse(dev ? argv.slice(1) : argv, { from: 'user' })
   const opts = program.opts()
   if (opts.prompt !== undefined && program.args[0] !== undefined) {
     program.error('error: pass the initial request either positionally or with --prompt, not both.')
   }
+  if (dev && (opts.setup || opts.acpServer)) {
+    program.error('error: strands dev cannot be combined with --setup or --acp-server.')
+  }
   return {
     update: false,
+    dev,
     request: opts.prompt ?? program.args[0],
     oneShot: Boolean(opts.print),
     acpServer: Boolean(opts.acpServer),
@@ -118,6 +132,7 @@ function parseUpdateArgs(argv: string[]): ParsedArgs {
 
   return {
     update: true,
+    dev: false,
     request: undefined,
     oneShot: false,
     acpServer: false,

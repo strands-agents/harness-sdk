@@ -260,6 +260,22 @@ describe('parseArgs', () => {
     expect(() => parseArgs(['update', 'unexpected'])).toThrow(/too many arguments/u)
   })
 
+  it('captures the dev command with its request and flags', () => {
+    expect(parseArgs(['dev', 'try this', '--agent', './agent.py'])).toMatchObject({
+      dev: true,
+      update: false,
+      request: 'try this',
+      agent: './agent.py',
+    })
+    expect(parseArgs([]).dev).toBe(false)
+    expect(parseArgs(['update']).dev).toBe(false)
+    expect(parseArgs(['develop']).request).toBe('develop')
+  })
+
+  it.each(['--setup', '--acp-server'])('rejects %s in dev mode', (flag) => {
+    expect(() => parseArgs(['dev', flag])).toThrow('strands dev cannot be combined with --setup or --acp-server')
+  })
+
   it('collects repeatable MCP configuration paths', () => {
     const args = parseArgs(['--mcp-config', '/tmp/mcp-a.json', '--mcp-config', '/tmp/mcp-b.json'])
     expect(args.mcpConfig).toEqual(['/tmp/mcp-a.json', '/tmp/mcp-b.json'])
