@@ -830,6 +830,7 @@ All three take the same Bedrock options:
 Authentication is handled by the vendor SDKs, following AWS's guidance for each API:
 
 - `BedrockModel.Messages` uses the Anthropic SDK's Bedrock clients, which sign each request with your AWS credentials (default credential chain, or `aws_profile` / `aws_access_key` in `client_args`) unless you pass an API key.
+  On bedrock-runtime it always sends InvokeModel's documented API version, `bedrock-2023-05-31`. On bedrock-mantle it follows the Anthropic SDK's default, as the [Anthropic provider](./anthropic) does: with anthropic 2.x that is `2026-10-21`, which rejects sampling parameters, so pin `client_args={"default_headers": {"anthropic-version": "2023-06-01"}}` to use them.
 - `BedrockModel.ChatCompletions` and `BedrockModel.Responses` use the OpenAI SDK with an API key, or a short-lived bearer token minted from your AWS credentials for each request. Bearer tokens need the `bedrock:CallWithBearerToken` IAM permission.
 
 They subclass the provider for their API, not `BedrockModel`, so guardrails and the other Converse options on this page don't apply to them. `BedrockModel.Messages` needs `pip install 'strands-agents[anthropic]'` (anthropic 0.91.0 or later for bedrock-mantle), and the OpenAI classes need `pip install 'strands-agents[openai]'`. Imported models (Custom Model Import) are served only through InvokeModel and aren't supported by these classes.

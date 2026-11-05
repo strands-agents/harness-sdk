@@ -23,6 +23,10 @@ _ENDPOINTS = ("bedrock-runtime", "bedrock-mantle")
 # Error events in an InvokeModel response stream that mean "try again later".
 _THROTTLING_EVENTS = ("throttlingException", "serviceUnavailableException")
 
+# The InvokeModel API version Bedrock documents. anthropic 2.x would otherwise send its own default, 2026-10-21,
+# which rejects sampling parameters; this keeps bedrock-runtime behaving the same on every SDK major version.
+_INVOKE_MODEL_API_VERSION = "bedrock-2023-05-31"
+
 
 class BedrockMessagesModel(AnthropicModel):
     """Claude on Amazon Bedrock through the Anthropic Messages API.
@@ -89,6 +93,36 @@ class BedrockMessagesModel(AnthropicModel):
         return anthropic.AsyncAnthropicBedrock(**client_args)  # type: ignore[return-value]
 
     @override
+    def format_request(
+        self,
+        messages: Messages,
+        tool_specs: list[ToolSpec] | None = None,
+        system_prompt: str | None = None,
+        tool_choice: ToolChoice | None = None,
+        dynamic_trailing_blocks: int = 0,
+        *,
+        system_prompt_content: list[SystemContentBlock] | None = None,
+    ) -> dict[str, Any]:
+        """Format like :class:`AnthropicModel`, pinning the InvokeModel API version on bedrock-runtime.
+
+        An ``anthropic_version`` set in ``params["extra_body"]`` takes precedence.
+        """
+        request = super().format_request(
+            messages,
+            tool_specs,
+            system_prompt,
+            tool_choice,
+            dynamic_trailing_blocks,
+            system_prompt_content=system_prompt_content,
+        )
+        if self._endpoint == "bedrock-runtime":
+            request["extra_body"] = {
+                "anthropic_version": _INVOKE_MODEL_API_VERSION,
+                **(request.get("extra_body") or {}),
+            }
+        return request
+
+    @override
     async def stream(
         self,
         messages: Messages,
@@ -102,7 +136,7 @@ class BedrockMessagesModel(AnthropicModel):
     ) -> AsyncGenerator[StreamEvent, None]:
         """Stream like :class:`AnthropicModel`, mapping InvokeModel's mid-stream error events to Strands exceptions.
 
-        The Anthropic SDK raises those events as a plain ``ValueError``.
+        The Anthropic SDK raises those events as a plain ``ValueError`` before 1.0, and as ``APIStatusError`` since.
         """
         try:
             async for event in super().stream(
@@ -115,7 +149,7 @@ class BedrockMessagesModel(AnthropicModel):
                 **kwargs,
             ):
                 yield event
-        except ValueError as error:
+        except (ValueError, anthropic.APIStatusError) as error:
             message = str(error)
             if any(name in message for name in _THROTTLING_EVENTS):
                 raise ModelThrottledException(message) from error

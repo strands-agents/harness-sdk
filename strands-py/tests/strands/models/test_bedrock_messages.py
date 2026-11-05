@@ -1,4 +1,5 @@
 import base64
+import importlib
 import inspect
 import json
 import re
@@ -8,7 +9,6 @@ import sys
 import zlib
 
 import anthropic
-import httpx
 import pytest
 
 from strands import Agent
@@ -72,6 +72,13 @@ THROTTLING_EVENT = _exception_event("throttlingException", "Too many requests, p
 OVERFLOW_EVENT = _exception_event("validationException", "Input is too long for requested model.")
 OTHER_ERROR_EVENT = _exception_event("internalServerException", "The system encountered an unexpected error.")
 
+# The installed anthropic release decides the HTTP package: httpx before 1.0, httpx2 since.
+HTTP = next(
+    importlib.import_module(base.__module__.partition(".")[0])
+    for base in anthropic.DefaultAsyncHttpxClient.__mro__
+    if base.__name__ == "AsyncClient"
+)
+
 # anthropic added its bedrock-mantle client in 0.91.0; older releases still cover the bedrock-runtime tests.
 requires_mantle_client = pytest.mark.skipif(
     not hasattr(anthropic, "AsyncAnthropicBedrockMantle"), reason="anthropic<0.91.0 has no bedrock-mantle client"
@@ -113,10 +120,10 @@ def network(monkeypatch, captured_requests, invoke_body):
         await request.aread()
         captured_requests.append(request)
         if request.url.path.endswith("/v1/messages"):
-            return httpx.Response(200, headers={"content-type": "text/event-stream"}, text=SSE_TEXT_RESPONSE)
-        return httpx.Response(200, headers={"content-type": "application/vnd.amazon.eventstream"}, content=invoke_body)
+            return HTTP.Response(200, headers={"content-type": "text/event-stream"}, text=SSE_TEXT_RESPONSE)
+        return HTTP.Response(200, headers={"content-type": "application/vnd.amazon.eventstream"}, content=invoke_body)
 
-    monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", handle_async_request)
+    monkeypatch.setattr(HTTP.AsyncHTTPTransport, "handle_async_request", handle_async_request)
 
 
 def test_nested_names():
@@ -174,7 +181,8 @@ def test_runtime_url_encodes_arn_model_ids(captured_requests):
     [
         (THROTTLING_EVENT, ModelThrottledException),
         (OVERFLOW_EVENT, ContextWindowOverflowException),
-        (OTHER_ERROR_EVENT, ValueError),
+        # The SDK raises other events as ValueError before 1.0 and as APIStatusError since; they pass through.
+        (OTHER_ERROR_EVENT, (ValueError, anthropic.APIStatusError)),
     ],
     ids=["throttling", "overflow", "other"],
 )
