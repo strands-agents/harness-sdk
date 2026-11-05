@@ -37,7 +37,7 @@ jobs:
         with:
           # Locked mode uses the same Samples baseline as docs CI.
           repository: strands-agents/samples
-          ref: ${{ inputs.content_snapshot == 'locked' && '0d9d9022fd699e8c00da8beeb2c7e9cdf1de2cd9' || 'main' }}
+          ref: ${{ inputs.content_snapshot == 'locked' && 'd04826e668a51b237a3fc06fd9402517a2daf66c' || 'main' }}
           path: samples-source
           persist-credentials: false
 

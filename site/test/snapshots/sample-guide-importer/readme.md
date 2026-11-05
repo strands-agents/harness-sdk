@@ -1,5 +1,4 @@
 ---
-sampleId: "typescript/02-applications/01-readme"
 catalogMode: "curated"
 title: "README guide"
 description: "Build a TypeScript sample guide from README content while preserving links, images, code blocks, task lists, and repository source references."
@@ -7,16 +6,8 @@ slug: "typescript/readme"
 language: "typescript"
 category: "applications"
 categoryLabel: "Applications"
-placement: "featured"
-kind: "application"
-collections: [{"id":"end-to-end","label":"End-to-end applications","description":"Complete applications with setup, validation, and deployment guidance.","order":0}]
-capabilities: ["tools","streaming"]
+collection: {"id":"end-to-end","label":"End-to-end applications","description":"Complete applications with setup, validation, and deployment guidance.","order":0}
 docs: [{"label":"Tools","url":"https://strandsagents.com/docs/tools/"}]
-variants: []
-program: "amplifying-ai"
-maturity: "validated"
-owner: "Strands"
-lastValidated: "2026-11-05"
 sourceUrl: "https://github.com/strands-agents/samples/tree/<source-commit>/typescript/02-applications/01-readme"
 order: 0
 ---

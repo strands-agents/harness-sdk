@@ -21,16 +21,11 @@ import {
 let guides: SampleGuideEntry[]
 
 interface GuideFixtureOptions {
-  sampleId?: string
   catalogMode?: 'legacy' | 'curated'
   family?: string
-  variants?: string[]
-  placement?: 'featured' | 'reference'
   category?: string
   categoryLabel?: string
-  collections?: Array<{ id: string; label: string; description?: string; order: number }>
-  program?: string
-  kind?: 'application' | 'workshop' | 'concept' | 'integration' | 'migration'
+  collection?: { id: string; label: string; description?: string; order: number }
 }
 
 function guideFixture(
@@ -44,7 +39,6 @@ function guideFixture(
     id: slug,
     collection: 'sampleGuides',
     data: {
-      sampleId: options.sampleId ?? slug,
       catalogMode,
       title: slug,
       description: `${slug} description`,
@@ -52,14 +46,9 @@ function guideFixture(
       language,
       category: options.category ?? 'learn',
       categoryLabel: options.categoryLabel ?? 'Learn',
-      placement: options.placement ?? 'featured',
-      kind: options.kind ?? (catalogMode === 'curated' ? 'application' : undefined),
-      collections: options.collections ?? [],
-      capabilities: [],
+      collection: options.collection,
       docs: [],
-      variants: options.variants ?? [],
       family: options.family,
-      program: options.program,
       sourceUrl: `https://github.com/strands-agents/samples/tree/commit/${slug}`,
       order,
     },
@@ -188,9 +177,6 @@ describe('generated sample guide pages', () => {
       expect(redirect?.getAttribute('data-default-target')).toBe(defaultTarget)
       expect(redirect?.getAttribute('data-python-target')).toBe(pythonTarget)
       expect(redirect?.querySelector('a')?.getAttribute('href')).toBe(defaultTarget)
-      expect(page.querySelector('#featured-examples')).toBeNull()
-      expect(page.querySelectorAll('[data-sample-placement]')).toHaveLength(0)
-      expect(page.querySelectorAll('.sample-card__badges')).toHaveLength(0)
       expect(page.querySelectorAll('.sl-link-card')).toHaveLength(0)
       return
     }
@@ -262,9 +248,6 @@ describe('generated sample guide pages', () => {
         }
       }
     }
-
-    expect(page.querySelectorAll('[data-sample-placement]')).toHaveLength(0)
-    expect(page.querySelectorAll('.sample-card__badges, .sample-card__program')).toHaveLength(0)
   })
 
   it('renders every guide at a stable route with language-scoped sample navigation', () => {
@@ -277,9 +260,7 @@ describe('generated sample guide pages', () => {
       expect(page.querySelector('.sample-guide__source code')).toBeNull()
       expect(page.querySelector('.sl-markdown-content > p')?.classList.contains('sample-guide__source')).toBe(true)
       expectPersistentSidebar(page, guides, guide)
-      expect(page.querySelector('[data-pagefind-body]') !== null).toBe(
-        guide.data.catalogMode === 'curated' || guide.data.placement === 'featured'
-      )
+      expect(page.querySelector('[data-pagefind-body]')).not.toBeNull()
       expect(page.querySelector('.sample-guide__metadata')).toBeNull()
 
       const markdownHref = page.querySelector('link[rel="alternate"][type="text/markdown"]')?.getAttribute('href')
@@ -309,17 +290,12 @@ describe('generated sample guide pages', () => {
       expect(rawMarkdown.trim(), guide.id).not.toBe('')
       expect(rawMarkdown, guide.id).toContain('## Upstream source')
       expect(rawMarkdown, guide.id).toContain(guide.data.sourceUrl)
-      if (guide.data.catalogMode === 'curated' || guide.data.placement === 'featured') {
-        expect(llms, guide.id).toContain(`[${label}](`)
-        expect(llms, guide.id).toContain(sourcePath)
-        expect(llmsFull, guide.id).toContain(`## ${label}`)
-        expect(llmsFull, guide.id).toContain(guide.data.sourceUrl)
-        expect(llmsFull, guide.id).toContain(`Markdown: `)
-        expect(llmsFull, guide.id).toContain(sourcePath)
-      } else {
-        expect(llms, guide.id).not.toContain(sourcePath)
-        expect(llmsFull, guide.id).not.toContain(sourcePath)
-      }
+      expect(llms, guide.id).toContain(`[${label}](`)
+      expect(llms, guide.id).toContain(sourcePath)
+      expect(llmsFull, guide.id).toContain(`## ${label}`)
+      expect(llmsFull, guide.id).toContain(guide.data.sourceUrl)
+      expect(llmsFull, guide.id).toContain(`Markdown: `)
+      expect(llmsFull, guide.id).toContain(sourcePath)
     }
   })
 
@@ -378,39 +354,6 @@ describe('sampleGuideSwitchPath', () => {
     )
   })
 
-  it('uses an explicit variant relationship when no family is declared', () => {
-    const entries = [
-      guideFixture('python/migration', 'python', 0, {
-        sampleId: 'python-migration',
-        variants: ['typescript-migration'],
-      }),
-      guideFixture('typescript/different-slug', 'typescript', 1, {
-        sampleId: 'typescript-migration',
-      }),
-    ]
-
-    expect(sampleGuideSwitchPath(entries, 'python/migration', 'typescript')).toBe(
-      '/examples/typescript/different-slug/'
-    )
-  })
-
-  it('falls back to an explicit variant when a family counterpart is unavailable', () => {
-    const entries = [
-      guideFixture('python/migration', 'python', 0, {
-        sampleId: 'python-migration',
-        family: 'python-only-family',
-        variants: ['typescript-migration'],
-      }),
-      guideFixture('typescript/different-slug', 'typescript', 1, {
-        sampleId: 'typescript-migration',
-      }),
-    ]
-
-    expect(sampleGuideSwitchPath(entries, 'python/migration', 'typescript')).toBe(
-      '/examples/typescript/different-slug/'
-    )
-  })
-
   it('does not guess a counterpart by slug or fall back to another guide', () => {
     const entries = [
       guideFixture('python/python-only', 'python', 0),
@@ -443,16 +386,15 @@ describe('sampleGuideSwitchPath', () => {
 })
 
 describe('groupSampleGuideFamilies', () => {
-  it('groups nine featured guides into eight editorial families', () => {
+  it('groups language variants into one editorial family', () => {
     const entries = [
       guideFixture('python/dynamic-ui', 'python', 0, { family: 'dynamic-ui' }),
       guideFixture('typescript/dynamic-ui', 'typescript', 1, { family: 'dynamic-ui' }),
-      ...Array.from({ length: 7 }, (_, index) => guideFixture(`python/example-${index + 1}`, 'python', index + 2)),
+      guideFixture('python/standalone', 'python', 2),
     ]
 
     const families = groupSampleGuideFamilies(entries)
 
-    expect(entries).toHaveLength(9)
     expect(
       families.map((family) => ({
         key: family.key,
@@ -465,43 +407,10 @@ describe('groupSampleGuideFamilies', () => {
         primary: 'python/dynamic-ui',
         guides: ['python/dynamic-ui', 'typescript/dynamic-ui'],
       },
-      ...entries.slice(2).map((entry) => ({
-        key: entry.data.sampleId,
-        primary: entry.data.slug,
-        guides: [entry.data.slug],
-      })),
-    ])
-  })
-
-  it('groups three supplemental references into two migration actions', () => {
-    const references = [
-      guideFixture('typescript/express', 'typescript', 0, { placement: 'reference' }),
-      guideFixture('python/langgraph', 'python', 1, {
-        family: 'langgraph-migration',
-        placement: 'reference',
-      }),
-      guideFixture('typescript/langgraph', 'typescript', 2, {
-        family: 'langgraph-migration',
-        placement: 'reference',
-      }),
-    ]
-
-    expect(
-      groupSampleGuideFamilies(references).map((family) => ({
-        key: family.key,
-        primary: family.primary.data.slug,
-        guides: family.guides.map((guide) => guide.data.slug),
-      }))
-    ).toEqual([
       {
-        key: 'typescript/express',
-        primary: 'typescript/express',
-        guides: ['typescript/express'],
-      },
-      {
-        key: 'langgraph-migration',
-        primary: 'python/langgraph',
-        guides: ['python/langgraph', 'typescript/langgraph'],
+        key: 'python/standalone',
+        primary: 'python/standalone',
+        guides: ['python/standalone'],
       },
     ])
   })
@@ -524,16 +433,15 @@ describe('groupSampleGuideCategories', () => {
     const entries = [
       guideFixture('python/langgraph', 'python', 0, {
         family: 'langgraph',
-        placement: 'reference',
-        collections: [migrate],
+        collection: migrate,
       }),
       guideFixture('python/dynamic-ui', 'python', 1, {
         family: 'dynamic-ui',
-        collections: [userExperiences],
+        collection: userExperiences,
       }),
       guideFixture('typescript/dynamic-ui', 'typescript', 2, {
         family: 'dynamic-ui',
-        collections: [userExperiences],
+        collection: userExperiences,
       }),
       guideFixture('python/ungrouped', 'python', 3, {
         category: 'technical-use-cases',
@@ -590,19 +498,13 @@ describe('groupSampleGuideCategories', () => {
 })
 
 describe('buildSampleGuideSidebar', () => {
-  const learn = [{ id: 'learn', label: 'Learn', order: 0 }]
-  const migrate = [{ id: 'migrate', label: 'Migrate', order: 1 }]
+  const learn = { id: 'learn', label: 'Learn', order: 0 }
+  const migrate = { id: 'migrate', label: 'Migrate', order: 1 }
   const entries = [
-    guideFixture('typescript/learn', 'typescript', 0, { collections: learn }),
-    guideFixture('python/learn', 'python', 1, { collections: learn }),
-    guideFixture('typescript/migrate', 'typescript', 2, {
-      placement: 'reference',
-      collections: migrate,
-    }),
-    guideFixture('python/migrate', 'python', 3, {
-      placement: 'reference',
-      collections: migrate,
-    }),
+    guideFixture('typescript/learn', 'typescript', 0, { collection: learn }),
+    guideFixture('python/learn', 'python', 1, { collection: learn }),
+    guideFixture('typescript/migrate', 'typescript', 2, { collection: migrate }),
+    guideFixture('python/migrate', 'python', 3, { collection: migrate }),
   ]
   const expectedTypeScript = {
     label: 'TypeScript',
@@ -627,7 +529,7 @@ describe('buildSampleGuideSidebar', () => {
     expect(buildSampleGuideSidebar(entries)).toEqual([expectedTypeScript, expectedPython])
   })
 
-  it('scopes a guide sidebar to its language without hiding reference guides', () => {
+  it('scopes a guide sidebar to its language', () => {
     expect(buildSampleGuideSidebar(entries, entries[3])).toEqual([expectedPython])
   })
 })

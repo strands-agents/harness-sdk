@@ -23,7 +23,7 @@ export function sortSampleGuides(guides: SampleGuideEntry[]): SampleGuideEntry[]
 export function groupSampleGuideFamilies(guides: SampleGuideEntry[]): SampleGuideFamily[] {
   const families = new Map<string, SampleGuideFamily>()
   for (const guide of sortSampleGuides(guides)) {
-    const key = guide.data.family ?? guide.data.sampleId
+    const key = guide.data.family ?? guide.data.slug
     const family = families.get(key)
     if (family) {
       family.guides.push(guide)
@@ -39,7 +39,7 @@ export function groupSampleGuideCategories(guides: SampleGuideEntry[]): SampleGu
 
   for (const family of groupSampleGuideFamilies(guides)) {
     const primary = family.primary
-    const collection = primary.data.collections[0]
+    const collection = primary.data.collection
     const key = collection?.id ?? primary.data.category
     let category = categories.get(key)
     if (!category) {
@@ -93,14 +93,9 @@ export function sampleGuideSwitchPath(
     return target ? sampleGuidePath(target) : undefined
   }
 
-  const familyTarget = current.data.family
+  const target = current.data.family
     ? catalogGuides.find((guide) => guide.data.language === targetLanguage && guide.data.family === current.data.family)
     : undefined
-  const target =
-    familyTarget ??
-    catalogGuides.find(
-      (guide) => guide.data.language === targetLanguage && current.data.variants.includes(guide.data.sampleId)
-    )
   return target ? sampleGuidePath(target) : undefined
 }
 
@@ -112,9 +107,7 @@ export function buildSampleGuideSidebar(guides: SampleGuideEntry[], currentGuide
     : languageOrder.filter((language) => availableLanguages.has(language))
 
   return languages.map((language) => {
-    const languageGuides = groupSampleGuideCategories(
-      guides.filter((guide) => guide.data.language === language)
-    ).flatMap((category) => category.families.flatMap((family) => family.guides))
+    const languageGuides = sortSampleGuides(guides.filter((guide) => guide.data.language === language))
 
     return {
       label: languageLabel(language),

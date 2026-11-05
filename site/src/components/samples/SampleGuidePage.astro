@@ -18,7 +18,6 @@ const { Content, headings } = await render(guide)
     title: guide.data.title,
     description: guide.data.description,
     editUrl: false,
-    pagefind: guide.data.catalogMode === 'curated' || guide.data.placement === 'featured',
   }}
   headings={headings}
   sidebar={sidebar}
