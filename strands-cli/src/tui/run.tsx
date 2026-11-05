@@ -1,13 +1,26 @@
+import { relative } from 'node:path'
 import { createElement, type ComponentProps, type ReactElement } from 'react'
 import { render, useInput, type Instance } from 'ink'
 
+import { createReloader, type ReloadOutcome } from '../dev/reload.js'
+import type { DevStatus } from '../dev/status.js'
+import { watchSources } from '../dev/watch.js'
 import { ChatRoot, type ChatLaunch, type SetupBridge } from './view/chat-root.js'
+import { DevStatusContext } from './view/dev-status-context.js'
 import type { McpTrustRequest } from './view/mcp-trust-prompt.js'
 import type { ChatControllerApi, ChatConversation } from './chat/controller.js'
+import { isActiveTask } from './chat/controller-helpers.js'
 import type { CliConfigStore } from './config.js'
 import { configurationFromStore, type RequestSetup } from './agent-configuration.js'
 import { hardExitProcessTree } from './terminal/process-tree.js'
 import { createInkOutputs, enterAlternateScreen } from './terminal/terminal.js'
+
+export interface DevChatOptions {
+  /** Project folder to watch. */
+  readonly root: string
+  /** Agent source file. */
+  readonly entrypoint: string
+}
 
 interface RunInkChatOptions {
   firstRequest?: string
@@ -18,6 +31,7 @@ interface RunInkChatOptions {
   intro?: boolean
   setup?: boolean
   config?: CliConfigStore
+  dev?: DevChatOptions
   renderApp?: typeof render
 }
 
@@ -33,15 +47,16 @@ type ChatControllerSource = ChatControllerApi | ChatControllerFactory
 
 function ChatSession({
   onCancelStartup,
+  devStatus,
   ...props
-}: ComponentProps<typeof ChatRoot> & { onCancelStartup(): void }): ReactElement {
+}: ComponentProps<typeof ChatRoot> & { onCancelStartup(): void; devStatus?: DevStatus }): ReactElement {
   useInput(
     (input, key) => {
       if (key.ctrl && input === 'c') onCancelStartup()
     },
     { isActive: props.trustRequest !== undefined }
   )
-  return createElement(ChatRoot, props)
+  return createElement(DevStatusContext.Provider, { value: devStatus }, createElement(ChatRoot, props))
 }
 
 export async function runInkChat(source: ChatControllerSource, options: RunInkChatOptions = {}): Promise<number> {
@@ -64,6 +79,10 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
   let replacementTask: Promise<void> | undefined
   let launchOptions: ChatLaunch | undefined
   let trustRequest: McpTrustRequest | undefined
+  let devStatus: DevStatus | undefined = options.dev
+    ? { entrypoint: relative(options.dev.root, options.dev.entrypoint), reload: { kind: 'watching' } }
+    : undefined
+  let stopDevReload: (() => void) | undefined
   const setupBridge: SetupBridge = {
     request: (): void => {},
     confirmMcp: (workspace, paths): Promise<boolean> =>
@@ -190,6 +209,7 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
       setup: options.setup === true,
       ...(options.config ? { config: options.config } : {}),
       ...(trustRequest ? { trustRequest } : {}),
+      ...(devStatus ? { devStatus } : {}),
       setupBridge,
       onSetupComplete: completeSetup,
       onCancelStartup: () => closeForExit(130),
@@ -209,6 +229,65 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
       incrementalRendering: true,
       maxFps: 30,
     })
+  }
+  // The previous agent stays on screen while its replacement loads. A turn that starts meanwhile
+  // makes the replacement stale, so the reloader tries again later.
+  const reloadController = async (): Promise<ReloadOutcome> => {
+    if (pendingExitCode !== undefined) return 'cancelled'
+    const previous = controller
+    if (!previous || replacementTask) return 'deferred'
+    const turns = previous.getSnapshot().completedTurns.length
+    let release = (): void => {}
+    replacementTask = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    try {
+      const conversation = await previous.captureConversation?.()
+      const replacement = await initializeController(undefined, conversation)
+      if (pendingExitCode !== undefined) {
+        await replacement.dispose()
+        return 'cancelled'
+      }
+      if (controller !== previous || previous.busy || previous.getSnapshot().completedTurns.length !== turns) {
+        await replacement.dispose()
+        return 'deferred'
+      }
+      const resumeVoiceInput = previous.pauseVoiceInput?.()
+      controller = replacement
+      instance?.rerender(chatRoot())
+      startTasks.push(replacement.start())
+      resumeVoiceInput?.(replacement)
+      await Promise.allSettled([previous.dispose()])
+      return 'reloaded'
+    } finally {
+      replacementTask = undefined
+      release()
+    }
+  }
+  const startDevReload = ({ root }: DevChatOptions): (() => void) => {
+    const reloader = createReloader({
+      canReload: () =>
+        controller !== undefined &&
+        replacementTask === undefined &&
+        !controller.busy &&
+        !controller.getSnapshot().tasks.some((task) => isActiveTask(task.status)),
+      reload: reloadController,
+      onStatus: (reload) => {
+        if (pendingExitCode !== undefined || !devStatus) return
+        devStatus = { ...devStatus, reload }
+        if (reload.kind === 'failed') controller?.showError?.('Reload failed', reload.message)
+        instance?.rerender(chatRoot())
+      },
+    })
+    const watcher = watchSources({
+      root,
+      onChange: () => reloader.request(),
+      onWarning: (message) => controller?.showError?.('Source watch', message),
+    })
+    return () => {
+      watcher.close()
+      reloader.close()
+    }
   }
 
   const onSigint = (): void => closeForExit(130)
@@ -256,10 +335,12 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
     if (!controller) {
       throw new Error('Controller initialization did not return a controller.')
     }
+    if (options.dev && controllerFactory) stopDevReload = startDevReload(options.dev)
     startTasks.push(controller.start(options.firstRequest))
     await instance!.waitUntilExit()
     return controller.getSnapshot().exitCode ?? 0
   } finally {
+    stopDevReload?.()
     process.off('SIGINT', onSigint)
     process.off('SIGTERM', onSigterm)
     process.off('SIGHUP', onSighup)

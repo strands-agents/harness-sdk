@@ -697,3 +697,22 @@ describe('ACP mode routing', () => {
     }
   }, 12_000)
 })
+
+describe('strands dev', () => {
+  it('reports a project error and exits with status 1', async () => {
+    const directory = await realpath(await mkdtemp(join(tmpdir(), 'strands-dev-empty-')))
+    const errors = vi.spyOn(process.stderr, 'write').mockReturnValue(true)
+    const previousExitCode = process.exitCode
+    try {
+      await main(['dev', '-p', 'hello', '--agent', join(directory, 'bundle.zip')])
+      expect(errors).toHaveBeenCalledWith(
+        'error: strands dev cannot load a ZIP archive. Use the project folder or its agent source file.\n'
+      )
+      expect(process.exitCode).toBe(1)
+    } finally {
+      process.exitCode = previousExitCode
+      errors.mockRestore()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+})

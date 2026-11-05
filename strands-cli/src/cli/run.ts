@@ -4,9 +4,10 @@ import { createHarness, harnessAgentOptionsFromConfig } from '@strands-agents/ha
 
 import { parseArgs, shouldPersistModelChanges, type CliRunMode, type ParsedArgs } from './arguments.js'
 import { invocationAgentForRun, pythonInvocationOptions, withDiscoveredSkills } from './invocation.js'
+import { resolveDevProject } from '../dev/project.js'
 import { initLogging } from '../logging.js'
 import { runPlainChat, runTurn } from '../console.js'
-import { importAgentProject } from '../tui/project/import.js'
+import { importAgentProject, type ImportedAgentProject } from '../tui/project/import.js'
 import { rethrowWithProviderHint } from '../tui/provider/packages.js'
 import { buildTelemetryPing, sendTelemetryPing, telemetryEnabled } from '../tui/telemetry.js'
 import { errorMessage } from '../tui/terminal/sanitize.js'
@@ -42,6 +43,14 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     process.exitCode = 1
     return
   }
+  let devProject: ImportedAgentProject | undefined
+  try {
+    devProject = devProjectFor(args)
+  } catch (error) {
+    process.stderr.write(`error: ${errorMessage(error)}\n`)
+    process.exitCode = 1
+    return
+  }
   if (mode === 'acp') {
     if (args.request !== undefined || args.oneShot) {
       const conflict = args.request !== undefined ? 'a request' : '--print'
@@ -63,9 +72,9 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     return
   }
   if (mode === 'print' || mode === 'plain') {
-    await runConsole(args, request, mode)
+    await runConsole(args, request, mode, devProject)
   } else {
-    await runInteractive(args, request)
+    await runInteractive(args, request, devProject)
   }
 }
 
@@ -80,6 +89,13 @@ export function selectRunMode(
     return 'print'
   }
   return terminal.stdoutIsTty ? 'ink' : 'plain'
+}
+
+function devProjectFor(args: ParsedArgs): ImportedAgentProject | undefined {
+  if (!args.dev) return undefined
+  const project = resolveDevProject(process.cwd(), args.agent)
+  args.agent = project.entrypoint
+  return project
 }
 
 async function readStdin(): Promise<string> {
@@ -119,7 +135,12 @@ async function runAcp(args: ParsedArgs): Promise<void> {
   }
 }
 
-async function runConsole(args: ParsedArgs, request: string | undefined, mode: 'print' | 'plain'): Promise<void> {
+async function runConsole(
+  args: ParsedArgs,
+  request: string | undefined,
+  mode: 'print' | 'plain',
+  devProject?: ImportedAgentProject
+): Promise<void> {
   let loadedMcp: Awaited<ReturnType<(typeof import('../tui/mcp.js'))['loadMcp']>> | undefined
   let agent: Awaited<ReturnType<typeof createHarness>> | undefined
   try {
@@ -127,7 +148,7 @@ async function runConsole(args: ParsedArgs, request: string | undefined, mode: '
     const config = await CliConfigStore.load()
     config.useEnvironmentFiles(args.envFiles)
     const projectPath = args.agent ?? config.snapshot().agentProject
-    const project = projectPath ? importAgentProject(projectPath) : undefined
+    const project = devProject ?? (projectPath ? importAgentProject(projectPath) : undefined)
     if (project?.language === 'python') {
       const { runPythonConsole } = await import('../tui/project/run.js')
       const settings = config.snapshot().settings
@@ -177,7 +198,11 @@ async function runConsole(args: ParsedArgs, request: string | undefined, mode: '
   }
 }
 
-async function runInteractive(args: ParsedArgs, request: string | undefined): Promise<void> {
+async function runInteractive(
+  args: ParsedArgs,
+  request: string | undefined,
+  devProject?: ImportedAgentProject
+): Promise<void> {
   try {
     await import('../tui/terminal/ink.js')
     // React's development timing buffer retains rendered props in Node. Load the production UI
@@ -202,7 +227,9 @@ async function runInteractive(args: ParsedArgs, request: string | undefined): Pr
     const initialWorkspace = process.cwd()
     let pinged = false
     process.exitCode = await runInkChat(
-      async (signal, requestSetup, conversation, launch, confirmMcp) => {
+      async (signal, requestSetup, conversation, setupLaunch, confirmMcp) => {
+        // Dev mode always runs the project agent. A setup change cannot replace it.
+        const launch = devProject ? undefined : setupLaunch
         signal.throwIfAborted()
         const initialMcp = await resolveMcpConfig(args.mcpConfig, {
           cwd: initialWorkspace,
@@ -212,7 +239,7 @@ async function runInteractive(args: ParsedArgs, request: string | undefined): Pr
         signal.throwIfAborted()
         const projectPath =
           launch?.agentProject ?? (launch?.configuration ? undefined : (args.agent ?? config.snapshot().agentProject))
-        const project = projectPath ? importAgentProject(projectPath) : undefined
+        const project = devProject ?? (projectPath ? importAgentProject(projectPath) : undefined)
         if (project?.language === 'python') {
           const { createPythonChat } = await import('../tui/project/run.js')
           return createPythonChat(
@@ -236,7 +263,12 @@ async function runInteractive(args: ParsedArgs, request: string | undefined): Pr
                   launch.configuration.profileBaseDir ?? initialWorkspace
                 ),
               }
-            : await invocationAgentForRun(launch?.agentProject ? { ...args, agent: launch.agentProject } : args, config)
+            : await invocationAgentForRun(
+                launch?.agentProject ? { ...args, agent: launch.agentProject } : args,
+                config,
+                process.cwd(),
+                devProject
+              )
         signal.throwIfAborted()
         const chat = await createInteractiveChat({
           agentOptions: invocation.options,
@@ -263,6 +295,7 @@ async function runInteractive(args: ParsedArgs, request: string | undefined): Pr
       },
       {
         ...(request ? { firstRequest: request } : {}),
+        ...(devProject ? { dev: { root: devProject.root, entrypoint: devProject.entrypoint } } : {}),
         intro: config.snapshot().settings.animations,
         setup: args.setup || (!args.agent && !config.snapshot().agentProject && config.needsSetup()),
         config,

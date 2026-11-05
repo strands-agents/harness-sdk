@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, relative } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createChangeBuffer, isSourceFile, watchSources, type SourceWatcher } from '../src/dev/watch.js'
@@ -83,41 +83,61 @@ describe('watchSources', () => {
     return watcher
   }
 
+  async function live(directory = root): Promise<void> {
+    const probe = join(directory, 'probe.ts')
+    await vi.waitFor(
+      async () => {
+        await writeFile(probe, String(Math.random()))
+        expect(changes).toContain(relative(root, probe))
+      },
+      { timeout: 5_000, interval: 100 }
+    )
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    changes.length = 0
+  }
+
+  const settled = { timeout: 5_000 }
+
   it('watches the project folders but not dependency or hidden folders', () => {
     expect(start().directories()).toBe(2)
   })
 
   it('reports source saves and skips other files and ignored folders', async () => {
     start()
+    await live(join(root, 'src'))
     await writeFile(join(root, 'node_modules', 'pkg', 'index.js'), 'x')
     await writeFile(join(root, '.venv', 'site.py'), 'x')
     await writeFile(join(root, 'notes.log'), 'x')
     await writeFile(join(root, 'src', 'tools.py'), 'x')
-    await vi.waitFor(() => expect(changes).toContain(join('src', 'tools.py')))
+    await vi.waitFor(() => expect(changes).toContain(join('src', 'tools.py')), settled)
     expect(changes.every((path) => path === join('src', 'tools.py'))).toBe(true)
   })
 
   it('watches folders that occur after start', async () => {
     start()
+    await live(join(root, 'src'))
     await mkdir(join(root, 'src', 'new'))
-    await vi.waitFor(() => expect(watcher!.directories()).toBe(3))
+    await vi.waitFor(() => expect(watcher!.directories()).toBe(3), settled)
+    await live(join(root, 'src', 'new'))
     await writeFile(join(root, 'src', 'new', 'helper.ts'), 'x')
-    await vi.waitFor(() => expect(changes).toContain(join('src', 'new', 'helper.ts')))
+    await vi.waitFor(() => expect(changes).toContain(join('src', 'new', 'helper.ts')), settled)
   })
 
   it('reports a deleted source file', async () => {
     await writeFile(join(root, 'agent.py'), 'x')
     start()
+    await live()
     await rm(join(root, 'agent.py'))
-    await vi.waitFor(() => expect(changes).toContain('agent.py'))
+    await vi.waitFor(() => expect(changes).toContain('agent.py'), settled)
   })
 
   it('stops the watch on a removed folder', async () => {
     await mkdir(join(root, 'src', 'old'))
     start()
     expect(watcher!.directories()).toBe(3)
+    await live(join(root, 'src'))
     await rm(join(root, 'src', 'old'), { recursive: true, force: true, maxRetries: 3 })
-    await vi.waitFor(() => expect(watcher!.directories()).toBe(2))
+    await vi.waitFor(() => expect(watcher!.directories()).toBe(2), settled)
   })
 
   it('warns once when the folder limit stops the watch', async () => {

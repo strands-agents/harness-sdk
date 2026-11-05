@@ -1,9 +1,10 @@
 import { PassThrough } from 'node:stream'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { render, type Instance } from 'ink'
 import { Message, TextBlock } from '@strands-agents/sdk'
+import type { ReactElement } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 
 import {
@@ -14,6 +15,7 @@ import {
   type ChatEvent,
   type ChatRunResult,
 } from '../src/tui/chat/controller.js'
+import type { DevStatus } from '../src/dev/status.js'
 import { CliConfigStore } from '../src/tui/config.js'
 import { configurationFromStore, type RequestSetup, type SetupChange } from '../src/tui/agent-configuration.js'
 import { runInkChat } from '../src/tui/run.js'
@@ -36,6 +38,67 @@ function backend(): ChatBackend {
 }
 
 describe('runInkChat', () => {
+  it('reloads the dev agent on a source save and keeps the conversation', async () => {
+    const directory = await realpath(await mkdtemp(join(tmpdir(), 'strands-dev-reload-')))
+    const sourcePath = join(directory, 'agent.ts')
+    await writeFile(sourcePath, 'first')
+    const captureConversation = async (): Promise<ChatConversation['snapshot']> => ({
+      scope: 'agent',
+      schemaVersion: '1.0',
+      createdAt: new Date().toISOString(),
+      data: { messages: [] },
+      appData: {},
+    })
+    const previous = new ChatController(
+      { ...backend(), captureConversation },
+      { initialMessages: [new Message({ role: 'user', content: [new TextBlock('Keep this turn.')] })] }
+    )
+    let current = previous
+    const source = vi.fn(async (_signal: AbortSignal, _setup: unknown, conversation?: ChatConversation) => {
+      if (!conversation) return previous
+      current = new ChatController({ ...backend(), captureConversation }, { initialTurns: conversation.completedTurns })
+      return current
+    })
+    let finish!: () => void
+    const rerender = vi.fn()
+    const instance = {
+      unmount: vi.fn(),
+      cleanup: vi.fn(),
+      rerender,
+      waitUntilExit: () =>
+        new Promise<void>((resolve) => {
+          finish = resolve
+        }),
+    } as unknown as Instance
+    const devStatus = (): DevStatus | undefined =>
+      (rerender.mock.calls.at(-1)?.[0] as ReactElement<{ devStatus?: DevStatus }> | undefined)?.props.devStatus
+    const running = runInkChat(source, {
+      config: CliConfigStore.memory(),
+      dev: { root: directory, entrypoint: sourcePath },
+      intro: false,
+      alternateScreen: false,
+      renderApp: (() => instance) as never,
+    })
+    try {
+      await vi.waitFor(() => expect(finish).toBeDefined())
+      await writeFile(sourcePath, 'second')
+      await vi.waitFor(() => expect(devStatus()?.reload).toEqual({ kind: 'reloaded' }), { timeout: 3000 })
+      expect(source).toHaveBeenCalledTimes(2)
+      expect(current).not.toBe(previous)
+      expect(current.getSnapshot().completedTurns[0]?.prompt).toBe('Keep this turn.')
+
+      source.mockRejectedValueOnce(new Error('Bad source edit'))
+      await writeFile(sourcePath, 'invalid')
+      await vi.waitFor(() => expect(current.getSnapshot().panel?.title).toBe('Reload failed'), { timeout: 3000 })
+      expect(devStatus()?.reload).toEqual({ kind: 'failed', message: 'Bad source edit' })
+      expect(current.getSnapshot().completedTurns[0]?.prompt).toBe('Keep this turn.')
+    } finally {
+      finish()
+      await running
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
   it('retains chat on reload or failed setup', async () => {
     const config = CliConfigStore.memory(
       {},
