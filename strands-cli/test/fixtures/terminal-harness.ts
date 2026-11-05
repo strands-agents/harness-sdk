@@ -11,7 +11,6 @@ import { expect } from 'vitest'
 const execFileAsync = promisify(execFile)
 
 export type TuiScenario =
-  | 'chat'
   | 'follow-up'
   | 'queue'
   | 'voice'
@@ -30,7 +29,6 @@ export type TuiScenario =
   | 'exit-sigterm'
   | 'exit-sigint'
   | 'exit-sighup'
-  | 'frog'
 
 export type TuiDriverScenario =
   | TuiScenario

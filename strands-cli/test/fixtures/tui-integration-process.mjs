@@ -44,7 +44,6 @@ if (scenario.startsWith('exit-')) {
     }
   })
 }
-const chatMode = scenario === 'chat'
 const followUpMode = scenario === 'follow-up'
 const approvalMode = scenario === 'approval'
 const shellMode = scenario === 'shell-command' || scenario === 'shell-interrupt'
@@ -100,7 +99,7 @@ const backend = {
       })
       yield { type: 'textDelta', text: 'Approval accepted' }
     } else {
-      yield { type: 'textDelta', text: chatMode ? 'Fixture reply' : followUpMode ? `Fixture turn ${turn}` : '' }
+      yield { type: 'textDelta', text: followUpMode ? `Fixture turn ${turn}` : '' }
     }
     return { stopReason: 'endTurn' }
   },
@@ -329,7 +328,7 @@ const chatController =
         voice,
       })
     : controller
-const idleMarker = shellMode ? '__SHELL_IDLE__' : chatMode || followUpMode || approvalMode ? '__CHAT_IDLE__' : undefined
+const idleMarker = shellMode ? '__SHELL_IDLE__' : followUpMode || approvalMode ? '__CHAT_IDLE__' : undefined
 if (idleMarker) {
   let observedActivity = false
   controller.subscribe(() => {

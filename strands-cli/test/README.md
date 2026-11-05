@@ -9,11 +9,11 @@ Run commands from `strands-cli/`:
 | Command                             | Coverage                                                                                          | Requirements                                                                 |
 | ----------------------------------- | ------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
 | `npm test`                          | Feature suites, excluding the dedicated integration/live entrypoints                              | Installed dependencies; Python cases may skip if no interpreter is available |
-| `npm run test:tui-integration`      | `terminal.integration.test.ts`: real Ink in PTY/ConPTY with a deterministic backend               | Python 3 on macOS/Linux; ConPTY on Windows                                   |
+| `npm run test:tui-integration`      | `terminal.integration.test.ts`: real Ink in PTY/ConPTY with a deterministic backend               | Python 3; ConPTY on Windows                                                  |
 | `npm run test:platform-integration` | `platform.integration.test.ts`: compiled CLI and exported TypeScript/Python agents                | Prior build; Python for Python exports                                       |
 | `npm run test:integ`                | `*.live.test.ts`: real provider, voice delegation, and self-building workflows                    | Prior build and provider credentials                                         |
 | `npm run test:voice`                | `voice.test.py`: offline Python voice adapters                                                    | `uv`, Python 3.13, and PortAudio                                             |
-| `npm run test:package-install`      | Installed CLI in print and terminal modes: real file, shell, and web-fetch tools; bundled sidecar | npm, Python 3 on macOS/Linux, ConPTY on Windows                              |
+| `npm run test:package-install`      | Installed CLI in print and terminal modes: real file, shell, and web-fetch tools; bundled sidecar | npm, Python 3; ConPTY on Windows                                             |
 
 `npm run check` runs lint, formatting, source/test types, and default test coverage. It does not run the five
 dedicated commands below `npm test` in the table.
@@ -35,8 +35,9 @@ file contents, and requests to a local HTTP server. Only model responses are scr
 sandbox, filesystem, network, and terminal run normally. CI runs this test on Linux, macOS, and Windows.
 The voice-panel terminal scenario uses a simulated voice session; live voice coverage is described below.
 
-Python exports require Python 3.10 or newer. Tests use `harness-py/.venv` when available; set `STRANDS_TEST_PYTHON`
-to another interpreter if needed. Imports install archive dependencies into fresh environments.
+Python exports require Python 3.10 or newer. The platform suite installs the exported requirements into fresh
+environments through the normal CLI import path. Ordinary Python source tests use `harness-py/.venv` when available;
+set `STRANDS_TEST_PYTHON` to another interpreter for those tests.
 
 ## Live provider checks
 

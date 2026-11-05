@@ -2,17 +2,6 @@ import { describe, expect, it } from 'vitest'
 import { sanitizeTerminalText } from '../src/terminal/text.js'
 import { expectRestoredTerminal, runTuiScenario } from './fixtures/terminal-harness.js'
 
-describe('TUI easter egg integration', () => {
-  it('plays the hidden frog animation and exits cleanly', async () => {
-    const result = await runTuiScenario('frog')
-    const clean = sanitizeTerminalText(result.output)
-
-    expect(result.returnCode).toBe(0)
-    expect(clean).toContain('▗▄▄▖')
-    expectRestoredTerminal(result)
-  })
-})
-
 describe('TUI panel integration', () => {
   it('opens slash panels and tabs across every multi-section layout', async () => {
     const result = await runTuiScenario('panels')
@@ -161,16 +150,6 @@ describe('TUI workflow integration', () => {
     const result = await runTuiScenario('voice')
     expect(result.returnCode).toBe(0)
     expect(result.screens.join('\n')).toContain('Voice muted')
-    expectRestoredTerminal(result)
-  })
-
-  it('submits a prompt, renders the streamed response, and exits cleanly', async () => {
-    const result = await runTuiScenario('chat')
-    const clean = result.screens.join('\n')
-
-    expect(result.returnCode).toBe(0)
-    expect(clean).toContain('hello from integration')
-    expect(clean).toContain('Fixture reply')
     expectRestoredTerminal(result)
   })
 

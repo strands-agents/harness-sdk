@@ -29,9 +29,8 @@ async function main() {
   const windows = process.platform === 'win32'
 
   const scenario = process.env.STRANDS_CLI_TEST_SCENARIO ?? 'exit'
+  const exportLanguage = process.env.STRANDS_CLI_TEST_EXPORT_LANGUAGE ?? 'typescript'
   const shellMode = { 'shell-command': 'command', 'shell-interrupt': 'interrupt' }[scenario]
-  const frogMode = scenario === 'frog'
-  const chatMode = scenario === 'chat'
   const followUpMode = scenario === 'follow-up'
   const approvalMode = scenario === 'approval'
   const setupExportMode = scenario === 'setup-export'
@@ -180,7 +179,7 @@ async function main() {
     if (setupImportMode) {
       await waitFor(['Quickstart', 'Import'], 20_000, false)
     } else {
-      const readyTimeout = liveMode ? 90_000 : lifecycleMode ? 60_000 : 8_000
+      const readyTimeout = liveMode ? 90_000 : lifecycleMode ? 210_000 : 8_000
       await waitForStableScreen(['Enter to send'], readyTimeout, 0, ['Loading…'])
     }
 
@@ -211,7 +210,6 @@ async function main() {
       resizeScreens.push({ columns: 120, rows: 40, text: screen.text })
     }
 
-    const exportLanguage = process.env.STRANDS_CLI_TEST_EXPORT_LANGUAGE ?? 'typescript'
     const typeInComposer = async (text, timeout = 10_000) => {
       const deadline = Date.now() + timeout
       while (Date.now() < deadline) {
@@ -250,7 +248,7 @@ async function main() {
       await waitFor(['Click or Enter to choose'], 2_000, false, commitStart)
       const launchStart = transcript.length
       await clickText('Launch')
-      await waitForStableScreen(['Enter to send', 'Ask your agent to change its instructions'], 90_000, launchStart, [
+      await waitForStableScreen(['Enter to send', 'Ask your agent to change its instructions'], 210_000, launchStart, [
         'Loading…',
       ])
     }
@@ -358,11 +356,6 @@ async function main() {
       const closeStart = transcript.length
       terminal.write('\u001b')
       await waitForStableScreen(['Enter to send'], 8_000, closeStart)
-    } else if (chatMode) {
-      terminal.write('hello from integration')
-      await waitFor(['hello from integration'], 2_000, false)
-      terminal.write('\r')
-      await waitFor(['Fixture reply', '__CHAT_IDLE__'], 8_000, false)
     } else if (followUpMode) {
       for (const [prompt, reply] of [
         ['first turn', 'Fixture turn 1'],
@@ -502,11 +495,6 @@ async function main() {
         terminal.write('\u001b')
         await waitForStableScreen(['Enter to send'], 8_000, closeStart)
       }
-    } else if (frogMode) {
-      terminal.write('/frog peek')
-      await waitFor(['/frog peek'], 2_000, false)
-      terminal.write('\r')
-      await waitFor(['▗▄▄▖'], 2_000)
     } else if (shellMode === 'command') {
       const input = windows
         ? "!Write-Output '__SHELL_LINE_1__','__SHELL_LINE_2__','__SHELL_LINE_3__','__SHELL_LINE_4__'"

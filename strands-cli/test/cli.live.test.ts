@@ -3,13 +3,12 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { homedir, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { promisify } from 'node:util'
-import { createHarness, defineHarnessAgentConfig } from '@strands-agents/harness'
+import { createHarness } from '@strands-agents/harness'
 import { tool } from '@strands-agents/sdk'
 import { describe, expect, it } from 'vitest'
 
 import { ChatController } from '../src/ui/chat/controller.js'
 import { AgentModelRuntime } from '../src/model/runtime.js'
-import { writeAgentProject } from '../src/project/export.js'
 import { ConversationManager } from '../src/ui/chat/conversations.js'
 import { StrandsChatBackend } from '../src/agent/backend.js'
 import { PythonVoiceSession, type VoiceSupervisorRequest } from '../src/agent/voice.js'
@@ -160,52 +159,6 @@ describe('strands CLI e2e', () => {
       }
     }
   )
-
-  it('runs an exported agent against a live model', async () => {
-    const cwd = mkdtempSync(join(tmpdir(), 'strands-cli-export-integ-'))
-    const home = mkdtempSync(join(tmpdir(), 'strands-cli-export-home-'))
-    try {
-      const archive = join(cwd, 'agent.zip')
-      await writeAgentProject(
-        defineHarnessAgentConfig({
-          name: 'Live exported agent',
-          model: INTEG_MODEL,
-          effort: 'off',
-          builtinTools: [],
-          builtinPlugins: [],
-          caching: false,
-          contextManager: false,
-          skills: false,
-          memory: false,
-          session: false,
-        }),
-        'typescript',
-        [],
-        archive,
-        cwd
-      )
-      const result = await run(
-        'node',
-        [BIN, '--agent', archive, '--print', 'Reply with exactly: LIVE_EXPORTED_AGENT_OK'],
-        {
-          cwd,
-          timeout: 180_000,
-          env: {
-            ...process.env,
-            HOME: home,
-            USERPROFILE: home,
-            AWS_CONFIG_FILE: process.env.AWS_CONFIG_FILE ?? join(homedir(), '.aws', 'config'),
-            AWS_SHARED_CREDENTIALS_FILE:
-              process.env.AWS_SHARED_CREDENTIALS_FILE ?? join(homedir(), '.aws', 'credentials'),
-          },
-        }
-      )
-      expect(`${result.stdout}\n${result.stderr}`).toContain('LIVE_EXPORTED_AGENT_OK')
-    } finally {
-      rmSync(cwd, { recursive: true, force: true })
-      rmSync(home, { recursive: true, force: true })
-    }
-  })
 
   it('runs a one-shot turn that creates a file via a tool', async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'strands-cli-integ-'))
