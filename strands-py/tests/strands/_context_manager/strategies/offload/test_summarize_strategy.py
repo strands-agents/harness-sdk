@@ -423,14 +423,25 @@ class TestServerSideSummary:
         ]
 
     @pytest.mark.asyncio
-    async def test_falls_back_to_client_side_without_summary(self, mock_agent):
+    @pytest.mark.parametrize(
+        ("summarize_result", "reason"),
+        [
+            pytest.param({"return_value": None}, "no summary returned", id="no_summary"),
+            pytest.param({"side_effect": RuntimeError("compaction rejected")}, "compaction rejected", id="error"),
+        ],
+    )
+    async def test_falls_back_to_client_side(self, mock_agent, caplog, summarize_result, reason):
         mock_agent.model.model_info.capabilities.server_side_summary = True
-        mock_agent.model.summarize = unittest.mock.AsyncMock(return_value=None)
+        mock_agent.model.summarize = unittest.mock.AsyncMock(**summarize_result)
         messages = self._messages()
         mock_agent.messages = messages
         strategy = Offload.summarize("*").when(utilization=0.8, preserve_recent=1)
 
-        assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is True
+        with caplog.at_level(logging.WARNING):
+            assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is True
 
         mock_agent.model.summarize.assert_awaited_once()
         assert any("[Summarized:" in block.get("text", "") for message in messages for block in message["content"])
+        assert reason in caplog.text
+        assert "falling back to client-side summary" in caplog.text
+        assert "thinking blocks kept after it will be dropped" in caplog.text

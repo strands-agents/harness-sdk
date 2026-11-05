@@ -35,6 +35,16 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _warn_client_side_fallback(model: Model, reason: str, *, exc_info: bool = False) -> None:
+    logger.warning(
+        "model=<%s>, reason=<%s> | server-side summary failed, falling back to client-side summary"
+        " | the client-side summary rewrites history, so thinking blocks kept after it will be dropped",
+        type(model).__name__,
+        reason,
+        exc_info=exc_info,
+    )
+
+
 class SummarizeStrategy(BaseOffloadStrategy):
     """Summarize strategy — replaces oversized content with LLM-generated summaries."""
 
@@ -129,7 +139,7 @@ class SummarizeStrategy(BaseOffloadStrategy):
         assistant message at index 1, leading any assistant content after it once alternation is repaired.
 
         Returns:
-            False when the model wrote no summary, so the caller summarizes client-side instead.
+            False when the model wrote no summary or the request failed, so the caller summarizes client-side instead.
         """
         messages = context.messages
         safe_ids = {id(message) for message in safe}
@@ -142,13 +152,7 @@ class SummarizeStrategy(BaseOffloadStrategy):
                 len(safe),
             )
         agent = context.agent
-        summary = await model.summarize(
-            messages[:end],
-            tool_specs=agent.tool_registry.get_all_tool_specs(),
-            system_prompt=agent.system_prompt,
-            system_prompt_content=agent.system_prompt_content,
-            instructions=self._config.get("system_prompt"),
-        )
+        summary = await self._request_server_side_summary(model, agent, messages[:end])
         if summary is None:
             return False
         if agent.model.model_info.capabilities.server_side_summary is not True:
@@ -159,6 +163,25 @@ class SummarizeStrategy(BaseOffloadStrategy):
         _repair_alternation(messages)
         logger.debug("summarized=<%s> | summarized opening messages server-side", end - 1)
         return True
+
+    async def _request_server_side_summary(
+        self, model: Model, agent: Agent, messages: list[Message]
+    ) -> ContentBlock | None:
+        """Return the model's server-side summary of ``messages``, or None after warning that client-side takes over."""
+        try:
+            summary = await model.summarize(
+                messages,
+                tool_specs=agent.tool_registry.get_all_tool_specs(),
+                system_prompt=agent.system_prompt,
+                system_prompt_content=agent.system_prompt_content,
+                instructions=self._config.get("system_prompt"),
+            )
+        except Exception as error:
+            _warn_client_side_fallback(model, repr(error), exc_info=True)
+            return None
+        if summary is None:
+            _warn_client_side_fallback(model, "no summary returned")
+        return summary
 
     async def _replace_block(
         self,
