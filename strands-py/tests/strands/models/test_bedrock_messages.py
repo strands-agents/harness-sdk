@@ -1,6 +1,10 @@
+import base64
+import json
 import re
+import struct
 import subprocess
 import sys
+import zlib
 
 import anthropic
 import httpx
@@ -10,6 +14,7 @@ from strands import Agent
 from strands.models import BedrockModel
 from strands.models._bedrock_messages import BedrockMessagesModel
 from strands.models.anthropic import AnthropicModel
+from strands.types.exceptions import ModelThrottledException
 
 SSE_TEXT_RESPONSE = "".join(
     f"event: {event}\ndata: {data}\n\n"
@@ -32,6 +37,35 @@ SSE_TEXT_RESPONSE = "".join(
 )
 
 
+def _event_stream_message(headers: dict[str, str], payload: bytes) -> bytes:
+    """Encode one AWS event stream message, the framing InvokeModelWithResponseStream uses."""
+    encoded_headers = b"".join(
+        bytes([len(name)]) + name.encode() + b"\x07" + struct.pack(">H", len(value)) + value.encode()
+        for name, value in headers.items()
+    )
+    total_length = 16 + len(encoded_headers) + len(payload)
+    prelude = struct.pack(">II", total_length, len(encoded_headers))
+    prelude += struct.pack(">I", zlib.crc32(prelude))
+    message = prelude + encoded_headers + payload
+    return message + struct.pack(">I", zlib.crc32(message))
+
+
+def _invoke_stream(events: list[str]) -> bytes:
+    """An InvokeModelWithResponseStream body that carries each Anthropic stream event as a chunk."""
+    chunk_headers = {":event-type": "chunk", ":content-type": "application/json", ":message-type": "event"}
+    return b"".join(
+        _event_stream_message(chunk_headers, json.dumps({"bytes": base64.b64encode(event.encode()).decode()}).encode())
+        for event in events
+    )
+
+
+INVOKE_EVENTS = [line.removeprefix("data: ") for line in SSE_TEXT_RESPONSE.splitlines() if line.startswith("data: ")]
+THROTTLING_EVENT = _event_stream_message(
+    {":exception-type": "throttlingException", ":content-type": "application/json", ":message-type": "exception"},
+    b'{"message": "Too many requests, please wait before trying again."}',
+)
+
+
 @pytest.fixture(autouse=True)
 def aws_environment(monkeypatch):
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKIDEXAMPLE")
@@ -46,16 +80,23 @@ def captured_requests():
     return []
 
 
+@pytest.fixture
+def invoke_body():
+    """The InvokeModel response stream to answer with."""
+    return _invoke_stream(INVOKE_EVENTS)
+
+
 @pytest.fixture(autouse=True)
-def network(monkeypatch, captured_requests):
-    """Answer at the innermost transport, so the Anthropic SDK's own Bedrock client and its auth run."""
+def network(monkeypatch, captured_requests, invoke_body):
+    """Answer at the innermost transport, so the Anthropic SDK's own Bedrock clients, their auth, and their
+    stream decoding all run."""
 
     async def handle_async_request(self, request):
         await request.aread()
         captured_requests.append(request)
         if request.url.path.endswith("/v1/messages"):
             return httpx.Response(200, headers={"content-type": "text/event-stream"}, text=SSE_TEXT_RESPONSE)
-        return httpx.Response(400, json={"message": "stop here"})
+        return httpx.Response(200, headers={"content-type": "application/vnd.amazon.eventstream"}, content=invoke_body)
 
     monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", handle_async_request)
 
@@ -83,12 +124,12 @@ def test_missing_extra_is_reported_as_an_absent_attribute():
     subprocess.run([sys.executable, "-c", code], check=True)
 
 
-def test_runtime_uses_invoke_model_signed_by_the_sdk(captured_requests):
+def test_runtime_streams_through_invoke_model_signed_by_the_sdk(captured_requests):
     model = BedrockModel.Messages(model_id="global.anthropic.claude-sonnet-4-6", max_tokens=16)
 
-    with pytest.raises(Exception, match="stop here"):
-        Agent(model=model, callback_handler=None)("hello")
+    result = Agent(model=model, callback_handler=None)("hello")
 
+    assert str(result).strip() == "hi"
     request = captured_requests[0]
     assert str(request.url) == (
         "https://bedrock-runtime.us-west-2.amazonaws.com/model/global.anthropic.claude-sonnet-4-6"
@@ -96,7 +137,28 @@ def test_runtime_uses_invoke_model_signed_by_the_sdk(captured_requests):
     )
     assert request.headers["authorization"].startswith("AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/")
     assert "/us-west-2/bedrock/aws4_request" in request.headers["authorization"]
-    assert b'"anthropic_version"' in request.content
+    assert json.loads(request.content)["anthropic_version"] == "bedrock-2023-05-31"
+
+
+def test_runtime_url_encodes_arn_model_ids(captured_requests):
+    arn = "arn:aws:bedrock:us-west-2:123456789012:application-inference-profile/abc"
+    Agent(model=BedrockModel.Messages(model_id=arn, max_tokens=16), callback_handler=None)("hello")
+
+    assert (
+        captured_requests[0]
+        .url.raw_path.decode()
+        .startswith("/model/arn:aws:bedrock:us-west-2:123456789012:application-inference-profile%2Fabc/")
+    )
+
+
+@pytest.mark.parametrize("invoke_body", [THROTTLING_EVENT])
+@pytest.mark.asyncio
+async def test_runtime_throttling_mid_stream_raises_model_throttled():
+    model = BedrockModel.Messages(model_id="m", max_tokens=16, client_args={"max_retries": 0})
+
+    with pytest.raises(ModelThrottledException, match="throttlingException"):
+        async for _ in model.stream([{"role": "user", "content": [{"text": "hello"}]}]):
+            pass
 
 
 def test_mantle_uses_the_messages_api_signed_by_the_sdk(captured_requests):
@@ -110,12 +172,13 @@ def test_mantle_uses_the_messages_api_signed_by_the_sdk(captured_requests):
     assert "/us-west-2/bedrock-mantle/aws4_request" in request.headers["authorization"]
 
 
+@pytest.mark.parametrize("endpoint", ["bedrock-runtime", "bedrock-mantle"])
 @pytest.mark.parametrize("source", ["argument", "environment"])
-def test_api_key_is_sent_as_a_bearer_token(source, monkeypatch, captured_requests):
+def test_api_key_is_sent_instead_of_signing(endpoint, source, monkeypatch, captured_requests):
     kwargs = {"api_key": "bedrock-key"} if source == "argument" else {}
     if source == "environment":
         monkeypatch.setenv("AWS_BEARER_TOKEN_BEDROCK", "bedrock-key")
-    model = BedrockModel.Messages(model_id="m", max_tokens=16, endpoint="bedrock-mantle", **kwargs)
+    model = BedrockModel.Messages(model_id="m", max_tokens=16, endpoint=endpoint, **kwargs)
 
     Agent(model=model, callback_handler=None)("hello")
 
