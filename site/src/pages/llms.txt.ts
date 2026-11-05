@@ -28,6 +28,7 @@ function extractLinks(
   items: StarlightSidebarItem[],
   descriptions: Map<string, string | undefined>,
   excludedSlugs: ReadonlySet<string>,
+  listedSlugs: Set<string>,
   depth: number = 0
 ): string[] {
   const lines: string[] = []
@@ -36,6 +37,7 @@ function extractLinks(
   for (const item of items) {
     if ('slug' in item && item.slug) {
       if (excludedSlugs.has(item.slug)) continue
+      listedSlugs.add(item.slug)
       // Internal link
       const url = siteLink(`/${item.slug}/index.md`)
       const label = item.label || item.slug.split('/').pop() || item.slug
@@ -46,7 +48,7 @@ function extractLinks(
         lines.push(`${indent}- [${item.label}](${item.link})`)
       }
     } else if ('items' in item && item.items) {
-      const childLines = extractLinks(item.items, descriptions, excludedSlugs, depth + 1)
+      const childLines = extractLinks(item.items, descriptions, excludedSlugs, listedSlugs, depth + 1)
       if (childLines.length === 0) continue
       // Group - add label and recurse
       lines.push(`${indent}- ${item.label}`)
@@ -72,6 +74,7 @@ function buildLlmsTxt(
   // against src/content files); if that ever diverges, a miss here degrades to
   // a link without a description rather than an error.
   const descriptions = new Map(docs.map((doc) => [doc.id, doc.data.description]))
+  const listedSlugs = new Set<string>()
 
   lines.push('# Strands Agents')
   lines.push('')
@@ -86,7 +89,7 @@ function buildLlmsTxt(
   // navigation.yml surfaces it here automatically.
   for (const section of sidebar) {
     if ('label' in section && 'items' in section && section.items) {
-      const sectionLines = extractLinks(section.items, descriptions, excludedSlugs, 0)
+      const sectionLines = extractLinks(section.items, descriptions, excludedSlugs, listedSlugs)
       if (sectionLines.length === 0) continue
 
       lines.push(`## ${section.label}`)
@@ -94,6 +97,22 @@ function buildLlmsTxt(
       lines.push(...sectionLines)
       lines.push('')
     }
+  }
+
+  // Integration guides are not in the sidebar (they are reached through the
+  // /integrations/ catalog), so list them from the docs collection.
+  const integrationDocs = docs
+    .filter((doc) => doc.id.startsWith('docs/integrations/') && !listedSlugs.has(doc.id))
+    .sort((a, b) => a.id.localeCompare(b.id))
+
+  if (integrationDocs.length > 0) {
+    lines.push(`## Integrations`)
+    lines.push('')
+    for (const doc of integrationDocs) {
+      const url = siteLink(`/${doc.id}/index.md`)
+      lines.push(linkLine(doc.data.title || doc.id, url, doc.data.description))
+    }
+    lines.push('')
   }
 
   // API sections - group by python/typescript

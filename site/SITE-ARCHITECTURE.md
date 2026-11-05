@@ -902,7 +902,7 @@ Our implementation renders documentation through Astro's container API, applies 
 
 ### Endpoints
 
-- `/llms.txt` - Index with links to docs, generated sample guides, blog posts, and changelog entries
+- `/llms.txt` - Index with links to docs, integration guides, generated sample guides, blog posts, and changelog entries
 - `/llms-full.txt` - Complete docs, generated sample guide, and blog content (excludes API reference)
 - `/{slug}/index.md` - Any doc page in raw markdown format
 - `/examples/{sample}/index.md` - Any generated sample guide in raw markdown format
@@ -911,7 +911,7 @@ Our implementation renders documentation through Astro's container API, applies 
 
 | File | Purpose |
 |------|---------|
-| `src/pages/llms.txt.ts` | Generates index from sidebar structure |
+| `src/pages/llms.txt.ts` | Generates index from sidebar structure, plus integration guides from the docs collection |
 | `src/pages/llms-full.txt.ts` | Renders all docs inline |
 | `src/pages/[...slug]/index.md.ts` | Dynamic endpoint for individual pages |
 | `src/pages/examples/[...sample]/index.md.ts` | Dynamic endpoint for generated sample guides |
