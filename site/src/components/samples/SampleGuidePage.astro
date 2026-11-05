@@ -9,8 +9,11 @@ interface Props {
 }
 
 const { guide, guides } = Astro.props
-const sidebar = buildSampleGuideSidebar(guides, guide.data.language)
+const sidebar = buildSampleGuideSidebar(guides, guide)
 const { Content, headings } = await render(guide)
+const isAmplifying =
+  guide.data.program === 'amplifying-ai' ||
+  guide.data.collections.some((collection) => collection.id === 'amplifying-ai')
 ---
 
 <StarlightPage
@@ -18,18 +21,55 @@ const { Content, headings } = await render(guide)
     title: guide.data.title,
     description: guide.data.description,
     editUrl: false,
+    pagefind: guide.data.placement === 'featured',
   }}
   headings={headings}
   sidebar={sidebar}
 >
+  <div class="sample-guide__metadata">
+    <span>{guide.data.kind}</span>
+    <span>{guide.data.language}</span>
+    {isAmplifying && <span>Amplifying AI</span>}
+    {guide.data.placement === 'reference' && <span>Reference</span>}
+  </div>
   <p class="sample-guide__source">
     <a href={guide.data.sourceUrl} target="_blank" rel="noopener">View the complete sample on GitHub</a>
   </p>
+  {
+    guide.data.docs.length > 0 && (
+      <p class="sample-guide__docs">
+        Related documentation:{' '}
+        {guide.data.docs.map((doc, index) => (
+          <>
+            {index > 0 && ', '}
+            <a href={doc.url}>{doc.label}</a>
+          </>
+        ))}
+      </p>
+    )
+  }
   <Content />
 </StarlightPage>
 
 <style>
-  .sample-guide__source {
+  .sample-guide__metadata {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    margin-block: 0 1rem;
+  }
+
+  .sample-guide__metadata span {
+    padding: 0.15rem 0.55rem;
+    border: 1px solid var(--sl-color-gray-5);
+    border-radius: 999px;
+    color: var(--sl-color-gray-2);
+    font-size: var(--sl-text-xs);
+    text-transform: capitalize;
+  }
+
+  .sample-guide__source,
+  .sample-guide__docs {
     color: var(--sl-color-gray-3);
     font-size: var(--sl-text-sm);
   }

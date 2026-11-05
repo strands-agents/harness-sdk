@@ -179,7 +179,7 @@ export const GET: APIRoute = async () => {
   const docs = allDocs.filter((doc) => !excludedSlugs.has(doc.id))
   const sidebar = loadSidebarFromConfig(path.resolve('./src/config/navigation.yml'), path.resolve('./src/content'))
 
-  const sampleGuides = await getCollection('sampleGuides')
+  const sampleGuides = await getCollection('sampleGuides', ({ data }) => data.placement === 'featured')
   const blogPosts = await getCollection('blog', ({ data }) => !data.draft)
   const releases = await getReleases()
   const content = buildLlmsTxt(docs, sidebar, sampleGuides, blogPosts, releases, excludedSlugs)

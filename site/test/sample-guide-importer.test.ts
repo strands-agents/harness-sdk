@@ -12,6 +12,12 @@ interface ManifestFixture {
     id: string
     label: string
   }>
+  collections?: Array<{
+    id: string
+    label: string
+    description?: string
+    samples: string[]
+  }>
   samples: Array<{
     id?: string
     slug?: string
@@ -24,6 +30,17 @@ interface ManifestFixture {
     path: string
     notebook?: string
     url?: string
+    placement?: 'featured' | 'reference' | 'repo-only'
+    kind?: 'application' | 'workshop' | 'concept' | 'integration' | 'migration'
+    collections?: string[]
+    capabilities?: string[]
+    docs?: Array<{ label: string; url: string }>
+    program?: string
+    maturity?: string
+    owner?: string
+    lastValidated?: string
+    variants?: string[]
+    family?: string
   }>
 }
 
@@ -72,36 +89,77 @@ beforeEach(() => {
         { language: 'TypeScript', id: 'learn', label: 'Learn' },
         { language: 'Python', id: 'learn', label: 'Learn' },
       ],
+      collections: [
+        {
+          id: 'end-to-end',
+          label: 'End-to-end applications',
+          description: 'Complete applications with setup, validation, and deployment guidance.',
+          samples: ['typescript/02-applications/01-readme'],
+        },
+        {
+          id: 'amplifying-ai',
+          label: 'Amplifying AI',
+          samples: ['python/02-applications/02-notebook'],
+        },
+      ],
       samples: [
         {
+          id: 'typescript/02-applications/01-readme',
+          slug: 'typescript/readme',
           language: 'TypeScript',
           category: 'applications',
           title: 'README guide',
           description: readmeDescription,
           tags: ['Agent class'],
           path: 'typescript/02-applications/01-readme',
+          placement: 'featured',
+          kind: 'application',
+          collections: ['end-to-end'],
+          capabilities: ['tools', 'streaming'],
+          docs: [{ label: 'Tools', url: 'https://strandsagents.com/docs/tools/' }],
+          program: 'amplifying-ai',
+          maturity: 'validated',
+          owner: 'Strands',
+          lastValidated: '2026-11-05',
+          variants: [],
         },
         {
+          id: 'python/02-applications/02-notebook',
+          slug: 'python/notebook',
           language: 'Python',
           category: 'applications',
           title: 'Notebook guide',
           description: notebookDescription,
           path: 'python/02-applications/02-notebook',
           notebook: 'guide.ipynb',
+          placement: 'reference',
+          kind: 'migration',
+          collections: ['amplifying-ai'],
+          capabilities: ['migration'],
+          program: 'amplifying-ai',
+          variants: [],
         },
         {
+          id: 'typescript/01-learn/01-workshop',
+          slug: 'typescript/workshop',
           language: 'TypeScript',
           category: 'learn',
           title: 'TypeScript workshop lesson',
           description: 'Protected TypeScript workshop curriculum is not published as an end-to-end example guide.',
           path: 'typescript/01-learn/01-workshop',
+          placement: 'repo-only',
+          kind: 'workshop',
         },
         {
+          id: 'python/01-learn/01-workshop',
+          slug: 'python/workshop',
           language: 'Python',
           category: 'learn',
           title: 'Python workshop lesson',
           description: 'Protected Python workshop curriculum is not published as an end-to-end example guide.',
           path: 'python/01-learn/01-workshop',
+          placement: 'repo-only',
+          kind: 'workshop',
         },
       ],
     } satisfies ManifestFixture)
@@ -176,7 +234,7 @@ afterEach(() => {
 })
 
 describe('buildSampleGuides', () => {
-  it('turns README and notebook guides into path-ordered, reproducible site Markdown', async () => {
+  it('turns curated README and notebook guides into editorially ordered, reproducible site Markdown', async () => {
     const commit = git('rev-parse', 'HEAD')
     await expect(buildSampleGuides({ sourceDir, outputDir })).resolves.toEqual({
       repository: 'strands-agents/samples',
@@ -197,7 +255,7 @@ describe('buildSampleGuides', () => {
     await expect(notebook).toMatchFileSnapshot('./snapshots/sample-guide-importer/notebook.md')
   })
 
-  it('excludes protected workshop curriculum from the public examples build', async () => {
+  it('publishes only featured and reference samples from a curated manifest', async () => {
     const commit = git('rev-parse', 'HEAD')
     await expect(buildSampleGuides({ sourceDir, outputDir, requireSamples: true })).resolves.toEqual({
       repository: 'strands-agents/samples',
@@ -207,6 +265,36 @@ describe('buildSampleGuides', () => {
     expect(
       (readdirSync(outputDir, { recursive: true }) as string[]).filter((file) => file.endsWith('.md')).sort()
     ).toEqual(['python/notebook.md', 'typescript/readme.md'])
+    expect(readFileSync(path.join(outputDir, 'typescript/readme.md'), 'utf8')).toContain(
+      'sampleId: "typescript/02-applications/01-readme"'
+    )
+    expect(readFileSync(path.join(outputDir, 'python/notebook.md'), 'utf8')).toContain(
+      'sampleId: "python/02-applications/02-notebook"'
+    )
+  })
+
+  it('publishes every sample when reading a legacy manifest without editorial metadata', async () => {
+    updateManifest((manifest) => {
+      delete manifest.collections
+      for (const sample of manifest.samples) {
+        delete sample.placement
+        delete sample.kind
+        delete sample.collections
+        delete sample.capabilities
+        delete sample.docs
+        delete sample.program
+        delete sample.maturity
+        delete sample.owner
+        delete sample.lastValidated
+        delete sample.variants
+        delete sample.family
+      }
+    })
+
+    await expect(buildSampleGuides({ sourceDir, outputDir })).resolves.toMatchObject({ sampleCount: 4 })
+    expect(
+      (readdirSync(outputDir, { recursive: true }) as string[]).filter((file) => file.endsWith('.md')).sort()
+    ).toEqual(['python/notebook.md', 'python/workshop.md', 'typescript/readme.md', 'typescript/workshop.md'])
   })
 
   it('allows unpublished README changes in local previews', async () => {
@@ -219,6 +307,7 @@ describe('buildSampleGuides', () => {
 
   it('rejects an empty catalog when samples are required', async () => {
     updateManifest((manifest) => {
+      manifest.collections = []
       manifest.samples = []
     })
 
@@ -333,6 +422,117 @@ describe('buildSampleGuides', () => {
     )
   })
 
+  it('requires an explicit placement, kind, and canonical slug in curated manifests', async () => {
+    updateManifest((manifest) => {
+      delete manifest.samples[0]!.placement
+    })
+
+    await expect(buildSampleGuides({ sourceDir, outputDir })).rejects.toThrow(
+      'typescript/02-applications/01-readme has no catalog placement'
+    )
+
+    updateManifest((manifest) => {
+      manifest.samples[0]!.placement = 'featured'
+      delete manifest.samples[0]!.kind
+    })
+    await expect(buildSampleGuides({ sourceDir, outputDir })).rejects.toThrow(
+      'typescript/02-applications/01-readme has no catalog kind'
+    )
+
+    updateManifest((manifest) => {
+      manifest.samples[0]!.kind = 'application'
+      delete manifest.samples[0]!.slug
+    })
+    await expect(buildSampleGuides({ sourceDir, outputDir })).rejects.toThrow(
+      'typescript/02-applications/01-readme has no canonical catalog slug'
+    )
+  })
+
+  it('rejects unknown and duplicate collection membership', async () => {
+    updateManifest((manifest) => {
+      manifest.samples[0]!.collections = ['missing']
+    })
+    await expect(buildSampleGuides({ sourceDir, outputDir })).rejects.toThrow(
+      'typescript/02-applications/01-readme references unknown collection missing'
+    )
+
+    updateManifest((manifest) => {
+      manifest.samples[0]!.collections = ['end-to-end']
+      manifest.collections![0]!.samples.push('typescript/02-applications/01-readme')
+    })
+    await expect(buildSampleGuides({ sourceDir, outputDir })).rejects.toThrow(
+      'Duplicate sample typescript/02-applications/01-readme in collection end-to-end'
+    )
+  })
+
+  it('uses top-level collection membership as the authoritative catalog order', async () => {
+    updateManifest((manifest) => {
+      manifest.samples[0]!.collections = ['amplifying-ai']
+    })
+
+    await expect(buildSampleGuides({ sourceDir, outputDir })).rejects.toThrow(
+      'typescript/02-applications/01-readme declares collection amplifying-ai but is not listed in it'
+    )
+  })
+
+  it('rejects duplicate per-sample collection and variant ids', async () => {
+    updateManifest((manifest) => {
+      manifest.samples[0]!.collections = ['end-to-end', 'end-to-end']
+    })
+    await expect(buildSampleGuides({ sourceDir, outputDir })).rejects.toThrow(
+      'typescript/02-applications/01-readme declares duplicate collection end-to-end'
+    )
+
+    updateManifest((manifest) => {
+      manifest.samples[0]!.collections = ['end-to-end']
+      manifest.samples[0]!.variants = ['python/02-applications/02-notebook', 'python/02-applications/02-notebook']
+    })
+    await expect(buildSampleGuides({ sourceDir, outputDir })).rejects.toThrow(
+      'typescript/02-applications/01-readme declares duplicate variant python/02-applications/02-notebook'
+    )
+  })
+
+  it('rejects collections that publish unknown or repo-only samples', async () => {
+    updateManifest((manifest) => {
+      manifest.collections![0]!.samples = ['missing/sample']
+      manifest.samples[0]!.collections = []
+    })
+    await expect(buildSampleGuides({ sourceDir, outputDir })).rejects.toThrow(
+      'Collection end-to-end references unknown sample missing/sample'
+    )
+
+    updateManifest((manifest) => {
+      manifest.collections![0]!.samples = ['typescript/01-learn/01-workshop']
+      manifest.samples[0]!.collections = []
+    })
+    await expect(buildSampleGuides({ sourceDir, outputDir })).rejects.toThrow(
+      'typescript/01-learn/01-workshop is repo-only but belongs to a published collection'
+    )
+  })
+
+  it('rejects unknown variant sample ids', async () => {
+    updateManifest((manifest) => {
+      manifest.samples[0]!.variants = ['missing/variant']
+    })
+
+    await expect(buildSampleGuides({ sourceDir, outputDir })).rejects.toThrow(
+      'typescript/02-applications/01-readme references unknown variant missing/variant'
+    )
+  })
+
+  it('rejects ambiguous published family languages', async () => {
+    updateManifest((manifest) => {
+      manifest.samples[0]!.family = 'shared'
+      manifest.samples[1]!.language = 'typescript'
+      manifest.samples[1]!.slug = 'typescript/notebook'
+      manifest.samples[1]!.family = 'shared'
+    })
+
+    await expect(buildSampleGuides({ sourceDir, outputDir })).rejects.toThrow(
+      'Duplicate published sample family language: shared/typescript'
+    )
+  })
+
   it('rejects unknown manifest fields', async () => {
     updateManifest((manifest) => {
       Object.assign(manifest, { repository: 'unexpected/repository' })
@@ -355,6 +555,14 @@ describe('buildSampleGuides', () => {
     })
 
     await expect(buildSampleGuides({ sourceDir, outputDir })).rejects.toThrow('Unrecognized key')
+  })
+
+  it('rejects non-HTTPS documentation links', async () => {
+    updateManifest((manifest) => {
+      manifest.samples[0]!.docs = [{ label: 'Unsafe', url: 'javascript:alert(1)' }]
+    })
+
+    await expect(buildSampleGuides({ sourceDir, outputDir })).rejects.toThrow('must use https')
   })
 
   it('rejects unsupported sample languages', async () => {

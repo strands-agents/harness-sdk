@@ -34,7 +34,9 @@ export const GET: APIRoute = async () => {
     lines.push('')
   }
 
-  const sampleGuides = sortSampleGuides(await getCollection('sampleGuides'))
+  const sampleGuides = sortSampleGuides(
+    await getCollection('sampleGuides', ({ data }) => data.placement === 'featured')
+  )
   for (const guide of sampleGuides) {
     lines.push(`## ${guide.data.title} (${languageLabel(guide.data.language)})`)
     lines.push('')

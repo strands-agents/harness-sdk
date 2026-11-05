@@ -3,10 +3,10 @@ import path from 'node:path'
 import { getCollection } from 'astro:content'
 import { parse } from 'node-html-parser'
 import { beforeAll, describe, expect, it } from 'vitest'
-import { DEFAULT_LANGUAGE_LABEL, LANGUAGE_STORAGE_KEY } from '../src/util/language-preference'
 import { pathWithBase } from '../src/util/links'
 import { languageLabel } from '../src/util/source-links'
 import {
+  groupSampleGuideFamilies,
   isSampleGuidePath,
   sampleGuideLanguageFromPath,
   sampleGuidePath,
@@ -43,6 +43,14 @@ function sampleGuideHref(guide: SampleGuideEntry): string {
   return configuredPathWithBase(sampleGuidePath(guide))
 }
 
+function visibleSidebarGuides(guides: SampleGuideEntry[], currentGuide: SampleGuideEntry): SampleGuideEntry[] {
+  const visible = guides.filter(
+    (guide) => guide.data.language === currentGuide.data.language && guide.data.placement === 'featured'
+  )
+  if (currentGuide.data.placement === 'reference') visible.push(currentGuide)
+  return visible
+}
+
 function expectPersistentSidebar(
   page: ReturnType<typeof parse>,
   guides: SampleGuideEntry[],
@@ -53,8 +61,8 @@ function expectPersistentSidebar(
   expect(page.querySelector('.sidebar-content a[aria-current="page"]')?.getAttribute('href')).toBe(
     sampleGuideHref(currentGuide)
   )
-  const languageGuides = guides.filter((guide) => guide.data.language === currentGuide.data.language)
-  const expectedHrefs = languageGuides.map(sampleGuideHref)
+  const sidebarGuides = visibleSidebarGuides(guides, currentGuide)
+  const expectedHrefs = sidebarGuides.map(sampleGuideHref)
   const expectedHrefSet = new Set(expectedHrefs)
   const orderedHrefs = page
     .querySelectorAll('.sidebar-content a')
@@ -77,7 +85,7 @@ function expectPersistentSidebar(
     expect(option.getAttribute('data-switch-href')).toBeUndefined()
   }
   for (const option of page.querySelectorAll(`language-toggle [data-lang="${otherLanguageLabel}"]`)) {
-    expect(option.hasAttribute('disabled')).toBe(false)
+    expect(option.hasAttribute('disabled')).toBe(switchTarget === undefined)
     expect(option.getAttribute('data-switch-href')).toBe(
       switchTarget ? configuredPathWithBase(switchTarget) : undefined
     )
@@ -86,14 +94,14 @@ function expectPersistentSidebar(
   const mobileHrefs = new Set(
     page.querySelectorAll('.mobile-menu__pages a').map((link) => link.getAttribute('href') ?? '')
   )
-  for (const guide of languageGuides) expect(mobileHrefs.has(sampleGuideHref(guide)), guide.id).toBe(true)
-  for (const guide of guides.filter((entry) => entry.data.language !== currentGuide.data.language)) {
+  for (const guide of sidebarGuides) expect(mobileHrefs.has(sampleGuideHref(guide)), guide.id).toBe(true)
+  for (const guide of guides.filter((entry) => !sidebarGuides.includes(entry))) {
     expect(mobileHrefs.has(sampleGuideHref(guide)), guide.id).toBe(false)
   }
 
-  const currentIndex = languageGuides.findIndex((guide) => guide.id === currentGuide.id)
-  const previous = languageGuides[currentIndex - 1]
-  const next = languageGuides[currentIndex + 1]
+  const currentIndex = sidebarGuides.findIndex((guide) => guide.id === currentGuide.id)
+  const previous = sidebarGuides[currentIndex - 1]
+  const next = sidebarGuides[currentIndex + 1]
   expect(page.querySelector('.pagination-links a[rel="prev"]')?.getAttribute('href')).toBe(
     previous ? sampleGuideHref(previous) : undefined
   )
@@ -105,29 +113,46 @@ function expectPersistentSidebar(
 describe('generated sample guide pages', () => {
   it('renders the expected /examples/ landing state for the available sample source', () => {
     const page = builtPage()
-    const redirect = page.querySelector('[data-sample-guide-redirect]')
 
     expect(page.querySelector('#_top')?.textContent.trim()).toBe('Examples')
     expect(page.querySelector('html[data-has-sidebar]')).toBeNull()
+    expect(page.querySelector('[data-pagefind-body]')).not.toBeNull()
 
     if (guides.length === 0) {
-      expect(redirect).toBeNull()
       expect(page.textContent).toContain('Sample guides are not available in this local build.')
       expect(page.textContent).toContain('SAMPLES_SOURCE_DIR')
       return
     }
 
-    const defaultGuide =
-      guides.find((guide) => guide.data.language === DEFAULT_LANGUAGE_LABEL.toLowerCase()) ?? guides[0]
-    const pythonGuide = guides.find((guide) => guide.data.language === 'python') ?? defaultGuide
+    const featuredFamilies = groupSampleGuideFamilies(guides.filter((guide) => guide.data.placement === 'featured'))
+    const featuredCards = page.querySelectorAll('[data-sample-placement="featured"]')
+    expect(featuredCards).toHaveLength(featuredFamilies.length)
 
-    expect(defaultGuide).toBeDefined()
-    expect(pythonGuide).toBeDefined()
-    expect(redirect?.getAttribute('data-storage-key')).toBe(LANGUAGE_STORAGE_KEY)
-    expect(redirect?.getAttribute('data-default-language')).toBe(DEFAULT_LANGUAGE_LABEL)
-    expect(redirect?.getAttribute('data-default-target')).toBe(sampleGuideHref(defaultGuide!))
-    expect(redirect?.getAttribute('data-python-target')).toBe(sampleGuideHref(pythonGuide!))
-    expect(redirect?.querySelector('a')?.getAttribute('href')).toBe(sampleGuideHref(defaultGuide!))
+    for (const family of featuredFamilies) {
+      const card = page.querySelector(`[data-sample-family="${family.key}"][data-sample-placement="featured"]`)
+      expect(card, family.key).not.toBeNull()
+      for (const guide of family.guides) {
+        expect(card?.querySelector(`a[href="${sampleGuideHref(guide)}"]`)?.textContent.trim(), guide.id).toBe(
+          languageLabel(guide.data.language)
+        )
+      }
+      const amplifying = family.guides.some(
+        (guide) =>
+          guide.data.program === 'amplifying-ai' ||
+          guide.data.collections.some((collection) => collection.id === 'amplifying-ai')
+      )
+      expect(card?.textContent.includes('Amplifying AI')).toBe(amplifying)
+    }
+
+    const referenceFamilies = groupSampleGuideFamilies(guides.filter((guide) => guide.data.placement === 'reference'))
+    expect(page.querySelectorAll('[data-sample-placement="reference"]')).toHaveLength(referenceFamilies.length)
+    for (const family of referenceFamilies) {
+      const card = page.querySelector(`[data-sample-family="${family.key}"][data-sample-placement="reference"]`)
+      expect(card, family.key).not.toBeNull()
+      for (const guide of family.guides) {
+        expect(card?.querySelector(`a[href="${sampleGuideHref(guide)}"]`), guide.id).not.toBeNull()
+      }
+    }
   })
 
   it('renders every guide at a stable route with language-scoped sample navigation', () => {
@@ -140,6 +165,7 @@ describe('generated sample guide pages', () => {
       expect(page.querySelector('.sample-guide__source code')).toBeNull()
       expect(page.querySelector('.sl-markdown-content > p')?.classList.contains('sample-guide__source')).toBe(true)
       expectPersistentSidebar(page, guides, guide)
+      expect(page.querySelector('[data-pagefind-body]') !== null).toBe(guide.data.placement === 'featured')
 
       const markdownHref = page.querySelector('link[rel="alternate"][type="text/markdown"]')?.getAttribute('href')
       expect(markdownHref).toBe(configuredPathWithBase(`${sampleGuidePath(guide)}index.md`))
@@ -156,7 +182,7 @@ describe('generated sample guide pages', () => {
     }
   })
 
-  it('publishes every guide on the machine-readable documentation surfaces', () => {
+  it('publishes every route as Markdown but only featured guides on discovery surfaces', () => {
     const llms = readFileSync(new URL('../dist/llms.txt', import.meta.url), 'utf8')
     const llmsFull = readFileSync(new URL('../dist/llms-full.txt', import.meta.url), 'utf8')
 
@@ -168,13 +194,29 @@ describe('generated sample guide pages', () => {
       expect(rawMarkdown.trim(), guide.id).not.toBe('')
       expect(rawMarkdown, guide.id).toContain('## Upstream source')
       expect(rawMarkdown, guide.id).toContain(guide.data.sourceUrl)
-      expect(llms, guide.id).toContain(`[${label}](`)
-      expect(llms, guide.id).toContain(sourcePath)
-      expect(llmsFull, guide.id).toContain(`## ${label}`)
-      expect(llmsFull, guide.id).toContain(guide.data.sourceUrl)
-      expect(llmsFull, guide.id).toContain(`Markdown: `)
-      expect(llmsFull, guide.id).toContain(sourcePath)
+      if (guide.data.placement === 'featured') {
+        expect(llms, guide.id).toContain(`[${label}](`)
+        expect(llms, guide.id).toContain(sourcePath)
+        expect(llmsFull, guide.id).toContain(`## ${label}`)
+        expect(llmsFull, guide.id).toContain(guide.data.sourceUrl)
+        expect(llmsFull, guide.id).toContain(`Markdown: `)
+        expect(llmsFull, guide.id).toContain(sourcePath)
+      } else {
+        expect(llms, guide.id).not.toContain(sourcePath)
+        expect(llmsFull, guide.id).not.toContain(sourcePath)
+      }
     }
+  })
+
+  it('publishes exactly the generated guide routes in the sitemap', () => {
+    const sitemap = readFileSync(new URL('../dist/sitemap-0.xml', import.meta.url), 'utf8')
+    const exampleRoot = configuredPathWithBase('/examples/')
+    const sitemapGuidePaths = [...sitemap.matchAll(/<loc>([^<]+)<\/loc>/g)]
+      .map((match) => new URL(match[1]!).pathname)
+      .filter((pathname) => pathname.startsWith(exampleRoot) && pathname !== exampleRoot)
+      .sort()
+
+    expect(sitemapGuidePaths).toEqual(guides.map(sampleGuideHref).sort())
   })
 
   it('renders fenced code with Expressive Code', () => {
@@ -209,39 +251,149 @@ describe('sampleGuideLanguageFromPath', () => {
 })
 
 describe('sampleGuideSwitchPath', () => {
-  const guide = (slug: string, language: string, order: number): SampleGuideEntry =>
+  const guide = (
+    slug: string,
+    language: 'python' | 'typescript',
+    order: number,
+    options: { sampleId?: string; family?: string; variants?: string[] } = {}
+  ): SampleGuideEntry =>
     ({
       id: slug,
       collection: 'sampleGuides',
       data: {
+        sampleId: options.sampleId ?? slug,
         title: slug,
         description: `${slug} description`,
         slug,
         language,
         category: 'learn',
         categoryLabel: 'Learn',
+        placement: 'featured',
+        kind: 'application',
+        collections: [],
+        capabilities: [],
+        docs: [],
+        variants: options.variants ?? [],
+        family: options.family,
         sourceUrl: `https://github.com/strands-agents/samples/tree/commit/${slug}`,
         order,
       },
     }) as SampleGuideEntry
 
-  it('prefers an exact cross-language counterpart', () => {
+  it('switches only between guides with the same explicit family', () => {
     const entries = [
-      guide('python/first-agent', 'python', 0),
+      guide('python/first-agent', 'python', 0, { family: 'first-agent' }),
       guide('typescript/fallback', 'typescript', 1),
-      guide('typescript/first-agent', 'typescript', 2),
+      guide('typescript/renamed-agent', 'typescript', 2, { family: 'first-agent' }),
     ]
 
-    expect(sampleGuideSwitchPath(entries, 'python/first-agent', 'typescript')).toBe('/examples/typescript/first-agent/')
+    expect(sampleGuideSwitchPath(entries, 'python/first-agent', 'typescript')).toBe(
+      '/examples/typescript/renamed-agent/'
+    )
   })
 
-  it('falls back to the first ordered guide in the target language', () => {
+  it('uses an explicit variant relationship when no family is declared', () => {
+    const entries = [
+      guide('python/migration', 'python', 0, {
+        sampleId: 'python-migration',
+        variants: ['typescript-migration'],
+      }),
+      guide('typescript/different-slug', 'typescript', 1, { sampleId: 'typescript-migration' }),
+    ]
+
+    expect(sampleGuideSwitchPath(entries, 'python/migration', 'typescript')).toBe(
+      '/examples/typescript/different-slug/'
+    )
+  })
+
+  it('falls back to an explicit variant when a family counterpart is unavailable', () => {
+    const entries = [
+      guide('python/migration', 'python', 0, {
+        sampleId: 'python-migration',
+        family: 'python-only-family',
+        variants: ['typescript-migration'],
+      }),
+      guide('typescript/different-slug', 'typescript', 1, { sampleId: 'typescript-migration' }),
+    ]
+
+    expect(sampleGuideSwitchPath(entries, 'python/migration', 'typescript')).toBe(
+      '/examples/typescript/different-slug/'
+    )
+  })
+
+  it('does not guess a counterpart by slug or fall back to another guide', () => {
     const entries = [
       guide('python/python-only', 'python', 0),
-      guide('typescript/second', 'typescript', 2),
-      guide('typescript/first', 'typescript', 1),
+      guide('typescript/python-only', 'typescript', 1),
+      guide('typescript/fallback', 'typescript', 2),
     ]
 
-    expect(sampleGuideSwitchPath(entries, 'python/python-only', 'typescript')).toBe('/examples/typescript/first/')
+    expect(sampleGuideSwitchPath(entries, 'python/python-only', 'typescript')).toBeUndefined()
   })
 })
+
+describe('groupSampleGuideFamilies', () => {
+  it('groups nine featured guides into eight editorial families', () => {
+    const entries = [
+      guideFixture('python/dynamic-ui', 'python', 0, 'dynamic-ui'),
+      guideFixture('typescript/dynamic-ui', 'typescript', 1, 'dynamic-ui'),
+      ...Array.from({ length: 7 }, (_, index) => guideFixture(`python/example-${index + 1}`, 'python', index + 2)),
+    ]
+
+    const families = groupSampleGuideFamilies(entries)
+
+    expect(entries).toHaveLength(9)
+    expect(families).toHaveLength(8)
+    expect(families[0]?.key).toBe('dynamic-ui')
+    expect(families[0]?.guides.map((entry) => entry.data.language)).toEqual(['python', 'typescript'])
+  })
+
+  it('groups three supplemental references into two migration actions', () => {
+    const references = [
+      guideFixture('typescript/express', 'typescript', 0),
+      guideFixture('python/langgraph', 'python', 1, 'langgraph-migration'),
+      guideFixture('typescript/langgraph', 'typescript', 2, 'langgraph-migration'),
+    ].map(
+      (guide) =>
+        ({
+          ...guide,
+          data: { ...guide.data, placement: 'reference' },
+        }) as SampleGuideEntry
+    )
+
+    expect(groupSampleGuideFamilies(references).map((family) => family.key)).toEqual([
+      'typescript/express',
+      'langgraph-migration',
+    ])
+  })
+})
+
+function guideFixture(
+  slug: string,
+  language: 'python' | 'typescript',
+  order: number,
+  family?: string
+): SampleGuideEntry {
+  return {
+    id: slug,
+    collection: 'sampleGuides',
+    data: {
+      sampleId: slug,
+      title: slug,
+      description: `${slug} description`,
+      slug,
+      language,
+      category: 'learn',
+      categoryLabel: 'Learn',
+      placement: 'featured',
+      kind: 'application',
+      collections: [],
+      capabilities: [],
+      docs: [],
+      variants: [],
+      family,
+      sourceUrl: `https://github.com/strands-agents/samples/tree/commit/${slug}`,
+      order,
+    },
+  } as SampleGuideEntry
+}
