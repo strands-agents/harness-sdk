@@ -26,6 +26,7 @@ const approvalMode = scenario === 'approval'
 const shellMode = scenario === 'shell-command' || scenario === 'shell-interrupt'
 let shellAbort
 let approvalRelease
+let queueRelease
 let permissionMode = 'default'
 let mcpState = 'failed'
 let turn = 0
@@ -46,9 +47,18 @@ const backend = {
   info() {
     return { model: 'fixture/model-alpha', effort: 'Medium' }
   },
-  async *stream() {
+  async *stream(prompt) {
     turn += 1
-    if (approvalMode) {
+    if (scenario === 'queue') {
+      if (prompt === 'hold queue') {
+        yield { type: 'textDelta', text: 'Queue gate waiting' }
+        await new Promise((resolve) => {
+          queueRelease = resolve
+        })
+      } else {
+        yield { type: 'textDelta', text: `Executed: ${prompt}` }
+      }
+    } else if (approvalMode) {
       yield {
         type: 'permission',
         request: {
@@ -178,6 +188,7 @@ const backend = {
     : {}),
   cancel() {
     shellAbort?.abort()
+    queueRelease?.()
   },
 }
 

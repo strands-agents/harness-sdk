@@ -12,6 +12,7 @@ const execFileAsync = promisify(execFile)
 export type TuiScenario =
   | 'chat'
   | 'follow-up'
+  | 'queue'
   | 'approval'
   | 'setup-export'
   | 'panels'

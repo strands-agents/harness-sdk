@@ -1246,13 +1246,12 @@ describe('ChatController', () => {
         attachments: [{ name: 'notes.md', size: 5, kind: 'document' }],
       },
     ])
+    expect(controller.updateQueuedPrompt('queued-1', '')).toBe(true)
+    expect(controller.getSnapshot().queuedPrompts).toMatchObject([{ id: 'queued-1', prompt: '' }])
 
     release()
     await Promise.all([first, queued])
-    expect(prompts).toEqual([
-      'first',
-      [{ text: 'second' }, { document: { name: 'notes md', format: 'md', source: { text: 'hello' } } }],
-    ])
+    expect(prompts).toEqual(['first', [{ document: { name: 'notes md', format: 'md', source: { text: 'hello' } } }]])
   })
 
   it('accepts and runs queued prompts in order while the active turn continues', async () => {
@@ -1393,6 +1392,50 @@ describe('ChatController', () => {
     finishSave()
     await saving
     expect(background).not.toHaveBeenCalled()
+  })
+
+  it('deletes queued user messages, settles their submissions, and preserves the remaining order', async () => {
+    // https://github.com/strands-agents/harness-sdk/issues/5531
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const prompts: string[] = []
+    const target = backend(async function* (prompt) {
+      prompts.push(prompt)
+      yield { type: 'textDelta', text: 'Working.' }
+      if (prompt === 'first') await gate
+      return { stopReason: 'endTurn' }
+    })
+    target.streamPeer = async function* (message) {
+      prompts.push(message.body)
+      yield* []
+      return { stopReason: 'endTurn' }
+    }
+    const controller = new ChatController(target)
+    const first = controller.submit('first')
+    try {
+      await vi.waitFor(() => expect(controller.getSnapshot().status).toBe('running'))
+      const deleted = controller.submit('delete me')
+      controller.enqueuePeerMessage({ from: { id: 'peer', name: 'Peer' }, body: 'peer message' })
+      const blanked = controller.submit('clear me')
+      const kept = controller.submit('keep me')
+      expect(controller.removeQueuedPrompt('queued-1')).toBe(true)
+      await expect(deleted).resolves.toBeUndefined()
+      expect(controller.removeQueuedPrompt('queued-1')).toBe(false)
+      expect(controller.removeQueuedPrompt('queued-2')).toBe(false)
+      expect(controller.updateQueuedPrompt('queued-3', '  ')).toBe(true)
+      await expect(blanked).resolves.toBeUndefined()
+      expect(controller.getSnapshot().queuedPrompts.map(({ prompt }) => prompt)).toEqual(['peer message', 'keep me'])
+      release()
+      await Promise.all([first, kept])
+      expect(prompts).toEqual(['first', 'peer message', 'keep me'])
+      expect(controller.removeQueuedPrompt('queued-4')).toBe(false)
+    } finally {
+      release()
+      await first
+      await controller.dispose()
+    }
   })
 
   it('queues peer messages at the turn boundary without interpreting them as local commands', async () => {

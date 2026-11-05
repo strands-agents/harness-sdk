@@ -45,7 +45,7 @@ import {
 } from '../panels/configuration.js'
 import { sanitizeTerminalText } from '../../terminal/text.js'
 
-export type QueuedPromptAction = 'edit' | 'up' | 'down'
+export type QueuedPromptAction = 'edit' | 'delete' | 'up' | 'down'
 export type QueuedPromptTarget = `${string}:${QueuedPromptAction}`
 
 export function ChatView(props: Parameters<typeof ChatViewContent>[0]): ReactElement {
@@ -569,7 +569,7 @@ function ChatViewContent({
               maxRows={editorMaxRows}
               maxHeight={editorMaxHeight}
               {...(snapshot.status === 'running' || snapshot.status === 'interrupting'
-                ? { placeholder: 'Enter to queue • Ctrl+J for newline • / for commands' }
+                ? { placeholder: 'Enter to queue • Alt+↑ edit queue • / for commands' }
                 : {})}
               {...(actionableCommandToken ? { actionableCommandToken } : {})}
               {...(snapshot.composerStatus ? { busyStatus: `${composerSpinner} ${snapshot.composerStatus}` } : {})}
@@ -810,7 +810,7 @@ function QueuedPromptSummary({
             prompt.source === 'peer'
               ? `Message from ${prompt.from ?? 'agent'}: ${prompt.prompt}`
               : editingId === prompt.id
-                ? `${queuedPromptLabel(prompt)} · editing`
+                ? `${queuedPromptLabel(prompt)} · editing · Ctrl+D delete`
                 : queuedPromptLabel(prompt)
           return (
             <Box key={prompt.id} height={1} flexShrink={0} paddingX={1}>
@@ -827,6 +827,7 @@ function QueuedPromptSummary({
                       { target: `${prompt.id}:up`, label: '↑', disabled: userIndex === 0 },
                       { target: `${prompt.id}:down`, label: '↓', disabled: userIndex === userPrompts.length - 1 },
                       { target: `${prompt.id}:edit`, label: 'Edit', active: editingId === prompt.id },
+                      { target: `${prompt.id}:delete`, label: 'Delete' },
                     ] as const
                   ).map((button) => (
                     <QueueButton

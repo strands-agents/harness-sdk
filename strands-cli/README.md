@@ -140,9 +140,12 @@ strands --acp-server                         # serve ACP on stdin/stdout
 
 When stdin is piped, its complete contents become the request only when no positional request was
 given. In plain mode, type `exit` or `quit`; in Ink, use `/exit`. Ctrl-D exits either interactive
-mode. In Ink, Ctrl-C cancels an active turn or exits with status 130 when idle.
+mode, except while editing a queued message. In Ink, Ctrl-C cancels an active turn or exits with status 130 when idle.
 The composer stays editable during a turn: Enter queues a follow-up, and Escape interrupts without
 discarding the current draft.
+Use Alt+↑/↓ or click Edit to edit a queued message. Enter saves and Esc restores your draft.
+Click Delete, or press Ctrl+D while editing, to remove it. Saving empty text deletes a message
+unless it has attachments.
 Prefix an Ink input with `!` to run a shell command directly in the active workspace without
 invoking the model, for example `!git status`. Each command runs once through the agent's shell
 sandbox while the full-screen UI remains open, and its output is rendered inline without compact
@@ -435,7 +438,7 @@ These commands are local to the full-screen Ink UI:
 | `/context`                     | Show context usage and prompt-cache activity                       |
 | `/compact`                     | Summarize older conversation context                               |
 | `/clear`                       | Rebuild the agent with a fresh conversation                        |
-| `/tasks`                       | Show task state and live subagent progress                          |
+| `/tasks`                       | Show task state and live subagent progress                         |
 | `/model [model-id]`            | Browse or change the active model                                  |
 | `/effort [level]`              | Open the effort slider or set the reasoning effort directly        |
 | `/fork [request]`              | Fork the current conversation into an independent agent            |

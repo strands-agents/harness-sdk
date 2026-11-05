@@ -366,6 +366,23 @@ export function ChatApp({
       setEditor(draft)
     }
   }, [setEditor])
+  const editQueuedPrompt = useCallback(
+    (id: string): void => {
+      const prompt = snapshot.queuedPrompts.find((candidate) => candidate.id === id && candidate.source !== 'peer')
+      if (!prompt) return
+      const currentEditor = editorRef.current
+      queuedPromptDraftRef.current ??= currentEditor
+      setEditingQueuedPromptId(id)
+      setEditor({
+        ...currentEditor,
+        input: prompt.prompt,
+        cursor: graphemes(prompt.prompt).length,
+        historyIndex: currentEditor.history.length,
+        draft: prompt.prompt,
+      })
+    },
+    [setEditor, snapshot.queuedPrompts]
+  )
   const selectPanelRow = useCallback((selection: number, capacity: number, rowCount: number): void => {
     panelSelectionRef.current = selection
     setPanelSelection(selection)
@@ -1171,23 +1188,11 @@ export function ChatApp({
         }
         if (target.action === 'up' || target.action === 'down') {
           controller.moveQueuedPrompt(target.id, target.action === 'up' ? -1 : 1)
+        } else if (target.action === 'delete') {
+          controller.removeQueuedPrompt(target.id)
         } else {
-          const prompt = snapshot.queuedPrompts.find((candidate) => candidate.id === target.id)
-          if (prompt && prompt.source !== 'peer') {
-            if (editingQueuedPromptId === prompt.id) {
-              finishQueuedPromptEdit()
-              return
-            }
-            queuedPromptDraftRef.current ??= currentEditor
-            setEditingQueuedPromptId(prompt.id)
-            setEditor({
-              ...currentEditor,
-              input: prompt.prompt,
-              cursor: graphemes(prompt.prompt).length,
-              historyIndex: currentEditor.history.length,
-              draft: prompt.prompt,
-            })
-          }
+          if (editingQueuedPromptId === target.id) finishQueuedPromptEdit()
+          else editQueuedPrompt(target.id)
         }
       } else if (footerAction) {
         if (footerAction === 'update' && availableUpdate) {
@@ -1207,6 +1212,7 @@ export function ChatApp({
       controller,
       dispatchPrompt,
       editingQueuedPromptId,
+      editQueuedPrompt,
       finishQueuedPromptEdit,
       footerElements,
       metadataElements,
@@ -1253,6 +1259,10 @@ export function ChatApp({
       setPressedPanelControl(undefined)
       setPressedSuggestion(undefined)
       setPressedQueuedPrompt(undefined)
+      if (!snapshot.panel && editingQueuedPromptId && key.ctrl && character === 'd') {
+        controller.removeQueuedPrompt(editingQueuedPromptId)
+        return
+      }
       if (key.ctrl && (character === 'c' || character === 'd')) {
         handleExit(character === 'c' ? 130 : 0)
         return
@@ -1801,6 +1811,13 @@ export function ChatApp({
         return
       }
 
+      if (key.meta && (key.upArrow || key.downArrow)) {
+        const prompts = snapshot.queuedPrompts.filter((prompt) => prompt.source !== 'peer')
+        const index = prompts.findIndex((prompt) => prompt.id === editingQueuedPromptId)
+        const next = index < 0 ? (key.upArrow ? prompts.length - 1 : 0) : index + (key.upArrow ? -1 : 1)
+        if (prompts[next]) editQueuedPrompt(prompts[next].id)
+        return
+      }
       if (editingQueuedPromptId && key.escape) {
         finishQueuedPromptEdit()
         return
@@ -1891,6 +1908,7 @@ export function ChatApp({
       copyText,
       dispatchPrompt,
       editingQueuedPromptId,
+      editQueuedPrompt,
       finishQueuedPromptEdit,
       frog,
       handleExit,
@@ -2078,7 +2096,7 @@ function parseQueuedPromptTarget(target: QueuedPromptTarget): { id: string; acti
   const separator = target.lastIndexOf(':')
   const id = target.slice(0, separator)
   const action = target.slice(separator + 1)
-  if (!id || (action !== 'edit' && action !== 'up' && action !== 'down')) {
+  if (!id || (action !== 'edit' && action !== 'delete' && action !== 'up' && action !== 'down')) {
     return undefined
   }
   return { id, action }

@@ -6,6 +6,11 @@ const CONTROLS = [
   ['Send a message', 'Enter', 'Send your message, or queue it while the harness is working.'],
   ['Add a line', 'Ctrl+J', 'Ctrl+J inserts a newline without sending.'],
   [
+    'Edit queued messages',
+    'Alt+↑/↓',
+    'Select a queued message with Alt+↑/↓ or click Edit. Enter saves; Esc restores your draft. Click Delete or press Ctrl+D while editing to remove it. Saving empty text also removes messages without attachments.',
+  ],
+  [
     'Interrupt or exit',
     'Esc / Ctrl+C',
     'Esc interrupts running work when no panel is open. Ctrl+C or Ctrl+D cancels busy work, or exits when idle.',

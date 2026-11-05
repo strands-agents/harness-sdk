@@ -124,6 +124,13 @@ describe('TUI terminal integration', () => {
 })
 
 describe('TUI workflow integration', () => {
+  it('deletes queued messages by mouse, keyboard, and blank edit without executing them', async () => {
+    const result = await runTuiScenario('queue')
+    expect(result.returnCode).toBe(0)
+    expect(result.screens.join('\n')).toContain('Executed: keep this')
+    expectRestoredTerminal(result)
+  })
+
   it('submits a prompt, renders the streamed response, and exits cleanly', async () => {
     const result = await runTuiScenario('chat')
     const clean = result.screens.join('\n')

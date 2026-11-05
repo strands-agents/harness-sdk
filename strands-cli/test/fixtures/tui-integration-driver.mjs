@@ -249,6 +249,37 @@ async function main() {
 
     if (scenario === 'builtin-tools') {
       await submit('exercise built-in tools', ['BUILTIN_TOOLS_OK'])
+    } else if (scenario === 'queue') {
+      await typeInComposer('hold queue')
+      terminal.write('\r')
+      await waitForStableScreen(['Queue gate waiting'])
+      for (const prompt of ['delete by mouse', 'delete by keyboard', 'clear with enter', 'keep this']) {
+        await typeInComposer(prompt)
+        terminal.write('\r')
+        await waitForStableScreen(['Queued', prompt])
+      }
+      await clickText('Delete')
+      await waitForStableScreen(['keep this'], 8_000, 0, ['delete by mouse'])
+      terminal.write('\u001b[1;3A')
+      await waitForStableScreen(['keep this · editing'])
+      terminal.write('\u001b[1;3A')
+      await waitForStableScreen(['clear with enter · editing'])
+      const clearStart = transcript.length
+      terminal.write('\u0015')
+      await waitForStableScreen(['Ctrl+D delete'], 8_000, clearStart)
+      terminal.write('\r')
+      await waitForStableScreen(['keep this'], 8_000, 0, ['clear with enter'])
+      terminal.write('\u001b[1;3A')
+      await waitForStableScreen(['keep this · editing'])
+      terminal.write('\u001b[1;3A')
+      await waitForStableScreen(['delete by keyboard · editing'])
+      terminal.write('\u0004')
+      await waitForStableScreen(['keep this'], 8_000, 0, ['delete by keyboard'])
+      terminal.write('\u001b')
+      await waitForStableScreen(['Executed: keep this', 'Enter to send'])
+      if (transcript.includes('Executed: delete') || transcript.includes('Executed: clear')) {
+        throw new Error('A deleted queued message was executed')
+      }
     } else if (liveMode) {
       let generation = 1
       let turns = 0

@@ -1237,7 +1237,7 @@ describe('ChatView', () => {
       terminalWidth: 100,
       terminalHeight: 40,
     })
-    expect(runningOutput).toContain('Enter to queue • Ctrl+J for newline • / for commands')
+    expect(runningOutput).toContain('Enter to queue • Alt+↑ edit queue • / for commands')
     expect(runningOutput).not.toContain('Enter to send')
 
     const updateOutput = renderView({
