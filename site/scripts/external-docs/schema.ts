@@ -181,7 +181,7 @@ function parseLockProduct(input: unknown, label: string): ExternalDocsProductLoc
 
 function sourcePath(input: unknown, label: string): string {
   const source = repositoryPath(input, label, '.md')
-  if (!source.startsWith('docs/user/')) fail(`${label} must be under docs/user/`)
+  if (!source.startsWith('docs/')) fail(`${label} must be under docs/`)
   return source
 }
 

@@ -653,9 +653,7 @@ sidebar:
           - label: PyWebRTC Audio
             href: https://github.com/strands-labs/pywebrtc-audio
             external: true
-          - label: Strands Decider
-            href: https://github.com/strands-labs/strands-decider
-            external: true
+          - externalDocs: strands-decider
       # Feeds llms.txt lesson listing (src/pages/llms.txt.ts extractLinks); visual sidebar built by route-middleware.
       - label: Learning
         items:

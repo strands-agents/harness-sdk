@@ -393,7 +393,7 @@ export const collections = {
         'docs/integrations/**/*.mdx',
         'docs/contribute/**/*.mdx',
         'docs/examples/**/[!index]*.mdx',
-        'docs/labs/**/*.mdx',
+        'docs/labs/**/*.{md,mdx}',
         'docs/api/python/**/*.mdx',
         'docs/api/typescript/**/*.(md|mdx)',
       ],
