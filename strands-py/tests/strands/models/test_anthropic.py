@@ -3314,7 +3314,7 @@ def test_format_request_logs_skipped_blocks_once_per_request(model, caplog):
 def _compaction_model(anthropic_client):
     anthropic_client.default_headers = {}
     return AnthropicModel(
-        model_id="m1",
+        model_id="claude-sonnet-5-5",
         max_tokens=1,
         params={"stop_sequences": ["STOP"]},
     )
@@ -3383,8 +3383,23 @@ def test_format_request_sends_from_last_compaction_block(anthropic_client):
     assert request["extra_headers"]["anthropic-beta"] == "compact-2026-09-04"
 
 
-def test_server_side_summary_is_on_by_default(model):
-    assert model.model_info.capabilities.server_side_summary is True
+@pytest.mark.parametrize(
+    "model_id",
+    [
+        "claude-haiku-5-5",
+        "claude-sonnet-5-5",
+        "claude-opus-5-5",
+        "claude-fable-5-1",
+        "claude-sonnet-5-5-20260401",
+    ],
+)
+def test_server_side_summary_is_on_by_default_for_listed_models(anthropic_client, model_id):
+    assert AnthropicModel(model_id=model_id, max_tokens=1).model_info.capabilities.server_side_summary is True
+
+
+@pytest.mark.parametrize("model_id", ["claude-sonnet-4-5", "m1"])
+def test_server_side_summary_is_unset_for_other_models(anthropic_client, model_id):
+    assert AnthropicModel(model_id=model_id, max_tokens=1).model_info.capabilities.server_side_summary is None
 
 
 def test_format_request_sends_compaction_text_without_capability(model):

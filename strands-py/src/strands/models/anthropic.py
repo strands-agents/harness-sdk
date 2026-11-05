@@ -35,7 +35,6 @@ from ..types.exceptions import ContextWindowOverflowException, ModelThrottledExc
 from ..types.streaming import CitationsDelta, StreamEvent
 from ..types.tools import ToolChoice, ToolChoiceAuto, ToolChoiceToolDict, ToolSpec
 from ._defaults import resolve_config_metadata
-from ._model_info import ModelCapabilities, ModelInfo
 from ._native_output import (
     StructuredOutputMechanism,
     handle_rejected_mechanism,
@@ -252,20 +251,6 @@ class AnthropicModel(Model):
             The Anthropic model configuration.
         """
         return resolve_config_metadata(self.config, self.config["model_id"])
-
-    @property
-    @override
-    def model_info(self) -> ModelInfo:
-        """Reports server-side summary as supported, which a ``model_info`` override still wins over.
-
-        Set ``model_info=ModelInfo(capabilities=ModelCapabilities(server_side_summary=False))`` to summarize
-        client-side instead.
-        """
-        return ModelInfo.merge(
-            super().model_info,
-            ModelInfo(capabilities=ModelCapabilities(server_side_summary=True)),
-            self.config.get("model_info"),
-        )
 
     def _format_request_message_content(self, content: ContentBlock) -> dict[str, Any] | None:
         """Format an Anthropic content block.

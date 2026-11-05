@@ -37,7 +37,8 @@ class ModelCapabilities:
             JSON schema.
         server_side_summary: Whether the model summarizes history server-side through
             :meth:`strands.models.Model.summarize`, which the summarize strategy then calls instead of its
-            client-side summary.
+            client-side summary. The shared model info sets it for the Claude models whose API supports it;
+            providers without a server-side summary turn it off. Set it to False to summarize client-side.
     """
 
     stateful: bool | None = None
@@ -111,6 +112,10 @@ def _merge_section(parts: list[_SectionT], empty: _SectionT) -> _SectionT:
             merged = replace(merged, **known)
     return merged
 
+
+SERVER_SIDE_SUMMARY_OFF = ModelInfo(capabilities=ModelCapabilities(server_side_summary=False))
+"""Turns ``server_side_summary`` off for providers that serve a model the shared info lists it for but have no
+server-side summary of their own."""
 
 _CAPABILITY_FIELDS = {
     "stateful": "stateful",
