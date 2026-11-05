@@ -1,4 +1,5 @@
 import base64
+import inspect
 import json
 import re
 import struct
@@ -63,6 +64,17 @@ INVOKE_EVENTS = [line.removeprefix("data: ") for line in SSE_TEXT_RESPONSE.split
 THROTTLING_EVENT = _event_stream_message(
     {":exception-type": "throttlingException", ":content-type": "application/json", ":message-type": "exception"},
     b'{"message": "Too many requests, please wait before trying again."}',
+)
+
+# anthropic added its bedrock-mantle client in 0.91.0; older releases still cover the bedrock-runtime tests.
+requires_mantle_client = pytest.mark.skipif(
+    not hasattr(anthropic, "AsyncAnthropicBedrockMantle"), reason="anthropic<0.91.0 has no bedrock-mantle client"
+)
+
+# anthropic added api_key to its bedrock-runtime client in 0.88.0.
+requires_bedrock_api_key = pytest.mark.skipif(
+    "api_key" not in inspect.signature(anthropic.AsyncAnthropicBedrock).parameters,
+    reason="anthropic<0.88.0 has no api_key on its bedrock-runtime client",
 )
 
 
@@ -161,6 +173,7 @@ async def test_runtime_throttling_mid_stream_raises_model_throttled():
             pass
 
 
+@requires_mantle_client
 def test_mantle_uses_the_messages_api_signed_by_the_sdk(captured_requests):
     model = BedrockModel.Messages(model_id="anthropic.claude-haiku-4-5", max_tokens=16, endpoint="bedrock-mantle")
 
@@ -172,7 +185,13 @@ def test_mantle_uses_the_messages_api_signed_by_the_sdk(captured_requests):
     assert "/us-west-2/bedrock-mantle/aws4_request" in request.headers["authorization"]
 
 
-@pytest.mark.parametrize("endpoint", ["bedrock-runtime", "bedrock-mantle"])
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        pytest.param("bedrock-runtime", marks=requires_bedrock_api_key),
+        pytest.param("bedrock-mantle", marks=requires_mantle_client),
+    ],
+)
 @pytest.mark.parametrize("source", ["argument", "environment"])
 def test_api_key_is_sent_instead_of_signing(endpoint, source, monkeypatch, captured_requests):
     kwargs = {"api_key": "bedrock-key"} if source == "argument" else {}
@@ -224,7 +243,18 @@ def test_region_resolution(region_name, env_region, expected, monkeypatch):
 
 
 def test_mantle_on_an_anthropic_release_without_its_client_raises(monkeypatch):
-    monkeypatch.delattr(anthropic, "AsyncAnthropicBedrockMantle")
+    monkeypatch.delattr(anthropic, "AsyncAnthropicBedrockMantle", raising=False)
 
     with pytest.raises(ImportError, match=re.escape("pip install -U 'anthropic>=0.91.0'")):
         BedrockModel.Messages(model_id="m", max_tokens=16, endpoint="bedrock-mantle")
+
+
+def test_runtime_api_key_on_an_anthropic_release_without_it_raises(monkeypatch):
+    class OldBedrockClient:
+        def __init__(self, *, aws_region=None, base_url=None):
+            pass
+
+    monkeypatch.setattr(anthropic, "AsyncAnthropicBedrock", OldBedrockClient)
+
+    with pytest.raises(ImportError, match=re.escape("pip install -U 'anthropic>=0.88.0'")):
+        BedrockModel.Messages(model_id="m", max_tokens=16, api_key="bedrock-key")

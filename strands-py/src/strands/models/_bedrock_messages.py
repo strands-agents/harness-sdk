@@ -1,5 +1,6 @@
 """The Anthropic Messages API served by Amazon Bedrock, exposed as ``BedrockModel.Messages``."""
 
+import inspect
 import logging
 from collections.abc import AsyncGenerator
 from typing import Any
@@ -80,6 +81,11 @@ class BedrockMessagesModel(AnthropicModel):
                     "install it with: pip install -U 'anthropic>=0.91.0'"
                 )
             return anthropic.AsyncAnthropicBedrockMantle(**client_args)  # type: ignore[return-value]
+        if "api_key" in client_args and "api_key" not in inspect.signature(anthropic.AsyncAnthropicBedrock).parameters:
+            raise ImportError(
+                f"anthropic=<{anthropic.__version__}> | api_key on bedrock-runtime requires anthropic>=0.88.0, "
+                "install it with: pip install -U 'anthropic>=0.88.0'"
+            )
         return anthropic.AsyncAnthropicBedrock(**client_args)  # type: ignore[return-value]
 
     @override
