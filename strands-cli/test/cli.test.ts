@@ -9,7 +9,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { DEFAULT_HARNESS_AGENT_CONFIG, defineHarnessAgentConfig } from '@strands-agents/harness'
 import type { Agent } from '@strands-agents/sdk'
 
-import { main, runPlainChat, selectRunMode } from '../src/cli/run.js'
+import { firstMcpDecision, main, runPlainChat, selectRunMode } from '../src/cli/run.js'
 import { agentConfig, parseArgs, shouldPersistModelChanges } from '../src/cli/arguments.js'
 import { invocationAgentForRun } from '../src/cli/invocation.js'
 import * as mcp from '../src/tui/mcp.js'
@@ -714,5 +714,28 @@ describe('strands dev', () => {
       errors.mockRestore()
       await rm(directory, { recursive: true, force: true })
     }
+  })
+})
+
+describe('firstMcpDecision', () => {
+  it('asks once and reuses the decision for later builds', async () => {
+    const decision = { paths: ['/project/.mcp.json'], strictPaths: [] }
+    const resolve = vi.fn(async () => decision)
+    const confirm = vi.fn(async () => true)
+    const resolveForBuild = firstMcpDecision(resolve)
+
+    await expect(resolveForBuild(confirm)).resolves.toBe(decision)
+    await expect(resolveForBuild(confirm)).resolves.toBe(decision)
+
+    expect(resolve).toHaveBeenCalledOnce()
+  })
+
+  it('asks again after a failed resolution', async () => {
+    const decision = { paths: [], strictPaths: [] }
+    const resolve = vi.fn().mockRejectedValueOnce(new Error('unreadable')).mockResolvedValue(decision)
+    const resolveForBuild = firstMcpDecision(resolve)
+
+    await expect(resolveForBuild(async () => false)).rejects.toThrow('unreadable')
+    await expect(resolveForBuild(async () => false)).resolves.toBe(decision)
   })
 })

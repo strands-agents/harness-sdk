@@ -38,7 +38,12 @@ function backend(): ChatBackend {
   }
 }
 
-type DevBuild = (conversation: ChatConversation | undefined, signal: AbortSignal) => Promise<ChatControllerApi>
+type ConfirmMcp = (workspace: string, paths: readonly string[]) => Promise<boolean>
+type DevBuild = (
+  conversation: ChatConversation | undefined,
+  signal: AbortSignal,
+  confirm: ConfirmMcp
+) => Promise<ChatControllerApi>
 type RenderedRoot = ReactElement<{ devStatus?: DevStatus; controller?: ChatControllerApi }>
 
 const captureConversation = async (): Promise<ChatConversation['snapshot']> => ({
@@ -60,8 +65,14 @@ async function startDevChat(build: DevBuild) {
   const directory = await realpath(await mkdtemp(join(tmpdir(), 'strands-dev-reload-')))
   const sourcePath = join(directory, 'agent.ts')
   await writeFile(sourcePath, 'first')
-  const source = vi.fn((signal: AbortSignal, _setup: unknown, conversation?: ChatConversation) =>
-    build(conversation, signal)
+  const source = vi.fn(
+    (
+      signal: AbortSignal,
+      _setup: unknown,
+      conversation: ChatConversation | undefined,
+      _launch: unknown,
+      confirm: ConfirmMcp
+    ) => build(conversation, signal, confirm)
   )
   let exit!: () => void
   const exited = new Promise<void>((resolve) => {
@@ -253,6 +264,27 @@ describe('runInkChat in dev mode', () => {
       expect(chat.shown()).toBe(previous)
     } finally {
       release?.()
+      await chat.close()
+    }
+  })
+
+  it('finishes the exit when a reload waits for an MCP trust answer', async () => {
+    const previous = devController()
+    let asked = false
+    const chat = await startDevChat(async (conversation, _signal, confirm) => {
+      if (!conversation) return previous
+      asked = true
+      await confirm('/work', ['/work/.mcp.json'])
+      return devController()
+    })
+    try {
+      await chat.ready()
+      await chat.save('second')
+      await vi.waitFor(() => expect(asked).toBe(true), settled)
+      chat.exit()
+      await chat.running
+      expect(chat.shown()).toBe(previous)
+    } finally {
       await chat.close()
     }
   })

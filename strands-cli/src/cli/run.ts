@@ -11,7 +11,7 @@ import { importAgentProject, type ImportedAgentProject } from '../tui/project/im
 import { rethrowWithProviderHint } from '../tui/provider/packages.js'
 import { buildTelemetryPing, sendTelemetryPing, telemetryEnabled } from '../tui/telemetry.js'
 import { errorMessage } from '../tui/terminal/sanitize.js'
-import { confirmWorkspaceMcp, resolveMcpConfig } from '../tui/workspace/trust.js'
+import { confirmWorkspaceMcp, resolveMcpConfig, type ResolvedMcpConfig } from '../tui/workspace/trust.js'
 
 export { TurnRenderer, runPlainChat, runTurn } from '../console.js'
 
@@ -89,6 +89,19 @@ export function selectRunMode(
     return 'print'
   }
   return terminal.stdoutIsTty ? 'ink' : 'plain'
+}
+
+type ConfirmMcp = (workspace: string, paths: readonly string[]) => Promise<boolean>
+type ResolveMcp = (confirm: ConfirmMcp) => Promise<ResolvedMcpConfig>
+
+/**
+ * Keep the first MCP decision for later builds, so that a dev reload never asks again.
+ * A changed project MCP file then fails its digest check instead.
+ * @internal
+ */
+export function firstMcpDecision(resolve: ResolveMcp): ResolveMcp {
+  let decided: ResolvedMcpConfig | undefined
+  return async (confirm) => (decided ??= await resolve(confirm))
 }
 
 function devProjectFor(args: ParsedArgs): ImportedAgentProject | undefined {
@@ -225,17 +238,20 @@ async function runInteractive(
     const config = await CliConfigStore.load()
     config.useEnvironmentFiles(args.envFiles)
     const initialWorkspace = process.cwd()
+    const resolveMcp: ResolveMcp = (confirm) =>
+      resolveMcpConfig(args.mcpConfig, {
+        cwd: initialWorkspace,
+        confirm,
+        discovery: config.snapshot().settings.mcpDiscovery,
+      })
+    const mcpForBuild = devProject ? firstMcpDecision(resolveMcp) : resolveMcp
     let pinged = false
     process.exitCode = await runInkChat(
       async (signal, requestSetup, conversation, setupLaunch, confirmMcp) => {
         // Dev mode always runs the project agent. A setup change cannot replace it.
         const launch = devProject ? undefined : setupLaunch
         signal.throwIfAborted()
-        const initialMcp = await resolveMcpConfig(args.mcpConfig, {
-          cwd: initialWorkspace,
-          confirm: confirmMcp,
-          discovery: config.snapshot().settings.mcpDiscovery,
-        })
+        const initialMcp = await mcpForBuild(confirmMcp)
         signal.throwIfAborted()
         const projectPath =
           launch?.agentProject ?? (launch?.configuration ? undefined : (args.agent ?? config.snapshot().agentProject))

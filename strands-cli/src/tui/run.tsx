@@ -372,6 +372,8 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
   } finally {
     exiting = true
     if (reloadInFlight && !startupAbort.signal.aborted) startupAbort.abort(new Error('The chat is closing.'))
+    // A build that waits for an MCP trust answer must settle, or the wait for replacementTask never ends.
+    trustRequest?.resolve(false)
     stopDevReload?.()
     process.off('SIGINT', onSigint)
     process.off('SIGTERM', onSigterm)
