@@ -2,8 +2,14 @@ import { describe, expect, it, vi } from 'vitest'
 import { Agent } from '../agent.js'
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
 import { createMockTool } from '../../__fixtures__/tool-helpers.js'
-import { TextBlock, ToolResultBlock, ToolUseBlock } from '../../types/messages.js'
-import { AfterToolCallEvent, BeforeToolCallEvent, BeforeToolsEvent, InterruptEvent } from '../../hooks/events.js'
+import { Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../types/messages.js'
+import {
+  AfterToolCallEvent,
+  BeforeInvocationEvent,
+  BeforeToolCallEvent,
+  BeforeToolsEvent,
+  InterruptEvent,
+} from '../../hooks/events.js'
 import { FunctionTool } from '../../tools/function-tool.js'
 import { InterruptResponseContent } from '../../types/interrupt.js'
 import type { InterruptState, InterruptStateData, PendingToolExecution } from '../../interrupt.js'
@@ -297,6 +303,61 @@ describe('Agent interrupt system', () => {
       const toolResult = toolResultMessage?.content.find((b) => b.type === 'toolResultBlock') as
         ToolResultBlock | undefined
       expect(toolResult?.content[0]).toMatchObject({ type: 'textBlock', text: 'Transfer approved' })
+    })
+
+    it('does not append hook messages when resuming an interrupted tool', async () => {
+      const model = new MockMessageModel()
+        .addTurn({
+          type: 'toolUseBlock',
+          name: 'confirmTool',
+          toolUseId: 'tool-1',
+          input: {},
+        })
+        .addTurn({ type: 'textBlock', text: 'finished' })
+      const tool = createMockTool('confirmTool', (context) => {
+        const response = context.interrupt<string>({ name: 'confirm', reason: 'Continue?' })
+        return `confirmed:${response}`
+      })
+      const agent = new Agent({ model, tools: [tool], printer: false })
+      const contextMessage = new Message({ role: 'user', content: [new TextBlock('context')] })
+      agent.addHook(BeforeInvocationEvent, (event) => {
+        event.messages.push(contextMessage)
+      })
+
+      const interruptResult = await agent.invoke('start')
+      const result = await agent.invoke([
+        new InterruptResponseContent({
+          interruptId: interruptResult.interrupts![0]!.id,
+          response: 'yes',
+        }),
+      ])
+
+      expect(result.stopReason).toBe('endTurn')
+      expect(agent.messages).toEqual([
+        new Message({ role: 'user', content: [new TextBlock('start')], trackingId: anyTrackingId }),
+        contextMessage,
+        new Message({
+          role: 'assistant',
+          content: [new ToolUseBlock({ name: 'confirmTool', toolUseId: 'tool-1', input: {} })],
+          trackingId: anyTrackingId,
+        }),
+        new Message({
+          role: 'user',
+          content: [
+            new ToolResultBlock({
+              toolUseId: 'tool-1',
+              status: 'success',
+              content: [new TextBlock('confirmed:yes')],
+            }),
+          ],
+          trackingId: anyTrackingId,
+        }),
+        new Message({
+          role: 'assistant',
+          content: [new TextBlock('finished')],
+          trackingId: anyTrackingId,
+        }),
+      ])
     })
 
     it('skips already-completed tools when resuming from partial execution', async () => {

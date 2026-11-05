@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, Mock, patch
 import pytest
 
 from strands.agent.agent import Agent
+from strands.agent.conversation_manager.compression.pin_message import is_pinned
 from strands.agent.conversation_manager.summarizing_conversation_manager import (
     DEFAULT_SUMMARIZATION_PROMPT,
     SummarizingConversationManager,
@@ -12,7 +13,7 @@ from strands.agent.invocation_context import (
     _create_auxiliary_invocation_context,
     _create_invocation_context,
 )
-from strands.hooks.events import BeforeModelCallEvent
+from strands.hooks.events import AfterModelCallEvent, BeforeModelCallEvent
 from strands.hooks.registry import HookRegistry
 from strands.models.model import Model
 from strands.types.content import Messages
@@ -306,20 +307,165 @@ def test_reduce_context_does_not_truncate_when_summary_call_fails_for_other_reas
     assert failing_agent.messages[0]["content"][0]["text"] == oversized
 
 
-def test_reduce_context_reraises_once_nothing_is_left_to_truncate(mock_agent):
-    """Every oversized block is truncated in one pass; the next overflow propagates."""
+def _truncated(text, preserve_chars=2_000):
+    removed = len(text) - 2 * preserve_chars
+    return f"{text[:preserve_chars]}...\n\n... [truncated: {removed} chars removed] ...\n\n...{text[-preserve_chars:]}"
+
+
+def test_reduce_context_truncates_largest_block_first_and_reraises_once_nothing_is_left(mock_agent):
+    """The first overflow truncates one block, largest first; the overflow propagates once none qualify."""
     manager = SummarizingConversationManager(summary_ratio=0.5, preserve_recent_messages=3)
     mock_agent.messages = [
         {"role": "user", "content": [{"text": "x" * 50_000}]},
         {"role": "assistant", "content": [{"text": "Response 1"}]},
-        {"role": "user", "content": [{"text": "z" * 50_000}]},
+        {"role": "user", "content": [{"text": "z" * 80_000}]},
+    ]
+
+    manager.reduce_context(mock_agent, e=RuntimeError("overflow"))
+    exp_messages = [
+        {"role": "user", "content": [{"text": "x" * 50_000}]},
+        {"role": "assistant", "content": [{"text": "Response 1"}]},
+        {"role": "user", "content": [{"text": _truncated("z" * 80_000)}]},
+    ]
+    assert mock_agent.messages == exp_messages
+
+    manager.reduce_context(mock_agent, e=RuntimeError("overflow"))
+    exp_messages[0] = {"role": "user", "content": [{"text": _truncated("x" * 50_000)}]}
+    assert mock_agent.messages == exp_messages
+
+    with pytest.raises(ContextWindowOverflowException, match="insufficient messages for summarization"):
+        manager.reduce_context(mock_agent, e=RuntimeError("overflow"))
+
+
+def test_reduce_context_truncation_fallback_skips_pin_first_messages(mock_agent):
+    """``pin_first`` protects messages from the truncation fallback even when no summarization ran yet."""
+    manager = SummarizingConversationManager(summary_ratio=0.5, preserve_recent_messages=3, pin_first=1)
+    mock_agent.messages = [
+        {"role": "user", "content": [{"text": "x" * 50_000}]},
+        {"role": "assistant", "content": [{"text": "Noted."}]},
+        {"role": "user", "content": [{"text": "z" * 80_000}]},
     ]
 
     manager.reduce_context(mock_agent, e=RuntimeError("overflow"))
     with pytest.raises(ContextWindowOverflowException, match="insufficient messages for summarization"):
         manager.reduce_context(mock_agent, e=RuntimeError("overflow"))
 
-    assert all("[truncated:" in mock_agent.messages[i]["content"][0]["text"] for i in (0, 2))
+    assert mock_agent.messages[0]["content"][0]["text"] == "x" * 50_000
+    assert mock_agent.messages[2]["content"][0]["text"] == _truncated("z" * 80_000)
+
+
+def test_pin_first_keeps_pinning_until_the_history_holds_that_many_messages(mock_agent):
+    """A reduction on a history shorter than ``pin_first`` pins what exists and the rest once they arrive."""
+    manager = SummarizingConversationManager(summary_ratio=0.5, preserve_recent_messages=3, pin_first=4)
+    mock_agent.messages = [
+        {"role": "user", "content": [{"text": "x" * 50_000}]},
+        {"role": "assistant", "content": [{"text": "Noted."}]},
+    ]
+
+    # Both messages get pinned, which leaves nothing to truncate.
+    with pytest.raises(ContextWindowOverflowException, match="insufficient messages for summarization"):
+        manager.reduce_context(mock_agent, e=RuntimeError("overflow"))
+    assert [is_pinned(mock_agent.messages, i) for i in range(2)] == [True, True]
+
+    mock_agent.messages += [
+        {"role": "user", "content": [{"text": "y" * 50_000}]},
+        {"role": "assistant", "content": [{"text": "Noted."}]},
+        {"role": "user", "content": [{"text": "z" * 50_000}]},
+    ]
+    manager.reduce_context(mock_agent, e=RuntimeError("overflow"))
+    assert [is_pinned(mock_agent.messages, i) for i in range(5)] == [True, True, True, True, False]
+    assert mock_agent.messages[4]["content"][0]["text"] == _truncated("z" * 50_000)
+
+
+def test_summary_call_is_not_repeated_while_the_overflowed_range_is_unchanged(mock_agent):
+    """Truncation outside the summarize range leaves it as it was, so the summary call is skipped, not re-sent."""
+    manager = SummarizingConversationManager(summary_ratio=0.5, preserve_recent_messages=2)
+    mock_agent.model.stream = Mock(
+        side_effect=lambda *a, **kw: _mock_model_stream_error(ContextWindowOverflowException("Input is too long"))
+    )
+    mock_agent.messages = [
+        {"role": "user", "content": [{"text": "a" * 20_000}]},
+        {"role": "assistant", "content": [{"text": "Noted."}]},
+        {"role": "user", "content": [{"text": "p" * 50_000}]},
+        {"role": "assistant", "content": [{"text": "Noted."}]},
+    ]
+
+    # Round 1: the summary call overflows on [a, Noted]; the largest block (the paste) is truncated instead.
+    manager.reduce_context(mock_agent, e=RuntimeError("overflow"))
+    assert mock_agent.model.stream.call_count == 1
+    assert mock_agent.messages[2]["content"][0]["text"] == _truncated("p" * 50_000)
+
+    # Round 2: the range is unchanged, so no summary call is made; truncation moves on to the block inside it.
+    manager.reduce_context(mock_agent, e=RuntimeError("overflow"))
+    assert mock_agent.model.stream.call_count == 1
+    assert mock_agent.messages[0]["content"][0]["text"] == _truncated("a" * 20_000)
+
+    # Round 3: the range changed, so summarization is attempted again.
+    with pytest.raises(ContextWindowOverflowException, match="Input is too long"):
+        manager.reduce_context(mock_agent, e=RuntimeError("overflow"))
+    assert mock_agent.model.stream.call_count == 2
+
+
+def test_summary_call_is_retried_each_round_when_a_summarization_agent_overflows(mock_agent):
+    """A summarization agent with tools is not deterministic, so its overflow does not arm the range fingerprint."""
+    summarization_agent = Mock(side_effect=ContextWindowOverflowException("Input is too long"))
+    summarization_agent.system_prompt = None
+    summarization_agent.messages = []
+    summarization_agent.tool_registry = Mock()
+    summarization_agent.tool_names = []
+    summarization_agent._default_structured_output_model = None
+    manager = SummarizingConversationManager(
+        summary_ratio=0.5, preserve_recent_messages=2, summarization_agent=summarization_agent
+    )
+    mock_agent.messages = [
+        {"role": "user", "content": [{"text": "a" * 20_000}]},
+        {"role": "assistant", "content": [{"text": "Noted."}]},
+        {"role": "user", "content": [{"text": "p" * 50_000}]},
+        {"role": "assistant", "content": [{"text": "Noted."}]},
+    ]
+
+    manager.reduce_context(mock_agent, e=RuntimeError("overflow"))
+    manager.reduce_context(mock_agent, e=RuntimeError("overflow"))
+
+    assert summarization_agent.call_count == 2
+    assert mock_agent.messages[0]["content"][0]["text"] == _truncated("a" * 20_000)
+    assert mock_agent.messages[2]["content"][0]["text"] == _truncated("p" * 50_000)
+
+
+def test_reduce_context_doubles_truncation_per_overflow_episode_and_resets_on_success(mock_agent):
+    """Consecutive overflows truncate 1, 2, 4, …; any other model-call outcome starts the next episode at 1 again."""
+    manager = SummarizingConversationManager(summary_ratio=0.5, preserve_recent_messages=30)
+    registry = HookRegistry()
+    manager.register_hooks(registry)
+    mock_agent.messages = [{"role": "user", "content": [{"text": str(i % 10) * 10_000}]} for i in range(30)]
+    overflow = ContextWindowOverflowException("overflow")
+
+    def truncated_count():
+        return sum("[truncated:" in message["content"][0]["text"] for message in mock_agent.messages)
+
+    for exp_count in (1, 3, 7):
+        manager.reduce_context(mock_agent, e=overflow)
+        assert truncated_count() == exp_count
+
+    # A further overflow keeps the episode going: the next round truncates 8.
+    registry.invoke_callbacks(AfterModelCallEvent(agent=mock_agent, invocation_state={}, exception=overflow))
+    manager.reduce_context(mock_agent, e=overflow)
+    assert truncated_count() == 15
+
+    # A successful call ends it: the next overflow costs one block again.
+    registry.invoke_callbacks(AfterModelCallEvent(agent=mock_agent, invocation_state={}))
+    manager.reduce_context(mock_agent, e=overflow)
+    assert truncated_count() == 16
+
+    # So does an unrelated failure.
+    registry.invoke_callbacks(AfterModelCallEvent(agent=mock_agent, invocation_state={}, exception=RuntimeError()))
+    manager.reduce_context(mock_agent, e=overflow)
+    assert truncated_count() == 17
+
+    # And the end of an invocation.
+    manager.apply_management(mock_agent)
+    manager.reduce_context(mock_agent, e=overflow)
+    assert truncated_count() == 18
 
 
 def test_reduce_context_does_not_resummarize_only_the_previous_summary(mock_agent):
@@ -409,6 +555,46 @@ def test_agent_recovers_from_oversized_paste_with_summarizing_manager():
     assert len(agent.messages[0]["content"][0]["text"]) < 5_000
     assert agent.messages[-1]["content"][0]["text"] == "Hello!"
     assert model.stream.call_count == 2
+
+
+def test_agent_keeps_earlier_documents_intact_when_a_later_paste_overflows():
+    """Only the paste that overflowed is truncated; an earlier 12K document the model can still fit survives (#5690)."""
+    window_chars = 100_000
+    fact = "The launch code is 7421."
+    document = "d" * 6_000 + fact + "d" * 6_000
+
+    def stream(messages, *args, **kwargs):
+        total = sum(len(block.get("text", "")) for message in messages for block in message["content"])
+        if total > window_chars:
+            return _mock_model_stream_error(ContextWindowOverflowException("Input is too long"))
+        return _mock_model_stream("Hello!")
+
+    model = Mock(spec=Model)
+    model.stream = Mock(side_effect=stream)
+    model.stateful = False
+    agent = Agent(model=model, conversation_manager=SummarizingConversationManager())
+    agent.messages = [
+        {"role": "user", "content": [{"text": document}]},
+        {"role": "assistant", "content": [{"text": "Noted."}]},
+        {"role": "user", "content": [{"text": "What is the launch code?"}]},
+        {"role": "assistant", "content": [{"text": fact}]},
+    ]
+
+    result = agent("p" * 500_000)
+
+    assert str(result).strip() == "Hello!"
+    assert agent.messages[0]["content"][0]["text"] == document
+    assert agent.messages[4]["content"][0]["text"] == _truncated("p" * 500_000)
+    assert model.stream.call_count == 2
+
+    # Every later overflow is its own episode and again costs exactly one block, however many are already truncated.
+    # (A fourth paste would reach preserve_recent_messages and be summarized instead.)
+    for index, paste in enumerate(("q" * 500_000, "r" * 500_000), start=2):
+        agent(paste)
+
+        assert agent.messages[0]["content"][0]["text"] == document
+        assert agent.messages[2 * index + 2]["content"][0]["text"] == _truncated(paste)
+        assert model.stream.call_count == 2 * index
 
 
 def test_proactive_reduce_context_does_not_truncate(mock_agent):

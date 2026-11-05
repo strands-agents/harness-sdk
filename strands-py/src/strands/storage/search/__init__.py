@@ -5,15 +5,19 @@ Storage backends use :class:`KeywordSearchStrategy` by default; consumers
 (memory stores, context offloaders) can override with a different strategy.
 """
 
+from ..embeddings.embedder import Embedder
 from ..storage import StorageSearchResult
 from .bm25 import Bm25SearchStrategy, Bm25SearchStrategyConfig
 from .keyword import KeywordSearchStrategy
+from .s3_vector import S3VectorSearchStrategy
 from .types import SearchStrategy
 
 __all__ = [
     "Bm25SearchStrategy",
     "Bm25SearchStrategyConfig",
+    "Embedder",
     "KeywordSearchStrategy",
+    "S3VectorSearchStrategy",
     "SearchStrategy",
     "StorageSearchResult",
 ]

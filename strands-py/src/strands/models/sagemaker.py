@@ -10,11 +10,13 @@ from typing import Any, Literal, TypedDict, TypeVar
 
 import boto3
 from botocore.config import Config as BotocoreConfig
+from botocore.exceptions import ClientError
 from mypy_boto3_sagemaker_runtime import SageMakerRuntimeClient
 from pydantic import BaseModel
 from typing_extensions import Unpack, override
 
 from ..types.content import ContentBlock, Messages
+from ..types.exceptions import ModelThrottledException
 from ..types.streaming import StreamEvent
 from ..types.tools import ToolChoice, ToolResult, ToolSpec
 from ._validation import validate_config_keys, warn_on_cache_config_not_supported, warn_on_tool_choice_not_supported
@@ -91,6 +93,21 @@ class ToolCall:
         self.id = str(kwargs.get("id", ""))
         self.type = "function"
         self.function = FunctionCall(**kwargs.get("function", {"name": "", "arguments": ""}))
+
+
+def _is_container_throttling(error: ClientError) -> bool:
+    """Return whether a SageMaker runtime error wraps an HTTP 429 from the model container.
+
+    SageMaker reports container errors as ``ModelError`` (HTTP 424) with the container's status in
+    ``OriginalStatusCode``.
+
+    Args:
+        error: The SageMaker runtime client error.
+
+    Returns:
+        True if the container responded with HTTP 429.
+    """
+    return error.response.get("OriginalStatusCode") == 429
 
 
 def _strip_sse_framing(line: str) -> str | None:
@@ -432,6 +449,9 @@ class SageMakerAIModel(OpenAIModel):
 
         Yields:
             Formatted message chunks from the model.
+
+        Raises:
+            ModelThrottledException: If the model container responds with HTTP 429.
         """
         warn_on_tool_choice_not_supported(tool_choice)
 
@@ -608,6 +628,8 @@ class SageMakerAIModel(OpenAIModel):
             self.client.exceptions.InternalDependencyException,
             self.client.exceptions.ModelNotReadyException,
         ) as e:
+            if _is_container_throttling(e):
+                raise ModelThrottledException(str(e)) from e
             logger.error("SageMaker error: %s", str(e))
             raise e
 
@@ -696,6 +718,9 @@ class SageMakerAIModel(OpenAIModel):
 
         Yields:
             Model events with the last being the structured output.
+
+        Raises:
+            ModelThrottledException: If the model container responds with HTTP 429.
         """
         # Format the request for structured output
         request = self.format_request(prompt, system_prompt=system_prompt)
@@ -734,5 +759,7 @@ class SageMakerAIModel(OpenAIModel):
             self.client.exceptions.InternalDependencyException,
             self.client.exceptions.ModelNotReadyException,
         ) as e:
+            if _is_container_throttling(e):
+                raise ModelThrottledException(str(e)) from e
             logger.error("SageMaker structured output error: %s", str(e))
             raise ValueError(f"SageMaker structured output error: {str(e)}") from e

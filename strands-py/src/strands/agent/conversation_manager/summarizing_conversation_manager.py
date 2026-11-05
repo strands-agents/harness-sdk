@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING, Any, Optional, cast
 from typing_extensions import override
 
 from ..._async import run_async
+from ...hooks.events import AfterModelCallEvent
+from ...hooks.registry import HookRegistry
 from ...tools._tool_helpers import noop_tool
 from ...tools.registry import ToolRegistry
 from ...types.content import Message, _ensure_tracking_id
@@ -19,7 +21,7 @@ from .compression.context_compression import (
     generate_summary,
 )
 from .compression.pin_message import apply_pin_first, partition_pinned
-from .compression.truncate_text import _truncate_oversized_text_blocks
+from .compression.truncate_text import _text_blocks, _truncate_largest_text_blocks
 from .conversation_manager import ConversationManager, ProactiveCompressionConfig
 
 if TYPE_CHECKING:
@@ -63,7 +65,9 @@ class SummarizingConversationManager(ConversationManager):
             summarization_system_prompt: Optional system prompt override for summarization.
                 If None, uses the default summarization prompt.
             pin_first: Number of messages at the start of the conversation to permanently pin.
-                Pinned messages are protected from summarization and compacted to the front.
+                Pinned messages are protected from summarization and from the overflow truncation
+                fallback, and compacted to the front. A pinned message that alone exceeds the context
+                window is re-raised as an overflow rather than truncated.
             proactive_compression: Enable proactive context compression before the model call.
                 - ``True``: compress when 70% of the context window is used (default threshold).
                 - ``{"compression_threshold": float}``: compress at the specified ratio (0, 1].
@@ -83,6 +87,23 @@ class SummarizingConversationManager(ConversationManager):
         self.pin_first = max(0, pin_first) if pin_first is not None else None
         self._pin_first_applied = False
         self._summary_message: Message | None = None
+        self._truncation_budget = 1
+        self._overflowed_range_fingerprint: tuple[int, int] | None = None
+
+    @override
+    def register_hooks(self, registry: HookRegistry, **kwargs: Any) -> None:
+        """Register hooks for agent lifecycle events.
+
+        Besides the base proactive-compression hook, resets the truncation budget once a model call ends
+        the run of consecutive overflows, so each overflow episode starts by truncating a single block again.
+        """
+        super().register_hooks(registry, **kwargs)
+        registry.add_callback(AfterModelCallEvent, self._on_after_model_call_reset_budget)
+
+    def _on_after_model_call_reset_budget(self, event: AfterModelCallEvent) -> None:
+        """End the overflow episode on any outcome other than a further overflow."""
+        if not isinstance(event.exception, ContextWindowOverflowException):
+            self._truncation_budget = 1
 
     @override
     def restore_from_session(self, state: dict[str, Any]) -> list[Message] | None:
@@ -107,24 +128,29 @@ class SummarizingConversationManager(ConversationManager):
 
         For the summarizing conversation manager, no proactive management is performed.
         Summarization only occurs when there's a context overflow that triggers reduce_context.
+        An overflow episode never spans invocations, so the truncation budget is reset here as well.
 
         Args:
             agent: The agent whose conversation history will be managed.
                 The agent's messages list is modified in-place.
             **kwargs: Additional keyword arguments for future extensibility.
         """
-        # No proactive management - summarization only happens on context overflow
-        pass
+        self._truncation_budget = 1
 
     def reduce_context(self, agent: "Agent", e: Exception | None = None, **kwargs: Any) -> None:
         """Reduce context using summarization.
 
         When ``e`` is set (reactive overflow recovery) and summarization fails with a
         ``ContextWindowOverflowException`` — too few messages to summarize, or the summary call itself
-        overflows — oversized text blocks in non-pinned messages are truncated to head+tail previews
-        instead; the failure is re-raised when nothing is left to truncate. Any other summarization
-        error (throttling, network) is re-raised untouched, since a retry may still succeed.
-        Truncation edits ``agent.messages`` only; a session store keeps the original content.
+        overflows — the largest text blocks in non-pinned messages are truncated to head+tail previews
+        instead. The first overflow truncates one block; ``Agent`` retries the model call and calls again
+        on a further overflow, and each consecutive truncation doubles the number of blocks (1, 2, 4, …)
+        until a model call succeeds, so a single oversized paste costs exactly one block while a history
+        that needs many blocks gone converges in O(log n) rounds. The failure is re-raised when nothing is
+        left to truncate. Any other summarization error (throttling, network) is re-raised untouched,
+        since a retry may still succeed. Truncation edits ``agent.messages`` in place; whether the original
+        content survives depends on the session manager (repository-based managers persist messages as
+        they are appended and keep it, ``SnapshotSessionManager`` persists the truncated history).
 
         When ``e`` is None (proactive compression), summarization failure is logged and
         returns silently — the model call proceeds regardless.
@@ -150,14 +176,17 @@ class SummarizingConversationManager(ConversationManager):
                 logger.warning("Proactive summarization failed, continuing: %s", summarization_error)
                 return
             # Only an overflow proves summarization cannot shrink the context; anything else may pass on retry.
-            if isinstance(summarization_error, ContextWindowOverflowException) and _truncate_oversized_text_blocks(
-                agent.messages
-            ):
-                logger.warning(
-                    "error=<%s> | summarization could not reduce context, truncated oversized text blocks instead",
-                    summarization_error,
-                )
-                return
+            if isinstance(summarization_error, ContextWindowOverflowException):
+                truncated = _truncate_largest_text_blocks(agent.messages, self._truncation_budget)
+                if truncated:
+                    self._truncation_budget *= 2
+                    logger.warning(
+                        "error=<%s>, truncated_blocks=<%d> | summarization could not reduce context, truncated the"
+                        " largest text blocks instead",
+                        summarization_error,
+                        truncated,
+                    )
+                    return
             # Reactive: rethrow so the ContextWindowOverflowException propagates
             logger.error("Summarization failed: %s", summarization_error)
             raise summarization_error from e
@@ -170,10 +199,17 @@ class SummarizingConversationManager(ConversationManager):
             invocation_context: The request the summary call's usage adds to.
 
         Raises:
-            ContextWindowOverflowException: If there are insufficient messages for summarization, or the
+            ContextWindowOverflowException: If there are insufficient messages for summarization, the
                 only message old enough to summarize is the previous summary (re-summarizing it would
-                not shrink the history, so the overflow would recur forever).
+                not shrink the history, so the overflow would recur forever), or the summary call already
+                overflowed on an identical range (retrying it would only cost another rejected call).
         """
+        # Pin the first N messages before any early exit so the truncation fallback in reduce_context sees them
+        # pinned too; keep pinning on later reductions until the history actually holds N messages.
+        if self.pin_first and not self._pin_first_applied:
+            apply_pin_first(agent.messages, self.pin_first)
+            self._pin_first_applied = len(agent.messages) >= self.pin_first
+
         # Calculate how many messages to summarize
         messages_to_summarize_count = max(1, int(len(agent.messages) * self.summary_ratio))
 
@@ -193,11 +229,6 @@ class SummarizingConversationManager(ConversationManager):
         if messages_to_summarize_count <= 0:
             raise ContextWindowOverflowException("Cannot summarize: insufficient messages for summarization")
 
-        # Pin first N messages permanently (only on first reduction)
-        if self.pin_first and not self._pin_first_applied:
-            apply_pin_first(agent.messages, self.pin_first)
-            self._pin_first_applied = True
-
         # Partition [0, messages_to_summarize_count) into pinned (preserve) and non-pinned (summarize)
         protected_to_preserve, to_summarize = partition_pinned(agent.messages, 0, messages_to_summarize_count)
 
@@ -208,7 +239,18 @@ class SummarizingConversationManager(ConversationManager):
 
         remaining_messages = agent.messages[messages_to_summarize_count:]
 
-        summary_message = self._generate_summary(to_summarize, agent, invocation_context)
+        # Truncation elsewhere in the history leaves this range as it was, so the summary call would overflow again.
+        fingerprint = (len(to_summarize), sum(len(block["text"]) for m in to_summarize for block in _text_blocks(m)))
+        if fingerprint == self._overflowed_range_fingerprint:
+            raise ContextWindowOverflowException("Cannot summarize: the summary call itself exceeds the context window")
+        try:
+            summary_message = self._generate_summary(to_summarize, agent, invocation_context)
+        except ContextWindowOverflowException:
+            # A direct model call is deterministic; a summarization agent with tools may still succeed on retry.
+            if self.summarization_agent is None:
+                self._overflowed_range_fingerprint = fingerprint
+            raise
+        self._overflowed_range_fingerprint = None
         # Assign tracking id to the summary message since it bypasses the append method.
         _ensure_tracking_id(summary_message)
 

@@ -1,5 +1,6 @@
 """Human-in-the-loop interrupt system for agent workflows."""
 
+import logging
 from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
@@ -8,6 +9,8 @@ if TYPE_CHECKING:
     from .types.content import Message
     from .types.interrupt import InterruptResponseContent
     from .types.tools import ToolResult
+
+logger = logging.getLogger(__name__)
 
 _AGENT_STREAM_INTERRUPT_ID_PREFIX = "v1:middleware_agent_stream:"
 """Id prefix for interrupts scoped to a whole invocation pass rather than a single tool call."""
@@ -211,22 +214,16 @@ class _InterruptState:
         legacy_tool_use_message = context.pop("tool_use_message", None)
         legacy_tool_results = context.pop("tool_results", []) if legacy_tool_use_message is not None else []
 
-        pending_tool_execution: PendingToolExecution | None
-        if pending_tool_execution_data is not None:
-            try:
-                pending_tool_execution = PendingToolExecution(**pending_tool_execution_data)
-            except TypeError as error:
-                # Avoid importing the types package while this module is still initializing.
-                from .types.exceptions import SessionException
+        if pending_tool_execution_data is None and legacy_tool_use_message is not None:
+            pending_tool_execution_data = {
+                "assistant_message": legacy_tool_use_message,
+                "completed_tool_results": legacy_tool_results,
+            }
 
-                raise SessionException(f"Failed to restore pending tool execution state: {error}") from error
-        elif legacy_tool_use_message is not None:
-            pending_tool_execution = PendingToolExecution(
-                assistant_message=cast("Message", legacy_tool_use_message),
-                completed_tool_results=cast(list["ToolResult"], legacy_tool_results),
-            )
-        else:
-            pending_tool_execution = None
+        # Only an activated state replays a pending execution; a stale one is dropped rather than restored.
+        pending_tool_execution: PendingToolExecution | None = None
+        if activated and pending_tool_execution_data is not None:
+            pending_tool_execution = _restore_pending_tool_execution(pending_tool_execution_data)
 
         return cls(
             interrupts={
@@ -239,3 +236,63 @@ class _InterruptState:
             activated=activated,
             pending_tool_execution=pending_tool_execution,
         )
+
+
+def _restore_pending_tool_execution(data: dict[str, Any]) -> PendingToolExecution | None:
+    """Rebuild a pending tool execution from session data.
+
+    Malformed data raises ``SessionException`` naming the field. Well-formed data the event loop could not replay
+    (no tool uses, or a result for an unknown tool use) is dropped with a warning instead, so a persisted session
+    stays loadable and the next invocation calls the model again.
+    """
+    # Avoid importing the types package while this module is still initializing.
+    from .types.exceptions import SessionException
+
+    try:
+        pending = PendingToolExecution(**data)
+    except TypeError as error:
+        raise SessionException(
+            f"field=<pending_tool_execution> | failed to restore pending tool execution state: {error}"
+        ) from error
+
+    message = pending.assistant_message
+    if not isinstance(message, dict) or not isinstance(message.get("content"), list):
+        raise SessionException(
+            "field=<pending_tool_execution.assistant_message> | failed to parse restored pending tool execution"
+        )
+    if message.get("role") != "assistant":
+        raise SessionException(
+            "field=<pending_tool_execution.assistant_message.role> | pending tool execution message must be an "
+            "assistant message"
+        )
+
+    tool_use_ids = {
+        block["toolUse"]["toolUseId"]
+        for block in message["content"]
+        if isinstance(block, dict) and isinstance(block.get("toolUse"), dict) and "toolUseId" in block["toolUse"]
+    }
+    if not tool_use_ids:
+        logger.warning(
+            "field=<pending_tool_execution.assistant_message.content> | pending tool execution message has no tool "
+            "uses, dropping it"
+        )
+        return None
+
+    if not isinstance(pending.completed_tool_results, list):
+        raise SessionException(
+            "field=<pending_tool_execution.completed_tool_results> | completed tool results must be a list"
+        )
+    for result in pending.completed_tool_results:
+        tool_use_id = result.get("toolUseId") if isinstance(result, dict) else None
+        field_name = f"field=<pending_tool_execution.completed_tool_results>, tool_use_id=<{tool_use_id}>"
+        if not isinstance(result, dict):
+            raise SessionException(f"{field_name} | failed to parse restored pending tool execution")
+        if "status" not in result:
+            raise SessionException(f"{field_name} | completed tool result has no status")
+        if not isinstance(result.get("content"), list):
+            raise SessionException(f"{field_name} | completed tool result content must be a list")
+        if tool_use_id not in tool_use_ids:
+            logger.warning("%s | does not match a tool use in the pending assistant message, dropping it", field_name)
+            return None
+
+    return pending

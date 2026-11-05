@@ -1,0 +1,115 @@
+---
+import { Icon } from '@astrojs/starlight/components'
+import { DEFAULT_LANGUAGE_LABEL } from '../../util/language-preference'
+import { pathWithBase } from '../../util/links'
+import { sampleGuidePath, type SampleGuideFamily } from '../../util/sample-guides'
+import { languageLabel } from '../../util/source-links'
+
+interface Props {
+  family: SampleGuideFamily
+}
+
+const { family } = Astro.props
+const defaultLanguage = DEFAULT_LANGUAGE_LABEL.toLowerCase()
+const primary = family.guides.find((guide) => guide.data.language === defaultLanguage) ?? family.primary
+---
+
+<article class="sl-link-card sample-link-card" data-sample-family={family.key}>
+  <div class="sample-link-card__stack">
+    <a class="title sample-link-card__title" href={pathWithBase(sampleGuidePath(primary))}>
+      {primary.data.title}
+    </a>
+    <p class="description sample-link-card__description">{primary.data.description}</p>
+    <nav class="sample-link-card__languages" aria-label={`${primary.data.title} languages`}>
+      {
+        family.guides.map((guide, index) => (
+          <>
+            {index > 0 && <span aria-hidden="true">·</span>}
+            <a href={pathWithBase(sampleGuidePath(guide))}>{languageLabel(guide.data.language)}</a>
+          </>
+        ))
+      }
+    </nav>
+  </div>
+  <Icon name="right-arrow" size="1.333em" class="sample-link-card__icon rtl:flip" />
+</article>
+
+<style>
+  .sample-link-card {
+    position: relative;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 0.5rem;
+    min-width: 0;
+    padding: 1rem;
+    border: 1px solid var(--sl-color-gray-5);
+    border-radius: 0.5rem;
+    box-shadow: var(--sl-shadow-sm);
+  }
+
+  .sample-link-card:hover {
+    border-color: var(--sl-color-gray-2);
+    background: var(--sl-color-gray-7, var(--sl-color-gray-6));
+  }
+
+  .sample-link-card:focus-within {
+    border-color: var(--sl-color-accent);
+  }
+
+  .sample-link-card__stack {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    min-width: 0;
+  }
+
+  .sample-link-card__title {
+    color: var(--sl-color-white);
+    font-size: var(--sl-text-lg);
+    font-weight: 600;
+    line-height: var(--sl-line-height-headings);
+    text-decoration: none;
+  }
+
+  .sample-link-card__title::before {
+    position: absolute;
+    inset: 0;
+    content: '';
+  }
+
+  .sample-link-card__description {
+    margin: 0;
+    color: var(--sl-color-gray-3);
+    line-height: 1.5;
+  }
+
+  .sample-link-card__languages {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    margin-top: auto;
+    padding-top: 0.25rem;
+    color: var(--sl-color-gray-3);
+    font-size: var(--sl-text-sm);
+  }
+
+  .sample-link-card__languages a {
+    color: var(--sl-color-text-accent);
+    font-weight: 600;
+    text-decoration: none;
+  }
+
+  .sample-link-card__languages a:hover {
+    text-decoration: underline;
+  }
+
+  :global(.sample-link-card__icon) {
+    color: var(--sl-color-gray-3);
+  }
+
+  .sample-link-card:hover :global(.sample-link-card__icon) {
+    color: var(--sl-color-white);
+  }
+</style>

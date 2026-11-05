@@ -52,6 +52,21 @@ export function resolveConfigMetadata<T extends BaseModelConfig>(config: T, mode
   return { ...config, contextWindowLimit: contextWindow }
 }
 
+/**
+ * The `maxTokens` to send: the configured value, else the model's output ceiling from the shared model
+ * info with the `modelInfo` override applied, else `undefined`. Reads the layers directly rather than
+ * `Model.modelInfo` so `getConfig()` can call it.
+ *
+ * @internal
+ * @param config - The stored model config
+ * @param modelId - The model ID to look up
+ * @returns The resolved `maxTokens`, or `undefined` when neither the user nor the model info says
+ */
+export function resolveMaxTokens(config: BaseModelConfig, modelId: string): number | undefined {
+  if (config.maxTokens !== undefined) return config.maxTokens
+  return mergeModelInfo(lookupModelInfo(modelId), config.modelInfo).limits?.maxOutputTokens
+}
+
 class CitationAccumulator {
   citations: Citation[] = []
   content: CitationGeneratedContent[] = []
@@ -497,7 +512,8 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
   ): AsyncGenerator<ModelStreamEvent | ContentBlock, StreamAggregatedResult, undefined> {
     try {
       // State maintained in closure
-      let messageRole: Role | null = null
+      // Providers can end an empty turn with only a stop event, so a message is assumed to be the assistant's.
+      let messageRole: Role = 'assistant'
       const contentBlocks: ContentBlock[] = []
       let accumulatedText = ''
       let accumulatedToolInput = ''
@@ -608,16 +624,11 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
 
           case 'modelMessageStopEvent':
             // Store message and stop reason
-            if (messageRole) {
-              const filtered = contentBlocks.filter(
-                (block) => !(block instanceof TextBlock && block.text.trim() === '')
-              )
-              stoppedMessage = new Message({
-                role: messageRole,
-                content: filtered,
-              })
-              finalStopReason = event.stopReason!
-            }
+            stoppedMessage = new Message({
+              role: messageRole,
+              content: contentBlocks.filter((block) => !(block instanceof TextBlock && block.text.trim() === '')),
+            })
+            finalStopReason = event.stopReason!
             break
 
           case 'modelMetadataEvent':

@@ -23,32 +23,43 @@ def _text_blocks(message: Message) -> Iterator[ContentBlock | ToolResultContent]
                 yield item
 
 
-def _truncate_oversized_text_blocks(messages: Messages, preserve_chars: int = _PRESERVE_CHARS) -> bool:
-    """Replace every oversized, untruncated text block in non-pinned messages with a head+tail preview.
+def _is_truncated(block: ContentBlock | ToolResultContent) -> bool:
+    return _TRUNCATION_MARKER.search(block["text"]) is not None
 
-    A block qualifies when truncating it saves more than ``preserve_chars`` characters, so each call
-    either shrinks the history by a meaningful amount or reports that nothing is left to truncate.
+
+def _truncate_largest_text_blocks(messages: Messages, budget: int = 1, preserve_chars: int = _PRESERVE_CHARS) -> int:
+    """Replace the largest untruncated text blocks in non-pinned messages with head+tail previews.
+
+    Up to ``budget`` blocks are truncated, largest first (ties go to the oldest). A block qualifies when
+    truncating it saves more than ``preserve_chars`` characters, so each call either shrinks the history
+    by a meaningful amount or reports that nothing is left.
 
     Args:
         messages: The conversation history, modified in place.
+        budget: Maximum number of blocks to truncate.
         preserve_chars: Characters kept at each end of a truncated text.
 
     Returns:
-        True if at least one block was truncated.
+        The number of blocks truncated.
     """
     if preserve_chars <= 0:
-        return False
+        return 0
 
-    truncated = False
-    for index, message in enumerate(messages):
-        if is_pinned(messages, index):
-            continue
-        for block in _text_blocks(message):
-            text = block["text"]
-            removed = len(text) - 2 * preserve_chars
-            if removed <= preserve_chars or _TRUNCATION_MARKER.search(text):
-                continue
-            marker = f"...\n\n... [truncated: {removed} chars removed] ...\n\n..."
-            block["text"] = f"{text[:preserve_chars]}{marker}{text[-preserve_chars:]}"
-            truncated = True
-    return truncated
+    candidates = sorted(
+        (
+            block
+            for index, message in enumerate(messages)
+            if not is_pinned(messages, index)
+            for block in _text_blocks(message)
+            if not _is_truncated(block)
+        ),
+        key=lambda block: len(block["text"]),
+        reverse=True,
+    )
+    qualifying = [block for block in candidates[:budget] if len(block["text"]) > 3 * preserve_chars]
+    for block in qualifying:
+        text = block["text"]
+        removed = len(text) - 2 * preserve_chars
+        marker = f"...\n\n... [truncated: {removed} chars removed] ...\n\n..."
+        block["text"] = f"{text[:preserve_chars]}{marker}{text[-preserve_chars:]}"
+    return len(qualifying)
