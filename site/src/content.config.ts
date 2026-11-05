@@ -110,7 +110,7 @@ export type ChangelogFrontmatter = z.infer<typeof changelogFrontmatterSchema>
 // integration (documented by a vendor dev-guide, no Strands-specific
 // installable package) as covering that language, so it still participates
 // in the language facet. The registry link derives from the package name at
-// build time (see toCardModel in util/catalog.ts), so entries never declare
+// build time (see toPublicModel in util/catalog.ts), so entries never declare
 // registry URLs. `.strict()` makes a submitted `registry:` (or any other
 // stray key) fail the build with a clear error instead of being silently
 // ignored.
