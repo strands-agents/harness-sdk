@@ -45,7 +45,10 @@ export function createReloader(options: ReloaderOptions): Reloader {
     retry = undefined
     if (closed || running || !pending) return
     if (!canReload()) {
-      if (!waiting) status({ kind: 'pending' })
+      if (!waiting) {
+        clearTimeout(settle)
+        status({ kind: 'pending' })
+      }
       waiting = true
       schedule()
       return

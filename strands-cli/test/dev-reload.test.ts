@@ -49,6 +49,17 @@ describe('createReloader', () => {
     expect(reload).toHaveBeenCalledOnce()
   })
 
+  it('keeps the pending state when a save waits after a recent reload', async () => {
+    let busy = false
+    const { states, reloader } = setup({ canReload: () => !busy })
+    reloader.request()
+    await vi.advanceTimersByTimeAsync(0)
+    busy = true
+    reloader.request()
+    await vi.advanceTimersByTimeAsync(150)
+    expect(states.at(-1)).toEqual({ kind: 'pending' })
+  })
+
   it('runs one more reload for a save during a reload', async () => {
     let finish!: (outcome: ReloadOutcome) => void
     const reload = vi.fn(() => new Promise<ReloadOutcome>((resolve) => (finish = resolve)))
