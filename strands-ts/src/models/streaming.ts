@@ -496,6 +496,9 @@ export interface CitationsDelta {
  * if `inputTokens + outputTokens === totalTokens`, `inputTokens` already includes the cache fields;
  * otherwise, total input is `inputTokens + cacheReadInputTokens + cacheWriteInputTokens`. Adding the
  * cache fields to an `inputTokens` that already includes them counts cached tokens twice.
+ *
+ * Custom model providers should include cached tokens in `inputTokens` (matching the OpenTelemetry
+ * GenAI conventions), so that `totalTokens === inputTokens + outputTokens`.
  */
 export interface Usage {
   /**

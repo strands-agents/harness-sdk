@@ -15,6 +15,9 @@ class Usage(TypedDict, total=False):
     otherwise, total input is ``inputTokens + cacheReadInputTokens + cacheWriteInputTokens``. Adding the
     cache fields to an ``inputTokens`` that already includes them counts cached tokens twice.
 
+    Custom model providers should include cached tokens in ``inputTokens`` (matching the OpenTelemetry
+    GenAI conventions), so that ``totalTokens == inputTokens + outputTokens``.
+
     Attributes:
         inputTokens: Number of input tokens, as the model provider counts them. May or may not include
             cached tokens, depending on the provider.
