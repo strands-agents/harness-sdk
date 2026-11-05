@@ -181,7 +181,7 @@ describe('Offload.summarize', () => {
       const toolResultMessage = makeToolResultMessage(largeText)
       const latest = new Message({ role: 'assistant', content: [new TextBlock('latest')] })
       const messages = [firstMessage, toolResultMessage, latest]
-      const mockModel = { stream: vi.fn(), countTokens: vi.fn(async () => 5000), modelInfo: {} }
+      const mockModel = { stream: vi.fn(), countTokens: vi.fn(async () => 5000) }
       const strategy = Offload.summarize('toolResults').when({ utilization: 0.85 })
       const context = makeContext(messages, 0.9, mockModel)
 
@@ -334,7 +334,7 @@ describe('repeated summarization', () => {
   // Regression test for https://github.com/strands-agents/harness-sdk/issues/4685
   it('keeps summaries out of a pinned message 0', async () => {
     const strategy = Offload.summarize('*').when({ utilization: 0.7, preserveRecent: 4 })
-    const mockModel = { stream: vi.fn(), modelInfo: {} }
+    const mockModel = { stream: vi.fn() }
     const task = () =>
       new Message({ role: 'user', content: [new TextBlock('task')], metadata: { custom: { pinned: true } } })
     const messages = [task()]
@@ -354,56 +354,5 @@ describe('repeated summarization', () => {
       .flatMap((message) => message.content)
       .filter((block) => block instanceof TextBlock && block.text.startsWith('[Summarized:'))
     expect(summaries).toHaveLength(1)
-  })
-})
-
-describe('server-side summary', () => {
-  const opening = (): Message[] => [
-    new Message({ role: 'user', content: [new TextBlock('task')] }),
-    new Message({ role: 'assistant', content: [new TextBlock('old1')] }),
-    new Message({ role: 'user', content: [new TextBlock('old2')] }),
-    new Message({ role: 'assistant', content: [new TextBlock('old3')] }),
-    new Message({ role: 'user', content: [new TextBlock('recent')] }),
-  ]
-
-  it('replaces the opening run with the model summary, keeping message 0', async () => {
-    const summary = new TextBlock('compacted', { metadata: { serverSideSummary: { provider: 'anthropic' } } })
-    const summarize = vi.fn(async () => summary)
-    const mockModel = { stream: vi.fn(), summarize, modelInfo: { capabilities: { serverSideSummary: true } } }
-    const messages = opening()
-    const strategy = Offload.summarize('*').when({ utilization: 0.8, preserveRecent: 1 })
-
-    expect(await strategy.apply(makeContext(messages, 0.9, mockModel))).toBe(true)
-
-    const sent = (summarize.mock.calls[0] as unknown as [Message[]])[0]
-    expect(sent.map((message) => (message.content[0] as TextBlock).text)).toStrictEqual([
-      'task',
-      'old1',
-      'old2',
-      'old3',
-    ])
-    expect(messages.map((message) => message.content[0])).toStrictEqual([
-      new TextBlock('task'),
-      summary,
-      new TextBlock('recent'),
-    ])
-    expect(mockModel.stream).not.toHaveBeenCalled()
-  })
-
-  it('summarizes client-side when the model writes no summary', async () => {
-    vi.mocked(summarizeContent).mockResolvedValueOnce('client summary')
-    const summarize = vi.fn(async () => undefined)
-    const mockModel = { stream: vi.fn(), summarize, modelInfo: { capabilities: { serverSideSummary: true } } }
-    const messages = opening()
-    const strategy = Offload.summarize('*').when({ utilization: 0.8, preserveRecent: 1 })
-
-    expect(await strategy.apply(makeContext(messages, 0.9, mockModel))).toBe(true)
-
-    expect(summarize).toHaveBeenCalledOnce()
-    expect(
-      messages.some((message) =>
-        message.content.some((block) => block instanceof TextBlock && block.text.includes('client summary'))
-      )
-    ).toBe(true)
   })
 })

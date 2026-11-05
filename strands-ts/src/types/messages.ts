@@ -202,31 +202,6 @@ export type ContentBlock =
   | CitationsBlock
 
 /**
- * Marks a text block as a summary its provider wrote server-side; other providers send the text.
- */
-export interface ServerSideSummary {
-  /**
-   * Name of the provider that wrote the summary, for example `'anthropic'`.
-   */
-  provider: string
-
-  /**
-   * Signature the provider returned with the summary, sent back unchanged.
-   */
-  signature?: string
-}
-
-/**
- * Metadata about a text block. Not sent to model providers, except as noted per field.
- */
-export interface TextBlockMetadata {
-  /**
-   * Present when the block is a summary its provider wrote server-side; only that provider reads it.
-   */
-  serverSideSummary?: ServerSideSummary
-}
-
-/**
  * Data for a text block.
  */
 export interface TextBlockData {
@@ -234,11 +209,6 @@ export interface TextBlockData {
    * Plain text content.
    */
   text: string
-
-  /**
-   * Optional metadata about the block.
-   */
-  metadata?: TextBlockMetadata
 }
 
 /**
@@ -255,14 +225,8 @@ export class TextBlock implements TextBlockData, JSONSerializable<TextBlockData>
    */
   readonly text: string
 
-  /**
-   * Optional metadata about the block.
-   */
-  readonly metadata?: TextBlockMetadata
-
-  constructor(text: string, options?: { metadata?: TextBlockMetadata }) {
-    this.text = text
-    if (options?.metadata !== undefined) this.metadata = options.metadata
+  constructor(data: string) {
+    this.text = data
   }
 
   /**
@@ -270,7 +234,7 @@ export class TextBlock implements TextBlockData, JSONSerializable<TextBlockData>
    * Called automatically by JSON.stringify().
    */
   toJSON(): TextBlockData {
-    return { text: this.text, ...(this.metadata !== undefined && { metadata: this.metadata }) }
+    return { text: this.text }
   }
 
   /**
@@ -280,7 +244,7 @@ export class TextBlock implements TextBlockData, JSONSerializable<TextBlockData>
    * @returns TextBlock instance
    */
   static fromJSON(data: TextBlockData): TextBlock {
-    return new TextBlock(data.text, data.metadata !== undefined ? { metadata: data.metadata } : undefined)
+    return new TextBlock(data.text)
   }
 }
 
@@ -1035,7 +999,7 @@ export class GuardContentBlock
  */
 export function contentBlockFromData(data: ContentBlockData): ContentBlock {
   if ('text' in data) {
-    return TextBlock.fromJSON(data)
+    return new TextBlock(data.text)
   } else if ('toolUse' in data) {
     return new ToolUseBlock(data.toolUse)
   } else if ('toolResult' in data) {

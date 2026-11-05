@@ -3,7 +3,6 @@ import {
   Model,
   type BaseModelConfig,
   type CountTokensOptions,
-  type SummarizeOptions,
   type StreamOptions,
   resolveConfigMetadata,
   resolveMaxTokens,
@@ -19,8 +18,7 @@ import {
   type StructuredOutputMechanism,
 } from './native-output.js'
 import { zodSchemaToJsonSchema } from '../tools/zod-utils.js'
-import { Message, TextBlock } from '../types/messages.js'
-import type { ContentBlock, SystemPrompt } from '../types/messages.js'
+import type { Message, ContentBlock, SystemPrompt } from '../types/messages.js'
 import type { ModelStreamEvent } from '../models/streaming.js'
 import { createEmptyUsage } from '../models/streaming.js'
 import { ContextWindowOverflowError, ModelError, ModelThrottledError, normalizeError } from '../errors.js'
@@ -147,33 +145,6 @@ function headerBetas(headers: ClientOptions['defaultHeaders']): string[] {
     .flatMap(([, value]) => (Array.isArray(value) ? value : [value]))
     .filter((value): value is string => typeof value === 'string')
     .flatMap((value) => value.split(',').flatMap((beta) => beta.trim() || []))
-}
-
-/** Beta that enables on-demand compaction, and compaction blocks in later requests. */
-export const COMPACTION_BETA = 'compact-2026-09-04'
-
-/** Whether `block` holds a compaction block Anthropic returned, stored as text. */
-function isCompaction(block: ContentBlock): block is TextBlock {
-  return block.type === 'textBlock' && block.metadata?.serverSideSummary?.provider === 'anthropic'
-}
-
-/**
- * Returns the messages from the last compaction block, which stands in for everything before it, or all of them.
- * The API rejects any content before a compaction block.
- */
-function fromLastCompaction(messages: Message[]): Message[] {
-  for (let index = messages.length - 1; index >= 0; index--) {
-    const message = messages[index]!
-    let position = -1
-    message.content.forEach((block, blockIndex) => {
-      if (isCompaction(block)) position = blockIndex
-    })
-    if (position >= 0) {
-      const first = new Message({ role: message.role, content: message.content.slice(position) })
-      return [first, ...messages.slice(index + 1)]
-    }
-  }
-  return messages
 }
 
 export interface AnthropicModelConfig extends BaseModelConfig {
@@ -308,8 +279,6 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
    * @returns Total input token count
    */
   override async countTokens(messages: Message[], options?: CountTokensOptions): Promise<number> {
-    // Count what a request sends, which starts at the last compaction block.
-    if (this._serverSideSummary()) messages = fromLastCompaction(messages)
     if (this._config.useNativeTokenCount !== true) return super.countTokens(messages, options)
 
     try {
@@ -322,7 +291,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
         ...(request.tool_choice && { tool_choice: request.tool_choice }),
       }
 
-      const requestOptions = this._buildRequestOptions(messages)
+      const requestOptions = this._buildRequestOptions()
       const response = requestOptions
         ? await this._client.messages.countTokens(params, requestOptions)
         : await this._client.messages.countTokens(params)
@@ -356,7 +325,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
         options
       )
       thinking = request.thinking
-      const requestOptions = this._buildRequestOptions(messages)
+      const requestOptions = this._buildRequestOptions()
       const usage = createEmptyUsage()
 
       while (true) {
@@ -594,67 +563,13 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
     return handleRejectedMechanism('anthropic', modelId, mechanism, schema, apiErrorMessage(error))
   }
 
-  /**
-   * Summarizes the conversation's opening `messages` with Anthropic on-demand compaction.
-   *
-   * Sends the live system prompt and tools unchanged under beta `compact-2026-09-04`, so the thinking kept after the
-   * summary stays valid. The returned compaction block is stored as a {@link TextBlock} holding the summary, which
-   * other providers send, with its signature in `metadata.serverSideSummary`; later requests from a model with
-   * `serverSideSummary` rebuild the compaction block from the two and start from it.
-   *
-   * @param messages - The opening messages to summarize, from message 0, left unmodified
-   * @param options - The live system prompt and tools, and instructions replacing the API's own prompt
-   * @returns The summary block, or `undefined` when the response holds no compaction block
-   */
-  override async summarize(messages: Message[], options?: SummarizeOptions): Promise<ContentBlock | undefined> {
-    const { stop_sequences: _stopSequences, ...request } = this._formatRequest(messages, {
-      ...(options?.systemPrompt !== undefined && { systemPrompt: options.systemPrompt }),
-      ...(options?.toolSpecs !== undefined && { toolSpecs: options.toolSpecs }),
-    })
-    const instructions = options?.instructions
-    const params = {
-      ...request,
-      compaction: { type: 'summarize', ...(instructions && { instructions }) },
-    } as unknown as Anthropic.Beta.Messages.MessageCreateParamsStreaming
-    const response = await this._client.beta.messages
-      .stream(params, this._buildRequestOptions(messages, true))
-      .finalMessage()
-
-    const block = (response.content as unknown as { type: string; content?: unknown; signature?: unknown }[]).find(
-      (candidate) => candidate.type === 'compaction'
-    )
-    if ((response.stop_reason as string) !== 'compaction' || typeof block?.content !== 'string' || !block.content) {
-      logger.warn(
-        `model_id=<${this._config.modelId}>, stop_reason=<${response.stop_reason}> | compaction returned no summary`
-      )
-      return undefined
-    }
-    return new TextBlock(block.content, {
-      metadata: {
-        serverSideSummary: {
-          provider: 'anthropic',
-          ...(typeof block.signature === 'string' && { signature: block.signature }),
-        },
-      },
-    })
-  }
-
-  /** Whether stored compaction blocks are sent as such; otherwise their text is sent. */
-  private _serverSideSummary(): boolean {
-    return this.modelInfo.capabilities?.serverSideSummary === true
-  }
-
-  private _buildRequestOptions(messages: Message[] = [], compacting = false): Anthropic.RequestOptions | undefined {
-    const sendsCompaction =
-      this._serverSideSummary() && messages.some((message) => message.content.some((block) => isCompaction(block)))
-    const required = [
-      ...(this._dropsStaleThinking() ? [THINKING_BINDING_BETA] : []),
-      ...(compacting || sendsCompaction ? [COMPACTION_BETA] : []),
-    ]
+  private _buildRequestOptions(): Anthropic.RequestOptions | undefined {
     let betas = this._config.betas ?? []
-    // Request headers replace client headers of the same name, so betas set on the client are carried over.
-    if (required.length > 0 && betas.length === 0) betas = this._clientBetas
-    betas = [...betas, ...required.filter((beta) => !betas.includes(beta))]
+    if (this._dropsStaleThinking()) {
+      // Request headers replace client headers of the same name, so betas set on the client are carried over.
+      if (betas.length === 0) betas = this._clientBetas
+      if (!betas.includes(THINKING_BINDING_BETA)) betas = [...betas, THINKING_BINDING_BETA]
+    }
     if (betas.length === 0) return undefined
     return { headers: { 'anthropic-beta': betas.join(',') } }
   }
@@ -766,7 +681,6 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
 
   private _formatRequest(messages: Message[], options?: StreamOptions): Anthropic.MessageStreamParams {
     if (!this._config.modelId) throw new Error('Model ID is required')
-    if (this._serverSideSummary()) messages = fromLastCompaction(messages)
 
     const messagesCache = this._cacheSection('messagesTTL')
     // The cache point goes on the last user message with content, not counting cache point blocks.
@@ -931,14 +845,6 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
   ): Anthropic.ContentBlockParam | Anthropic.ToolResultBlockParam | undefined {
     switch (block.type) {
       case 'textBlock':
-        if (this._serverSideSummary() && isCompaction(block)) {
-          const signature = block.metadata?.serverSideSummary?.signature
-          return {
-            type: 'compaction',
-            content: block.text,
-            ...(signature && { signature }),
-          } as unknown as Anthropic.ContentBlockParam
-        }
         return { type: 'text', text: block.text }
 
       case 'imageBlock': {

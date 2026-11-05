@@ -75,12 +75,6 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
     const safe = messages.filter((message) => safeSet.has(message))
     if (safe.length === 0) return false
 
-    if (
-      model.modelInfo.capabilities?.serverSideSummary === true &&
-      (await this._summarizeServerSide(context, model, safe))
-    )
-      return true
-
     const contentBlocks = flattenMessagesToContent(safe)
     const summary = await summarizeContent(contentBlocks, model, this._config, context.invocationContext)
     if (!summary) return false
@@ -91,41 +85,6 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
 
     repairAlternation(messages)
     logger.debug(`summarized=<${safe.length}>, tokens=<${totalTokens}> | batched summarization complete`)
-    return true
-  }
-
-  /**
-   * Summarizes message 0 through the last of `safe` server-side, keeping message 0 in place.
-   *
-   * A server-side summary can only stand in for the conversation's exact start, so every message up to the last of
-   * `safe` is covered, even ones `safe` leaves out (such as pinned messages). The summary becomes an assistant message
-   * at index 1, leading any assistant content after it once alternation is repaired.
-   *
-   * @returns False when the model wrote no summary, so the caller summarizes client-side instead
-   */
-  private async _summarizeServerSide(context: ContextState, model: Model, safe: Message[]): Promise<boolean> {
-    const { messages, agent } = context
-    const safeSet = new Set(safe)
-    let end = messages.length
-    while (end > 0 && !safeSet.has(messages[end - 1]!)) end--
-    if (end - 1 > safe.length) {
-      logger.warn(
-        `covered=<${end - 1}>, eligible=<${safe.length}> | a server-side summary covers the conversation's start` +
-          ' | summarizing messages that were not eligible too'
-      )
-    }
-    const summary = await model.summarize(messages.slice(0, end), {
-      toolSpecs: agent.toolRegistry.list().map((tool) => tool.toolSpec),
-      ...(agent.systemPrompt !== undefined && { systemPrompt: agent.systemPrompt }),
-      ...(this._config.systemPrompt !== undefined && { instructions: this._config.systemPrompt }),
-    })
-    if (!summary) return false
-    if (agent.model.modelInfo.capabilities?.serverSideSummary !== true) {
-      logger.warn("the agent's model does not declare serverSideSummary | it will read the summary as plain text")
-    }
-    messages.splice(1, end - 1, new Message({ role: 'assistant', content: [summary] }))
-    repairAlternation(messages)
-    logger.debug(`summarized=<${end - 1}> | summarized opening messages server-side`)
     return true
   }
 

@@ -292,16 +292,6 @@ export interface StreamOptions {
 }
 
 /**
- * Options for {@link Model.summarize}.
- */
-export interface SummarizeOptions extends CountTokensOptions {
-  /**
-   * Summarization instructions replacing the provider's own prompt.
-   */
-  instructions?: string
-}
-
-/**
  * Options for counting tokens in a set of messages.
  */
 export interface CountTokensOptions {
@@ -438,26 +428,6 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
    */
   async countTokens(messages: Message[], options?: CountTokensOptions): Promise<number> {
     return estimateTokensHeuristic(messages, options)
-  }
-
-  /**
-   * Summarizes the conversation's opening `messages` server-side.
-   *
-   * The summarize strategy calls this instead of its client-side summary when
-   * `modelInfo.capabilities.serverSideSummary` is `true`, with the messages from message 0 through the last one it
-   * summarizes. Providers with server-side summaries override it. The base implementation has none, so it logs a
-   * warning and returns `undefined`, and the strategy summarizes client-side instead.
-   *
-   * @param _messages - The opening messages to summarize, from message 0, left unmodified
-   * @param _options - The live system prompt and tools, and instructions replacing the provider's own prompt
-   * @returns The summary block that takes the summarized messages' place, or `undefined` when none was written
-   */
-  async summarize(_messages: Message[], _options?: SummarizeOptions): Promise<ContentBlock | undefined> {
-    logger.warn(
-      `model=<${this.constructor.name}> | serverSideSummary is set but the model has no server-side summary` +
-        ' | summarizing client-side instead'
-    )
-    return undefined
   }
 
   /**
