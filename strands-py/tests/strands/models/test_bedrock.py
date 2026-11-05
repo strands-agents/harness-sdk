@@ -4674,6 +4674,19 @@ def test_messages_ttl_false_disables_the_message_cache_point(bedrock_client):
     assert request["messages"] == [{"role": "user", "content": [{"text": "hi"}]}]
 
 
+@pytest.mark.asyncio
+async def test_stream_cache_messages_false_skips_the_message_cache_point(bedrock_client, alist):
+    bedrock_client.converse_stream.return_value = {"stream": []}
+    model = BedrockModel(model_id="us.anthropic.claude-haiku-4-5-20251001-v1:0", cache_config=CacheConfig())
+    messages = [{"role": "user", "content": [{"text": "hi"}]}]
+
+    await alist(model.stream(messages, system_prompt="sys", cache_messages=False))
+
+    request = bedrock_client.converse_stream.call_args.kwargs
+    assert request["messages"] == messages
+    assert request["system"] == [{"text": "sys"}, {"cachePoint": {"type": "default"}}]
+
+
 def test_messages_ttl_string_sets_the_message_cache_point_ttl(bedrock_client):
     _ = bedrock_client
     model = BedrockModel(

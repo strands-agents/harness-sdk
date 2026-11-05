@@ -177,10 +177,12 @@ async def generate_summary(
         {"role": "user", "content": [{"text": "Please summarize this conversation."}]}
     ]
 
+    # The summary replaces these messages, so a cache point on them would be written and never read.
     chunks = model.stream(
         summarization_messages,
         tool_specs=None,
         system_prompt=resolved_system_prompt,
+        cache_messages=False,
     )
 
     result_message: Message | None = None

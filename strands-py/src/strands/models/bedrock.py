@@ -446,6 +446,7 @@ class BedrockModel(Model):
         system_prompt_content: list[SystemContentBlock] | None = None,
         tool_choice: ToolChoice | None = None,
         dynamic_trailing_blocks: int = 0,
+        cache_messages: bool = True,
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Format a Bedrock converse stream request.
@@ -457,6 +458,7 @@ class BedrockModel(Model):
             system_prompt_content: System prompt content blocks to provide context to the model.
             dynamic_trailing_blocks: How many trailing blocks of the last user message are rebuilt on every
                 call, so the cache point goes ahead of them.
+            cache_messages: Whether ``cache_config`` may place a cache point in the messages.
             **kwargs: Additional keyword arguments for future extensibility.
 
         Returns:
@@ -485,7 +487,7 @@ class BedrockModel(Model):
         if self._should_cache_system(system_blocks):
             system_blocks.append({"cachePoint": {"type": "default"}})
 
-        formatted_messages = self._format_bedrock_messages(messages, dynamic_trailing_blocks)
+        formatted_messages = self._format_bedrock_messages(messages, dynamic_trailing_blocks, cache_messages)
         if self._tool_result_turn_separation_model_id == self.config["model_id"]:
             formatted_messages = self._separate_tool_result_turns(formatted_messages)
 
@@ -942,7 +944,9 @@ class BedrockModel(Model):
             return True
         return signed
 
-    def _format_bedrock_messages(self, messages: Messages, dynamic_trailing_blocks: int = 0) -> list[dict[str, Any]]:
+    def _format_bedrock_messages(
+        self, messages: Messages, dynamic_trailing_blocks: int = 0, cache_messages: bool = True
+    ) -> list[dict[str, Any]]:
         """Format messages for Bedrock API compatibility.
 
         This function ensures messages conform to Bedrock's expected format by:
@@ -956,6 +960,7 @@ class BedrockModel(Model):
             messages: List of messages to format
             dynamic_trailing_blocks: How many trailing blocks of the last user message are rebuilt on every
                 call, so the cache point goes ahead of them.
+            cache_messages: Whether ``cache_config`` may place a cache point in the messages.
 
         Returns:
             Messages formatted for Bedrock API compatibility
@@ -1049,7 +1054,7 @@ class BedrockModel(Model):
                     "model_id=<%s> | cache_config is enabled but this model does not support automatic caching",
                     self.config.get("model_id"),
                 )
-            if cache_strategy == "anthropic" and cache_config.messages_ttl is not False:
+            if cache_strategy == "anthropic" and cache_config.messages_ttl is not False and cache_messages:
                 self._inject_cache_point(cleaned_messages, dynamic_trailing_blocks)
 
         return cleaned_messages
@@ -1596,6 +1601,7 @@ class BedrockModel(Model):
             system_prompt_content,
             tool_choice,
             kwargs.get("dynamic_trailing_blocks", 0),
+            kwargs.get("cache_messages", True),
             cancel_signal,
             structured_output_model,
         )
@@ -1632,6 +1638,7 @@ class BedrockModel(Model):
         system_prompt_content: list[SystemContentBlock] | None = None,
         tool_choice: ToolChoice | None = None,
         dynamic_trailing_blocks: int = 0,
+        cache_messages: bool = True,
         cancel_signal: threading.Event | None = None,
         structured_output_model: type[BaseModel] | None = None,
     ) -> None:
@@ -1648,6 +1655,7 @@ class BedrockModel(Model):
             tool_choice: Selection strategy for tool invocation.
             dynamic_trailing_blocks: How many trailing blocks of the last user message are rebuilt on every
                 call, so the cache point goes ahead of them.
+            cache_messages: Whether ``cache_config`` may place a cache point in the messages.
             cancel_signal: Event that stops the transfer at the next chunk boundary.
             structured_output_model: Output model the call must produce; the request is then sent with the
                 strongest structured output mechanism the model supports.
@@ -1659,7 +1667,7 @@ class BedrockModel(Model):
         try:
             logger.debug("formatting request")
             request = self.format_request(
-                messages, tool_specs, system_prompt_content, tool_choice, dynamic_trailing_blocks
+                messages, tool_specs, system_prompt_content, tool_choice, dynamic_trailing_blocks, cache_messages
             )
             model_id = request["modelId"]
             logger.debug("request=<%s>", request)

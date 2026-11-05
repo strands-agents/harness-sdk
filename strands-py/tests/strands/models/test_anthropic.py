@@ -1927,6 +1927,17 @@ class TestPromptCaching:
 
         assert self._breakpoints(request) == []
 
+    @pytest.mark.asyncio
+    async def test_stream_cache_messages_false_skips_the_message_breakpoint(
+        self, anthropic_client, model, messages, alist
+    ):
+        anthropic_client.messages.stream.return_value = _message_start_stream()
+        model.update_config(cache_config=CacheConfig(strategy="auto"))
+
+        await alist(model.stream(messages, cache_messages=False))
+
+        assert self._breakpoints(anthropic_client.messages.stream.call_args.kwargs) == []
+
     def test_messages_ttl_string_sets_the_message_breakpoint_ttl(self, model, messages):
         model.update_config(cache_config=CacheConfig(strategy="auto", ttl="1h", messages_ttl="5m"))
 

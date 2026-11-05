@@ -941,7 +941,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
   private _formatRequest(messages: Message[], options?: StreamOptions): ConverseStreamCommandInput {
     const request: ConverseStreamCommandInput = {
       modelId: this._config.modelId,
-      messages: this._formatMessages(messages, options?.dynamicTrailingBlocks ?? 0),
+      messages: this._formatMessages(messages, options?.dynamicTrailingBlocks ?? 0, options?.cacheMessages ?? true),
     }
 
     // Add system prompt
@@ -1088,7 +1088,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
    * @param messages - SDK messages
    * @returns Bedrock-formatted messages
    */
-  private _formatMessages(messages: Message[], dynamicTrailingBlocks = 0): BedrockMessage[] {
+  private _formatMessages(messages: Message[], dynamicTrailingBlocks = 0, cacheMessages = true): BedrockMessage[] {
     // Pre-compute the index of the last user message containing text/image content
     // This ensures guardContent wrapping is maintained across tool execution cycles
     const lastUserTextIdx = this._config.guardrailConfig?.guardLatestUserMessage
@@ -1125,9 +1125,10 @@ export class BedrockModel extends Model<BedrockModelConfig> {
     }
 
     const cacheConfig = this._config.cacheConfig
-    const messagesCache = this._shouldEnableCaching()
-      ? resolveCacheSection(cacheConfig?.messagesTTL, cacheConfig?.ttl)
-      : { enabled: false }
+    const messagesCache =
+      this._shouldEnableCaching() && cacheMessages
+        ? resolveCacheSection(cacheConfig?.messagesTTL, cacheConfig?.ttl)
+        : { enabled: false }
     if (messagesCache.enabled) {
       this._injectCachePoint(formattedMessages, messagesCache.ttl, dynamicTrailingBlocks)
     }

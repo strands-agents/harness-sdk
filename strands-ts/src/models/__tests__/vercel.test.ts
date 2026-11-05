@@ -1372,6 +1372,20 @@ describe('VercelModel', () => {
         expect(bedrockMessageCachePoint(args)).toEqual({ type: 'default', ttl: '1h' })
       })
 
+      it('skips the message cache point when the call passes cacheMessages: false', async () => {
+        const { collect, callArgs } = setupCaptureTest(
+          minimalParts,
+          { cacheConfig: {} },
+          'amazon-bedrock',
+          CACHING_MODEL_ID
+        )
+        await collect(userMessages, { systemPrompt: 'be helpful', cacheMessages: false })
+
+        const args = callArgs()
+        expect(bedrockSystemCachePoint(args)).toEqual({ type: 'default' })
+        expect(bedrockMessageCachePoint(args)).toBeUndefined()
+      })
+
       it('never marks tool definitions, since bedrock caches them as part of the prefix', async () => {
         const config = { cacheConfig: { toolsTTL: '1h' as const } }
         const { collect, callArgs } = setupCaptureTest(minimalParts, config, 'amazon-bedrock', CACHING_MODEL_ID)

@@ -345,6 +345,7 @@ class OpenAIResponsesModel(Model):
             model_state,
             agent_metadata,
             dynamic_trailing_blocks=kwargs.get("dynamic_trailing_blocks", 0),
+            cache_messages=kwargs.get("cache_messages", True),
         )
         self._move_new_fields_to_extra_body(request)
         logger.debug("formatted request=<%s>", request)
@@ -578,6 +579,7 @@ class OpenAIResponsesModel(Model):
         agent_metadata: AgentMetadata | None = None,
         *,
         dynamic_trailing_blocks: int = 0,
+        cache_messages: bool = True,
     ) -> dict[str, Any]:
         """Format an OpenAI Responses API compatible response streaming request.
 
@@ -589,6 +591,7 @@ class OpenAIResponsesModel(Model):
             model_state: Runtime state for model providers (e.g., server-side response ids).
             agent_metadata: Invoking agent's metadata.
             dynamic_trailing_blocks: Number of temporary trailing blocks in the final user message.
+            cache_messages: Whether ``cache_config`` may place cache checkpoints in the messages.
 
         Returns:
             An OpenAI Responses API compatible response streaming request.
@@ -600,7 +603,8 @@ class OpenAIResponsesModel(Model):
         cache_config = cast(CacheConfig | None, self.config.get("cache_config"))
         cache_points = cache_config is not None and self.model_info.capabilities.prompt_caching == "cache_points"
         cache_messages = (
-            cache_points
+            cache_messages
+            and cache_points
             and cache_config is not None
             and cache_config.messages_ttl is not False
             # A native input override stays under the caller's control.

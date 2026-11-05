@@ -148,4 +148,13 @@ describe('summarizeContent', () => {
     await expect(summarizeContent(content, model)).rejects.toThrow('images unsupported')
     expect(streamSpy).toHaveBeenCalledTimes(1)
   })
+
+  it('requests no message cache point', async () => {
+    const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'summary' })
+    const streamSpy = vi.spyOn(model, 'stream')
+
+    await summarizeContent([new TextBlock('notes')], model)
+
+    expect(streamSpy).toHaveBeenCalledWith(expect.any(Array), expect.objectContaining({ cacheMessages: false }))
+  })
 })
