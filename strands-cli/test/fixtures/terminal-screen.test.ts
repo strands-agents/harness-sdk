@@ -3,6 +3,7 @@ import { Text } from 'ink'
 import { createElement } from 'react'
 
 import { TerminalScreen } from './terminal-screen.mjs'
+import { expectRestoredTerminal } from './terminal-harness.js'
 import { render, ttyInput, ttyOutput } from './terminal.js'
 
 it('consumes terminal output even when a test does not capture frames', async () => {
@@ -38,6 +39,39 @@ it('reads viewport text and locates styled controls after wide characters', asyn
     screen.resize(10, 4)
     expect(screen.text.split('\n')).toEqual(['Ready', '', '', ''])
     expect(screen.locate('Hidden')).toBeUndefined()
+  } finally {
+    screen.dispose()
+  }
+})
+
+it('accepts equivalent mouse resets but rejects terminal modes left enabled', async () => {
+  const screen = new TerminalScreen(20, 3)
+  const output = '\u001b[?1049h\u001b[?1002h\u001b[?1006h\u001b[?2004h\u001b[?25l'
+  const reset = '\u001b[?1003;1006l\u001b[?2004l\u001b[?2026l\u001b[?2031l\u001b[?25h'
+  try {
+    await screen.write(`${output}${reset}\u001b[?1049l`)
+    const result = {
+      returnCode: 0,
+      inputModeRestored: null,
+      terminalModes: screen.terminal.modes,
+      output: `${output}${reset}\u001b[?1049l`,
+      screens: [],
+      resizeScreens: [],
+      exportSaved: false,
+    }
+    expectRestoredTerminal(result)
+    for (const enabled of ['1003', '1006', '2004', '2026', '2031']) {
+      await screen.write(`${reset}\u001b[?${enabled}h`)
+      expect(() =>
+        expectRestoredTerminal({
+          ...result,
+          output: `${result.output}\u001b[?${enabled}h`,
+          terminalModes: screen.terminal.modes,
+        })
+      ).toThrow()
+    }
+    await screen.write(`${reset}\u001b[?25l`)
+    expect(() => expectRestoredTerminal({ ...result, output: `${result.output}\u001b[?25l` })).toThrow()
   } finally {
     screen.dispose()
   }

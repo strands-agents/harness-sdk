@@ -7,7 +7,13 @@ import type { ChatConversations } from '../agent/types.js'
 import type { CliConfigStore } from '../config/store.js'
 import { configurationFromStore, type RequestSetup } from '../agent/configuration.js'
 import { hardExitProcessTree } from '../terminal/process-tree.js'
-import { createInkOutputs, enterAlternateScreen, saveTerminalTitle, setTerminalTitle } from '../terminal/terminal.js'
+import {
+  createInkOutputs,
+  enterAlternateScreen,
+  restoreTerminalModes,
+  saveTerminalTitle,
+  setTerminalTitle,
+} from '../terminal/terminal.js'
 import { observeTerminalColorMode } from '../terminal/theme-detection.js'
 import { sessionResumeCommand } from '../session/sessions.js'
 import { sanitizeTerminalText } from '../terminal/text.js'
@@ -82,7 +88,6 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
   const output = options.output ?? process.stdout
   const errorOutput = options.errorOutput ?? process.stderr
   const terminalTheme = observeTerminalColorMode(input, output)
-  await terminalTheme.ready
   const alternateScreen = options.alternateScreen !== false
   const inkOutputs = createInkOutputs(output, errorOutput, alternateScreen)
   let leaveTerminalMode = (): void => {}
@@ -102,10 +107,7 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
   }
   const renderApp = options.renderApp ?? render
   const hardExit = (exitCode: number): never => {
-    stopWatchingTitle()
-    leaveTerminalMode()
-    restoreTerminalTitle()
-    terminalTheme.dispose()
+    cleanup()
     return hardExitProcessTree(exitCode)
   }
   let controller: ChatControllerApi | undefined
@@ -289,11 +291,46 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
   const onSigint = (): void => closeForExit(130)
   const onSigterm = (): void => closeForExit(143)
   const onSighup = (): void => closeForExit(129)
-  process.on('SIGINT', onSigint)
-  process.on('SIGTERM', onSigterm)
-  process.on('SIGHUP', onSighup)
+  let cleanedUp = false
+  const cleanup = (): void => {
+    if (cleanedUp) return
+    cleanedUp = true
+    process.off('SIGINT', onSigint)
+    process.off('SIGTERM', onSigterm)
+    process.off('SIGHUP', onSighup)
+    process.off('exit', onProcessExit)
+    process.off('uncaughtExceptionMonitor', onProcessExit)
+    for (const restore of [
+      (): void => instance?.unmount(),
+      (): void => instance?.cleanup(),
+      stopWatchingTitle,
+      leaveTerminalMode,
+      restoreTerminalTitle,
+      terminalTheme.dispose,
+      (): void => restoreTerminalModes(output),
+    ]) {
+      try {
+        restore()
+      } catch {
+        // Try every restoration step without replacing the original crash or exit status.
+      }
+    }
+  }
+  const onProcessExit = (reason: number | Error): void => {
+    // The SDK's signal handler can call process.exit(0) before our shutdown completes.
+    if (reason === 0 && pendingExitCode) process.exitCode = pendingExitCode
+    cleanup()
+  }
+  process.prependListener('SIGINT', onSigint)
+  process.prependListener('SIGTERM', onSigterm)
+  process.prependListener('SIGHUP', onSighup)
+  process.on('exit', onProcessExit)
+  // Restore the primary screen before Node prints an uncaught exception.
+  process.on('uncaughtExceptionMonitor', onProcessExit)
 
   try {
+    await terminalTheme.ready
+    if (pendingExitCode !== undefined) return pendingExitCode
     restoreTerminalTitle = saveTerminalTitle(output)
     if (typeof source === 'function') {
       controllerFactory = source
@@ -338,15 +375,7 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
     await instance!.waitUntilExit()
     return pendingExitCode ?? controller?.getSnapshot().exitCode ?? 0
   } finally {
-    process.off('SIGINT', onSigint)
-    process.off('SIGTERM', onSigterm)
-    process.off('SIGHUP', onSighup)
-    instance?.unmount()
-    instance?.cleanup()
-    stopWatchingTitle()
-    leaveTerminalMode()
-    restoreTerminalTitle()
-    terminalTheme.dispose()
+    cleanup()
 
     const resumeSession = controller?.resumeSession
     if (resumeSession && controller?.getSnapshot().status === 'closed') {

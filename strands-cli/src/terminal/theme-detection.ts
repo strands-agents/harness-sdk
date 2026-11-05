@@ -2,6 +2,7 @@ import { Transform } from 'node:stream'
 import { StringDecoder } from 'node:string_decoder'
 
 import type { ResolvedColorMode } from '../ui/chat/types.js'
+import { restoreTerminalModes } from './terminal.js'
 
 const BACKGROUND_QUERY = '\u001b]11;?\u001b\\'
 const BACKGROUND_RESPONSE_PREFIX = '\u001b]11;'
@@ -94,7 +95,19 @@ export function observeTerminalColorMode(
     isRaw: { get: () => input.isRaw },
   })
   filtered.setRawMode = (mode): typeof filtered => {
-    input.setRawMode(mode)
+    // Own raw input until disposal; changing screens during a cooked read can crash ConPTY.
+    if (!mode) {
+      input.pause()
+      try {
+        // ConPTY only forwards mouse resets while VT input is still enabled.
+        restoreTerminalModes(output)
+      } catch {
+        // A closed output must not prevent restoring keyboard input.
+      }
+    } else {
+      input.setRawMode(true)
+      input.resume()
+    }
     return filtered
   }
   filtered.ref = (): typeof filtered => {
@@ -115,9 +128,10 @@ export function observeTerminalColorMode(
     if (pendingTimer) clearTimeout(pendingTimer)
     input.unpipe(filtered)
     filtered.destroy()
-    output.write(COLOR_SCHEME_NOTIFICATIONS.disable)
+    filtered.setRawMode(false)
     if (!wasRaw && input.isRaw) input.setRawMode(false)
     finishInitialQuery()
+    output.write(COLOR_SCHEME_NOTIFICATIONS.disable)
   }
 
   try {

@@ -95,7 +95,9 @@ describe('runInkChat', () => {
       finish()
       await running
     }
-    expect(writes.at(-1)).toBe('\u001b[23;2t')
+    expect(writes.at(-1)).toContain('?2004l')
+    expect(writes.at(-1)).toContain('?2031l')
+    expect(writes.at(-1)).toContain('?25h')
     expect(writes.filter((value) => value === '\u001b[23;2t')).toHaveLength(1)
   })
 
@@ -528,6 +530,8 @@ describe('runInkChat', () => {
     } as unknown as Instance
     const renderApp = vi.fn((_element: unknown) => instance)
     const sigintListeners = process.listenerCount('SIGINT')
+    const exitListeners = process.listenerCount('exit')
+    const exceptionListeners = process.listenerCount('uncaughtExceptionMonitor')
 
     const result = await runInkChat(controller, {
       output,
@@ -551,6 +555,8 @@ describe('runInkChat', () => {
     expect(cleanup).toHaveBeenCalledOnce()
     expect(target.dispose).toHaveBeenCalledOnce()
     expect(process.listenerCount('SIGINT')).toBe(sigintListeners)
+    expect(process.listenerCount('exit')).toBe(exitListeners)
+    expect(process.listenerCount('uncaughtExceptionMonitor')).toBe(exceptionListeners)
   })
 
   it('waits for resume advice to flush before forcing an interrupted session to exit', async () => {
@@ -620,14 +626,40 @@ describe('runInkChat', () => {
     expect(writes.at(-1)).toContain('?1049l')
   })
 
+  it('finishes terminal restoration when renderer cleanup throws', async () => {
+    const controller = new ChatController(idleBackend())
+    controller.close(23)
+    const writes: string[] = []
+    const output = { isTTY: true, write: (value: string) => writes.push(value) } as unknown as NodeJS.WriteStream
+    const cleanup = vi.fn()
+    const result = await runInkChat(controller, {
+      output,
+      input: ttyInput(),
+      intro: false,
+      renderApp: (() => ({
+        unmount: () => {
+          throw new Error('Renderer cleanup failed')
+        },
+        cleanup,
+        waitUntilExit: async () => {},
+      })) as never,
+    })
+    expect(result).toBe(23)
+    expect(cleanup).toHaveBeenCalledOnce()
+    expect(writes.join('')).toContain('?1049l')
+    expect(writes.join('')).toContain('\u001b[23;2t')
+    expect(writes.at(-1)).toContain('?2004l')
+    expect(writes.at(-1)).toContain('?2031l')
+    expect(writes.at(-1)).toContain('?25h')
+  })
+
   it('cancels startup MCP trust with Ctrl-C and restores the terminal before forced exit', async () => {
     const forcedExit = new Error('forced startup exit')
-    const input = Object.assign(new PassThrough(), {
-      isTTY: true,
-      setRawMode: vi.fn(),
-      ref: vi.fn(),
-      unref: vi.fn(),
-    }) as unknown as NodeJS.ReadStream
+    const input = ttyInput()
+    vi.mocked(input.setRawMode).mockImplementation((mode) => {
+      input.isRaw = mode
+      return input
+    })
     const output = Object.assign(new PassThrough(), { isTTY: true, columns: 120, rows: 40 })
     let written = ''
     output.on('data', (chunk: Buffer) => {

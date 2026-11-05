@@ -121,6 +121,32 @@ describe('TUI terminal integration', () => {
     expect(result.returnCode).toBe(0)
     expectRestoredTerminal(result)
   })
+
+  it.each([
+    ['exit-direct', 23, undefined],
+    ['exit-exception', 1, 'Error: Fixture uncaught exception'],
+    ['exit-rejection', 1, 'Error: Fixture unhandled rejection'],
+  ] as const)('restores the terminal after %s without hiding the failure', async (scenario, code, error) => {
+    // https://github.com/strands-agents/harness-sdk/issues/4961
+    const result = await runTuiScenario(scenario)
+    expect(result.returnCode).toBe(code)
+    expectRestoredTerminal(result)
+    if (error) {
+      expect(result.output).toContain(error)
+      expect(result.output.indexOf('\u001b[?1049l')).toBeLessThan(result.output.indexOf(error))
+    }
+  })
+
+  // Sending these signals on Windows uses TerminateProcess, bypassing Node handlers.
+  it.skipIf(process.platform === 'win32').each([
+    ['exit-sigterm', 143],
+    ['exit-sigint', 130],
+    ['exit-sighup', 129],
+  ] as const)('restores the terminal on %s', async (scenario, code) => {
+    const result = await runTuiScenario(scenario)
+    expect(result.returnCode).toBe(code)
+    expectRestoredTerminal(result)
+  })
 })
 
 describe('TUI workflow integration', () => {

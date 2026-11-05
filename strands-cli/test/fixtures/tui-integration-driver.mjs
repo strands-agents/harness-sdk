@@ -2,8 +2,11 @@
 
 import { Buffer } from 'node:buffer'
 import { spawn } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { EventEmitter } from 'node:events'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { createInterface } from 'node:readline'
 import { StringDecoder } from 'node:string_decoder'
 import { clearTimeout, setTimeout } from 'node:timers'
@@ -49,20 +52,25 @@ async function main() {
   let screenWriteError
   let lastOutputAt = Date.now()
   let returnCode
-  let termiosRestored = null
+  let inputModeRestored = null
   let resolveExit
   const exited = new Promise((resolve) => {
     resolveExit = resolve
   })
+  const statePath = windows ? join(tmpdir(), `strands-tui-input-${randomUUID()}.json`) : undefined
   const terminal = windows
-    ? (await import('node-pty')).default.spawn(command, args, {
-        name: 'xterm-256color',
-        cols: 100,
-        rows,
-        cwd: process.cwd(),
-        env: { ...process.env, CI: 'false', TERM: 'xterm-256color' },
-        useConpty: true,
-      })
+    ? (await import('node-pty')).default.spawn(
+        process.env.PYTHON ?? 'python',
+        [fileURLToPath(new URL('./tui-integration-terminal.py', import.meta.url)), statePath, command, ...args],
+        {
+          name: 'xterm-256color',
+          cols: 100,
+          rows,
+          cwd: process.cwd(),
+          env: { ...process.env, CI: 'false', TERM: 'xterm-256color' },
+          useConpty: true,
+        }
+      )
     : spawnPosix(command, args, rows)
   const dataSubscription = terminal.onData((data) => {
     transcript += data
@@ -73,10 +81,10 @@ async function main() {
         screenWriteError ??= error
       })
   })
-  const exitSubscription = terminal.onExit(({ exitCode, termiosRestored: restored }) => {
+  const exitSubscription = terminal.onExit(({ exitCode, inputModeRestored: restored }) => {
     // ConPTY can close its output socket before node-pty receives the native exit status.
     returnCode = exitCode ?? 0
-    termiosRestored = restored ?? null
+    inputModeRestored = restored ?? null
     resolveExit()
   })
 
@@ -519,20 +527,39 @@ async function main() {
       await waitFor(['Cancelled', '__SHELL_IDLE__'], 4_000, false)
     }
 
-    const draft = startupTyping ? 'startup draft' : 'junk'
-    const draftStart = transcript.length
-    terminal.write(draft)
-    await waitFor([draft], 2_000, false, draftStart)
-    terminal.write('\u007f'.repeat(draft.length) + '/exit')
-    await waitFor(['/exit▌'], 2_000, false)
-    terminal.write('\r')
+    if (scenario.startsWith('exit-')) {
+      terminal.write('\u0018')
+    } else {
+      const draft = startupTyping ? 'startup draft' : 'junk'
+      const draftStart = transcript.length
+      terminal.write(draft)
+      await waitFor([draft], 2_000, false, draftStart)
+      terminal.write('\u007f'.repeat(draft.length) + '/exit')
+      await waitFor(['/exit▌'], 2_000, false)
+      terminal.write('\r')
+    }
     await waitForExit()
     await drainScreen(Date.now() + 1_000)
+    if (statePath) {
+      // The output socket can close before the native wrapper finishes checking input.
+      const deadline = Date.now() + 8_000
+      while (!existsSync(statePath)) {
+        if (Date.now() >= deadline) {
+          throw new Error(`missing native input report; returnCode=${returnCode}; output=${transcript}`)
+        }
+        await sleep(25)
+      }
+      const result = JSON.parse(readFileSync(statePath, 'utf8'))
+      if (result.error) throw new Error(`native input check failed: ${result.error}; output=${transcript}`)
+      returnCode = result.exitCode
+      inputModeRestored = result.inputModeRestored
+    }
 
     await writeStdout(
       JSON.stringify({
         returnCode,
-        termiosRestored,
+        inputModeRestored,
+        terminalModes: screen.terminal.modes,
         transcript: Buffer.from(transcript).toString('base64'),
         screens,
         resizeScreens,
@@ -540,7 +567,7 @@ async function main() {
       })
     )
   } catch (error) {
-    if (returnCode === undefined) {
+    if (returnCode === undefined || (statePath && !existsSync(statePath))) {
       terminal.kill()
       await Promise.race([exited, sleep(1_000)])
     }
@@ -550,6 +577,10 @@ async function main() {
     exitSubscription.dispose()
     await Promise.race([screenWrites, sleep(1_000)])
     screen.dispose()
+    if (statePath) {
+      rmSync(statePath, { force: true })
+      rmSync(`${statePath}.tmp`, { force: true })
+    }
   }
 }
 
@@ -571,7 +602,7 @@ function spawnPosix(command, args, rows) {
   child.on('error', (error) => process.stderr.write(`${error.message}\n`))
   child.on('close', (code) => {
     events.emit('data', decoder.end())
-    events.emit('exit', result ?? { exitCode: code ?? 1, termiosRestored: false })
+    events.emit('exit', result ?? { exitCode: code ?? 1, inputModeRestored: false })
     lines.close()
   })
   const subscribe = (event, listener) => {

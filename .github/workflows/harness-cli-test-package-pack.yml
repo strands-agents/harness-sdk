@@ -82,7 +82,7 @@ jobs:
         run: npm ci
 
       - name: Setup Python for the terminal driver
-        if: runner.os != 'Windows'
+        id: python
         uses: actions/setup-python@v7.0.0
         with:
           python-version: '3.12'
@@ -96,6 +96,7 @@ jobs:
 
       - name: Pack, install in a tmpdir, run the bin
         env:
+          PYTHON: ${{ steps.python.outputs.python-path }}
           STRANDS_CLI_KEEP_TARBALL: 'true'
         run: npm run test:package-install
 

@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { URL, fileURLToPath } from 'node:url'
+import type { IModes } from '@xterm/headless'
 import { expect } from 'vitest'
 
 const execFileAsync = promisify(execFile)
@@ -23,6 +24,12 @@ export type TuiScenario =
   | 'startup-typing'
   | 'resize'
   | 'exit'
+  | 'exit-direct'
+  | 'exit-exception'
+  | 'exit-rejection'
+  | 'exit-sigterm'
+  | 'exit-sigint'
+  | 'exit-sighup'
   | 'frog'
 
 export type TuiDriverScenario =
@@ -36,7 +43,8 @@ export type TuiDriverScenario =
 
 export interface TuiResult {
   returnCode: number
-  termiosRestored: boolean | null
+  inputModeRestored: boolean | null
+  terminalModes: IModes
   output: string
   screens: string[]
   resizeScreens: Array<{ columns: number; rows: number; text: string }>
@@ -87,7 +95,8 @@ export async function runTuiCommand(options: {
   }
   return {
     returnCode: result.returnCode,
-    termiosRestored: result.termiosRestored,
+    inputModeRestored: result.inputModeRestored,
+    terminalModes: result.terminalModes,
     output: decode(result.transcript),
     screens: result.screens,
     resizeScreens: result.resizeScreens,
@@ -99,12 +108,26 @@ export function expectRestoredTerminal(result: TuiResult): void {
   const enterAlternateScreen = '\u001b[?1049h'
   const leaveAlternateScreen = '\u001b[?1049l'
 
-  if (result.termiosRestored !== null) {
-    expect(result.termiosRestored).toBe(true)
+  if (result.inputModeRestored !== null) {
+    expect(result.inputModeRestored).toBe(true)
   }
   expect(result.output.split(enterAlternateScreen).length - 1).toBe(1)
   expect(result.output.split(leaveAlternateScreen).length - 1).toBe(1)
   expect(result.output.indexOf(enterAlternateScreen)).toBeLessThan(result.output.indexOf(leaveAlternateScreen))
+  // eslint-disable-next-line no-control-regex -- ConPTY combines parameters in terminal mode controls.
+  const controls = [...result.output.matchAll(/\u001b\[\?([\d;]+)([hl])/gu)]
+  expect(result.terminalModes, JSON.stringify(controls.map(([sequence]) => sequence))).toMatchObject({
+    mouseTrackingMode: 'none',
+    bracketedPasteMode: false,
+    synchronizedOutputMode: false,
+  })
+  const modes = new Map<string, boolean>()
+  for (const [, parameters, action] of controls) {
+    for (const mode of parameters!.split(';')) modes.set(mode, action === 'h')
+  }
+  expect(modes.get('1006')).toBe(false)
+  expect(modes.get('2031')).not.toBe(true)
+  expect(modes.get('25')).toBe(true)
 }
 
 function decode(value: string): string {

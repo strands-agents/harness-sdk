@@ -121,6 +121,24 @@ describe('terminal background detection', () => {
     expect(input.setRawMode).not.toHaveBeenCalled()
   })
 
+  it('retains raw input until disposal and restores it even if terminal output closes', async () => {
+    const input = ttyInput()
+    vi.mocked(input.setRawMode).mockImplementation((raw) => {
+      input.isRaw = raw
+      return input
+    })
+    const output = ttyOutput(80, 24)
+    const observer = observeTerminalColorMode(input, output)
+    observer.input.setRawMode(false)
+    expect(input.isRaw).toBe(true)
+    vi.spyOn(output, 'write').mockImplementation(() => {
+      throw new Error('Terminal closed')
+    })
+    expect(() => observer.dispose()).toThrow('Terminal closed')
+    await observer.ready
+    expect(input.isRaw).toBe(false)
+  })
+
   it('tracks terminal color-scheme notifications without passing them to Ink', async () => {
     const input = ttyInput()
     const output = ttyOutput(80, 24)

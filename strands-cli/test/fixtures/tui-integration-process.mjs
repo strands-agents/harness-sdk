@@ -20,6 +20,30 @@ const [
 
 const sandbox = new WorkspaceSandbox(process.cwd())
 const scenario = process.env.STRANDS_CLI_TEST_SCENARIO ?? 'exit'
+if (scenario.startsWith('exit-')) {
+  process.stdin.on('data', (chunk) => {
+    if (!chunk.toString().includes('\u0018')) return
+    switch (scenario) {
+      case 'exit-direct':
+        process.exit(23)
+        break
+      case 'exit-exception':
+        throw new Error('Fixture uncaught exception')
+      case 'exit-rejection':
+        void Promise.reject(new Error('Fixture unhandled rejection'))
+        break
+      case 'exit-sigterm':
+        process.kill(process.pid, 'SIGTERM')
+        break
+      case 'exit-sigint':
+        process.kill(process.pid, 'SIGINT')
+        break
+      case 'exit-sighup':
+        process.kill(process.pid, 'SIGHUP')
+        break
+    }
+  })
+}
 const chatMode = scenario === 'chat'
 const followUpMode = scenario === 'follow-up'
 const approvalMode = scenario === 'approval'

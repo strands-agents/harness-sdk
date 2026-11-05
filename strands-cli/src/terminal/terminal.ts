@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { fstatSync } from 'node:fs'
+import { fstatSync, writeSync } from 'node:fs'
 
 import { sanitizeTerminalText } from './text.js'
 
@@ -18,6 +18,7 @@ const CURSOR_HOME = '\u001b[H'
 
 export interface TerminalOutput {
   isTTY?: boolean
+  fd?: number
   write(value: string): unknown
 }
 
@@ -33,7 +34,7 @@ export function saveTerminalTitle(output: TerminalOutput = process.stdout): () =
   return (): void => {
     if (!saved) return
     saved = false
-    output.write('\u001b[23;2t')
+    writeTerminalReset(output, '\u001b[23;2t')
   }
 }
 
@@ -54,8 +55,20 @@ export function enterAlternateScreen(output: TerminalOutput = process.stdout): (
       return
     }
     active = false
-    output.write(LEAVE_ALTERNATE_SCREEN)
+    writeTerminalReset(output, LEAVE_ALTERNATE_SCREEN)
   }
+}
+
+function writeTerminalReset(output: TerminalOutput, value: string): void {
+  // Windows TTY writes are asynchronous; exit handlers cannot wait for them.
+  if (output.isTTY && typeof output.fd === 'number') writeSync(output.fd, value)
+  else output.write(value)
+}
+
+/** @internal */
+export function restoreTerminalModes(output: TerminalOutput = process.stdout): void {
+  if (!output.isTTY) return
+  writeTerminalReset(output, `${SYNCHRONIZED_OUTPUT_END}${DISABLE_MOUSE}\u001b[?2004l\u001b[?2031l\u001b[?25h`)
 }
 
 export function setTerminalMouseMotion(enabled: boolean, output: TerminalOutput = process.stdout): void {

@@ -1,16 +1,14 @@
-"""Own a POSIX PTY while the shared Node driver runs the scenarios."""
+"""Check native input-mode restoration around the shared terminal scenarios."""
 
 import base64
-import fcntl
 import json
 import os
-import pty
 import select
 import signal
 import struct
 import subprocess
 import sys
-import termios
+from pathlib import Path
 
 
 def emit(message):
@@ -18,6 +16,10 @@ def emit(message):
 
 
 def main():
+    import fcntl
+    import pty
+    import termios
+
     master, slave = pty.openpty()
     child = None
     try:
@@ -59,7 +61,7 @@ def main():
         emit({
             "type": "exit",
             "exitCode": child.returncode,
-            "termiosRestored": initial == termios.tcgetattr(slave),
+            "inputModeRestored": initial == termios.tcgetattr(slave),
         })
     finally:
         if child is not None and child.poll() is None:
@@ -69,5 +71,42 @@ def main():
         os.close(slave)
 
 
+def main_windows():
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.GetStdHandle.argtypes = [wintypes.DWORD]
+    kernel32.GetStdHandle.restype = wintypes.HANDLE
+    kernel32.GetConsoleMode.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+    kernel32.SetConsoleMode.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    handle = kernel32.GetStdHandle(-10)
+    mode = wintypes.DWORD()
+    if not kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+        raise ctypes.WinError(ctypes.get_last_error())
+    # Node restores this native baseline after JS cleanup; keep shell mouse reporting off.
+    initial = mode.value & ~0x0010  # ENABLE_MOUSE_INPUT
+    if not kernel32.SetConsoleMode(handle, initial):
+        raise ctypes.WinError(ctypes.get_last_error())
+    child = subprocess.run(sys.argv[2:])
+    if not kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+        raise ctypes.WinError(ctypes.get_last_error())
+    return {
+        "exitCode": child.returncode,
+        "inputModeRestored": initial == mode.value,
+    }
+
+
 if __name__ == "__main__":
-    main()
+    if os.name == "nt":
+        try:
+            result = main_windows()
+        except Exception as error:
+            result = {"error": str(error)}
+        report = Path(sys.argv[1])
+        temporary = Path(f"{report}.tmp")
+        temporary.write_text(json.dumps(result))
+        temporary.replace(report)
+        sys.exit(result.get("exitCode", 1))
+    else:
+        main()
