@@ -186,9 +186,13 @@ async def test_runtime_error_events_mid_stream_are_mapped(expected):
         async for _ in model.stream([{"role": "user", "content": [{"text": "hello"}]}]):
             pass
 
+    expected_event = {
+        ModelThrottledException: "throttlingException",
+        ContextWindowOverflowException: "Input is too long",
+    }
+    assert expected_event.get(expected, "internalServerException") in str(raised.value)
     if expected is ValueError:
         assert type(raised.value) is ValueError
-        assert "internalServerException" in str(raised.value)
 
 
 @requires_mantle_client
