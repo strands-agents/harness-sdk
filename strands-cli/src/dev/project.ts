@@ -13,6 +13,18 @@ export function isIgnoredDirectory(name: string): boolean {
   return name.startsWith('.') || IGNORED_DIRECTORIES.has(name)
 }
 
+/** A Python virtual environment, whatever its name. */
+export function isVirtualEnvironment(path: string): boolean {
+  return regularFile(join(path, VIRTUAL_ENVIRONMENT_MARKER))
+}
+
+export const VIRTUAL_ENVIRONMENT_MARKER = 'pyvenv.cfg'
+
+/** A folder that dev mode searches and watches. */
+export function isProjectFolder(path: string, name: string): boolean {
+  return !isIgnoredDirectory(name) && !isVirtualEnvironment(path)
+}
+
 /** Find the source agent that `strands dev` runs. It never falls back to the saved default agent. */
 export function resolveDevProject(cwd: string, agentPath?: string): ImportedAgentProject {
   if (agentPath !== undefined) {
@@ -32,7 +44,7 @@ function hasRootEntrypoint(root: string): boolean {
 // The launch folder stays the root so that package imports such as `from refund_desk.tools import x` resolve.
 function nestedProject(root: string): ImportedAgentProject {
   const matches = readdirSync(root, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory() && !isIgnoredDirectory(entry.name))
+    .filter((entry) => entry.isDirectory() && isProjectFolder(join(root, entry.name), entry.name))
     .flatMap((entry) => AGENT_FILES.map((name) => join(root, entry.name, name)))
     .filter(regularFile)
     .sort()

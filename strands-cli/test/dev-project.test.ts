@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { isIgnoredDirectory, resolveDevProject } from '../src/dev/project.js'
+import { isIgnoredDirectory, isProjectFolder, resolveDevProject } from '../src/dev/project.js'
 
 let root: string
 
@@ -48,6 +48,19 @@ describe('resolveDevProject', () => {
     expect(resolveDevProject(root).entrypoint).toBe(entrypoint)
   })
 
+  it('prefers a root agent over an agent in a subfolder', async () => {
+    const entrypoint = await file('agent.py')
+    await file(join('refund_desk', 'agent.py'))
+    expect(resolveDevProject(root).entrypoint).toBe(entrypoint)
+  })
+
+  it('skips virtual environments whatever their name', async () => {
+    await file(join('env', 'pyvenv.cfg'), 'home = /usr/bin')
+    await file(join('env', 'agent.py'))
+    const entrypoint = await file(join('src', 'agent.ts'))
+    expect(resolveDevProject(root).entrypoint).toBe(entrypoint)
+  })
+
   it('rejects a folder with no agent', () => {
     expect(() => resolveDevProject(root)).toThrow(
       `No agent found in ${root}. Add agent.py or agent.ts, or use --agent <path>.`
@@ -78,9 +91,21 @@ describe('isIgnoredDirectory', () => {
     ['.venv', true],
     ['__pycache__', true],
     ['dist', true],
+    ['build', true],
+    ['venv', true],
     ['src', false],
     ['refund_desk', false],
   ])('%s is ignored: %s', (name, ignored) => {
     expect(isIgnoredDirectory(name)).toBe(ignored)
+  })
+})
+
+describe('isProjectFolder', () => {
+  it('rejects ignored names and virtual environments', async () => {
+    await file(join('env', 'pyvenv.cfg'), 'home = /usr/bin')
+    await mkdir(join(root, 'refund_desk'))
+    expect(isProjectFolder(join(root, 'env'), 'env')).toBe(false)
+    expect(isProjectFolder(join(root, 'node_modules'), 'node_modules')).toBe(false)
+    expect(isProjectFolder(join(root, 'refund_desk'), 'refund_desk')).toBe(true)
   })
 })

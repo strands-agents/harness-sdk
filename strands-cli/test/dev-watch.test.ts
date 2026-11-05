@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -138,6 +138,43 @@ describe('watchSources', () => {
     await live(join(root, 'src'))
     await rm(join(root, 'src', 'old'), { recursive: true, force: true, maxRetries: 3 })
     await vi.waitFor(() => expect(watcher!.directories()).toBe(2), settled)
+  })
+
+  it('reports a folder that appears with files in it', async () => {
+    const outside = await realpath(await mkdtemp(join(tmpdir(), 'strands-dev-moved-')))
+    try {
+      await writeFile(join(outside, 'tools.py'), 'x')
+      start()
+      await live(join(root, 'src'))
+      await rename(outside, join(root, 'src', 'tools'))
+      await vi.waitFor(() => expect(changes).toContain(join('src', 'tools')), settled)
+      expect(watcher!.directories()).toBe(3)
+    } finally {
+      await rm(outside, { recursive: true, force: true })
+    }
+  })
+
+  it('skips virtual environments whatever their name', async () => {
+    await mkdir(join(root, 'env', 'lib'), { recursive: true })
+    await writeFile(join(root, 'env', 'pyvenv.cfg'), 'home = /usr/bin')
+    expect(start().directories()).toBe(2)
+  })
+
+  it('stops the watch on a folder that becomes a virtual environment', async () => {
+    start()
+    await live(join(root, 'src'))
+    await mkdir(join(root, 'src', 'env', 'lib'), { recursive: true })
+    await vi.waitFor(() => expect(watcher!.directories()).toBe(4), settled)
+    await writeFile(join(root, 'src', 'env', 'pyvenv.cfg'), 'home = /usr/bin')
+    await vi.waitFor(() => expect(watcher!.directories()).toBe(2), settled)
+  })
+
+  it('watches shallow folders first when the folder limit applies', async () => {
+    await mkdir(join(root, 'a', 'b', 'c'), { recursive: true })
+    await mkdir(join(root, 'z'))
+    start(4)
+    await live(join(root, 'z'))
+    expect(warnings).toHaveLength(1)
   })
 
   it('warns once when the folder limit stops the watch', async () => {

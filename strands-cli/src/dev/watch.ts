@@ -2,7 +2,7 @@ import { lstatSync, readdirSync, watch, type FSWatcher } from 'node:fs'
 import { extname, join, relative, sep } from 'node:path'
 
 import { errorMessage } from '../tui/terminal/sanitize.js'
-import { isIgnoredDirectory } from './project.js'
+import { isProjectFolder, VIRTUAL_ENVIRONMENT_MARKER } from './project.js'
 
 const SOURCE_EXTENSIONS = new Set([
   '.ts',
@@ -89,9 +89,13 @@ export function watchSources(options: SourceWatcherOptions): SourceWatcher {
   }
   const handle = (directory: string, name: string): void => {
     const path = join(directory, name)
+    if (name === VIRTUAL_ENVIRONMENT_MARKER && directory !== root) {
+      unwatch(directory)
+      return
+    }
     const kind = entryKind(path)
     if (kind === 'directory') {
-      if (!isIgnoredDirectory(name)) addTree(path)
+      if (isProjectFolder(path, name) && addTree(path)) buffer.add(relative(root, path))
       return
     }
     if (kind === 'missing') unwatch(path)
@@ -118,9 +122,18 @@ export function watchSources(options: SourceWatcherOptions): SourceWatcher {
       return false
     }
   }
-  const addTree = (directory: string): void => {
-    if (!addDirectory(directory)) return
-    for (const name of childDirectories(directory)) addTree(join(directory, name))
+  // Breadth first, so that the folder limit drops the deepest folders, not the agent's own.
+  const addTree = (start: string): boolean => {
+    if (!addDirectory(start)) return false
+    const queue = [start]
+    while (queue.length > 0) {
+      const directory = queue.shift()!
+      for (const name of childDirectories(directory)) {
+        const child = join(directory, name)
+        if (addDirectory(child)) queue.push(child)
+      }
+    }
+    return true
   }
 
   addTree(root)
@@ -146,7 +159,7 @@ function entryKind(path: string): 'directory' | 'file' | 'missing' {
 function childDirectories(directory: string): string[] {
   try {
     return readdirSync(directory, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory() && !isIgnoredDirectory(entry.name))
+      .filter((entry) => entry.isDirectory() && isProjectFolder(join(directory, entry.name), entry.name))
       .map((entry) => entry.name)
   } catch (error) {
     if (isMissing(error)) return []
