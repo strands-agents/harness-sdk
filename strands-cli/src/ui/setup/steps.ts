@@ -36,6 +36,7 @@ import {
   compatibleProfile,
   credentialSetupDescription,
   effectiveProviderEnvironment,
+  exaWebSearchActive,
   providerAssessment,
   providerSelectOptions,
   sourceLabel,
@@ -287,13 +288,16 @@ export function rowsForStep(
       }
       if (flow === 'quickstart') {
         const nativeSearch = supportsWebSearch(draft.profile.model)
+        const exaSearch = exaWebSearchActive(draft.profile) || !nativeSearch
         const enabled = profileToolEnabled(draft.profile.builtinTools, 'web_search')
         rows.push({
           id: 'quickstart-web-search',
           label: 'Web search',
           // The Exa-on note is a warning rendered by the wizard.
           description: enabled
-            ? "Provider's built-in search"
+            ? exaSearch
+              ? 'Third-party search via Exa'
+              : "Provider's built-in search"
             : nativeSearch
               ? 'Built-in search available'
               : 'No built-in search',
@@ -305,14 +309,14 @@ export function rowsForStep(
                 updateProfile({ builtinTools: withoutProfileTool(draft.profile.builtinTools, 'web_search') }),
             },
             {
-              label: nativeSearch ? 'Native' : 'Exa',
+              label: exaSearch ? 'Exa' : 'Native',
               active: enabled,
               activate: (): void => {
                 const withoutSearch = withoutProfileTool(draft.profile.builtinTools, 'web_search')
                 updateProfile({
-                  builtinTools: nativeSearch
-                    ? withProfileTool(withoutSearch, 'web_search')
-                    : withWebSearchFallback(withoutSearch),
+                  builtinTools: exaSearch
+                    ? withWebSearchFallback(withoutSearch)
+                    : withProfileTool(withoutSearch, 'web_search'),
                 })
               },
             },

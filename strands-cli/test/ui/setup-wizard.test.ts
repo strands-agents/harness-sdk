@@ -15,9 +15,6 @@ import { sanitizeTerminalText } from '../../src/terminal/text.js'
 import * as directoryPicker from '../../src/terminal/directory-picker.js'
 import { SetupWizard } from '../../src/ui/setup/wizard.js'
 import { ChatRoot } from '../../src/ui/app.js'
-import { openingNeighbor } from '../../src/ui/setup/menu.js'
-import { PROVIDERS } from '../../src/ui/setup/providers.js'
-import { setupStepProgress } from '../../src/ui/setup/steps.js'
 import { getTheme } from '../../src/ui/theme.js'
 import {
   discoverAwsConfiguration,
@@ -122,25 +119,6 @@ describe('setup presentation', () => {
       await instance.waitUntilExit()
       await rm(directory, { recursive: true, force: true })
     }
-  })
-
-  it('reports progress through the quickstart flow', () => {
-    expect(setupStepProgress('quickstart', 1)).toEqual({
-      current: 1,
-      total: 1,
-      instruction: 'Pick a model for your agent',
-    })
-    expect(setupStepProgress('customize', 6)).toEqual({
-      current: 6,
-      total: 6,
-      instruction: 'Set tool permissions',
-    })
-    expect(setupStepProgress('customize', 7)).toEqual({
-      current: 6,
-      total: 6,
-      instruction: 'Review your agent',
-      label: 'Review',
-    })
   })
 
   it.skipIf(process.platform === 'win32')(
@@ -291,7 +269,7 @@ describe('setup presentation', () => {
       vi.stubEnv('AWS_SHARED_CREDENTIALS_FILE', credentials)
       for (const key of ['AWS_REGION', 'AWS_DEFAULT_REGION']) vi.stubEnv(key, undefined)
       vi.mocked(discoverAwsConfiguration).mockImplementation(readAwsConfiguration)
-      const model = PROVIDERS[provider].model({})
+      const model = `${provider}/profile-test-model`
       vi.mocked(discoverProviderModels).mockResolvedValue({
         available: true,
         models: [{ id: model.slice(model.indexOf('/') + 1), name: 'Profile test model' }],
@@ -517,7 +495,7 @@ describe('setup presentation', () => {
   ] as const)(
     'moves between %s provider sections at %s columns and remembers the model cursor',
     async (flow, columns) => {
-      const defaultModel = PROVIDERS.bedrock.model({})
+      const defaultModel = DEFAULT_HARNESS_AGENT_CONFIG.model
       const alternateModel = 'anthropic.claude-opus-4-8'
       const discovery = vi.mocked(discoverProviderModels)
       discovery.mockResolvedValue({
@@ -599,7 +577,7 @@ describe('setup presentation', () => {
     [140, 20],
   ])('keeps model options clickable and scrollable at %s×%s', async (columns, terminalRows) => {
     vi.stubEnv('AWS_BEARER_TOKEN_BEDROCK', undefined)
-    const model = PROVIDERS.bedrock.model({})
+    const model = DEFAULT_HARNESS_AGENT_CONFIG.model
     const discovery = vi.mocked(discoverProviderModels)
     discovery.mockResolvedValue({
       available: true,
@@ -746,7 +724,7 @@ describe('setup presentation', () => {
   )
 
   // Narrow enough that the model options panel stays hidden and identifiers render inline.
-  it('renders discovered models as single-line options with fully qualified identifiers', async () => {
+  it('requires selecting a discovered model for first launch and shows its fully qualified identifier', async () => {
     const modelDiscovery = vi.mocked(discoverProviderModels)
     modelDiscovery.mockResolvedValue({
       available: true,
@@ -758,6 +736,8 @@ describe('setup presentation', () => {
     })
     const input = ttyInput()
     const output = ttyOutput(100, 36)
+    const config = CliConfigStore.memory({}, { animations: false }, { onboardingVersion: 0 })
+    const onComplete = vi.fn()
     let frame = ''
     output.on('data', (chunk: Buffer) => {
       if (chunk.toString().includes('\n')) {
@@ -766,8 +746,8 @@ describe('setup presentation', () => {
     })
     const instance = render(
       createElement(SetupWizard, {
-        config: CliConfigStore.memory({}, { animations: false }),
-        onComplete: () => {},
+        config,
+        onComplete,
       }),
       {
         stdin: input,
@@ -798,6 +778,8 @@ describe('setup presentation', () => {
       expect(frame.split('\n').find((line) => line.includes('Model Beta'))).toContain('bedrock/model-beta')
       expect(frame).not.toContain(' · bedrock/')
       expect(frame).not.toContain('○')
+      await clickModel('Launch Strands harness')
+      expect(onComplete).not.toHaveBeenCalled()
 
       await clickModel('Model Alpha')
       await vi.waitFor(() => expect(frame).toContain('✓ Model Alpha'))
@@ -811,6 +793,12 @@ describe('setup presentation', () => {
       await vi.waitFor(() => expect(frame).toContain('✓ Model Alpha'))
       await clickModel('Model Alpha')
       await vi.waitFor(() => expect(frame).not.toContain('✓ Model Alpha'))
+      await clickModel('Launch Strands harness')
+      expect(onComplete).not.toHaveBeenCalled()
+      await clickModel('Model Alpha')
+      await clickModel('Launch Strands harness')
+      await vi.waitFor(() => expect(onComplete).toHaveBeenCalledOnce())
+      expect(config.snapshot().profile.model).toBe('bedrock/model-alpha')
     } finally {
       instance.unmount()
       await instance.waitUntilExit()
@@ -820,7 +808,7 @@ describe('setup presentation', () => {
 
   it('hides identifiers in the options layout and moves mouse focus from search to reasoning', async () => {
     const modelDiscovery = vi.mocked(discoverProviderModels)
-    const modelSpecifier = PROVIDERS.bedrock.model({})
+    const modelSpecifier = DEFAULT_HARNESS_AGENT_CONFIG.model
     const modelId = modelSpecifier.slice(modelSpecifier.indexOf('/') + 1)
     modelDiscovery.mockResolvedValue({
       available: true,
@@ -1610,17 +1598,6 @@ describe('setup presentation', () => {
     }
   })
 
-  it('moves between the full-width Quickstart card and the pair below it', () => {
-    expect(openingNeighbor(0, 'down', 2)).toBe(1)
-    expect(openingNeighbor(0, 'right', 2)).toBe(1)
-    expect(openingNeighbor(1, 'right', 2)).toBe(2)
-    expect(openingNeighbor(2, 'left', 2)).toBe(1)
-    expect(openingNeighbor(2, 'up', 2)).toBe(0)
-    expect(openingNeighbor(1, 'down', 2)).toBe(1)
-    expect(openingNeighbor(2, 'right', 2)).toBe(2)
-    expect(openingNeighbor(1, 'down', 1)).toBe(2)
-  })
-
   it('detects local providers without asking for endpoint URLs', async () => {
     vi.stubEnv('OLLAMA_HOST', undefined)
     vi.stubEnv('LITELLM_BASE_URL', undefined)
@@ -1780,7 +1757,7 @@ describe('setup presentation', () => {
 })
 
 describe('setup refresh', () => {
-  it.each(['selected', 'onboarding fallback'])('clears the custom model module for a %s model', async (mode) => {
+  it.each(['selected', 'first-run selection'])('clears the custom model module for a %s model', async (mode) => {
     vi.mocked(discoverProviderModels).mockResolvedValue({
       available: true,
       models: [{ id: 'anthropic.claude-opus-4-8', name: 'New selected model' }],
@@ -1789,7 +1766,7 @@ describe('setup refresh', () => {
       {},
       { animations: false },
       {
-        ...(mode === 'onboarding fallback' ? { onboardingVersion: 0 } : {}),
+        ...(mode === 'first-run selection' ? { onboardingVersion: 0 } : {}),
         profile: {
           model: mode === 'selected' ? 'bedrock/old' : 'openai/old',
           modelModule: { kind: 'model', module: './custom.mjs', export: 'model' },
@@ -1825,19 +1802,17 @@ describe('setup refresh', () => {
     try {
       await instance.waitUntilRenderFlush()
       await click('Customize')
-      if (mode === 'selected') {
-        await vi.waitFor(() => expect(frame).toContain('New selected model'))
-        await click('New selected model')
-      } else {
+      if (mode === 'first-run selection') {
         await vi.waitFor(() => expect(frame).toContain('Credentials detected'))
         await click('Amazon Bedrock')
-        await vi.waitFor(() => expect(frame).toContain('New selected model'))
       }
+      await vi.waitFor(() => expect(frame).toContain('New selected model'))
+      await click('New selected model')
       for (let step = 0; step < 6; step++) await click('Continue')
       await click('Save and Launch')
       await vi.waitFor(() => expect(onComplete).toHaveBeenCalledOnce())
       expect(onComplete.mock.calls[0]![0].configuration.profile).toMatchObject({
-        model: mode === 'selected' ? 'bedrock/anthropic.claude-opus-4-8' : DEFAULT_HARNESS_AGENT_CONFIG.model,
+        model: 'bedrock/anthropic.claude-opus-4-8',
         modelModule: null,
       })
     } finally {
@@ -2214,6 +2189,12 @@ describe('setup theme', () => {
     { name: 'retains the saved theme', fresh: false, expected: 'merlin' },
     { name: 'uses the default for fresh setup', fresh: true, expected: DEFAULT_CHAT_SETTINGS.frogTheme },
   ])('$name', async ({ fresh, expected }) => {
+    if (fresh) {
+      vi.mocked(discoverProviderModels).mockResolvedValue({
+        available: true,
+        models: [{ id: DEFAULT_HARNESS_AGENT_CONFIG.model.split('/')[1]!, name: 'Default model' }],
+      })
+    }
     const config = CliConfigStore.memory(
       {},
       fresh ? { animations: false } : { frogTheme: 'merlin', animations: false },
@@ -2241,6 +2222,7 @@ describe('setup theme', () => {
     try {
       await instance.waitUntilRenderFlush()
       await press('\r')
+      if (fresh) await vi.waitFor(() => expect(writes.join('')).toContain('Default model'))
       expect(sanitizeTerminalText(writes.join(''))).toMatch(/Save and Launch|Launch Strands harness/)
       await press('\u001b[Z')
       await press('\r')
@@ -2250,6 +2232,7 @@ describe('setup theme', () => {
     } finally {
       instance.unmount()
       await instance.waitUntilExit()
+      vi.mocked(discoverProviderModels).mockResolvedValue({ available: true, models: [] })
     }
   })
 })

@@ -47,7 +47,6 @@ import { Cursor, EditableText } from '../text-input.js'
 import { Fade, useFadeTransition } from '../animation.js'
 
 import {
-  PROVIDERS,
   compatibleProfile,
   exaWebSearchActive,
   providerAssessment,
@@ -485,6 +484,13 @@ function SetupWizardContent({
   ])
   const selectedModelProvider = providerFromModel(draft.profile.model)
   const hasSelectedModel = deselectedModel !== draft.profile.model
+  const selectedModelAvailable =
+    hasSelectedModel &&
+    providerModels.provider === quickstartProvider &&
+    providerModels.available &&
+    !providerModels.loading &&
+    providerModels.models.some((model) => `${quickstartProvider}/${model.id}` === draft.profile.model)
+  const keepingConfiguredModel = !config.needsSetup() && draft.profile.model === config.snapshot().profile.model
   const canContinue =
     step !== 1 ||
     (flow === 'import'
@@ -492,7 +498,8 @@ function SetupWizardContent({
       : isProviderSetup
         ? hasSelectedModel &&
           selectedModelProvider === quickstartProvider &&
-          setupReadyProviders.includes(quickstartProvider)
+          setupReadyProviders.includes(quickstartProvider) &&
+          (selectedModelAvailable || keepingConfiguredModel)
         : draft.providers.some((provider) => readyProviders.includes(provider)))
   const inspectedProvider = isProviderSetup ? quickstartProvider : undefined
   const inspectedAssessment = inspectedProvider
@@ -649,12 +656,6 @@ function SetupWizardContent({
     ? 'error'
     : bannerWarningStatus
   const availableReasoningRow = providerConfigurationRows.find((row) => row.id === 'thinking')
-  const selectedModelAvailable =
-    hasSelectedModel &&
-    providerModels.provider === quickstartProvider &&
-    providerModels.available &&
-    !providerModels.loading &&
-    providerModels.models.some((model) => `${quickstartProvider}/${model.id}` === draft.profile.model)
   const reasoningRow = selectedModelAvailable ? availableReasoningRow : undefined
   const reasoningRowIndex = reasoningRow ? rows.indexOf(reasoningRow) : -1
   const hiddenReasoningRowIndex = availableReasoningRow && !reasoningRow ? rows.indexOf(availableReasoningRow) : -1
@@ -745,9 +746,11 @@ function SetupWizardContent({
     return providerModels.models.filter((model) => `${model.name} ${model.id}`.toLowerCase().includes(query))
   }, [modelQuery, providerModels.models])
   const quickstartModelOffset = rows.length
-  const defaultModel =
-    quickstartProvider === 'ollama' ? undefined : PROVIDERS[quickstartProvider].model(effectiveEnvironment)
-  const quickstartDefaultModel = defaultModel?.slice(defaultModel.indexOf('/') + 1)
+  const defaultModel = DEFAULT_HARNESS_AGENT_CONFIG.model
+  const quickstartDefaultModel =
+    providerFromModel(defaultModel) === quickstartProvider
+      ? defaultModel.slice(defaultModel.indexOf('/') + 1)
+      : undefined
   const selectedModelOption = Math.max(
     0,
     modelOptionRows.findIndex((row) => row === rows[selection])
@@ -1675,7 +1678,8 @@ function SetupWizardContent({
       if (nextFlow !== 'import') {
         const provider = providerFromModel(draft.profile.model) ?? 'bedrock'
         if (nextFlow === 'quickstart') {
-          setDraft(quickstartDraft(provider, effectiveEnvironment))
+          const next = quickstartDraft(draft.profile.model)
+          setDraft({ ...next, profile: { ...next.profile, modelModule: draft.profile.modelModule } })
         }
         setQuickstartProvider(provider)
         setSelection(PROVIDER_IDS.indexOf(provider))
@@ -1749,7 +1753,11 @@ function SetupWizardContent({
       return
     }
     if (!canContinue) {
-      setError('Select a provider with detected credentials; follow the provider setup instructions.')
+      setError(
+        setupReadyProviders.includes(quickstartProvider)
+          ? 'Select an available model to continue.'
+          : 'Select a provider with detected credentials; follow the provider setup instructions.'
+      )
       return
     }
     if (flow === 'quickstart') {
@@ -1924,8 +1932,8 @@ function SetupWizardContent({
         return
       }
       providerSectionSelections.current.models = model.id
-      const profile = quickstartDraft(quickstartProvider, effectiveEnvironment).profile
       const modelSpecifier = `${quickstartProvider}/${model.id}`
+      const profile = quickstartDraft(modelSpecifier).profile
       if (draft.profile.model === modelSpecifier && deselectedModel !== modelSpecifier) {
         setDeselectedModel(modelSpecifier)
         setError(undefined)
@@ -2046,10 +2054,24 @@ function SetupWizardContent({
         providers.length === current.providers.length &&
         providers.every((provider, index) => provider === current.providers[index])
       const modelProvider = providerFromModel(current.profile.model)
-      const defaultProvider = providers[0]
       let profile = current.profile
-      if (config.needsSetup() && defaultProvider && (!modelProvider || !providers.includes(modelProvider))) {
-        const defaults = quickstartDraft(defaultProvider, effectiveEnvironment).profile
+      const environmentModel =
+        quickstartProvider === 'ollama'
+          ? effectiveEnvironment.OLLAMA_MODEL?.value
+          : quickstartProvider === 'litellm'
+            ? effectiveEnvironment.LITELLM_MODEL?.value
+            : undefined
+      const discoveredModel =
+        providerModels.provider === quickstartProvider
+          ? providerModels.models.find(
+              ({ id }) =>
+                id === environmentModel ||
+                (quickstartProvider === 'ollama' &&
+                  id.replace(/:latest$/, '') === environmentModel?.replace(/:latest$/, ''))
+            )
+          : undefined
+      if (config.needsSetup() && modelProvider !== quickstartProvider && discoveredModel) {
+        const defaults = quickstartDraft(`${quickstartProvider}/${discoveredModel.id}`).profile
         profile = compatibleProfile({
           ...profile,
           model: defaults.model,
@@ -2063,7 +2085,16 @@ function SetupWizardContent({
       }
       return { ...current, providers, profile }
     })
-  }, [awsDiscovery.credentialStatus, config, effectiveEnvironment, isProviderSetup, ollamaDiscovery, readyProviders])
+  }, [
+    awsDiscovery.credentialStatus,
+    config,
+    effectiveEnvironment,
+    isProviderSetup,
+    ollamaDiscovery,
+    providerModels,
+    quickstartProvider,
+    readyProviders,
+  ])
 
   const frogClockMs = useBrandAnimation(frogAnimationId)
   const frogElapsedMs = useBrandAnimationFrame(frogClockMs, brandFrame.width, brandFrame.height)

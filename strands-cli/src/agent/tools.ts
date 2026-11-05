@@ -108,8 +108,7 @@ export interface BuiltinToolChoice {
 export function builtinToolChoices(profile: HarnessAgentConfig): BuiltinToolChoice[] {
   const nativeSearch = supportsWebSearch(profile.model)
   return BUILTIN_TOOLS.map(([id, description]) => {
-    // Without native search, web_search is the third-party Exa fallback: off unless opted into.
-    const thirdParty = id === 'web_search' && !nativeSearch
+    const thirdParty = id === 'web_search' && (!nativeSearch || webSearchFallback(profile.builtinTools) === 'exa')
     const active = thirdParty
       ? webSearchFallback(profile.builtinTools) === 'exa'
       : profileToolEnabled(profile.builtinTools, id)

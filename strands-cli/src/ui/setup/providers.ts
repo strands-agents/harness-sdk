@@ -57,48 +57,41 @@ export const PROVIDERS: Readonly<
   Record<
     ProviderId,
     {
-      model(environment: DetectedProviderEnvironment): string
       fields: readonly ProviderField[]
     }
   >
 > = {
   bedrock: {
-    model: () => DEFAULT_HARNESS_AGENT_CONFIG.model,
     fields: AWS_FIELDS,
   },
   'bedrock-mantle': {
-    model: () => 'bedrock-mantle/openai.gpt-5.6-sol',
     fields: AWS_FIELDS,
   },
   anthropic: {
-    model: () => 'anthropic/claude-opus-4-8',
     fields: [providerField('ANTHROPIC_API_KEY', 'Enter API Key', 'Enter API key')],
   },
   openai: {
-    model: () => 'openai/gpt-5.6-sol',
     fields: [providerField('OPENAI_API_KEY', 'Enter API Key', 'Enter API key')],
   },
   google: {
-    model: () => 'google/gemini-3.5-flash',
     fields: [providerField('GEMINI_API_KEY', 'Enter API Key', 'Enter API key')],
   },
   ollama: {
-    model: (environment) => `ollama/${environment.OLLAMA_MODEL?.value || 'llama3.2'}`,
     fields: [],
   },
   litellm: {
-    model: (environment) => `litellm/${environment.LITELLM_MODEL?.value || 'openai/gpt-4o-mini'}`,
     fields: [providerField('LITELLM_API_KEY', 'Enter API Key', 'Enter API key')],
   },
 }
 
-export function quickstartDraft(provider: ProviderId, environment: DetectedProviderEnvironment): SetupDraft {
+export function quickstartDraft(model = DEFAULT_HARNESS_AGENT_CONFIG.model): SetupDraft {
+  const provider = providerFromModel(model) ?? 'bedrock'
   const localProvider = provider === 'ollama' || provider === 'litellm'
   return {
     providers: [provider],
     profile: compatibleProfile({
       ...DEFAULT_HARNESS_AGENT_CONFIG,
-      model: PROVIDERS[provider].model(environment),
+      model,
       builtinTools: withoutProfileTool(DEFAULT_HARNESS_AGENT_CONFIG.builtinTools, 'web_search'),
       caching: !localProvider,
       effort: localProvider ? 'off' : DEFAULT_HARNESS_AGENT_CONFIG.effort,
@@ -110,9 +103,9 @@ export function quickstartDraft(provider: ProviderId, environment: DetectedProvi
   }
 }
 
-/** Whether this profile's `web_search` will actually go to Exa: opted in, on a model without native search. */
+/** An explicit Exa selection wins even when the model also supports native search. */
 export function exaWebSearchActive(profile: HarnessAgentConfig): boolean {
-  return !supportsWebSearch(profile.model) && webSearchFallback(profile.builtinTools) === 'exa'
+  return webSearchFallback(profile.builtinTools) === 'exa'
 }
 
 /** Without native search, `web_search` is only kept as the explicit Exa opt-in; the plain default would refuse to start. */

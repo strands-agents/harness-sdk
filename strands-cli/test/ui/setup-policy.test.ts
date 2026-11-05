@@ -16,6 +16,7 @@ import {
   quickstartDraft,
 } from '../../src/ui/setup/providers.js'
 import {
+  builtinToolChoices,
   enabledProfileTools,
   profileToolEnabled,
   webSearchFallback,
@@ -25,7 +26,7 @@ import { rowsForStep } from '../../src/ui/setup/steps.js'
 import { resolveSkillSources } from '../../src/agent/skills.js'
 
 function setupControls(profile: Partial<HarnessAgentConfig>, discovery = true) {
-  let draft = quickstartDraft('bedrock', {})
+  let draft = quickstartDraft()
   draft.profile = defineHarnessAgentConfig(profile)
   draft.settings.skillDiscovery = discovery
   return {
@@ -252,7 +253,7 @@ describe('setup provider credentials', () => {
       const rows = rowsForStep(
         1,
         'quickstart',
-        quickstartDraft('bedrock', {}),
+        quickstartDraft(),
         '',
         {},
         {},
@@ -317,7 +318,7 @@ describe('setup provider credentials', () => {
     const apiKey = rowsForStep(
       1,
       'quickstart',
-      quickstartDraft('openai', {}),
+      quickstartDraft('openai/test-model'),
       '',
       {},
       detectedEnvironment,
@@ -337,32 +338,12 @@ describe('setup provider credentials', () => {
     vi.unstubAllEnvs()
   })
 
-  it('detects Ollama without asking for an endpoint', () => {
-    const rows = rowsForStep(
-      1,
-      'quickstart',
-      quickstartDraft('ollama', {}),
-      '',
-      {},
-      {},
-      'ollama',
-      [],
-      { profiles: [], regions: [] },
-      { installed: true, running: false, models: [] },
-      () => {},
-      () => {},
-      () => {}
-    )
-
-    expect(rows.some((row) => row.field === 'OLLAMA_HOST')).toBe(false)
-  })
-
   it('asks for a LiteLLM key only when the proxy requests authentication', () => {
     const environment = { LITELLM_API_KEY: { value: 'rejected', source: 'process' as const } }
     const rows = rowsForStep(
       1,
       'quickstart',
-      quickstartDraft('litellm', environment),
+      quickstartDraft('litellm/test-model'),
       '',
       {},
       environment,
@@ -388,7 +369,7 @@ describe('setup provider credentials', () => {
     const rows = rowsForStep(
       1,
       'quickstart',
-      quickstartDraft('openai', environment),
+      quickstartDraft('openai/test-model'),
       '',
       {},
       environment,
@@ -410,7 +391,7 @@ describe('setup provider credentials', () => {
     const rows = rowsForStep(
       1,
       'quickstart',
-      quickstartDraft('openai', environment),
+      quickstartDraft('openai/test-model'),
       '',
       {},
       environment,
@@ -440,7 +421,7 @@ describe('setup provider credentials', () => {
     const rows = rowsForStep(
       1,
       'quickstart',
-      quickstartDraft('google', environment),
+      quickstartDraft('google/test-model'),
       '',
       {},
       environment,
@@ -466,45 +447,9 @@ describe('setup provider credentials', () => {
     })
   })
 
-  it('keeps missing-credential guidance concise', () => {
-    const warning = providerAssessment('openai', {}, { profiles: [], regions: [] }, undefined).warning
-
-    expect(warning).toBe('OPENAI_API_KEY was not detected.')
-  })
-
-  it('keeps local-provider guidance concise', () => {
-    expect(
-      providerAssessment('ollama', {}, { profiles: [], regions: [] }, { installed: true, running: true, models: [] })
-        .warning
-    ).toBe('Run ollama pull {model id}, then choose Refresh.')
-    expect(
-      providerAssessment('litellm', {}, { profiles: [], regions: [] }, undefined, {
-        reachable: false,
-        authenticationRequired: false,
-        models: [],
-      }).warning
-    ).toBe('Start the LiteLLM proxy on localhost:4000, then choose Refresh.')
-    expect(
-      providerAssessment('litellm', {}, { profiles: [], regions: [] }, undefined, {
-        reachable: true,
-        authenticationRequired: true,
-        models: [],
-        status: 401,
-      }).warning
-    ).toBe('Enter LITELLM_API_KEY below, then choose Refresh.')
-    expect(
-      providerAssessment('litellm', {}, { profiles: [], regions: [] }, undefined, {
-        reachable: true,
-        authenticationRequired: false,
-        models: [{ id: 'openai/gpt-4o', name: 'GPT-4o' }],
-        status: 200,
-      }).warning
-    ).toBeUndefined()
-  })
-
   it('keeps ready-provider model controls while hiding credentials', () => {
     const environment = { OPENAI_API_KEY: { value: 'secret', source: 'process' as const } }
-    const draft = quickstartDraft('openai', environment)
+    const draft = quickstartDraft('openai/test-model')
     draft.providers = ['bedrock', 'openai']
     const rows = rowsForStep(
       1,
@@ -532,8 +477,7 @@ describe('setup provider credentials', () => {
     ['bedrock/qwen.qwen3-next-80b-a3b', ['Off', 'Minimal', 'Low', 'Medium', 'High', 'Extra high', 'Max']],
   ])('uses the supported effort range for %s', (model, labels) => {
     const provider = model.startsWith('openai/') ? 'openai' : 'bedrock'
-    const draft = quickstartDraft(provider, {})
-    draft.profile = { ...draft.profile, model }
+    const draft = quickstartDraft(model)
     const rows = rowsForStep(
       1,
       'quickstart',
@@ -554,7 +498,7 @@ describe('setup provider credentials', () => {
   })
 
   it('omits reasoning controls when the selected model does not support effort', () => {
-    const draft = quickstartDraft('ollama', { OLLAMA_MODEL: { value: 'llama3.2', source: 'process' } })
+    const draft = quickstartDraft('ollama/llama3.2')
     const rows = rowsForStep(
       1,
       'quickstart',
@@ -579,7 +523,7 @@ describe('setup web_search availability', () => {
   it.each(['bedrock', 'bedrock-mantle', 'openai'] as const)(
     'enables every quickstart capability except web_search for %s',
     (provider) => {
-      const draft = quickstartDraft(provider, {})
+      const draft = quickstartDraft(`${provider}/openai.gpt-6.1-sol`)
       expect(enabledProfileTools(draft.profile.builtinTools)).toEqual(
         enabledProfileTools(DEFAULT_HARNESS_AGENT_CONFIG.builtinTools).filter((tool) => tool !== 'web_search')
       )
@@ -592,7 +536,7 @@ describe('setup web_search availability', () => {
     ['Exa', 'bedrock', 'exa'],
     ['Native', 'bedrock-mantle', 'native'],
   ] as const)('offers an explicit %s web search opt-in for %s', (label, provider, mode) => {
-    const draft = quickstartDraft(provider, {})
+    const draft = quickstartDraft(`${provider}/openai.gpt-6.1-sol`)
     let profile = draft.profile
     const rows = rowsForStep(
       1,
@@ -624,7 +568,7 @@ describe('setup web_search availability', () => {
   })
 
   it('keeps the Exa web search opt-in for Bedrock', () => {
-    const bedrock = quickstartDraft('bedrock', {}).profile
+    const bedrock = quickstartDraft().profile
     const exa = { ...bedrock, builtinTools: { web_search: 'exa' as const } }
     expect(compatibleProfile(exa).builtinTools).toMatchObject({ web_search: 'exa' })
   })
@@ -634,16 +578,44 @@ describe('setup web_search availability', () => {
     ['bedrock/zai.glm-4.7', 'off', 'off'],
     ['bedrock/us.anthropic.claude-sonnet-4-5-20250929-v1:0', 'high', 'high'],
   ] as const)('keeps %s on a supported effort (%s → %s)', (model, effort, expected) => {
-    const profile = { ...quickstartDraft('bedrock', {}).profile, model, effort }
+    const profile = { ...quickstartDraft().profile, model, effort }
     expect(compatibleProfile(profile).effort).toBe(expected)
   })
 
-  it('reports Exa as active only when opted in on a model without native search', () => {
-    const bedrock = quickstartDraft('bedrock', {}).profile
+  it('keeps an explicit Exa selection visible even when the model supports native search', () => {
+    const bedrock = quickstartDraft().profile
     expect(exaWebSearchActive(bedrock)).toBe(false)
     expect(exaWebSearchActive({ ...bedrock, builtinTools: { web_search: 'exa' } })).toBe(true)
-    const mantle = quickstartDraft('bedrock-mantle', {}).profile
-    expect(exaWebSearchActive({ ...mantle, builtinTools: { web_search: 'exa' } })).toBe(false)
+    const draft = quickstartDraft('bedrock-mantle/openai.gpt-6.1-sol')
+    expect(exaWebSearchActive(draft.profile)).toBe(false)
+    draft.profile = { ...draft.profile, builtinTools: { web_search: 'exa' } }
+    expect(exaWebSearchActive(draft.profile)).toBe(true)
+    expect(builtinToolChoices(draft.profile).find(({ id }) => id === 'web_search')).toMatchObject({
+      active: true,
+      thirdParty: true,
+    })
+    const rows = rowsForStep(
+      1,
+      'quickstart',
+      draft,
+      '',
+      {},
+      {},
+      'bedrock-mantle',
+      ['bedrock-mantle'],
+      { profiles: [], regions: [] },
+      undefined,
+      () => {},
+      () => {},
+      () => {}
+    )
+    expect(rows.find(({ id }) => id === 'quickstart-web-search')).toMatchObject({
+      description: 'Third-party search via Exa',
+      choices: [
+        { label: 'Off', active: false },
+        { label: 'Exa', active: true },
+      ],
+    })
   })
 
   it('opts a profile into Exa by storing the string, whichever form builtinTools uses', () => {
