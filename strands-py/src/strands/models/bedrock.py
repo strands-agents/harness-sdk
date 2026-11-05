@@ -446,6 +446,7 @@ class BedrockModel(Model):
         system_prompt_content: list[SystemContentBlock] | None = None,
         tool_choice: ToolChoice | None = None,
         dynamic_trailing_blocks: int = 0,
+        *,
         cache_messages: bool = True,
         **kwargs: Any,
     ) -> dict[str, Any]:
@@ -1667,7 +1668,12 @@ class BedrockModel(Model):
         try:
             logger.debug("formatting request")
             request = self.format_request(
-                messages, tool_specs, system_prompt_content, tool_choice, dynamic_trailing_blocks, cache_messages
+                messages,
+                tool_specs,
+                system_prompt_content,
+                tool_choice,
+                dynamic_trailing_blocks,
+                cache_messages=cache_messages,
             )
             model_id = request["modelId"]
             logger.debug("request=<%s>", request)

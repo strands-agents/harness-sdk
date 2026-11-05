@@ -602,7 +602,7 @@ class OpenAIResponsesModel(Model):
         """
         cache_config = cast(CacheConfig | None, self.config.get("cache_config"))
         cache_points = cache_config is not None and self.model_info.capabilities.prompt_caching == "cache_points"
-        cache_messages = (
+        place_checkpoints = (
             cache_messages
             and cache_points
             and cache_config is not None
@@ -614,7 +614,7 @@ class OpenAIResponsesModel(Model):
             self._format_cacheable_request_messages(
                 messages, dynamic_trailing_blocks, cast(CacheConfig, cache_config).messages_ttl
             )
-            if cache_messages
+            if place_checkpoints
             else (self._format_request_messages(messages), False)
         )
         stateful = self.stateful
