@@ -134,6 +134,21 @@ describe('retrieval tool', () => {
     expect(searchResult).toContain('COMMAND_ERROR: failed')
   })
 
+  it('keeps shell diagnostics when truncating stdout', async () => {
+    const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+    const ref = await stash.store(
+      'tool-shell',
+      0,
+      encodeJSON({ json: { output: 'stdout '.repeat(200), error: 'COMMAND_ERROR: failed', exit_code: 7 } })
+    )
+    const retrievalTool = createRetrievalTool(stash, 40)
+
+    const result = (await invoke(retrievalTool, { reference: ref })) as string
+    expect(result).toContain('[truncated]')
+    expect(result).toContain('[stderr]\nCOMMAND_ERROR: failed')
+    expect(result).toContain('[exit_code: 7]')
+  })
+
   it('returns error for unknown reference', async () => {
     const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
     const retrievalTool = createRetrievalTool(stash)

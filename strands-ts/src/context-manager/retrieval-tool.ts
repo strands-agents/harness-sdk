@@ -74,8 +74,7 @@ export function createRetrievalTool(stash: Stash, maxResultTokens?: number): Too
         }
         const shellResult = renderShellResult(result.data)
         if (shellResult !== null) {
-          if (shellResult.length <= maxChars) return shellResult
-          return `${shellResult.slice(0, maxChars)}\n\n[truncated]`
+          return truncateShellResult(shellResult, maxChars)
         }
         const serialized = JSON.stringify(result.data)
         if (serialized.length <= maxChars) return result.data as JSONValue
@@ -133,7 +132,7 @@ function renderShellResult(data: unknown): string | null {
 
   const record = data as Record<string, unknown>
   if (typeof record.output === 'string' && typeof record.error === 'string' && Number.isInteger(record.exit_code)) {
-    const parts = [record.output]
+    const parts = record.output ? [record.output] : []
     if (record.error) parts.push(`[stderr]\n${record.error}`)
     parts.push(`[exit_code: ${record.exit_code}]`)
 
@@ -151,6 +150,20 @@ function renderShellResult(data: unknown): string | null {
     }
   }
   return null
+}
+
+function truncateShellResult(text: string, maxChars: number): string {
+  if (text.length <= maxChars) return text
+  const trailerStarts = ['\n\n[stderr]\n', '\n\n[exit_code: ']
+    .map((marker) => text.indexOf(marker))
+    .filter((index) => index >= 0)
+  const trailerStart = trailerStarts.length > 0 ? Math.min(...trailerStarts) : -1
+  if (trailerStart < 0) return `${text.slice(0, maxChars)}\n\n[truncated]`
+  const trailer = text.slice(trailerStart)
+  const truncation = '\n\n[truncated]'
+  const available = maxChars - truncation.length - trailer.length
+  if (available <= 0) return text.slice(0, maxChars)
+  return `${text.slice(0, available)}${truncation}${trailer}`
 }
 
 function extractText(data: unknown): string | null {

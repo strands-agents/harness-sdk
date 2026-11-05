@@ -131,6 +131,20 @@ class TestRetrievalTool:
         assert "COMMAND_ERROR: failed" in search_result["content"][0]["text"]
 
     @pytest.mark.asyncio
+    async def test_truncating_shell_output_keeps_diagnostics(self, stash):
+        ref = await _store_shell_output(
+            stash, "stdout " * 200, error="COMMAND_ERROR: failed", exit_code=7
+        )
+        tool = _create_retrieval_tool(stash, max_result_tokens=40)
+
+        result = await tool._tool_func({"toolUseId": "t1", "input": {"reference": ref}})
+        text = result["content"][0]["text"]
+
+        assert "[truncated]" in text
+        assert "[stderr]\nCOMMAND_ERROR: failed" in text
+        assert "[exit_code: 7]" in text
+
+    @pytest.mark.asyncio
     async def test_returns_error_for_unknown_reference(self, stash):
         tool = _create_retrieval_tool(stash)
         result = await tool._tool_func({"toolUseId": "t1", "input": {"reference": "nonexistent"}})

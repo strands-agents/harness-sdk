@@ -49,7 +49,7 @@ def _render_shell_result(data: object) -> str | None:
             and isinstance(data.get("error"), str)
             and isinstance(data.get("exit_code"), int)
         ):
-            parts = [data["output"]]
+            parts = [data["output"]] if data["output"] else []
             if data["error"]:
                 parts.append(f"[stderr]\n{data['error']}")
             parts.append(f"[exit_code: {data['exit_code']}]")
@@ -68,6 +68,26 @@ def _render_shell_result(data: object) -> str | None:
         except (TypeError, ValueError):
             return None
     return None
+
+
+def _truncate_shell_result(text: str, max_chars: int) -> str:
+    """Keep shell diagnostics visible when stdout fills the retrieval budget."""
+    if len(text) <= max_chars:
+        return text
+    trailer_starts = [
+        index
+        for marker in ("\n\n[stderr]\n", "\n\n[exit_code: ")
+        if (index := text.find(marker)) >= 0
+    ]
+    trailer_start = min(trailer_starts, default=-1)
+    if trailer_start < 0:
+        return text[:max_chars] + "\n\n[truncated]"
+    trailer = text[trailer_start:]
+    truncation = "\n\n[truncated]"
+    available = max_chars - len(truncation) - len(trailer)
+    if available <= 0:
+        return text[:max_chars]
+    return text[:available] + truncation + trailer
 
 
 def _extract_text(data: object) -> str | None:
@@ -111,7 +131,9 @@ def _create_retrieval_tool(stash: Stash, max_result_tokens: int | None = None) -
                     return ToolResult(toolUseId=tool_use_id, status="success", content=[media])
             shell_result = _render_shell_result(result)
             full_text = shell_result if shell_result is not None else json.dumps(result)
-            if len(full_text) > max_chars:
+            if shell_result is not None:
+                full_text = _truncate_shell_result(full_text, max_chars)
+            elif len(full_text) > max_chars:
                 full_text = full_text[:max_chars] + "\n\n[truncated]"
             content: list[ToolResultContent] = [ToolResultContent(text=full_text)]
             return ToolResult(toolUseId=tool_use_id, status="success", content=content)
