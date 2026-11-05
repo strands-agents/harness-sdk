@@ -359,9 +359,9 @@ class Model(abc.ABC):
                 output retry to providers that enforce structured output themselves. The response must then be
                 either a call to the tool named in ``tool_choice`` or a final text response whose text is exactly one
                 JSON object that validates against this model.
-            **kwargs: Additional keyword arguments for future extensibility. Providers that place cache points
-                from ``cache_config`` honor ``dynamic_trailing_blocks`` (trailing blocks of the last user message
-                rebuilt on every call) and ``cache_messages`` (False skips the messages cache point for this call).
+            **kwargs: Additional keyword arguments. Providers that place cache points from ``cache_config`` honor
+                ``dynamic_trailing_blocks`` (trailing blocks of the last user message rebuilt on every call) and
+                ``cache_messages`` (False skips the messages cache point for this call).
 
         Yields:
             Formatted message chunks from the model.
