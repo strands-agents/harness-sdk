@@ -536,3 +536,121 @@ describe('read media validation', () => {
     )
   })
 })
+
+function pngSized(width: number, height: number, padding = 0): Uint8Array {
+  const ihdr = Buffer.alloc(13)
+  ihdr.writeUInt32BE(width, 0)
+  ihdr.writeUInt32BE(height, 4)
+  ihdr.set([8, 2, 0, 0, 0], 8)
+  const pixels = new Uint8Array((1 + 3 * width) * height)
+  const pad = padding ? pngChunk('tEXt', bytesOf('pad\0', 'a'.repeat(padding))) : new Uint8Array()
+  const signature = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]
+  return bytesOf(signature, pngChunk('IHDR', ihdr), pad, pngChunk('IDAT', deflateSync(pixels)), pngChunk('IEND', []))
+}
+
+function riff(...chunks: [string, Uint8Array][]): Uint8Array {
+  const body = bytesOf('WEBP', ...chunks.flatMap(([kind, data]) => [kind, u32le(data.length), data]))
+  return bytesOf('RIFF', u32le(body.length), body)
+}
+
+function u32le(value: number): Uint8Array {
+  const out = Buffer.alloc(4)
+  out.writeUInt32LE(value >>> 0)
+  return out
+}
+
+function jpegSized(width: number, height: number): Uint8Array {
+  const out = Buffer.from(JPEG)
+  const sof = out.indexOf(Buffer.from([0xff, 0xc0]))
+  out.writeUInt16BE(height, sof + 5)
+  out.writeUInt16BE(width, sof + 7)
+  return new Uint8Array(out)
+}
+
+function gifSized(width: number, height: number): Uint8Array {
+  const out = Buffer.from(GIF)
+  out.writeUInt16LE(width, 6)
+  out.writeUInt16LE(height, 8)
+  return new Uint8Array(out)
+}
+
+function webpLosslessSized(width: number, height: number): Uint8Array {
+  const out = Buffer.from(WEBP)
+  const bits = (out.readUInt32LE(21) & ~0x0fffffff) | (width - 1) | ((height - 1) << 14)
+  out.writeUInt32LE(bits >>> 0, 21)
+  return new Uint8Array(out)
+}
+
+function webpLossySized(width: number, height: number): Uint8Array {
+  const frame = Buffer.from([0, 0, 0, 0x9d, 0x01, 0x2a, 0, 0, 0, 0])
+  frame.writeUInt16LE(width, 6)
+  frame.writeUInt16LE(height, 8)
+  return riff(['VP8 ', frame])
+}
+
+function webpExtendedSized(width: number, height: number): Uint8Array {
+  const vp8x = Buffer.alloc(10)
+  vp8x.writeUIntLE(width - 1, 4, 3)
+  vp8x.writeUIntLE(height - 1, 7, 3)
+  return riff(['VP8X', vp8x], ['VP8L', WEBP.subarray(20)])
+}
+
+describe('read image limits', () => {
+  const limited = makeRead({ maxImageBytes: 4096, maxImageDimension: 8000 })
+
+  it.each([
+    ['wide.png', pngSized(8001, 1), '8001x1 px png'],
+    ['tall.png', pngSized(1, 8001), '1x8001 px png'],
+    ['wide.jpg', jpegSized(8001, 1), '8001x1 px jpeg'],
+    ['wide.gif', gifSized(1, 8001), '1x8001 px gif'],
+    ['lossless.webp', webpLosslessSized(8001, 2), '8001x2 px webp'],
+    ['lossy.webp', webpLossySized(2, 8001), '2x8001 px webp'],
+    ['extended.webp', webpExtendedSized(9000, 3), '9000x3 px webp'],
+    ['heavy.png', pngSized(2, 2, 4096), '2x2 px png'],
+  ])('rejects %s, larger than the model accepts', async (name, data, size) => {
+    const path = join(dir, name)
+    writeFileSync(path, data)
+    await expect(limited.invoke({ path }, ctx())).rejects.toThrow(
+      `${path} is a ${size} image of ${data.length} bytes, larger than this model accepts (4096 bytes and 8000 px`
+    )
+  })
+
+  it.each([
+    pngSized(8000, 1),
+    jpegSized(1, 8000),
+    gifSized(8000, 8000),
+    webpLosslessSized(8000, 1),
+    webpLossySized(1, 8000),
+    webpExtendedSized(8000, 8000),
+  ])('returns an image at the model limit', async (data) => {
+    const path = join(dir, 'edge.img.png')
+    writeFileSync(path, data)
+    const out = await makeRead({ maxImageBytes: data.length, maxImageDimension: 8000 }).invoke({ path }, ctx())
+    expect(out).toBeInstanceOf(ImageBlock)
+  })
+
+  it('returns an oversized image when no limits are set', async () => {
+    const path = join(dir, 'wide.png')
+    writeFileSync(path, pngSized(8001, 1))
+    expect(await read.invoke({ path }, ctx())).toBeInstanceOf(ImageBlock)
+  })
+
+  it('describes an oversized image when media is off', async () => {
+    const path = join(dir, 'wide.png')
+    writeFileSync(path, pngSized(8001, 1))
+    const out = await makeRead({ media: false, maxImageDimension: 8000 }).invoke({ path }, ctx())
+    expect(out).toContain('This model cannot view image files')
+  })
+
+  it.each([
+    ['bedrock/global.anthropic.claude-sonnet-4-6', 'error'],
+    ['bedrock/us.amazon.nova-2-lite-v1:0', 'success'],
+  ])('applies the image limits of %s', async (model, status) => {
+    const harness = await createHarness({ model, skills: false })
+    const path = join(dir, 'wide.png')
+    writeFileSync(path, pngSized(8001, 1))
+    const result = await harness.tool.read!.invoke({ path }, { recordDirectToolCall: false })
+    expect(result.status).toBe(status)
+    if (status === 'error') expect(result.content).toHaveLength(1)
+  })
+})

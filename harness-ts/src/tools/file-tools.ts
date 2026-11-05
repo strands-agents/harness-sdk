@@ -13,7 +13,7 @@ import { DocumentBlock, ImageBlock, tool } from '@strands-agents/sdk'
 import type { DocumentFormat, ImageFormat, ToolContext } from '@strands-agents/sdk'
 import { z } from 'zod'
 
-import { documentProblem, imageProblem } from './media-validation.js'
+import { documentProblem, imageProblem, imageSize } from './media-validation.js'
 
 const READ_DEFAULT_LIMIT = 2000
 
@@ -132,6 +132,21 @@ function mediaResult(path: string, check: MediaCheck, bytes: Uint8Array, media: 
   return new DocumentBlock({ name: documentName(path), format: check.format as DocumentFormat, source: { bytes } })
 }
 
+function throwIfTooLarge(path: string, format: ImageFormat, bytes: Uint8Array, limits: ImageLimits): void {
+  // The model rejects a larger image, and the rejected block stays in history, failing every later turn.
+  const { maxImageBytes, maxImageDimension } = limits
+  const [width, height] = imageSize(bytes, format) ?? [0, 0]
+  const tooHeavy = maxImageBytes !== undefined && bytes.length > maxImageBytes
+  const tooWide = maxImageDimension !== undefined && Math.max(width, height) > maxImageDimension
+  if (!tooHeavy && !tooWide) return
+  const accepted = [maxImageBytes && `${maxImageBytes} bytes`, maxImageDimension && `${maxImageDimension} px per side`]
+  throw new Error(
+    `${path} is a ${width}x${height} px ${format} image of ${bytes.length} bytes, larger than this model accepts ` +
+      `(${accepted.filter(Boolean).join(' and ')}). Write a smaller copy with a shell tool (for example ImageMagick ` +
+      '`magick`, macOS `sips`, or Python Pillow) and read that.'
+  )
+}
+
 function invalidMediaAsText(
   path: string,
   ext: string,
@@ -156,7 +171,10 @@ function invalidMediaAsText(
   return [`[${path} is not ${expected}${reason}. Showing it as text.]\n`, content]
 }
 
-function readCallback(media: boolean): (input: ReadInput, context?: ToolContext) => Promise<ReadOutput> {
+function readCallback(
+  media: boolean,
+  limits: ImageLimits = {}
+): (input: ReadInput, context?: ToolContext) => Promise<ReadOutput> {
   return async (input: ReadInput, context?: ToolContext): Promise<ReadOutput> => {
     if (!context) throw new Error('Tool context is required for read.')
     validatePath(input.path)
@@ -167,7 +185,10 @@ function readCallback(media: boolean): (input: ReadInput, context?: ToolContext)
     if (IMAGE_EXTENSIONS.includes(ext) || DOCUMENT_FORMATS.includes(ext)) {
       const bytes = await context.agent.sandbox.readFile(input.path)
       const check = checkMedia(ext, bytes)
-      if (check.problem === undefined) return mediaResult(input.path, check, bytes, media)
+      if (check.problem === undefined) {
+        if (media && check.kind === 'Image') throwIfTooLarge(input.path, check.format as ImageFormat, bytes, limits)
+        return mediaResult(input.path, check, bytes, media)
+      }
       ;[note, content] = invalidMediaAsText(input.path, ext, bytes, check.expected, check.problem)
     } else {
       content = await context.agent.sandbox.readText(input.path)
@@ -197,7 +218,15 @@ export const read = tool({
   callback: readCallback(true),
 })
 
-export interface MakeReadOptions {
+/** The largest image a model accepts; `read` fails the call for a larger one. See `imageLimits` in `models.ts`. */
+export interface ImageLimits {
+  /** Largest image file, in bytes. */
+  maxImageBytes?: number
+  /** Largest image width or height, in pixels. */
+  maxImageDimension?: number
+}
+
+export interface MakeReadOptions extends ImageLimits {
   /** Return images and binary documents as viewable media. Defaults to true. */
   media?: boolean
 }
@@ -208,12 +237,12 @@ export interface MakeReadOptions {
  * Pass `media: false` for a model that rejects image and document blocks, and `read` describes those
  * files in text instead. See `supportsMedia` in `models.ts`.
  */
-export function makeRead({ media = true }: MakeReadOptions = {}): typeof read {
+export function makeRead({ media = true, ...limits }: MakeReadOptions = {}): typeof read {
   return tool({
     name: 'read',
     description: READ_DESCRIPTION,
     inputSchema: READ_SCHEMA,
-    callback: readCallback(media),
+    callback: readCallback(media, limits),
   })
 }
 

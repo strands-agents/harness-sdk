@@ -34,6 +34,42 @@ export function imageProblem(data: Uint8Array, format: ImageFormat): string | un
   return format === 'gif' ? gifProblem(data) : webpProblem(data)
 }
 
+/** The `[width, height]` of `data`, a usable `format` image, or `undefined` if its header does not say. */
+export function imageSize(data: Uint8Array, format: ImageFormat): [number, number] | undefined {
+  const dv = view(data)
+  if (format === 'png') return [dv.getUint32(16), dv.getUint32(20)]
+  if (format === 'gif') return [dv.getUint16(6, true), dv.getUint16(8, true)]
+  return format === 'jpeg' ? jpegSize(data, dv) : webpSize(data, dv)
+}
+
+function jpegSize(data: Uint8Array, dv: DataView): [number, number] | undefined {
+  let pos = 2
+  while (pos + 9 <= data.length) {
+    const marker = data[pos + 1]!
+    if (marker === 0xff || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd8)) {
+      pos += marker === 0xff ? 1 : 2
+      continue
+    }
+    if (marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker)) {
+      return [dv.getUint16(pos + 7), dv.getUint16(pos + 5)]
+    }
+    pos += 2 + dv.getUint16(pos + 2)
+  }
+  return undefined
+}
+
+function webpSize(data: Uint8Array, dv: DataView): [number, number] | undefined {
+  if (data.length < 30) return undefined
+  const kind = ascii(data.subarray(12, 16))
+  if (kind === 'VP8X') return [1 + (dv.getUint32(24, true) & 0xffffff), 1 + (dv.getUint32(26, true) >>> 8)]
+  if (kind === 'VP8 ') return [dv.getUint16(26, true) & 0x3fff, dv.getUint16(28, true) & 0x3fff]
+  if (kind === 'VP8L') {
+    const bits = dv.getUint32(21, true)
+    return [1 + (bits & 0x3fff), 1 + ((bits >>> 14) & 0x3fff)]
+  }
+  return undefined
+}
+
 /** Why `data` is not a usable `format` document, if it is not. */
 export function documentProblem(data: Uint8Array, format: string): string | undefined {
   if (format === 'pdf') return pdfProblem(data)
