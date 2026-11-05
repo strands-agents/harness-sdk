@@ -82,7 +82,10 @@ export default defineConfig({
       markdown: {
         // API docs are symlinked from .build/api-docs; processedDirs ensures Starlight's
         // rehype plugins (e.g. heading anchor links) run on the real resolved paths.
-        processedDirs: [path.resolve('.build/api-docs')],
+        processedDirs: [
+          path.resolve('.build/api-docs'),
+          path.resolve('.build/external-docs'),
+        ],
       },
       title: 'Strands Agents',
       description: 'The open source toolkit for building production agents.',

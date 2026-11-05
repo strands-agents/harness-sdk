@@ -209,7 +209,7 @@ function translateHttpError(providerName: string, status: number, body: unknown)
   const detail = errorDetail(body)
   const message = `${providerName} decision request failed with HTTP ${status}${detail ? `: ${detail}` : ''}`
   const cause = new SystemOneHttpError(status, body, message)
-  if (status === 429 || status === 529) return new ModelThrottledError(message, { cause })
+  if (status === 429 || status === 503 || status === 529) return new ModelThrottledError(message, { cause })
   if (status === 413) return new ContextWindowOverflowError(message)
   return new ModelError(message, { cause })
 }

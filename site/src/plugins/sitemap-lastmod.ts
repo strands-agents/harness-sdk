@@ -22,8 +22,10 @@
  * array, it skips adding its own — so this replaces the default
  * sitemap with one that includes lastmod.
  */
+import fs from 'node:fs'
 import path from 'node:path'
 import sitemap from '@astrojs/sitemap'
+import { loadGeneratedExternalDocsNavigation } from '../external-docs-navigation'
 import type { SitemapItem } from '@astrojs/sitemap'
 import { buildLastModMap, getGitPrefix } from '../util/git-dates'
 
@@ -83,6 +85,7 @@ export function sitemapWithLastmod(contentDir: string = 'src/content') {
   console.log(`[sitemap-lastmod] Loaded ${lastModMap.size} git dates`)
 
   const contentPrefix = (rel: string) => gitPrefix + path.posix.join(contentDir, rel)
+  const excludedRoutes = [...EXCLUDED_ROUTES, ...loadPreviewExternalDocsRoutes(path.resolve('.build/external-docs'))]
 
   // Precompute lastmod dates for route classes with no backing content file.
   // Homepage uses the newest content commit overall — never the build date,
@@ -104,7 +107,7 @@ export function sitemapWithLastmod(contentDir: string = 'src/content') {
   return sitemap({
     filter: (page: string) => {
       const pathname = new URL(page).pathname
-      return !EXCLUDED_ROUTES.some((route) => pathname.startsWith(`${basePath}/${route}`))
+      return !excludedRoutes.some((route) => pathname.startsWith(`${basePath}/${route}`))
     },
     serialize(item: SitemapItem) {
       const url = new URL(item.url)
@@ -141,4 +144,16 @@ export function sitemapWithLastmod(contentDir: string = 'src/content') {
       return item
     },
   })
+}
+
+export function loadPreviewExternalDocsRoutes(externalDocsDir: string): string[] {
+  if (!fs.existsSync(externalDocsDir)) return []
+
+  const routes: string[] = []
+  for (const entry of fs.readdirSync(externalDocsDir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue
+    const navigation = loadGeneratedExternalDocsNavigation(externalDocsDir, entry.name)
+    if (navigation?.product.status === 'preview') routes.push(`${navigation.routePrefix}/`)
+  }
+  return routes
 }

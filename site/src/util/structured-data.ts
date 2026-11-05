@@ -3,6 +3,17 @@
  * Used by Head.astro (docs, blog, and changelog pages).
  */
 
+/**
+ * Serialize JSON-LD for insertion into a script element with `set:html`.
+ *
+ * JSON.stringify does not escape `<`, so a string containing `</script>` can
+ * terminate the element before the browser parses the JSON. Escaping `<` as a
+ * JSON Unicode sequence preserves the parsed value without creating HTML.
+ */
+export function serializeJsonLd(value: object): string {
+  return JSON.stringify(value).replace(/</g, '\\u003c')
+}
+
 const breadcrumbLabels: Record<string, string> = {
   docs: 'Docs',
   'user-guide': 'User Guide',

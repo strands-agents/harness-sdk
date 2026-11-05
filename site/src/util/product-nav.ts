@@ -59,9 +59,9 @@ function toNavItem(item: StarlightSidebarItem, labels: Map<string, string>): Pro
   return { type: 'link', label, href: pathWithBase(`/${item.slug}/`) }
 }
 
-function hasSlug(item: StarlightSidebarItem, slug: string): boolean {
-  if ('items' in item) return item.items.some((child) => hasSlug(child, slug))
-  return 'slug' in item && item.slug === slug
+function hasSlugAtOrBelow(item: StarlightSidebarItem, slug: string): boolean {
+  if ('items' in item) return item.items.some((child) => hasSlugAtOrBelow(child, slug))
+  return 'slug' in item && (item.slug === slug || item.slug.startsWith(`${slug}/`))
 }
 
 /**
@@ -72,7 +72,7 @@ function hasSlug(item: StarlightSidebarItem, slug: string): boolean {
 export async function getProductNav(hubHref: string): Promise<ProductNavItem[]> {
   const [sidebar, labels] = await Promise.all([getSidebar(), getLabels()])
   const hubSlug = hubHref.replace(pathWithBase('/'), '').replace(/\/$/, '')
-  const group = sidebar.find((item) => 'items' in item && hasSlug(item, hubSlug))
+  const group = sidebar.find((item) => 'items' in item && hasSlugAtOrBelow(item, hubSlug))
   if (!group || !('items' in group)) return []
   return group.items.map((item) => toNavItem(item, labels)).filter((i) => i !== null)
 }
