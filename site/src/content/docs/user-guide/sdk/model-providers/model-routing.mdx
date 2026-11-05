@@ -189,10 +189,11 @@ With two or more candidates, the classifier makes one additional model call befo
 the first serving call. Choose a classifier model that supports
 <Syntax py="structured output" ts="tool calling and forced tool selection" plain />.
 
-Set <Syntax py="system_prompt" ts="systemPrompt" /> to supply your routing policy.
+Set <Syntax py="system_prompt" ts="routingPolicy" /> to supply your routing policy.
 The policy can prioritize cost, latency, region, capabilities, or another criterion
-represented in candidate evidence. The SDK appends mandatory isolation, valid-index,
-and structured-output rules to every custom policy.
+represented in candidate evidence. The SDK sends mandatory
+<Syntax py="isolation, valid-index, and structured-output" ts="isolation and candidate-key" plain />
+rules with every custom policy.
 
 The classifier receives a bounded representation of the latest request-bearing user
 message, textual agent instructions, and candidate names, descriptions, and
