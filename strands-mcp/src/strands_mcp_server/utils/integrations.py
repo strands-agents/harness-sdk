@@ -36,7 +36,7 @@ class FeedUnavailableError(Exception):
 def _fetch_feed() -> List[Dict[str, Any]]:
     url = doc_config.integrations_feed_url
     try:
-        feed = json.loads(doc_fetcher._get(url))
+        feed = json.loads(doc_fetcher.fetch_text(url))
     except (OSError, ValueError) as e:
         raise FeedUnavailableError(
             f"could not load the integrations catalog from {url} ({e}); retry later, "

@@ -71,7 +71,7 @@ def fresh_cache(monkeypatch):
 
 @pytest.fixture
 def feed_get():
-    with patch.object(integrations.doc_fetcher, "_get", return_value=json.dumps(FEED)) as mock_get:
+    with patch.object(integrations.doc_fetcher, "fetch_text", return_value=json.dumps(FEED)) as mock_get:
         yield mock_get
 
 
@@ -160,17 +160,19 @@ class TestFeedErrors:
         ],
     )
     def test_unreachable_feed_is_a_tool_error(self, error):
-        with patch.object(integrations.doc_fetcher, "_get", side_effect=error):
+        with patch.object(integrations.doc_fetcher, "fetch_text", side_effect=error):
             with pytest.raises(ToolError, match="could not load the integrations catalog.*search_docs"):
                 find_integrations()
 
     def test_non_json_feed_is_a_tool_error(self):
-        with patch.object(integrations.doc_fetcher, "_get", return_value="<html>not found</html>"):
+        with patch.object(integrations.doc_fetcher, "fetch_text", return_value="<html>not found</html>"):
             with pytest.raises(ToolError, match="could not load the integrations catalog"):
                 find_integrations()
 
     def test_unsupported_schema_version_asks_for_upgrade(self):
-        with patch.object(integrations.doc_fetcher, "_get", return_value=json.dumps({**FEED, "schemaVersion": 2})):
+        with patch.object(
+            integrations.doc_fetcher, "fetch_text", return_value=json.dumps({**FEED, "schemaVersion": 2})
+        ):
             with pytest.raises(ToolError, match="schemaVersion 2.*upgrade strands-agents-mcp-server"):
                 find_integrations()
 
