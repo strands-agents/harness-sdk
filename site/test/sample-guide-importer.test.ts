@@ -270,7 +270,9 @@ describe('buildSampleGuides', () => {
     expect(readFileSync(path.join(outputDir, 'typescript/readme.md'), 'utf8')).toContain(
       'sampleId: "typescript/02-applications/01-readme"'
     )
-    expect(readFileSync(path.join(outputDir, 'typescript/readme.md'), 'utf8')).toContain('catalogMode: "curated"')
+    const readme = readFileSync(path.join(outputDir, 'typescript/readme.md'), 'utf8')
+    expect(readme).toContain('catalogMode: "curated"')
+    expect(readme).toContain('kind: "application"')
     expect(readFileSync(path.join(outputDir, 'python/notebook.md'), 'utf8')).toContain(
       'sampleId: "python/02-applications/02-notebook"'
     )
@@ -299,7 +301,9 @@ describe('buildSampleGuides', () => {
     expect(
       (readdirSync(outputDir, { recursive: true }) as string[]).filter((file) => file.endsWith('.md')).sort()
     ).toEqual(['python/notebook.md', 'typescript/readme.md'])
-    expect(readFileSync(path.join(outputDir, 'typescript/readme.md'), 'utf8')).toContain('catalogMode: "legacy"')
+    const readme = readFileSync(path.join(outputDir, 'typescript/readme.md'), 'utf8')
+    expect(readme).toContain('catalogMode: "legacy"')
+    expect(readme).not.toMatch(/^kind:/m)
   })
 
   it('rejects collections without the curated catalog marker', async () => {

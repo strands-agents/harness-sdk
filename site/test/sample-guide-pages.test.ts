@@ -3,6 +3,7 @@ import path from 'node:path'
 import { getCollection } from 'astro:content'
 import { parse } from 'node-html-parser'
 import { beforeAll, describe, expect, it } from 'vitest'
+import { DEFAULT_LANGUAGE_LABEL, LANGUAGE_STORAGE_KEY } from '../src/util/language-preference'
 import { pathWithBase } from '../src/util/links'
 import { languageLabel } from '../src/util/source-links'
 import {
@@ -26,6 +27,7 @@ interface GuideFixtureOptions {
   placement?: 'featured' | 'reference'
   collections?: Array<{ id: string; label: string; description?: string; order: number }>
   program?: string
+  kind?: 'application' | 'workshop' | 'concept' | 'integration' | 'migration'
 }
 
 function guideFixture(
@@ -34,12 +36,13 @@ function guideFixture(
   order: number,
   options: GuideFixtureOptions = {}
 ): SampleGuideEntry {
+  const catalogMode = options.catalogMode ?? 'curated'
   return {
     id: slug,
     collection: 'sampleGuides',
     data: {
       sampleId: options.sampleId ?? slug,
-      catalogMode: options.catalogMode ?? 'curated',
+      catalogMode,
       title: slug,
       description: `${slug} description`,
       slug,
@@ -47,7 +50,7 @@ function guideFixture(
       category: 'learn',
       categoryLabel: 'Learn',
       placement: options.placement ?? 'featured',
-      kind: 'application',
+      kind: options.kind ?? (catalogMode === 'curated' ? 'application' : undefined),
       collections: options.collections ?? [],
       capabilities: [],
       docs: [],
@@ -159,14 +162,36 @@ describe('generated sample guide pages', () => {
 
     expect(page.querySelector('#_top')?.textContent.trim()).toBe('Examples')
     expect(page.querySelector('html[data-has-sidebar]')).toBeNull()
-    expect(page.querySelector('[data-pagefind-body]')).not.toBeNull()
 
     if (guides.length === 0) {
+      expect(page.querySelector('[data-pagefind-body]')).not.toBeNull()
       expect(page.textContent).toContain('Sample guides are not available in this local build.')
       expect(page.textContent).toContain('SAMPLES_SOURCE_DIR')
       return
     }
 
+    if (guides[0]?.data.catalogMode === 'legacy') {
+      const redirect = page.querySelector('[data-sample-guide-redirect]')
+      const defaultGuide =
+        guides.find((guide) => guide.data.language === DEFAULT_LANGUAGE_LABEL.toLowerCase()) ?? guides[0]!
+      const pythonGuide = guides.find((guide) => guide.data.language === 'python')
+      const defaultTarget = sampleGuideHref(defaultGuide)
+      const pythonTarget = pythonGuide ? sampleGuideHref(pythonGuide) : defaultTarget
+
+      expect(page.querySelector('[data-pagefind-body]')).toBeNull()
+      expect(redirect).not.toBeNull()
+      expect(redirect?.getAttribute('data-storage-key')).toBe(LANGUAGE_STORAGE_KEY)
+      expect(redirect?.getAttribute('data-default-language')).toBe(DEFAULT_LANGUAGE_LABEL)
+      expect(redirect?.getAttribute('data-default-target')).toBe(defaultTarget)
+      expect(redirect?.getAttribute('data-python-target')).toBe(pythonTarget)
+      expect(redirect?.querySelector('a')?.getAttribute('href')).toBe(defaultTarget)
+      expect(page.querySelector('#featured-examples')).toBeNull()
+      expect(page.querySelectorAll('[data-sample-placement]')).toHaveLength(0)
+      expect(page.querySelectorAll('.sample-card__badges')).toHaveLength(0)
+      return
+    }
+
+    expect(page.querySelector('[data-pagefind-body]')).not.toBeNull()
     const featuredFamilies = groupSampleGuideFamilies(guides.filter((guide) => guide.data.placement === 'featured'))
     const featuredCards = page.querySelectorAll('[data-sample-placement="featured"]')
     expect(featuredCards).toHaveLength(featuredFamilies.length)
@@ -211,6 +236,12 @@ describe('generated sample guide pages', () => {
       expect(page.querySelector('.sl-markdown-content > p')?.classList.contains('sample-guide__source')).toBe(true)
       expectPersistentSidebar(page, guides, guide)
       expect(page.querySelector('[data-pagefind-body]') !== null).toBe(guide.data.placement === 'featured')
+      if (guide.data.catalogMode === 'legacy') {
+        expect(guide.data.kind).toBeUndefined()
+        expect(page.querySelector('.sample-guide__metadata')).toBeNull()
+      } else {
+        expect(page.querySelector('.sample-guide__metadata span')?.textContent.trim()).toBe(guide.data.kind)
+      }
 
       const markdownHref = page.querySelector('link[rel="alternate"][type="text/markdown"]')?.getAttribute('href')
       expect(markdownHref).toBe(configuredPathWithBase(`${sampleGuidePath(guide)}index.md`))

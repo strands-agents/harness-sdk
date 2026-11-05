@@ -276,7 +276,7 @@ function parseManifest(value: unknown) {
       catalogMode,
       categoryLabel,
       placement: curated ? sample.placement! : 'featured',
-      kind: curated ? sample.kind! : 'application',
+      kind: curated ? sample.kind! : undefined,
       collections: curated
         ? [...memberships]
             .map((collectionId) => collections.get(collectionId)!)
@@ -791,7 +791,7 @@ function frontmatter(sample: ManifestSample, description: string, commit: string
     `category: ${JSON.stringify(sample.category)}`,
     `categoryLabel: ${JSON.stringify(sample.categoryLabel)}`,
     `placement: ${JSON.stringify(sample.placement)}`,
-    `kind: ${JSON.stringify(sample.kind)}`,
+    ...(sample.kind ? [`kind: ${JSON.stringify(sample.kind)}`] : []),
     `collections: ${JSON.stringify(sample.collections)}`,
     `capabilities: ${JSON.stringify(sample.capabilities)}`,
     `docs: ${JSON.stringify(sample.docs)}`,

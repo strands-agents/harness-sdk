@@ -283,7 +283,7 @@ const sampleGuideSchema = z
     category: z.string(),
     categoryLabel: z.string(),
     placement: z.enum(['featured', 'reference']),
-    kind: z.enum(['application', 'workshop', 'concept', 'integration', 'migration']),
+    kind: z.enum(['application', 'workshop', 'concept', 'integration', 'migration']).optional(),
     collections: z.array(
       z.object({
         id: z.string(),

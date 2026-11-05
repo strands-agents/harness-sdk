@@ -1,6 +1,7 @@
 ---
 import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro'
 import { getCollection } from 'astro:content'
+import { DEFAULT_LANGUAGE_LABEL, LANGUAGE_STORAGE_KEY } from '../util/language-preference'
 import { pathWithBase } from '../util/links'
 import {
   groupSampleGuideFamilies,
@@ -12,6 +13,14 @@ import {
 import { languageLabel } from '../util/source-links'
 
 const guides = sortSampleGuides(await getCollection('sampleGuides'))
+const catalogMode = guides[0]?.data.catalogMode
+const isLegacyCatalog = catalogMode === 'legacy'
+const defaultGuide = isLegacyCatalog
+  ? (guides.find((entry) => entry.data.language === DEFAULT_LANGUAGE_LABEL.toLowerCase()) ?? guides[0])
+  : undefined
+const pythonGuide = isLegacyCatalog ? guides.find((entry) => entry.data.language === 'python') : undefined
+const defaultTarget = defaultGuide ? pathWithBase(sampleGuidePath(defaultGuide)) : undefined
+const pythonTarget = pythonGuide ? pathWithBase(sampleGuidePath(pythonGuide)) : defaultTarget
 const featuredGuides = guides.filter((guide) => guide.data.placement === 'featured')
 const featuredFamilies = groupSampleGuideFamilies(featuredGuides)
 const referenceGuides = guides.filter((guide) => guide.data.placement === 'reference')
@@ -51,15 +60,50 @@ const ungroupedReferenceFamilies = groupSampleGuideFamilies(ungroupedReferences)
 <StarlightPage
   frontmatter={{
     title: 'Examples',
-    description: 'Complete Strands applications, from setup through validation and deployment.',
+    description: isLegacyCatalog
+      ? 'Runnable Strands agent samples.'
+      : 'Complete Strands applications, from setup through validation and deployment.',
     editUrl: false,
-    pagefind: true,
+    pagefind: !isLegacyCatalog,
   }}
   hasSidebar={false}
   sidebar={[]}
 >
   {
-    guides.length > 0 ? (
+    isLegacyCatalog && defaultTarget ? (
+      <>
+        <div
+          data-sample-guide-redirect
+          data-storage-key={LANGUAGE_STORAGE_KEY}
+          data-default-language={DEFAULT_LANGUAGE_LABEL}
+          data-default-target={defaultTarget}
+          data-python-target={pythonTarget}
+        >
+          <p>Opening examples for your preferred language.</p>
+          <p>
+            <a href={defaultTarget}>Continue to examples</a>
+          </p>
+        </div>
+        <script is:inline>
+          ;(function () {
+            var redirect = document.querySelector('[data-sample-guide-redirect]')
+            if (!redirect) return
+
+            var language = redirect.getAttribute('data-default-language')
+            var storageKey = redirect.getAttribute('data-storage-key')
+            try {
+              if (storageKey) language = localStorage.getItem(storageKey) || language
+            } catch {}
+
+            var target =
+              language === 'Python'
+                ? redirect.getAttribute('data-python-target')
+                : redirect.getAttribute('data-default-target')
+            if (target) window.location.replace(target)
+          })()
+        </script>
+      </>
+    ) : guides.length > 0 ? (
       <>
         <p class="sample-catalog__intro">
           Build from a complete application, then use the{' '}
@@ -79,7 +123,7 @@ const ungroupedReferenceFamilies = groupSampleGuideFamilies(ungroupedReferences)
                   data-sample-placement="featured"
                 >
                   <div class="sample-card__badges">
-                    <span>{family.primary.data.kind}</span>
+                    {family.primary.data.kind && <span>{family.primary.data.kind}</span>}
                     {family.guides.some(isAmplifyingAiSampleGuide) && (
                       <span class="sample-card__program">Amplifying AI</span>
                     )}
@@ -123,7 +167,7 @@ const ungroupedReferenceFamilies = groupSampleGuideFamilies(ungroupedReferences)
                   data-sample-placement="reference"
                 >
                   <div class="sample-card__badges">
-                    <span>{family.primary.data.kind}</span>
+                    {family.primary.data.kind && <span>{family.primary.data.kind}</span>}
                     {family.guides.some(isAmplifyingAiSampleGuide) && (
                       <span class="sample-card__program">Amplifying AI</span>
                     )}

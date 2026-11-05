@@ -28,12 +28,16 @@ const isAmplifying = isAmplifyingAiSampleGuide(guide)
   headings={headings}
   sidebar={sidebar}
 >
-  <div class="sample-guide__metadata">
-    <span>{guide.data.kind}</span>
-    <span>{guide.data.language}</span>
-    {isAmplifying && <span>Amplifying AI</span>}
-    {guide.data.placement === 'reference' && <span>Reference</span>}
-  </div>
+  {
+    guide.data.catalogMode === 'curated' && (
+      <div class="sample-guide__metadata">
+        {guide.data.kind && <span>{guide.data.kind}</span>}
+        <span>{guide.data.language}</span>
+        {isAmplifying && <span>Amplifying AI</span>}
+        {guide.data.placement === 'reference' && <span>Reference</span>}
+      </div>
+    )
+  }
   <p class="sample-guide__source">
     <a href={guide.data.sourceUrl} target="_blank" rel="noopener">View the complete sample on GitHub</a>
   </p>
