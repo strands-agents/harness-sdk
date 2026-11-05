@@ -165,16 +165,16 @@ The command never loads your saved default agent, and it cannot load a ZIP archi
 this repository, use `strands-dev dev`: `strands-dev` is the source launcher, and `dev` is the command.
 
 When you save a source, instruction, or configuration file, the CLI reloads the agent. The reload waits until
-the current turn and all background tasks stop. The conversation stays. If the new code does not load, the
-previous agent stays and an error panel shows the cause.
+all turns and background tasks stop, in every conversation. The conversation stays. If the new code does not
+load, the previous agent stays and an error panel shows the cause.
 
 The status line shows the agent name at the left and the reload state at the right: `● dev · watching`,
 `↻ reload pending`, `↻ reloading`, `↻ agent.py reloaded · session kept`, or `✗ reload failed`.
 
-The watcher ignores `node_modules`, `venv`, `__pycache__`, `dist`, `build`, and hidden folders such as `.git`
-and `.venv`. It watches files with these extensions: `.ts`, `.tsx`, `.mts`, `.js`, `.mjs`, `.py`, `.md`, `.txt`,
-`.json`, `.yaml`, `.yml`, and `.toml`. A change to an `.env` file does not reload the agent. A reload keeps the
-active conversation only, and forked agents close.
+The watcher ignores `node_modules`, `venv`, `__pycache__`, `dist`, `build`, hidden folders such as `.git`, and
+all Python virtual environments. It watches files with these extensions: `.ts`, `.tsx`, `.mts`, `.js`, `.mjs`,
+`.py`, `.md`, `.txt`, `.json`, `.yaml`, `.yml`, and `.toml`. A change to an `.env` file does not reload the
+agent. A reload keeps the active conversation only, and forked agents close.
 
 Source code runs on your computer with your permissions. Open only the projects that you trust.
 
