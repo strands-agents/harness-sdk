@@ -10,7 +10,7 @@ import logging
 import re
 import warnings
 from collections import Counter
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Mapping
 from typing import Any, TypeVar, cast
 from urllib.parse import urlparse
 
@@ -96,6 +96,14 @@ _ANTHROPIC_CACHE_TYPE = "ephemeral"
 # The anthropic SDK added the output_config request parameter in 0.77.0, after transform_schema (0.75.0).
 _SDK_SUPPORTS_NATIVE_OUTPUT = tuple(int(part) for part in re.findall(r"\d+", anthropic.__version__)[:2]) >= (0, 77)
 
+# anthropic 1.0 removed the sampling parameters from the messages method signatures, so they travel in
+# ``extra_body`` (merged into the request body on every SDK version). API version 2026-10-21, the default
+# on anthropic 2.x, rejects them outright; only the 2023-06-01 API version still accepts them.
+# https://platform.claude.com/docs/en/api/migration-2026-10-21#sampling-parameters
+_SAMPLING_PARAMS = frozenset({"temperature", "top_k", "top_p"})
+_LEGACY_API_VERSION = "2023-06-01"
+_API_VERSION_HEADER = "anthropic-version"
+
 
 def _mechanism_tool_choice(
     mechanism: StructuredOutputMechanism | None, tool_choice: ToolChoice | None
@@ -154,8 +162,10 @@ class AnthropicModel(Model):
             model_id: Calude model ID (e.g., "claude-3-7-sonnet-latest").
                 For a complete list of supported models, see
                 https://docs.anthropic.com/en/docs/about-claude/models/all-models.
-            params: Additional model parameters (e.g., temperature).
+            params: Additional model parameters (e.g., metadata, stop_sequences).
                 For a complete list of supported parameters, see https://docs.anthropic.com/en/api/messages.
+                Sampling parameters (temperature, top_k, top_p) are accepted only by API version 2023-06-01;
+                pin it with client_args={"default_headers": {"anthropic-version": "2023-06-01"}}.
             anthropic_tools: Anthropic-specific server-side tools that are not function tools
                 (e.g., web_search, web_fetch, code_execution). Appended alongside the agent's function tools.
                 Use the standard tools interface for function calling tools.
@@ -349,6 +359,7 @@ class AnthropicModel(Model):
         formatted_messages = []
         dropped_unsigned_reasoning = False
         skipped: Counter[str] = Counter()
+        drop_assistant_documents = self._api_version() not in (None, _LEGACY_API_VERSION)
 
         for message_idx, message in enumerate(messages):
             formatted_contents: list[dict[str, Any]] = []
@@ -375,6 +386,12 @@ class AnthropicModel(Model):
                 # Check for location sources in image, document, or video content
                 if _has_location_source(content):
                     skipped["Location sources are not supported by Anthropic | skipping content block"] += 1
+                    continue
+
+                if drop_assistant_documents and message["role"] == "assistant" and "document" in content:
+                    skipped[
+                        "Assistant document blocks are not supported by this API version | skipping content block"
+                    ] += 1
                     continue
 
                 formatted_content = self._format_request_message_content(content)
@@ -592,6 +609,8 @@ class AnthropicModel(Model):
         Raises:
             TypeError: If a message contains a content block type that cannot be converted to an Anthropic-compatible
                 format.
+            ValueError: If params sets a sampling parameter both directly and in extra_body, or sets one while the
+                request uses an API version other than 2023-06-01.
         """
         messages, cache_target_idx = self._manage_cache_points(messages)
 
@@ -604,7 +623,7 @@ class AnthropicModel(Model):
             for tool_spec in tool_specs or []
         ]
 
-        params = self.config.get("params") or {}
+        params = self._format_request_params()
         server_tools = [*(self.config.get("anthropic_tools") or []), *(params.get("tools") or [])]
         # Forcing a tool means this turn must call a function tool, so server tools are left out.
         if tool_choice is None or "auto" in tool_choice:
@@ -637,6 +656,49 @@ class AnthropicModel(Model):
             request = self._request_with_drop_block(request) or request
 
         return request
+
+    def _format_request_params(self) -> dict[str, Any]:
+        """Return the config params with sampling parameters routed through ``extra_body``.
+
+        Returns:
+            The params to spread into the request.
+
+        Raises:
+            ValueError: If a sampling parameter is set both in params and in params["extra_body"], or if sampling
+                parameters are set while the request uses an API version other than 2023-06-01.
+        """
+        params = dict(self.config.get("params") or {})
+        sampling_params = {key: params.pop(key) for key in _SAMPLING_PARAMS & params.keys()}
+        extra_body = dict(params.get("extra_body") or {})
+
+        if conflicts := sampling_params.keys() & extra_body.keys():
+            raise ValueError(f"params=<{sorted(conflicts)}> | set both in params and in params['extra_body']")
+        if sampling_params:
+            params["extra_body"] = extra_body = {**sampling_params, **extra_body}
+
+        sent_sampling_params = _SAMPLING_PARAMS & extra_body.keys()
+        api_version = self._api_version()
+        if sent_sampling_params and api_version not in (None, _LEGACY_API_VERSION):
+            raise ValueError(
+                f"params=<{sorted(sent_sampling_params)}>, anthropic_version=<{api_version}> | sampling parameters "
+                f"are not accepted by this API version; remove them, or pin the API version with "
+                f'client_args={{"default_headers": {{"anthropic-version": "{_LEGACY_API_VERSION}"}}}} '
+                "(Claude 4.6 and earlier honor them; Claude 4.7 and later accept only the defaults)"
+            )
+        return params
+
+    def _api_version(self) -> str | None:
+        """The ``anthropic-version`` the request will send; None when the client is a stub without real headers."""
+        request_headers = (self.config.get("params") or {}).get("extra_headers") or {}
+        client_headers = getattr(self.client, "default_headers", None)
+        # The SDK lists its own lowercase default after any user header, so the first match is the user's.
+        for headers in (request_headers, client_headers):
+            if not isinstance(headers, Mapping):
+                continue
+            for name, value in headers.items():
+                if name.lower() == _API_VERSION_HEADER and isinstance(value, str):
+                    return value
+        return None
 
     def _request_with_drop_block(self, request: dict[str, Any]) -> dict[str, Any] | None:
         """Return the request with stale thinking blocks dropped, or None if it cannot change."""
@@ -1042,6 +1104,8 @@ class AnthropicModel(Model):
             ContextWindowOverflowException: If the input exceeds the model's context window.
             ModelThrottledException: If the request is throttled by Anthropic.
             RuntimeError: If a paused server-side tool turn is still paused after the continuation limit.
+            ValueError: If params sets a sampling parameter both directly and in extra_body, or sets one while the
+                request uses an API version other than 2023-06-01.
         """
         mechanism = self._structured_output_mechanism(structured_output_model, tool_choice)
 
