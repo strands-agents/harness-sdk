@@ -348,7 +348,9 @@ Cache activity is reported in the usage metrics, in the same fields Bedrock uses
 
 `cache_config` caches the system prompt and the conversation; set `system_prompt_ttl=False`
 to leave the system prompt uncached, or a TTL string (`system_prompt_ttl="1h"`) to give it its
-own duration. Add `tools_ttl` to the same `cache_config` to cache the tool definitions as well:
+own duration. `messages_ttl` works the same way for the conversation: `False` leaves it uncached,
+and a TTL string gives it its own duration. Add `tools_ttl` to the same `cache_config` to cache
+the tool definitions as well:
 a TTL string sets the duration, `True` uses the provider default. The model-level `cache_tools`
 parameter (and `CacheToolsConfig`) is deprecated in favor of `tools_ttl`; it still works, and
 unlike `tools_ttl` it caches the tool definitions on its own, without a `cache_config`. Passing

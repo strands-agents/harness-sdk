@@ -1818,6 +1818,20 @@ class TestPromptCaching:
 
         assert self._breakpoints(request) == [("messages", 0, {"type": "ephemeral", "ttl": "1h"})]
 
+    def test_messages_ttl_false_disables_the_message_breakpoint(self, model, messages):
+        model.update_config(cache_config=CacheConfig(strategy="auto", messages_ttl=False))
+
+        request = model.format_request(messages)
+
+        assert self._breakpoints(request) == []
+
+    def test_messages_ttl_string_sets_the_message_breakpoint_ttl(self, model, messages):
+        model.update_config(cache_config=CacheConfig(strategy="auto", ttl="1h", messages_ttl="5m"))
+
+        request = model.format_request(messages)
+
+        assert self._breakpoints(request) == [("messages", 0, {"type": "ephemeral", "ttl": "5m"})]
+
     def test_cache_tools_caches_only_the_last_tool(self, model, messages, tool_specs):
         """One cache_control on the final tool caches the whole tool block, so one breakpoint is enough."""
         model.update_config(cache_tools="default")

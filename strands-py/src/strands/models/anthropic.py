@@ -48,7 +48,7 @@ from ._validation import (
     _warn_on_deprecated_cache_tools,
     validate_config_keys,
 )
-from .model import BaseModelConfig, CacheConfig, CacheToolsConfig, Model
+from .model import BaseModelConfig, CacheConfig, CacheToolsConfig, Model, _messages_cache_ttl
 
 logger = logging.getLogger(__name__)
 
@@ -342,8 +342,7 @@ class AnthropicModel(Model):
         Returns:
             An Anthropic messages array.
         """
-        cache_config = self.config.get("cache_config")
-        configured_ttl = cache_config.ttl if cache_config else None
+        configured_ttl = _messages_cache_ttl(self.config.get("cache_config"))
         formatted_messages = []
         dropped_unsigned_reasoning = False
         skipped: Counter[str] = Counter()
@@ -524,7 +523,7 @@ class AnthropicModel(Model):
             )
             return messages, None
 
-        if self._auto_caching_unsupported():
+        if self._auto_caching_unsupported() or cache_config.messages_ttl is False:
             return messages, None
 
         target_idx = next(

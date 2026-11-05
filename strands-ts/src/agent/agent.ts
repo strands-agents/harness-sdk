@@ -2704,7 +2704,7 @@ export class Agent implements LocalAgent, InvokableAgent {
     invocationState: InvocationState,
     invocationContext: InvocationContextImpl
   ): AsyncGenerator<AgentStreamEvent, StreamAggregatedResult, undefined> {
-    messages = normalizeToolUseNames(messages)
+    messages = fillEmptyAssistantMessages(normalizeToolUseNames(messages))
     const proxy = new ModelProxy(model)
     const streamGenerator = proxy.streamAggregated(messages, streamOptions, invocationContext)
     try {
@@ -3024,6 +3024,7 @@ function isBlankTextBlock(block: ContentBlock): boolean {
 }
 
 const INVALID_TOOL_NAME_PLACEHOLDER = 'INVALID_TOOL_NAME'
+const BLANK_TEXT_PLACEHOLDER = '[blank text]'
 
 /**
  * Returns the IDs of a message's structured output tool calls.
@@ -3075,6 +3076,29 @@ function normalizeToolUseNames(messages: Message[]): Message[] {
   })
 
   return replaced ? next : messages
+}
+
+/**
+ * Gives empty assistant messages a `[blank text]` block. Providers drop messages with no content
+ * when formatting a request, which would otherwise send two user turns in a row.
+ * Returns the input unchanged (same reference) when no message is empty.
+ */
+function fillEmptyAssistantMessages(messages: Message[]): Message[] {
+  if (!messages.some(isEmptyAssistantMessage)) return messages
+  logger.debug('replacing empty assistant message content with blank text placeholder')
+  return messages.map((message) =>
+    isEmptyAssistantMessage(message)
+      ? new Message({
+          role: message.role,
+          content: [new TextBlock(BLANK_TEXT_PLACEHOLDER)],
+          ...(message.metadata !== undefined && { metadata: message.metadata }),
+        })
+      : message
+  )
+}
+
+function isEmptyAssistantMessage(message: Message | undefined): boolean {
+  return message?.role === 'assistant' && message.content.length === 0
 }
 
 /**
