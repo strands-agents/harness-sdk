@@ -109,9 +109,12 @@ class SummarizeStrategy(BaseOffloadStrategy):
         if not safe:
             return False
 
-        if model.model_info.capabilities.server_side_summary is True and await self._summarize_server_side(
-            context, model, safe
-        ):
+        # The agent's model replays the summary block, so both it and the summarizer must support it.
+        server_side = (
+            model.model_info.capabilities.server_side_summary is True
+            and context.agent.model.model_info.capabilities.server_side_summary is True
+        )
+        if server_side and await self._summarize_server_side(context, model, safe):
             return True
 
         content_blocks = _flatten_messages_to_content(safe)
@@ -155,10 +158,6 @@ class SummarizeStrategy(BaseOffloadStrategy):
         summary = await self._request_server_side_summary(model, agent, messages[:end])
         if summary is None:
             return False
-        if agent.model.model_info.capabilities.server_side_summary is not True:
-            logger.warning(
-                "the agent's model does not declare server_side_summary | it will read the summary as plain text"
-            )
         messages[1:end] = [Message(role="assistant", content=[summary])]
         _repair_alternation(messages)
         logger.debug("summarized=<%s> | summarized opening messages server-side", end - 1)

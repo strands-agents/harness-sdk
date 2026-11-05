@@ -424,6 +424,28 @@ class TestServerSideSummary:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
+        ("agent_supports", "aux_supports"),
+        [pytest.param(False, True, id="agent_model_unsupported"), pytest.param(True, False, id="aux_unsupported")],
+    )
+    async def test_requires_both_models_to_support_server_side_summary(self, mock_agent, agent_supports, aux_supports):
+        aux_model = unittest.mock.AsyncMock()
+        aux_model.count_tokens = unittest.mock.AsyncMock(return_value=5000)
+        aux_model.stream = _make_stream_events("Summary of content.")
+        aux_model.summarize = unittest.mock.AsyncMock()
+        aux_model.model_info.capabilities.server_side_summary = aux_supports
+        mock_agent.aux_model = aux_model
+        mock_agent.model.model_info.capabilities.server_side_summary = agent_supports
+        messages = self._messages()
+        mock_agent.messages = messages
+        strategy = Offload.summarize("*").when(utilization=0.8, preserve_recent=1)
+
+        assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is True
+
+        aux_model.summarize.assert_not_awaited()
+        assert any("[Summarized:" in block.get("text", "") for message in messages for block in message["content"])
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
         ("summarize_result", "reason"),
         [
             pytest.param(
