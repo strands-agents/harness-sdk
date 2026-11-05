@@ -14,14 +14,14 @@ import type { CatalogEntryData } from '../content.config'
 export const CATALOG_FEED_SCHEMA_VERSION = 1
 
 export const CATALOG_FEED_PATH = '/integrations.json'
-export const CATALOG_FEED_SCHEMA_PATH = '/integrations.schema.json'
+const CATALOG_FEED_SCHEMA_PATH = '/integrations.schema.json'
 
 const feedLanguageSchema = z.object({
   package: z.string().optional().describe('Package name as published on the registry'),
   registryUrl: z.url().optional().describe('PyPI or npm page for the package'),
 })
 
-export const catalogFeedEntrySchema = z.object({
+const catalogFeedEntrySchema = z.object({
   id: z.string().describe('Stable entry id'),
   name: z.string(),
   description: z.string(),
@@ -42,7 +42,11 @@ export const catalogFeedSchema = z
     schemaVersion: z.literal(CATALOG_FEED_SCHEMA_VERSION),
     integrations: z.array(catalogFeedEntrySchema),
   })
-  .meta({ title: 'Strands Agents integrations catalog' })
+  .meta({
+    title: 'Strands Agents integrations catalog',
+    description:
+      'schemaVersion changes only on breaking changes; new fields can appear at any time, so ignore unknown ones.',
+  })
 
 export type CatalogFeed = z.infer<typeof catalogFeedSchema>
 type CatalogFeedEntry = z.infer<typeof catalogFeedEntrySchema>
