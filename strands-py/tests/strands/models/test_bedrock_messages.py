@@ -212,8 +212,9 @@ def test_messages_client_uses_a_pool_per_event_loop(boto_session):
     assert isinstance(second, httpx.AsyncClient)
 
 
-@pytest.mark.parametrize("http", [httpx, pytest.importorskip("httpx2")], ids=["httpx", "httpx2"])
-def test_streamed_request_bodies_are_read_before_signing(http, boto_session):
+@pytest.mark.parametrize("package", ["httpx", "httpx2"])
+def test_streamed_request_bodies_are_read_before_signing(package, boto_session):
+    http = pytest.importorskip(package)
     auth = _auth_class(http)(
         session=boto_session, region="us-west-2", service="bedrock", error_type=RuntimeError, api_key=None
     )
