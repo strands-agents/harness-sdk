@@ -43,6 +43,7 @@ export function createReloader(options: ReloaderOptions): Reloader {
     }
   }
   function attempt(): void {
+    clearTimeout(retry)
     retry = undefined
     if (closed || running || !pending) return
     if (!canReload()) {

@@ -60,6 +60,15 @@ describe('createReloader', () => {
     expect(states.at(-1)).toEqual({ kind: 'pending' })
   })
 
+  it('keeps one retry timer when a save arrives while it waits', async () => {
+    const canReload = vi.fn(() => false)
+    const { reloader } = setup({ canReload })
+    reloader.request()
+    reloader.request()
+    await vi.advanceTimersByTimeAsync(10)
+    expect(canReload).toHaveBeenCalledTimes(3)
+  })
+
   it('runs one more reload for a save during a reload', async () => {
     let finish!: (outcome: ReloadOutcome) => void
     const reload = vi.fn(() => new Promise<ReloadOutcome>((resolve) => (finish = resolve)))
