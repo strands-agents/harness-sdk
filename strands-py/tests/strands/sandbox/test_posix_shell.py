@@ -459,14 +459,14 @@ async def test_read_file_failed_cd_is_not_reported_missing(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_read_file_other_failure_raises_oserror_not_file_not_found(sandbox, monkeypatch):
+async def test_read_file_other_failure_raises_plain_oserror(sandbox, monkeypatch):
     async def fake_execute(self, command, **kwargs):
-        return ExecutionResult(exit_code=1, stdout="", stderr="base64: read error: Permission denied")
+        return ExecutionResult(exit_code=1, stdout="", stderr="base64: read error: Input/output error")
 
     monkeypatch.setattr(PosixShellSandbox, "execute", fake_execute, raising=True)
-    with pytest.raises(OSError, match="Permission denied") as exc_info:
-        await sandbox.read_file("locked.txt")
-    assert not isinstance(exc_info.value, FileNotFoundError)
+    with pytest.raises(OSError) as exc_info:
+        await sandbox.read_file("data.bin")
+    assert (type(exc_info.value), str(exc_info.value)) == (OSError, "base64: read error: Input/output error")
 
 
 @pytest.mark.asyncio
