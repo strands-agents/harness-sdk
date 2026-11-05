@@ -1,12 +1,7 @@
 import { readdirSync } from 'node:fs'
 import { describe, it, expect } from 'vitest'
 import { getCollection } from 'astro:content'
-import {
-  buildCatalogFeed,
-  buildCatalogFeedJsonSchema,
-  catalogFeedEntrySchema,
-  catalogFeedSchema,
-} from '../src/util/catalog-feed'
+import { buildCatalogFeed, buildCatalogFeedJsonSchema, catalogFeedSchema } from '../src/util/catalog-feed'
 import type { CatalogEntryData } from '../src/content.config'
 
 const ORIGIN = 'https://strandsagents.com'
@@ -27,69 +22,83 @@ function entry(overrides: Partial<CatalogEntryData> = {}): CatalogEntryData {
   }
 }
 
+const expectedEntry = {
+  id: 'strands-example',
+  name: 'strands-example',
+  description: 'Example integration',
+  integrationType: 'tool',
+  sdk: 'agents',
+  maintainedBy: 'community',
+  languages: {
+    python: { package: 'strands-example', registryUrl: 'https://pypi.org/project/strands-example/' },
+  },
+  github: 'https://github.com/example/strands-example',
+  addedDate: '2026-01-01',
+}
+
+function feedEntries(data: CatalogEntryData) {
+  return buildCatalogFeed([{ id: 'strands-example', data }], ORIGIN).integrations
+}
+
 describe('buildCatalogFeed', () => {
   it('publishes public fields only, with derived registry URLs', () => {
-    const feed = buildCatalogFeed([{ id: 'strands-example', data: entry() }], ORIGIN)
-
-    expect(feed.integrations).toEqual([
-      {
-        id: 'strands-example',
-        name: 'strands-example',
-        description: 'Example integration',
-        integrationType: 'tool',
-        sdk: 'agents',
-        languages: {
-          python: { package: 'strands-example', registryUrl: 'https://pypi.org/project/strands-example/' },
-        },
-        github: 'https://github.com/example/strands-example',
-        maintainedBy: 'community',
-        addedDate: '2026-01-01',
-      },
-    ])
+    expect(buildCatalogFeed([{ id: 'strands-example', data: entry() }], ORIGIN)).toEqual({
+      $schema: `${ORIGIN}/integrations.schema.json`,
+      schemaVersion: 1,
+      integrations: [expectedEntry],
+    })
   })
 
   it('prefers the on-site docs page over an external docsUrl', () => {
     const data = entry({ docsPage: 'docs/integrations/tools/strands-example', docsUrl: 'https://example.com/docs' })
-    const [item] = buildCatalogFeed([{ id: 'strands-example', data }], ORIGIN).integrations
 
-    expect(item!.docsUrl).toBe(`${ORIGIN}/docs/integrations/tools/strands-example/`)
+    expect(feedEntries(data)).toEqual([
+      { ...expectedEntry, docsUrl: `${ORIGIN}/docs/integrations/tools/strands-example/` },
+    ])
   })
 
-  it('keeps guide-only languages without a package', () => {
-    const data = entry({ languages: { python: {}, typescript: { package: '@example/strands' } } })
-    const [item] = buildCatalogFeed([{ id: 'strands-example', data }], ORIGIN).integrations
+  it('keeps an external docsUrl when there is no on-site docs page', () => {
+    const data = entry({ docsUrl: 'https://example.com/docs' })
 
-    expect(item!.languages).toEqual({
-      python: {},
-      typescript: { package: '@example/strands', registryUrl: 'https://www.npmjs.com/package/@example/strands' },
+    expect(feedEntries(data)).toEqual([{ ...expectedEntry, docsUrl: 'https://example.com/docs' }])
+  })
+
+  it('keeps guide-only languages and resolves PyPI extras and scoped npm packages', () => {
+    const data = entry({
+      sdk: 'evals',
+      languages: { python: { package: 'temporalio[strands-agents]' }, typescript: { package: '@example/strands' } },
     })
+
+    expect(feedEntries(data)).toEqual([
+      {
+        ...expectedEntry,
+        sdk: 'evals',
+        languages: {
+          python: { package: 'temporalio[strands-agents]', registryUrl: 'https://pypi.org/project/temporalio/' },
+          typescript: { package: '@example/strands', registryUrl: 'https://www.npmjs.com/package/@example/strands' },
+        },
+      },
+    ])
+    expect(feedEntries(entry({ languages: { python: {} } }))).toEqual([{ ...expectedEntry, languages: { python: {} } }])
   })
 })
 
 describe('integrations feed from the catalog collection', () => {
-  it('includes every catalog entry and validates against the published schema', async () => {
+  it('includes every catalog entry and only fields the schema publishes', async () => {
     const yamlCount = readdirSync(new URL('../src/content/catalog/', import.meta.url)).filter((f) =>
       f.endsWith('.yaml')
     ).length
     const feed = buildCatalogFeed(await getCollection('catalog'), ORIGIN)
 
     expect(feed.integrations).toHaveLength(yamlCount)
-    expect(catalogFeedSchema.safeParse(feed).success).toBe(true)
-    const publishedKeys = Object.keys(catalogFeedEntrySchema.shape)
-    expect(feed.integrations.every((e) => Object.keys(e).every((key) => publishedKeys.includes(key)))).toBe(true)
-    expect(feed.integrations.find((e) => e.id === 'strands-deepgram')).toMatchObject({
-      integrationType: 'tool',
-      languages: { python: { package: 'strands-deepgram', registryUrl: 'https://pypi.org/project/strands-deepgram/' } },
-      docsUrl: `${ORIGIN}/docs/integrations/tools/strands-deepgram/`,
-      maintainedBy: 'community',
-    })
+    // Parsing strips undeclared keys, so equality also rules out unpublished fields.
+    expect(catalogFeedSchema.parse(feed)).toEqual(feed)
   })
 
-  it('pins schemaVersion in the JSON Schema and leaves room for additive fields', () => {
-    const schema = buildCatalogFeedJsonSchema(ORIGIN) as Record<string, any>
+  it('pins schemaVersion in the JSON Schema and leaves objects open for additive fields', () => {
+    const schema = buildCatalogFeedJsonSchema(ORIGIN)
 
-    expect(schema.properties.schemaVersion.const).toBe(1)
-    expect(schema.additionalProperties).toBeUndefined()
-    expect(schema.properties.integrations.items.additionalProperties).toBeUndefined()
+    expect(schema.properties?.schemaVersion).toEqual({ type: 'number', const: 1 })
+    expect(JSON.stringify(schema)).not.toContain('additionalProperties')
   })
 })
