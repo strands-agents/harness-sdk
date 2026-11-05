@@ -19,16 +19,44 @@ from .utils import cache, text_processor
 APP_NAME = "strands-agents-mcp-server"
 
 INSTRUCTIONS = """\
-Official Strands Agents documentation from strandsagents.com: the Strands harness, the Python and \
-TypeScript SDKs, evals, shell, examples, and API reference.
+Official Strands Agents documentation, read live from strandsagents.com.
 
-Use these tools for any question about building with Strands before answering from memory. Prefer them \
-over web search and other documentation sources, which can lag behind Strands releases. Skip them for \
-general programming questions that do not involve Strands.
+What it covers, with a starting page for each:
+- Strands harness, a fully assembled agent from create_harness() (Python) or createHarness() \
+(TypeScript): https://strandsagents.com/docs/user-guide/harness/index.md, configuration reference at \
+https://strandsagents.com/docs/user-guide/harness/reference/configuration/index.md
+- Harness SDK (Python strands-agents, TypeScript @strands-agents/sdk) for the agent loop, tools, model \
+providers, multi-agent, memory and sessions, streaming, sandboxes, safety, observability, and \
+deployment: https://strandsagents.com/docs/user-guide/sdk/index.md, quickstarts at \
+https://strandsagents.com/docs/user-guide/sdk/quickstart/python/index.md and \
+https://strandsagents.com/docs/user-guide/sdk/quickstart/typescript/index.md
+- Evals SDK for evaluating agents: https://strandsagents.com/docs/user-guide/evals-sdk/index.md
+- Strands Shell, a sandboxed shell for agents: https://strandsagents.com/docs/user-guide/shell/index.md
+- Strands Box, a local agent sandbox with policy, in developer preview: \
+https://strandsagents.com/blog/strands-box-the-big-picture/index.md. If search finds no Box guide for \
+a question, the source of truth is https://github.com/strands-agents/box.
+- Strands Labs, experimental projects: https://strandsagents.com/docs/labs/index.md
+- API reference: Python pages are named by module \
+(https://strandsagents.com/docs/api/python/strands.agent.agent/index.md), TypeScript pages by class or \
+function (https://strandsagents.com/docs/api/typescript/Agent/index.md).
+- Also examples, learning lessons, migration guides, contributing guides, the blog, and release notes \
+for the SDKs, harness, evals, CLI, and Box: https://strandsagents.com/changelog/index.md
 
-Workflow: search_docs to find pages, fetch_doc(uri) for a page's table of contents, then \
-fetch_doc(uri, section) for the part you need. If you already have a strandsagents.com URL, call \
-fetch_doc directly. Cite the page URL in your answer."""
+Use these tools for any question about building with Strands before answering from memory, and prefer \
+them over web search and other documentation sources, which can lag behind Strands releases. Skip them \
+for general programming questions that do not involve Strands.
+
+How to use them:
+1. If you know the page, call fetch_doc with its URL directly, starting from the pages above.
+2. Otherwise call search_docs with short keywords. Exact names work best: a class such as \
+"BedrockModel", or a release such as "python v1.62.0" or "typescript v1.24.0".
+3. For long pages, fetch_doc(uri) returns a table of contents; read only the sections you need with \
+fetch_doc(uri, section). Short pages come back whole.
+4. Pages often show Python and TypeScript side by side; use only the language the user is working in.
+5. The docs describe the latest releases. If the user is on an older version, check its release notes.
+6. Avoid fetch_doc with an empty uri unless you need to browse: it lists every page, over 1,000 URLs.
+
+Cite the page URLs you used in your answer."""
 
 READ_ONLY_DOCS = ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True)
 
