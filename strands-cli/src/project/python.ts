@@ -65,7 +65,7 @@ interface PythonState {
   messages: MessageData[]
   tools: { name: string; description: string }[]
   skills: SkillInfo[]
-  privatePaths: string[]
+  privatePaths: string[] | null
 }
 
 type WorkerMessage =
@@ -213,7 +213,7 @@ export class PythonBackend implements ChatBackend {
   get skills(): readonly SkillInfo[] {
     return this._state.skills
   }
-  get privatePaths(): readonly string[] {
+  get privatePaths(): readonly string[] | null {
     return this._state.privatePaths
   }
 

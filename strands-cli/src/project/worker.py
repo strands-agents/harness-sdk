@@ -24,12 +24,14 @@ from strands import Agent, tool
 from strands.hooks import HookOrder
 from strands.hooks.events import BeforeModelCallEvent, BeforeToolCallEvent
 from strands.models import Model
-from strands.session import SnapshotSessionManager
-from strands.storage import LocalFileStorage
+from strands.session import FileSessionManager, S3SessionManager, SnapshotSessionManager
+from strands.storage import InMemoryStorage, LocalFileStorage, S3Storage
+from strands.storage import storage as storage_types
 from strands.tools.mcp import MCPClient
 from strands.types.tools import ToolContext
 from strands.vended_memory_stores.file_memory_store import FileMemoryStore
 from strands.vended_plugins.context_offloader import ContextOffloader
+from strands.vended_plugins.context_offloader import storage as offloader_storage
 from strands.vended_plugins.skills import AgentSkills
 from strands_harness import define_harness_agent_config, harness_agent_kwargs_from_config
 from strands_harness.defaults import DEFAULT_MODEL
@@ -237,52 +239,89 @@ def display_messages(agent):
     return messages
 
 
-def local_session_directory(storage):
+def local_storage_paths(storage):
     parts = []
-    while hasattr(storage, "_storage") and hasattr(storage, "_prefix"):
-        parts.append(storage._prefix)
-        storage = storage._storage
-    if not isinstance(storage, LocalFileStorage):
+    while isinstance(storage, getattr(storage_types, "_NamespacedStorage", ())):
+        prefix = getattr(storage, "_prefix", None)
+        if not isinstance(prefix, str):
+            return None
+        parts.insert(0, prefix)
+        storage = getattr(storage, "_storage", None)
+    if isinstance(storage, LocalFileStorage):
+        directory = getattr(storage, "base_dir", None)
+    elif isinstance(storage, offloader_storage.FileStorage):
+        directory = getattr(storage, "_artifact_dir", None)
+    elif isinstance(storage, (InMemoryStorage, S3Storage, offloader_storage.InMemoryStorage, offloader_storage.S3Storage)):
+        return []
+    else:
         return None
-    return str(Path(storage._base_dir, *parts).resolve())
+    if not isinstance(directory, (str, os.PathLike)):
+        return None
+    return [str(Path(os.fsdecode(directory), *parts).resolve())]
 
 
 def agent_stash(agent):
     return getattr(getattr(agent, "context_manager", None), "stash", None)
 
 
-def local_stash_directory(agent):
-    stash = agent_stash(agent)
-    base_storage = getattr(stash, "_base_storage", None)
-    storage = getattr(stash, "_storage", None)
-    base_directory = local_session_directory(base_storage)
-    if storage is base_storage:
-        return base_directory
-    namespace = getattr(storage, "_prefix", "")
-    if base_directory is None or not namespace:
+def agent_private_paths(agent):
+    """None disables export and watching when private storage cannot be identified."""
+    paths = []
+    storages = []
+    manager = getattr(agent, "_session_manager", None)
+    if isinstance(manager, SnapshotSessionManager):
+        storages.append(getattr(manager, "_storage", None))
+    elif isinstance(manager, FileSessionManager):
+        directory = getattr(manager, "storage_dir", None)
+        if not isinstance(directory, (str, os.PathLike)):
+            return None
+        paths.append(str(Path(os.fsdecode(directory)).resolve()))
+    elif manager is not None and not isinstance(manager, S3SessionManager):
         return None
-    # The namespace's first segment holds every session's stash, not just this agent's.
-    return str(Path(base_directory, namespace.split("/")[0]))
 
+    stash = agent_stash(agent)
+    if stash is not None:
+        base_storage = getattr(stash, "_base_storage", None)
+        storage = getattr(stash, "_storage", None)
+        base_paths = local_storage_paths(base_storage)
+        if base_paths is None or local_storage_paths(storage) is None:
+            return None
+        if storage is base_storage:
+            paths.extend(base_paths)
+        elif isinstance(storage, getattr(storage_types, "_NamespacedStorage", ())):
+            namespace = getattr(storage, "_prefix", None)
+            if not isinstance(namespace, str) or not namespace:
+                return None
+            # Exclude every session's stash, not just this agent's.
+            paths.extend(str(Path(path, namespace.split("/")[0])) for path in base_paths)
+        else:
+            return None
 
-def local_offloader_directories(agent):
-    plugins = getattr(getattr(agent, "_plugin_registry", None), "_plugins", {}).values()
-    return [
-        directory
-        for plugin in plugins
-        if isinstance(plugin, ContextOffloader)
-        and (directory := local_session_directory(getattr(plugin, "_storage", None)))
-    ]
-
-
-def local_memory_directories(agent):
-    # The SDK exposes local store paths only through the manager/store internals.
-    stores = getattr(getattr(agent, "memory_manager", None), "_stores", [])
-    return [
-        directory
-        for store in stores
-        if isinstance(store, FileMemoryStore) and (directory := local_session_directory(store._storage))
-    ]
+    plugins = getattr(getattr(agent, "_plugin_registry", None), "_plugins", None)
+    if not isinstance(plugins, dict):
+        return None
+    storages.extend(getattr(plugin, "_storage", None) for plugin in plugins.values() if isinstance(plugin, ContextOffloader))
+    memory = getattr(agent, "memory_manager", None)
+    if memory is not None:
+        stores = getattr(memory, "_stores", None)
+        if not isinstance(stores, (list, tuple)):
+            return None
+        for store in stores:
+            if isinstance(store, FileMemoryStore):
+                storages.append(getattr(store, "_storage", None))
+            else:
+                try:
+                    from strands.vended_memory_stores.bedrock_knowledge_base import BedrockKnowledgeBaseStore
+                except ImportError:
+                    return None
+                if not isinstance(store, BedrockKnowledgeBaseStore):
+                    return None
+    for storage in storages:
+        local = local_storage_paths(storage)
+        if local is None:
+            return None
+        paths.extend(local)
+    return list(dict.fromkeys(paths))
 
 
 class Runtime:
@@ -550,9 +589,9 @@ class Runtime:
             model = str(self.agent.model.get_config().get("model_id", type(self.agent.model).__name__))
         manager = self.agent._session_manager
         session_id = manager.session_id if isinstance(manager, SnapshotSessionManager) else None
-        storage = manager._storage if isinstance(manager, SnapshotSessionManager) else None
-        session_directory = local_session_directory(storage)
-        stash_directory = local_stash_directory(self.agent)
+        storage = getattr(manager, "_storage", None) if isinstance(manager, SnapshotSessionManager) else None
+        session_paths = local_storage_paths(storage)
+        session_directory = session_paths[0] if session_paths else None
         managed_session = session_directory is not None
         skills = self.skills()
         active = skills.get_activated_skills(self.agent) if skills else []
@@ -592,12 +631,7 @@ class Runtime:
                 else {}
             ),
             "messages": display_messages(self.agent),
-            "privatePaths": [
-                *([session_directory] if session_directory else []),
-                *([stash_directory] if stash_directory else []),
-                *local_offloader_directories(self.agent),
-                *local_memory_directories(self.agent),
-            ],
+            "privatePaths": agent_private_paths(self.agent),
             "tools": [
                 {"name": spec["name"], "description": spec.get("description", "")}
                 for spec in self.agent.tool_registry.get_all_tool_specs()

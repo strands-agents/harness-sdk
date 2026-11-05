@@ -125,6 +125,13 @@ export class ConversationManager implements ChatControllerApi {
             options.projectPrivatePaths
           )
         : undefined
+    if (project && options.reloadProject && options.projectPrivatePaths === null) {
+      this._openError(
+        'live reload unavailable',
+        project.root,
+        'Private storage could not be located. Automatic reload and export are disabled for this agent.'
+      )
+    }
     this._stopAgentMessaging = this._agentMessaging?.subscribe(() => {
       if (this._panel?.kind === 'agents' && this._panel.title === AGENTS_PANEL_TITLE) {
         this._openAgentsPanel(false)

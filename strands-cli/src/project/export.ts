@@ -15,7 +15,6 @@ import { ZipFile } from 'yazl'
 import { resolveSkillPaths } from '../agent/skills.js'
 import { webFetchModelId } from '../agent/tools.js'
 import { PROVIDER_PACKAGES } from '../model/packages.js'
-import { SDK_VERSION } from '../package-version.js'
 import { containsPath, expandHome } from '../paths.js'
 import { chooseSaveFile } from '../terminal/directory-picker.js'
 import { isRecord } from '../values.js'
@@ -192,7 +191,7 @@ export async function exportSourceProject(
 ): Promise<string | undefined> {
   if (privatePaths === null) {
     throw new Error(
-      `Cannot safely export this agent: its private storage could not be located with SDK ${SDK_VERSION}. ` +
+      'Cannot safely export this agent: its private storage could not be located. ' +
         'Use supported session, memory, and context storage before exporting.'
     )
   }

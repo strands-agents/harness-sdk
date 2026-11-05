@@ -89,6 +89,74 @@ describe.skipIf(!existsSync(python))('Python source loading', () => {
   }
 
   it.each([
+    ['memory store', 'memory=MemoryManager(stores=[memory_store], injection=False)'],
+    [
+      'memory storage',
+      'memory=MemoryManager(stores=[FileMemoryStore(name="private", storage=storage, extraction=False)], injection=False)',
+    ],
+    ['session storage', 'session=SnapshotSessionManager(session_id="private", storage=storage)'],
+    ['context stash', 'context_manager=ContextManager(stash={"storage": storage})'],
+    ['context offloader', 'plugins=[ContextOffloader(storage=storage)]'],
+  ])(
+    'refuses exports with unrecognized %s without preventing chat',
+    async (name, options) => {
+      const entrypoint = join(root, 'agent.py')
+      await mkdir(join(root, 'private-data'))
+      await writeFile(join(root, 'private-data', 'private.txt'), 'PRIVATE PYTHON SENTINEL')
+      await writeFile(
+        entrypoint,
+        `from strands.memory import MemoryManager
+from strands.session import SnapshotSessionManager
+from strands.storage import LocalFileStorage
+from strands.experimental.context_manager import ContextManager
+from strands.vended_memory_stores.file_memory_store import FileMemoryStore
+from strands.vended_memory_stores.test_memory_store import TestMemoryStore
+from strands.vended_plugins.context_offloader import ContextOffloader
+
+class UnknownStorage:
+    def __init__(self, base):
+        self.base = base
+    def __getattr__(self, name):
+        return getattr(self.base, name)
+    def namespace(self, prefix):
+        return UnknownStorage(self.base.namespace(prefix))
+
+storage = UnknownStorage(LocalFileStorage("private-data"))
+memory_store = TestMemoryStore(name="private", path="private-data/notes.json", extraction=False)
+${(name === 'memory store'
+  ? baseSource
+      .replace('def status()', 'async def status()')
+      .replace('return "authored tool"', 'await memory_store.add("PRIVATE PYTHON MEMORY")\n    return "authored tool"')
+  : baseSource
+).replace('agent = build()', `agent = build(${options})`)}
+`
+      )
+      const requestSetup = vi.fn()
+      const config = CliConfigStore.memory()
+      await config.setPermissionMode('bypassPermissions')
+      const chat = await createPythonChat(entrypoint, config, { cwd: root }, AbortSignal.timeout(15_000), requestSetup)
+      chats.push(chat)
+      const startup = JSON.stringify(chat.getSnapshot())
+      chat.dismissPanel()
+      await chat.submit('{"tool":"status"}')
+      expect(JSON.stringify(chat.getSnapshot())).toContain('authored tool')
+      const archive = join(root, 'unsafe.zip')
+      await chat.submit(`/export python "${archive}"`)
+      expect(JSON.stringify(chat.getSnapshot())).toContain('Cannot safely export this agent')
+      expect(existsSync(archive)).toBe(false)
+      expect(startup).toContain('live reload unavailable')
+      if (name === 'memory store') {
+        expect(await readFile(join(root, 'private-data', 'notes.json'), 'utf8')).toContain('PRIVATE PYTHON MEMORY')
+      }
+      expect(await readFile(join(root, 'private-data', 'private.txt'), 'utf8')).toBe('PRIVATE PYTHON SENTINEL')
+      await writeFile(entrypoint, `${await readFile(entrypoint, 'utf8')}\n# source changed\n`)
+      await new Promise((resolve) => setTimeout(resolve, 350))
+      expect(requestSetup).not.toHaveBeenCalled()
+    },
+    30_000
+  )
+
+  it.each([
     '{"dir": "custom-memory"}',
     'MemoryManager(stores=[FileMemoryStore(name="private", storage=LocalFileStorage("custom-memory").namespace(""), writable=False)], injection=False)',
   ])('excludes actual memory storage from exports and source watching: %s', { timeout: 30_000 }, async (memory) => {
@@ -114,7 +182,8 @@ ${baseSource.replace('"memory": False', `"memory": ${memory}`)}`
 
     const changed = vi.fn()
     const failed = vi.fn()
-    const stop = watchAgentProject(project, changed, failed, backend.privatePaths)
+    expect(backend.privatePaths).not.toBeNull()
+    const stop = watchAgentProject(project, changed, failed, backend.privatePaths!)
     try {
       await writeFile(privateFile, 'UPDATED PRIVATE MEMORY SENTINEL')
       await new Promise((resolve) => setTimeout(resolve, 350))

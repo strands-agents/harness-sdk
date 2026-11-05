@@ -321,9 +321,14 @@ export async function createPythonChat(
         controller,
       })
     }
-    const privatePaths: string[] = []
+    let privatePaths: string[] | null = []
     for (const { controller } of entries) {
-      privatePaths.push(...(controller.backend as PythonBackend).privatePaths)
+      const paths = (controller.backend as PythonBackend).privatePaths
+      if (paths === null) {
+        privatePaths = null
+        break
+      }
+      privatePaths.push(...paths)
     }
     return new ConversationManager(
       { activeId: conversations?.activeId ?? 'agent-1', entries },
