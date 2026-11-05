@@ -69,6 +69,8 @@ snapshot:
   empty records for unknown identifiers, so a typo changes the source store.
 - Run the migration offline against a copy of the session store first. Do not race a live
   agent that uses the same session.
+- Stop every agent that uses the session before the real migration, and keep it stopped
+  until cutover. Writes made after the migration runs are not copied to the snapshot.
 - Stop if the target snapshot already exists. Keep the source records until you verify
   that the snapshot restores correctly.
 
@@ -150,7 +152,8 @@ python migrate_repository_session.py
   1. Dry-run against a copy of the session store.
   2. Attach `SnapshotSessionManager` to a fresh agent with the same `session_id` and
      `agent_id`. Compare `agent.messages`, `agent.state.get()`, `agent.system_prompt`, and
-     the conversation-manager state.
+     the conversation-manager state with the values a repository-based manager restores
+     from a copy of the source store.
   3. Cut application code over to `SnapshotSessionManager`.
   4. Delete the source records only after verifying that the snapshot restores correctly.
 
