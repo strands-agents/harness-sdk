@@ -128,6 +128,14 @@ describe('AnthropicModel', () => {
       )
     })
 
+    it('does not warn when maxTokens is pinned through modelInfo', () => {
+      new AnthropicModel({ apiKey: 'sk-ant-test', modelInfo: { limits: { maxOutputTokens: 2_000 } } })
+      expect(warnOnce).not.toHaveBeenCalledWith(
+        expect.objectContaining({ warn: expect.any(Function) }),
+        expect.stringContaining('using default maxTokens')
+      )
+    })
+
     it('warns when modelId is not explicitly set', () => {
       new AnthropicModel({ apiKey: 'sk-ant-test' })
       expect(warnOnce).toHaveBeenCalledWith(

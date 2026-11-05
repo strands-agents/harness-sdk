@@ -455,7 +455,9 @@ describe('resolveModel', () => {
 
   it('does not force max tokens on a legacy claude 3 bedrock id', async () => {
     const model = await resolve('bedrock/anthropic.claude-3-haiku-20240307-v1:0')
-    expect(model.getConfig().maxTokens).toBeUndefined()
+    // The SDK may default maxTokens from its model info; the harness must not pass its own.
+    const config = (model as unknown as { _config: { maxTokens?: number } })._config
+    expect(config.maxTokens).toBeUndefined()
   })
 
   it('builds bedrock-mantle via the OpenAI provider', async () => {

@@ -10,6 +10,7 @@ import type { HeadEntry } from './BlogLayout.astro'
 import type { BlogPost, Author } from '../util/blog'
 import { formatDate } from '../util/blog'
 import { pathWithBase } from '../util/links'
+import { serializeJsonLd } from '../util/structured-data'
 
 interface Props {
   post: BlogPost
@@ -50,7 +51,7 @@ const jsonLd = {
 const extraHead: HeadEntry[] = [
   // Starlight renders head-entry content with set:html (no escaping), so a
   // `</script>` inside any post field would break out of the JSON-LD tag.
-  { tag: 'script', attrs: { type: 'application/ld+json' }, content: JSON.stringify(jsonLd).replace(/</g, '\\u003c') },
+  { tag: 'script', attrs: { type: 'application/ld+json' }, content: serializeJsonLd(jsonLd) },
   { tag: 'meta', attrs: { property: 'article:published_time', content: date.toISOString() } },
   ...authors.map(
     (author): HeadEntry => ({

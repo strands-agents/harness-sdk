@@ -6,6 +6,7 @@ import anthropic
 import pydantic
 import pytest
 
+from strands.models._model_info import ModelCapabilities, ModelInfo
 from strands.models._native_output import (
     _FORCED_TOOL_CHOICE_UNSUPPORTED_MESSAGES,
     _NATIVE_OUTPUT_REJECTED_MESSAGES,
@@ -77,6 +78,20 @@ FORCED = {"tool": {"name": "Person"}}
 )
 def test_structured_output_mechanisms(unsupported, tool_choice, exp_mechanisms):
     tru_mechanisms = structured_output_mechanisms(unsupported, tool_choice, Person)
+
+    assert tru_mechanisms == exp_mechanisms
+
+
+@pytest.mark.parametrize(
+    ("capabilities", "exp_mechanisms"),
+    [
+        (ModelCapabilities(forced_tool_choice=False), ["native", "auto"]),
+        (ModelCapabilities(native_structured_output=False), ["forced", "auto"]),
+        (ModelCapabilities(forced_tool_choice=True, native_structured_output=True), ["forced", "native", "auto"]),
+    ],
+)
+def test_structured_output_mechanisms_skips_what_the_model_info_says_is_unsupported(capabilities, exp_mechanisms):
+    tru_mechanisms = structured_output_mechanisms(set(), FORCED, Person, ModelInfo(capabilities=capabilities))
 
     assert tru_mechanisms == exp_mechanisms
 

@@ -11,13 +11,15 @@ import LanguageToggle from './LanguageToggle.astro';
 import { getStarCount } from '../util/github';
 import { products } from '../config/navbar';
 import { pathWithBase } from '../util/links';
-import { getProductNav } from '../util/product-nav';
+import { getProductNav, normalizedSidebarToProductNav } from '../util/product-nav';
+import { isSampleGuidePath } from '../util/sample-guides';
 import MobileNavTree from './MobileNavTree.astro';
 
 const stars = await getStarCount();
 const currentPath = Astro.url.pathname.replace(/\/?$/, '/');
+const isExamplesPage = isSampleGuidePath(currentPath);
 
-// The "Projects" dropdown is organized around products (Strands harness, SDK,
+// The "Docs" dropdown is organized around products (Strands harness, SDK,
 // Shell, Evals) from navigation.yml, so the dropdown and the docs stay
 // aligned. Each product renders as one entry linking to its hub; its full
 // docs sidebar (`nav`) drives the mobile accordion. Labs (experimental projects) has its own docs hub, so
@@ -51,6 +53,9 @@ const learnCategories = [
     title: 'Examples',
     description: 'Runnable samples you can drop into your own project.',
     href: pathWithBase('/examples/'),
+    nav: isExamplesPage
+      ? normalizedSidebarToProductNav(Astro.locals.starlightRoute.sidebar)
+      : undefined,
   },
 ];
 
@@ -66,7 +71,7 @@ const learnCategories = [
       </a>
       <ul class="strands-nav__links" role="list">
         <li class="strands-nav__item" data-menu-trigger="docs">
-          <button type="button" class="strands-nav__trigger" aria-haspopup="true">Projects</button>
+          <button type="button" class="strands-nav__trigger" aria-haspopup="true">Docs</button>
           <NavMenu id="docs" categories={docsCategories} />
         </li>
         <li class="strands-nav__item" data-menu-trigger="learn">
@@ -143,11 +148,11 @@ const learnCategories = [
     </div>
   </div>
 
-  <!-- Mobile menu panel (Figma 745:13162): Projects / Learn accordions of
+  <!-- Mobile menu panel (Figma 745:13162): Docs / Learn accordions of
        categories + page links, then plain Integrations / Blog links. -->
   <div class="strands-nav__mobile" data-mobile-menu>
     {[
-      { label: 'Projects', categories: docsCategories },
+      { label: 'Docs', categories: docsCategories },
       { label: 'Learn', categories: learnCategories },
     ].map((section) => (
       <div class="mobile-menu__section" data-mobile-section>
@@ -856,7 +861,7 @@ const learnCategories = [
       color: var(--accent-green);
     }
 
-    /* Indent categories under their section header (Projects / Learn) so the
+    /* Indent categories under their section header (Docs / Learn) so the
        hierarchy reads clearly. */
     .mobile-menu__section-body {
       display: none;
@@ -1168,6 +1173,14 @@ const learnCategories = [
       inerted.forEach((el) => (el.inert = true));
     };
 
+    const positionMobileMenu = () => {
+      if (!navInner) return;
+      // Include the homepage announcement offset, but reserve the full bar
+      // height while a hidden header is sliding back into view.
+      const bottom = Math.max(navInner.getBoundingClientRect().bottom, navInner.offsetHeight);
+      mobileMenu.style.top = `${bottom}px`;
+    };
+
     const setMenuOpen = (open: boolean) => {
       mobileMenu.classList.toggle('is-open', open);
       setPageInert(open);
@@ -1177,11 +1190,14 @@ const learnCategories = [
       // not the page behind it (the menu can overflow the viewport).
       document.body.style.overflow = open ? 'hidden' : '';
       if (open) {
-        // Pin the fixed overlay directly below the header. Its height, not its
-        // rect, so a header still sliding back in doesn't skew the position.
-        const bottom = navInner?.offsetHeight ?? 0;
-        mobileMenu.style.top = `${bottom}px`;
+        window.addEventListener('resize', positionMobileMenu);
+        // Focus-driven scrolling can still move the page with body overflow hidden.
+        window.addEventListener('scroll', positionMobileMenu, { passive: true });
+        positionMobileMenu();
         revealCurrent();
+      } else {
+        window.removeEventListener('resize', positionMobileMenu);
+        window.removeEventListener('scroll', positionMobileMenu);
       }
     };
 

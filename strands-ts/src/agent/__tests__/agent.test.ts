@@ -78,7 +78,19 @@ describe('Agent', () => {
 
         expect(items.length).toBeGreaterThan(0)
         const firstItem = items[0]
-        expect(firstItem).toEqual(new BeforeInvocationEvent({ agent: agent, invocationState: {} }))
+        expect(firstItem).toEqual(
+          new BeforeInvocationEvent({
+            agent,
+            invocationState: {},
+            messages: [
+              new Message({
+                role: 'user',
+                content: [new TextBlock('Test prompt')],
+                trackingId: anyTrackingId,
+              }),
+            ],
+          })
+        )
       })
 
       it('returns AgentResult as generator return value', async () => {
@@ -2611,6 +2623,34 @@ describe('normalizeToolUseNames', () => {
       .find((m) => m.role === 'assistant')!
       .content.find((b) => b.type === 'toolUseBlock') as ToolUseBlock
     expect(sentToolUse).toStrictEqual(new ToolUseBlock({ name: 'good_tool-1', toolUseId: 'tu-1', input: {} }))
+  })
+
+  // Guards against https://github.com/strands-agents/harness-sdk/issues/5763: an empty assistant turn
+  // must not leave two user turns in a row once providers drop the empty message.
+  describe('when history contains an empty assistant message', () => {
+    it('sends it to the model as a blank text placeholder without changing stored history', async () => {
+      const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'ok' })
+      const streamSpy = vi.spyOn(model, 'stream')
+
+      const agent = new Agent({
+        model,
+        printer: false,
+        messages: [
+          new Message({ role: 'user', content: [new TextBlock('Say hi')] }),
+          new Message({ role: 'assistant', content: [] }),
+        ],
+      })
+
+      await agent.invoke('continue')
+
+      const sentMessages = streamSpy.mock.calls[0]?.[0] as Message[]
+      expect(sentMessages.map((message) => ({ role: message.role, content: message.content }))).toStrictEqual([
+        { role: 'user', content: [new TextBlock('Say hi')] },
+        { role: 'assistant', content: [new TextBlock('[blank text]')] },
+        { role: 'user', content: [new TextBlock('continue')] },
+      ])
+      expect(agent.messages[1]?.content).toStrictEqual([])
+    })
   })
 
   describe('MCP toolsChanged integration', () => {

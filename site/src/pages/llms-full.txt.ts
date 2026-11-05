@@ -2,9 +2,11 @@ import type { APIRoute } from 'astro'
 import { getCollection } from 'astro:content'
 import { renderEntryToMarkdown } from '@util/render-to-markdown'
 import { siteLink } from '@util/links'
+import { sortSampleGuides } from '@util/sample-guides'
+import { languageLabel } from '@util/source-links'
 
 export const GET: APIRoute = async () => {
-  const allDocs = await getCollection('docs', ({ data }) => !data.draft)
+  const allDocs = await getCollection('docs', ({ data }) => !data.draft && data.externalDocs?.status !== 'preview')
   // Exclude API documentation from full content
   const docs = allDocs.filter((doc) => !doc.id.startsWith('docs/api/'))
   const lines: string[] = []
@@ -27,6 +29,21 @@ export const GET: APIRoute = async () => {
 
     lines.push('')
     lines.push(`Source: ${siteLink(`/${doc.id}/index.md`)}`)
+    lines.push('')
+    lines.push('---')
+    lines.push('')
+  }
+
+  const sampleGuides = sortSampleGuides(await getCollection('sampleGuides'))
+  for (const guide of sampleGuides) {
+    lines.push(`## ${guide.data.title} (${languageLabel(guide.data.language)})`)
+    lines.push('')
+
+    const { markdown } = await renderEntryToMarkdown(guide, `/examples/${guide.data.slug}/`)
+    lines.push(markdown.trim())
+
+    lines.push('')
+    lines.push(`Markdown: ${siteLink(`/examples/${guide.data.slug}/index.md`)}`)
     lines.push('')
     lines.push('---')
     lines.push('')

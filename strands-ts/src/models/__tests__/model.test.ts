@@ -125,6 +125,85 @@ describe('Model', () => {
       })
     })
 
+    // Guards against https://github.com/strands-agents/harness-sdk/issues/5763 and
+    // https://github.com/strands-agents/harness-sdk/issues/3189: a stream without a message start
+    // still completes as an assistant message.
+    describe('when the stream has no message start event', () => {
+      it('completes a message with streamed text and tool use as the assistant', async () => {
+        const provider = new TestModelProvider(async function* () {
+          yield { type: 'modelContentBlockStartEvent' }
+          yield {
+            type: 'modelContentBlockDeltaEvent',
+            delta: { type: 'textDelta', text: 'Checking' },
+          }
+          yield { type: 'modelContentBlockStopEvent' }
+          yield {
+            type: 'modelContentBlockStartEvent',
+            start: { type: 'toolUseStart', toolUseId: 'tool1', name: 'get_weather' },
+          }
+          yield {
+            type: 'modelContentBlockDeltaEvent',
+            delta: { type: 'toolUseInputDelta', input: '{"location": "Paris"}' },
+          }
+          yield { type: 'modelContentBlockStopEvent' }
+          yield { type: 'modelMessageStopEvent', stopReason: 'toolUse' }
+        })
+
+        const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+
+        const { result } = await collectGenerator(provider.streamAggregated(messages))
+
+        expect(result).toEqual({
+          message: {
+            type: 'message',
+            role: 'assistant',
+            content: [
+              { type: 'textBlock', text: 'Checking' },
+              {
+                type: 'toolUseBlock',
+                toolUseId: 'tool1',
+                name: 'get_weather',
+                input: { location: 'Paris' },
+              },
+            ],
+            trackingId: anyTrackingId,
+          },
+          stopReason: 'toolUse',
+        })
+      })
+
+      it('returns an empty assistant message when the turn is empty', async () => {
+        const provider = new TestModelProvider(async function* () {
+          yield { type: 'modelMessageStopEvent', stopReason: 'endTurn' }
+          yield {
+            type: 'modelMetadataEvent',
+            usage: { inputTokens: 10, outputTokens: 1, totalTokens: 11 },
+          }
+        })
+
+        const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+
+        const { result } = await collectGenerator(provider.streamAggregated(messages))
+
+        expect(result).toEqual({
+          message: {
+            type: 'message',
+            role: 'assistant',
+            content: [],
+            trackingId: anyTrackingId,
+            metadata: {
+              usage: { inputTokens: 10, outputTokens: 1, totalTokens: 11 },
+            },
+          },
+          stopReason: 'endTurn',
+          metadata: {
+            type: 'modelMetadataEvent',
+            usage: { inputTokens: 10, outputTokens: 1, totalTokens: 11 },
+          },
+        })
+      })
+    })
+
     describe('when streaming multiple text blocks', () => {
       it('yields all blocks in order', async () => {
         const provider = new TestModelProvider(async function* () {

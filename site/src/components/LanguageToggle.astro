@@ -11,6 +11,11 @@ import { LANGUAGE_STORAGE_KEY, DEFAULT_LANGUAGE_LABEL } from '../util/language-p
 import { getLanguageSwitchTarget, type LanguageSlug } from '../util/language-switch'
 import { getApiCounterpartMap } from '../util/api-counterparts'
 import { getBase, pathWithBase } from '../util/links'
+import {
+  sampleGuideLanguageFromPath,
+  sampleGuideSwitchPath,
+  sortSampleGuides,
+} from '../util/sample-guides'
 import typescriptIcon from '../assets/lang/typescript.svg?raw'
 import pythonIcon from '../assets/lang/python.svg?raw'
 
@@ -22,11 +27,24 @@ const apiCounterparts = getApiCounterpartMap(allDocs)
 const base = getBase()
 const rawPath = Astro.url.pathname
 const currentPath = base && rawPath.startsWith(base) ? rawPath.slice(base.length) || '/' : rawPath
+const sampleGuideLanguage = sampleGuideLanguageFromPath(rawPath)
+const sampleGuideSlug = sampleGuideLanguage
+  ? currentPath.replace(/^\/examples\//, '').replace(/\/$/, '')
+  : undefined
+const sampleGuides = sampleGuideLanguage ? sortSampleGuides(await getCollection('sampleGuides')) : []
 
 function switchHref(lang: LanguageSlug): string | undefined {
+  if (sampleGuideSlug) {
+    const target = sampleGuideSwitchPath(sampleGuides, sampleGuideSlug, lang)
+    return target ? pathWithBase(target) : undefined
+  }
+
   const target = getLanguageSwitchTarget(currentPath, lang, docIds, apiCounterparts)
   return target ? pathWithBase(target) : undefined
 }
+
+const sampleGuideLanguageLabel =
+  sampleGuideLanguage === 'python' ? 'Python' : sampleGuideLanguage === 'typescript' ? 'TypeScript' : undefined
 
 // On single-language docs pages, disable the unavailable side.
 // `starlightRoute` is a getter that throws off non-Starlight pages — try/catch required.
@@ -158,7 +176,14 @@ const typescriptDisabled = resolvedLanguages !== undefined && !resolvedLanguages
   }
 </style>
 
-<script is:inline define:vars={{ STORAGE_KEY: LANGUAGE_STORAGE_KEY, DEFAULT_LANG: DEFAULT_LANGUAGE_LABEL }}>
+<script
+  is:inline
+  define:vars={{
+    STORAGE_KEY: LANGUAGE_STORAGE_KEY,
+    DEFAULT_LANG: DEFAULT_LANGUAGE_LABEL,
+    PAGE_LANGUAGE: sampleGuideLanguageLabel,
+  }}
+>
   (function () {
     // Idempotency guard: multiple instances on one page, run logic once.
     if (window.__strandsLanguageToggleInit) return;
@@ -194,8 +219,9 @@ const typescriptDisabled = resolvedLanguages !== undefined && !resolvedLanguages
       });
     }
 
-    /** On single-language pages, resolve to the available language (stored pref untouched). */
+    /** Sample routes win; other single-language pages resolve to their available language. */
     function effectiveLanguage(lang) {
+      if (PAGE_LANGUAGE) return PAGE_LANGUAGE;
       var enabled = Array.prototype.filter.call(
         document.querySelectorAll('language-toggle .lang-option'),
         function (btn) { return !btn.disabled; }
@@ -237,7 +263,7 @@ const typescriptDisabled = resolvedLanguages !== undefined && !resolvedLanguages
       applying = false;
     }
 
-    var current = getPreference();
+    var current = PAGE_LANGUAGE || getPreference();
     if (document.readyState === 'loading') {
       document.addEventListener('DOMContentLoaded', function () { applyLanguage(current, false); });
     } else {

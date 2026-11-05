@@ -9,7 +9,7 @@ What the SDKs know about models: context windows, output ceilings, which models 
 Edit the file; each SDK copies it into its own package when it installs and builds, and does not commit the copy:
 
 - `strands-ts`: the `prepare` (any `npm ci` / `npm install`) and `prebuild` scripts `cp` it to `strands-ts/src/models/model-info.json` (git-ignored). Run `npm run prepare -w strands-ts` after editing to refresh it. `model-info.test.node.ts` asserts the copy equals this file.
-- `strands-py`: a hatch build hook does the same for the Python package (comes with the Python PR).
+- `strands-py`: the `hatch_build.py` build hook copies it to `strands-py/src/strands/models/model_info.json` (git-ignored). `test__model_info.py` asserts the copy equals this file.
 
 ### Format
 
