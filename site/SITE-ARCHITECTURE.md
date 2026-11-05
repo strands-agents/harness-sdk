@@ -41,6 +41,8 @@ We're using [Astro](https://astro.build/) with the [Starlight](https://starlight
 ### 3. Generated Sample Guides (`scripts/samples/`, `src/pages/examples/`)
 
 The build imports the samples repository's `samples.json` catalog and guide content into `.build/samples/pages`.
+For curated manifests, the ordered top-level collections are the publication allowlist: uncollected samples remain
+available in the repository but do not generate website routes.
 
 - Set `SAMPLES_SOURCE_DIR` to a checkout of the samples repository.
 - Set `SAMPLES_REQUIRE_SOURCE=1` to fail when the source checkout is missing or has no samples. Without it, the build clears generated guides and renders the local setup message at `/examples/`.

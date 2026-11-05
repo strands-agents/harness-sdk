@@ -274,12 +274,28 @@ export type Announcement = z.infer<typeof announcementSchema>
 
 const sampleGuideSchema = z
   .object({
+    catalogMode: z.enum(['legacy', 'curated']),
     title: z.string(),
     description: z.string(),
     slug: z.string(),
     language: z.enum(ALL_SDK_LANGUAGES),
     category: z.string(),
     categoryLabel: z.string(),
+    collection: z
+      .object({
+        id: z.string(),
+        label: z.string(),
+        description: z.string().optional(),
+        order: z.number().int().nonnegative(),
+      })
+      .optional(),
+    docs: z.array(
+      z.object({
+        label: z.string(),
+        url: z.string().url().startsWith('https://', 'documentation links must use https'),
+      })
+    ),
+    family: z.string().optional(),
     sourceUrl: z.string().url(),
     order: z.number().int().nonnegative(),
   })
