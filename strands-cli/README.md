@@ -176,6 +176,13 @@ all Python virtual environments. It watches files with these extensions: `.ts`, 
 `.py`, `.md`, `.txt`, `.json`, `.yaml`, `.yml`, and `.toml`. A change to an `.env` file does not reload the
 agent. A reload keeps the active conversation only, and forked agents close.
 
+If your agent writes such files into a project folder that is not hidden, each write reloads the agent. Keep
+session and memory data in a hidden folder, as the default `./.agent/` folder does.
+
+The CLI asks one time for each `strands dev` launch if it can trust the project MCP configuration. Reloads use
+that answer. If you change the configuration, the next reload fails. Start `strands dev` again to approve the
+change.
+
 Source code runs on your computer with your permissions. Open only the projects that you trust.
 
 ## Options
