@@ -20,6 +20,9 @@ EXPECTED_TOP_3 = {
     "python v1.62.0": "changelog/sdk/python-v1.62.0/index.md",
     "migrate strands-agents-tools": "docs/user-guide/migrate/strands-agents-tools/index.md",
     "shell mcp server": "docs/user-guide/shell/mcp-server/index.md",
+    "bedrock": "docs/user-guide/sdk/model-providers/amazon-bedrock/index.md",
+    "hooks": "docs/user-guide/sdk/agents/hooks/index.md",
+    "guardrails": "docs/user-guide/sdk/safety-security/guardrails/index.md",
 }
 
 # Each search_docs call hydrates its top results, including the changelog aggregate page.

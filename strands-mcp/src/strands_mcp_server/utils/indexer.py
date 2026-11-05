@@ -28,11 +28,11 @@ class Doc:
     index_title: str  # Searchable title text including variants
 
 
-# BM25 parameters
 _K1 = 1.2
-_B = 0.75
 # Each field saturates on its own, so a long body adds a bounded amount per query term.
 _FIELD_WEIGHTS = {"title": 4.0, "headings": 1.0, "body": 1.0}
+# Light title normalization keeps an llms.txt description from costing a page its title match.
+_FIELD_B = {"title": 0.3, "headings": 0.75, "body": 0.75}
 
 FieldCounts = Dict[str, Counter[str]]
 
@@ -185,7 +185,8 @@ class IndexSearch:
         for name, counts in self.doc_fields[idx].items():
             tf = counts[tok]
             if tf:
-                norm = 1 - _B + _B * self.doc_lengths[idx][name] / avg_lengths[name]
+                b = _FIELD_B[name]
+                norm = 1 - b + b * self.doc_lengths[idx][name] / avg_lengths[name]
                 score += _FIELD_WEIGHTS[name] * tf * (_K1 + 1) / (tf + _K1 * norm)
         return score
 
