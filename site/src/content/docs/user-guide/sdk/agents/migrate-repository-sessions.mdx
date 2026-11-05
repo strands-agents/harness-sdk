@@ -144,7 +144,8 @@ python migrate_repository_session.py
 - **Get the source session ID** from the existing agent or session manager. See
   [Reading the session ID](./session-management.mdx#reading-the-session-id).
 - **Run once per session** and `agent_id`. If a run fails, run it again for that session.
-  An "already migrated" error means the session is done.
+  An "already migrated" error means a target snapshot already exists. Verify it with
+  step 2 below before you treat the session as done.
 - **Verify, then cut over:**
   1. Dry-run against a copy of the session store.
   2. Attach `SnapshotSessionManager` to a fresh agent with the same `session_id` and
