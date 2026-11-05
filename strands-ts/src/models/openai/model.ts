@@ -129,11 +129,15 @@ export class OpenAIModel extends Model<OpenAIModelConfig> {
   /**
    * Adds whether this model manages conversation state server-side: `true` only for
    * `api: 'responses'` with `stateful === true`. Chat Completions is always stateless, and
-   * Responses defaults to stateless.
+   * Responses defaults to stateless. Neither API takes temporary messages.
    */
   override get modelInfo(): ModelInfo {
     const stateful = this._api === 'responses' && this._config.stateful === true
-    return mergeModelInfo(super.modelInfo, { capabilities: { stateful } }, this._config.modelInfo)
+    return mergeModelInfo(
+      super.modelInfo,
+      { capabilities: { stateful, temporaryMessages: false } },
+      this._config.modelInfo
+    )
   }
 
   /**

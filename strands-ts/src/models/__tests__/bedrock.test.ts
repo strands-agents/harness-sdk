@@ -499,6 +499,11 @@ describe('BedrockModel', () => {
       }
     )
 
+    it('reports no temporary messages, since Converse ignores clear_at', () => {
+      const provider = new BedrockModel({ modelId: 'us.anthropic.claude-opus-5-5' })
+      expect(provider.modelInfo.capabilities?.temporaryMessages).toBe(false)
+    })
+
     it('lets a modelInfo override win over implicit caching for an OpenAI model', () => {
       const provider = new BedrockModel({
         modelId: 'us.openai.gpt-6-luna',

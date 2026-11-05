@@ -383,18 +383,6 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
   }
 
   /**
-   * Whether this provider sends an `InjectedBlock` as a message the model reads only until the next user message.
-   * When `true`, the provider receives injected blocks as stored and formats them; otherwise it receives the latest
-   * user message's injected text as text. A provider that can send them overrides this.
-   *
-   * @experimental
-   * @returns `false` unless the provider overrides it
-   */
-  get sendsTemporaryMessages(): boolean {
-    return false
-  }
-
-  /**
    * Everything the SDK knows about the configured model, resolved on each read. Layers, later
    * ones winning: the shared model info for `modelId`, the `contextWindowLimit` config value, and
    * the `modelInfo` config override. Each read returns a new record, so do not compare reads by
@@ -428,7 +416,8 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
    * Count tokens for the given input before sending to the model.
    *
    * Used for proactive context management (e.g., triggering compression at a threshold).
-   * The base implementation uses a character-based heuristic (chars/4 for text, chars/2 for JSON).
+   * The base implementation uses a character-based heuristic (chars/4 for text, chars/2 for JSON). It counts only the
+   * latest user message's injected blocks, the ones a model reads.
    *
    * Subclasses should override this method to use native token counting APIs
    * (e.g., Bedrock CountTokens, Anthropic countTokens, Gemini countTokens)
@@ -790,11 +779,7 @@ function estimateTokensHeuristic(messages: Message[], options?: CountTokensOptio
     }
   }
 
-  for (const message of messages) {
-    for (const block of message.content) {
-      total += estimateContentBlockTokens(block)
-    }
-  }
+  total += estimateMessageTokens(messages)
 
   if (options?.toolSpecs) {
     for (const spec of options.toolSpecs) {
@@ -803,6 +788,28 @@ function estimateTokensHeuristic(messages: Message[], options?: CountTokensOptio
   }
 
   return total
+}
+
+/** Counts the messages, with only the latest user message's injected blocks, the ones a model reads. */
+function estimateMessageTokens(messages: Message[]): number {
+  const latestUser = latestUserIndex(messages)
+  return messages
+    .flatMap((message, index) =>
+      index === latestUser ? message.content : message.content.filter((block) => block.type !== 'injectedBlock')
+    )
+    .reduce((total, block) => total + estimateContentBlockTokens(block), 0)
+}
+
+/**
+ * Index of the latest user message, or -1 when there is none.
+ *
+ * @internal
+ */
+export function latestUserIndex(messages: Message[]): number {
+  for (let index = messages.length - 1; index >= 0; index--) {
+    if (messages[index]!.role === 'user') return index
+  }
+  return -1
 }
 
 function heuristicText(text: string): number {

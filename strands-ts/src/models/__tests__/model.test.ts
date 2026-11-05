@@ -1207,6 +1207,17 @@ describe('countTokens', () => {
     expect(result).toBe(Math.ceil('cwd: /repo, date: today'.length / 4))
   })
 
+  it('counts only the injected blocks of the latest user message', async () => {
+    const provider = new TestModelProvider()
+    const messages = [
+      new Message({ role: 'user', content: [new InjectedBlock({ text: 'x'.repeat(400), source: 'test' })] }),
+      new Message({ role: 'assistant', content: [new TextBlock('ok')] }),
+      new Message({ role: 'user', content: [new InjectedBlock({ text: 'cwd: /repo', source: 'test' })] }),
+    ]
+    const result = await provider.countTokens(messages)
+    expect(result).toBe(Math.ceil('ok'.length / 4) + Math.ceil('cwd: /repo'.length / 4))
+  })
+
   it('estimates string system prompt tokens', async () => {
     const provider = new TestModelProvider()
     const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
@@ -1315,11 +1326,10 @@ describe('info', () => {
     expect(provider.modelInfo.capabilities?.promptCaching).toBe('cachePoints')
   })
 
-  it('does not send temporary messages, even for a model that accepts them', () => {
+  it('reports temporary messages from the shared model info for any provider', () => {
     const provider = new TestModelProvider()
-    provider.updateConfig({ modelId: 'us.anthropic.claude-opus-5-5' })
+    provider.updateConfig({ modelId: 'claude-opus-5-5' })
     expect(provider.modelInfo.capabilities?.temporaryMessages).toBe(true)
-    expect(provider.sendsTemporaryMessages).toBe(false)
   })
 
   it('lets a provider put its facts over the shared model info, with the user override over both', () => {

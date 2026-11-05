@@ -213,32 +213,9 @@ describe('ModelProxy', () => {
       ])
     })
 
-    it('sends text to a provider that does not send temporary messages, whatever its model info says', async () => {
+    it('passes injected blocks through to a model that takes temporary messages', async () => {
       const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'ok' })
       model.updateConfig({ modelInfo: { capabilities: { temporaryMessages: true } } })
-      const streamSpy = vi.spyOn(model, 'stream')
-      const messages = [
-        new Message({
-          role: 'user',
-          content: [new TextBlock('Refactor.'), new InjectedBlock({ text: 'reminder', source: 'test' })],
-          trackingId: 'msg-1',
-        }),
-      ]
-
-      await drain(new ModelProxy(model).streamAggregated(messages))
-
-      expect(streamSpy.mock.calls[0]![0]).toEqual([
-        new Message({
-          role: 'user',
-          content: [new TextBlock('Refactor.'), new TextBlock('\n\nreminder')],
-          trackingId: 'msg-1',
-        }),
-      ])
-    })
-
-    it('passes injected blocks through to a provider that sends temporary messages', async () => {
-      const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'ok' })
-      vi.spyOn(model, 'sendsTemporaryMessages', 'get').mockReturnValue(true)
       const streamSpy = vi.spyOn(model, 'stream')
       const messages = [
         new Message({
@@ -252,35 +229,6 @@ describe('ModelProxy', () => {
       await drain(new ModelProxy(model).streamAggregated(messages))
 
       expect(streamSpy.mock.calls[0]![0]).toBe(messages)
-    })
-
-    it('counts only the latest injected blocks for a provider that sends temporary messages', async () => {
-      const model = new MockMessageModel()
-      vi.spyOn(model, 'sendsTemporaryMessages', 'get').mockReturnValue(true)
-      const countSpy = vi.spyOn(model, 'countTokens')
-      const latest = new Message({
-        role: 'user',
-        content: [new TextBlock('Now the docs.'), new InjectedBlock({ text: 'two', source: 'test' })],
-        trackingId: 'msg-3',
-      })
-      const answer = new Message({ role: 'assistant', content: [new TextBlock('Done.')], trackingId: 'msg-2' })
-      const messages = [
-        new Message({
-          role: 'user',
-          content: [new TextBlock('Refactor.'), new InjectedBlock({ text: 'one', source: 'test' })],
-          trackingId: 'msg-1',
-        }),
-        answer,
-        latest,
-      ]
-
-      await new ModelProxy(model).countTokens(messages)
-
-      expect(countSpy.mock.calls[0]![0]).toEqual([
-        new Message({ role: 'user', content: [new TextBlock('Refactor.')], trackingId: 'msg-1' }),
-        answer,
-        latest,
-      ])
     })
 
     it('counts the messages it would send', async () => {

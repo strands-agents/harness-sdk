@@ -287,11 +287,6 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
     }
   }
 
-  /** Sends injected text as turn-scoped system messages to the models that accept them. */
-  override get sendsTemporaryMessages(): boolean {
-    return this.modelInfo.capabilities?.temporaryMessages === true
-  }
-
   updateConfig(modelConfig: AnthropicModelConfig): void {
     if (modelConfig.anthropicTools) validateAnthropicTools(modelConfig.anthropicTools)
 
@@ -916,7 +911,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
       )
     }
 
-    return requestMessages(messages, formatted, this.sendsTemporaryMessages)
+    return requestMessages(messages, formatted, this.modelInfo.capabilities?.temporaryMessages === true)
   }
 
   private _isCacheableBlock(

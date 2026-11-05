@@ -1,5 +1,6 @@
 import { unwrapInvocationContext, type InvocationContext } from '../agent/invocation-context.js'
 import { Message, TextBlock, type ContentBlock } from '../types/messages.js'
+import { latestUserIndex } from './model.js'
 import type { CountTokensOptions, Model, StreamAggregatedResult, StreamOptions } from './model.js'
 import type { ModelStreamEvent } from './streaming.js'
 
@@ -11,7 +12,7 @@ import type { ModelStreamEvent } from './streaming.js'
  * added only when the call returns normally and the provider reported it; a thrown error
  * passes through and adds nothing.
  *
- * An `InjectedBlock` reaches a provider whose {@link Model.sendsTemporaryMessages} is `true` as it is
+ * An `InjectedBlock` reaches a model whose `modelInfo.capabilities.temporaryMessages` is `true` as it is
  * stored, and that provider sends it so the model reads it only until the next user message. Every
  * other model, custom ones included, gets the latest user message's injected blocks as text and none
  * of the earlier ones.
@@ -51,24 +52,18 @@ export class ModelProxy {
   }
 
   /**
-   * Delegates to the wrapped model's `countTokens` with the injected blocks the model reads: for a provider that
-   * sends temporary messages, those of the latest user message as stored (the API has cleared the earlier ones);
-   * for every other provider, the text {@link streamAggregated} sends.
+   * Delegates to the wrapped model's `countTokens` with the messages {@link streamAggregated} would send.
    *
    * @param messages - The messages to count
    * @param options - Optional system prompt and tool specs to count with them
    * @returns The wrapped model's count
    */
   countTokens(messages: Message[], options?: CountTokensOptions): Promise<number> {
-    const counted =
-      messages.some(hasInjectedBlock) && this._model.sendsTemporaryMessages
-        ? withoutClearedInjectedBlocks(messages)
-        : this._prepare(messages).messages
-    return this._model.countTokens(counted, options)
+    return this._model.countTokens(this._prepare(messages).messages, options)
   }
 
   private _prepare(messages: Message[]): RenderedMessages {
-    if (!messages.some(hasInjectedBlock) || this._model.sendsTemporaryMessages) {
+    if (!messages.some(hasInjectedBlock) || this._model.modelInfo.capabilities?.temporaryMessages === true) {
       return { messages, dynamicTrailingBlocks: 0 }
     }
     return renderInjectedBlocks(messages)
@@ -113,16 +108,6 @@ function renderInjectedBlocks(messages: Message[]): RenderedMessages {
   return { messages: rendered, dynamicTrailingBlocks }
 }
 
-/** The messages without the injected blocks before the latest user message. */
-function withoutClearedInjectedBlocks(messages: Message[]): Message[] {
-  const latestUser = latestUserIndex(messages)
-  return messages.map((message, index) =>
-    index === latestUser || !hasInjectedBlock(message)
-      ? message
-      : withContent(message, withoutInjectedBlocks(message.content))
-  )
-}
-
 function withContent(message: Message, content: ContentBlock[]): Message {
   return new Message({
     role: message.role,
@@ -146,13 +131,6 @@ function withInjectedText(content: ContentBlock[]): ContentBlock[] {
 
 function withoutInjectedBlocks(content: ContentBlock[]): ContentBlock[] {
   return content.filter((block) => !isInjectedBlock(block))
-}
-
-function latestUserIndex(messages: Message[]): number {
-  for (let index = messages.length - 1; index >= 0; index--) {
-    if (messages[index]!.role === 'user') return index
-  }
-  return -1
 }
 
 function hasInjectedBlock(message: Message): boolean {

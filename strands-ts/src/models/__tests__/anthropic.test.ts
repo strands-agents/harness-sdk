@@ -211,19 +211,13 @@ describe('AnthropicModel', () => {
       expect(model.modelInfo.capabilities?.temporaryMessages).toBe(expected)
     })
 
-    it('sends temporary messages to the models that accept them, unless the modelInfo config says otherwise', () => {
-      expect(new AnthropicModel({ apiKey: 'sk-ant-test', modelId: 'claude-opus-5-5' }).sendsTemporaryMessages).toBe(
-        true
-      )
-      expect(new AnthropicModel({ apiKey: 'sk-ant-test', modelId: 'claude-sonnet-4-6' }).sendsTemporaryMessages).toBe(
-        false
-      )
+    it('lets the modelInfo config turn temporary messages off', () => {
       const model = new AnthropicModel({
         apiKey: 'sk-ant-test',
         modelId: 'claude-opus-5-5',
         modelInfo: { capabilities: { temporaryMessages: false } },
       })
-      expect(model.sendsTemporaryMessages).toBe(false)
+      expect(model.modelInfo.capabilities?.temporaryMessages).toBe(false)
     })
 
     it('re-resolves the default maxTokens when modelId changes', () => {

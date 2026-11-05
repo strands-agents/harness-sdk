@@ -527,13 +527,17 @@ export class BedrockModel extends Model<BedrockModelConfig> {
   }
 
   /**
-   * Reports OpenAI models as implicitly cached, which a `modelInfo` override still wins over. The
-   * shared model info lists cache points for their OpenAI-compatible APIs, but Converse caches them
-   * implicitly and rejects cache points.
+   * Reports that Converse takes no temporary messages, since it ignores `clear_at`, and reports OpenAI models as
+   * implicitly cached. A `modelInfo` override still wins over both. The shared model info lists cache points for
+   * their OpenAI-compatible APIs, but Converse caches them implicitly and rejects cache points.
    */
   override get modelInfo(): ModelInfo {
-    if (!this.modelId?.toLowerCase().includes('openai.')) return super.modelInfo
-    return mergeModelInfo(super.modelInfo, { capabilities: { promptCaching: 'auto' } }, this._config.modelInfo)
+    const implicitCache = this.modelId?.toLowerCase().includes('openai.') === true
+    return mergeModelInfo(
+      super.modelInfo,
+      { capabilities: { temporaryMessages: false, ...(implicitCache && { promptCaching: 'auto' as const }) } },
+      this._config.modelInfo
+    )
   }
 
   /**

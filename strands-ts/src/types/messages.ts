@@ -1013,7 +1013,7 @@ export interface InjectedBlockData {
  * `agent.messages` can skip it. `ContextInjector` writes its text as injected blocks. It belongs in a user message,
  * after the existing content; in any other message it is left out.
  *
- * When the model's provider sends temporary messages (see `Model.sendsTemporaryMessages`), the provider sends it as
+ * When the model takes temporary messages (`modelInfo.capabilities.temporaryMessages`), the provider sends it as
  * a system message the model reads only until the next user message, which the model ranks above the user. Every
  * other model receives only the latest user message's injected text, as plain text. Keep content from outside the
  * conversation, such as tool output or retrieved documents, out of it.

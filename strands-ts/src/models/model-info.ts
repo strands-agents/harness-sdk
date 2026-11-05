@@ -34,9 +34,12 @@ export interface ModelCapabilities {
   /** Whether the model can summarize conversation history server-side. */
   readonly serverSideSummary?: boolean | undefined
   /**
-   * Whether the model accepts temporary messages: injected text it reads only until the next user message, such as
-   * Anthropic's turn-scoped system messages. A provider that can send them reports so through
-   * `Model.sendsTemporaryMessages`.
+   * Whether the model and provider take temporary messages: injected text the model reads only until the next user
+   * message, such as Anthropic's turn-scoped system messages. When `true`, the provider receives each `InjectedBlock`
+   * as stored and formats it; otherwise it receives only the latest user message's injected text, as text. A provider
+   * that cannot send them sets this to `false` in its `modelInfo`.
+   *
+   * @experimental
    */
   readonly temporaryMessages?: boolean | undefined
 }
