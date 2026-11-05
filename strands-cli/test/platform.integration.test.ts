@@ -8,6 +8,7 @@ import { defineHarnessAgentConfig, type HarnessAgentConfig, type HarnessModuleRe
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import { CliConfigStore } from '../src/config/store.js'
+import { readProjectArchive } from '../src/project/archive.js'
 import { writeAgentProject } from '../src/project/export.js'
 import type { AgentProjectLanguage } from '../src/project/import.js'
 import { resolveSkillPaths } from '../src/agent/skills.js'
@@ -99,7 +100,8 @@ describe('cross-platform exported agent E2E', () => {
       cwd: root,
       exportPath: secondArchive,
       exportLanguage: 'python',
-      env: cliEnvironment(),
+      // Windows pip can resolve its default cache relative to the imported project.
+      env: { ...cliEnvironment(), PIP_CACHE_DIR: 'pip/cache' },
       timeout: 240_000,
     })
     const output = result.screens.join('\n')
@@ -109,6 +111,8 @@ describe('cross-platform exported agent E2E', () => {
     expectMcpStopped(output)
     expect(result.exportSaved).toBe(true)
     expectRestoredTerminal(result)
+    const entries = [...readProjectArchive(await readFile(secondArchive)).keys()]
+    expect(entries.filter((path) => path.startsWith('pip/cache/'))).toEqual([])
 
     const finalOutput = await cliFor(secondArchive, 'invoke the MCP probe after re-import')
     expect(finalOutput).toContain('platform-mcp-ok')

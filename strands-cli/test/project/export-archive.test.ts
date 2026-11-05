@@ -113,6 +113,9 @@ it.each(['typescript', 'python'] as const)(
     await prepareArchiveDependencies(project.root, language)
     expect(execute).toHaveBeenCalledTimes(1)
     expect(execute.mock.calls[0]?.[2].cwd).toBe(realpathSync(project.root))
+    if (language === 'python') {
+      expect(execute.mock.calls[0]?.[2].env).toMatchObject({ PIP_NO_CACHE_DIR: '1' })
+    }
     expect(await readFile(join(project.root, '.strands-dependencies'), 'utf8')).toMatch(/^[a-f0-9]{64}$/u)
 
     await prepareArchiveDependencies(extracted.root, language)

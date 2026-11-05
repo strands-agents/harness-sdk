@@ -232,7 +232,12 @@ async function installDependencies(root: string, language: AgentProjectLanguage)
       } catch {
         await run(process.platform === 'win32' ? 'python' : 'python3', ['-m', 'venv', '.venv'], options)
       }
-      await run(python, ['-m', 'pip', 'install', ...(contents[0] ? ['-r', 'requirements.txt'] : ['.'])], options)
+      await run(
+        python,
+        ['-m', 'pip', 'install', ...(contents[0] ? ['-r', 'requirements.txt'] : ['.'])],
+        // Build-isolation subprocesses inherit the environment, but not pip's command-line flags.
+        { ...options, env: { ...process.env, PIP_NO_CACHE_DIR: '1' } }
+      )
     }
     const installed = await readManifests()
     const installedContents = contents.map((content, index) =>
@@ -243,7 +248,9 @@ async function installDependencies(root: string, language: AgentProjectLanguage)
     const setup = [
       ...(nodeDependencies ? [`npm ${npmCommand}`] : []),
       ...(pythonDependencies
-        ? [`python3 -m venv .venv, then ${python} -m pip install ${contents[0] ? '-r requirements.txt' : '.'}`]
+        ? [
+            `python3 -m venv .venv, then ${python} -m pip install ${contents[0] ? '-r requirements.txt' : '.'} with PIP_NO_CACHE_DIR=1 in the environment`,
+          ]
         : []),
     ].join(', then ')
     throw new Error(
