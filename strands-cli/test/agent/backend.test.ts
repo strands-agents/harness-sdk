@@ -246,7 +246,7 @@ describe('StrandsChatBackend', () => {
       name: 'Strands harness',
       appState: { get: () => undefined },
       messages: [new Message({ role: 'user', content: [new TextBlock('prior prompt')] })],
-      model: { modelId: 'model', getConfig: () => ({}) },
+      model: new BedrockModel({ modelId: 'model' }),
       tools: [],
       takeSnapshot: vi.fn(() => snapshot),
       loadSnapshot: vi.fn(() => {
@@ -283,7 +283,7 @@ describe('StrandsChatBackend', () => {
       name: 'Strands harness',
       appState: { get: () => undefined },
       messages: [],
-      model: { modelId: 'model', getConfig: () => ({}) },
+      model: new BedrockModel({ modelId: 'model' }),
       tools: [],
       takeSnapshot: () => ({ id: 'before-invocation' }),
       loadSnapshot: () => {},
@@ -310,7 +310,7 @@ describe('StrandsChatBackend', () => {
       name: 'Strands harness',
       appState: { get: () => undefined },
       messages: [],
-      model: { modelId: 'model', getConfig: () => ({}) },
+      model: new BedrockModel({ modelId: 'model' }),
       tools: [],
       cancel: () => {},
       async *stream(input: unknown) {
@@ -679,7 +679,7 @@ describe('StrandsChatBackend', () => {
           },
         ],
       },
-      model: { getConfig: () => ({}) },
+      model: new BedrockModel({ modelId: 'test' }),
       async *stream(input: unknown) {
         args.push(input)
         yield {
@@ -710,7 +710,7 @@ describe('StrandsChatBackend', () => {
     const agent = withSnapshotMethods({
       name: 'Strands Agent',
       appState,
-      model: { getConfig: () => ({ contextWindowLimit: 1_000 }) },
+      model: { modelInfo: { limits: { contextWindow: 1_000 } }, getConfig: () => ({}) },
       cancel: vi.fn(),
       async *stream() {
         yield {
@@ -784,6 +784,7 @@ describe('StrandsChatBackend', () => {
     let summaryContent = [new TextBlock('summary')]
     const model = {
       modelId: 'anthropic.claude-test',
+      modelInfo: { limits: { contextWindow: 1_000 } },
       getConfig: () => ({ modelId: 'anthropic.claude-test', contextWindowLimit: 1_000 }),
       countTokens: vi.fn(async () => 42),
       async *streamAggregated() {
@@ -876,10 +877,7 @@ describe('StrandsChatBackend', () => {
 
     const differentModelAgent = {
       ...restoredAgent,
-      model: {
-        modelId: 'anthropic.claude-other',
-        getConfig: () => ({ modelId: 'anthropic.claude-other', contextWindowLimit: 1_000 }),
-      },
+      model: new BedrockModel({ modelId: 'anthropic.claude-other', contextWindowLimit: 1_000 }),
     } as unknown as Agent
     expect(
       new StrandsChatBackend(new AgentModelRuntime(differentModelAgent), { contextScope: '/workspace' }).contextUsage()
@@ -926,15 +924,10 @@ describe('StrandsChatBackend', () => {
   })
 
   it('includes provider-separated prompt-cache tokens in the latest context without using stale SDK totals', async () => {
-    class BedrockModel {
-      getConfig(): { contextWindowLimit: number } {
-        return { contextWindowLimit: 1_000_000 }
-      }
-    }
     const agent = withSnapshotMethods({
       name: 'Strands harness',
       appState: { get: () => undefined },
-      model: new BedrockModel(),
+      model: new BedrockModel({ contextWindowLimit: 1_000_000 }),
       tools: [],
       cancel: () => {},
       async *stream() {
@@ -1000,7 +993,7 @@ describe('StrandsChatBackend', () => {
     const root = withSnapshotMethods({
       name: 'Strands harness',
       appState: { get: () => undefined },
-      model: { modelId: 'root-model', getConfig: () => ({}) },
+      model: new BedrockModel({ modelId: 'root-model' }),
       tools: [],
     }) as unknown as Agent
     const child = { name: 'Child' } as unknown as Agent

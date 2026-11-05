@@ -150,7 +150,7 @@ export async function createInteractiveRuntime(options: CreateInteractiveRuntime
   const disposeFailedAgent = async (candidate: Agent): Promise<void> => {
     candidate.cancel()
     releaseAgent(candidate)
-    await Promise.allSettled([candidate.memoryManager?.flush()])
+    await Promise.allSettled([candidate.shutdown()])
   }
 
   const buildAgent = async (
@@ -233,7 +233,7 @@ export async function createInteractiveRuntime(options: CreateInteractiveRuntime
     disposed = true
     disposal = (async (): Promise<void> => {
       await Promise.allSettled([...backends].map((backend) => backend.dispose()))
-      await Promise.allSettled([...agents].map((agent) => agent.memoryManager?.flush()))
+      await Promise.allSettled([...agents].map((agent) => agent.shutdown()))
       for (const stop of stopObservingSubagents.values()) stop()
       stopObservingSubagents.clear()
       agents.clear()
@@ -488,7 +488,7 @@ export async function createInteractiveRuntime(options: CreateInteractiveRuntime
           await Promise.allSettled([
             disposeBackend(),
             mcp.dispose(),
-            Promise.resolve().then(() => runtime.agent.memoryManager?.flush()),
+            Promise.resolve().then(() => runtime.agent.shutdown()),
           ])
           releaseAgent(runtime.agent)
           backends.delete(backend)

@@ -123,7 +123,7 @@ describe('projectAgentEvent', () => {
 describe('projectAgentResult', () => {
   it('projects accumulated usage when no latest invocation exists', () => {
     const agent = {
-      model: { getConfig: () => ({}) },
+      model: { modelInfo: {}, getConfig: () => ({}) },
     } as unknown as Agent
     const result = {
       stopReason: 'endTurn',
@@ -155,6 +155,7 @@ describe('projectAgentResult', () => {
   it('does not infer a context limit when the model config omits one', () => {
     const agent = {
       model: {
+        modelInfo: {},
         getConfig: () => ({}),
         estimateUtilization: (tokens: number) => tokens / 200_000,
       },

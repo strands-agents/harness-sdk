@@ -189,7 +189,7 @@ export class StrandsChatBackend implements ChatBackend {
     if (agent.messages.length === 0) {
       throw new Error('There is no conversation to name yet.')
     }
-    const model = (agent as Agent & { auxModel?: Agent['model'] }).auxModel ?? agent.model
+    const model = agent.auxModel
     if (model.stateful) {
       throw new Error('Automatic naming is unavailable for a stateful model. Use /sessions rename <name>.')
     }

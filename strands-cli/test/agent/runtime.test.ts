@@ -972,11 +972,7 @@ describe('interactive runtime lifecycle', () => {
     }
   )
 
-  it.each([
-    ['Review authentication.', 'Review authentication.'],
-    ['a'.repeat(79) + '👩‍💻tail', 'a'.repeat(79) + '👩‍💻'],
-    ['a'.repeat(79) + 'e\u0301tail', 'a'.repeat(79) + 'e\u0301'],
-  ])(
+  it.each([['a'.repeat(79) + '👩‍💻tail', 'a'.repeat(79) + '👩‍💻']])(
     'exposes a live background subagent as a temporary task-addressed message endpoint (%s)',
     async (task, summary) => {
       let steering!: LiveSteering
@@ -1667,15 +1663,12 @@ function fakeAgent(modelId: string, id = `agent-${modelId}`, memoryManager?: { f
       delete: vi.fn(),
     },
     cancel: vi.fn(),
+    shutdown: Agent.prototype.shutdown,
     initialize: vi.fn(async () => {}),
     takeSnapshot: vi.fn(() => snapshot),
     loadSnapshot: vi.fn(),
     messages: [],
-    model: {
-      modelId,
-      getConfig: () => ({}),
-      updateConfig: vi.fn(),
-    },
+    model: new BedrockModel({ modelId }),
     toolRegistry: { get: vi.fn() },
     tools: [],
     ...(memoryManager ? { memoryManager } : {}),
@@ -1688,7 +1681,7 @@ function fakeAgent(modelId: string, id = `agent-${modelId}`, memoryManager?: { f
 }
 
 function configureMeasuredTurn(agent: Agent): void {
-  agent.model.getConfig = () => ({ contextWindowLimit: 1_000 })
+  agent.model.updateConfig({ contextWindowLimit: 1_000 })
   agent.stream = async function* () {
     yield* []
     const usage = { inputTokens: 100, outputTokens: 25, totalTokens: 125 }

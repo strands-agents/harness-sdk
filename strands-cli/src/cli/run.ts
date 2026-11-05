@@ -176,10 +176,8 @@ async function runConsole(args: ParsedArgs, request: string | undefined, mode: '
     process.stderr.write(`error: ${errorMessage(err)}\n`)
     process.exitCode = 1
   } finally {
-    // Extraction runs in the background on a turn interval, so a short run exits with recent turns
-    // unsaved. Flush at the process boundary to persist them, best-effort: a flush failure must not
-    // fail a completed turn or skip MCP teardown.
-    await Promise.allSettled([agent?.memoryManager?.flush(), loadedMcp?.dispose()])
+    // Cleanup failure must not fail a completed turn or skip MCP teardown.
+    await Promise.allSettled([agent?.shutdown(), loadedMcp?.dispose()])
   }
 }
 

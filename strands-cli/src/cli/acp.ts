@@ -324,9 +324,7 @@ async function disconnectMcpClients(clients: readonly McpClient[]): Promise<void
 
 async function disposeSession(session: AcpSession): Promise<void> {
   session.agent.cancel()
-  await settleWithin(Promise.resolve(session.activePrompt).then(() => session.agent.memoryManager?.flush())).catch(
-    () => undefined
-  )
+  await settleWithin(Promise.resolve(session.activePrompt).then(() => session.agent.shutdown())).catch(() => undefined)
   await disconnectMcpClients(session.mcpClients)
 }
 

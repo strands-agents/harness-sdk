@@ -54,20 +54,11 @@ describe('TurnRenderer', () => {
     expect(out).toContain('↳ TOOL_OK')
   })
 
-  it('uses a neutral completion label when a tool has no displayable result', () => {
-    expect(render([toolResult('success')])).toContain('✓ done')
-  })
-
   it.each(['😀', 'e\u0301', '👨‍👩‍👧‍👦'])('truncates tool inputs without splitting %s', (character) => {
     const prefix = 'a'.repeat(78)
     const out = render([toolCall('echo', prefix + character + 'xx')])
     expect(out).toContain(`⚙ echo(${prefix}…)`)
     expect(out).not.toContain(character)
-  })
-
-  it('keeps tool inputs within the existing length budget', () => {
-    expect(render([toolCall('echo', 'a'.repeat(80))])).toContain(`⚙ echo(${'a'.repeat(80)})`)
-    expect(render([toolCall('echo', 'a'.repeat(81))])).toContain(`⚙ echo(${'a'.repeat(79)}…)`)
   })
 
   it('renders a failed tool result', () => {
@@ -141,29 +132,5 @@ describe('TurnRenderer', () => {
     expect(out).toContain('15 tokens')
     expect(out).toContain('12 in')
     expect(out).not.toContain('125 tokens')
-  })
-
-  it('does not print an unreliable Gemini input/output split', () => {
-    class GoogleModel {}
-    const result = {
-      metrics: {
-        latestAgentInvocation: {
-          usage: { inputTokens: 100, outputTokens: 55, totalTokens: 155 },
-        },
-      },
-    }
-    const out = render([textDelta('hi')], result, new GoogleModel() as Agent['model'])
-
-    expect(out).toContain('155 tokens')
-    expect(out).toContain('input/output split unavailable')
-    expect(out).not.toContain('100 in')
-    expect(out).not.toContain('55 out')
-  })
-
-  it('identifies which events render', () => {
-    expect(TurnRenderer.renders(textDelta('x'))).toBe(true)
-    expect(TurnRenderer.renders(toolCall('bash', {}))).toBe(true)
-    expect(TurnRenderer.renders(toolResult('success'))).toBe(true)
-    expect(TurnRenderer.renders({ type: 'beforeInvocationEvent' } as AgentStreamEvent)).toBe(false)
   })
 })

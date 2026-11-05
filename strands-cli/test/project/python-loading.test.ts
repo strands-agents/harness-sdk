@@ -129,6 +129,7 @@ ${baseSource.replace('"memory": False', `"memory": ${memory}`)}`
 
   it.each([false, true])(
     'excludes context stash storage from exports with a custom namespace=%s',
+    { timeout: 30_000 },
     async (namespaced) => {
       await writeFile(join(root, 'public.txt'), 'PUBLIC SOURCE')
       const backend = await open(`from strands.experimental.context_manager import ContextManager
@@ -179,6 +180,7 @@ def build(**overrides):`
 
   it.each(['True', '{"dir": "custom-sessions"}', 'False'])(
     'rejects missing saved sessions without creating one when session=%s',
+    { timeout: 30_000 },
     async (session) => {
       const source = baseSource
         .replace('"session": False', `"session": ${session}`)

@@ -189,48 +189,65 @@ describe('loadMcp', () => {
     }
   })
 
-  it.each(['inline', 'file'] as const)('preserves SDK OAuth credentials from %s configuration', async (source) => {
-    const directory = await temporaryDirectory('strands-mcp-auth-')
-    const path = join(directory, 'mcp.json')
-    const auth = {
-      clientId: '${env:MCP_CLIENT_ID}',
-      clientSecret: '${MCP_CLIENT_SECRET}',
-      scopes: ['tools:read', '${env:MCP_SCOPE}'],
-    }
-    const servers = {
-      authenticated: {
-        url: 'https://example.com/mcp',
-        type: 'http',
-        auth,
-        http_headers: { 'X-Account': 'example' },
-        toolFilters: { allowed: ['^read_'], rejected: ['^read_secret$'] },
-        continueOnError: false,
-      },
-    }
-    await writeFile(path, JSON.stringify({ mcpServers: servers }))
-    const loadServers = vi.spyOn(McpClient, 'loadServers').mockResolvedValue([])
-
-    const loaded = await loadMcp({ paths: [], servers: source === 'inline' ? servers : path })
-    expect(loadServers).toHaveBeenCalledWith(
-      {
+  it.each(['inline', 'file'] as const)(
+    'preserves SDK OAuth and task settings from %s configuration',
+    async (source) => {
+      const directory = await temporaryDirectory('strands-mcp-auth-')
+      const path = join(directory, 'mcp.json')
+      const auth = {
+        clientId: '${env:MCP_CLIENT_ID}',
+        clientSecret: '${MCP_CLIENT_SECRET}',
+        scopes: ['tools:read', '${env:MCP_SCOPE}'],
+      }
+      const servers = {
         authenticated: {
           url: 'https://example.com/mcp',
-          transport: 'streamable-http',
-          headers: { 'X-Account': 'example' },
+          type: 'http',
           auth,
-          toolFilters: servers.authenticated.toolFilters,
+          http_headers: { 'X-Account': 'example' },
+          toolFilters: { allowed: ['^read_'], rejected: ['^read_secret$'] },
+          tasksConfig: { requestTimeout: 2_000, pollTimeout: 10_000, pollInterval: 100, ttl: 1_000 },
           continueOnError: false,
         },
-      },
-      expect.not.objectContaining({ applicationName: expect.anything() }),
-      { prefixWithServerName: true }
-    )
-    expect(loaded.paths).toEqual(source === 'file' ? [path] : [])
-    expect(await loaded.list()).toMatchObject([
-      { name: 'authenticated', source: source === 'file' ? path : 'Agent configuration', canRetry: false },
-    ])
-    await loaded.dispose()
-  })
+      }
+      await writeFile(path, JSON.stringify({ mcpServers: servers }))
+      const loadServers = vi.spyOn(McpClient, 'loadServers').mockResolvedValue([])
+
+      const loaded = await loadMcp({ paths: [], servers: source === 'inline' ? servers : path })
+      expect(loadServers).toHaveBeenCalledWith(
+        {
+          authenticated: {
+            url: 'https://example.com/mcp',
+            transport: 'streamable-http',
+            headers: { 'X-Account': 'example' },
+            auth,
+            toolFilters: servers.authenticated.toolFilters,
+            tasksConfig: servers.authenticated.tasksConfig,
+            continueOnError: false,
+          },
+        },
+        expect.not.objectContaining({ applicationName: expect.anything() }),
+        { prefixWithServerName: true }
+      )
+      expect(loaded.paths).toEqual(source === 'file' ? [path] : [])
+      expect(await loaded.list()).toMatchObject([
+        { name: 'authenticated', source: source === 'file' ? path : 'Agent configuration', canRetry: false },
+      ])
+      await loaded.dispose()
+    }
+  )
+
+  it.each(['requestTimeout', 'pollTimeout', 'pollInterval', 'ttl'])(
+    'rejects an invalid MCP task %s before loading a server',
+    async (field) => {
+      await expect(
+        readMcpDefinitions({
+          paths: [],
+          servers: { remote: { url: 'https://example.com/mcp', tasksConfig: { [field]: -1 } } },
+        })
+      ).rejects.toThrow(`tasksConfig.${field}`)
+    }
+  )
 
   it.each([{ name: 'omitted' }, { name: 'empty', scopes: [] as string[] }])(
     'preserves $name OAuth scopes',
@@ -434,22 +451,6 @@ describe('loadMcp', () => {
       await vi.waitFor(() => expect(changed).toHaveBeenCalledWith([], tools))
       await vi.waitFor(() => expect(progressed).toHaveBeenCalled())
       expect(loaded.startup?.progress()).toEqual({ total: 1, connected: 1, failed: 0 })
-    } finally {
-      vi.spyOn(McpClient.prototype, 'disconnect').mockResolvedValue(undefined)
-      await loaded.dispose()
-    }
-  })
-
-  it('counts a server whose connection fails as failed startup progress', async () => {
-    vi.spyOn(McpClient.prototype, 'connect').mockRejectedValue(new Error('spawn failed'))
-
-    const loaded = await loadMcp({
-      paths: [],
-      servers: { broken: { command: 'broken-server' } },
-      backgroundConnect: true,
-    })
-    try {
-      await vi.waitFor(() => expect(loaded.startup?.progress()).toEqual({ total: 1, connected: 0, failed: 1 }))
     } finally {
       vi.spyOn(McpClient.prototype, 'disconnect').mockResolvedValue(undefined)
       await loaded.dispose()

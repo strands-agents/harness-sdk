@@ -521,10 +521,8 @@ class Runtime:
         return strands_config
 
     async def cleanup(self, agent):
-        manager = getattr(agent, "memory_manager", None)
-        if manager:
-            with contextlib.suppress(Exception):
-                await manager.flush()
+        with contextlib.suppress(Exception):
+            await agent.shutdown_async()
         with contextlib.suppress(Exception):
             agent.cleanup()
 

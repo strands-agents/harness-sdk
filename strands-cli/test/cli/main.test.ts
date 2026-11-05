@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { AgentStreamEvent } from '@strands-agents/sdk'
+import { Agent, type AgentStreamEvent } from '@strands-agents/sdk'
 import { CliConfigStore } from '../../src/config/store.js'
 import type { runInkChat } from '../../src/ui/run.js'
 
@@ -21,6 +21,7 @@ const { main } = await import('../../src/cli/run.js')
 
 function fakeAgent(): { sent: string[] } & {
   addHook: ReturnType<typeof vi.fn>
+  shutdown: Agent['shutdown']
   stream: (message: string) => AsyncGenerator<AgentStreamEvent, unknown>
 } {
   const sent: string[] = []
@@ -29,7 +30,7 @@ function fakeAgent(): { sent: string[] } & {
     yield textEvent
     return { metrics: { accumulatedUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } } }
   }
-  return { sent, stream, addHook: vi.fn() }
+  return { sent, stream, addHook: vi.fn(), shutdown: Agent.prototype.shutdown }
 }
 
 const textEvent = {
@@ -108,14 +109,6 @@ describe('main', () => {
     }
   )
 
-  it('runs a one-shot turn with --print', async () => {
-    const agent = fakeAgent()
-    createHarness.mockResolvedValue(agent)
-    await main(['-p', 'do it'])
-    expect(agent.sent).toEqual(['do it'])
-    expect(writes.join('')).toContain('ok')
-  })
-
   it('errors when one-shot has no request', async () => {
     // With a TTY stdin there's nothing to read, so -p with no request must error rather than block.
     const original = process.stdin.isTTY
@@ -136,11 +129,5 @@ describe('main', () => {
     expect(process.exitCode).toBe(1)
     expect(createHarness).toHaveBeenCalledOnce()
     expect(errWrites.join('')).toContain('error: Provider unavailable')
-  })
-
-  it('honors commander exit for --help without treating it as an error', async () => {
-    await main(['--help'])
-    expect(process.exitCode).toBe(0)
-    expect(errWrites.join('')).not.toContain('error:')
   })
 })

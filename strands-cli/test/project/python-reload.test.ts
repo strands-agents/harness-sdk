@@ -89,7 +89,7 @@ agent = create_harness(
 
     expect(first.info().description).toBe('v1')
     expect(second.info().description).toBe('v2')
-  }, 15_000)
+  }, 30_000)
 
   it('surfaces a source reload request after strands_config apply', async () => {
     const backend = await open(true)

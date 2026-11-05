@@ -1,3 +1,4 @@
+import { BedrockModel } from '@strands-agents/sdk/models/bedrock'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { readFileSync } from 'node:fs'
@@ -72,9 +73,10 @@ describe('ACP server', () => {
     const fakeAgent = {
       addHook: vi.fn(),
       cancel,
+      shutdown: Agent.prototype.shutdown,
       initialize,
       messages: [],
-      model: { getConfig: () => ({ contextWindowLimit: 1_000 }) },
+      model: new BedrockModel({ contextWindowLimit: 1_000 }),
       async *stream(input: ContentBlockData[]) {
         received = input
         yield {
@@ -221,59 +223,6 @@ describe('ACP server', () => {
     }
   })
 
-  it('omits an ACP usage split when the pinned Gemini adapter cannot provide exact buckets', async () => {
-    class GoogleModel {
-      getConfig(): { contextWindowLimit: number } {
-        return { contextWindowLimit: 1_000_000 }
-      }
-    }
-    const usage = { inputTokens: 100, outputTokens: 55, totalTokens: 155 }
-    const fakeAgent = {
-      addHook: vi.fn(),
-      cancel: vi.fn(),
-      initialize: vi.fn(async () => undefined),
-      messages: [],
-      model: new GoogleModel(),
-      async *stream() {
-        yield {
-          type: 'modelStreamUpdateEvent',
-          event: { type: 'modelMetadataEvent', usage },
-        } as unknown as AgentStreamEvent
-        return {
-          stopReason: 'endTurn',
-          contextSize: 100,
-          projectedContextSize: 155,
-          metrics: { latestAgentInvocation: { usage } },
-        } as AgentResult
-      },
-    } as unknown as Agent
-    const service = new AcpService({}, { buildAgent: vi.fn(async () => fakeAgent) })
-    const notify = vi.fn(
-      async (_method: typeof acp.methods.client.session.update, _params: acp.SessionNotification) => undefined
-    )
-    const client = { notify } as unknown as acp.AgentContext
-
-    try {
-      const session = await service.newSession({ cwd: process.cwd(), mcpServers: [] })
-      const response = await service.prompt(
-        {
-          sessionId: session.sessionId,
-          prompt: [{ type: 'text', text: 'hello' }],
-        },
-        client
-      )
-
-      expect(response).toEqual({ stopReason: 'end_turn' })
-      expect(notify.mock.calls.map((call) => call[1].update)).toContainEqual({
-        sessionUpdate: 'usage_update',
-        used: 155,
-        size: 1_000_000,
-      })
-    } finally {
-      await service.dispose()
-    }
-  })
-
   it('upgrades and replays legacy Desktop profile messages when loading an ACP session', async () => {
     const sessionDirectory = await mkdtemp(join(tmpdir(), 'strands-acp-session-'))
     const sessionId = 'saved-session'
@@ -281,6 +230,7 @@ describe('ACP server', () => {
     const initialize = vi.fn(async () => undefined)
     const fakeAgent = {
       cancel: vi.fn(),
+      shutdown: Agent.prototype.shutdown,
       initialize,
       sessionManager: { sessionId },
       messages: [
@@ -594,6 +544,7 @@ describe('ACP server', () => {
       return {
         sessionManager: { sessionId: id },
         cancel: vi.fn(),
+        shutdown: Agent.prototype.shutdown,
         initialize,
         messages: [],
       } as unknown as Agent
@@ -641,7 +592,13 @@ describe('ACP server', () => {
       })
       const buildAgent = vi.fn(async () => {
         if (stage === 'construction') await wait()
-        return { cancel, initialize, messages: [], memoryManager: { flush } } as unknown as Agent
+        return {
+          cancel,
+          shutdown: Agent.prototype.shutdown,
+          initialize,
+          messages: [],
+          memoryManager: { flush },
+        } as unknown as Agent
       })
       const service = new AcpService({ session: false }, { buildAgent })
       const request = {
@@ -691,9 +648,10 @@ describe('ACP server', () => {
     const fakeAgentValue = {
       addHook: vi.fn(),
       cancel,
+      shutdown: Agent.prototype.shutdown,
       initialize: vi.fn(async () => undefined),
       messages: [],
-      model: { getConfig: () => ({}) },
+      model: new BedrockModel({ modelId: 'test' }),
       memoryManager: { flush },
       async *stream() {
         streamStarted.resolve()

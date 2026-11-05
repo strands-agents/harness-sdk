@@ -175,6 +175,7 @@ function validateServer(path: string, name: string, value: Record<string, unknow
   const transport = normalizeTransport(value.transport ?? value.type, path, name)
   const headers = mcpHeaders(value, path, name)
   const toolFilters = mcpToolFilters(value, path, name)
+  const tasksConfig = value.tasksConfig
   if (!command && !url && value.disabled !== true && value.enabled !== false) {
     throw configError(path, name, 'provide either "command" or "url".')
   }
@@ -201,18 +202,13 @@ function validateServer(path: string, name: string, value: Record<string, unknow
       ? { continueOnError: booleanValue(value.continueOnError, path, name, 'continueOnError') }
       : { continueOnError: true }),
     ...(toolFilters ? { toolFilters } : {}),
-    ...(isRecord(value.tasksConfig)
+    ...(isRecord(tasksConfig)
       ? {
-          tasksConfig: {
-            ...(value.tasksConfig.ttl !== undefined
-              ? { ttl: positiveNumber(value.tasksConfig.ttl, path, name, 'tasksConfig.ttl') }
-              : {}),
-            ...(value.tasksConfig.pollTimeout !== undefined
-              ? {
-                  pollTimeout: positiveNumber(value.tasksConfig.pollTimeout, path, name, 'tasksConfig.pollTimeout'),
-                }
-              : {}),
-          },
+          tasksConfig: Object.fromEntries(
+            ['requestTimeout', 'pollTimeout', 'pollInterval', 'ttl']
+              .filter((field) => tasksConfig[field] !== undefined)
+              .map((field) => [field, positiveNumber(tasksConfig[field], path, name, `tasksConfig.${field}`)])
+          ),
         }
       : {}),
   }

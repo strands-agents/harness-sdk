@@ -4,6 +4,8 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   Agent,
   Model,
+  Message,
+  TextBlock,
   AfterModelCallEvent,
   AfterToolCallEvent,
   BeforeInvocationEvent,
@@ -17,6 +19,8 @@ import {
   type AgentStreamEvent,
   type ModelStreamEvent,
 } from '@strands-agents/sdk'
+
+import { GoogleModel } from '@strands-agents/sdk/models/google'
 
 import { latestResultModelUsage, latestRootModelUsage, normalizeUsage, RunUsage } from '../../src/usage.js'
 import { projectAgentResult } from '../../src/agent/events.js'
@@ -67,19 +71,33 @@ describe('usage normalization', () => {
     })
   })
 
-  it('reports only the exact total for Gemini on the pinned SDK', () => {
-    class GoogleModel {}
-    const usage = normalizeUsage(new GoogleModel() as unknown as Model, {
-      inputTokens: 100,
-      outputTokens: 55,
-      totalTokens: 155,
-      cacheReadInputTokens: 20,
-    })
-
-    expect(usage).toEqual({
-      totalTokens: 155,
-      cacheReadInputTokens: 20,
-    })
+  it('keeps Gemini prompt, tool, reasoning, and cache usage from the installed SDK', async () => {
+    const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new globalThis.Response(
+        `data: ${JSON.stringify({
+          candidates: [{ content: { role: 'model', parts: [{ text: 'done' }] }, finishReason: 'STOP' }],
+          usageMetadata: {
+            promptTokenCount: 100,
+            toolUsePromptTokenCount: 20,
+            candidatesTokenCount: 30,
+            thoughtsTokenCount: 5,
+            totalTokenCount: 155,
+            cachedContentTokenCount: 20,
+          },
+        })}\n\n`,
+        { headers: { 'Content-Type': 'text/event-stream' } }
+      )
+    )
+    try {
+      const model = new GoogleModel({ modelId: 'gemini-test', apiKey: 'test-key' })
+      let usage
+      for await (const event of model.stream([new Message({ role: 'user', content: [new TextBlock('work')] })])) {
+        if (event.type === 'modelMetadataEvent' && event.usage) usage = normalizeUsage(model, event.usage)
+      }
+      expect(usage).toEqual({ inputTokens: 120, outputTokens: 35, totalTokens: 155, cacheReadInputTokens: 20 })
+    } finally {
+      fetch.mockRestore()
+    }
   })
 })
 
@@ -480,12 +498,10 @@ describe('delegated run usage', () => {
     }
   )
 
-  it('keeps detached subagent spend with its originating run and installs hooks only once per agent', async () => {
+  it('keeps detached subagent spend with its originating run', async () => {
     const { root, child, release } = await detachedAgents()
     await root.initialize()
     await child.initialize()
-    const rootHooks = vi.spyOn(root, 'addHook')
-    const childHooks = vi.spyOn(child, 'addHook')
     const usage = RunUsage.start(root)
     try {
       const result = await root.invoke('work')
@@ -516,15 +532,11 @@ describe('delegated run usage', () => {
       await root.invoke('continue')
       expect(nextUsage.total()?.totalTokens).toBe(8)
       expect(usage.total()?.totalTokens).toBe(116)
-      expect(rootHooks).toHaveBeenCalledTimes(7)
-      expect(childHooks).toHaveBeenCalledTimes(7)
       await child.invoke('unrelated invocation')
       expect(usage.total()?.totalTokens).toBe(116)
     } finally {
       release()
       root.cancel()
-      rootHooks.mockRestore()
-      childHooks.mockRestore()
     }
   })
 

@@ -113,7 +113,7 @@ export async function loadTypescriptProject(
             try {
               agent.cancel()
             } finally {
-              await agent.memoryManager?.flush()
+              await agent.shutdown()
             }
           })
         )
