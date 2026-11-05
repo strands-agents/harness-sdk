@@ -11,5 +11,10 @@
 
 export { makeShell, makeBash } from './make-shell.js'
 export type { MakeShellOptions, MakeBashOptions } from './make-shell.js'
-export { SANDBOX_SHELL_DESCRIPTION, ShellTimeoutError, ShellExecutionError } from './types.js'
-export type { ShellOutput } from './types.js'
+export {
+  SANDBOX_SHELL_DESCRIPTION,
+  SANDBOX_SHELL_STDIO_DESCRIPTION,
+  ShellTimeoutError,
+  ShellExecutionError,
+} from './types.js'
+export type { ShellOutput, ShellResultKeys, ShellStdioOutput } from './types.js'

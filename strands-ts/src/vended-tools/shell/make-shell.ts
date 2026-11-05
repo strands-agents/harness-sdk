@@ -13,7 +13,15 @@ import { tool } from '../../tools/tool-factory.js'
 import { z } from 'zod'
 import { SandboxTimeoutError } from '../../sandbox/errors.js'
 import { Sandbox } from '../../sandbox/base.js'
-import { ShellTimeoutError, ShellExecutionError, SANDBOX_SHELL_DESCRIPTION, type ShellOutput } from './types.js'
+import {
+  ShellTimeoutError,
+  ShellExecutionError,
+  SANDBOX_SHELL_DESCRIPTION,
+  SANDBOX_SHELL_STDIO_DESCRIPTION,
+  type ShellOutput,
+  type ShellResultKeys,
+  type ShellStdioOutput,
+} from './types.js'
 
 const sandboxShellInputSchema = z.object({
   command: z.string().describe('The shell command to execute.'),
@@ -24,6 +32,11 @@ export interface MakeShellOptions {
   name?: string
   description?: string
   inputSchema?: z.ZodType
+  /**
+   * `'output_error'` (default) returns `{ output, error, exit_code }`; `'stdout_stderr'` returns
+   * `{ stdout, stderr, exit_code }`. Also picks the default description.
+   */
+  resultKeys?: ShellResultKeys
 }
 
 /**
@@ -47,10 +60,16 @@ export function makeShell(
   maybeOptions?: MakeShellOptions
 ): ReturnType<typeof tool> {
   const { boundSandbox, options } = resolveShellArgs(sandboxOrOptions, maybeOptions)
+  if (options.resultKeys !== undefined && !['output_error', 'stdout_stderr'].includes(options.resultKeys)) {
+    throw new Error(`resultKeys must be 'output_error' or 'stdout_stderr', got '${String(options.resultKeys)}'`)
+  }
+  const stdio = options.resultKeys === 'stdout_stderr'
+  const toResult = (stdout: string, stderr: string, exitCode: number): ShellOutput | ShellStdioOutput =>
+    stdio ? { stdout, stderr, exit_code: exitCode } : { output: stdout, error: stderr, exit_code: exitCode }
 
   return tool({
     name: options.name ?? 'shell',
-    description: options.description ?? SANDBOX_SHELL_DESCRIPTION,
+    description: options.description ?? (stdio ? SANDBOX_SHELL_STDIO_DESCRIPTION : SANDBOX_SHELL_DESCRIPTION),
     inputSchema: (options.inputSchema ?? sandboxShellInputSchema) as typeof sandboxShellInputSchema,
     callback: async (input, context) => {
       if (!context) {
@@ -60,14 +79,17 @@ export function makeShell(
       const sandbox = boundSandbox ?? context.agent.sandbox
       try {
         const result = await sandbox.execute(input.command, { timeout: input.timeout ?? 120 })
-        return { output: result.stdout, error: result.stderr, exit_code: result.exitCode } as ShellOutput
+        return toResult(result.stdout, result.stderr, result.exitCode)
       } catch (err) {
         // Shell* extends Bash* so pre-rename catch clauses keep matching.
         if (err instanceof SandboxTimeoutError) {
           // Thrown errors reach the model as `Error: <message>`, so the partial output rides in the message.
           // 124 is the timeout(1) convention for a command killed by its time limit.
-          const partial: ShellOutput = { output: err.stdout, error: err.stderr, exit_code: 124 }
-          throw new ShellTimeoutError(`${err.message}\n${JSON.stringify(partial)}`, partial)
+          const partial = toResult(err.stdout, err.stderr, 124)
+          throw new ShellTimeoutError<ShellOutput | ShellStdioOutput>(
+            `${err.message}\n${JSON.stringify(partial)}`,
+            partial
+          )
         }
         throw new ShellExecutionError((err as Error).message)
       }

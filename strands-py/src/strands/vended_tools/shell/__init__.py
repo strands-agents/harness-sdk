@@ -10,11 +10,13 @@ Example Usage:
 """
 
 from .shell import make_shell, shell
-from .types import ShellExecutionError, ShellOutput
+from .types import ShellExecutionError, ShellOutput, ShellResultKeys, ShellStdioOutput
 
 __all__ = [
     "ShellExecutionError",
     "ShellOutput",
+    "ShellResultKeys",
+    "ShellStdioOutput",
     "make_shell",
     "shell",
 ]

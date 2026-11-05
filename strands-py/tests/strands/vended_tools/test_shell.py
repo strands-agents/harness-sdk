@@ -15,7 +15,11 @@ from strands.sandbox.errors import SandboxTimeoutError
 from strands.sandbox.not_a_sandbox_local_environment import NotASandboxLocalEnvironment
 from strands.types.tools import ToolContext
 from strands.vended_tools.shell import make_shell, shell
-from strands.vended_tools.shell.types import SANDBOX_SHELL_DESCRIPTION, ShellExecutionError
+from strands.vended_tools.shell.types import (
+    SANDBOX_SHELL_DESCRIPTION,
+    SANDBOX_SHELL_STDIO_DESCRIPTION,
+    ShellExecutionError,
+)
 
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="POSIX shell required")
 
@@ -90,6 +94,37 @@ class TestMakeShell:
         t = make_shell(sandbox=_BoomSandbox())
         with pytest.raises(RuntimeError, match="boom"):
             await t(command="echo hi", tool_context=_tool_context())
+
+
+class TestStdioResultKeys:
+    """Tests for ``result_keys="stdout_stderr"``."""
+
+    @pytest.fixture
+    def stdio_shell(self):
+        return make_shell(sandbox=NotASandboxLocalEnvironment(), result_keys="stdout_stderr")
+
+    @pytest.mark.asyncio
+    async def test_returns_stdout_stderr_exit_code(self, stdio_shell):
+        result = await stdio_shell(command="echo out; echo warn >&2; exit 3", tool_context=_tool_context())
+        assert result == {"stdout": "out\n", "stderr": "warn\n", "exit_code": 3}
+
+    @pytest.mark.asyncio
+    async def test_timeout_partial_uses_stdio_keys(self, stdio_shell):
+        with pytest.raises(SandboxTimeoutError) as exc_info:
+            await stdio_shell(command="echo partial; echo warn >&2; sleep 5", tool_context=_tool_context(), timeout=0.3)
+        partial = {"stdout": "partial\n", "stderr": "warn\n", "exit_code": 124}
+        assert str(exc_info.value) == f"Execution timed out after 0.3 seconds\n{json.dumps(partial)}"
+
+    def test_default_description_matches_keys(self, stdio_shell):
+        assert stdio_shell.tool_spec["description"] == SANDBOX_SHELL_STDIO_DESCRIPTION
+
+    def test_rejects_unknown_result_keys(self):
+        with pytest.raises(ValueError, match="result_keys must be"):
+            make_shell(result_keys="stdout")  # type: ignore[arg-type]
+
+    def test_custom_description_wins(self):
+        tool = make_shell(result_keys="stdout_stderr", description="custom desc")
+        assert tool.tool_spec["description"] == "custom desc"
 
 
 class TestDefaultShell:

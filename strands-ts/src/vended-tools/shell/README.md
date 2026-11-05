@@ -32,11 +32,12 @@ Without a bound sandbox, the tool reads `context.agent.sandbox` at call time.
 
 ### `makeShell(options?)` / `makeShell(sandbox, options?)`
 
-| Option        | Type        | Default    | Description                     |
-| ------------- | ----------- | ---------- | ------------------------------- |
-| `name`        | `string`    | `shell`    | Tool name.                      |
-| `description` | `string`    | (built-in) | Description shown to the model. |
-| `inputSchema` | `z.ZodType` | (built-in) | Override the input schema.      |
+| Option        | Type                                | Default          | Description                     |
+| ------------- | ----------------------------------- | ---------------- | ------------------------------- |
+| `name`        | `string`                            | `shell`          | Tool name.                      |
+| `description` | `string`                            | (built-in)       | Description shown to the model. |
+| `inputSchema` | `z.ZodType`                         | (built-in)       | Override the input schema.      |
+| `resultKeys`  | `'output_error' \| 'stdout_stderr'` | `'output_error'` | Result key names (see below).   |
 
 ### Input
 
@@ -57,10 +58,14 @@ interface ShellOutput {
 }
 ```
 
+With `resultKeys: 'stdout_stderr'` the result is `ShellStdioOutput` — `{ stdout, stderr, exit_code }` — and the default
+description names those keys instead.
+
 ### Error Handling
 
 - **`ShellTimeoutError`**: thrown when a command exceeds its timeout. The output captured before the kill is on
-  `error.partial` (`{ output, error, exit_code: 124 }`) and appended to the message as JSON, so the model still sees
+  `error.partial` (`{ output, error, exit_code: 124 }`, or `{ stdout, stderr, exit_code: 124 }` with
+  `resultKeys: 'stdout_stderr'`) and appended to the message as JSON, so the model still sees
   it on the failed tool result
 - **`ShellExecutionError`**: thrown when the sandbox fails to execute the command
 
