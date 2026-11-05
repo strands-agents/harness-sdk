@@ -259,27 +259,73 @@ describe('ConversationManager', () => {
       await choose('off')
       expect(voice.stop).not.toHaveBeenCalled()
       await choose('on')
+      expect(manager.getSnapshot().panel).toBeUndefined()
+      await manager.submit('/voice')
       await choose('on')
       expect(voice.start).toHaveBeenCalledOnce()
-      expect(manager.getSnapshot().panel?.rows[0]?.control).toMatchObject({
-        options: [{ value: 'off' }, { value: 'on', active: true }],
-      })
+      expect(manager.getSnapshot().panel).toBeUndefined()
 
       manager.toggleVoiceMute()
+      await manager.submit('/voice')
       await choose('on')
       expect(voice.start).toHaveBeenCalledOnce()
       expect(manager.getSnapshot().voice?.status).toBe('muted')
+      await manager.submit('/voice')
       await choose('off')
       await choose('off')
       expect(voice.stop).toHaveBeenCalledOnce()
 
       await choose()
       expect(voice.start).toHaveBeenCalledTimes(2)
+      await manager.submit('/voice')
       await choose()
       expect(voice.stop).toHaveBeenCalledTimes(2)
       expect(manager.getSnapshot().voice?.status).toBe('off')
       expect(await choose('invalid')).toBe(false)
     } finally {
+      await manager.dispose()
+    }
+  })
+
+  it.each([false, true])('returns to chat while voice connects and exposes failures (fails=%s)', async (fails) => {
+    // https://github.com/strands-agents/harness-sdk/issues/5412
+    const primary = new ChatController(backend('primary', emptyRun))
+    const voice = fakeVoiceInput()
+    let finish!: () => void
+    const connecting = new Promise<void>((resolve) => {
+      finish = resolve
+    })
+    voice.start.mockImplementationOnce(async () => {
+      voice.emitStatus('connecting')
+      await connecting
+      if (fails) throw new Error('Connection timed out')
+      voice.emitStatus('listening')
+    })
+    const manager = new ConversationManager(primary, { fork: async () => primary, voice })
+    try {
+      await manager.submit('/settings')
+      await manager.submit('/voice')
+      const enabling = manager.activatePanelRow({ label: 'Voice', description: '', value: 'voice:enabled=on' })
+      expect(manager.getSnapshot().panel).toBeUndefined()
+      expect(manager.getSnapshot().voice?.status).toBe('connecting')
+      finish()
+      await enabling
+      if (fails) {
+        expect(manager.getSnapshot().panel).toMatchObject({
+          kind: 'error',
+          rows: [{ description: 'Connection timed out' }],
+        })
+      } else {
+        expect(manager.getSnapshot().voice?.status).toBe('listening')
+        expect(manager.getSnapshot().panel).toBeUndefined()
+        await manager.submit('/voice')
+        voice.emitStatus('muted')
+        expect(manager.getSnapshot().panel?.kind).toBe('voice')
+        await manager.activatePanelRow({ label: 'Voice', description: '', value: 'voice:voice=matthew' })
+        expect(manager.getSnapshot().panel?.kind).toBe('voice')
+      }
+    } finally {
+      finish()
       await manager.dispose()
     }
   })
@@ -304,6 +350,32 @@ describe('ConversationManager', () => {
         title: 'voice update failed',
         rows: [{ description: 'Voice connection failed.' }],
       })
+    } finally {
+      await manager.dispose()
+    }
+  })
+
+  it('preserves errors raised while closing another panel to enable voice', async () => {
+    const target = backend('primary', emptyRun)
+    target.watchTasks = (listener) => {
+      listener([{ id: 'task', label: 'Working', source: 'background', status: 'working' }])
+      return () => {}
+    }
+    const apply = vi.fn()
+    const primary = new ChatController(target, {
+      builtinTools: {
+        choices: () => [{ name: 'shell', description: 'Run commands', enabled: true }],
+        apply,
+      },
+    })
+    const manager = new ConversationManager(primary, { fork: async () => primary, voice: fakeVoiceInput() })
+    try {
+      await manager.submit('/tools')
+      await manager.activatePanelRow(manager.getSnapshot().panel!.rows[0]!)
+      await manager.submit('/voice')
+      await manager.activatePanelRow({ label: 'Voice', description: '', value: 'voice:enabled=on' })
+      expect(manager.getSnapshot().panel).toMatchObject({ kind: 'error', title: 'tools not changed' })
+      expect(apply).not.toHaveBeenCalled()
     } finally {
       await manager.dispose()
     }

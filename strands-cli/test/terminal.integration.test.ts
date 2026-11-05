@@ -131,6 +131,13 @@ describe('TUI workflow integration', () => {
     expectRestoredTerminal(result)
   })
 
+  it('returns to chat after enabling voice and allows reopening the voice panel', async () => {
+    const result = await runTuiScenario('voice')
+    expect(result.returnCode).toBe(0)
+    expect(result.screens.join('\n')).toContain('Voice muted')
+    expectRestoredTerminal(result)
+  })
+
   it('submits a prompt, renders the streamed response, and exits cleanly', async () => {
     const result = await runTuiScenario('chat')
     const clean = result.screens.join('\n')

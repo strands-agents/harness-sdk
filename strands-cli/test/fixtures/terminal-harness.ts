@@ -13,6 +13,7 @@ export type TuiScenario =
   | 'chat'
   | 'follow-up'
   | 'queue'
+  | 'voice'
   | 'approval'
   | 'setup-export'
   | 'panels'

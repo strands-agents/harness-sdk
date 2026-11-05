@@ -265,7 +265,7 @@ const controller = new ChatController(backend, {
     return path
   },
 })
-const voiceSnapshot = {
+let voiceSnapshot = {
   status: 'off',
   muted: false,
   inputLevel: 0,
@@ -275,11 +275,18 @@ const voiceSnapshot = {
   voice: 'tiffany',
   model: 'amazon.nova-2-5-sonic',
 }
+const voiceListeners = new Set()
 const voice = {
-  subscribe: () => () => {},
+  subscribe: (listener) => {
+    voiceListeners.add(listener)
+    return () => voiceListeners.delete(listener)
+  },
   onSupervisorRequest: () => () => {},
   getSnapshot: () => voiceSnapshot,
-  start: async () => {},
+  start: async () => {
+    voiceSnapshot = { ...voiceSnapshot, status: 'muted', muted: true }
+    for (const listener of voiceListeners) listener()
+  },
   stop: async () => {},
   narrate: () => false,
   resolveSupervisorRequest: () => false,
@@ -292,7 +299,7 @@ const voice = {
   dispose: async () => {},
 }
 const chatController =
-  scenario === 'panels'
+  scenario === 'panels' || scenario === 'voice'
     ? new ConversationManager(controller, {
         fork: async () => controller,
         voice,

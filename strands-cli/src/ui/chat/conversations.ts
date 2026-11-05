@@ -92,6 +92,11 @@ export class ConversationManager implements ChatControllerApi {
     this._voice = new ConversationVoice(options.voice, () => this._active, {
       panel: (rows): void => {
         this._panel = rows ? this._makePanel({ kind: 'voice', title: 'Voice', rows }) : undefined
+        if (!rows) {
+          while (this._active.controller.dismissPanel()) {
+            if (this._active.controller.getSnapshot().panel?.kind === 'error') break
+          }
+        }
         this._emit()
       },
       error: (title, label, message): void => this._openError(title, label, message),

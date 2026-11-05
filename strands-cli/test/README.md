@@ -21,7 +21,7 @@ dedicated commands below `npm test` in the table.
 ## Terminal and platform checks
 
 The terminal suite exercises keyboard input, streamed conversation output, slash-command panels, queued-message
-deletion, shell commands, resizing, and cleanup. Vitest reports each scenario. The drivers feed output through `@xterm/headless` and assert
+deletion, voice-panel dismissal, shell commands, resizing, and cleanup. Vitest reports each scenario. The drivers feed output through `@xterm/headless` and assert
 visible labels and state transitions rather than exact escape sequences or complete screen snapshots.
 
 CI runs the source TUI on Linux and the compiled TUI on Linux, macOS, and Windows. This suite starts the TUI
@@ -31,6 +31,7 @@ The package-install test packs and installs the CLI outside the checkout. A scri
 Harness's write, edit, read, shell, and web-fetch tools in print and interactive modes. It checks tool results,
 file contents, and requests to a local HTTP server. Only model responses are scripted; the Harness, tools,
 sandbox, filesystem, network, and terminal run normally. CI runs this test on Linux, macOS, and Windows.
+The voice-panel terminal scenario uses a simulated voice session; live voice coverage is described below.
 
 Python exports require Python 3.10 or newer. Tests use `harness-py/.venv` when available; set `STRANDS_TEST_PYTHON`
 to another interpreter if needed. Imports install archive dependencies into fresh environments.

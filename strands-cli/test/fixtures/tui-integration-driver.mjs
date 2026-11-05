@@ -212,7 +212,7 @@ async function main() {
         const attemptDeadline = Math.min(deadline, Date.now() + 2_000)
         while (Date.now() < attemptDeadline) {
           await drainScreen(attemptDeadline)
-          if (screen.locate(text)?.row >= rows - 5) return start
+          if (screen.locate(`${text}▌`)?.row >= rows - 5) return start
           await sleep(25)
         }
       }
@@ -280,6 +280,18 @@ async function main() {
       if (transcript.includes('Executed: delete') || transcript.includes('Executed: clear')) {
         throw new Error('A deleted queued message was executed')
       }
+    } else if (scenario === 'voice') {
+      await typeInComposer('/voice')
+      terminal.write('\r')
+      await waitForStableScreen(['Speaker', 'Nova'])
+      await clickText('On')
+      await waitForStableScreen(['Voice muted', 'Enter to send'], 8_000, 0, ['Speaker'])
+      await typeInComposer('/voice')
+      terminal.write('\r')
+      await waitForStableScreen(['Speaker', 'Nova', 'Space mute'])
+      const start = transcript.length
+      terminal.write('\u001b')
+      await waitForStableScreen(['Voice muted', 'Enter to send'], 8_000, start, ['Speaker'])
     } else if (liveMode) {
       let generation = 1
       let turns = 0
