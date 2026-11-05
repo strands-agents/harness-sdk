@@ -256,18 +256,27 @@ class TestFetchDocErrors:
             "hint": "Use one of the listed section IDs.",
         }
 
-    def test_uncatalogued_url_fetch_failure_suggests_close_catalog_urls(self, mock_cache):
+    @pytest.mark.parametrize(
+        "uri",
+        [
+            "https://strandsagents.com/docs/user-guide/agent/index.md",
+            "https://strandsagents.com/docs/user-guide/agent/",
+            "https://strandsagents.com/docs/user-guide/agent",
+        ],
+        ids=["index-md", "trailing-slash", "bare-path"],
+    )
+    def test_uncatalogued_url_fetch_failure_suggests_close_catalog_urls(self, mock_cache, uri):
         mock_cache.ensure_page.return_value = None
         mock_cache.get_url_titles.return_value = {
             "https://strandsagents.com/docs/user-guide/agents/index.md": "Agents",
             "https://strandsagents.com/blog/launch/index.md": "Launch",
         }
 
-        tru_result = fetch_doc(uri="https://strandsagents.com/docs/user-guide/agent/index.md")
+        tru_result = fetch_doc(uri=uri)
 
         assert tru_result == {
             "error": "fetch failed",
-            "url": "https://strandsagents.com/docs/user-guide/agent/index.md",
+            "url": uri,
             "suggestions": [{"url": "https://strandsagents.com/docs/user-guide/agents/index.md", "title": "Agents"}],
             "hint": "This URL is not in the docs catalog. Use a suggested URL, or search_docs to find the page.",
         }

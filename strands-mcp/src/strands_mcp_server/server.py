@@ -78,13 +78,18 @@ def _section_index(sections: list[dict]) -> list[dict]:
     return [{"id": s["id"], "title": s["title"], "children": s["children"]} for s in sections]
 
 
+def _catalog_path(uri: str) -> str:
+    path = urlparse(uri).path.rstrip("/")
+    return path if path.endswith(".md") else f"{path}/index.md"
+
+
 def _fetch_failure(uri: str) -> Dict[str, Any]:
     url_titles = cache.get_url_titles()
     if uri in url_titles:
         raise ToolError(f"fetch failed for {uri}; the page is in the docs catalog, so retry or use another result")
     urls_by_path = {urlparse(url).path: url for url in url_titles}
     matches = difflib.get_close_matches(
-        urlparse(uri).path, list(urls_by_path), n=SUGGESTION_LIMIT, cutoff=SUGGESTION_CUTOFF
+        _catalog_path(uri), list(urls_by_path), n=SUGGESTION_LIMIT, cutoff=SUGGESTION_CUTOFF
     )
     return {
         "error": "fetch failed",
