@@ -99,6 +99,11 @@ class SummarizeStrategy(BaseOffloadStrategy):
         if not safe:
             return False
 
+        if model.model_info.capabilities.server_side_summary is True and await self._summarize_server_side(
+            context, model, safe
+        ):
+            return True
+
         content_blocks = _flatten_messages_to_content(safe)
         summary = await _summarize_content(content_blocks, model, self._config, context.invocation_context)
         if not summary:
@@ -114,6 +119,45 @@ class SummarizeStrategy(BaseOffloadStrategy):
 
         _repair_alternation(messages)
         logger.debug("summarized=<%s>, tokens=<%s> | batched summarization complete", removed, total_tokens)
+        return True
+
+    async def _summarize_server_side(self, context: ContextState, model: Model, safe: list[Message]) -> bool:
+        """Summarize message 0 through the last of ``safe`` server-side, keeping message 0 in place.
+
+        A server-side summary can only stand in for the conversation's exact start, so every message up to the last
+        of ``safe`` is covered, even ones ``safe`` leaves out (such as pinned messages). The summary becomes an
+        assistant message at index 1, leading any assistant content after it once alternation is repaired.
+
+        Returns:
+            False when the model wrote no summary, so the caller summarizes client-side instead.
+        """
+        messages = context.messages
+        safe_ids = {id(message) for message in safe}
+        end = max(index for index, message in enumerate(messages) if id(message) in safe_ids) + 1
+        if end - 1 > len(safe):
+            logger.warning(
+                "covered=<%d>, eligible=<%d> | a server-side summary covers the conversation's start"
+                " | summarizing messages that were not eligible too",
+                end - 1,
+                len(safe),
+            )
+        agent = context.agent
+        summary = await model.summarize(
+            messages[:end],
+            tool_specs=agent.tool_registry.get_all_tool_specs(),
+            system_prompt=agent.system_prompt,
+            system_prompt_content=agent.system_prompt_content,
+            instructions=self._config.get("system_prompt"),
+        )
+        if summary is None:
+            return False
+        if agent.model.model_info.capabilities.server_side_summary is not True:
+            logger.warning(
+                "the agent's model does not declare server_side_summary | it will read the summary as plain text"
+            )
+        messages[1:end] = [Message(role="assistant", content=[summary])]
+        _repair_alternation(messages)
+        logger.debug("summarized=<%s> | summarized opening messages server-side", end - 1)
         return True
 
     async def _replace_block(

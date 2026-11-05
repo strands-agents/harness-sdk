@@ -3207,3 +3207,89 @@ def test_format_request_logs_skipped_blocks_once_per_request(model, caplog):
     messages_logged = [record.getMessage() for record in caplog.records]
     assert len(messages_logged) == 1
     assert "count=<3> | Location sources are not supported by Anthropic" in messages_logged[0]
+
+
+def _compaction_model(anthropic_client):
+    anthropic_client.default_headers = {}
+    return AnthropicModel(
+        model_id="m1",
+        max_tokens=1,
+        params={"stop_sequences": ["STOP"]},
+        model_info=ModelInfo(capabilities=ModelCapabilities(server_side_summary=True)),
+    )
+
+
+def _stored_compaction(text="summary", signature="sig"):
+    return {"text": text, "metadata": {"serverSideSummary": {"provider": "anthropic", "signature": signature}}}
+
+
+def _mock_compaction_response(anthropic_client, response):
+    final = unittest.mock.Mock()
+    final.to_dict.return_value = response
+    stream = unittest.mock.AsyncMock()
+    stream.get_final_message.return_value = final
+    anthropic_client.beta.messages.stream.return_value.__aenter__.return_value = stream
+
+
+@pytest.mark.asyncio
+async def test_summarize_sends_compaction_request_and_stores_block(anthropic_client):
+    model = _compaction_model(anthropic_client)
+    _mock_compaction_response(
+        anthropic_client,
+        {"stop_reason": "compaction", "content": [{"type": "compaction", "content": "the summary", "signature": "s1"}]},
+    )
+    messages = [{"role": "user", "content": [{"text": "hi"}]}, {"role": "assistant", "content": [{"text": "yo"}]}]
+
+    block = await model.summarize(messages, system_prompt="sys", instructions="keep ids")
+
+    request = anthropic_client.beta.messages.stream.call_args.kwargs
+    assert request["extra_body"]["compaction"] == {"type": "summarize", "instructions": "keep ids"}
+    assert request["extra_headers"]["anthropic-beta"] == "compact-2026-09-04"
+    assert "stop_sequences" not in request
+    assert request["system"] == "sys"
+    assert len(request["messages"]) == 2
+    assert block == _stored_compaction("the summary", "s1")
+
+
+@pytest.mark.asyncio
+async def test_summarize_returns_none_without_compaction_block(anthropic_client, caplog):
+    model = _compaction_model(anthropic_client)
+    _mock_compaction_response(anthropic_client, {"stop_reason": "end_turn", "content": [{"type": "text", "text": "x"}]})
+
+    with caplog.at_level(logging.WARNING):
+        assert await model.summarize([{"role": "user", "content": [{"text": "hi"}]}]) is None
+    assert "compaction returned no summary" in caplog.text
+
+
+def test_format_request_sends_from_last_compaction_block(anthropic_client):
+    model = _compaction_model(anthropic_client)
+    messages = [
+        {"role": "user", "content": [{"text": "first"}]},
+        {"role": "assistant", "content": [_stored_compaction("old")]},
+        {"role": "user", "content": [{"text": "more"}]},
+        {"role": "assistant", "content": [_stored_compaction("new", "s2"), {"text": "after"}]},
+        {"role": "user", "content": [{"text": "next"}]},
+    ]
+
+    request = model.format_request(messages)
+
+    assert request["messages"] == [
+        {
+            "role": "assistant",
+            "content": [{"type": "compaction", "content": "new", "signature": "s2"}, {"type": "text", "text": "after"}],
+        },
+        {"role": "user", "content": [{"type": "text", "text": "next"}]},
+    ]
+    assert request["extra_headers"]["anthropic-beta"] == "compact-2026-09-04"
+
+
+def test_format_request_sends_compaction_text_without_capability(model):
+    messages = [
+        {"role": "user", "content": [{"text": "first"}]},
+        {"role": "assistant", "content": [_stored_compaction("old")]},
+    ]
+
+    request = model.format_request(messages)
+
+    assert request["messages"][1]["content"] == [{"type": "text", "text": "old"}]
+    assert "extra_headers" not in request

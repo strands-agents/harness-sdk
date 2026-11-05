@@ -1,4 +1,5 @@
 import json
+import logging
 import math
 import warnings
 from unittest.mock import MagicMock
@@ -796,3 +797,10 @@ class TestCacheConfig:
     def test_cache_key_round_trips(self):
         """cache_key preserves the value it was constructed with."""
         assert CacheConfig(cache_key="tenant-42").cache_key == "tenant-42"
+
+
+@pytest.mark.asyncio
+async def test_summarize_base_has_no_server_side_summary(model, caplog):
+    with caplog.at_level(logging.WARNING):
+        assert await model.summarize([{"role": "user", "content": [{"text": "hi"}]}]) is None
+    assert "summarizing client-side instead" in caplog.text

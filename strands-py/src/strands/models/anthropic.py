@@ -29,7 +29,7 @@ from ..types.citations import (
     WebLocation,
     WebLocationDict,
 )
-from ..types.content import ContentBlock, Message, Messages, SystemContentBlock
+from ..types.content import ContentBlock, Message, Messages, ServerSideSummary, SystemContentBlock
 from ..types.event_loop import Usage
 from ..types.exceptions import ContextWindowOverflowException, ModelThrottledException
 from ..types.streaming import CitationsDelta, StreamEvent
@@ -49,6 +49,29 @@ from ._validation import (
     validate_config_keys,
 )
 from .model import BaseModelConfig, CacheConfig, CacheToolsConfig, Model, _messages_cache_ttl
+
+COMPACTION_BETA = "compact-2026-09-04"
+"""Beta that enables on-demand compaction, and compaction blocks in later requests."""
+
+
+def _is_compaction(block: ContentBlock) -> bool:
+    """Whether ``block`` holds a compaction block Anthropic returned, stored as text."""
+    return "text" in block and block.get("metadata", {}).get("serverSideSummary", {}).get("provider") == "anthropic"
+
+
+def _from_last_compaction(messages: Messages) -> Messages:
+    """Return the messages from the last compaction block, which stands in for everything before it, or all of them.
+
+    The API rejects any content before a compaction block.
+    """
+    for index in reversed(range(len(messages))):
+        content = messages[index]["content"]
+        positions = [position for position, block in enumerate(content) if _is_compaction(block)]
+        if positions:
+            first = Message(role=messages[index]["role"], content=content[positions[-1] :])
+            return [first, *messages[index + 1 :]]
+    return messages
+
 
 logger = logging.getLogger(__name__)
 
@@ -232,6 +255,10 @@ class AnthropicModel(Model):
             TypeError: If the content block type or document format cannot be converted to an
                 Anthropic-compatible format.
         """
+        if self._server_side_summary and _is_compaction(content):
+            signature = content["metadata"]["serverSideSummary"].get("signature")
+            return {"type": "compaction", "content": content["text"], **({"signature": signature} if signature else {})}
+
         if "document" in content:
             document_format = content["document"]["format"]
             if document_format == "pdf":
@@ -590,6 +617,8 @@ class AnthropicModel(Model):
             TypeError: If a message contains a content block type that cannot be converted to an Anthropic-compatible
                 format.
         """
+        if self._server_side_summary:
+            messages = _from_last_compaction(messages)
         messages, cache_target_idx = self._manage_cache_points(messages)
 
         tools: list[dict[str, Any]] = [
@@ -630,24 +659,37 @@ class AnthropicModel(Model):
             "tools": tools,
         }
 
+        if self._server_side_summary and any(
+            _is_compaction(block) for message in messages for block in message["content"]
+        ):
+            request = self._with_beta(request, COMPACTION_BETA)
         if self._drop_stale_thinking_model_id == self.config["model_id"]:
             request = self._request_with_drop_block(request) or request
 
         return request
+
+    @property
+    def _server_side_summary(self) -> bool:
+        """Whether stored compaction blocks are sent as such; otherwise their text is sent."""
+        return self.model_info.capabilities.server_side_summary is True
+
+    def _with_beta(self, request: dict[str, Any], beta: str) -> dict[str, Any]:
+        """Return the request with ``beta`` added to its ``anthropic-beta`` header."""
+        extra_headers = dict(request.get("extra_headers") or {})
+        # Request headers replace client headers of the same name, so betas set on the client are carried over.
+        configured = extra_headers.get("anthropic-beta") or self.client.default_headers.get("anthropic-beta")
+        betas = [value.strip() for value in configured.split(",")] if isinstance(configured, str) else []
+        if beta not in betas:
+            betas.append(beta)
+        extra_headers["anthropic-beta"] = ",".join(value for value in betas if value)
+        return {**request, "extra_headers": extra_headers}
 
     def _request_with_drop_block(self, request: dict[str, Any]) -> dict[str, Any] | None:
         """Return the request with stale thinking blocks dropped, or None if it cannot change."""
         thinking = thinking_with_drop_block(request.get("thinking"))
         if thinking is None:
             return None
-        extra_headers = dict(request.get("extra_headers") or {})
-        # Request headers replace client headers of the same name, so betas set on the client are carried over.
-        configured = extra_headers.get("anthropic-beta") or self.client.default_headers.get("anthropic-beta")
-        betas = [beta.strip() for beta in configured.split(",")] if isinstance(configured, str) else []
-        if THINKING_BINDING_BETA not in betas:
-            betas.append(THINKING_BINDING_BETA)
-        extra_headers["anthropic-beta"] = ",".join(beta for beta in betas if beta)
-        return {**request, "thinking": thinking, "extra_headers": extra_headers}
+        return {**self._with_beta(request, THINKING_BINDING_BETA), "thinking": thinking}
 
     def _format_system_prompt(
         self, system_prompt: str | None, system_prompt_content: list[SystemContentBlock] | None
@@ -977,6 +1019,9 @@ class AnthropicModel(Model):
         Returns:
             Total input token count.
         """
+        if self._server_side_summary:
+            # Count what a request sends, which starts at the last compaction block.
+            messages = _from_last_compaction(messages)
         if self.config.get("use_native_token_count") is not True:
             return await super().count_tokens(messages, tool_specs, system_prompt, system_prompt_content)
 
@@ -985,7 +1030,7 @@ class AnthropicModel(Model):
                 messages, tool_specs, system_prompt, system_prompt_content=system_prompt_content
             )
             # Keep only fields accepted by count_tokens; strip inference params (max_tokens, temperature, etc.)
-            count_tokens_fields = {"model", "messages", "tools", "tool_choice", "system"}
+            count_tokens_fields = {"model", "messages", "tools", "tool_choice", "system", "extra_headers"}
             request = {k: request[k] for k in request.keys() & count_tokens_fields}
 
             response = await self.client.messages.count_tokens(**request)
@@ -1179,6 +1224,59 @@ class AnthropicModel(Model):
             return
 
         logger.debug("finished streaming response from model")
+
+    @override
+    async def summarize(
+        self,
+        messages: Messages,
+        *,
+        tool_specs: list[ToolSpec] | None = None,
+        system_prompt: str | None = None,
+        system_prompt_content: list[SystemContentBlock] | None = None,
+        instructions: str | None = None,
+        **kwargs: Any,
+    ) -> ContentBlock | None:
+        """Summarize the conversation's opening ``messages`` with Anthropic on-demand compaction.
+
+        Sends the live system prompt and tools unchanged under beta ``compact-2026-09-04``, so the thinking kept
+        after the summary stays valid. The returned compaction block is stored as a text block holding the summary,
+        which other providers send, with its signature in ``metadata.serverSideSummary``; later requests from a model
+        with ``server_side_summary`` rebuild the compaction block from the two and start from it.
+
+        Args:
+            messages: The opening messages to summarize, from message 0, left unmodified.
+            tool_specs: The live conversation's tool specifications.
+            system_prompt: The live conversation's plain string system prompt.
+            system_prompt_content: The live conversation's structured system prompt.
+            instructions: Summarization instructions replacing the API's own prompt.
+            **kwargs: Additional keyword arguments for future extensibility.
+
+        Returns:
+            The summary block, or None when the response holds no compaction block.
+        """
+        request = self.format_request(messages, tool_specs, system_prompt, system_prompt_content=system_prompt_content)
+        # The API rejects these on a compaction request.
+        request.pop("stop_sequences", None)
+        request.pop("context_management", None)
+        compaction: dict[str, Any] = {"type": "summarize", **({"instructions": instructions} if instructions else {})}
+        request["extra_body"] = {**(request.get("extra_body") or {}), "compaction": compaction}
+        request = self._with_beta(request, COMPACTION_BETA)
+
+        async with self.client.beta.messages.stream(**request) as stream:
+            response = cast(dict[str, Any], (await stream.get_final_message()).to_dict())
+
+        block = next((block for block in response.get("content") or [] if block.get("type") == "compaction"), None)
+        if response.get("stop_reason") != "compaction" or not block or not block.get("content"):
+            logger.warning(
+                "model_id=<%s>, stop_reason=<%s> | compaction returned no summary",
+                self.config["model_id"],
+                response.get("stop_reason"),
+            )
+            return None
+        server_side = ServerSideSummary(provider="anthropic")
+        if isinstance(block.get("signature"), str):
+            server_side["signature"] = block["signature"]
+        return ContentBlock(text=block["content"], metadata={"serverSideSummary": server_side})
 
     def _record_rejected_mechanism(
         self,

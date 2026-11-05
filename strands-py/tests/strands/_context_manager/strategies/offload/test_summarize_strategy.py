@@ -388,3 +388,49 @@ class TestSummarizationWithToolCalls:
             ]
         ]
         assert tru_calls == exp_calls
+
+
+class TestServerSideSummary:
+    """Tests for summarizing through a model's server-side summary."""
+
+    @staticmethod
+    def _messages() -> Messages:
+        return [
+            Message(role="user", content=[ContentBlock(text="task")]),
+            Message(role="assistant", content=[ContentBlock(text="old1")]),
+            Message(role="user", content=[ContentBlock(text="old2")]),
+            Message(role="assistant", content=[ContentBlock(text="old3")]),
+            Message(role="user", content=[ContentBlock(text="recent")]),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_replaces_opening_run_with_server_side_summary(self, mock_agent):
+        mock_agent.model.model_info.capabilities.server_side_summary = True
+        summary = ContentBlock(text="compacted", metadata={"serverSideSummary": {"provider": "anthropic"}})
+        mock_agent.model.summarize = unittest.mock.AsyncMock(return_value=summary)
+        messages = self._messages()
+        mock_agent.messages = messages
+        strategy = Offload.summarize("*").when(utilization=0.8, preserve_recent=1)
+
+        assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is True
+
+        sent = mock_agent.model.summarize.call_args.args[0]
+        assert [block["text"] for message in sent for block in message["content"]] == ["task", "old1", "old2", "old3"]
+        assert messages == [
+            Message(role="user", content=[ContentBlock(text="task")]),
+            Message(role="assistant", content=[summary]),
+            Message(role="user", content=[ContentBlock(text="recent")]),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_client_side_without_summary(self, mock_agent):
+        mock_agent.model.model_info.capabilities.server_side_summary = True
+        mock_agent.model.summarize = unittest.mock.AsyncMock(return_value=None)
+        messages = self._messages()
+        mock_agent.messages = messages
+        strategy = Offload.summarize("*").when(utilization=0.8, preserve_recent=1)
+
+        assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is True
+
+        mock_agent.model.summarize.assert_awaited_once()
+        assert any("[Summarized:" in block.get("text", "") for message in messages for block in message["content"])

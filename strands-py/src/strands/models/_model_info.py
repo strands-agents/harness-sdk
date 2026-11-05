@@ -35,12 +35,16 @@ class ModelCapabilities:
             (``any`` or a named tool).
         native_structured_output: Whether the provider can make the model's text output conform to a
             JSON schema.
+        server_side_summary: Whether the model summarizes history server-side through
+            :meth:`strands.models.Model.summarize`, which the summarize strategy then calls instead of its
+            client-side summary.
     """
 
     stateful: bool | None = None
     prompt_caching: PromptCaching | None = None
     forced_tool_choice: bool | None = None
     native_structured_output: bool | None = None
+    server_side_summary: bool | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -113,6 +117,7 @@ _CAPABILITY_FIELDS = {
     "promptCaching": "prompt_caching",
     "forcedToolChoice": "forced_tool_choice",
     "nativeStructuredOutput": "native_structured_output",
+    "serverSideSummary": "server_side_summary",
 }
 _LIMIT_FIELDS = {"contextWindow": "context_window", "maxOutputTokens": "max_output_tokens"}
 # Shared-data values are camelCase; the Python literals are snake_case.

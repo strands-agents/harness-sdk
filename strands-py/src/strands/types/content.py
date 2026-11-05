@@ -77,6 +77,29 @@ class CachePoint(TypedDict):
     ttl: NotRequired[str]
 
 
+class ServerSideSummary(TypedDict):
+    """Marks a text block as a summary its provider wrote server-side; other providers send the text.
+
+    Attributes:
+        provider: Name of the provider that wrote the summary, for example "anthropic".
+        signature: Signature the provider returned with the summary, sent back unchanged.
+    """
+
+    provider: str
+    signature: NotRequired[str]
+
+
+class TextBlockMetadata(TypedDict, total=False):
+    """Metadata about a text block. Not sent to model providers, except as noted per field.
+
+    Attributes:
+        serverSideSummary: Present when the block is a summary its provider wrote server-side; only that
+            provider reads it.
+    """
+
+    serverSideSummary: ServerSideSummary
+
+
 class ContentBlock(TypedDict, total=False):
     """A block of content for a message that you pass to, or receive from, a model.
 
@@ -86,6 +109,7 @@ class ContentBlock(TypedDict, total=False):
         document: A document to include in the message.
         guardContent: Contains the content to assess with the guardrail.
         image: Image to include in the message.
+        metadata: Metadata about the block, meaningful only alongside `text`.
         reasoningContent: Contains content regarding the reasoning that is carried out by the model.
         text: Text to include in the message.
         toolResult: The result for a tool request that a model makes.
@@ -99,6 +123,7 @@ class ContentBlock(TypedDict, total=False):
     document: DocumentContent
     guardContent: GuardContent
     image: ImageContent
+    metadata: TextBlockMetadata
     reasoningContent: ReasoningContentBlock
     text: str
     toolResult: ToolResult
