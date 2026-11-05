@@ -6,7 +6,8 @@ from dataclasses import dataclass
 from ..config import doc_config
 
 # Example: "[Quickstart](https://strandsagents.com/.../index.md): Get an agent running."
-_MD_LINK = re.compile(r"\[([^\]]+)\]\((https?://[^\)]+)\)(?::[ \t]*([^\n]*))?")
+# A description stops before any further link on the line, so that link is still parsed.
+_MD_LINK = re.compile(r"\[([^\]]+)\]\((https?://[^\)]+)\)(?::[ \t]*((?:(?!\[[^\]]+\]\(https?://)[^\n])*))?")
 _HTML_BLOCK = re.compile(r"(?is)<(script|style|noscript).*?>.*?</\1>")
 _TAG = re.compile(r"(?s)<[^>]+>")
 _TITLE_TAG = re.compile(r"(?is)<title[^>]*>(.*?)</title>")
