@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import Anthropic from '@anthropic-ai/sdk'
+import { VERSION as SDK_VERSION } from '@anthropic-ai/sdk/version'
 import { isNode } from '../../__fixtures__/environment.js'
 import { AnthropicModel } from '../anthropic.js'
 import { ContextWindowOverflowError, ModelError, ModelThrottledError } from '../../errors.js'
@@ -51,13 +52,6 @@ vi.mock('@anthropic-ai/sdk', () => {
 
 vi.mock('../../logging/warn-once.js', () => ({
   warnOnce: vi.fn(),
-}))
-
-const sdkVersion = vi.hoisted(() => ({ current: '1.4.0' }))
-vi.mock('@anthropic-ai/sdk/version', () => ({
-  get VERSION() {
-    return sdkVersion.current
-  },
 }))
 
 describe('AnthropicModel', () => {
@@ -2593,60 +2587,19 @@ describe('AnthropicModel', () => {
       return captured
     }
 
-    afterEach(() => {
-      sdkVersion.current = '1.4.0'
-    })
-
-    it.each([
-      { name: 'temperature', config: { temperature: 0.2 }, params: 'temperature is' },
-      { name: 'topP', config: { topP: 0.9 }, params: 'top_p is' },
-      { name: 'params.top_k', config: { params: { top_k: 3 } }, params: 'top_k is' },
-      {
-        name: 'several params',
-        config: { temperature: 0.2, params: { top_p: 0.9 } },
-        params: 'temperature, top_p are',
-      },
-    ])('rejects $name on SDK 1.x before sending the request', async ({ config, params }) => {
-      const captured = captureBuiltClient()
-      const provider = new AnthropicModel({ apiKey: 'sk-test', modelId: 'm1', ...config })
-
-      await expect(collectIterator(provider.stream(messages))).rejects.toThrow(
-        `${params} not supported by Anthropic API version 2026-10-21, the default for @anthropic-ai/sdk 1.4.0`
-      )
-      await expect(collectIterator(provider.stream(messages))).rejects.toThrow("'anthropic-version': '2023-06-01'")
-      expect(captured.request).toBeNull()
-    })
-
-    it.each([
-      { name: 'an object', defaultHeaders: { 'Anthropic-Version': '2023-06-01' } },
-      { name: 'header tuples', defaultHeaders: [['anthropic-version', '2023-06-01']] },
-      { name: 'a Headers instance', defaultHeaders: new Headers({ 'anthropic-version': '2023-06-01' }) },
-    ])('sends temperature on SDK 1.x when the previous API version is pinned as $name', async ({ defaultHeaders }) => {
-      const captured = captureBuiltClient()
+    it('leaves the check to the API for an injected client', async () => {
+      const stream = vi.fn(() => (async function* () {})())
       const provider = new AnthropicModel({
-        apiKey: 'sk-test',
-        modelId: 'm1',
+        client: { messages: { stream } } as unknown as Anthropic,
         temperature: 0.2,
-        clientConfig: { defaultHeaders },
       })
 
       await collectIterator(provider.stream(messages))
 
-      expect(captured.request.temperature).toBe(0.2)
+      expect(stream).toHaveBeenCalledWith(expect.objectContaining({ temperature: 0.2 }))
     })
 
-    it('sends temperature on SDK 0.x', async () => {
-      sdkVersion.current = '0.109.1'
-      const captured = captureBuiltClient()
-      const provider = new AnthropicModel({ apiKey: 'sk-test', modelId: 'm1', temperature: 0.2, params: { top_k: 3 } })
-
-      await collectIterator(provider.stream(messages))
-
-      expect(captured.request).toMatchObject({ temperature: 0.2, top_k: 3 })
-    })
-
-    it('rejects temperature on SDK 0.x when the current API version is pinned', async () => {
-      sdkVersion.current = '0.109.1'
+    it('rejects temperature when the current API version is pinned', async () => {
       captureBuiltClient()
       const provider = new AnthropicModel({
         apiKey: 'sk-test',
@@ -2660,48 +2613,92 @@ describe('AnthropicModel', () => {
       )
     })
 
-    it('leaves the check to the API for an injected client', async () => {
-      const stream = vi.fn(() => (async function* () {})())
-      const provider = new AnthropicModel({
-        client: { messages: { stream } } as unknown as Anthropic,
-        temperature: 0.2,
+    describe.skipIf(SDK_VERSION.startsWith('0.'))('on @anthropic-ai/sdk 1.x', () => {
+      it.each([
+        { name: 'temperature', config: { temperature: 0.2 }, params: 'temperature is' },
+        { name: 'topP', config: { topP: 0.9 }, params: 'top_p is' },
+        { name: 'params.top_k', config: { params: { top_k: 3 } }, params: 'top_k is' },
+        {
+          name: 'several params',
+          config: { temperature: 0.2, params: { top_p: 0.9 } },
+          params: 'temperature, top_p are',
+        },
+      ])('rejects $name before sending the request', async ({ config, params }) => {
+        const captured = captureBuiltClient()
+        const provider = new AnthropicModel({ apiKey: 'sk-test', modelId: 'm1', ...config })
+
+        await expect(collectIterator(provider.stream(messages))).rejects.toThrow(
+          `${params} not supported by Anthropic API version 2026-10-21, the default for @anthropic-ai/sdk ${SDK_VERSION}`
+        )
+        await expect(collectIterator(provider.stream(messages))).rejects.toThrow("'anthropic-version': '2023-06-01'")
+        expect(captured.request).toBeNull()
       })
 
-      await collectIterator(provider.stream(messages))
+      it.each([
+        { name: 'an object', defaultHeaders: { 'Anthropic-Version': '2023-06-01' } },
+        { name: 'header tuples', defaultHeaders: [['anthropic-version', '2023-06-01']] },
+        { name: 'a Headers instance', defaultHeaders: new Headers({ 'anthropic-version': '2023-06-01' }) },
+      ])('sends temperature when the previous API version is pinned as $name', async ({ defaultHeaders }) => {
+        const captured = captureBuiltClient()
+        const provider = new AnthropicModel({
+          apiKey: 'sk-test',
+          modelId: 'm1',
+          temperature: 0.2,
+          clientConfig: { defaultHeaders },
+        })
 
-      expect(stream).toHaveBeenCalledWith(expect.objectContaining({ temperature: 0.2 }))
+        await collectIterator(provider.stream(messages))
+
+        expect(captured.request.temperature).toBe(0.2)
+      })
+
+      it('skips PDF documents in assistant messages', async () => {
+        const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+        const captured = captureBuiltClient()
+        const provider = new AnthropicModel({ apiKey: 'sk-test', modelId: 'm1' })
+        const conversation = [
+          new Message({ role: 'user', content: [new TextBlock('Summarize'), pdf] }),
+          new Message({ role: 'assistant', content: [new TextBlock('Here it is'), pdf] }),
+        ]
+
+        await collectIterator(provider.stream(conversation))
+
+        expect(captured.request.messages[0].content.map((block: { type: string }) => block.type)).toEqual([
+          'text',
+          'document',
+        ])
+        expect(captured.request.messages[1].content.map((block: { type: string }) => block.type)).toEqual(['text'])
+        expect(warnSpy).toHaveBeenCalledWith(
+          expect.stringContaining('document blocks are not accepted in assistant messages')
+        )
+        warnSpy.mockRestore()
+      })
     })
 
-    it('skips PDF documents in assistant messages on SDK 1.x', async () => {
-      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
-      const captured = captureBuiltClient()
-      const provider = new AnthropicModel({ apiKey: 'sk-test', modelId: 'm1' })
-      const conversation = [
-        new Message({ role: 'user', content: [new TextBlock('Summarize'), pdf] }),
-        new Message({ role: 'assistant', content: [new TextBlock('Here it is'), pdf] }),
-      ]
+    // Runs in CI's job against the lowest supported @anthropic-ai/sdk. Browser mode can't re-mock VERSION per test.
+    describe.runIf(SDK_VERSION.startsWith('0.'))('on @anthropic-ai/sdk 0.x', () => {
+      it('sends sampling params', async () => {
+        const captured = captureBuiltClient()
+        const provider = new AnthropicModel({
+          apiKey: 'sk-test',
+          modelId: 'm1',
+          temperature: 0.2,
+          params: { top_k: 3 },
+        })
 
-      await collectIterator(provider.stream(conversation))
+        await collectIterator(provider.stream(messages))
 
-      expect(captured.request.messages[0].content.map((block: { type: string }) => block.type)).toEqual([
-        'text',
-        'document',
-      ])
-      expect(captured.request.messages[1].content.map((block: { type: string }) => block.type)).toEqual(['text'])
-      expect(warnSpy).toHaveBeenCalledWith(
-        expect.stringContaining('document blocks are not accepted in assistant messages')
-      )
-      warnSpy.mockRestore()
-    })
+        expect(captured.request).toMatchObject({ temperature: 0.2, top_k: 3 })
+      })
 
-    it('keeps PDF documents in assistant messages on SDK 0.x', async () => {
-      sdkVersion.current = '0.109.1'
-      const captured = captureBuiltClient()
-      const provider = new AnthropicModel({ apiKey: 'sk-test', modelId: 'm1' })
+      it('keeps PDF documents in assistant messages', async () => {
+        const captured = captureBuiltClient()
+        const provider = new AnthropicModel({ apiKey: 'sk-test', modelId: 'm1' })
 
-      await collectIterator(provider.stream([new Message({ role: 'assistant', content: [pdf] })]))
+        await collectIterator(provider.stream([new Message({ role: 'assistant', content: [pdf] })]))
 
-      expect(captured.request.messages[0].content[0].type).toBe('document')
+        expect(captured.request.messages[0].content[0].type).toBe('document')
+      })
     })
   })
 
