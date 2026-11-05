@@ -4,7 +4,7 @@ import { render } from 'astro:content'
 import { buildSampleGuideSidebar, type SampleGuideEntry } from '../../util/sample-guides'
 import { languageLabel } from '../../util/source-links'
 import { articleSchema } from '../../util/structured-data'
-import { CANONICAL_SAMPLES_REPOSITORY } from '../../../scripts/samples/importer'
+import { CANONICAL_SAMPLES_REPOSITORY } from '../../config/samples'
 
 interface Props {
   guide: SampleGuideEntry

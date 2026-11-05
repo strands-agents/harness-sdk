@@ -150,6 +150,13 @@ describe('structured data per page type', () => {
   const sdk = products.find((product) => product.label === 'Harness SDK')!
   const routeUrl = (route: string) => `${site}${base}${route}`
 
+  it('configures every product with a source repository and languages', () => {
+    for (const product of products) {
+      expect(product.repository, product.label).toMatch(/^https:\/\/github\.com\/strands-agents\//)
+      expect(product.languages.length, product.label).toBeGreaterThan(0)
+    }
+  })
+
   it('describes every product with its source repository on the homepage', () => {
     expect(page('/')).toEqual([...baseSchemas(site), ...products.map((product) => productSchema(product, site))])
   })
