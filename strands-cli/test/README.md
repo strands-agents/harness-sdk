@@ -21,7 +21,7 @@ dedicated commands below `npm test` in the table.
 ## Terminal and platform checks
 
 The terminal suite exercises keyboard input, streamed conversation output, slash-command panels, queued-message
-deletion, voice-panel dismissal, shell commands, resizing, and cleanup. Vitest reports each scenario. The drivers feed output through `@xterm/headless` and assert
+deletion, voice-panel controls, shell commands, resizing, and cleanup. Vitest reports each scenario. The drivers feed output through `@xterm/headless` and assert
 visible labels and state transitions rather than exact escape sequences or complete screen snapshots.
 Exit cases check terminal restoration after direct process exit, uncaught exceptions, rejected promises, and
 POSIX termination signals. Windows signal-kill cases are excluded because `TerminateProcess` cannot run cleanup.

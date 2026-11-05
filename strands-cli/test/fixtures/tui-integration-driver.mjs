@@ -293,10 +293,7 @@ async function main() {
       terminal.write('\r')
       await waitForStableScreen(['Speaker', 'Nova'])
       await clickText('On')
-      await waitForStableScreen(['Voice muted', 'Enter to send'], 8_000, 0, ['Speaker'])
-      await typeInComposer('/voice')
-      terminal.write('\r')
-      await waitForStableScreen(['Speaker', 'Nova', 'Space mute'])
+      await waitForStableScreen(['Voice muted', 'Speaker', 'Nova', 'Space mute'])
       const start = transcript.length
       terminal.write('\u001b')
       await waitForStableScreen(['Voice muted', 'Enter to send'], 8_000, start, ['Speaker'])

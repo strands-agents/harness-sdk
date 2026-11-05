@@ -126,7 +126,6 @@ export class ConversationVoice {
           const { status } = this._voice.getSnapshot()
           const active = status !== 'off' && status !== 'error'
           const enabled = selected === undefined ? !active : selected === 'on'
-          if (enabled) this._panels.panel()
           if (enabled !== active) {
             await (enabled ? this._voice.start() : this._voice.stop())
           }
