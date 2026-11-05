@@ -14,7 +14,7 @@ from botocore.auth import SigV4Auth
 from botocore.awsrequest import AWSRequest
 
 
-def require_sdk_version(name: str, version: str, minimum: tuple[int, int, int], feature: str, extra: str) -> None:
+def require_sdk_version(name: str, version: str, minimum: tuple[int, int, int], feature: str) -> None:
     """Raise ImportError if an installed SDK is older than ``feature`` supports.
 
     Older releases report an authentication failure raised while signing as a connection error and retry it.
@@ -24,7 +24,7 @@ def require_sdk_version(name: str, version: str, minimum: tuple[int, int, int], 
         required = ".".join(map(str, minimum))
         raise ImportError(
             f"{name}=<{version}> | {feature} requires {name}>={required}, "
-            f"install it with: pip install -U 'strands-agents[{extra}]'"
+            f"install it with: pip install -U '{name}>={required}'"
         )
 
 

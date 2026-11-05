@@ -17,7 +17,7 @@ from .anthropic import AnthropicModel
 from .bedrock import BedrockEndpoint, _resolve_bedrock_region
 
 # 0.98.0 is the first release with the Bedrock client's skip_auth that also passes signing errors through.
-require_sdk_version("anthropic", anthropic.__version__, (0, 98, 0), "BedrockModel.Messages", "anthropic")
+require_sdk_version("anthropic", anthropic.__version__, (0, 98, 0), "BedrockModel.Messages")
 
 logger = logging.getLogger(__name__)
 

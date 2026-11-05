@@ -18,7 +18,7 @@ from .openai import OpenAIModel
 from .openai_responses import OpenAIResponsesModel
 
 # 2.31.0 is the first release that passes errors raised while signing through instead of retrying them.
-require_sdk_version("openai", openai.__version__, (2, 31, 0), "BedrockModel.ChatCompletions and .Responses", "openai")
+require_sdk_version("openai", openai.__version__, (2, 31, 0), "BedrockModel.ChatCompletions and .Responses")
 
 _ENDPOINTS = ("bedrock-runtime", "bedrock-mantle")
 

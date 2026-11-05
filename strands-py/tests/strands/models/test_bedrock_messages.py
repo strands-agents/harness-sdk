@@ -1,5 +1,6 @@
 import asyncio
 import http.server
+import re
 import subprocess
 import sys
 import threading
@@ -13,7 +14,7 @@ from botocore.credentials import Credentials
 
 from strands import Agent
 from strands.models import BedrockModel
-from strands.models._bedrock_auth import _per_loop_transport_class
+from strands.models._bedrock_auth import _auth_class, _per_loop_transport_class, require_sdk_version
 from strands.models._bedrock_messages import BedrockMessagesModel
 from strands.models.anthropic import AnthropicModel
 
@@ -200,12 +201,60 @@ def test_messages_client_uses_a_pool_per_event_loop(boto_session):
     model = BedrockModel.Messages(model_id="m", max_tokens=16, boto_session=boto_session)
     agent = Agent(model=model, callback_handler=None)
 
-    agent("one")
-    agent("two")
+    transport = model.client._client._transport
 
-    pools = model.client._client._transport._clients
-    assert len(pools) == 1
-    assert all(isinstance(pool, httpx.AsyncClient) for pool in pools.values())
+    agent("one")
+    (first,) = transport._clients.values()
+    agent("two")
+    (second,) = transport._clients.values()
+
+    assert second is not first
+    assert isinstance(second, httpx.AsyncClient)
+
+
+@pytest.mark.parametrize("http", [httpx, pytest.importorskip("httpx2")], ids=["httpx", "httpx2"])
+def test_streamed_request_bodies_are_read_before_signing(http, boto_session):
+    auth = _auth_class(http)(
+        session=boto_session, region="us-west-2", service="bedrock", error_type=RuntimeError, api_key=None
+    )
+
+    async def body():
+        yield b'{"a": '
+        yield b"1}"
+
+    async def sign():
+        request = http.Request(
+            "POST", "https://bedrock-runtime.us-west-2.amazonaws.com/anthropic/v1/messages", content=body()
+        )
+        flow = auth.async_auth_flow(request)
+        return await flow.__anext__()
+
+    request = asyncio.run(sign())
+
+    assert request.content == b'{"a": 1}'
+    assert request.headers["authorization"].startswith("AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/")
+
+
+def test_sync_auth_flow_signs_and_sends_api_keys(boto_session):
+    auth_class = _auth_class(httpx)
+    signing = auth_class(
+        session=boto_session, region="us-west-2", service="bedrock", error_type=RuntimeError, api_key=None
+    )
+    keyed = auth_class(
+        session=boto_session, region="us-west-2", service="bedrock", error_type=RuntimeError, api_key="k"
+    )
+
+    signed = next(signing.sync_auth_flow(httpx.Request("POST", "https://example.com", content=b"{}")))
+    with_key = next(keyed.sync_auth_flow(httpx.Request("POST", "https://example.com", content=b"{}")))
+
+    assert signed.headers["authorization"].startswith("AWS4-HMAC-SHA256 ")
+    assert with_key.headers["authorization"] == "Bearer k"
+
+
+def test_old_sdk_versions_are_rejected_with_the_version_to_install():
+    with pytest.raises(ImportError, match=re.escape("pip install -U 'anthropic>=0.98.0'")):
+        require_sdk_version("anthropic", "0.97.3", (0, 98, 0), "BedrockModel.Messages")
+    require_sdk_version("anthropic", "0.98.0", (0, 98, 0), "BedrockModel.Messages")
 
 
 def test_proxy_environment_variables_apply(monkeypatch):
