@@ -46,6 +46,15 @@ def _warn_client_side_fallback(model: Model, reason: str, *, exc_info: bool = Fa
     )
 
 
+def _warn_kept_pins(model: Model, kept: int) -> None:
+    logger.warning(
+        "model=<%s>, kept=<%d> | pinned messages are kept after a server-side summary"
+        " | thinking in the messages kept after the summary will be dropped",
+        type(model).__name__,
+        kept,
+    )
+
+
 def _is_summary(block: ContentBlock) -> bool:
     return "summary" in block or ("text" in block and block["text"].startswith("[Summarized:"))
 
@@ -74,7 +83,6 @@ class SummarizeStrategy(BaseOffloadStrategy):
     ) -> None:
         super().__init__(target, conditions)
         self._config: SummarizeConfig = config or {}
-        self._warned_kept_pins = False
 
     def when(
         self,
@@ -179,21 +187,10 @@ class SummarizeStrategy(BaseOffloadStrategy):
         kept = [kept for message in pinned if (kept := _without_summaries(message))]
         messages[1:end] = [Message(role="assistant", content=[summary]), *kept]
         if kept:
-            self._warn_kept_pins(model)
+            _warn_kept_pins(model, len(kept))
         _repair_alternation(messages)
         logger.debug("summarized=<%s>, kept=<%s> | summarized opening messages server-side", replaced, len(kept))
         return True
-
-    def _warn_kept_pins(self, model: Model) -> None:
-        """Log, once per strategy, that pinned messages kept after a server-side summary cost kept thinking."""
-        if self._warned_kept_pins:
-            return
-        self._warned_kept_pins = True
-        logger.warning(
-            "model=<%s> | pinned messages are kept after a server-side summary"
-            " | thinking in the messages kept after the summary will be dropped",
-            type(model).__name__,
-        )
 
     async def _request_server_side_summary(
         self, model: Model, agent: Agent, messages: list[Message]
