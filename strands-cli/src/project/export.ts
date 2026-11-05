@@ -137,16 +137,16 @@ export async function writeAgentProject(
   const files = language === 'typescript' ? typescriptProject(config) : pythonProject(config)
   const zip = new ZipFile()
   let bytes = 0
-  const addBytes = (size: number): void => {
+  const addBytes = (size: number, source: string): void => {
     bytes += size
     if (bytes > MAX_PROJECT_BYTES) {
-      throw new Error('The exported agent project exceeds 50 MB.')
+      throw new Error(`The exported agent project exceeds 50 MB while adding ${source} (${size} bytes).`)
     }
   }
   for (const [path, contents] of Object.entries(files)) {
     assertPortableArchivePath(path)
     const buffer = Buffer.from(contents)
-    addBytes(buffer.length)
+    addBytes(buffer.length, path)
     zip.addBuffer(buffer, path, { compress: false, mode: 0o100644 })
   }
   for (const skill of skills) {
@@ -156,7 +156,7 @@ export async function writeAgentProject(
     if ('contents' in source) {
       assertPortableArchivePath(`agent/${source.destination}`)
       const buffer = Buffer.from(source.contents)
-      addBytes(buffer.length)
+      addBytes(buffer.length, source.destination)
       zip.addBuffer(buffer, `agent/${source.destination}`, { compress: false, mode: 0o100644 })
     } else if (source.directoryOnly) {
       assertPortableArchivePath(`agent/${source.destination}`)
@@ -238,9 +238,11 @@ export async function exportSourceProject(
     zip,
     root,
     '',
-    (size) => {
+    (size, source) => {
       bytes += size
-      if (bytes > MAX_PROJECT_BYTES) throw new Error('The exported agent project exceeds 50 MB.')
+      if (bytes > MAX_PROJECT_BYTES) {
+        throw new Error(`The exported agent project exceeds 50 MB while adding ${source} (${size} bytes).`)
+      }
     },
     excluded
   )
@@ -634,7 +636,7 @@ function addPath(
   zip: ZipFile,
   source: string,
   destination: string,
-  addBytes: (size: number) => void,
+  addBytes: (size: number, source: string) => void,
   privatePaths: readonly string[]
 ): void {
   assertPortableArchivePath(destination)
@@ -661,7 +663,7 @@ function addDirectory(
   zip: ZipFile,
   source: string,
   destination: string,
-  addBytes: (size: number) => void,
+  addBytes: (size: number, source: string) => void,
   excluded: ReadonlySet<string> = new Set()
 ): void {
   const root = realpathSync(source)
@@ -697,13 +699,18 @@ function addDirectory(
   visit(root)
 }
 
-function addFile(zip: ZipFile, source: string, destination: string, addBytes: (size: number) => void): void {
+function addFile(
+  zip: ZipFile,
+  source: string,
+  destination: string,
+  addBytes: (size: number, source: string) => void
+): void {
   const details = lstatSync(source)
   if (!details.isFile()) {
     throw new Error('Exported packages cannot contain symbolic links.')
   }
   validateNoSecretFile(source)
-  addBytes(details.size)
+  addBytes(details.size, source)
   // Buffered, not streamed: a validation throw later in the walk abandons the zip, and an
   // already-created read stream would leak its descriptor and emit an unhandled open error.
   // The size cap bounds total memory, and addBytes enforces it before this read.

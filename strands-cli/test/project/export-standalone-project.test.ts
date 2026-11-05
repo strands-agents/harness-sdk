@@ -1,5 +1,5 @@
 import { realpathSync, writeFileSync } from 'node:fs'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, truncate, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { unzipSync, zipSync } from 'fflate'
@@ -7,6 +7,7 @@ import { afterEach, beforeEach, expect, it } from 'vitest'
 
 import { exportSourceProject } from '../../src/project/export.js'
 import { importAgentProject } from '../../src/project/import.js'
+import { MAX_PROJECT_BYTES } from '../../src/project/packaging.js'
 
 let root: string
 
@@ -62,6 +63,20 @@ it(
     }
   }
 )
+
+it('names oversized source files without writing an archive', async () => {
+  const source = join(root, 'source')
+  await file(join(source, 'agent.py'))
+  const oversized = join(source, 'large.bin')
+  await file(oversized)
+  await truncate(oversized, MAX_PROJECT_BYTES + 1)
+  const destination = join(root, 'agent.zip')
+
+  await expect(exportSourceProject(importAgentProject(source), 'Agent', 'python', [], destination)).rejects.toThrow(
+    `exceeds 50 MB while adding ${oversized}`
+  )
+  await expect(readFile(destination)).rejects.toMatchObject({ code: 'ENOENT' })
+})
 
 it.each(['src/custom.mjs', ' leading.mjs', ' leading/custom.mjs'])(
   'preserves authored bytes and entrypoint %s through ZIP and directory export',
