@@ -1,4 +1,27 @@
-<?xml version="1.0" encoding="UTF-8"?><rss version="2.0"><channel><title>Strands Agents Changelog</title><description>Releases across Strands Agents products.</description><link>https://strandsagents.com/</link><language>en-us</language><item><title>SDK Python v1.63.0</title><link>https://strandsagents.com/changelog/sdk/python-v1.63.0/</link><guid isPermaLink="true">https://strandsagents.com/changelog/sdk/python-v1.63.0/</guid><description>• log unsupported-block skips once per request
+<?xml version="1.0" encoding="UTF-8"?><rss version="2.0"><channel><title>Strands Agents Changelog</title><description>Releases across Strands Agents products.</description><link>https://strandsagents.com/</link><language>en-us</language><item><title>SDK Python v1.64.0</title><link>https://strandsagents.com/changelog/sdk/python-v1.64.0/</link><guid isPermaLink="true">https://strandsagents.com/changelog/sdk/python-v1.64.0/</guid><description>• load samples in documentation previews
+• add S3 Vectors search strategy for S3Storage in Python
+• send toolResult status to Amazon Nova models (Python)
+• render samples as documentation guides
+• add SystemOneDecisionModel for Jev and decisionapi.net</description><pubDate>Wed, 04 Nov 2026 00:00:00 GMT</pubDate><category>persistence</category><category>model</category><category>context</category></item><item><title>SDK TypeScript v1.24.0</title><link>https://strandsagents.com/changelog/sdk/typescript-v1.24.0/</link><guid isPermaLink="true">https://strandsagents.com/changelog/sdk/typescript-v1.24.0/</guid><description>• load samples in documentation previews
+• send toolResult status to Amazon Nova models (TypeScript)
+• load @modelcontextprotocol/ext-tasks lazily so CommonJS loaders can import the SDK
+• expose messages to BeforeInvocationEvent
+• add S3VectorSearchStrategy integration test (TypeScript)</description><pubDate>Wed, 04 Nov 2026 00:00:00 GMT</pubDate><category>model</category><category>mcp</category><category>hooks</category><category>language</category><category>persistence</category><category>multiagent</category><category>context</category></item><item><title>Evals v1.9.0</title><link>https://strandsagents.com/changelog/evals/v1.9.0/</link><guid isPermaLink="true">https://strandsagents.com/changelog/evals/v1.9.0/</guid><description>• add --case selector to run command
+• add extraction steps to session-converter skill
+• relax CI gate on workstream/optimizer-workflow branch
+• suggest evaluators and write experiment file in session-converter</description><pubDate>Wed, 04 Nov 2026 00:00:00 GMT</pubDate><category>cli</category><category>generators</category><category>tracing</category></item><item><title>Harness Python v0.3.4</title><link>https://strandsagents.com/changelog/harness/python-v0.3.4/</link><guid isPermaLink="true">https://strandsagents.com/changelog/harness/python-v0.3.4/</guid><description>• load samples in documentation previews
+• render samples as documentation guides
+• add a product-aware docs footer and last-updated dates
+• link box discussions and the box repo from the issue chooser
+• bump astral-sh/setup-uv from 10.3.2 to 10.3.3</description><pubDate>Wed, 04 Nov 2026 00:00:00 GMT</pubDate></item><item><title>Harness TypeScript v0.3.4</title><link>https://strandsagents.com/changelog/harness/typescript-v0.3.4/</link><guid isPermaLink="true">https://strandsagents.com/changelog/harness/typescript-v0.3.4/</guid><description>• load samples in documentation previews
+• render samples as documentation guides
+• add a product-aware docs footer and last-updated dates
+• link box discussions and the box repo from the issue chooser
+• bump astral-sh/setup-uv from 10.3.2 to 10.3.3</description><pubDate>Wed, 04 Nov 2026 00:00:00 GMT</pubDate></item><item><title>Harness CLI v0.2.4</title><link>https://strandsagents.com/changelog/cli/v0.2.4/</link><guid isPermaLink="true">https://strandsagents.com/changelog/cli/v0.2.4/</guid><description>• load samples in documentation previews
+• render samples as documentation guides
+• add a product-aware docs footer and last-updated dates
+• link box discussions and the box repo from the issue chooser
+• bump astral-sh/setup-uv from 10.3.2 to 10.3.3</description><pubDate>Wed, 04 Nov 2026 00:00:00 GMT</pubDate></item><item><title>SDK Python v1.63.0</title><link>https://strandsagents.com/changelog/sdk/python-v1.63.0/</link><guid isPermaLink="true">https://strandsagents.com/changelog/sdk/python-v1.63.0/</guid><description>• log unsupported-block skips once per request
 • bump re-actors/alls-green from 1.2.2 to 1.3.0
 • apply area-catalog label to PRs touching catalog entries
 • bump actions/upload-artifact from 7.0.1 to 7.0.2

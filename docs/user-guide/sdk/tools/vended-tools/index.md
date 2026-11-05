@@ -4,8 +4,9 @@ They ship as part of the SDK package and are updated alongside it. See [Versioni
 
 ## Quickstart
 
-Each tool is imported from its own subpath under `@strands-agents/sdk/vended-tools`, with no additional packages required:
+Each tool is imported from its own module under `strands.vended_tools``@strands-agents/sdk/vended-tools`, with no additional packages required:
 
+(( tab "TypeScript" ))
 ```typescript
 import { Agent } from '@strands-agents/sdk'
 import { bash } from '@strands-agents/sdk/vended-tools/bash'
@@ -17,6 +18,19 @@ const agent = new Agent({
   tools: [bash, edit, httpRequest, notebook],
 })
 ```
+(( /tab "TypeScript" ))
+
+(( tab "Python" ))
+```python
+from strands import Agent
+from strands.vended_tools.edit import edit
+from strands.vended_tools.http_request import http_request
+from strands.vended_tools.notebook import notebook
+from strands.vended_tools.shell import shell
+
+agent = Agent(tools=[shell, edit, http_request, notebook])
+```
+(( /tab "Python" ))
 
 ## Available tools
 

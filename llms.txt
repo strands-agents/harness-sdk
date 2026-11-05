@@ -997,6 +997,7 @@
 
 ## Blog
 
+- [Strands adds more built-in tools for Python and TypeScript](https://strandsagents.com/blog/more-built-in-tools-python-typescript/index.md): Built-in file, web, and multi-agent tools for your Strands agents, available in both Python and TypeScript.
 - [Red team your harness before your customers do, with Strands Evals](https://strandsagents.com/blog/red-team-your-agent-strands-evals/index.md): Red teaming in Strands Evals 1.7.0 runs adversarial conversations against your agent or harness. Attack a refund agent with GOAT, then check its tool calls, not just the score.
 - [Evaluating structured agent output, field by field, with Strands Evals](https://strandsagents.com/blog/structured-output-similarity-strands-evals/index.md): StructuredOutputSimilarity scores structured agent output field by field with Stickler: deterministic, per-field accuracy with no LLM judge in the default path.
 - [Strands Decider adds four Gemma 4 models](https://strandsagents.com/blog/strands-decider-gemma-4-models/index.md): Four new Strands Decider models built on Gemma 4 let developers compare sizes for routing, guardrails, evaluation, and other agent decisions.
@@ -1036,6 +1037,7 @@
 
 - [Changelog](https://strandsagents.com/changelog/index.md): All releases across the SDK, Harness, Harness CLI, Evals, and Box
 - SDK Python
+  - [v1.64.0](https://strandsagents.com/changelog/sdk/python-v1.64.0/index.md): SDK Python v1.64.0 (2026-11-04)
   - [v1.63.0](https://strandsagents.com/changelog/sdk/python-v1.63.0/index.md): SDK Python v1.63.0 (2026-10-30)
   - [v1.62.0](https://strandsagents.com/changelog/sdk/python-v1.62.0/index.md): SDK Python v1.62.0 (2026-10-21)
   - [v1.61.1](https://strandsagents.com/changelog/sdk/python-v1.61.1/index.md): SDK Python v1.61.1 (2026-10-15)
@@ -1124,6 +1126,7 @@
   - [v0.1.1](https://strandsagents.com/changelog/sdk/python-v0.1.1/index.md): SDK Python v0.1.1 (2025-05-17)
   - [v0.1.0](https://strandsagents.com/changelog/sdk/python-v0.1.0/index.md): SDK Python v0.1.0 (2025-05-16)
 - SDK TypeScript
+  - [v1.24.0](https://strandsagents.com/changelog/sdk/typescript-v1.24.0/index.md): SDK TypeScript v1.24.0 (2026-11-04)
   - [v1.23.0](https://strandsagents.com/changelog/sdk/typescript-v1.23.0/index.md): SDK TypeScript v1.23.0 (2026-10-30)
   - [v1.22.0](https://strandsagents.com/changelog/sdk/typescript-v1.22.0/index.md): SDK TypeScript v1.22.0 (2026-10-21)
   - [v1.21.0](https://strandsagents.com/changelog/sdk/typescript-v1.21.0/index.md): SDK TypeScript v1.21.0 (2026-10-14)
@@ -1172,6 +1175,7 @@
   - [v0.1.1](https://strandsagents.com/changelog/sdk/typescript-v0.1.1/index.md): SDK TypeScript v0.1.1 (2025-12-03)
   - [v0.1.0](https://strandsagents.com/changelog/sdk/typescript-v0.1.0/index.md): SDK TypeScript v0.1.0 (2025-12-03)
 - Evals
+  - [v1.9.0](https://strandsagents.com/changelog/evals/v1.9.0/index.md): Evals v1.9.0 (2026-11-04)
   - [v1.8.0](https://strandsagents.com/changelog/evals/v1.8.0/index.md): Evals v1.8.0 (2026-10-30)
   - [v1.7.0](https://strandsagents.com/changelog/evals/v1.7.0/index.md): Evals v1.7.0 (2026-10-21)
   - [v1.6.0](https://strandsagents.com/changelog/evals/v1.6.0/index.md): Evals v1.6.0 (2026-10-14)
@@ -1206,15 +1210,8 @@
   - [v0.1.2](https://strandsagents.com/changelog/evals/v0.1.2/index.md): Evals v0.1.2 (2026-01-13)
   - [v0.1.1](https://strandsagents.com/changelog/evals/v0.1.1/index.md): Evals v0.1.1 (2025-12-15)
   - [v0.1.0](https://strandsagents.com/changelog/evals/v0.1.0/index.md): Evals v0.1.0 (2025-12-03)
-- Harness TypeScript
-  - [v0.3.3](https://strandsagents.com/changelog/harness/typescript-v0.3.3/index.md): Harness TypeScript v0.3.3 (2026-10-30)
-  - [v0.3.2](https://strandsagents.com/changelog/harness/typescript-v0.3.2/index.md): Harness TypeScript v0.3.2 (2026-10-29)
-  - [v0.3.1](https://strandsagents.com/changelog/harness/typescript-v0.3.1/index.md): Harness TypeScript v0.3.1 (2026-10-21)
-  - [v0.3.0](https://strandsagents.com/changelog/harness/typescript-v0.3.0/index.md): Harness TypeScript v0.3.0 (2026-10-14)
-  - [v0.2.0](https://strandsagents.com/changelog/harness/typescript-v0.2.0/index.md): Harness TypeScript v0.2.0 (2026-10-08)
-  - [v0.1.1](https://strandsagents.com/changelog/harness/typescript-v0.1.1/index.md): Harness TypeScript v0.1.1 (2026-09-22)
-  - [v0.1.0](https://strandsagents.com/changelog/harness/typescript-v0.1.0/index.md): Harness TypeScript v0.1.0 (2026-09-21)
 - Harness Python
+  - [v0.3.4](https://strandsagents.com/changelog/harness/python-v0.3.4/index.md): Harness Python v0.3.4 (2026-11-04)
   - [v0.3.3](https://strandsagents.com/changelog/harness/python-v0.3.3/index.md): Harness Python v0.3.3 (2026-10-29)
   - [v0.3.2](https://strandsagents.com/changelog/harness/python-v0.3.2/index.md): Harness Python v0.3.2 (2026-10-22)
   - [v0.3.1](https://strandsagents.com/changelog/harness/python-v0.3.1/index.md): Harness Python v0.3.1 (2026-10-15)
@@ -1223,7 +1220,17 @@
   - [v0.1.2](https://strandsagents.com/changelog/harness/python-v0.1.2/index.md): Harness Python v0.1.2 (2026-09-22)
   - [v0.1.1](https://strandsagents.com/changelog/harness/python-v0.1.1/index.md): Harness Python v0.1.1 (2026-09-21)
   - [v0.1.0](https://strandsagents.com/changelog/harness/python-v0.1.0/index.md): Harness Python v0.1.0 (2026-09-21)
+- Harness TypeScript
+  - [v0.3.4](https://strandsagents.com/changelog/harness/typescript-v0.3.4/index.md): Harness TypeScript v0.3.4 (2026-11-04)
+  - [v0.3.3](https://strandsagents.com/changelog/harness/typescript-v0.3.3/index.md): Harness TypeScript v0.3.3 (2026-10-30)
+  - [v0.3.2](https://strandsagents.com/changelog/harness/typescript-v0.3.2/index.md): Harness TypeScript v0.3.2 (2026-10-29)
+  - [v0.3.1](https://strandsagents.com/changelog/harness/typescript-v0.3.1/index.md): Harness TypeScript v0.3.1 (2026-10-21)
+  - [v0.3.0](https://strandsagents.com/changelog/harness/typescript-v0.3.0/index.md): Harness TypeScript v0.3.0 (2026-10-14)
+  - [v0.2.0](https://strandsagents.com/changelog/harness/typescript-v0.2.0/index.md): Harness TypeScript v0.2.0 (2026-10-08)
+  - [v0.1.1](https://strandsagents.com/changelog/harness/typescript-v0.1.1/index.md): Harness TypeScript v0.1.1 (2026-09-22)
+  - [v0.1.0](https://strandsagents.com/changelog/harness/typescript-v0.1.0/index.md): Harness TypeScript v0.1.0 (2026-09-21)
 - Harness CLI
+  - [v0.2.4](https://strandsagents.com/changelog/cli/v0.2.4/index.md): Harness CLI v0.2.4 (2026-11-04)
   - [v0.2.3](https://strandsagents.com/changelog/cli/v0.2.3/index.md): Harness CLI v0.2.3 (2026-10-29)
   - [v0.2.2](https://strandsagents.com/changelog/cli/v0.2.2/index.md): Harness CLI v0.2.2 (2026-10-22)
   - [v0.2.1](https://strandsagents.com/changelog/cli/v0.2.1/index.md): Harness CLI v0.2.1 (2026-10-14)
