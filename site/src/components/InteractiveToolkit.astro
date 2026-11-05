@@ -12,20 +12,18 @@ const str = (text: string) => ({ text, color: 'var(--code-string)' });
 const t = (text: string) => ({ text });
 
 // Each card can define an `expanded` payload. When present, the `+` button
-// toggles between the compact and expanded view. When absent, the `+` remains
-// a no-op and the card stays compact. `header` groups the card under a
-// workflow stage (Start / Build / Secure / Control / Validate / Explore);
-// `defaultOpen` renders the card expanded on load.
+// toggles between the compact and expanded view. `defaultOpen` renders the
+// card expanded on load.
 const cards = [
   {
     slug: '/harness',
-    header: 'Start',
+    name: 'Strands harness',
     color: 'var(--card-accent-orange)',
-    description: 'Strands harness is a state-of-the-art, fully assembled agent harness.',
+    description: 'A fully assembled agent harness with benchmarked defaults.',
     tags: ['Optimized', 'CLI or library', 'Fully customizable'],
     expanded: {
       description:
-        'Strands harness is a fully assembled, state-of-the-art agent harness. It gives you an optimized agent with benchmarked defaults for the system prompt, tools, memory, sessions, and context management, ready to take from idea to production.',
+        'Strands harness gives you a fully assembled agent with benchmarked defaults for the system prompt, tools, memory, session management, and context management, ready to take your idea to production.',
       features: [
         {
           title: 'Optimized defaults',
@@ -57,7 +55,7 @@ const cards = [
   },
   {
     slug: '/harness-sdk',
-    header: 'Build',
+    name: 'Strands Harness SDK',
     color: 'var(--card-accent-teal)',
     description: 'The Harness SDK for building an agent harness from the ground up.',
     tags: ['Own the loop', 'Tools & MCP', 'Any model'],
@@ -78,7 +76,7 @@ const cards = [
           body: 'Bedrock, Anthropic, OpenAI, Google, Ollama, and more. The model is one object you hand to the agent; the rest of your code stays the same.',
         },
       ],
-      viewMoreHref: pathWithBase('/docs/user-guide/sdk/tools/'),
+      viewMoreHref: pathWithBase('/docs/user-guide/sdk/'),
       codePy: [
         { lineNo: 1, tokens: [kw('from'), t(' strands '), kw('import'), t(' Agent, tool')] },
         { lineNo: 2, tokens: [t('')] },
@@ -111,7 +109,7 @@ const cards = [
   },
   {
     slug: '/box',
-    header: 'Secure',
+    name: 'Strands Box',
     color: 'var(--card-accent-purple)',
     description: 'An agent sandbox that pairs OS containment with Dogwood policy.',
     tags: ['OS containment', 'Dogwood policy', 'Credential injection'],
@@ -151,7 +149,7 @@ const cards = [
   },
   {
     slug: '/shell',
-    header: 'Control',
+    name: 'Strands Shell',
     color: 'var(--card-accent-yellow)',
     description: 'A virtual shell designed for AI agents to use safely.',
     tags: ['Sandboxed', 'MCP server', 'Python/TS'],
@@ -197,7 +195,7 @@ const cards = [
   },
   {
     slug: '/evals',
-    header: 'Validate',
+    name: 'Strands Evals',
     color: 'var(--card-accent-pink)',
     description: 'Validate your agent before you ship.',
     tags: ['Score', 'Diagnose', 'Simulate'],
@@ -218,7 +216,7 @@ const cards = [
           body: 'Simulators play the user or stand in for a tool, so you can score multi-turn behavior and run red-team attacks without a human in the loop.',
         },
       ],
-      viewMoreHref: pathWithBase('/docs/user-guide/evals-sdk/quickstart/'),
+      viewMoreHref: pathWithBase('/docs/user-guide/evals-sdk/'),
       pythonOnly: true,
       codePy: [
         { lineNo: 1, tokens: [kw('from'), t(' strands '), kw('import'), t(' Agent')] },
@@ -238,210 +236,200 @@ const cards = [
       ],
     },
   },
-  {
-    slug: '/labs',
-    header: 'Explore',
-    color: 'var(--card-accent-blue)',
-    description: 'Experimental projects pushing the boundaries of what agents can do.',
-    tags: ['Robotics', 'World models', 'Benchmarks'],
-    expanded: {
-      description:
-        'Strands Labs is the experimental arm of Strands Agents: open source projects that take the Strands Harness SDK into new problem spaces. They move faster and cover more surface area than the core Strands Harness SDK, so expect more frequent changes and newer integrations.',
-      features: [
-        {
-          title: 'Robots',
-          body: 'Control, simulate, and train robots with natural language. Sim-first, with 70+ robots behind one interface.',
-        },
-        {
-          title: 'World models and benchmarks',
-          body: 'Agentic benchmark harnesses, harness optimization, and world-model research built on the Strands Harness SDK.',
-        },
-        {
-          title: 'Works alongside the Strands Harness SDK today',
-          body: 'Each project is published to package repositories and lives in its own repository under strands-labs. Some graduate into the core Strands Harness SDK; others stay experimental.',
-        },
-      ],
-      viewMoreHref: pathWithBase('/docs/labs/'),
-    },
-  },
+];
+
+function cardFor(slug: string) {
+  const card = cards.find((candidate) => candidate.slug === slug);
+  if (!card) throw new Error(`Missing toolkit card: ${slug}`);
+  return card;
+}
+
+const pillars = [
+  { title: 'Build', cards: [cardFor('/harness'), cardFor('/harness-sdk')] },
+  { title: 'Control', cards: [cardFor('/box'), cardFor('/shell')] },
+  { title: 'Validate', cards: [cardFor('/evals')] },
 ];
 
 ---
 
-<section class="toolkit" aria-label="Interactive toolkit">
+<section class="toolkit" aria-label="Strands toolkit">
   <div class="toolkit__inner">
     <div class="toolkit__cards">
       <div class="toolkit__cards-header">
         <span class="toolkit__cards-branch toolkit__cards-branch--left" aria-hidden="true"></span>
-        <h3 class="toolkit__cards-title">Explore by Toolkit</h3>
+        <h2 class="toolkit__cards-title">The Strands toolkit</h2>
         <span class="toolkit__cards-branch toolkit__cards-branch--right" aria-hidden="true"></span>
       </div>
       <div class="toolkit__cards-grid">
-        {cards.map((card) => (
-          <div class="toolkit__section">
-          <h3 class="toolkit__section-title">{card.header}</h3>
-          <article
-            class:list={[
-              'toolkit__card',
-              card.expanded && 'toolkit__card--expandable',
-              card.defaultOpen && 'is-open',
-            ]}
-            style={`--accent: ${card.color};`}
-            data-expandable={card.expanded ? '' : undefined}
-          >
-            {/* Compact view: always rendered, hidden when card is open. */}
-            <div class="toolkit__card-compact">
-              <h4 class="toolkit__card-slug">{card.slug}</h4>
-              <p class="toolkit__card-desc">{card.description}</p>
-              <ul class="toolkit__card-tags" role="list">
-                {card.tags.map((tag) => (
-                  <li class="toolkit__card-tag">{tag}</li>
-                ))}
-              </ul>
-            </div>
-
-            {card.expanded && (
-              <div class="toolkit__card-expanded">
-                <h4 class="toolkit__card-slug toolkit__card-slug--expanded">
-                  {card.slug}
-                </h4>
-                <div class="toolkit__card-expanded-body">
-                  <div class="toolkit__card-expanded-text">
-                    <p class="toolkit__card-expanded-desc">
-                      {card.expanded.description}
-                    </p>
-                    <ul class="toolkit__card-features" role="list">
-                      {card.expanded.features.map((f) => (
-                        <li class="toolkit__card-feature">
-                          <span
-                            class="toolkit__card-feature-bullet"
-                            aria-hidden="true"
-                          ></span>
-                          <p class="toolkit__card-feature-text">
-                            <strong>{f.title}</strong> {f.body}
-                          </p>
-                        </li>
+        {pillars.map((pillar) => (
+          <section class="toolkit__section">
+            <h3 class="toolkit__section-title">{pillar.title}</h3>
+            <div class="toolkit__section-cards">
+              {pillar.cards.map((card) => (
+                <article
+                  class:list={[
+                    'toolkit__card',
+                    card.expanded && 'toolkit__card--expandable',
+                    card.defaultOpen && 'is-open',
+                  ]}
+                  style={`--accent: ${card.color};`}
+                  data-expandable={card.expanded ? '' : undefined}
+                >
+                  {/* Compact view: always rendered, hidden when card is open. */}
+                  <div class="toolkit__card-compact">
+                    <h4 class="toolkit__card-name">{card.name}</h4>
+                    <p class="toolkit__card-desc">{card.description}</p>
+                    <ul class="toolkit__card-tags" role="list">
+                      {card.tags.map((tag) => (
+                        <li class="toolkit__card-tag">{tag}</li>
                       ))}
                     </ul>
                   </div>
-                  {card.expanded.codePy && (
-                  <div class="toolkit__card-terminal">
-                    <header class="toolkit__card-terminal-header">
-                      <div class="toolkit__card-terminal-dots" aria-hidden="true">
-                        <span class="toolkit__card-terminal-dot toolkit__card-terminal-dot--red" />
-                        <span class="toolkit__card-terminal-dot toolkit__card-terminal-dot--yellow" />
-                        <span class="toolkit__card-terminal-dot toolkit__card-terminal-dot--green" />
-                      </div>
-                      <button
-                        type="button"
-                        class="toolkit__card-terminal-copy"
-                        aria-label="Copy code"
-                      >
-                        <svg
-                          class="toolkit__card-terminal-copy-icon toolkit__card-terminal-copy-icon--copy"
-                          viewBox="0 0 16 19"
-                          fill="none"
-                          aria-hidden="true"
-                        >
-                          <rect
-                            x="4.5"
-                            y="0.5"
-                            width="11"
-                            height="14"
-                            rx="1.5"
-                            stroke="currentColor"
-                          />
-                          <rect
-                            x="0.5"
-                            y="4.5"
-                            width="11"
-                            height="14"
-                            rx="1.5"
-                            fill="var(--terminal-bg)"
-                            stroke="currentColor"
-                          />
-                        </svg>
-                        <svg
-                          class="toolkit__card-terminal-copy-icon toolkit__card-terminal-copy-icon--check"
-                          viewBox="0 0 16 16"
-                          fill="none"
-                          aria-hidden="true"
-                        >
-                          <path
-                            d="M13.5 4.5L6.5 11.5L3 8"
-                            stroke="currentColor"
-                            stroke-width="2"
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
-                          />
-                        </svg>
-                        <span class="toolkit__card-terminal-copy-label">copy</span>
-                      </button>
-                    </header>
-                    {/* TypeScript panel (only for cards that have a TS
-                        variant). Hidden unless the current language is TS. */}
-                    {card.expanded.codeTs && (
-                      <pre
-                        class="toolkit__card-terminal-code"
-                        data-lang-code="typescript"
-                        hidden
-                      ><code>{card.expanded.codeTs.map((row) => (
-                        <div class="toolkit__card-terminal-row">
-                          <span class="toolkit__card-terminal-lineno">{row.lineNo}</span>
-                          <span class="toolkit__card-terminal-line">{row.tokens.map((tok) => (
-                            tok.color ? <span style={`color: ${tok.color};`}>{tok.text}</span> : <span>{tok.text}</span>
-                          ))}</span>
-                        </div>
-                      ))}</code></pre>
-                    )}
-                    {/* Python panel. Always present; the default view. */}
-                    <pre
-                      class="toolkit__card-terminal-code"
-                      data-lang-code="python"
-                    ><code>{card.expanded.codePy.map((row) => (
-                      <div class="toolkit__card-terminal-row">
-                        <span class="toolkit__card-terminal-lineno">{row.lineNo}</span>
-                        <span class="toolkit__card-terminal-line">{row.tokens.map((tok) => (
-                          tok.color ? <span style={`color: ${tok.color};`}>{tok.text}</span> : <span>{tok.text}</span>
-                        ))}</span>
-                      </div>
-                    ))}</code></pre>
-                    {/* Python-only note (e.g. /evals): shown only when the
-                        current language is TS, since there's no TS variant. */}
-                    {card.expanded.pythonOnly && (
-                      <p class="toolkit__card-terminal-note" data-python-only-note hidden>
-                        The Evals SDK is Python-only.
-                      </p>
-                    )}
-                  </div>
-                  )}
-                </div>
-                {card.expanded.viewMoreHref && (
-                <a
-                  href={card.expanded.viewMoreHref}
-                  class="toolkit__card-view-more"
-                >
-                  View more
-                  <span
-                    class="toolkit__card-view-more-arrow"
-                    set:html={arrow}
-                  />
-                </a>
-                )}
-              </div>
-            )}
 
-            <button
-              type="button"
-              class="toolkit__card-open"
-              aria-label={`Toggle ${card.slug} details`}
-              aria-expanded={card.defaultOpen ? 'true' : 'false'}
-              data-toggle
-            >
-              <span class="toolkit__card-open-icon" set:html={plus} />
-            </button>
-          </article>
-          </div>
+                  {card.expanded && (
+                    <div class="toolkit__card-expanded">
+                      <h4 class="toolkit__card-name toolkit__card-name--expanded">
+                        {card.name}
+                      </h4>
+                      <div class="toolkit__card-expanded-body">
+                        <div class="toolkit__card-expanded-text">
+                          <p class="toolkit__card-expanded-desc">
+                            {card.expanded.description}
+                          </p>
+                          <ul class="toolkit__card-features" role="list">
+                            {card.expanded.features.map((f) => (
+                              <li class="toolkit__card-feature">
+                                <span
+                                  class="toolkit__card-feature-bullet"
+                                  aria-hidden="true"
+                                ></span>
+                                <p class="toolkit__card-feature-text">
+                                  <strong>{f.title}</strong> {f.body}
+                                </p>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                        {card.expanded.codePy && (
+                          <div class="toolkit__card-terminal">
+                            <header class="toolkit__card-terminal-header">
+                              <div class="toolkit__card-terminal-dots" aria-hidden="true">
+                                <span class="toolkit__card-terminal-dot toolkit__card-terminal-dot--red" />
+                                <span class="toolkit__card-terminal-dot toolkit__card-terminal-dot--yellow" />
+                                <span class="toolkit__card-terminal-dot toolkit__card-terminal-dot--green" />
+                              </div>
+                              <button
+                                type="button"
+                                class="toolkit__card-terminal-copy"
+                                aria-label="Copy code"
+                              >
+                                <svg
+                                  class="toolkit__card-terminal-copy-icon toolkit__card-terminal-copy-icon--copy"
+                                  viewBox="0 0 16 19"
+                                  fill="none"
+                                  aria-hidden="true"
+                                >
+                                  <rect
+                                    x="4.5"
+                                    y="0.5"
+                                    width="11"
+                                    height="14"
+                                    rx="1.5"
+                                    stroke="currentColor"
+                                  />
+                                  <rect
+                                    x="0.5"
+                                    y="4.5"
+                                    width="11"
+                                    height="14"
+                                    rx="1.5"
+                                    fill="var(--terminal-bg)"
+                                    stroke="currentColor"
+                                  />
+                                </svg>
+                                <svg
+                                  class="toolkit__card-terminal-copy-icon toolkit__card-terminal-copy-icon--check"
+                                  viewBox="0 0 16 16"
+                                  fill="none"
+                                  aria-hidden="true"
+                                >
+                                  <path
+                                    d="M13.5 4.5L6.5 11.5L3 8"
+                                    stroke="currentColor"
+                                    stroke-width="2"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                  />
+                                </svg>
+                                <span class="toolkit__card-terminal-copy-label">copy</span>
+                              </button>
+                            </header>
+                            {/* TypeScript panel (only for cards that have a TS
+                                variant). Hidden unless the current language is TS. */}
+                            {card.expanded.codeTs && (
+                              <pre
+                                class="toolkit__card-terminal-code"
+                                data-lang-code="typescript"
+                                hidden
+                              ><code>{card.expanded.codeTs.map((row) => (
+                                <div class="toolkit__card-terminal-row">
+                                  <span class="toolkit__card-terminal-lineno">{row.lineNo}</span>
+                                  <span class="toolkit__card-terminal-line">{row.tokens.map((tok) => (
+                                    tok.color ? <span style={`color: ${tok.color};`}>{tok.text}</span> : <span>{tok.text}</span>
+                                  ))}</span>
+                                </div>
+                              ))}</code></pre>
+                            )}
+                            {/* Python panel. Always present; the default view. */}
+                            <pre
+                              class="toolkit__card-terminal-code"
+                              data-lang-code="python"
+                            ><code>{card.expanded.codePy.map((row) => (
+                              <div class="toolkit__card-terminal-row">
+                                <span class="toolkit__card-terminal-lineno">{row.lineNo}</span>
+                                <span class="toolkit__card-terminal-line">{row.tokens.map((tok) => (
+                                  tok.color ? <span style={`color: ${tok.color};`}>{tok.text}</span> : <span>{tok.text}</span>
+                                ))}</span>
+                              </div>
+                            ))}</code></pre>
+                            {/* Python-only note (e.g. /evals): shown only when the
+                                current language is TS, since there's no TS variant. */}
+                            {card.expanded.pythonOnly && (
+                              <p class="toolkit__card-terminal-note" data-python-only-note hidden>
+                                The Evals SDK is Python-only.
+                              </p>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                      {card.expanded.viewMoreHref && (
+                        <a
+                          href={card.expanded.viewMoreHref}
+                          class="toolkit__card-view-more"
+                        >
+                          View more
+                          <span
+                            class="toolkit__card-view-more-arrow"
+                            set:html={arrow}
+                          />
+                        </a>
+                      )}
+                    </div>
+                  )}
+
+                  <button
+                    type="button"
+                    class="toolkit__card-open"
+                    aria-label={`Toggle ${card.name} details`}
+                    aria-expanded={card.defaultOpen ? 'true' : 'false'}
+                    data-toggle
+                  >
+                    <span class="toolkit__card-open-icon" set:html={plus} />
+                  </button>
+                </article>
+              ))}
+            </div>
+          </section>
         ))}
       </div>
     </div>
@@ -547,7 +535,7 @@ const cards = [
     transition: grid-template-columns 0.3s ease;
   }
 
-  /* Each grid cell is a section: a workflow-stage header above one card. */
+  /* Each grid cell is a pillar with one or more product cards. */
   .toolkit__section {
     display: flex;
     flex-direction: column;
@@ -567,12 +555,20 @@ const cards = [
     color: var(--fg);
   }
 
-  /* When a card is expanded, its column widens to 2fr (the other two stay
-     1fr) so the expanded body fits description+features on the left and the
-     terminal on the right. The wide track follows the open card's column
-     (3n+1 to 3n+3), so expansion looks right no matter which card the user
-     picks. Compact cards keep their 200px height (align-self: start stops
-     them stretching to the expanded card's row height). */
+  .toolkit__section-cards {
+    display: grid;
+    grid-template-rows: repeat(2, minmax(200px, 1fr));
+    gap: 24px;
+    flex: 1;
+  }
+
+  .toolkit__section-cards:has(.toolkit__card.is-open) {
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* When a card is expanded, its pillar widens to 2fr while the other two
+     stay 1fr. The wide track follows the open card's pillar. */
   .toolkit__cards-grid:has(.toolkit__card.is-open) .toolkit__section {
     align-self: start;
   }
@@ -590,12 +586,11 @@ const cards = [
     position: relative;
     display: flex;
     flex-direction: column;
+    box-sizing: border-box;
+    width: 100%;
     /* Reserve room below the tags for the absolutely-positioned `+` control so
        a wrapped second tag row never collides with it. */
     padding: 22px 24px 40px;
-    /* Fill the grid cell so every compact card matches the tallest one in the
-       row; min-height is the floor when all cards are short. */
-    height: 100%;
     min-height: 200px;
     background: var(--card-bg);
     border: 1.5px solid var(--card-border);
@@ -622,7 +617,7 @@ const cards = [
     margin-top: auto;
   }
 
-  .toolkit__card-slug {
+  .toolkit__card-name {
     margin: 0;
     font-family: 'JetBrains Mono', ui-monospace, monospace;
     font-weight: 700;
@@ -741,7 +736,7 @@ const cards = [
     }
   }
 
-  .toolkit__card-slug--expanded {
+  .toolkit__card-name--expanded {
     font-size: 28px;
   }
 
@@ -979,10 +974,21 @@ const cards = [
       grid-template-columns: 1fr;
     }
 
-    /* Cards hug their content when stacked. */
+    .toolkit__section-cards {
+      grid-template-rows: none;
+      grid-auto-rows: 1fr;
+      flex: none;
+    }
+
+    /* Compact card pairs share the height of their tallest card when stacked. */
     .toolkit__card {
       height: auto;
       min-height: 0;
+    }
+
+    .toolkit__card:not(.is-open) {
+      height: auto;
+      min-height: 168px;
     }
   }
 
@@ -1024,6 +1030,10 @@ const cards = [
       gap: 16px;
     }
 
+    .toolkit__section-cards {
+      gap: 12px;
+    }
+
     /* Cards per Figma 745:12133: compact rows with 12px padding, hugging
        their content; smaller type throughout. */
     .toolkit__card {
@@ -1034,7 +1044,7 @@ const cards = [
       gap: 8px;
     }
 
-    .toolkit__card-slug {
+    .toolkit__card-name {
       font-size: 15px;
     }
 
@@ -1048,7 +1058,7 @@ const cards = [
       padding: 12px 17px;
     }
 
-    .toolkit__card-slug--expanded {
+    .toolkit__card-name--expanded {
       font-size: 15px;
     }
 
