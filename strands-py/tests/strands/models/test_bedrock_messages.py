@@ -145,7 +145,8 @@ def test_missing_extra_is_reported_as_an_absent_attribute():
         "import sys; sys.modules['anthropic'] = None\n"
         "from strands.models import BedrockModel\n"
         "assert not hasattr(BedrockModel, 'Messages')\n"
-        'try:\n    BedrockModel.Messages\nexcept AttributeError as e:\n    assert "strands-agents[anthropic]" in str(e)'
+        'try:\n    BedrockModel.Messages\nexcept AttributeError as e:\n    assert "strands-agents[bedrock]" in str(e)'
+        '\n    assert "strands-agents[anthropic]" in str(e)'
     )
 
     subprocess.run([sys.executable, "-c", code], check=True)

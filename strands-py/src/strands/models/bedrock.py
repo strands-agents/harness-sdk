@@ -253,7 +253,8 @@ class _LazyModelClass:
                 raise
             # AttributeError, not ImportError, so hasattr, help(), and inspect treat the class as absent.
             raise AttributeError(
-                f"{self._attribute} requires the '{self._extra}' extra: pip install 'strands-agents[{self._extra}]'"
+                f"{self._attribute} requires the '{self._extra}' SDK: pip install 'strands-agents[bedrock]' "
+                f"(or 'strands-agents[{self._extra}]')"
             ) from error
         return getattr(module, self._name)
 
