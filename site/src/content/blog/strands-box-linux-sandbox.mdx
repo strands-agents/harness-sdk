@@ -18,7 +18,7 @@ An agent can pick up a new issue or investigate an alert without waiting for som
 
 Teams commonly deploy agents in containers or micro-VMs to isolate them from other workloads and help limit the blast radius of a compromise. Micro-VMs strengthen that separation with a hardware-backed boundary and their own operating system kernel. Within that environment, we still need to define which files and tools the agent can use, where it can send network requests, and what checks must pass before it takes certain actions. We also need to let the agent call APIs without giving it direct access to credentials.
 
-Strands Box is an open source, operating-system-level sandbox that lets you define and enforce those limits. We first launched Box on macOS, and now it supports Linux, bringing a complementary layer of containment and policy enforcement to agents running on your own Linux hosts or in the cloud on AWS and other providers.
+[Strands Box](https://github.com/strands-agents/box) is an open source, operating-system-level sandbox that lets you define and enforce those limits. We first launched Box on macOS, and now it supports Linux, bringing a complementary layer of containment and policy enforcement to agents running on your own Linux hosts or in the cloud on AWS and other providers.
 
 With Box, you control which files an agent can read or change, which tools it can call, which commands it can run, and where it can send network requests. Box enforces those limits so the agent cannot freely use every file or permission available in its deployment environment. It also injects credentials into approved requests, letting the agent call APIs without being able to read the secrets directly.
 
