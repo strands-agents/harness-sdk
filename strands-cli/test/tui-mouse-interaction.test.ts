@@ -3,7 +3,9 @@ import { render } from 'ink'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ttyInput, ttyOutput } from './fixtures/terminal.js'
 
+import type { DevStatus } from '../src/dev/status.js'
 import { ChatApp } from '../src/tui/view/app.js'
+import { DevStatusContext } from '../src/tui/view/dev-status-context.js'
 import { ChatController, type ChatBackend } from '../src/tui/chat/controller.js'
 import { sanitizeTerminalText } from '../src/tui/terminal/sanitize.js'
 
@@ -53,6 +55,48 @@ describe('TUI mouse input', () => {
       await vi.waitFor(() => expect(controller.getSnapshot().settings.frogTheme).toBe('minimal'))
     }
     expect(frame().join('\n')).not.toContain('Choose a theme')
+  })
+
+  it('copies the dev status line as the screen shows it', async () => {
+    const input = ttyInput()
+    const output = ttyOutput(120, 16)
+    const frame = captureFrame(output)
+    const writes: string[] = []
+    output.on('data', (chunk: Buffer) => writes.push(chunk.toString()))
+    const controller = new ChatController(backend(), {
+      runtime: { version: '1.2.3', model: 'bedrock/test', cwd: '/work' },
+    })
+    const dev: DevStatus = { entrypoint: 'agent.ts', reload: { kind: 'watching' } }
+    const instance = render(
+      createElement(DevStatusContext.Provider, { value: dev }, createElement(ChatApp, { controller })),
+      {
+        stdin: input,
+        stdout: output,
+        stderr: ttyOutput(120, 16),
+        exitOnCtrlC: false,
+        patchConsole: false,
+        interactive: true,
+      }
+    )
+    instances.push(instance)
+    await instance.waitUntilRenderFlush()
+
+    const status = findText(frame(), '● dev · watching')
+    input.write(mouseInputSequence(0, 0, status.row, 'M'))
+    input.write(mouseInputSequence(32, 119, status.row, 'M'))
+    input.write(mouseInputSequence(0, 119, status.row, 'm'))
+
+    await vi.waitFor(() => expect(writes.join('')).toContain('\u001b]52;'))
+    const osc = '\u001b]52;'
+    const written = writes.join('')
+    const encoded =
+      written
+        .slice(written.indexOf(osc) + osc.length)
+        .split(';')[1]
+        ?.match(/^[A-Za-z0-9+/=]*/u)?.[0] ?? ''
+    const copied = Buffer.from(encoded, 'base64').toString('utf8')
+    expect(copied).toContain(`${controller.getSnapshot().runtime.agent} • `)
+    expect(copied).toContain('● dev · watching')
   })
 
   it('activates model metadata and the Settings button from direct clicks', async () => {

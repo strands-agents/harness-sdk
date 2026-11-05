@@ -1,6 +1,7 @@
 import {
   createElement,
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -33,6 +34,7 @@ import {
 import { copyTerminalText, setTerminalMouseMotion } from '../terminal/terminal.js'
 import { openExternalUrl } from '../terminal/open-url.js'
 import { ChatView, type QueuedPromptAction, type QueuedPromptTarget } from './chat-view.js'
+import { DevStatusContext } from './dev-status-context.js'
 import {
   activateMetadataTarget,
   adjacentSettingOption,
@@ -251,6 +253,9 @@ export function ChatApp({
   }
   const viewPropsRef = useRef(viewProps)
   viewPropsRef.current = viewProps
+  const devStatus = useContext(DevStatusContext)
+  const devStatusRef = useRef(devStatus)
+  devStatusRef.current = devStatus
   const registerPanelElement = useCallback((element: DOMElement | null): void => {
     panelElement.current = element ?? undefined
   }, [])
@@ -504,11 +509,15 @@ export function ChatApp({
                 anchor: mouse,
                 lines: sanitizeTerminalText(
                   renderToString(
-                    createElement(ChatView, {
-                      ...viewPropsRef.current,
-                      input: currentEditor.input,
-                      cursor: currentEditor.cursor,
-                    }),
+                    createElement(
+                      DevStatusContext.Provider,
+                      { value: devStatusRef.current },
+                      createElement(ChatView, {
+                        ...viewPropsRef.current,
+                        input: currentEditor.input,
+                        cursor: currentEditor.cursor,
+                      })
+                    ),
                     { columns: terminalWidth }
                   )
                 ).split('\n'),
