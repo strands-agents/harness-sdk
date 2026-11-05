@@ -3,7 +3,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
 import { McpClient, type McpServerConfig, type McpToolFilters } from '@strands-agents/sdk'
 
 import { readMcpDefinitions, type LoadMcpOptions } from '../config/mcp.js'
-import { HARNESS_VERSION } from '../package-version.js'
+import { HARNESS_VERSION, SDK_VERSION } from '../package-version.js'
 import { errorMessage, sanitizeTerminalText } from '../terminal/text.js'
 
 export { defaultMcpPaths, projectMcpPaths, readMcpDefinitions, type LoadMcpOptions } from '../config/mcp.js'
@@ -426,29 +426,57 @@ async function refreshRemoteTransport(client: McpClient, name: string, definitio
  * itself with the SDK's `[^A-Za-z0-9_-]` -> `_` sanitization.
  */
 async function createClient(name: string, definition: McpServerConfig): Promise<McpClient | undefined> {
+  let client: McpClient | undefined
   if (transportType(definition) !== 'stdio' || !definition.command) {
-    const [client] = await McpClient.loadServers({ [name]: definition }, CLIENT_DEFAULTS, {
+    ;[client] = await McpClient.loadServers({ [name]: definition }, CLIENT_DEFAULTS, {
       prefixWithServerName: true,
     })
-    if (client && transportType(definition) === 'sse') settleSseStartOnClose(client)
-    return client
+  } else {
+    // Construction failures propagate: loadMcp owns the continueOnError catch so the reason survives for /mcp.
+    client = new McpClient({
+      ...CLIENT_DEFAULTS,
+      applicationName: name,
+      transport: new StdioClientTransport({
+        command: interpolateEnv(definition.command),
+        ...(definition.args ? { args: definition.args.map(interpolateEnv) } : {}),
+        ...(definition.env ? { env: interpolateRecord(definition.env) } : {}),
+        ...(definition.cwd ? { cwd: interpolateEnv(definition.cwd) } : {}),
+        stderr: 'ignore',
+      }),
+      prefix:
+        definition.prefix !== undefined ? interpolateEnv(definition.prefix) : name.replace(/[^A-Za-z0-9_-]/g, '_'),
+      ...(definition.continueOnError !== undefined ? { continueOnError: definition.continueOnError } : {}),
+      ...(definition.tasksConfig ? { tasksConfig: definition.tasksConfig } : {}),
+      ...(definition.toolFilters ? { toolFilters: compileToolFilters(definition.toolFilters) } : {}),
+    })
   }
-  // Construction failures propagate: loadMcp owns the continueOnError catch so the reason survives for /mcp.
-  return new McpClient({
-    ...CLIENT_DEFAULTS,
-    applicationName: name,
-    transport: new StdioClientTransport({
-      command: interpolateEnv(definition.command),
-      ...(definition.args ? { args: definition.args.map(interpolateEnv) } : {}),
-      ...(definition.env ? { env: interpolateRecord(definition.env) } : {}),
-      ...(definition.cwd ? { cwd: interpolateEnv(definition.cwd) } : {}),
-      stderr: 'ignore',
-    }),
-    prefix: definition.prefix !== undefined ? interpolateEnv(definition.prefix) : name.replace(/[^A-Za-z0-9_-]/g, '_'),
-    ...(definition.continueOnError !== undefined ? { continueOnError: definition.continueOnError } : {}),
-    ...(definition.tasksConfig ? { tasksConfig: definition.tasksConfig } : {}),
-    ...(definition.toolFilters ? { toolFilters: compileToolFilters(definition.toolFilters) } : {}),
-  })
+  if (client) {
+    assertMcpCompatibility(client)
+    if (transportType(definition) === 'sse') settleSseStartOnClose(client)
+  }
+  return client
+}
+
+function assertMcpCompatibility(client: McpClient): void {
+  const transport: unknown = Reflect.get(client, '_transport')
+  let prototype: object | null = client
+  while (prototype && !Object.hasOwn(prototype, 'onToolsChanged')) {
+    prototype = Object.getPrototypeOf(prototype) as object | null
+  }
+  if (
+    typeof Reflect.get(client, '_createClient') !== 'function' ||
+    !('_urlConfig' in client) ||
+    typeof transport !== 'object' ||
+    transport === null ||
+    typeof Reflect.get(transport, 'start') !== 'function' ||
+    typeof Reflect.get(transport, 'close') !== 'function' ||
+    !prototype ||
+    typeof Object.getOwnPropertyDescriptor(prototype, 'onToolsChanged')?.set !== 'function'
+  ) {
+    throw new Error(
+      `MCP is incompatible with SDK ${SDK_VERSION}. Update the Strands CLI before connecting this server.`
+    )
+  }
 }
 
 function settleSseStartOnClose(client: McpClient): void {

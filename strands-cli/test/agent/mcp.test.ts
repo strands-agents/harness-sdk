@@ -8,6 +8,7 @@ import { Agent, McpClient } from '@strands-agents/sdk'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { defaultMcpPaths, loadMcp, projectMcpPaths, readMcpDefinitions } from '../../src/agent/mcp.js'
+import { SDK_VERSION } from '../../src/package-version.js'
 import { ChatController } from '../../src/ui/chat/controller.js'
 import { idleBackend } from '../fixtures/chat-backend.js'
 import { startRemoteMcpServer } from '../fixtures/remote-mcp.js'
@@ -46,6 +47,26 @@ afterEach(() => {
 })
 
 describe('loadMcp', () => {
+  it('reports an incompatible SDK instead of starting a broken deferred connection', async () => {
+    const loadServers = McpClient.loadServers.bind(McpClient)
+    vi.spyOn(McpClient, 'loadServers').mockImplementation(async (...args) => {
+      const clients = await loadServers(...args)
+      for (const client of clients) Reflect.set(client, '_createClient', undefined)
+      return clients
+    })
+    const loaded = await loadMcp({
+      paths: [],
+      servers: { incompatible: { url: 'http://127.0.0.1:1/mcp', continueOnError: true } },
+      backgroundConnect: true,
+    })
+    expect(loaded.clients).toEqual([])
+    expect(loaded.startup?.progress()).toEqual({ total: 1, connected: 0, failed: 1 })
+    expect(await loaded.list()).toMatchObject([
+      { name: 'incompatible', state: 'failed', error: expect.stringContaining(`incompatible with SDK ${SDK_VERSION}`) },
+    ])
+    await loaded.dispose()
+  })
+
   it('connects to a legacy stdio server that closes on protocol discovery', async () => {
     const server = `
       const readline = require('node:readline')
@@ -962,18 +983,9 @@ describe('loadMcp', () => {
       })
     )
 
-    const disconnect = vi.fn(async () => {})
-    const loadServers = vi.spyOn(McpClient, 'loadServers').mockImplementation(async (definitions) =>
-      Object.keys(definitions as object).map(
-        (name) =>
-          ({
-            clientName: name,
-            connectionState: 'disconnected',
-            disconnect,
-          }) as unknown as McpClient
-      )
-    )
-    const stdioDisconnect = vi.spyOn(McpClient.prototype, 'disconnect').mockResolvedValue(undefined)
+    const loadServers = vi.spyOn(McpClient, 'loadServers')
+    const actual = await vi.importActual<typeof import('@strands-agents/sdk')>('@strands-agents/sdk')
+    const disconnect = vi.spyOn(actual.McpClient.prototype, 'disconnect')
 
     try {
       const loaded = await loadMcp({ paths: [user, project, missing] })
@@ -992,8 +1004,7 @@ describe('loadMcp', () => {
         { name: 'local', state: 'disconnected' },
       ])
       await loaded.dispose()
-      expect(disconnect).toHaveBeenCalledTimes(1)
-      expect(stdioDisconnect).toHaveBeenCalledTimes(1)
+      expect(disconnect).toHaveBeenCalledTimes(2)
     } finally {
       await rm(directory, { recursive: true, force: true })
     }
