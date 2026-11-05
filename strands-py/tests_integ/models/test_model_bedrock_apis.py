@@ -1,10 +1,10 @@
-"""Integration tests for the nested ``BedrockModel`` API classes on both Bedrock endpoints.
+"""Integration tests for the nested ``BedrockModel`` API classes.
 
-Each call is signed with an explicit boto3 session. The shared conformance suite covers ``BedrockModel.Messages``
-and ``BedrockModel.ChatCompletions`` on the bedrock-runtime default.
+The shared conformance suite covers ``BedrockModel.Messages`` on the bedrock-runtime default. The OpenAI classes run
+on bedrock-mantle in us-east-1, like ``test_model_mantle.py``: bearer tokens on bedrock-runtime need the
+``bedrock:CallWithBearerToken`` permission.
 """
 
-import boto3
 import pytest
 
 from strands import Agent, tool
@@ -18,19 +18,18 @@ def get_weather(city: str) -> dict:
 
 
 @pytest.mark.parametrize(
-    ("model_class", "endpoint", "model_id"),
+    ("model_class", "endpoint", "region_name", "model_id"),
     [
-        ("Messages", "bedrock-runtime", "global.anthropic.claude-sonnet-4-6"),
-        ("Messages", "bedrock-mantle", "anthropic.claude-haiku-4-5"),
-        ("ChatCompletions", "bedrock-runtime", "openai.gpt-oss-120b-1:0"),
-        ("ChatCompletions", "bedrock-mantle", "openai.gpt-oss-120b"),
-        ("Responses", "bedrock-mantle", "openai.gpt-oss-120b"),
+        ("Messages", "bedrock-runtime", "us-west-2", "global.anthropic.claude-sonnet-4-6"),
+        ("Messages", "bedrock-mantle", "us-west-2", "anthropic.claude-haiku-4-5"),
+        ("ChatCompletions", "bedrock-mantle", "us-east-1", "openai.gpt-oss-120b"),
+        ("Responses", "bedrock-mantle", "us-east-1", "openai.gpt-oss-120b"),
     ],
 )
-def test_tool_use_with_session_credentials(model_class, endpoint, model_id):
+def test_tool_use(model_class, endpoint, region_name, model_id):
     settings = {"max_tokens": 1024} if model_class == "Messages" else {}
     model = getattr(BedrockModel, model_class)(
-        model_id=model_id, endpoint=endpoint, boto_session=boto3.Session(region_name="us-west-2"), **settings
+        model_id=model_id, endpoint=endpoint, region_name=region_name, **settings
     )
     agent = Agent(model=model, tools=[get_weather], callback_handler=None)
 

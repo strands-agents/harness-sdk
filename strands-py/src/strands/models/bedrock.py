@@ -10,7 +10,7 @@ import logging
 import os
 import threading
 import warnings
-from collections.abc import AsyncGenerator, Callable, Iterable, ValuesView
+from collections.abc import AsyncGenerator, Callable, Iterable, Mapping, ValuesView
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeVar, cast
 
 import boto3
@@ -63,17 +63,23 @@ BedrockEndpoint = Literal["bedrock-runtime", "bedrock-mantle"]
 """The Bedrock endpoint families that serve the Messages, Chat Completions, and Responses APIs."""
 
 
-def _resolve_bedrock_region(region_name: str | None, boto_session: boto3.Session | None) -> tuple[boto3.Session, str]:
-    """Resolve the session and region the way ``BedrockModel`` does, validating the region for URL use.
+def _resolve_bedrock_region(region_name: str | None) -> str:
+    """Resolve the region the way ``BedrockModel`` does, validated for use in an endpoint URL."""
+    region = region_name or boto3.Session().region_name or os.environ.get("AWS_REGION") or DEFAULT_BEDROCK_REGION
+    return validate_region(region)
+
+
+def _check_bedrock_options(owner: str, model_config: Mapping[str, Any], parent_options: set[str]) -> None:
+    """Reject parent-provider options the nested Bedrock classes set themselves, and imported models.
 
     Raises:
-        ValueError: If both are given, or the resolved region is malformed.
+        ValueError: If ``model_config`` holds one of ``parent_options``, or the model is an imported model.
     """
-    if region_name and boto_session:
-        raise ValueError("Cannot specify both `region_name` and `boto_session`.")
-    session = boto_session or boto3.Session()
-    region = region_name or session.region_name or os.environ.get("AWS_REGION") or DEFAULT_BEDROCK_REGION
-    return session, validate_region(region)
+    if passed := parent_options & set(model_config):
+        raise ValueError(f"options=<{sorted(passed)}> | not supported by {owner}, use the Bedrock options instead")
+    model_id = str(model_config.get("model_id") or "")
+    if ":imported-model/" in model_id:
+        raise ValueError(f"model_id=<{model_id}> | imported models are served only through InvokeModel")
 
 
 _BEDROCK_VIDEO_FORMAT_ALIASES = {
