@@ -3,8 +3,8 @@
  *
  * Before each user turn an internal `ContextInjector` re-surfaces a small block: the platform and
  * current date (the date is why this is injected rather than baked into the system prompt — a value
- * that changes each turn would bust the cached system-prompt prefix, whereas an ephemeral injection
- * lands after it and leaves the cache warm), the working directory, the contents of the project's
+ * that changes each turn would bust the cached system-prompt prefix, whereas an injection lands
+ * after it and leaves the cache warm), the working directory, the contents of the project's
  * `AGENTS.md`, and links to other `AGENTS.md` / `README.md` files found a couple of levels down
  * (links, not contents, so the block stays small — the agent reads them on demand).
  *

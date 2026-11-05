@@ -1,10 +1,10 @@
-import { BeforeModelCallEvent } from '../../hooks/events.js'
-import { HookOrder } from '../../hooks/types.js'
 import { resolveTrigger } from '../../injection/message-injection.js'
+import { InvokeModelStage } from '../../middleware/index.js'
 import { logger } from '../../logging/logger.js'
 import { normalizeError } from '../../errors.js'
 import { InjectedBlock, Message } from '../../types/messages.js'
 import type { ContentBlock } from '../../types/messages.js'
+import type { InvokeModelContext } from '../../middleware/index.js'
 import type { Plugin } from '../../plugins/plugin.js'
 import type { LocalAgent } from '../../types/agent.js'
 import type { InjectionTrigger, InjectionContext } from '../../injection/types.js'
@@ -28,9 +28,10 @@ export interface ContextInjectorConfig {
   /**
    * Renders the text to write into the latest user message, or `undefined`/`''` to skip. The text reaches
    * the model verbatim, so it is a prompt-injection surface: escape any attacker-influenced fields yourself.
-   * On a model whose provider sends temporary messages it arrives as a system message, which the model ranks above
+   * On a model that takes temporary messages it arrives as a system message, which the model ranks above
    * the user, so never put content from outside the conversation (tool output, retrieved documents) in it.
-   * A callback that throws fails open (injection is skipped, the model call proceeds).
+   * Called at most once per user message: a retry, a forced structured output call or a resume sends the text it
+   * returned the first time. A callback that throws fails open (injection is skipped, the model call proceeds).
    */
   renderContent: (context: InjectionContext) => Promise<string | undefined>
 }
@@ -40,8 +41,8 @@ export interface ContextInjectorConfig {
  *
  * Before each model call, the plugin asks {@link ContextInjectorConfig.renderContent} for text, gated by
  * {@link ContextInjectorConfig.trigger}, and writes it into the latest user message as an
- * `InjectedBlock`. The block stays in the conversation and the session. When the model's provider sends
- * temporary messages (`AnthropicModel` on supported Claude models), the model receives each block as a system
+ * `InjectedBlock`. The block stays in the conversation and the session. When the model takes temporary
+ * messages (`AnthropicModel` on supported Claude models), the model receives each block as a system
  * message it reads only until the next user message, so the stored history is sent unchanged on every call. Every
  * other model receives only the latest user message's blocks, as text.
  *
@@ -72,34 +73,38 @@ export class ContextInjector implements Plugin {
   }
 
   initAgent(agent: LocalAgent): void {
-    // Runs after the SDK's other hooks, so the write lands in any user message they added.
-    agent.addHook(BeforeModelCallEvent, (event) => this._inject(event), { order: HookOrder.SDK_LAST })
+    agent.addMiddleware(InvokeModelStage.Input, (context) => this._inject(context))
   }
 
   /**
-   * Writes the rendered text into the latest user message, which the model has not answered yet, so the stored
-   * history before it never changes. A message gets at most one block from this injector, so a retry, a forced
-   * structured output call or a resume sends the same request again, also after a session restore. Anything
-   * that skips leaves the conversation unchanged so the model call proceeds (fail open).
+   * Writes the rendered text into the latest user message of the conversation and of this call. It runs as model
+   * input, after hooks and background task results have added their messages, and the model has not answered that
+   * message yet, so the stored history before it never changes. A message gets at most one block from this
+   * injector, so a retry, a forced structured output call or a resume sends the same request again, also after a
+   * session restore. Anything that skips leaves the conversation unchanged (fail open).
    */
-  private async _inject(event: BeforeModelCallEvent): Promise<void> {
-    const messages = event.agent.messages
-    const latest = messages.at(-1)
-    if (event.cancel || latest?.role !== 'user' || latest.content.some((block) => this._wrote(block))) return
-    const context: InjectionContext = {
-      messages: messages.map((message) => message.toJSON()),
-      appState: event.agent.appState,
-      agent: event.agent,
+  private async _inject(context: InvokeModelContext): Promise<InvokeModelContext> {
+    const history = context.agent.messages
+    const latest = history.at(-1)
+    if (latest?.role !== 'user' || latest.content.some((block) => this._wrote(block))) return context
+    // Another middleware may have replaced this call's messages.
+    const index = context.messages.findIndex((message) => message.trackingId === latest.trackingId)
+    if (index < 0) return context
+    const injectionContext: InjectionContext = {
+      messages: context.messages.map((message) => message.toJSON()),
+      appState: context.agent.appState,
+      agent: context.agent,
     }
-    if (!this._trigger(context)) return
-    const text = await this._render(context)
-    if (!text?.trim()) return
-    messages[messages.length - 1] = new Message({
-      role: 'user',
-      content: [...latest.content, new InjectedBlock({ text, source: this.name })],
-      trackingId: latest.trackingId,
-      ...(latest.metadata !== undefined && { metadata: latest.metadata }),
-    })
+    if (!this._trigger(injectionContext)) return context
+    const text = await this._render(injectionContext)
+    if (!text?.trim()) return context
+    const block = new InjectedBlock({ text, source: this.name })
+    // After the stored content, so text other middleware adds for this call only stays last.
+    const position = latest.content.length
+    history[history.length - 1] = withBlock(latest, block, position)
+    const messages = [...context.messages]
+    messages[index] = withBlock(messages[index]!, block, position)
+    return { ...context, messages }
   }
 
   private async _render(context: InjectionContext): Promise<string | undefined> {
@@ -114,4 +119,13 @@ export class ContextInjector implements Plugin {
   private _wrote(block: ContentBlock): boolean {
     return block.type === 'injectedBlock' && block.injected.source === this.name
   }
+}
+
+function withBlock(message: Message, block: InjectedBlock, position: number): Message {
+  return new Message({
+    role: message.role,
+    content: [...message.content.slice(0, position), block, ...message.content.slice(position)],
+    trackingId: message.trackingId,
+    ...(message.metadata !== undefined && { metadata: message.metadata }),
+  })
 }

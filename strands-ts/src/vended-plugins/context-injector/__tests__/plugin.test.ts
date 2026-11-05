@@ -1,10 +1,12 @@
 import { describe, it, expect, vi } from 'vitest'
 import { ContextInjector } from '../plugin.js'
 import type { ContextInjectorConfig } from '../plugin.js'
-import { InjectedBlock, Message, TextBlock, ToolResultBlock } from '../../../types/messages.js'
+import { InjectedBlock, Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../../types/messages.js'
 import type { ContentBlock, MessageData } from '../../../types/messages.js'
 import { AfterModelCallEvent, BeforeModelCallEvent, MessageAddedEvent } from '../../../hooks/events.js'
 import { createMockAgent } from '../../../__fixtures__/agent-helpers.js'
+import { InvokeModelStage } from '../../../middleware/index.js'
+import { continuations } from '../../../agent/continuation.js'
 import { Agent } from '../../../agent/agent.js'
 import type { AgentConfig } from '../../../agent/agent.js'
 import { Offload } from '../../../context-manager/strategies/offload/index.js'
@@ -14,6 +16,7 @@ import { logger } from '../../../logging/logger.js'
 import type { StreamOptions } from '../../../models/model.js'
 import type { InjectionContext } from '../../../injection/types.js'
 import type { Tool } from '../../../tools/tool.js'
+import type { Plugin } from '../../../plugins/plugin.js'
 
 const injected = (text: string, source = 'test') => new InjectedBlock({ text, source })
 
@@ -27,11 +30,12 @@ describe('ContextInjector', () => {
       expect(new ContextInjector({ name: 'now', renderContent: async () => 'x' }).name).toBe('now')
     })
 
-    it('registers a BeforeModelCallEvent hook on initAgent', () => {
-      const agent = createMockAgent()
+    it('registers an InvokeModelStage input middleware on initAgent', () => {
+      const addMiddleware = vi.fn()
+      const agent = createMockAgent({ extra: { addMiddleware } as never })
       new ContextInjector({ renderContent: async () => 'x' }).initAgent(agent)
 
-      expect(agent.trackedHooks.map((hook) => hook.eventType)).toStrictEqual([BeforeModelCallEvent])
+      expect(addMiddleware.mock.calls.map(([stage]) => stage)).toStrictEqual([InvokeModelStage.Input])
     })
   })
 
@@ -177,7 +181,7 @@ describe('ContextInjector', () => {
       ])
     })
 
-    it('keeps every request a prefix of the next for a provider that sends temporary messages', async () => {
+    it('keeps every request a prefix of the next for a model that takes temporary messages', async () => {
       let todo = 'v1'
       const tool = createMockTool('todo_write', () => {
         todo = 'v2'
@@ -187,7 +191,7 @@ describe('ContextInjector', () => {
         .addTurn({ type: 'toolUseBlock', name: 'todo_write', toolUseId: 'tool-1', input: {} })
         .addTurn({ type: 'textBlock', text: 'done' })
         .addTurn({ type: 'textBlock', text: 'again' })
-      vi.spyOn(model, 'sendsTemporaryMessages', 'get').mockReturnValue(true)
+      model.updateConfig({ modelInfo: { capabilities: { temporaryMessages: true } } })
       const { agent, requests } = setup(
         model,
         { trigger: 'everyTurn', renderContent: async () => `<todos>${todo}</todos>` },
@@ -283,6 +287,79 @@ describe('ContextInjector', () => {
         [new TextBlock('ask')],
         [new TextBlock('[guide] be brief'), injected('reminder')],
       ])
+    })
+
+    it('writes into the result a background task delivers before the model call', async () => {
+      const model = new MockMessageModel()
+        .addTurn({ type: 'textBlock', text: 'one' })
+        .addTurn({ type: 'textBlock', text: 'two' })
+      const { agent, requests } = setup(model, { trigger: 'everyTurn', renderContent: async () => 'reminder' })
+      await agent.invoke('Run work.')
+      agent.addHook(BeforeModelCallEvent, (event) => {
+        continuations.addInput(event, {
+          args: [
+            new Message({
+              role: 'assistant',
+              content: [new ToolUseBlock({ name: 'task', toolUseId: 'task-1', input: {} })],
+            }),
+            new Message({
+              role: 'user',
+              content: [
+                new ToolResultBlock({ toolUseId: 'task-1', status: 'success', content: [new TextBlock('done')] }),
+              ],
+            }),
+          ],
+        })
+      })
+
+      await agent.invoke('Continue.')
+
+      expect(requests[1]!.at(-1)!.content).toStrictEqual([
+        expect.objectContaining({ toolResult: expect.anything() }),
+        { text: '\n\nreminder' },
+      ])
+    })
+
+    it('keeps text other middleware adds for one call after the injected block', async () => {
+      const model = new MockMessageModel().addTurn(new Error('throttled')).addTurn({ type: 'textBlock', text: 'ok' })
+      const perCall: Plugin = {
+        name: 'per-call',
+        initAgent: (agent) => {
+          agent.addMiddleware(InvokeModelStage.Input, async (context) => {
+            const messages = [...context.messages]
+            const latest = messages.at(-1)!
+            messages[messages.length - 1] = new Message({
+              role: 'user',
+              content: [...latest.content, new TextBlock('\n\nper-call')],
+              trackingId: latest.trackingId,
+            })
+            return { ...context, messages }
+          })
+        },
+      }
+      const agent = new Agent({
+        model,
+        printer: false,
+        plugins: [perCall, new ContextInjector({ name: 'test', renderContent: async () => 'reminder' })],
+      })
+      const requests: MessageData[][] = []
+      const originalStream = model.stream.bind(model)
+      vi.spyOn(model, 'stream').mockImplementation(async function* (messages, streamOptions) {
+        requests.push(messages.map((message) => message.toJSON()))
+        yield* originalStream(messages, streamOptions)
+      })
+      agent.addHook(AfterModelCallEvent, (event) => {
+        if (event.error) event.retry = true
+      })
+
+      await agent.invoke('ask')
+
+      expect(requests[0]![0]!.content).toStrictEqual([
+        { text: 'ask' },
+        { text: '\n\nreminder' },
+        { text: '\n\nper-call' },
+      ])
+      expect(requests[1]).toStrictEqual(requests[0])
     })
 
     it("does not render on a tool-result turn with the default 'userTurn' trigger", async () => {
