@@ -471,3 +471,30 @@ class TestServerSideSummary:
         assert reason in caplog.text
         assert "falling back to client-side summary" in caplog.text
         assert "thinking blocks kept after it will be dropped" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_client_side_fallback_keeps_earlier_server_side_summary(self, mock_agent):
+        mock_agent.model.model_info.capabilities.server_side_summary = True
+        mock_agent.model.summarize = unittest.mock.AsyncMock(side_effect=RuntimeError("overloaded"))
+        summarizer_inputs: list[Messages] = []
+        summarize_stream = _make_stream_events("Summary of content.")
+
+        def capture_stream(messages, *args, **kwargs):
+            summarizer_inputs.append(messages)
+            return summarize_stream(messages, *args, **kwargs)
+
+        mock_agent.model.stream = capture_stream
+        messages: Messages = [
+            Message(role="user", content=[ContentBlock(text="task")]),
+            Message(role="assistant", content=[ContentBlock(summary={"provider": "anthropic", "text": "fact"})]),
+            Message(role="user", content=[ContentBlock(text="old1")]),
+            Message(role="assistant", content=[ContentBlock(text="old2")]),
+            Message(role="user", content=[ContentBlock(text="recent")]),
+        ]
+        mock_agent.messages = messages
+        strategy = Offload.summarize("*").when(utilization=0.8, preserve_recent=1)
+
+        assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is True
+
+        sent_texts = [block.get("text") for sent in summarizer_inputs for m in sent for block in m["content"]]
+        assert "fact" in sent_texts

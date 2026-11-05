@@ -3317,7 +3317,6 @@ def _compaction_model(anthropic_client):
         model_id="m1",
         max_tokens=1,
         params={"stop_sequences": ["STOP"]},
-        model_info=ModelInfo(capabilities=ModelCapabilities(server_side_summary=True)),
     )
 
 
@@ -3384,13 +3383,20 @@ def test_format_request_sends_from_last_compaction_block(anthropic_client):
     assert request["extra_headers"]["anthropic-beta"] == "compact-2026-09-04"
 
 
+def test_server_side_summary_is_on_by_default(model):
+    assert model.model_info.capabilities.server_side_summary is True
+
+
 def test_format_request_sends_compaction_text_without_capability(model):
+    model.update_config(model_info=ModelInfo(capabilities=ModelCapabilities(server_side_summary=False)))
     messages = [
         {"role": "user", "content": [{"text": "first"}]},
         {"role": "assistant", "content": [_stored_compaction("old")]},
     ]
 
     request = model.format_request(messages)
+
+    assert model.model_info.capabilities.server_side_summary is False
 
     assert request["messages"][1]["content"] == [{"type": "text", "text": "old"}]
     assert "extra_headers" not in request
