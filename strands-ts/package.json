@@ -275,7 +275,7 @@
     "@ai-sdk/amazon-bedrock": "^4.0.129",
     "@ai-sdk/openai": "^3.0.41",
     "@ai-sdk/provider": "^3.0.0",
-    "@anthropic-ai/sdk": "^0.109.1",
+    "@anthropic-ai/sdk": "^1.4.0",
     "@aws-sdk/client-bedrock": "^3.1153.0",
     "@aws-sdk/client-bedrock-agent": "^3.1153.0",
     "@aws-sdk/client-bedrock-agent-runtime": "^3.1153.0",
@@ -342,7 +342,7 @@
   "peerDependencies": {
     "@a2a-js/sdk": "^0.3.10",
     "@ai-sdk/provider": "^3.0.0",
-    "@anthropic-ai/sdk": "^0.109.1",
+    "@anthropic-ai/sdk": ">=0.109.1 <2.0.0",
     "@aws-sdk/client-bedrock-agent": "^3.1078.0",
     "@aws-sdk/client-bedrock-agent-runtime": "^3.1078.0",
     "@aws-sdk/client-s3": "^3.1078.0",

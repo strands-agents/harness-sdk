@@ -30,6 +30,19 @@ describe('external docs schema', () => {
     expect(parseExternalDocsManifest(manifest())).toEqual(manifest())
   })
 
+  it('accepts manifests without the deprecated upstream status', () => {
+    const input = manifest()
+    const withoutStatus = {
+      ...input,
+      product: {
+        id: input.product.id,
+        name: input.product.name,
+      },
+    }
+
+    expect(parseExternalDocsManifest(withoutStatus)).toEqual(withoutStatus)
+  })
+
   it('rejects unknown fields and unsupported product status', () => {
     const withUnknown = { ...manifest(), owner: 'site' }
     expect(() => parseExternalDocsManifest(withUnknown)).toThrow(/must contain exactly/)
