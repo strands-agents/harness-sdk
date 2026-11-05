@@ -35,9 +35,9 @@ jobs:
       - name: Checkout samples snapshot
         uses: actions/checkout@v7
         with:
-          # Locked mode uses the same Samples baseline as docs CI.
+          # Locked mode uses a reviewed Samples baseline; latest mode follows main.
           repository: strands-agents/samples
-          ref: ${{ inputs.content_snapshot == 'locked' && 'd04826e668a51b237a3fc06fd9402517a2daf66c' || 'main' }}
+          ref: ${{ inputs.content_snapshot == 'locked' && '6226307ed8f6de1face333d3daec638593aeedf3' || 'main' }}
           path: samples-source
           persist-credentials: false
 

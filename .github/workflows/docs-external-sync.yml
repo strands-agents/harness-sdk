@@ -25,9 +25,9 @@ jobs:
       - name: Checkout samples
         uses: actions/checkout@v7
         with:
-          # Keep this revision in sync with docs-ci.yml for deterministic validation.
+          # Keep this revision in sync with the locked production baseline.
           repository: strands-agents/samples
-          ref: d04826e668a51b237a3fc06fd9402517a2daf66c
+          ref: 6226307ed8f6de1face333d3daec638593aeedf3
           path: samples-source
           persist-credentials: false
 

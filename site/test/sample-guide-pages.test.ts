@@ -532,4 +532,43 @@ describe('buildSampleGuideSidebar', () => {
   it('scopes a guide sidebar to its language', () => {
     expect(buildSampleGuideSidebar(entries, entries[3])).toEqual([expectedPython])
   })
+
+  it('preserves category groups and omits Overview for legacy guide sidebars', () => {
+    const legacyEntries = [
+      guideFixture('python/first-agent', 'python', 0, {
+        catalogMode: 'legacy',
+        category: 'learn',
+        categoryLabel: 'Learn',
+      }),
+      guideFixture('python/lambda', 'python', 1, {
+        catalogMode: 'legacy',
+        category: 'deploy',
+        categoryLabel: 'Deploy',
+      }),
+      guideFixture('typescript/first-agent', 'typescript', 2, {
+        catalogMode: 'legacy',
+        category: 'learn',
+        categoryLabel: 'Learn',
+      }),
+    ]
+
+    expect(buildSampleGuideSidebar(legacyEntries, legacyEntries[0])).toEqual([
+      {
+        label: 'Python',
+        collapsed: false,
+        items: [
+          {
+            label: 'Learn',
+            collapsed: false,
+            items: [{ label: 'python/first-agent', link: '/examples/python/first-agent/' }],
+          },
+          {
+            label: 'Deploy',
+            collapsed: false,
+            items: [{ label: 'python/lambda', link: '/examples/python/lambda/' }],
+          },
+        ],
+      },
+    ])
+  })
 })

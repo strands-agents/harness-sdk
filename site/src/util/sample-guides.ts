@@ -105,20 +105,34 @@ export function buildSampleGuideSidebar(guides: SampleGuideEntry[], currentGuide
   const languages: SampleGuideEntry['data']['language'][] = currentGuide
     ? [currentGuide.data.language]
     : languageOrder.filter((language) => availableLanguages.has(language))
+  const catalogMode = currentGuide?.data.catalogMode ?? guides[0]?.data.catalogMode
 
   return languages.map((language) => {
     const languageGuides = sortSampleGuides(guides.filter((guide) => guide.data.language === language))
+    const items =
+      catalogMode === 'legacy'
+        ? groupSampleGuideCategories(languageGuides).map((category) => ({
+            label: category.label,
+            collapsed: false,
+            items: category.families.flatMap((family) =>
+              family.guides.map((guide) => ({
+                label: guide.data.title,
+                link: sampleGuidePath(guide),
+              }))
+            ),
+          }))
+        : [
+            { label: 'Overview', link: '/examples/' },
+            ...languageGuides.map((guide) => ({
+              label: guide.data.title,
+              link: sampleGuidePath(guide),
+            })),
+          ]
 
     return {
       label: languageLabel(language),
       collapsed: false,
-      items: [
-        { label: 'Overview', link: '/examples/' },
-        ...languageGuides.map((guide) => ({
-          label: guide.data.title,
-          link: sampleGuidePath(guide),
-        })),
-      ],
+      items,
     }
   })
 }
