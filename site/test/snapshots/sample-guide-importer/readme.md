@@ -1,5 +1,6 @@
 ---
 sampleId: "typescript/02-applications/01-readme"
+catalogMode: "curated"
 title: "README guide"
 description: "Build a TypeScript sample guide from README content while preserving links, images, code blocks, task lists, and repository source references."
 slug: "typescript/readme"

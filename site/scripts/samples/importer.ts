@@ -21,6 +21,8 @@ const MAX_GUIDE_BYTES = 2 * 1024 * 1024
 const MIN_DESCRIPTION_LENGTH = 140
 const MAX_DESCRIPTION_LENGTH = 160
 const SNIPPET_DIRECTIVE_PATTERN = /^-+8<-+\s*"[^"]+"$/
+// Legacy manifests treat the ordered 01-learn curricula as workshop content, not standalone guides.
+const WORKSHOP_SAMPLE_PREFIXES = ['python/01-learn/', 'typescript/01-learn/']
 
 const htmlConverter = new TurndownService({
   headingStyle: 'atx',
@@ -160,6 +162,7 @@ const sampleSchema = z
 const manifestSchema = z
   .object({
     version: z.literal(1),
+    catalog: z.literal('curated').optional(),
     categories: z.array(categorySchema),
     collections: z.array(collectionSchema).optional(),
     samples: z.array(sampleSchema),
@@ -169,7 +172,15 @@ type ParsedManifest = z.infer<typeof manifestSchema>
 
 function parseManifest(value: unknown) {
   const manifest: ParsedManifest = manifestSchema.parse(value)
-  const curated = manifest.collections !== undefined
+  const catalogMode = manifest.catalog === 'curated' ? 'curated' : 'legacy'
+  const curated = catalogMode === 'curated'
+  if (curated && manifest.collections === undefined) {
+    throw new Error('Curated samples manifest must define collections')
+  }
+  if (!curated && manifest.collections !== undefined) {
+    throw new Error('Samples manifest collections require catalog: "curated"')
+  }
+
   const categoryLabels = new Map<string, string>()
   for (const category of manifest.categories) {
     const key = `${category.language}/${category.id}`
@@ -230,41 +241,55 @@ function parseManifest(value: unknown) {
     const categoryLabel = categoryLabels.get(category)
     if (categoryLabel === undefined) throw new Error(`${sample.path} references unknown category ${category}`)
 
-    const declaredCollections = new Set<string>()
-    for (const collectionId of sample.collections) {
-      if (declaredCollections.has(collectionId)) {
-        throw new Error(`${sample.id} declares duplicate collection ${collectionId}`)
-      }
-      declaredCollections.add(collectionId)
-      if (!collections.has(collectionId)) {
-        throw new Error(`${sample.id} references unknown collection ${collectionId}`)
-      }
-      if (!collectionMembership.get(sample.id)?.has(collectionId)) {
-        throw new Error(`${sample.id} declares collection ${collectionId} but is not listed in it`)
-      }
-    }
     const memberships = collectionMembership.get(sample.id) ?? new Set<string>()
-    const declaredVariants = new Set<string>()
-    for (const variantId of sample.variants) {
-      if (declaredVariants.has(variantId)) {
-        throw new Error(`${sample.id} declares duplicate variant ${variantId}`)
+    if (curated) {
+      const declaredCollections = new Set<string>()
+      for (const collectionId of sample.collections) {
+        if (declaredCollections.has(collectionId)) {
+          throw new Error(`${sample.id} declares duplicate collection ${collectionId}`)
+        }
+        declaredCollections.add(collectionId)
+        if (!collections.has(collectionId)) {
+          throw new Error(`${sample.id} references unknown collection ${collectionId}`)
+        }
+        if (!collectionMembership.get(sample.id)?.has(collectionId)) {
+          throw new Error(`${sample.id} declares collection ${collectionId} but is not listed in it`)
+        }
       }
-      declaredVariants.add(variantId)
-      if (!declaredIds.has(variantId)) throw new Error(`${sample.id} references unknown variant ${variantId}`)
-      if (variantId === sample.id) throw new Error(`${sample.id} cannot reference itself as a variant`)
-    }
-    if (sample.placement === 'repo-only' && memberships.size > 0) {
-      throw new Error(`${sample.id} is repo-only but belongs to a published collection`)
+
+      const declaredVariants = new Set<string>()
+      for (const variantId of sample.variants) {
+        if (declaredVariants.has(variantId)) {
+          throw new Error(`${sample.id} declares duplicate variant ${variantId}`)
+        }
+        declaredVariants.add(variantId)
+        if (!declaredIds.has(variantId)) throw new Error(`${sample.id} references unknown variant ${variantId}`)
+        if (variantId === sample.id) throw new Error(`${sample.id} cannot reference itself as a variant`)
+      }
+      if (sample.placement === 'repo-only' && memberships.size > 0) {
+        throw new Error(`${sample.id} is repo-only but belongs to a published collection`)
+      }
     }
 
     return {
       ...sample,
+      catalogMode,
       categoryLabel,
-      placement: sample.placement ?? 'featured',
-      kind: sample.kind ?? 'application',
-      collections: [...memberships]
-        .map((collectionId) => collections.get(collectionId)!)
-        .sort((left, right) => left.order - right.order),
+      placement: curated ? sample.placement! : 'featured',
+      kind: curated ? sample.kind! : 'application',
+      collections: curated
+        ? [...memberships]
+            .map((collectionId) => collections.get(collectionId)!)
+            .sort((left, right) => left.order - right.order)
+        : [],
+      capabilities: curated ? sample.capabilities : [],
+      docs: curated ? sample.docs : [],
+      variants: curated ? sample.variants : [],
+      family: curated ? sample.family : undefined,
+      program: curated ? sample.program : undefined,
+      maturity: curated ? sample.maturity : undefined,
+      owner: curated ? sample.owner : undefined,
+      lastValidated: curated ? sample.lastValidated : undefined,
     }
   })
 
@@ -274,10 +299,12 @@ function parseManifest(value: unknown) {
     }
   }
 
-  const publishedSamples = samples.filter((sample) => sample.placement !== 'repo-only')
+  const publishedSamples = curated
+    ? samples.filter((sample) => sample.placement !== 'repo-only')
+    : samples.filter((sample) => !WORKSHOP_SAMPLE_PREFIXES.some((prefix) => sample.path.startsWith(prefix)))
   const familyLanguages = new Set<string>()
   for (const sample of publishedSamples) {
-    if (!sample.family) continue
+    if (!curated || !sample.family) continue
     const familyLanguage = `${sample.family}/${sample.language}`
     if (familyLanguages.has(familyLanguage)) {
       throw new Error(`Duplicate published sample family language: ${familyLanguage}`)
@@ -290,7 +317,7 @@ function parseManifest(value: unknown) {
     if (!catalogOrder.has(sampleId)) catalogOrder.set(sampleId, catalogOrder.size)
   }
 
-  return { samples: publishedSamples, catalogOrder }
+  return { samples: publishedSamples, catalogOrder, catalogMode }
 }
 
 type SampleManifest = ReturnType<typeof parseManifest>
@@ -756,6 +783,7 @@ function frontmatter(sample: ManifestSample, description: string, commit: string
   return [
     '---',
     `sampleId: ${JSON.stringify(sample.id)}`,
+    `catalogMode: ${JSON.stringify(sample.catalogMode)}`,
     `title: ${JSON.stringify(sample.title)}`,
     `description: ${JSON.stringify(description)}`,
     `slug: ${JSON.stringify(sample.slug)}`,
@@ -792,6 +820,7 @@ export async function buildSampleGuides(options: BuildSampleGuidesOptions): Prom
   await rm(options.outputDir, { recursive: true, force: true })
   const placementOrder = { featured: 0, reference: 1 }
   const samples = [...manifest.samples].sort((left, right) => {
+    if (manifest.catalogMode === 'legacy') return left.path.localeCompare(right.path)
     const placementDifference = placementOrder[left.placement] - placementOrder[right.placement]
     if (placementDifference !== 0) return placementDifference
     const leftOrder = manifest.catalogOrder.get(left.id) ?? Number.MAX_SAFE_INTEGER

@@ -4,10 +4,10 @@ import { getCollection } from 'astro:content'
 import { pathWithBase } from '../util/links'
 import {
   groupSampleGuideFamilies,
+  isAmplifyingAiSampleGuide,
   sampleGuidePath,
   sortSampleGuides,
   type SampleGuideEntry,
-  type SampleGuideFamily,
 } from '../util/sample-guides'
 import { languageLabel } from '../util/source-links'
 
@@ -15,8 +15,8 @@ const guides = sortSampleGuides(await getCollection('sampleGuides'))
 const featuredGuides = guides.filter((guide) => guide.data.placement === 'featured')
 const featuredFamilies = groupSampleGuideFamilies(featuredGuides)
 const referenceGuides = guides.filter((guide) => guide.data.placement === 'reference')
-const featuredHeading = featuredGuides[0]?.data.collections[0]?.label ?? 'End-to-end examples'
-const featuredDescription = featuredGuides[0]?.data.collections[0]?.description
+const featuredHeading = 'End-to-end examples'
+const featuredDescription = 'Complete applications with setup, validation, and deployment guidance.'
 
 const collectionSections = new Map<
   string,
@@ -46,13 +46,6 @@ const supplementalSections = [...collectionSections.values()]
   .sort((left, right) => left.order - right.order)
   .map((section) => ({ ...section, families: groupSampleGuideFamilies(section.guides) }))
 const ungroupedReferenceFamilies = groupSampleGuideFamilies(ungroupedReferences)
-
-const isAmplifying = (family: SampleGuideFamily) =>
-  family.guides.some(
-    (guide) =>
-      guide.data.program === 'amplifying-ai' ||
-      guide.data.collections.some((collection) => collection.id === 'amplifying-ai')
-  )
 ---
 
 <StarlightPage
@@ -87,7 +80,9 @@ const isAmplifying = (family: SampleGuideFamily) =>
                 >
                   <div class="sample-card__badges">
                     <span>{family.primary.data.kind}</span>
-                    {isAmplifying(family) && <span class="sample-card__program">Amplifying AI</span>}
+                    {family.guides.some(isAmplifyingAiSampleGuide) && (
+                      <span class="sample-card__program">Amplifying AI</span>
+                    )}
                   </div>
                   <h3>{family.primary.data.title}</h3>
                   <p>{family.primary.data.description}</p>
@@ -129,7 +124,9 @@ const isAmplifying = (family: SampleGuideFamily) =>
                 >
                   <div class="sample-card__badges">
                     <span>{family.primary.data.kind}</span>
-                    {isAmplifying(family) && <span class="sample-card__program">Amplifying AI</span>}
+                    {family.guides.some(isAmplifyingAiSampleGuide) && (
+                      <span class="sample-card__program">Amplifying AI</span>
+                    )}
                   </div>
                   <h3>{family.primary.data.title}</h3>
                   <p>{family.primary.data.description}</p>

@@ -9,8 +9,19 @@ export interface SampleGuideFamily {
   guides: SampleGuideEntry[]
 }
 
+// Keep this identifier aligned with the samples catalog producer contract:
+// https://github.com/strands-agents/samples/blob/main/samples-catalog.json
+const AMPLIFYING_AI_CATALOG_ID = 'amplifying-ai'
+
 export function sortSampleGuides(guides: SampleGuideEntry[]): SampleGuideEntry[] {
   return [...guides].sort((left, right) => left.data.order - right.data.order)
+}
+
+export function isAmplifyingAiSampleGuide(guide: SampleGuideEntry): boolean {
+  return (
+    guide.data.program === AMPLIFYING_AI_CATALOG_ID ||
+    guide.data.collections.some((collection) => collection.id === AMPLIFYING_AI_CATALOG_ID)
+  )
 }
 
 export function groupSampleGuideFamilies(guides: SampleGuideEntry[]): SampleGuideFamily[] {
@@ -50,12 +61,23 @@ export function sampleGuideSwitchPath(
   const current = guides.find((guide) => guide.data.slug === currentSlug)
   if (!current || current.data.language === targetLanguage) return undefined
 
+  const catalogGuides = guides.filter((guide) => guide.data.catalogMode === current.data.catalogMode)
+  if (current.data.catalogMode === 'legacy') {
+    const segments = current.data.slug.split('/')
+    if (segments.length < 2) return undefined
+    const counterpartSlug = [targetLanguage, ...segments.slice(1)].join('/')
+    const target =
+      catalogGuides.find((guide) => guide.data.slug === counterpartSlug) ??
+      sortSampleGuides(catalogGuides).find((guide) => guide.data.language === targetLanguage)
+    return target ? sampleGuidePath(target) : undefined
+  }
+
   const familyTarget = current.data.family
-    ? guides.find((guide) => guide.data.language === targetLanguage && guide.data.family === current.data.family)
+    ? catalogGuides.find((guide) => guide.data.language === targetLanguage && guide.data.family === current.data.family)
     : undefined
   const target =
     familyTarget ??
-    guides.find(
+    catalogGuides.find(
       (guide) => guide.data.language === targetLanguage && current.data.variants.includes(guide.data.sampleId)
     )
   return target ? sampleGuidePath(target) : undefined

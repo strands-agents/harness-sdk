@@ -7,6 +7,7 @@ import { pathWithBase } from '../src/util/links'
 import { languageLabel } from '../src/util/source-links'
 import {
   groupSampleGuideFamilies,
+  isAmplifyingAiSampleGuide,
   isSampleGuidePath,
   sampleGuideLanguageFromPath,
   sampleGuidePath,
@@ -16,6 +17,48 @@ import {
 } from '../src/util/sample-guides'
 
 let guides: SampleGuideEntry[]
+
+interface GuideFixtureOptions {
+  sampleId?: string
+  catalogMode?: 'legacy' | 'curated'
+  family?: string
+  variants?: string[]
+  placement?: 'featured' | 'reference'
+  collections?: Array<{ id: string; label: string; description?: string; order: number }>
+  program?: string
+}
+
+function guideFixture(
+  slug: string,
+  language: 'python' | 'typescript',
+  order: number,
+  options: GuideFixtureOptions = {}
+): SampleGuideEntry {
+  return {
+    id: slug,
+    collection: 'sampleGuides',
+    data: {
+      sampleId: options.sampleId ?? slug,
+      catalogMode: options.catalogMode ?? 'curated',
+      title: slug,
+      description: `${slug} description`,
+      slug,
+      language,
+      category: 'learn',
+      categoryLabel: 'Learn',
+      placement: options.placement ?? 'featured',
+      kind: 'application',
+      collections: options.collections ?? [],
+      capabilities: [],
+      docs: [],
+      variants: options.variants ?? [],
+      family: options.family,
+      program: options.program,
+      sourceUrl: `https://github.com/strands-agents/samples/tree/commit/${slug}`,
+      order,
+    },
+  } as SampleGuideEntry
+}
 
 beforeAll(async () => {
   guides = sortSampleGuides(await getCollection('sampleGuides'))
@@ -127,6 +170,12 @@ describe('generated sample guide pages', () => {
     const featuredFamilies = groupSampleGuideFamilies(guides.filter((guide) => guide.data.placement === 'featured'))
     const featuredCards = page.querySelectorAll('[data-sample-placement="featured"]')
     expect(featuredCards).toHaveLength(featuredFamilies.length)
+    if (featuredFamilies.length > 0) {
+      expect(page.querySelector('#featured-examples')?.textContent.trim()).toBe('End-to-end examples')
+      expect(page.querySelector('section[aria-labelledby="featured-examples"] > p')?.textContent.trim()).toBe(
+        'Complete applications with setup, validation, and deployment guidance.'
+      )
+    }
 
     for (const family of featuredFamilies) {
       const card = page.querySelector(`[data-sample-family="${family.key}"][data-sample-placement="featured"]`)
@@ -136,11 +185,7 @@ describe('generated sample guide pages', () => {
           languageLabel(guide.data.language)
         )
       }
-      const amplifying = family.guides.some(
-        (guide) =>
-          guide.data.program === 'amplifying-ai' ||
-          guide.data.collections.some((collection) => collection.id === 'amplifying-ai')
-      )
+      const amplifying = family.guides.some(isAmplifyingAiSampleGuide)
       expect(card?.textContent.includes('Amplifying AI')).toBe(amplifying)
     }
 
@@ -250,41 +295,28 @@ describe('sampleGuideLanguageFromPath', () => {
   })
 })
 
-describe('sampleGuideSwitchPath', () => {
-  const guide = (
-    slug: string,
-    language: 'python' | 'typescript',
-    order: number,
-    options: { sampleId?: string; family?: string; variants?: string[] } = {}
-  ): SampleGuideEntry =>
-    ({
-      id: slug,
-      collection: 'sampleGuides',
-      data: {
-        sampleId: options.sampleId ?? slug,
-        title: slug,
-        description: `${slug} description`,
-        slug,
-        language,
-        category: 'learn',
-        categoryLabel: 'Learn',
-        placement: 'featured',
-        kind: 'application',
-        collections: [],
-        capabilities: [],
-        docs: [],
-        variants: options.variants ?? [],
-        family: options.family,
-        sourceUrl: `https://github.com/strands-agents/samples/tree/commit/${slug}`,
-        order,
-      },
-    }) as SampleGuideEntry
+describe('isAmplifyingAiSampleGuide', () => {
+  it('recognizes the producer contract through either program or collection metadata', () => {
+    const programGuide = guideFixture('python/program', 'python', 0, { program: 'amplifying-ai' })
+    const collectionGuide = guideFixture('python/collection', 'python', 1, {
+      collections: [{ id: 'amplifying-ai', label: 'Amplifying AI', order: 0 }],
+    })
+    const regularGuide = guideFixture('python/regular', 'python', 2)
 
+    expect([
+      isAmplifyingAiSampleGuide(programGuide),
+      isAmplifyingAiSampleGuide(collectionGuide),
+      isAmplifyingAiSampleGuide(regularGuide),
+    ]).toEqual([true, true, false])
+  })
+})
+
+describe('sampleGuideSwitchPath', () => {
   it('switches only between guides with the same explicit family', () => {
     const entries = [
-      guide('python/first-agent', 'python', 0, { family: 'first-agent' }),
-      guide('typescript/fallback', 'typescript', 1),
-      guide('typescript/renamed-agent', 'typescript', 2, { family: 'first-agent' }),
+      guideFixture('python/first-agent', 'python', 0, { family: 'first-agent' }),
+      guideFixture('typescript/fallback', 'typescript', 1),
+      guideFixture('typescript/renamed-agent', 'typescript', 2, { family: 'first-agent' }),
     ]
 
     expect(sampleGuideSwitchPath(entries, 'python/first-agent', 'typescript')).toBe(
@@ -294,11 +326,13 @@ describe('sampleGuideSwitchPath', () => {
 
   it('uses an explicit variant relationship when no family is declared', () => {
     const entries = [
-      guide('python/migration', 'python', 0, {
+      guideFixture('python/migration', 'python', 0, {
         sampleId: 'python-migration',
         variants: ['typescript-migration'],
       }),
-      guide('typescript/different-slug', 'typescript', 1, { sampleId: 'typescript-migration' }),
+      guideFixture('typescript/different-slug', 'typescript', 1, {
+        sampleId: 'typescript-migration',
+      }),
     ]
 
     expect(sampleGuideSwitchPath(entries, 'python/migration', 'typescript')).toBe(
@@ -308,12 +342,14 @@ describe('sampleGuideSwitchPath', () => {
 
   it('falls back to an explicit variant when a family counterpart is unavailable', () => {
     const entries = [
-      guide('python/migration', 'python', 0, {
+      guideFixture('python/migration', 'python', 0, {
         sampleId: 'python-migration',
         family: 'python-only-family',
         variants: ['typescript-migration'],
       }),
-      guide('typescript/different-slug', 'typescript', 1, { sampleId: 'typescript-migration' }),
+      guideFixture('typescript/different-slug', 'typescript', 1, {
+        sampleId: 'typescript-migration',
+      }),
     ]
 
     expect(sampleGuideSwitchPath(entries, 'python/migration', 'typescript')).toBe(
@@ -323,77 +359,96 @@ describe('sampleGuideSwitchPath', () => {
 
   it('does not guess a counterpart by slug or fall back to another guide', () => {
     const entries = [
-      guide('python/python-only', 'python', 0),
-      guide('typescript/python-only', 'typescript', 1),
-      guide('typescript/fallback', 'typescript', 2),
+      guideFixture('python/python-only', 'python', 0),
+      guideFixture('typescript/python-only', 'typescript', 1),
+      guideFixture('typescript/fallback', 'typescript', 2),
     ]
 
     expect(sampleGuideSwitchPath(entries, 'python/python-only', 'typescript')).toBeUndefined()
+  })
+
+  it('preserves exact counterpart switching for legacy catalogs', () => {
+    const entries = [
+      guideFixture('python/first-agent', 'python', 0, { catalogMode: 'legacy' }),
+      guideFixture('typescript/fallback', 'typescript', 1, { catalogMode: 'legacy' }),
+      guideFixture('typescript/first-agent', 'typescript', 2, { catalogMode: 'legacy' }),
+    ]
+
+    expect(sampleGuideSwitchPath(entries, 'python/first-agent', 'typescript')).toBe('/examples/typescript/first-agent/')
+  })
+
+  it('preserves ordered-language fallback switching for legacy catalogs', () => {
+    const entries = [
+      guideFixture('python/python-only', 'python', 0, { catalogMode: 'legacy' }),
+      guideFixture('typescript/second', 'typescript', 2, { catalogMode: 'legacy' }),
+      guideFixture('typescript/first', 'typescript', 1, { catalogMode: 'legacy' }),
+    ]
+
+    expect(sampleGuideSwitchPath(entries, 'python/python-only', 'typescript')).toBe('/examples/typescript/first/')
   })
 })
 
 describe('groupSampleGuideFamilies', () => {
   it('groups nine featured guides into eight editorial families', () => {
     const entries = [
-      guideFixture('python/dynamic-ui', 'python', 0, 'dynamic-ui'),
-      guideFixture('typescript/dynamic-ui', 'typescript', 1, 'dynamic-ui'),
+      guideFixture('python/dynamic-ui', 'python', 0, { family: 'dynamic-ui' }),
+      guideFixture('typescript/dynamic-ui', 'typescript', 1, { family: 'dynamic-ui' }),
       ...Array.from({ length: 7 }, (_, index) => guideFixture(`python/example-${index + 1}`, 'python', index + 2)),
     ]
 
     const families = groupSampleGuideFamilies(entries)
 
     expect(entries).toHaveLength(9)
-    expect(families).toHaveLength(8)
-    expect(families[0]?.key).toBe('dynamic-ui')
-    expect(families[0]?.guides.map((entry) => entry.data.language)).toEqual(['python', 'typescript'])
+    expect(
+      families.map((family) => ({
+        key: family.key,
+        primary: family.primary.data.slug,
+        guides: family.guides.map((guide) => guide.data.slug),
+      }))
+    ).toEqual([
+      {
+        key: 'dynamic-ui',
+        primary: 'python/dynamic-ui',
+        guides: ['python/dynamic-ui', 'typescript/dynamic-ui'],
+      },
+      ...entries.slice(2).map((entry) => ({
+        key: entry.data.sampleId,
+        primary: entry.data.slug,
+        guides: [entry.data.slug],
+      })),
+    ])
   })
 
   it('groups three supplemental references into two migration actions', () => {
     const references = [
-      guideFixture('typescript/express', 'typescript', 0),
-      guideFixture('python/langgraph', 'python', 1, 'langgraph-migration'),
-      guideFixture('typescript/langgraph', 'typescript', 2, 'langgraph-migration'),
-    ].map(
-      (guide) =>
-        ({
-          ...guide,
-          data: { ...guide.data, placement: 'reference' },
-        }) as SampleGuideEntry
-    )
+      guideFixture('typescript/express', 'typescript', 0, { placement: 'reference' }),
+      guideFixture('python/langgraph', 'python', 1, {
+        family: 'langgraph-migration',
+        placement: 'reference',
+      }),
+      guideFixture('typescript/langgraph', 'typescript', 2, {
+        family: 'langgraph-migration',
+        placement: 'reference',
+      }),
+    ]
 
-    expect(groupSampleGuideFamilies(references).map((family) => family.key)).toEqual([
-      'typescript/express',
-      'langgraph-migration',
+    expect(
+      groupSampleGuideFamilies(references).map((family) => ({
+        key: family.key,
+        primary: family.primary.data.slug,
+        guides: family.guides.map((guide) => guide.data.slug),
+      }))
+    ).toEqual([
+      {
+        key: 'typescript/express',
+        primary: 'typescript/express',
+        guides: ['typescript/express'],
+      },
+      {
+        key: 'langgraph-migration',
+        primary: 'python/langgraph',
+        guides: ['python/langgraph', 'typescript/langgraph'],
+      },
     ])
   })
 })
-
-function guideFixture(
-  slug: string,
-  language: 'python' | 'typescript',
-  order: number,
-  family?: string
-): SampleGuideEntry {
-  return {
-    id: slug,
-    collection: 'sampleGuides',
-    data: {
-      sampleId: slug,
-      title: slug,
-      description: `${slug} description`,
-      slug,
-      language,
-      category: 'learn',
-      categoryLabel: 'Learn',
-      placement: 'featured',
-      kind: 'application',
-      collections: [],
-      capabilities: [],
-      docs: [],
-      variants: [],
-      family,
-      sourceUrl: `https://github.com/strands-agents/samples/tree/commit/${slug}`,
-      order,
-    },
-  } as SampleGuideEntry
-}

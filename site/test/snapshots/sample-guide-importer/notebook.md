@@ -1,5 +1,6 @@
 ---
 sampleId: "python/02-applications/02-notebook"
+catalogMode: "curated"
 title: "Notebook guide"
 description: "Build a Python sample guide from a Jupyter notebook while preserving readable Markdown and executable code without publishing cell output data."
 slug: "python/notebook"

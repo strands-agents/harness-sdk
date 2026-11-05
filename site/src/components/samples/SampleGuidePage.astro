@@ -1,7 +1,11 @@
 ---
 import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro'
 import { render } from 'astro:content'
-import { buildSampleGuideSidebar, type SampleGuideEntry } from '../../util/sample-guides'
+import {
+  buildSampleGuideSidebar,
+  isAmplifyingAiSampleGuide,
+  type SampleGuideEntry,
+} from '../../util/sample-guides'
 
 interface Props {
   guide: SampleGuideEntry
@@ -11,9 +15,7 @@ interface Props {
 const { guide, guides } = Astro.props
 const sidebar = buildSampleGuideSidebar(guides, guide)
 const { Content, headings } = await render(guide)
-const isAmplifying =
-  guide.data.program === 'amplifying-ai' ||
-  guide.data.collections.some((collection) => collection.id === 'amplifying-ai')
+const isAmplifying = isAmplifyingAiSampleGuide(guide)
 ---
 
 <StarlightPage

@@ -275,6 +275,7 @@ export type Announcement = z.infer<typeof announcementSchema>
 const sampleGuideSchema = z
   .object({
     sampleId: z.string(),
+    catalogMode: z.enum(['legacy', 'curated']),
     title: z.string(),
     description: z.string(),
     slug: z.string(),

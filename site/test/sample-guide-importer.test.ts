@@ -7,6 +7,7 @@ import { buildSampleGuides } from '../scripts/samples/importer'
 
 interface ManifestFixture {
   version: 1
+  catalog?: 'curated'
   categories: Array<{
     language: string
     id: string
@@ -83,6 +84,7 @@ beforeEach(() => {
     'samples.json',
     JSON.stringify({
       version: 1,
+      catalog: 'curated',
       categories: [
         { language: 'TypeScript', id: 'applications', label: 'Applications' },
         { language: 'Python', id: 'applications', label: 'Applications' },
@@ -268,13 +270,15 @@ describe('buildSampleGuides', () => {
     expect(readFileSync(path.join(outputDir, 'typescript/readme.md'), 'utf8')).toContain(
       'sampleId: "typescript/02-applications/01-readme"'
     )
+    expect(readFileSync(path.join(outputDir, 'typescript/readme.md'), 'utf8')).toContain('catalogMode: "curated"')
     expect(readFileSync(path.join(outputDir, 'python/notebook.md'), 'utf8')).toContain(
       'sampleId: "python/02-applications/02-notebook"'
     )
   })
 
-  it('publishes every sample when reading a legacy manifest without editorial metadata', async () => {
+  it('preserves workshop exclusion when reading a legacy manifest without editorial metadata', async () => {
     updateManifest((manifest) => {
+      delete manifest.catalog
       delete manifest.collections
       for (const sample of manifest.samples) {
         delete sample.placement
@@ -291,10 +295,31 @@ describe('buildSampleGuides', () => {
       }
     })
 
-    await expect(buildSampleGuides({ sourceDir, outputDir })).resolves.toMatchObject({ sampleCount: 4 })
+    await expect(buildSampleGuides({ sourceDir, outputDir })).resolves.toMatchObject({ sampleCount: 2 })
     expect(
       (readdirSync(outputDir, { recursive: true }) as string[]).filter((file) => file.endsWith('.md')).sort()
-    ).toEqual(['python/notebook.md', 'python/workshop.md', 'typescript/readme.md', 'typescript/workshop.md'])
+    ).toEqual(['python/notebook.md', 'typescript/readme.md'])
+    expect(readFileSync(path.join(outputDir, 'typescript/readme.md'), 'utf8')).toContain('catalogMode: "legacy"')
+  })
+
+  it('rejects collections without the curated catalog marker', async () => {
+    updateManifest((manifest) => {
+      delete manifest.catalog
+    })
+
+    await expect(buildSampleGuides({ sourceDir, outputDir })).rejects.toThrow(
+      'Samples manifest collections require catalog: "curated"'
+    )
+  })
+
+  it('rejects the curated catalog marker without collections', async () => {
+    updateManifest((manifest) => {
+      delete manifest.collections
+    })
+
+    await expect(buildSampleGuides({ sourceDir, outputDir })).rejects.toThrow(
+      'Curated samples manifest must define collections'
+    )
   })
 
   it('allows unpublished README changes in local previews', async () => {
