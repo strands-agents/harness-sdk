@@ -4,6 +4,9 @@ import { Uncertain, type AnswerOf, type DecisionInput, type DecisionResult, type
 
 const MAX_CHOICE_COUNT = 255
 const PROBABILITY_TOLERANCE = 1e-6
+// System One servers such as strands-decider round each probability to 4 decimals,
+// so a distribution over N choices may sum to 1 within N * 5e-5.
+const PROBABILITY_ROUNDING_TOLERANCE = 5e-5
 
 /** @internal */
 export interface SystemOneProviderConfig {
@@ -302,7 +305,7 @@ function parseChoiceAnswer(answer: Record<string, unknown>, choices: readonly st
   )
   const probabilityValues = Object.values(probabilities)
   const sum = probabilityValues.reduce((total, probability) => total + probability, 0)
-  if (Math.abs(sum - 1) > PROBABILITY_TOLERANCE) {
+  if (Math.abs(sum - 1) > choices.length * PROBABILITY_ROUNDING_TOLERANCE + PROBABILITY_TOLERANCE) {
     throw new ModelError(`probabilities for question id=<${id}> must sum to 1`)
   }
   const selectedProbability = probabilities[selected]!

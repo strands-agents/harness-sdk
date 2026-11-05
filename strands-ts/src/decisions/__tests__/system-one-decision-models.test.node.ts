@@ -361,6 +361,30 @@ describe.each(PROVIDERS)('$name', ({ create, endpoint, defaultModelId, providerN
       )
     })
 
+    it('accepts Choice probabilities rounded to 4 decimals', async () => {
+      // Live strands-decider output: ten probabilities rounded to 4 decimals sum to 1.0001.
+      const probabilities = {
+        payments: 0.1056,
+        fraud: 0.0067,
+        onboarding: 0.0053,
+        tax: 0.0032,
+        identity: 0.0035,
+        payouts: 0.8215,
+        disputes: 0.0089,
+        refunds: 0.0076,
+        pricing: 0.0031,
+        support: 0.0347,
+      }
+      const decision = create({
+        apiKey: 'test-key',
+        fetch: fakeFetch(responseBody({ q: { type: 'choice', choice: 'payouts', probabilities, confidence: 0.8017 } })),
+      })
+
+      const result = await decision.ask('state', { q: { question: 'pick?', choices: Object.keys(probabilities) } })
+
+      expect(result.answers).toEqual({ q: 'payouts' })
+    })
+
     it('rejects more than 255 Choice options before sending', async () => {
       const fetch = fakeFetch(responseBody({}))
       const decision = create({ apiKey: 'test-key', fetch })
