@@ -247,7 +247,9 @@ async function main() {
       ])
     }
 
-    if (liveMode) {
+    if (scenario === 'builtin-tools') {
+      await submit('exercise built-in tools', ['BUILTIN_TOOLS_OK'])
+    } else if (liveMode) {
       let generation = 1
       let turns = 0
       const liveSubmit = async (prompt, idleGeneration, idleTurns) => {

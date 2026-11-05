@@ -811,6 +811,7 @@ describe('StrandsChatBackend', () => {
       appState: { get: () => undefined },
       messages,
       model,
+      auxModel: model,
       tools: [],
       systemPrompt: 'system',
       sessionManager: { saveSnapshot },

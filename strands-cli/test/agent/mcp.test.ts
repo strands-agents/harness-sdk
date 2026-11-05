@@ -648,6 +648,10 @@ describe('loadMcp', () => {
           content: [{ type: 'text', text: JSON.stringify({ marker: 'remote-mcp-ok', client: 'remote' }) }],
         })
         expect(server.connections()).toBe(1)
+        await loaded.setEnabled!('remote', false)
+        vi.stubEnv('STRANDS_TEST_MCP_AUTH', 'Bearer expired-again')
+        await expect(loaded.setEnabled!('remote', true)).resolves.toContain('403')
+        expect(await loaded.list()).toMatchObject([{ state: 'failed', error: expect.stringContaining('403') }])
       } finally {
         await loaded.dispose()
         await server.close()

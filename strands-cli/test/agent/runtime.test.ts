@@ -408,7 +408,7 @@ describe('interactive runtime lifecycle', () => {
       await persist('Private storage sentinel')
       const privateDirectory = stash
         ? kind === 'namespaced stash'
-          ? join('private-state', 'context')
+          ? 'private-state'
           : 'context'
         : kind === 'legacy session' || kind === 'namespaced session'
           ? 'private-state'

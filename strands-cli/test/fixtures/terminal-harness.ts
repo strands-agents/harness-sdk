@@ -30,6 +30,7 @@ export type TuiDriverScenario =
   | 'lifecycle-project'
   | 'lifecycle-setup-import'
   | 'live-self-building'
+  | 'builtin-tools'
 
 export interface TuiResult {
   returnCode: number

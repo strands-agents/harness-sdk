@@ -238,15 +238,22 @@ function deferConnection(
     if (disabled) return
     lastError = errorMessage(error)
   }
-  const protocolConnect = client.client.connect.bind(client.client)
-  client.client.connect = async (...args): Promise<void> => {
-    try {
-      await protocolConnect(...args)
-    } catch (error) {
-      recordFailure(error)
-      throw error
+  const observeErrors = (protocol: McpClient['client']): McpClient['client'] => {
+    const connect = protocol.connect.bind(protocol)
+    protocol.connect = async (...args): Promise<void> => {
+      try {
+        await connect(...args)
+      } catch (error) {
+        recordFailure(error)
+        throw error
+      }
     }
+    return protocol
   }
+  observeErrors(client.client)
+  // URL retries rebuild the SDK's protocol client; keep reporting failures after each rebuild.
+  const createProtocolClient = Reflect.get(client, '_createClient').bind(client) as () => McpClient['client']
+  Reflect.set(client, '_createClient', () => observeErrors(createProtocolClient()))
 
   client.connect = (reconnect = false, options): Promise<void> => {
     const signal = options?.signal
@@ -404,9 +411,9 @@ async function refreshRemoteTransport(client: McpClient, name: string, definitio
   if (!replacement) {
     throw new Error(`Could not recreate the connection for ${name}.`)
   }
-  // The SDK loader owns auth/config parsing but exposes no transport factory. Keep the client
-  // registered with the agent and replace only its single-use HTTP/SSE transport.
+  // The SDK loader owns auth parsing. Its URL retry rebuilds must use the refreshed credentials.
   Reflect.set(client, '_transport', Reflect.get(replacement, '_transport'))
+  Reflect.set(client, '_urlConfig', Reflect.get(replacement, '_urlConfig'))
 }
 
 /**

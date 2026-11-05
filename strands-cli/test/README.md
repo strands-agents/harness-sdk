@@ -6,14 +6,14 @@ filesystem operations, local transports, SDK loops, and authored-agent processes
 
 Run commands from `strands-cli/`:
 
-| Command                             | Coverage                                                                            | Requirements                                                                 |
-| ----------------------------------- | ----------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| `npm test`                          | Feature suites, excluding the dedicated integration/live entrypoints                | Installed dependencies; Python cases may skip if no interpreter is available |
-| `npm run test:tui-integration`      | `terminal.integration.test.ts`: real Ink in PTY/ConPTY with a deterministic backend | Python 3 on macOS/Linux; ConPTY on Windows                                   |
-| `npm run test:platform-integration` | `platform.integration.test.ts`: compiled CLI and exported TypeScript/Python agents  | Prior build; Python for Python exports                                       |
-| `npm run test:integ`                | `*.live.test.ts`: real provider, voice delegation, and self-building workflows      | Prior build and provider credentials                                         |
-| `npm run test:voice`                | `voice.test.py`: offline Python voice adapters                                      | `uv`, Python 3.13, and PortAudio                                             |
-| `npm run test:package-install`      | Pack/install outside the checkout, installed launcher and bundled sidecar           | npm and a build-capable checkout                                             |
+| Command                             | Coverage                                                                                          | Requirements                                                                 |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `npm test`                          | Feature suites, excluding the dedicated integration/live entrypoints                              | Installed dependencies; Python cases may skip if no interpreter is available |
+| `npm run test:tui-integration`      | `terminal.integration.test.ts`: real Ink in PTY/ConPTY with a deterministic backend               | Python 3 on macOS/Linux; ConPTY on Windows                                   |
+| `npm run test:platform-integration` | `platform.integration.test.ts`: compiled CLI and exported TypeScript/Python agents                | Prior build; Python for Python exports                                       |
+| `npm run test:integ`                | `*.live.test.ts`: real provider, voice delegation, and self-building workflows                    | Prior build and provider credentials                                         |
+| `npm run test:voice`                | `voice.test.py`: offline Python voice adapters                                                    | `uv`, Python 3.13, and PortAudio                                             |
+| `npm run test:package-install`      | Installed CLI in print and terminal modes: real file, shell, and web-fetch tools; bundled sidecar | npm, Python 3 on macOS/Linux, ConPTY on Windows                              |
 
 `npm run check` runs lint, formatting, source/test types, and default test coverage. It does not run the five
 dedicated commands below `npm test` in the table.
@@ -26,6 +26,11 @@ visible labels and state transitions rather than exact escape sequences or compl
 
 CI runs the source TUI on Linux and the compiled TUI on Linux, macOS, and Windows. This suite starts the TUI
 with a deterministic backend. The platform and live suites exercise the full compiled CLI startup path.
+
+The package-install test packs and installs the CLI outside the checkout. A scripted model calls the installed
+Harness's write, edit, read, shell, and web-fetch tools in print and interactive modes. It checks tool results,
+file contents, and requests to a local HTTP server. Only model responses are scripted; the Harness, tools,
+sandbox, filesystem, network, and terminal run normally. CI runs this test on Linux, macOS, and Windows.
 
 Python exports require Python 3.10 or newer. Tests use `harness-py/.venv` when available; set `STRANDS_TEST_PYTHON`
 to another interpreter if needed. Imports install archive dependencies into fresh environments.
