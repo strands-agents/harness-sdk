@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url'
 import type { HarnessAgentConfig } from '@strands-agents/harness'
 import { normalizeHarnessAgentConfig } from '@strands-agents/harness/internal'
 import { FileStorage, type Agent } from '@strands-agents/sdk'
-import { LocalFileStorage } from '@strands-agents/sdk/storage'
+import { InMemoryStorage, LocalFileStorage, S3Storage } from '@strands-agents/sdk/storage'
 import { FileMemoryStore } from '@strands-agents/sdk/vended-memory-stores/file-memory-store'
 import { unzipSync } from 'fflate'
 import { ZipFile } from 'yazl'
@@ -15,6 +15,7 @@ import { ZipFile } from 'yazl'
 import { resolveSkillPaths } from '../agent/skills.js'
 import { webFetchModelId } from '../agent/tools.js'
 import { PROVIDER_PACKAGES } from '../model/packages.js'
+import { SDK_VERSION } from '../package-version.js'
 import { containsPath, expandHome } from '../paths.js'
 import { chooseSaveFile } from '../terminal/directory-picker.js'
 import { isRecord } from '../values.js'
@@ -185,10 +186,16 @@ export async function exportSourceProject(
   project: ImportedAgentProject,
   name: string,
   language: AgentProjectLanguage,
-  privatePaths: readonly string[] = [],
+  privatePaths: readonly string[] | null = [],
   destination?: string,
   output: AgentProjectOutput = 'zip'
 ): Promise<string | undefined> {
+  if (privatePaths === null) {
+    throw new Error(
+      `Cannot safely export this agent: its private storage could not be located with SDK ${SDK_VERSION}. ` +
+        'Use supported session, memory, and context storage before exporting.'
+    )
+  }
   if (language !== project.language) {
     throw new Error(
       `This agent is authored in ${project.language}; export it in the same language to preserve its code.`
@@ -260,34 +267,59 @@ export async function exportSourceProject(
   return path
 }
 
-/** @internal Local SDK state excluded from source exports and source watching. */
-export function agentPrivatePaths(agent: Agent): string[] {
+/** @internal Local SDK state; null means exports and automatic source watching are unsafe. */
+export function agentPrivatePaths(agent: Agent): string[] | null {
   const paths: string[] = []
   // The SDK exposes these stores only through internals; inspect its built-in local backends.
   if (agent.sessionManager) {
+    if (!('_configStorage' in agent.sessionManager)) return null
     const storage: unknown = Reflect.get(agent.sessionManager, '_configStorage') ?? agent.storage
     if (storage instanceof LocalFileStorage) {
+      if (typeof storage.baseDir !== 'string') return null
       paths.push(
         Symbol.for('strands.storage.namespaced') in storage ? storage.baseDir : join(storage.baseDir, 'session')
       )
     } else if (isRecord(storage) && storage.snapshot instanceof FileStorage) {
       const baseDir: unknown = Reflect.get(storage.snapshot, '_baseDir')
-      if (typeof baseDir === 'string') paths.push(baseDir)
+      if (typeof baseDir !== 'string') return null
+      paths.push(baseDir)
+    } else if (!(storage instanceof InMemoryStorage || storage instanceof S3Storage)) {
+      return null
     }
   }
   const stash = agent.contextManager?.stash
   const stashStorage: unknown = stash && Reflect.get(stash, '_baseStorage')
+  if (stash && !('_storage' in stash)) return null
   if (stash && stashStorage instanceof LocalFileStorage) {
+    if (typeof stashStorage.baseDir !== 'string') return null
     paths.push(
       Reflect.get(stash, '_storage') === stashStorage ? stashStorage.baseDir : join(stashStorage.baseDir, 'context')
     )
+  } else if (stash && !(stashStorage instanceof InMemoryStorage || stashStorage instanceof S3Storage)) {
+    return null
   }
   const stores: unknown = agent.memoryManager && Reflect.get(agent.memoryManager, '_searchStores')
+  if (agent.memoryManager && !Array.isArray(stores)) return null
   if (Array.isArray(stores)) {
     for (const store of stores) {
-      if (!(store instanceof FileMemoryStore)) continue
+      if (!(store instanceof FileMemoryStore)) {
+        try {
+          // This backend requires optional AWS packages; only load it for non-file stores.
+          const { BedrockKnowledgeBaseStore } = createRequire(import.meta.url)(
+            '@strands-agents/sdk/vended-memory-stores/bedrock-knowledge-base'
+          ) as typeof import('@strands-agents/sdk/vended-memory-stores/bedrock-knowledge-base')
+          if (store instanceof BedrockKnowledgeBaseStore) continue
+        } catch {
+          return null
+        }
+        return null
+      }
       const storage: unknown = Reflect.get(store, '_storage')
-      if (storage instanceof LocalFileStorage) paths.push(storage.baseDir)
+      if (storage instanceof LocalFileStorage && typeof storage.baseDir === 'string') {
+        paths.push(storage.baseDir)
+      } else if (!(storage instanceof InMemoryStorage || storage instanceof S3Storage)) {
+        return null
+      }
     }
   }
   return [...new Set(paths)]

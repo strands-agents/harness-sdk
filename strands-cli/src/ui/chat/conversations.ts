@@ -43,7 +43,7 @@ interface ConversationManagerOptions {
   agentMessaging?: AgentMessaging
   voice?: VoiceInput
   project?: ImportedAgentProject
-  projectPrivatePaths?: readonly string[]
+  projectPrivatePaths?: readonly string[] | null
   reloadProject?(conversationId: string): void
 }
 
@@ -111,7 +111,7 @@ export class ConversationManager implements ChatControllerApi {
     this._snapshot = this._buildSnapshot()
     const project = options.project
     this._stopProjectWatch =
-      project && options.reloadProject
+      project && options.reloadProject && options.projectPrivatePaths !== null
         ? watchAgentProject(
             project,
             () => {

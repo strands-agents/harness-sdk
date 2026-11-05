@@ -72,7 +72,7 @@ export interface TypescriptMetadata {
   provider: string
   selection: NonNullable<ChatConversation['selection']>
   sourceSelection: ChatConversation['sourceSelection']
-  privatePaths: readonly string[]
+  privatePaths: readonly string[] | null
   profile: HarnessAgentConfig
   mcp: {
     paths: readonly string[]
@@ -568,7 +568,7 @@ export class TypescriptBackend implements ChatBackend {
   get sessionIdentity(): TypescriptMetadata['sessionIdentity'] {
     return this.state.sessionIdentity
   }
-  get privatePaths(): readonly string[] {
+  get privatePaths(): readonly string[] | null {
     return this.state.privatePaths
   }
   reconstructable(): boolean {

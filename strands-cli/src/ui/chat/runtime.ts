@@ -103,7 +103,7 @@ export async function createTypescriptChat(
             project,
             backend.name,
             language,
-            [backend.sessionDirectory, ...backend.privatePaths],
+            backend.privatePaths === null ? null : [backend.sessionDirectory, ...backend.privatePaths],
             destination,
             output
           ),
@@ -217,10 +217,16 @@ export async function createTypescriptChat(
         agentMessaging: messaging,
         voice: new PythonVoiceSession({ cwd: options.initialWorkspace }),
         project,
-        projectPrivatePaths: entries.flatMap(({ controller }) => {
-          const backend = controller.backend as TypescriptBackend
-          return [backend.sessionDirectory, ...backend.privatePaths].map((path) => resolve(backend.cwd, path))
-        }),
+        projectPrivatePaths: entries.some(
+          ({ controller }) => (controller.backend as TypescriptBackend).privatePaths === null
+        )
+          ? null
+          : entries.flatMap(({ controller }) => {
+              const backend = controller.backend as TypescriptBackend
+              return [backend.sessionDirectory, ...(backend.privatePaths ?? [])].map((path) =>
+                resolve(backend.cwd, path)
+              )
+            }),
         reloadProject: (conversationId): void => requestSetup({ agentProject: project.entrypoint, conversationId }),
       }
     )
@@ -441,11 +447,12 @@ export async function createInteractiveChat(
         ...(options.project ? { project: options.project } : {}),
         exportAgentProject: (language, destination, output): Promise<string | undefined> => {
           if (options.project) {
+            const privatePaths = agentPrivatePaths(runtime.agent)
             return exportSourceProject(
               options.project,
               runtime.agent.name,
               language,
-              [sessionDirectory, ...agentPrivatePaths(runtime.agent)],
+              privatePaths === null ? null : [sessionDirectory, ...privatePaths],
               destination,
               output
             )
@@ -619,12 +626,14 @@ export async function createInteractiveChat(
         ...(project && options.requestSetup
           ? {
               project,
-              projectPrivatePaths: [
-                initialSessionDirectory,
-                ...[...runtimes].flatMap((runtime) =>
-                  agentPrivatePaths(runtime.agent).map((path) => resolve(initialWorkspace, path))
-                ),
-              ],
+              projectPrivatePaths: [...runtimes].some((runtime) => agentPrivatePaths(runtime.agent) === null)
+                ? null
+                : [
+                    initialSessionDirectory,
+                    ...[...runtimes].flatMap((runtime) =>
+                      (agentPrivatePaths(runtime.agent) ?? []).map((path) => resolve(initialWorkspace, path))
+                    ),
+                  ],
               reloadProject: (conversationId: string): void =>
                 options.requestSetup?.({ agentProject: project.entrypoint, conversationId }),
             }

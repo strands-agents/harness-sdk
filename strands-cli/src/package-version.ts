@@ -35,6 +35,7 @@ function installedPackageVersion(packageName: string): string {
 }
 
 export const HARNESS_VERSION = installedPackageVersion('@strands-agents/harness')
+export const SDK_VERSION = installedPackageVersion('@strands-agents/sdk')
 
 let cliVersion: string | undefined
 

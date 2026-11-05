@@ -23,6 +23,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { BedrockModel } from '@strands-agents/sdk/models/bedrock'
 import { LocalFileStorage } from '@strands-agents/sdk/storage'
 import { FileMemoryStore } from '@strands-agents/sdk/vended-memory-stores/file-memory-store'
+import { TestMemoryStore } from '@strands-agents/sdk/vended-memory-stores/test-memory-store'
 import { AgentSkills, type Skill } from '@strands-agents/sdk/vended-plugins/skills'
 
 const mocks = vi.hoisted(() => ({
@@ -285,53 +286,84 @@ describe('interactive runtime lifecycle', () => {
     }
   })
 
-  it.each([true, false])('keeps custom memory private during export and reload (writable=%s)', async (writable) => {
-    const { createHarness } = await vi.importActual<typeof import('@strands-agents/harness')>('@strands-agents/harness')
-    mocks.createHarness.mockImplementation(createHarness)
-    const root = dirname(testSessionRoot)
-    await mkdir(root, { recursive: true })
-    const entrypoint = join(root, 'agent.ts')
-    await writeFile(entrypoint, 'export const marker = "source"\n')
-    const store = new FileMemoryStore({
-      name: 'personal',
-      storage: new LocalFileStorage(join(root, 'private-data')),
-      writable,
-      extraction: false,
-    })
-    await store.add('Private memory sentinel')
-    const requestSetup = vi.fn()
-    const watch = vi.spyOn(projectWatch, 'watchAgentProject').mockReturnValue(() => {})
-    const controller = await createInteractiveChat({
-      cwd: root,
-      project: { root, entrypoint, language: 'typescript' },
-      requestSetup,
-      agentOptions: {
-        model: new BedrockModel({ modelId: 'anthropic.claude-test' }),
-        session: false,
-        memory: new MemoryManager({ stores: [store] }),
-        skills: false,
-        builtinTools: [],
-        builtinPlugins: [],
-        contextManager: false,
-        backgroundTasks: false,
-        caching: false,
-        effort: 'off',
-      },
-    })
-    try {
-      await store.add('Another private memory')
-      expect(watch.mock.calls[0]?.[3]).toContain(join(root, 'private-data', 'memory', 'personal'))
+  it.each(['writable', 'read-only', 'unrecognized'])(
+    'keeps %s memory private during export and reload',
+    async (kind) => {
+      const { createHarness } =
+        await vi.importActual<typeof import('@strands-agents/harness')>('@strands-agents/harness')
+      mocks.createHarness.mockImplementation(createHarness)
+      const root = dirname(testSessionRoot)
+      await mkdir(root, { recursive: true })
+      const entrypoint = join(root, 'agent.ts')
+      await writeFile(entrypoint, 'export const marker = "source"\n')
+      const store =
+        kind === 'unrecognized'
+          ? new TestMemoryStore({
+              name: 'personal',
+              path: join(root, 'private-data.json'),
+              extraction: false,
+            })
+          : new FileMemoryStore({
+              name: 'personal',
+              storage: new LocalFileStorage(join(root, 'private-data')),
+              writable: kind === 'writable',
+              extraction: false,
+            })
+      await store.add('Private memory sentinel')
+      const requestSetup = vi.fn()
+      const watch = vi.spyOn(projectWatch, 'watchAgentProject').mockReturnValue(() => {})
+      const controller = await createInteractiveChat({
+        cwd: root,
+        project: { root, entrypoint, language: 'typescript' },
+        requestSetup,
+        agentOptions: {
+          model: new BedrockModel({ modelId: 'anthropic.claude-test' }),
+          session: false,
+          memory: new MemoryManager({ stores: [store] }),
+          skills: false,
+          builtinTools: [],
+          builtinPlugins: [],
+          contextManager: false,
+          backgroundTasks: false,
+          caching: false,
+          effort: 'off',
+        },
+      })
+      try {
+        await store.add('Another private memory')
+        if (kind === 'unrecognized') {
+          expect(watch).not.toHaveBeenCalled()
+          expect(await readFile(join(root, 'private-data.json'), 'utf8')).toContain('Private memory sentinel')
+          const refused = join(root, 'unsafe.zip')
+          await controller.submit(`/export typescript "${refused}"`)
+          await expect(readFile(refused)).rejects.toMatchObject({ code: 'ENOENT' })
+          expect(JSON.stringify(controller.getSnapshot())).toContain('Cannot safely export this agent')
+          return
+        }
+        expect(watch.mock.calls[0]?.[3]).toContain(join(root, 'private-data', 'memory', 'personal'))
 
-      const destination = join(root, 'agent.zip')
-      await controller.submit(`/export typescript "${destination}"`)
-      const entries = unzipSync(await readFile(destination))
-      expect(Object.keys(entries).some((path) => path.endsWith('.md'))).toBe(false)
-      expect(Buffer.from(entries['agent.ts']!).toString()).toContain('source')
-    } finally {
-      await controller.dispose()
-      watch.mockRestore()
+        const destination = join(root, 'agent.zip')
+        await controller.submit(`/export typescript "${destination}"`)
+        const entries = unzipSync(await readFile(destination))
+        expect(Object.keys(entries).some((path) => path.endsWith('.md'))).toBe(false)
+        expect(Buffer.from(entries['agent.ts']!).toString()).toContain('source')
+
+        const storage: unknown = Reflect.get(store, '_storage')
+        Reflect.deleteProperty(store, '_storage')
+        try {
+          const refused = join(root, 'unsafe.zip')
+          await controller.submit(`/export typescript "${refused}"`)
+          await expect(readFile(refused)).rejects.toMatchObject({ code: 'ENOENT' })
+          expect(JSON.stringify(controller.getSnapshot())).toContain('Cannot safely export this agent')
+        } finally {
+          Reflect.set(store, '_storage', storage)
+        }
+      } finally {
+        await controller.dispose()
+        watch.mockRestore()
+      }
     }
-  })
+  )
 
   it.each([
     'legacy session',
@@ -343,7 +375,7 @@ describe('interactive runtime lifecycle', () => {
     'namespaced stash',
   ])('keeps %s storage private during export and reload', async (kind) => {
     const { createHarness } = await vi.importActual<typeof import('@strands-agents/harness')>('@strands-agents/harness')
-    let agent: Agent
+    let agent!: Agent
     mocks.createHarness.mockImplementation(async (options) => {
       agent = await createHarness(options)
       return agent
@@ -425,6 +457,18 @@ describe('interactive runtime lifecycle', () => {
         false
       )
       expect(Object.values(entries).some((bytes) => Buffer.from(bytes).includes('storage sentinel'))).toBe(false)
+      const owner = stash ? agent.contextManager!.stash! : agent.sessionManager!
+      const field = stash ? '_storage' : '_configStorage'
+      const value: unknown = Reflect.get(owner, field)
+      Reflect.deleteProperty(owner, field)
+      try {
+        const refused = join(root, 'unsafe.zip')
+        await controller.submit(`/export typescript "${refused}"`)
+        await expect(readFile(refused)).rejects.toMatchObject({ code: 'ENOENT' })
+        expect(JSON.stringify(controller.getSnapshot())).toContain('Cannot safely export this agent')
+      } finally {
+        Reflect.set(owner, field, value)
+      }
     } finally {
       await controller.dispose()
       watch.mockRestore()
