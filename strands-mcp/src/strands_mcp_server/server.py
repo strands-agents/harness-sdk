@@ -61,6 +61,8 @@ Cite the page URLs you used in your answer."""
 READ_ONLY_DOCS = ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True)
 
 SUGGESTION_LIMIT = 5
+# Every catalog path shares the /docs/ prefix, so lower cutoffs suggest unrelated pages.
+SUGGESTION_CUTOFF = 0.8
 
 
 def _is_valid_doc_url(uri: str) -> bool:
@@ -80,11 +82,14 @@ def _fetch_failure(uri: str) -> Dict[str, Any]:
     url_titles = cache.get_url_titles()
     if uri in url_titles:
         raise ToolError(f"fetch failed for {uri}; the page is in the docs catalog, so retry or use another result")
-    matches = difflib.get_close_matches(uri, list(url_titles), n=SUGGESTION_LIMIT)
+    urls_by_path = {urlparse(url).path: url for url in url_titles}
+    matches = difflib.get_close_matches(
+        urlparse(uri).path, list(urls_by_path), n=SUGGESTION_LIMIT, cutoff=SUGGESTION_CUTOFF
+    )
     return {
         "error": "fetch failed",
         "url": uri,
-        "suggestions": [{"url": url, "title": url_titles[url]} for url in matches],
+        "suggestions": [{"url": urls_by_path[path], "title": url_titles[urls_by_path[path]]} for path in matches],
         "hint": "This URL is not in the docs catalog. Use a suggested URL, or search_docs to find the page.",
     }
 

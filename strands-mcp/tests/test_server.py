@@ -215,7 +215,11 @@ class TestFetchDocErrors:
     def test_disallowed_url_points_to_search(self, mock_cache):
         tru_result = fetch_doc(uri="https://evil.com/hack")
 
-        assert "search_docs" in tru_result["hint"]
+        assert tru_result == {
+            "error": "only https://strandsagents.com URLs allowed",
+            "url": "https://evil.com/hack",
+            "hint": "Use search_docs to find the Strands page for this topic.",
+        }
 
     def test_invalid_section_lists_valid_sections(self, mock_cache, api_reference_doc):
         mock_cache.ensure_page.return_value = Page(
@@ -226,12 +230,33 @@ class TestFetchDocErrors:
 
         tru_result = fetch_doc(uri="https://strandsagents.com/test.md", section="99")
 
-        assert tru_result["error"] == "section '99' not found"
-        assert [section["id"] for section in tru_result["sections"]] == ["1", "2", "3"]
-        assert all(set(section) == {"id", "title", "children"} for section in tru_result["sections"])
-        assert tru_result["hint"]
+        assert tru_result == {
+            "error": "section '99' not found",
+            "url": "https://strandsagents.com/test.md",
+            "sections": [
+                {
+                    "id": "1",
+                    "title": "AfterModelCallEvent",
+                    "children": [
+                        {"id": "1.1", "title": "should_reverse_callbacks"},
+                        {"id": "1.2", "title": "ModelStopResponse"},
+                    ],
+                },
+                {
+                    "id": "2",
+                    "title": "AfterToolCallEvent",
+                    "children": [{"id": "2.1", "title": "should_reverse_callbacks"}],
+                },
+                {
+                    "id": "3",
+                    "title": "AgentTool",
+                    "children": [{"id": "3.1", "title": "__init__()"}, {"id": "3.2", "title": "stream()"}],
+                },
+            ],
+            "hint": "Use one of the listed section IDs.",
+        }
 
-    def test_uncatalogued_url_fetch_failure_suggests_catalog_urls(self, mock_cache):
+    def test_uncatalogued_url_fetch_failure_suggests_close_catalog_urls(self, mock_cache):
         mock_cache.ensure_page.return_value = None
         mock_cache.get_url_titles.return_value = {
             "https://strandsagents.com/docs/user-guide/agents/index.md": "Agents",
@@ -240,12 +265,28 @@ class TestFetchDocErrors:
 
         tru_result = fetch_doc(uri="https://strandsagents.com/docs/user-guide/agent/index.md")
 
-        assert tru_result["error"] == "fetch failed"
-        assert tru_result["suggestions"][0] == {
-            "url": "https://strandsagents.com/docs/user-guide/agents/index.md",
-            "title": "Agents",
+        assert tru_result == {
+            "error": "fetch failed",
+            "url": "https://strandsagents.com/docs/user-guide/agent/index.md",
+            "suggestions": [{"url": "https://strandsagents.com/docs/user-guide/agents/index.md", "title": "Agents"}],
+            "hint": "This URL is not in the docs catalog. Use a suggested URL, or search_docs to find the page.",
         }
-        assert "search_docs" in tru_result["hint"]
+
+    def test_uncatalogued_url_without_close_match_has_no_suggestions(self, mock_cache):
+        mock_cache.ensure_page.return_value = None
+        mock_cache.get_url_titles.return_value = {
+            "https://strandsagents.com/docs/contribute/index.md": "Contribute",
+            "https://strandsagents.com/docs/labs/index.md": "Labs",
+        }
+
+        tru_result = fetch_doc(uri="https://strandsagents.com/docs/does-not-exist/index.md")
+
+        assert tru_result == {
+            "error": "fetch failed",
+            "url": "https://strandsagents.com/docs/does-not-exist/index.md",
+            "suggestions": [],
+            "hint": "This URL is not in the docs catalog. Use a suggested URL, or search_docs to find the page.",
+        }
 
     def test_catalog_url_fetch_failure_is_a_tool_error(self, mock_cache):
         catalog_url = "https://strandsagents.com/docs/user-guide/agents/index.md"
