@@ -1,7 +1,10 @@
 import { execFile } from 'node:child_process'
+import { once } from 'node:events'
+import { existsSync } from 'node:fs'
 import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { setTimeout as delay } from 'node:timers/promises'
 import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 import { defineHarnessAgentConfig, type HarnessAgentConfig, type HarnessModuleReference } from '@strands-agents/harness'
@@ -56,8 +59,8 @@ describe('cross-platform exported agent E2E', () => {
     await rm(root, { recursive: true, force: true })
   })
 
-  it('extracts concurrent imports safely and installs their dependencies once', async () => {
-    const concurrentHome = join(root, 'concurrent-home')
+  it.each(['fresh', 'interrupted'])('serializes concurrent imports after a %s installation', async (state) => {
+    const concurrentHome = join(root, `concurrent-${state}`)
     await mkdir(concurrentHome)
     const path = join(root, 'concurrent.zip')
     const files = Object.fromEntries(
@@ -74,11 +77,14 @@ describe('cross-platform exported agent E2E', () => {
         'wrapper/project/install.cjs': strToU8(`
           const fs = require('node:fs')
           const path = require('node:path')
+          fs.mkdirSync('install-active')
           fs.appendFileSync('installation-count', 'installed\\n')
+          fs.writeFileSync(path.join(process.env.STRANDS_TEST_BARRIER, 'install-started'), process.cwd())
           const deadline = Date.now() + 15000
           const timer = setInterval(() => {
-            if ([0, 1, 2].every(index => fs.existsSync(path.join(process.env.STRANDS_TEST_BARRIER, 'ready-' + index)))) {
+            if (fs.existsSync(path.join(process.env.STRANDS_TEST_BARRIER, 'release'))) {
               fs.mkdirSync('node_modules', { recursive: true })
+              fs.rmdirSync('install-active')
               clearInterval(timer)
             } else if (Date.now() > deadline) {
               process.exit(1)
@@ -97,22 +103,53 @@ describe('cross-platform exported agent E2E', () => {
       await prepareArchiveDependencies(root, 'typescript')
       console.log(extractAgentArchive(${JSON.stringify(path)}))
     `
-    const results = await Promise.allSettled(
-      [0, 1, 2].map((index) =>
-        run(process.execPath, ['--input-type=module', '-e', script, String(index)], {
-          env: { ...process.env, ...cliEnvironment(concurrentHome), STRANDS_TEST_BARRIER: concurrentHome },
-          timeout: 30_000,
-        })
-      )
+    const options = {
+      env: { ...process.env, ...cliEnvironment(concurrentHome), STRANDS_TEST_BARRIER: concurrentHome },
+      timeout: 30_000,
+    }
+    let interrupted: Promise<unknown> | undefined
+    if (state === 'interrupted') {
+      const running = run(process.execPath, ['--input-type=module', '-e', script, 'interrupted'], options)
+      interrupted = running.catch(() => undefined)
+      await expect.poll(() => existsSync(join(concurrentHome, 'install-started')), { timeout: 15_000 }).toBe(true)
+      const exited = once(running.child, 'exit')
+      running.child.kill('SIGKILL')
+      await exited
+    }
+    let settled = 0
+    const imports = [0, 1, 2].map((index) =>
+      run(process.execPath, ['--input-type=module', '-e', script, String(index)], options).finally(() => {
+        settled++
+      })
     )
+    const finished = Promise.allSettled(imports)
+    try {
+      await expect
+        .poll(() => [0, 1, 2].every((index) => existsSync(join(concurrentHome, `ready-${index}`))), { timeout: 15_000 })
+        .toBe(true)
+      await expect.poll(() => existsSync(join(concurrentHome, 'install-started')), { timeout: 15_000 }).toBe(true)
+      await delay(1_000)
+      expect(settled).toBe(0)
+      const installing = await readFile(join(concurrentHome, 'install-started'), 'utf8')
+      expect(await readFile(join(installing, 'installation-count'), 'utf8')).toBe('installed\n')
+    } finally {
+      await writeFile(join(concurrentHome, 'release'), '')
+      await finished
+      await interrupted
+    }
+    const results = await finished
     const directories = results.map((result) => {
       if (result.status === 'rejected') throw result.reason
       return result.value.stdout.trim()
     })
     expect(new Set(directories).size).toBe(1)
-    expect(await readFile(join(directories[0]!, 'installation-count'), 'utf8')).toBe('installed\n')
+    expect(await readFile(join(directories[0]!, 'installation-count'), 'utf8')).toBe(
+      'installed\n'.repeat(state === 'interrupted' ? 2 : 1)
+    )
     const cache = join(concurrentHome, '.strands', 'cli', 'cache', 'agents')
-    expect((await readdir(cache)).filter((name) => name.endsWith('.lock') || name.startsWith('.extract-'))).toEqual([])
+    expect(
+      (await readdir(cache)).filter((name) => name.includes('.dependencies.lock') || name.startsWith('.extract-'))
+    ).toEqual([])
   })
 
   it('uses an agent across repeated export and import boundaries', { timeout: 480_000 }, async () => {

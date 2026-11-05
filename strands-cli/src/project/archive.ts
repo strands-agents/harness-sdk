@@ -1,5 +1,5 @@
-import { execFile } from 'node:child_process'
-import { createHash } from 'node:crypto'
+import { execFile, type ExecFileOptions } from 'node:child_process'
+import { createHash, randomUUID } from 'node:crypto'
 import {
   lstatSync,
   mkdirSync,
@@ -8,13 +8,14 @@ import {
   readFileSync,
   realpathSync,
   renameSync,
+  rmdirSync,
   rmSync,
+  unlinkSync,
   writeFileSync,
 } from 'node:fs'
-import { access, open, readFile, unlink, writeFile, type FileHandle } from 'node:fs/promises'
+import { access, readFile, writeFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
-import { promisify } from 'node:util'
 
 import { Unzip, UnzipInflate, unzipSync } from 'fflate'
 
@@ -31,7 +32,6 @@ export const AGENT_ENTRYPOINTS = ['ts', 'mts', 'js', 'mjs', 'py'].flatMap((exten
 ])
 export const AGENT_ENTRYPOINT_FILE = '.strands-entrypoint'
 export const SOURCE_EXTENSION = /\.(?:ts|mts|js|mjs|py)$/u
-const run = promisify(execFile)
 
 function archiveCache(): string {
   return userDirectory('cache', 'agents')
@@ -185,47 +185,134 @@ export async function prepareArchiveDependencies(root: string, language: AgentPr
   // Keep the lock outside the archive: wrapped projects must still have a single child directory.
   const lockPath = join(cache, `${relative(cache, root).split(sep)[0]}.dependencies.lock`)
   const deadline = Date.now() + 3 * 180_000
-  let lock: FileHandle | undefined
-  while (!lock) {
+  const owner = `${process.pid}-${randomUUID()}`
+  while (true) {
     try {
-      lock = await open(lockPath, 'wx', 0o600)
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+      const temporary = mkdtempSync(`${lockPath}-`)
       try {
-        const pid = Number(await readFile(lockPath, 'utf8'))
-        if (Number.isSafeInteger(pid) && pid > 0) {
-          try {
-            process.kill(pid, 0)
-          } catch (error) {
-            if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error
-            throw new Error(`An interrupted dependency installation left ${lockPath}. Remove this file and retry.`, {
-              cause: error,
-            })
-          }
-        }
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue
-        if ((error as NodeJS.ErrnoException).code !== 'EPERM') throw error
+        writeFileSync(join(temporary, owner), '', { mode: 0o600 })
+        // Publish an occupied directory so another process can safely reap an empty one.
+        renameSync(temporary, lockPath)
+        break
+      } finally {
+        rmSync(temporary, { recursive: true, force: true })
       }
+    } catch (error) {
+      if (!['EEXIST', 'ENOTEMPTY', 'ENOTDIR', 'EPERM'].includes((error as NodeJS.ErrnoException).code ?? '')) {
+        throw error
+      }
+      if (removeStoppedInstallers(lockPath)) continue
       if (Date.now() >= deadline) {
-        throw new Error(
-          `Another process is installing this agent's dependencies. If it has stopped, remove ${lockPath} and retry.`,
-          { cause: error }
-        )
+        throw new Error(`Another process is installing this agent's dependencies. Retry after it finishes.`, {
+          cause: error,
+        })
       }
       await delay(100)
     }
   }
   try {
-    await lock.writeFile(String(process.pid))
-    await installDependencies(root, language)
+    await installDependencies(root, language, lockPath)
   } finally {
-    await lock.close()
-    await unlink(lockPath)
+    unlinkSync(join(lockPath, owner))
+    removeEmptyInstallLock(lockPath)
   }
 }
 
-async function installDependencies(root: string, language: AgentProjectLanguage): Promise<void> {
+function installerRunning(owner: string): boolean {
+  const pid = Number(owner.split('-')[0])
+  if (!Number.isSafeInteger(pid) || pid <= 0) return false
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false
+    if ((error as NodeJS.ErrnoException).code === 'EPERM') return true
+    throw error
+  }
+}
+
+function removeEmptyInstallLock(path: string): void {
+  try {
+    rmdirSync(path)
+  } catch (error) {
+    if (!['ENOENT', 'ENOTEMPTY', 'EEXIST'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error
+  }
+}
+
+function removeStoppedInstallers(path: string): boolean {
+  let owners: string[]
+  try {
+    owners = readdirSync(path)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return true
+    if ((error as NodeJS.ErrnoException).code !== 'ENOTDIR') throw error
+    // Older locks did not record installer children, so a dead CLI alone cannot prove they stopped.
+    try {
+      if (installerRunning(readFileSync(path, 'utf8'))) return false
+    } catch (error) {
+      if (['ENOENT', 'EISDIR'].includes((error as NodeJS.ErrnoException).code ?? '')) return true
+      throw error
+    }
+    throw new Error(`An older installation left ${path}. Stop any npm or pip installer, remove this file, and retry.`, {
+      cause: error,
+    })
+  }
+  if (owners.some(installerRunning)) return false
+  if (owners.some((owner) => !/^\d+-[0-9a-f-]{36}$/u.test(owner))) {
+    throw new Error(
+      `An installation was interrupted while starting. Stop any npm or pip installer, remove ${path}, and retry.`
+    )
+  }
+  // Unique filenames prevent a delayed reaper from deleting a new owner's lock.
+  for (const owner of owners) {
+    rmSync(join(path, owner), { force: true })
+  }
+  removeEmptyInstallLock(path)
+  return true
+}
+
+async function runInstaller(
+  command: string,
+  args: string[],
+  options: ExecFileOptions,
+  lockPath: string
+): Promise<void> {
+  const starting = join(lockPath, 'starting')
+  writeFileSync(starting, '', { mode: 0o600 })
+  await new Promise<void>((resolve, reject) => {
+    let failure: Error | null = null
+    let child
+    try {
+      child = execFile(command, args, options, (error) => {
+        failure ??= error
+      })
+    } catch (error) {
+      unlinkSync(starting)
+      reject(error)
+      return
+    }
+    const owner = child.pid ? join(lockPath, `${child.pid}-${randomUUID()}`) : undefined
+    child.once('close', () => {
+      try {
+        if (owner) rmSync(owner, { force: true })
+        if (failure) reject(failure)
+        else resolve()
+      } catch (error) {
+        reject(error)
+      }
+    })
+    try {
+      if (owner) writeFileSync(owner, '', { mode: 0o600 })
+      unlinkSync(starting)
+    } catch (error) {
+      // Keep the starting marker if ownership could not be recorded.
+      failure = error as Error
+      child.kill()
+    }
+  })
+}
+
+async function installDependencies(root: string, language: AgentProjectLanguage, lockPath: string): Promise<void> {
   const manifests =
     language === 'typescript'
       ? ['package.json', 'package-lock.json', 'npm-shrinkwrap.json']
@@ -263,19 +350,25 @@ async function installDependencies(root: string, language: AgentProjectLanguage)
   try {
     if (nodeDependencies) {
       const npm = npmInvocation([npmCommand, '--no-audit', '--no-fund'])
-      await run(npm.command, npm.args, options)
+      await runInstaller(npm.command, npm.args, options, lockPath)
     }
     if (pythonDependencies) {
       try {
         await access(python)
       } catch {
-        await run(process.platform === 'win32' ? 'python' : 'python3', ['-m', 'venv', '.venv'], options)
+        await runInstaller(
+          process.platform === 'win32' ? 'python' : 'python3',
+          ['-m', 'venv', '.venv'],
+          options,
+          lockPath
+        )
       }
-      await run(
+      await runInstaller(
         python,
         ['-m', 'pip', 'install', ...(contents[0] ? ['-r', 'requirements.txt'] : ['.'])],
         // Keep downloads out of exported source; build-isolation subprocesses inherit env, not pip flags.
-        { ...options, env: { ...process.env, PIP_NO_CACHE_DIR: '1' } }
+        { ...options, env: { ...process.env, PIP_NO_CACHE_DIR: '1' } },
+        lockPath
       )
     }
     const installed = await readManifests()

@@ -7,7 +7,21 @@ import { strToU8, zipSync } from 'fflate'
 import { ZipFile } from 'yazl'
 
 const execute = vi.hoisted(() => vi.fn())
-vi.mock('node:child_process', () => ({ execFile: execute }))
+vi.mock('node:child_process', async () => {
+  const { EventEmitter } = await import('node:events')
+  return {
+    execFile: (command: string, args: string[], options: object, callback: (error: Error | null) => void) => {
+      const child = Object.assign(new EventEmitter(), { pid: process.pid })
+      process.nextTick(() => {
+        execute(command, args, options, (error: Error | null) => {
+          callback(error)
+          child.emit('close')
+        })
+      })
+      return child
+    },
+  }
+})
 
 import { prepareArchiveDependencies } from '../../src/project/archive.js'
 import { importAgentProject } from '../../src/project/import.js'
