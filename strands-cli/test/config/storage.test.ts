@@ -434,7 +434,7 @@ describe('CliConfigStore', () => {
   })
 
   it.each(['{ invalid json', 'null', '[]'])(
-    'starts setup without modifying an unreadable JSON config: %s',
+    'reports an unreadable JSON config without replacing it: %s',
     async (text) => {
       const directory = await temporaryDirectory()
       const path = join(directory, 'cli.toml')
@@ -442,10 +442,7 @@ describe('CliConfigStore', () => {
       await mkdir(join(directory, 'cli'))
       await writeFile(legacyPath, text)
 
-      const config = await CliConfigStore.load(path)
-
-      expect(config.needsSetup()).toBe(true)
-      expect(config.snapshot().permissions).toEqual({ mode: 'default', allow: [], deny: [] })
+      await expect(CliConfigStore.load(path)).rejects.toThrow(`Invalid CLI config at ${legacyPath}`)
       expect(await readFile(legacyPath, 'utf8')).toBe(text)
       await expect(readFile(path, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
     }

@@ -461,11 +461,7 @@ async function readConfigDocument(path: string): Promise<{ document: ConfigDocum
   if (legacyText === undefined) {
     return { document: {} }
   }
-  try {
-    return { document: parseConfigText(legacyPath, () => JSON.parse(legacyText) as unknown), legacyPath }
-  } catch {
-    return { document: {} }
-  }
+  return { document: parseConfigText(legacyPath, () => JSON.parse(legacyText) as unknown), legacyPath }
 }
 
 async function readOptionalFile(path: string): Promise<string | undefined> {
