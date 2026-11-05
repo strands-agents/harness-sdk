@@ -99,14 +99,15 @@ def _to_summarizer_blocks(block: ContentBlock) -> list[ContentBlock]:
     Text, images, and documents pass through; other content is rendered as text or a placeholder, and the rest
     is left out.
     """
-    if "text" in block or "image" in block or "document" in block:
+    if "text" in block:
+        # Drop metadata so a server-side summary reaches the summarizer as plain text.
+        return [ContentBlock(text=block["text"])]
+    if "image" in block or "document" in block:
         return [block]
     if "citationsContent" in block:
         return [ContentBlock(text=content["text"]) for content in block["citationsContent"].get("content", [])]
     if "guardContent" in block:
         return [ContentBlock(text=block["guardContent"]["text"]["text"])]
-    if "summary" in block:
-        return [ContentBlock(text=block["summary"]["text"])]
     if "video" in block:
         return [ContentBlock(text="[video omitted]")]
     if "audio" in block:

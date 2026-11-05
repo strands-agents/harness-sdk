@@ -406,7 +406,7 @@ class TestServerSideSummary:
     @pytest.mark.asyncio
     async def test_replaces_opening_run_with_server_side_summary(self, mock_agent):
         mock_agent.model.model_info.capabilities.server_side_summary = True
-        summary = ContentBlock(summary={"provider": "anthropic", "text": "compacted"})
+        summary = ContentBlock(text="compacted", metadata={"serverSideSummary": {"provider": "anthropic"}})
         mock_agent.model.summarize = unittest.mock.AsyncMock(return_value=summary)
         messages = self._messages()
         mock_agent.messages = messages
@@ -484,9 +484,10 @@ class TestServerSideSummary:
             return summarize_stream(messages, *args, **kwargs)
 
         mock_agent.model.stream = capture_stream
+        earlier_summary = ContentBlock(text="fact", metadata={"serverSideSummary": {"provider": "anthropic"}})
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="task")]),
-            Message(role="assistant", content=[ContentBlock(summary={"provider": "anthropic", "text": "fact"})]),
+            Message(role="assistant", content=[earlier_summary]),
             Message(role="user", content=[ContentBlock(text="old1")]),
             Message(role="assistant", content=[ContentBlock(text="old2")]),
             Message(role="user", content=[ContentBlock(text="recent")]),
@@ -496,5 +497,6 @@ class TestServerSideSummary:
 
         assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is True
 
-        sent_texts = [block.get("text") for sent in summarizer_inputs for m in sent for block in m["content"]]
-        assert "fact" in sent_texts
+        sent_blocks = [block for sent in summarizer_inputs for message in sent for block in message["content"]]
+        assert ContentBlock(text="fact") in sent_blocks
+        assert not any("metadata" in block for block in sent_blocks)

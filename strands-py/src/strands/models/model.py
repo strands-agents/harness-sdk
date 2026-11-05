@@ -57,9 +57,6 @@ def _count_content_block_tokens(
     if "text" in block:
         total += count_text(block["text"])
 
-    if "summary" in block:
-        total += count_text(block["summary"].get("text", ""))
-
     if "toolUse" in block:
         tool_use = block["toolUse"]
         total += count_text(tool_use.get("name", ""))
@@ -426,7 +423,8 @@ class Model(abc.ABC):
             **kwargs: Additional keyword arguments for future extensibility.
 
         Returns:
-            A ``summary`` block that takes the summarized messages' place.
+            A text block holding the summary, with provider data in ``metadata.serverSideSummary``, that takes
+            the summarized messages' place.
 
         Raises:
             NotImplementedError: If the model has no server-side summary.
