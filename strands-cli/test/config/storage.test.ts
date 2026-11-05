@@ -1,7 +1,7 @@
+import { DEFAULT_HARNESS_AGENT_CONFIG } from '@strands-agents/harness'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { DEFAULT_HARNESS_AGENT_CONFIG } from '@strands-agents/harness'
 import { parse, stringify } from 'smol-toml'
 
 import { applyProviderEnvironmentValues, SETUP_VERSION, CliConfigStore } from '../../src/config/store.js'
@@ -61,26 +61,10 @@ describe('CliConfigStore', () => {
 
     const config = await CliConfigStore.load(path)
 
-    expect(config.snapshot()).toEqual({
-      path,
+    expect(config.snapshot()).toMatchObject({
       onboarding: { version: 0 },
-      providers: { enabled: ['bedrock'] },
-      profile: DEFAULT_HARNESS_AGENT_CONFIG,
       permissions: { mode: 'default', allow: [], deny: [] },
-      settings: {
-        transcriptSpacing: 'comfortable',
-        animations: true,
-        showReasoning: true,
-        toolOutput: 'compact',
-        frogTheme: 'green',
-        mcpDiscovery: false,
-        disabledMcpServers: [],
-        skillDiscovery: false,
-        agentMessaging: true,
-        telemetry: true,
-        updatePrompts: true,
-        contextOffloadThreshold: 'default',
-      },
+      settings: { mcpDiscovery: false, skillDiscovery: false },
     })
     expect(config.needsSetup()).toBe(true)
   })

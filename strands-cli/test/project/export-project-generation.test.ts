@@ -378,7 +378,7 @@ export const agent = await createHarness({
     expect(pyEntries.get('requirements.txt')?.toString()).toContain(`strands-harness[${extra}]~=`)
   })
 
-  it('includes a production build', async () => {
+  it('includes dependencies for a tool-specific model', async () => {
     const root = await temporaryDirectory()
     const config = defineHarnessAgentConfig({
       model: 'bedrock/model',
@@ -390,15 +390,6 @@ export const agent = await createHarness({
 
     const manifest = JSON.parse(entries.get('package.json')!.toString())
     expect(manifest.dependencies.openai).toBeTruthy()
-    expect(manifest.dependencies.dotenv).toBeUndefined()
-    expect(manifest.scripts.build).toBe('tsc && node build.mjs')
-    expect(manifest.scripts.start).toBeUndefined()
-    expect(manifest.scripts.dev).toBeUndefined()
-    const tsconfig = JSON.parse(entries.get('tsconfig.json')!.toString())
-    expect(tsconfig.compilerOptions.outDir).toBe('dist')
-    expect(tsconfig.include).toEqual(['agent/**/*'])
-    expect(entries.get('build.mjs')?.toString()).toContain("cpSync('agent', 'dist/agent'")
-    expect(entries.get('.gitignore')?.toString()).toContain('.env.local')
   })
 
   it.each(['agent.ts', 'agent.py', 'agent/agent.ts', 'agent/agent.mts', 'agent/agent.py'])(

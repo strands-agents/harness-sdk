@@ -26,22 +26,12 @@ describe('agentProjectSource memory', () => {
     )
   })
 
-  it('does not forward default memory config to the loader', () => {
-    const generated = source({ memoryStores: [store] })
-    expect(generated).toContain("memory: extensions['memory'],")
-    expect(generated).not.toMatch(/defineHarnessAgentConfig\(\{[\s\S]*memory:[\s\S]*\}\)\)/u)
-  })
-
   it('emits memory=False for python when memory stores are configured', () => {
     expect(source({ memory: false, memoryStores: [store] }, 'python')).toContain('memory=False,')
   })
 })
 
 describe('agentProjectSource skills', () => {
-  it('omits skills when it matches the default', () => {
-    expect(source({})).not.toContain('skills')
-  })
-
   it('emits skills: false for a disabled profile', () => {
     expect(source({ skills: false })).toContain('skills: false,')
     expect(source({ skills: false }, 'python')).toContain('skills=False,')

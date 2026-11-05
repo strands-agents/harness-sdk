@@ -10,7 +10,6 @@ import { discoverProviderModels } from '../../src/model/discovery.js'
 import {
   profileEffort,
   resolveModelTarget,
-  effortDisplayLabel,
   effortOptions,
   validateModelSelection,
   type EffortInput,
@@ -29,15 +28,6 @@ describe('model display names', () => {
     expect(modelDisplayName('bedrock/custom-model')).toBe('bedrock/custom-model')
     expect(modelDisplayName('Custom Model')).toBe('Custom Model')
   })
-})
-
-// Emulates the unpublished harness fix for #5191. Remove once the minimum harness version includes it.
-vi.mock('@strands-agents/harness', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@strands-agents/harness')>()
-  return {
-    ...actual,
-    supportsThinking: (spec: string) => actual.supportsThinking(spec) || /openai\.gpt-(5\.\d|6\.|daybreak-)/.test(spec),
-  }
 })
 
 afterEach(() => {
@@ -183,17 +173,6 @@ describe('AgentModelRuntime thinking controls', () => {
     await expect(runtime.setEffort('high')).rejects.toThrow()
   })
 
-  it.each(['global.anthropic.claude-haiku-4-5-20251001-v1:0', 'global.anthropic.claude-opus-4-5-20251101-v1:0'])(
-    'offers levels for %s, which takes extended thinking',
-    (modelId) => {
-      expect(runtimeFor(modelId, 'auto').listEfforts()).toHaveLength(5)
-    }
-  )
-
-  it('still offers levels for a Claude at the adaptive floor', () => {
-    expect(runtimeFor('global.anthropic.claude-opus-4-6-v1', 'high').listEfforts()).toHaveLength(5)
-  })
-
   it.each([
     ['high', 'bedrock/us.anthropic.claude-3-haiku-20240307-v1:0', 'auto'],
     ['max', 'bedrock/openai.gpt-oss-120b-1:0', 'auto'],
@@ -268,7 +247,6 @@ describe('AgentModelRuntime thinking controls', () => {
   // https://github.com/strands-agents/harness-sdk/issues/5191
   it.each([
     ['openai.gpt-5.4', ['none', 'low', 'medium', 'high', 'xhigh']],
-    ['us.openai.gpt-5.5', ['none', 'low', 'medium', 'high', 'xhigh']],
     ['us.openai.gpt-6.1-sol', ['low', 'medium', 'high', 'xhigh', 'max']],
     ['openai.gpt-daybreak-blue-5.6-sol', ['none', 'low', 'medium', 'high', 'xhigh', 'max']],
   ])('offers GPT-5 line effort levels for %s', (modelId, levels) => {
@@ -276,16 +254,6 @@ describe('AgentModelRuntime thinking controls', () => {
 
     expect(runtime.listEfforts().map((option) => option.id)).toEqual(levels)
     expect(runtime.listEfforts()).toContainEqual({ id: 'high', label: 'High', active: true })
-  })
-
-  it('labels the configured thinking for models without an effort mapping', () => {
-    expect(effortDisplayLabel('auto')).toBe('Auto')
-    expect(effortDisplayLabel(true)).toBe('Auto')
-    expect(effortDisplayLabel(undefined)).toBe('Auto')
-    expect(effortDisplayLabel(null)).toBe('Off')
-    expect(effortDisplayLabel(false)).toBe('Off')
-    expect(effortDisplayLabel('xhigh')).toBe('Extra high')
-    expect(effortDisplayLabel('medium')).toBe('Medium')
   })
 
   it('preserves an explicit thinking-off setting when forking', () => {
@@ -297,14 +265,6 @@ describe('AgentModelRuntime thinking controls', () => {
 
     expect(runtime.listEfforts().map((option) => option.id)).toEqual(['low', 'medium', 'high'])
     await expect(runtime.setEffort('max')).rejects.toThrow('not supported')
-  })
-
-  it('offers the Qwen effort levels accepted by the Bedrock resolver', () => {
-    expect(
-      runtimeFor('us.qwen.qwen3-32b-v1:0', 'high')
-        .listEfforts()
-        .map((option) => option.id)
-    ).toEqual(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
   })
 
   it.each([

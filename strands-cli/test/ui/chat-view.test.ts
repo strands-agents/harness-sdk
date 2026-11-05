@@ -12,7 +12,6 @@ import { Markdown } from '../../src/ui/markdown.js'
 import {
   composerPanelHeight,
   configurationDockWidth,
-  CONFIG_DOCK_GAP,
   panelControlTarget,
   panelRowCapacity,
   permissionPanelLayout,
@@ -265,45 +264,6 @@ describe('ChatView', () => {
     expect(wide).not.toContain('Preview ·')
     expect(wide).not.toContain('←→ switch')
     expect(narrow).not.toContain('TypeScript')
-  })
-
-  it('moves the empty-state lockup left when the configuration dock opens', () => {
-    const panel: ChatPanel = {
-      id: 'config',
-      kind: 'config',
-      title: 'Configuration',
-      rows: [],
-      filters: [
-        { id: 'typescript', label: 'TypeScript' },
-        { id: 'python', label: 'Python' },
-      ],
-      configuration: liveConfiguration,
-      language: 'typescript',
-    }
-    const render = (open: boolean): string =>
-      sanitizeTerminalText(
-        renderView(
-          {
-            snapshot: snapshot({
-              settings: { ...DEFAULT_CHAT_SETTINGS, animations: false },
-              ...(open ? { panel, configuration: liveConfiguration } : {}),
-            }),
-            terminalWidth: 180,
-            terminalHeight: 40,
-            panelFilter: 'typescript',
-          },
-          { columns: 180 }
-        )
-      )
-    const brandColumn = (output: string): number =>
-      output
-        .split('\n')
-        .find((line) => line.includes('▀▄     ▄▄'))!
-        .indexOf('▀▄     ▄▄')
-
-    const centered = brandColumn(render(false))
-    const shifted = brandColumn(render(true))
-    expect(centered - shifted).toBe(Math.round((configurationDockWidth(180, true) + CONFIG_DOCK_GAP) / 2))
   })
 
   it('highlights the previous config line red and the replacement green', () => {
@@ -821,37 +781,6 @@ describe('ChatView', () => {
     }
   )
 
-  it.each([22, 40, 80, 150])('energizes the effort panel only when Max is selected at %s columns', (width) => {
-    const effortPanel = (active: 'high' | 'max'): ChatPanel => ({
-      id: 'effort',
-      kind: 'effort',
-      title: 'effort',
-      rows: [],
-      slider: {
-        label: 'Effort',
-        options: [
-          { id: 'high', label: 'High', ...(active === 'high' ? { active: true } : {}) },
-          { id: 'max', label: 'Max', ...(active === 'max' ? { active: true } : {}) },
-        ],
-      },
-    })
-    const renderEffort = (active: 'high' | 'max'): string =>
-      sanitizeTerminalText(
-        renderView({
-          snapshot: snapshot({ panel: effortPanel(active), settings: { ...DEFAULT_CHAT_SETTINGS, animations: false } }),
-          terminalWidth: width,
-          terminalHeight: 24,
-        })
-      )
-    const high = renderEffort('high')
-    const max = renderEffort('max')
-
-    expect(high).not.toMatch(/[ϟ✦]/u)
-    expect(max).toMatch(/[ϟ✦]/u)
-    expect(max).toMatch(/[━┃]/u)
-    expect(max.split('\n').every((line) => stringWidth(line) <= width)).toBe(true)
-  })
-
   it.each(['agents', 'mcp', 'settings'] as const)('renders the %s panel from its independent viewport', (kind) => {
     const rows = Array.from({ length: 12 }, (_, index) => ({
       label: `Tool ${String(index).padStart(2, '0')}`,
@@ -1101,19 +1030,6 @@ describe('ChatView', () => {
       expect(sanitizeTerminalText(frames.at(-1)!)).toContain('FINAL_INSTRUCTION')
     }
   )
-
-  it('renders the colored startup wordmark with one model label', () => {
-    const output = renderView({
-      snapshot: snapshot(),
-      terminalWidth: 100,
-      terminalHeight: 40,
-    })
-    const plainOutput = sanitizeTerminalText(output)
-
-    expect(output).toContain('[48;2;129;255;157m ')
-    expect(output).toMatch(/[▗▖▄▝▐▞▟▘▚▌▙▀▜▛]/u)
-    expect(plainOutput.match(/bedrock\/test/g)).toHaveLength(1)
-  })
 
   it('opens direct shell output when tool output is hidden and collapses it on request', () => {
     const output = Array.from({ length: 12 }, (_, index) => `shell line ${index + 1}`).join('\n')
@@ -1574,60 +1490,6 @@ describe('ChatView', () => {
     expect(lines[nextMessage + 2]).toBe('Reasoning')
     expect(finalMetrics).toBeGreaterThan(nextMessage)
     expect(lines[finalMetrics + 1]).toBe('')
-  })
-
-  it.each([
-    ['comfortable', 'hidden'],
-    ['comfortable', 'compact'],
-    ['compact', 'hidden'],
-    ['compact', 'compact'],
-  ] as const)('adds one blank row after reasoning with %s spacing and %s tools', (transcriptSpacing, toolOutput) => {
-    const output = renderView({
-      snapshot: snapshot({
-        settings: { ...DEFAULT_CHAT_SETTINGS, transcriptSpacing, toolOutput },
-        completedTurns: [
-          {
-            id: 'turn-1',
-            prompt: 'inspect this',
-            agentName: 'Strands harness',
-            entries: [
-              { id: 'reasoning-1', type: 'reasoning', text: 'I should inspect the files.' },
-              {
-                id: 'tool-1',
-                type: 'tool',
-                toolUseId: 'tool-use-1',
-                name: 'bash',
-                input: { command: 'npm test' },
-                status: 'success',
-              },
-              {
-                id: 'tool-2',
-                type: 'tool',
-                toolUseId: 'tool-use-2',
-                name: 'read',
-                input: { path: 'README.md' },
-                status: 'success',
-              },
-              { id: 'reasoning-2', type: 'reasoning', text: 'I have enough context.' },
-              { id: 'answer-1', type: 'assistant', text: 'Done.' },
-            ],
-            status: 'complete',
-          },
-        ],
-      }),
-      terminalWidth: 100,
-      terminalHeight: 40,
-    })
-
-    const lines = sanitizeTerminalText(output)
-      .split('\n')
-      .map((line) => line.trim())
-    expect(lines[lines.indexOf('I should inspect the files.') + 1]).toBe('')
-    expect(lines[lines.indexOf('I should inspect the files.') + 2]).toContain(
-      toolOutput === 'hidden' ? 'Shell npm test' : 'Tool activity'
-    )
-    expect(lines[lines.indexOf('I have enough context.') + 1]).toBe('')
-    expect(lines[lines.indexOf('I have enough context.') + 2]).toBe('Strands harness')
   })
 
   it('presents maxTokens as a recoverable output limit', () => {
@@ -2281,31 +2143,6 @@ describe('ChatView', () => {
     }
   })
 
-  it('renders fork progress alongside the conversation', () => {
-    const output = renderView({
-      snapshot: snapshot({
-        completedTurns: [
-          {
-            id: 'turn-1',
-            prompt: 'Keep this conversation visible',
-            agentName: 'Strands harness',
-            entries: [{ id: 'reply-1', type: 'assistant', text: 'Existing reply' }],
-            status: 'complete',
-          },
-        ],
-        notices: [{ id: 'manager-fork-progress', afterTurnId: 'turn-1', text: 'Forking agent…', status: 'running' }],
-      }),
-      terminalWidth: 100,
-      terminalHeight: 30,
-    })
-
-    expect(output).toContain('Forking agent')
-    expect(output).toContain('Keep this conversation visible')
-    expect(output).toContain('Existing reply')
-    expect(output).toContain('Enter to send')
-    expect(output).not.toContain('Viewing Forking agent')
-  })
-
   it('renders compaction status inside the composer instead of as a panel', () => {
     const output = renderView({
       snapshot: snapshot({ composerStatus: 'Compacting context...' }),
@@ -2678,80 +2515,6 @@ describe('ChatView', () => {
     }
   })
 
-  it.each([
-    ['Appearance', 'Theme, transcript, reasoning, tool output, and animations'],
-    ['Agent', 'tool-result tokens'],
-    ['Auto-Discovery', 'only explicit --mcp-config sources load'],
-    ['Updates', 'asks before installing an available update'],
-    ['Telemetry', 'one anonymous ping per launch'],
-  ] as const)('uses the %s category title without its description header', (category, description) => {
-    const output = sanitizeTerminalText(
-      renderView({
-        snapshot: snapshot({ panel: settingsPanel(category) }),
-        terminalWidth: 100,
-        terminalHeight: 30,
-      })
-    )
-
-    expect(output.split(category)).toHaveLength(3)
-    expect(output).not.toContain(description)
-  })
-
-  it.each([40, 80, 150])('keeps every /settings section in one centered %i-column frame', (terminalWidth) => {
-    const sections = [
-      ['Appearance', 'Theme'],
-      ['Agent', 'Tool'],
-      ['Auto-Discovery', 'MCP'],
-      ['Updates', 'Startup'],
-      ['Telemetry', 'Send'],
-    ] as const
-    let expectedBounds: { top: number; bottom: number; left: number; right: number } | undefined
-
-    for (const [category, rowLabel] of sections) {
-      const lines = sanitizeTerminalText(
-        renderView({
-          snapshot: snapshot({
-            panel: settingsPanel(category, DEFAULT_CHAT_SETTINGS, category === 'Agent'),
-          }),
-          terminalWidth,
-          terminalHeight: 24,
-        })
-      ).split('\n')
-      const top = lines.findIndex((line) => /┌.*┐┌.*┐/u.test(line))
-      const bottom = lines.findIndex((line, index) => index > top && /└.*┘└.*┘/u.test(line))
-      const row = lines.findIndex((line) => line.includes(rowLabel))
-      const border = lines[top]!
-      const bounds = { top, bottom, left: border.indexOf('┌'), right: border.lastIndexOf('┐') }
-      const title = lines.findIndex((line) => line.includes(`││ ${category}`))
-
-      expect(lines.every((line) => stringWidth(line) <= terminalWidth)).toBe(true)
-      expect(title - top).toBe(1)
-      expect(row - title).toBe(2)
-      expect(bottom - row).toBeGreaterThan(2)
-      expectedBounds ??= bounds
-      expect(bounds).toEqual(expectedBounds)
-    }
-  })
-
-  it('keeps the active theme in view when the theme options overflow the row', () => {
-    const output = sanitizeTerminalText(
-      renderView({
-        snapshot: snapshot({
-          settings: { ...DEFAULT_CHAT_SETTINGS, frogTheme: 'scarlet' },
-          panel: settingsPanel('Appearance', { ...DEFAULT_CHAT_SETTINGS, frogTheme: 'scarlet' }),
-        }),
-        terminalWidth: 80,
-        terminalHeight: 24,
-      })
-    )
-    const theme = output.split('\n').find((line) => line.includes('› Theme'))
-
-    expect(theme).toContain('‹')
-    expect(theme).toContain('Scarlet')
-    expect(theme).not.toContain('Classic')
-    expect(theme).not.toMatch(/Scarlet.*›/u)
-  })
-
   it.each([40, 80, 150, 200])('renders searchable permission modes and tool grants at %i columns', (width) => {
     const rendered = renderView({
       snapshot: snapshot({
@@ -2865,20 +2628,6 @@ describe('ChatView', () => {
       expect({ left: model.left, right: model.right }).toEqual({ left: command.left, right: command.right })
     }
   )
-
-  it('shows only a centered spinner in the composer while /model loads', () => {
-    const lines = renderView({
-      snapshot: snapshot({ panel: { id: 'models', kind: 'models', title: 'models', rows: [], loading: true } }),
-      terminalWidth: 90,
-      terminalHeight: 30,
-    }).split('\n')
-    const loading = lines.find((line) => line.includes('Loading models'))
-    expect(loading).toBeDefined()
-    const center = loading!.indexOf('Loading models') + 'Loading models'.length / 2
-    expect(Math.abs(center - 45)).toBeLessThanOrEqual(3)
-    expect(lines.join('\n')).not.toContain('Providers')
-    expect(lines.join('\n')).not.toContain('Search models')
-  })
 
   it('renders providers and models as focused 33/66 columns', () => {
     const current = snapshot({

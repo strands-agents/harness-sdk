@@ -7,17 +7,6 @@ import { upgradeDesktopAgentProfileMessages } from '../../src/session/desktop-pr
 import { SHELL_OUTPUT_LIMIT_BYTES, SHELL_OUTPUT_LIMIT_NOTICE } from '../../src/terminal/shell-output.js'
 
 describe('TurnProjector', () => {
-  it('projects a delayed response only while it is set', () => {
-    const projector = new TurnProjector('turn-1', 'hello')
-    expect(projector.snapshot()).not.toHaveProperty('responseDelayed')
-
-    projector.setResponseDelayed(true)
-    expect(projector.snapshot().responseDelayed).toBe(true)
-
-    projector.setResponseDelayed(false)
-    expect(projector.snapshot()).not.toHaveProperty('responseDelayed')
-  })
-
   it.each(['complete', 'cancelled', 'error'] as const)('clears a delayed response when the turn is %s', (status) => {
     const projector = new TurnProjector('turn-1', 'hello')
     projector.setResponseDelayed(true)

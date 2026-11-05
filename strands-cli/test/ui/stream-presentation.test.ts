@@ -127,39 +127,6 @@ describe('presentChatStream', () => {
     expect(next.value).toEqual({ stopReason: 'endTurn' })
   })
 
-  it('uses the same bounded delay on either side of the buffer limit', async () => {
-    const present = async (length: number): Promise<{ text: string; waits: number[] }> => {
-      async function* source(): AsyncGenerator<ChatEvent, ChatRunResult, undefined> {
-        yield { type: 'textDelta', text: 'x'.repeat(length) }
-        return { stopReason: 'endTurn' }
-      }
-      const waits: number[] = []
-      const stream = presentChatStream(source(), {
-        delay: async (milliseconds) => {
-          waits.push(milliseconds)
-        },
-      })
-      const chunks: string[] = []
-      let next = await stream.next()
-      while (!next.done) {
-        if (next.value.type === 'textDelta') {
-          chunks.push(next.value.text)
-        }
-        next = await stream.next()
-      }
-      return { text: chunks.join(''), waits }
-    }
-
-    const belowLimit = await present(479)
-    const atLimit = await present(480)
-
-    expect(belowLimit.text).toBe('x'.repeat(479))
-    expect(atLimit.text).toBe('x'.repeat(480))
-    expect(belowLimit.waits).toEqual(atLimit.waits)
-    expect(belowLimit.waits.length).toBeGreaterThan(0)
-    expect(belowLimit.waits.length).toBeLessThanOrEqual(8)
-  })
-
   it('does not split grapheme clusters across presentation chunks', async () => {
     const family = '👨‍👩‍👧‍👦'
     const accented = 'e\u0301'

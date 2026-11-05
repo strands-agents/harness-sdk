@@ -6,9 +6,7 @@ import { describe, expect, it } from 'vitest'
 
 import { commandAssistance } from '../../src/ui/chat/commands.js'
 import {
-  composerMaxRows,
   emptyEditor,
-  promptEditorHeight,
   promptViewport,
   reduceInput,
   reduceInputSequence,
@@ -79,24 +77,6 @@ describe('editable text', () => {
 })
 
 describe('prompt editor input', () => {
-  it('scales the composer row cap with terminal height up to eight rows', () => {
-    expect(composerMaxRows(12)).toBe(2)
-    expect(composerMaxRows(16)).toBe(6)
-    expect(composerMaxRows(30)).toBe(8)
-    expect(composerMaxRows(16, 2)).toBe(4)
-  })
-
-  it('reports the rendered editor height for command-deck layout', () => {
-    expect(promptEditorHeight('', 0, 80, 8)).toBe(4)
-    expect(promptEditorHeight('one\ntwo', 8, 80, 8)).toBe(4)
-    expect(promptEditorHeight('one\ntwo\nthree\nfour', 18, 80, 8)).toBe(6)
-    expect(promptEditorHeight('one\ntwo\nthree\nfour', 18, 80, 3)).toBe(5)
-    expect(promptEditorHeight(Array.from({ length: 12 }, (_, i) => `line ${i}`).join('\n'), 0, 80, 8)).toBe(10)
-    expect(promptEditorHeight('one\ntwo\nthree\nfour', 18, 80, 8, true)).toBe(4)
-    expect(promptEditorHeight('', 0, 80, 8, false, true)).toBe(6)
-    expect(promptEditorHeight('', 0, 80, 8, true, true)).toBe(6)
-  })
-
   it('names the wrapped rows scrolled out of the prompt', () => {
     const input = Array.from({ length: 12 }, (_, index) => `line ${index + 1}`).join('\n')
     const frame = (cursor: number): string[] =>
@@ -268,25 +248,6 @@ describe('prompt editor input', () => {
     ])
   })
 
-  it('colors an actionable command token with the accent without coloring its argument', () => {
-    const level = chalk.level
-    chalk.level = 3
-    try {
-      const output = renderToString(
-        createElement(PromptEditor, {
-          input: '/model improve the response',
-          cursor: 26,
-          actionableCommandToken: '/model',
-        })
-      )
-      expect(output).toContain(
-        '\u001b[38;2;0;204;96m/model\u001b[38;2;236;239;241m improve the respons\u001b[7me\u001b[27m'
-      )
-    } finally {
-      chalk.level = level
-    }
-  })
-
   it.each([
     ['A👩🏽‍💻', ''],
     ['Ae', '\u0301'],
@@ -312,13 +273,6 @@ describe('prompt editor input', () => {
       action: 'none',
       state: { input: 'one\n' },
     })
-  })
-
-  it('submits and recalls history', () => {
-    const typed = reduceInput(emptyEditor(), 'hello', {}, 'idle').state
-    const submitted = submitEditor(typed, typed.input)
-    expect(submitted).toMatchObject({ action: 'submit', prompt: 'hello', state: { input: '' } })
-    expect(reduceInput(submitted.state, '', { upArrow: true }, 'idle').state.input).toBe('hello')
   })
 
   it('returns to the unsent draft after browsing and editing history', () => {

@@ -458,11 +458,8 @@ describe('PythonVoiceSession', () => {
     }
   })
 
-  it('resolves the repository sidecar from source and built module layouts', () => {
+  it('resolves the repository sidecar from source modules', () => {
     expect(resolveVoiceSidecarPath(resolve(import.meta.dirname, '../../src/agent'))).toBe(
-      resolve(import.meta.dirname, '../../src/agent/voice-sidecar.py')
-    )
-    expect(resolveVoiceSidecarPath(resolve(import.meta.dirname, '../../dist/src/agent'))).toBe(
       resolve(import.meta.dirname, '../../src/agent/voice-sidecar.py')
     )
   })

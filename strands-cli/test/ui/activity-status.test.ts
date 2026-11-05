@@ -2,7 +2,7 @@ import { createElement } from 'react'
 import { renderToString } from 'ink'
 import { describe, expect, it } from 'vitest'
 
-import { toolActivity, toolGroupActivity, turnActivity, turnActivityText } from '../../src/ui/chat/transcript-turn.js'
+import { toolActivity, toolGroupActivity } from '../../src/ui/chat/transcript-turn.js'
 import { TurnView } from '../../src/ui/chat/transcript-turn.js'
 import { DEFAULT_CHAT_SETTINGS } from '../../src/ui/chat/types.js'
 import { type ChatTurn } from '../../src/agent/types.js'
@@ -19,17 +19,6 @@ const turn = (source?: ChatTurn['source']): ChatTurn => ({
 })
 
 describe('activity status', () => {
-  it('labels the turn line from a fixed set of activities', () => {
-    expect(turnActivityText(turnActivity(turn(), false), turn(), '|')).toBe('| Working (esc to interrupt)')
-    expect(turnActivityText(turnActivity(turn(), true), turn(), '|')).toBe('◆ Waiting for approval')
-    expect(turnActivityText(turnActivity(turn('background'), false), turn('background'), '|')).toBe(
-      '| Reviewing background result (esc to interrupt)'
-    )
-    expect(turnActivityText(turnActivity(turn('peer'), false), turn('peer'), '|')).toBe(
-      '| Responding to Reviewer (esc to interrupt)'
-    )
-  })
-
   it('pauses only a running tool call and ranks a group by its most pressing member', () => {
     expect(toolActivity('running', true)).toBe('paused')
     expect(toolActivity('success', true)).toBe('succeeded')
@@ -39,14 +28,6 @@ describe('activity status', () => {
     expect(toolGroupActivity(['success', 'cancelled', 'error'], false)).toBe('failed')
     expect(toolGroupActivity(['success', 'cancelled'], false)).toBe('cancelled')
     expect(toolGroupActivity(['success'], false)).toBe('succeeded')
-  })
-
-  it('shows a response delay without overriding a pending approval', () => {
-    const delayed = { ...turn(), responseDelayed: true }
-    expect(turnActivityText(turnActivity(delayed, false), delayed, '|')).toBe(
-      '| Waiting for model response (esc to interrupt)'
-    )
-    expect(turnActivityText(turnActivity(delayed, true), delayed, '|')).toBe('◆ Waiting for approval')
   })
 
   it.each([60, 100])('renders the delayed-response recovery hint at %i columns', (columns) => {

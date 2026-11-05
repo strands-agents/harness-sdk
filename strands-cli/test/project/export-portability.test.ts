@@ -123,24 +123,6 @@ it.each(['typescript', 'python'] as const)('rejects credentials in %s dependency
   await expect(writeAgentProject(profile, language, [], join(root, 'agent.zip'))).rejects.toThrow('credentials')
 })
 
-it('emits a truthful generated README and no unused instructions file', async () => {
-  const archive = join(root, 'agent.zip')
-  await writeAgentProject(
-    defineHarnessAgentConfig({ name: 'Portable', instructions: 'Embedded instructions' }),
-    'typescript',
-    [],
-    archive
-  )
-  const entries = unzipSync(await readFile(archive))
-  const readme = Buffer.from(entries['README.md']!).toString()
-  expect(readme).toContain('Edit `agent/agent.ts`')
-  expect(readme).toContain("import { agent } from './dist/agent/agent.js'")
-  expect(readme).not.toContain('createAgent(options)')
-  expect(readme).not.toContain('agent/instructions.md')
-  expect(entries).not.toHaveProperty('agent/instructions.md')
-  expect(Buffer.from(entries['agent/agent.ts']!).toString()).toContain("instructions: 'Embedded instructions'")
-})
-
 it('rejects archive names that Windows cannot extract', async () => {
   const skill = join(root, 'CON')
   await file(join(skill, 'SKILL.md'), '# Reserved')

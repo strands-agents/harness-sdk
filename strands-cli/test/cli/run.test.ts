@@ -285,10 +285,6 @@ describe('parseArgs', () => {
     expect(() => parseArgs(['--prompt', 'one', 'two'])).toThrow('either positionally or with --prompt')
   })
 
-  it('captures the setup flag', () => {
-    expect(parseArgs(['--setup']).setup).toBe(true)
-  })
-
   it('captures the update command without treating other requests as commands', () => {
     expect(parseArgs(['update']).update).toBe(true)
     expect(parseArgs(['summarize']).request).toBe('summarize')

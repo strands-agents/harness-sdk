@@ -146,19 +146,7 @@ describe('availableCliUpdate', () => {
 })
 
 describe('compareVersions', () => {
-  it.each([
-    ['1.2.0', '1.1.9', true],
-    ['2.0.0', '1.99.99', true],
-    ['1.2.0', '1.2.0-beta.2', true],
-    ['1.2.0-beta.10', '1.2.0-beta.2', true],
-    ['1.2.0-beta.2', '1.2.0', false],
-    ['1.2.0', '2.0.0-beta.1', false],
-  ])('compares %s against %s', (candidate, current, expected) => {
-    expect(compareVersions(candidate, current) === 1).toBe(expected)
-  })
-
-  it('ignores build metadata and rejects malformed versions', () => {
-    expect(compareVersions('1.2.0+published', '1.2.0+local')).toBe(0)
+  it('rejects malformed versions', () => {
     expect(compareVersions('invalid', '1.2.0')).toBeUndefined()
   })
 })

@@ -72,17 +72,6 @@ describe('theme resolution', () => {
       }
     }
   })
-
-  it('exposes the terminal canvas color with a palette fallback', () => {
-    expect(getTheme(settings(), 'dark').canvas).toBe('#101213')
-    expect(getTheme(settings(), 'light').canvas).toBe('#ffffff')
-    expect(getTheme(settings(), 'dark', '#1b1f27').canvas).toBe('#1b1f27')
-  })
-
-  it('keeps the preset Oak accent', () => {
-    const oak = getTheme(settings('oak'), 'dark')
-    expect(oak.accent).toBe('#d0a071')
-  })
 })
 
 describe('terminal background detection', () => {

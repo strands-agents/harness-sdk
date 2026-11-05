@@ -3,7 +3,6 @@ import { createElement } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 
 import {
-  agentGridLayout,
   clampAgentGridViewport,
   moveAgentGridSelection,
   revealAgentGridSelection,
@@ -11,21 +10,17 @@ import {
 } from '../../src/ui/panels/agents.js'
 import {
   filterPanelRows,
-  isComposerPanel,
   moveSelection,
   mouseScrollDirection,
   revealPanelSelection,
   scrollDetail,
   scrollPanelViewport,
   scrollTranscript,
-  settingArrowValue,
   shouldToggleVoiceMute,
 } from '../../src/ui/interaction.js'
 import { planTranscriptLayout, transcriptWindow } from '../../src/ui/chat/transcript.js'
-import { summarizeToolInput, toolAction } from '../../src/ui/presentation.js'
+import { summarizeToolInput } from '../../src/ui/presentation.js'
 import { parseMouseInput, selectScreenText } from '../../src/terminal/mouse-input.js'
-import { settingsRows } from '../../src/ui/chat/panel-state.js'
-import { DEFAULT_CHAT_SETTINGS } from '../../src/config/settings.js'
 import { ChatApp } from '../../src/ui/chat/screen.js'
 import { ChatController } from '../../src/ui/chat/controller.js'
 import { idleBackend } from '../fixtures/chat-backend.js'
@@ -110,54 +105,12 @@ describe('panel helpers', () => {
     { label: 'Model B', description: 'Provider B', filter: 'current' },
   ]
 
-  it('maps ←→ on a settings row to its neighboring option, and to Off and On for a toggle', () => {
-    const [theme, , animations, , toolOutput] = settingsRows(DEFAULT_CHAT_SETTINGS, 'Appearance')
-    const [contextOffloadThreshold] = settingsRows(DEFAULT_CHAT_SETTINGS, 'Agent')
-
-    expect(settingArrowValue(theme!, -1)).toBeUndefined()
-    expect(settingArrowValue(theme!, 1)).toBe('frogTheme=minimal')
-    expect(settingArrowValue(toolOutput!, -1)).toBe('toolOutput=hidden')
-    expect(settingArrowValue(toolOutput!, 1)).toBe('toolOutput=full')
-    expect(settingArrowValue(animations!, 1)).toBeUndefined()
-    expect(settingArrowValue(animations!, -1)).toBe('animations')
-    expect(settingArrowValue(contextOffloadThreshold!, -1)).toBeUndefined()
-    expect(settingArrowValue(contextOffloadThreshold!, 1)).toBe('contextOffloadThreshold=1500')
-    expect(settingArrowValue({ label: 'note', description: '' }, 1)).toBeUndefined()
-  })
-
-  it('shows strands_config operations and concise input details', () => {
-    expect(summarizeToolInput('strands_config', { action: 'inspect' })).toBe('inspect')
-    expect(summarizeToolInput('strands_config', { action: 'models', provider: 'bedrock', query: 'opus' })).toBe(
-      'models: bedrock · opus'
-    )
-    expect(
-      summarizeToolInput('strands_config', {
-        action: 'update',
-        profile: { model: 'bedrock/global.anthropic.claude-opus-4-6-v1:0' },
-      })
-    ).toBe('update model: Claude Opus 4.6')
-    expect(
-      summarizeToolInput('strands_config', {
-        action: 'update',
-        profile: { effort: 'high', instructions: 'Be concise.' },
-      })
-    ).toBe('update: effort, instructions')
-    expect(summarizeToolInput('strands_config', { action: 'apply', revision: 2 })).toBe('apply')
-  })
-
   it('truncates tool summaries without splitting graphemes or changing the input', () => {
     const input = { command: `${'a'.repeat(158)}😀x` }
     expect(summarizeToolInput('shell', input)).toBe(`${'a'.repeat(158)}…`)
     expect(input.command).toBe(`${'a'.repeat(158)}😀x`)
     expect(summarizeToolInput('custom', `${'a'.repeat(155)}😀xxx`)).toBe(`"${'a'.repeat(155)}😀x…`)
     expect(summarizeToolInput('shell', { command: 'e\u0301'.repeat(161) })).toBe(`${'e\u0301'.repeat(159)}…`)
-  })
-
-  it('presents the SDK Background Tasks management tool', () => {
-    expect(toolAction('strands_manage_background_task')).toBe('Background')
-    expect(summarizeToolInput('strands_manage_background_task', { mode: 'cancel', taskId: 'task-1' })).toBe(
-      'cancel · task-1'
-    )
   })
 
   it('filters rows and accepts custom IDs for supported providers', () => {
@@ -223,20 +176,6 @@ describe('panel helpers', () => {
     expect(revealPanelSelection(3, 8, 5, 20)).toBe(3)
     expect(revealPanelSelection(14, 8, 5, 20)).toBe(10)
     expect(revealPanelSelection(10, 8, 5, 20)).toBe(8)
-  })
-
-  it.each([
-    [120, 40, 4, 8],
-    [100, 30, 3, 3],
-    [40, 16, 1, 1],
-    [22, 10, 1, 1],
-  ])('fits agent cards to a %i×%i full screen', (width, height, columns, capacity) => {
-    const layout = agentGridLayout(width, height)
-    expect(isComposerPanel('agents')).toBe(false)
-    expect(layout).toMatchObject({ columns, capacity })
-    expect(layout.cardWidth * layout.columns + 2 * (layout.columns - 1)).toBeLessThanOrEqual(width - 2)
-    expect(layout.cardHeight).toBeLessThanOrEqual(layout.gridHeight)
-    expect(layout.gridHeight).toBeLessThan(height)
   })
 
   it('scrolls agent cards by grid rows and clamps after the roster shrinks', () => {

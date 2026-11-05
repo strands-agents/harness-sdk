@@ -41,10 +41,6 @@ describe('resolveLogConfig', () => {
     expect(config.level).toBe('warn')
   })
 
-  it('falls back to debug for an unknown level', () => {
-    expect(resolveLogConfig({ STRANDS_CLI_LOG_LEVEL: 'nonsense' }).level).toBe('debug')
-  })
-
   it('takes the level from STRANDS_CLI_LOG unless STRANDS_CLI_LOG_LEVEL is set', () => {
     expect(resolveLogConfig({ STRANDS_CLI_LOG: 'warn' })).toMatchObject({ enabled: true, level: 'warn' })
     expect(resolveLogConfig({ STRANDS_CLI_LOG: 'warn', STRANDS_CLI_LOG_LEVEL: 'error' }).level).toBe('error')

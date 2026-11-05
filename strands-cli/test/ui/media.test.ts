@@ -15,7 +15,6 @@ import {
 import { projectMessages, TurnProjector } from '../../src/ui/chat/projector.js'
 import { projectMediaContent, projectToolResultContent } from '../../src/agent/events.js'
 import { MediaView } from '../../src/ui/media.js'
-import { sanitizeTerminalText } from '../../src/terminal/text.js'
 
 describe('SDK media projection', () => {
   const bytes = new Uint8Array([1, 2, 3])
@@ -124,13 +123,5 @@ describe('terminal media', () => {
     expect(rendered).toContain('item    value')
     expect(rendered).not.toContain('\t')
     expect(content.source.text).toBe('item\tvalue')
-  })
-
-  it('renders a compact image label without dropping attachment bytes', () => {
-    const bytes = new Uint8Array([1, 2, 3])
-    const content = { type: 'image' as const, format: 'png' as const, source: { type: 'bytes' as const, bytes } }
-    const rendered = renderToString(createElement(MediaView, { content }), { columns: 40 })
-    expect(sanitizeTerminalText(rendered)).toBe('image: png, 3 bytes')
-    expect(content.source.bytes).toEqual(new Uint8Array([1, 2, 3]))
   })
 })

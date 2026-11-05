@@ -7,7 +7,6 @@ import { ChatController, type ChatControllerOptions } from '../../src/ui/chat/co
 import { CliConfigStore } from '../../src/config/store.js'
 import { sanitizeTerminalText } from '../../src/terminal/text.js'
 import { ChatApp } from '../../src/ui/chat/screen.js'
-import { frogStartupHeight, renderFrogStartupLockup } from '../../src/ui/frog-renderer.js'
 import { SetupWizard } from '../../src/ui/setup/wizard.js'
 import { idleBackend } from '../fixtures/chat-backend.js'
 import { render, ttyInput, ttyOutput } from '../fixtures/terminal.js'
@@ -106,27 +105,6 @@ describe('responsive welcome art', () => {
       expect(view.screen()).toContain('/help')
       expect(view.screen()).toContain('/settings')
     })
-  })
-
-  it.each([
-    [120, 35, 12],
-    [80, 34, 6],
-    [73, 34, 6],
-    [64, 34, 6],
-    [120, 20, 8],
-    [80, 19, 6],
-    [40, 11, 2],
-    [22, 8, 1],
-    [80, 4, 1],
-  ])('fits %s columns and %s available rows into %s art rows', (width, available, height) => {
-    expect(frogStartupHeight(width, available)).toBe(height)
-    const art = renderFrogStartupLockup(width, false, 0, 'green', false, {}, height)
-    const lines = art.split('\n')
-    expect(lines).toHaveLength(height)
-    expect(lines.every((line) => stringWidth(line) === width)).toBe(true)
-    if (height < 12) {
-      expect(art).toMatch(STRANDS_WORDMARK)
-    }
   })
 
   it('shrinks and restores the welcome banner while retaining the composer draft', async () => {

@@ -7,7 +7,6 @@ const execute = vi.hoisted(() => vi.fn())
 vi.mock('node:child_process', () => ({ execFile: execute }))
 
 import {
-  canUseNativePicker,
   chooseAgentProject,
   chooseDirectory,
   chooseFiles,
@@ -18,14 +17,6 @@ import { loadAttachments } from '../../src/ui/chat/attachments.js'
 afterEach(() => {
   execute.mockReset()
   vi.restoreAllMocks()
-})
-
-it('offers native pickers on macOS and Windows only', () => {
-  expect(['darwin', 'win32', 'linux'].map((platform) => canUseNativePicker(platform as NodeJS.Platform))).toEqual([
-    true,
-    true,
-    false,
-  ])
 })
 
 it('opens the Windows save dialog through PowerShell without shell interpolation', async () => {

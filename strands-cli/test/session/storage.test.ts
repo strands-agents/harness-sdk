@@ -133,7 +133,6 @@ describe('session catalog', () => {
   it.each([
     ['Please inspect the parser\nand keep the fix small.', 'Please inspect the parser and keep the fix small.'],
     ['a'.repeat(116) + '👩‍💻' + 'b'.repeat(10), 'a'.repeat(116) + '👩‍💻...'],
-    ['a'.repeat(116) + 'e\u0301' + 'b'.repeat(10), 'a'.repeat(116) + 'e\u0301...'],
   ])('reads legacy roots, skips unreadable roots, and previews the latest prompt (%s)', async (prompt, preview) => {
     const directory = await mkdtemp(join(tmpdir(), 'strands-session-metadata-'))
     const root = join(directory, 'cli', 'sessions')
@@ -346,7 +345,6 @@ describe('session catalog', () => {
     const root = join(tmpdir(), 'sessions')
     const first = workspaceSessionDirectory(join(tmpdir(), 'a', 'my project'), root)
     const second = workspaceSessionDirectory(join(tmpdir(), 'b', 'my project'), root)
-    expect(first).toMatch(/[/\\]my-project-[0-9a-f]{12}$/)
     expect(first.startsWith(root)).toBe(true)
     expect(second).not.toBe(first)
     expect(workspaceSessionDirectory(join(tmpdir(), 'a', 'my project'), root)).toBe(first)

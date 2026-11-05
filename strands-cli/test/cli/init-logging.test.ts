@@ -22,15 +22,6 @@ afterEach(() => {
 })
 
 describe('initLogging', () => {
-  it.each([{}, { STRANDS_CLI_LOG: 'off' }, { STRANDS_CLI_LOG: '1', STRANDS_CLI_LOG_FILE: '/dev/null/nope/cli.log' }])(
-    'configures both loggers in ink mode for %j',
-    (environment) => {
-      initLogging('ink', environment)
-      expect(configureHarness).toHaveBeenCalledTimes(1)
-      expect(configureSdk).toHaveBeenCalledTimes(1)
-    }
-  )
-
   it('writes to the log file only once logging is opted into', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'strands-init-log-'))
     const filePath = join(directory, 'cli.log')

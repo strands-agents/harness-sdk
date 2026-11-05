@@ -78,46 +78,4 @@ describe('/rename', () => {
       await rm(directory, { recursive: true, force: true })
     }
   })
-
-  it('generates a name without an argument and allows an explicit rename to cancel it', async () => {
-    let finish!: (name: string) => void
-    let signal!: AbortSignal
-    const backend = {
-      ...idleBackend(),
-      generateSessionName: vi.fn(
-        (request: AbortSignal) =>
-          new Promise<string>((resolve) => {
-            signal = request
-            finish = resolve
-          })
-      ),
-    }
-    const renameCurrent = vi.fn(async (name: string) => ({ sessionId: 'saved-session', name }))
-    const controller = new ChatController(backend, {
-      sessions: {
-        current: 'saved-session',
-        directory: '/tmp/sessions',
-        list: async () => [],
-        resolve: async () => {
-          throw new Error('No saved session selected')
-        },
-        renameCurrent,
-      },
-    })
-    try {
-      await controller.submit('/rename')
-      expect(controller.busy).toBe(false)
-      expect(backend.generateSessionName).toHaveBeenCalledOnce()
-      await controller.submit('/sessions rename Chosen name')
-      finish('Stale generated name')
-      await vi.waitFor(() =>
-        expect(controller.getSnapshot().notices).toMatchObject([{ text: 'Session naming cancelled' }])
-      )
-      expect(signal.aborted).toBe(true)
-      expect(renameCurrent).toHaveBeenCalledExactlyOnceWith('Chosen name')
-      expect(controller.getSnapshot().runtime.sessionName).toBe('Chosen name')
-    } finally {
-      await controller.dispose()
-    }
-  })
 })

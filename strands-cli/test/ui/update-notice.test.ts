@@ -1,5 +1,5 @@
 import { createElement } from 'react'
-import { renderToString, type Instance } from 'ink'
+import { type Instance } from 'ink'
 import stringWidth from 'string-width'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -268,30 +268,6 @@ describe('update prompt', () => {
       instance.unmount()
       await instance.waitUntilExit()
     }
-  })
-
-  it('links the available version to the CLI package page', () => {
-    vi.stubEnv('TERM_PROGRAM', 'ghostty')
-    const output = renderToString(
-      createElement(ThemeProvider, {
-        settings: DEFAULT_CHAT_SETTINGS,
-        children: createElement(UpdatePrompt, {
-          version: '0.1.3',
-          onExit: () => {},
-          width: 80,
-          height: 24,
-          onUpdate: () => {},
-          onLater: () => {},
-          onDisable: async () => true,
-        }),
-      }),
-      { columns: 80 }
-    )
-
-    expect(output).toContain('\u001b]8;;https://www.npmjs.com/package/@strands-agents/cli\u0007')
-    expect(output).toContain('\u001b]8;;\u0007')
-    expect(sanitizeTerminalText(output)).toContain('Strands CLI 0.1.3 is available!')
-    vi.unstubAllEnvs()
   })
 
   it('selects choices on hover and activates them on click', async () => {

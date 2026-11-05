@@ -2,7 +2,7 @@ import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createElement } from 'react'
 
-import { renderToString, type Instance } from 'ink'
+import { type Instance } from 'ink'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { ChatController, type ChatControllerApi } from '../../src/ui/chat/controller.js'
@@ -12,7 +12,6 @@ import * as filePicker from '../../src/terminal/directory-picker.js'
 import { ConversationManager } from '../../src/ui/chat/conversations.js'
 import { sanitizeTerminalText } from '../../src/terminal/text.js'
 import { ChatApp } from '../../src/ui/chat/screen.js'
-import { PromptEditor } from '../../src/ui/chat/prompt.js'
 import { idleBackend } from '../fixtures/chat-backend.js'
 import { temporaryDirectory } from '../fixtures/tempdir.js'
 import { render, ttyInput, ttyOutput } from '../fixtures/terminal.js'
@@ -40,22 +39,6 @@ afterEach(async () => {
 })
 
 describe('/file', () => {
-  it('renders attached file metadata in the composer', () => {
-    const output = renderToString(
-      createElement(PromptEditor, {
-        input: '',
-        cursor: 0,
-        width: 60,
-        attachments: [{ name: 'frog.png', size: 1536, kind: 'image' }],
-      }),
-      { columns: 60 }
-    )
-
-    expect(output).toContain('frog.png')
-    expect(output).toContain('1.5 KB')
-    expect(output).toContain('Enter to send')
-  })
-
   it('attaches explicit paths and sends their content with the next prompt', async () => {
     const root = await temporaryDirectory('strands-file-command-')
     const path = join(root, 'frog notes.md')

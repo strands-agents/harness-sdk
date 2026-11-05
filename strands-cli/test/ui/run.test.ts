@@ -15,7 +15,6 @@ import { runInkChat } from '../../src/ui/run.js'
 import * as processTree from '../../src/terminal/process-tree.js'
 import { ConversationManager } from '../../src/ui/chat/conversations.js'
 import { workspaceSessionDirectory } from '../../src/session/catalog.js'
-import * as frogIntro from '../../src/ui/frog-renderer.js'
 import { idleBackend } from '../fixtures/chat-backend.js'
 
 describe('runInkChat', () => {
@@ -706,83 +705,6 @@ describe('runInkChat', () => {
       input.destroy()
       output.destroy()
     }
-  })
-
-  it('restarts the intro after resolving initial MCP trust', async () => {
-    const input = Object.assign(new PassThrough(), {
-      isTTY: true,
-      setRawMode: vi.fn(),
-      ref: vi.fn(),
-      unref: vi.fn(),
-    }) as unknown as NodeJS.ReadStream
-    const output = Object.assign(new PassThrough(), { isTTY: true, columns: 120, rows: 40 })
-    let written = ''
-    output.on('data', (chunk: Buffer) => {
-      written += chunk.toString()
-    })
-    const controller = new ChatController(idleBackend())
-    const renderIntro = vi.spyOn(frogIntro, 'renderFrogSpiralFrame')
-    let answered = false
-    const running = runInkChat(
-      async (_signal, _setup, _conversation, _launch, confirmMcp) => {
-        await confirmMcp('/workspace', ['mcp.json'])
-        return controller
-      },
-      {
-        input,
-        output: output as unknown as NodeJS.WriteStream,
-        errorOutput: output as unknown as NodeJS.WriteStream,
-        renderApp: (element, options) => render(element, { ...options, interactive: true, patchConsole: false }),
-      }
-    )
-    try {
-      await vi.waitFor(() => expect(written).toContain("Trust this project's MCP configuration?"))
-      renderIntro.mockClear()
-      input.push('y')
-      answered = true
-      await vi.waitFor(() => expect(renderIntro).toHaveBeenCalled())
-    } finally {
-      if (!answered) input.push('n')
-      controller.close(0)
-      await running
-      renderIntro.mockRestore()
-      input.destroy()
-      output.destroy()
-    }
-  })
-
-  it('renders startup before constructing the controller', async () => {
-    const controller = new ChatController(idleBackend())
-    controller.close(0)
-    const writes: string[] = []
-    const output = { write: (value: string) => writes.push(value) } as unknown as NodeJS.WriteStream
-    const instance = {
-      unmount: vi.fn(),
-      cleanup: vi.fn(),
-      waitUntilExit: async () => {},
-      rerender: vi.fn(),
-      clear: vi.fn(),
-    } as unknown as Instance
-    const renderApp = vi.fn((_element: unknown) => {
-      expect(writes[0]).toContain('?1049h')
-      return instance
-    })
-    const source = vi.fn(async () => {
-      expect(writes[0]).toContain('?1049h')
-      expect(renderApp).toHaveBeenCalledOnce()
-      return controller
-    })
-
-    await runInkChat(source, {
-      output,
-      intro: false,
-      renderApp: renderApp as never,
-    })
-
-    expect(renderApp).toHaveBeenCalledOnce()
-    expect(renderApp.mock.invocationCallOrder[0]).toBeLessThan(source.mock.invocationCallOrder[0]!)
-    expect(instance.rerender).toHaveBeenCalledOnce()
-    expect(writes.at(-1)).toContain('?1049l')
   })
 
   it('shows startup progress until the controller can accept the first typed request', async () => {

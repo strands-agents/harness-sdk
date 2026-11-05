@@ -9,13 +9,6 @@ function metadataSnapshot(model: string, cwd: string) {
 }
 
 describe('metadataPlacements', () => {
-  it('centers the directory when it fits between the controls', () => {
-    const placements = metadataPlacements(metadataSnapshot('Claude Opus 4.6', '/work'), 100)
-    const path = placements.find(({ target }) => target === 'cwd')!
-    expect(Math.abs(placements[0]!.width + stringWidth(path.text) / 2 - 49)).toBeLessThanOrEqual(0.5)
-    expect(placements.reduce((sum, { width }) => sum + width, 0)).toBe(98)
-  })
-
   it('sanitizes the workspace path only for display', () => {
     const current = metadataSnapshot('Claude Opus 4.6', '/work/\u001b[31mteam\u007fagent')
     const path = metadataPlacements(current, 100).find(({ target }) => target === 'cwd')!

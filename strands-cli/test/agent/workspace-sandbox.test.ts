@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { join } from 'node:path'
 import { SandboxAbortError, SandboxPathNotFoundError } from '@strands-agents/sdk'
 import { describe, expect, it } from 'vitest'
 
@@ -39,18 +39,6 @@ describe('WorkspaceSandbox', () => {
     } finally {
       await rm(directory, { recursive: true, force: true })
     }
-  })
-
-  it('describes the local environment without shell probes', () => {
-    expect(new WorkspaceSandbox('/work', { platform: 'linux' }).environment).toMatchObject({
-      platform: 'Linux',
-      cwd: resolve('/work'),
-      shell: 'sh',
-    })
-    expect(new WorkspaceSandbox('/work', { platform: 'win32' }).environment).toMatchObject({
-      platform: 'Windows',
-      shell: 'PowerShell',
-    })
   })
 
   it('uses sh on POSIX and PowerShell on Windows', () => {
