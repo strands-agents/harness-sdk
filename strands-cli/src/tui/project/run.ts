@@ -1,7 +1,7 @@
 import { createInterface } from 'node:readline/promises'
 import { TurnRenderer } from '../../console.js'
 
-import { importAgentProject } from './import.js'
+import type { ImportedAgentProject } from './import.js'
 import { exportSourceProject } from './export.js'
 import { ChatController, type ChatConversation } from '../chat/controller.js'
 import type { CliConfigStore } from '../config.js'
@@ -12,14 +12,13 @@ import { PythonVoiceSession } from '../voice/session.js'
 import { PythonBackend, type PythonOptions } from './python.js'
 
 export async function createPythonChat(
-  path: string,
+  project: ImportedAgentProject,
   config: CliConfigStore,
   options: PythonOptions,
   signal: AbortSignal,
   requestSetup: () => void,
   conversation?: ChatConversation
 ): Promise<ConversationManager> {
-  const project = importAgentProject(path)
   const createController = (
     backend: PythonBackend,
     initialTurns?: ChatConversation['completedTurns']
@@ -85,13 +84,13 @@ export async function createPythonChat(
 }
 
 export async function runPythonConsole(
-  path: string,
+  project: ImportedAgentProject,
   config: CliConfigStore,
   options: PythonOptions,
   request: string | undefined,
   interactive: boolean
 ): Promise<void> {
-  const backend = await PythonBackend.open(importAgentProject(path), config, options)
+  const backend = await PythonBackend.open(project, config, options)
   const terminal = interactive ? createInterface({ input: process.stdin, output: process.stdout }) : undefined
   const cancel = (): void => backend.cancel()
   process.on('SIGINT', cancel)

@@ -136,7 +136,7 @@ async function runConsole(args: ParsedArgs, request: string | undefined, mode: '
         discovery: settings.mcpDiscovery,
       })
       await runPythonConsole(
-        project.entrypoint,
+        project,
         config,
         await pythonInvocationOptions(args, process.cwd(), settings, mcp),
         request,
@@ -216,7 +216,7 @@ async function runInteractive(args: ParsedArgs, request: string | undefined): Pr
         if (project?.language === 'python') {
           const { createPythonChat } = await import('../tui/project/run.js')
           return createPythonChat(
-            project.entrypoint,
+            project,
             config,
             await pythonInvocationOptions(args, initialWorkspace, config.snapshot().settings, initialMcp),
             signal,
