@@ -4,10 +4,11 @@ import CommunityContributionAside from '../CommunityContributionAside.astro';
 import IntegrationsBackLink from '../IntegrationsBackLink.astro';
 import LanguageSupportAside from '../LanguageSupportAside.astro';
 import ExperimentalAside from '../ExperimentalAside.astro';
+import ExternalDocsPreviewAside from '../ExternalDocsPreviewAside.astro';
 import PageTags from '../PageTags.astro';
 
 const { starlightRoute } = Astro.locals;
-const { languages, community, experimental } = starlightRoute.entry.data;
+const { languages, community, experimental, externalDocs } = starlightRoute.entry.data;
 // Integration doc pages render without the docs sidebar (see route-middleware.ts);
 // the back strip is their route to the /integrations catalog. get-featured is
 // excepted — it renders inside the catalog rail, so the sidebar is its way back.
@@ -25,6 +26,11 @@ const coversAllLanguages = ALL_SDK_LANGUAGES.every((l) => langArray.includes(l))
 <div class="sl-markdown-content">
   {isIntegrationsPage && <IntegrationsBackLink />}
   {experimental && <ExperimentalAside />}
+  {
+    externalDocs?.status === 'preview' && (
+      <ExternalDocsPreviewAside product={externalDocs.product} />
+    )
+  }
   {community && <CommunityContributionAside />}
   {/* Language support aside is omitted for community pages — the CommunityContributionAside already
       contextualizes the page, and language support is listed in the community catalog table instead. */}

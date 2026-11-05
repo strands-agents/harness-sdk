@@ -63,6 +63,25 @@ describe('buildStaticRedirects', () => {
     expect(redirects).toEqual({ '/docs/user-guide/python-tools': '/docs/user-guide/custom_tools/' })
   })
 
+  it('accepts a generated page mounted through a content symlink as a redirect target', () => {
+    const generatedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'redirect-static-generated-'))
+    writeDoc(generatedDir, 'quickstart.md', 'title: Quickstart')
+    fs.mkdirSync(path.join(contentDir, 'docs/user-guide'), { recursive: true })
+    fs.symlinkSync(generatedDir, path.join(contentDir, 'docs/user-guide/product'), 'dir')
+
+    try {
+      expect(
+        buildStaticRedirects(contentDir, '/', {
+          'docs/user-guide/product': 'docs/user-guide/product/quickstart',
+        })
+      ).toEqual({
+        '/docs/user-guide/product': '/docs/user-guide/product/quickstart/',
+      })
+    } finally {
+      fs.rmSync(generatedDir, { recursive: true, force: true })
+    }
+  })
+
   it('passes external targets through unchanged', () => {
     const redirects = buildStaticRedirects(contentDir, '/', { discord: 'https://discord.gg/strands' })
 
@@ -171,6 +190,14 @@ describe('buildStaticRedirects', () => {
     // specific entry.
     const redirects = buildPublishedRedirects(path.resolve(__dirname, '../src/content'), legacyRoutes)
 
+    expect(redirects).toMatchObject({
+      '/docs/user-guide/box': '/docs/user-guide/box/quickstart/',
+      '/docs/user-guide/box/getting-started': '/docs/user-guide/box/quickstart/',
+      '/docs/user-guide/box/guides/add-a-tool': '/docs/user-guide/box/guides/add-an-mcp-server/',
+      '/docs/user-guide/box/guides/grant-files': '/docs/user-guide/box/reference/configuration/',
+      '/docs/user-guide/box/reference/cli': '/docs/user-guide/box/reference/configuration/',
+      '/docs/user-guide/box/security/agent-and-tool-containment': '/docs/user-guide/box/security/',
+    })
     expect(Object.keys(redirects).length).toBeGreaterThan(0)
   })
 })
