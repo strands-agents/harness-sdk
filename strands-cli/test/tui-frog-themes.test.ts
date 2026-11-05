@@ -1,4 +1,5 @@
 import { stripVTControlCharacters } from 'node:util'
+import headless from '@xterm/headless'
 import stringWidth from 'string-width'
 import { describe, expect, it } from 'vitest'
 
@@ -8,10 +9,17 @@ import {
   renderFrogBrandEasterEggFrame,
   renderFrogSpiralFrame,
   renderFrogStartupLockup,
+  type FrogAnimationRun,
   type FrogRenderOptions,
 } from '../src/tui/view/frog-intro-renderer.js'
 
 const BASES = FROG_THEMES.filter((theme) => theme !== 'custom')
+const ORANGE = 0xf58426
+const BLUE = 0x006bb6
+const INK = 0x041121
+const WHITE = 0xf2f6fa
+const BALL_HALF_ROWS = 4
+const QUADRANT_GLYPHS = ' ▗▖▄▝▐▞▟▘▚▌▙▀▜▛█'
 const VARIANTS = ['hop', 'fly', 'peek', 'firefly'] as const
 
 describe('frog themes', () => {
@@ -120,16 +128,64 @@ describe('frog palettes', () => {
     expect(spectre).toContain(';2;255;55;76m')
   })
 
-  it('gives the Knicks frog an orange basketball and an orange wordmark', () => {
-    const orange = ';2;245;132;38m'
-    const frog = renderFrogAnimationRuns(98, 14, 'hop', 0.66, 960, true, 'knicks')
-      .map((run) => run.text)
-      .join('\n')
-    const wordmarkRow = renderFrogStartupLockup(98, true, 960, 'knicks').split('\n')[3]!
+  it('alternates Knicks orange and blue across the wordmark letters', async () => {
+    const wordmarkRow = renderFrogStartupLockup(98, true, 960, 'knicks', false, { colorMode: 'dark' }).split('\n')[3]!
 
-    expect(frog).toContain(orange)
-    expect(wordmarkRow).toContain(orange)
-    expect(renderFrogStartupLockup(98, true, 960, 'green')).not.toContain(orange)
+    expect(await wordmarkLetterColors(wordmarkRow)).toEqual([ORANGE, BLUE, ORANGE, BLUE, ORANGE, BLUE, ORANGE])
+  })
+
+  it.each([
+    ['the startup lockup', renderFrogStartupLockup(98, true, 960, 'knicks', false, { colorMode: 'dark' })],
+    ['a hop', positionedRuns(renderFrogAnimationRuns(98, 14, 'hop', 0.66, 960, true, 'knicks', { colorMode: 'dark' }))],
+  ])('draws center and side seams across the Knicks basketball in %s', async (_, frame) => {
+    const pixels = await renderedPixels(frame)
+    const ball = basketballBox(pixels)
+    const seamsCrossing = (y: number): number =>
+      pixels[y]!.filter(
+        (color, x) =>
+          x > ball.left &&
+          x < ball.right &&
+          color === INK &&
+          pixels[y]![x - 1] === ORANGE &&
+          pixels[y]![x + 1] === ORANGE
+      ).length
+
+    expect(ball.seam).toBeGreaterThan(0)
+    expect(seamsCrossing(ball.seam - 1)).toBe(3)
+    expect(seamsCrossing(ball.seam + 1)).toBe(3)
+  })
+
+  it('keeps the Knicks basketball above the feet when the frog lands', async () => {
+    const pixels = await renderedPixels(
+      positionedRuns(renderFrogAnimationRuns(98, 14, 'hop', 0.745, 960, true, 'knicks', { colorMode: 'dark' }))
+    )
+    const ball = basketballBox(pixels)
+    const footRows = pixels.flatMap((line, y) => (line.some((color, x) => color === INK && x > ball.right) ? [y] : []))
+
+    expect(ball.seam).toBeGreaterThan(0)
+    expect(ball.seam + BALL_HALF_ROWS).toBeLessThanOrEqual(Math.max(...footRows))
+  })
+
+  it('draws the Knicks frog inner lines in orange and keeps its outline and pupils ink', async () => {
+    const pixels = await renderedPixels(renderFrogStartupLockup(98, true, 960, 'knicks', false, { colorMode: 'dark' }))
+    const ball = basketballBox(pixels)
+    const outline = pixels.flatMap((line, y) => line.flatMap((color, x) => (color === INK ? [{ x, y }] : [])))
+    const top = Math.min(...outline.map(({ y }) => y))
+    const bottom = Math.max(...outline.map(({ y }) => y))
+    const right = Math.max(...outline.map(({ x }) => x))
+    const frog = pixels.slice(0, bottom + 1).map((line) => line.slice(0, right + 1))
+    const innerOrange = frog.some((line, y) => line.some((color, x) => color === ORANGE && !ball.contains(x, y)))
+    const edges = frog.slice(top).flatMap((line, offset) => {
+      const filled = line.flatMap((color, x) => (color >= 0 ? [x] : []))
+      const leftEdge = ball.coversRow(top + offset) ? [] : [line[filled[0]!]]
+      return [...leftEdge, line[filled.at(-1)!]]
+    })
+    const highlights = frog.flatMap((line, y) => line.flatMap((color, x) => (color === WHITE ? [{ x, y }] : [])))
+
+    expect(innerOrange).toBe(true)
+    expect(edges.every((color) => color === INK)).toBe(true)
+    expect(highlights.length).toBeGreaterThan(0)
+    expect(highlights.every(({ x, y }) => frog[y]![x - 1] === INK || frog[y]![x + 1] === INK)).toBe(true)
   })
 
   it('uses Classic for an unspecified Custom base and ignores invalid color strings', () => {
@@ -157,4 +213,77 @@ function renderPaths(theme: FrogTheme, options: FrogRenderOptions) {
     renderFrogBrandEasterEggFrame(98, 0.3, 960, true, theme, false, 960, options),
     ...VARIANTS.map((variant) => renderFrogAnimationRuns(98, 14, variant, 0.66, 960, true, theme, options)),
   ]
+}
+
+async function renderedScreen(frame: string): Promise<headless.Terminal> {
+  const screen = new headless.Terminal({
+    cols: 120,
+    rows: frame.split('\n').length,
+    allowProposedApi: true,
+    convertEol: true,
+  })
+  await new Promise<void>((resolve) => screen.write(frame, resolve))
+  return screen
+}
+
+function positionedRuns(runs: readonly FrogAnimationRun[]): string {
+  const rows = Math.max(...runs.map(({ row }) => row)) + 1
+  return Array.from({ length: rows }, (_, row) =>
+    runs
+      .filter((run) => run.row === row)
+      .map(({ column, text }) => `\u001b[${column + 1}G${text}`)
+      .join('')
+  ).join('\n')
+}
+
+async function renderedPixels(frame: string): Promise<number[][]> {
+  const screen = await renderedScreen(frame)
+  return Array.from({ length: screen.rows * 2 }, (_, y) =>
+    Array.from({ length: screen.cols * 2 }, (_, x) => pixelColor(screen, x, y))
+  )
+}
+
+function pixelColor(screen: headless.Terminal, x: number, y: number): number {
+  const cell = screen.buffer.active.getLine(Math.floor(y / 2))!.getCell(Math.floor(x / 2))!
+  const mask = QUADRANT_GLYPHS.indexOf(cell.getChars() || ' ')
+  const lit = mask < 0 || (mask & (1 << (3 - (y % 2) * 2 - (x % 2)))) !== 0
+  if (lit) {
+    return cell.isFgRGB() ? cell.getFgColor() : -1
+  }
+  return cell.isBgRGB() ? cell.getBgColor() : -1
+}
+
+async function wordmarkLetterColors(row: string): Promise<number[]> {
+  const screen = await renderedScreen(row)
+  const line = screen.buffer.active.getLine(0)!
+  const colors: number[] = []
+  for (let column = line.translateToString().search(/[\u2550-\u256c]/u); column < screen.cols; column++) {
+    const color = pixelColor(screen, column * 2, 0)
+    if (color >= 0 && colors.at(-1) !== color) {
+      colors.push(color)
+    }
+  }
+  return colors
+}
+
+function basketballBox(pixels: readonly number[][]) {
+  const crossesSeam = (y: number, x: number): boolean =>
+    pixels[y]![x] === INK && pixels[y - 1]?.[x] === ORANGE && pixels[y + 1]?.[x] === ORANGE
+  const seam = pixels.findIndex((line, y) => line.filter((_, x) => crossesSeam(y, x)).length >= 8)
+  const line = pixels[seam] ?? []
+  let left = line.findIndex((_, x) => crossesSeam(seam, x))
+  let right = left
+  while (line[left - 1] === INK) {
+    left--
+  }
+  while (line[right + 1] === INK) {
+    right++
+  }
+  return {
+    seam,
+    left,
+    right,
+    coversRow: (y: number): boolean => Math.abs(y - seam) <= BALL_HALF_ROWS,
+    contains: (x: number, y: number): boolean => Math.abs(y - seam) <= BALL_HALF_ROWS && x >= left && x <= right,
+  }
 }

@@ -613,7 +613,7 @@ function wordColor(canvas: Canvas, point: WordPoint): Color {
     return point.index % 23 === 0 ? 'white' : 'lime'
   }
   if (canvas.theme === 'knicks') {
-    return 'orange'
+    return point.letterIndex % 2 === 0 ? 'orange' : 'lime'
   }
   return 'lime'
 }

@@ -25,7 +25,19 @@ const FROG_BITMAP = [
 ] as const
 
 const FROG_INTERIOR = frogInterior()
+const FROG_INNER_LINES = frogInnerLines()
 const STAR_BITMAP = ['....#....', '...###...', '#########', '.#######.', '..#####..', '..##.##..', '.##...##.'] as const
+const BASKETBALL_BITMAP = [
+  '....#########....',
+  '..##oooo#oooo##..',
+  '.##ooooo#ooooo##.',
+  '#oo#oooo#oooo#oo#',
+  '#################',
+  '#oo#oooo#oooo#oo#',
+  '.##ooooo#ooooo##.',
+  '..##oooo#oooo##..',
+  '....#########....',
+] as const
 const FROG_OUTLINE = FROG_BITMAP.flatMap((row, y) =>
   [...row].flatMap((character, x) => {
     if (character !== '#') {
@@ -124,9 +136,11 @@ export function hopState(from: Point, to: Point, progress: number): { pose: Frog
 }
 
 export function frogFootOffset(transform: FrogTransform, pose: FrogPose): number {
-  const origin = { ...transform, x: 0, y: 0 }
-  const deformation = frogDeformation(pose)
-  return Math.max(...FROG_OUTLINE.map((point) => brandPoint(point, origin, deformation).y))
+  return frogFootY({ ...transform, x: 0, y: 0 }, frogDeformation(pose))
+}
+
+function frogFootY(transform: FrogTransform, deformation: Point): number {
+  return Math.max(...FROG_OUTLINE.map((point) => brandPoint(point, transform, deformation).y))
 }
 
 export function drawPushingTongue(
@@ -214,8 +228,9 @@ export function drawFrog(
           (((row === 2 || row === 3) && (column === 3 || column === 4 || column === 12 || column === 13)) ||
             (row === 6 && column === 7) ||
             (row === 7 && column >= 4 && column <= 6))
+        const color = spectreFace ? frogFillColor(canvas, row, column) : frogLineColor(canvas, key)
         for (const point of points) {
-          sink.setPixel(point.x, point.y, spectreFace ? frogFillColor(canvas, row, column) : 'ink', priority + 20)
+          sink.setPixel(point.x, point.y, color, priority + 20)
         }
       }
     }
@@ -257,6 +272,10 @@ function frogFillColor(canvas: Canvas, row: number, column: number): Color {
   return 'lime'
 }
 
+function frogLineColor(canvas: Canvas, key: string): Color {
+  return canvas.theme === 'knicks' && FROG_INNER_LINES.has(key) ? 'orange' : 'ink'
+}
+
 function drawThemeFace(canvas: Canvas, transform: FrogTransform, deformation: Point, priority: number): void {
   if (['green', 'minimal', 'kikker', 'spectre'].includes(canvas.theme)) {
     return
@@ -284,17 +303,28 @@ function drawThemeFace(canvas: Canvas, transform: FrogTransform, deformation: Po
   }
   if (canvas.theme === 'knicks') {
     const ball = brandPoint({ x: -6, y: 5 }, transform, deformation)
-    const radius = 2.6 * transform.scale
-    fillCircle(canvas, ball.x, ball.y, radius + 0.5, 'ink', priority + 32)
-    fillCircle(canvas, ball.x, ball.y, radius, 'orange', priority + 33)
-    for (let offset = -radius; offset <= radius; offset += 0.5) {
-      canvas.setPixel(ball.x, ball.y + offset, 'ink', priority + 34)
-    }
+    drawBasketball(canvas, ball, frogFootY(transform, deformation), priority + 32)
   }
   for (const x of [-5.5, 3.5]) {
     const color = canvas.theme === 'circuit' ? (x < 0 ? 'cyan' : 'red') : 'white'
     const eye = brandPoint({ x, y: -7.5 }, transform, deformation)
     fillCircle(canvas, eye.x, eye.y, 0.58 * transform.scale, color, priority + 31)
+  }
+}
+
+function drawBasketball(canvas: PixelSink, center: Point, footY: number, priority: number): void {
+  // Unscaled pixels keep each seam one pixel wide in a hop. The clamp keeps the ball above the feet in a squash.
+  const middleColumn = (BASKETBALL_BITMAP[0].length - 1) / 2
+  const middleRow = (BASKETBALL_BITMAP.length - 1) / 2
+  const centerY = Math.min(center.y, footY - middleRow)
+  for (const [row, pixels] of BASKETBALL_BITMAP.entries()) {
+    for (const [column, pixel] of [...pixels].entries()) {
+      if (pixel !== '.') {
+        const x = center.x + (column - middleColumn) / 2
+        const y = centerY + row - middleRow
+        canvas.setPixel(x, y, pixel === '#' ? 'ink' : 'orange', priority)
+      }
+    }
   }
 }
 
@@ -422,6 +452,28 @@ function frogInterior(): Set<string> {
     }
   }
   return interior
+}
+
+function frogInnerLines(): Set<string> {
+  const lines = new Set<string>()
+  for (const [row, pixels] of FROG_BITMAP.entries()) {
+    for (const [column, pixel] of [...pixels].entries()) {
+      // Rows 0-4 are the eyes, so the pupils stay ink.
+      if (row > 4 && pixel === '#' && !touchesExterior(column, row)) {
+        lines.add(`${column}:${row}`)
+      }
+    }
+  }
+  return lines
+}
+
+function touchesExterior(column: number, row: number): boolean {
+  return [-1, 0, 1].some((offsetY) =>
+    [-1, 0, 1].some((offsetX) => {
+      const pixel = FROG_BITMAP[row + offsetY]?.[column + offsetX]
+      return pixel === undefined || (pixel !== '#' && !FROG_INTERIOR.has(`${column + offsetX}:${row + offsetY}`))
+    })
+  )
 }
 
 export function interpolatePose(from: FrogPose, to: FrogPose, progress: number): FrogPose {
