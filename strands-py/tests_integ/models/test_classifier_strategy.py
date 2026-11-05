@@ -3,6 +3,7 @@
 import logging
 
 from strands import Agent
+from strands.decisions import LLMDecisionModel
 from strands.models import BedrockModel, ClassifierStrategy, ModelRouter, RoutingCandidate
 from strands.types.exceptions import ModelThrottledException
 from tests_integ.conftest import retry_on_flaky
@@ -46,7 +47,7 @@ def test_model_router_selects_expected_model_from_three_candidates(caplog):
         strategy=ClassifierStrategy(
             BedrockModel(
                 model_id=_HAIKU_MODEL_ID,
-                max_tokens=64,
+                max_tokens=512,
                 streaming=False,
                 temperature=0,
             )
@@ -69,6 +70,55 @@ def test_model_router_selects_expected_model_from_three_candidates(caplog):
 
     assert result.stop_reason == "end_turn"
     assert str(result).strip()
+    expected_log = (
+        "strategy=<ClassifierStrategy>, candidate=<advanced model>, "
+        f"model=<BedrockModel/{_NOVA_PRO_MODEL_ID}> | candidate selected"
+    )
+    assert any(expected_log in record.getMessage() for record in caplog.records)
+
+
+@retry_on_flaky(
+    "Bedrock capacity may be transiently unavailable",
+    max_attempts=2,
+    retry_on=[ModelThrottledException],
+)
+def test_model_router_classifies_with_a_decision_model(caplog):
+    """An explicit LLMDecisionModel routes the same request to the same candidate as a plain Model."""
+    routine_model = BedrockModel(model_id=_NOVA_LITE_MODEL_ID, max_tokens=512, streaming=False)
+    advanced_model = BedrockModel(model_id=_NOVA_PRO_MODEL_ID, max_tokens=512, streaming=False)
+    classifier = LLMDecisionModel(
+        BedrockModel(model_id=_HAIKU_MODEL_ID, max_tokens=512, streaming=False, temperature=0)
+    )
+    router = ModelRouter(
+        models=[
+            RoutingCandidate(
+                routine_model,
+                name="routine model",
+                description="Best suited to concise factual questions and routine requests.",
+            ),
+            RoutingCandidate(
+                advanced_model,
+                name="advanced model",
+                description="Best suited to complex systems design with several interacting constraints.",
+            ),
+        ],
+        strategy=ClassifierStrategy(
+            classifier,
+            routing_policy="Prefer the routine model unless the request needs multi-step design.",
+            timeout=30,
+        ),
+    )
+    agent = Agent(model=router, load_tools_from_directory=False, callback_handler=None)
+    request = (
+        "Design a backward-compatible migration from region-local to globally unique idempotency keys for an "
+        "active-active payment service. Account for concurrent requests, mixed-version deployments, rollback, "
+        "reconciliation, and monitoring. Return exactly three concise bullets."
+    )
+
+    with caplog.at_level(logging.INFO, logger="strands.models.routing.router"):
+        result = agent(request)
+
+    assert result.stop_reason == "end_turn"
     expected_log = (
         "strategy=<ClassifierStrategy>, candidate=<advanced model>, "
         f"model=<BedrockModel/{_NOVA_PRO_MODEL_ID}> | candidate selected"
