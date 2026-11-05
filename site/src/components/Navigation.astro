@@ -966,8 +966,8 @@ const learnCategories = [
       opacity: 0.75;
     }
 
-    /* Page links (sub-items): indented under an accent rail and dimmed so they
-       read as children of the category, not siblings of the section titles. */
+    /* Page links (sub-items): indented and dimmed so they read as children of
+       the category, without adding another visual rail to the navigation. */
     .mobile-menu__pages {
       display: none;
       flex-direction: column;
@@ -975,7 +975,6 @@ const learnCategories = [
       margin: 8px 0 0;
       padding: 2px 0 2px 14px;
       list-style: none;
-      border-left: 2px solid var(--accent-green);
     }
 
     .mobile-menu__cat.is-open .mobile-menu__pages {
