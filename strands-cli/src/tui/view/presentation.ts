@@ -1,6 +1,7 @@
 import type { JSONValue } from '@strands-agents/sdk'
 import stringWidth from 'string-width'
 
+import { devStatusLabel, type DevStatus, type DevStatusTone } from '../../dev/status.js'
 import type { ChatEntry, ChatPanel, ChatSnapshot } from '../chat/controller.js'
 import { DEFAULT_CHAT_SETTINGS, type ThemeColors } from '../chat/types.js'
 import { modelDisplayName } from '../model/display.js'
@@ -11,12 +12,20 @@ import { getTheme } from './theme.js'
 const METADATA_START_COLUMN = 2
 
 interface MetadataPlacement {
-  target: 'model' | 'cwd' | 'settings'
+  target: 'model' | 'cwd' | 'dev' | 'settings'
   text: string
   width: number
   alignment: 'flex-start' | 'center' | 'flex-end'
+  /** Agent name shown before the controls in dev mode. It is not a click target. */
+  lead?: string
+  tone?: DevStatusTone
   controls?: { target: 'model' | 'effort' | 'context'; text: string }[]
 }
+
+const DEV_LABEL_MAX_WIDTH = 40
+const AGENT_LABEL_MAX_WIDTH = 24
+const MIN_LABEL_WIDTH = 4
+const CONTROL_SEPARATOR = ' • '
 
 export function permissionPageSize(terminalHeight: number, optionRows: number): number {
   return Math.max(3, Math.min(12, terminalHeight - optionRows - 8))
@@ -224,7 +233,25 @@ export function contextColor(context: ChatSnapshot['context'], palette: ThemeCol
   return percentage >= 90 ? palette.error : percentage >= 75 ? palette.warning : palette.accent
 }
 
-export function metadataPlacements(snapshot: ChatSnapshot, terminalWidth: number): MetadataPlacement[] {
+function devLabels(
+  snapshot: ChatSnapshot,
+  dev: DevStatus | undefined,
+  room: number
+): { agent: string; status: string; tone?: DevStatusTone } {
+  if (!dev) return { agent: '', status: '' }
+  const label = devStatusLabel(dev)
+  const statusRoom = Math.min(DEV_LABEL_MAX_WIDTH, Math.floor(room / 2))
+  const status = statusRoom >= MIN_LABEL_WIDTH ? truncateMetadata(label.text, statusRoom) : ''
+  const agentRoom = Math.min(AGENT_LABEL_MAX_WIDTH, Math.floor((room - stringWidth(status)) / 3))
+  const agent = agentRoom >= MIN_LABEL_WIDTH ? truncateMetadata(snapshot.runtime.agent, agentRoom) : ''
+  return { agent, status, ...(status ? { tone: label.tone } : {}) }
+}
+
+export function metadataPlacements(
+  snapshot: ChatSnapshot,
+  terminalWidth: number,
+  dev?: DevStatus
+): MetadataPlacement[] {
   const separatorWidth = 2
   const available = Math.max(0, Math.floor(terminalWidth) - METADATA_START_COLUMN)
   const model = modelDisplayName(snapshot.runtime.model)
@@ -232,7 +259,11 @@ export function metadataPlacements(snapshot: ChatSnapshot, terminalWidth: number
   const modelLabel = model ? `${model}${effort}` : (snapshot.runtime.effort ?? '')
   const settingsText = truncateMetadata('/settings', available)
   const settingsWidth = stringWidth(settingsText)
-  const leftWidth = Math.max(0, available - settingsWidth - separatorWidth)
+  const labels = devLabels(snapshot, dev, available - settingsWidth - separatorWidth)
+  const statusWidth = stringWidth(labels.status)
+  const agentWidth = labels.agent ? stringWidth(labels.agent) + stringWidth(CONTROL_SEPARATOR) : 0
+  const rightWidth = settingsWidth + (statusWidth ? statusWidth + separatorWidth : 0)
+  const leftWidth = Math.max(0, available - rightWidth - separatorWidth - agentWidth)
   const context = formatContext(snapshot.context)
   const minimumContextWidth = stringWidth(formatContext(snapshot.context, 1))
   const controlSeparatorWidth = modelLabel ? stringWidth(' • ') : 0
@@ -260,16 +291,18 @@ export function metadataPlacements(snapshot: ChatSnapshot, terminalWidth: number
       text: contextWidth ? formatContext(snapshot.context, contextWidth - minimumContextWidth + 1) : '',
     },
   ].filter((control) => control.text)
-  const modelText = controls.map((control) => control.text).join(' • ')
+  const modelText = [labels.agent, ...controls.map((control) => control.text)].filter(Boolean).join(CONTROL_SEPARATOR)
   const pathMinimumStart = modelText ? stringWidth(modelText) + separatorWidth : 0
-  const pathMaximumEnd = Math.max(0, available - settingsWidth - separatorWidth)
+  const pathMaximumEnd = Math.max(0, available - rightWidth - separatorWidth)
   const pathText = truncateMetadata(snapshot.runtime.cwd, Math.max(0, pathMaximumEnd - pathMinimumStart), true)
   const pathWidth = stringWidth(pathText)
   const pathStart = Math.max(
     pathMinimumStart,
     Math.min(Math.floor((available - pathWidth) / 2), pathMaximumEnd - pathWidth)
   )
-  const modelSlotWidth = pathText ? pathStart : modelText ? available - settingsWidth : 0
+  const modelSlotWidth = pathText ? pathStart : modelText ? available - rightWidth : 0
+  const rightSlotWidth = available - modelSlotWidth - pathWidth
+  const settingsSlotWidth = statusWidth ? settingsWidth + separatorWidth : rightSlotWidth
   return [
     {
       target: 'model' as const,
@@ -277,6 +310,7 @@ export function metadataPlacements(snapshot: ChatSnapshot, terminalWidth: number
       width: modelSlotWidth,
       alignment: 'flex-start' as const,
       controls,
+      ...(labels.agent ? { lead: labels.agent } : {}),
     },
     {
       target: 'cwd' as const,
@@ -285,9 +319,16 @@ export function metadataPlacements(snapshot: ChatSnapshot, terminalWidth: number
       alignment: 'flex-end' as const,
     },
     {
+      target: 'dev' as const,
+      text: labels.status,
+      width: rightSlotWidth - settingsSlotWidth,
+      alignment: 'flex-end' as const,
+      ...(labels.tone ? { tone: labels.tone } : {}),
+    },
+    {
       target: 'settings' as const,
       text: settingsText,
-      width: available - modelSlotWidth - pathWidth,
+      width: settingsSlotWidth,
       alignment: 'flex-end' as const,
     },
   ].filter((placement) => placement.text)

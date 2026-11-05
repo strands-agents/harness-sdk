@@ -1,6 +1,7 @@
 import { createContext, Fragment, useContext, type ReactElement } from 'react'
 import { Box, type DOMElement } from 'ink'
 import type { ChatPanel, ChatSnapshot } from '../chat/types.js'
+import { DevStatusContext } from './dev-status-context.js'
 import type { MetadataTarget } from './interaction.js'
 import { contextColor, metadataPlacements } from './presentation.js'
 import { Text, useTheme } from './theme.js'
@@ -70,9 +71,10 @@ export function ComposerFooter({
 }): ReactElement {
   const palette = useTheme()
   const { accent, foreground } = palette
+  const dev = useContext(DevStatusContext)
   return (
     <Box height={1} marginTop={1} width={width} flexShrink={0} paddingX={1} overflow="hidden">
-      {metadataPlacements(snapshot, width).map((segment) => (
+      {metadataPlacements(snapshot, width, dev).map((segment) => (
         <Box
           key={segment.target}
           width={segment.width}
@@ -84,25 +86,32 @@ export function ComposerFooter({
             <Box ref={(element) => onActionElement?.('settings', element)}>
               <Text color={settingsHovered ? accent : foreground}>{segment.text}</Text>
             </Box>
+          ) : segment.target === 'dev' ? (
+            <Text color={palette[segment.tone ?? 'success']}>{segment.text}</Text>
           ) : segment.controls ? (
-            segment.controls.map((control, index) => (
-              <Fragment key={control.target}>
-                {index > 0 ? <Text color={foreground}> • </Text> : null}
-                <Box ref={(element) => onMetadataElement?.(control.target, element)}>
-                  <Text
-                    color={
-                      hovered === control.target || pressed === control.target
-                        ? accent
-                        : control.target === 'context'
-                          ? contextColor(snapshot.context, palette)
-                          : foreground
-                    }
-                  >
-                    {control.text}
-                  </Text>
-                </Box>
-              </Fragment>
-            ))
+            <>
+              {segment.lead ? (
+                <Text color={foreground}>{segment.controls.length > 0 ? `${segment.lead} • ` : segment.lead}</Text>
+              ) : null}
+              {segment.controls.map((control, index) => (
+                <Fragment key={control.target}>
+                  {index > 0 ? <Text color={foreground}> • </Text> : null}
+                  <Box ref={(element) => onMetadataElement?.(control.target, element)}>
+                    <Text
+                      color={
+                        hovered === control.target || pressed === control.target
+                          ? accent
+                          : control.target === 'context'
+                            ? contextColor(snapshot.context, palette)
+                            : foreground
+                      }
+                    >
+                      {control.text}
+                    </Text>
+                  </Box>
+                </Fragment>
+              ))}
+            </>
           ) : (
             <Text dimColor>{segment.text}</Text>
           )}

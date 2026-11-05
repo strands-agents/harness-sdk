@@ -63,10 +63,7 @@ describe('createReloader', () => {
   })
 
   it('tries again after a deferred reload', async () => {
-    const reload = vi
-      .fn<() => Promise<ReloadOutcome>>()
-      .mockResolvedValueOnce('deferred')
-      .mockResolvedValue('reloaded')
+    const reload = vi.fn<() => Promise<ReloadOutcome>>().mockResolvedValueOnce('deferred').mockResolvedValue('reloaded')
     const { states, reloader } = setup({ reload })
     reloader.request()
     await vi.advanceTimersByTimeAsync(10)
