@@ -111,23 +111,23 @@ export function buildSampleGuideSidebar(guides: SampleGuideEntry[], currentGuide
     ? [currentGuide.data.language]
     : languageOrder.filter((language) => availableLanguages.has(language))
 
-  return languages.map((language) => ({
-    label: languageLabel(language),
-    collapsed: false,
-    items: [
-      { label: 'Overview', link: '/examples/' },
-      ...groupSampleGuideCategories(guides.filter((guide) => guide.data.language === language)).map((category) => ({
-        label: category.label,
-        collapsed: false,
-        items: category.families.flatMap((family) =>
-          family.guides.map((guide) => ({
-            label: guide.data.title,
-            link: sampleGuidePath(guide),
-          }))
-        ),
-      })),
-    ],
-  }))
+  return languages.map((language) => {
+    const languageGuides = groupSampleGuideCategories(
+      guides.filter((guide) => guide.data.language === language)
+    ).flatMap((category) => category.families.flatMap((family) => family.guides))
+
+    return {
+      label: languageLabel(language),
+      collapsed: false,
+      items: [
+        { label: 'Overview', link: '/examples/' },
+        ...languageGuides.map((guide) => ({
+          label: guide.data.title,
+          link: sampleGuidePath(guide),
+        })),
+      ],
+    }
+  })
 }
 
 export function isSampleGuidePath(pathname: string): boolean {

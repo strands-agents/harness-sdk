@@ -124,6 +124,7 @@ function expectPersistentSidebar(
     .querySelectorAll('.section-group[data-sidebar-lang]')
     .map((group) => group.getAttribute('data-sidebar-lang'))
   expect(sidebarLanguages).toEqual([currentGuide.data.language])
+  expect(page.querySelectorAll('.section-group[data-sidebar-lang] details')).toHaveLength(0)
 
   const currentLanguage = currentGuide.data.language
   const currentLanguageLabel = currentLanguage === 'python' ? 'Python' : 'TypeScript'
@@ -208,6 +209,7 @@ describe('generated sample guide pages', () => {
     expect(sidebarLanguages).toEqual(
       landingSidebar.map((group) => (group.label === 'Python' ? 'python' : 'typescript'))
     )
+    expect(page.querySelectorAll('.section-group[data-sidebar-lang] details')).toHaveLength(0)
     for (const group of landingSidebar) {
       const language = group.label === 'Python' ? 'python' : 'typescript'
       const sidebarGroup = page.querySelector(`.section-group[data-sidebar-lang="${language}"]`)
@@ -607,16 +609,8 @@ describe('buildSampleGuideSidebar', () => {
     collapsed: false,
     items: [
       { label: 'Overview', link: '/examples/' },
-      {
-        label: 'Learn',
-        collapsed: false,
-        items: [{ label: 'typescript/learn', link: '/examples/typescript/learn/' }],
-      },
-      {
-        label: 'Migrate',
-        collapsed: false,
-        items: [{ label: 'typescript/migrate', link: '/examples/typescript/migrate/' }],
-      },
+      { label: 'typescript/learn', link: '/examples/typescript/learn/' },
+      { label: 'typescript/migrate', link: '/examples/typescript/migrate/' },
     ],
   }
   const expectedPython = {
@@ -624,16 +618,8 @@ describe('buildSampleGuideSidebar', () => {
     collapsed: false,
     items: [
       { label: 'Overview', link: '/examples/' },
-      {
-        label: 'Learn',
-        collapsed: false,
-        items: [{ label: 'python/learn', link: '/examples/python/learn/' }],
-      },
-      {
-        label: 'Migrate',
-        collapsed: false,
-        items: [{ label: 'python/migrate', link: '/examples/python/migrate/' }],
-      },
+      { label: 'python/learn', link: '/examples/python/learn/' },
+      { label: 'python/migrate', link: '/examples/python/migrate/' },
     ],
   }
 
