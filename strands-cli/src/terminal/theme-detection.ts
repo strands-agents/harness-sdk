@@ -106,6 +106,7 @@ export function observeTerminalColorMode(
       }
     } else {
       input.setRawMode(true)
+      output.write(`${COLOR_SCHEME_NOTIFICATIONS.enable}${BACKGROUND_QUERY}`)
       input.resume()
     }
     return filtered

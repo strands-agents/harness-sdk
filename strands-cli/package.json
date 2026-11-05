@@ -73,6 +73,7 @@
     "@strands-agents/harness": "^0.3.4",
     "@strands-agents/sdk": "^1.24.0",
     "commander": "^15",
+    "cross-spawn": "^7.0.6",
     "fflate": "^0.8.3",
     "ink": "7.1.1",
     "marked": "^18.0.9",

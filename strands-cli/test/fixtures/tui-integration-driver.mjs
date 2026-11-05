@@ -286,6 +286,23 @@ async function main() {
       if (transcript.includes('Executed: delete') || transcript.includes('Executed: clear')) {
         throw new Error('A deleted queued message was executed')
       }
+    } else if (scenario === 'editor') {
+      await typeInComposer('/config')
+      terminal.write('\r')
+      await waitForStableScreen(['E open'])
+      terminal.write('e')
+      await waitFor(['EDITOR_READY'], 8_000, false)
+      if (screen.terminal.modes.mouseTrackingMode !== 'none') throw new Error('CLI mouse reporting leaked into editor')
+      terminal.write('editor ')
+      await waitFor(['editor'], 8_000, false)
+      terminal.write('input\r')
+      await waitFor(['EDITOR_INPUT_OK'], 8_000, true)
+      await waitForStableScreen(['E open'])
+      if (screen.terminal.buffer.active.type !== 'alternate') throw new Error('CLI alternate screen was not restored')
+      if (screen.terminal.modes.mouseTrackingMode !== 'any') throw new Error('CLI mouse reporting was not restored')
+      const start = transcript.length
+      terminal.write('\u001b')
+      await waitForStableScreen(['Enter to send'], 8_000, start)
     } else if (scenario === 'voice') {
       await typeInComposer('/voice')
       terminal.write('\r')

@@ -7,12 +7,14 @@ import type { ChatConversations } from '../agent/types.js'
 import type { CliConfigStore } from '../config/store.js'
 import { configurationFromStore, type RequestSetup } from '../agent/configuration.js'
 import { hardExitProcessTree } from '../terminal/process-tree.js'
+import { openAgentProject } from '../terminal/open-editor.js'
 import {
   createInkOutputs,
   enterAlternateScreen,
   restoreTerminalModes,
   saveTerminalTitle,
   setTerminalTitle,
+  setTerminalMouseMotion,
 } from '../terminal/terminal.js'
 import { observeTerminalColorMode } from '../terminal/theme-detection.js'
 import { sessionResumeCommand } from '../session/sessions.js'
@@ -269,6 +271,21 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
         closeForExit(0)
       },
       onCancelStartup: () => closeForExit(130),
+      openProject: async (project): Promise<void> => {
+        leaveTerminalMode()
+        restoreTerminalModes(output)
+        const wasRaw = input.isRaw
+        try {
+          if (input.isTTY) input.setRawMode(false)
+          await openAgentProject(project)
+        } finally {
+          if (input.isTTY && wasRaw) input.setRawMode(true)
+          if (!cleanedUp) {
+            if (alternateScreen) leaveTerminalMode = enterAlternateScreen(output)
+            setTerminalMouseMotion(true, output)
+          }
+        }
+      },
     })
   }
   const renderChat = (): void => {

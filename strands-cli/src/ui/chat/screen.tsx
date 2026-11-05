@@ -147,7 +147,7 @@ export function ChatApp({
   const snapshot = useSyncExternalStore(controller.subscribe, controller.getSnapshot)
   const cliVersion = readCliVersion()
   const [footerElements, registerFooterElement] = useElementMap<FooterAction>()
-  const { exit } = useApp()
+  const { exit, suspendTerminal } = useApp()
   const { stdout } = useStdout()
   const { columns: width, rows: height } = useTerminalSize()
   const [editor, setEditorState] = useState<EditorState>(emptyEditor)
@@ -593,10 +593,10 @@ export function ChatApp({
   const openConfigurationProject = useCallback((): void => {
     const project = controller.getSnapshot().configuration?.project
     if (!project) return
-    void openProject(project).catch((cause: unknown) => {
+    void suspendTerminal(() => openProject(project)).catch((cause: unknown) => {
       controller.showError?.('could not open project', `${project.root}\n${errorMessage(cause)}`)
     })
-  }, [controller, openProject])
+  }, [controller, openProject, suspendTerminal])
 
   useLayoutEffect(() => {
     const { snapshot, terminalWidth, terminalHeight, panelRows, composerHeight } = viewPropsRef.current

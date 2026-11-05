@@ -1,6 +1,8 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { agentProjectEditorCommand } from '../../src/terminal/open-editor.js'
+import { agentProjectEditorCommand, openAgentProject } from '../../src/terminal/open-editor.js'
+
+afterEach(() => vi.unstubAllEnvs())
 
 const project = {
   root: '/work/agent',
@@ -8,6 +10,11 @@ const project = {
 }
 
 describe('agent project editor', () => {
+  it('waits for the configured editor and reports a failed exit', async () => {
+    vi.stubEnv('STRANDS_EDITOR', `"${process.execPath}" -e "process.exit(17)"`)
+    await expect(openAgentProject(project)).rejects.toThrow('Editor exited with status 17')
+  })
+
   it('opens the project with the configured editor and arguments', () => {
     expect(
       agentProjectEditorCommand(project, 'darwin', {
@@ -17,6 +24,7 @@ describe('agent project editor', () => {
     ).toEqual({
       command: 'cursor',
       args: ['--reuse-window', project.root],
+      interactive: true,
     })
     expect(
       agentProjectEditorCommand(project, 'darwin', {
@@ -25,6 +33,7 @@ describe('agent project editor', () => {
     ).toEqual({
       command: 'sh',
       args: ['-c', 'exec cursor "$@"', '', project.root],
+      interactive: true,
     })
   })
 

@@ -8,6 +8,7 @@ import { type ChatControllerApi } from './chat/controller.js'
 import { DEFAULT_CHAT_SETTINGS, type ChatSettings, type ChatSnapshot } from './chat/types.js'
 import { type CliConfigStore } from '../config/store.js'
 import { type RequestSetup, type SetupChange } from '../agent/configuration.js'
+import type { ChatConfigurationProject } from '../agent/types.js'
 import { SetupWizard } from './setup/wizard.js'
 import { availableCliUpdate } from '../cli/update.js'
 import { readCliVersion } from '../package-version.js'
@@ -66,6 +67,7 @@ interface ChatRootProps {
   onUpdateRequested?(): void
   checkForUpdate?(): Promise<string | undefined>
   promptForUpdate?: boolean
+  openProject?: (project: ChatConfigurationProject) => Promise<void>
 }
 
 export function ChatRoot({
@@ -80,6 +82,7 @@ export function ChatRoot({
   onUpdateRequested = (): void => {},
   checkForUpdate = availableCliUpdate,
   promptForUpdate = true,
+  openProject,
 }: ChatRootProps): ReactElement | null {
   const developmentCheckout = readCliVersion().includes('development')
   const [phase, setPhase] = useState<'setup' | 'chat' | 'cancelled'>(setup ? 'setup' : 'chat')
@@ -226,6 +229,7 @@ export function ChatRoot({
   return (
     <ChatApp
       controller={controller}
+      {...(openProject ? { openProject } : {})}
       entranceFade={chatEntranceFade.current}
       {...(availableUpdate ? { availableUpdate } : {})}
       updateStatus={updateStatus}

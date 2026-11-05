@@ -1,6 +1,25 @@
 #!/usr/bin/env node
 
-import { writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+if (process.argv[2] === '--editor') {
+  if (!process.stdin.isTTY || !process.stdout.isTTY || !process.stderr.isTTY) {
+    throw new Error('Editor did not inherit the terminal')
+  }
+  if (process.argv[3] !== process.env.STRANDS_CLI_TEST_EDITOR_ROOT) {
+    throw new Error(`Editor received the wrong project: ${process.argv[3]}`)
+  }
+  process.stdout.write('\u001b[?1049h\u001b[2J\u001b[H')
+  process.stdout.write('EDITOR_READY\n')
+  const input = await new Promise((resolve) => process.stdin.once('data', resolve))
+  if (input.toString().trim() !== 'editor input') throw new Error('Editor did not receive input')
+  process.stdout.write('\u001b[?1049l')
+  process.stdout.write('EDITOR_INPUT_OK\n')
+  process.exit(0)
+}
 
 await import('../../dist/src/terminal/ink.js')
 const sourceRoot = process.env.STRANDS_CLI_TEST_DIST === 'true' ? '../../dist/src' : '../../src'
@@ -20,6 +39,23 @@ const [
 
 const sandbox = new WorkspaceSandbox(process.cwd())
 const scenario = process.env.STRANDS_CLI_TEST_SCENARIO ?? 'exit'
+let editorDirectory
+let editorProject
+if (scenario === 'editor') {
+  editorDirectory = await mkdtemp(join(tmpdir(), 'strands-editor-'))
+  const root = join(editorDirectory, "a & O'Brien %PATH%")
+  await mkdir(root)
+  editorProject = { root, entrypoint: join(root, 'agent.ts') }
+  process.env.STRANDS_CLI_TEST_EDITOR_ROOT = root
+  const fixture = fileURLToPath(import.meta.url)
+  if (process.platform === 'win32') {
+    const shim = join(editorDirectory, 'editor.cmd')
+    await writeFile(shim, `@"${process.execPath}" "${fixture}" --editor %*\r\n`)
+    process.env.STRANDS_EDITOR = `"${shim}"`
+  } else {
+    process.env.STRANDS_EDITOR = `"${process.execPath}" "${fixture}" --editor`
+  }
+}
 if (scenario.startsWith('exit-')) {
   process.stdin.on('data', (chunk) => {
     if (!chunk.toString().includes('\u0018')) return
@@ -217,6 +253,18 @@ const backend = {
 
 const controller = new ChatController(backend, {
   settings: { animations: false },
+  ...(editorProject
+    ? {
+        configurationSource: () => ({
+          preferredLanguage: 'typescript',
+          documents: {
+            typescript: { source: 'export const agent = {}', generated: false },
+            python: { source: '', generated: false },
+          },
+          project: editorProject,
+        }),
+      }
+    : {}),
   ...(scenario === 'panels'
     ? {
         mcp: {
@@ -341,6 +389,10 @@ if (idleMarker) {
     }
   })
 }
-process.exitCode = await runInkChat(chatController, {
-  intro: scenario === 'startup' || scenario === 'startup-typing',
-})
+try {
+  process.exitCode = await runInkChat(chatController, {
+    intro: scenario === 'startup' || scenario === 'startup-typing',
+  })
+} finally {
+  if (editorDirectory) await rm(editorDirectory, { recursive: true, force: true })
+}

@@ -139,6 +139,13 @@ describe('TUI terminal integration', () => {
 })
 
 describe('TUI workflow integration', () => {
+  it('hands the terminal to a configured editor and resumes the CLI afterward', async () => {
+    const result = await runTuiScenario('editor')
+    expect(result.returnCode).toBe(0)
+    expect(result.output).toContain('EDITOR_INPUT_OK')
+    expectRestoredTerminal(result)
+  })
+
   it('deletes queued messages by mouse, keyboard, and blank edit without executing them', async () => {
     const result = await runTuiScenario('queue')
     expect(result.returnCode).toBe(0)

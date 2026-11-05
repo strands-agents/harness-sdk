@@ -14,6 +14,7 @@ export type TuiScenario =
   | 'follow-up'
   | 'queue'
   | 'voice'
+  | 'editor'
   | 'approval'
   | 'setup-export'
   | 'panels'
@@ -109,8 +110,9 @@ export function expectRestoredTerminal(result: TuiResult): void {
   if (result.inputModeRestored !== null) {
     expect(result.inputModeRestored).toBe(true)
   }
-  expect(result.output.split(enterAlternateScreen).length - 1).toBe(1)
-  expect(result.output.split(leaveAlternateScreen).length - 1).toBe(1)
+  const entries = result.output.split(enterAlternateScreen).length - 1
+  expect(entries).toBeGreaterThan(0)
+  expect(result.output.split(leaveAlternateScreen).length - 1).toBe(entries)
   expect(result.output.indexOf(enterAlternateScreen)).toBeLessThan(result.output.indexOf(leaveAlternateScreen))
   // eslint-disable-next-line no-control-regex -- ConPTY combines parameters in terminal mode controls.
   const controls = [...result.output.matchAll(/\u001b\[\?([\d;]+)([hl])/gu)]
@@ -125,6 +127,7 @@ export function expectRestoredTerminal(result: TuiResult): void {
   }
   expect(modes.get('1006')).toBe(false)
   expect(modes.get('2031')).not.toBe(true)
+  expect(modes.get('1049')).toBe(false)
   expect(modes.get('25')).toBe(true)
 }
 
