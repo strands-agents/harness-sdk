@@ -15,7 +15,7 @@ import { visit } from 'unist-util-visit'
 const execFileAsync = promisify(execFile)
 
 // Generated links intentionally target the canonical repository, including builds from local forks.
-const CANONICAL_SAMPLES_REPOSITORY = 'strands-agents/samples'
+export const CANONICAL_SAMPLES_REPOSITORY = 'strands-agents/samples'
 const MAX_MANIFEST_BYTES = 2 * 1024 * 1024
 const MAX_GUIDE_BYTES = 2 * 1024 * 1024
 const MIN_DESCRIPTION_LENGTH = 140

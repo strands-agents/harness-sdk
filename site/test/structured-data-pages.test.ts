@@ -4,12 +4,20 @@ import path from 'node:path'
 import { getCollection } from 'astro:content'
 import { beforeAll, describe, expect, it } from 'vitest'
 
-import { getPublishedPosts } from '../src/util/blog'
+import { LANGUAGE_META, PRODUCT_RELEASE_STREAM, SDK_META } from '../src/config/changelog'
+import { products } from '../src/config/navbar'
+import { getPublishedPosts, resolveAuthors } from '../src/util/blog'
+import { sortEntries, toCardModel } from '../src/util/catalog'
 import { releaseSlug } from '../src/util/changelog'
+import { relatedUserGuideFor } from '../src/util/related-docs'
+import { languageLabel } from '../src/util/source-links'
+import { baseSchemas, integrationsSchema, productId, productSchema } from '../src/util/structured-data'
 
 type JsonLdNode = Record<string, unknown>
 
 const distDir = path.resolve('dist')
+const site = (process.env.SITE_DOMAIN || 'https://strandsagents.com').replace(/\/$/, '')
+const organization = { '@id': `${site}/#organization` }
 const base = (process.env.ASTRO_BASE_PATH ?? '/').replace(/\/$/, '')
 const jsonLdScript = /<script type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/g
 
@@ -139,104 +147,188 @@ describe('structured data on every built page', () => {
 })
 
 describe('structured data per page type', () => {
-  it('describes every product with its source repository on the homepage', () => {
-    const graph = page('/')
-    const products = ofType(graph, 'SoftwareApplication')
+  const sdk = products.find((product) => product.label === 'Harness SDK')!
+  const routeUrl = (route: string) => `${site}${base}${route}`
 
-    expect(graph.map((node) => node['@type'])).toEqual([
-      'Organization',
-      'WebSite',
-      ...products.map(() => 'SoftwareApplication'),
-    ])
-    expect(products.map((product) => product.name)).toEqual(
-      expect.arrayContaining([
-        'Strands harness',
-        'Strands Harness SDK',
-        'Strands Shell',
-        'Strands Box',
-        'Strands Evals',
-      ])
-    )
-    for (const product of products) {
-      expect((product.isBasedOn as JsonLdNode).codeRepository).toMatch(/^https:\/\/github\.com\/strands-agents\//)
-    }
+  it('describes every product with its source repository on the homepage', () => {
+    expect(page('/')).toEqual([...baseSchemas(site), ...products.map((product) => productSchema(product, site))])
   })
 
-  it('ties guides to the product they document', () => {
-    const graph = page('/docs/user-guide/sdk/agents/agent-loop/')
-    const [article] = ofType(graph, 'TechArticle')
-    const [product] = ofType(graph, 'SoftwareApplication')
+  it('ties guides to the product they document', async () => {
+    const docs = await getCollection('docs')
+    const entry = docs.find((doc) => doc.id === 'docs/user-guide/sdk/agents/agent-loop')!
+    const url = routeUrl('/docs/user-guide/sdk/agents/agent-loop/')
+    const related = relatedUserGuideFor(entry, docs)
+    expect(related.length).toBeGreaterThan(0)
 
-    expect(product?.name).toBe('Strands Harness SDK')
-    expect(article?.headline).toBeTruthy()
-    expect(article?.about).toEqual({ '@id': product?.['@id'] })
-    expect(article?.publisher).toEqual({ '@id': graph[0]?.['@id'] })
+    expect(ofType(page('/docs/user-guide/sdk/agents/agent-loop/'), 'TechArticle')).toEqual([
+      {
+        '@type': 'TechArticle',
+        headline: 'Agent Loop',
+        description: entry.data.description,
+        url,
+        mainEntityOfPage: {
+          '@type': 'WebPage',
+          '@id': url,
+          relatedLink: related.map((doc) => `${site}/${doc.slug}/`),
+        },
+        dateModified: expect.any(String),
+        author: organization,
+        publisher: organization,
+        about: { '@id': productId(sdk, site) },
+        keywords: 'event-loop, tool-execution, hooks',
+        isBasedOn: [
+          {
+            '@type': 'SoftwareSourceCode',
+            programmingLanguage: 'Python',
+            codeRepository: 'https://github.com/strands-agents/harness-sdk',
+            url: 'https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/agent.py',
+          },
+          {
+            '@type': 'SoftwareSourceCode',
+            programmingLanguage: 'Python',
+            codeRepository: 'https://github.com/strands-agents/harness-sdk',
+            url: 'https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/event_loop/event_loop.py',
+          },
+          {
+            '@type': 'SoftwareSourceCode',
+            programmingLanguage: 'TypeScript',
+            codeRepository: 'https://github.com/strands-agents/harness-sdk',
+            url: 'https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/agent/agent.ts',
+          },
+        ],
+      },
+    ])
   })
 
   it('marks API reference pages as APIReference', () => {
-    for (const route of ['/docs/api/python/strands.agent.agent/', '/docs/api/typescript/Agent/']) {
+    for (const [route, headline] of [
+      ['/docs/api/python/strands.agent.agent/', 'strands.agent.agent'],
+      ['/docs/api/typescript/Agent/', 'Agent'],
+    ]) {
       const graph = page(route)
-      const [reference] = ofType(graph, 'APIReference')
+      const url = routeUrl(route)
 
-      expect(reference?.headline, route).toBeTruthy()
-      expect(reference?.about, route).toEqual({ '@id': ofType(graph, 'SoftwareApplication')[0]?.['@id'] })
-      expect(ofType(graph, 'TechArticle'), route).toHaveLength(0)
+      expect(ofType(graph, 'TechArticle'), route).toEqual([])
+      expect(ofType(graph, 'APIReference'), route).toEqual([
+        {
+          '@type': 'APIReference',
+          headline,
+          url,
+          mainEntityOfPage: { '@type': 'WebPage', '@id': url },
+          author: organization,
+          publisher: organization,
+          about: { '@id': productId(sdk, site) },
+        },
+      ])
     }
   })
 
   it('emits an article without a product on learning lessons', () => {
-    const [article] = ofType(page('/docs/learning/evaluating-agents/'), 'TechArticle')
+    const url = routeUrl('/docs/learning/evaluating-agents/')
 
-    expect(article?.headline).toBe('Lesson 13: Evaluating agents')
-    expect(article?.about).toBeUndefined()
+    expect(ofType(page('/docs/learning/evaluating-agents/'), 'TechArticle')).toEqual([
+      {
+        '@type': 'TechArticle',
+        headline: 'Lesson 13: Evaluating agents',
+        description: expect.any(String),
+        url,
+        mainEntityOfPage: { '@type': 'WebPage', '@id': url },
+        dateModified: expect.any(String),
+        author: organization,
+        publisher: organization,
+      },
+    ])
   })
 
   it('publishes release metadata on every changelog release page', async () => {
     const releases = await getCollection('changelog')
     expect(releases.length).toBeGreaterThan(0)
     for (const release of releases) {
+      const { data } = release
       const route = `/changelog/${releaseSlug(release)}/`
-      const [product, node] = ofType(page(route), 'SoftwareApplication')
-      if (release.data.sdk === 'cli') expect(product?.softwareVersion, route).toBe(release.data.version)
-      else expect(node?.isPartOf, route).toEqual({ '@id': product?.['@id'] })
+      const url = routeUrl(route)
+      const product = products.find((p) => PRODUCT_RELEASE_STREAM[p.label] === data.sdk)
+      const name = product?.name ?? `Strands ${SDK_META[data.sdk].label}`
 
-      expect(release.data.sdk === 'cli' ? product : node, route).toMatchObject({
+      expect(
+        page(route).find((node) => node['@id'] === `${url}#release`),
+        route
+      ).toEqual({
         '@type': 'SoftwareApplication',
-        softwareVersion: release.data.version,
-        datePublished: release.data.date.toISOString(),
-        downloadUrl: release.data.packageUrl,
+        '@id': `${url}#release`,
+        name: data.language ? `${name} ${LANGUAGE_META[data.language].label}` : name,
+        softwareVersion: data.version,
+        datePublished: data.date.toISOString(),
+        releaseNotes: url,
+        downloadUrl: data.packageUrl,
+        applicationCategory: 'DeveloperApplication',
+        publisher: organization,
+        ...(product && { isPartOf: { '@id': productId(product, site) } }),
       })
     }
   })
 
   it('lists every catalog entry on /integrations/', async () => {
     const entries = await getCollection('catalog')
-    const [list] = ofType(page('/integrations/'), 'ItemList')
-    const items = (list?.itemListElement as JsonLdNode[]).map((element) => element.item as JsonLdNode)
+    const cards = sortEntries(entries.map((entry) => toCardModel(entry.id, entry.data, undefined, new Date())))
 
-    expect(list?.numberOfItems).toBe(entries.length)
-    expect(items.map((item) => item.codeRepository).sort()).toEqual(entries.map((entry) => entry.data.github).sort())
-    for (const item of items) expect(item['@type']).toBe('SoftwareSourceCode')
+    expect(ofType(page('/integrations/'), 'ItemList')).toEqual([
+      integrationsSchema(cards, routeUrl('/integrations/'), site),
+    ])
   })
 
   it('keeps BlogPosting in the page graph', async () => {
     const posts = await getPublishedPosts()
     expect(posts.length).toBeGreaterThan(0)
     for (const post of posts) {
-      const [posting] = ofType(page(`/blog/${post.id}/`), 'BlogPosting')
+      const route = `/blog/${post.id}/`
+      const authors = await resolveAuthors(post.data.authors)
 
-      expect(posting?.headline, post.id).toBe(post.data.title)
-      expect(posting?.publisher, post.id).toEqual({ '@id': page('/')[0]?.['@id'] })
+      expect(ofType(page(route), 'BlogPosting'), post.id).toEqual([
+        {
+          '@type': 'BlogPosting',
+          headline: post.data.title,
+          description: post.data.description,
+          image: routeUrl(`/blog/og/${post.id}.png`),
+          mainEntityOfPage: { '@type': 'WebPage', '@id': post.data.canonicalUrl ?? routeUrl(route) },
+          datePublished: post.data.date.toISOString(),
+          author: authors.map((author) => ({
+            '@type': 'Person',
+            name: author.data.name,
+            url: routeUrl(`/blog/authors/${author.id}/`),
+          })),
+          publisher: organization,
+        },
+      ])
     }
   })
 
-  it('links sample guides to their source', async () => {
+  it('links sample guides to the samples repository', async () => {
     for (const guide of await getCollection('sampleGuides')) {
       const route = `/examples/${guide.data.slug}/`
+      const url = routeUrl(route)
       expect(existsSync(path.join(distDir, route, 'index.html')), route).toBe(true)
-      const [article] = ofType(page(route), 'TechArticle')
 
-      expect((article?.isBasedOn as JsonLdNode[])[0]?.url, route).toBe(guide.data.sourceUrl)
+      expect(ofType(page(route), 'TechArticle'), route).toEqual([
+        {
+          '@type': 'TechArticle',
+          headline: guide.data.title,
+          description: guide.data.description,
+          url,
+          mainEntityOfPage: { '@type': 'WebPage', '@id': url },
+          author: organization,
+          publisher: organization,
+          isBasedOn: [
+            {
+              '@type': 'SoftwareSourceCode',
+              programmingLanguage: languageLabel(guide.data.language),
+              codeRepository: 'https://github.com/strands-agents/samples',
+              url: guide.data.sourceUrl,
+            },
+          ],
+        },
+      ])
     }
   })
 })

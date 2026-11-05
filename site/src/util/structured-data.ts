@@ -23,36 +23,6 @@ export function serializeJsonLd(value: object): string {
   return JSON.stringify(value).replace(/</g, '\\u003c')
 }
 
-const breadcrumbLabels: Record<string, string> = {
-  docs: 'Docs',
-  'user-guide': 'User Guide',
-  concepts: 'Concepts',
-  agents: 'Agents',
-  tools: 'Tools',
-  'multi-agent': 'Multi-Agent',
-  'model-providers': 'Model Providers',
-  streaming: 'Streaming',
-  bidi: 'Voice',
-  deploy: 'Deploy',
-  'safety-security': 'Safety & Security',
-  'observability-evaluation': 'Observability',
-  'evals-sdk': 'Evals SDK',
-  examples: 'Examples',
-  community: 'Community',
-  labs: 'Labs',
-  contribute: 'Contribute',
-  api: 'API Reference',
-  plugins: 'Plugins',
-  quickstart: 'Quickstart',
-  experimental: 'Experimental',
-  python: 'Python',
-  sdk: 'Harness SDK',
-  typescript: 'TypeScript',
-  integrations: 'Integrations',
-  'session-managers': 'Session Managers',
-  contributing: 'Contributing',
-}
-
 export interface BreadcrumbItem {
   '@type': 'ListItem'
   position: number
@@ -61,41 +31,35 @@ export interface BreadcrumbItem {
 }
 
 // Landing pages outside the docs collection; every other ancestor must be a docs page.
-const sectionPages = new Set(['blog', 'changelog', 'examples', 'integrations'])
-
-function segmentLabel(segment: string): string {
-  return (
-    breadcrumbLabels[segment] ?? segment.replace(/-/g, ' ').replace(/\b\w/g, (character) => character.toUpperCase())
-  )
-}
+const sectionPages = new Map([
+  ['blog', 'Blog'],
+  ['changelog', 'Changelog'],
+  ['examples', 'Examples'],
+  ['integrations', 'Integrations'],
+])
 
 /**
- * Build breadcrumb JSON-LD from the canonical route id. Ancestors without a page
- * (e.g. `/docs/api/`, `/changelog/sdk/`) are dropped: every linked crumb must resolve.
+ * Build breadcrumb JSON-LD from the canonical route id, naming each ancestor after its
+ * page title. Ancestors without a page (e.g. `/docs/api/`, `/changelog/sdk/`) are dropped.
  */
 export function buildBreadcrumbItems(
   routeId: string,
   title: string,
   siteUrl: string,
-  pageIds: Set<string>,
+  pageTitles: Map<string, string>,
   basePath = ''
 ): BreadcrumbItem[] {
   const segments = routeId
     .replace(/^\/|\/$/g, '')
     .split('/')
     .filter(Boolean)
-  const ancestors = segments
-    .slice(0, -1)
-    .map((_, index) => segments.slice(0, index + 1).join('/'))
-    .filter((id) => pageIds.has(id) || sectionPages.has(id))
+  const ancestors = segments.slice(0, -1).flatMap((_, index) => {
+    const id = segments.slice(0, index + 1).join('/')
+    const name = pageTitles.get(id) ?? sectionPages.get(id)
+    return name ? [{ name, item: `${siteUrl}${basePath}/${id}/` }] : []
+  })
 
-  return [
-    ...ancestors.map((id) => ({
-      name: segmentLabel(id.split('/').at(-1) ?? id),
-      item: `${siteUrl}${basePath}/${id}/`,
-    })),
-    { name: title },
-  ].map((crumb, index) => ({ '@type': 'ListItem', position: index + 1, ...crumb }))
+  return [...ancestors, { name: title }].map((crumb, index) => ({ '@type': 'ListItem', position: index + 1, ...crumb }))
 }
 
 const APACHE_LICENSE = 'https://www.apache.org/licenses/LICENSE-2.0'
@@ -131,21 +95,11 @@ export function baseSchemas(siteUrl: string): JsonLdNode[] {
   ]
 }
 
-/** Source repository and implementation languages per navbar product label. */
-export const PRODUCT_SOURCE: Record<string, { repository: string; languages: string[] }> = {
-  Harness: { repository: 'https://github.com/strands-agents/harness-sdk', languages: ['Python', 'TypeScript'] },
-  'Harness SDK': { repository: 'https://github.com/strands-agents/harness-sdk', languages: ['Python', 'TypeScript'] },
-  Shell: { repository: 'https://github.com/strands-agents/shell', languages: ['Rust'] },
-  Box: { repository: 'https://github.com/strands-agents/box', languages: ['Rust'] },
-  Evals: { repository: 'https://github.com/strands-agents/evals', languages: ['Python'] },
-}
-
 export function productId(product: Product, siteUrl: string): string {
   return `${siteUrl}${product.href}#software`
 }
 
 export function productSchema(product: Product, siteUrl: string): JsonLdNode {
-  const source = PRODUCT_SOURCE[product.label]
   return {
     '@type': 'SoftwareApplication',
     '@id': productId(product, siteUrl),
@@ -156,13 +110,11 @@ export function productSchema(product: Product, siteUrl: string): JsonLdNode {
     license: APACHE_LICENSE,
     offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
     publisher: organizationRef(siteUrl),
-    ...(source && {
-      isBasedOn: {
-        '@type': 'SoftwareSourceCode',
-        codeRepository: source.repository,
-        programmingLanguage: source.languages,
-      },
-    }),
+    isBasedOn: {
+      '@type': 'SoftwareSourceCode',
+      codeRepository: product.repository,
+      programmingLanguage: product.languages,
+    },
   }
 }
 

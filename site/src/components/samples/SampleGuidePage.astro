@@ -4,6 +4,7 @@ import { render } from 'astro:content'
 import { buildSampleGuideSidebar, type SampleGuideEntry } from '../../util/sample-guides'
 import { languageLabel } from '../../util/source-links'
 import { articleSchema } from '../../util/structured-data'
+import { CANONICAL_SAMPLES_REPOSITORY } from '../../../scripts/samples/importer'
 
 interface Props {
   guide: SampleGuideEntry
@@ -26,7 +27,7 @@ Astro.locals.structuredData = [
       sources: [
         {
           programmingLanguage: languageLabel(guide.data.language),
-          codeRepository: guide.data.sourceUrl.split('/').slice(0, 5).join('/'),
+          codeRepository: `https://github.com/${CANONICAL_SAMPLES_REPOSITORY}`,
           url: guide.data.sourceUrl,
         },
       ],
