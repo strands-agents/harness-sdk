@@ -2684,6 +2684,24 @@ describe('AnthropicModel', () => {
         expect(captured.request).toStrictEqual({ ...helloRequest, temperature: 0.2 })
       })
 
+      it.runIf(isNode)(
+        'lets a clientConfig pin win over a differently cased ANTHROPIC_CUSTOM_HEADERS pin',
+        async () => {
+          vi.stubEnv('ANTHROPIC_CUSTOM_HEADERS', 'Anthropic-Version: 2026-10-21')
+          const captured = await captureRealClient()
+          const provider = new AnthropicModel({
+            apiKey: 'sk-test',
+            modelId: 'm1',
+            temperature: 0.2,
+            clientConfig: { defaultHeaders: { 'anthropic-version': '2023-06-01' } },
+          })
+
+          await collectIterator(provider.stream(messages))
+
+          expect(captured.request).toStrictEqual({ ...helloRequest, temperature: 0.2 })
+        }
+      )
+
       it.runIf(isNode)('sends temperature when ANTHROPIC_CUSTOM_HEADERS pins the previous API version', async () => {
         vi.stubEnv('ANTHROPIC_CUSTOM_HEADERS', 'anthropic-version: 2023-06-01')
         const captured = await captureRealClient()

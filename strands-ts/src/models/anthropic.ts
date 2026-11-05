@@ -611,11 +611,12 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
     // The SDK merges ANTHROPIC_CUSTOM_HEADERS into `_options.defaultHeaders`; fall back to clientConfig if that moves.
     const sent =
       (this._client as unknown as { _options?: ClientOptions })._options?.defaultHeaders ?? clientConfig?.defaultHeaders
-    const pinned = headerValues(sent, 'anthropic-version')[0]
+    // The SDK lets the last of several case-variant keys win.
+    const pinned = headerValues(sent, 'anthropic-version').at(-1)
     this._apiVersion = pinned ?? sdkDefaultApiVersion()
     if (pinned === undefined) {
       this._apiVersionOrigin = `the default for @anthropic-ai/sdk ${ANTHROPIC_SDK_VERSION}`
-    } else if (headerValues(clientConfig?.defaultHeaders, 'anthropic-version').length > 0) {
+    } else if (pinned === headerValues(clientConfig?.defaultHeaders, 'anthropic-version').at(-1)) {
       this._apiVersionOrigin = "pinned by clientConfig.defaultHeaders['anthropic-version']"
     } else {
       this._apiVersionOrigin = 'pinned by the ANTHROPIC_CUSTOM_HEADERS environment variable'
