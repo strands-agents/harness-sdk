@@ -1,0 +1,129 @@
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+import { createChangeBuffer, isSourceFile, watchSources, type SourceWatcher } from '../src/dev/watch.js'
+
+describe('createChangeBuffer', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('sends one sorted, unique change after the burst stops', () => {
+    const onChange = vi.fn()
+    const buffer = createChangeBuffer({ debounceMs: 200, onChange })
+    buffer.add('tools.py')
+    vi.advanceTimersByTime(150)
+    buffer.add('agent.py')
+    buffer.add('tools.py')
+    vi.advanceTimersByTime(199)
+    expect(onChange).not.toHaveBeenCalled()
+    vi.advanceTimersByTime(1)
+    expect(onChange).toHaveBeenCalledExactlyOnceWith(['agent.py', 'tools.py'])
+  })
+
+  it('drops pending changes on close', () => {
+    const onChange = vi.fn()
+    const buffer = createChangeBuffer({ debounceMs: 200, onChange })
+    buffer.add('agent.py')
+    buffer.close()
+    vi.advanceTimersByTime(500)
+    expect(onChange).not.toHaveBeenCalled()
+  })
+})
+
+describe('isSourceFile', () => {
+  it.each([
+    ['agent.py', true],
+    ['instructions.md', true],
+    ['pyproject.toml', true],
+    ['Agent.TS', true],
+    ['.env', false],
+    ['agent.py~', false],
+    ['notes.log', false],
+  ])('%s is a source file: %s', (name, expected) => {
+    expect(isSourceFile(name)).toBe(expected)
+  })
+})
+
+describe('watchSources', () => {
+  let root: string
+  let watcher: SourceWatcher | undefined
+  let changes: string[]
+  let warnings: string[]
+
+  beforeEach(async () => {
+    root = await realpath(await mkdtemp(join(tmpdir(), 'strands-dev-watch-')))
+    await mkdir(join(root, 'src'))
+    await mkdir(join(root, 'node_modules', 'pkg'), { recursive: true })
+    await mkdir(join(root, '.venv'))
+    changes = []
+    warnings = []
+  })
+
+  afterEach(async () => {
+    watcher?.close()
+    watcher = undefined
+    await rm(root, { recursive: true, force: true, maxRetries: 3 })
+  })
+
+  function start(maxDirectories?: number): SourceWatcher {
+    watcher = watchSources({
+      root,
+      debounceMs: 20,
+      onChange: (paths) => changes.push(...paths),
+      onWarning: (message) => warnings.push(message),
+      ...(maxDirectories !== undefined ? { maxDirectories } : {}),
+    })
+    return watcher
+  }
+
+  it('watches the project folders but not dependency or hidden folders', () => {
+    expect(start().directories()).toBe(2)
+  })
+
+  it('reports source saves and skips other files and ignored folders', async () => {
+    start()
+    await writeFile(join(root, 'node_modules', 'pkg', 'index.js'), 'x')
+    await writeFile(join(root, '.venv', 'site.py'), 'x')
+    await writeFile(join(root, 'notes.log'), 'x')
+    await writeFile(join(root, 'src', 'tools.py'), 'x')
+    await vi.waitFor(() => expect(changes).toContain(join('src', 'tools.py')))
+    expect(changes.every((path) => path === join('src', 'tools.py'))).toBe(true)
+  })
+
+  it('watches folders that occur after start', async () => {
+    start()
+    await mkdir(join(root, 'src', 'new'))
+    await vi.waitFor(() => expect(watcher!.directories()).toBe(3))
+    await writeFile(join(root, 'src', 'new', 'helper.ts'), 'x')
+    await vi.waitFor(() => expect(changes).toContain(join('src', 'new', 'helper.ts')))
+  })
+
+  it('reports a deleted source file', async () => {
+    await writeFile(join(root, 'agent.py'), 'x')
+    start()
+    await rm(join(root, 'agent.py'))
+    await vi.waitFor(() => expect(changes).toContain('agent.py'))
+  })
+
+  it('stops the watch on a removed folder', async () => {
+    await mkdir(join(root, 'src', 'old'))
+    start()
+    expect(watcher!.directories()).toBe(3)
+    await rm(join(root, 'src', 'old'), { recursive: true, force: true, maxRetries: 3 })
+    await vi.waitFor(() => expect(watcher!.directories()).toBe(2))
+  })
+
+  it('warns once when the folder limit stops the watch', async () => {
+    await mkdir(join(root, 'a'))
+    await mkdir(join(root, 'b'))
+    expect(start(2).directories()).toBe(2)
+    expect(warnings).toEqual(['Watching the first 2 folders only. Changes in other folders do not reload the agent.'])
+  })
+})
