@@ -240,8 +240,9 @@ def test_unwrap_raises_runtime_error_for_error_results():
         ("import sys\nprint(sys.modules)", "AttributeError"),
         ("print(().__class__.__bases__)", "AttributeError"),
         ("print(__builtins__)", "NameError"),
-        ("print(eval('1 + 1'))", "NameError"),
-        ("exec('x = 1')", "NameError"),
+        ("print(eval(\"open('/etc/passwd').read()\"))", "PermissionError"),
+        ("exec('import subprocess')", "ModuleNotFoundError"),
+        ("print(eval('__builtins__'))", "NameError"),
         ("def f(): pass\nprint(f.__globals__)", "AttributeError"),
         ("from pathlib import Path\nprint(Path('/etc/passwd').read_text())", "PermissionError"),
     ],
@@ -268,7 +269,7 @@ _module = sys.modules["strands_harness.tools.programmatic_tool_caller"]
 
 
 def test_synchronous_busy_loop_is_bounded(monkeypatch):
-    monkeypatch.setattr(_module, "_LIMITS", {**_module._LIMITS, "max_duration_secs": 0.2})
+    monkeypatch.setattr(_module, "_LIMITS", {**_module._LIMITS, "max_feed_duration_secs": 0.2})
     start = time.monotonic()
     result = _run(_agent(calculator), "while True:\n    pass")
     assert result["status"] == "error"

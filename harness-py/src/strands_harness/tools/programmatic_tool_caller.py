@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 # is in flight), so it bounds runaway guest code without penalizing slow tools; the wall clock is
 # bounded separately by ``timeout``. Suspensions are host round trips: a sequentially awaited tool
 # call costs two, a gathered one about one, so this is roughly 500 sequential calls per run.
-_LIMITS = {"max_duration_secs": 60.0, "max_memory": 256 * 1024 * 1024, "max_suspensions": 1_000}
+_LIMITS = {"max_feed_duration_secs": 60.0, "max_memory": 256 * 1024 * 1024, "max_suspensions": 1_000}
 
 # Inner tool calls in flight at once per run: ``asyncio.gather`` over a big list must not fan out
 # unbounded against the same agent (a model turn is naturally bounded by its handful of tool_use blocks).
