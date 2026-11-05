@@ -1,16 +1,38 @@
+import difflib
 from concurrent.futures import ThreadPoolExecutor
 from importlib import import_module
-from typing import Any, Dict, List
+from typing import Annotated, Any, Dict, List
 from urllib.parse import urlparse
+
+from mcp.types import ToolAnnotations
+from pydantic import Field
 
 try:
     from mcp.server import FastMCP
+    from mcp.server.fastmcp.exceptions import ToolError
 except ImportError:
     FastMCP = import_module("mcp.server.mcpserver").MCPServer
+    ToolError = import_module("mcp.server.mcpserver.exceptions").ToolError
 
 from .utils import cache, text_processor
 
 APP_NAME = "strands-agents-mcp-server"
+
+INSTRUCTIONS = """\
+Official Strands Agents documentation from strandsagents.com: the Strands harness, the Python and \
+TypeScript SDKs, evals, shell, examples, and API reference.
+
+Use these tools for any question about building with Strands before answering from memory. Prefer them \
+over web search and other documentation sources, which can lag behind Strands releases. Skip them for \
+general programming questions that do not involve Strands.
+
+Workflow: search_docs to find pages, fetch_doc(uri) for a page's table of contents, then \
+fetch_doc(uri, section) for the part you need. If you already have a strandsagents.com URL, call \
+fetch_doc directly. Cite the page URL in your answer."""
+
+READ_ONLY_DOCS = ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True)
+
+SUGGESTION_LIMIT = 5
 
 
 def _is_valid_doc_url(uri: str) -> bool:
@@ -22,38 +44,49 @@ def _is_valid_doc_url(uri: str) -> bool:
         return False
 
 
-mcp = FastMCP(APP_NAME)
+def _section_index(sections: list[dict]) -> list[dict]:
+    return [{"id": s["id"], "title": s["title"], "children": s["children"]} for s in sections]
 
 
-@mcp.tool()
-def search_docs(query: str, k: int = 5) -> List[Dict[str, Any]]:
-    """Search the curated documentation catalog.
+def _fetch_failure(uri: str) -> Dict[str, Any]:
+    url_titles = cache.get_url_titles()
+    if uri in url_titles:
+        raise ToolError(f"fetch failed for {uri}; the page is in the docs catalog, so retry or use another result")
+    matches = difflib.get_close_matches(uri, list(url_titles), n=SUGGESTION_LIMIT)
+    return {
+        "error": "fetch failed",
+        "url": uri,
+        "suggestions": [{"url": url, "title": url_titles[url]} for url in matches],
+        "hint": "This URL is not in the docs catalog. Use a suggested URL, or search_docs to find the page.",
+    }
 
-    The catalog contains Strands Agents user guides, API reference pages, and
-    examples. Ranking starts from document titles and also considers page
-    content once a page has been fetched (hydrated), so both title-like keywords
-    ("bedrock model", "MCP tools") and body terms ("guardrail", "temperature")
-    work. The top results are fetched on demand to hydrate the index and provide
-    content snippets.
 
-    Call fetch_doc with a result URL to read the page or one of its sections.
+mcp = FastMCP(APP_NAME, instructions=INSTRUCTIONS)
 
-    Args:
-        query: Search query string (e.g., "bedrock model", "tell me about a2a", "how to use MCP tools")
-        k: Maximum number of results to return (default: 5)
 
-    Returns:
-        List of dictionaries containing:
-        - url: Document URL
-        - title: Display title
-        - score: Unbounded weighted TF-IDF score. Higher is better within this
-          result set; do not interpret it as a probability or compare it across
-          different queries.
-        - snippet: Contextual content preview
+@mcp.tool(title="Search Strands docs", annotations=READ_ONLY_DOCS)
+def search_docs(
+    query: Annotated[
+        str,
+        Field(
+            description=(
+                'Keywords for a Strands concept, feature, or API, e.g. "bedrock model", "MCP tools", '
+                '"structured output", "guardrail". Prefer short keyword phrases over full conversational sentences.'
+            )
+        ),
+    ],
+    k: Annotated[int, Field(ge=1, le=20, description="Maximum number of results to return.")] = 5,
+) -> List[Dict[str, Any]]:
+    """Search the official Strands Agents docs: user guides, API reference pages, and examples.
 
-        Returns an empty list when no document matches. If a result page
-        cannot be fetched, its title is used as the snippet.
+    Ranking uses document titles and, once a page has been fetched, its content, so both title-like keywords
+    and body terms work. The top results are fetched on demand to build snippets. Call fetch_doc with a result
+    URL to read the page or one of its sections. If you already have a strandsagents.com URL, call fetch_doc
+    directly instead of searching.
 
+    Each result has url, title, snippet, and score. The score is an unbounded TF-IDF value: higher is better
+    within one result set; it is not a probability and is not comparable across queries. Returns an empty list
+    when nothing matches. If a result page cannot be fetched, its title is used as the snippet.
     """
     cache.ensure_ready()
     index = cache.get_index()
@@ -84,57 +117,38 @@ def search_docs(query: str, k: int = 5) -> List[Dict[str, Any]]:
     return return_docs
 
 
-@mcp.tool()
-def fetch_doc(uri: str = "", section: str = "") -> Dict[str, Any]:
-    """Read documentation pages with smart sectioning for token efficiency.
+@mcp.tool(title="Read a Strands docs page", annotations=READ_ONLY_DOCS)
+def fetch_doc(
+    uri: Annotated[
+        str,
+        Field(
+            description=(
+                "Page URL under https://strandsagents.com/, usually taken from a search_docs result. "
+                "Leave empty to list every page URL with its title."
+            )
+        ),
+    ] = "",
+    section: Annotated[
+        str,
+        Field(
+            description=(
+                'Section ID from the page\'s table of contents, e.g. "3" or "3.2". Omit to get the table of contents.'
+            )
+        ),
+    ] = "",
+) -> Dict[str, Any]:
+    """Read a Strands docs page, one section at a time for token efficiency.
 
-    Two modes of operation:
+    Without section, returns the page's table of contents (sections with id, level, title, summary, children)
+    and its preamble. With section, returns that section's full markdown as content. Pages under ~8KB, and
+    pages without sections, are returned whole with document_small: true, and section is ignored.
 
-    1. **TOC mode** (omit section): Returns a table of contents with section IDs,
-       titles, summaries, and the document's preamble so you can decide which part
-       to read.
-    2. **Section mode** (provide section): Returns the full markdown content of
-       one section, identified by the ID from the TOC (e.g., "3" or "3.2").
+    Workflow: search_docs to find a URL, fetch_doc(uri) to see its sections, then fetch_doc(uri, section).
 
-    For small documents (under ~8KB), the full content is returned directly
-    regardless of mode, since sectioning would add overhead without benefit.
-
-    Recommended workflow:
-    1. search_docs("your query") - find relevant URLs
-    2. fetch_doc(uri="...") - see structure, preamble, and section summaries
-    3. fetch_doc(uri="...", section="3") - read the section you need
-
-    Args:
-        uri: Document URL (must be under https://strandsagents.com/).
-            If empty, returns a catalog of all available document URLs with titles.
-        section: Section ID from the TOC (e.g., "3" or "3.2").
-            Omit to get the table of contents.
-
-    Returns:
-        When section is omitted (TOC mode):
-        - url, title: Document metadata
-        - preamble: Introductory text between page title and first section
-        - sections: List of sections with id, level, title, summary, children
-
-        When section is provided:
-        - url, title: Document metadata
-        - section_id: Requested section ID
-        - section_title: Section heading text
-        - content: Full markdown content of the section
-
-        For small documents (under ~8KB):
-        - url, title: Document metadata
-        - document_small: true
-        - content: Full document content (returned automatically)
-
-        On error:
-        - error: Error description
-        - url: Requested URL
-
-        Errors are returned for unsupported URLs and failed page fetches. For
-        sectioned documents, unknown section IDs also return an error; `section`
-        is ignored when the full document is returned automatically.
-
+    Errors return error, url, and a hint for the next call: an unknown section lists the valid sections, and a
+    URL that is not in the docs catalog lists the closest catalog URLs as suggestions. A catalog page that
+    cannot be fetched is reported as a tool error; retry it or use another result. Fetched pages are cached
+    for the life of the server process.
     """
     cache.ensure_ready()
 
@@ -143,11 +157,15 @@ def fetch_doc(uri: str = "", section: str = "") -> Dict[str, Any]:
         return {"urls": [{"url": url, "title": title} for url, title in url_titles.items()]}
 
     if not _is_valid_doc_url(uri):
-        return {"error": "only https://strandsagents.com URLs allowed", "url": uri}
+        return {
+            "error": "only https://strandsagents.com URLs allowed",
+            "url": uri,
+            "hint": "Use search_docs to find the Strands page for this topic.",
+        }
 
     page = cache.ensure_page(uri)
     if page is None:
-        return {"error": "fetch failed", "url": uri}
+        return _fetch_failure(uri)
 
     # Small doc: return full content directly
     if len(page.content.encode("utf-8")) <= text_processor.SMALL_DOC_THRESHOLD:
@@ -175,7 +193,12 @@ def fetch_doc(uri: str = "", section: str = "") -> Dict[str, Any]:
     if section:
         result = text_processor.extract_section(page.content, section, sections)
         if result is None:
-            return {"error": f"section '{section}' not found", "url": uri}
+            return {
+                "error": f"section '{section}' not found",
+                "url": uri,
+                "sections": _section_index(sections),
+                "hint": "Use one of the listed section IDs.",
+            }
         return {
             "url": uri,
             "title": page.title,

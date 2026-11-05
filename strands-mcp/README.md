@@ -57,9 +57,12 @@ This MCP server provides curated documentation access to your GenAI tools via ll
 - `search_docs(query, k)` ranks by document title and by page content once a page has been hydrated. Both title-like keywords and body terms work; call `fetch_doc` to inspect a result's contents.
 - Search scores are unbounded weighted TF-IDF values. They are useful only for ordering results from the same query; they are not probabilities and should not be compared across queries.
 - `search_docs` returns an empty list when no document matches. If a matched page cannot be fetched for its snippet, the result still includes the URL and title.
-- `fetch_doc` returns `{"error": "...", "url": "..."}` for unsupported URLs and failed page fetches. For
-  sectioned documents, unknown section IDs also return an error; `section` is ignored when the full document is
-  returned automatically.
+- `fetch_doc` returns `{"error": "...", "url": "...", "hint": "..."}` for unsupported URLs, URLs that are not in
+  the docs catalog (with the closest catalog URLs as `suggestions`), and unknown section IDs (with the valid
+  `sections`); `section` is ignored when the full document is returned automatically. A catalog page that cannot be
+  fetched is reported as a tool error (`isError: true`).
+- Both tools are annotated read-only and idempotent, and the server sends `instructions` telling clients when to use
+  it and in which order to call the tools.
 
 ## Configuration
 
