@@ -25,7 +25,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: strands-agents/samples
-          ref: 6226307ed8f6de1face333d3daec638593aeedf3
+          ref: 0d9d9022fd699e8c00da8beeb2c7e9cdf1de2cd9
           path: samples-source
           persist-credentials: false
 

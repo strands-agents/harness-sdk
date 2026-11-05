@@ -1,11 +1,7 @@
 ---
 import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro'
 import { render } from 'astro:content'
-import {
-  buildSampleGuideSidebar,
-  isAmplifyingAiSampleGuide,
-  type SampleGuideEntry,
-} from '../../util/sample-guides'
+import { buildSampleGuideSidebar, type SampleGuideEntry } from '../../util/sample-guides'
 
 interface Props {
   guide: SampleGuideEntry
@@ -15,7 +11,6 @@ interface Props {
 const { guide, guides } = Astro.props
 const sidebar = buildSampleGuideSidebar(guides, guide)
 const { Content, headings } = await render(guide)
-const isAmplifying = isAmplifyingAiSampleGuide(guide)
 ---
 
 <StarlightPage
@@ -23,21 +18,11 @@ const isAmplifying = isAmplifyingAiSampleGuide(guide)
     title: guide.data.title,
     description: guide.data.description,
     editUrl: false,
-    pagefind: guide.data.placement === 'featured',
+    pagefind: guide.data.catalogMode === 'curated' || guide.data.placement === 'featured',
   }}
   headings={headings}
   sidebar={sidebar}
 >
-  {
-    guide.data.catalogMode === 'curated' && (
-      <div class="sample-guide__metadata">
-        {guide.data.kind && <span>{guide.data.kind}</span>}
-        <span>{guide.data.language}</span>
-        {isAmplifying && <span>Amplifying AI</span>}
-        {guide.data.placement === 'reference' && <span>Reference</span>}
-      </div>
-    )
-  }
   <p class="sample-guide__source">
     <a href={guide.data.sourceUrl} target="_blank" rel="noopener">View the complete sample on GitHub</a>
   </p>
@@ -58,22 +43,6 @@ const isAmplifying = isAmplifyingAiSampleGuide(guide)
 </StarlightPage>
 
 <style>
-  .sample-guide__metadata {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.4rem;
-    margin-block: 0 1rem;
-  }
-
-  .sample-guide__metadata span {
-    padding: 0.15rem 0.55rem;
-    border: 1px solid var(--sl-color-gray-5);
-    border-radius: 999px;
-    color: var(--sl-color-gray-2);
-    font-size: var(--sl-text-xs);
-    text-transform: capitalize;
-  }
-
   .sample-guide__source,
   .sample-guide__docs {
     color: var(--sl-color-gray-3);

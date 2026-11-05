@@ -1,16 +1,16 @@
 ---
+import { CardGrid } from '@astrojs/starlight/components'
 import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro'
 import { getCollection } from 'astro:content'
+import SampleCatalogCard from '../components/samples/SampleCatalogCard.astro'
 import { DEFAULT_LANGUAGE_LABEL, LANGUAGE_STORAGE_KEY } from '../util/language-preference'
 import { pathWithBase } from '../util/links'
 import {
-  groupSampleGuideFamilies,
-  isAmplifyingAiSampleGuide,
+  buildSampleGuideSidebar,
+  groupSampleGuideCategories,
   sampleGuidePath,
   sortSampleGuides,
-  type SampleGuideEntry,
 } from '../util/sample-guides'
-import { languageLabel } from '../util/source-links'
 
 const guides = sortSampleGuides(await getCollection('sampleGuides'))
 const catalogMode = guides[0]?.data.catalogMode
@@ -21,40 +21,13 @@ const defaultGuide = isLegacyCatalog
 const pythonGuide = isLegacyCatalog ? guides.find((entry) => entry.data.language === 'python') : undefined
 const defaultTarget = defaultGuide ? pathWithBase(sampleGuidePath(defaultGuide)) : undefined
 const pythonTarget = pythonGuide ? pathWithBase(sampleGuidePath(pythonGuide)) : defaultTarget
-const featuredGuides = guides.filter((guide) => guide.data.placement === 'featured')
-const featuredFamilies = groupSampleGuideFamilies(featuredGuides)
-const referenceGuides = guides.filter((guide) => guide.data.placement === 'reference')
-const featuredHeading = 'End-to-end examples'
-const featuredDescription = 'Complete applications with setup, validation, and deployment guidance.'
-
-const collectionSections = new Map<
-  string,
-  { label: string; description?: string; guides: SampleGuideEntry[]; order: number }
->()
-const ungroupedReferences: SampleGuideEntry[] = []
-for (const guide of referenceGuides) {
-  const collection = guide.data.collections[0]
-  if (!collection) {
-    ungroupedReferences.push(guide)
-    continue
-  }
-
-  let section = collectionSections.get(collection.id)
-  if (!section) {
-    section = {
-      label: collection.label,
-      description: collection.description,
-      guides: [],
-      order: collection.order,
-    }
-    collectionSections.set(collection.id, section)
-  }
-  section.guides.push(guide)
-}
-const supplementalSections = [...collectionSections.values()]
-  .sort((left, right) => left.order - right.order)
-  .map((section) => ({ ...section, families: groupSampleGuideFamilies(section.guides) }))
-const ungroupedReferenceFamilies = groupSampleGuideFamilies(ungroupedReferences)
+const catalogSections = isLegacyCatalog ? [] : groupSampleGuideCategories(guides)
+const sidebar = isLegacyCatalog ? [] : buildSampleGuideSidebar(guides)
+const headings = catalogSections.map((section) => ({
+  depth: 2,
+  slug: `sample-category-${section.key}`,
+  text: section.label,
+}))
 ---
 
 <StarlightPage
@@ -62,12 +35,14 @@ const ungroupedReferenceFamilies = groupSampleGuideFamilies(ungroupedReferences)
     title: 'Examples',
     description: isLegacyCatalog
       ? 'Runnable Strands agent samples.'
-      : 'Complete Strands applications, from setup through validation and deployment.',
+      : 'Complete Strands applications and guided workflows.',
     editUrl: false,
     pagefind: !isLegacyCatalog,
+    tableOfContents: catalogSections.length > 0,
   }}
-  hasSidebar={false}
-  sidebar={[]}
+  {headings}
+  hasSidebar={!isLegacyCatalog && sidebar.length > 0}
+  {sidebar}
 >
   {
     isLegacyCatalog && defaultTarget ? (
@@ -106,109 +81,22 @@ const ungroupedReferenceFamilies = groupSampleGuideFamilies(ungroupedReferences)
     ) : guides.length > 0 ? (
       <>
         <p class="sample-catalog__intro">
-          Build from a complete application, then use the{' '}
-          <a href={pathWithBase('/docs/user-guide/sdk/quickstart/overview/')}>documentation</a> for individual
-          components and concepts.
+          Explore complete examples, organized by what you want to learn or build.
         </p>
 
-        {featuredFamilies.length > 0 && (
-          <section class="sample-catalog__section" aria-labelledby="featured-examples">
-            <h2 id="featured-examples">{featuredHeading}</h2>
-            {featuredDescription && <p>{featuredDescription}</p>}
-            <div class="sample-catalog__grid">
-              {featuredFamilies.map((family) => (
-                <article
-                  class="sample-card"
-                  data-sample-family={family.key}
-                  data-sample-placement="featured"
-                >
-                  <div class="sample-card__badges">
-                    {family.primary.data.kind && <span>{family.primary.data.kind}</span>}
-                    {family.guides.some(isAmplifyingAiSampleGuide) && (
-                      <span class="sample-card__program">Amplifying AI</span>
-                    )}
-                  </div>
-                  <h3>{family.primary.data.title}</h3>
-                  <p>{family.primary.data.description}</p>
-                  {family.primary.data.capabilities.length > 0 && (
-                    <p class="sample-card__capabilities">
-                      {family.primary.data.capabilities.slice(0, 4).join(' · ')}
-                    </p>
-                  )}
-                  <nav
-                    class="sample-card__links"
-                    aria-label={`${family.primary.data.title} languages`}
-                  >
-                    {family.guides.map((guide) => (
-                      <a href={pathWithBase(sampleGuidePath(guide))}>
-                        {languageLabel(guide.data.language)}
-                      </a>
-                    ))}
-                  </nav>
-                </article>
-              ))}
-            </div>
-          </section>
-        )}
-
-        {supplementalSections.map((section, sectionIndex) => (
+        {catalogSections.map((section) => (
           <section
             class="sample-catalog__section"
-            aria-labelledby={`sample-collection-${sectionIndex}`}
-            data-pagefind-ignore
+            aria-labelledby={`sample-category-${section.key}`}
+            data-sample-category={section.key}
           >
-            <h2 id={`sample-collection-${sectionIndex}`}>{section.label}</h2>
+            <h2 id={`sample-category-${section.key}`}>{section.label}</h2>
             {section.description && <p>{section.description}</p>}
-            <div class="sample-catalog__grid sample-catalog__grid--secondary">
-              {section.families.map((family) => (
-                <article
-                  class="sample-card"
-                  data-sample-family={family.key}
-                  data-sample-placement="reference"
-                >
-                  <div class="sample-card__badges">
-                    {family.primary.data.kind && <span>{family.primary.data.kind}</span>}
-                    {family.guides.some(isAmplifyingAiSampleGuide) && (
-                      <span class="sample-card__program">Amplifying AI</span>
-                    )}
-                  </div>
-                  <h3>{family.primary.data.title}</h3>
-                  <p>{family.primary.data.description}</p>
-                  <nav
-                    class="sample-card__links"
-                    aria-label={`${family.primary.data.title} languages`}
-                  >
-                    {family.guides.map((guide) => (
-                      <a href={pathWithBase(sampleGuidePath(guide))}>
-                        {languageLabel(guide.data.language)}
-                      </a>
-                    ))}
-                  </nav>
-                </article>
-              ))}
-            </div>
+            <CardGrid>
+              {section.families.map((family) => <SampleCatalogCard {family} />)}
+            </CardGrid>
           </section>
         ))}
-
-        {ungroupedReferenceFamilies.length > 0 && (
-          <details class="sample-catalog__references" data-pagefind-ignore>
-            <summary>Reference library ({ungroupedReferenceFamilies.length})</summary>
-            <ul>
-              {ungroupedReferenceFamilies.map((family) => (
-                <li data-sample-family={family.key} data-sample-placement="reference">
-                  <span>{family.primary.data.title}</span>
-                  <nav aria-label={`${family.primary.data.title} languages`}>
-                    {family.guides.map((guide) => (
-                      <a href={pathWithBase(sampleGuidePath(guide))}>
-                        {languageLabel(guide.data.language)}
-                      </a>
-                    ))}
-                  </nav>
-                </li>
-              ))}
-            </ul>
-          </details>
-        )}
       </>
     ) : (
       <>
@@ -225,116 +113,19 @@ const ungroupedReferenceFamilies = groupSampleGuideFamilies(ungroupedReferences)
   .sample-catalog__intro {
     max-width: 50rem;
     font-size: var(--sl-text-lg);
+    color: var(--sl-color-gray-2);
   }
 
   .sample-catalog__section {
-    margin-block: 2.5rem;
+    margin-top: 2.5rem;
   }
 
-  .sample-catalog__grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
-    gap: 1rem;
-    margin-top: 1.25rem;
-  }
-
-  .sample-catalog__grid--secondary {
-    grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr));
-  }
-
-  .sample-card {
-    padding: 1.1rem;
-    border: 1px solid var(--sl-color-gray-5);
-    border-radius: 0.75rem;
-    color: inherit;
-    background: var(--sl-color-bg-nav);
-  }
-
-  .sample-card:hover,
-  .sample-card:focus-within {
-    border-color: var(--sl-color-accent);
-  }
-
-  .sample-card h3 {
-    margin-block: 0.8rem 0.45rem;
-    color: var(--sl-color-white);
-  }
-
-  .sample-card p {
-    margin: 0;
-    color: var(--sl-color-gray-2);
-  }
-
-  .sample-card__badges {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.35rem;
-  }
-
-  .sample-card__badges span {
-    padding: 0.12rem 0.5rem;
-    border: 1px solid var(--sl-color-gray-5);
-    border-radius: 999px;
-    color: var(--sl-color-gray-2);
-    font-size: var(--sl-text-xs);
-    text-transform: capitalize;
-  }
-
-  .sample-card__badges .sample-card__program {
-    border-color: var(--sl-color-accent-low);
-    color: var(--sl-color-accent-high);
-  }
-
-  .sample-card .sample-card__capabilities {
-    margin-top: 0.8rem;
+  .sample-catalog__section > p {
+    margin-top: 0.5rem;
     color: var(--sl-color-gray-3);
-    font-size: var(--sl-text-sm);
   }
 
-  .sample-card__links {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem;
+  .sample-catalog__section :global(.card-grid) {
     margin-top: 1rem;
-  }
-
-  .sample-card__links a {
-    padding: 0.3rem 0.7rem;
-    border-radius: 0.35rem;
-    color: var(--sl-color-accent-high);
-    background: var(--sl-color-accent-low);
-    font-size: var(--sl-text-sm);
-    font-weight: 600;
-    text-decoration: none;
-  }
-
-  .sample-card__links a:hover {
-    text-decoration: underline;
-  }
-
-  .sample-catalog__references {
-    margin-block: 2.5rem;
-    padding: 1rem;
-    border: 1px solid var(--sl-color-gray-5);
-    border-radius: 0.75rem;
-  }
-
-  .sample-catalog__references summary {
-    cursor: pointer;
-    font-weight: 600;
-  }
-
-  .sample-catalog__references li {
-    display: flex;
-    justify-content: space-between;
-    align-items: baseline;
-    gap: 1rem;
-    margin-block: 0.5rem;
-  }
-
-  .sample-catalog__references li nav {
-    display: flex;
-    gap: 0.75rem;
-    font-size: var(--sl-text-sm);
   }
 </style>

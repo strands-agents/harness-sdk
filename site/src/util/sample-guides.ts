@@ -8,20 +8,16 @@ export interface SampleGuideFamily {
   primary: SampleGuideEntry
   guides: SampleGuideEntry[]
 }
-
-// Keep this identifier aligned with the samples catalog producer contract:
-// https://github.com/strands-agents/samples/blob/main/samples-catalog.json
-const AMPLIFYING_AI_CATALOG_ID = 'amplifying-ai'
+export interface SampleGuideCategory {
+  key: string
+  label: string
+  description?: string
+  order: number
+  families: SampleGuideFamily[]
+}
 
 export function sortSampleGuides(guides: SampleGuideEntry[]): SampleGuideEntry[] {
   return [...guides].sort((left, right) => left.data.order - right.data.order)
-}
-
-export function isAmplifyingAiSampleGuide(guide: SampleGuideEntry): boolean {
-  return (
-    guide.data.program === AMPLIFYING_AI_CATALOG_ID ||
-    guide.data.collections.some((collection) => collection.id === AMPLIFYING_AI_CATALOG_ID)
-  )
 }
 
 export function groupSampleGuideFamilies(guides: SampleGuideEntry[]): SampleGuideFamily[] {
@@ -36,6 +32,31 @@ export function groupSampleGuideFamilies(guides: SampleGuideEntry[]): SampleGuid
     families.set(key, { key, primary: guide, guides: [guide] })
   }
   return [...families.values()]
+}
+
+export function groupSampleGuideCategories(guides: SampleGuideEntry[]): SampleGuideCategory[] {
+  const categories = new Map<string, SampleGuideCategory>()
+
+  for (const family of groupSampleGuideFamilies(guides)) {
+    const primary = family.primary
+    const collection = primary.data.collections[0]
+    const key = collection?.id ?? primary.data.category
+    let category = categories.get(key)
+    if (!category) {
+      const newCategory: SampleGuideCategory = {
+        key,
+        label: collection?.label ?? primary.data.categoryLabel,
+        ...(collection?.description ? { description: collection.description } : {}),
+        order: collection?.order ?? primary.data.order,
+        families: [],
+      }
+      categories.set(key, newCategory)
+      category = newCategory
+    }
+    category.families.push(family)
+  }
+
+  return [...categories.values()].sort((left, right) => left.order - right.order)
 }
 
 export function sampleGuidePath(guide: SampleGuideEntry): string {
@@ -83,44 +104,30 @@ export function sampleGuideSwitchPath(
   return target ? sampleGuidePath(target) : undefined
 }
 
-export function buildSampleGuideSidebar(guides: SampleGuideEntry[], currentGuide: SampleGuideEntry) {
-  const categories = new Map<string, { label: string; guides: SampleGuideEntry[] }>()
+export function buildSampleGuideSidebar(guides: SampleGuideEntry[], currentGuide?: SampleGuideEntry) {
+  const availableLanguages = new Set(guides.map((guide) => guide.data.language))
+  const languageOrder: SampleGuideEntry['data']['language'][] = ['typescript', 'python']
+  const languages: SampleGuideEntry['data']['language'][] = currentGuide
+    ? [currentGuide.data.language]
+    : languageOrder.filter((language) => availableLanguages.has(language))
 
-  for (const guide of guides) {
-    if (guide.data.language !== currentGuide.data.language || guide.data.placement !== 'featured') continue
-    const primaryCollection = guide.data.collections[0]
-    const categoryId = primaryCollection?.id ?? guide.data.category
-    let category = categories.get(categoryId)
-    if (!category) {
-      category = { label: primaryCollection?.label ?? guide.data.categoryLabel, guides: [] }
-      categories.set(categoryId, category)
-    }
-    category.guides.push(guide)
-  }
-
-  if (currentGuide.data.placement === 'reference') {
-    categories.set('current-reference', {
-      label: 'Reference example',
-      guides: [currentGuide],
-    })
-  }
-
-  if (categories.size === 0) return []
-
-  return [
-    {
-      label: languageLabel(currentGuide.data.language),
-      collapsed: false,
-      items: [...categories.values()].map((category) => ({
+  return languages.map((language) => ({
+    label: languageLabel(language),
+    collapsed: false,
+    items: [
+      { label: 'Overview', link: '/examples/' },
+      ...groupSampleGuideCategories(guides.filter((guide) => guide.data.language === language)).map((category) => ({
         label: category.label,
         collapsed: false,
-        items: category.guides.map((guide) => ({
-          label: guide.data.title,
-          link: sampleGuidePath(guide),
-        })),
+        items: category.families.flatMap((family) =>
+          family.guides.map((guide) => ({
+            label: guide.data.title,
+            link: sampleGuidePath(guide),
+          }))
+        ),
       })),
-    },
-  ]
+    ],
+  }))
 }
 
 export function isSampleGuidePath(pathname: string): boolean {
