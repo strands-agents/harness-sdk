@@ -9,8 +9,8 @@ import { toPublicModel } from './catalog'
 import { pathWithBase } from './links'
 import type { CatalogEntryData } from '../content.config'
 
-// Bump on any change that can break an existing consumer (removed or renamed
-// fields, narrowed values). Adding optional fields does not need a bump.
+// Bump on any change that can break a consumer (removed or renamed fields, removed enum values).
+// New optional fields, enum values, or language keys need no bump; consumers ignore unknown ones.
 export const CATALOG_FEED_SCHEMA_VERSION = 1
 
 export const CATALOG_FEED_PATH = '/integrations.json'
@@ -45,7 +45,7 @@ export const catalogFeedSchema = z
   .meta({
     title: 'Strands Agents integrations catalog',
     description:
-      'schemaVersion changes only on breaking changes; new fields can appear at any time, so ignore unknown ones.',
+      'schemaVersion changes only on breaking changes; new fields, enum values, and language keys can appear at any time, so ignore unknown ones.',
   })
 
 export type CatalogFeed = z.infer<typeof catalogFeedSchema>
