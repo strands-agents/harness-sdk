@@ -17,7 +17,6 @@ const t = (text: string) => ({ text });
 const cards = [
   {
     slug: '/harness',
-    name: 'Strands harness',
     color: 'var(--card-accent-orange)',
     description: 'A fully assembled agent harness with benchmarked defaults.',
     tags: ['Optimized', 'CLI or library', 'Fully customizable'],
@@ -55,7 +54,6 @@ const cards = [
   },
   {
     slug: '/harness-sdk',
-    name: 'Strands Harness SDK',
     color: 'var(--card-accent-teal)',
     description: 'The Harness SDK for building an agent harness from the ground up.',
     tags: ['Own the loop', 'Tools & MCP', 'Any model'],
@@ -109,7 +107,6 @@ const cards = [
   },
   {
     slug: '/box',
-    name: 'Strands Box',
     color: 'var(--card-accent-purple)',
     description: 'An agent sandbox that pairs OS containment with Dogwood policy.',
     tags: ['OS containment', 'Dogwood policy', 'Credential injection'],
@@ -149,7 +146,6 @@ const cards = [
   },
   {
     slug: '/shell',
-    name: 'Strands Shell',
     color: 'var(--card-accent-yellow)',
     description: 'A virtual shell designed for AI agents to use safely.',
     tags: ['Sandboxed', 'MCP server', 'Python/TS'],
@@ -195,7 +191,6 @@ const cards = [
   },
   {
     slug: '/evals',
-    name: 'Strands Evals',
     color: 'var(--card-accent-pink)',
     description: 'Validate your agent before you ship.',
     tags: ['Score', 'Diagnose', 'Simulate'],
@@ -277,7 +272,7 @@ const pillars = [
                 >
                   {/* Compact view: always rendered, hidden when card is open. */}
                   <div class="toolkit__card-compact">
-                    <h4 class="toolkit__card-name">{card.name}</h4>
+                    <h4 class="toolkit__card-slug">{card.slug}</h4>
                     <p class="toolkit__card-desc">{card.description}</p>
                     <ul class="toolkit__card-tags" role="list">
                       {card.tags.map((tag) => (
@@ -288,8 +283,8 @@ const pillars = [
 
                   {card.expanded && (
                     <div class="toolkit__card-expanded">
-                      <h4 class="toolkit__card-name toolkit__card-name--expanded">
-                        {card.name}
+                      <h4 class="toolkit__card-slug toolkit__card-slug--expanded">
+                        {card.slug}
                       </h4>
                       <div class="toolkit__card-expanded-body">
                         <div class="toolkit__card-expanded-text">
@@ -420,7 +415,7 @@ const pillars = [
                   <button
                     type="button"
                     class="toolkit__card-open"
-                    aria-label={`Toggle ${card.name} details`}
+                    aria-label={`Toggle ${card.slug} details`}
                     aria-expanded={card.defaultOpen ? 'true' : 'false'}
                     data-toggle
                   >
@@ -617,7 +612,7 @@ const pillars = [
     margin-top: auto;
   }
 
-  .toolkit__card-name {
+  .toolkit__card-slug {
     margin: 0;
     font-family: 'JetBrains Mono', ui-monospace, monospace;
     font-weight: 700;
@@ -736,7 +731,7 @@ const pillars = [
     }
   }
 
-  .toolkit__card-name--expanded {
+  .toolkit__card-slug--expanded {
     font-size: 28px;
   }
 
@@ -1044,7 +1039,7 @@ const pillars = [
       gap: 8px;
     }
 
-    .toolkit__card-name {
+    .toolkit__card-slug {
       font-size: 15px;
     }
 
@@ -1058,7 +1053,7 @@ const pillars = [
       padding: 12px 17px;
     }
 
-    .toolkit__card-name--expanded {
+    .toolkit__card-slug--expanded {
       font-size: 15px;
     }
 

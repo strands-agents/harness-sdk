@@ -73,7 +73,7 @@ describe('homepage machine-readable metadata', () => {
           text: pillar.querySelector('.toolkit__section-title')?.text.trim(),
         },
         products: pillar.querySelectorAll('.toolkit__card').map((card) => {
-          const heading = card.querySelector('.toolkit__card-name')
+          const heading = card.querySelector('.toolkit__card-slug')
           return { tagName: heading?.tagName, text: heading?.text.trim() }
         }),
       }))
@@ -81,20 +81,20 @@ describe('homepage machine-readable metadata', () => {
       {
         title: { tagName: 'H3', text: 'Build' },
         products: [
-          { tagName: 'H4', text: 'Strands harness' },
-          { tagName: 'H4', text: 'Strands Harness SDK' },
+          { tagName: 'H4', text: '/harness' },
+          { tagName: 'H4', text: '/harness-sdk' },
         ],
       },
       {
         title: { tagName: 'H3', text: 'Control' },
         products: [
-          { tagName: 'H4', text: 'Strands Box' },
-          { tagName: 'H4', text: 'Strands Shell' },
+          { tagName: 'H4', text: '/box' },
+          { tagName: 'H4', text: '/shell' },
         ],
       },
       {
         title: { tagName: 'H3', text: 'Validate' },
-        products: [{ tagName: 'H4', text: 'Strands Evals' }],
+        products: [{ tagName: 'H4', text: '/evals' }],
       },
     ])
   })
