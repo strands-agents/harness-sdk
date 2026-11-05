@@ -107,8 +107,10 @@ Storage resolves in this order for each subsystem:
    error in TypeScript
 
 :::note
-Python `SessionManager` is deprecated, and does not use
-the provided `Storage` parameter. Use
+Python's repository-based managers
+(`RepositorySessionManager`, `FileSessionManager`,
+`S3SessionManager`) are deprecated and do not use the
+provided `Storage` parameter. Use
 `SnapshotSessionManager` in Python or `SessionManager` in
 TypeScript to take advantage of agent-level storage.
 :::
