@@ -57,6 +57,7 @@ import type { ContentBlock, Message, SystemPrompt } from '../types/messages.js'
 import type { JSONSerializable } from '../types/json.js'
 import { jsonReplacer } from './json.js'
 import { getServiceName } from './utils.js'
+import { totalPromptTokens } from '../models/streaming.js'
 
 /**
  * JSON-serializable representation of LocalTrace.
@@ -370,7 +371,7 @@ export class Tracer {
 
       const span = this._startSpan({
         name: 'chat',
-        attributes,
+        attributes: { ...attributes, ...this._traceAttributes },
         spanKind: SpanKind.INTERNAL,
         ...(this._loopSpan && { parentSpan: this._loopSpan }),
       })
@@ -444,12 +445,16 @@ export class Tracer {
 
       const span = this._startSpan({
         name: `execute_tool ${tool.name}`,
-        attributes,
+        attributes: { ...attributes, ...this._traceAttributes },
         spanKind: SpanKind.INTERNAL,
         ...(this._loopSpan && { parentSpan: this._loopSpan }),
       })
 
       if (this._useLatestConventions) {
+        // The execute_tool span convention records tool inputs in the dedicated
+        // gen_ai.tool.call.arguments span attribute (Opt-In), which spec-compliant
+        // consumers read on tool spans.
+        span.setAttribute('gen_ai.tool.call.arguments', JSON.stringify(tool.input, jsonReplacer))
         this._addEvent(
           span,
           'gen_ai.client.inference.operation.details',
@@ -506,6 +511,13 @@ export class Tracer {
         attributes['gen_ai.tool.status'] = statusStr
 
         if (this._useLatestConventions) {
+          // The execute_tool span convention records tool outputs in the dedicated
+          // gen_ai.tool.call.result span attribute (Opt-In), which spec-compliant
+          // consumers read on tool spans. The spec scopes the attribute to successful
+          // executions; failures are captured in the span status instead.
+          if (statusStr !== 'error') {
+            attributes['gen_ai.tool.call.result'] = JSON.stringify(toolResult.content, jsonReplacer)
+          }
           this._addEvent(
             span,
             'gen_ai.client.inference.operation.details',
@@ -905,7 +917,7 @@ export class Tracer {
       const attributes: Record<string, AttributeValue> = { 'agent_loop.cycle_id': cycleId }
       const span = this._startSpan({
         name: 'execute_agent_loop_cycle',
-        attributes,
+        attributes: { ...attributes, ...this._traceAttributes },
         ...(this._agentSpan && { parentSpan: this._agentSpan }),
       })
       this._addEventMessages(span, messages)
@@ -1121,17 +1133,25 @@ export class Tracer {
    * attribute names for compatibility with different OTEL backends.
    */
   private _setUsageAttributes(attributes: Record<string, AttributeValue>, usage: Usage): void {
-    attributes['gen_ai.usage.prompt_tokens'] = usage.inputTokens
-    attributes['gen_ai.usage.input_tokens'] = usage.inputTokens
+    const promptTokens = totalPromptTokens(usage)
+    attributes['gen_ai.usage.prompt_tokens'] = promptTokens
+    attributes['gen_ai.usage.input_tokens'] = promptTokens
     attributes['gen_ai.usage.completion_tokens'] = usage.outputTokens
     attributes['gen_ai.usage.output_tokens'] = usage.outputTokens
     attributes['gen_ai.usage.total_tokens'] = usage.totalTokens
 
     if ((usage.cacheReadInputTokens ?? 0) > 0) {
-      attributes['gen_ai.usage.cache_read_input_tokens'] = usage.cacheReadInputTokens!
+      attributes['gen_ai.usage.cache_read.input_tokens'] = usage.cacheReadInputTokens!
+      // Deprecated pre-semconv name, dual-emitted unless opted into the latest conventions
+      if (!this._useLatestConventions) {
+        attributes['gen_ai.usage.cache_read_input_tokens'] = usage.cacheReadInputTokens!
+      }
     }
     if ((usage.cacheWriteInputTokens ?? 0) > 0) {
-      attributes['gen_ai.usage.cache_write_input_tokens'] = usage.cacheWriteInputTokens!
+      attributes['gen_ai.usage.cache_creation.input_tokens'] = usage.cacheWriteInputTokens!
+      if (!this._useLatestConventions) {
+        attributes['gen_ai.usage.cache_write_input_tokens'] = usage.cacheWriteInputTokens!
+      }
     }
   }
 

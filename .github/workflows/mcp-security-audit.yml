@@ -1,0 +1,53 @@
+name: "MCP: Security Audit"
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        required: true
+        type: string
+
+jobs:
+  security-audit:
+    name: pip-audit
+    permissions:
+      contents: read
+    runs-on: strands-agents_ubuntu-latest_4-core
+    defaults:
+      run:
+        working-directory: strands-mcp
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v7.1.0
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+
+      - name: Install pip-audit
+        run: pip install --no-cache-dir pip-audit
+
+      # Informational, does not block the release. PR-introduced vulns are
+      # gated by the repo-level Dependency Review job in ci.yml; pre-existing
+      # advisories are driven down via Dependabot. The release reviewer can
+      # read the report below before approving.
+      - name: Audit installed dependency closure (informational)
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          # Resolve the package's full dependency closure into a temporary
+          # venv, then audit it. Auditing the project metadata directly skips
+          # transitive deps; this mirrors what an end user actually installs.
+          # Create the target without pip/setuptools bootstrap tooling, then
+          # use the runner's pip to install into it. This keeps the audit
+          # focused on declared runtime dependencies; if the project ever
+          # declares setuptools, pip will install it and it will be audited.
+          python -m venv --without-pip /tmp/audit-env
+          python -m pip --python /tmp/audit-env install .
+          pip-audit --path /tmp/audit-env/lib/python*/site-packages

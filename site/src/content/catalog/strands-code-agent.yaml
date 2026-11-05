@@ -1,0 +1,10 @@
+name: strands-code-agent
+description: A coding agent that replaces tool-calling with code generation in a persistent Python REPL
+integrationType: agent-extension
+maintainedBy: aws
+languages:
+  python:
+    package: strands-code-agent
+github: https://github.com/aws-samples/sample-strands-code-agent
+docsPage: docs/integrations/agent-extensions/strands-code-agent
+addedDate: 2026-05-15

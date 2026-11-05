@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { validateIdentifier, validateUuidV7 } from '../validation.js'
+import { validateIdentifier, validateScope, validateUuidV7 } from '../validation.js'
 
 describe('validateIdentifier', () => {
   describe('when identifier is valid', () => {
@@ -20,6 +20,22 @@ describe('validateIdentifier', () => {
     it('throws error', () => {
       expect(() => validateIdentifier('invalid\\id')).toThrow(
         "Identifier 'invalid\\id' can only contain lowercase letters, numbers, hyphens, and underscores"
+      )
+    })
+  })
+})
+
+describe('validateScope', () => {
+  describe('when scope is supported', () => {
+    it('returns the scope', () => {
+      expect([validateScope('agent'), validateScope('multiAgent')]).toEqual(['agent', 'multiAgent'])
+    })
+  })
+
+  describe('when scope contains path traversal', () => {
+    it('throws error', () => {
+      expect(() => validateScope('../../outside')).toThrow(
+        "Invalid scope '../../outside': must be 'agent' or 'multiAgent'"
       )
     })
   })

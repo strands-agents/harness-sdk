@@ -2,12 +2,13 @@
 /**
  * Custom Head override to add Mermaid diagram support, favicon, AWS Shortbread cookie consent,
  * and structured data (JSON-LD).
- * See ARCHITECTURE.md for details.
+ * See SITE-ARCHITECTURE.md for details.
  */
 import { getCollection } from 'astro:content'
 import SiteScripts from '../SiteScripts.astro'
 import Analytics from '../Analytics.astro'
-import { baseSchemas } from '../../util/structured-data'
+import { baseSchemas, buildBreadcrumbItems, serializeJsonLd } from '../../util/structured-data'
+import { getDocsIds, getSampleGuideRouteIds } from '../../util/docs-ids'
 import { relatedUserGuideFor } from '../../util/related-docs'
 import { resolveLanguage, sourceLinkUrl } from '../../util/source-links'
 import type { SourceLink } from '../../content.config'
@@ -19,51 +20,18 @@ const route = Astro.locals.starlightRoute
 const base = import.meta.env.BASE_URL || '/'
 const faviconHref = base.endsWith('/') ? `${base}favicon.svg` : `${base}/favicon.svg`
 
-// Build breadcrumb list from URL path
-const siteUrl = Astro.site?.origin || 'https://strandsagents.com'
-const pathSegments = Astro.url.pathname.replace(/^\/|\/$/g, '').split('/').filter(Boolean)
-const breadcrumbLabels: Record<string, string> = {
-  'docs': 'Docs',
-  'user-guide': 'User Guide',
-  'concepts': 'Concepts',
-  'agents': 'Agents',
-  'tools': 'Tools',
-  'multi-agent': 'Multi-Agent',
-  'model-providers': 'Model Providers',
-  'streaming': 'Streaming',
-  'bidirectional-streaming': 'Voice & Realtime',
-  'deploy': 'Deploy',
-  'safety-security': 'Safety & Security',
-  'observability-evaluation': 'Observability',
-  'evals-sdk': 'Evals SDK',
-  'examples': 'Examples',
-  'community': 'Community',
-  'labs': 'Labs',
-  'contribute': 'Contribute',
-  'api': 'API Reference',
-  'plugins': 'Plugins',
-  'quickstart': 'Quickstart',
-  'experimental': 'Experimental',
-  'python': 'Python',
-  'typescript': 'TypeScript',
-  'integrations': 'Integrations',
-  'session-managers': 'Session Managers',
-  'contributing': 'Contributing',
-}
+// Raw markdown twins are available for generated sample guides and non-preview docs.
+const [docIds, sampleGuideRouteIds] = await Promise.all([getDocsIds(), getSampleGuideRouteIds()])
+const baseNoSlash = base.replace(/\/$/, '')
+const hasMarkdownTwin =
+  sampleGuideRouteIds.has(route.entry.id) ||
+  (docIds.has(route.entry.id) && route.entry.data.externalDocs?.status !== 'preview')
+const markdownHref = hasMarkdownTwin ? `${baseNoSlash}/${route.entry.id}/index.md` : null
 
-const breadcrumbItems = pathSegments.map((segment, i) => {
-  const path = '/' + pathSegments.slice(0, i + 1).join('/') + '/'
-  const isLast = i === pathSegments.length - 1
-  const name = isLast
-    ? (route.entry.data.title || segment)
-    : (breadcrumbLabels[segment] || segment.replace(/-/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase()))
-  return {
-    "@type": "ListItem" as const,
-    position: i + 1,
-    name,
-    ...(isLast ? {} : { item: siteUrl + path })
-  }
-})
+// Build breadcrumb list from the canonical route id rather than the deployed URL,
+// which may contain a preview base path.
+const siteUrl = Astro.site?.origin || 'https://strandsagents.com'
+const breadcrumbItems = buildBreadcrumbItems(route.entry.id, route.entry.data.title, siteUrl, baseNoSlash)
 
 // TechArticle node for docs pages with tags or sourceLinks. Reaches HTML-only
 // crawlers that don't follow the llms.txt convention.
@@ -122,8 +90,11 @@ const structuredData = {
 
 {head.map(({ tag: Tag, attrs, content }) => <Tag {...attrs} set:html={content} />)}
 
-<!-- Favicon - uses logo-auto.svg which adapts to light/dark mode via prefers-color-scheme -->
+<!-- Favicon: green frog on a black tile so it stays legible on light backgrounds. -->
 <link rel="icon" type="image/svg+xml" href={faviconHref} />
+
+<!-- Raw markdown twin of this page, for LLMs and tooling -->
+{markdownHref && <link rel="alternate" type="text/markdown" href={markdownHref} />}
 
 <!-- AWS Shortbread cookie consent -->
 <SiteScripts />
@@ -132,51 +103,161 @@ const structuredData = {
 <Analytics />
 
 <!-- Structured Data -->
-<script type="application/ld+json" set:html={JSON.stringify(structuredData)} />
+<script type="application/ld+json" set:html={serializeJsonLd(structuredData)} />
+
+<!-- Embed mode: with `?embed` in the URL the page renders chromeless (no site
+     header/sidebar/TOC/footers) for the /integrations docs drawer iframe. The
+     site is statically built, so the switch must run client-side: this inline
+     script sets `data-embed` on <html> before first paint and CSS in
+     custom.css hides the chrome. Without JS the page renders normally. -->
+<script is:inline>
+  if (new URLSearchParams(location.search).has('embed')) {
+    document.documentElement.dataset.embed = ''
+    // The full page URL is canonical; keep embed views out of search indexes.
+    const meta = document.createElement('meta')
+    meta.name = 'robots'
+    meta.content = 'noindex'
+    document.head.appendChild(meta)
+    // In-article links navigate the embedding page, not the iframe (same-page
+    // anchor links keep scrolling inside the embed).
+    addEventListener('DOMContentLoaded', () => {
+      for (const a of document.querySelectorAll('a[href]')) {
+        const href = a.getAttribute('href') || ''
+        if (!href.startsWith('#') && !a.target) a.target = '_parent'
+      }
+    })
+  }
+</script>
 
 <script>
-  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs'
+  // Mermaid is ~2MB from the CDN, so only load it on pages that actually have a diagram
+  if (document.querySelector('pre[data-language="mermaid"]')) {
+    const { default: mermaid } = await import(
+      /* @vite-ignore */ 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs'
+    )
 
-  // Transform Expressive Code mermaid blocks into mermaid.js format
-  document.querySelectorAll('pre[data-language="mermaid"]').forEach((pre) => {
-    const diagram = [...pre.querySelectorAll('code > .ec-line')].map((it) => it.textContent).join('\n')
-    const div = document.createElement('pre')
-    div.className = 'mermaid'
-    div.textContent = diagram
-    pre.replaceWith(div)
-  })
+    // Transform Expressive Code mermaid blocks into mermaid.js format
+    document.querySelectorAll('pre[data-language="mermaid"]').forEach((pre) => {
+      const diagram = [...pre.querySelectorAll('code > .ec-line')].map((it) => it.textContent).join('\n')
+      const div = document.createElement('pre')
+      div.className = 'mermaid'
+      div.textContent = diagram
+      pre.replaceWith(div)
+    })
 
-  const isDark = document.documentElement.dataset.theme === 'dark'
-  mermaid.initialize({ startOnLoad: false, theme: isDark ? 'dark' : 'neutral' })
+    const isDark = document.documentElement.dataset.theme === 'dark'
 
-  // Only render diagrams in visible panels; defer hidden ones until shown
-  const hiddenDiagrams = new Set(
-    document.querySelectorAll('[role="tabpanel"][hidden] .mermaid')
-  )
-  const visibleDiagrams = [...document.querySelectorAll('.mermaid')].filter(
-    (el) => !hiddenDiagrams.has(el)
-  )
-  if (visibleDiagrams.length > 0) {
-    await mermaid.run({ nodes: visibleDiagrams })
+    const css = getComputedStyle(document.documentElement)
+    const token = (name: string, fallback: string) =>
+      css.getPropertyValue(name).trim() || fallback
+
+    if (isDark) {
+      // Dark mode keeps mermaid's built-in dark theme, which already reads well
+      // against the docs' dark surfaces. Its stock lineColor is too dim on our
+      // near-black background though, so lift just the edges.
+      mermaid.initialize({
+        startOnLoad: false,
+        theme: 'dark',
+        themeVariables: {
+          lineColor: token('--strands-grey-400', '#b6b6b6'),
+        },
+      })
+    } else {
+      // Light mode: mermaid's stock `neutral` theme ignores the brand palette,
+      // so drive the `base` theme from the same custom properties custom.css
+      // defines. Read them at runtime so the palette stays single-sourced.
+      const surface = token('--sl-color-gray-6', '#f4f4f4')
+      const border = token('--strands-grey-200', '#d9d9d9')
+      const ink = token('--strands-charcoal-1', '#28292a')
+      const line = token('--sl-color-gray-3', '#666464')
+      const accent = token('--strands-green-3', '#02a435')
+      const accentLow = token('--strands-seafoam-green', '#e6f6e7')
+      const page = token('--strands-white', '#ffffff')
+
+      mermaid.initialize({
+        startOnLoad: false,
+        theme: 'base',
+        themeVariables: {
+          background: 'transparent',
+          // No fontFamily override here: mermaid measures label text to size each
+          // node, and a non-resolvable value like `inherit` makes it size boxes
+          // with default metrics while CSS applies a wider font, clipping labels.
+          // Node surfaces
+          primaryColor: surface,
+          primaryTextColor: ink,
+          primaryBorderColor: border,
+          mainBkg: surface,
+          nodeBorder: border,
+          secondaryColor: accentLow,
+          tertiaryColor: page,
+          // Subgraph / cluster surfaces pick up the seafoam accent
+          clusterBkg: accentLow,
+          clusterBorder: accent,
+          // Text, edges, and edge labels
+          textColor: ink,
+          titleColor: ink,
+          lineColor: line,
+          edgeLabelBackground: page,
+        },
+      })
+    }
+
+    // Only render diagrams in visible panels; defer hidden ones until shown
+    const hiddenDiagrams = new Set(
+      document.querySelectorAll('[role="tabpanel"][hidden] .mermaid')
+    )
+    const visibleDiagrams = [...document.querySelectorAll('.mermaid')].filter(
+      (el) => !hiddenDiagrams.has(el)
+    )
+    if (visibleDiagrams.length > 0) {
+      await mermaid.run({ nodes: visibleDiagrams })
+    }
+
+    // Render deferred diagrams once when their panel becomes visible
+    const observer = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        if (mutation.type === 'attributes' && mutation.attributeName === 'hidden') {
+          const panel = mutation.target as Element
+          if (panel.hasAttribute('hidden')) continue
+          const pending = [...panel.querySelectorAll('.mermaid')].filter(
+            (el) => hiddenDiagrams.has(el)
+          )
+          if (pending.length === 0) continue
+          pending.forEach((el) => hiddenDiagrams.delete(el))
+          mermaid.run({ nodes: pending })
+        }
+      }
+    })
+
+    document.querySelectorAll('[role="tabpanel"]').forEach((panel) => {
+      observer.observe(panel, { attributes: true, attributeFilter: ['hidden'] })
+    })
   }
+</script>
 
-  // Render deferred diagrams once when their panel becomes visible
-  const observer = new MutationObserver((mutations) => {
-    for (const mutation of mutations) {
-      if (mutation.type === 'attributes' && mutation.attributeName === 'hidden') {
-        const panel = mutation.target as Element
-        if (panel.hasAttribute('hidden')) continue
-        const pending = [...panel.querySelectorAll('.mermaid')].filter(
-          (el) => hiddenDiagrams.has(el)
-        )
-        if (pending.length === 0) continue
-        pending.forEach((el) => hiddenDiagrams.delete(el))
-        mermaid.run({ nodes: pending })
+<script>
+  // Horizontally-scrollable regions (wide code blocks, API tables, the landing
+  // terminal) must be keyboard-focusable so keyboard-only users can scroll them
+  // (WCAG 2.1.1 — axe rule "scrollable-region-focusable"). Mark the ones that
+  // actually overflow as focusable, and label them for screen readers.
+  const markScrollable = () => {
+    const candidates = document.querySelectorAll(
+      'pre, .sl-markdown-content table, [class*="terminal__code"], .expressive-code figure > pre'
+    )
+    for (const el of candidates) {
+      if (el.hasAttribute('tabindex')) continue
+      // Overflows (either axis) and isn't already reachable via a focusable child.
+      const scrolls =
+        el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > el.clientHeight + 1
+      const hasFocusableChild = el.querySelector('a, button, input, textarea, select, [tabindex]')
+      if (scrolls && !hasFocusableChild) {
+        el.setAttribute('tabindex', '0')
+        if (!el.hasAttribute('role')) el.setAttribute('role', 'region')
+        if (!el.hasAttribute('aria-label')) el.setAttribute('aria-label', 'Scrollable content')
       }
     }
-  })
-
-  document.querySelectorAll('[role="tabpanel"]').forEach((panel) => {
-    observer.observe(panel, { attributes: true, attributeFilter: ['hidden'] })
-  })
+  }
+  // Run after layout settles, and again if tab panels reveal hidden content.
+  if (document.readyState === 'complete') markScrollable()
+  else window.addEventListener('load', markScrollable)
 </script>

@@ -1,5 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi, type Mock } from 'vitest'
 import { LocalFileStorage } from '../local-file-storage.js'
+import { QmdSearchStrategy } from '../search/qmd.js'
+import type { SearchStrategy } from '../search/types.js'
+import { NotASandboxLocalEnvironment } from '../../sandbox/not-a-sandbox-local-environment.js'
+import { logger } from '../../logging/logger.js'
 import { rm, readFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -70,6 +74,16 @@ describe('LocalFileStorage', () => {
     })
   })
 
+  describe('key validation', () => {
+    it('rejects keys containing backslashes', async () => {
+      await expect(storage.write('foo\\bar', new Uint8Array([1]))).rejects.toThrow('backslashes are not allowed')
+    })
+
+    it('rejects backslash path traversal', async () => {
+      await expect(storage.read('foo\\..\\..\\etc\\passwd')).rejects.toThrow('backslashes are not allowed')
+    })
+  })
+
   describe('delete', () => {
     it('removes an existing key', async () => {
       await storage.write('deleteme', new Uint8Array([1]))
@@ -130,6 +144,148 @@ describe('LocalFileStorage', () => {
 
       const keys = await storage.list('')
       expect(keys).toEqual(['a', 'b', 'c'])
+    })
+  })
+
+  describe('namespace', () => {
+    it('returns a LocalFileStorage instance rooted at the subdirectory', async () => {
+      const namespaced = storage.namespace('sub/dir')
+
+      expect(namespaced).toBeInstanceOf(LocalFileStorage)
+      await namespaced.write('file.txt', new Uint8Array([1, 2, 3]))
+      expect(await namespaced.read('file.txt')).toEqual(new Uint8Array([1, 2, 3]))
+      expect(await namespaced.list('')).toEqual(['file.txt'])
+    })
+
+    it('isolates keys from the parent storage', async () => {
+      const namespaced = storage.namespace('isolated')
+      await storage.write('root.txt', new Uint8Array([1]))
+      await namespaced.write('child.txt', new Uint8Array([2]))
+
+      expect(await storage.list('')).toContain('root.txt')
+      expect(await storage.list('')).not.toContain('child.txt')
+      expect(await namespaced.list('')).toEqual(['child.txt'])
+    })
+
+    it('exposes baseDir pointing to the subdirectory', () => {
+      const namespaced = storage.namespace('nested')
+      expect(namespaced.baseDir).toBe(`${baseDir}/nested`)
+    })
+  })
+
+  describe('constructor config', () => {
+    const fakeStrategy = (): SearchStrategy<LocalFileStorage> & { index: Mock; search: Mock } => ({
+      index: vi.fn().mockResolvedValue(undefined),
+      search: vi.fn().mockResolvedValue([{ key: 'hit.txt', score: 1 }]),
+    })
+
+    it('indexes writes and delegates search to a searchStrategy from config', async () => {
+      const strategy = fakeStrategy()
+      const configured = new LocalFileStorage(baseDir, { searchStrategy: strategy })
+
+      await configured.write('a.txt', new Uint8Array([1]))
+      expect(strategy.index).toHaveBeenCalledWith(configured, 'a.txt', new Uint8Array([1]))
+      expect(await configured.search('query')).toEqual([{ key: 'hit.txt', score: 1 }])
+      expect(strategy.search).toHaveBeenCalledWith(configured, 'query')
+    })
+
+    it('routes I/O through a sandbox from config', async () => {
+      const sandbox = new NotASandboxLocalEnvironment()
+      const writeFile = vi.spyOn(sandbox, 'writeFile')
+      const configured = new LocalFileStorage(baseDir, { sandbox })
+
+      await configured.write('a.txt', new Uint8Array([1]))
+      expect(writeFile).toHaveBeenCalledWith(`${baseDir}/a.txt`, new Uint8Array([1]))
+    })
+
+    it('accepts a positional sandbox and search strategy', async () => {
+      const sandbox = new NotASandboxLocalEnvironment()
+      const writeFile = vi.spyOn(sandbox, 'writeFile')
+      const strategy = fakeStrategy()
+      const positional = new LocalFileStorage(baseDir, sandbox, strategy)
+
+      await positional.write('a.txt', new Uint8Array([1]))
+      expect(writeFile).toHaveBeenCalledTimes(1)
+      await positional.search('query')
+      expect(strategy.search).toHaveBeenCalledTimes(1)
+    })
+
+    it('carries a searchStrategy from config through forSandbox and namespace', async () => {
+      const strategy = fakeStrategy()
+      const configured = new LocalFileStorage(baseDir, { searchStrategy: strategy })
+
+      await configured.forSandbox(new NotASandboxLocalEnvironment()).search('one')
+      await configured.namespace('sub').search('two')
+      expect(strategy.search.mock.calls.map((call) => call[1])).toEqual(['one', 'two'])
+    })
+  })
+
+  describe('host filesystem strategies with a sandbox', () => {
+    const sandboxSafeStrategy = (): SearchStrategy<LocalFileStorage> & { search: Mock } => ({
+      search: vi.fn().mockResolvedValue([]),
+    })
+
+    it('marks QmdSearchStrategy as requiring host filesystem access', () => {
+      expect(new QmdSearchStrategy().requiresHostFs).toBe(true)
+    })
+
+    it('rejects a host filesystem strategy passed with a sandbox', () => {
+      const sandbox = new NotASandboxLocalEnvironment()
+      // @ts-expect-error the overloads reject this at compile time; the runtime check covers JS callers
+      expect(() => new LocalFileStorage(baseDir, sandbox, new QmdSearchStrategy())).toThrow(
+        'QmdSearchStrategy requires host filesystem access and cannot be used with a sandbox'
+      )
+    })
+
+    it('rejects a host filesystem strategy passed with a sandbox in config', () => {
+      const config = { sandbox: new NotASandboxLocalEnvironment(), searchStrategy: new QmdSearchStrategy() }
+      // @ts-expect-error the overloads reject this at compile time; the runtime check covers JS callers
+      expect(() => new LocalFileStorage(baseDir, config)).toThrow(
+        'QmdSearchStrategy requires host filesystem access and cannot be used with a sandbox'
+      )
+    })
+
+    it('accepts a sandbox-safe strategy passed with a sandbox', async () => {
+      const strategy = sandboxSafeStrategy()
+      const sandboxed = new LocalFileStorage(baseDir, new NotASandboxLocalEnvironment(), strategy)
+      await sandboxed.search('query')
+      expect(strategy.search).toHaveBeenCalledTimes(1)
+    })
+
+    it('rejects at runtime a strategy typed as SearchStrategy that declares requiresHostFs', () => {
+      class HostIndexStrategy {
+        readonly requiresHostFs = true
+        async search(): Promise<[]> {
+          return []
+        }
+      }
+      const strategy: SearchStrategy<LocalFileStorage> = new HostIndexStrategy()
+      expect(() => new LocalFileStorage(baseDir, new NotASandboxLocalEnvironment(), strategy)).toThrow(
+        'HostIndexStrategy requires host filesystem access and cannot be used with a sandbox'
+      )
+    })
+
+    it('drops a host filesystem strategy in forSandbox and falls back to keyword search', async () => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      const bound = new LocalFileStorage(baseDir, undefined, new QmdSearchStrategy()).forSandbox(
+        new NotASandboxLocalEnvironment()
+      )
+
+      expect(warnSpy).toHaveBeenCalledTimes(1)
+      expect(warnSpy).toHaveBeenCalledWith(
+        'strategy=<QmdSearchStrategy> | search strategy requires host filesystem access and is not compatible ' +
+          'with sandboxed storage | falling back to keyword search'
+      )
+      await bound.write('auth.md', new TextEncoder().encode('OAuth2 authentication flow'))
+      expect((await bound.search('authentication')).map((result) => result.key)).toEqual(['auth.md'])
+      warnSpy.mockRestore()
+    })
+
+    it('keeps a sandbox-safe strategy in forSandbox', async () => {
+      const strategy = sandboxSafeStrategy()
+      const bound = new LocalFileStorage(baseDir, undefined, strategy).forSandbox(new NotASandboxLocalEnvironment())
+      await bound.search('query')
+      expect(strategy.search).toHaveBeenCalledTimes(1)
     })
   })
 })

@@ -1,0 +1,107 @@
+---
+import { getCollection } from 'astro:content';
+import frog from '../assets/nav/frog-hop.svg?raw';
+import arrow from '../assets/banner/arrow.svg?raw';
+import { activeAnnouncement, announcementExpires } from '../util/announcements';
+import { pathWithBase } from '../util/links';
+
+const announcements = (await getCollection('announcements')).map((a) => a.data);
+const announcement = activeAnnouncement(announcements, new Date());
+const isExternal = announcement && /^https?:\/\//.test(announcement.href);
+const href = announcement && (isExternal ? announcement.href : pathWithBase(announcement.href));
+---
+
+{
+  announcement && (
+    <>
+      <aside class="announcement" aria-label="Announcement" data-expires={announcementExpires(announcement)}>
+        <a class="announcement__link" href={href} {...(isExternal && {
+            target: '_blank',
+            rel: 'noopener',
+            'aria-label': `${announcement.title}: ${announcement.linkText} (opens in a new tab)`,
+          })}>
+          <span class="announcement__frog" set:html={frog} aria-hidden="true" />
+          <span class="announcement__title">{announcement.title}</span>
+          <span class="announcement__cta">
+            {announcement.linkText}
+            <span class="announcement__arrow" set:html={arrow} aria-hidden="true" />
+          </span>
+        </a>
+      </aside>
+      {/* The site is only rebuilt on deploy, so drop the banner client-side once it expires. */}
+      <script is:inline>
+        (function () {
+          var el = document.querySelector('.announcement');
+          if (el && el.dataset.expires < new Date().toISOString().slice(0, 10)) el.remove();
+        })();
+      </script>
+    </>
+  )
+}
+
+<style>
+  .announcement {
+    background: var(--strands-green);
+    color: var(--strands-black);
+  }
+
+  .announcement__link {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    max-width: 1442px;
+    margin: 0 auto;
+    padding: 8px clamp(16px, 5vw, 96px);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 14px;
+    line-height: 1.4;
+    color: inherit;
+    text-decoration: none;
+  }
+
+  .announcement__frog {
+    display: inline-flex;
+    flex: none;
+    width: 20px;
+    height: 20px;
+  }
+
+  .announcement__frog :global(svg),
+  .announcement__arrow :global(svg) {
+    width: 100%;
+    height: 100%;
+  }
+
+  .announcement__cta {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    gap: 6px;
+    font-weight: 600;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+
+  .announcement__link:hover .announcement__cta {
+    text-decoration-thickness: 2px;
+  }
+
+  .announcement__arrow {
+    display: inline-flex;
+    width: 11px;
+    height: 9px;
+  }
+
+  @media (max-width: 767px) {
+    .announcement__link {
+      flex-wrap: wrap;
+      font-size: 13px;
+      text-align: center;
+    }
+
+    .announcement__frog {
+      display: none;
+    }
+  }
+</style>

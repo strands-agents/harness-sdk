@@ -12,9 +12,12 @@ from mcp.types import Tool as MCPTool
 from mcp.types import ToolExecution
 
 from strands.tools.mcp import MCPClient, TasksConfig
+from strands.tools.mcp._compat import MCP_V2
 from strands.tools.mcp.mcp_tasks import DEFAULT_TASK_POLL_TIMEOUT, DEFAULT_TASK_TTL
 
 from .conftest import create_server_capabilities
+
+pytestmark = pytest.mark.skipif(MCP_V2, reason="the legacy 2025-11-25 task workflow requires mcp 1.x")
 
 
 class TestTasksOptIn:
@@ -215,6 +218,253 @@ class TestTaskExecution:
             assert result["status"] == "success"
             assert "Done" in result["content"][0].get("text", "")
 
+    @pytest.mark.asyncio
+    async def test_cancellation_cancels_remote_task_and_preserves_session(self, mock_transport, mock_session):
+        """Test per-call cancellation stops the remote task without closing the session."""
+        import threading
+
+        self._setup_task_tool(mock_session, "slow_tool")
+        poll_started = asyncio.Event()
+        cancel_signal = threading.Event()
+
+        async def infinite_poll(task_id):
+            poll_started.set()
+            while True:
+                await asyncio.sleep(1)
+                yield MagicMock(status="running")
+
+        mock_session.experimental.poll_task = infinite_poll
+        mock_session.experimental.cancel_task = AsyncMock()
+
+        with MCPClient(mock_transport["transport_callable"], tasks_config=TasksConfig()) as client:
+            client.list_tools_sync()
+            cancelled_call = asyncio.create_task(
+                client.call_tool_async(
+                    tool_use_id="cancelled", name="slow_tool", arguments={}, cancel_signal=cancel_signal
+                )
+            )
+            await asyncio.wait_for(poll_started.wait(), timeout=1)
+            cancel_signal.set()
+            cancelled_result = await asyncio.wait_for(cancelled_call, timeout=1)
+
+            client._tool_task_support_cache["fast_tool"] = None
+            mock_session.call_tool.return_value = MCPCallToolResult(
+                isError=False, content=[MCPTextContent(type="text", text="done")]
+            )
+            second_result = await client.call_tool_async(tool_use_id="completed", name="fast_tool", arguments={})
+
+        assert cancelled_result["status"] == "error"
+        assert cancelled_result["content"] == [
+            {"text": "Tool execution cancelled locally; remote execution may have continued"}
+        ]
+        assert cancelled_result["cancelled"] is True
+        mock_session.experimental.cancel_task.assert_awaited_once_with("test-task-id")
+        assert second_result["status"] == "success"
+
+    @pytest.mark.asyncio
+    async def test_cancellation_reconciles_delayed_task_creation_response(self, mock_transport, mock_session):
+        """Test cancellation discovers and stops a task whose creation response is delayed."""
+        import threading
+
+        self._setup_task_tool(mock_session, "slow_tool")
+        creation_started = threading.Event()
+        release_response = threading.Event()
+        cancel_signal = threading.Event()
+        create_result = MagicMock()
+        create_result.task.taskId = "delayed-task-id"
+
+        async def delayed_creation(**kwargs):
+            creation_started.set()
+            while not release_response.is_set():
+                await asyncio.sleep(0.01)
+            return create_result
+
+        mock_session.experimental.call_tool_as_task = delayed_creation
+        mock_session.experimental.cancel_task = AsyncMock()
+
+        with MCPClient(mock_transport["transport_callable"], tasks_config=TasksConfig()) as client:
+            client.list_tools_sync()
+            call = asyncio.create_task(
+                client.call_tool_async(
+                    tool_use_id="cancelled", name="slow_tool", arguments={}, cancel_signal=cancel_signal
+                )
+            )
+            assert await asyncio.to_thread(creation_started.wait, 1)
+            cancel_signal.set()
+            await asyncio.sleep(0.1)
+            release_response.set()
+            result = await asyncio.wait_for(call, timeout=2)
+
+        assert result["status"] == "error"
+        mock_session.experimental.cancel_task.assert_awaited_once_with("delayed-task-id")
+
+    @pytest.mark.asyncio
+    async def test_cancellation_detaches_resistant_task_creation_and_cancels_late_task(
+        self, mock_transport, mock_session
+    ):
+        """Test a cancellation-resistant creation call cannot block the local result."""
+        import threading
+
+        self._setup_task_tool(mock_session, "slow_tool")
+        creation_started = threading.Event()
+        release_response = threading.Event()
+        cancellation_started = threading.Event()
+        release_cancellation = threading.Event()
+        cancel_signal = threading.Event()
+        create_result = MagicMock()
+        create_result.task.taskId = "late-task-id"
+
+        async def resistant_creation(**kwargs):
+            creation_started.set()
+            try:
+                while not release_response.is_set():
+                    await asyncio.sleep(0.01)
+            except asyncio.CancelledError:
+                while not release_response.is_set():
+                    await asyncio.sleep(0.01)
+            return create_result
+
+        async def resistant_cancellation(task_id):
+            cancellation_started.set()
+            while not release_cancellation.is_set():
+                await asyncio.sleep(0.01)
+
+        mock_session.experimental.call_tool_as_task = resistant_creation
+        mock_session.experimental.cancel_task = resistant_cancellation
+
+        with MCPClient(mock_transport["transport_callable"], tasks_config=TasksConfig()) as client:
+            client.list_tools_sync()
+            call = asyncio.create_task(
+                client.call_tool_async(
+                    tool_use_id="cancelled", name="slow_tool", arguments={}, cancel_signal=cancel_signal
+                )
+            )
+            assert await asyncio.to_thread(creation_started.wait, 1)
+            cancel_signal.set()
+            result = await asyncio.wait_for(call, timeout=2)
+            release_response.set()
+            assert await asyncio.to_thread(cancellation_started.wait, 1)
+            assert len(client._background_cleanup_tasks) >= 1
+            release_cancellation.set()
+            await asyncio.sleep(0.1)
+            assert not client._background_cleanup_tasks
+
+        assert result["status"] == "error"
+
+    @pytest.mark.asyncio
+    async def test_context_exit_drains_delayed_task_cancellation(self, mock_transport, mock_session):
+        """Test session shutdown waits for delayed task creation and remote cancellation."""
+        import threading
+
+        self._setup_task_tool(mock_session, "slow_tool")
+        creation_started = threading.Event()
+        release_response = threading.Event()
+        cancel_signal = threading.Event()
+        create_result = MagicMock()
+        create_result.task.taskId = "shutdown-task-id"
+
+        async def resistant_creation(**kwargs):
+            creation_started.set()
+            try:
+                while not release_response.is_set():
+                    await asyncio.sleep(0.01)
+            except asyncio.CancelledError:
+                while not release_response.is_set():
+                    await asyncio.sleep(0.01)
+            return create_result
+
+        mock_session.experimental.call_tool_as_task = resistant_creation
+        mock_session.experimental.cancel_task = AsyncMock()
+
+        with MCPClient(mock_transport["transport_callable"], tasks_config=TasksConfig()) as client:
+            client.list_tools_sync()
+            call = asyncio.create_task(
+                client.call_tool_async(
+                    tool_use_id="cancelled", name="slow_tool", arguments={}, cancel_signal=cancel_signal
+                )
+            )
+            assert await asyncio.to_thread(creation_started.wait, 1)
+            cancel_signal.set()
+            result = await asyncio.wait_for(call, timeout=2)
+            release_timer = threading.Timer(0.1, release_response.set)
+            release_timer.start()
+
+        release_timer.join(timeout=1)
+        assert result["status"] == "error"
+        mock_session.experimental.cancel_task.assert_awaited_once_with("shutdown-task-id")
+        assert not client._background_cleanup_tasks
+
+    @pytest.mark.asyncio
+    async def test_task_creation_cancellation_does_not_guess_shared_request_id(self, mock_transport, mock_session):
+        """Test task creation cancellation waits for the task ID instead of guessing a request ID."""
+        import threading
+
+        self._setup_task_tool(mock_session, "slow_tool")
+        creation_started = threading.Event()
+        cancel_signal = threading.Event()
+
+        async def blocked_creation(**kwargs):
+            creation_started.set()
+            await asyncio.Event().wait()
+
+        mock_session.experimental.call_tool_as_task = blocked_creation
+        mock_session.experimental.cancel_task = AsyncMock()
+        mock_session._request_id = 42
+
+        with MCPClient(mock_transport["transport_callable"], tasks_config=TasksConfig()) as client:
+            client.list_tools_sync()
+            call = asyncio.create_task(
+                client.call_tool_async(
+                    tool_use_id="cancelled", name="slow_tool", arguments={}, cancel_signal=cancel_signal
+                )
+            )
+            assert await asyncio.to_thread(creation_started.wait, 1)
+            cancel_signal.set()
+            result = await asyncio.wait_for(call, timeout=2)
+
+        assert result["status"] == "error"
+        mock_session.send_notification.assert_not_awaited()
+        mock_session.experimental.cancel_task.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_remote_task_cancellation_timeout_does_not_block_local_result(self, mock_transport, mock_session):
+        """Test an unresponsive tasks/cancel request cannot hang local cancellation."""
+        import threading
+
+        self._setup_task_tool(mock_session, "slow_tool")
+        poll_started = asyncio.Event()
+        cancel_signal = threading.Event()
+
+        async def infinite_poll(task_id):
+            poll_started.set()
+            while True:
+                await asyncio.sleep(1)
+                yield MagicMock(status="running")
+
+        async def hanging_cancel(task_id):
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                await asyncio.Event().wait()
+
+        mock_session.experimental.poll_task = infinite_poll
+        mock_session.experimental.cancel_task = hanging_cancel
+
+        with MCPClient(mock_transport["transport_callable"], tasks_config=TasksConfig()) as client:
+            client.list_tools_sync()
+            call = asyncio.create_task(
+                client.call_tool_async(
+                    tool_use_id="cancelled", name="slow_tool", arguments={}, cancel_signal=cancel_signal
+                )
+            )
+            await asyncio.wait_for(poll_started.wait(), timeout=1)
+            cancel_signal.set()
+            result = await asyncio.wait_for(call, timeout=2)
+
+        assert result["status"] == "error"
+        assert result["content"] == [{"text": "Tool execution cancelled locally; remote execution may have continued"}]
+        assert result["cancelled"] is True
+
     def test_logs_warning_when_task_execution_ignores_progress_callback(self, mock_transport, mock_session, caplog):
         """Test warning is logged when task execution ignores progress callbacks."""
         self._setup_task_tool(mock_session, "task_tool")
@@ -303,3 +553,28 @@ class TestTaskMetaForwarding:
             experimental.call_tool_as_task.assert_called_once()
             call_kwargs = experimental.call_tool_as_task.call_args
             assert call_kwargs.kwargs.get("meta") is None
+
+
+@pytest.mark.skipif(MCP_V2, reason="requires mcp 1.x")
+class TestFinalizedTaskLifecycleUnavailableOnV1:
+    """The finalized SEP-2663 lifecycle refuses to run against the mcp 1.x line."""
+
+    def test_submit_tool_sync_requires_mcp_v2(self, mock_transport, mock_session):
+        """Test the public task lifecycle rejects mcp 1.x before sending anything."""
+        with MCPClient(mock_transport["transport_callable"], tasks_config={}) as client:
+            with pytest.raises(RuntimeError, match="mcp 2.x"):
+                client.submit_tool_sync("tool")
+
+    @pytest.mark.asyncio
+    async def test_submit_tool_async_requires_mcp_v2(self, mock_transport, mock_session):
+        """Test the async task lifecycle rejects mcp 1.x before sending anything."""
+        with MCPClient(mock_transport["transport_callable"], tasks_config={}) as client:
+            with pytest.raises(RuntimeError, match="mcp 2.x"):
+                await client.submit_tool_async("tool")
+
+    @pytest.mark.asyncio
+    async def test_task_aware_call_requires_mcp_v2(self, mock_transport, mock_session):
+        """Test the task-aware tools/call round rejects mcp 1.x."""
+        with MCPClient(mock_transport["transport_callable"], tasks_config={}) as client:
+            with pytest.raises(RuntimeError, match="mcp 2.x"):
+                await client._call_tool_with_task_once_async("tool", None, timedelta(seconds=1), None, None)

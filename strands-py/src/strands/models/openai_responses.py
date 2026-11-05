@@ -22,6 +22,7 @@ import base64
 import json
 import logging
 import mimetypes
+from collections import Counter
 from collections.abc import AsyncGenerator
 from importlib.metadata import version as get_package_version
 from types import SimpleNamespace
@@ -53,6 +54,7 @@ except Exception as e:
 
 import openai  # noqa: E402 - must import after version check
 
+from ..agent.agent_metadata import AgentMetadata  # noqa: E402
 from ..types.citations import WebLocationDict  # noqa: E402
 from ..types.content import ContentBlock, Messages, Role, SystemContentBlock  # noqa: E402
 from ..types.event_loop import Usage  # noqa: E402
@@ -60,9 +62,12 @@ from ..types.exceptions import ContextWindowOverflowException, ModelThrottledExc
 from ..types.streaming import StreamEvent  # noqa: E402
 from ..types.tools import ToolChoice, ToolResult, ToolSpec, ToolUse  # noqa: E402
 from ._defaults import resolve_config_metadata  # noqa: E402
+from ._model_info import ModelCapabilities, ModelInfo  # noqa: E402
 from ._openai_bedrock import BedrockMantleConfig, resolve_bedrock_client_args  # noqa: E402
-from ._validation import validate_config_keys  # noqa: E402
-from .model import BaseModelConfig, Model  # noqa: E402
+from ._openai_cache import CACHE_LIFETIMES, apply_cache_config  # noqa: E402
+from ._openai_errors import classify_openai_error  # noqa: E402
+from ._validation import _has_location_source, _log_skipped_blocks, validate_config_keys  # noqa: E402
+from .model import BaseModelConfig, CacheConfig, Model  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +79,16 @@ _MAX_MEDIA_SIZE_LABEL = "20MB"
 _DEFAULT_MIME_TYPE = "application/octet-stream"
 _CONTEXT_WINDOW_OVERFLOW_MSG = "OpenAI Responses API threw context window overflow error"
 _RATE_LIMIT_MSG = "OpenAI Responses API threw rate limit error"
+# Input content types that accept prompt_cache_breakpoint (gpt-5.6+).
+_CACHEABLE_INPUT_TYPES = frozenset({"input_text", "input_image", "input_file"})
+
+
+class _OpenAIResponsesStreamError(RuntimeError):
+    """Error reported by a terminal OpenAI Responses API stream event."""
+
+    def __init__(self, message: str | None, code: str | None) -> None:
+        super().__init__(message or "OpenAI Responses API response failed")
+        self.code = code
 
 
 def _encode_media_to_data_url(data: bytes, format_ext: str, media_type: str = "image") -> str:
@@ -140,12 +155,22 @@ class OpenAIResponsesModel(Model):
             use_native_token_count: Whether to use the native OpenAI input_tokens.count API.
                 When True, count_tokens() calls the OpenAI API for accurate counts.
                 When False (default), skips the API call and uses the local estimator.
+            cache_config: Prompt-caching configuration. OpenAI routes cache reads on
+                ``cache_key`` (mapped to ``prompt_cache_key``) and honors ``ttl`` when it names an
+                OpenAI retention value (``prompt_cache_retention``). On models whose ``model_info`` says
+                they take cache points (GPT-5.6 and later), message checkpoints keep per-call injected
+                content out of the cache; ``strategy="auto"`` or ``"anthropic"`` places them and
+                ``messages_ttl=False`` disables them. There, a ``"30m"``/``"12h"`` ``messages_ttl`` sets
+                each checkpoint's ``ttl`` and such a ``ttl`` sets ``prompt_cache_options.ttl``.
+                ``tools_ttl`` and ``system_prompt_ttl`` have no effect. Native caching fields in
+                ``params`` take precedence.
         """
 
         model_id: str
         params: dict[str, Any] | None
         stateful: bool
         use_native_token_count: bool
+        cache_config: CacheConfig | None
 
     def __init__(
         self,
@@ -160,9 +185,11 @@ class OpenAIResponsesModel(Model):
                 For a complete list of supported arguments, see https://pypi.org/project/openai/.
                 May be combined with ``bedrock_mantle_config``; when both are set, the config
                 derives ``base_url`` and ``api_key`` (which must not appear in ``client_args``).
-            bedrock_mantle_config: Route requests through Amazon Bedrock's Mantle
-                (OpenAI-compatible) endpoint. See :class:`BedrockMantleConfig` for accepted
-                keys. When set, a fresh bearer token is minted on every request.
+            bedrock_mantle_config: Route requests through one of Amazon Bedrock's
+                OpenAI-compatible endpoints, ``bedrock-mantle`` (the default) or
+                ``bedrock-runtime`` via the config's ``endpoint`` key. See
+                :class:`BedrockMantleConfig` for accepted keys. When set, a fresh bearer
+                token is minted on every request.
             **model_config: Configuration options for the OpenAI Responses API model.
         """
         validate_config_keys(model_config, self.OpenAIResponsesConfig)
@@ -194,12 +221,16 @@ class OpenAIResponsesModel(Model):
 
     @property
     @override
-    def stateful(self) -> bool:
-        """Whether server-side conversation storage is enabled.
+    def model_info(self) -> ModelInfo:
+        """Adds whether server-side conversation storage is enabled.
 
-        Derived from the ``stateful`` configuration option.
+        Taken from the ``stateful`` configuration option, which a ``model_info`` override still wins over.
         """
-        return bool(self.config.get("stateful"))
+        return ModelInfo.merge(
+            super().model_info,
+            ModelInfo(capabilities=ModelCapabilities(stateful=bool(self.config.get("stateful")))),
+            cast(ModelInfo | None, self.config.get("model_info")),
+        )
 
     @override
     def update_config(self, **model_config: Unpack[OpenAIResponsesConfig]) -> None:  # type: ignore[override]
@@ -284,6 +315,7 @@ class OpenAIResponsesModel(Model):
         *,
         tool_choice: ToolChoice | None = None,
         model_state: dict[str, Any] | None = None,
+        agent_metadata: AgentMetadata | None = None,
         **kwargs: Any,
     ) -> AsyncGenerator[StreamEvent, None]:
         """Stream conversation with the OpenAI Responses API model.
@@ -294,6 +326,7 @@ class OpenAIResponsesModel(Model):
             system_prompt: System prompt to provide context to the model.
             tool_choice: Selection strategy for tool invocation.
             model_state: Runtime state for model providers (e.g., server-side response ids).
+            agent_metadata: Invoking agent's metadata.
             **kwargs: Additional keyword arguments for future extensibility.
 
         Yields:
@@ -304,7 +337,16 @@ class OpenAIResponsesModel(Model):
             ModelThrottledException: If the request is throttled by OpenAI (rate limits).
         """
         logger.debug("formatting request for OpenAI Responses API")
-        request = self._format_request(messages, tool_specs, system_prompt, tool_choice, model_state)
+        request = self._format_request(
+            messages,
+            tool_specs,
+            system_prompt,
+            tool_choice,
+            model_state,
+            agent_metadata,
+            dynamic_trailing_blocks=kwargs.get("dynamic_trailing_blocks", 0),
+        )
+        self._move_new_fields_to_extra_body(request)
         logger.debug("formatted request=<%s>", request)
 
         logger.debug("invoking OpenAI Responses API model")
@@ -407,19 +449,32 @@ class OpenAIResponsesModel(Model):
                                         call_info["arguments"] = event.arguments
                                         break
 
+                        elif event.type == "response.failed":
+                            error = getattr(event.response, "error", None)
+                            raise _OpenAIResponsesStreamError(
+                                getattr(error, "message", None), getattr(error, "code", None)
+                            )
+
+                        elif event.type == "error":
+                            raise _OpenAIResponsesStreamError(
+                                getattr(event, "message", None), getattr(event, "code", None)
+                            )
+
                         elif event.type == "response.incomplete":
                             # Response stopped early (e.g., max tokens reached)
                             if hasattr(event, "response"):
                                 if hasattr(event.response, "usage"):
                                     final_usage = event.response.usage
-                                # Check if stopped due to max_output_tokens
-                                if (
-                                    hasattr(event.response, "incomplete_details")
-                                    and event.response.incomplete_details
-                                    and getattr(event.response.incomplete_details, "reason", None)
-                                    == "max_output_tokens"
-                                ):
+                                # Check if stopped due to max_output_tokens or a content filter
+                                incomplete_reason = (
+                                    getattr(event.response.incomplete_details, "reason", None)
+                                    if getattr(event.response, "incomplete_details", None)
+                                    else None
+                                )
+                                if incomplete_reason == "max_output_tokens":
                                     stop_reason = "length"
+                                elif incomplete_reason == "content_filter":
+                                    stop_reason = "content_filter"
                             break
 
                         elif event.type == "response.completed":
@@ -427,13 +482,14 @@ class OpenAIResponsesModel(Model):
                             if hasattr(event, "response") and hasattr(event.response, "usage"):
                                 final_usage = event.response.usage
                             break
-            except openai.APIError as e:
-                if hasattr(e, "code") and e.code == "context_length_exceeded":
-                    logger.warning(_CONTEXT_WINDOW_OVERFLOW_MSG)
-                    raise ContextWindowOverflowException(str(e)) from e
-                if isinstance(e, openai.RateLimitError):
+            except (openai.APIError, _OpenAIResponsesStreamError) as error:
+                error_kind = classify_openai_error(error)
+                if error_kind == "throttling":
                     logger.warning(_RATE_LIMIT_MSG)
-                    raise ModelThrottledException(str(e)) from e
+                    raise ModelThrottledException(str(error)) from error
+                if error_kind == "context_overflow":
+                    logger.warning(_CONTEXT_WINDOW_OVERFLOW_MSG)
+                    raise ContextWindowOverflowException(str(error)) from error
                 raise
 
             # Close current content block if we had any
@@ -456,11 +512,13 @@ class OpenAIResponsesModel(Model):
                 yield self._format_chunk({"chunk_type": "content_delta", "data_type": "tool", "data": tool_call})
                 yield self._format_chunk({"chunk_type": "content_stop", "data_type": "tool"})
 
-            # Determine finish reason: tool_calls > max_tokens (length) > normal stop
-            if tool_calls:
+            # Determine finish reason: max_tokens (length) or content_filter > tool_calls > normal stop.
+            # A function call that is still in flight when the response is cut off has truncated
+            # arguments, so it must surface as the cut-off reason rather than be executed.
+            if stop_reason in ("length", "content_filter"):
+                finish_reason = stop_reason
+            elif tool_calls:
                 finish_reason = "tool_calls"
-            elif stop_reason == "length":
-                finish_reason = "length"
             else:
                 finish_reason = "stop"
             yield self._format_chunk({"chunk_type": "message_stop", "data": finish_reason})
@@ -493,15 +551,17 @@ class OpenAIResponsesModel(Model):
             try:
                 request = self._format_request(prompt, system_prompt=system_prompt)
                 request.pop("stream", None)
+                self._move_new_fields_to_extra_body(request)
                 response = await client.responses.parse(**request, text_format=output_model)
-            except openai.BadRequestError as e:
-                if hasattr(e, "code") and e.code == "context_length_exceeded":
+            except openai.APIError as error:
+                error_kind = classify_openai_error(error)
+                if error_kind == "throttling":
+                    logger.warning(_RATE_LIMIT_MSG)
+                    raise ModelThrottledException(str(error)) from error
+                if error_kind == "context_overflow":
                     logger.warning(_CONTEXT_WINDOW_OVERFLOW_MSG)
-                    raise ContextWindowOverflowException(str(e)) from e
+                    raise ContextWindowOverflowException(str(error)) from error
                 raise
-            except openai.RateLimitError as e:
-                logger.warning(_RATE_LIMIT_MSG)
-                raise ModelThrottledException(str(e)) from e
 
         if response.output_parsed:
             yield {"output": response.output_parsed}
@@ -515,6 +575,9 @@ class OpenAIResponsesModel(Model):
         system_prompt: str | None = None,
         tool_choice: ToolChoice | None = None,
         model_state: dict[str, Any] | None = None,
+        agent_metadata: AgentMetadata | None = None,
+        *,
+        dynamic_trailing_blocks: int = 0,
     ) -> dict[str, Any]:
         """Format an OpenAI Responses API compatible response streaming request.
 
@@ -524,6 +587,8 @@ class OpenAIResponsesModel(Model):
             system_prompt: System prompt to provide context to the model.
             tool_choice: Selection strategy for tool invocation.
             model_state: Runtime state for model providers (e.g., server-side response ids).
+            agent_metadata: Invoking agent's metadata.
+            dynamic_trailing_blocks: Number of temporary trailing blocks in the final user message.
 
         Returns:
             An OpenAI Responses API compatible response streaming request.
@@ -532,17 +597,33 @@ class OpenAIResponsesModel(Model):
             TypeError: If a message contains a content block type that cannot be converted to an OpenAI-compatible
                 format.
         """
-        input_items = self._format_request_messages(messages)
+        cache_config = cast(CacheConfig | None, self.config.get("cache_config"))
+        cache_points = cache_config is not None and self.model_info.capabilities.prompt_caching == "cache_points"
+        cache_messages = (
+            cache_points
+            and cache_config is not None
+            and cache_config.messages_ttl is not False
+            # A native input override stays under the caller's control.
+            and "input" not in cast(dict[str, Any], self.config.get("params", {}))
+        )
+        input_items, explicit_cache = (
+            self._format_cacheable_request_messages(
+                messages, dynamic_trailing_blocks, cast(CacheConfig, cache_config).messages_ttl
+            )
+            if cache_messages
+            else (self._format_request_messages(messages), False)
+        )
+        stateful = self.stateful
         request: dict[str, Any] = {
             "model": self.config["model_id"],
             "input": input_items,
             "stream": True,
             **cast(dict[str, Any], self.config.get("params", {})),
-            "store": self.stateful,
+            "store": stateful,
         }
 
         response_id = model_state.get("response_id") if model_state else None
-        if response_id and self.stateful:
+        if response_id and stateful:
             request["previous_response_id"] = response_id
 
         if system_prompt:
@@ -567,6 +648,11 @@ class OpenAIResponsesModel(Model):
                 ),
             ]
             request.update(self._format_request_tool_choice(tool_choice))
+
+        apply_cache_config(request, cache_config, agent_metadata, supports_message_caching=cache_points)
+        if explicit_cache:
+            # Caller-supplied mode, TTL and diagnostics take precedence.
+            request["prompt_cache_options"] = {"mode": "explicit", **request.get("prompt_cache_options", {})}
 
         return request
 
@@ -594,31 +680,137 @@ class OpenAIResponsesModel(Model):
                 # Default to auto for unknown formats
                 return {"tool_choice": "auto"}
 
+    @staticmethod
+    def _move_new_fields_to_extra_body(request: dict[str, Any]) -> None:
+        """Send wire fields newer than the minimum supported OpenAI client through ``extra_body``.
+
+        ``prompt_cache_options`` is a named kwarg only in recent clients; older supported clients
+        reject it on ``create`` and ``parse``. Keys in a caller-supplied ``extra_body.prompt_cache_options``
+        win, while keys it leaves unset (such as ``mode``) keep the SDK default.
+        """
+        if "prompt_cache_options" in request:
+            extra_body = dict(request.get("extra_body") or {})
+            extra_body["prompt_cache_options"] = {
+                **request.pop("prompt_cache_options"),
+                **extra_body.get("prompt_cache_options", {}),
+            }
+            request["extra_body"] = extra_body
+
     @classmethod
-    def _format_request_messages(cls, messages: Messages) -> list[dict[str, Any]]:
+    def _format_cacheable_request_messages(
+        cls, messages: Messages, dynamic_trailing_blocks: int, messages_ttl: bool | str | None = None
+    ) -> tuple[list[dict[str, Any]], bool]:
+        """Format messages with a cache checkpoint on the last input part of each durable user message.
+
+        The final user message's last ``dynamic_trailing_blocks`` blocks are temporary: they go after the
+        checkpoint and after any tool outputs, so a changing injection never shifts the cached prefix.
+        A ``messages_ttl`` naming a cache lifetime becomes each checkpoint's ``ttl``.
+
+        Returns:
+            The input items, and whether the request should default ``prompt_cache_options.mode`` to explicit.
+            Without a checkpoint or a temporary suffix, implicit caching stays so the request still caches.
+        """
+        checkpoint = (
+            {"mode": "explicit", "ttl": messages_ttl} if messages_ttl in CACHE_LIFETIMES else {"mode": "explicit"}
+        )
+        input_items: list[dict[str, Any]] = []
+        has_checkpoints = False
+        skipped: Counter[str] = Counter()
+        for index, message in enumerate(messages):
+            role, content = message["role"], message["content"]
+            dynamic_count = dynamic_trailing_blocks if role == "user" and index == len(messages) - 1 else 0
+            boundary = max(0, len(content) - dynamic_count)
+            items = cls._format_request_messages(
+                [{"role": role, "content": content[:boundary]}], skipped_blocks=skipped
+            )
+            cls._normalize_tool_outputs(items)
+            part = cls._last_cacheable_part(items) if role == "user" else None
+            if part is not None:
+                # Mark every durable user message, not just the latest: the provider bounds lookups and
+                # writes itself, and earlier markers keep the previous request's cache entry reachable.
+                part["prompt_cache_breakpoint"] = dict(checkpoint)
+                has_checkpoints = True
+            if dynamic_count:
+                tail = cls._format_request_messages(
+                    [{"role": "user", "content": content[boundary:]}], skipped_blocks=skipped
+                )
+                cls._normalize_tool_outputs(tail)
+                cls._append_dynamic_content(items, tail)
+            input_items.extend(items)
+        _log_skipped_blocks(logger, skipped)
+        return input_items, has_checkpoints or dynamic_trailing_blocks > 0
+
+    @staticmethod
+    def _normalize_tool_outputs(items: list[dict[str, Any]]) -> None:
+        """Send text tool outputs as one input_text block, so they can carry a checkpoint and replay identically.
+
+        An empty output stays a string: an empty text block would be a meaningless checkpoint.
+        """
+        for item in items:
+            if item.get("type") == "function_call_output" and isinstance(item["output"], str) and item["output"]:
+                item["output"] = [{"type": "input_text", "text": item["output"]}]
+
+    @staticmethod
+    def _last_cacheable_part(items: list[dict[str, Any]]) -> dict[str, Any] | None:
+        """Find the final input part (text, image, or file) in a formatted, normalized durable user message."""
+        parts = [
+            part
+            for item in items
+            for part in (item.get("output") if item.get("type") == "function_call_output" else item.get("content"))
+            or []
+        ]
+        return next((part for part in reversed(parts) if part.get("type") in _CACHEABLE_INPUT_TYPES), None)
+
+    @staticmethod
+    def _append_dynamic_content(items: list[dict[str, Any]], tail: list[dict[str, Any]]) -> None:
+        """Merge temporary content into the durable user message; after tool outputs, it becomes its own message."""
+        if tail and items and "role" in tail[0] and "role" in items[-1]:
+            items[-1]["content"].extend(tail.pop(0)["content"])
+        items.extend(tail)
+
+    @classmethod
+    def _format_request_messages(
+        cls,
+        messages: Messages,
+        *,
+        skipped_blocks: Counter[str] | None = None,
+    ) -> list[dict[str, Any]]:
         """Format an OpenAI compatible messages array.
 
         Args:
             messages: List of message objects to be processed by the model.
+            skipped_blocks: Caller-owned counter for unsupported blocks. When given, the caller logs
+                the skips once for the whole request; otherwise they are logged here.
 
         Returns:
             An OpenAI compatible messages array.
         """
         formatted_messages: list[dict[str, Any]] = []
+        skipped: Counter[str] = Counter() if skipped_blocks is None else skipped_blocks
 
         for message in messages:
             role = message["role"]
             contents = message["content"]
 
-            if any("reasoningContent" in content for content in contents):
-                logger.warning(
-                    "reasoningContent is not yet supported in multi-turn conversations with the Responses API"
-                )
+            filtered_contents = []
+            for content in contents:
+                if "reasoningContent" in content:
+                    skipped[
+                        "reasoningContent is not yet supported in multi-turn conversations with the Responses API"
+                    ] += 1
+                    continue
+                if "cachePoint" in content:
+                    skipped["cachePoint content block is not supported by OpenAI Responses | skipping"] += 1
+                    continue
+                if "toolResult" in content or "toolUse" in content:
+                    continue
+                if _has_location_source(content):
+                    skipped["Location sources are not supported by OpenAI Responses | skipping content block"] += 1
+                    continue
+                filtered_contents.append(content)
 
             formatted_contents = [
-                cls._format_request_message_content(content, role=role)
-                for content in contents
-                if not any(block_type in content for block_type in ["toolResult", "toolUse", "reasoningContent"])
+                cls._format_request_message_content(content, role=role) for content in filtered_contents
             ]
 
             formatted_tool_calls = [
@@ -634,15 +826,36 @@ class OpenAIResponsesModel(Model):
             ]
 
             if formatted_contents:
-                formatted_messages.append(
-                    {
-                        "role": role,  # "user" | "assistant"
-                        "content": formatted_contents,
-                    }
-                )
+                if role == "assistant":
+                    # Only the string EasyInputMessage form is a valid assistant *input* shape
+                    # without the full output-item metadata (id/status/annotations) that has
+                    # already been discarded by this point. Replaying verbatim output items is
+                    # tracked in https://github.com/strands-agents/harness-sdk/issues/3389.
+                    dropped_types = [
+                        part.get("type", "unknown") for part in formatted_contents if part.get("type") != "output_text"
+                    ]
+                    if dropped_types:
+                        logger.warning(
+                            "content_type=<%s> | non-text assistant history content has no valid "
+                            "Responses API input shape | dropping",
+                            ", ".join(dropped_types),
+                        )
+                    text = "\n".join(part["text"] for part in formatted_contents if part.get("type") == "output_text")
+                    if text:
+                        formatted_messages.append({"role": "assistant", "content": text})
+                else:
+                    formatted_messages.append(
+                        {
+                            "role": role,  # "user"
+                            "content": formatted_contents,
+                        }
+                    )
 
             formatted_messages.extend(formatted_tool_calls)
             formatted_messages.extend(formatted_tool_messages)
+
+        if skipped_blocks is None:
+            _log_skipped_blocks(logger, skipped)
 
         return [
             message
@@ -669,7 +882,10 @@ class OpenAIResponsesModel(Model):
         if "document" in content:
             doc = content["document"]
             data_url = _encode_media_to_data_url(doc["source"]["bytes"], doc["format"], "document")
-            return {"type": "input_file", "file_url": data_url}
+            name = doc.get("name", "document")
+            suffix = f".{doc['format']}"
+            filename = name if name.endswith(suffix) else f"{name}{suffix}"
+            return {"type": "input_file", "filename": filename, "file_data": data_url}
 
         if "image" in content:
             img = content["image"]
@@ -739,7 +955,10 @@ class OpenAIResponsesModel(Model):
                 has_media = True
                 doc = content["document"]
                 data_url = _encode_media_to_data_url(doc["source"]["bytes"], doc["format"], "document")
-                output_parts.append({"type": "input_file", "file_url": data_url})
+                name = doc.get("name", "document")
+                suffix = f".{doc['format']}"
+                filename = name if name.endswith(suffix) else f"{name}{suffix}"
+                output_parts.append({"type": "input_file", "filename": filename, "file_data": data_url})
 
         # Return array if has media content, otherwise join as string for simpler text-only cases
         output: list[dict[str, Any]] | str
@@ -839,6 +1058,8 @@ class OpenAIResponsesModel(Model):
                         return {"messageStop": {"stopReason": "tool_use"}}
                     case "length":
                         return {"messageStop": {"stopReason": "max_tokens"}}
+                    case "content_filter":
+                        return {"messageStop": {"stopReason": "content_filtered"}}
                     case _:
                         return {"messageStop": {"stopReason": "end_turn"}}
 
@@ -852,8 +1073,13 @@ class OpenAIResponsesModel(Model):
 
                 if tokens_details := getattr(event["data"], "input_tokens_details", None):
                     cached = getattr(tokens_details, "cached_tokens", None)
-                    if isinstance(cached, int) and cached:
+                    if isinstance(cached, int):
                         usage_data["cacheReadInputTokens"] = cached
+
+                    # Reported first-party from GPT-5.6
+                    cache_write = getattr(tokens_details, "cache_write_tokens", None)
+                    if isinstance(cache_write, int):
+                        usage_data["cacheWriteInputTokens"] = cache_write
 
                 return {
                     "metadata": {

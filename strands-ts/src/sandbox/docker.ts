@@ -8,7 +8,7 @@ import { streamProcess } from './stream-process.js'
 import type { ExecutionResult, StreamChunk } from './types.js'
 import type { Tool } from '../tools/tool.js'
 import { makeFileEditor, DEFAULT_FILE_EDITOR_DESCRIPTION } from '../vended-tools/file-editor/index.js'
-import { makeBash, SANDBOX_BASH_DESCRIPTION } from '../vended-tools/bash/index.js'
+import { makeShell, SANDBOX_SHELL_DESCRIPTION } from '../vended-tools/shell/index.js'
 
 /**
  * Options for constructing a {@link DockerSandbox}.
@@ -87,9 +87,9 @@ export class DockerSandbox extends PosixShellSandbox {
         name: 'sandbox_file_editor',
         description: `${DEFAULT_FILE_EDITOR_DESCRIPTION} Files are in Docker container "${this.container}".`,
       }),
-      makeBash(this, {
-        name: 'sandbox_bash',
-        description: `${SANDBOX_BASH_DESCRIPTION} Runs in Docker container "${this.container}".${cwd}`,
+      makeShell(this, {
+        name: 'sandbox_shell',
+        description: `${SANDBOX_SHELL_DESCRIPTION} Runs in Docker container "${this.container}".${cwd}`,
       }),
     ]
   }

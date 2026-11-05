@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from .types import InjectionContext, InjectionTriggerPredicate
 
 if TYPE_CHECKING:
-    from .._middleware.stages import InvokeModelContext
+    from ..middleware.stages import InvokeModelContext
     from ..types.content import ContentBlock, Message, Messages
 
 logger = logging.getLogger(__name__)
@@ -90,7 +90,9 @@ def _create_injection_middleware(
         if text is None or not text.strip():
             return context
 
-        return replace(context, messages=_fold_into_last_user_message(context.messages, text))
+        folded, appended = _fold_into_last_user_message(context.messages, text)
+
+        return replace(context, messages=folded, dynamic_trailing_blocks=context.dynamic_trailing_blocks + appended)
 
     return handler
 
@@ -143,18 +145,16 @@ def _is_user_turn(messages: Messages) -> bool:
     return last["role"] == "user" and not any("toolResult" in block for block in last["content"])
 
 
-def _fold_into_last_user_message(messages: Messages, text: str) -> Messages:
+def _fold_into_last_user_message(messages: Messages, text: str) -> tuple[Messages, int]:
     """Fold ``text`` into the most recent ``user`` message as a text block, returning a NEW list.
 
     Folding into the existing user message (rather than inserting a standalone message) keeps
-    role alternation valid in both chat and the autonomous tool loop. The block is placed to
-    keep the message valid for the model:
+    role alternation valid in both chat and the autonomous tool loop.
 
-    - A plain user ask: the text is **prepended**, leaving the user's own ask in the recency
-      slot — the last thing the model reads.
-    - A tool-result turn (the message carries a tool result block): the text is **appended**,
-      because providers require the tool result to be the first content block in the turn that
-      answers a tool use.
+    The text is always **appended**. A tool result has to stay the first content block in the turn
+    that answers a tool use, and a trailing run is the only placement a provider can keep out of its
+    cached prefix — text ahead of the stable conversation would invalidate the cache from the first
+    block onward.
 
     The input list and its messages are never mutated. When there is no ``user`` message, the
     input list is returned unchanged.
@@ -164,7 +164,9 @@ def _fold_into_last_user_message(messages: Messages, text: str) -> Messages:
         text: The text to fold into the most recent user message.
 
     Returns:
-        A new list with the folded message, or the input list when there is no user message.
+        The folded conversation and how many trailing blocks of its last message are per-call
+        content: 1 when the fold landed on the last message, 0 otherwise (including when there is
+        no user message to fold into, in which case the input list is returned unchanged).
     """
     target_index = -1
     for index in range(len(messages) - 1, -1, -1):
@@ -172,14 +174,14 @@ def _fold_into_last_user_message(messages: Messages, text: str) -> Messages:
             target_index = index
             break
     if target_index < 0:
-        return messages
+        return messages, 0
 
     target = messages[target_index]
-    injected: ContentBlock = {"text": text}
-    # A tool result must stay the first block in the turn that answers a tool use, so append
-    # rather than prepend when the target carries one.
-    has_tool_result = any("toolResult" in block for block in target["content"])
-    content = [*target["content"], injected] if has_tool_result else [injected, *target["content"]]
+    # Some providers concatenate adjacent text blocks, which would run this onto the user's own words.
+    has_text = any("text" in block for block in target["content"])
+    separator = "\n\n" if has_text and not text.startswith("\n") else ""
+    injected: ContentBlock = {"text": f"{separator}{text}"}
+    content = [*target["content"], injected]
 
     folded: Message = {"role": target["role"], "content": content}
     if "metadata" in target:
@@ -187,4 +189,5 @@ def _fold_into_last_user_message(messages: Messages, text: str) -> Messages:
 
     result = list(messages)
     result[target_index] = folded
-    return result
+    # A provider only places its cache point in the last message, so a fold elsewhere reports nothing.
+    return result, (1 if target_index == len(messages) - 1 else 0)

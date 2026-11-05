@@ -6,10 +6,6 @@
  * OpenAI SDK consumes. Tokens are minted on demand via
  * `@aws/bedrock-token-generator` so long-running agents survive the bearer
  * token's maximum lifetime.
- *
- * `@aws/bedrock-token-generator` is declared as an optional peer dependency, so
- * the import is lazy: it happens the first time the OpenAI client's async
- * `apiKey` setter is invoked.
  */
 
 import type { AwsCredentialIdentity, AwsCredentialIdentityProvider } from '@smithy/types'
@@ -17,14 +13,30 @@ import type { AwsCredentialIdentity, AwsCredentialIdentityProvider } from '@smit
 const MANTLE_DOCS_URL = 'https://docs.aws.amazon.com/bedrock/latest/userguide/inference-openai.html'
 
 /**
- * Mantle-routed model id prefixes served from `/openai/v1` instead of `/v1`.
- *
- * On Mantle the base path is keyed by model family, not API surface: hosted
- * OpenAI models (`openai.gpt-5.*`) are served from `/openai/v1`, while other
- * models (e.g. `openai.gpt-oss-*`) use `/v1` — both on the same `/responses`
- * and `/chat/completions` endpoints.
+ * Mantle model lines served from `/openai/v1`; every other Mantle model uses
+ * `/v1`, and the wrong base path fails with HTTP 400. The base path is a
+ * per-model property that no Mantle API reports, so these prefixes were
+ * verified against the `us-east-1` catalog on 2026-08-05. Scope each prefix to
+ * a single model line, never a vendor: one vendor's lines can split across base
+ * paths (`google.gemma-4-*` is on `/openai/v1`, `google.gemma-3-*` is on
+ * `/v1`). An unmatched new line falls through to `/v1`; the `mantle-routing`
+ * integ test fails naming any id that routes wrong.
  */
-const OPENAI_PATH_MODEL_PREFIXES = ['openai.gpt-5.'] as const
+const OPENAI_PATH_MODEL_PREFIXES = [
+  'openai.gpt-5.',
+  // Not in the catalog the rest of this list was verified against; base path per the model card.
+  'openai.gpt-daybreak-',
+  'openai.gpt-6-',
+  'openai.gpt-6.',
+  'xai.grok-4.',
+  'google.gemma-4-',
+] as const
+
+// Matches AWS region identifiers such as us-east-1, ap-southeast-1, and us-gov-east-1.
+// Anchored so a malformed region (e.g. one containing '@', ':', '/', '#') cannot re-point
+// the Mantle endpoint URL to a non-AWS host. Mirrors the Python SDK's validate_region
+// (`[0-9]` rather than `\d` keeps the two patterns character-identical).
+const VALID_REGION = /^[a-z]{2}(-[a-z]+)+-[0-9]+$/
 
 /**
  * Async function that returns a freshly minted Bedrock Mantle bearer token.
@@ -70,19 +82,36 @@ export interface BedrockMantleConfig {
 }
 
 /**
+ * Validates an AWS region before it is interpolated into the Mantle endpoint URL.
+ *
+ * Guards against a malformed region (containing URL control characters such as
+ * `@`, `:`, `/`, `#`) re-pointing a signed request to a non-AWS host, which would
+ * exfiltrate the minted bearer token.
+ *
+ * @internal
+ */
+function validateRegion(region: string): string {
+  if (!VALID_REGION.test(region)) {
+    throw new Error(`invalid AWS region: '${region}'`)
+  }
+  return region
+}
+
+/**
  * Resolves the AWS region for Mantle, preferring explicit config and falling
- * back to the standard AWS env vars.
+ * back to the standard AWS env vars. The resolved region is validated before it
+ * is returned, since it is interpolated into the Mantle endpoint URL.
  *
  * @internal
  */
 export function resolveMantleRegion(config: BedrockMantleConfig): string {
   if (config.region) {
-    return config.region
+    return validateRegion(config.region)
   }
 
   const envRegion = globalThis?.process?.env?.AWS_REGION || globalThis?.process?.env?.AWS_DEFAULT_REGION
   if (envRegion) {
-    return envRegion
+    return validateRegion(envRegion)
   }
 
   throw new Error(
@@ -93,17 +122,25 @@ export function resolveMantleRegion(config: BedrockMantleConfig): string {
 }
 
 /**
- * Builds the Mantle base URL for a region and model id.
+ * Resolves the Mantle base path for a model id.
  *
- * The base path is keyed by model family: `openai.gpt-5.*` is served from
- * `/openai/v1`, all other Mantle-routed models from `/v1`. This mirrors the
- * Python SDK's `_resolve_mantle_base_path`.
+ * Mirrors the Python SDK's `_resolve_mantle_base_path`. Exported for the
+ * `mantle-routing` integ test, which asserts this resolution against the live
+ * Mantle catalog.
+ *
+ * @internal
+ */
+export function resolveMantleBasePath(modelId: string): '/v1' | '/openai/v1' {
+  return OPENAI_PATH_MODEL_PREFIXES.some((prefix) => modelId.startsWith(prefix)) ? '/openai/v1' : '/v1'
+}
+
+/**
+ * Builds the Mantle base URL for a region and model id.
  *
  * @internal
  */
 export function bedrockMantleBaseUrl(region: string, modelId: string): string {
-  const suffix = OPENAI_PATH_MODEL_PREFIXES.some((prefix) => modelId.startsWith(prefix)) ? '/openai/v1' : '/v1'
-  return `https://bedrock-mantle.${region}.api.aws${suffix}`
+  return `https://bedrock-mantle.${region}.api.aws${resolveMantleBasePath(modelId)}`
 }
 
 /**

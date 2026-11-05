@@ -15,8 +15,10 @@ export type IntegrationType =
   | 'tool'
   | 'session-manager'
   | 'memory-store'
+  | 'storage'
   | 'integration'
   | 'plugin'
+  | 'observability'
   | 'agent-extension'
   | 'intervention'
 

@@ -1,0 +1,51 @@
+---
+interface Props {
+  title?: string
+  variant?: 'warning' | 'addition'
+}
+const { title = 'Changed since recording', variant = 'warning' } = Astro.props
+const titleId = title ? `course-notice-${crypto.randomUUID()}` : undefined
+---
+
+<aside
+  class:list={['course-notice', { 'course-notice--addition': variant === 'addition' }]}
+  role={title ? undefined : 'note'}
+  aria-labelledby={titleId}
+>
+  {title && <p id={titleId} class="course-notice__title">{title}</p>}
+  <slot />
+</aside>
+
+<style>
+  .course-notice {
+    --course-notice-border: var(--sl-color-red);
+    --course-notice-background: var(--sl-color-red-low);
+    --course-notice-accent: var(--sl-color-red-high);
+    margin-block: 1.5rem;
+    padding: 1rem 1.25rem;
+    border: 1px solid var(--course-notice-border);
+    border-inline-start-width: 4px;
+    border-radius: 0.35rem;
+    background: var(--course-notice-background);
+    color: var(--sl-color-white);
+  }
+  .course-notice__title {
+    margin: 0 0 0.5rem;
+    font-weight: 700;
+    color: var(--course-notice-accent);
+  }
+  .course-notice :global(a) {
+    color: var(--course-notice-accent);
+  }
+  .course-notice :global(> :last-child) {
+    margin-bottom: 0;
+  }
+  .course-notice :global(> :first-child) {
+    margin-top: 0;
+  }
+  .course-notice--addition {
+    --course-notice-border: var(--sl-color-green);
+    --course-notice-background: var(--sl-color-green-low);
+    --course-notice-accent: var(--sl-color-green-high);
+  }
+</style>

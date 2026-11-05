@@ -1,22 +1,30 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import {
   BedrockRuntimeClient,
+  ConverseCommand,
   ConverseStreamCommand,
   CountTokensCommand,
   ValidationException,
+  type ConverseStreamCommandInput,
 } from '@aws-sdk/client-bedrock-runtime'
 import { isNode } from '../../__fixtures__/environment.js'
 import { BedrockModel } from '../bedrock.js'
+import type { BedrockModelOptions } from '../bedrock.js'
 import { ContextWindowOverflowError, ModelThrottledError } from '../../errors.js'
 import { Message, ReasoningBlock, ToolUseBlock, ToolResultBlock, JsonBlock } from '../../types/messages.js'
 import type { SystemContentBlock } from '../../types/messages.js'
 import { TextBlock, GuardContentBlock, CachePointBlock } from '../../types/messages.js'
-import { ImageBlock, VideoBlock, DocumentBlock } from '../../types/media.js'
+import { AudioBlock, ImageBlock, VideoBlock, DocumentBlock } from '../../types/media.js'
 import { CitationsBlock } from '../../types/citations.js'
 import type { StreamOptions } from '../model.js'
-import { collectIterator } from '../../__fixtures__/model-test-helpers.js'
+import { collectGenerator, collectIterator } from '../../__fixtures__/model-test-helpers.js'
+import { anyTrackingId } from '../../__fixtures__/message-helpers.js'
 import { NOOP_TOOL_SPEC } from '../../tools/noop-tool.js'
 import { warnOnce } from '../../logging/warn-once.js'
+import { logger } from '../../logging/logger.js'
+import { z } from 'zod'
+import { clearStructuredOutputSupport, toNativeOutputSchema } from '../native-output.js'
+import { zodSchemaToJsonSchema } from '../../tools/zod-utils.js'
 
 /**
  * Helper function to mock BedrockRuntimeClient implementation with customizable config.
@@ -206,6 +214,7 @@ describe('BedrockModel', () => {
       const provider = new BedrockModel({ modelId: customModelId })
       expect(provider.getConfig()).toStrictEqual({
         modelId: customModelId,
+        maxTokens: 8192,
         contextWindowLimit: 200_000,
       })
     })
@@ -284,6 +293,45 @@ describe('BedrockModel', () => {
       expect(BedrockRuntimeClient).toHaveBeenCalledWith(expect.objectContaining({ requestHandler: handler }))
     })
 
+    it('applies the requestTimeout option to the default request handler', () => {
+      new BedrockModel({ region: 'us-west-2', requestTimeout: 600_000 })
+      expect(BedrockRuntimeClient).toHaveBeenCalledWith(
+        expect.objectContaining({ requestHandler: { requestTimeout: 600_000 } })
+      )
+    })
+
+    it('lets the requestTimeout option take precedence over clientConfig.requestHandler', () => {
+      new BedrockModel({
+        region: 'us-west-2',
+        requestTimeout: 600_000,
+        clientConfig: { requestHandler: { requestTimeout: 5_000, connectionTimeout: 1_000 } },
+      })
+      expect(BedrockRuntimeClient).toHaveBeenCalledWith(
+        expect.objectContaining({ requestHandler: { requestTimeout: 600_000, connectionTimeout: 1_000 } })
+      )
+    })
+
+    it('falls back to the default when requestTimeout is explicitly undefined', () => {
+      const options = { region: 'us-west-2', requestTimeout: undefined } as unknown as BedrockModelOptions
+      new BedrockModel(options)
+      expect(BedrockRuntimeClient).toHaveBeenCalledWith(
+        expect.objectContaining({ requestHandler: { requestTimeout: 120_000 } })
+      )
+    })
+
+    it('warns and keeps a handler instance untouched when requestTimeout is also given', () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const handler = { handle: vi.fn(), updateHttpClientConfig: vi.fn(), httpHandlerConfigs: vi.fn() }
+      new BedrockModel({ region: 'us-west-2', requestTimeout: 600_000, clientConfig: { requestHandler: handler } })
+      expect(BedrockRuntimeClient).toHaveBeenCalledWith(expect.objectContaining({ requestHandler: handler }))
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'request_timeout=<600000> | requestTimeout is ignored when clientConfig.requestHandler is a handler instance'
+        )
+      )
+      warnSpy.mockRestore()
+    })
+
     it('adds api key middleware when apiKey is provided', () => {
       const provider = new BedrockModel({ region: 'us-east-1', apiKey: 'br-test-key' })
       const mockAdd = provider['_client'].middlewareStack.add as ReturnType<typeof vi.fn>
@@ -322,25 +370,28 @@ describe('BedrockModel', () => {
       expect(config).toStrictEqual({
         modelId: 'global.anthropic.claude-sonnet-4-6',
         temperature: 0.5,
+        maxTokens: 128_000,
         contextWindowLimit: 1_000_000,
       })
     })
 
     it('includes contextWindowLimit in config when provided', () => {
       const provider = new BedrockModel({
-        modelId: 'anthropic.claude-sonnet-4-20250514-v1:0',
+        modelId: 'anthropic.claude-sonnet-4-6',
         contextWindowLimit: 200_000,
       })
       expect(provider.getConfig()).toStrictEqual({
-        modelId: 'anthropic.claude-sonnet-4-20250514-v1:0',
+        modelId: 'anthropic.claude-sonnet-4-6',
+        maxTokens: 128_000,
         contextWindowLimit: 200_000,
       })
     })
 
     it('auto-populates contextWindowLimit from model ID lookup', () => {
-      const provider = new BedrockModel({ modelId: 'anthropic.claude-sonnet-4-20250514-v1:0' })
+      const provider = new BedrockModel({ modelId: 'anthropic.claude-sonnet-4-6' })
       expect(provider.getConfig()).toStrictEqual({
-        modelId: 'anthropic.claude-sonnet-4-20250514-v1:0',
+        modelId: 'anthropic.claude-sonnet-4-6',
+        maxTokens: 128_000,
         contextWindowLimit: 1_000_000,
       })
     })
@@ -349,6 +400,7 @@ describe('BedrockModel', () => {
       const provider = new BedrockModel({ modelId: 'us.anthropic.claude-sonnet-4-6' })
       expect(provider.getConfig()).toStrictEqual({
         modelId: 'us.anthropic.claude-sonnet-4-6',
+        maxTokens: 128_000,
         contextWindowLimit: 1_000_000,
       })
     })
@@ -357,17 +409,28 @@ describe('BedrockModel', () => {
       const provider = new BedrockModel()
       expect(provider.getConfig()).toStrictEqual({
         modelId: 'global.anthropic.claude-sonnet-4-6',
+        maxTokens: 128_000,
         contextWindowLimit: 1_000_000,
       })
     })
 
+    it('auto-populates contextWindowLimit from the modelInfo override over the shared value', () => {
+      const provider = new BedrockModel({
+        modelId: 'anthropic.claude-sonnet-4-6',
+        modelInfo: { limits: { contextWindow: 500_000 } },
+      })
+      expect(provider.getConfig().contextWindowLimit).toBe(500_000)
+      expect(provider.modelInfo.limits?.contextWindow).toBe(500_000)
+    })
+
     it('does not override explicit contextWindowLimit', () => {
       const provider = new BedrockModel({
-        modelId: 'anthropic.claude-sonnet-4-20250514-v1:0',
+        modelId: 'anthropic.claude-sonnet-4-6',
         contextWindowLimit: 100_000,
       })
       expect(provider.getConfig()).toStrictEqual({
-        modelId: 'anthropic.claude-sonnet-4-20250514-v1:0',
+        modelId: 'anthropic.claude-sonnet-4-6',
+        maxTokens: 128_000,
         contextWindowLimit: 100_000,
       })
     })
@@ -376,6 +439,198 @@ describe('BedrockModel', () => {
       const provider = new BedrockModel({ modelId: 'unknown.model-v1:0' })
       expect(provider.getConfig()).toStrictEqual({
         modelId: 'unknown.model-v1:0',
+      })
+    })
+  })
+
+  describe('info', () => {
+    it('reads cache points for Claude model ids from the shared model info', () => {
+      const provider = new BedrockModel({ modelId: 'us.anthropic.claude-sonnet-4-6' })
+
+      expect(provider.modelInfo.capabilities?.promptCaching).toBe('cachePoints')
+    })
+
+    it('leaves caching unknown for other model ids', () => {
+      const provider = new BedrockModel({ modelId: 'amazon.nova-pro-v1:0' })
+
+      expect(provider.modelInfo.capabilities?.promptCaching).toBeUndefined()
+    })
+
+    it.each([
+      'anthropic.claude-future-9',
+      'arn:aws:bedrock:us-east-1:123456789012:default-prompt-router/anthropic.claude:1',
+      'US.ANTHROPIC.CLAUDE-SONNET-4-6',
+    ])('auto-caches an unlisted Claude id by name: %s', async (modelId) => {
+      const provider = new BedrockModel({ modelId, cacheConfig: { strategy: 'auto' } })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+
+      collectIterator(provider.stream(messages, { systemPrompt: 'Be helpful' }))
+
+      expect(provider.modelInfo.capabilities?.promptCaching).toBeUndefined()
+      expect(vi.mocked(ConverseStreamCommand).mock.lastCall?.[0].system).toEqual([
+        { text: 'Be helpful' },
+        { cachePoint: { type: 'default' } },
+      ])
+    })
+
+    it('does not auto-cache an unlisted id that is not Claude', async () => {
+      const provider = new BedrockModel({
+        modelId: 'arn:aws:bedrock:us-east-1:123456789012:custom-model/acme.foo/abc',
+        cacheConfig: { strategy: 'auto' },
+      })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+
+      collectIterator(provider.stream(messages, { systemPrompt: 'Be helpful' }))
+
+      expect(provider.modelInfo.capabilities?.promptCaching).toBeUndefined()
+      expect(vi.mocked(ConverseStreamCommand).mock.lastCall?.[0].system).toEqual([{ text: 'Be helpful' }])
+    })
+
+    it.each(['us.openai.gpt-6-luna', 'openai.gpt-6.1-sol', 'openai.gpt-5.6-sol'])(
+      'reports an OpenAI model as implicitly cached and sends no cache point: %s',
+      async (modelId) => {
+        const provider = new BedrockModel({ modelId, cacheConfig: { strategy: 'auto' } })
+        const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+
+        collectIterator(provider.stream(messages, { systemPrompt: 'Be helpful' }))
+
+        expect(provider.modelInfo.capabilities?.promptCaching).toBe('auto')
+        expect(vi.mocked(ConverseStreamCommand).mock.lastCall?.[0].system).toEqual([{ text: 'Be helpful' }])
+      }
+    )
+
+    it('lets a modelInfo override win over implicit caching for an OpenAI model', () => {
+      const provider = new BedrockModel({
+        modelId: 'us.openai.gpt-6-luna',
+        modelInfo: { capabilities: { promptCaching: 'cachePoints' } },
+      })
+      expect(provider.modelInfo.capabilities?.promptCaching).toBe('cachePoints')
+    })
+
+    it('injects auto cache points on a model the info override says takes them', async () => {
+      const provider = new BedrockModel({
+        modelId: 'amazon.nova-pro-v1:0',
+        cacheConfig: { strategy: 'auto' },
+        modelInfo: { capabilities: { promptCaching: 'cachePoints' } },
+      })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+
+      collectIterator(provider.stream(messages, { systemPrompt: 'Be helpful' }))
+
+      expect(vi.mocked(ConverseStreamCommand).mock.lastCall?.[0].system).toEqual([
+        { text: 'Be helpful' },
+        { cachePoint: { type: 'default' } },
+      ])
+    })
+
+    it('skips auto cache points on a Claude model the info override marks unsupported', async () => {
+      const provider = new BedrockModel({
+        modelId: 'us.anthropic.claude-sonnet-4-6',
+        cacheConfig: { strategy: 'auto' },
+        modelInfo: { capabilities: { promptCaching: 'unsupported' } },
+      })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+
+      collectIterator(provider.stream(messages, { systemPrompt: 'Be helpful' }))
+
+      expect(vi.mocked(ConverseStreamCommand).mock.lastCall?.[0].system).toEqual([{ text: 'Be helpful' }])
+    })
+
+    describe('maxTokens default', () => {
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+      const sentInferenceConfig = (): unknown => vi.mocked(ConverseStreamCommand).mock.lastCall?.[0].inferenceConfig
+
+      it.each([
+        ['a listed model id', { modelId: 'anthropic.claude-sonnet-4-6' }, 128_000],
+        ['a cross-region model id', { modelId: 'us.anthropic.claude-sonnet-4-6' }, 128_000],
+        ['the SDK default model', {}, 128_000],
+        ['an older Claude model', { modelId: 'anthropic.claude-3-5-sonnet-20241022-v2:0' }, 8192],
+        [
+          'an inference profile ARN',
+          { modelId: 'arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.anthropic.claude-sonnet-4-6' },
+          128_000,
+        ],
+      ])('defaults maxTokens to the model info output ceiling for %s', (_, config, maxTokens) => {
+        const provider = new BedrockModel(config)
+
+        collectIterator(provider.stream(messages))
+
+        expect(sentInferenceConfig()).toStrictEqual({ maxTokens })
+      })
+
+      it('defaults maxTokens from the modelInfo override', () => {
+        const provider = new BedrockModel({ modelId: 'm1', modelInfo: { limits: { maxOutputTokens: 2_000 } } })
+
+        collectIterator(provider.stream(messages))
+
+        expect(sentInferenceConfig()).toStrictEqual({ maxTokens: 2_000 })
+      })
+
+      it('leaves maxTokens unset for a model the shared model info does not list', () => {
+        const provider = new BedrockModel({ modelId: 'unknown.model-v1:0' })
+
+        collectIterator(provider.stream(messages))
+
+        expect(provider.modelInfo.limits?.maxOutputTokens).toBeUndefined()
+        expect(sentInferenceConfig()).toBeUndefined()
+      })
+
+      it('sends an explicit maxTokens over the model info output ceiling', () => {
+        const provider = new BedrockModel({ modelId: 'anthropic.claude-sonnet-4-6', maxTokens: 1 })
+
+        collectIterator(provider.stream(messages))
+
+        expect(sentInferenceConfig()).toStrictEqual({ maxTokens: 1 })
+      })
+
+      it('re-resolves the default maxTokens when modelId changes', () => {
+        const provider = new BedrockModel({ modelId: 'anthropic.claude-sonnet-4-6' })
+        provider.updateConfig({ modelId: 'anthropic.claude-haiku-4-5-20251001-v1:0' })
+
+        collectIterator(provider.stream(messages))
+
+        expect(sentInferenceConfig()).toStrictEqual({ maxTokens: 64_000 })
+      })
+
+      it.each([
+        ['a 200k-window model', { modelId: 'anthropic.claude-sonnet-4-5-20250929-v1:0' }],
+        [
+          'a user-set contextWindowLimit',
+          { modelId: 'anthropic.claude-sonnet-4-5-20250929-v1:0', contextWindowLimit: 100_000 },
+        ],
+      ])('does not cap the default maxTokens by the context window for %s', (_, config) => {
+        const provider = new BedrockModel(config)
+
+        collectIterator(provider.stream(messages))
+
+        expect(sentInferenceConfig()).toStrictEqual({ maxTokens: 64_000 })
+      })
+
+      it('surfaces the default maxTokens in getConfig', () => {
+        expect(new BedrockModel({ modelId: 'anthropic.claude-sonnet-4-6' }).getConfig().maxTokens).toBe(128_000)
+      })
+
+      it('warns once when maxTokens is defaulted', () => {
+        new BedrockModel({ modelId: 'anthropic.claude-sonnet-4-6' })
+        expect(warnOnce).toHaveBeenCalledWith(
+          expect.objectContaining({ warn: expect.any(Function) }),
+          expect.stringContaining('max_tokens=<128000> | using default maxTokens')
+        )
+      })
+
+      it.each([
+        ['maxTokens is explicit', { modelId: 'anthropic.claude-sonnet-4-6', maxTokens: 1 }],
+        [
+          'it is pinned through modelInfo',
+          { modelId: 'anthropic.claude-sonnet-4-6', modelInfo: { limits: { maxOutputTokens: 2_000 } } },
+        ],
+        ['the model is unknown', { modelId: 'unknown.model-v1:0' }],
+      ])('does not warn about maxTokens when %s', (_, config) => {
+        new BedrockModel(config)
+        expect(warnOnce).not.toHaveBeenCalledWith(
+          expect.objectContaining({ warn: expect.any(Function) }),
+          expect.stringContaining('using default maxTokens')
+        )
       })
     })
   })
@@ -453,7 +708,7 @@ describe('BedrockModel', () => {
     it('formats the request to bedrock properly', async () => {
       const provider = new BedrockModel({
         region: 'us-west-2',
-        modelId: 'anthropic.claude-test-model',
+        modelId: 'anthropic.claude-sonnet-4-6',
         maxTokens: 1024,
         temperature: 0.7,
         topP: 0.9,
@@ -488,14 +743,14 @@ describe('BedrockModel', () => {
         MyExtraArg: 'ExtraArg',
         additionalModelRequestFields: ['World!'],
         additionalModelResponseFieldPaths: ['Hello!'],
-        modelId: 'anthropic.claude-test-model',
+        modelId: 'anthropic.claude-sonnet-4-6',
         messages: [
           {
             role: 'user',
             content: [{ text: 'Hello' }, { cachePoint: { type: 'default' } }],
           },
         ],
-        system: [{ text: 'You are a helpful assistant' }],
+        system: [{ text: 'You are a helpful assistant' }, { cachePoint: { type: 'default' } }],
         toolConfig: {
           toolChoice: { auto: {} },
           tools: [
@@ -578,6 +833,7 @@ describe('BedrockModel', () => {
 
       // Verify ConverseStreamCommand was called with properly formatted request
       expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+        inferenceConfig: { maxTokens: 128_000 },
         messages: [
           {
             content: [
@@ -697,6 +953,168 @@ describe('BedrockModel', () => {
       ])
     })
 
+    // Covers the strict_tools cases in strands-py test_bedrock.py, plus the TS-only
+    // unsupported-keyword warning.
+    describe('strictTools', () => {
+      const toolSpec = (inputSchema: object) => ({
+        name: 'calc',
+        description: 'Calculator',
+        inputSchema,
+      })
+      const lastTools = () => {
+        const call = vi.mocked(ConverseStreamCommand).mock.lastCall?.[0]
+        return (call?.toolConfig?.tools ?? []) as Array<{
+          toolSpec?: { name?: string; description?: string; strict?: boolean; inputSchema?: { json?: unknown } }
+        }>
+      }
+
+      it('injects strict: true and closes the schema when strictTools is true', () => {
+        const provider = new BedrockModel({ strictTools: true })
+        const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+        collectIterator(
+          provider.stream(messages, {
+            toolSpecs: [toolSpec({ type: 'object', properties: { a: { type: 'string' } } })],
+          })
+        )
+
+        expect(lastTools()[0]!.toolSpec).toStrictEqual({
+          name: 'calc',
+          description: 'Calculator',
+          inputSchema: {
+            json: { type: 'object', properties: { a: { type: 'string' } }, additionalProperties: false },
+          },
+          strict: true,
+        })
+        expect(warnOnce).not.toHaveBeenCalledWith(expect.anything(), expect.stringContaining('strict mode rejects'))
+      })
+
+      it('does not mutate the caller-provided input schema', () => {
+        const provider = new BedrockModel({ strictTools: true })
+        const inputSchema = { type: 'object', properties: { a: { type: 'string' } } }
+        const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+        collectIterator(provider.stream(messages, { toolSpecs: [toolSpec(inputSchema)] }))
+
+        expect(lastTools()[0]!.toolSpec!.inputSchema!.json).toHaveProperty('additionalProperties', false)
+        expect('additionalProperties' in inputSchema).toBe(false)
+      })
+
+      it('preserves an existing additionalProperties: true', () => {
+        const provider = new BedrockModel({ strictTools: true })
+        const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+        collectIterator(
+          provider.stream(messages, {
+            toolSpecs: [
+              toolSpec({ type: 'object', properties: { a: { type: 'string' } }, additionalProperties: true }),
+            ],
+          })
+        )
+
+        expect(lastTools()[0]!.toolSpec!.inputSchema!.json).toEqual({
+          type: 'object',
+          properties: { a: { type: 'string' } },
+          additionalProperties: true,
+        })
+        expect(warnOnce).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.stringContaining('tool=<calc>, keywords=<additionalProperties> | tool schema uses keywords')
+        )
+      })
+
+      it('warns with the tool name and keywords when a schema uses bounds', () => {
+        const provider = new BedrockModel({ strictTools: true })
+        const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+        collectIterator(
+          provider.stream(messages, {
+            toolSpecs: [toolSpec({ type: 'object', properties: { n: { type: 'integer', minimum: 0, maximum: 9 } } })],
+          })
+        )
+
+        expect(warnOnce).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.stringContaining('tool=<calc>, keywords=<maximum,minimum> | tool schema uses keywords')
+        )
+      })
+
+      it('patches nested object schemas', () => {
+        const provider = new BedrockModel({ strictTools: true })
+        const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+        collectIterator(
+          provider.stream(messages, {
+            toolSpecs: [
+              toolSpec({
+                type: 'object',
+                properties: { outer: { type: 'object', properties: { inner: { type: 'string' } } } },
+              }),
+            ],
+          })
+        )
+
+        expect(lastTools()[0]!.toolSpec!.inputSchema!.json).toEqual({
+          type: 'object',
+          properties: {
+            outer: { type: 'object', properties: { inner: { type: 'string' } }, additionalProperties: false },
+          },
+          additionalProperties: false,
+        })
+      })
+
+      it('omits strict and leaves the schema unchanged by default', () => {
+        const provider = new BedrockModel()
+        const inputSchema = { type: 'object', properties: { a: { type: 'string' } } }
+        const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+        collectIterator(provider.stream(messages, { toolSpecs: [toolSpec(inputSchema)] }))
+
+        const spec = lastTools()[0]!.toolSpec!
+        expect(spec.strict).toBeUndefined()
+        expect(spec.inputSchema!.json).toEqual(inputSchema)
+      })
+
+      it('omits strict when strictTools is false', () => {
+        const provider = new BedrockModel({ strictTools: false })
+        const inputSchema = { type: 'object', properties: { a: { type: 'string' } } }
+        const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+        collectIterator(provider.stream(messages, { toolSpecs: [toolSpec(inputSchema)] }))
+
+        const spec = lastTools()[0]!.toolSpec!
+        expect(spec.strict).toBeUndefined()
+        expect(spec.inputSchema!.json).toEqual(inputSchema)
+      })
+
+      it('applies strict to every tool when multiple tool specs are given', () => {
+        const provider = new BedrockModel({ strictTools: true })
+        const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+        collectIterator(
+          provider.stream(messages, {
+            toolSpecs: [
+              toolSpec({ type: 'object', properties: { a: { type: 'string' } } }),
+              { name: 'other', description: 'Other', inputSchema: { type: 'object', properties: {} } },
+            ],
+          })
+        )
+
+        expect(lastTools()).toStrictEqual([
+          {
+            toolSpec: {
+              name: 'calc',
+              description: 'Calculator',
+              inputSchema: {
+                json: { type: 'object', properties: { a: { type: 'string' } }, additionalProperties: false },
+              },
+              strict: true,
+            },
+          },
+          {
+            toolSpec: {
+              name: 'other',
+              description: 'Other',
+              inputSchema: { json: { type: 'object', properties: {}, additionalProperties: false } },
+              strict: true,
+            },
+          },
+        ])
+      })
+    })
+
     it('formats reasoning messages properly', async () => {
       const provider = new BedrockModel()
       const messages = [
@@ -719,6 +1137,7 @@ describe('BedrockModel', () => {
 
       // Verify ConverseStreamCommand was called with properly formatted request
       expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+        inferenceConfig: { maxTokens: 128_000 },
         messages: [
           {
             role: 'user',
@@ -755,6 +1174,7 @@ describe('BedrockModel', () => {
       collectIterator(provider.stream(messages))
 
       expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+        inferenceConfig: { maxTokens: 128_000 },
         messages: [
           {
             role: 'assistant',
@@ -775,6 +1195,55 @@ describe('BedrockModel', () => {
       })
     })
 
+    const signedBlock = new ReasoningBlock({ text: 'Claude thinking', signature: 'sig' })
+    const unsignedBlock = new ReasoningBlock({ text: 'gpt-oss thinking' })
+    const redactedBlock = new ReasoningBlock({ redactedContent: new Uint8Array([1, 2, 3]) })
+    const SIGNED_REASONING = { reasoningContent: { reasoningText: { text: 'Claude thinking', signature: 'sig' } } }
+    const UNSIGNED_REASONING = { reasoningContent: { reasoningText: { text: 'gpt-oss thinking' } } }
+    const REDACTED_REASONING = { reasoningContent: { redactedContent: new Uint8Array([1, 2, 3]) } }
+
+    // Guards against https://github.com/strands-agents/harness-sdk/issues/4779
+    it.each([
+      // Non-Anthropic models reject the Anthropic-only signature; models with their own reasoning keep it unsigned.
+      { modelId: 'openai.gpt-oss-120b-1:0', expReasoning: [UNSIGNED_REASONING, REDACTED_REASONING] },
+      { modelId: 'moonshot.kimi-k2-thinking', expReasoning: [UNSIGNED_REASONING, REDACTED_REASONING] },
+      { modelId: 'minimax.minimax-m2.5', expReasoning: [UNSIGNED_REASONING, REDACTED_REASONING] },
+      // Anthropic models require a signature on every reasoning text block.
+      { modelId: 'global.anthropic.claude-opus-5', expReasoning: [SIGNED_REASONING, REDACTED_REASONING] },
+      {
+        modelId: 'arn:aws:bedrock:us-west-2::foundation-model/anthropic.claude-sonnet-4-5',
+        expReasoning: [SIGNED_REASONING, REDACTED_REASONING],
+      },
+      // Models that reject reasoning text outright; redactedContent is opaque and kept.
+      { modelId: 'us.amazon.nova-pro-v1:0', expReasoning: [REDACTED_REASONING] },
+      { modelId: 'us.meta.llama3-3-70b-instruct-v1:0', expReasoning: [REDACTED_REASONING] },
+      { modelId: 'openai.gpt-5.5', expReasoning: [REDACTED_REASONING] },
+      { modelId: 'openai.gpt-daybreak-blue-5.6-sol', expReasoning: [REDACTED_REASONING] },
+      { modelId: 'qwen.qwen3-coder-480b-a35b-v1:0', expReasoning: [REDACTED_REASONING] },
+      // DeepSeek rejects reasoning content altogether.
+      { modelId: 'us.deepseek.r1-v1:0', expReasoning: [] },
+      // An ARN or bare inference profile ID can hide the vendor, so nothing is dropped.
+      {
+        modelId: 'arn:aws:bedrock:us-west-2:123456789012:application-inference-profile/abc123',
+        expReasoning: [SIGNED_REASONING, UNSIGNED_REASONING, REDACTED_REASONING],
+      },
+      { modelId: 'abc123xyz', expReasoning: [SIGNED_REASONING, UNSIGNED_REASONING, REDACTED_REASONING] },
+    ])('drops the replayed reasoning $modelId rejects', async ({ modelId, expReasoning }) => {
+      const provider = new BedrockModel({ modelId })
+      const messages = [
+        new Message({ role: 'user', content: [new TextBlock('Hello')] }),
+        new Message({
+          role: 'assistant',
+          content: [signedBlock, unsignedBlock, redactedBlock, new TextBlock('Response')],
+        }),
+      ]
+
+      await collectIterator(provider.stream(messages))
+
+      const call = mockConverseStreamCommand.mock.lastCall?.[0]
+      expect(call?.messages?.[1]?.content).toEqual([...expReasoning, { text: 'Response' }])
+    })
+
     it('formats cache point blocks in messages', async () => {
       const provider = new BedrockModel()
       const messages = [
@@ -788,6 +1257,7 @@ describe('BedrockModel', () => {
 
       // Verify ConverseStreamCommand was called with properly formatted request
       expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+        inferenceConfig: { maxTokens: 128_000 },
         messages: [
           {
             role: 'user',
@@ -813,10 +1283,38 @@ describe('BedrockModel', () => {
       collectIterator(provider.stream(messages))
 
       expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+        inferenceConfig: { maxTokens: 128_000 },
         messages: [
           {
             role: 'user',
             content: [{ text: 'Message with 1h cache point' }, { cachePoint: { type: 'default', ttl: '1h' } }],
+          },
+        ],
+        modelId: expect.any(String),
+      })
+    })
+
+    // https://github.com/strands-agents/harness-sdk/issues/3759
+    it.each([null, ''])('omits a falsy ttl on user-supplied cache point blocks in messages', async (ttl) => {
+      const provider = new BedrockModel()
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [
+            new TextBlock('Message with cache point'),
+            new CachePointBlock({ cacheType: 'default', ttl: ttl as unknown as string }),
+          ],
+        }),
+      ]
+
+      await collectIterator(provider.stream(messages))
+
+      expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+        inferenceConfig: { maxTokens: 128_000 },
+        messages: [
+          {
+            role: 'user',
+            content: [{ text: 'Message with cache point' }, { cachePoint: { type: 'default' } }],
           },
         ],
         modelId: expect.any(String),
@@ -1174,6 +1672,23 @@ describe('BedrockModel', () => {
           expected: ContextWindowOverflowError,
         },
         {
+          name: 'ContextWindowOverflowError for Nova input tokens exceeded (#5739)',
+          error: new ValidationException({
+            message:
+              'The model returned the following errors: Input Tokens Exceeded: Number of input tokens exceeds maximum length. Please update the input to try again.',
+            $metadata: {},
+          }),
+          expected: ContextWindowOverflowError,
+        },
+        {
+          name: 'ContextWindowOverflowError for OpenAI-style maximum context length (#5739)',
+          error: new ValidationException({
+            message: "The model returned the following errors: This model's maximum context length is 32768 tokens.",
+            $metadata: {},
+          }),
+          expected: ContextWindowOverflowError,
+        },
+        {
           name: 'ValidationException for invalid input',
           error: new ValidationException({ message: 'ValidationException', $metadata: {} }),
           expected: ValidationException,
@@ -1206,6 +1721,428 @@ describe('BedrockModel', () => {
   })
 
   describe('stream', () => {
+    // Guards against https://github.com/strands-agents/harness-sdk/issues/5763: after a tool result, Bedrock
+    // can end an empty turn with messageStop and metadata but no messageStart.
+    describe('when Bedrock ends an empty turn without a messageStart', () => {
+      it('aggregates an empty assistant message', async () => {
+        setupMockSend(async function* () {
+          yield { messageStop: { stopReason: 'end_turn' } }
+          yield { metadata: { usage: { inputTokens: 100, outputTokens: 1, totalTokens: 101 } } }
+        })
+        const provider = new BedrockModel()
+        const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+
+        const { result } = await collectGenerator(provider.streamAggregated(messages))
+
+        expect(result).toEqual({
+          message: {
+            type: 'message',
+            role: 'assistant',
+            content: [],
+            trackingId: anyTrackingId,
+            metadata: { usage: { inputTokens: 100, outputTokens: 1, totalTokens: 101 } },
+          },
+          stopReason: 'endTurn',
+          metadata: { type: 'modelMetadataEvent', usage: { inputTokens: 100, outputTokens: 1, totalTokens: 101 } },
+        })
+      })
+    })
+
+    describe('structured output enforcement', () => {
+      const forcedRejection = new ValidationException({
+        message:
+          "This model doesn't support the toolConfig.toolChoice.tool field. Remove toolConfig.toolChoice.tool and try again.",
+        $metadata: {},
+      })
+      const nativeRejection = new ValidationException({
+        message: "This model doesn't support the outputConfig field. Remove outputConfig and try again.",
+        $metadata: {},
+      })
+      const thinking = { type: 'adaptive' }
+      const schema = z.object({ name: z.string(), age: z.number() })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Generate a person')] })]
+      const structuredOutputOptions: StreamOptions = {
+        toolSpecs: [
+          { name: 'strands_structured_output', description: 'Output', inputSchema: zodSchemaToJsonSchema(schema) },
+        ],
+        toolChoice: { tool: { name: 'strands_structured_output' } },
+        structuredOutputSchema: schema,
+      }
+      const emptyStream = (): { stream: AsyncIterable<unknown> } => ({
+        stream: (async function* (): AsyncGenerator<unknown> {})(),
+      })
+
+      const sentRequests = (
+        command: typeof ConverseStreamCommand | typeof ConverseCommand = ConverseStreamCommand
+      ): ConverseStreamCommandInput[] => vi.mocked(command).mock.calls.map((call) => call[0])
+
+      /** The structured output mechanism a sent Converse request uses. */
+      const mechanismOf = (request: ConverseStreamCommandInput): string => {
+        if (request.toolConfig?.toolChoice && 'tool' in request.toolConfig.toolChoice) return 'forced'
+        return request.outputConfig?.textFormat ? 'native' : 'auto'
+      }
+
+      /** Mocks send to reject with each error in turn, then return an empty response. */
+      const mockRejections = (...errors: Error[]): ReturnType<typeof vi.fn> => {
+        const mockSend = vi.fn()
+        for (const error of errors) mockSend.mockRejectedValueOnce(error)
+        mockSend.mockImplementation(async () => emptyStream())
+        mockBedrockClientImplementation({ send: mockSend })
+        return mockSend
+      }
+
+      beforeEach(() => {
+        clearStructuredOutputSupport()
+      })
+
+      it.each([
+        { name: 'no rejection', rejections: [], expected: ['forced'] },
+        { name: 'a forced tool choice rejection', rejections: [forcedRejection], expected: ['forced', 'native'] },
+        {
+          name: 'forced and native rejections',
+          rejections: [forcedRejection, nativeRejection],
+          expected: ['forced', 'native', 'auto'],
+        },
+      ])('falls back to the next mechanism after $name and remembers it', async ({ rejections, expected }) => {
+        mockRejections(...rejections)
+        const provider = new BedrockModel({ modelId: 'm1' })
+
+        await collectIterator(provider.stream(messages, structuredOutputOptions))
+
+        expect(sentRequests().map(mechanismOf)).toStrictEqual(expected)
+
+        vi.mocked(ConverseStreamCommand).mockClear()
+        await collectIterator(provider.stream(messages, structuredOutputOptions))
+
+        expect(sentRequests().map(mechanismOf)).toStrictEqual([expected[expected.length - 1]])
+      })
+
+      it('falls back on a non-streaming request', async () => {
+        const mockSend = vi
+          .fn()
+          .mockRejectedValueOnce(forcedRejection)
+          .mockResolvedValue({
+            output: { message: { role: 'assistant', content: [{ text: '{"name": "John", "age": 30}' }] } },
+            stopReason: 'end_turn',
+            usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+          })
+        mockBedrockClientImplementation({ send: mockSend })
+        const provider = new BedrockModel({ modelId: 'm1', stream: false })
+
+        await collectIterator(provider.stream(messages, structuredOutputOptions))
+
+        expect(sentRequests(ConverseCommand).map(mechanismOf)).toStrictEqual(['forced', 'native'])
+      })
+
+      it('skips native output for a schema it cannot represent', async () => {
+        mockRejections(forcedRejection)
+        const provider = new BedrockModel({ modelId: 'm1' })
+        const recordSchema = z.object({ scores: z.record(z.string(), z.number()) })
+
+        await collectIterator(
+          provider.stream(messages, { ...structuredOutputOptions, structuredOutputSchema: recordSchema })
+        )
+
+        expect(sentRequests().map(mechanismOf)).toStrictEqual(['forced', 'auto'])
+      })
+
+      it('starts at native output for a model the shared model info says cannot be forced', async () => {
+        const mockSend = mockRejections()
+        const provider = new BedrockModel({ modelId: 'us.anthropic.claude-opus-5-5' })
+
+        await collectIterator(provider.stream(messages, structuredOutputOptions))
+
+        expect(mockSend).toHaveBeenCalledTimes(1)
+        expect(sentRequests().map(mechanismOf)).toStrictEqual(['native'])
+      })
+
+      it('skips native output when the info override says the model lacks it', async () => {
+        mockRejections(forcedRejection)
+        const provider = new BedrockModel({
+          modelId: 'm1',
+          modelInfo: { capabilities: { nativeStructuredOutput: false } },
+        })
+
+        await collectIterator(provider.stream(messages, structuredOutputOptions))
+
+        expect(sentRequests().map(mechanismOf)).toStrictEqual(['forced', 'auto'])
+      })
+
+      it('surfaces an unrelated validation error without retrying', async () => {
+        const mockSend = mockRejections(new ValidationException({ message: 'Malformed input request', $metadata: {} }))
+        const provider = new BedrockModel({ modelId: 'm1' })
+
+        await expect(collectIterator(provider.stream(messages, structuredOutputOptions))).rejects.toThrow(
+          'Malformed input request'
+        )
+        expect(mockSend).toHaveBeenCalledOnce()
+      })
+
+      it('retries the next mechanism with drop_block when its replayed thinking is stale', async () => {
+        const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+        const bindingError = new ValidationException({
+          message:
+            'messages.1.content.0: Invalid `signature` in `thinking` block. The block is bound to a different conversation.',
+          $metadata: {},
+        })
+        mockRejections(forcedRejection, bindingError)
+        const provider = new BedrockModel({ modelId: 'm1', additionalRequestFields: { thinking } })
+
+        await collectIterator(provider.stream(messages, structuredOutputOptions))
+
+        expect(
+          sentRequests().map((request) => [mechanismOf(request), request.additionalModelRequestFields])
+        ).toStrictEqual([
+          ['forced', undefined],
+          ['native', { thinking }],
+          [
+            'native',
+            {
+              thinking: { ...thinking, block_binding: { prefix_mismatch_behavior: 'drop_block' } },
+              anthropic_beta: ['thinking-binding-controls-2026-08-01'],
+            },
+          ],
+        ])
+        warnSpy.mockRestore()
+      })
+
+      it.each([
+        { name: 'native', rejections: [forcedRejection] },
+        { name: 'auto', rejections: [forcedRejection, nativeRejection] },
+      ])('sends $name with auto tool choice, keeping the thinking config forcing strips', async ({ rejections }) => {
+        mockRejections(...rejections)
+        const provider = new BedrockModel({ modelId: 'm1', additionalRequestFields: { thinking } })
+
+        await collectIterator(provider.stream(messages, structuredOutputOptions))
+
+        const request = sentRequests().at(-1)
+        expect(request?.toolConfig?.toolChoice).toStrictEqual({ auto: {} })
+        expect(request?.additionalModelRequestFields).toStrictEqual({ thinking })
+      })
+
+      it('sends native output with the converted schema, keeping other outputConfig settings', async () => {
+        mockRejections(forcedRejection)
+        const provider = new BedrockModel({ modelId: 'm1', additionalArgs: { outputConfig: { effort: 'high' } } })
+
+        await collectIterator(provider.stream(messages, structuredOutputOptions))
+
+        expect(sentRequests().at(-1)?.outputConfig).toStrictEqual({
+          effort: 'high',
+          textFormat: {
+            type: 'json_schema',
+            structure: {
+              jsonSchema: {
+                schema: JSON.stringify(toNativeOutputSchema(zodSchemaToJsonSchema(schema))),
+                name: 'strands_structured_output',
+              },
+            },
+          },
+        })
+      })
+    })
+
+    describe('stale thinking recovery', () => {
+      const bindingError = new ValidationException({
+        message:
+          'messages.1.content.0: Invalid `signature` in `thinking` block. The block is bound to a different conversation.',
+        $metadata: {},
+      })
+      const thinking = { type: 'adaptive' }
+      const dropBlockFields = {
+        thinking: { type: 'adaptive', block_binding: { prefix_mismatch_behavior: 'drop_block' } },
+        anthropic_beta: ['other-beta', 'thinking-binding-controls-2026-08-01'],
+      }
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+      const sentFields = (command: typeof ConverseStreamCommand | typeof ConverseCommand): unknown[] =>
+        vi.mocked(command).mock.calls.map((call) => call[0].additionalModelRequestFields)
+
+      it.each([
+        { mode: 'streaming', stream: true, command: ConverseStreamCommand },
+        { mode: 'non-streaming', stream: false, command: ConverseCommand },
+      ])('retries a $mode request once with drop_block and keeps it on', async ({ stream, command }) => {
+        const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+        const response = stream
+          ? { stream: (async function* (): AsyncGenerator<unknown> {})() }
+          : {
+              output: { message: { role: 'assistant', content: [{ text: 'Hello' }] } },
+              stopReason: 'end_turn',
+              usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+              metrics: { latencyMs: 100 },
+            }
+        const mockSend = vi.fn().mockRejectedValueOnce(bindingError).mockResolvedValue(response)
+        mockBedrockClientImplementation({ send: mockSend })
+        const provider = new BedrockModel({
+          modelId: 'm1',
+          stream,
+          additionalRequestFields: { thinking, anthropic_beta: ['other-beta'] },
+        })
+
+        await collectIterator(provider.stream(messages))
+
+        expect(sentFields(command)).toStrictEqual([{ thinking, anthropic_beta: ['other-beta'] }, dropBlockFields])
+        expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('retrying with drop_block'))
+
+        await collectIterator(provider.stream(messages))
+
+        expect(mockSend).toHaveBeenCalledTimes(3)
+        expect(sentFields(command).at(-1)).toStrictEqual(dropBlockFields)
+        warnSpy.mockRestore()
+      })
+
+      it.each([
+        {
+          name: 'a caller-set block_binding',
+          fields: { thinking: { ...thinking, block_binding: { prefix_mismatch_behavior: 'error' } } },
+        },
+        { name: 'no thinking config', fields: { reasoning_config: { type: 'enabled' } } },
+        { name: 'no additional request fields', fields: undefined },
+      ])('re-throws the binding error with $name', async ({ fields }) => {
+        const mockSend = vi.fn().mockRejectedValue(bindingError)
+        mockBedrockClientImplementation({ send: mockSend })
+        const provider = new BedrockModel({ modelId: 'm1', ...(fields && { additionalRequestFields: fields }) })
+
+        await expect(collectIterator(provider.stream(messages))).rejects.toThrow('bound to a different conversation')
+        expect(mockSend).toHaveBeenCalledOnce()
+      })
+
+      it('re-throws the binding message on a non-validation error', async () => {
+        const mockSend = vi.fn().mockRejectedValue(new Error(bindingError.message))
+        mockBedrockClientImplementation({ send: mockSend })
+        const provider = new BedrockModel({ modelId: 'm1', additionalRequestFields: { thinking } })
+
+        await expect(collectIterator(provider.stream(messages))).rejects.toThrow('bound to a different conversation')
+        expect(mockSend).toHaveBeenCalledOnce()
+      })
+
+      it.each([
+        {
+          name: 'a throttle',
+          retry: async () => ({
+            stream: (async function* (): AsyncGenerator<unknown> {
+              yield { throttlingException: { message: 'Rate exceeded' } }
+            })(),
+          }),
+          expected: ModelThrottledError,
+        },
+        {
+          name: 'a context window overflow',
+          retry: async () => {
+            throw new Error('Input is too long for requested model')
+          },
+          expected: ContextWindowOverflowError,
+        },
+      ])('maps $name on the retry to its SDK error', async ({ retry, expected }) => {
+        const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+        const mockSend = vi.fn().mockRejectedValueOnce(bindingError).mockImplementationOnce(retry)
+        mockBedrockClientImplementation({ send: mockSend })
+        const provider = new BedrockModel({ modelId: 'm1', additionalRequestFields: { thinking } })
+
+        await expect(collectIterator(provider.stream(messages))).rejects.toThrow(expected)
+        expect(mockSend).toHaveBeenCalledTimes(2)
+        warnSpy.mockRestore()
+      })
+
+      it('re-throws a second binding error without retrying again', async () => {
+        const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+        const mockSend = vi.fn().mockRejectedValue(bindingError)
+        mockBedrockClientImplementation({ send: mockSend })
+        const provider = new BedrockModel({ modelId: 'm1', additionalRequestFields: { thinking } })
+
+        await expect(collectIterator(provider.stream(messages))).rejects.toThrow('bound to a different conversation')
+        expect(mockSend).toHaveBeenCalledTimes(2)
+        warnSpy.mockRestore()
+      })
+
+      it('keeps thinking off when a forced tool choice follows the retry', async () => {
+        const mockSend = vi
+          .fn()
+          .mockRejectedValueOnce(bindingError)
+          .mockResolvedValue({ stream: (async function* (): AsyncGenerator<unknown> {})() })
+        mockBedrockClientImplementation({ send: mockSend })
+        const provider = new BedrockModel({ modelId: 'm1', additionalRequestFields: { thinking } })
+        await collectIterator(provider.stream(messages))
+
+        await collectIterator(provider.stream(messages, { toolChoice: { any: {} } }))
+
+        expect(sentFields(ConverseStreamCommand).at(-1)).toBeUndefined()
+      })
+    })
+
+    it.each([
+      { mode: 'streaming', stream: true },
+      { mode: 'non-streaming', stream: false },
+    ])('passes the cancellation signal to the $mode Bedrock request', async ({ stream }) => {
+      const mockSend = vi.fn(async () => {
+        if (stream) {
+          return {
+            stream: (async function* (): AsyncGenerator<unknown> {
+              yield { messageStart: { role: 'assistant' } }
+              yield { messageStop: { stopReason: 'end_turn' } }
+            })(),
+          }
+        }
+        return {
+          output: { message: { role: 'assistant', content: [{ text: 'Hello' }] } },
+          stopReason: 'end_turn',
+          usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+          metrics: { latencyMs: 100 },
+        }
+      })
+      mockBedrockClientImplementation({ send: mockSend })
+      const controller = new AbortController()
+      const provider = new BedrockModel({ stream })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+
+      await collectIterator(provider.stream(messages, { cancelSignal: controller.signal }))
+
+      expect(mockSend).toHaveBeenCalledWith(expect.anything(), { abortSignal: controller.signal })
+    })
+
+    it('stops a fake in-flight Bedrock producer when the signal aborts', async () => {
+      let producedTokens = 0
+      let producerStopped = false
+      let resolveFirstToken!: () => void
+      const firstTokenProduced = new Promise<void>((resolve) => {
+        resolveFirstToken = resolve
+      })
+      const mockSend = vi.fn(async (_command: unknown, sendOptions?: unknown) => {
+        const signal = (sendOptions as { abortSignal?: AbortSignal } | undefined)?.abortSignal
+        return {
+          stream: (async function* (): AsyncGenerator<unknown> {
+            yield { messageStart: { role: 'assistant' } }
+            yield { contentBlockStart: { start: {}, contentBlockIndex: 0 } }
+            while (producedTokens < 20) {
+              if (signal?.aborted) {
+                producerStopped = true
+                break
+              }
+              producedTokens += 1
+              if (producedTokens === 1) {
+                resolveFirstToken()
+              }
+              yield { contentBlockDelta: { delta: { text: 'token ' }, contentBlockIndex: 0 } }
+              await new Promise<void>((resolve) => setTimeout(resolve, 1))
+            }
+            yield { contentBlockStop: { contentBlockIndex: 0 } }
+            yield { messageStop: { stopReason: 'end_turn' } }
+          })(),
+        }
+      })
+      mockBedrockClientImplementation({ send: mockSend })
+      const controller = new AbortController()
+      const provider = new BedrockModel()
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+
+      const streamResult = collectIterator(provider.stream(messages, { cancelSignal: controller.signal }))
+      await firstTokenProduced
+      const tokensAtCancel = producedTokens
+      controller.abort()
+      await streamResult
+
+      expect(producerStopped).toBe(true)
+      expect(producedTokens).toBe(tokensAtCancel)
+    })
+
     it('handles tool use input delta', async () => {
       setupMockSend(async function* () {
         yield { messageStart: { role: 'assistant' } }
@@ -1376,6 +2313,62 @@ describe('BedrockModel', () => {
       }
     })
 
+    it('handles cache usage metrics in non-streaming mode', async () => {
+      const mockSend = vi.fn(async () => ({
+        output: { message: { role: 'assistant', content: [{ text: 'Hello' }] } },
+        stopReason: 'end_turn',
+        usage: {
+          inputTokens: 100,
+          outputTokens: 50,
+          totalTokens: 150,
+          cacheReadInputTokens: 80,
+          cacheWriteInputTokens: 20,
+        },
+        metrics: { latencyMs: 100 },
+      }))
+      mockBedrockClientImplementation({ send: mockSend })
+
+      const provider = new BedrockModel({ stream: false })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+
+      const events = await collectIterator(provider.stream(messages))
+
+      const metadataEvent = events.find((e) => e.type === 'modelMetadataEvent')
+      expect(metadataEvent).toEqual({
+        type: 'modelMetadataEvent',
+        usage: {
+          inputTokens: 100,
+          outputTokens: 50,
+          totalTokens: 150,
+          cacheReadInputTokens: 80,
+          cacheWriteInputTokens: 20,
+        },
+        metrics: { latencyMs: 100 },
+      })
+    })
+
+    it('omits cache counters in non-streaming mode when usage does not report them', async () => {
+      const mockSend = vi.fn(async () => ({
+        output: { message: { role: 'assistant', content: [{ text: 'Hello' }] } },
+        stopReason: 'end_turn',
+        usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
+        metrics: { latencyMs: 100 },
+      }))
+      mockBedrockClientImplementation({ send: mockSend })
+
+      const provider = new BedrockModel({ stream: false })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+
+      const events = await collectIterator(provider.stream(messages))
+
+      const metadataEvent = events.find((e) => e.type === 'modelMetadataEvent')
+      expect(metadataEvent).toEqual({
+        type: 'modelMetadataEvent',
+        usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
+        metrics: { latencyMs: 100 },
+      })
+    })
+
     it('handles trace in metadata', async () => {
       setupMockSend(async function* () {
         yield { messageStart: { role: 'assistant' } }
@@ -1519,7 +2512,8 @@ describe('BedrockModel', () => {
       vi.clearAllMocks()
     })
 
-    it('does not add cache points to string system prompt with cacheConfig', async () => {
+    it('appends a cache point to a string system prompt with cacheConfig', async () => {
+      // Regression guard for https://github.com/strands-agents/harness-sdk/issues/3144.
       const provider = new BedrockModel({ cacheConfig: { strategy: 'auto' } })
       const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
       const options: StreamOptions = {
@@ -1529,6 +2523,7 @@ describe('BedrockModel', () => {
       collectIterator(provider.stream(messages, options))
 
       expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+        inferenceConfig: { maxTokens: 128_000 },
         modelId: 'global.anthropic.claude-sonnet-4-6',
         messages: [
           {
@@ -1536,7 +2531,7 @@ describe('BedrockModel', () => {
             content: [{ text: 'Hello' }, { cachePoint: { type: 'default' } }],
           },
         ],
-        system: [{ text: 'You are a helpful assistant' }],
+        system: [{ text: 'You are a helpful assistant' }, { cachePoint: { type: 'default' } }],
       })
     })
 
@@ -1553,6 +2548,7 @@ describe('BedrockModel', () => {
       collectIterator(provider.stream(messages, options))
 
       expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+        inferenceConfig: { maxTokens: 128_000 },
         modelId: 'global.anthropic.claude-sonnet-4-6',
         messages: [
           {
@@ -1578,6 +2574,7 @@ describe('BedrockModel', () => {
       collectIterator(provider.stream(messages, options))
 
       expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+        inferenceConfig: { maxTokens: 128_000 },
         modelId: 'global.anthropic.claude-sonnet-4-6',
         messages: [
           {
@@ -1611,6 +2608,7 @@ describe('BedrockModel', () => {
 
       // Verify array is used as-is
       expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+        inferenceConfig: { maxTokens: 128_000 },
         modelId: 'global.anthropic.claude-sonnet-4-6',
         messages: [
           {
@@ -1640,6 +2638,7 @@ describe('BedrockModel', () => {
       collectIterator(provider.stream(messages, options))
 
       expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+        inferenceConfig: { maxTokens: 128_000 },
         modelId: 'global.anthropic.claude-sonnet-4-6',
         messages: [
           {
@@ -1682,7 +2681,7 @@ describe('BedrockModel', () => {
       collectIterator(provider.stream(messages, options))
 
       const call = mockConverseStreamCommand.mock.lastCall?.[0]
-      expect(call?.system).toStrictEqual([{ text: 'You are a helpful assistant' }])
+      expect(call?.system).toStrictEqual([{ text: 'You are a helpful assistant' }, { cachePoint: { type: 'default' } }])
       expect(call?.toolConfig?.tools).toStrictEqual([
         {
           toolSpec: {
@@ -1803,6 +2802,802 @@ describe('BedrockModel', () => {
       expect(lastBlock).toStrictEqual({ cachePoint: { type: 'default' } })
     })
 
+    it('applies the configured messagesTTL over a null ttl on the caller point', async () => {
+      const provider = new BedrockModel({ cacheConfig: { strategy: 'auto', messagesTTL: '1h' } })
+      const point = new CachePointBlock({ cacheType: 'default' })
+      // Off the typed path, but reachable from untyped JSON: a null ttl is not a ttl.
+      ;(point as unknown as { ttl: string | null }).ttl = null
+      const messages = [new Message({ role: 'user', content: [new TextBlock('durable ask'), point] })]
+
+      collectIterator(provider.stream(messages))
+
+      const call = mockConverseStreamCommand.mock.lastCall?.[0]
+      expect(call?.messages?.[0]?.content).toStrictEqual([
+        { text: 'durable ask' },
+        { cachePoint: { type: 'default', ttl: '1h' } },
+      ])
+    })
+
+    it('replaces a leading caller-placed cache point with automatic placement', async () => {
+      const provider = new BedrockModel({ cacheConfig: { strategy: 'auto' } })
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [new CachePointBlock({ cacheType: 'default' }), new TextBlock('durable ask')],
+        }),
+      ]
+
+      collectIterator(provider.stream(messages))
+
+      const call = mockConverseStreamCommand.mock.lastCall?.[0]
+      expect(call?.messages?.[0]?.content).toStrictEqual([{ text: 'durable ask' }, { cachePoint: { type: 'default' } }])
+    })
+
+    it('leaves a message that was only a cache point empty', async () => {
+      const provider = new BedrockModel({ cacheConfig: { strategy: 'auto' } })
+      const messages = [new Message({ role: 'user', content: [new CachePointBlock({ cacheType: 'default' })] })]
+
+      collectIterator(provider.stream(messages))
+
+      const call = mockConverseStreamCommand.mock.lastCall?.[0]
+      expect(call?.messages?.[0]?.content).toStrictEqual([])
+    })
+
+    it('honors a cache point the caller placed in the last user message', async () => {
+      const provider = new BedrockModel({ cacheConfig: { strategy: 'auto' } })
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [
+            new TextBlock('durable ask'),
+            new CachePointBlock({ cacheType: 'default' }),
+            new TextBlock('<context-status>rebuilt each call</context-status>'),
+          ],
+        }),
+      ]
+
+      collectIterator(provider.stream(messages))
+
+      const call = mockConverseStreamCommand.mock.lastCall?.[0]
+      expect(call?.messages?.[0]?.content).toStrictEqual([
+        { text: 'durable ask' },
+        { cachePoint: { type: 'default' } },
+        { text: '<context-status>rebuilt each call</context-status>' },
+      ])
+    })
+
+    it('keeps only the first of three cache points, and gives it the configured ttl', async () => {
+      const provider = new BedrockModel({ cacheConfig: { strategy: 'auto', messagesTTL: '1h' } })
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [
+            new TextBlock('durable ask'),
+            new CachePointBlock({ cacheType: 'default' }),
+            new TextBlock('per-call'),
+            new CachePointBlock({ cacheType: 'default' }),
+            new TextBlock('more per-call'),
+            new CachePointBlock({ cacheType: 'default' }),
+          ],
+        }),
+      ]
+
+      collectIterator(provider.stream(messages))
+
+      const call = mockConverseStreamCommand.mock.lastCall?.[0]
+      expect(call?.messages?.[0]?.content).toStrictEqual([
+        { text: 'durable ask' },
+        { cachePoint: { type: 'default', ttl: '1h' } },
+        { text: 'per-call' },
+        { text: 'more per-call' },
+      ])
+    })
+
+    it('relocates an honored cache point over the adjacent document run only', async () => {
+      const provider = new BedrockModel({ cacheConfig: { strategy: 'auto' } })
+      const earlier = new DocumentBlock({ name: 'earlier', format: 'md', source: { bytes: new Uint8Array([1]) } })
+      const adjacent = new DocumentBlock({ name: 'adjacent', format: 'md', source: { bytes: new Uint8Array([2]) } })
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [
+            new TextBlock('analyze these'),
+            earlier,
+            new TextBlock('notes'),
+            adjacent,
+            new CachePointBlock({ cacheType: 'default' }),
+          ],
+        }),
+      ]
+
+      collectIterator(provider.stream(messages))
+
+      const call = mockConverseStreamCommand.mock.lastCall?.[0]
+      expect(call?.messages?.[0]?.content).toStrictEqual([
+        { text: 'analyze these' },
+        { document: { name: 'earlier', format: 'md', source: { bytes: new Uint8Array([1]) } } },
+        { text: 'notes' },
+        { cachePoint: { type: 'default' } },
+        { document: { name: 'adjacent', format: 'md', source: { bytes: new Uint8Array([2]) } } },
+      ])
+    })
+
+    it('still strips cache points in earlier messages', async () => {
+      const provider = new BedrockModel({ cacheConfig: { strategy: 'auto' } })
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [new TextBlock('old ask'), new CachePointBlock({ cacheType: 'default' })],
+        }),
+        new Message({ role: 'assistant', content: [new TextBlock('reply')] }),
+        new Message({
+          role: 'user',
+          content: [new TextBlock('new ask'), new CachePointBlock({ cacheType: 'default' })],
+        }),
+      ]
+
+      collectIterator(provider.stream(messages))
+
+      const call = mockConverseStreamCommand.mock.lastCall?.[0]
+      expect(call?.messages?.map((msg) => msg.content)).toStrictEqual([
+        [{ text: 'old ask' }],
+        [{ text: 'reply' }],
+        [{ text: 'new ask' }, { cachePoint: { type: 'default' } }],
+      ])
+    })
+
+    it('applies the configured messagesTTL to an honored cache point without one', async () => {
+      const provider = new BedrockModel({ cacheConfig: { strategy: 'auto', messagesTTL: '1h' } })
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [
+            new TextBlock('durable ask'),
+            new CachePointBlock({ cacheType: 'default' }),
+            new TextBlock('per-call'),
+          ],
+        }),
+      ]
+
+      collectIterator(provider.stream(messages))
+
+      const call = mockConverseStreamCommand.mock.lastCall?.[0]
+      expect(call?.messages?.[0]?.content).toStrictEqual([
+        { text: 'durable ask' },
+        { cachePoint: { type: 'default', ttl: '1h' } },
+        { text: 'per-call' },
+      ])
+    })
+
+    it('does not forward an empty configured messagesTTL', async () => {
+      // "" is not a TTL - Bedrock rejects it against its enum - and Python drops it, so TS must too.
+      const provider = new BedrockModel({ cacheConfig: { strategy: 'auto', messagesTTL: '' as never } })
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [
+            new TextBlock('durable ask'),
+            new CachePointBlock({ cacheType: 'default', ttl: '1h' }),
+            new TextBlock('per-call'),
+          ],
+        }),
+      ]
+
+      collectIterator(provider.stream(messages))
+
+      const call = mockConverseStreamCommand.mock.lastCall?.[0]
+      expect(call?.messages?.[0]?.content).toStrictEqual([
+        { text: 'durable ask' },
+        { cachePoint: { type: 'default' } },
+        { text: 'per-call' },
+      ])
+    })
+
+    it('normalizes the ttl of a relocated cache point', async () => {
+      // The relocation path must normalize too: a caller ttl there is just as capable of a rejection.
+      const provider = new BedrockModel({ cacheConfig: { strategy: 'auto', messagesTTL: '5m' } })
+      const doc = new DocumentBlock({ name: 'd', format: 'md', source: { bytes: new Uint8Array([1]) } })
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [
+            new TextBlock('analyze'),
+            doc,
+            new CachePointBlock({ cacheType: 'default', ttl: '1h' }),
+            new TextBlock('per-call'),
+          ],
+        }),
+      ]
+
+      collectIterator(provider.stream(messages))
+
+      const call = mockConverseStreamCommand.mock.lastCall?.[0]
+      expect(call?.messages?.[0]?.content).toStrictEqual([
+        { text: 'analyze' },
+        { cachePoint: { type: 'default', ttl: '5m' } },
+        { document: { name: 'd', format: 'md', source: { bytes: new Uint8Array([1]) } } },
+        { text: 'per-call' },
+      ])
+    })
+
+    it('normalizes a hand-placed ttl to the configured one', async () => {
+      // A caller ttl can invalidate the request: Bedrock rejects a longer ttl after a shorter one.
+      const provider = new BedrockModel({ cacheConfig: { strategy: 'auto', messagesTTL: '1h' } })
+      const messages = [
+        new Message({
+          role: 'user',
+          // A trailing block makes the honored POSITION observable: a strip-and-re-append would move
+          // the point to the end, so this also fails against the behaviour this change replaces.
+          content: [
+            new TextBlock('durable ask'),
+            new CachePointBlock({ cacheType: 'default', ttl: '5m' }),
+            new TextBlock('per-call'),
+          ],
+        }),
+      ]
+
+      collectIterator(provider.stream(messages))
+
+      const call = mockConverseStreamCommand.mock.lastCall?.[0]
+      expect(call?.messages?.[0]?.content).toStrictEqual([
+        { text: 'durable ask' },
+        { cachePoint: { type: 'default', ttl: '1h' } },
+        { text: 'per-call' },
+      ])
+    })
+
+    it('drops a hand-placed ttl when no messagesTTL is configured', async () => {
+      const provider = new BedrockModel({ cacheConfig: { strategy: 'auto' } })
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [
+            new TextBlock('durable ask'),
+            new CachePointBlock({ cacheType: 'default', ttl: '1h' }),
+            new TextBlock('per-call'),
+          ],
+        }),
+      ]
+
+      collectIterator(provider.stream(messages))
+
+      const call = mockConverseStreamCommand.mock.lastCall?.[0]
+      expect(call?.messages?.[0]?.content).toStrictEqual([
+        { text: 'durable ask' },
+        { cachePoint: { type: 'default' } },
+        { text: 'per-call' },
+      ])
+    })
+
+    it('relocates an honored cache point ahead of a directly preceding non-PDF document', async () => {
+      const provider = new BedrockModel({ cacheConfig: { strategy: 'auto' } })
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [
+            new TextBlock('analyze this'),
+            new DocumentBlock({ name: 'readme', format: 'md', source: { bytes: new Uint8Array([1]) } }),
+            new CachePointBlock({ cacheType: 'default' }),
+            new TextBlock('per-call'),
+          ],
+        }),
+      ]
+
+      collectIterator(provider.stream(messages))
+
+      const call = mockConverseStreamCommand.mock.lastCall?.[0]
+      expect(call?.messages?.[0]?.content).toStrictEqual([
+        { text: 'analyze this' },
+        { cachePoint: { type: 'default' } },
+        { document: { name: 'readme', format: 'md', source: { bytes: new Uint8Array([1]) } } },
+        { text: 'per-call' },
+      ])
+    })
+
+    it('does not relocate an honored cache point a document does not directly precede', async () => {
+      const provider = new BedrockModel({ cacheConfig: { strategy: 'auto' } })
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [
+            new TextBlock('analyze this'),
+            new DocumentBlock({ name: 'readme', format: 'md', source: { bytes: new Uint8Array([1]) } }),
+            new TextBlock('notes'),
+            new CachePointBlock({ cacheType: 'default' }),
+          ],
+        }),
+      ]
+
+      collectIterator(provider.stream(messages))
+
+      const call = mockConverseStreamCommand.mock.lastCall?.[0]
+      expect(call?.messages?.[0]?.content).toStrictEqual([
+        { text: 'analyze this' },
+        { document: { name: 'readme', format: 'md', source: { bytes: new Uint8Array([1]) } } },
+        { text: 'notes' },
+        { cachePoint: { type: 'default' } },
+      ])
+    })
+
+    it('leaves an honored cache point after a PDF document', async () => {
+      const provider = new BedrockModel({ cacheConfig: { strategy: 'auto' } })
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [
+            new TextBlock('analyze this'),
+            new DocumentBlock({ name: 'report', format: 'pdf', source: { bytes: new Uint8Array([1]) } }),
+            new CachePointBlock({ cacheType: 'default' }),
+          ],
+        }),
+      ]
+
+      collectIterator(provider.stream(messages))
+
+      const call = mockConverseStreamCommand.mock.lastCall?.[0]
+      expect(call?.messages?.[0]?.content).toStrictEqual([
+        { text: 'analyze this' },
+        { document: { name: 'report', format: 'pdf', source: { bytes: new Uint8Array([1]) } } },
+        { cachePoint: { type: 'default' } },
+      ])
+    })
+
+    it('drops an honored cache point when a non-PDF document leads the message', async () => {
+      const provider = new BedrockModel({ cacheConfig: { strategy: 'auto' } })
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [
+            new DocumentBlock({ name: 'readme', format: 'md', source: { bytes: new Uint8Array([1]) } }),
+            new CachePointBlock({ cacheType: 'default' }),
+          ],
+        }),
+      ]
+
+      collectIterator(provider.stream(messages))
+
+      const call = mockConverseStreamCommand.mock.lastCall?.[0]
+      expect(call?.messages?.[0]?.content).toStrictEqual([
+        { document: { name: 'readme', format: 'md', source: { bytes: new Uint8Array([1]) } } },
+      ])
+    })
+
+    describe('cache sections', () => {
+      const toolSpecs = [{ name: 'calculator', description: 'Calculate', inputSchema: { type: 'object' as const } }]
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+
+      /** The auto-injected cache points, as [tools, lastUserMessage]. */
+      const cachePoints = (): [unknown, unknown] => {
+        const call = mockConverseStreamCommand.mock.lastCall?.[0]
+        const tools = call?.toolConfig?.tools ?? []
+        const userMsg = call?.messages?.[0]
+        const content = userMsg?.content ?? []
+        const toolsLast = tools[tools.length - 1]
+        const messagesLast = content[content.length - 1]
+        return [
+          toolsLast && 'cachePoint' in toolsLast ? toolsLast.cachePoint : undefined,
+          messagesLast && 'cachePoint' in messagesLast ? messagesLast.cachePoint : undefined,
+        ]
+      }
+
+      /** The cache points in `system`, in order. */
+      const systemCachePoints = (): unknown[] =>
+        (mockConverseStreamCommand.mock.lastCall?.[0]?.system ?? [])
+          .filter((block) => 'cachePoint' in block)
+          .map((block) => ('cachePoint' in block ? block.cachePoint : undefined))
+
+      const systemPromptWith = (ttl?: string): SystemContentBlock[] => [
+        new TextBlock('durable system prompt'),
+        new CachePointBlock({ cacheType: 'default', ...(ttl === undefined ? {} : { ttl }) }),
+      ]
+
+      it('caches every section when no strategy is given', async () => {
+        // strategy defaults to 'auto', so a config that omits it still enables caching.
+        const provider = new BedrockModel({ cacheConfig: {} })
+
+        collectIterator(provider.stream(messages, { toolSpecs }))
+
+        expect(cachePoints()).toStrictEqual([{ type: 'default' }, { type: 'default' }])
+      })
+
+      it('caches only the tool definitions when messagesTTL is false', async () => {
+        const provider = new BedrockModel({ cacheConfig: { messagesTTL: false } })
+
+        collectIterator(provider.stream(messages, { toolSpecs }))
+
+        expect(cachePoints()).toStrictEqual([{ type: 'default' }, undefined])
+      })
+
+      it('caches only the conversation when toolsTTL is false', async () => {
+        const provider = new BedrockModel({ cacheConfig: { toolsTTL: false } })
+
+        collectIterator(provider.stream(messages, { toolSpecs }))
+
+        expect(cachePoints()).toStrictEqual([undefined, { type: 'default' }])
+      })
+
+      it('emits nothing when every section is disabled', async () => {
+        const provider = new BedrockModel({ cacheConfig: { toolsTTL: false, messagesTTL: false } })
+
+        collectIterator(provider.stream(messages, { toolSpecs }))
+
+        expect(cachePoints()).toStrictEqual([undefined, undefined])
+      })
+
+      it('warns through warnOnce when auto finds no caching support', async () => {
+        const provider = new BedrockModel({ modelId: 'meta.llama3-70b-instruct-v1:0', cacheConfig: {} })
+
+        await collectIterator(provider.stream(messages, { toolSpecs }))
+
+        expect(cachePoints()).toStrictEqual([undefined, undefined])
+        expect(warnOnce).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.stringContaining('does not support automatic caching')
+        )
+      })
+
+      it('applies the shared ttl to both sections', async () => {
+        // Bedrock requires checkpoint TTLs to be non-increasing across toolConfig then messages, which
+        // equal values satisfy.
+        const provider = new BedrockModel({ cacheConfig: { ttl: '1h' } })
+
+        collectIterator(provider.stream(messages, { toolSpecs }))
+
+        expect(cachePoints()).toStrictEqual([
+          { type: 'default', ttl: '1h' },
+          { type: 'default', ttl: '1h' },
+        ])
+      })
+
+      it('lets a per-section ttl override the shared ttl', async () => {
+        const provider = new BedrockModel({ cacheConfig: { ttl: '1h', messagesTTL: '5m' } })
+
+        collectIterator(provider.stream(messages, { toolSpecs }))
+
+        expect(cachePoints()).toStrictEqual([
+          { type: 'default', ttl: '1h' },
+          { type: 'default', ttl: '5m' },
+        ])
+      })
+
+      it('treats an empty ttl as unset rather than shipping it', async () => {
+        // Bedrock validates ttl against an enum and rejects ''.
+        const provider = new BedrockModel({ cacheConfig: { ttl: '', messagesTTL: '' } })
+
+        collectIterator(provider.stream(messages, { toolSpecs }))
+
+        expect(cachePoints()).toStrictEqual([{ type: 'default' }, { type: 'default' }])
+      })
+
+      it('falls through an empty per-section ttl to the shared ttl', async () => {
+        // An empty section ttl is unconfigured rather than an override, so the shared one applies.
+        const provider = new BedrockModel({ cacheConfig: { ttl: '1h', messagesTTL: '' } })
+
+        collectIterator(provider.stream(messages, { toolSpecs }))
+
+        expect(cachePoints()).toStrictEqual([
+          { type: 'default', ttl: '1h' },
+          { type: 'default', ttl: '1h' },
+        ])
+      })
+
+      it('applies the shared ttl to a caller-placed system cache point', async () => {
+        // Bedrock rejects a TTL that exceeds an earlier checkpoint's, so a shared ttl that reached tools
+        // and messages but not the system point between them would emit an invalid request.
+        const provider = new BedrockModel({ cacheConfig: { ttl: '1h' } })
+
+        collectIterator(provider.stream(messages, { toolSpecs, systemPrompt: systemPromptWith() }))
+
+        const [tools, messagePoint] = cachePoints()
+        expect([tools, systemCachePoints(), messagePoint]).toStrictEqual([
+          { type: 'default', ttl: '1h' },
+          [{ type: 'default', ttl: '1h' }],
+          { type: 'default', ttl: '1h' },
+        ])
+      })
+
+      it('falls through an empty system cache point ttl to the shared ttl', async () => {
+        const provider = new BedrockModel({ cacheConfig: { ttl: '1h' } })
+
+        collectIterator(provider.stream(messages, { toolSpecs, systemPrompt: systemPromptWith('') }))
+
+        expect(systemCachePoints()).toStrictEqual([{ type: 'default', ttl: '1h' }])
+      })
+
+      it('leaves a system cache point ttl the caller wrote as written', async () => {
+        // Two conflicting TTLs are the caller's to reconcile; only an absent one is filled in.
+        const provider = new BedrockModel({ cacheConfig: { ttl: '1h' } })
+
+        collectIterator(provider.stream(messages, { toolSpecs, systemPrompt: systemPromptWith('5m') }))
+
+        expect(systemCachePoints()).toStrictEqual([{ type: 'default', ttl: '5m' }])
+      })
+
+      it('leaves a system cache point alone when no ttl is configured', async () => {
+        const provider = new BedrockModel({ cacheConfig: {} })
+
+        collectIterator(provider.stream(messages, { toolSpecs, systemPrompt: systemPromptWith() }))
+
+        expect(systemCachePoints()).toStrictEqual([{ type: 'default' }])
+      })
+
+      it('leaves a system cache point alone when the model does not support caching', async () => {
+        // A config that never reaches the wire must not reach the system point either.
+        const provider = new BedrockModel({ modelId: 'meta.llama3-70b-instruct-v1:0', cacheConfig: { ttl: '1h' } })
+
+        collectIterator(provider.stream(messages, { toolSpecs, systemPrompt: systemPromptWith() }))
+
+        expect(systemCachePoints()).toStrictEqual([{ type: 'default' }])
+      })
+
+      it('does not mutate the system prompt blocks the caller owns', async () => {
+        const provider = new BedrockModel({ cacheConfig: { ttl: '1h' } })
+        const systemPrompt = systemPromptWith()
+
+        collectIterator(provider.stream(messages, { toolSpecs, systemPrompt }))
+
+        expect(systemCachePoints()).toStrictEqual([{ type: 'default', ttl: '1h' }])
+        expect((systemPrompt[1] as CachePointBlock).ttl).toBeUndefined()
+      })
+
+      it('applies the shared ttl to every system cache point', async () => {
+        // Every checkpoint has to move together; a TTL on only the first would leave the rest behind it.
+        const provider = new BedrockModel({ cacheConfig: { ttl: '1h' } })
+        const systemPrompt: SystemContentBlock[] = [
+          new TextBlock('a'),
+          new CachePointBlock({ cacheType: 'default' }),
+          new TextBlock('b'),
+          new CachePointBlock({ cacheType: 'default' }),
+        ]
+
+        collectIterator(provider.stream(messages, { toolSpecs, systemPrompt }))
+
+        expect(systemCachePoints()).toStrictEqual([
+          { type: 'default', ttl: '1h' },
+          { type: 'default', ttl: '1h' },
+        ])
+      })
+
+      it('treats an empty shared ttl as unconfigured', async () => {
+        // An empty TTL is not a TTL, so it must not reach the wire for the Bedrock enum to reject. Asserted
+        // without tools so the tools checkpoint cannot be what holds the fill-in back.
+        const provider = new BedrockModel({ cacheConfig: { ttl: '' } })
+
+        collectIterator(provider.stream(messages, { systemPrompt: systemPromptWith() }))
+
+        expect(systemCachePoints()).toStrictEqual([{ type: 'default' }])
+      })
+
+      it('drops an empty system cache point ttl when no ttl is configured', async () => {
+        // A falsy TTL is not a TTL: Bedrock validates ttl against an enum and rejects ''. No fill-in applies
+        // here, so normalizing is the only thing standing between the caller's '' and a rejected request.
+        const provider = new BedrockModel({})
+
+        collectIterator(provider.stream(messages, { toolSpecs, systemPrompt: systemPromptWith('') }))
+
+        expect(systemCachePoints()).toStrictEqual([{ type: 'default' }])
+      })
+
+      it('drops an empty system cache point ttl behind a shorter tools ttl', async () => {
+        // The fill-in stands down behind a shorter tools TTL, but the caller's empty TTL still must not ship.
+        const provider = new BedrockModel({ cacheConfig: { ttl: '1h', toolsTTL: '5m', messagesTTL: false } })
+
+        collectIterator(provider.stream(messages, { toolSpecs, systemPrompt: systemPromptWith('') }))
+
+        const [tools] = cachePoints()
+        expect([tools, systemCachePoints()]).toStrictEqual([{ type: 'default', ttl: '5m' }, [{ type: 'default' }]])
+      })
+
+      it('does not mutate a system cache point whose empty ttl it drops', async () => {
+        // The caller owns the block, so normalizing must not reach back into it.
+        const provider = new BedrockModel({})
+        const systemPrompt = systemPromptWith('')
+
+        collectIterator(provider.stream(messages, { toolSpecs, systemPrompt }))
+
+        expect(systemCachePoints()).toStrictEqual([{ type: 'default' }])
+        expect((systemPrompt[1] as CachePointBlock).ttl).toBe('')
+      })
+
+      it('leaves a system cache point alone when the tools checkpoint ahead of it is shorter', async () => {
+        // Bedrock rejects a TTL longer than an earlier checkpoint's, so filling in the shared ttl over a
+        // shorter toolsTTL would trade one invalid request for another.
+        const provider = new BedrockModel({ cacheConfig: { ttl: '1h', toolsTTL: '5m', messagesTTL: false } })
+
+        collectIterator(provider.stream(messages, { toolSpecs, systemPrompt: systemPromptWith() }))
+
+        const [tools] = cachePoints()
+        expect([tools, systemCachePoints()]).toStrictEqual([{ type: 'default', ttl: '5m' }, [{ type: 'default' }]])
+      })
+
+      it('leaves a system cache point alone when the tools checkpoint ahead of it is longer', async () => {
+        // The fill-in stands down on ANY difference from the tools TTL, not only a shortening one.
+        // Comparing two durations means parsing them, and CacheTTL accepts arbitrary strings, so a longer
+        // tools TTL is treated the same. The emitted request is equivalent either way: the provider
+        // default this leaves the point at is 5m, which is what the shared ttl would have stamped here.
+        const provider = new BedrockModel({ cacheConfig: { ttl: '5m', toolsTTL: '1h' } })
+
+        collectIterator(provider.stream(messages, { toolSpecs, systemPrompt: systemPromptWith() }))
+
+        const [tools] = cachePoints()
+        expect([tools, systemCachePoints()]).toStrictEqual([{ type: 'default', ttl: '1h' }, [{ type: 'default' }]])
+      })
+
+      it('applies the shared ttl when the tools section carries it too', async () => {
+        const provider = new BedrockModel({ cacheConfig: { ttl: '1h', toolsTTL: '1h' } })
+
+        collectIterator(provider.stream(messages, { toolSpecs, systemPrompt: systemPromptWith() }))
+
+        expect(systemCachePoints()).toStrictEqual([{ type: 'default', ttl: '1h' }])
+      })
+
+      it('applies the shared ttl when the tools section is disabled', async () => {
+        // No tools checkpoint means nothing precedes the system point, so the shared ttl is safe.
+        const provider = new BedrockModel({ cacheConfig: { ttl: '1h', toolsTTL: false } })
+
+        collectIterator(provider.stream(messages, { toolSpecs, systemPrompt: systemPromptWith() }))
+
+        expect(systemCachePoints()).toStrictEqual([{ type: 'default', ttl: '1h' }])
+      })
+
+      it('applies the shared ttl when the request carries no tools at all', async () => {
+        const provider = new BedrockModel({ cacheConfig: { ttl: '1h', toolsTTL: '5m' } })
+
+        collectIterator(provider.stream(messages, { systemPrompt: systemPromptWith() }))
+
+        expect(systemCachePoints()).toStrictEqual([{ type: 'default', ttl: '1h' }])
+      })
+
+      it('resolves the ttl for a caller-placed cache point too', async () => {
+        // The honored path takes its own route to the cache point, so it needs the same resolution:
+        // `true` enables the section without being a duration, and the shared ttl still applies.
+        const placed = [
+          new Message({
+            role: 'user',
+            content: [new TextBlock('durable prefix'), new CachePointBlock({ cacheType: 'default' })],
+          }),
+        ]
+
+        const enabledWithoutDuration = new BedrockModel({ cacheConfig: { messagesTTL: true } })
+        collectIterator(enabledWithoutDuration.stream(placed))
+        expect(mockConverseStreamCommand.mock.lastCall?.[0]?.messages?.[0]?.content).toStrictEqual([
+          { text: 'durable prefix' },
+          { cachePoint: { type: 'default' } },
+        ])
+
+        const sharedTTL = new BedrockModel({ cacheConfig: { ttl: '1h' } })
+        collectIterator(sharedTTL.stream(placed))
+        expect(mockConverseStreamCommand.mock.lastCall?.[0]?.messages?.[0]?.content).toStrictEqual([
+          { text: 'durable prefix' },
+          { cachePoint: { type: 'default', ttl: '1h' } },
+        ])
+      })
+
+      it('ignores cacheKey: it does not change the request shape', () => {
+        // Bedrock does not consume cacheKey, so it must not reach the request.
+        const withoutKey = new BedrockModel({ modelId: 'anthropic.claude-test-model', cacheConfig: {} })
+        const withKey = new BedrockModel({
+          modelId: 'anthropic.claude-test-model',
+          cacheConfig: { cacheKey: 'tenant-42' },
+        })
+
+        collectIterator(withoutKey.stream(messages, { toolSpecs }))
+        const withoutKeyRequest = mockConverseStreamCommand.mock.lastCall?.[0]
+
+        collectIterator(withKey.stream(messages, { toolSpecs }))
+        const withKeyRequest = mockConverseStreamCommand.mock.lastCall?.[0]
+
+        expect(withKeyRequest).toStrictEqual(withoutKeyRequest)
+      })
+    })
+
+    describe('per-call trailing blocks', () => {
+      const lastContent = (): unknown[] => mockConverseStreamCommand.mock.lastCall?.[0]?.messages?.[0]?.content ?? []
+
+      it('places the cache point ahead of the per-call tail', () => {
+        const provider = new BedrockModel({ cacheConfig: { strategy: 'auto' } })
+        const messages = [
+          new Message({ role: 'user', content: [new TextBlock('durable ask'), new TextBlock('per-call')] }),
+        ]
+
+        collectIterator(provider.stream(messages, { dynamicTrailingBlocks: 1 }))
+
+        expect(lastContent()).toStrictEqual([
+          { text: 'durable ask' },
+          { cachePoint: { type: 'default' } },
+          { text: 'per-call' },
+        ])
+      })
+
+      it('places the cache point ahead of every block of a multi-block tail', () => {
+        const provider = new BedrockModel({ cacheConfig: { strategy: 'auto' } })
+        const messages = [
+          new Message({
+            role: 'user',
+            content: [new TextBlock('durable ask'), new TextBlock('injected'), new TextBlock('status')],
+          }),
+        ]
+
+        collectIterator(provider.stream(messages, { dynamicTrailingBlocks: 2 }))
+
+        expect(lastContent()).toStrictEqual([
+          { text: 'durable ask' },
+          { cachePoint: { type: 'default' } },
+          { text: 'injected' },
+          { text: 'status' },
+        ])
+      })
+
+      it('appends the cache point at the end when no per-call tail is marked', () => {
+        const provider = new BedrockModel({ cacheConfig: { strategy: 'auto' } })
+        const messages = [new Message({ role: 'user', content: [new TextBlock('a'), new TextBlock('b')] })]
+
+        collectIterator(provider.stream(messages))
+
+        expect(lastContent()).toStrictEqual([{ text: 'a' }, { text: 'b' }, { cachePoint: { type: 'default' } }])
+      })
+
+      it('skips the cache point when the whole message is per-call content', () => {
+        const provider = new BedrockModel({ cacheConfig: { strategy: 'auto' } })
+        const messages = [new Message({ role: 'user', content: [new TextBlock('per-call only')] })]
+
+        collectIterator(provider.stream(messages, { dynamicTrailingBlocks: 1 }))
+
+        expect(lastContent()).toStrictEqual([{ text: 'per-call only' }])
+      })
+
+      it('steps a per-call boundary back over a directly preceding non-PDF document', () => {
+        const provider = new BedrockModel({ cacheConfig: { strategy: 'auto' } })
+        const messages = [
+          new Message({
+            role: 'user',
+            content: [
+              new TextBlock('analyze this'),
+              new DocumentBlock({ name: 'readme', format: 'md', source: { bytes: new Uint8Array([1]) } }),
+              new TextBlock('per-call'),
+            ],
+          }),
+        ]
+
+        collectIterator(provider.stream(messages, { dynamicTrailingBlocks: 1 }))
+
+        // Bedrock rejects a cache point directly after a non-PDF document; the per-call path is routed
+        // through the same honor logic, so the same step-back applies.
+        expect(lastContent()).toStrictEqual([
+          { text: 'analyze this' },
+          { cachePoint: { type: 'default' } },
+          { document: { name: 'readme', format: 'md', source: { bytes: new Uint8Array([1]) } } },
+          { text: 'per-call' },
+        ])
+      })
+
+      it('applies the configured messages TTL to a per-call boundary', () => {
+        const provider = new BedrockModel({ cacheConfig: { strategy: 'auto', messagesTTL: '1h' } })
+        const messages = [
+          new Message({ role: 'user', content: [new TextBlock('durable ask'), new TextBlock('per-call')] }),
+        ]
+
+        collectIterator(provider.stream(messages, { dynamicTrailingBlocks: 1 }))
+
+        expect(lastContent()).toStrictEqual([
+          { text: 'durable ask' },
+          { cachePoint: { type: 'default', ttl: '1h' } },
+          { text: 'per-call' },
+        ])
+      })
+
+      it('emits no cache point for a per-call tail when caching is not configured', () => {
+        const provider = new BedrockModel({})
+        const messages = [
+          new Message({ role: 'user', content: [new TextBlock('durable ask'), new TextBlock('per-call')] }),
+        ]
+
+        collectIterator(provider.stream(messages, { dynamicTrailingBlocks: 1 }))
+
+        expect(lastContent()).toStrictEqual([{ text: 'durable ask' }, { text: 'per-call' }])
+      })
+    })
+
     it('inserts cache point before a non-PDF document block', async () => {
       const provider = new BedrockModel({ cacheConfig: { strategy: 'auto' } })
       const messages = [
@@ -1871,6 +3666,31 @@ describe('BedrockModel', () => {
       ])
     })
 
+    it('inserts cache point before the first of several non-PDF documents', async () => {
+      const provider = new BedrockModel({ cacheConfig: { strategy: 'auto' } })
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [
+            new TextBlock('Analyze these files'),
+            new DocumentBlock({ name: 'first', format: 'csv', source: { bytes: new Uint8Array([1]) } }),
+            new DocumentBlock({ name: 'second', format: 'csv', source: { bytes: new Uint8Array([2]) } }),
+          ],
+        }),
+      ]
+
+      collectIterator(provider.stream(messages))
+
+      // A cache point after either document would be directly preceded by one, which Bedrock rejects.
+      const call = mockConverseStreamCommand.mock.lastCall?.[0]
+      expect(call?.messages?.[0]?.content).toStrictEqual([
+        { text: 'Analyze these files' },
+        { cachePoint: { type: 'default' } },
+        { document: { name: 'first', format: 'csv', source: { bytes: new Uint8Array([1]) } } },
+        { document: { name: 'second', format: 'csv', source: { bytes: new Uint8Array([2]) } } },
+      ])
+    })
+
     it('skips cache point when a non-PDF document is the first block', async () => {
       const provider = new BedrockModel({ cacheConfig: { strategy: 'auto' } })
       const messages = [
@@ -1909,7 +3729,6 @@ describe('BedrockModel', () => {
     })
 
     it('logs warning and disables caching for non-caching models', async () => {
-      const warnSpy = vi.spyOn(console, 'warn')
       const provider = new BedrockModel({
         modelId: 'amazon.titan-text-express-v1',
         cacheConfig: { strategy: 'auto' },
@@ -1922,7 +3741,10 @@ describe('BedrockModel', () => {
       collectIterator(provider.stream(messages, options))
 
       // Verify warning was logged
-      expect(warnSpy).toHaveBeenCalled()
+      expect(warnOnce).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.stringContaining('does not support automatic caching')
+      )
 
       // Verify no cache points were added
       expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
@@ -1935,8 +3757,6 @@ describe('BedrockModel', () => {
         ],
         system: [{ text: 'You are a helpful assistant' }],
       })
-
-      warnSpy.mockRestore()
     })
 
     it('enables caching with anthropic strategy for application inference profiles', async () => {
@@ -1969,6 +3789,7 @@ describe('BedrockModel', () => {
 
       // Empty array should not set system field
       expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+        inferenceConfig: { maxTokens: 128_000 },
         modelId: 'global.anthropic.claude-sonnet-4-6',
         messages: [
           {
@@ -1997,6 +3818,7 @@ describe('BedrockModel', () => {
       collectIterator(provider.stream(messages, options))
 
       expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+        inferenceConfig: { maxTokens: 128_000 },
         modelId: 'global.anthropic.claude-sonnet-4-6',
         messages: [
           {
@@ -2038,6 +3860,7 @@ describe('BedrockModel', () => {
       collectIterator(provider.stream(messages, options))
 
       expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+        inferenceConfig: { maxTokens: 128_000 },
         modelId: 'global.anthropic.claude-sonnet-4-6',
         messages: [
           {
@@ -2078,6 +3901,7 @@ describe('BedrockModel', () => {
       collectIterator(provider.stream(messages, options))
 
       expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+        inferenceConfig: { maxTokens: 128_000 },
         modelId: 'global.anthropic.claude-sonnet-4-6',
         messages: [
           {
@@ -2116,6 +3940,7 @@ describe('BedrockModel', () => {
       collectIterator(provider.stream(messages, options))
 
       expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+        inferenceConfig: { maxTokens: 128_000 },
         modelId: 'global.anthropic.claude-sonnet-4-6',
         messages: [
           {
@@ -2134,6 +3959,125 @@ describe('BedrockModel', () => {
           },
         ],
       })
+    })
+
+    it('carries cacheConfig.ttl into the appended system cache point', async () => {
+      const provider = new BedrockModel({ cacheConfig: { strategy: 'auto', ttl: '1h' } })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+      const options: StreamOptions = { systemPrompt: 'static prompt' }
+
+      collectIterator(provider.stream(messages, options))
+
+      const call = mockConverseStreamCommand.mock.lastCall?.[0]
+      expect(call?.system).toStrictEqual([{ text: 'static prompt' }, { cachePoint: { type: 'default', ttl: '1h' } }])
+    })
+
+    it('does not inject a system cache point when systemPromptTTL is false', async () => {
+      const provider = new BedrockModel({ cacheConfig: { strategy: 'auto', systemPromptTTL: false } })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+      const options: StreamOptions = { systemPrompt: 'static prompt' }
+
+      collectIterator(provider.stream(messages, options))
+
+      const call = mockConverseStreamCommand.mock.lastCall?.[0]
+      expect(call?.system).toStrictEqual([{ text: 'static prompt' }])
+    })
+
+    it('fills a caller-placed system point from ttl when systemPromptTTL is false', async () => {
+      const provider = new BedrockModel({ cacheConfig: { strategy: 'auto', ttl: '1h', systemPromptTTL: false } })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+      const options: StreamOptions = {
+        systemPrompt: [new TextBlock('static prompt'), new CachePointBlock({ cacheType: 'default' })],
+      }
+
+      collectIterator(provider.stream(messages, options))
+
+      const call = mockConverseStreamCommand.mock.lastCall?.[0]
+      expect(call?.system).toStrictEqual([{ text: 'static prompt' }, { cachePoint: { type: 'default', ttl: '1h' } }])
+    })
+
+    it('emits an explicit systemPromptTTL as written, above a shorter tools point', async () => {
+      const provider = new BedrockModel({ cacheConfig: { strategy: 'auto', systemPromptTTL: '1h', toolsTTL: '5m' } })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+      const options: StreamOptions = {
+        systemPrompt: 'static prompt',
+        toolSpecs: [{ name: 'calc', description: 'Calculator', inputSchema: { type: 'object', properties: {} } }],
+      }
+
+      collectIterator(provider.stream(messages, options))
+
+      const call = mockConverseStreamCommand.mock.lastCall?.[0]
+      expect(call?.system).toStrictEqual([{ text: 'static prompt' }, { cachePoint: { type: 'default', ttl: '1h' } }])
+    })
+
+    it('carries an explicit systemPromptTTL into the appended cache point without a shared ttl', async () => {
+      const provider = new BedrockModel({ cacheConfig: { strategy: 'auto', systemPromptTTL: '1h' } })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+      const options: StreamOptions = { systemPrompt: 'static prompt' }
+
+      collectIterator(provider.stream(messages, options))
+
+      const call = mockConverseStreamCommand.mock.lastCall?.[0]
+      expect(call?.system).toStrictEqual([{ text: 'static prompt' }, { cachePoint: { type: 'default', ttl: '1h' } }])
+    })
+
+    it('honors a caller-placed system cache point anywhere in the prefix', async () => {
+      const provider = new BedrockModel({ cacheConfig: { strategy: 'auto' } })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+      const options: StreamOptions = {
+        systemPrompt: [
+          new TextBlock('static prompt'),
+          new CachePointBlock({ cacheType: 'default', ttl: '1h' }),
+          new TextBlock('trailing instructions'),
+        ],
+      }
+
+      collectIterator(provider.stream(messages, options))
+
+      const call = mockConverseStreamCommand.mock.lastCall?.[0]
+      expect(call?.system).toStrictEqual([
+        { text: 'static prompt' },
+        { cachePoint: { type: 'default', ttl: '1h' } },
+        { text: 'trailing instructions' },
+      ])
+    })
+
+    it('stands the system cache point TTL down when the tools point carries a different TTL', async () => {
+      const provider = new BedrockModel({ cacheConfig: { strategy: 'auto', ttl: '1h', toolsTTL: '5m' } })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+      const options: StreamOptions = {
+        systemPrompt: 'static prompt',
+        toolSpecs: [{ name: 'calc', description: 'Calculator', inputSchema: { type: 'object', properties: {} } }],
+      }
+
+      collectIterator(provider.stream(messages, options))
+
+      const call = mockConverseStreamCommand.mock.lastCall?.[0]
+      expect(call?.system).toStrictEqual([{ text: 'static prompt' }, { cachePoint: { type: 'default' } }])
+    })
+
+    it('skips the system cache point when the system prompt is absent', async () => {
+      const provider = new BedrockModel({ cacheConfig: { strategy: 'auto' } })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+
+      collectIterator(provider.stream(messages))
+
+      const call = mockConverseStreamCommand.mock.lastCall?.[0]
+      expect(call?.system).toBeUndefined()
+    })
+
+    it('appends a system cache point under explicit anthropic strategy for ARN inference profiles', async () => {
+      const provider = new BedrockModel({
+        modelId: 'arn:aws:bedrock:us-east-1:123:application-inference-profile/abc',
+        cacheConfig: { strategy: 'anthropic' },
+      })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+      const options: StreamOptions = { systemPrompt: 'static prompt' }
+
+      collectIterator(provider.stream(messages, options))
+
+      const call = mockConverseStreamCommand.mock.lastCall?.[0]
+      expect(call?.system).toStrictEqual([{ text: 'static prompt' }, { cachePoint: { type: 'default' } }])
     })
   })
 
@@ -2164,6 +4108,7 @@ describe('BedrockModel', () => {
       collectIterator(provider.stream(messages))
 
       expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+        inferenceConfig: { maxTokens: 128_000 },
         modelId: 'global.anthropic.claude-sonnet-4-6',
         messages: [
           {
@@ -2205,6 +4150,7 @@ describe('BedrockModel', () => {
       collectIterator(provider.stream(messages))
 
       expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+        inferenceConfig: { maxTokens: 128_000 },
         modelId: 'global.anthropic.claude-sonnet-4-6',
         messages: [
           {
@@ -2390,6 +4336,58 @@ describe('BedrockModel', () => {
 
   describe('media blocks in messages', () => {
     const mockConverseStreamCommand = vi.mocked(ConverseStreamCommand)
+
+    it('formats top-level audio block', async () => {
+      const provider = new BedrockModel()
+      const audioBytes = new Uint8Array([1, 2, 3])
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [new AudioBlock({ format: 'mp3', source: { bytes: audioBytes } })],
+        }),
+      ]
+
+      collectIterator(provider.stream(messages))
+
+      expect(mockConverseStreamCommand).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          messages: [
+            {
+              role: 'user',
+              content: [{ audio: { format: 'mp3', source: { bytes: audioBytes } } }],
+            },
+          ],
+        })
+      )
+    })
+
+    it('formats top-level audio block with S3 source', async () => {
+      const provider = new BedrockModel()
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [
+            new AudioBlock({
+              format: 'wav',
+              source: { location: { type: 's3', uri: 's3://bucket/audio.wav' } },
+            }),
+          ],
+        }),
+      ]
+
+      collectIterator(provider.stream(messages))
+
+      expect(mockConverseStreamCommand).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          messages: [
+            {
+              role: 'user',
+              content: [{ audio: { format: 'wav', source: { s3Location: { uri: 's3://bucket/audio.wav' } } } }],
+            },
+          ],
+        })
+      )
+    })
 
     it('formats top-level image block', async () => {
       const provider = new BedrockModel()
@@ -2607,6 +4605,39 @@ describe('BedrockModel', () => {
           ],
         })
       )
+    })
+
+    it('omits an empty source when replaying a citation', async () => {
+      const provider = new BedrockModel()
+      const messages = [
+        new Message({
+          role: 'assistant',
+          content: [
+            new CitationsBlock({
+              citations: [
+                {
+                  location: { type: 'documentPage' as const, documentIndex: 0, start: 1, end: 2 },
+                  source: '',
+                  sourceContent: [{ text: 'page source' }],
+                  title: 'letter',
+                },
+              ],
+              content: [{ text: 'summary' }],
+            }),
+          ],
+        }),
+        new Message({ role: 'user', content: [new TextBlock('Follow up')] }),
+      ]
+
+      collectIterator(provider.stream(messages))
+
+      const request = mockConverseStreamCommand.mock.lastCall![0]
+      const replayed = request.messages![0]!.content![0]!.citationsContent!.citations![0]!
+      expect(replayed).toStrictEqual({
+        location: { documentPage: { documentIndex: 0, start: 1, end: 2 } },
+        sourceContent: [{ text: 'page source' }],
+        title: 'letter',
+      })
     })
   })
 
@@ -2902,6 +4933,7 @@ describe('BedrockModel', () => {
         collectIterator(provider.stream(messages))
 
         expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+          inferenceConfig: { maxTokens: 128_000 },
           messages: [
             {
               content: [
@@ -2941,6 +4973,7 @@ describe('BedrockModel', () => {
         collectIterator(provider.stream(messages))
 
         expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+          inferenceConfig: { maxTokens: 128_000 },
           messages: [
             {
               content: [
@@ -2982,6 +5015,7 @@ describe('BedrockModel', () => {
         collectIterator(provider.stream(messages))
 
         expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+          inferenceConfig: { maxTokens: 8192 },
           messages: [
             {
               content: [
@@ -3000,12 +5034,12 @@ describe('BedrockModel', () => {
           modelId: 'anthropic.claude-3-5-sonnet-20241022-v2:0',
         })
       })
-    })
 
-    describe('when includeToolResultStatus is undefined (default)', () => {
-      it('follows auto logic for non-Claude models', async () => {
+      // https://github.com/strands-agents/harness-sdk/issues/5741
+      it('includes status field for Amazon Nova models', async () => {
         const provider = new BedrockModel({
-          modelId: 'amazon.nova-lite-v1:0',
+          modelId: 'us.amazon.nova-lite-v1:0',
+          includeToolResultStatus: 'auto',
         })
         const messages = [
           new Message({
@@ -3013,7 +5047,7 @@ describe('BedrockModel', () => {
             content: [
               new ToolResultBlock({
                 toolUseId: 'tool-123',
-                status: 'success',
+                status: 'error',
                 content: [new TextBlock('Result')],
               }),
             ],
@@ -3029,6 +5063,7 @@ describe('BedrockModel', () => {
                 {
                   toolResult: {
                     content: [{ text: 'Result' }],
+                    status: 'error',
                     toolUseId: 'tool-123',
                   },
                 },
@@ -3037,9 +5072,50 @@ describe('BedrockModel', () => {
             },
           ],
           toolConfig: BEDROCK_NOOP_TOOL_CONFIG,
-          modelId: 'amazon.nova-lite-v1:0',
+          modelId: 'us.amazon.nova-lite-v1:0',
         })
       })
+    })
+
+    describe('when includeToolResultStatus is undefined (default)', () => {
+      it.each(['us.writer.palmyra-x5-v1:0', 'us.meta.llama4-scout-17b-instruct-v1:0'])(
+        'omits status field for models Bedrock does not document as supporting it (%s)',
+        async (modelId) => {
+          const provider = new BedrockModel({ modelId })
+          const messages = [
+            new Message({
+              role: 'user',
+              content: [
+                new ToolResultBlock({
+                  toolUseId: 'tool-123',
+                  status: 'success',
+                  content: [new TextBlock('Result')],
+                }),
+              ],
+            }),
+          ]
+
+          collectIterator(provider.stream(messages))
+
+          expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+            messages: [
+              {
+                content: [
+                  {
+                    toolResult: {
+                      content: [{ text: 'Result' }],
+                      toolUseId: 'tool-123',
+                    },
+                  },
+                ],
+                role: 'user',
+              },
+            ],
+            toolConfig: BEDROCK_NOOP_TOOL_CONFIG,
+            modelId,
+          })
+        }
+      )
     })
   })
 
@@ -3378,6 +5454,190 @@ describe('BedrockModel', () => {
         const redactEvent = events.find((e) => e.type === 'modelRedactionEvent')
         expect(redactEvent).toBeUndefined()
       })
+
+      it('emits redaction events when guardrail_intervened is reported without a trace', async () => {
+        // Guards against https://github.com/strands-agents/harness-sdk/issues/3612: with
+        // guardrailConfig.trace='disabled' Bedrock still reports guardrail_intervened but carries no
+        // assessment, and blocked content must still be redacted.
+        setupMockSend(async function* () {
+          yield { messageStart: { role: 'assistant' } }
+          yield { contentBlockStart: {} }
+          yield { contentBlockDelta: { delta: { text: 'Hello' } } }
+          yield { contentBlockStop: {} }
+          yield { messageStop: { stopReason: 'guardrail_intervened' } }
+          yield { metadata: { usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } } }
+        })
+
+        const provider = new BedrockModel({
+          guardrailConfig: {
+            guardrailIdentifier: 'my-guardrail-id',
+            guardrailVersion: '1',
+          },
+        })
+        const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+        const events = await collectIterator(provider.stream(messages))
+
+        const redactEvents = events.filter((e) => e.type === 'modelRedactionEvent')
+        expect(redactEvents).toStrictEqual([
+          {
+            type: 'modelRedactionEvent',
+            inputRedaction: { replaceContent: '[User input redacted.]' },
+          },
+        ])
+      })
+
+      it('emits redaction events when guardrail_intervened but no metadata event arrives', async () => {
+        // Guards against https://github.com/strands-agents/harness-sdk/issues/3612: the guardrail
+        // trace normally arrives with metadata, but redaction keys off the stop reason and must still
+        // occur when the stream ends without any metadata event.
+        setupMockSend(async function* () {
+          yield { messageStart: { role: 'assistant' } }
+          yield { contentBlockStart: {} }
+          yield { contentBlockDelta: { delta: { text: 'Hello' } } }
+          yield { contentBlockStop: {} }
+          yield { messageStop: { stopReason: 'guardrail_intervened' } }
+        })
+
+        const provider = new BedrockModel({
+          guardrailConfig: {
+            guardrailIdentifier: 'my-guardrail-id',
+            guardrailVersion: '1',
+          },
+        })
+        const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+        const events = await collectIterator(provider.stream(messages))
+
+        const redactEvents = events.filter((e) => e.type === 'modelRedactionEvent')
+        expect(redactEvents).toStrictEqual([
+          {
+            type: 'modelRedactionEvent',
+            inputRedaction: { replaceContent: '[User input redacted.]' },
+          },
+        ])
+      })
+
+      it('emits redaction events exactly once across multiple metadata events', async () => {
+        // Guards against https://github.com/strands-agents/harness-sdk/issues/3612: Bedrock may emit
+        // more than one metadata event, and redaction must not be duplicated.
+        setupMockSend(async function* () {
+          yield { messageStart: { role: 'assistant' } }
+          yield { contentBlockStart: {} }
+          yield { contentBlockDelta: { delta: { text: 'Hello' } } }
+          yield { contentBlockStop: {} }
+          yield { messageStop: { stopReason: 'guardrail_intervened' } }
+          yield { metadata: { usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } } }
+          yield { metadata: { usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } } }
+        })
+
+        const provider = new BedrockModel({
+          guardrailConfig: {
+            guardrailIdentifier: 'my-guardrail-id',
+            guardrailVersion: '1',
+          },
+        })
+        const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+        const events = await collectIterator(provider.stream(messages))
+
+        const redactEvents = events.filter((e) => e.type === 'modelRedactionEvent')
+        expect(redactEvents).toStrictEqual([
+          {
+            type: 'modelRedactionEvent',
+            inputRedaction: { replaceContent: '[User input redacted.]' },
+          },
+        ])
+      })
+
+      it('does not emit redaction events when the trace only reports ANONYMIZED (masking)', async () => {
+        // Bedrock reports stopReason=guardrail_intervened for masked content too, but the
+        // masked spans have already been substituted in place and the surrounding message
+        // must be preserved. The trace disambiguates: only BLOCKED actions warrant redaction.
+        setupMockSend(async function* () {
+          yield { messageStart: { role: 'assistant' } }
+          yield { contentBlockStart: {} }
+          yield { contentBlockDelta: { delta: { text: '{BLOCKING_HELLO}! 👋' } } }
+          yield { contentBlockStop: {} }
+          yield { messageStop: { stopReason: 'guardrail_intervened' } }
+          yield {
+            metadata: {
+              usage: { inputTokens: 13, outputTokens: 17, totalTokens: 30 },
+              trace: {
+                guardrail: {
+                  outputAssessments: {
+                    '8oi5sp73w4ca': [
+                      {
+                        sensitiveInformationPolicy: {
+                          regexes: [
+                            {
+                              action: 'ANONYMIZED',
+                              detected: true,
+                              match: 'Hello',
+                              name: 'BLOCKING_HELLO',
+                              regex: 'Hello',
+                            },
+                          ],
+                        },
+                      },
+                    ],
+                  },
+                },
+              },
+            },
+          }
+        })
+
+        const provider = new BedrockModel({
+          guardrailConfig: {
+            guardrailIdentifier: 'my-guardrail-id',
+            guardrailVersion: '1',
+          },
+        })
+        const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+        const events = await collectIterator(provider.stream(messages))
+
+        expect(events.some((e) => e.type === 'modelRedactionEvent')).toBe(false)
+      })
+
+      it('does not emit redaction events for masking in non-streaming path', async () => {
+        const mockSend = vi.fn(async () => ({
+          output: { message: { role: 'assistant', content: [{ text: '{BLOCKING_HELLO}! 👋' }] } },
+          stopReason: 'guardrail_intervened',
+          usage: { inputTokens: 13, outputTokens: 17, totalTokens: 30 },
+          trace: {
+            guardrail: {
+              outputAssessments: {
+                '8oi5sp73w4ca': [
+                  {
+                    sensitiveInformationPolicy: {
+                      regexes: [
+                        {
+                          action: 'ANONYMIZED',
+                          detected: true,
+                          match: 'Hello',
+                          name: 'BLOCKING_HELLO',
+                          regex: 'Hello',
+                        },
+                      ],
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        }))
+        mockBedrockClientImplementation({ send: mockSend })
+
+        const provider = new BedrockModel({
+          stream: false,
+          guardrailConfig: {
+            guardrailIdentifier: 'my-guardrail-id',
+            guardrailVersion: '1',
+          },
+        })
+        const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+        const events = await collectIterator(provider.stream(messages))
+
+        expect(events.some((e) => e.type === 'modelRedactionEvent')).toBe(false)
+      })
     })
 
     describe('redaction event generation', () => {
@@ -3672,6 +5932,42 @@ describe('BedrockModel', () => {
           type: 'modelRedactionEvent',
           inputRedaction: { replaceContent: '[User input redacted.]' },
         })
+      })
+
+      it('emits redaction events when guardrail_intervened is reported without a trace', async () => {
+        // Guards against https://github.com/strands-agents/harness-sdk/issues/3612: with
+        // guardrailConfig.trace='disabled' Bedrock still reports guardrail_intervened but carries no
+        // assessment, and blocked content must still be redacted.
+        const mockSend = vi.fn(async () => ({
+          output: {
+            message: {
+              role: 'assistant',
+              content: [{ text: 'Hello' }],
+            },
+          },
+          stopReason: 'guardrail_intervened',
+          usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+        }))
+        mockBedrockClientImplementation({ send: mockSend })
+
+        const provider = new BedrockModel({
+          stream: false,
+          guardrailConfig: {
+            guardrailIdentifier: 'id',
+            guardrailVersion: '1',
+          },
+        })
+        const events = await collectIterator(
+          provider.stream([new Message({ role: 'user', content: [new TextBlock('Hello')] })])
+        )
+
+        const redactEvents = events.filter((e) => e.type === 'modelRedactionEvent')
+        expect(redactEvents).toStrictEqual([
+          {
+            type: 'modelRedactionEvent',
+            inputRedaction: { replaceContent: '[User input redacted.]' },
+          },
+        ])
       })
     })
 
@@ -4422,7 +6718,7 @@ describe('BedrockModel', () => {
     const mockConverseStreamCommand = vi.mocked(ConverseStreamCommand)
 
     const provider = new BedrockModel({
-      modelId: 'anthropic.claude-sonnet-4-20250514-v1:0',
+      modelId: 'anthropic.claude-sonnet-4-6',
       additionalRequestFields: {
         thinking: { type: 'enabled', budget_tokens: 5000 },
         some_other_field: 'value',
@@ -4472,7 +6768,7 @@ describe('BedrockModel', () => {
 
     it('omits additionalModelRequestFields when thinking is the only field and tool choice forces tool use', () => {
       const thinkingOnlyProvider = new BedrockModel({
-        modelId: 'anthropic.claude-sonnet-4-20250514-v1:0',
+        modelId: 'anthropic.claude-sonnet-4-6',
         additionalRequestFields: {
           thinking: { type: 'enabled', budget_tokens: 5000 },
         },

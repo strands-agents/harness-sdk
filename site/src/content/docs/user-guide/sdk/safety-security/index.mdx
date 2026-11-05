@@ -1,0 +1,97 @@
+---
+title: Secure for production
+description: "Run a Strands agent safely in production: add guardrails, harden prompts against injection, keep message history trusted, and redact PII."
+sidebar:
+  label: Overview
+tags: [safety]
+---
+
+import { CardGrid, LinkCard } from '@astrojs/starlight/components'
+
+An agent in production takes untrusted input, calls tools with real permissions,
+and returns model output to real users. Securing it means putting controls at
+each of those boundaries: screen what goes in and out with guardrails, write
+system prompts that hold up against injection, treat any history you did not
+produce as untrusted, and keep personal data out of your telemetry. The agent
+you built does not change; you wrap it in the safeguards production demands.
+
+## Safeguards
+
+<CardGrid>
+  <LinkCard
+    title="Add guardrails"
+    href="guardrails/"
+    description="Filter harmful content, block off-topic requests, and protect sensitive data at the model boundary."
+  />
+  <LinkCard
+    title="Harden your prompts"
+    href="prompt-engineering/"
+    description="Write system prompts that resist injection, sanitize input, and keep the agent in scope."
+  />
+  <LinkCard
+    title="Trust your message history"
+    href="trusted-message-history/"
+    description="Treat history from a source you do not control as untrusted, and clear forged tool content."
+  />
+  <LinkCard
+    title="Redact PII"
+    href="pii-redaction/"
+    description="Keep personal data out of traces and logs with library or collector-level masking."
+  />
+  <LinkCard
+    title="Build responsibly"
+    href="responsible-ai/"
+    description="Design least-privilege tools, validate input, and log sensitive operations for review."
+  />
+</CardGrid>
+
+## Wrap an agent in a guardrail
+
+The most direct control is a guardrail on the model boundary. Configure one on
+the model provider and every prompt and response the agent handles is screened
+against it, with blocked content redacted from the conversation before it
+reaches the model again.
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands import Agent
+from strands.models import BedrockModel
+
+# The guardrail screens every prompt and response; blocked content is redacted
+model = BedrockModel(
+    guardrail_id="your-guardrail-id",
+    guardrail_version="1",
+)
+
+agent = Agent(model=model)
+agent("Summarize our refund policy for a customer.")
+```
+
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/safety-security/index_imports.ts:guardrail_agent_imports"
+
+--8<-- "user-guide/sdk/safety-security/index.ts:guardrail_agent"
+```
+
+</Tab>
+</Tabs>
+
+For the full guardrail configuration, shadow-mode monitoring, and providers
+without native guardrails, see [Add guardrails](guardrails/).
+
+## Where to go next
+
+Shipping an agent for the first time? Start with [guardrails](guardrails/) to put
+a control on the model boundary, then [harden your prompts](prompt-engineering/)
+so the system prompt holds up against adversarial input. If your agent loads
+history from a request body or a shared store, read
+[trusted message history](trusted-message-history/) before you do.
+
+Handling personal data or operating in a regulated environment? Add
+[PII redaction](pii-redaction/) to your telemetry pipeline and follow the
+[responsible AI](responsible-ai/) practices for tool design and audit logging.

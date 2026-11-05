@@ -58,14 +58,13 @@ def test_agent_rejects_invalid_retry_strategy_type():
         Agent(retry_strategy=FakeRetryStrategy())
 
 
-def test_agent_rejects_subclass_of_model_retry_strategy():
-    """Test that Agent rejects subclasses of ModelRetryStrategy (strict type check)."""
+def test_agent_accepts_subclass_of_model_retry_strategy():
+    """Test that Agent accepts subclasses of ModelRetryStrategy."""
 
     class CustomRetryStrategy(ModelRetryStrategy):
         pass
 
-    with pytest.raises(ValueError, match="retry_strategy must be an instance of ModelRetryStrategy"):
-        Agent(retry_strategy=CustomRetryStrategy())
+    Agent(retry_strategy=CustomRetryStrategy())  # does not raise
 
 
 def test_agent_default_retry_strategy_uses_event_loop_constants():

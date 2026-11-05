@@ -1,0 +1,58 @@
+---
+/**
+ * "Back to Integrations" strip shown at the top of full-page integration doc
+ * views (docs/integrations/**). These pages hide the docs sidebar (see
+ * route-middleware.ts), so this link is the way back to the /integrations
+ * catalog. Hidden in embed mode (the drawer has its own chrome) via the
+ * html[data-embed] rule in styles/custom.css.
+ *
+ * Progressive enhancement: when the visitor arrived from the catalog page,
+ * the click becomes history.back() so their filter and scroll state survive.
+ */
+import { pathWithBase } from '../util/links'
+
+const href = pathWithBase('/integrations/')
+---
+
+<nav class="integrations-back print:hidden" aria-label="Breadcrumb">
+  <a data-integrations-back href={href}>
+    <span aria-hidden="true">&larr;</span>
+    Back to Integrations
+  </a>
+</nav>
+
+<script is:inline>
+  ;(() => {
+    const link = document.querySelector('a[data-integrations-back]')
+    if (!(link instanceof HTMLAnchorElement)) return
+    link.addEventListener('click', (event) => {
+      try {
+        const referrer = new URL(document.referrer)
+        const target = new URL(link.href)
+        if (referrer.origin === location.origin && referrer.pathname === target.pathname) {
+          event.preventDefault()
+          history.back()
+        }
+      } catch {
+        // No or unparsable referrer: fall through to normal navigation.
+      }
+    })
+  })()
+</script>
+
+<style>
+  .integrations-back {
+    margin-bottom: 1rem;
+  }
+  .integrations-back a {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.85rem;
+    color: var(--sl-color-gray-3);
+    text-decoration: none;
+  }
+  .integrations-back a:hover {
+    color: var(--sl-color-link-hover);
+  }
+</style>

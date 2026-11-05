@@ -4,6 +4,9 @@ import { InvokeModelStage } from '../../../middleware/index.js'
 import { Message, TextBlock } from '../../../types/messages.js'
 import type { InvokeModelContext } from '../../../middleware/index.js'
 import { createMockAgent } from '../../../__fixtures__/agent-helpers.js'
+import { Agent } from '../../../agent/agent.js'
+import { MockMessageModel } from '../../../__fixtures__/mock-message-model.js'
+import type { StreamOptions } from '../../../models/model.js'
 import { anyTrackingId } from '../../../__fixtures__/message-helpers.js'
 
 const user = (text: string) => new Message({ role: 'user', content: [new TextBlock(text)] })
@@ -54,7 +57,7 @@ describe('ContextInjector', () => {
         { role: 'assistant', content: [{ text: 'prior' }], trackingId: anyTrackingId },
         {
           role: 'user',
-          content: [{ text: 'INJECTED' }, { text: 'ask' }],
+          content: [{ text: 'ask' }, { text: '\n\nINJECTED' }],
           trackingId: anyTrackingId,
         },
       ])
@@ -77,7 +80,7 @@ describe('ContextInjector', () => {
       expect(result.messages.map((m) => m.toJSON())).toStrictEqual([
         {
           role: 'user',
-          content: [{ text: 'INJECTED' }, { text: 'ask' }],
+          content: [{ text: 'ask' }, { text: '\n\nINJECTED' }],
           trackingId: anyTrackingId,
         },
         { role: 'assistant', content: [{ text: 'reply' }], trackingId: anyTrackingId },
@@ -116,6 +119,42 @@ describe('ContextInjector', () => {
         { role: 'assistant', content: [{ text: 'prior' }], trackingId: anyTrackingId },
         { role: 'user', content: [{ text: 'ask' }], trackingId: anyTrackingId },
       ])
+    })
+  })
+
+  describe('per-call trailing blocks handoff to the provider', () => {
+    // The boundary must survive the whole chain, so these go through a real Agent.
+    const trailingBlocksSeen = (model: MockMessageModel): number[] => {
+      const seen: number[] = []
+      const original = model.stream.bind(model)
+      model.stream = async function* mockStream(messages, options?: StreamOptions) {
+        seen.push(options?.dynamicTrailingBlocks ?? 0)
+        yield* original(messages, options)
+      } as typeof model.stream
+      return seen
+    }
+
+    it('reaches the model when an injector is active', async () => {
+      const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Hello' })
+      const seen = trailingBlocksSeen(model)
+      const agent = new Agent({
+        model,
+        plugins: [new ContextInjector({ renderContent: async () => '<ctx>EPHEMERAL</ctx>' })],
+      })
+
+      await agent.invoke('what is the weather?')
+
+      expect(seen).toStrictEqual([1])
+    })
+
+    it('is absent without an injector, so an ordinary call is unchanged', async () => {
+      const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Hello' })
+      const seen = trailingBlocksSeen(model)
+      const agent = new Agent({ model })
+
+      await agent.invoke('what is the weather?')
+
+      expect(seen).toStrictEqual([0])
     })
   })
 })

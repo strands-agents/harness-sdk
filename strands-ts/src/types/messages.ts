@@ -1,7 +1,7 @@
 import type { JSONValue, Serialized, MaybeSerializedInput, JSONSerializable } from './json.js'
 import { deepCopy, omitUndefined } from './json.js'
-import type { ImageBlockData, VideoBlockData, DocumentBlockData } from './media.js'
-import { ImageBlock, VideoBlock, DocumentBlock, encodeBase64, decodeBase64 } from './media.js'
+import type { AudioBlockData, ImageBlockData, VideoBlockData, DocumentBlockData } from './media.js'
+import { AudioBlock, ImageBlock, VideoBlock, DocumentBlock, encodeBase64, decodeBase64 } from './media.js'
 import type { CitationsBlockData } from './citations.js'
 import { CitationsBlock } from './citations.js'
 import type { Usage, Metrics } from '../models/streaming.js'
@@ -164,7 +164,7 @@ export type Role = 'user' | 'assistant'
 
 /**
  * A block of content within a message.
- * Content blocks can contain text, tool usage requests, tool results, reasoning content, cache points, guard content, or media (image, video, document).
+ * Content blocks can contain text, tool usage requests, tool results, reasoning content, cache points, guard content, or media (audio, image, video, document).
  *
  * This is a discriminated union where the object key determines the content format.
  *
@@ -182,6 +182,7 @@ export type ContentBlockData =
   | { reasoning: ReasoningBlockData }
   | { cachePoint: CachePointBlockData }
   | { guardContent: GuardContentBlockData }
+  | { audio: AudioBlockData }
   | { image: ImageBlockData }
   | { video: VideoBlockData }
   | { document: DocumentBlockData }
@@ -194,6 +195,7 @@ export type ContentBlock =
   | ReasoningBlock
   | CachePointBlock
   | GuardContentBlock
+  | AudioBlock
   | ImageBlock
   | VideoBlock
   | DocumentBlock
@@ -697,6 +699,7 @@ export class JsonBlock implements JsonBlockData, JSONSerializable<JsonBlockData>
  * - `interrupt` - Agent execution was interrupted for human input
  * - `maxTokens` - The model provider's per-call token cap was reached
  * - `limitOutputTokens` - Agent loop stopped because `InvokeOptions.limits.outputTokens` was reached
+ * - `limitStructuredOutputAttempts` - Agent loop stopped because `InvokeOptions.limits.structuredOutputAttempts` was reached
  * - `limitTotalTokens` - Agent loop stopped because `InvokeOptions.limits.totalTokens` was reached
  * - `limitTurns` - Agent loop stopped because `InvokeOptions.limits.turns` was reached
  * - `pauseTurn` - Model paused a long-running turn; the response should be sent back to continue
@@ -714,6 +717,7 @@ export type StopReason =
   | 'interrupt'
   | 'maxTokens'
   | 'limitOutputTokens'
+  | 'limitStructuredOutputAttempts'
   | 'limitTotalTokens'
   | 'limitTurns'
   | 'pauseTurn'
@@ -722,6 +726,30 @@ export type StopReason =
   | 'toolUse'
   | 'modelContextWindowExceeded'
   | (string & {}) // Allow any string while preserving autocomplete for known values
+
+/**
+ * Stop reasons for a call that stopped because a limit ({@link InvokeOptions.limits}) was reached.
+ *
+ * @internal
+ */
+export const LIMIT_STOP_REASONS = new Set<StopReason>([
+  'limitTurns',
+  'limitTotalTokens',
+  'limitOutputTokens',
+  'limitStructuredOutputAttempts',
+])
+
+/**
+ * Explains that a nested call stopped because a limit (its own or the request's) was reached, so its answer is incomplete.
+ *
+ * @param agentName - Name of the agent that stopped
+ * @param stopReason - The limit stop reason it returned
+ * @returns The message to surface in place of the agent's answer
+ * @internal
+ */
+export function limitStopMessage(agentName: string, stopReason: StopReason): string {
+  return `Agent '${agentName}' stopped early (${stopReason}): a limit on this call was reached, so its answer is incomplete`
+}
 
 /**
  * System prompt for guiding model behavior.
@@ -982,6 +1010,8 @@ export function contentBlockFromData(data: ContentBlockData): ContentBlock {
     return CachePointBlock.fromJSON(data)
   } else if ('guardContent' in data) {
     return GuardContentBlock.fromJSON(data)
+  } else if ('audio' in data) {
+    return AudioBlock.fromJSON(data)
   } else if ('image' in data) {
     return ImageBlock.fromJSON(data)
   } else if ('video' in data) {

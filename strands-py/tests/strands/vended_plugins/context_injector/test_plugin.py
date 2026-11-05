@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from strands._middleware.stages import InvokeModelContext, InvokeModelStage
+from strands.middleware.stages import InvokeModelContext, InvokeModelStage
 from strands.vended_plugins.context_injector import ContextInjector
 
 
@@ -28,7 +28,7 @@ def register(plugin: ContextInjector) -> tuple[Any, Any]:
     """Run the plugin's init_agent and return (agent, registered_handler)."""
     agent = make_agent()
     plugin.init_agent(agent)
-    call = agent._middleware_registry.add_middleware.call_args
+    call = agent.add_middleware.call_args
     return agent, call
 
 
@@ -40,6 +40,7 @@ def invoke_ctx(messages: list[dict], agent: Any) -> InvokeModelContext:
         tool_specs=[],
         tool_choice=None,
         invocation_state={},
+        model=MagicMock(),
     )
 
 
@@ -73,7 +74,7 @@ class TestRegisteredHandler:
         )
         assert result.messages == [
             {"role": "assistant", "content": [{"text": "prior"}]},
-            {"role": "user", "content": [{"text": "INJECTED"}, {"text": "ask"}]},
+            {"role": "user", "content": [{"text": "ask"}, {"text": "\n\nINJECTED"}]},
         ]
 
     async def test_skips_on_non_user_turn_by_default(self):
@@ -93,7 +94,7 @@ class TestRegisteredHandler:
         )
         # No later user message than index 0, so the fold targets it.
         assert result.messages == [
-            {"role": "user", "content": [{"text": "INJECTED"}, {"text": "ask"}]},
+            {"role": "user", "content": [{"text": "ask"}, {"text": "\n\nINJECTED"}]},
             {"role": "assistant", "content": [{"text": "reply"}]},
         ]
 

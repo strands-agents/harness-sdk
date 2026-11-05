@@ -24,11 +24,11 @@ const linkFor = (r: typeof release) => pathWithBase(`/changelog/${releaseSlug(r)
 ---
 <ChangelogLayout title={title} description={description}>
   <div class="cl-page cl-detail">
-    <a class="cl-back" href={pathWithBase('/changelog/')}><span aria-hidden="true">←</span> All releases</a>
+    <a class="cl-back" data-pagefind-ignore href={pathWithBase('/changelog/')}><span aria-hidden="true">←</span> All releases</a>
     <ol class="cl-feed-list" role="list">
       <li class="cl-version-item"><ChangelogVersion release={release} detail /></li>
     </ol>
-    <nav class="cl-pager" aria-label={`Other ${label} releases`}>
+    <nav class="cl-pager" data-pagefind-ignore aria-label={`Other ${label} releases`}>
       {older ? (
         <a class="cl-pager-link cl-pager-prev" href={linkFor(older)} rel="prev">
           <span class="cl-pager-dir"><span aria-hidden="true">←</span> Older</span>

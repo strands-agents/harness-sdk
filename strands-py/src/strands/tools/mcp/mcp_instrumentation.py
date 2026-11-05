@@ -1,14 +1,22 @@
 """OpenTelemetry instrumentation for Model Context Protocol (MCP) tracing.
 
-Enables distributed tracing across MCP client-server boundaries by injecting
-OpenTelemetry context into MCP request metadata (_meta field) and extracting
-it on the server side, creating unified traces that span from agent calls
-through MCP tool executions.
+Enables distributed tracing across MCP client-server boundaries. The client
+side is handled with `inject_trace_context`, which `MCPClient` uses to merge
+the current OpenTelemetry context into the `_meta` field of outgoing tool
+calls through the public `meta` parameter of the official `mcp` package.
+
+The server side covers MCP servers hosted in the same process. It extracts
+client-injected context from incoming messages so server-side spans join the
+client's trace. This requires patching private internals of the `mcp` package
+and those internals are only stable within the 1.x line, so the patches are
+gated to `mcp` 1.x. The `mcp` 2.x line propagates trace context natively.
 
 Based on: https://github.com/traceloop/openllmetry/tree/main/packages/opentelemetry-instrumentation-mcp
 Related issue: https://github.com/modelcontextprotocol/modelcontextprotocol/issues/246
 """
 
+import logging
+import threading
 from collections.abc import AsyncGenerator, Callable
 from contextlib import _AsyncGeneratorContextManager, asynccontextmanager
 from dataclasses import dataclass
@@ -19,8 +27,41 @@ from mcp.types import JSONRPCMessage, JSONRPCRequest
 from opentelemetry import context, propagate
 from wrapt import ObjectProxy, register_post_import_hook, wrap_function_wrapper
 
-# Module-level flag to ensure instrumentation is applied only once
+from ._compat import MCP_V2
+
+logger = logging.getLogger(__name__)
+
+# Module-level flag to ensure instrumentation is applied only once. The lock
+# makes the check-and-set atomic so concurrent MCPClient construction cannot
+# stack duplicate wrappers.
 _instrumentation_applied = False
+_instrumentation_lock = threading.Lock()
+
+
+def inject_trace_context(meta: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Merge the current OpenTelemetry context into MCP request metadata.
+
+    Injects the active trace context (for example `traceparent` and
+    `tracestate`) into a copy of `meta` so it can be sent as the `_meta`
+    field of an MCP request. This enables server-side context extraction and
+    trace continuation across the client-server boundary.
+
+    Telemetry must never fail the tool call itself, so propagator errors are
+    logged and swallowed; the caller's metadata is still returned.
+
+    Args:
+        meta: Existing request metadata, or None. The input is not mutated.
+
+    Returns:
+        A new dict containing the caller's entries plus the injected trace
+        context, or None when there is no metadata to send.
+    """
+    carrier: dict[str, Any] = dict(meta) if meta else {}
+    try:
+        propagate.get_global_textmap().inject(carrier)
+    except Exception:
+        logger.warning("failed to inject trace context into mcp request meta", exc_info=True)
+    return carrier or None
 
 
 @dataclass(slots=True, frozen=True)
@@ -41,79 +82,34 @@ class ItemWithContext:
 
 
 def mcp_instrumentation() -> None:
-    """Apply OpenTelemetry instrumentation patches to MCP components.
+    """Apply OpenTelemetry instrumentation patches for in-process MCP servers.
 
-    This function instruments three key areas of MCP communication:
-    1. Client-side: Injects tracing context into tool call requests
-    2. Transport-level: Extracts context from incoming messages
-    3. Session-level: Manages bidirectional context flow
+    Instruments two areas of server-side MCP communication:
+    1. Transport-level: Extracts context from incoming messages
+    2. Session-level: Preserves context across async message processing
+       boundaries
 
-    The patches enable distributed tracing by:
-    - Adding OpenTelemetry context to the _meta field of MCP requests
-    - Extracting and activating context on the server side
-    - Preserving context across async message processing boundaries
+    Together the patches let an MCP server hosted in the same process join
+    the trace of the client that injected context into the request's `_meta`
+    field. Client-side injection does not require patching; `MCPClient`
+    injects context via `inject_trace_context`.
+
+    The patches wrap private internals of the `mcp` package that are only
+    stable within the 1.x line, so they are applied only when `mcp` 1.x is
+    installed. The `mcp` 2.x line propagates trace context natively.
 
     This function is idempotent - multiple calls will not accumulate wrappers.
     """
     global _instrumentation_applied
 
-    # Return early if instrumentation has already been applied
-    if _instrumentation_applied:
-        return
+    with _instrumentation_lock:
+        # Return early if instrumentation has already been applied
+        if _instrumentation_applied:
+            return
+        _instrumentation_applied = True
 
-    def patch_mcp_client(wrapped: Callable[..., Any], instance: Any, args: Any, kwargs: Any) -> Any:
-        """Patch MCP client to inject OpenTelemetry context into tool calls.
-
-        Intercepts outgoing MCP requests and injects the current OpenTelemetry
-        context into the request's _meta field for tools/call methods. This
-        enables server-side context extraction and trace continuation.
-
-        Args:
-            wrapped: The original function being wrapped
-            instance: The instance the method is being called on
-            args: Positional arguments to the wrapped function
-            kwargs: Keyword arguments to the wrapped function
-
-        Returns:
-            Result of the wrapped function call
-        """
-        if len(args) < 1:
-            return wrapped(*args, **kwargs)
-
-        request = args[0]
-        method = getattr(request.root, "method", None)
-
-        if method != "tools/call":
-            return wrapped(*args, **kwargs)
-
-        try:
-            if hasattr(request.root, "params") and request.root.params:
-                # Handle Pydantic models
-                if hasattr(request.root.params, "model_dump") and hasattr(request.root.params, "model_validate"):
-                    params_dict = request.root.params.model_dump(by_alias=True)
-                    # Add _meta with tracing context
-                    meta = params_dict.get("_meta") if params_dict.get("_meta") is not None else {}
-                    params_dict["_meta"] = meta
-                    propagate.get_global_textmap().inject(meta)
-
-                    # Recreate the Pydantic model with the updated data
-                    # This preserves the original model type and avoids serialization warnings
-                    params_class = type(request.root.params)
-                    try:
-                        request.root.params = params_class.model_validate(params_dict)
-                    except Exception:
-                        # Fallback to dict if model recreation fails
-                        request.root.params = params_dict
-
-                elif isinstance(request.root.params, dict):
-                    # Handle dict params directly
-                    meta = request.root.params.setdefault("_meta", {})
-                    propagate.get_global_textmap().inject(meta)
-
-            return wrapped(*args, **kwargs)
-
-        except Exception:
-            return wrapped(*args, **kwargs)
+        if MCP_V2:
+            return
 
     def transport_wrapper() -> Callable[
         [Callable[..., Any], Any, Any, Any], _AsyncGeneratorContextManager[tuple[Any, Any]]
@@ -165,8 +161,6 @@ def mcp_instrumentation() -> None:
         return traced_method
 
     # Apply patches
-    wrap_function_wrapper("mcp.shared.session", "BaseSession.send_request", patch_mcp_client)
-
     register_post_import_hook(
         lambda _: wrap_function_wrapper(
             "mcp.server.streamable_http", "StreamableHTTPServerTransport.connect", transport_wrapper()
@@ -223,9 +217,9 @@ class TransportContextExtractingReader(ObjectProxy):
         """
         async for item in self.__wrapped__:
             if isinstance(item, SessionMessage):
-                request = item.message.root
+                request = item.message.root  # type: ignore[union-attr]
             elif type(item) is JSONRPCMessage:
-                request = item.root
+                request = item.root  # type: ignore[unreachable]
             else:
                 yield item
                 continue

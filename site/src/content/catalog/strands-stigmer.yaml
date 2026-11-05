@@ -1,0 +1,9 @@
+name: strands-stigmer
+description: The execution graph of AWS for Strands agents, providing verified method contracts with IAM permissions, call chains, and least-privilege policies.
+integrationType: tool
+languages:
+  python:
+    package: strands-stigmer
+github: https://github.com/LNSHRIVAS/stigmer
+docsUrl: https://stigmer.network/strands-stigmer/
+addedDate: 2026-08-05

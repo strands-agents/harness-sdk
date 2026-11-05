@@ -1,6 +1,45 @@
 """Tests for model validation helper functions."""
 
-from strands.models._validation import _has_location_source
+import logging
+from collections import Counter
+
+import pytest
+
+from strands.models._validation import _has_location_source, _log_skipped_blocks, validate_region
+
+
+class TestValidateRegion:
+    """Tests for the validate_region helper function."""
+
+    @pytest.mark.parametrize("region", ["us-east-1", "ap-southeast-1", "us-gov-east-1", "eu-central-1"])
+    def test_well_formed_region_is_returned(self, region):
+        """A well-formed region is accepted and returned unchanged."""
+        assert validate_region(region) == region
+
+    @pytest.mark.parametrize(
+        "region",
+        [
+            "x@attacker.com:443/#",  # URL control characters redirecting the host
+            "us-east-1\n",  # trailing newline
+            "\nus-east-1",  # leading newline
+            "us-east-1/",  # trailing path separator
+            "US-EAST-1",  # uppercase
+            "useast1",  # missing separators
+            "us-east",  # missing numeric suffix
+            "us-east-١",  # non-ASCII (Arabic-Indic) digit
+            "us-éast-1",  # non-ASCII letter
+            "",  # empty
+        ],
+    )
+    def test_malformed_region_is_rejected(self, region):
+        """A malformed region is rejected before it can reach an endpoint URL."""
+        with pytest.raises(ValueError, match="invalid AWS region"):
+            validate_region(region)
+
+    def test_non_string_region_is_rejected(self):
+        """A non-string region is rejected rather than raising an opaque error later."""
+        with pytest.raises(ValueError, match="invalid AWS region"):
+            validate_region(None)  # type: ignore[arg-type]
 
 
 class TestHasLocationSource:
@@ -65,3 +104,19 @@ class TestHasLocationSource:
         """Test that video without source is not detected as location."""
         content = {"video": {"format": "mp4"}}
         assert not _has_location_source(content)
+
+
+def test_log_skipped_blocks_logs_each_notice_once_with_its_count(caplog):
+    caplog.set_level(logging.WARNING, logger="strands.test")
+
+    _log_skipped_blocks(logging.getLogger("strands.test"), Counter({"notice a": 3, "notice b": 1}))
+
+    assert [record.getMessage() for record in caplog.records] == ["count=<3> | notice a", "count=<1> | notice b"]
+
+
+def test_log_skipped_blocks_logs_nothing_when_nothing_was_skipped(caplog):
+    caplog.set_level(logging.WARNING, logger="strands.test")
+
+    _log_skipped_blocks(logging.getLogger("strands.test"), Counter())
+
+    assert caplog.records == []

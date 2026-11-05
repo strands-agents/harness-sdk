@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { resolveLanguage, languageLabel, sourceLinkUrl } from '../src/util/source-links'
+import { languageCodeForLabel, resolveLanguage, languageLabel, sourceLinkUrl } from '../src/util/source-links'
 
 describe('resolveLanguage', () => {
   it('infers python from a .py extension', () => {
@@ -18,7 +18,9 @@ describe('resolveLanguage', () => {
   })
 
   it('throws for an unmapped extension with no explicit language', () => {
-    expect(() => resolveLanguage({ path: 'configs/agent.toml', repo: 'harness-sdk' })).toThrow(/unrecognized file extension/)
+    expect(() => resolveLanguage({ path: 'configs/agent.toml', repo: 'harness-sdk' })).toThrow(
+      /unrecognized file extension/
+    )
   })
 
   it('throws for a path with no extension and no explicit language', () => {
@@ -37,16 +39,27 @@ describe('languageLabel', () => {
   })
 })
 
+describe('languageCodeForLabel', () => {
+  it('maps known display labels back to their canonical code', () => {
+    expect(languageCodeForLabel('Python')).toBe('python')
+    expect(languageCodeForLabel('TypeScript')).toBe('typescript')
+  })
+
+  it('returns undefined for unknown labels', () => {
+    expect(languageCodeForLabel('Rust')).toBeUndefined()
+  })
+})
+
 describe('sourceLinkUrl', () => {
   it('builds a GitHub blob URL from repo and path', () => {
     expect(sourceLinkUrl({ path: 'strands-py/src/strands/agent/agent.py', repo: 'harness-sdk' })).toBe(
-      'https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/agent.py',
+      'https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/agent.py'
     )
   })
 
   it('respects a custom repo override', () => {
     expect(sourceLinkUrl({ path: 'src/tool.py', repo: 'tools' })).toBe(
-      'https://github.com/strands-agents/tools/blob/main/src/tool.py',
+      'https://github.com/strands-agents/tools/blob/main/src/tool.py'
     )
   })
 })

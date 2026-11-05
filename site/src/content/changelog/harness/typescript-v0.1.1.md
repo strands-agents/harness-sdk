@@ -2,14 +2,14 @@
 sdk: harness
 language: typescript
 version: "0.1.1"
-tag: v0.1.1
-date: 2025-12-03
-releaseUrl: https://github.com/strands-agents/sdk-typescript/releases/tag/v0.1.1
-packageUrl: https://www.npmjs.com/package/@strands-agents/sdk/v/0.1.1
+tag: harness-typescript/v0.1.1
+date: 2026-09-22
+releaseUrl: https://github.com/strands-agents/harness-sdk/releases/tag/harness-typescript/v0.1.1
+packageUrl: https://www.npmjs.com/package/@strands-agents/harness/v/0.1.1
 entries:
-  - { type: other, breaking: false, scope: null, areas: [model], title: "bump @aws-sdk/client-bedrock-runtime from 3.941.0 to 3.943.0", pr: 304, prUrl: "https://github.com/strands-agents/sdk-typescript/pull/304", commit: "51e331f", commitUrl: "https://github.com/strands-agents/sdk-typescript/commit/51e331f", author: "dependabot[bot]" }
-  - { type: other, breaking: false, scope: null, areas: [], title: "bump actions/upload-artifact from 4 to 5", pr: 302, prUrl: "https://github.com/strands-agents/sdk-typescript/pull/302", commit: "ad13100", commitUrl: "https://github.com/strands-agents/sdk-typescript/commit/ad13100", author: "dependabot[bot]" }
-  - { type: other, breaking: false, scope: null, areas: [], title: "bump the development-dependencies group with 10 updates", pr: 303, prUrl: "https://github.com/strands-agents/sdk-typescript/pull/303", commit: "085fb64", commitUrl: "https://github.com/strands-agents/sdk-typescript/commit/085fb64", author: "dependabot[bot]" }
-  - { type: other, breaking: false, scope: null, areas: [mcp], title: "Update mcp version", pr: 307, prUrl: "https://github.com/strands-agents/sdk-typescript/pull/307", commit: "145452c", commitUrl: "https://github.com/strands-agents/sdk-typescript/commit/145452c", author: Unshure }
-  - { type: other, breaking: false, scope: null, areas: [mcp], title: "Update MCP example in readme", pr: 308, prUrl: "https://github.com/strands-agents/sdk-typescript/pull/308", commit: "0a412e4", commitUrl: "https://github.com/strands-agents/sdk-typescript/commit/0a412e4", author: zastrowm }
+  - { type: fix, breaking: false, scope: harness, areas: [devx], title: "align Node requirement and default model docs", pr: 4469, prUrl: "https://github.com/strands-agents/harness-sdk/pull/4469", commit: "1f08ea6", commitUrl: "https://github.com/strands-agents/harness-sdk/commit/1f08ea6", author: pgrayy }
+  - { type: fix, breaking: false, scope: harness, areas: [model], title: "default effort back to 'auto' so no-reasoning models resolve", pr: 4473, prUrl: "https://github.com/strands-agents/harness-sdk/pull/4473", commit: "98547f1", commitUrl: "https://github.com/strands-agents/harness-sdk/commit/98547f1", author: strandly-the-agent }
+  - { type: fix, breaking: false, scope: harness, areas: [model, tool], title: "let an explicit web_search: 'exa' win over native search", pr: 4491, prUrl: "https://github.com/strands-agents/harness-sdk/pull/4491", commit: "523d4d0", commitUrl: "https://github.com/strands-agents/harness-sdk/commit/523d4d0", author: strandly-the-agent }
+  - { type: docs, breaking: false, scope: null, areas: [], title: "use Strands wordmarks in package READMEs", pr: 4475, prUrl: "https://github.com/strands-agents/harness-sdk/pull/4475", commit: "42c4c42", commitUrl: "https://github.com/strands-agents/harness-sdk/commit/42c4c42", author: pgrayy }
+  - { type: chore, breaking: false, scope: harness-ts, areas: [community], title: "lift the @strands-agents/sdk <1.18.0 cap", pr: 4520, prUrl: "https://github.com/strands-agents/harness-sdk/pull/4520", commit: "15c42ff", commitUrl: "https://github.com/strands-agents/harness-sdk/commit/15c42ff", author: notowen333 }
 ---

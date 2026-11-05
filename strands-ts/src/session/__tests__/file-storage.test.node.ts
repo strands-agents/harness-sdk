@@ -102,6 +102,21 @@ describe('FileStorage', () => {
       })
     })
 
+    describe('FileSnapshotStorage_When_InvalidScope_Then_RejectsPath', () => {
+      it('rejects a scope containing path traversal', async () => {
+        const location = {
+          sessionId: 'test-session',
+          scope: '../../../../outside',
+          scopeId: SCOPE_ID,
+        } as unknown as SnapshotLocation
+
+        await expect(
+          storage.saveSnapshot({ location, snapshotId: '1', isLatest: true, snapshot: createTestSnapshot() })
+        ).rejects.toThrow("Invalid scope '../../../../outside': must be 'agent' or 'multiAgent'")
+        await expect(fs.readdir(testDir)).resolves.toEqual([])
+      })
+    })
+
     describe('FileSnapshotStorage_When_MultiAgentScope_Then_SavesCorrectly', () => {
       it('saves multi-agent snapshot to correct path', async () => {
         const location: SnapshotLocation = {

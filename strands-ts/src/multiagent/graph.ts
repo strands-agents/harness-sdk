@@ -1,5 +1,10 @@
 import type { AttributeValue } from '@opentelemetry/api'
 import type { InvocationState, InvokableAgent } from '../types/agent.js'
+import {
+  type InvocationContext,
+  type InvocationContextImpl,
+  resolveInvocationContext,
+} from '../agent/invocation-context.js'
 import type { MultiAgentContentInput, MultiAgentInput, MultiAgentInvokeOptions } from './multiagent.js'
 import {
   applyOrchestratorHookResponses,
@@ -20,7 +25,7 @@ import type { HookCallback, HookableEventConstructor, HookCleanup } from '../hoo
 import type { MultiAgentPlugin } from './plugins.js'
 import type { SessionManager } from '../session/session-manager.js'
 import { MultiAgentPluginRegistry } from './plugins.js'
-import type { NodeDefinition } from './nodes.js'
+import type { NodeDefinition, NodeInputOptions } from './nodes.js'
 import { AgentNode, MultiAgentNode, Node } from './nodes.js'
 import { MultiAgentState, MultiAgentResult, NodeResult, Status } from './state.js'
 import type { MultiAgent } from './multiagent.js'
@@ -121,8 +126,9 @@ export interface GraphOptions extends GraphConfig {
  *   scheduling the next set of nodes.
  * - Agent nodes are stateless by default (snapshot/restore on each execution). Python
  *   accumulates agent state across executions unless `reset_on_revisit` is enabled.
- * - Node failures produce a FAILED result, allowing parallel paths to continue.
- *   MultiAgent-level limits (maxSteps) throw exceptions. Python does the inverse:
+ * - Node failures produce a FAILED result, allowing parallel paths to continue; this
+ *   includes a node whose agent reaches a request limit ({@link MultiAgentInvokeOptions.limits}).
+ *   The graph's own `maxSteps` and `timeout` throw exceptions. Python does the inverse:
  *   node failures throw exceptions (fail-fast), while limit violations return a
  *   FAILED result.
  *
@@ -251,9 +257,11 @@ export class Graph implements MultiAgent {
     // child agent so mutations in one node are visible in the next.
     const invocationState: InvocationState = options?.invocationState ?? {}
 
+    const invocationContext = resolveInvocationContext(options)
+
     // Hook invocation lives in `_stream` so hook-raised `InterruptError`s land in the
     // same frame as the execution loop.
-    const gen = this._stream(input, invocationState, options?.cancelSignal)
+    const gen = this._stream(input, invocationState, invocationContext, options?.cancelSignal)
     try {
       let next = await gen.next()
       while (!next.done) {
@@ -269,12 +277,15 @@ export class Graph implements MultiAgent {
   private async *_stream(
     input: MultiAgentInput,
     invocationState: InvocationState,
+    invocationContext: InvocationContextImpl,
     externalCancelSignal?: AbortSignal
   ): AsyncGenerator<MultiAgentStreamEvent, MultiAgentResult, undefined> {
     // Reuse state from a prior INTERRUPTED run so `graph.invoke(responses)` can
     // resume on the same instance without a SessionManager.
     const state = this._pendingInterruptState ?? new MultiAgentState({ nodeIds: [...this.nodes.keys()] })
     delete this._pendingInterruptState
+    // Rebound on every run: a resumed run reuses the state but may belong to another request.
+    state._bindInvocationContext(invocationContext)
 
     const queue = new Queue<NodeExecutionOutput>()
     const streams = new Map<string, Promise<void>>()
@@ -370,7 +381,10 @@ export class Graph implements MultiAgent {
             continue
           }
 
-          streams.set(node.id, this._streamNode(node, nodeInput, state, queue, nodeSpan, invocationState, cancelSignal))
+          streams.set(
+            node.id,
+            this._streamNode(node, nodeInput, state, queue, nodeSpan, invocationState, invocationContext, cancelSignal)
+          )
         }
 
         await queue.wait()
@@ -424,6 +438,7 @@ export class Graph implements MultiAgent {
         results: state.results,
         content: this._resolveContent(state),
         duration: Date.now() - state.startTime,
+        invocationContext,
       })
       // Stash on interrupt so same-instance resume has state; otherwise start fresh.
       if (result.status === Status.INTERRUPTED) {
@@ -522,6 +537,7 @@ export class Graph implements MultiAgent {
     queue: Queue<NodeExecutionOutput>,
     nodeSpan: Span | null,
     invocationState: InvocationState,
+    invocationContext: InvocationContext,
     executionSignal?: AbortSignal
   ): Promise<void> {
     // Per-node timeout only applies to AgentNode; a nested MultiAgentNode manages
@@ -535,13 +551,13 @@ export class Graph implements MultiAgent {
     const cancelSignal = signals.length > 0 ? AbortSignal.any(signals) : undefined
 
     try {
-      const gen = this._tracer.withSpanContext(nodeSpan, () =>
-        node.stream(input, state, {
-          invocationState,
-          ...(cancelSignal && { cancelSignal }),
-          ...(this._canRunConcurrently && { bufferOutput: true }),
-        })
-      )
+      const nodeOptions: NodeInputOptions = {
+        invocationState,
+        invocationContext,
+        ...(cancelSignal && { cancelSignal }),
+        ...(this._canRunConcurrently && { bufferOutput: true }),
+      }
+      const gen = this._tracer.withSpanContext(nodeSpan, () => node.stream(input, state, nodeOptions))
       let next = await this._tracer.withSpanContext(nodeSpan, () => gen.next())
       while (!next.done) {
         await queue.send({ type: 'event', node, event: next.value })

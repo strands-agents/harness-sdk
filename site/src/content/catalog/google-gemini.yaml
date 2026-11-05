@@ -1,0 +1,10 @@
+name: Google Gemini
+description: Run Strands agents on Google Gemini models, with built-in tools, structured output, and image and video input.
+integrationType: model-provider
+maintainedBy: strands
+languages:
+  python: {}
+  typescript: {}
+github: https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/gemini.py
+docsPage: docs/user-guide/sdk/model-providers/google
+addedDate: 2025-09-19

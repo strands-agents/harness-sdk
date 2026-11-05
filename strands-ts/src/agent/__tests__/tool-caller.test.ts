@@ -58,6 +58,26 @@ describe('ToolCaller', () => {
       )
     })
 
+    it('passes agent.cancelSignal to direct tool calls', async () => {
+      let receivedSignal: AbortSignal | undefined
+      const tool = createMockTool('probe', (context) => {
+        receivedSignal = context.cancelSignal
+        return new ToolResultBlock({
+          toolUseId: context.toolUse.toolUseId,
+          status: 'success',
+          content: [],
+        })
+      })
+      const agent = new Agent({
+        model: new MockMessageModel().addTurn({ type: 'textBlock', text: 'unused' }),
+        tools: [tool],
+      })
+
+      await agent.tool.probe!.invoke({})
+
+      expect(receivedSignal).toBe(agent.cancelSignal)
+    })
+
     it('throws when tool is not found', async () => {
       const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Hello' })
       const agent = new Agent({ model, tools: [] })

@@ -1,5 +1,12 @@
 export {
   type McpClientOptions,
+  type McpListOptions,
+  type McpListToolsOptions,
+  type McpProgress,
+  type McpProgressCallback,
+  type McpToolFilterCallback,
+  type McpToolFilters,
+  type McpToolMatcher,
   type McpClientConfig,
   type McpClientCredentials,
   type McpTransport,
@@ -7,5 +14,31 @@ export {
   type TasksConfig,
   type McpConnectionState,
   McpClient,
+  McpTaskCancelledError,
+  McpTaskFailedError,
 } from './client.js'
-export type { McpServerConfig } from './config.js'
+export type { McpLoadServersOptions, McpServerConfig, SerializableMcpToolFilters } from './config.js'
+
+export type { McpTaskRequestOptions } from './client.js'
+export type {
+  McpSubmitToolResult,
+  McpCancelTaskResult,
+  McpCancelledTask,
+  McpCompletedTask,
+  McpCreateTaskResult,
+  McpDetailedTask,
+  McpDirectCallToolResult,
+  McpFailedTask,
+  McpGetTaskResult,
+  McpInputRequest,
+  McpInputRequests,
+  McpInputRequiredTask,
+  McpInputResponse,
+  McpInputResponses,
+  McpTask,
+  McpTaskError,
+  McpTaskResult,
+  McpTaskStatus,
+  McpUpdateTaskResult,
+  McpWorkingTask,
+} from './task-types.js'

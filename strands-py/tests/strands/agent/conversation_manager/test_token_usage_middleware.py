@@ -6,7 +6,7 @@ import pytest
 
 from strands import Agent
 from strands._context_manager.modes.agentic.agentic_context import create_token_usage_middleware
-from strands._middleware.stages import InvokeModelContext
+from strands.middleware.stages import InvokeModelContext
 from strands.types.content import Message
 from tests.fixtures.mocked_model_provider import MockedModelProvider
 
@@ -25,6 +25,7 @@ def make_context(**overrides) -> InvokeModelContext:
         tool_specs=[],
         tool_choice=None,
         invocation_state={},
+        model=mock_model(200_000),
     )
     defaults.update(overrides)
     return InvokeModelContext(**defaults)
@@ -33,7 +34,7 @@ def make_context(**overrides) -> InvokeModelContext:
 @pytest.mark.asyncio
 class TestCreateTokenUsageMiddleware:
     async def test_returns_context_unchanged_when_projected_tokens_not_set(self):
-        middleware = create_token_usage_middleware(mock_model(200_000))
+        middleware = create_token_usage_middleware()
         context = make_context()
 
         result = await middleware(context)
@@ -41,7 +42,7 @@ class TestCreateTokenUsageMiddleware:
         assert result is context
 
     async def test_returns_context_unchanged_when_messages_are_empty(self):
-        middleware = create_token_usage_middleware(mock_model(200_000))
+        middleware = create_token_usage_middleware()
         context = make_context(messages=[], projected_input_tokens=50_000)
 
         result = await middleware(context)
@@ -49,8 +50,8 @@ class TestCreateTokenUsageMiddleware:
         assert result is context
 
     async def test_appends_context_status_to_last_message_content(self):
-        middleware = create_token_usage_middleware(mock_model(200_000))
-        context = make_context(projected_input_tokens=50_000)
+        middleware = create_token_usage_middleware()
+        context = make_context(model=mock_model(200_000), projected_input_tokens=50_000)
 
         result = await middleware(context)
 
@@ -63,8 +64,19 @@ class TestCreateTokenUsageMiddleware:
         assert "<remaining>" in status_text
         assert "</context-status>" in status_text
 
+    async def test_uses_the_effective_context_model_limit_not_a_captured_default(self):
+        # guards against reporting the agent's default-model window for a redirected call
+        middleware = create_token_usage_middleware()
+        context = make_context(model=mock_model(10_000), projected_input_tokens=8_000)
+
+        result = await middleware(context)
+
+        status_text = result.messages[0]["content"][1]["text"]
+        assert "8,000 / 10,000 tokens (80.0%)" in status_text
+        assert "<remaining>~2,000 tokens</remaining>" in status_text
+
     async def test_does_not_mutate_the_original_messages(self):
-        middleware = create_token_usage_middleware(mock_model(200_000))
+        middleware = create_token_usage_middleware()
         original_message: Message = {"role": "user", "content": [{"text": "hello"}]}
         context = make_context(messages=[original_message], projected_input_tokens=50_000)
 
@@ -74,8 +86,8 @@ class TestCreateTokenUsageMiddleware:
         assert len(original_message["content"]) == 1
 
     async def test_uses_default_context_window_limit_when_model_has_no_limit(self):
-        middleware = create_token_usage_middleware(mock_model(None))
-        context = make_context(projected_input_tokens=100_000)
+        middleware = create_token_usage_middleware()
+        context = make_context(model=mock_model(None), projected_input_tokens=100_000)
 
         result = await middleware(context)
 
@@ -85,7 +97,7 @@ class TestCreateTokenUsageMiddleware:
         assert "200,000" in status_text
 
     async def test_preserves_message_metadata(self):
-        middleware = create_token_usage_middleware(mock_model(200_000))
+        middleware = create_token_usage_middleware()
         metadata = {"usage": {"inputTokens": 10, "outputTokens": 5, "totalTokens": 15}}
         context = make_context(
             messages=[{"role": "user", "content": [{"text": "hello"}], "metadata": metadata}],
@@ -97,8 +109,8 @@ class TestCreateTokenUsageMiddleware:
         assert result.messages[0]["metadata"] == metadata
 
     async def test_reports_correct_remaining_tokens(self):
-        middleware = create_token_usage_middleware(mock_model(100_000))
-        context = make_context(projected_input_tokens=80_000)
+        middleware = create_token_usage_middleware()
+        context = make_context(model=mock_model(100_000), projected_input_tokens=80_000)
 
         result = await middleware(context)
 
@@ -176,3 +188,51 @@ class TestTokenUsageMiddlewareIntegration:
         for messages in seen_messages:
             for block in messages[-1]["content"]:
                 assert "<context-status>" not in block.get("text", "")
+
+
+@pytest.mark.asyncio
+async def test_status_line_is_reported_as_per_call_content():
+    """The status line carries a live token count, so it is rebuilt on every call.
+
+    Reporting it keeps a provider's cache point ahead of it; otherwise the cache point lands after
+    a block that changes every turn and no request ever reads a cache entry.
+    """
+    middleware = create_token_usage_middleware()
+    context = make_context(projected_input_tokens=50_000)
+
+    result = await middleware(context)
+
+    assert result.dynamic_trailing_blocks == 1
+
+
+@pytest.mark.asyncio
+async def test_reports_nothing_when_the_status_line_lands_in_an_assistant_message():
+    """The status text is appended to the last message whatever its role, but only a boundary on the
+    last user message is meaningful. On an assistant-terminated history the text is already outside the
+    cached prefix, so reporting trailing blocks would move a provider's cache point off the end of the last user
+    message and evict durable content. Reachable via ``agent()`` with no prompt and restored sessions.
+    """
+    middleware = create_token_usage_middleware()
+    context = make_context(
+        messages=[
+            {"role": "user", "content": [{"text": "durable ask"}]},
+            {"role": "assistant", "content": [{"text": "reply"}]},
+        ],
+        projected_input_tokens=50_000,
+    )
+
+    result = await middleware(context)
+
+    assert result.messages[-1]["role"] == "assistant"
+    assert "<context-status>" in result.messages[-1]["content"][-1]["text"]
+    assert result.dynamic_trailing_blocks == 0
+
+
+@pytest.mark.asyncio
+async def test_reports_nothing_when_projection_is_unavailable():
+    middleware = create_token_usage_middleware()
+    context = make_context()
+
+    result = await middleware(context)
+
+    assert result.dynamic_trailing_blocks == 0

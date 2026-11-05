@@ -22,7 +22,7 @@ import type {
   ResponseCreateParamsStreaming,
   ResponseUsage,
 } from 'openai/resources/responses/responses'
-import type { Message, StopReason, ToolResultBlock } from '../../types/messages.js'
+import { Message, type StopReason, type ToolResultBlock } from '../../types/messages.js'
 import type { ImageBlock, DocumentBlock } from '../../types/media.js'
 import { encodeBase64 } from '../../types/media.js'
 import { toMimeType } from '../../mime.js'
@@ -32,9 +32,16 @@ import type { StreamOptions } from '../model.js'
 import { logger } from '../../logging/logger.js'
 import { MODEL_DEFAULTS } from '../defaults.js'
 import { formatImageDataUrl, warnManagedParams as warnManagedParamsShared } from './formatting.js'
+import { applyCacheConfig, CACHE_LIFETIMES } from './cache.js'
 import type { OpenAIResponsesConfig } from './types.js'
+import type { ModelInfo } from '../model-info.js'
 
 export const DEFAULT_RESPONSES_MODEL_ID = MODEL_DEFAULTS.openai.modelId
+
+/** Input content types that accept `prompt_cache_breakpoint` (gpt-5.6+). */
+const CACHEABLE_INPUT_TYPES = new Set(['input_text', 'input_image', 'input_file'])
+
+type InputPart = { type: string; prompt_cache_breakpoint?: { mode: 'explicit'; ttl?: string } }
 
 const MANAGED_PARAMS: ReadonlySet<string> = new Set(['model', 'input', 'stream', 'store'])
 
@@ -50,15 +57,22 @@ export function warnManagedParams(params: Record<string, unknown> | undefined): 
 /**
  * Builds a Responses API streaming request body.
  *
+ * @param modelInfo - What the SDK knows about the model; decides whether durable message checkpoints are placed
  * @internal
  */
 export function formatResponsesRequest(
   config: OpenAIResponsesConfig,
   messages: Message[],
   options: StreamOptions | undefined,
-  stateful: boolean
+  stateful: boolean,
+  modelInfo: ModelInfo
 ): ResponseCreateParamsStreaming {
-  const input = formatResponsesMessages(messages)
+  const { cacheConfig } = config
+  const cachePoints = modelInfo.capabilities?.promptCaching === 'cachePoints'
+  const cacheMessages = cachePoints && cacheConfig !== undefined && cacheConfig.messagesTTL !== false
+  const { input, explicitCache } = cacheMessages
+    ? formatCacheableResponsesMessages(messages, options?.dynamicTrailingBlocks, cacheConfig.messagesTTL)
+    : { input: formatResponsesMessages(messages), explicitCache: false }
 
   // User `params` are spread first so provider-managed fields (asserted
   // required by `ResponseCreateParamsStreaming` below) always win. The
@@ -125,7 +139,86 @@ export function formatResponsesRequest(
   if (config.maxTokens !== undefined) request.max_output_tokens = config.maxTokens
   if (config.topP !== undefined) request.top_p = config.topP
 
+  if (explicitCache) {
+    // Caller-supplied mode, TTL and diagnostics take precedence.
+    const native = config.params?.prompt_cache_options as object | undefined
+    Object.assign(request, { prompt_cache_options: { mode: 'explicit', ...native } })
+  }
+
+  applyCacheConfig(request, cacheConfig, options?.agentMetadata, cachePoints)
+
   return request
+}
+
+/**
+ * Formats messages with a cache checkpoint on the last input part of each durable user message.
+ *
+ * The final user message's last `dynamicTrailingBlocks` blocks are temporary: they go after the
+ * checkpoint and after any tool outputs, so a changing injection never shifts the cached prefix.
+ * A `messagesTTL` naming a cache lifetime becomes each checkpoint's `ttl`. `explicitCache` reports
+ * whether the request should default `prompt_cache_options.mode` to explicit; without a checkpoint or
+ * a temporary suffix, implicit caching stays so the request still caches.
+ */
+function formatCacheableResponsesMessages(
+  messages: Message[],
+  dynamicTrailingBlocks = 0,
+  messagesTTL?: boolean | string
+): { input: ResponseInputItem[]; explicitCache: boolean } {
+  const ttl = typeof messagesTTL === 'string' && CACHE_LIFETIMES.has(messagesTTL) ? { ttl: messagesTTL } : {}
+  const input: ResponseInputItem[] = []
+  let hasCheckpoints = false
+  for (const [index, { role, content }] of messages.entries()) {
+    const dynamicCount = role === 'user' && index === messages.length - 1 ? dynamicTrailingBlocks : 0
+    const boundary = Math.max(0, content.length - dynamicCount)
+    const items = formatResponsesMessages([new Message({ role, content: content.slice(0, boundary) })])
+    normalizeToolOutputs(items)
+    const part = role === 'user' ? lastCacheablePart(items) : undefined
+    if (part) {
+      // Mark every durable user message, not just the latest: the provider bounds lookups and
+      // writes itself, and earlier markers keep the previous request's cache entry reachable.
+      part.prompt_cache_breakpoint = { mode: 'explicit', ...ttl }
+      hasCheckpoints = true
+    }
+    if (dynamicCount > 0) {
+      const tail = formatResponsesMessages([new Message({ role: 'user', content: content.slice(boundary) })])
+      normalizeToolOutputs(tail)
+      appendDynamicContent(items, tail)
+    }
+    input.push(...items)
+  }
+  return { input, explicitCache: hasCheckpoints || dynamicTrailingBlocks > 0 }
+}
+
+/**
+ * Sends text tool outputs as one input_text block, so they can carry a checkpoint and replay identically.
+ * An empty output stays a string: an empty text block would be a meaningless checkpoint.
+ */
+function normalizeToolOutputs(items: ResponseInputItem[]): void {
+  for (const item of items) {
+    if (item.type === 'function_call_output' && typeof item.output === 'string' && item.output !== '') {
+      item.output = [{ type: 'input_text', text: item.output }]
+    }
+  }
+}
+
+/** Finds the final input part (text, image, or file) in a formatted, normalized durable user message. */
+function lastCacheablePart(items: ResponseInputItem[]): InputPart | undefined {
+  const parts = items.flatMap((item) => {
+    const content = item.type === 'function_call_output' ? item.output : (item as { content?: unknown }).content
+    return Array.isArray(content) ? (content as InputPart[]) : []
+  })
+  return parts.reverse().find((part) => CACHEABLE_INPUT_TYPES.has(part.type))
+}
+
+/** Merges temporary content into the durable user message; after tool outputs, it becomes its own message. */
+function appendDynamicContent(items: ResponseInputItem[], tail: ResponseInputItem[]): void {
+  const last = items.at(-1)
+  const first = tail[0]
+  if (last && first && 'role' in last && 'role' in first) {
+    ;(last as { content: unknown[] }).content.push(...(first as { content: unknown[] }).content)
+    tail.shift()
+  }
+  items.push(...tail)
 }
 
 /**
@@ -171,7 +264,7 @@ function formatResponsesMessages(messages: Message[]): ResponseInputItem[] {
         case 'citationsBlock': {
           const citBlock = block as { content: Array<{ text: string }> }
           for (const c of citBlock.content) {
-            contentItems.push({ type: 'output_text', text: c.text })
+            contentItems.push({ type: role === 'user' ? 'input_text' : 'output_text', text: c.text })
           }
           break
         }
@@ -214,15 +307,33 @@ function formatResponsesMessages(messages: Message[]): ResponseInputItem[] {
       }
     }
 
-    // Cast is needed because assistant messages here use `output_text` content
-    // blocks, which the SDK's input types model as `ResponseOutputMessage` —
-    // a response-shaped type that requires `id`/`status`/`annotations`. The API
-    // accepts these fields as omitted on input, but the SDK types don't reflect that.
     if (contentItems.length > 0) {
-      input.push({
-        role,
-        content: contentItems,
-      } as unknown as ResponseInputItem)
+      if (role === 'assistant') {
+        // Only the string EasyInputMessage form is a valid assistant *input* shape
+        // without the full ResponseOutputMessage metadata (id/status/annotations),
+        // which has already been discarded by this point. Non-text assistant history
+        // has no valid input shape either. Replaying verbatim output items is
+        // tracked in https://github.com/strands-agents/harness-sdk/issues/3389.
+        const droppedTypes = contentItems.filter((item) => item.type !== 'output_text').map((item) => item.type)
+        if (droppedTypes.length > 0) {
+          logger.warn(
+            `content_type=<${droppedTypes.join(', ')}> | non-text assistant history content has no valid responses api input shape | dropping`
+          )
+        }
+        const text = contentItems
+          .filter((item) => item.type === 'output_text')
+          .map((item) => item.text as string)
+          .join('\n')
+        if (text) input.push({ role: 'assistant', content: text })
+      } else {
+        // Cast is needed only because `contentItems` is built as a loosely-typed
+        // record array; the user-role items themselves (`input_text`/`input_image`/
+        // `input_file`) are valid `EasyInputMessage` content.
+        input.push({
+          role,
+          content: contentItems,
+        } as unknown as ResponseInputItem)
+      }
     }
 
     input.push(...toolCallItems)
@@ -337,6 +448,7 @@ export interface ResponsesStreamState {
     outputTokens: number
     totalTokens: number
     cacheReadInputTokens?: number
+    cacheWriteInputTokens?: number
   } | null
   stopReason: StopReason
 }
@@ -357,11 +469,12 @@ export function createResponsesStreamState(): ResponsesStreamState {
 
 /**
  * Maps a Responses API `usage` object to the SDK's usage shape, including
- * prompt-cache reads. The Responses API reports cache hits via
- * `usage.input_tokens_details.cached_tokens`; surfacing it as
- * `cacheReadInputTokens` keeps the Responses path consistent with the Bedrock,
+ * prompt-cache reads and writes. The Responses API reports cache hits via
+ * `usage.input_tokens_details.cached_tokens` and cache writes via
+ * `cache_write_tokens`; surfacing them as `cacheReadInputTokens` /
+ * `cacheWriteInputTokens` keeps the Responses path consistent with the Bedrock,
  * Anthropic, and Vercel model adapters (and lets `telemetry/tracer.ts` emit
- * `gen_ai.usage.cache_read_input_tokens`).
+ * `gen_ai.usage.cache_read.input_tokens`).
  *
  * @internal
  */
@@ -375,7 +488,24 @@ function mapResponsesUsage(usage: ResponseUsage): NonNullable<ResponsesStreamSta
   if (typeof cached === 'number' && cached > 0) {
     mapped.cacheReadInputTokens = cached
   }
+  // GPT-5.6 reports cache writes here; the openai package's InputTokensDetails
+  // does not type the field yet, so read it through a narrow cast.
+  const cacheWrite = (usage.input_tokens_details as { cache_write_tokens?: number } | undefined)?.cache_write_tokens
+  if (typeof cacheWrite === 'number' && cacheWrite > 0) {
+    mapped.cacheWriteInputTokens = cacheWrite
+  }
   return mapped
+}
+
+function createResponsesStreamError(
+  message: string | undefined,
+  code: string | null | undefined
+): Error & { code?: string } {
+  const error = new Error(message || 'OpenAI Responses API response failed') as Error & { code?: string }
+  if (code) {
+    error.code = code
+  }
+  return error
 }
 
 /**
@@ -497,8 +627,19 @@ export function mapResponsesEventToSDK(
       }
       if (resp.incomplete_details?.reason === 'max_output_tokens') {
         state.stopReason = 'maxTokens'
+      } else if (resp.incomplete_details?.reason === 'content_filter') {
+        state.stopReason = 'contentFiltered'
       }
       break
+    }
+
+    case 'response.failed': {
+      const error = event.response.error
+      throw createResponsesStreamError(error?.message, error?.code)
+    }
+
+    case 'error': {
+      throw createResponsesStreamError(event.message, event.code)
     }
 
     case 'response.completed': {
@@ -542,8 +683,9 @@ export function finalizeResponsesStream(state: ResponsesStreamState): ModelStrea
     events.push({ type: 'modelContentBlockStopEvent' })
   }
 
+  // A function call in flight at max_output_tokens has truncated arguments, so maxTokens wins.
   let stopReason = state.stopReason
-  if (state.toolCalls.size > 0) {
+  if (state.toolCalls.size > 0 && stopReason !== 'maxTokens') {
     stopReason = 'toolUse'
   }
 

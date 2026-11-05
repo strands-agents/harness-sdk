@@ -14,7 +14,7 @@ import {
   systemPromptFromData,
   systemPromptToData,
 } from '../messages.js'
-import { ImageBlock, VideoBlock, DocumentBlock, encodeBase64 } from '../media.js'
+import { AudioBlock, ImageBlock, VideoBlock, DocumentBlock, encodeBase64 } from '../media.js'
 import { CitationsBlock } from '../citations.js'
 import { anyTrackingId } from '../../__fixtures__/message-helpers.js'
 
@@ -403,6 +403,27 @@ describe('Message.fromMessageData', () => {
     expect(message.content[0]!.type).toBe('guardContentBlock')
   })
 
+  it('converts audio block data to AudioBlock', () => {
+    const messageData: MessageData = {
+      role: 'user',
+      content: [
+        {
+          audio: {
+            format: 'mp3',
+            source: { bytes: new Uint8Array([1, 2, 3]) },
+          },
+        },
+      ],
+    }
+    const message = Message.fromMessageData(messageData)
+    expect(message.content).toEqual([
+      new AudioBlock({
+        format: 'mp3',
+        source: { bytes: new Uint8Array([1, 2, 3]) },
+      }),
+    ])
+  })
+
   it('converts image block data to ImageBlock', () => {
     const messageData: MessageData = {
       role: 'user',
@@ -731,6 +752,7 @@ describe('toJSON/fromJSON round-trips', () => {
     ['JsonBlock',                              () => new JsonBlock({ json: { key: 'value', nested: { a: 1 } } })],
     ['GuardContentBlock with text',            () => new GuardContentBlock({ text: { text: 'Guard this', qualifiers: ['guard_content'] } })],
     ['GuardContentBlock with image',           () => new GuardContentBlock({ image: { format: 'png', source: { bytes: new Uint8Array([1, 2, 3]) } } })],
+    ['AudioBlock',                             () => new AudioBlock({ format: 'mp3', source: { bytes: new Uint8Array([1, 2, 3]) } })],
     ['Message with text content',              () => new Message({ role: 'user', content: [new TextBlock('Hello')] })],
     ['Message with multiple content blocks',   () => new Message({ role: 'assistant', content: [new TextBlock('Here is the result'), new ToolUseBlock({ name: 'test-tool', toolUseId: '123', input: { key: 'value' } })] })],
     ['Message with image content',             () => new Message({ role: 'user', content: [new TextBlock('Check this image'), new ImageBlock({ format: 'png', source: { bytes: new Uint8Array([1, 2, 3]) } })] })],

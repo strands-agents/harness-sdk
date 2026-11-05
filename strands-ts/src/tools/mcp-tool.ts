@@ -1,4 +1,4 @@
-import { McpError, ErrorCode, UrlElicitationRequiredError } from '@modelcontextprotocol/sdk/types.js'
+import { ProtocolError, ProtocolErrorCode, UrlElicitationRequiredError } from '@modelcontextprotocol/client'
 
 import { createErrorResult, Tool, type ToolContext, type ToolStreamGenerator } from './tool.js'
 import type { ToolSpec } from './types.js'
@@ -14,6 +14,7 @@ export interface McpToolConfig {
   description: string
   inputSchema: JSONSchema
   outputSchema?: JSONSchema
+  annotations?: Record<string, JSONValue | undefined>
   client: McpClient
 }
 
@@ -28,7 +29,7 @@ export class McpTool extends Tool {
   readonly name: string
   readonly description: string
   readonly toolSpec: ToolSpec
-  private readonly mcpClient: McpClient
+  private readonly _mcpClient: McpClient
 
   constructor(config: McpToolConfig) {
     super()
@@ -39,8 +40,18 @@ export class McpTool extends Tool {
       description: config.description,
       inputSchema: config.inputSchema,
       ...(config.outputSchema !== undefined && { outputSchema: config.outputSchema }),
+      ...(config.annotations !== undefined && { annotations: config.annotations }),
     }
-    this.mcpClient = config.client
+    this._mcpClient = config.client
+  }
+
+  /**
+   * The MCP client this tool belongs to.
+   *
+   * @returns The client supplied when this tool was constructed.
+   */
+  get mcpClient(): McpClient {
+    return this._mcpClient
   }
 
   // eslint-disable-next-line require-yield
@@ -49,7 +60,7 @@ export class McpTool extends Tool {
 
     try {
       const rawResult: unknown = await this.mcpClient.callTool(this, input as JSONValue, {
-        signal: toolContext.agent.cancelSignal,
+        signal: toolContext.cancelSignal,
       })
 
       if (!this._isMcpToolResult(rawResult)) {
@@ -74,7 +85,7 @@ export class McpTool extends Tool {
     } catch (error) {
       if (
         error instanceof UrlElicitationRequiredError ||
-        (error instanceof McpError && error.code === ErrorCode.UrlElicitationRequired)
+        (error instanceof ProtocolError && error.code === ProtocolErrorCode.UrlElicitationRequired)
       ) {
         const elicitations =
           error instanceof UrlElicitationRequiredError

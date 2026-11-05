@@ -1,0 +1,8 @@
+name: strands-redis-session-manager
+description: Redis-backed session manager persisting agent sessions with configurable key namespaces and optional rolling expiration for distributed apps.
+integrationType: session-manager
+languages:
+  python:
+    package: strands-redis-session-manager
+github: https://github.com/lekhnath/strands-redis-session-manager
+addedDate: 2025-11-16

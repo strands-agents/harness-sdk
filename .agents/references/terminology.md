@@ -18,7 +18,8 @@ One concept, one term. Never vary for stylistic reasons. This file is the canoni
 | Durable knowledge an agent recalls across sessions | memory (or long-term memory) | knowledge store, recall, persistent memory |
 | The SDK class that implements memory management | memory manager | knowledge store, recall, memory store, knowledge base |
 | The SDK class that implements the backend containing memories | memory store | knowledge store, recall |
-| Controlling agent behavior at runtime | hooks | middleware, interceptors, callbacks (hooks is Strands-specific) |
+| Observing and reacting to agent lifecycle events | hooks | interceptors, callbacks, event listeners (hooks is Strands-specific) |
+| Wrapping and controlling a stage's execution (model call, tool call) | middleware | interceptors, filters, decorators, hooks |
 | Multiple agents working together | multi-agent | multi-agent system, agent orchestration, agent coordination |
 | Agent-to-agent communication pattern | agents as tools | agent chaining, agent delegation, nested agents |
 | Graph-based agent coordination | graph | workflow graph, DAG, directed graph |
@@ -26,6 +27,7 @@ One concept, one term. Never vary for stylistic reasons. This file is the canoni
 | Pausing agent execution for human input | interrupts | human-in-the-loop, breakpoints, pause points |
 | Agent output with enforced schema | structured output | typed output, schema-validated output, Pydantic output |
 | Watching agent execution | observability | monitoring, telemetry, instrumentation |
+| Durable storage for offloaded context content | stash | L1 stash, L1, stash layer, context cache |
 | Checking agent quality | evaluation | testing, benchmarking, assessment |
 | Running agents in production | deployment | hosting, serving, shipping |
 | The decorator for making Python functions into tools | @tool decorator | tool annotation, tool wrapper |

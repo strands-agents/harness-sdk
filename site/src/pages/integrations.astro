@@ -1,0 +1,357 @@
+---
+/**
+ * Community integration catalog: searchable, filterable grid of community
+ * packages. Entries come from the `catalog` content collection; popularity
+ * stats from the bot-maintained src/data/catalog-stats.json. Everything is
+ * rendered statically; the inline script only toggles card visibility.
+ */
+import { getCollection } from 'astro:content'
+import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro'
+import CatalogCard from '../components/catalog/CatalogCard.astro'
+import CatalogFacets from '../components/catalog/CatalogFacets.astro'
+import { CATALOG_TYPES, MAINTAINED_BY_TIERS } from '../components/catalog/types'
+import { toCardModel, sortEntries, type CatalogStatsFile } from '../util/catalog'
+import { pathWithBase } from '../util/links'
+import statsFile from '../data/catalog-stats.json'
+import '../styles/catalog.css'
+
+const stats = statsFile as CatalogStatsFile
+const entries = await getCollection('catalog')
+const buildDate = new Date()
+const cards = sortEntries(entries.map((e) => toCardModel(e.id, e.data, stats[e.id], buildDate)))
+
+// The SDK facet renders only when the catalog actually has evals entries;
+// the Verified filter only when at least one entry is actually verified.
+const showSdkFacet = cards.some((c) => c.sdk === 'evals')
+const hasVerified = cards.some((c) => c.badges.includes('verified'))
+const hasFeatured = cards.some((c) => c.featured)
+const hasNew = cards.some((c) => c.badges.includes('new'))
+
+// Counts span both SDKs while filtering is per-SDK; with no evals entries the
+// two coincide, so if/when evals entries land these need client-side recompute.
+const typeFacets = CATALOG_TYPES.map(({ value, labelPlural }) => ({
+  value,
+  label: labelPlural,
+  count: cards.filter((c) => c.integrationType === value).length,
+})).filter((t) => t.count > 0)
+
+const maintainedByFacets = MAINTAINED_BY_TIERS.map(({ value, label }) => ({
+  value,
+  label,
+  count: cards.filter((c) => c.maintainedBy === value).length,
+})).filter((t) => t.count > 0)
+
+const title = 'Integrations'
+const description = 'Community-built tools, model providers, plugins, and integrations for Strands Agents.'
+
+// Left sidebar (real Starlight sidebar): browse by type. Each link filters the
+// catalog via ?type=; "All integrations" clears it.
+const sidebar = [
+  {
+    label: 'Integrations',
+    items: [
+      { label: 'All integrations', link: '/integrations/' },
+      ...typeFacets.map((t) => ({ label: t.label, link: `/integrations/?type=${t.value}` })),
+    ],
+  },
+  { label: 'Add your integration', link: '/docs/integrations/get-featured/' },
+]
+---
+
+<StarlightPage frontmatter={{ title, description, tableOfContents: false }} sidebar={sidebar}>
+  <div class="cat-page">
+    <div class="cat-head">
+      <p class="cat-subtitle">Tools, model providers, and integrations built by the Strands team and community.</p>
+      <div class="cat-head-actions">
+        <a class="cat-cta-btn" href={pathWithBase('/docs/integrations/get-featured/')}>Add your integration</a>
+        <p class="cat-note"><span data-cat-count>{cards.length}</span> integrations</p>
+      </div>
+    </div>
+
+    {/* The sidebar (type links + search) is hidden below 50rem; this bar stands in for it. */}
+    <div class="cat-mobile-filters" data-pagefind-ignore>
+      <input
+        type="search"
+        class="cat-mobile-search"
+        data-cat-search
+        placeholder="Search…"
+        aria-label="Search integrations"
+      />
+      <select class="cat-mobile-type" data-cat-type-select aria-label="Integration type">
+        <option value="">All types</option>
+        {typeFacets.map((t) => <option value={t.value}>{`${t.label} (${t.count})`}</option>)}
+      </select>
+    </div>
+
+    {/* Facets inline (no modal): the search input lives in the left sidebar (or
+        the mobile filter bar) and drives the same filter state document-wide. */}
+    <div class="cat-facets" data-pagefind-ignore>
+      <CatalogFacets
+        maintainedBy={maintainedByFacets}
+        showSdkFacet={showSdkFacet}
+        hasVerified={hasVerified}
+        hasFeatured={hasFeatured}
+        hasNew={hasNew}
+      />
+    </div>
+    <div class="cat-grid" data-cat-grid>
+      {cards.map((card) => <CatalogCard card={card} />)}
+      {/* Not a .cat-card: the filter script must never hide this tile. */}
+      <div class="cat-cta">
+        <h2 class="cat-cta-title">Add your integration</h2>
+        <p class="cat-cta-body">Built a tool, model provider, or plugin for Strands? List it here.</p>
+        <a class="cat-cta-btn" href={pathWithBase('/docs/integrations/get-featured/')}>Add your integration</a>
+      </div>
+    </div>
+
+    {/* Docs drawer: clicking a card whose docs live on this site opens the
+        page in a slide-over iframe (the doc loads with ?embed so it renders
+        chromeless — see overrides/Head.astro). The grid, filters, and scroll
+        position stay live underneath. */}
+    <dialog class="cat-drawer" data-cat-drawer aria-label="Integration documentation">
+      <div class="cat-drawer-bar">
+        <span class="cat-drawer-name" data-cat-drawer-name></span>
+        <a class="cat-drawer-full" data-cat-drawer-full href={pathWithBase('/')}>Open full page ↗</a>
+        <button class="cat-dialog-close" type="button" data-cat-drawer-close aria-label="Close documentation">Esc</button>
+      </div>
+      <iframe class="cat-drawer-frame" data-cat-drawer-frame title="Integration documentation" src="about:blank"
+      ></iframe>
+    </dialog>
+    <p class="cat-empty" data-cat-empty hidden>No integrations match the current filters.</p>
+
+    <p class="cat-disclaimer">Community packages are maintained by their authors. Review them before production use. Questions? Ask in <a href="https://discord.gg/strands">Discord</a>.</p>
+  </div>
+</StarlightPage>
+
+<script>
+  // Client-side faceted filtering over the statically-rendered cards. The
+  // matching + URL-state logic lives in util/catalog-filter (unit-tested);
+  // this script only reads the DOM and toggles [hidden].
+  import { matchesFilters, stateToQuery, queryToState, type CardFilterData } from '../util/catalog-filter'
+  import { CATALOG_TYPES } from '../components/catalog/types'
+
+  const cards = Array.from(document.querySelectorAll<HTMLElement>('[data-cat-grid] .cat-card'))
+  // The left sidebar's search input, plus the mobile filter bar's stand-in.
+  const searchInputs = Array.from(document.querySelectorAll<HTMLInputElement>('[data-sidebar-search], [data-cat-search]'))
+  const typeSelect = document.querySelector<HTMLSelectElement>('[data-cat-type-select]')
+  const typeBtns = Array.from(document.querySelectorAll<HTMLElement>('[data-cat-type]'))
+  const badgeBtns = Array.from(document.querySelectorAll<HTMLElement>('[data-cat-badge]'))
+  const maintainedBtns = Array.from(document.querySelectorAll<HTMLElement>('[data-cat-maintained]'))
+  const sdkBtns = Array.from(document.querySelectorAll<HTMLElement>('[data-cat-sdk]'))
+  const langBtns = Array.from(document.querySelectorAll<HTMLElement>('[data-cat-lang]'))
+  const emptyEl = document.querySelector<HTMLElement>('[data-cat-empty]')
+  const countEl = document.querySelector<HTMLElement>('[data-cat-count]')
+
+  const state = queryToState(location.search)
+  // A URL facet with no rendered control would show an empty grid with no
+  // visible way to reset it: ?sdk=evals with no SDK toggle, or a badge value
+  // whose button is hidden because no entry carries it.
+  if (sdkBtns.length === 0) state.sdk = 'agents'
+  const renderedBadges = new Set(badgeBtns.map((btn) => btn.dataset.catBadge))
+  for (const badge of state.badges) if (!renderedBadges.has(badge)) state.badges.delete(badge)
+  const renderedMaintained = new Set(maintainedBtns.map((btn) => btn.dataset.catMaintained))
+  for (const by of state.maintainedBy) if (!renderedMaintained.has(by)) state.maintainedBy.delete(by)
+  // Type filtering is driven by the left sidebar or mobile select (?type=), not chips,
+  // so validate against the known catalog types rather than rendered buttons.
+  const validTypes = new Set(CATALOG_TYPES.map((t) => t.value))
+  for (const t of state.types) if (!validTypes.has(t)) state.types.delete(t)
+
+  // Language is a catalog control (the All / Python / TypeScript segment), no
+  // longer tied to the header's site-wide language toggle. Drop any ?lang value
+  // without a rendered button so the URL can't select an option the user can't
+  // clear.
+  const renderedLangs = new Set(langBtns.map((btn) => btn.dataset.catLang).filter(Boolean))
+  for (const l of state.languages) if (!renderedLangs.has(l)) state.languages.delete(l)
+
+  function cardData(el: HTMLElement): CardFilterData {
+    return {
+      search: el.dataset.search || '',
+      type: el.dataset.type || '',
+      languages: (el.dataset.langs || '').split(' ').filter(Boolean),
+      badges: (el.dataset.badges || '').split(' ').filter(Boolean),
+      maintainedBy: el.dataset.maintained || '',
+      sdk: el.dataset.sdk || 'agents',
+    }
+  }
+
+  function apply() {
+    let visible = 0
+    for (const el of cards) {
+      const data = cardData(el)
+      const show = matchesFilters(data, state)
+      el.hidden = !show
+      if (show) visible++
+    }
+    if (emptyEl) emptyEl.hidden = visible > 0
+    if (countEl) countEl.textContent = String(visible)
+
+    // Reflect the active type onto the left sidebar (single-select browse).
+    // Starlight marks every /integrations link current by pathname, so clear
+    // and set aria-current here to match the ?type in effect ("" = All).
+    const activeType = state.types.size === 1 ? [...state.types][0] : ''
+    // Scope to the catalog browse links (/integrations[?type=]); the "Add your
+    // integration" link points at /docs/… and must never take the active state.
+    document.querySelectorAll<HTMLAnchorElement>('.sidebar-content a[href*="/integrations"]:not([href*="/docs/"])').forEach((a) => {
+      const linkType = new URL(a.href, location.origin).searchParams.get('type') || ''
+      if (linkType === activeType) a.setAttribute('aria-current', 'page')
+      else a.removeAttribute('aria-current')
+    })
+    if (typeSelect) typeSelect.value = activeType
+
+    for (const btn of typeBtns) btn.setAttribute('aria-pressed', String(state.types.has(btn.dataset.catType || '')))
+    for (const btn of badgeBtns) btn.setAttribute('aria-pressed', String(state.badges.has(btn.dataset.catBadge || '')))
+    for (const btn of maintainedBtns)
+      btn.setAttribute('aria-pressed', String(state.maintainedBy.has(btn.dataset.catMaintained || '')))
+    for (const btn of sdkBtns) btn.setAttribute('aria-checked', String(state.sdk === btn.dataset.catSdk))
+    // The "All" button (empty value) is checked when no language is selected.
+    for (const btn of langBtns) {
+      const lang = btn.dataset.catLang || ''
+      const checked = lang ? state.languages.has(lang) : state.languages.size === 0
+      btn.setAttribute('aria-checked', String(checked))
+    }
+
+    // `entry` (the open docs drawer) is not filter state; carry the current
+    // value through so re-serializing the filters doesn't close the deep link.
+    const params = new URLSearchParams(stateToQuery(state))
+    const entryId = new URLSearchParams(location.search).get('entry')
+    if (entryId) params.set('entry', entryId)
+    const query = params.toString()
+    history.replaceState(null, '', (query ? `?${query}` : location.pathname) + location.hash)
+  }
+
+  function toggle(set: Set<string>, value: string) {
+    if (set.has(value)) set.delete(value)
+    else set.add(value)
+  }
+
+  for (const input of searchInputs) {
+    input.value = state.search
+    input.addEventListener('input', () => {
+      state.search = input.value
+      for (const other of searchInputs) if (other !== input) other.value = input.value
+      apply()
+    })
+  }
+
+  typeSelect?.addEventListener('change', () => {
+    state.types.clear()
+    if (typeSelect.value) state.types.add(typeSelect.value)
+    apply()
+  })
+
+  for (const btn of typeBtns)
+    btn.addEventListener('click', () => {
+      toggle(state.types, btn.dataset.catType || '')
+      apply()
+    })
+  for (const btn of badgeBtns)
+    btn.addEventListener('click', () => {
+      toggle(state.badges, btn.dataset.catBadge || '')
+      apply()
+    })
+  for (const btn of maintainedBtns)
+    btn.addEventListener('click', () => {
+      toggle(state.maintainedBy, btn.dataset.catMaintained || '')
+      apply()
+    })
+  for (const btn of sdkBtns)
+    btn.addEventListener('click', () => {
+      state.sdk = btn.dataset.catSdk || 'agents'
+      apply()
+    })
+  // Single-select, radio semantics: picking a language replaces the set; "All"
+  // (empty value) clears it. Re-picking the active one keeps it selected.
+  for (const btn of langBtns)
+    btn.addEventListener('click', () => {
+      const lang = btn.dataset.catLang || ''
+      state.languages.clear()
+      if (lang) state.languages.add(lang)
+      apply()
+    })
+
+  apply()
+
+  // --- Docs drawer -----------------------------------------------------------
+  // Cards whose docs live on this site open in a slide-over <dialog> with an
+  // iframe (the doc URL gets ?embed, which strips the site chrome — see
+  // overrides/Head.astro) instead of navigating away, so the grid, filters,
+  // and scroll position stay live. External cards are untouched (new tab),
+  // and without JS the links navigate normally.
+  const drawer = document.querySelector<HTMLDialogElement>('[data-cat-drawer]')
+  const drawerFrame = document.querySelector<HTMLIFrameElement>('[data-cat-drawer-frame]')
+  const drawerName = document.querySelector<HTMLElement>('[data-cat-drawer-name]')
+  const drawerFull = document.querySelector<HTMLAnchorElement>('[data-cat-drawer-full]')
+  const entryLinks = Array.from(document.querySelectorAll<HTMLAnchorElement>('.cat-card [data-cat-entry]'))
+  const entryById = new Map(entryLinks.map((a) => [a.dataset.catEntry || '', a]))
+
+  // Tracks whether the current open pushed a history entry, so close can undo
+  // it (back button parity); a ?entry deep link on load pushes nothing.
+  let drawerPushed = false
+
+  function drawerUrl(entryId: string | null): string {
+    const params = new URLSearchParams(location.search)
+    if (entryId) params.set('entry', entryId)
+    else params.delete('entry')
+    const query = params.toString()
+    return (query ? `?${query}` : location.pathname) + location.hash
+  }
+
+  function openDrawer(link: HTMLAnchorElement) {
+    if (!drawer || !drawerFrame) return
+    drawerFrame.src = `${link.href.split('#')[0]}?embed`
+    if (drawerName) drawerName.textContent = link.textContent?.trim() || ''
+    if (drawerFull) drawerFull.href = link.href
+    if (!drawer.open) drawer.showModal()
+  }
+
+  function closeDrawer() {
+    if (!drawer?.open) return
+    drawer.close()
+  }
+
+  for (const link of entryLinks)
+    link.addEventListener('click', (e) => {
+      // Modified clicks keep their browser behavior (new tab, etc.).
+      if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return
+      e.preventDefault()
+      history.pushState({ catEntry: link.dataset.catEntry }, '', drawerUrl(link.dataset.catEntry || null))
+      drawerPushed = true
+      openDrawer(link)
+    })
+
+  drawer?.addEventListener('click', (e) => {
+    // Clicks on the backdrop land on the dialog element itself.
+    if (e.target === drawer) closeDrawer()
+  })
+  document.querySelector('[data-cat-drawer-close]')?.addEventListener('click', closeDrawer)
+
+  // Fires on every close path (Esc, button, backdrop, popstate): unload the
+  // iframe and put the URL back where it was before the drawer opened.
+  drawer?.addEventListener('close', () => {
+    if (drawerFrame) drawerFrame.src = 'about:blank'
+    if (new URLSearchParams(location.search).get('entry')) {
+      if (drawerPushed) history.back()
+      else history.replaceState(null, '', drawerUrl(null))
+    }
+    drawerPushed = false
+  })
+
+  // Back/forward buttons open and close the drawer to match the URL.
+  window.addEventListener('popstate', () => {
+    const entryId = new URLSearchParams(location.search).get('entry')
+    const link = entryId ? entryById.get(entryId) : undefined
+    if (link) {
+      drawerPushed = false
+      openDrawer(link)
+    } else {
+      closeDrawer()
+    }
+  })
+
+  // Deep link: /integrations/?entry=<id> opens the drawer on load. Unknown
+  // ids (stale links, external-only entries) are ignored.
+  const initialEntry = new URLSearchParams(location.search).get('entry')
+  const initialLink = initialEntry ? entryById.get(initialEntry) : undefined
+  if (initialLink) openDrawer(initialLink)
+  else if (initialEntry) history.replaceState(null, '', drawerUrl(null))
+</script>

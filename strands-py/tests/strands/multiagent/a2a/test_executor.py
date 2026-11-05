@@ -5,7 +5,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from a2a.types import DataPart, FilePart, InternalError, TextPart, UnsupportedOperationError
+from a2a.types import DataPart, FilePart, InternalError, InvalidParamsError, TextPart, UnsupportedOperationError
 from a2a.utils.errors import ServerError
 
 from strands.agent.agent_result import AgentResult as SAAgentResult
@@ -2268,3 +2268,464 @@ async def test_concurrent_compliant_streaming_uses_distinct_artifact_ids():
     # Each request used exactly one artifact id, and the two requests' ids are disjoint.
     assert len(ids_a) == 1 and len(ids_b) == 1
     assert ids_a.isdisjoint(ids_b)
+
+
+# ── Inbound interrupt responses ──────────────────────────────────────────────
+#
+# Regression coverage for https://github.com/strands-agents/harness-sdk/issues/2948: a client
+# resumes a task parked in `input_required` by sending a DataPart shaped like
+# InterruptResponseContent. These tests guarantee such a part reaches the agent as an interrupt
+# response rather than being flattened into a text block, and that a response the executor cannot
+# bind to a parked interrupt is rejected before the agent runs.
+
+
+def _interrupt_response_part(interrupt_id, response):
+    """Build an A2A DataPart carrying an interrupt response for the given id."""
+    data_part = MagicMock(spec=DataPart)
+    data_part.data = {"interruptResponse": {"interruptId": interrupt_id, "response": response}}
+    part = MagicMock()
+    part.root = data_part
+    return part
+
+
+def _data_part(data):
+    """Build an A2A DataPart carrying arbitrary structured data."""
+    data_part = MagicMock(spec=DataPart)
+    data_part.data = data
+    part = MagicMock()
+    part.root = data_part
+    return part
+
+
+def _text_part(text):
+    """Build an A2A TextPart."""
+    text_part = MagicMock(spec=TextPart)
+    text_part.text = text
+    part = MagicMock()
+    part.root = text_part
+    return part
+
+
+def _park_interrupt(agent, *interrupt_ids):
+    """Put the agent into an interrupt state holding the given parked interrupt ids."""
+    from strands.interrupt import Interrupt, _InterruptState
+
+    state = _InterruptState()
+    state.interrupts = {id_: Interrupt(id=id_, name=f"name-{id_}") for id_ in interrupt_ids}
+    state.activated = True
+    agent._interrupt_state = state
+    return state
+
+
+def _request_with_parts(mock_request_context, parts, task_id="task-resume"):
+    """Point a request context at a task carrying the given message parts."""
+    task = MagicMock()
+    task.id = task_id
+    task.context_id = f"ctx-{task_id}"
+    mock_request_context.current_task = task
+
+    message = MagicMock()
+    message.parts = parts
+    mock_request_context.message = message
+    return mock_request_context
+
+
+@pytest.mark.asyncio
+async def test_execute_interrupt_response_resumes_parked_interrupt(
+    mock_strands_agent, mock_request_context, mock_event_queue
+):
+    """An interrupt-response DataPart reaches the agent as InterruptResponseContent, not text."""
+    _park_interrupt(mock_strands_agent, "int-1")
+
+    mock_result = MagicMock(spec=SAAgentResult)
+    mock_result.stop_reason = "end_turn"
+    mock_result.interrupts = None
+    mock_result.__str__ = MagicMock(return_value="Campaign created")
+
+    async def mock_stream(agent_input, **kwargs):
+        yield {"result": mock_result}
+
+    mock_strands_agent.stream_async = MagicMock(side_effect=mock_stream)
+    executor = StrandsA2AExecutor(mock_strands_agent)
+
+    _request_with_parts(mock_request_context, [_interrupt_response_part("int-1", {"approved": True})])
+    await executor.execute(mock_request_context, mock_event_queue)
+
+    tru_input = mock_strands_agent.stream_async.call_args[0][0]
+    exp_input = [{"interruptResponse": {"interruptId": "int-1", "response": {"approved": True}}}]
+    assert tru_input == exp_input
+
+
+@pytest.mark.asyncio
+async def test_execute_multiple_interrupt_responses_all_delivered(
+    mock_strands_agent, mock_request_context, mock_event_queue
+):
+    """Distinct interrupt ids in one message are all forwarded to the agent."""
+    _park_interrupt(mock_strands_agent, "int-1", "int-2")
+
+    mock_result = MagicMock(spec=SAAgentResult)
+    mock_result.stop_reason = "end_turn"
+    mock_result.interrupts = None
+    mock_result.__str__ = MagicMock(return_value="done")
+
+    async def mock_stream(agent_input, **kwargs):
+        yield {"result": mock_result}
+
+    mock_strands_agent.stream_async = MagicMock(side_effect=mock_stream)
+    executor = StrandsA2AExecutor(mock_strands_agent)
+
+    _request_with_parts(
+        mock_request_context,
+        [_interrupt_response_part("int-1", "yes"), _interrupt_response_part("int-2", "no")],
+    )
+    await executor.execute(mock_request_context, mock_event_queue)
+
+    tru_input = mock_strands_agent.stream_async.call_args[0][0]
+    exp_input = [
+        {"interruptResponse": {"interruptId": "int-1", "response": "yes"}},
+        {"interruptResponse": {"interruptId": "int-2", "response": "no"}},
+    ]
+    assert tru_input == exp_input
+
+
+@pytest.mark.asyncio
+async def test_execute_null_interrupt_response_rejected(mock_strands_agent, mock_request_context, mock_event_queue):
+    """A null answer leaves the interrupt unsatisfied, so it is refused instead of silently re-firing."""
+    _park_interrupt(mock_strands_agent, "int-1")
+    mock_strands_agent.stream_async = MagicMock()
+    executor = StrandsA2AExecutor(mock_strands_agent)
+
+    _request_with_parts(mock_request_context, [_interrupt_response_part("int-1", None)])
+
+    with pytest.raises(ServerError) as exc_info:
+        await executor.execute(mock_request_context, mock_event_queue)
+
+    assert isinstance(exc_info.value.error, InvalidParamsError)
+    mock_strands_agent.stream_async.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_execute_falsy_interrupt_response_is_valid(mock_strands_agent, mock_request_context, mock_event_queue):
+    """Only null is refused: False answers an interrupt just as well as True."""
+    _park_interrupt(mock_strands_agent, "int-1")
+
+    mock_result = MagicMock(spec=SAAgentResult)
+    mock_result.stop_reason = "end_turn"
+    mock_result.interrupts = None
+    mock_result.__str__ = MagicMock(return_value="done")
+
+    async def mock_stream(agent_input, **kwargs):
+        yield {"result": mock_result}
+
+    mock_strands_agent.stream_async = MagicMock(side_effect=mock_stream)
+    executor = StrandsA2AExecutor(mock_strands_agent)
+
+    _request_with_parts(mock_request_context, [_interrupt_response_part("int-1", False)])
+    await executor.execute(mock_request_context, mock_event_queue)
+
+    tru_input = mock_strands_agent.stream_async.call_args[0][0]
+    exp_input = [{"interruptResponse": {"interruptId": "int-1", "response": False}}]
+    assert tru_input == exp_input
+
+
+@pytest.mark.asyncio
+async def test_execute_interrupt_response_for_unknown_id_fails_closed(
+    mock_strands_agent, mock_request_context, mock_event_queue
+):
+    """A response naming an interrupt the agent is not parked on never reaches the agent."""
+    _park_interrupt(mock_strands_agent, "int-1")
+    mock_strands_agent.stream_async = MagicMock()
+    executor = StrandsA2AExecutor(mock_strands_agent)
+
+    _request_with_parts(mock_request_context, [_interrupt_response_part("int-other", {"approved": True})])
+
+    with pytest.raises(ServerError) as exc_info:
+        await executor.execute(mock_request_context, mock_event_queue)
+
+    assert isinstance(exc_info.value.error, InvalidParamsError)
+    mock_strands_agent.stream_async.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_execute_interrupt_response_when_not_parked_fails_closed(
+    mock_strands_agent, mock_request_context, mock_event_queue
+):
+    """Interrupt responses sent to an agent holding no interrupt are rejected."""
+    mock_strands_agent.stream_async = MagicMock()
+    executor = StrandsA2AExecutor(mock_strands_agent)
+
+    _request_with_parts(mock_request_context, [_interrupt_response_part("int-1", {"approved": True})])
+
+    with pytest.raises(ServerError) as exc_info:
+        await executor.execute(mock_request_context, mock_event_queue)
+
+    assert isinstance(exc_info.value.error, InvalidParamsError)
+    mock_strands_agent.stream_async.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_execute_rejected_resume_leaves_interrupt_parked(
+    mock_strands_agent, mock_request_context, mock_event_queue
+):
+    """Rejecting a resume must not clear the interrupt the agent is still waiting on."""
+    state = _park_interrupt(mock_strands_agent, "int-1")
+    mock_strands_agent.stream_async = MagicMock()
+    executor = StrandsA2AExecutor(mock_strands_agent)
+
+    _request_with_parts(mock_request_context, [_interrupt_response_part("int-other", "yes")])
+
+    with pytest.raises(ServerError) as exc_info:
+        await executor.execute(mock_request_context, mock_event_queue)
+
+    assert isinstance(exc_info.value.error, InvalidParamsError)
+    assert state.activated
+    assert "int-1" in state.interrupts
+
+
+@pytest.mark.asyncio
+async def test_execute_duplicate_interrupt_responses_rejected(
+    mock_strands_agent, mock_request_context, mock_event_queue
+):
+    """Two responses for one interrupt id are ambiguous and rejected rather than silently resolved."""
+    _park_interrupt(mock_strands_agent, "int-1")
+    mock_strands_agent.stream_async = MagicMock()
+    executor = StrandsA2AExecutor(mock_strands_agent)
+
+    _request_with_parts(
+        mock_request_context,
+        [_interrupt_response_part("int-1", {"approved": True}), _interrupt_response_part("int-1", {"approved": False})],
+    )
+
+    with pytest.raises(ServerError) as exc_info:
+        await executor.execute(mock_request_context, mock_event_queue)
+
+    assert isinstance(exc_info.value.error, InvalidParamsError)
+    mock_strands_agent.stream_async.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "malformed",
+    [
+        {"interruptResponse": "not-an-object"},
+        {"interruptResponse": {"response": "yes"}},
+        {"interruptResponse": {"interruptId": "", "response": "yes"}},
+        {"interruptResponse": {"interruptId": 42, "response": "yes"}},
+        {"interruptResponse": {"interruptId": "int-1"}},
+    ],
+)
+@pytest.mark.asyncio
+async def test_execute_malformed_interrupt_response_rejected(
+    malformed, mock_strands_agent, mock_request_context, mock_event_queue
+):
+    """Malformed interrupt responses fail before the agent is invoked."""
+    _park_interrupt(mock_strands_agent, "int-1")
+    mock_strands_agent.stream_async = MagicMock()
+    executor = StrandsA2AExecutor(mock_strands_agent)
+
+    _request_with_parts(mock_request_context, [_data_part(malformed)])
+
+    with pytest.raises(ServerError) as exc_info:
+        await executor.execute(mock_request_context, mock_event_queue)
+
+    assert isinstance(exc_info.value.error, InvalidParamsError)
+    mock_strands_agent.stream_async.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_execute_interrupt_response_mixed_with_other_parts_rejected(
+    mock_strands_agent, mock_request_context, mock_event_queue
+):
+    """Content alongside an interrupt response would be silently dropped, so the message is rejected."""
+    _park_interrupt(mock_strands_agent, "int-1")
+    mock_strands_agent.stream_async = MagicMock()
+    executor = StrandsA2AExecutor(mock_strands_agent)
+
+    _request_with_parts(
+        mock_request_context,
+        [_interrupt_response_part("int-1", {"approved": True}), _text_part("and also do something else")],
+    )
+
+    with pytest.raises(ServerError) as exc_info:
+        await executor.execute(mock_request_context, mock_event_queue)
+
+    assert isinstance(exc_info.value.error, InvalidParamsError)
+    mock_strands_agent.stream_async.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_execute_new_message_while_parked_fails_closed(
+    mock_strands_agent, mock_request_context, mock_event_queue
+):
+    """A parked task does not accept a fresh conversational turn in place of a resume."""
+    _park_interrupt(mock_strands_agent, "int-1")
+    mock_strands_agent.stream_async = MagicMock()
+    executor = StrandsA2AExecutor(mock_strands_agent)
+
+    _request_with_parts(mock_request_context, [_text_part("never mind, do something else")])
+
+    with pytest.raises(ServerError) as exc_info:
+        await executor.execute(mock_request_context, mock_event_queue)
+
+    assert isinstance(exc_info.value.error, InvalidParamsError)
+    mock_strands_agent.stream_async.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_execute_ordinary_data_part_still_converts_to_text(
+    mock_strands_agent, mock_request_context, mock_event_queue
+):
+    """A DataPart without an interrupt response keeps the generic structured-data path."""
+    mock_result = MagicMock(spec=SAAgentResult)
+    mock_result.stop_reason = "end_turn"
+    mock_result.interrupts = None
+    mock_result.__str__ = MagicMock(return_value="ok")
+
+    async def mock_stream(agent_input, **kwargs):
+        yield {"result": mock_result}
+
+    mock_strands_agent.stream_async = MagicMock(side_effect=mock_stream)
+    executor = StrandsA2AExecutor(mock_strands_agent)
+
+    _request_with_parts(mock_request_context, [_data_part({"campaign": "spring", "budget": 100})])
+    await executor.execute(mock_request_context, mock_event_queue)
+
+    tru_input = mock_strands_agent.stream_async.call_args[0][0]
+    assert len(tru_input) == 1
+    assert tru_input[0]["text"].startswith("[Structured Data]")
+    assert "spring" in tru_input[0]["text"]
+
+
+# ── Outbound interrupt advertisement ─────────────────────────────────────────
+#
+# An interrupt id is generated server-side, so a client can only answer an interrupt if the id
+# reaches it. These tests guarantee the input_required status message carries the ids in a DataPart
+# while keeping the human-readable TextPart clients already rely on.
+
+
+def _input_required_message(mock_event_queue):
+    """The status message from the single input_required event on the queue."""
+    from a2a.types import TaskState, TaskStatusUpdateEvent
+
+    events = [call[0][0] for call in mock_event_queue.enqueue_event.call_args_list]
+    input_required = [
+        e for e in events if isinstance(e, TaskStatusUpdateEvent) and e.status.state == TaskState.input_required
+    ]
+    assert len(input_required) == 1
+    return input_required[0].status.message
+
+
+async def _run_until_interrupt(executor, mock_strands_agent, mock_request_context, mock_event_queue, interrupts):
+    """Drive one execution whose result carries the given interrupts."""
+    mock_result = MagicMock(spec=SAAgentResult)
+    mock_result.stop_reason = "interrupt"
+    mock_result.interrupts = interrupts
+
+    async def mock_stream(agent_input, **kwargs):
+        yield {"result": mock_result}
+
+    mock_strands_agent.stream_async = MagicMock(side_effect=mock_stream)
+    _request_with_parts(mock_request_context, [_text_part("do the thing")], task_id="task-out")
+    await executor.execute(mock_request_context, mock_event_queue)
+
+
+@pytest.mark.asyncio
+async def test_interrupt_advertises_ids_in_data_part(mock_strands_agent, mock_request_context, mock_event_queue):
+    """The input_required message carries each interrupt's id so a client can answer it."""
+    from strands.interrupt import Interrupt
+
+    executor = StrandsA2AExecutor(mock_strands_agent)
+    await _run_until_interrupt(
+        executor,
+        mock_strands_agent,
+        mock_request_context,
+        mock_event_queue,
+        [Interrupt(id="v1:tool_call:tu-1:abc", name="approve_campaign", reason={"name": "spring"})],
+    )
+
+    data_parts = [p.root.data for p in _input_required_message(mock_event_queue).parts if isinstance(p.root, DataPart)]
+    tru_data = data_parts
+    exp_data = [
+        {
+            "interrupts": [
+                {"interruptId": "v1:tool_call:tu-1:abc", "name": "approve_campaign", "reason": {"name": "spring"}}
+            ]
+        }
+    ]
+    assert tru_data == exp_data
+
+
+@pytest.mark.asyncio
+async def test_interrupt_keeps_human_readable_text_part(mock_strands_agent, mock_request_context, mock_event_queue):
+    """The prose part clients already read stays first and unchanged."""
+    from strands.interrupt import Interrupt
+
+    executor = StrandsA2AExecutor(mock_strands_agent)
+    await _run_until_interrupt(
+        executor,
+        mock_strands_agent,
+        mock_request_context,
+        mock_event_queue,
+        [Interrupt(id="int-1", name="approval", reason="Need user approval")],
+    )
+
+    first_part = _input_required_message(mock_event_queue).parts[0].root
+    assert isinstance(first_part, TextPart)
+    assert "approval" in first_part.text
+    assert "Need user approval" in first_part.text
+
+
+@pytest.mark.asyncio
+async def test_interrupt_advertises_every_pending_id(mock_strands_agent, mock_request_context, mock_event_queue):
+    """Every interrupt the agent parked is addressable, not just the first."""
+    from strands.interrupt import Interrupt
+
+    executor = StrandsA2AExecutor(mock_strands_agent)
+    await _run_until_interrupt(
+        executor,
+        mock_strands_agent,
+        mock_request_context,
+        mock_event_queue,
+        [Interrupt(id="int-1", name="first"), Interrupt(id="int-2", name="second")],
+    )
+
+    data_parts = [p.root.data for p in _input_required_message(mock_event_queue).parts if isinstance(p.root, DataPart)]
+    tru_ids = [entry["interruptId"] for entry in data_parts[0]["interrupts"]]
+    exp_ids = ["int-1", "int-2"]
+    assert tru_ids == exp_ids
+
+
+@pytest.mark.asyncio
+async def test_interrupt_reason_that_is_not_json_falls_back_to_text(
+    mock_strands_agent, mock_request_context, mock_event_queue
+):
+    """A reason the transport cannot encode degrades to its string form rather than failing late."""
+    from strands.interrupt import Interrupt
+
+    class Unserializable:
+        def __str__(self):
+            return "<custom reason>"
+
+    executor = StrandsA2AExecutor(mock_strands_agent)
+    await _run_until_interrupt(
+        executor,
+        mock_strands_agent,
+        mock_request_context,
+        mock_event_queue,
+        [Interrupt(id="int-1", name="approval", reason=Unserializable())],
+    )
+
+    data_parts = [p.root.data for p in _input_required_message(mock_event_queue).parts if isinstance(p.root, DataPart)]
+    tru_reason = data_parts[0]["interrupts"][0]["reason"]
+    exp_reason = "<custom reason>"
+    assert tru_reason == exp_reason
+
+
+@pytest.mark.asyncio
+async def test_interrupt_without_details_sends_no_data_part(mock_strands_agent, mock_request_context, mock_event_queue):
+    """stop_reason='interrupt' with no interrupts still parks the task, with nothing to advertise."""
+    executor = StrandsA2AExecutor(mock_strands_agent)
+    await _run_until_interrupt(executor, mock_strands_agent, mock_request_context, mock_event_queue, [])
+
+    parts = _input_required_message(mock_event_queue).parts
+    assert not [p for p in parts if isinstance(p.root, DataPart)]
+    assert isinstance(parts[0].root, TextPart)

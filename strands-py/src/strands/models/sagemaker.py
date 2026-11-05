@@ -1,28 +1,34 @@
 """Amazon SageMaker model provider."""
 
+import asyncio
 import json
 import logging
 import os
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Iterable, Iterator
 from dataclasses import dataclass
 from typing import Any, Literal, TypedDict, TypeVar
 
 import boto3
 from botocore.config import Config as BotocoreConfig
+from botocore.exceptions import ClientError
 from mypy_boto3_sagemaker_runtime import SageMakerRuntimeClient
 from pydantic import BaseModel
 from typing_extensions import Unpack, override
 
 from ..types.content import ContentBlock, Messages
+from ..types.exceptions import ModelThrottledException
 from ..types.streaming import StreamEvent
 from ..types.tools import ToolChoice, ToolResult, ToolSpec
-from ._validation import validate_config_keys, warn_on_tool_choice_not_supported
-from .model import BaseModelConfig
+from ._validation import validate_config_keys, warn_on_cache_config_not_supported, warn_on_tool_choice_not_supported
+from .model import BaseModelConfig, CacheConfig
 from .openai import OpenAIModel
 
 T = TypeVar("T", bound=BaseModel)
 
 logger = logging.getLogger(__name__)
+
+# ``None`` is a valid decoded event, so it cannot mark the end of the stream.
+_END_OF_STREAM: Any = object()
 
 
 @dataclass
@@ -89,6 +95,98 @@ class ToolCall:
         self.function = FunctionCall(**kwargs.get("function", {"name": "", "arguments": ""}))
 
 
+def _is_container_throttling(error: ClientError) -> bool:
+    """Return whether a SageMaker runtime error wraps an HTTP 429 from the model container.
+
+    SageMaker reports container errors as ``ModelError`` (HTTP 424) with the container's status in
+    ``OriginalStatusCode``.
+
+    Args:
+        error: The SageMaker runtime client error.
+
+    Returns:
+        True if the container responded with HTTP 429.
+    """
+    return error.response.get("OriginalStatusCode") == 429
+
+
+def _strip_sse_framing(line: str) -> str | None:
+    """Return the JSON payload of one SSE line, or None if the line carries no event.
+
+    Strips an optional ``data:`` field prefix and skips blank lines, comment lines
+    (``:`` prefix), non-data SSE fields (``event:``, ``id:``, ``retry:``), and the
+    ``[DONE]`` sentinel.
+
+    Args:
+        line: A single line from the event stream, without its terminating newline.
+
+    Returns:
+        The payload to decode as JSON, or None if the line is not a data event.
+    """
+    line = line.strip()
+    if line.startswith("data:"):
+        line = line[len("data:") :].strip()
+    elif line.startswith(("event:", "id:", "retry:")):
+        return None
+    if not line or line.startswith(":") or line == "[DONE]":
+        return None
+    return line
+
+
+def _parse_event_stream(body: Iterable[Any]) -> Iterator[dict[str, Any]]:
+    """Yield decoded JSON events from a SageMaker response stream.
+
+    A ``PayloadPart`` is an arbitrary byte chunk that is not aligned to event
+    boundaries: a container such as vLLM or TGI may flush several ``data:`` SSE
+    events in one part, or split a single event across parts. Bytes are buffered;
+    each complete newline-delimited line is decoded as an independent event and any
+    trailing partial line is retained until the next part completes it. A malformed
+    ``data:``-framed line is dropped with a warning, while a bare line that does not
+    decode on its own defers to the whole-buffer decode, so a payload that is not
+    newline-framed (multi-line bare JSON) is decoded once the buffer parses whole.
+
+    Args:
+        body: The ``response["Body"]`` event stream of ``PayloadPart`` chunks.
+
+    Yields:
+        One decoded JSON object per event.
+    """
+    buffer = ""
+    for part in body:
+        buffer += part["PayloadPart"]["Bytes"].decode("utf-8")
+        logger.debug("buffer=<%s> | accumulated payload part", buffer)
+        while "\n" in buffer:
+            line, rest = buffer.split("\n", 1)
+            payload = _strip_sse_framing(line)
+            if payload is None:
+                buffer = rest
+                continue
+            try:
+                event = json.loads(payload)
+            except json.JSONDecodeError:
+                if not line.lstrip().startswith("data:"):
+                    # Not SSE-framed: likely one line of a bare JSON document that only
+                    # decodes as a whole. Stop line-splitting and let the whole-buffer
+                    # decode below retry once more bytes arrive.
+                    break
+                logger.warning("line=<%s> | skipping malformed event", line)
+                buffer = rest
+                continue
+            buffer = rest
+            yield event
+        payload = _strip_sse_framing(buffer)
+        if payload is None:
+            continue
+        try:
+            parsed = json.loads(payload)
+        except json.JSONDecodeError:
+            continue
+        buffer = ""
+        yield parsed
+    if _strip_sse_framing(buffer) is not None:
+        logger.warning("buffer=<%s> | stream ended with an undecoded partial event", buffer)
+
+
 class SageMakerAIModel(OpenAIModel):
     """Amazon SageMaker model provider implementation."""
 
@@ -123,6 +221,7 @@ class SageMakerAIModel(OpenAIModel):
         Attributes:
             endpoint_name: The name of the SageMaker endpoint to invoke
             inference_component_name: The name of the inference component to use
+            cache_config: Prompt caching settings. SageMaker honors no cache fields, so any set field is ignored.
 
             additional_args: Other request parameters, as supported by https://bit.ly/sagemaker-invoke-endpoint-params
         """
@@ -132,6 +231,7 @@ class SageMakerAIModel(OpenAIModel):
         inference_component_name: str | None
         target_model: str | None | None
         target_variant: str | None | None
+        cache_config: CacheConfig | None
         additional_args: dict[str, Any] | None
 
     def __init__(
@@ -255,8 +355,17 @@ class SageMakerAIModel(OpenAIModel):
             payload["tool_choice"] = "auto"
 
         for message in payload["messages"]:  # type: ignore
-            # Assistant message must have either content or tool_calls, but not both
-            if message.get("role", "") == "assistant" and message.get("tool_calls", []) != []:
+            # An assistant turn may carry text beside its tool calls -- the model's
+            # reasoning about why it is calling the tool -- and OpenAI-compatible
+            # endpoints accept both fields together. Drop `content` only when there
+            # is nothing in it to send, which is the case this guarded: an assistant
+            # message with no content would otherwise go out as `"content": null`
+            # next to `tool_calls`.
+            if (
+                message.get("role", "") == "assistant"
+                and message.get("tool_calls", []) != []
+                and not message.get("content")
+            ):
                 message.pop("content", None)
             if message.get("role") == "tool" and self.payload_config.get("tool_results_as_user_messages", False):
                 # Convert tool message to user message
@@ -297,7 +406,27 @@ class SageMakerAIModel(OpenAIModel):
         if additional_args:
             request.update(additional_args)
 
+        # SageMaker applies no CacheConfig fields; warn that any set field is ignored.
+        warn_on_cache_config_not_supported(
+            self.endpoint_config.get("cache_config"), "SageMaker", supported=set(), stacklevel=3
+        )
         return request
+
+    def _invoke_endpoint(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Invoke the endpoint and decode its response body.
+
+        The SageMaker runtime client is synchronous, so callers run this on a worker
+        thread to keep the event loop free.
+
+        Args:
+            request: Formatted request to send to the endpoint.
+
+        Returns:
+            The decoded JSON response body.
+        """
+        response = self.client.invoke_endpoint(**request)
+        body: dict[str, Any] = json.loads(response["Body"].read().decode("utf-8"))
+        return body
 
     @override
     async def stream(
@@ -321,6 +450,9 @@ class SageMakerAIModel(OpenAIModel):
 
         Yields:
             Formatted message chunks from the model.
+
+        Raises:
+            ModelThrottledException: If the model container responds with HTTP 429.
         """
         warn_on_tool_choice_not_supported(tool_choice)
 
@@ -332,79 +464,76 @@ class SageMakerAIModel(OpenAIModel):
 
         try:
             if self.payload_config.get("stream", True):
-                response = self.client.invoke_endpoint_with_response_stream(**request)
+                # The SageMaker runtime client is synchronous, so the invocation and each
+                # read of the response body run off the event loop.
+                response = await asyncio.to_thread(self.client.invoke_endpoint_with_response_stream, **request)
 
                 # Message start
                 yield self.format_chunk({"chunk_type": "message_start"})
 
                 # Parse the content
                 finish_reason = ""
-                partial_content = ""
                 tool_calls: dict[int, list[Any]] = {}
                 has_text_content = False
                 text_content_started = False
                 reasoning_content_started = False
 
-                for event in response["Body"]:
-                    chunk = event["PayloadPart"]["Bytes"].decode("utf-8")
-                    partial_content += chunk[6:] if chunk.startswith("data: ") else chunk  # TGI fix
-                    logger.info("chunk=<%s>", partial_content)
-                    try:
-                        content = json.loads(partial_content)
-                        partial_content = ""
-                        choice = content["choices"][0]
-                        logger.info("choice=<%s>", json.dumps(choice, indent=2))
-
-                        # Handle text content
-                        if choice["delta"].get("content"):
-                            if not text_content_started:
-                                yield self.format_chunk({"chunk_type": "content_start", "data_type": "text"})
-                                text_content_started = True
-                            has_text_content = True
-                            yield self.format_chunk(
-                                {
-                                    "chunk_type": "content_delta",
-                                    "data_type": "text",
-                                    "data": choice["delta"]["content"],
-                                }
-                            )
-
-                        # Handle reasoning content
-                        # vLLM v0.16.0+ uses "reasoning" instead of "reasoning_content"
-                        reasoning_text = choice["delta"].get("reasoning_content") or choice["delta"].get("reasoning")
-                        if reasoning_text:
-                            if not reasoning_content_started:
-                                yield self.format_chunk(
-                                    {"chunk_type": "content_start", "data_type": "reasoning_content"}
-                                )
-                                reasoning_content_started = True
-                            yield self.format_chunk(
-                                {
-                                    "chunk_type": "content_delta",
-                                    "data_type": "reasoning_content",
-                                    "data": reasoning_text,
-                                }
-                            )
-
-                        # Handle tool calls
-                        generated_tool_calls = choice["delta"].get("tool_calls", [])
-                        if not isinstance(generated_tool_calls, list):
-                            generated_tool_calls = [generated_tool_calls]
-                        for tool_call in generated_tool_calls:
-                            tool_calls.setdefault(tool_call["index"], []).append(tool_call)
-
-                        if choice["finish_reason"] is not None:
-                            finish_reason = choice["finish_reason"]
-                            break
-
-                        if choice.get("usage"):
-                            yield self.format_chunk(
-                                {"chunk_type": "metadata", "data": UsageMetadata(**choice["usage"])}
-                            )
-
-                    except json.JSONDecodeError:
-                        # Continue accumulating content until we have valid JSON
+                # Pulling one event at a time keeps the read on a worker thread.
+                events = _parse_event_stream(response["Body"])
+                while (content := await asyncio.to_thread(next, events, _END_OF_STREAM)) is not _END_OF_STREAM:
+                    choices = content.get("choices")
+                    if not choices:
+                        if usage := content.get("usage"):
+                            yield self.format_chunk({"chunk_type": "metadata", "data": UsageMetadata(**usage)})
                         continue
+                    if finish_reason:
+                        continue
+
+                    choice = choices[0]
+                    logger.debug("choice=<%s>", json.dumps(choice, indent=2))
+
+                    # Handle text content
+                    if choice["delta"].get("content"):
+                        if not text_content_started:
+                            yield self.format_chunk({"chunk_type": "content_start", "data_type": "text"})
+                            text_content_started = True
+                        has_text_content = True
+                        yield self.format_chunk(
+                            {
+                                "chunk_type": "content_delta",
+                                "data_type": "text",
+                                "data": choice["delta"]["content"],
+                            }
+                        )
+
+                    # Handle reasoning content
+                    # vLLM v0.16.0+ uses "reasoning" instead of "reasoning_content"
+                    reasoning_text = choice["delta"].get("reasoning_content") or choice["delta"].get("reasoning")
+                    if reasoning_text:
+                        if not reasoning_content_started:
+                            yield self.format_chunk({"chunk_type": "content_start", "data_type": "reasoning_content"})
+                            reasoning_content_started = True
+                        yield self.format_chunk(
+                            {
+                                "chunk_type": "content_delta",
+                                "data_type": "reasoning_content",
+                                "data": reasoning_text,
+                            }
+                        )
+
+                    # Handle tool calls
+                    generated_tool_calls = choice["delta"].get("tool_calls", [])
+                    if not isinstance(generated_tool_calls, list):
+                        generated_tool_calls = [generated_tool_calls]
+                    for tool_call in generated_tool_calls:
+                        tool_calls.setdefault(tool_call["index"], []).append(tool_call)
+
+                    usage = content.get("usage") or choice.get("usage")
+                    if usage:
+                        yield self.format_chunk({"chunk_type": "metadata", "data": UsageMetadata(**usage)})
+
+                    if choice["finish_reason"] is not None:
+                        finish_reason = choice["finish_reason"]
 
                 # Close reasoning content if it was started
                 if reasoning_content_started:
@@ -438,8 +567,7 @@ class SageMakerAIModel(OpenAIModel):
 
             else:
                 # Not all SageMaker AI models support streaming!
-                response = self.client.invoke_endpoint(**request)  # type: ignore[assignment]
-                final_response_json = json.loads(response["Body"].read().decode("utf-8"))  # type: ignore[attr-defined]
+                final_response_json = await asyncio.to_thread(self._invoke_endpoint, request)
                 logger.info("response=<%s>", json.dumps(final_response_json, indent=2))
 
                 # Obtain the key elements from the response
@@ -491,10 +619,8 @@ class SageMakerAIModel(OpenAIModel):
                 # Message close
                 yield self.format_chunk({"chunk_type": "message_stop", "data": message_stop_reason})
                 # Handle usage metadata
-                if final_response_json.get("usage"):
-                    yield self.format_chunk(
-                        {"chunk_type": "metadata", "data": UsageMetadata(**final_response_json.get("usage"))}
-                    )
+                if usage := final_response_json.get("usage"):
+                    yield self.format_chunk({"chunk_type": "metadata", "data": UsageMetadata(**usage)})
         except (
             self.client.exceptions.InternalFailure,
             self.client.exceptions.ServiceUnavailable,
@@ -503,6 +629,8 @@ class SageMakerAIModel(OpenAIModel):
             self.client.exceptions.InternalDependencyException,
             self.client.exceptions.ModelNotReadyException,
         ) as e:
+            if _is_container_throttling(e):
+                raise ModelThrottledException(str(e)) from e
             logger.error("SageMaker error: %s", str(e))
             raise e
 
@@ -591,6 +719,9 @@ class SageMakerAIModel(OpenAIModel):
 
         Yields:
             Model events with the last being the structured output.
+
+        Raises:
+            ModelThrottledException: If the model container responds with HTTP 429.
         """
         # Format the request for structured output
         request = self.format_request(prompt, system_prompt=system_prompt)
@@ -605,8 +736,7 @@ class SageMakerAIModel(OpenAIModel):
 
         try:
             # Use non-streaming mode for structured output
-            response = self.client.invoke_endpoint(**request)
-            final_response_json = json.loads(response["Body"].read().decode("utf-8"))
+            final_response_json = await asyncio.to_thread(self._invoke_endpoint, request)
 
             # Extract the structured content
             message = final_response_json["choices"][0]["message"]
@@ -630,5 +760,7 @@ class SageMakerAIModel(OpenAIModel):
             self.client.exceptions.InternalDependencyException,
             self.client.exceptions.ModelNotReadyException,
         ) as e:
+            if _is_container_throttling(e):
+                raise ModelThrottledException(str(e)) from e
             logger.error("SageMaker structured output error: %s", str(e))
             raise ValueError(f"SageMaker structured output error: {str(e)}") from e

@@ -1,0 +1,9 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "strands",
+  "version": "0.2.0",
+  "description": "Build, extend, evaluate, and migrate applications with Strands Agents in Python or TypeScript.",
+  "author": {
+    "name": "Strands Agents"
+  }
+}

@@ -2,10 +2,12 @@
 
 import copy
 import logging
+import warnings
 from typing import TYPE_CHECKING, Any
 
 from ..agent.state import AgentState
 from ..tools._tool_helpers import generate_missing_tool_result_content
+from ..types.agent import LocalAgent
 from ..types.content import ContentBlock, Message, _generate_tracking_id
 from ..types.exceptions import SessionException
 from ..types.session import (
@@ -18,15 +20,24 @@ from .session_manager import SessionManager
 from .session_repository import SessionRepository
 
 if TYPE_CHECKING:
-    from ..agent.agent import Agent
-    from ..experimental.bidi.agent.agent import BidiAgent
     from ..multiagent.base import MultiAgentBase
 
 logger = logging.getLogger(__name__)
 
 
-class RepositorySessionManager(SessionManager):
-    """Session manager for persisting agents in a SessionRepository."""
+class RepositorySessionManager(SessionManager[LocalAgent]):
+    """Session manager for persisting agents in a SessionRepository.
+
+    This manager uses a :class:`SessionRepository` (a structured per-message CRUD interface),
+    not the unified :class:`~strands.storage.storage.Storage` protocol. It does not resolve
+    from the agent-level ``storage`` parameter. For snapshot-based persistence that integrates
+    with agent-level storage, use :class:`~strands.session.snapshot_session_manager.SnapshotSessionManager`.
+
+    This manager does not support an agent ``context_manager``. Each message is persisted once, so
+    the edits a context manager makes to history (truncated tool results, in-place summaries) and
+    its stash of offloaded content are not saved, and a restore reloads the unreduced history. Use
+    :class:`~strands.session.snapshot_session_manager.SnapshotSessionManager` with a context manager.
+    """
 
     def __init__(
         self,
@@ -66,7 +77,10 @@ class RepositorySessionManager(SessionManager):
         # Track the previously synced internal state for each agent to detect changes.
         self._last_synced_internal_state: dict[str, dict[str, Any]] = {}
 
-    def append_message(self, message: Message, agent: "Agent", **kwargs: Any) -> None:
+        # Held records per agent, used by redact_latest_message to find alias records.
+        self._held_records: dict[str, list[SessionMessage]] = {}
+
+    def append_message(self, message: Message, agent: "LocalAgent", **kwargs: Any) -> None:
         """Append a message to the agent's session.
 
         Args:
@@ -84,8 +98,9 @@ class RepositorySessionManager(SessionManager):
         session_message = SessionMessage.from_message(message, next_index)
         self._latest_agent_message[agent.agent_id] = session_message
         self.session_repository.create_message(self.session_id, agent.agent_id, session_message)
+        self._held_records.setdefault(agent.agent_id, []).append(session_message)
 
-    def redact_latest_message(self, redact_message: Message, agent: "Agent", **kwargs: Any) -> None:
+    def redact_latest_message(self, redact_message: Message, agent: "LocalAgent", **kwargs: Any) -> None:
         """Redact the latest message appended to the session.
 
         Args:
@@ -97,24 +112,39 @@ class RepositorySessionManager(SessionManager):
         if latest_agent_message is None:
             raise SessionException("No message to redact.")
         latest_agent_message.redact_message = redact_message
-        return self.session_repository.update_message(self.session_id, agent.agent_id, latest_agent_message)
+        self.session_repository.update_message(self.session_id, agent.agent_id, latest_agent_message)
 
-    def sync_agent(self, agent: "Agent", **kwargs: Any) -> None:
+        # A retried prompt may have stored the same dict in an earlier record; rewrite those too.
+        for r in self._held_records.get(agent.agent_id, []):
+            if r is not latest_agent_message and r.to_message() is redact_message:
+                self.session_repository.update_message(self.session_id, agent.agent_id, r)
+
+    def sync_agent(self, agent: "LocalAgent", **kwargs: Any) -> None:
         """Serialize and update the agent into the session repository.
 
-        Only updates the agent if state has been modified or internal state has changed.
-        This optimization reduces unnecessary I/O operations when the agent processes
-        messages without modifying its state.
+        For Agent, only updates if state or internal state has changed. Other LocalAgent
+        implementations are written on every sync.
 
         Args:
             agent: Agent to sync to the session.
             **kwargs: Additional keyword arguments for future extensibility.
         """
+        from ..agent.agent import Agent
+
+        if not isinstance(agent, Agent):
+            # Prune held records so tracking state stays bounded.
+            self._prune_held_records(agent)
+            self.session_repository.update_agent(self.session_id, SessionAgent.from_agent(agent))
+            return
+
         # Get current versions and conversation manager state
         current_state_version = agent.state._get_version()
         current_interrupt_state_version = agent._interrupt_state._get_version()
         current_conversation_manager_state = agent.conversation_manager.get_state()
         current_model_state = agent._model_state
+
+        # Prune held records so tracking state stays bounded.
+        self._prune_held_records(agent)
 
         # Check if we have a previous state to compare against
         last_synced = self._last_synced_internal_state.get(agent.agent_id)
@@ -166,13 +196,36 @@ class RepositorySessionManager(SessionManager):
             "model_state": copy.deepcopy(current_model_state),
         }
 
-    def initialize(self, agent: "Agent", **kwargs: Any) -> None:
+    def _prune_held_records(self, agent: "LocalAgent") -> None:
+        """Drop held records whose message is no longer in ``agent.messages``.
+
+        A record is held while its message (matched by tracking id, or by identity for messages
+        without one) is in ``agent.messages``.
+        """
+        held_ids = {message.get("tracking_id") for message in agent.messages} - {None}
+        held_objects = {id(message) for message in agent.messages}
+        self._held_records[agent.agent_id] = [
+            record
+            for record in self._held_records.get(agent.agent_id, [])
+            if record.to_message().get("tracking_id") in held_ids or id(record.to_message()) in held_objects
+        ]
+
+    def initialize(self, agent: "LocalAgent", **kwargs: Any) -> None:
         """Initialize an agent with a session.
 
         Args:
             agent: Agent to initialize from the session
             **kwargs: Additional keyword arguments for future extensibility.
         """
+        from ..agent.agent import Agent
+
+        if agent.storage is not None:
+            # Caller depth varies, so stacklevel=1 pins dedup to this line (once per process).
+            warnings.warn(
+                "Agent-level storage is set, but RepositorySessionManager does not use it; use"
+                " SnapshotSessionManager for unified storage integration",
+                stacklevel=1,
+            )
         if agent.agent_id in self._latest_agent_message:
             raise SessionException("The `agent_id` of an agent must be unique in a session.")
         self._latest_agent_message[agent.agent_id] = None
@@ -194,9 +247,11 @@ class RepositorySessionManager(SessionManager):
             self.session_repository.create_agent(self.session_id, session_agent)
             # Initialize messages with sequential indices
             session_message = None
+            self._held_records[agent.agent_id] = []
             for i, message in enumerate(agent.messages):
                 session_message = SessionMessage.from_message(message, i)
                 self.session_repository.create_message(self.session_id, agent.agent_id, session_message)
+                self._held_records[agent.agent_id].append(session_message)
             self._latest_agent_message[agent.agent_id] = session_message
         else:
             logger.debug(
@@ -209,23 +264,27 @@ class RepositorySessionManager(SessionManager):
             session_agent.initialize_internal_state(agent)
 
             # Restore the conversation manager to its previous state, and get the optional prepend messages
-            prepend_messages = agent.conversation_manager.restore_from_session(session_agent.conversation_manager_state)
-
-            if prepend_messages is None:
-                prepend_messages = []
+            prepend_messages = []
+            offset = 0
+            if isinstance(agent, Agent):
+                prepend_messages = (
+                    agent.conversation_manager.restore_from_session(session_agent.conversation_manager_state) or []
+                )
+                offset = agent.conversation_manager.removed_message_count
 
             # List the messages currently in the session, using an offset of the messages previously removed
             # by the conversation manager.
             session_messages = self.session_repository.list_messages(
                 session_id=self.session_id,
                 agent_id=agent.agent_id,
-                offset=agent.conversation_manager.removed_message_count,
+                offset=offset,
             )
+            self._held_records[agent.agent_id] = list(session_messages)
             if len(session_messages) > 0:
                 self._latest_agent_message[agent.agent_id] = session_messages[-1]
 
             # Skip restoring messages when conversation is managed server-side
-            if agent.model.stateful:
+            if isinstance(agent, Agent) and agent.model.stateful:
                 logger.debug(
                     "agent_id=<%s> | session_id=<%s> | skipping message restore for server-managed conversation",
                     agent.agent_id,
@@ -246,7 +305,7 @@ class RepositorySessionManager(SessionManager):
         """Fix broken tool use/result pairs in message history.
 
         Handles orphaned toolUse (no corresponding toolResult), stale toolResult (IDs that don't match
-        the preceding toolUse), and orphaned toolResult at conversation start (no preceding toolUse).
+        the preceding toolUse), and orphaned toolResult at any index (no preceding toolUse).
 
         Uses a declarative rebuild: for each assistant message with toolUse, the next message's toolResult
         content is rebuilt to have exactly one result per toolUse ID, filling gaps with error results and
@@ -258,15 +317,26 @@ class RepositorySessionManager(SessionManager):
         Returns:
             Fixed list of messages with proper tool use/result pairs
         """
-        if messages:
-            first_message = messages[0]
-            if first_message["role"] == "user" and any("toolResult" in content for content in first_message["content"]):
-                logger.warning(
-                    "Session message history starts with orphaned toolResult with no preceding toolUse. "
-                    "This typically happens when messages are truncated due to pagination limits. "
-                    "Removing orphaned toolResult message to maintain valid conversation structure."
-                )
-                messages.pop(0)
+        # Reverse iteration keeps the lower indices valid after a removal.
+        for index in range(len(messages) - 1, -1, -1):
+            message = messages[index]
+            if message["role"] != "user" or not any("toolResult" in content for content in message["content"]):
+                continue
+            previous_message = messages[index - 1] if index > 0 else None
+            if previous_message is not None and any("toolUse" in content for content in previous_message["content"]):
+                continue
+
+            logger.warning(
+                "message_index=<%d> | orphaned toolResult with no preceding toolUse. "
+                "This typically happens when messages are truncated due to pagination limits. "
+                "Removing orphaned toolResult to maintain valid conversation structure.",
+                index,
+            )
+            remaining_content = [content for content in message["content"] if "toolResult" not in content]
+            if remaining_content:
+                message["content"] = remaining_content
+            else:
+                messages.pop(index)
 
         # Snapshot eligible indices before iterating. Trailing message excluded (handled by agent class
         # at prompt-arrival time). Reverse iteration keeps snapshotted indices valid after inserts.
@@ -279,9 +349,7 @@ class RepositorySessionManager(SessionManager):
 
         for index in reversed(tool_use_indices):
             message = messages[index]
-            tool_use_ids = [
-                content["toolUse"]["toolUseId"] for content in message["content"] if "toolUse" in content
-            ]
+            tool_use_ids = [content["toolUse"]["toolUseId"] for content in message["content"] if "toolUse" in content]
 
             next_message = messages[index + 1]
             next_content = next_message["content"]
@@ -347,93 +415,3 @@ class RepositorySessionManager(SessionManager):
             source.deserialize_state(state)
 
         self._is_new_session = False
-
-    def initialize_bidi_agent(self, agent: "BidiAgent", **kwargs: Any) -> None:
-        """Initialize a bidirectional agent with a session.
-
-        Args:
-            agent: BidiAgent to initialize from the session
-            **kwargs: Additional keyword arguments for future extensibility.
-        """
-        if agent.agent_id in self._latest_agent_message:
-            raise SessionException("The `agent_id` of an agent must be unique in a session.")
-        self._latest_agent_message[agent.agent_id] = None
-
-        # Skip read_agent call for new sessions since no agents can exist yet
-        if self._is_new_session:
-            session_agent = None
-        else:
-            session_agent = self.session_repository.read_agent(self.session_id, agent.agent_id)
-
-        if session_agent is None:
-            logger.debug(
-                "agent_id=<%s> | session_id=<%s> | creating bidi agent",
-                agent.agent_id,
-                self.session_id,
-            )
-
-            session_agent = SessionAgent.from_bidi_agent(agent)
-            self.session_repository.create_agent(self.session_id, session_agent)
-            # Initialize messages with sequential indices
-            session_message = None
-            for i, message in enumerate(agent.messages):
-                session_message = SessionMessage.from_message(message, i)
-                self.session_repository.create_message(self.session_id, agent.agent_id, session_message)
-            self._latest_agent_message[agent.agent_id] = session_message
-        else:
-            logger.debug(
-                "agent_id=<%s> | session_id=<%s> | restoring bidi agent",
-                agent.agent_id,
-                self.session_id,
-            )
-            agent.state = AgentState(session_agent.state)
-
-            session_agent.initialize_bidi_internal_state(agent)
-
-            # BidiAgent has no conversation_manager, so no prepend_messages or removed_message_count
-            session_messages = self.session_repository.list_messages(
-                session_id=self.session_id,
-                agent_id=agent.agent_id,
-                offset=0,
-            )
-            if len(session_messages) > 0:
-                self._latest_agent_message[agent.agent_id] = session_messages[-1]
-
-            # Restore the agents messages array
-            agent.messages = [session_message.to_message() for session_message in session_messages]
-
-            # Fix broken session histories: https://github.com/strands-agents/harness-sdk/issues/859
-            agent.messages = self._fix_broken_tool_use(agent.messages)
-
-        self._is_new_session = False
-
-    def append_bidi_message(self, message: Message, agent: "BidiAgent", **kwargs: Any) -> None:
-        """Append a message to the bidirectional agent's session.
-
-        Args:
-            message: Message to add to the agent in the session
-            agent: BidiAgent to append the message to
-            **kwargs: Additional keyword arguments for future extensibility.
-        """
-        # Calculate the next index (0 if this is the first message, otherwise increment the previous index)
-        latest_agent_message = self._latest_agent_message[agent.agent_id]
-        if latest_agent_message:
-            next_index = latest_agent_message.message_id + 1
-        else:
-            next_index = 0
-
-        session_message = SessionMessage.from_message(message, next_index)
-        self._latest_agent_message[agent.agent_id] = session_message
-        self.session_repository.create_message(self.session_id, agent.agent_id, session_message)
-
-    def sync_bidi_agent(self, agent: "BidiAgent", **kwargs: Any) -> None:
-        """Serialize and update the bidirectional agent into the session repository.
-
-        Args:
-            agent: BidiAgent to sync to the session.
-            **kwargs: Additional keyword arguments for future extensibility.
-        """
-        self.session_repository.update_agent(
-            self.session_id,
-            SessionAgent.from_bidi_agent(agent),
-        )

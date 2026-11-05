@@ -1,3 +1,5 @@
+import type { Scope } from './types.js'
+
 /**
  * Validates that an identifier contains only allowed characters.
  * Allowed characters: lowercase letters (a-z), numbers (0-9), hyphens (-), and underscores (_)
@@ -12,6 +14,21 @@ export function validateIdentifier(id: string): string {
     throw new Error(`Identifier '${id}' can only contain lowercase letters, numbers, hyphens, and underscores`)
   }
   return id
+}
+
+/**
+ * Validates that a snapshot scope is supported.
+ *
+ * @internal
+ * @param scope - The scope to validate
+ * @returns The validated scope
+ * @throws Error if the scope is not supported
+ */
+export function validateScope(scope: unknown): Scope {
+  if (scope !== 'agent' && scope !== 'multiAgent') {
+    throw new Error(`Invalid scope '${String(scope)}': must be 'agent' or 'multiAgent'`)
+  }
+  return scope
 }
 
 /**

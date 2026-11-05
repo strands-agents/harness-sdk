@@ -16,15 +16,29 @@ import {
 import { Model, resolveConfigMetadata } from '../model.js'
 import type { CountTokensOptions, StreamOptions } from '../model.js'
 import type { Message } from '../../types/messages.js'
-import type { ModelStreamEvent } from '../streaming.js'
-import { ContextWindowOverflowError, ModelThrottledError, ProviderTokenCountError } from '../../errors.js'
+import type { ModelStreamEvent, Usage } from '../streaming.js'
+import {
+  ContextWindowOverflowError,
+  ModelThrottledError,
+  ModelNetworkError,
+  ProviderTokenCountError,
+} from '../../errors.js'
 import type { GoogleModelConfig, GoogleModelOptions, GoogleStreamState } from './types.js'
 export type { GoogleModelConfig, GoogleModelOptions }
-import { classifyGoogleError } from './errors.js'
+import { classifyGoogleError, type GoogleErrorType } from './errors.js'
 import { formatMessages, mapChunkToEvents } from './adapters.js'
 import { MODEL_DEFAULTS, defaultModelWarningMessage } from '../defaults.js'
 import { warnOnce } from '../../logging/warn-once.js'
 import { logger } from '../../logging/logger.js'
+
+/**
+ * Builds the Strands error for each recognized Google error type.
+ */
+const GOOGLE_ERROR_FACTORIES: Record<GoogleErrorType, (error: Error) => Error> = {
+  contextOverflow: (error) => new ContextWindowOverflowError(error.message),
+  throttling: (error) => new ModelThrottledError(error.message, { cause: error }),
+  network: (error) => new ModelNetworkError(error.message, { cause: error }),
+}
 
 /**
  * Google model provider implementation.
@@ -147,6 +161,11 @@ export class GoogleModel extends Model<GoogleModelConfig> {
     return resolveConfigMetadata(this._config, this._config.modelId ?? MODEL_DEFAULTS.gemini.modelId)
   }
 
+  /** The configured model ID, else the default one that gets sent. */
+  override get modelId(): string {
+    return this._config.modelId ?? MODEL_DEFAULTS.gemini.modelId
+  }
+
   /**
    * Count tokens using Gemini's native countTokens API.
    *
@@ -236,6 +255,7 @@ export class GoogleModel extends Model<GoogleModelConfig> {
         hasToolCalls: false,
         inputTokens: 0,
         outputTokens: 0,
+        totalTokens: 0,
       }
 
       for await (const chunk of stream) {
@@ -243,30 +263,22 @@ export class GoogleModel extends Model<GoogleModelConfig> {
       }
 
       if (streamState.inputTokens > 0 || streamState.outputTokens > 0) {
-        yield {
-          type: 'modelMetadataEvent',
-          usage: {
-            inputTokens: streamState.inputTokens,
-            outputTokens: streamState.outputTokens,
-            totalTokens: streamState.inputTokens + streamState.outputTokens,
-          },
+        const usage: Usage = {
+          inputTokens: streamState.inputTokens,
+          outputTokens: streamState.outputTokens,
+          totalTokens: streamState.totalTokens,
         }
+        if (streamState.cacheReadInputTokens !== undefined) {
+          usage.cacheReadInputTokens = streamState.cacheReadInputTokens
+        }
+        yield { type: 'modelMetadataEvent', usage }
       }
     } catch (error) {
       if (!(error instanceof Error)) {
         throw error
       }
       const errorType = classifyGoogleError(error)
-
-      if (errorType === 'contextOverflow') {
-        throw new ContextWindowOverflowError(error.message)
-      }
-
-      if (errorType === 'throttling') {
-        throw new ModelThrottledError(error.message, { cause: error })
-      }
-
-      throw error
+      throw errorType ? GOOGLE_ERROR_FACTORIES[errorType](error) : error
     }
   }
 
@@ -344,6 +356,21 @@ export class GoogleModel extends Model<GoogleModelConfig> {
     // Spread params object for forward compatibility
     if (this._config.params) {
       Object.assign(config, this._config.params)
+    }
+
+    // Gemini Developer API requires this flag when mixing function declarations with built-in tools.
+    // Runs after params spread so a caller-supplied toolConfig is merged into, not overwritten.
+    const needsServerSideFlag =
+      this._config.builtInTools &&
+      this._config.builtInTools.length > 0 &&
+      options?.toolSpecs &&
+      options.toolSpecs.length > 0 &&
+      !this._client.vertexai
+    if (needsServerSideFlag) {
+      config.toolConfig = {
+        ...config.toolConfig,
+        includeServerSideToolInvocations: config.toolConfig?.includeServerSideToolInvocations ?? true,
+      }
     }
 
     return {

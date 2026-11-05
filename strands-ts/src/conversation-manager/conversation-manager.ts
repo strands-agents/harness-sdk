@@ -6,18 +6,15 @@
  */
 
 import type { Plugin } from '../plugins/plugin.js'
+import { createAuxiliaryInvocationContext, type InvocationContext } from '../agent/invocation-context.js'
 import type { LocalAgent } from '../types/agent.js'
 import { AfterModelCallEvent, BeforeModelCallEvent } from '../hooks/events.js'
 import { ContextWindowOverflowError } from '../errors.js'
 import type { Model } from '../models/model.js'
 import { logger } from '../logging/logger.js'
-import { warnOnce } from '../logging/warn-once.js'
 
 /** Default compression threshold ratio. */
 const DEFAULT_COMPRESSION_THRESHOLD = 0.7
-
-/** @internal Default context window limit fallback when the model doesn't report one. */
-export const DEFAULT_CONTEXT_WINDOW_LIMIT = 200_000
 
 /**
  * Options passed to {@link ConversationManager.reduce}.
@@ -35,8 +32,9 @@ export type ConversationManagerReduceOptions = {
   agent: LocalAgent
 
   /**
-   * The model instance. Used by conversation managers that perform model-based
-   * reduction (e.g. summarization).
+   * The model of the call that triggered the reduction (the routed model under a
+   * `ModelRouter`). Use it to size the reduction (`countTokens`, `estimateUtilization`);
+   * managers that reduce via a model call should resolve their own, typically `agent.auxModel`.
    */
   model: Model
 
@@ -51,6 +49,9 @@ export type ConversationManagerReduceOptions = {
    * proceeds regardless.
    */
   error?: ContextWindowOverflowError
+
+  /** The request this reduction runs for, if any; a nested call that joins it adds to the request's usage, but the request's limits don't apply. */
+  readonly invocationContext?: InvocationContext
 }
 
 /**
@@ -171,7 +172,14 @@ export abstract class ConversationManager implements Plugin {
     // Reactive overflow recovery
     agent.addHook(AfterModelCallEvent, async (event) => {
       if (event.error instanceof ContextWindowOverflowError) {
-        if (await this.reduce({ agent: event.agent, model: event.model, error: event.error })) {
+        const auxiliaryInvocationContext = createAuxiliaryInvocationContext(event.invocationContext)
+        const reduceOptions: ConversationManagerReduceOptions = {
+          agent: event.agent,
+          model: event.model,
+          error: event.error,
+          ...(auxiliaryInvocationContext && { invocationContext: auxiliaryInvocationContext }),
+        }
+        if (await this.reduce(reduceOptions)) {
           event.retry = true
         }
       }
@@ -183,27 +191,24 @@ export abstract class ConversationManager implements Plugin {
         return
       }
 
-      let contextWindowLimit = event.model.getConfig().contextWindowLimit
-      if (contextWindowLimit === undefined) {
-        contextWindowLimit = DEFAULT_CONTEXT_WINDOW_LIMIT
-        warnOnce(
-          logger,
-          `conversation_manager=<${this.name}> | contextWindowLimit is not set on the model, using default of ${DEFAULT_CONTEXT_WINDOW_LIMIT} | set contextWindowLimit in your model config for accurate proactive compression`
-        )
-      }
-
       if (event.projectedInputTokens === undefined) {
         return
       }
 
-      const ratio = event.projectedInputTokens / contextWindowLimit
+      const ratio = event.model.estimateUtilization(event.projectedInputTokens)
       if (ratio >= this._compressionThreshold) {
         logger.debug(
-          `projected_tokens=<${event.projectedInputTokens}>, limit=<${contextWindowLimit}>, ratio=<${ratio.toFixed(2)}>, compression_threshold=<${this._compressionThreshold}> | compression threshold exceeded, reducing context`
+          `projected_tokens=<${event.projectedInputTokens}>, ratio=<${ratio.toFixed(2)}>, compression_threshold=<${this._compressionThreshold}> | compression threshold exceeded, reducing context`
         )
         // Proactive compression is best-effort: swallow errors so the model call can still proceed.
+        const auxiliaryInvocationContext = createAuxiliaryInvocationContext(event.invocationContext)
+        const reduceOptions: ConversationManagerReduceOptions = {
+          agent: event.agent,
+          model: event.model,
+          ...(auxiliaryInvocationContext && { invocationContext: auxiliaryInvocationContext }),
+        }
         try {
-          await this.reduce({ agent: event.agent, model: event.model })
+          await this.reduce(reduceOptions)
         } catch (e) {
           logger.warn(`conversation_manager=<${this.name}> | proactive compression failed, continuing | error=<${e}>`)
         }

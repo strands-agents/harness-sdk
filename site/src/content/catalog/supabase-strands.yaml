@@ -1,0 +1,8 @@
+name: supabase-strands
+description: Supabase-backed session manager for Strands Agents that persists conversation history in a PostgreSQL database hosted on Supabase.
+integrationType: session-manager
+languages:
+  python:
+    package: supabase-strands
+github: https://github.com/siddharthkrish/strands-supabase-session-manager
+addedDate: 2026-02-25

@@ -193,10 +193,10 @@ describe.skipIf(sshEc2.shouldSkip)('SshSandbox (integration)', () => {
   // getTools()
   // -------------------------------------------------------------------------
 
-  it('getTools returns sandbox_bash and sandbox_file_editor', () => {
+  it('getTools returns sandbox_shell and sandbox_file_editor', () => {
     const tools = makeSandbox().getTools()
     const names = tools.map((t) => t.name)
-    expect(names).toContain('sandbox_bash')
+    expect(names).toContain('sandbox_shell')
     expect(names).toContain('sandbox_file_editor')
   })
 

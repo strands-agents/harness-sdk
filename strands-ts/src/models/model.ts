@@ -13,6 +13,8 @@ import { CitationsBlock } from '../types/citations.js'
 import type { Citation, CitationGeneratedContent } from '../types/citations.js'
 import type { StateStore } from '../state-store.js'
 import type { ToolChoice, ToolSpec } from '../tools/types.js'
+import type { AgentMetadata } from '../agent/agent-metadata.js'
+import type { z } from 'zod'
 import {
   ModelContentBlockDeltaEvent,
   ModelContentBlockStartEvent,
@@ -26,22 +28,43 @@ import {
 import { MaxTokensError, ModelError, normalizeError } from '../errors.js'
 import type { Redaction } from '../hooks/events.js'
 import { logger } from '../logging/logger.js'
-import { getContextWindowLimit } from './defaults.js'
+import { DEFAULT_CONTEXT_WINDOW_LIMIT } from './defaults.js'
+import { lookupModelInfo, mergeModelInfo, type ModelInfo } from './model-info.js'
+import { warnOnce } from '../logging/warn-once.js'
 
 /**
- * Resolves model metadata fields on a config object from built-in lookup tables
- * when not explicitly set. Explicit values pass through unchanged.
+ * Fills `contextWindowLimit` on a config object when not explicitly set. Explicit values pass
+ * through unchanged.
+ *
+ * Kept so `getConfig().contextWindowLimit` keeps its documented value. The filled value is resolved
+ * through every layer below the user's (shared model info, then the `modelInfo` override), so
+ * `Model.modelInfo` can take it at face value.
  *
  * @internal
  * @param config - The stored model config
  * @param modelId - The model ID to look up
- * @returns A new config with resolved metadata, or the original config if nothing to resolve
+ * @returns A new config with the limit filled in, or the original config if nothing to fill
  */
 export function resolveConfigMetadata<T extends BaseModelConfig>(config: T, modelId: string): T {
   if (config.contextWindowLimit !== undefined) return config
-  const limit = getContextWindowLimit(modelId)
-  if (limit === undefined) return config
-  return { ...config, contextWindowLimit: limit }
+  const contextWindow = mergeModelInfo(lookupModelInfo(modelId), config.modelInfo).limits?.contextWindow
+  if (contextWindow === undefined) return config
+  return { ...config, contextWindowLimit: contextWindow }
+}
+
+/**
+ * The `maxTokens` to send: the configured value, else the model's output ceiling from the shared model
+ * info with the `modelInfo` override applied, else `undefined`. Reads the layers directly rather than
+ * `Model.modelInfo` so `getConfig()` can call it.
+ *
+ * @internal
+ * @param config - The stored model config
+ * @param modelId - The model ID to look up
+ * @returns The resolved `maxTokens`, or `undefined` when neither the user nor the model info says
+ */
+export function resolveMaxTokens(config: BaseModelConfig, modelId: string): number | undefined {
+  if (config.maxTokens !== undefined) return config.maxTokens
+  return mergeModelInfo(lookupModelInfo(modelId), config.modelInfo).limits?.maxOutputTokens
 }
 
 class CitationAccumulator {
@@ -65,15 +88,105 @@ class CitationAccumulator {
 
 /**
  * Configuration for prompt caching.
+ *
+ * Providers consume only the fields they support.
  */
 export interface CacheConfig {
   /**
-   * Caching strategy to use.
-   * - "auto": Automatically inject cache points at optimal positions based on model ID detection
-   *   (after tools, after last user message)
-   * - "anthropic": Force enable Anthropic-style caching (useful for application inference profiles)
+   * Whether to skip caching for models that do not support it.
+   * - "auto": cache only when the model is known to support it
+   * - "anthropic": cache without that check, for model identifiers it cannot inspect
+   *   (an application inference profile, for example)
+   *
+   * @defaultValue 'auto'
    */
-  strategy: 'auto' | 'anthropic'
+  strategy?: 'auto' | 'anthropic'
+
+  /**
+   * TTL for every cache point, overridden by a per-section TTL. Provider default when omitted.
+   *
+   * Bedrock requires checkpoint TTLs to be non-increasing across `toolConfig`, system and messages, and
+   * rejects a longer TTL that follows a shorter one. This TTL therefore also fills in for a cache point
+   * placed by hand in the system prompt that carries none of its own, so one value keeps every
+   * checkpoint in step. A TTL written on such a point is left as written, and a `toolsTTL` that differs
+   * from this one leaves the point at the provider default rather than landing a longer TTL behind a
+   * shorter checkpoint - either way, two TTLs in tension are yours to reconcile.
+   */
+  ttl?: CacheTTL
+
+  /**
+   * Cache the tool definitions. A TTL sets this section's duration; `false` disables it.
+   *
+   * @defaultValue true
+   */
+  toolsTTL?: boolean | CacheTTL
+
+  /**
+   * Cache the system prompt, auto-injecting a cache point at its end so repeated calls with the same
+   * static system prefix hit the cache. A TTL sets this section's duration; `true` (the default) reads
+   * the value from `ttl`; `false` disables systemPrompt cache injection.
+   *
+   * @defaultValue true
+   */
+  systemPromptTTL?: boolean | CacheTTL
+
+  /**
+   * Cache the conversation prefix, on the last user message. A TTL sets this section's duration;
+   * `false` disables it.
+   *
+   * @defaultValue true
+   */
+  messagesTTL?: boolean | CacheTTL
+
+  /**
+   * Stable identity a prompt-cache-routing provider (OpenAI, LiteLLM) uses as its cache key. Left
+   * unset, it is derived per request as `strands-<sessionId>` whenever the agent has a session
+   * manager, so repeat runs of a session share a cache prefix with no key management. Set it to a
+   * string to pin your own key; set it to `false` to opt out of routing entirely. The resolved key
+   * (whether set or derived from the session id) is transmitted to the provider. Because the derived
+   * key is resolved per request, it is not reflected in `getConfig()`.
+   */
+  cacheKey?: string | false
+}
+
+/**
+ * TTL duration for a cache entry.
+ *
+ * The literals are the valid Anthropic options. Providers validate TTLs server-side.
+ */
+export type CacheTTL = '5m' | '1h' | (string & {})
+
+/**
+ * A cache section resolved to the values a provider emits.
+ *
+ * @internal
+ */
+export interface ResolvedCacheSection {
+  /** Whether this section should carry a cache point. */
+  enabled: boolean
+
+  /** The TTL to emit, absent when no TTL applies. */
+  ttl?: CacheTTL
+}
+
+/**
+ * Resolves whether a cache section is enabled and which TTL it carries.
+ *
+ * @param section - The section as configured.
+ * @param ttlFallbacks - TTLs to fall back to, most specific first.
+ * @returns The section's enabled state and resolved TTL.
+ *
+ * @internal
+ */
+export function resolveCacheSection(
+  section: boolean | CacheTTL | undefined,
+  ...ttlFallbacks: (CacheTTL | undefined)[]
+): ResolvedCacheSection {
+  const enabled = section !== false
+  const sectionTTL = typeof section === 'string' ? section : undefined
+  const ttl = [sectionTTL, ...ttlFallbacks].find(Boolean)
+
+  return ttl ? { enabled, ttl } : { enabled }
 }
 
 /**
@@ -114,20 +227,32 @@ export interface BaseModelConfig {
   /**
    * Maximum context window size in tokens for the model.
    *
-   * This value represents the total token capacity shared between input and output.
-   * When not provided, it is automatically resolved from a built-in lookup table
-   * based on the configured model ID. An explicit value always takes precedence.
-   *
-   * When `modelId` is changed via `updateConfig()`, this value is automatically
-   * re-resolved if it was initially auto-populated. Explicitly set values are preserved.
+   * The same fact as `modelInfo.limits.contextWindow`; setting it here is shorthand for setting it
+   * through `modelInfo`, and it wins over the shared model info. When both are set, `modelInfo` wins.
+   * When not provided, vended providers still populate it from the shared model info for
+   * callers that read `getConfig()`; `modelInfo` is the resolved view to read.
    */
   contextWindowLimit?: number
+
+  /**
+   * Overrides for what the SDK knows about the model. Fields set here win over the shared model
+   * info and the provider; `capabilities.stateful` changes how the agent loop sends history, so set
+   * it only for a provider that keeps state server-side. `updateConfig({ modelInfo })` replaces the
+   * previous override entirely, it does not merge into it.
+   */
+  modelInfo?: ModelInfo
 }
 
 /**
  * Options interface for configuring streaming model invocation.
  */
 export interface StreamOptions {
+  /**
+   * Optional cancellation signal that a provider implementation can forward to abort an in-flight request.
+   * Support is provider-dependent.
+   */
+  cancelSignal?: AbortSignal
+
   /**
    * System prompt to guide the model's behavior.
    * Can be a simple string or an array of content blocks for advanced caching.
@@ -151,6 +276,19 @@ export interface StreamOptions {
    * visible to the caller after the stream completes.
    */
   modelState?: StateStore
+
+  /** How many trailing blocks of the last user message are rebuilt on every call. */
+  dynamicTrailingBlocks?: number
+
+  /** Metadata of the invoking agent, supplied per request. */
+  agentMetadata?: AgentMetadata
+
+  /**
+   * Schema this call must produce, set by the agent on its structured output retry so the provider can choose how to
+   * enforce it. The response must then be either a call to the tool named in `toolChoice` or a final text response
+   * whose text is exactly one JSON object that validates against this schema.
+   */
+  structuredOutputSchema?: z.ZodSchema
 }
 
 /**
@@ -235,13 +373,33 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
    * sends only the latest message instead of the full history. After each invocation,
    * the agent's local message history is cleared automatically.
    *
-   * Model providers that support server-side state management should override this
-   * to return `true`.
+   * Reads `modelInfo.capabilities.stateful`, so a provider that keeps state server-side sets it there
+   * (see {@link modelInfo}) and a `modelInfo` config override can change it.
    *
-   * @returns `false` by default
+   * @returns `false` when unknown
    */
   get stateful(): boolean {
-    return false
+    return this.modelInfo.capabilities?.stateful ?? false
+  }
+
+  /**
+   * Everything the SDK knows about the configured model, resolved on each read. Layers, later
+   * ones winning: the shared model info for `modelId`, the `contextWindowLimit` config value, and
+   * the `modelInfo` config override. Each read returns a new record, so do not compare reads by
+   * reference.
+   *
+   * A provider that knows better than the shared model info overrides this getter: put its facts over
+   * `super.modelInfo`, then the user's `getConfig().modelInfo` over those so the override still wins:
+   * `{ ...info, capabilities: { ...info.capabilities, promptCaching: 'auto', ...config.modelInfo?.capabilities } }`.
+   * Do not read {@link stateful} inside the override; it reads this getter.
+   */
+  get modelInfo(): ModelInfo {
+    const config = this.getConfig()
+    return mergeModelInfo(
+      lookupModelInfo(this.modelId ?? ''),
+      { limits: { contextWindow: config.contextWindowLimit } },
+      config.modelInfo
+    )
   }
 
   /**
@@ -270,6 +428,28 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
    */
   async countTokens(messages: Message[], options?: CountTokensOptions): Promise<number> {
     return estimateTokensHeuristic(messages, options)
+  }
+
+  /**
+   * Estimate the fraction of the model's context window consumed by the given input token count.
+   *
+   * Resolves the model's context window limit (falling back to {@link DEFAULT_CONTEXT_WINDOW_LIMIT}
+   * with a warning when not configured) and returns `inputTokens / contextWindowLimit`.
+   *
+   * @param inputTokens - Total input token count (e.g. from a model event's projectedInputTokens)
+   * @returns Token usage ratio (0–1+; above 1.0 means overflow)
+   */
+  estimateUtilization(inputTokens: number): number {
+    let contextWindowLimit = this.modelInfo.limits?.contextWindow
+    if (!contextWindowLimit) {
+      contextWindowLimit = DEFAULT_CONTEXT_WINDOW_LIMIT
+      warnOnce(
+        logger,
+        `contextWindowLimit is not set on the model, using default of ${DEFAULT_CONTEXT_WINDOW_LIMIT} for utilization estimate | set contextWindowLimit in your model config for accurate results`
+      )
+    }
+
+    return inputTokens / contextWindowLimit
   }
 
   /**
@@ -332,7 +512,8 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
   ): AsyncGenerator<ModelStreamEvent | ContentBlock, StreamAggregatedResult, undefined> {
     try {
       // State maintained in closure
-      let messageRole: Role | null = null
+      // Providers can end an empty turn with only a stop event, so a message is assumed to be the assistant's.
+      let messageRole: Role = 'assistant'
       const contentBlocks: ContentBlock[] = []
       let accumulatedText = ''
       let accumulatedToolInput = ''
@@ -416,11 +597,19 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
               } else if (accumulatedCitations.hasData()) {
                 block = new CitationsBlock({
                   citations: accumulatedCitations.citations,
-                  content: accumulatedCitations.content,
+                  // Citations deltas that ground already-streamed text carry no content of their own.
+                  content:
+                    accumulatedCitations.content.length > 0
+                      ? accumulatedCitations.content
+                      : accumulatedText
+                        ? [{ text: accumulatedText }]
+                        : [],
                 })
+                accumulatedText = ''
                 accumulatedCitations.reset()
               } else {
                 block = new TextBlock(accumulatedText)
+                accumulatedText = ''
               }
               contentBlocks.push(block)
               yield block
@@ -435,16 +624,11 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
 
           case 'modelMessageStopEvent':
             // Store message and stop reason
-            if (messageRole) {
-              const filtered = contentBlocks.filter(
-                (block) => !(block instanceof TextBlock && block.text.trim() === '')
-              )
-              stoppedMessage = new Message({
-                role: messageRole,
-                content: filtered,
-              })
-              finalStopReason = event.stopReason!
-            }
+            stoppedMessage = new Message({
+              role: messageRole,
+              content: contentBlocks.filter((block) => !(block instanceof TextBlock && block.text.trim() === '')),
+            })
+            finalStopReason = event.stopReason!
             break
 
           case 'modelMetadataEvent':

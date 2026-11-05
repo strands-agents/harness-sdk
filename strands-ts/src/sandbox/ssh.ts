@@ -9,7 +9,7 @@ import { streamProcess } from './stream-process.js'
 import type { ExecutionResult, StreamChunk } from './types.js'
 import type { Tool } from '../tools/tool.js'
 import { makeFileEditor, DEFAULT_FILE_EDITOR_DESCRIPTION } from '../vended-tools/file-editor/index.js'
-import { makeBash, SANDBOX_BASH_DESCRIPTION } from '../vended-tools/bash/index.js'
+import { makeShell, SANDBOX_SHELL_DESCRIPTION } from '../vended-tools/shell/index.js'
 
 // Known-safe SSH options. Options that execute commands, tunnel traffic, or load
 // external config are excluded. Reviewed and approved by AppSec.
@@ -160,9 +160,9 @@ export class SshSandbox extends PosixShellSandbox {
         name: 'sandbox_file_editor',
         description: `${DEFAULT_FILE_EDITOR_DESCRIPTION} Files are on host "${this.host}".`,
       }),
-      makeBash(this, {
-        name: 'sandbox_bash',
-        description: `${SANDBOX_BASH_DESCRIPTION} Runs on host "${this.host}". Working directory: ${this.workingDir}.`,
+      makeShell(this, {
+        name: 'sandbox_shell',
+        description: `${SANDBOX_SHELL_DESCRIPTION} Runs on host "${this.host}". Working directory: ${this.workingDir}.`,
       }),
     ]
   }

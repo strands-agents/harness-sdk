@@ -3,11 +3,12 @@ import uuid
 
 import pydantic
 import pytest
+from botocore.exceptions import ClientError
 
 import strands
-from strands import Agent
+from strands import Agent, tool
 from strands.models import BedrockModel, CacheConfig, CacheToolsConfig
-from strands.types.content import ContentBlock
+from strands.types.content import ContentBlock, Messages
 
 # Model ID used for prompt-caching TTL integration tests. Per
 # https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html
@@ -17,6 +18,17 @@ from strands.types.content import ContentBlock
 # the same-version Sonnet 4.5. Bump this when a newer Haiku is released that
 # supports CachePoint TTL.
 _CACHE_TTL_MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+
+
+def _durable_prefix() -> str:
+    """Salted per run so a rerun cannot read an earlier run's entry, and sized past the cache minimum."""
+    return f"Dossier {uuid.uuid4()}. " + ("The subject prefers concise written answers. " * 600)
+
+
+@strands.tool
+def echo(value: str) -> str:
+    """Echo the given value back."""
+    return value
 
 
 @pytest.fixture
@@ -226,6 +238,34 @@ def test_invoke_multi_modal_input(streaming_agent, yellow_img):
     assert "yellow" in text
 
 
+_AUDIO_UNSUPPORTED_MESSAGE = "Model does not support audio modality"
+
+
+def test_invoke_audio_input(pineapple_audio):
+    model = BedrockModel(
+        model_id="mistral.voxtral-small-24b-2507",
+        region_name="us-east-1",
+        temperature=0,
+        max_tokens=20,
+    )
+    agent = Agent(model=model, load_tools_from_directory=False)
+    content = [
+        {"text": "Transcribe the final word spoken in the audio. Output only that word."},
+        {"audio": {"format": "mp3", "source": {"bytes": pineapple_audio}}},
+    ]
+
+    try:
+        result = agent(content)
+    except ClientError as error:
+        # A service-side Bedrock rejection, not an SDK defect; the test resumes once Bedrock serves audio again.
+        if _AUDIO_UNSUPPORTED_MESSAGE in str(error):
+            pytest.skip(f"Bedrock rejected audio input: {error}")
+        raise
+    text = result.message["content"][0]["text"].lower()
+
+    assert "pineapple" in text
+
+
 def test_document_citations(non_streaming_agent, letter_pdf):
     content: list[ContentBlock] = [
         {
@@ -289,7 +329,7 @@ def test_reasoning_content_in_messages_with_thinking_disabled():
     """Test that messages with reasoningContent are accepted when thinking is explicitly disabled."""
     # First, get a real reasoning response with thinking enabled
     thinking_model = BedrockModel(
-        model_id="us.anthropic.claude-sonnet-4-20250514-v1:0",
+        model_id="global.anthropic.claude-sonnet-4-6",
         additional_request_fields={
             "thinking": {
                 "type": "enabled",
@@ -305,7 +345,7 @@ def test_reasoning_content_in_messages_with_thinking_disabled():
 
     # Now create a model with thinking disabled and use the messages from the thinking session
     disabled_model = BedrockModel(
-        model_id="us.anthropic.claude-sonnet-4-20250514-v1:0",
+        model_id="global.anthropic.claude-sonnet-4-6",
         additional_request_fields={
             "thinking": {
                 "type": "disabled",
@@ -341,19 +381,13 @@ def test_prompt_caching_with_5m_ttl(quiet_strands_logging):
     This test verifies:
     1. First call creates cache (cacheWriteInputTokens > 0)
     2. Second call reads from cache (cacheReadInputTokens > 0)
-
-    Uses Claude Haiku 4.5 which supports TTL in CachePointBlock on Bedrock.
-    Older models (e.g. Claude Sonnet 4) reject the TTL field with a ValidationException.
     """
     model = BedrockModel(
         model_id="us.anthropic.claude-haiku-4-5-20251001-v1:0",
         streaming=False,
     )
 
-    # Use unique identifier to avoid cache conflicts between test runs
-    unique_id = str(uuid.uuid4())
-    # Minimum 4096 tokens required for caching with Haiku 4.5
-    large_context = f"Background information for test {unique_id}: " + ("This is important context. " * 1000)
+    large_context = _durable_prefix()
 
     system_prompt_with_cache = [
         {"text": large_context},
@@ -387,12 +421,7 @@ def test_prompt_caching_with_5m_ttl(quiet_strands_logging):
 
 
 def test_prompt_caching_with_1h_ttl(quiet_strands_logging):
-    """Test prompt caching with 1 hour TTL and verify cache metrics.
-
-    Uses Claude Haiku 4.5 which supports 1hr TTL.
-    Uses unique content per test run to avoid cache conflicts with concurrent CI runs.
-    Even with 1hr TTL, unique content ensures cache entries don't interfere across tests.
-    """
+    """Test prompt caching with 1 hour TTL and verify cache metrics."""
     model = BedrockModel(
         model_id="us.anthropic.claude-haiku-4-5-20251001-v1:0",
         streaming=False,
@@ -446,9 +475,7 @@ def test_prompt_caching_with_ttl_in_messages(quiet_strands_logging):
     )
     agent = Agent(model=model, load_tools_from_directory=False)
 
-    unique_id = str(uuid.uuid4())
-    # Minimum 4096 tokens required for caching with Haiku 4.5
-    large_text = f"Important context for test {unique_id}: " + ("This is critical information. " * 1000)
+    large_text = _durable_prefix()
 
     content_with_cache = [
         {"text": large_text},
@@ -489,8 +516,7 @@ def test_prompt_caching_backward_compatibility_no_ttl(quiet_strands_logging):
         streaming=False,
     )
 
-    unique_id = str(uuid.uuid4())
-    large_context = f"Background information for test {unique_id}: " + ("This is important context. " * 1000)
+    large_context = _durable_prefix()
 
     system_prompt_with_cache = [
         {"text": large_context},
@@ -516,7 +542,7 @@ def test_prompt_caching_backward_compatibility_no_ttl(quiet_strands_logging):
 class TestCountTokens:
     @pytest.fixture
     def model(self):
-        return BedrockModel(model_id="anthropic.claude-sonnet-4-20250514-v1:0", use_native_token_count=True)
+        return BedrockModel(model_id="anthropic.claude-sonnet-4-6", use_native_token_count=True)
 
     @pytest.fixture
     def messages(self):
@@ -582,10 +608,6 @@ def test_prompt_caching_cache_tools_ttl():
     Note: we intentionally do not assert specific cacheWriteInputTokens on the toolConfig
     prefix because Bedrock's tool-prefix cache threshold varies by model and region.
     The critical behavior under test here is that the TTL field is accepted end-to-end.
-
-    Uses Claude Haiku 4.5 which supports TTL in CachePointBlock on Bedrock per
-    https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html
-    (Claude Opus 4.5, Claude Haiku 4.5, and Claude Sonnet 4.5 all support 1h TTL).
     """
     model = BedrockModel(
         model_id=_CACHE_TTL_MODEL_ID,
@@ -608,9 +630,10 @@ def test_prompt_caching_cache_tools_ttl():
     )
 
     # The call must succeed — Bedrock must accept cachePoint.ttl on the toolConfig checkpoint
-    # without raising a ValidationException.
+    # without raising a ValidationException. The loop only returns on a terminal stop reason, so
+    # this proves completion without depending on the model emitting text.
     result = agent("Use the lookup_fact tool to look up 'python'.")
-    assert len(str(result)) > 0
+    assert result.stop_reason == "end_turn"
 
 
 def test_prompt_caching_cache_config_auto_with_ttl(quiet_strands_logging):
@@ -618,9 +641,6 @@ def test_prompt_caching_cache_config_auto_with_ttl(quiet_strands_logging):
 
     Verifies that the cache point appended to the last user message by _inject_cache_point
     carries the configured TTL, and that Bedrock accepts the request.
-
-    Uses Claude Haiku 4.5 which supports TTL in CachePointBlock on Bedrock per
-    https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html
     """
     model = BedrockModel(
         model_id=_CACHE_TTL_MODEL_ID,
@@ -628,9 +648,7 @@ def test_prompt_caching_cache_config_auto_with_ttl(quiet_strands_logging):
         cache_config=CacheConfig(strategy="auto", ttl="5m"),
     )
 
-    unique_id = str(uuid.uuid4())
-    # Minimum 4096 tokens required for caching with Haiku 4.5
-    large_message = f"Context for test {unique_id}: " + ("This is important context. " * 1000) + " What is 2+2?"
+    large_message = f"{_durable_prefix()} What is 2+2?"
 
     agent = Agent(
         model=model,
@@ -657,9 +675,6 @@ def test_prompt_caching_aligned_1h_ttl_across_checkpoints(quiet_strands_logging)
 
     This test sets 1h TTL on all three checkpoints simultaneously and verifies the
     call succeeds.
-
-    Uses Claude Haiku 4.5 which supports 1h TTL per
-    https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html
     """
     model = BedrockModel(
         model_id=_CACHE_TTL_MODEL_ID,
@@ -679,11 +694,6 @@ def test_prompt_caching_aligned_1h_ttl_across_checkpoints(quiet_strands_logging)
         {"text": "You are a helpful assistant."},
     ]
 
-    @strands.tool
-    def echo(value: str) -> str:
-        """Echo the given value back."""
-        return value
-
     agent = Agent(
         model=model,
         system_prompt=system_prompt_with_cache,
@@ -691,6 +701,195 @@ def test_prompt_caching_aligned_1h_ttl_across_checkpoints(quiet_strands_logging)
         load_tools_from_directory=False,
     )
 
-    # Must succeed without ValidationException on the non-increasing TTL rule
+    # Must succeed without ValidationException on the non-increasing TTL rule. The large context
+    # exceeds the cache minimum, so a cache write reliably confirms the request was accepted.
     result = agent("What is 2+2?")
-    assert len(str(result)) > 0
+    assert result.metrics.accumulated_usage.get("cacheWriteInputTokens", 0) > 0
+
+
+def test_prompt_caching_untimed_cache_tools_inherits_the_configured_ttl(quiet_strands_logging):
+    """An untimed cache_tools takes the Bedrock default, which a configured ttl on the message point exceeds.
+
+    Bedrock processes cache checkpoints in order toolConfig -> system -> messages and requires their TTLs
+    to be non-increasing. A bare-string cache_tools="default" emits no TTL, so the tools point sat at the
+    5m default while the auto-injected message point carried the configured 1h - an increasing sequence
+    Bedrock rejects. The tools point now inherits the configured ttl, keeping the sequence in step.
+    """
+    model = BedrockModel(
+        model_id=_CACHE_TTL_MODEL_ID,
+        streaming=False,
+        cache_tools="default",
+        cache_config=CacheConfig(strategy="auto", ttl="1h"),
+    )
+
+    agent = Agent(
+        model=model,
+        system_prompt=_durable_prefix(),
+        tools=[echo],
+        load_tools_from_directory=False,
+    )
+
+    # The durable prefix exceeds the cache minimum, so a cache write reliably confirms Bedrock
+    # accepted the aligned-TTL request without a ValidationException.
+    result = agent("What is 2+2?")
+    assert result.metrics.accumulated_usage.get("cacheWriteInputTokens", 0) > 0
+
+
+def test_bedrock_cache_point(quiet_strands_logging):
+    messages: Messages = [
+        {
+            "role": "user",
+            "content": [
+                {"text": _durable_prefix()},
+                {"cachePoint": {"type": "default"}},
+            ],
+        },
+        {"role": "assistant", "content": [{"text": "Blue!"}]},
+    ]
+
+    cache_point_usage = 0
+
+    def cache_point_callback_handler(**kwargs):
+        nonlocal cache_point_usage
+        if "event" in kwargs and kwargs["event"] and "metadata" in kwargs["event"] and kwargs["event"]["metadata"]:
+            metadata = kwargs["event"]["metadata"]
+            if "usage" in metadata and metadata["usage"]:
+                if "cacheReadInputTokens" in metadata["usage"] or "cacheWriteInputTokens" in metadata["usage"]:
+                    cache_point_usage += 1
+
+    agent = Agent(
+        model=BedrockModel(model_id=_CACHE_TTL_MODEL_ID),
+        messages=messages,
+        callback_handler=cache_point_callback_handler,
+        load_tools_from_directory=False,
+    )
+    agent("What is favorite color?")
+    assert cache_point_usage > 0
+
+
+def test_bedrock_multi_prompt_and_duplicate_cache_point(quiet_strands_logging):
+    """Test multi-prompt system with cache point."""
+    system_prompt_content = [
+        {"text": "You are a helpful assistant." * 800},  # Long text for cache; must clear Haiku 4.5's 4096-token min
+        {"cachePoint": {"type": "default"}},
+        {"text": "Always respond with enthusiasm!"},
+    ]
+
+    cache_point_usage = 0
+
+    def cache_point_callback_handler(**kwargs):
+        nonlocal cache_point_usage
+        if "event" in kwargs and kwargs["event"] and "metadata" in kwargs["event"] and kwargs["event"]["metadata"]:
+            metadata = kwargs["event"]["metadata"]
+            if "usage" in metadata and metadata["usage"]:
+                if "cacheReadInputTokens" in metadata["usage"] or "cacheWriteInputTokens" in metadata["usage"]:
+                    cache_point_usage += 1
+
+    agent = Agent(
+        model=BedrockModel(model_id=_CACHE_TTL_MODEL_ID, cache_prompt="default"),
+        system_prompt=system_prompt_content,
+        callback_handler=cache_point_callback_handler,
+        load_tools_from_directory=False,
+    )
+    agent("Hello!")
+    assert cache_point_usage > 0
+
+
+def test_a_cache_boundary_keeps_per_call_content_out_of_the_cached_prefix(quiet_strands_logging):
+    """Content behind a caller's boundary stays uncached instead of being folded into the prefix.
+
+    A read alone does not show this: relocating the point to the end of the message also earns a read,
+    because everything including the per-call tail gets cached. The tail's tokens are what tell the
+    two apart - they are billed as ordinary input when the boundary is honored, and swallowed into
+    cacheWriteInputTokens when it is not.
+    """
+    tail = f"Addendum {uuid.uuid4()}. " + ("Disregard this filler sentence entirely. " * 600)
+    model = BedrockModel(model_id=_CACHE_TTL_MODEL_ID, cache_config=CacheConfig(strategy="auto"))
+    agent = Agent(model=model, load_tools_from_directory=False, callback_handler=None)
+
+    first = agent([{"text": _durable_prefix()}, {"cachePoint": {"type": "default"}}, {"text": tail}])
+    first_usage = first.metrics.latest_agent_invocation.usage
+    assert first_usage.get("cacheWriteInputTokens", 0) > 0, "first turn should have written the prefix"
+    assert first_usage.get("inputTokens", 0) > 1000, (
+        f"per-call tail was folded into the cached prefix instead of billed as input: {dict(first_usage)}"
+    )
+
+    fresh_tail = f"Addendum {uuid.uuid4()}. " + ("Disregard this filler sentence entirely. " * 600)
+    second = agent([{"text": "Anything else?"}, {"cachePoint": {"type": "default"}}, {"text": fresh_tail}])
+    assert second.metrics.latest_agent_invocation.usage.get("cacheReadInputTokens", 0) > 0, (
+        "second turn rewrote the prefix instead of reading it"
+    )
+
+
+def test_a_leading_cache_point_is_accepted(quiet_strands_logging):
+    """A cache point with nothing ahead of it is replaced by automatic placement.
+
+    Bedrock rejects the shape outright with "There is nothing available to cache", so the point has to
+    be dropped and re-placed for the request to survive at all.
+    """
+    model = BedrockModel(model_id=_CACHE_TTL_MODEL_ID, cache_config=CacheConfig(strategy="auto"))
+    agent = Agent(model=model, load_tools_from_directory=False, callback_handler=None)
+
+    result = agent([{"cachePoint": {"type": "default"}}, {"text": _durable_prefix()}])
+
+    assert result.metrics.latest_agent_invocation.usage.get("cacheWriteInputTokens", 0) > 0
+
+
+@pytest.mark.parametrize("configured_ttl", [None, "5m"])
+def test_a_caller_ttl_does_not_conflict_with_the_tools_ttl(quiet_strands_logging, configured_ttl):
+    """A caller's TTL is normalized so it cannot invert the TTL order Bedrock requires.
+
+    Bedrock reads cache points in toolConfig, system, messages order and rejects a longer TTL that
+    follows a shorter one, so a caller's ``1h`` behind tools at ``5m`` is what has to be neutralized.
+    Both configurations reach the API: the caller's TTL is dropped when none is configured and replaced
+    by the configured one otherwise. A tool cache point only reaches the request when a tool is
+    registered, so the conflicting order this guards against needs one.
+    """
+
+    @tool
+    def current_time() -> str:
+        """Get the current time."""
+        return "12:00"
+
+    model = BedrockModel(
+        model_id=_CACHE_TTL_MODEL_ID,
+        cache_config=CacheConfig(strategy="auto", ttl=configured_ttl),
+        cache_tools=CacheToolsConfig(ttl="5m"),
+    )
+    agent = Agent(model=model, tools=[current_time], load_tools_from_directory=False, callback_handler=None)
+
+    result = agent(
+        [
+            {"text": _durable_prefix()},
+            {"cachePoint": {"type": "default", "ttl": "1h"}},
+            {"text": "Reply OK."},
+        ]
+    )
+
+    assert result.stop_reason == "end_turn"
+    assert result.metrics.latest_agent_invocation.usage.get("cacheWriteInputTokens", 0) > 0
+
+
+# A ~100 KB PDF plus the SDK's throttling backoff can outlast the global 90s timeout.
+@pytest.mark.timeout(300)
+@pytest.mark.parametrize("document_format", ["csv", "pdf"])
+def test_a_cache_point_after_a_document_is_accepted(quiet_strands_logging, letter_pdf, document_format):
+    """Bedrock refuses a cache point directly after a non-PDF document but allows one after a PDF.
+
+    The point steps back over an adjacent non-PDF document and stays put after a PDF, so both shapes
+    have to reach the API intact.
+    """
+    sources = {"csv": b"a,b\n1,2\n", "pdf": letter_pdf}
+    document: ContentBlock = {
+        "document": {
+            "format": document_format,
+            "name": "attachment",
+            "source": {"bytes": sources[document_format]},
+        }
+    }
+    model = BedrockModel(model_id=_CACHE_TTL_MODEL_ID, cache_config=CacheConfig(strategy="auto"))
+    agent = Agent(model=model, load_tools_from_directory=False, callback_handler=None)
+
+    result = agent([{"text": _durable_prefix()}, document, {"cachePoint": {"type": "default"}}, {"text": "Reply OK."}])
+
+    assert result.stop_reason == "end_turn"

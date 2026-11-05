@@ -61,6 +61,73 @@ describe('MCP Integration Tests', () => {
     },
   ]
 
+  describe('filtering and prefixing through Agent', () => {
+    function createLocalClient(prefix: string, allowed: string[]): McpClient {
+      return new McpClient({
+        applicationName: `test-mcp-${prefix}`,
+        transport: new StdioClientTransport({
+          command: 'npx',
+          args: ['tsx', serverPath],
+        }),
+        prefix,
+        toolFilters: { allowed },
+      })
+    }
+
+    it('registers a prefixed filtered tool and executes it through the direct Agent tool API', async () => {
+      const client = createLocalClient('filtered', ['echo'])
+      const agent = new Agent({ tools: [client] })
+
+      await agent.initialize()
+      const result = await agent.tool.filtered_echo!.invoke({ message: 'direct integration' })
+
+      expect(agent.toolRegistry.list().map((tool) => tool.name)).toEqual(['filtered_echo'])
+      expect(result).toMatchObject({
+        status: 'success',
+        content: [{ type: 'textBlock', text: 'direct integration' }],
+      })
+      await client.disconnect()
+    })
+
+    it('reuses one filtered and prefixed client across two Agents', async () => {
+      const client = createLocalClient('shared', ['echo'])
+      const agent1 = new Agent({ tools: [client] })
+      const agent2 = new Agent({ tools: [client] })
+
+      await agent1.initialize()
+      await agent2.initialize()
+      const result1 = await agent1.tool.shared_echo!.invoke({ message: 'Agent 1' })
+      const result2 = await agent2.tool.shared_echo!.invoke({ message: 'Agent 2' })
+
+      expect(agent1.toolRegistry.list().map((tool) => tool.name)).toEqual(['shared_echo'])
+      expect(agent2.toolRegistry.list().map((tool) => tool.name)).toEqual(['shared_echo'])
+      expect(result1.content).toEqual([{ type: 'textBlock', text: 'Agent 1' }])
+      expect(result2.content).toEqual([{ type: 'textBlock', text: 'Agent 2' }])
+      await client.disconnect()
+    })
+
+    it('registers two distinct prefixes without collisions and invokes each raw server tool', async () => {
+      const echoClient = createLocalClient('server1', ['echo'])
+      const calculatorClient = createLocalClient('server2', ['calculator'])
+      const agent = new Agent({ tools: [echoClient, calculatorClient] })
+
+      await agent.initialize()
+      const echoResult = await agent.tool.server1_echo!.invoke({ message: 'From Server 1' })
+      const calculatorResult = await agent.tool.server2_calculator!.invoke({ operation: 'add', a: 2, b: 3 })
+
+      expect(
+        agent.toolRegistry
+          .list()
+          .map((tool) => tool.name)
+          .sort()
+      ).toEqual(['server1_echo', 'server2_calculator'])
+      expect(echoResult.content).toEqual([{ type: 'textBlock', text: 'From Server 1' }])
+      expect(calculatorResult.content).toEqual([{ type: 'textBlock', text: 'Result: 5' }])
+      await echoClient.disconnect()
+      await calculatorClient.disconnect()
+    })
+  })
+
   describe.each(transports)('$name transport', ({ createClient }) => {
     it('agent can use multiple MCP tools in a conversation', async () => {
       const client = await createClient()
@@ -161,5 +228,41 @@ describe('MCP Integration Tests', () => {
 
       await client.disconnect()
     }, 60000)
+  })
+
+  // The prompts and resources methods behave the same over every transport, so one transport is enough.
+  describe('prompts and resources', () => {
+    it('lists and renders prompts, reads static and templated resources', async () => {
+      const client = new McpClient({
+        applicationName: 'test-mcp-prompts-resources',
+        transport: new StdioClientTransport({
+          command: 'npx',
+          args: ['tsx', serverPath],
+        }),
+      })
+
+      const prompts = await client.listPrompts()
+      expect(prompts.prompts.map((prompt) => prompt.name)).toEqual(['summarize'])
+
+      const prompt = await client.getPrompt('summarize', { topic: 'AI' })
+      expect(prompt.messages[0]).toMatchObject({
+        role: 'user',
+        content: { type: 'text', text: 'Summarize the topic: AI' },
+      })
+
+      const resources = await client.listResources()
+      expect(resources.resources.map((resource) => resource.uri)).toEqual(['test://greeting.txt'])
+
+      const readStatic = await client.readResource('test://greeting.txt')
+      expect(readStatic.contents[0]).toMatchObject({ text: 'Hello from the test resource' })
+
+      const templates = await client.listResourceTemplates()
+      expect(templates.resourceTemplates.map((template) => template.uriTemplate)).toEqual(['test://users/{userId}'])
+
+      const readTemplated = await client.readResource(new URL('test://users/42'))
+      expect(readTemplated.contents[0]).toMatchObject({ text: 'Data for user 42' })
+
+      await client.disconnect()
+    }, 30000)
   })
 })

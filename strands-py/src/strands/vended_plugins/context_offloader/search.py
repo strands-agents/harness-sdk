@@ -9,6 +9,9 @@ from __future__ import annotations
 import re
 
 _MAX_PATTERN_LENGTH = 200
+# Best-effort heuristic; does not catch all catastrophic patterns (e.g. (.*a){12}$).
+_NESTED_QUANTIFIER = re.compile(r"[+*]\s*\)\s*[+*]")
+_MATCH_LINE = re.compile(r"^>", re.MULTILINE)
 
 _TEXT_APPLICATION_TYPES = frozenset(
     {
@@ -49,7 +52,10 @@ def _search_content(
         max_chars: Maximum output size in characters; results are truncated beyond this.
 
     Returns:
-        Formatted search results with line numbers, or an error/empty message.
+        Formatted search results with line numbers, or a message reporting empty content or no matches.
+
+    Raises:
+        ValueError: If line_range is not a 1-indexed, non-empty range within the content.
     """
     lines = text.split("\n")
     total_lines = len(lines)
@@ -63,11 +69,11 @@ def _search_content(
     if line_range is not None:
         start, end = line_range
         if start < 1:
-            return f"Error: line_range.start ({start}) must be >= 1."
+            raise ValueError(f"line_range.start ({start}) must be >= 1.")
         if start > end:
-            return f"Error: line_range.start ({start}) must be <= line_range.end ({end})."
+            raise ValueError(f"line_range.start ({start}) must be <= line_range.end ({end}).")
         if start > total_lines:
-            return f"Error: line_range.start ({start}) is beyond content length ({total_lines} lines)."
+            raise ValueError(f"line_range.start ({start}) is beyond content length ({total_lines} lines).")
         scope_start = start - 1
         scope_end = min(end - 1, total_lines - 1)
 
@@ -81,12 +87,18 @@ def _search_content(
 
 
 def _truncate(output: str, max_chars: int, message: str) -> str:
-    """Cut output at the last newline before max_chars and append a truncation message."""
+    """Cut output at the last newline before max_chars and append a truncation message.
+
+    When the first matched line (``>`` prefix) within the budget begins after that newline, cut at
+    ``max_chars`` instead so the matched line stays visible.
+    """
     if len(output) <= max_chars:
         return output
 
     cut = output.rfind("\n", 0, max_chars)
-    slice_end = cut if cut > 0 else max_chars
+    first_match = _MATCH_LINE.search(output, 0, max_chars)
+    drops_first_match = first_match is not None and first_match.start() > cut
+    slice_end = cut if cut > 0 and not drops_first_match else max_chars
 
     return output[:slice_end] + f"\n\n[{message}]"
 
@@ -119,6 +131,8 @@ def _search_by_pattern(
     safe_input = pattern[:_MAX_PATTERN_LENGTH] if len(pattern) > _MAX_PATTERN_LENGTH else pattern
 
     try:
+        if _NESTED_QUANTIFIER.search(safe_input):
+            raise re.error("nested quantifier")
         regex = re.compile(safe_input)
     except re.error:
         regex = re.compile(re.escape(safe_input))
@@ -143,9 +157,7 @@ def _search_by_pattern(
     return f"{header}\n\n{truncated_body}"
 
 
-def _search_by_line_range(
-    lines: list[str], start: int, end: int, total_lines: int, max_chars: int
-) -> str:
+def _search_by_line_range(lines: list[str], start: int, end: int, total_lines: int, max_chars: int) -> str:
     """Format a contiguous range of lines with truncation."""
     indices = list(range(start, end + 1))
     header = f"[Lines {start + 1}-{end + 1} of {total_lines}]"

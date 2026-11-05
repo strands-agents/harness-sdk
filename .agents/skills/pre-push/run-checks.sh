@@ -33,14 +33,9 @@
 #
 # NOTE: a clean run here does NOT guarantee CI is green. This runs your current
 # OS + interpreter/node only — it does not reproduce CI's version/OS matrices
-# (Python 3.10–3.14 × linux/win/mac; Node 20/22/24 × 3 OS) or the npm-pack
+# (Python 3.10–3.14 × linux/win/mac; Node 22/24 × 3 OS) or the npm-pack
 # out-of-tree smoke test. It clears the deterministic, single-platform
 # failures (lint, format, types, build, unit tests) so CI rarely bounces.
-#
-# Scope note: CI's `typescript` filter also covers strands-wasm/, strands-py-
-# wasm/, wit/, and strandly/ because CI runs `strandly check --py` (wasm) on
-# those. This script does NOT run that wasm check, so it deliberately does NOT
-# claim those paths — a change to them is left entirely to CI.
 set -uo pipefail
 
 # --- locate repo root -------------------------------------------------------
@@ -128,12 +123,7 @@ changed_files() {
 
 # --- path filters -----------------------------------------------------------
 # A file matches an area if it matches any of these glob prefixes. Returns 0
-# (match) / 1 (no match).
-#
-# python + docs match CI's filters exactly. typescript is NARROWER than CI's:
-# we drop strands-wasm/, strands-py-wasm/, wit/, strandly/, and wasm-* because
-# those are validated in CI by `strandly check --py`, which this script does
-# not run. Lighting up the area for them would falsely imply coverage.
+# (match) / 1 (no match). Each area mirrors CI's filter in ci.yml.
 matches_python() {
   case "$1" in
     strands-py/*|.github/workflows/python-*|.github/workflows/ci.yml) return 0 ;;

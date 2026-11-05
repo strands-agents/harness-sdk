@@ -234,13 +234,31 @@ describe('TestMemoryStore', () => {
       await expect(store.search('anything')).rejects.toThrow('each record must have string')
     })
 
+    it('throws a clear error on a record whose metadata is not an object', async () => {
+      // A present-but-non-object metadata (e.g. a hand-edited or cross-SDK file) must fail fast
+      // rather than silently corrupting the spread into search results.
+      const badRecord = [{ id: 'a', content: 'hi', createdAt: '2026-01-01T00:00:00.000Z', metadata: 'oops' }]
+      await fs.writeFile(filePath(), JSON.stringify(badRecord), 'utf8')
+      const store = new TestMemoryStore({ name: 'notes', path: filePath() })
+      await expect(store.search('hi')).rejects.toThrow("'metadata', when present, must be a JSON object")
+    })
+
+    it('accepts a record with null metadata (treated as absent, matching Python)', async () => {
+      const record = [{ id: 'a', content: 'hi there', createdAt: '2026-01-01T00:00:00.000Z', metadata: null }]
+      await fs.writeFile(filePath(), JSON.stringify(record), 'utf8')
+      const store = new TestMemoryStore({ name: 'notes', path: filePath() })
+      const results = await store.search('hi')
+      expect(results).toHaveLength(1)
+      expect(results[0]?.metadata).toEqual({ _relevanceScore: 1 })
+    })
+
     it('throws a clear error when the path is unreachable', async () => {
-      // Point the store under an existing FILE, so the backing path can't be reached — surfacing a
-      // wrapped "failed to read/write" error naming the path rather than a bare OS error.
+      // Point the store under an existing FILE, so the backing path can't be reached — the backend
+      // raises a StorageError naming the key rather than a bare OS error.
       const blocker = join(dir, 'blocker')
       await fs.writeFile(blocker, 'not a directory', 'utf8')
       const store = new TestMemoryStore({ name: 'notes', path: join(blocker, 'notes.json') })
-      await expect(store.add('user prefers dark mode')).rejects.toThrow('failed to')
+      await expect(store.add('user prefers dark mode')).rejects.toThrow('Failed to write')
     })
 
     it('keeps all entries when many writes happen concurrently', async () => {
@@ -250,10 +268,9 @@ describe('TestMemoryStore', () => {
       expect(JSON.parse(raw)).toHaveLength(10)
     })
 
-    it('reflects a just-added record when a search races the first add (no stale cache)', async () => {
-      // On a cold store, search() and add() both trigger the lazy load; the memoized load must keep
-      // the added record visible to subsequent searches rather than overwriting it with a pre-write
-      // snapshot.
+    it('reflects a just-added record when a search races the first add', async () => {
+      // search() and add() both read fresh from storage; a search racing the first add must not
+      // leave a subsequent search reading a pre-write snapshot.
       const store = new TestMemoryStore({ name: 'notes', path: filePath() })
       await Promise.all([store.add('zebra giraffe'), store.search('apple')])
       const results = await store.search('zebra')

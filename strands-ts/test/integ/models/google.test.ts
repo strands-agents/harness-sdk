@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { Message, TextBlock } from '@strands-agents/sdk'
+import { Message, TextBlock, ToolResultBlock, ToolUseBlock } from '@strands-agents/sdk'
 import type { ModelStreamEvent } from '$/sdk/models/streaming.js'
 
 import { collectIterator } from '$/sdk/__fixtures__/model-test-helpers.js'
@@ -124,6 +124,42 @@ describe.skipIf(gemini.skip)('GoogleModel Integration Tests', () => {
         const messageStopEvent = events.find((e) => e.type === 'modelMessageStopEvent')
         expect(messageStopEvent).toBeDefined()
         expect(messageStopEvent?.stopReason).toBe('endTurn')
+      })
+    })
+
+    describe('Usage Metadata', () => {
+      it.concurrent('reports usage that satisfies the total invariant on a tool-using turn', async () => {
+        const provider = gemini.createModel({ params: { maxOutputTokens: 100 } })
+
+        const toolSpecs = [
+          {
+            name: 'get_weather',
+            description: 'Get the current weather for a city',
+            inputSchema: { type: 'object' as const, properties: { city: { type: 'string' as const } } },
+          },
+        ]
+        const messages: Message[] = [
+          new Message({ role: 'user', content: [new TextBlock('What is the weather in New York?')] }),
+          new Message({
+            role: 'assistant',
+            content: [new ToolUseBlock({ name: 'get_weather', toolUseId: 'weather-1', input: { city: 'New York' } })],
+          }),
+          new Message({
+            role: 'user',
+            content: [
+              new ToolResultBlock({ toolUseId: 'weather-1', status: 'success', content: [new TextBlock('sunny')] }),
+            ],
+          }),
+        ]
+
+        const events = await collectIterator<ModelStreamEvent>(provider.stream(messages, { toolSpecs }))
+
+        const metadataEvent = events.find((e) => e.type === 'modelMetadataEvent')
+        const usage = metadataEvent?.usage
+        expect(usage).toBeDefined()
+        expect(usage!.inputTokens).toBeGreaterThan(0)
+        expect(usage!.outputTokens).toBeGreaterThan(0)
+        expect(usage!.totalTokens).toBe(usage!.inputTokens + usage!.outputTokens)
       })
     })
   })

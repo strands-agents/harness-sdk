@@ -1,0 +1,152 @@
+---
+title: Agent Governance Toolkit
+community: true
+description: Deterministic policy enforcement via Microsoft Agent Governance Toolkit
+integrationType: intervention
+languages: Python
+sidebar:
+  label: "Agent Governance Toolkit"
+project:
+  github: https://github.com/lizradway/strands-agt
+  pypi: https://pypi.org/project/strands-agt/
+  maintainer: lizradway
+service:
+  name: Microsoft Agent Governance Toolkit
+  link: https://github.com/microsoft/agent-governance-toolkit
+---
+
+[strands-agt](https://github.com/lizradway/strands-agt) integrates Microsoft's [Agent Governance Toolkit (AGT)](https://github.com/microsoft/agent-governance-toolkit) with Strands Agents via the `InterventionHandler` primitive. It provides deterministic, YAML-based policy enforcement that gates tool calls before execution — no model judgment involved.
+
+- **Deny** — block tool calls that violate policy (e.g. file deletion, production access)
+- **Allow** — permit tool calls that match policy
+- **Steer** — redirect the agent with guidance instead of a hard block
+
+## Installation
+
+```bash
+pip install strands-agt
+```
+
+## Usage
+
+### Basic policy enforcement
+
+Define policies in YAML:
+
+```yaml
+# policies.yaml
+policies:
+  - name: allow-search
+    effect: allow
+    actions: ["search", "read_file"]
+    principals: ["User::*"]
+
+  - name: deny-delete
+    effect: deny
+    actions: ["delete_file"]
+    principals: ["*"]
+    reason: "File deletion is not permitted"
+```
+
+Attach to your agent:
+
+```python
+from strands import Agent
+from strands_agt import AGTGovernance
+
+governance = AGTGovernance(policies="policies.yaml")
+
+agent = Agent(
+    tools=[search_tool, read_file_tool, delete_file_tool],
+    interventions=[governance],
+)
+
+# search_tool executes normally
+agent("Search for quarterly reports")
+
+# delete_file_tool is blocked — the model sees the denial reason
+agent("Delete the temp files")
+```
+
+### Role-based access with principal resolution
+
+```python
+from strands_agt import AGTGovernance
+
+governance = AGTGovernance(
+    policies="role_policies.yaml",
+    principal_resolver=lambda state: {
+        "type": state.get("user_role", "User"),
+        "id": state.get("user_id", "anonymous"),
+    },
+)
+
+agent = Agent(
+    tools=[...],
+    interventions=[governance],
+)
+
+# Pass identity via invocation_state
+agent("Delete the old backups", invocation_state={"user_role": "Admin", "user_id": "alice"})
+```
+
+### Rate limiting
+
+```yaml
+policies:
+  - name: rate-limited-email
+    effect: allow
+    actions: ["send_email"]
+    conditions:
+      session.call_count:
+        lt: 5
+```
+
+The handler tracks per-tool call counts automatically and includes them in policy evaluation.
+
+### Context enrichment
+
+```python
+governance = AGTGovernance(
+    policies="env_policies.yaml",
+    context_enricher=lambda ctx: {
+        "environment": os.environ.get("DEPLOY_ENV", "development"),
+        "tenant_id": ctx["invocation_state"].get("tenant_id"),
+    },
+)
+```
+
+Enricher fields are available in policy conditions under `session.*`.
+
+## Configuration
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `policies` | `str \| list[str]` | required | YAML policy file path(s) or inline YAML text |
+| `principal` | `dict[str, str] \| None` | `{"type": "User", "id": "anonymous"}` | Static principal identity |
+| `principal_resolver` | `Callable \| None` | `None` | Dynamic resolver from `invocation_state` |
+| `context_enricher` | `Callable \| None` | `None` | Injects extra fields into policy context |
+| `on_error` | `str` | `"throw"` | Error mode: `"throw"`, `"proceed"`, or `"deny"` |
+
+## Policy format
+
+Each policy has:
+
+| Field | Required | Description |
+|---|---|---|
+| `name` | Yes | Unique policy identifier |
+| `effect` | Yes | `allow`, `deny`, or `steer` |
+| `actions` | No | Tool names to match (`["*"]` = all) |
+| `principals` | No | Principal patterns (`["Type::id"]`, `["Type::*"]`, `["*"]`) |
+| `conditions` | No | Context conditions (supports `lt`, `lte`, `gt`, `gte`, `eq`, `neq`, `in`) |
+| `reason` | No | Message shown to the model on deny |
+| `guidance` | No | Feedback for steer decisions |
+
+Deny policies are evaluated first and short-circuit. If no deny matches, steer is checked. If neither matches, the first matching allow wins. No match = deny (fail-closed).
+
+## References
+
+- [GitHub](https://github.com/lizradway/strands-agt)
+- [PyPI](https://pypi.org/project/strands-agt/)
+- [Microsoft AGT](https://github.com/microsoft/agent-governance-toolkit)
+- [Strands Interventions docs](/docs/user-guide/sdk/agents/interventions/)

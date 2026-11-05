@@ -8,6 +8,7 @@ import json
 import logging
 import mimetypes
 import secrets
+from collections import Counter
 from collections.abc import AsyncGenerator
 from typing import Any, TypeVar, cast
 
@@ -19,14 +20,27 @@ from ..types.content import ContentBlock, ContentBlockStartToolUse, Messages, Sy
 from ..types.event_loop import Usage
 from ..types.exceptions import ContextWindowOverflowException, ModelThrottledException, ProviderTokenCountError
 from ..types.streaming import StreamEvent
-from ..types.tools import ToolChoice, ToolSpec
+from ..types.tools import ToolChoice, ToolChoiceToolDict, ToolSpec
 from ._defaults import resolve_config_metadata
-from ._validation import _has_location_source, validate_config_keys
+from ._validation import _has_location_source, _log_skipped_blocks, validate_config_keys
 from .model import BaseModelConfig, Model
 
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T", bound=pydantic.BaseModel)
+
+# mimetypes lacks flv and three_gp and varies by host.
+_VIDEO_MIME_TYPES = {
+    "flv": "video/x-flv",
+    "mkv": "video/x-matroska",
+    "mov": "video/quicktime",
+    "mpeg": "video/mpeg",
+    "mpg": "video/mpeg",
+    "mp4": "video/mp4",
+    "three_gp": "video/3gpp",
+    "webm": "video/webm",
+    "wmv": "video/x-ms-wmv",
+}
 
 
 class GeminiModel(Model):
@@ -174,6 +188,15 @@ class GeminiModel(Model):
                 ),
             )
 
+        if "video" in content:
+            video_format = content["video"]["format"]
+            return genai.types.Part(
+                inline_data=genai.types.Blob(
+                    data=content["video"]["source"]["bytes"],
+                    mime_type=_VIDEO_MIME_TYPES.get(video_format, f"video/{video_format}"),
+                ),
+            )
+
         if "reasoningContent" in content:
             thought_signature = content["reasoningContent"]["reasoningText"].get("signature")
 
@@ -241,12 +264,16 @@ class GeminiModel(Model):
         tool_use_id_to_name: dict[str, str] = {}
 
         contents = []
+        skipped: Counter[str] = Counter()
         for message in messages:
             parts = []
             for content in message["content"]:
                 # Check for location sources and skip with warning
                 if _has_location_source(content):
-                    logger.warning("Location sources are not supported by Gemini | skipping content block")
+                    skipped["Location sources are not supported by Gemini | skipping content block"] += 1
+                    continue
+                if "cachePoint" in content:
+                    skipped["cachePoint content block is not supported by Gemini | skipping"] += 1
                     continue
                 parts.append(self._format_request_content_part(content, tool_use_id_to_name))
 
@@ -257,6 +284,7 @@ class GeminiModel(Model):
                 )
             )
 
+        _log_skipped_blocks(logger, skipped)
         return contents
 
     def _format_request_tools(self, tool_specs: list[ToolSpec] | None) -> list[genai.types.Tool | Any] | None:
@@ -288,11 +316,46 @@ class GeminiModel(Model):
             tools.extend(self.config["gemini_tools"])
         return tools
 
+    @staticmethod
+    def _format_tool_choice(tool_choice: ToolChoice | None) -> genai.types.ToolConfig | None:
+        """Format a tool choice into a Gemini tool config.
+
+        - Docs: https://googleapis.github.io/python-genai/genai.html#genai.types.ToolConfig
+
+        Args:
+            tool_choice: Selection strategy for tool invocation.
+
+        Returns:
+            Gemini tool config, or None when no recognized strategy is requested.
+        """
+        if tool_choice is None:
+            return None
+
+        allowed_function_names: list[str] | None = None
+        if "auto" in tool_choice:
+            mode = genai.types.FunctionCallingConfigMode.AUTO
+        elif "any" in tool_choice:
+            mode = genai.types.FunctionCallingConfigMode.ANY
+        elif "tool" in tool_choice:
+            # Gemini has no single-tool mode, so a specific tool is ANY narrowed to that one function.
+            mode = genai.types.FunctionCallingConfigMode.ANY
+            allowed_function_names = [cast(ToolChoiceToolDict, tool_choice)["tool"]["name"]]
+        else:
+            return None
+
+        return genai.types.ToolConfig(
+            function_calling_config=genai.types.FunctionCallingConfig(
+                mode=mode,
+                allowed_function_names=allowed_function_names,
+            ),
+        )
+
     def _format_request_config(
         self,
         tool_specs: list[ToolSpec] | None,
         system_prompt: str | None,
         params: dict[str, Any] | None,
+        tool_choice: ToolChoice | None = None,
     ) -> genai.types.GenerateContentConfig:
         """Format Gemini request config.
 
@@ -302,14 +365,32 @@ class GeminiModel(Model):
             tool_specs: List of tool specifications to make available to the model.
             system_prompt: System prompt to provide context to the model.
             params: Additional model parameters (e.g., temperature).
+            tool_choice: Selection strategy for tool invocation.
 
         Returns:
             Gemini request config.
         """
+        config_params = dict(params or {})
+
+        tool_config = self._format_tool_choice(tool_choice) if tool_specs else None
+        if tool_config is not None:
+            # A tool config set in params wins, matching the other providers and the TypeScript SDK. A tool
+            # config expresses more than a ToolChoice can, so the explicit one is left whole rather than
+            # merged with, or replaced by, the narrower per-request choice.
+            config_params.setdefault("tool_config", tool_config)
+
+        # Enable flag to mix function declarations with built-in tools (not supported in Vertex AI).
+        needs_server_side_flag = tool_specs and self.config.get("gemini_tools") and not self._get_client().vertexai
+        if needs_server_side_flag:
+            tc = config_params.get("tool_config")
+            as_dict = tc.to_json_dict() if isinstance(tc, genai.types.ToolConfig) else dict(tc or {})
+            as_dict.setdefault("include_server_side_tool_invocations", True)
+            config_params["tool_config"] = as_dict
+
         return genai.types.GenerateContentConfig(
             system_instruction=system_prompt,
             tools=self._format_request_tools(tool_specs),
-            **(params or {}),
+            **config_params,
         )
 
     def _format_request(
@@ -318,6 +399,7 @@ class GeminiModel(Model):
         tool_specs: list[ToolSpec] | None,
         system_prompt: str | None,
         params: dict[str, Any] | None,
+        tool_choice: ToolChoice | None = None,
     ) -> dict[str, Any]:
         """Format a Gemini streaming request.
 
@@ -328,12 +410,13 @@ class GeminiModel(Model):
             tool_specs: List of tool specifications to make available to the model.
             system_prompt: System prompt to provide context to the model.
             params: Additional model parameters (e.g., temperature).
+            tool_choice: Selection strategy for tool invocation.
 
         Returns:
             A Gemini streaming request.
         """
         return {
-            "config": self._format_request_config(tool_specs, system_prompt, params).to_json_dict(),
+            "config": self._format_request_config(tool_specs, system_prompt, params, tool_choice).to_json_dict(),
             "contents": [content.to_json_dict() for content in self._format_request_content(messages)],
             "model": self.config["model_id"],
         }
@@ -396,15 +479,17 @@ class GeminiModel(Model):
                                 "delta": {
                                     "reasoningContent": {
                                         "text": event["data"].text,
-                                        **(
-                                            {
-                                                "signature": base64.b64encode(event["data"].thought_signature).decode(
-                                                    "ascii"
-                                                )
-                                            }
-                                            if event["data"].thought_signature
-                                            else {}
-                                        ),
+                                    },
+                                },
+                            },
+                        }
+
+                    case "reasoning_signature":
+                        return {
+                            "contentBlockDelta": {
+                                "delta": {
+                                    "reasoningContent": {
+                                        "signature": base64.b64encode(event["data"].thought_signature).decode("ascii"),
                                     },
                                 },
                             },
@@ -424,19 +509,42 @@ class GeminiModel(Model):
                         return {"messageStop": {"stopReason": "max_tokens"}}
                     case "SAFETY":
                         return {"messageStop": {"stopReason": "guardrail_intervened"}}
+                    case (
+                        "RECITATION"
+                        | "BLOCKLIST"
+                        | "PROHIBITED_CONTENT"
+                        | "SPII"
+                        | "IMAGE_SAFETY"
+                        | "IMAGE_PROHIBITED_CONTENT"
+                        | "IMAGE_RECITATION"
+                    ):
+                        return {"messageStop": {"stopReason": "content_filtered"}}
                     case _:
                         return {"messageStop": {"stopReason": "end_turn"}}
 
             case "metadata":
-                input_tokens = event["data"].prompt_token_count or 0
-                total_tokens = event["data"].total_token_count or 0
+                usage_metadata = event["data"]
+                prompt_tokens = usage_metadata.prompt_token_count or 0
+                tool_use_prompt_tokens = usage_metadata.tool_use_prompt_token_count or 0
+                input_tokens = prompt_tokens + tool_use_prompt_tokens
+                total_tokens = usage_metadata.total_token_count or 0
+                candidates_tokens = usage_metadata.candidates_token_count
+                thoughts_tokens = usage_metadata.thoughts_token_count or 0
+                # Gemini's total_token_count folds four disjoint buckets (prompt + candidates +
+                # tool_use_prompt + thoughts). tool_use_prompt is input and thoughts are billed as output,
+                # so deriving output by subtraction miscounts tool_use_prompt as output; sum each side from
+                # its own fields, falling back to subtraction only when candidates is absent.
                 usage_data: Usage = {
                     "inputTokens": input_tokens,
-                    "outputTokens": max(0, total_tokens - input_tokens),
+                    "outputTokens": (
+                        candidates_tokens + thoughts_tokens
+                        if candidates_tokens is not None
+                        else max(0, total_tokens - input_tokens)
+                    ),
                     "totalTokens": total_tokens,
                 }
 
-                if cached := event["data"].cached_content_token_count:
+                if cached := usage_metadata.cached_content_token_count:
                     usage_data["cacheReadInputTokens"] = cached
 
                 return {
@@ -518,6 +626,7 @@ class GeminiModel(Model):
         messages: Messages,
         tool_specs: list[ToolSpec] | None = None,
         system_prompt: str | None = None,
+        *,
         tool_choice: ToolChoice | None = None,
         **kwargs: Any,
     ) -> AsyncGenerator[StreamEvent, None]:
@@ -527,8 +636,9 @@ class GeminiModel(Model):
             messages: List of message objects to be processed by the model.
             tool_specs: List of tool specifications to make available to the model.
             system_prompt: System prompt to provide context to the model.
-            tool_choice: Selection strategy for tool invocation.
-                Note: Currently unused.
+            tool_choice: Selection strategy for tool invocation. Applied only when tool specs are provided,
+                since there is nothing to choose from without them, and only when params sets no tool config of
+                its own - an explicit tool config takes precedence.
             **kwargs: Additional keyword arguments for future extensibility.
 
         Yields:
@@ -537,7 +647,9 @@ class GeminiModel(Model):
         Raises:
             ModelThrottledException: If the request is throttled by Gemini.
         """
-        request = self._format_request(messages, tool_specs, system_prompt, self.config.get("params"))
+        request = self._format_request(
+            messages, tool_specs, system_prompt, self.config.get("params"), tool_choice=tool_choice
+        )
 
         client = self._get_client().aio
 
@@ -547,6 +659,7 @@ class GeminiModel(Model):
             yield self._format_chunk({"chunk_type": "message_start"})
 
             data_type: str | None = None
+            deferred_signature_parts: list[genai.types.Part] = []
             tool_used = False
             candidate = None
             event = None
@@ -582,18 +695,53 @@ class GeminiModel(Model):
                             },
                         )
 
+                    # A thought signature can arrive on a part carrying no text of its own (Gemini
+                    # attaches it to a trailing empty part), so emit it independently of part.text;
+                    # gating on part.text drops those signatures during aggregation. Function-call
+                    # parts carry their signature on the tool-use block start instead (see above).
+                    # A signature arriving inside a text block (Gemini can sign an early text part and
+                    # keep streaming text) is held until the stream ends so the text stays one block.
+                    if part.thought_signature and not part.function_call:
+                        if data_type == "text":
+                            deferred_signature_parts.append(part)
+                            continue
+                        if data_type is None:
+                            yield self._format_chunk({"chunk_type": "content_start", "data_type": "reasoning_content"})
+                            data_type = "reasoning_content"
+                        yield self._format_chunk(
+                            {
+                                "chunk_type": "content_delta",
+                                "data_type": "reasoning_signature",
+                                "data": part,
+                            },
+                        )
+
             if data_type is not None:
                 yield self._format_chunk({"chunk_type": "content_stop", "data_type": data_type})
+            for deferred_part in deferred_signature_parts:
+                yield self._format_chunk({"chunk_type": "content_start", "data_type": "reasoning_content"})
+                yield self._format_chunk(
+                    {
+                        "chunk_type": "content_delta",
+                        "data_type": "reasoning_signature",
+                        "data": deferred_part,
+                    },
+                )
+                yield self._format_chunk({"chunk_type": "content_stop", "data_type": "reasoning_content"})
             yield self._format_chunk(
                 {
                     "chunk_type": "message_stop",
                     "data": "TOOL_USE" if tool_used else (candidate.finish_reason if candidate else "STOP"),
                 }
             )
-            if event:
+            if event and event.usage_metadata is not None:
                 yield self._format_chunk({"chunk_type": "metadata", "data": event.usage_metadata})
 
         except genai.errors.ClientError as error:
+            # When the response body is not JSON, google-genai sets status to the HTTP reason
+            # phrase ("Too Many Requests"), so the HTTP code is the reliable throttling signal.
+            if error.code == 429:
+                raise ModelThrottledException(error.message or str(error)) from error
             match error.status:
                 case "RESOURCE_EXHAUSTED" | "UNAVAILABLE":
                     raise ModelThrottledException(error.message or str(error)) from error

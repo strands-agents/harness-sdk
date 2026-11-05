@@ -1,0 +1,8 @@
+name: strands-cloudflare
+description: Cloudflare tools for Strands Agents covering Zones, DNS, Workers, KV, R2, D1, Pages, AI Gateway, and Tunnels management.
+integrationType: tool
+languages:
+  python:
+    package: strands-cloudflare
+github: https://github.com/mertozbas/strands-cloudflare
+addedDate: 2026-01-20

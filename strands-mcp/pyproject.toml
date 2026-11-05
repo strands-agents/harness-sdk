@@ -1,0 +1,130 @@
+[project]
+name = "strands-agents-mcp-server"
+dynamic = ["version"]
+description = "A Model Context Protocol server that provides knowledge about building AI agents with Strands Agents"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "Apache-2.0"}
+license-files = ["LICENSE", "NOTICE"]
+authors = [
+    {name = "AWS", email = "opensource@amazon.com"},
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = [
+    "mcp>=1.1.3,<2.2",
+    "pydantic>=2.0.0",
+]
+
+[project.scripts]
+strands-agents-mcp-server = "strands_mcp_server.server:main"
+
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.version]
+source = "vcs"
+raw-options.root = ".."
+raw-options.tag_regex = "^mcp/v(?P<version>.+)$"
+raw-options.git_describe_command = ["git", "describe", "--dirty", "--tags", "--long", "--match", "mcp/v*"]
+
+[project.urls]
+Homepage = "https://github.com/strands-agents/harness-sdk"
+"Bug Tracker" = "https://github.com/strands-agents/harness-sdk/issues"
+Documentation = "https://strandsagents.com"
+
+[project.optional-dependencies]
+dev = [
+    "commitizen>=4.4.0",
+    "hatch>=1.0.0",
+    "packaging>=23.0,<27.0.0",
+    "pre-commit>=2.20.0",
+    "pytest>=9.0.0",
+    "pytest-timeout>=2.0.0",
+    "ruff>=0.4.4",
+    "tomli>=2.0.0,<3.0.0; python_version < '3.11'",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/strands_mcp_server"]
+
+[tool.hatch.envs.hatch-static-analysis]
+dependencies = [
+    "mcp>=1.1.3,<2.2",
+    "pydantic>=2.0.0",
+    "ruff>=0.4.4",
+]
+
+[tool.hatch.envs.hatch-static-analysis.scripts]
+format-check = [
+    "ruff format --check"
+]
+format-fix = [
+    "ruff format"
+]
+lint-check = [
+    "ruff check"
+]
+lint-fix = [
+    "ruff check --fix"
+]
+
+[tool.hatch.envs.default]
+features = ["dev"]
+
+[tool.hatch.envs.default.scripts]
+list = [
+    "echo 'Scripts commands available for default env:'; hatch env show --json | jq --raw-output '.default.scripts | keys[]'"
+]
+format = [
+  "hatch fmt --formatter",
+]
+lint = [
+    "hatch fmt --linter"
+]
+test = ["pytest tests/ {args}"]
+test-integ = ["pytest tests_integ/ -v --timeout=60 {args}"]
+test-all = ["pytest tests/ tests_integ/ {args}"]
+
+[tool.ruff]
+line-length = 120
+include = ["src/**/*.py", "tests/**/*.py", "tests_integ/**/*.py"]
+
+[tool.ruff.lint]
+select = [
+  "E", # pycodestyle
+  "F", # pyflakes
+  "I", # isort
+  "B", # flake8-bugbear
+]
+
+[tool.commitizen]
+name = "cz_conventional_commits"
+tag_format = "v$version"
+bump_message = "chore(release): bump version $current_version -> $new_version"
+version_files = [
+    "pyproject.toml:version",
+]
+update_changelog_on_bump = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "integ: integration tests that hit the network",
+]

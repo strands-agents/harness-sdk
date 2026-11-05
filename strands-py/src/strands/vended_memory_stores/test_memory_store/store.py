@@ -6,9 +6,9 @@ across sessions, and can be set to ephemeral for testing.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
-import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -17,6 +17,8 @@ from typing import Any
 from typing_extensions import Unpack
 
 from ...memory.types import MemoryEntry, MemoryStore, Metadata, SearchOptions
+from ...storage import InMemoryStorage, LocalFileStorage, Storage
+from ...storage.search.keyword import token_overlap_score, tokenize
 from .types import TestMemoryAddResult, TestMemoryStoreConfig
 
 DEFAULT_MAX_SEARCH_RESULTS = 10
@@ -51,25 +53,8 @@ def _sanitize_name(name: str) -> str:
     return re.sub(r"[^\w\-.]", "_", sanitized, flags=re.ASCII)
 
 
-def _tokenize(text: str) -> set[str]:
-    r"""Lowercase and split text into a set of word tokens, dropping empties.
-
-    Splits on any run of non-word characters. Ensures cross-SDK compatibility.
-    """
-    return {token for token in re.split(r"\W+", text.lower()) if token}
-
-
-def _token_overlap_score(query_tokens: set[str], content: str) -> int:
-    """Lexical relevance score for one record.
-
-    The number of distinct query tokens that appear in the content; a higher count means more of the
-    query's words are present. Returns 0 when there is no overlap.
-    """
-    return len(query_tokens & _tokenize(content))
-
-
 class TestMemoryStore(MemoryStore):
-    """A :class:`~strands.memory.types.MemoryStore` backed by an in-memory list and a local JSON file.
+    """A :class:`~strands.memory.types.MemoryStore` backed by a local JSON file.
 
     A zero-infrastructure store for prototyping and testing. It persists to disk by default so memories persist
     across sessions. Set ``persist=False`` for an ephemeral, single-session store.
@@ -81,7 +66,14 @@ class TestMemoryStore(MemoryStore):
 
     Each :meth:`add` rewrites the whole file, so this fits modest volumes (hundreds to low thousands
     of entries), not production workloads — use a managed store like ``BedrockKnowledgeBaseStore`` for
-    that. Writes within a process are serialized; concurrent writers across processes are not.
+    that. Writes within one event loop are serialized; concurrent writers across processes are not.
+
+    Persistence is backed by the unified :class:`~strands.storage.Storage` interface internally:
+    ``persist=True`` (the default) uses a :class:`~strands.storage.LocalFileStorage`, ``persist=False``
+    an ephemeral :class:`~strands.storage.InMemoryStorage`. Unlike other subsystems
+    (SnapshotSessionManager, ContextOffloader), this store does not accept an external ``Storage``
+    or resolve from the agent-level ``storage`` — it manages its own backend via ``persist`` and
+    ``path``.
 
     The on-disk format is shared with the TypeScript SDK's ``TestMemoryStore``: records use the same
     camelCase keys (``id``, ``content``, ``metadata``, ``createdAt``) and the same timestamp shape, so
@@ -124,20 +116,36 @@ class TestMemoryStore(MemoryStore):
         self.writable = store_config.get("writable", True)
         self.extraction = store_config.get("extraction")
 
-        self._persist = store_config.get("persist", True)
+        persist = store_config.get("persist", True)
         path = store_config.get("path")
         if path is not None and not path.strip():
             raise ValueError("TestMemoryStore: path must not be empty.")
-        if not self._persist:
-            self._path: Path | None = None
-        elif path is not None:
-            self._path = Path(path)
-        else:
-            self._path = Path.home() / ".strands" / "memory" / f"{_sanitize_name(self.name)}.json"
 
-        # Records load lazily on first read/write so construction never touches the filesystem.
-        self._records: list[dict[str, Any]] | None = None
-        self._lock = threading.Lock()
+        # Persistence runs on the unified Storage interface. Resolve a (backend, key) pair whose
+        # on-disk location matches the pre-Storage behavior exactly:
+        #   persist=False       -> ephemeral in-memory store
+        #   persist=True + path  -> the file at `path` (backend rooted at its parent dir)
+        #   persist=True default -> ~/.strands/memory/<sanitized-name>.json
+        # LocalFileStorage/InMemoryStorage construction touches no filesystem, so building the store
+        # never does I/O.
+        if not persist:
+            self._storage: Storage = InMemoryStorage()
+            self._key = f"{_sanitize_name(self.name)}.json"
+        elif path is not None:
+            file = Path(path)
+            self._storage = LocalFileStorage(str(file.parent))
+            self._key = file.name
+        else:
+            self._storage = LocalFileStorage(str(Path.home() / ".strands" / "memory"))
+            self._key = f"{_sanitize_name(self.name)}.json"
+
+        # Serializes the read-modify-write cycle of add so concurrent adds don't each read the same
+        # snapshot and clobber one another (last-write-wins). The lock is created lazily per running
+        # loop (see _get_lock): an asyncio.Lock binds to the first loop that uses it, so a store
+        # reused across the fresh loops a synchronous Agent creates per invocation would otherwise
+        # raise "bound to a different event loop".
+        self._lock: asyncio.Lock | None = None
+        self._lock_loop: asyncio.AbstractEventLoop | None = None
 
     async def search(self, query: str, options: SearchOptions | None = None) -> list[MemoryEntry]:
         """Search stored entries for those whose content overlaps the query.
@@ -154,22 +162,24 @@ class TestMemoryStore(MemoryStore):
             token-less query returns no results.
 
         Raises:
-            ValueError: If ``options.max_search_results`` is less than 1.
+            ValueError: If ``options.max_search_results`` is less than 1, or the backing file is
+                malformed (invalid JSON, not an array, or a record missing required fields).
+            StorageError: If the backend read fails.
         """
         caller_max = options.get("max_search_results") if options is not None else None
         if caller_max is not None and caller_max < 1:
             raise ValueError("TestMemoryStore: max_search_results must be at least 1.")
         limit = caller_max or self.max_search_results or DEFAULT_MAX_SEARCH_RESULTS
 
-        query_tokens = _tokenize(query)
+        query_tokens = tokenize(query)
         if not query_tokens:
             return []
 
-        records = self._load()
+        records = await self._read()
 
         scored: list[tuple[dict[str, Any], int]] = []
         for record in records:
-            score = _token_overlap_score(query_tokens, record["content"])
+            score = token_overlap_score(query_tokens, record["content"])
             if score > 0:
                 scored.append((record, score))
 
@@ -198,21 +208,21 @@ class TestMemoryStore(MemoryStore):
             The id of the stored (or already-present) record.
 
         Raises:
-            ValueError: If the store is not writable or ``content`` is empty/whitespace.
-            OSError: If persisting the entry to disk fails (e.g. the path is unreachable or not
-                writable), with the target path in the message.
+            ValueError: If the store is not writable, ``content`` is empty/whitespace, or the
+                existing backing file is malformed.
+            StorageError: If the backend read or write fails.
         """
         if not self.writable:
             raise ValueError("TestMemoryStore: store is not writable. Set writable=True in config to enable add().")
         if not content.strip():
             raise ValueError("TestMemoryStore: content must not be empty.")
 
-        # The lock serializes the whole load-modify-flush cycle so concurrent adds don't each load
-        # the same snapshot and clobber one another (last-write-wins). Within a single event loop the
-        # synchronous critical section is already atomic; the lock additionally guards a store shared
-        # across OS threads.
-        with self._lock:
-            records = self._load()
+        # The lock serializes the whole read-modify-write cycle so concurrent adds on the same event
+        # loop don't each read the same snapshot and clobber one another. Reading inside the critical
+        # section guarantees add #N sees add #N-1's write. Serialization is per event loop; adds
+        # driven from separate loops/processes against a shared file remain last-write-wins.
+        async with self._get_lock():
+            records = await self._read()
 
             normalized_content = content.strip()
             for record in records:
@@ -223,35 +233,46 @@ class TestMemoryStore(MemoryStore):
             if metadata is not None:
                 new_record["metadata"] = metadata
 
-            # Flush the candidate list first and only commit it to the in-memory cache once the write
-            # succeeds, so a failed flush never leaves a phantom record that later writes resurrect.
-            next_records = [*records, new_record]
-            self._flush(next_records)
-            self._records = next_records
+            await self._write([*records, new_record])
             return TestMemoryAddResult(id=new_record["id"])
 
-    def _load(self) -> list[dict[str, Any]]:
-        """Load records from disk on first use; ephemeral stores (and a missing file) start empty."""
-        if self._records is not None:
-            return self._records
+    def _get_lock(self) -> asyncio.Lock:
+        """Return the write lock for the running event loop, creating a fresh one when the loop changes.
 
-        if self._path is None:
-            self._records = []
-            return self._records
+        An ``asyncio.Lock`` binds to the first loop that uses it, so a lock created once and reused
+        across loops raises ``RuntimeError``. A synchronous ``Agent`` runs each invocation on a fresh
+        loop, so a store reused across invocations must rebind. Rebinding per loop keeps the
+        serialization guarantee within a single loop (the only scope concurrency happens in) while
+        never carrying a lock across loops.
+        """
+        running_loop = asyncio.get_running_loop()
+        if self._lock is None or self._lock_loop is not running_loop:
+            self._lock = asyncio.Lock()
+            self._lock_loop = running_loop
+        return self._lock
+
+    async def _read(self) -> list[dict[str, Any]]:
+        """Read and parse the record file from storage; a missing key (or empty store) starts empty.
+
+        Reads fresh on every call — there is no in-memory cache, so a search always reflects the
+        latest write.
+
+        Raises:
+            ValueError: If the stored file is not valid JSON, is not an array, or holds a record
+                missing the required string fields.
+            StorageError: If the backend read fails.
+        """
+        data = await self._storage.read(self._key)
+        if data is None:
+            return []
 
         try:
-            with open(self._path, encoding="utf-8") as file:
-                parsed_file = json.load(file)
-        except FileNotFoundError:
-            self._records = []
-            return self._records
+            parsed_file = json.loads(data)
         except json.JSONDecodeError as error:
-            raise ValueError(f"TestMemoryStore: invalid JSON in {self._path}: {error}") from error
-        except OSError as error:
-            raise OSError(f"TestMemoryStore: failed to read {self._path}: {error}") from error
+            raise ValueError(f"TestMemoryStore: invalid JSON in {self._key}: {error}") from error
 
         if not isinstance(parsed_file, list):
-            raise ValueError(f"TestMemoryStore: invalid backing file {self._path}: expected a JSON array of records")
+            raise ValueError(f"TestMemoryStore: invalid backing file {self._key}: expected a JSON array of records")
         for record in parsed_file:
             if (
                 not isinstance(record, dict)
@@ -260,29 +281,22 @@ class TestMemoryStore(MemoryStore):
                 or not isinstance(record.get("createdAt"), str)
             ):
                 raise ValueError(
-                    f"TestMemoryStore: invalid backing file {self._path}: "
+                    f"TestMemoryStore: invalid backing file {self._key}: "
                     "each record must have string 'id', 'content', and 'createdAt' fields"
                 )
-        self._records = parsed_file
-        return self._records
+            metadata = record.get("metadata")
+            if metadata is not None and not isinstance(metadata, dict):
+                raise ValueError(
+                    f"TestMemoryStore: invalid backing file {self._key}: "
+                    "a record's 'metadata', when present, must be a JSON object"
+                )
+        return parsed_file
 
-    def _flush(self, records: list[dict[str, Any]]) -> None:
-        """Persist ``records`` with an atomic write (write to a ``.tmp`` file, then replace).
+    async def _write(self, records: list[dict[str, Any]]) -> None:
+        """Persist ``records`` as a single JSON file through the storage backend.
 
-        A crash mid-write can never leave a partially written file. A no-op for ephemeral stores.
-
-        Raises:
-            OSError: If the backing directory cannot be created or the file cannot be written
-                (e.g. the path is unreachable or not writable), with the target path in the message.
+        Callers serialize invocations via the instance lock; atomicity is the backend's
+        responsibility. A backend I/O failure surfaces as its own ``StorageError``, naming the key.
         """
-        if self._path is None:
-            return
-
-        try:
-            self._path.parent.mkdir(parents=True, exist_ok=True)
-            tmp_path = self._path.with_name(f"{self._path.name}.tmp")
-            with open(tmp_path, "w", encoding="utf-8", newline="\n") as file:
-                json.dump(records, file, indent=2, ensure_ascii=False)
-            tmp_path.replace(self._path)
-        except OSError as error:
-            raise OSError(f"TestMemoryStore: failed to write {self._path}: {error}") from error
+        data = json.dumps(records, indent=2, ensure_ascii=False).encode("utf-8")
+        await self._storage.write(self._key, data)

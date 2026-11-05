@@ -12,8 +12,10 @@ import { z } from 'zod'
 import { logger } from '../../logging/logger.js'
 import type { JSONValue } from '../../types/json.js'
 import { FileStorage, InMemoryStorage as LegacyInMemoryStorage, type Storage as OffloaderStorage } from './storage.js'
-import { NAMESPACED, namespace, type Storage } from '../../storage/storage.js'
+import { resolveNamespace, type Storage } from '../../storage/storage.js'
+import { InMemoryStorage } from '../../storage/in-memory-storage.js'
 import { isSearchableContent, searchContent } from './search.js'
+import { AgentAsTool } from '../../agent/agent-as-tool.js'
 
 function isOffloaderStorage(storage: Storage | OffloaderStorage): storage is OffloaderStorage {
   return 'store' in storage && 'retrieve' in storage
@@ -162,8 +164,11 @@ export interface ContextOffloaderConfig {
    * unless the storage is already namespaced. If the resolved storage exposes a
    * `forSandbox(sandbox)` method (as `LocalFileStorage` and its namespace views do),
    * the plugin auto-routes I/O through the agent's sandbox.
+   *
+   * When omitted, resolves from the agent-level `storage` during initialization.
+   * If no agent-level storage is available either, falls back to in-memory storage.
    */
-  storage: Storage | OffloaderStorage
+  storage?: Storage | OffloaderStorage
   /** Token threshold above which tool results are offloaded. Defaults to 2,500. */
   maxResultTokens?: number
   /** Number of tokens to keep as an inline preview. Defaults to 1,000. */
@@ -208,8 +213,8 @@ export class ContextOffloader implements Plugin {
 
   private static readonly _DEFAULT_EVICT_AFTER_CYCLES = 20
 
-  private readonly _sandboxableStorage: { forSandbox(sandbox: Sandbox): Storage } | undefined
-  private readonly _storage: Storage | OffloaderStorage
+  private _sandboxableStorage: { forSandbox(sandbox: Sandbox): Storage } | undefined
+  private _storage!: Storage | OffloaderStorage
   private readonly _maxResultTokens: number
   private readonly _previewTokens: number
   private readonly _includeRetrievalTool: boolean
@@ -232,26 +237,31 @@ export class ContextOffloader implements Plugin {
       throw new Error('evictAfterCycles must be a positive integer')
     }
 
-    if (isOffloaderStorage(config.storage)) {
-      this._storage = config.storage
-    } else if (NAMESPACED in config.storage) {
-      this._storage = config.storage
-    } else if (config.storage.namespace) {
-      this._storage = config.storage.namespace('offloader')
-    } else {
-      this._storage = namespace(config.storage, 'offloader')
+    if (config.storage) {
+      this._resolveAndSetStorage(config.storage)
     }
-    this._sandboxableStorage =
-      !isOffloaderStorage(this._storage) && 'forSandbox' in this._storage
-        ? (this._storage as { forSandbox(sandbox: Sandbox): Storage })
-        : undefined
     this._maxResultTokens = maxResultTokens
     this._previewTokens = previewTokens
     this._includeRetrievalTool = config.includeRetrievalTool ?? true
     this._evictAfterCycles = evictAfterCycles
   }
 
+  private _resolveAndSetStorage(storage: Storage | OffloaderStorage): void {
+    if (isOffloaderStorage(storage)) {
+      this._storage = storage
+    } else {
+      this._storage = resolveNamespace(storage, 'offloader')
+    }
+    this._sandboxableStorage =
+      !isOffloaderStorage(this._storage) && 'forSandbox' in this._storage
+        ? (this._storage as { forSandbox(sandbox: Sandbox): Storage })
+        : undefined
+  }
+
   initAgent(agent: LocalAgent): void {
+    if (!this._storage) {
+      this._resolveAndSetStorage(agent.storage ?? new InMemoryStorage())
+    }
     if (this._storage instanceof LegacyInMemoryStorage) {
       this._storage._bind(agent, this._evictAfterCycles)
     }
@@ -372,13 +382,17 @@ export class ContextOffloader implements Plugin {
   ): Promise<{ ref: string; contentType: string; description: string }> {
     if (block instanceof TextBlock && block.text) {
       const ref = await storeContent(storage, key, new TextEncoder().encode(block.text), 'text/plain')
-      return { ref, contentType: 'text/plain', description: `text, ${block.text.length.toLocaleString()} chars` }
+      return { ref, contentType: 'text/plain', description: `text, ${block.text.length.toLocaleString('en-US')} chars` }
     }
     if (block instanceof JsonBlock) {
       const jsonStr = JSON.stringify(block.json, null, 2)
       const jsonBytes = new TextEncoder().encode(jsonStr)
       const ref = await storeContent(storage, key, jsonBytes, 'application/json')
-      return { ref, contentType: 'application/json', description: `json, ${jsonBytes.length.toLocaleString()} bytes` }
+      return {
+        ref,
+        contentType: 'application/json',
+        description: `json, ${jsonBytes.length.toLocaleString('en-US')} bytes`,
+      }
     }
     if (block instanceof ImageBlock || block instanceof VideoBlock || block instanceof DocumentBlock) {
       const bytes = getBytes(block)
@@ -391,7 +405,7 @@ export class ContextOffloader implements Plugin {
       const label = block instanceof DocumentBlock ? block.name : contentType
       if (bytes) {
         const ref = await storeContent(storage, key, bytes, contentType)
-        return { ref, contentType, description: `${label}, ${bytes.length.toLocaleString()} bytes` }
+        return { ref, contentType, description: `${label}, ${bytes.length.toLocaleString('en-US')} bytes` }
       }
       return { ref: '', contentType, description: `${label}, 0 bytes` }
     }
@@ -425,7 +439,7 @@ export class ContextOffloader implements Plugin {
     }
 
     return (
-      `[Offloaded: ${content.length} blocks, ~${tokenCount.toLocaleString()} tokens]\n` +
+      `[Offloaded: ${content.length} blocks, ~${tokenCount.toLocaleString('en-US')} tokens]\n` +
       `${guidance}\n\n` +
       `${preview}\n\n` +
       `[Stored references:]\n${refLines}`
@@ -434,6 +448,12 @@ export class ContextOffloader implements Plugin {
 
   private async _handleToolResult(event: AfterToolCallEvent): Promise<void> {
     if (event.result.status === 'error') return
+
+    // Skip delegation tool results — their content is the final delegated answer
+    // and must not be truncated/offloaded. The delegation plugin transforms this
+    // result into the AgentResult.lastMessage, so offloading would replace the
+    // final answer with an unrecoverable placeholder.
+    if (event.tool instanceof AgentAsTool && event.tool.delegate) return
 
     // Skip results from the retrieval tool to prevent circular offloading
     if (this._includeRetrievalTool && event.toolUse.name === RETRIEVAL_TOOL_NAME) return

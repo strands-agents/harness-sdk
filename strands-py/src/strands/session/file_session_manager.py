@@ -5,6 +5,7 @@ import logging
 import os
 import shutil
 import tempfile
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from .. import _identifier
@@ -52,13 +53,23 @@ class FileSessionManager(RepositorySessionManager, SessionRepository):
         Args:
             session_id: ID for the session.
                 ID is not allowed to contain path separators (e.g., a/b).
-            storage_dir: Directory for local filesystem storage (defaults to temp dir).
+            storage_dir: Directory for local filesystem storage.
+                Defaults to a user-private ``~/.strands/sessions/`` directory.
             **kwargs: Additional keyword arguments for future extensibility.
         """
-        self.storage_dir = storage_dir or os.path.join(tempfile.gettempdir(), "strands/sessions")
-        os.makedirs(self.storage_dir, exist_ok=True)
+        self.storage_dir = storage_dir or self._default_storage_dir()
+        os.makedirs(self.storage_dir, mode=0o700, exist_ok=True)
 
         super().__init__(session_id=session_id, session_repository=self)
+
+    @staticmethod
+    def _default_storage_dir() -> str:
+        """Return a user-private default storage directory.
+
+        Sessions are stored under ``~/.strands/sessions/``, which is private to
+        the current user and avoids the world-writable ``/tmp`` directory.
+        """
+        return str(Path.home() / ".strands" / "sessions")
 
     def _get_session_path(self, session_id: str) -> str:
         """Get session directory path.
@@ -106,7 +117,12 @@ class FileSessionManager(RepositorySessionManager, SessionRepository):
         return os.path.join(agent_path, "messages", f"{MESSAGE_PREFIX}{message_id}.json")
 
     def _read_file(self, path: str) -> dict[str, Any]:
-        """Read JSON file."""
+        """Read JSON file with symlink protection."""
+        # Refuse to read through symlinks (prevents session data injection)
+        if os.path.islink(path):
+            raise SessionException(
+                f"Refusing to read symlink at {path}. This may indicate a symlink attack or session tampering."
+            )
         try:
             with open(path, encoding="utf-8") as f:
                 return cast(dict[str, Any], json.load(f))
@@ -114,13 +130,31 @@ class FileSessionManager(RepositorySessionManager, SessionRepository):
             raise SessionException(f"Invalid JSON in file {path}: {str(e)}") from e
 
     def _write_file(self, path: str, data: dict[str, Any]) -> None:
-        """Write JSON file."""
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        # This automic write ensure the completeness of session files in both single agent/ multi agents
-        tmp = f"{path}.tmp"
-        with open(tmp, "w", encoding="utf-8", newline="\n") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
-        os.replace(tmp, path)
+        """Write JSON file atomically with symlink protection.
+
+        Uses tempfile.mkstemp() for unpredictable temp file names and checks
+        for symlinks at the target path to prevent symlink-following attacks.
+        """
+        dir_path = os.path.dirname(path)
+        os.makedirs(dir_path, mode=0o700, exist_ok=True)
+
+        # Refuse to write if the target path is a symlink (prevents symlink attacks)
+        if os.path.islink(path):
+            raise SessionException(f"Refusing to write to symlink at {path}. This may indicate a symlink attack.")
+
+        # Use mkstemp for unpredictable temp file name in the same directory
+        fd, tmp_path = tempfile.mkstemp(dir=dir_path, prefix=".strands_", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+            os.replace(tmp_path, path)
+        except BaseException:
+            # Clean up temp file on any failure
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
 
     def create_session(self, session: Session, **kwargs: Any) -> Session:
         """Create a new session."""
@@ -129,9 +163,9 @@ class FileSessionManager(RepositorySessionManager, SessionRepository):
             raise SessionException(f"Session {session.session_id} already exists")
 
         # Create directory structure
-        os.makedirs(session_dir, exist_ok=True)
-        os.makedirs(os.path.join(session_dir, "agents"), exist_ok=True)
-        os.makedirs(os.path.join(session_dir, "multi_agents"), exist_ok=True)
+        os.makedirs(session_dir, mode=0o700, exist_ok=True)
+        os.makedirs(os.path.join(session_dir, "agents"), mode=0o700, exist_ok=True)
+        os.makedirs(os.path.join(session_dir, "multi_agents"), mode=0o700, exist_ok=True)
 
         # Write session file
         session_file = os.path.join(session_dir, "session.json")
@@ -162,8 +196,8 @@ class FileSessionManager(RepositorySessionManager, SessionRepository):
         agent_id = session_agent.agent_id
 
         agent_dir = self._get_agent_path(session_id, agent_id)
-        os.makedirs(agent_dir, exist_ok=True)
-        os.makedirs(os.path.join(agent_dir, "messages"), exist_ok=True)
+        os.makedirs(agent_dir, mode=0o700, exist_ok=True)
+        os.makedirs(os.path.join(agent_dir, "messages"), mode=0o700, exist_ok=True)
 
         agent_file = os.path.join(agent_dir, "agent.json")
         session_data = session_agent.to_dict()
@@ -263,7 +297,7 @@ class FileSessionManager(RepositorySessionManager, SessionRepository):
         """Create a new multiagent state in the session."""
         multi_agent_id = multi_agent.id
         multi_agent_dir = self._get_multi_agent_path(session_id, multi_agent_id)
-        os.makedirs(multi_agent_dir, exist_ok=True)
+        os.makedirs(multi_agent_dir, mode=0o700, exist_ok=True)
 
         multi_agent_file = os.path.join(multi_agent_dir, "multi_agent.json")
         session_data = multi_agent.serialize_state()

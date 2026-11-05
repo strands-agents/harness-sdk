@@ -13,7 +13,7 @@ import type {
   GuardContentBlock,
   JsonBlock,
 } from '../types/messages.js'
-import type { ImageBlock, VideoBlock, DocumentBlock } from '../types/media.js'
+import type { AudioBlock, ImageBlock, VideoBlock, DocumentBlock } from '../types/media.js'
 import type { CitationsBlock } from '../types/citations.js'
 
 /**
@@ -40,6 +40,7 @@ export type PlainContentBlock =
   | NoJSON<CachePointBlock>
   | NoJSON<GuardContentBlock>
   | NoJSON<JsonBlock>
+  | NoJSON<AudioBlock>
   | NoJSON<ImageBlock>
   | NoJSON<VideoBlock>
   | NoJSON<DocumentBlock>

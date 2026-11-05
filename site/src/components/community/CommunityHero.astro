@@ -1,0 +1,132 @@
+---
+---
+
+<header class="community-hero">
+  <div class="hero-inner">
+    <div class="hero-text">
+      <span class="kicker">Strands Academy</span>
+      <h1>Community<span class="dot">.</span></h1>
+      <p class="dek">
+        Courses, deep dives, and events from the team building the SDK. Everything you need to go from your first
+        agent loop to production.
+      </p>
+      <nav class="paths" aria-label="Page sections">
+        <a href="#courses">↓ Courses</a>
+        <a href="#deep-dives">↓ Deep dives</a>
+        <a href="#events">↓ Events</a>
+        <a href="#blog">↓ From the blog</a>
+      </nav>
+    </div>
+    <aside class="hero-aside">
+      <slot name="bulletin" />
+    </aside>
+  </div>
+</header>
+
+<style>
+  .community-hero {
+    position: relative;
+  }
+
+  .hero-inner {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 5.5rem 3rem 4.5rem;
+    position: relative;
+    display: grid;
+    grid-template-columns: 1.5fr 1fr;
+    gap: 4rem;
+    align-items: center;
+  }
+
+  .hero-aside {
+    display: flex;
+    justify-content: flex-end;
+  }
+
+  .kicker {
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: 0.75rem;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: #00cc5f;
+    font-weight: 700;
+  }
+
+  :global([data-theme='light']) .kicker {
+    color: #008542;
+  }
+
+  h1 {
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: clamp(3.25rem, 8vw, 5.5rem);
+    line-height: 1;
+    letter-spacing: -0.03em;
+    font-weight: 600;
+    color: var(--sl-color-white);
+    margin: 0;
+  }
+
+  .dot {
+    color: #00cc5f;
+  }
+
+  :global([data-theme='light']) .dot {
+    color: #008542;
+  }
+
+  .dek {
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: 1.375rem;
+    color: #b9c4bd;
+    max-width: 40rem;
+    margin: 1.25rem 0 0;
+  }
+
+  :global([data-theme='light']) .dek {
+    color: var(--sl-color-gray-2);
+  }
+
+  .paths {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1.75rem;
+    margin-top: 2.25rem;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: 1rem;
+  }
+
+  .paths a {
+    color: #9db5a7;
+    text-decoration: none;
+    border-bottom: 1px solid #2c5940;
+    padding-bottom: 3px;
+  }
+
+  :global([data-theme='light']) .paths a {
+    color: var(--sl-color-gray-2);
+    border-bottom-color: rgba(0, 150, 70, 0.3);
+  }
+
+  .paths a:hover {
+    color: #00ff77;
+    border-color: #00ff77;
+  }
+
+  :global([data-theme='light']) .paths a:hover {
+    color: #008542;
+    border-color: #008542;
+  }
+
+  @media (max-width: 900px) {
+    .hero-inner {
+      padding: 3.5rem 1.5rem 3rem;
+      grid-template-columns: 1fr;
+      gap: 2.5rem;
+    }
+
+    .hero-aside {
+      justify-content: stretch;
+    }
+  }
+</style>

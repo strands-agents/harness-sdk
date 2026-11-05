@@ -1,0 +1,8 @@
+name: strands-swarms
+description: Task-based swarm orchestration for Strands Agents that coordinates multiple agents working on decomposed subtasks in parallel.
+integrationType: agent-extension
+languages:
+  python:
+    package: strands-swarms
+github: https://github.com/JackXu0/strands-swarms
+addedDate: 2026-01-29

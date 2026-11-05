@@ -1,0 +1,9 @@
+name: "respan"
+description: "OpenTelemetry instrumentation plugin that normalizes Strands Agents TS spans into the Respan observability platform."
+integrationType: observability
+maintainedBy: partner
+languages:
+  typescript:
+    package: "@respan/instrumentation-strands-agents"
+github: https://github.com/respanai/respan
+addedDate: 2026-06-30

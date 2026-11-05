@@ -4,7 +4,7 @@ Sample applications demonstrating Strands Agents TypeScript SDK features.
 
 ## Prerequisites
 
-- Node.js 20+
+- Node.js 22+
 - AWS credentials configured (for the default Bedrock model provider)
 
 ## Running an Example
@@ -18,12 +18,14 @@ npm start
 
 ## Available Examples
 
-| Example | Description |
-|---------|-------------|
-| [first-agent](./first-agent/) | Basic agent usage with tools, invoke, and streaming patterns |
-| [graph](./graph/) | Graph multi-agent orchestration (linear, fan-out, streaming) |
-| [swarm](./swarm/) | Swarm multi-agent orchestration (agent-driven handoffs) |
-| [mcp](./mcp/) | Model Context Protocol integration with external tool servers |
-| [agents-as-tools](./agents-as-tools/) | Agents as tools pattern (orchestrator delegates to specialized tool agents) |
-| [browser-agent](./browser-agent/) | Browser-based agent with DOM manipulation canvas (OpenAI, Anthropic, Bedrock) |
-| [telemetry](./telemetry/) | OpenTelemetry tracing with Jaeger (requires Docker, see its [README](./telemetry/README.md)) |
+| Example                               | Description                                                                                                   |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| [first-agent](./first-agent/)         | Basic agent usage with tools, invoke, and streaming patterns                                                  |
+| [graph](./graph/)                     | Graph multi-agent orchestration (linear, fan-out, streaming)                                                  |
+| [swarm](./swarm/)                     | Swarm multi-agent orchestration (agent-driven handoffs)                                                       |
+| [mcp](./mcp/)                         | Model Context Protocol integration with external tool servers                                                 |
+| [agents-as-tools](./agents-as-tools/) | Agents as tools pattern (orchestrator delegates to specialized tool agents)                                   |
+| [browser-agent](./browser-agent/)     | Browser-based agent with DOM manipulation canvas (OpenAI, Anthropic, Bedrock)                                 |
+| [telemetry](./telemetry/)             | OpenTelemetry tracing with Jaeger (requires Docker, see its [README](./telemetry/README.md))                  |
+| [decisions](./decisions/)             | Decision-model primitive — ask closed questions with typed answers and `Uncertain(reason)`                    |
+| [model-routing](./model-routing/)     | `ModelRouter` with `ClassifierStrategy`, routing an easy and a hard question to a fast and an advanced model  |

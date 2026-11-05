@@ -24,11 +24,41 @@ from strands.hooks.registry import HookOrder
 from strands.memory.extraction.triggers import InvocationTrigger
 from strands.memory.extraction.types import ExtractionConfig, ExtractionResult
 from strands.memory.memory_manager import MemoryManager
+from strands.storage import Storage
+from strands.types.exceptions import StorageError
 from strands.vended_memory_stores.test_memory_store import (
     TestMemoryAddResult,
     TestMemoryStore,
     TestMemoryStoreConfig,
 )
+
+
+class _YieldingStorage:
+    """A ``Storage`` wrapper that awaits a real suspension point before delegating each operation.
+
+    Forcing the write lock to actually suspend (rather than complete synchronously) is what binds a
+    lock's internal waiter to the running loop, so a store reused across loops fails loudly on a
+    loop-bound lock instead of passing by luck.
+    """
+
+    def __init__(self, inner: Storage) -> None:
+        self._inner = inner
+
+    async def write(self, key: str, data: bytes) -> None:
+        await asyncio.sleep(0)
+        await self._inner.write(key, data)
+
+    async def read(self, key: str) -> bytes | None:
+        await asyncio.sleep(0)
+        return await self._inner.read(key)
+
+    async def delete(self, key: str) -> None:
+        await asyncio.sleep(0)
+        await self._inner.delete(key)
+
+    async def list(self, query: str = "") -> list[str]:
+        await asyncio.sleep(0)
+        return await self._inner.list(query)
 
 
 @pytest.fixture
@@ -50,11 +80,10 @@ def make_store(store_path: str):
 
 
 class TestPackageExport:
-    def test_lazy_export_from_parent_package(self):
-        # The store is documented as importable from the parent package via its lazy __getattr__.
-        from strands.vended_memory_stores import __getattr__
+    def test_export_from_parent_package(self):
+        from strands.vended_memory_stores import TestMemoryStore as Imported
 
-        assert __getattr__("TestMemoryStore") is TestMemoryStore
+        assert Imported is TestMemoryStore
 
     def test_unknown_attribute_raises(self):
         from strands.vended_memory_stores import __getattr__
@@ -275,19 +304,55 @@ class TestPersistence:
             await store.search("anything")
 
     @pytest.mark.asyncio
+    async def test_raises_clear_error_on_non_object_metadata(self, make_store, store_path):
+        # A present-but-non-object metadata (e.g. a hand-edited or cross-SDK file) must fail fast
+        # rather than crashing opaquely when search spreads it into the result.
+        record = [{"id": "a", "content": "hi", "createdAt": "2026-01-01T00:00:00.000Z", "metadata": "oops"}]
+        Path(store_path).write_text(json.dumps(record), encoding="utf-8")
+        store = make_store()
+        with pytest.raises(ValueError, match="'metadata', when present, must be a JSON object"):
+            await store.search("hi")
+
+    @pytest.mark.asyncio
+    async def test_accepts_null_metadata_as_absent(self, make_store, store_path):
+        # A record with null metadata is accepted and treated as absent, matching the TS store.
+        record = [{"id": "a", "content": "hi there", "createdAt": "2026-01-01T00:00:00.000Z", "metadata": None}]
+        Path(store_path).write_text(json.dumps(record), encoding="utf-8")
+        store = make_store()
+        results = await store.search("hi")
+        assert len(results) == 1
+        assert results[0].metadata == {"_relevanceScore": 1}
+
+    @pytest.mark.asyncio
     async def test_keeps_all_entries_under_concurrent_writes(self, make_store, store_path):
         store = make_store()
         await asyncio.gather(*(store.add(f"fact number {index}") for index in range(10)))
         assert len(json.loads(Path(store_path).read_text(encoding="utf-8"))) == 10
 
+    def test_reused_across_separate_event_loops(self, make_store, store_path):
+        # A synchronous Agent runs each invocation on a fresh event loop, so a store reused across
+        # invocations acquires its write lock on a different loop each time. A loop-bound lock created
+        # once would raise "bound to a different event loop"; the lock must rebind per loop. Wrapping
+        # the backend so each op suspends forces the lock to actually bind a waiter to the loop, so a
+        # regression surfaces rather than passing by luck.
+        store = make_store()
+        store._storage = _YieldingStorage(store._storage)
+
+        async def batch(tag: str) -> None:
+            await asyncio.gather(store.add(f"{tag} one"), store.add(f"{tag} two"))
+
+        asyncio.run(batch("first"))
+        asyncio.run(batch("second"))
+        assert len(json.loads(Path(store_path).read_text(encoding="utf-8"))) == 4
+
     @pytest.mark.asyncio
     async def test_raises_clear_error_when_path_is_unreachable(self, tmp_path):
-        # Point the store under an existing FILE, so the backing path can't be reached — surfacing a
-        # wrapped "failed to read/write" error naming the path rather than a bare OSError.
+        # Point the store under an existing FILE, so the backing path can't be reached — the backend
+        # raises a StorageError naming the key rather than a bare OSError.
         blocker = tmp_path / "blocker"
         blocker.write_text("not a directory", encoding="utf-8")
         store = TestMemoryStore(name="notes", path=str(blocker / "notes.json"))
-        with pytest.raises(OSError, match="failed to"):
+        with pytest.raises(StorageError, match="Failed to write"):
             await store.add("user prefers dark mode")
 
 
@@ -339,8 +404,9 @@ class _FakeAgent:
 
     def __init__(self, model: Any = None) -> None:
         self.model = model
+        self.aux_model = model
         self.hooks: list[tuple[Any, Any, float]] = []
-        self._middleware_registry = MagicMock()
+        self.add_middleware = MagicMock()
 
     def add_hook(self, callback: Any, event_type: Any = None, *, order: float = HookOrder.DEFAULT) -> None:
         self.hooks.append((callback, event_type, order))
