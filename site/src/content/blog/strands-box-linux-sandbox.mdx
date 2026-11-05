@@ -46,7 +46,7 @@ The [customer service sample](https://github.com/strands-agents/box/tree/main/ex
 
 Box uses two files to define the agent’s environment and the rules it must follow. `box.toml` is the configuration file, where you specify what to run, which files the agent can use, and how Box handles credentials. `policy.dw` is the policy file, where you write Dogwood rules for tool calls and network requests.
 
-In `box.toml`, the `[agent.filesystem]` section defines which files and directories the agent can read or change. This excerpt uses simplified paths to show how the sample separates application files from the agent’s writable workspace.
+The sample generates `box.toml` at runtime in [`sdk/run-demo.py`](https://github.com/strands-agents/box/blob/main/examples/cloud-deployments/agentcore-runtime/sdk/run-demo.py) or [`langchain-example/run-demo.py`](https://github.com/strands-agents/box/blob/main/examples/cloud-deployments/agentcore-runtime/langchain-example/run-demo.py), depending on the framework. Its `[agent.filesystem]` section defines which files and directories the agent can read or change. This excerpt uses simplified paths to show how the sample separates application files from the agent’s writable workspace.
 
 ```toml title="box.toml"
 [agent.filesystem]
@@ -73,7 +73,7 @@ The agent receives a placeholder instead of the real token. When Box permits a m
 
 Suppose your order service is available at `orders.example.com`. An agent can check whether order `42` qualifies for a replacement by calling `GET /orders/42/replacement`. For this example, the service returns `200` only when the order qualifies. The agent can then request the replacement by sending a `POST` to the same path.
 
-The Dogwood rules in [`policy.dw`](https://github.com/strands-agents/box/blob/main/examples/cloud-deployments/agentcore-runtime/policy.dw) specify which network requests are allowed and can add conditions based on earlier actions and results. The following rule blocks a shipment unless Box has recorded that confirmation in the last five minutes.
+The Dogwood rules in [`policy.dw`](https://github.com/strands-agents/box/blob/main/examples/cloud-deployments/agentcore-runtime/policy.dw) specify which network requests are allowed and can add conditions based on earlier actions and results. The following excerpt adapts the sample’s local test service to `orders.example.com` over HTTPS. It blocks a shipment unless Box has recorded that confirmation in the last five minutes.
 
 ```text title="policy.dw"
 @id("dispatch_requires_eligibility")
