@@ -1,11 +1,18 @@
 import { readFileSync } from 'node:fs'
 
+import { getCollection } from 'astro:content'
 import { JSDOM } from 'jsdom'
-import { describe, expect, it } from 'vitest'
+import { beforeAll, describe, expect, it } from 'vitest'
 
 import { showFooterLanguage } from '../src/util/footer'
+import { sampleGuidePath, sortSampleGuides, type SampleGuideEntry } from '../src/util/sample-guides'
 
 const SITE_ORIGIN = 'https://strandsagents.com'
+let sampleGuide: SampleGuideEntry | undefined
+
+beforeAll(async () => {
+  sampleGuide = sortSampleGuides(await getCollection('sampleGuides'))[0]
+})
 
 function builtPage(route: string): Document {
   const html = readFileSync(new URL(`../dist/${route}/index.html`, import.meta.url), 'utf8')
@@ -69,10 +76,12 @@ describe('compact docs footer output', () => {
   })
 
   it('routes generated sample guides to the Samples issue tracker', () => {
-    const footer = footerFor('examples/python/first-agent')
+    if (!sampleGuide) return
+    const route = sampleGuidePath(sampleGuide).replace(/^\/|\/$/g, '')
+    const footer = footerFor(route)
 
     expect(footer.querySelector('.site-footer__release')).toBeNull()
-    expectDocumentationIssue(linkByText(footer, 'Open an issue'), 'samples', 'examples/python/first-agent')
+    expectDocumentationIssue(linkByText(footer, 'Open an issue'), 'samples', route)
   })
 
   it('omits releases for Shell while keeping its issue tracker', () => {

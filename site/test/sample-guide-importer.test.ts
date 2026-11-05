@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -7,10 +7,17 @@ import { buildSampleGuides } from '../scripts/samples/importer'
 
 interface ManifestFixture {
   version: 1
+  catalog?: 'curated'
   categories: Array<{
     language: string
     id: string
     label: string
+  }>
+  collections?: Array<{
+    id: string
+    label: string
+    description?: string
+    samples: string[]
   }>
   samples: Array<{
     id?: string
@@ -24,6 +31,8 @@ interface ManifestFixture {
     path: string
     notebook?: string
     url?: string
+    docs?: Array<{ label: string; url: string }>
+    family?: string
   }>
 }
 
@@ -66,32 +75,72 @@ beforeEach(() => {
     'samples.json',
     JSON.stringify({
       version: 1,
+      catalog: 'curated',
       categories: [
+        { language: 'TypeScript', id: 'applications', label: 'Applications' },
+        { language: 'Python', id: 'applications', label: 'Applications' },
         { language: 'TypeScript', id: 'learn', label: 'Learn' },
         { language: 'Python', id: 'learn', label: 'Learn' },
       ],
+      collections: [
+        {
+          id: 'end-to-end',
+          label: 'End-to-end applications',
+          description: 'Complete applications with setup, validation, and deployment guidance.',
+          samples: ['typescript/02-applications/01-readme'],
+        },
+        {
+          id: 'amplifying-ai',
+          label: 'Amplifying AI',
+          samples: ['python/02-applications/02-notebook'],
+        },
+      ],
       samples: [
         {
+          id: 'typescript/02-applications/01-readme',
+          slug: 'typescript/readme',
           language: 'TypeScript',
-          category: 'learn',
+          category: 'applications',
           title: 'README guide',
           description: readmeDescription,
           tags: ['Agent class'],
-          path: 'typescript/01-learn/01-readme',
+          path: 'typescript/02-applications/01-readme',
+          docs: [{ label: 'Tools', url: 'https://strandsagents.com/docs/tools/' }],
         },
         {
+          id: 'python/02-applications/02-notebook',
+          slug: 'python/notebook',
           language: 'Python',
-          category: 'learn',
+          category: 'applications',
           title: 'Notebook guide',
           description: notebookDescription,
-          path: 'python/01-learn/02-notebook',
+          path: 'python/02-applications/02-notebook',
           notebook: 'guide.ipynb',
+          docs: [{ label: 'Migration', url: 'https://strandsagents.com/docs/migrate/' }],
+        },
+        {
+          id: 'typescript/01-learn/01-workshop',
+          slug: 'typescript/workshop',
+          language: 'TypeScript',
+          category: 'learn',
+          title: 'TypeScript workshop lesson',
+          description: 'Protected TypeScript workshop curriculum is not published as an end-to-end example guide.',
+          path: 'typescript/01-learn/01-workshop',
+        },
+        {
+          id: 'python/01-learn/01-workshop',
+          slug: 'python/workshop',
+          language: 'Python',
+          category: 'learn',
+          title: 'Python workshop lesson',
+          description: 'Protected Python workshop curriculum is not published as an end-to-end example guide.',
+          path: 'python/01-learn/01-workshop',
         },
       ],
     } satisfies ManifestFixture)
   )
   write(
-    'typescript/01-learn/01-readme/README.md',
+    'typescript/02-applications/01-readme/README.md',
     [
       '# README guide',
       '',
@@ -124,13 +173,13 @@ beforeEach(() => {
       '# Secondary heading',
     ].join('\n')
   )
-  write('typescript/01-learn/01-readme/src/index.ts', 'export const ok = true\n')
-  write('typescript/01-learn/01-readme/images/one.png', 'one')
-  write('typescript/01-learn/01-readme/images/two.png', 'two')
-  write('typescript/01-learn/01-readme/images/html.png', 'html')
-  write('typescript/01-learn/01-readme/images/reference.png', 'reference')
+  write('typescript/02-applications/01-readme/src/index.ts', 'export const ok = true\n')
+  write('typescript/02-applications/01-readme/images/one.png', 'one')
+  write('typescript/02-applications/01-readme/images/two.png', 'two')
+  write('typescript/02-applications/01-readme/images/html.png', 'html')
+  write('typescript/02-applications/01-readme/images/reference.png', 'reference')
   write(
-    'python/01-learn/02-notebook/guide.ipynb',
+    'python/02-applications/02-notebook/guide.ipynb',
     JSON.stringify({
       metadata: { language_info: { name: 'Python' } },
       cells: [
@@ -144,6 +193,8 @@ beforeEach(() => {
       ],
     })
   )
+  write('typescript/01-learn/01-workshop/README.md', '# TypeScript workshop lesson\n\nProtected workshop curriculum.\n')
+  write('python/01-learn/01-workshop/README.md', '# Python workshop lesson\n\nProtected workshop curriculum.\n')
 
   git('init', '--quiet')
   git('config', 'user.email', 'test@example.com')
@@ -158,7 +209,7 @@ afterEach(() => {
 })
 
 describe('buildSampleGuides', () => {
-  it('turns README and notebook guides into path-ordered, reproducible site Markdown', async () => {
+  it('turns curated README and notebook guides into editorially ordered, reproducible site Markdown', async () => {
     const commit = git('rev-parse', 'HEAD')
     await expect(buildSampleGuides({ sourceDir, outputDir })).resolves.toEqual({
       repository: 'strands-agents/samples',
@@ -179,8 +230,63 @@ describe('buildSampleGuides', () => {
     await expect(notebook).toMatchFileSnapshot('./snapshots/sample-guide-importer/notebook.md')
   })
 
+  it('publishes only samples listed in top-level collections', async () => {
+    const commit = git('rev-parse', 'HEAD')
+    await expect(buildSampleGuides({ sourceDir, outputDir, requireSamples: true })).resolves.toEqual({
+      repository: 'strands-agents/samples',
+      commit,
+      sampleCount: 2,
+    })
+    expect(
+      (readdirSync(outputDir, { recursive: true }) as string[]).filter((file) => file.endsWith('.md')).sort()
+    ).toEqual(['python/notebook.md', 'typescript/readme.md'])
+    const readme = readFileSync(path.join(outputDir, 'typescript/readme.md'), 'utf8')
+    expect(readme).toContain('catalogMode: "curated"')
+    expect(readme).toContain('"id":"end-to-end"')
+    expect(readme).not.toMatch(/^placement:/m)
+  })
+
+  it('preserves workshop exclusion when reading a legacy manifest without editorial metadata', async () => {
+    updateManifest((manifest) => {
+      delete manifest.catalog
+      delete manifest.collections
+      for (const sample of manifest.samples) {
+        delete sample.docs
+        delete sample.family
+      }
+    })
+
+    await expect(buildSampleGuides({ sourceDir, outputDir })).resolves.toMatchObject({ sampleCount: 2 })
+    expect(
+      (readdirSync(outputDir, { recursive: true }) as string[]).filter((file) => file.endsWith('.md')).sort()
+    ).toEqual(['python/notebook.md', 'typescript/readme.md'])
+    const readme = readFileSync(path.join(outputDir, 'typescript/readme.md'), 'utf8')
+    expect(readme).toContain('catalogMode: "legacy"')
+    expect(readme).not.toMatch(/^collection:/m)
+  })
+
+  it('rejects collections without the curated catalog marker', async () => {
+    updateManifest((manifest) => {
+      delete manifest.catalog
+    })
+
+    await expect(buildSampleGuides({ sourceDir, outputDir })).rejects.toThrow(
+      'Samples manifest collections require catalog: "curated"'
+    )
+  })
+
+  it('rejects the curated catalog marker without collections', async () => {
+    updateManifest((manifest) => {
+      delete manifest.collections
+    })
+
+    await expect(buildSampleGuides({ sourceDir, outputDir })).rejects.toThrow(
+      'Curated samples manifest must define collections'
+    )
+  })
+
   it('allows unpublished README changes in local previews', async () => {
-    write('typescript/01-learn/01-readme/README.md', '# README guide\n\nUncommitted preview.\n')
+    write('typescript/02-applications/01-readme/README.md', '# README guide\n\nUncommitted preview.\n')
 
     await buildSampleGuides({ sourceDir, outputDir })
 
@@ -189,6 +295,7 @@ describe('buildSampleGuides', () => {
 
   it('rejects an empty catalog when samples are required', async () => {
     updateManifest((manifest) => {
+      manifest.collections = []
       manifest.samples = []
     })
 
@@ -209,7 +316,7 @@ describe('buildSampleGuides', () => {
 
   it('translates notebook shell commands and writefile cells for web guides', async () => {
     write(
-      'python/01-learn/02-notebook/guide.ipynb',
+      'python/02-applications/02-notebook/guide.ipynb',
       JSON.stringify({
         metadata: { language_info: { name: 'Python' } },
         cells: [
@@ -251,7 +358,7 @@ describe('buildSampleGuides', () => {
   it('handles many isolated backticks without variadic argument exhaustion', async () => {
     const content = `value = "${'` '.repeat(120_000)}done"`
     write(
-      'python/01-learn/02-notebook/guide.ipynb',
+      'python/02-applications/02-notebook/guide.ipynb',
       JSON.stringify({
         metadata: { language_info: { name: 'Python' } },
         cells: [{ cell_type: 'code', source: [content] }],
@@ -271,7 +378,7 @@ describe('buildSampleGuides', () => {
   })
 
   it('rejects a sample symlink that resolves outside the checkout', async () => {
-    const samplePath = path.join(sourceDir, 'typescript/01-learn/01-readme')
+    const samplePath = path.join(sourceDir, 'typescript/02-applications/01-readme')
     const outsidePath = path.join(fixtureDir, 'outside-sample')
     rmSync(samplePath, { recursive: true, force: true })
     mkdirSync(outsidePath)
@@ -303,6 +410,77 @@ describe('buildSampleGuides', () => {
     )
   })
 
+  it('requires an explicit canonical slug in curated manifests', async () => {
+    updateManifest((manifest) => {
+      delete manifest.samples[0]!.slug
+    })
+    await expect(buildSampleGuides({ sourceDir, outputDir })).rejects.toThrow(
+      'typescript/02-applications/01-readme has no canonical catalog slug'
+    )
+  })
+
+  it('rejects duplicate collection membership', async () => {
+    updateManifest((manifest) => {
+      manifest.collections![0]!.samples.push('typescript/02-applications/01-readme')
+    })
+    await expect(buildSampleGuides({ sourceDir, outputDir })).rejects.toThrow(
+      'Duplicate sample typescript/02-applications/01-readme in collection end-to-end'
+    )
+  })
+
+  it('rejects samples assigned to more than one collection', async () => {
+    updateManifest((manifest) => {
+      manifest.collections![1]!.samples.push('typescript/02-applications/01-readme')
+    })
+
+    await expect(buildSampleGuides({ sourceDir, outputDir })).rejects.toThrow(
+      'Sample typescript/02-applications/01-readme belongs to multiple collections: end-to-end, amplifying-ai'
+    )
+  })
+
+  it('rejects collections that publish unknown samples', async () => {
+    updateManifest((manifest) => {
+      manifest.collections![0]!.samples = ['missing/sample']
+    })
+    await expect(buildSampleGuides({ sourceDir, outputDir })).rejects.toThrow(
+      'Collection end-to-end references unknown sample missing/sample'
+    )
+  })
+
+  it('rejects ambiguous published family languages', async () => {
+    updateManifest((manifest) => {
+      manifest.samples[0]!.family = 'shared'
+      manifest.samples[1]!.language = 'typescript'
+      manifest.samples[1]!.slug = 'typescript/notebook'
+      manifest.samples[1]!.family = 'shared'
+    })
+
+    await expect(buildSampleGuides({ sourceDir, outputDir })).rejects.toThrow(
+      'Duplicate published sample family language: shared/typescript'
+    )
+  })
+
+  it('rejects published family members assigned to different collections', async () => {
+    updateManifest((manifest) => {
+      manifest.samples[0]!.family = 'shared'
+      manifest.samples[1]!.family = 'shared'
+    })
+
+    await expect(buildSampleGuides({ sourceDir, outputDir })).rejects.toThrow(
+      'Published sample family shared belongs to multiple collections: end-to-end, amplifying-ai'
+    )
+  })
+
+  it('requires documentation links for published samples', async () => {
+    updateManifest((manifest) => {
+      delete manifest.samples[0]!.docs
+    })
+
+    await expect(buildSampleGuides({ sourceDir, outputDir })).rejects.toThrow(
+      'Published sample typescript/02-applications/01-readme has no documentation links'
+    )
+  })
+
   it('rejects unknown manifest fields', async () => {
     updateManifest((manifest) => {
       Object.assign(manifest, { repository: 'unexpected/repository' })
@@ -327,6 +505,14 @@ describe('buildSampleGuides', () => {
     await expect(buildSampleGuides({ sourceDir, outputDir })).rejects.toThrow('Unrecognized key')
   })
 
+  it('rejects non-HTTPS documentation links', async () => {
+    updateManifest((manifest) => {
+      manifest.samples[0]!.docs = [{ label: 'Unsafe', url: 'javascript:alert(1)' }]
+    })
+
+    await expect(buildSampleGuides({ sourceDir, outputDir })).rejects.toThrow('must use https')
+  })
+
   it('rejects unsupported sample languages', async () => {
     updateManifest((manifest) => {
       manifest.samples[0]!.language = 'ruby'
@@ -346,7 +532,7 @@ describe('buildSampleGuides', () => {
   })
 
   it('rejects unsafe link protocols', async () => {
-    write('typescript/01-learn/01-readme/README.md', '[Unsafe](javascript:alert(1))\n')
+    write('typescript/02-applications/01-readme/README.md', '[Unsafe](javascript:alert(1))\n')
 
     await expect(buildSampleGuides({ sourceDir, outputDir })).rejects.toThrow(
       'Sample guide contains an unsafe javascript: URL'
@@ -354,7 +540,7 @@ describe('buildSampleGuides', () => {
   })
 
   it('rejects protocol-relative URLs', async () => {
-    write('typescript/01-learn/01-readme/README.md', '[Unsafe](//evil.example/path)\n')
+    write('typescript/02-applications/01-readme/README.md', '[Unsafe](//evil.example/path)\n')
 
     await expect(buildSampleGuides({ sourceDir, outputDir })).rejects.toThrow(
       'Sample guide contains a protocol-relative URL'
@@ -362,7 +548,10 @@ describe('buildSampleGuides', () => {
   })
 
   it('rejects snippet directives in imported content', async () => {
-    write('typescript/01-learn/01-readme/README.md', ['```text', '---8<--- "../../../.git/config"', '```'].join('\n'))
+    write(
+      'typescript/02-applications/01-readme/README.md',
+      ['```text', '---8<--- "../../../.git/config"', '```'].join('\n')
+    )
 
     await expect(buildSampleGuides({ sourceDir, outputDir })).rejects.toThrow(
       'Sample guide contains a prohibited --8<-- snippet directive'
@@ -370,7 +559,10 @@ describe('buildSampleGuides', () => {
   })
 
   it('rejects snippet directives decoded from embedded HTML', async () => {
-    write('typescript/01-learn/01-readme/README.md', '<pre><code>--8&lt;-- "../../../.git/config"</code></pre>\n')
+    write(
+      'typescript/02-applications/01-readme/README.md',
+      '<pre><code>--8&lt;-- "../../../.git/config"</code></pre>\n'
+    )
 
     await expect(buildSampleGuides({ sourceDir, outputDir })).rejects.toThrow(
       'Sample guide contains a prohibited --8<-- snippet directive'
@@ -379,7 +571,7 @@ describe('buildSampleGuides', () => {
 
   it('rewrites repo-root links to commit-pinned GitHub URLs', async () => {
     write('shared/example.ts', 'export const shared = true\n')
-    write('typescript/01-learn/01-readme/README.md', '[Shared](/shared/example.ts?plain=1#L1)\n')
+    write('typescript/02-applications/01-readme/README.md', '[Shared](/shared/example.ts?plain=1#L1)\n')
     const commit = git('rev-parse', 'HEAD')
 
     await buildSampleGuides({ sourceDir, outputDir })
@@ -390,20 +582,20 @@ describe('buildSampleGuides', () => {
   })
 
   it('warns when a relative file link is missing', async () => {
-    write('typescript/01-learn/01-readme/README.md', '[Missing file](missing.txt)\n')
+    write('typescript/02-applications/01-readme/README.md', '[Missing file](missing.txt)\n')
     const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const commit = git('rev-parse', 'HEAD')
 
     await buildSampleGuides({ sourceDir, outputDir })
 
     expect(readFileSync(path.join(outputDir, 'typescript/readme.md'), 'utf8')).toContain(
-      `https://github.com/strands-agents/samples/blob/${commit}/typescript/01-learn/01-readme/missing.txt`
+      `https://github.com/strands-agents/samples/blob/${commit}/typescript/02-applications/01-readme/missing.txt`
     )
     expect(warning).toHaveBeenCalledWith(expect.stringContaining('links to missing relative target missing.txt'))
   })
 
   it('rejects a missing relative image', async () => {
-    write('typescript/01-learn/01-readme/README.md', '![Missing image](missing.png)\n')
+    write('typescript/02-applications/01-readme/README.md', '![Missing image](missing.png)\n')
 
     await expect(buildSampleGuides({ sourceDir, outputDir })).rejects.toThrow(
       'links to missing relative image missing.png'
@@ -411,8 +603,8 @@ describe('buildSampleGuides', () => {
   })
 
   it('derives missing image alt text from a descriptive filename', async () => {
-    write('typescript/01-learn/01-readme/images/architecture_2.png', 'architecture')
-    write('typescript/01-learn/01-readme/README.md', '# README guide\n\n![](images/architecture_2.png)\n')
+    write('typescript/02-applications/01-readme/images/architecture_2.png', 'architecture')
+    write('typescript/02-applications/01-readme/README.md', '# README guide\n\n![](images/architecture_2.png)\n')
 
     await buildSampleGuides({ sourceDir, outputDir })
 
@@ -422,25 +614,25 @@ describe('buildSampleGuides', () => {
   })
 
   it.each(['image.png', '1.png'])('uses fallback alt text for the generic filename %s', async (fileName) => {
-    write(`typescript/01-learn/01-readme/images/${fileName}`, 'image')
-    write('typescript/01-learn/01-readme/README.md', `# README guide\n\n![](images/${fileName})\n`)
+    write(`typescript/02-applications/01-readme/images/${fileName}`, 'image')
+    write('typescript/02-applications/01-readme/README.md', `# README guide\n\n![](images/${fileName})\n`)
     const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const commit = git('rev-parse', 'HEAD')
 
     await buildSampleGuides({ sourceDir, outputDir })
 
     expect(readFileSync(path.join(outputDir, 'typescript/readme.md'), 'utf8')).toContain(
-      `![README guide illustration](https://raw.githubusercontent.com/strands-agents/samples/${commit}/typescript/01-learn/01-readme/images/${fileName})`
+      `![README guide illustration](https://raw.githubusercontent.com/strands-agents/samples/${commit}/typescript/02-applications/01-readme/images/${fileName})`
     )
     expect(warning).toHaveBeenCalledTimes(1)
     expect(warning).toHaveBeenCalledWith(
-      'typescript/01-learn/01-readme/README.md contains an image without alt text or a descriptive filename; using fallback alt text "README guide illustration"'
+      'typescript/02-applications/01-readme/README.md contains an image without alt text or a descriptive filename; using fallback alt text "README guide illustration"'
     )
   })
 
   it('keeps a section heading when prose appears before the first H1', async () => {
     write(
-      'typescript/01-learn/01-readme/README.md',
+      'typescript/02-applications/01-readme/README.md',
       ['Introductory prose without a source title.', '', '# Important section', '', 'Section content.'].join('\n')
     )
 
@@ -453,7 +645,7 @@ describe('buildSampleGuides', () => {
 
   it('normalizes skipped heading levels beneath the page title', async () => {
     write(
-      'typescript/01-learn/01-readme/README.md',
+      'typescript/02-applications/01-readme/README.md',
       [
         '# README guide',
         '',
@@ -486,7 +678,7 @@ describe('buildSampleGuides', () => {
       manifest.samples[0]!.description = 'Short description.'
     })
     write(
-      'typescript/01-learn/01-readme/README.md',
+      'typescript/02-applications/01-readme/README.md',
       [
         '# README guide',
         '',
@@ -516,7 +708,7 @@ describe('buildSampleGuides', () => {
     updateManifest((manifest) => {
       manifest.samples[0]!.description = 'Stream responses (Coming Soon)'
     })
-    write('typescript/01-learn/01-readme/README.md', '# Streaming in Strands Agents\n\nComing Soon\n')
+    write('typescript/02-applications/01-readme/README.md', '# Streaming in Strands Agents\n\nComing Soon\n')
     const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
     await buildSampleGuides({ sourceDir, outputDir })
