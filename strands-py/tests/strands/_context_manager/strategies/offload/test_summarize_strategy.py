@@ -423,6 +423,66 @@ class TestServerSideSummary:
         ]
 
     @pytest.mark.asyncio
+    async def test_keeps_pinned_messages_after_server_side_summary(self, mock_agent, caplog):
+        mock_agent.model.model_info.capabilities.server_side_summary = True
+        summary = ContentBlock(summary={"provider": "anthropic", "text": "compacted"})
+        mock_agent.model.summarize = unittest.mock.AsyncMock(return_value=summary)
+        pinned = {"custom": {"pinned": True}}
+        earlier = ContentBlock(summary={"provider": "anthropic", "text": "earlier"})
+        messages: Messages = [
+            Message(role="user", content=[ContentBlock(text="task")]),
+            Message(role="assistant", content=[ContentBlock(text="old1")]),
+            Message(role="user", content=[ContentBlock(text="old2")]),
+            Message(role="assistant", content=[earlier, ContentBlock(text="pin")], metadata=pinned),
+            Message(role="user", content=[ContentBlock(text="old4")]),
+            Message(role="assistant", content=[ContentBlock(text="old5")]),
+            Message(role="user", content=[ContentBlock(text="recent")]),
+        ]
+        mock_agent.messages = messages
+        strategy = Offload.summarize("*").when(utilization=0.8, preserve_recent=1)
+
+        with caplog.at_level(logging.WARNING):
+            assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is True
+
+        sent = mock_agent.model.summarize.call_args.args[0]
+        assert len(sent) == 6
+        assert [block for message in messages for block in message["content"]] == [
+            ContentBlock(text="task"),
+            summary,
+            ContentBlock(text="pin"),
+            ContentBlock(text="recent"),
+        ]
+        assert [message["role"] for message in messages] == ["user", "assistant", "user"]
+        assert messages[1]["metadata"] == pinned
+        assert "pinned messages are kept after a server-side summary" in caplog.text
+        assert "not eligible" not in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_warns_about_kept_pinned_messages_once_per_strategy(self, mock_agent, caplog):
+        mock_agent.model.model_info.capabilities.server_side_summary = True
+        mock_agent.model.summarize = unittest.mock.AsyncMock(
+            return_value=ContentBlock(summary={"provider": "anthropic", "text": "compacted"})
+        )
+        strategy = Offload.summarize("*").when(utilization=0.8, preserve_recent=1)
+
+        def pinned_history() -> Messages:
+            return [
+                Message(role="user", content=[ContentBlock(text="task")]),
+                Message(role="assistant", content=[ContentBlock(text="pin")], metadata={"custom": {"pinned": True}}),
+                Message(role="user", content=[ContentBlock(text="old2")]),
+                Message(role="assistant", content=[ContentBlock(text="old3")]),
+                Message(role="user", content=[ContentBlock(text="recent")]),
+            ]
+
+        with caplog.at_level(logging.WARNING):
+            for _ in range(2):
+                messages = pinned_history()
+                mock_agent.messages = messages
+                assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9))
+
+        assert caplog.text.count("pinned messages are kept after a server-side summary") == 1
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize(
         ("agent_supports", "aux_supports"),
         [pytest.param(False, True, id="agent_model_unsupported"), pytest.param(True, False, id="aux_unsupported")],

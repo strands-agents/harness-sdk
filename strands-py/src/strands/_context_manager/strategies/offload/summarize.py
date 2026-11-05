@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from ....agent.conversation_manager.compression.pin_message import is_pinned
 from ....types.content import ContentBlock, Message
 from ....types.tools import ToolResult, ToolResultContent
 from ...methods.summarize import (
@@ -45,6 +46,18 @@ def _warn_client_side_fallback(model: Model, reason: str, *, exc_info: bool = Fa
     )
 
 
+def _is_summary(block: ContentBlock) -> bool:
+    return "summary" in block or ("text" in block and block["text"].startswith("[Summarized:"))
+
+
+def _without_summaries(message: Message) -> Message | None:
+    """Return ``message`` without the earlier summaries merged into it, or None when nothing else is left."""
+    content = [block for block in message["content"] if not _is_summary(block)]
+    if len(content) == len(message["content"]):
+        return message
+    return {**message, "content": content} if content else None
+
+
 class SummarizeStrategy(BaseOffloadStrategy):
     """Summarize strategy — replaces oversized content with LLM-generated summaries."""
 
@@ -61,6 +74,7 @@ class SummarizeStrategy(BaseOffloadStrategy):
     ) -> None:
         super().__init__(target, conditions)
         self._config: SummarizeConfig = config or {}
+        self._warned_kept_pins = False
 
     def when(
         self,
@@ -138,8 +152,10 @@ class SummarizeStrategy(BaseOffloadStrategy):
         """Summarize message 0 through the last of ``safe`` server-side, keeping message 0 in place.
 
         A server-side summary can only stand in for the conversation's exact start, so every message up to the last
-        of ``safe`` is covered, even ones ``safe`` leaves out (such as pinned messages). The summary becomes an
-        assistant message at index 1, leading any assistant content after it once alternation is repaired.
+        of ``safe`` is sent, even ones ``safe`` leaves out. The summary becomes an assistant message at index 1,
+        followed by the pinned messages it covered, without earlier summaries merged into them; it leads any
+        assistant content after it once alternation is repaired. Pinned messages kept after the summary invalidate
+        the thinking in the messages after them.
 
         Returns:
             False when the server-side summary failed, so the caller summarizes client-side instead.
@@ -147,21 +163,37 @@ class SummarizeStrategy(BaseOffloadStrategy):
         messages = context.messages
         safe_ids = {id(message) for message in safe}
         end = max(index for index, message in enumerate(messages) if id(message) in safe_ids) + 1
-        if end - 1 > len(safe):
+        pinned = [message for index, message in enumerate(messages[1:end], start=1) if is_pinned(messages, index)]
+        replaced = end - 1 - len(pinned)
+        if replaced > len(safe):
             logger.warning(
                 "covered=<%d>, eligible=<%d> | a server-side summary covers the conversation's start"
                 " | summarizing messages that were not eligible too",
-                end - 1,
+                replaced,
                 len(safe),
             )
         agent = context.agent
         summary = await self._request_server_side_summary(model, agent, messages[:end])
         if summary is None:
             return False
-        messages[1:end] = [Message(role="assistant", content=[summary])]
+        kept = [kept for message in pinned if (kept := _without_summaries(message))]
+        messages[1:end] = [Message(role="assistant", content=[summary]), *kept]
+        if kept:
+            self._warn_kept_pins(model)
         _repair_alternation(messages)
-        logger.debug("summarized=<%s> | summarized opening messages server-side", end - 1)
+        logger.debug("summarized=<%s>, kept=<%s> | summarized opening messages server-side", replaced, len(kept))
         return True
+
+    def _warn_kept_pins(self, model: Model) -> None:
+        """Log, once per strategy, that pinned messages kept after a server-side summary cost kept thinking."""
+        if self._warned_kept_pins:
+            return
+        self._warned_kept_pins = True
+        logger.warning(
+            "model=<%s> | pinned messages are kept after a server-side summary"
+            " | thinking in the messages kept after the summary will be dropped",
+            type(model).__name__,
+        )
 
     async def _request_server_side_summary(
         self, model: Model, agent: Agent, messages: list[Message]
