@@ -15,6 +15,7 @@ import {
   type ChatEvent,
   type ChatRunResult,
 } from '../src/tui/chat/controller.js'
+import type { ChatTask } from '../src/tui/chat/types.js'
 import type { DevStatus } from '../src/dev/status.js'
 import { CliConfigStore } from '../src/tui/config.js'
 import { configurationFromStore, type RequestSetup, type SetupChange } from '../src/tui/agent-configuration.js'
@@ -37,68 +38,252 @@ function backend(): ChatBackend {
   }
 }
 
-describe('runInkChat', () => {
-  it('reloads the dev agent on a source save and keeps the conversation', async () => {
-    const directory = await realpath(await mkdtemp(join(tmpdir(), 'strands-dev-reload-')))
-    const sourcePath = join(directory, 'agent.ts')
-    await writeFile(sourcePath, 'first')
-    const captureConversation = async (): Promise<ChatConversation['snapshot']> => ({
-      scope: 'agent',
-      schemaVersion: '1.0',
-      createdAt: new Date().toISOString(),
-      data: { messages: [] },
-      appData: {},
-    })
-    const previous = new ChatController(
-      { ...backend(), captureConversation },
-      { initialMessages: [new Message({ role: 'user', content: [new TextBlock('Keep this turn.')] })] }
-    )
-    let current = previous
-    const source = vi.fn(async (_signal: AbortSignal, _setup: unknown, conversation?: ChatConversation) => {
+type DevBuild = (conversation: ChatConversation | undefined, signal: AbortSignal) => Promise<ChatControllerApi>
+type RenderedRoot = ReactElement<{ devStatus?: DevStatus; controller?: ChatControllerApi }>
+
+const captureConversation = async (): Promise<ChatConversation['snapshot']> => ({
+  scope: 'agent',
+  schemaVersion: '1.0',
+  createdAt: new Date().toISOString(),
+  data: { messages: [] },
+  appData: {},
+})
+
+function devController(overrides: Partial<ChatBackend> = {}): ChatController {
+  return new ChatController(
+    { ...backend(), captureConversation, ...overrides },
+    { initialMessages: [new Message({ role: 'user', content: [new TextBlock('Keep this turn.')] })] }
+  )
+}
+
+async function startDevChat(build: DevBuild) {
+  const directory = await realpath(await mkdtemp(join(tmpdir(), 'strands-dev-reload-')))
+  const sourcePath = join(directory, 'agent.ts')
+  await writeFile(sourcePath, 'first')
+  const source = vi.fn((signal: AbortSignal, _setup: unknown, conversation?: ChatConversation) =>
+    build(conversation, signal)
+  )
+  let exit!: () => void
+  const exited = new Promise<void>((resolve) => {
+    exit = resolve
+  })
+  const rerender = vi.fn()
+  const instance = { unmount: vi.fn(), cleanup: vi.fn(), rerender, waitUntilExit: () => exited } as unknown as Instance
+  const renderApp = vi.fn(() => instance)
+  const running = runInkChat(source, {
+    config: CliConfigStore.memory(),
+    dev: { root: directory, entrypoint: sourcePath },
+    intro: false,
+    alternateScreen: false,
+    renderApp: renderApp as never,
+  })
+  const root = (): RenderedRoot | undefined =>
+    (rerender.mock.calls.at(-1)?.[0] ?? (renderApp.mock.calls.at(-1) as unknown[] | undefined)?.[0]) as
+      RenderedRoot | undefined
+  return {
+    source,
+    rerender,
+    running,
+    exit,
+    status: () => root()?.props.devStatus?.reload,
+    shown: () => root()?.props.controller,
+    save: (content: string) => writeFile(sourcePath, content),
+    ready: () => vi.waitFor(() => expect(renderApp).toHaveBeenCalled(), { timeout: 5000 }),
+    close: async (): Promise<void> => {
+      exit()
+      await running
+      await rm(directory, { recursive: true, force: true })
+    },
+  }
+}
+
+const settled = { timeout: 5000 }
+
+describe('runInkChat in dev mode', () => {
+  it('reloads on a save, keeps the conversation, and keeps the agent when a reload fails', async () => {
+    const previous = devController()
+    let current: ChatController | undefined
+    const chat = await startDevChat(async (conversation) => {
       if (!conversation) return previous
       current = new ChatController({ ...backend(), captureConversation }, { initialTurns: conversation.completedTurns })
       return current
     })
-    let finish!: () => void
-    const rerender = vi.fn()
-    const instance = {
-      unmount: vi.fn(),
-      cleanup: vi.fn(),
-      rerender,
-      waitUntilExit: () =>
-        new Promise<void>((resolve) => {
-          finish = resolve
-        }),
-    } as unknown as Instance
-    const devStatus = (): DevStatus | undefined =>
-      (rerender.mock.calls.at(-1)?.[0] as ReactElement<{ devStatus?: DevStatus }> | undefined)?.props.devStatus
-    const running = runInkChat(source, {
-      config: CliConfigStore.memory(),
-      dev: { root: directory, entrypoint: sourcePath },
-      intro: false,
-      alternateScreen: false,
-      renderApp: (() => instance) as never,
-    })
     try {
-      await vi.waitFor(() => expect(finish).toBeDefined())
-      await writeFile(sourcePath, 'second')
-      await vi.waitFor(() => expect(devStatus()?.reload).toEqual({ kind: 'reloaded' }), { timeout: 3000 })
-      expect(source).toHaveBeenCalledTimes(2)
-      expect(current).not.toBe(previous)
-      expect(current.getSnapshot().completedTurns[0]?.prompt).toBe('Keep this turn.')
+      await chat.ready()
+      await chat.save('second')
+      await vi.waitFor(() => expect(chat.status()).toEqual({ kind: 'reloaded' }), settled)
+      expect(chat.shown()).toBe(current)
+      expect(current!.getSnapshot().completedTurns[0]?.prompt).toBe('Keep this turn.')
 
-      source.mockRejectedValueOnce(new Error('Bad source edit'))
-      await writeFile(sourcePath, 'invalid')
-      await vi.waitFor(() => expect(current.getSnapshot().panel?.title).toBe('Reload failed'), { timeout: 3000 })
-      expect(devStatus()?.reload).toEqual({ kind: 'failed', message: 'Bad source edit' })
-      expect(current.getSnapshot().completedTurns[0]?.prompt).toBe('Keep this turn.')
+      const reloaded = current!
+      chat.source.mockRejectedValueOnce(new Error('Bad source edit'))
+      await chat.save('invalid')
+      await vi.waitFor(() => expect(chat.status()).toEqual({ kind: 'failed', message: 'Bad source edit' }), settled)
+      expect(reloaded.getSnapshot().panel?.title).toBe('Reload failed')
+      expect(chat.shown()).toBe(reloaded)
+      expect(reloaded.getSnapshot().status).not.toBe('closed')
+      expect(reloaded.getSnapshot().completedTurns[0]?.prompt).toBe('Keep this turn.')
     } finally {
-      finish()
-      await running
-      await rm(directory, { recursive: true, force: true })
+      await chat.close()
     }
   })
 
+  it('reloads while a todo is unfinished', async () => {
+    const previous = devController({
+      watchTasks: (listener) => {
+        listener([{ id: 'todo-1', label: 'Check the order', status: 'in_progress', source: 'todo' }])
+        return () => {}
+      },
+    })
+    const chat = await startDevChat(async (conversation) => (conversation ? devController() : previous))
+    try {
+      await chat.ready()
+      await chat.save('second')
+      await vi.waitFor(() => expect(chat.status()).toEqual({ kind: 'reloaded' }), settled)
+    } finally {
+      await chat.close()
+    }
+  })
+
+  it('waits for a background result that is not delivered yet', async () => {
+    let pushTasks!: (tasks: readonly ChatTask[]) => void
+    const previous = devController({
+      watchTasks: (listener) => {
+        pushTasks = listener
+        listener([
+          { id: 'task-1', label: 'reviewer', status: 'completed', source: 'background', deliveryState: 'ready' },
+        ])
+        return () => {}
+      },
+    })
+    const chat = await startDevChat(async (conversation) => (conversation ? devController() : previous))
+    try {
+      await chat.ready()
+      await chat.save('second')
+      await vi.waitFor(() => expect(chat.status()).toEqual({ kind: 'pending' }), settled)
+      expect(chat.source).toHaveBeenCalledTimes(1)
+      pushTasks([])
+      await vi.waitFor(() => expect(chat.status()).toEqual({ kind: 'reloaded' }), settled)
+    } finally {
+      await chat.close()
+    }
+  })
+
+  it('keeps the old chat on screen while the new agent loads', async () => {
+    const previous = devController()
+    const replacement = devController()
+    let release: (() => void) | undefined
+    const chat = await startDevChat(async (conversation) => {
+      if (!conversation) return previous
+      await new Promise<void>((resolve) => {
+        release = resolve
+      })
+      return replacement
+    })
+    try {
+      await chat.ready()
+      await chat.save('second')
+      await vi.waitFor(() => expect(release).toBeDefined(), settled)
+      expect(chat.rerender.mock.calls.every(([root]) => (root as RenderedRoot).props.controller !== undefined)).toBe(
+        true
+      )
+      expect(chat.shown()).toBe(previous)
+      release!()
+      await vi.waitFor(() => expect(chat.shown()).toBe(replacement), settled)
+    } finally {
+      release?.()
+      await chat.close()
+    }
+  })
+
+  it('discards a replacement that a new turn made stale and tries again', async () => {
+    const previous = devController()
+    const stale = devController()
+    const disposeStale = vi.spyOn(stale, 'dispose')
+    let release: (() => void) | undefined
+    let builds = 0
+    const chat = await startDevChat(async (conversation) => {
+      if (!conversation) return previous
+      builds += 1
+      if (builds > 1) return devController()
+      await new Promise<void>((resolve) => {
+        release = resolve
+      })
+      return stale
+    })
+    try {
+      await chat.ready()
+      await chat.save('second')
+      await vi.waitFor(() => expect(release).toBeDefined(), settled)
+      await previous.submit('A turn during the build')
+      release!()
+      await vi.waitFor(() => expect(chat.status()).toEqual({ kind: 'reloaded' }), settled)
+      expect(disposeStale).toHaveBeenCalled()
+      expect(builds).toBe(2)
+    } finally {
+      release?.()
+      await chat.close()
+    }
+  })
+
+  it('cancels a reload when the chat closes while the new agent loads', async () => {
+    const previous = devController()
+    const replacement = devController()
+    const disposeReplacement = vi.spyOn(replacement, 'dispose')
+    let release: (() => void) | undefined
+    let buildSignal: AbortSignal | undefined
+    const chat = await startDevChat(async (conversation, signal) => {
+      if (!conversation) return previous
+      buildSignal = signal
+      await new Promise<void>((resolve) => {
+        release = resolve
+      })
+      return replacement
+    })
+    try {
+      await chat.ready()
+      await chat.save('second')
+      await vi.waitFor(() => expect(release).toBeDefined(), settled)
+      previous.close(0)
+      chat.exit()
+      await vi.waitFor(() => expect(buildSignal?.aborted).toBe(true))
+      release!()
+      await chat.running
+      expect(disposeReplacement).toHaveBeenCalled()
+      expect(chat.shown()).toBe(previous)
+    } finally {
+      release?.()
+      await chat.close()
+    }
+  })
+
+  it('reloads once the chat is ready after a save during startup', async () => {
+    const previous = devController()
+    let release: (() => void) | undefined
+    const chat = await startDevChat(async (conversation) => {
+      if (conversation) return devController()
+      await new Promise<void>((resolve) => {
+        release = resolve
+      })
+      return previous
+    })
+    try {
+      for (let attempt = 0; attempt < 10; attempt += 1) {
+        await chat.save(`edit ${attempt}`)
+        await new Promise((resolve) => setTimeout(resolve, 100))
+      }
+      await new Promise((resolve) => setTimeout(resolve, 400))
+      release!()
+      await vi.waitFor(() => expect(chat.source.mock.calls.length).toBeGreaterThanOrEqual(2), settled)
+      await vi.waitFor(() => expect(chat.status()).toEqual({ kind: 'reloaded' }), settled)
+    } finally {
+      release?.()
+      await chat.close()
+    }
+  })
+})
+
+describe('runInkChat', () => {
   it('retains chat on reload or failed setup', async () => {
     const config = CliConfigStore.memory(
       {},

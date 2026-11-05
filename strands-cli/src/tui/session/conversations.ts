@@ -10,7 +10,6 @@ import type {
   ChatVoiceStore,
 } from '../chat/controller.js'
 import { parseCommandInvocation } from '../chat/commands.js'
-import { isUnresolvedBackgroundTask } from '../chat/controller-helpers.js'
 import { errorMessage, sanitizeTerminalText } from '../terminal/sanitize.js'
 import type { AgentMessaging } from '../messaging.js'
 import { conversationStatus, conversationTitle, readConversationValue, unquote } from './conversation-helpers.js'
@@ -103,14 +102,16 @@ export class ConversationManager implements ChatControllerApi {
 
   readonly getSnapshot = (): ChatSnapshot => this._snapshot
 
-  captureConversation(conversationId = this._activeId): ReturnType<ChatController['captureConversation']> {
-    if (
+  hasRunningWork(): boolean {
+    return (
       this._forking ||
       this._resuming ||
-      [...this._conversations.values()].some(
-        ({ controller }) => controller.busy || controller.getSnapshot().tasks.some(isUnresolvedBackgroundTask)
-      )
-    ) {
+      [...this._conversations.values()].some(({ controller }) => controller.hasRunningWork())
+    )
+  }
+
+  captureConversation(conversationId = this._activeId): ReturnType<ChatController['captureConversation']> {
+    if (this.hasRunningWork()) {
       return Promise.reject(
         new Error('Finish or cancel running work in all conversations before applying setup changes.')
       )

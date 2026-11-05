@@ -96,6 +96,18 @@ describe('createReloader', () => {
     expect(states.at(-1)).toEqual({ kind: 'reloaded' })
   })
 
+  it('arms no timer when it closes during a reload', async () => {
+    let finish!: (outcome: ReloadOutcome) => void
+    const reload = vi.fn(() => new Promise<ReloadOutcome>((resolve) => (finish = resolve)))
+    const { states, reloader } = setup({ reload })
+    reloader.request()
+    reloader.close()
+    finish('reloaded')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(vi.getTimerCount()).toBe(0)
+    expect(states).toEqual([{ kind: 'reloading' }])
+  })
+
   it('stays quiet after a cancelled reload and after close', async () => {
     const reload = vi.fn(async (): Promise<ReloadOutcome> => 'cancelled')
     const { states, reloader } = setup({ reload })

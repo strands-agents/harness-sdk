@@ -31,14 +31,15 @@ export function createReloader(options: ReloaderOptions): Reloader {
   }
   const schedule = (): void => {
     clearTimeout(retry)
-    retry = setTimeout(attempt, retryMs)
+    retry = setTimeout(attempt, retryMs).unref()
   }
   const settled = (outcome: ReloadOutcome): void => {
+    if (closed) return
     if (outcome === 'deferred') {
       pending = true
     } else if (outcome === 'reloaded') {
       status({ kind: 'reloaded' })
-      settle = setTimeout(() => status({ kind: 'watching' }), settleMs)
+      settle = setTimeout(() => status({ kind: 'watching' }), settleMs).unref()
     }
   }
   function attempt(): void {

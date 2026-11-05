@@ -504,6 +504,8 @@ export interface ChatControllerApi {
   readonly voice?: ChatVoiceStore
   readonly busy: boolean
   readonly hardExitCode: number | undefined
+  /** True while any turn, fork, resume, or background task would make `captureConversation` reject. */
+  hasRunningWork?(): boolean
   captureConversation?(conversationId?: string): Promise<ChatConversation>
   pauseVoiceInput?(): (target: ChatControllerApi) => void
   showError?(title: string, message: string): void

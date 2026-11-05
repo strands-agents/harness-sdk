@@ -224,11 +224,15 @@ export class ChatController implements ChatControllerApi {
 
   readonly getSnapshot = (): ChatSnapshot => this._snapshot
 
+  hasRunningWork(): boolean {
+    return this.busy || this._hasUnresolvedBackgroundTasks()
+  }
+
   async captureConversation(): Promise<ChatConversation> {
     if (!this._backend.captureConversation) {
       throw new Error('This agent cannot transfer its conversation.')
     }
-    if (this.busy || this._hasUnresolvedBackgroundTasks()) {
+    if (this.hasRunningWork()) {
       throw new Error('Finish or cancel running work before applying setup changes.')
     }
     const session = this._backend.sessionIdentity

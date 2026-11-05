@@ -9,7 +9,6 @@ import { ChatRoot, type ChatLaunch, type SetupBridge } from './view/chat-root.js
 import { DevStatusContext } from './view/dev-status-context.js'
 import type { McpTrustRequest } from './view/mcp-trust-prompt.js'
 import type { ChatControllerApi, ChatConversation } from './chat/controller.js'
-import { isActiveTask } from './chat/controller-helpers.js'
 import type { CliConfigStore } from './config.js'
 import { configurationFromStore, type RequestSetup } from './agent-configuration.js'
 import { hardExitProcessTree } from './terminal/process-tree.js'
@@ -59,6 +58,30 @@ function ChatSession({
   return createElement(DevStatusContext.Provider, { value: devStatus }, createElement(ChatRoot, props))
 }
 
+function hasRunningWork(controller: ChatControllerApi): boolean {
+  return controller.hasRunningWork?.() ?? controller.busy
+}
+
+// Work can start between the reload check and the capture. The reload then waits instead of failing.
+async function captureForReload(controller: ChatControllerApi): Promise<ChatConversation | undefined | 'busy'> {
+  try {
+    return await controller.captureConversation?.()
+  } catch (error) {
+    if (hasRunningWork(controller)) return 'busy'
+    throw error
+  }
+}
+
+function replacementIsStale(
+  previous: ChatControllerApi,
+  current: ChatControllerApi | undefined,
+  completedTurns: number
+): boolean {
+  return (
+    current !== previous || hasRunningWork(previous) || previous.getSnapshot().completedTurns.length !== completedTurns
+  )
+}
+
 export async function runInkChat(source: ChatControllerSource, options: RunInkChatOptions = {}): Promise<number> {
   const input = options.input ?? process.stdin
   const output = options.output ?? process.stdout
@@ -83,6 +106,9 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
     ? { entrypoint: relative(options.dev.root, options.dev.entrypoint), reload: { kind: 'watching' } }
     : undefined
   let stopDevReload: (() => void) | undefined
+  const devWarnings: string[] = []
+  let reloadInFlight = false
+  let exiting = false
   const setupBridge: SetupBridge = {
     request: (): void => {},
     confirmMcp: (workspace, paths): Promise<boolean> =>
@@ -233,22 +259,24 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
   // The previous agent stays on screen while its replacement loads. A turn that starts meanwhile
   // makes the replacement stale, so the reloader tries again later.
   const reloadController = async (): Promise<ReloadOutcome> => {
-    if (pendingExitCode !== undefined) return 'cancelled'
     const previous = controller
+    if (exiting || pendingExitCode !== undefined) return 'cancelled'
     if (!previous || replacementTask) return 'deferred'
     const turns = previous.getSnapshot().completedTurns.length
     let release = (): void => {}
     replacementTask = new Promise<void>((resolve) => {
       release = resolve
     })
+    reloadInFlight = true
     try {
-      const conversation = await previous.captureConversation?.()
+      const conversation = await captureForReload(previous)
+      if (conversation === 'busy') return 'deferred'
       const replacement = await initializeController(undefined, conversation)
-      if (pendingExitCode !== undefined) {
+      if (exiting || pendingExitCode !== undefined || previous.getSnapshot().status === 'closed') {
         await replacement.dispose()
         return 'cancelled'
       }
-      if (controller !== previous || previous.busy || previous.getSnapshot().completedTurns.length !== turns) {
+      if (replacementIsStale(previous, controller, turns)) {
         await replacement.dispose()
         return 'deferred'
       }
@@ -260,20 +288,17 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
       await Promise.allSettled([previous.dispose()])
       return 'reloaded'
     } finally {
+      reloadInFlight = false
       replacementTask = undefined
       release()
     }
   }
   const startDevReload = ({ root }: DevChatOptions): (() => void) => {
     const reloader = createReloader({
-      canReload: () =>
-        controller !== undefined &&
-        replacementTask === undefined &&
-        !controller.busy &&
-        !controller.getSnapshot().tasks.some((task) => isActiveTask(task.status)),
+      canReload: () => controller !== undefined && replacementTask === undefined && !hasRunningWork(controller),
       reload: reloadController,
       onStatus: (reload) => {
-        if (pendingExitCode !== undefined || !devStatus) return
+        if (exiting || pendingExitCode !== undefined || !devStatus) return
         devStatus = { ...devStatus, reload }
         if (reload.kind === 'failed') controller?.showError?.('Reload failed', reload.message)
         instance?.rerender(chatRoot())
@@ -282,7 +307,10 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
     const watcher = watchSources({
       root,
       onChange: () => reloader.request(),
-      onWarning: (message) => controller?.showError?.('Source watch', message),
+      onWarning: (message) => {
+        if (controller?.showError) controller.showError('Source watch', message)
+        else devWarnings.push(message)
+      },
     })
     return () => {
       watcher.close()
@@ -303,6 +331,8 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
     } else {
       controller = source
     }
+    // Watch before the first build so that a save during startup reloads once the chat is ready.
+    if (options.dev && controllerFactory) stopDevReload = startDevReload(options.dev)
     if (controller || options.setup) renderChat()
     const setupExit = await setupTask
     if (setupExit !== 0) {
@@ -335,11 +365,13 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
     if (!controller) {
       throw new Error('Controller initialization did not return a controller.')
     }
-    if (options.dev && controllerFactory) stopDevReload = startDevReload(options.dev)
+    for (const message of devWarnings.splice(0)) controller.showError?.('Source watch', message)
     startTasks.push(controller.start(options.firstRequest))
     await instance!.waitUntilExit()
     return controller.getSnapshot().exitCode ?? 0
   } finally {
+    exiting = true
+    if (reloadInFlight && !startupAbort.signal.aborted) startupAbort.abort(new Error('The chat is closing.'))
     stopDevReload?.()
     process.off('SIGINT', onSigint)
     process.off('SIGTERM', onSigterm)

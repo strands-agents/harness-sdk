@@ -55,9 +55,11 @@ describe('ConversationManager', () => {
       await manager.submit('/fork')
       const running = manager.submit('Keep working')
       await vi.waitFor(() => expect(manager.busy).toBe(true))
+      expect(manager.hasRunningWork()).toBe(true)
       await expect(manager.captureConversation('agent-1')).rejects.toThrow('all conversations')
       release()
       await running
+      expect(manager.hasRunningWork()).toBe(false)
       await expect(manager.captureConversation('agent-1')).resolves.toMatchObject({ snapshot })
     } finally {
       release()
@@ -475,6 +477,26 @@ describe('ConversationManager', () => {
       runtime: { cwd: '/work/one' },
       completedTurns: [{ prompt: 'keep this conversation' }],
     })
+  })
+
+  it('counts unresolved background tasks as running work but not todos', () => {
+    let taskListener: ((tasks: readonly ChatTask[]) => void) | undefined
+    const target = backend('primary', emptyRun)
+    target.watchTasks = (listener) => {
+      taskListener = listener
+      listener([])
+      return () => {}
+    }
+    const controller = new ChatController(target)
+
+    taskListener?.([{ id: 'todo-1', label: 'Check the order', status: 'in_progress', source: 'todo' }])
+    expect(controller.hasRunningWork()).toBe(false)
+
+    taskListener?.([
+      { id: 'task-1', label: 'reviewer', status: 'completed', source: 'background', deliveryState: 'ready' },
+    ])
+    expect(controller.busy).toBe(false)
+    expect(controller.hasRunningWork()).toBe(true)
   })
 
   it('blocks saved-session activation while a background result awaits delivery', async () => {
