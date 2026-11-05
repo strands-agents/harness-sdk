@@ -200,7 +200,7 @@ github:
     expect(loaded).toEqual(fixture.manifest)
   })
 
-  it('keeps upstream stable docs in preview until the site promotes them', () => {
+  it('uses preview site status when the deprecated upstream status is stable', () => {
     const fixture = createFixture()
     const manifest = {
       ...fixture.manifest,
@@ -210,7 +210,7 @@ github:
     expect(buildExternalDocsProduct({ ...fixture, manifest })).toEqual(buildExternalDocsProduct(fixture))
   })
 
-  it('uses the site configuration as the publication authority', () => {
+  it('uses stable site status when the deprecated upstream status is preview', () => {
     const fixture = createFixture()
     const config = { ...fixture.config, publicationStatus: 'stable' as const }
     const built = buildExternalDocsProduct({ ...fixture, config })

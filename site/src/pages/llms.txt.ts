@@ -59,22 +59,23 @@ function extractLinks(
   return lines
 }
 
-function buildLlmsTxt(
+export function buildLlmsTxt(
   docs: CollectionEntry<'docs'>[],
   sidebar: StarlightSidebarItem[],
   sampleGuides: CollectionEntry<'sampleGuides'>[],
   blogPosts: CollectionEntry<'blog'>[],
-  releases: ChangelogRelease[],
-  excludedSlugs: ReadonlySet<string>
+  releases: ChangelogRelease[]
 ): string {
   const lines: string[] = []
   const includedSlugs = new Set<string>()
+  const excludedSlugs = new Set(docs.filter(({ data }) => data.externalDocs?.status === 'preview').map((doc) => doc.id))
+  const publishedDocs = docs.filter((doc) => !excludedSlugs.has(doc.id))
 
   // Frontmatter descriptions keyed by doc id, for annotating sidebar-derived
   // links. Sidebar slugs live in the same namespace (sidebar.ts validates each
   // against src/content files); if that ever diverges, a miss here degrades to
   // a link without a description rather than an error.
-  const descriptions = new Map(docs.map((doc) => [doc.id, doc.data.description]))
+  const descriptions = new Map(publishedDocs.map((doc) => [doc.id, doc.data.description]))
 
   lines.push('# Strands Agents')
   lines.push('')
@@ -99,7 +100,7 @@ function buildLlmsTxt(
   }
 
   // API sections - group by python/typescript
-  const apiDocs = docs.filter((doc) => doc.id.startsWith('docs/api/'))
+  const apiDocs = publishedDocs.filter((doc) => doc.id.startsWith('docs/api/'))
   const pythonApi = apiDocs.filter((doc) => doc.id.startsWith('docs/api/python/'))
   const typescriptApi = apiDocs.filter((doc) => doc.id.startsWith('docs/api/typescript/'))
 
@@ -131,7 +132,7 @@ function buildLlmsTxt(
   // detail pages and some hub pages are intentionally linked from content
   // instead, but a live documentation page must still be discoverable in
   // llms.txt. Keep the curated order above, then append every remaining doc.
-  const remainingDocs = docs
+  const remainingDocs = publishedDocs
     .filter((doc) => doc.id !== '404' && !includedSlugs.has(doc.id))
     .sort((a, b) => a.id.localeCompare(b.id))
 
@@ -195,17 +196,13 @@ function buildLlmsTxt(
 }
 
 export const GET: APIRoute = async () => {
-  const allDocs = await getCollection('docs', ({ data }) => !data.draft)
-  const excludedSlugs = new Set(
-    allDocs.filter(({ data }) => data.externalDocs?.status === 'preview').map((doc) => doc.id)
-  )
-  const docs = allDocs.filter((doc) => !excludedSlugs.has(doc.id))
+  const docs = await getCollection('docs', ({ data }) => !data.draft)
   const sidebar = loadSidebarFromConfig(path.resolve('./src/config/navigation.yml'), path.resolve('./src/content'))
 
   const sampleGuides = await getCollection('sampleGuides')
   const blogPosts = await getCollection('blog', ({ data }) => !data.draft)
   const releases = await getReleases()
-  const content = buildLlmsTxt(docs, sidebar, sampleGuides, blogPosts, releases, excludedSlugs)
+  const content = buildLlmsTxt(docs, sidebar, sampleGuides, blogPosts, releases)
 
   return new Response(content, {
     headers: {

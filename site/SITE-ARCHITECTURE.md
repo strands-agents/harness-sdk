@@ -157,13 +157,13 @@ components, title, description, and `nav: { group: string, order: positive integ
 Group/order pairs must also be unique. The files are not evaluated as MDX, so braces and
 import/export-like prose remain literal text.
 
-The upstream product status is `preview` or `stable` metadata describing the source repository's
-view of its documentation. The site registry is the publication authority: its
-`publicationStatus` determines whether imported pages are preview or stable on this site.
-Preview pages render a documentation-preview caution and remain out of search and
-machine-readable publication surfaces. Stable imported pages are automatically included in
-`llms.txt`, `llms-full.txt`, search, and the sitemap; there is no separate machine-readable indexing
-switch. A lock-only update cannot promote pages.
+The manifest's optional `product.status` field is deprecated schema-v1 compatibility metadata.
+When present, it must be `preview` or `stable`, but it never gates publication. The site registry
+is the publication authority: its `publicationStatus` determines whether imported pages are
+preview or stable on this site. Preview pages render a documentation-preview caution and remain
+out of search and machine-readable publication surfaces. Stable imported pages are automatically
+included in `llms.txt`, `llms-full.txt`, search, and the sitemap; there is no separate
+machine-readable indexing switch. A lock-only update cannot promote pages.
 
 #### Site registry and lock
 
@@ -186,9 +186,9 @@ Automatic refreshes are intentionally disabled so upstream activity does not cre
 lock PRs. There is no fixed refresh cadence: maintainers run the workflow on demand before site
 changes that affect federation compatibility, or when they intentionally want CI and local builds
 to adopt a newer upstream baseline.
-The upstream status does not gate publication. This lets the site promote or preview a pinned
-snapshot without requiring a coordinated source-repository change. The workflow summary and PR
-body link to each upstream old-to-new commit comparison.
+The deprecated upstream status does not gate publication. This lets the site promote or preview a
+pinned snapshot without requiring a coordinated source-repository change. The workflow summary and
+PR body link to each upstream old-to-new commit comparison.
 
 #### Generated layout
 
