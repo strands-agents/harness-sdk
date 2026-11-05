@@ -6,6 +6,7 @@ import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 import { defineHarnessAgentConfig, type HarnessAgentConfig, type HarnessModuleReference } from '@strands-agents/harness'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { strToU8, zipSync } from 'fflate'
 
 import { CliConfigStore } from '../src/config/store.js'
 import { readProjectArchive } from '../src/project/archive.js'
@@ -53,6 +54,65 @@ describe('cross-platform exported agent E2E', () => {
 
   afterAll(async () => {
     await rm(root, { recursive: true, force: true })
+  })
+
+  it('extracts concurrent imports safely and installs their dependencies once', async () => {
+    const concurrentHome = join(root, 'concurrent-home')
+    await mkdir(concurrentHome)
+    const path = join(root, 'concurrent.zip')
+    const files = Object.fromEntries(
+      Array.from({ length: 500 }, (_, index) => [`wrapper/project/files/${index}.txt`, strToU8('source')])
+    )
+    await writeFile(
+      path,
+      zipSync({
+        ...files,
+        'wrapper/project/agent.ts': strToU8('export const agent = {}'),
+        'wrapper/project/package.json': strToU8(
+          JSON.stringify({ private: true, scripts: { postinstall: 'node install.cjs' } })
+        ),
+        'wrapper/project/install.cjs': strToU8(`
+          const fs = require('node:fs')
+          const path = require('node:path')
+          fs.appendFileSync('installation-count', 'installed\\n')
+          const deadline = Date.now() + 15000
+          const timer = setInterval(() => {
+            if ([0, 1, 2].every(index => fs.existsSync(path.join(process.env.STRANDS_TEST_BARRIER, 'ready-' + index)))) {
+              fs.mkdirSync('node_modules', { recursive: true })
+              clearInterval(timer)
+            } else if (Date.now() > deadline) {
+              process.exit(1)
+            }
+          }, 100)
+        `),
+      })
+    )
+    const module = pathToFileURL(join(process.cwd(), 'dist/src/project/archive.js')).href
+    const script = `
+      import { writeFileSync } from 'node:fs'
+      import { join } from 'node:path'
+      import { extractAgentArchive, prepareArchiveDependencies } from ${JSON.stringify(module)}
+      const root = extractAgentArchive(${JSON.stringify(path)})
+      writeFileSync(join(process.env.STRANDS_TEST_BARRIER, 'ready-' + process.argv[1]), '')
+      await prepareArchiveDependencies(root, 'typescript')
+      console.log(extractAgentArchive(${JSON.stringify(path)}))
+    `
+    const results = await Promise.allSettled(
+      [0, 1, 2].map((index) =>
+        run(process.execPath, ['--input-type=module', '-e', script, String(index)], {
+          env: { ...process.env, ...cliEnvironment(concurrentHome), STRANDS_TEST_BARRIER: concurrentHome },
+          timeout: 30_000,
+        })
+      )
+    )
+    const directories = results.map((result) => {
+      if (result.status === 'rejected') throw result.reason
+      return result.value.stdout.trim()
+    })
+    expect(new Set(directories).size).toBe(1)
+    expect(await readFile(join(directories[0]!, 'installation-count'), 'utf8')).toBe('installed\n')
+    const cache = join(concurrentHome, '.strands', 'cli', 'cache', 'agents')
+    expect((await readdir(cache)).filter((name) => name.endsWith('.lock') || name.startsWith('.extract-'))).toEqual([])
   })
 
   it('uses an agent across repeated export and import boundaries', { timeout: 480_000 }, async () => {

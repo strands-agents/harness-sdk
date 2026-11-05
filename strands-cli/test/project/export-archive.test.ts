@@ -110,8 +110,10 @@ it.each(['typescript', 'python'] as const)(
         callback(null, '', '')
       }
     })
+    execute.mockImplementationOnce((_command, _args, _options, callback) => callback(new Error('installer failed')))
+    await expect(prepareArchiveDependencies(project.root, language)).rejects.toThrow('Could not install')
     await prepareArchiveDependencies(project.root, language)
-    expect(execute).toHaveBeenCalledTimes(1)
+    expect(execute).toHaveBeenCalledTimes(2)
     expect(execute.mock.calls[0]?.[2].cwd).toBe(realpathSync(project.root))
     if (language === 'python') {
       expect(execute.mock.calls[0]?.[2].env).toMatchObject({ PIP_NO_CACHE_DIR: '1' })
@@ -125,7 +127,7 @@ it.each(['typescript', 'python'] as const)(
     await writeFile(join(source, filename), '')
     await writeFile(join(source, manifest), contents)
     await prepareArchiveDependencies(source, language)
-    expect(execute).toHaveBeenCalledTimes(1)
+    expect(execute).toHaveBeenCalledTimes(2)
   }
 )
 

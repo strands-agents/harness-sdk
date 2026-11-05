@@ -11,8 +11,9 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs'
-import { access, readFile, writeFile } from 'node:fs/promises'
-import { dirname, isAbsolute, join, resolve } from 'node:path'
+import { access, open, readFile, unlink, writeFile, type FileHandle } from 'node:fs/promises'
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { setTimeout as delay } from 'node:timers/promises'
 import { promisify } from 'node:util'
 
 import { Unzip, UnzipInflate, unzipSync } from 'fflate'
@@ -31,7 +32,6 @@ export const AGENT_ENTRYPOINTS = ['ts', 'mts', 'js', 'mjs', 'py'].flatMap((exten
 export const AGENT_ENTRYPOINT_FILE = '.strands-entrypoint'
 export const SOURCE_EXTENSION = /\.(?:ts|mts|js|mjs|py)$/u
 const run = promisify(execFile)
-const preparations = new Map<string, Promise<void>>()
 
 function archiveCache(): string {
   return userDirectory('cache', 'agents')
@@ -70,7 +70,13 @@ export function extractAgentArchive(path: string): string {
       }
     }
     archiveProjectRoot(realpathSync(temporary))
-    renameSync(temporary, destination)
+    try {
+      renameSync(temporary, destination)
+    } catch (error) {
+      // Another process may have finished extracting this same archive.
+      if (!['EEXIST', 'ENOTEMPTY', 'EPERM'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error
+      if (!lstatSync(destination).isDirectory()) throw error
+    }
     return archiveProjectRoot(realpathSync(destination))
   } finally {
     rmSync(temporary, { recursive: true, force: true })
@@ -176,14 +182,47 @@ export async function prepareArchiveDependencies(root: string, language: AgentPr
   }
   root = realpathSync(root)
   if (root === cache || !containsPath(cache, root)) return
-  let preparation = preparations.get(root)
-  if (!preparation) {
-    preparation = installDependencies(root, language).finally(() => {
-      preparations.delete(root)
-    })
-    preparations.set(root, preparation)
+  // Keep the lock outside the archive: wrapped projects must still have a single child directory.
+  const lockPath = join(cache, `${relative(cache, root).split(sep)[0]}.dependencies.lock`)
+  const deadline = Date.now() + 3 * 180_000
+  let lock: FileHandle | undefined
+  while (!lock) {
+    try {
+      lock = await open(lockPath, 'wx', 0o600)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+      try {
+        const pid = Number(await readFile(lockPath, 'utf8'))
+        if (Number.isSafeInteger(pid) && pid > 0) {
+          try {
+            process.kill(pid, 0)
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error
+            throw new Error(`An interrupted dependency installation left ${lockPath}. Remove this file and retry.`, {
+              cause: error,
+            })
+          }
+        }
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue
+        if ((error as NodeJS.ErrnoException).code !== 'EPERM') throw error
+      }
+      if (Date.now() >= deadline) {
+        throw new Error(
+          `Another process is installing this agent's dependencies. If it has stopped, remove ${lockPath} and retry.`,
+          { cause: error }
+        )
+      }
+      await delay(100)
+    }
   }
-  await preparation
+  try {
+    await lock.writeFile(String(process.pid))
+    await installDependencies(root, language)
+  } finally {
+    await lock.close()
+    await unlink(lockPath)
+  }
 }
 
 async function installDependencies(root: string, language: AgentProjectLanguage): Promise<void> {
@@ -235,7 +274,7 @@ async function installDependencies(root: string, language: AgentProjectLanguage)
       await run(
         python,
         ['-m', 'pip', 'install', ...(contents[0] ? ['-r', 'requirements.txt'] : ['.'])],
-        // Build-isolation subprocesses inherit the environment, but not pip's command-line flags.
+        // Keep downloads out of exported source; build-isolation subprocesses inherit env, not pip flags.
         { ...options, env: { ...process.env, PIP_NO_CACHE_DIR: '1' } }
       )
     }
