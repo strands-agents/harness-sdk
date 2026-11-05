@@ -14,7 +14,7 @@ import re
 from strands.tools.decorator import tool
 from strands.types.tools import ToolContext, ToolResult
 
-from .media_validation import document_problem, image_problem
+from .media_validation import document_problem, image_problem, image_size
 
 _READ_DEFAULT_LIMIT = 2000
 
@@ -98,6 +98,21 @@ def _media_result(
     return {"toolUseId": tool_use_id, "status": "success", "content": [{kind: block}]}
 
 
+def _raise_if_too_large(
+    path: str, image_format: str, data: bytes, max_bytes: int | None, max_dimension: int | None
+) -> None:
+    # The model rejects a larger image, and the rejected block stays in history, failing every later turn.
+    width, height = image_size(data, image_format) or (0, 0)
+    if (max_bytes is None or len(data) <= max_bytes) and (max_dimension is None or max(width, height) <= max_dimension):
+        return
+    limits = [f"{max_bytes} bytes" if max_bytes else "", f"{max_dimension} px per side" if max_dimension else ""]
+    raise ValueError(
+        f"{path} is a {width}x{height} px {image_format} image of {len(data)} bytes, larger than this model accepts "
+        f"({' and '.join(filter(None, limits))}). Write a smaller copy with a shell tool (for example ImageMagick "
+        "`magick`, macOS `sips`, or Python Pillow) and read that."
+    )
+
+
 def _invalid_media_as_text(path: str, extension: str, data: bytes, expected: str, problem: str) -> tuple[str, str]:
     # Sending it as media would fail the request and every later one, so show text or raise instead.
     reason = f": {problem}" if problem else ""
@@ -113,13 +128,16 @@ def _invalid_media_as_text(path: str, extension: str, data: bytes, expected: str
     return f"[{path} is not {expected}{reason}. Showing it as text.]\n", content
 
 
-def make_read(media: bool = True):
+def make_read(media: bool = True, max_image_bytes: int | None = None, max_image_dimension: int | None = None):
     """Build the ``read`` tool.
 
     Args:
         media: Return images and binary documents as viewable media. Set ``False`` for a model that
             rejects media blocks, and ``read`` describes those files in text instead. See
             ``_supports_media`` in ``models``.
+        max_image_bytes: Largest image file, in bytes, the model accepts; a larger one fails the call.
+        max_image_dimension: Largest image width or height, in pixels, the model accepts; a larger one
+            fails the call. See ``_image_limits`` in ``models``.
     """
 
     @tool(name="read", context="tool_context")
@@ -143,6 +161,8 @@ def make_read(media: bool = True):
             data = await tool_context.agent.sandbox.read_file(path)
             kind, media_format, expected, problem = _check_media(extension, data)
             if problem is None:
+                if media and kind == "image":
+                    _raise_if_too_large(path, media_format, data, max_image_bytes, max_image_dimension)
                 return _media_result(path, kind, media_format, data, media, tool_context.tool_use["toolUseId"])
             note, content = _invalid_media_as_text(path, extension, data, expected, problem)
         else:

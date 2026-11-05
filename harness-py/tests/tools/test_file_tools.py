@@ -503,3 +503,121 @@ async def test_read_surfaces_an_invalid_document_as_an_error_tool_result(ctx, tm
     assert result["status"] == "error"
     assert [next(iter(c)) for c in result["content"]] == ["text"]
     assert "not a valid pdf document: it does not end with a cross-reference trailer" in result["content"][0]["text"]
+
+
+def _png_sized(width, height, padding=0):
+    ihdr = _png_chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+    idat = _png_chunk(b"IDAT", zlib.compress(bytes(1 + 3 * width) * height))
+    pad = _png_chunk(b"tEXt", b"pad\x00" + b"a" * padding) if padding else b""
+    return b"\x89PNG\r\n\x1a\n" + ihdr + pad + idat + _png_chunk(b"IEND", b"")
+
+
+def _riff(*chunks):
+    body = b"WEBP" + b"".join(kind + struct.pack("<I", len(data)) + data for kind, data in chunks)
+    return b"RIFF" + struct.pack("<I", len(body)) + body
+
+
+def _jpeg_sized(width, height):
+    sof = _JPEG.index(b"\xff\xc0")
+    return _JPEG[: sof + 5] + struct.pack(">HH", height, width) + _JPEG[sof + 9 :]
+
+
+def _gif_sized(width, height):
+    return _GIF[:6] + struct.pack("<HH", width, height) + _GIF[10:]
+
+
+def _webp_lossless_sized(width, height):
+    (bits,) = struct.unpack_from("<I", _WEBP, 21)
+    bits = bits & ~0x0FFFFFFF | (width - 1) | (height - 1) << 14
+    return _WEBP[:21] + struct.pack("<I", bits) + _WEBP[25:]
+
+
+def _webp_lossy_sized(width, height):
+    return _riff((b"VP8 ", b"\x00\x00\x00\x9d\x01\x2a" + struct.pack("<HH", width, height)))
+
+
+def _webp_extended_sized(width, height):
+    canvas = (width - 1).to_bytes(3, "little") + (height - 1).to_bytes(3, "little")
+    return _riff((b"VP8X", bytes(4) + canvas), (b"VP8L", _WEBP[20:]))
+
+
+_LIMITED_READ = make_read(max_image_bytes=4096, max_image_dimension=8000)
+
+
+@pytest.mark.parametrize(
+    ("name", "data", "size"),
+    [
+        ("wide.png", _png_sized(8001, 1), "8001x1 px png"),
+        ("tall.png", _png_sized(1, 8001), "1x8001 px png"),
+        ("wide.jpg", _jpeg_sized(8001, 1), "8001x1 px jpeg"),
+        ("wide.gif", _gif_sized(1, 8001), "1x8001 px gif"),
+        ("lossless.webp", _webp_lossless_sized(8001, 2), "8001x2 px webp"),
+        ("lossy.webp", _webp_lossy_sized(2, 8001), "2x8001 px webp"),
+        ("extended.webp", _webp_extended_sized(9000, 3), "9000x3 px webp"),
+        ("heavy.png", _png_sized(2, 2, padding=4096), "2x2 px png"),
+    ],
+)
+async def test_read_rejects_an_image_larger_than_the_model_accepts(ctx, tmp_path, name, data, size):
+    path = tmp_path / name
+    path.write_bytes(data)
+    expected = f"{path} is a {size} image of {len(data)} bytes, larger than this model accepts (4096 bytes and 8000 px"
+    with pytest.raises(ValueError, match=re.escape(expected)):
+        await _LIMITED_READ._tool_func(path=str(path), tool_context=ctx)
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        _png_sized(8000, 1),
+        _jpeg_sized(1, 8000),
+        _gif_sized(8000, 8000),
+        _webp_lossless_sized(8000, 1),
+        _webp_lossy_sized(1, 8000),
+        _webp_extended_sized(8000, 8000),
+    ],
+)
+async def test_read_returns_an_image_at_the_model_limit(ctx, tmp_path, data):
+    path = tmp_path / "edge.img.png"
+    path.write_bytes(data)
+    limited = make_read(max_image_bytes=len(data), max_image_dimension=8000)
+    result = await limited._tool_func(path=str(path), tool_context=ctx)
+    assert result["content"][0]["image"]["source"]["bytes"] == data
+
+
+async def test_read_without_limits_returns_an_oversized_image(ctx, tmp_path):
+    path = tmp_path / "wide.png"
+    path.write_bytes(_png_sized(8001, 1))
+    result = await read._tool_func(path=str(path), tool_context=ctx)
+    assert result["status"] == "success"
+
+
+async def test_read_describes_an_oversized_image_when_media_is_off(ctx, tmp_path):
+    path = tmp_path / "wide.png"
+    path.write_bytes(_png_sized(8001, 1))
+    out = await make_read(media=False, max_image_dimension=8000)._tool_func(path=str(path), tool_context=ctx)
+    assert "This model cannot view image files" in out
+
+
+async def test_read_surfaces_an_oversized_image_as_an_error_tool_result(ctx, tmp_path):
+    path = tmp_path / "wide.png"
+    path.write_bytes(_png_sized(8001, 1))
+    tool_use = {"toolUseId": "t1", "name": "read", "input": {"path": str(path)}}
+    events = [e async for e in _LIMITED_READ.stream(tool_use, {"agent": ctx.agent})]
+    result = events[-1].tool_result
+    assert result["status"] == "error"
+    assert [next(iter(c)) for c in result["content"]] == ["text"]
+    assert "Write a smaller copy with a shell tool" in result["content"][0]["text"]
+
+
+@pytest.mark.parametrize(
+    ("model", "rejected"),
+    [("bedrock/global.anthropic.claude-sonnet-4-6", True), ("bedrock/us.amazon.nova-2-lite-v1:0", False)],
+)
+async def test_harness_read_applies_the_model_image_limits(tmp_path, model, rejected):
+    agent = create_harness(model=model, skills=False)
+    path = tmp_path / "wide.png"
+    path.write_bytes(_png_sized(8001, 1))
+    harness_read = agent.tool_registry.registry["read"]
+    tool_use = {"toolUseId": "t1", "name": "read", "input": {"path": str(path)}}
+    events = [e async for e in harness_read.stream(tool_use, {"agent": agent})]
+    assert events[-1].tool_result["status"] == ("error" if rejected else "success")

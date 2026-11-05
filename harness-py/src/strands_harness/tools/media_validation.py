@@ -32,6 +32,44 @@ def image_problem(data: bytes, image_format: str) -> str | None:
     return {"png": _png_problem, "jpeg": _jpeg_problem, "gif": _gif_problem, "webp": _webp_problem}[image_format](data)
 
 
+def image_size(data: bytes, image_format: str) -> tuple[int, int] | None:
+    """The ``(width, height)`` of ``data``, a usable ``image_format`` image, or ``None`` if its header does not say."""
+    if image_format == "png":
+        return struct.unpack_from(">II", data, 16)
+    if image_format == "gif":
+        return struct.unpack_from("<HH", data, 6)
+    return _jpeg_size(data) if image_format == "jpeg" else _webp_size(data)
+
+
+def _jpeg_size(data: bytes) -> tuple[int, int] | None:
+    pos = 2
+    while pos + 9 <= len(data):
+        marker = data[pos + 1]
+        if marker == 0xFF or marker == 0x01 or 0xD0 <= marker <= 0xD8:
+            pos += 1 if marker == 0xFF else 2
+            continue
+        if 0xC0 <= marker <= 0xCF and marker not in (0xC4, 0xC8, 0xCC):
+            height, width = struct.unpack_from(">HH", data, pos + 5)
+            return width, height
+        pos += 2 + struct.unpack_from(">H", data, pos + 2)[0]
+    return None
+
+
+def _webp_size(data: bytes) -> tuple[int, int] | None:
+    if len(data) < 30:
+        return None
+    kind = data[12:16]
+    if kind == b"VP8X":
+        return 1 + int.from_bytes(data[24:27], "little"), 1 + int.from_bytes(data[27:30], "little")
+    if kind == b"VP8 ":
+        width, height = struct.unpack_from("<HH", data, 26)
+        return width & 0x3FFF, height & 0x3FFF
+    if kind == b"VP8L":
+        (bits,) = struct.unpack_from("<I", data, 21)
+        return 1 + (bits & 0x3FFF), 1 + (bits >> 14 & 0x3FFF)
+    return None
+
+
 def document_problem(data: bytes, document_format: str) -> str | None:
     """Why ``data`` is not a usable ``document_format`` document, if it is not."""
     if document_format == "pdf":

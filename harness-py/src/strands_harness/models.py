@@ -451,6 +451,33 @@ def _supports_media(model: Model | ModelRouter | str | None) -> bool:
     return True
 
 
+def _image_limits(model: Model | ModelRouter | str | None) -> dict[str, int]:
+    """The ``read`` image limits ``model`` is known to enforce, as ``make_read`` keyword arguments.
+
+    Claude rejects an image over 8000 px a side, or over 3,932,160 bytes on Bedrock and 7,864,320 on the
+    Anthropic API (5 and 10 MiB once base64-encoded), and the rejected block fails every later turn. Other
+    Bedrock models accept larger images, so they and unknown ``Model`` instances get no limits. A
+    ``ModelRouter`` gets the strictest limit among its candidates.
+    """
+    from strands.models import BedrockModel
+
+    if isinstance(model, ModelRouter):
+        candidates = [_image_limits(candidate.model) for candidate in model.candidates]
+        keys = {key for limits in candidates for key in limits}
+        return {key: min(limits[key] for limits in candidates if key in limits) for key in keys}
+    if isinstance(model, BedrockModel):
+        model_id = (model.get_config() or {}).get("model_id")
+        return _image_limits(model_id) if isinstance(model_id, str) else {}
+    if isinstance(model, Model):
+        return {}
+    provider_name, name = _split_provider(model or defaults.DEFAULT_MODEL)
+    if provider_name == "anthropic":
+        return {"max_image_bytes": 7_864_320, "max_image_dimension": 8000}
+    if provider_name == "bedrock" and _bedrock_family(name).startswith("anthropic."):
+        return {"max_image_bytes": 3_932_160, "max_image_dimension": 8000}
+    return {}
+
+
 def resolve_model(
     model: Model | ModelRouter | str | None,
     default: str,
