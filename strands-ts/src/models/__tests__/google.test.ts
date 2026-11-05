@@ -1000,18 +1000,16 @@ describe('GoogleModel', () => {
         yield { candidates: [{ content: { parts: [{ text: ' and it is sunny.' }] }, finishReason: 'STOP' }] }
       })
 
-      const { items, result } = await collectGenerator(provider.streamAggregated(messages))
+      const { result } = await collectGenerator(provider.streamAggregated(messages))
 
       expect(result.message.content).toEqual([
         new TextBlock('The time is 12:00 and it is sunny.'),
         new ReasoningBlock({ signature: 'YWJj' }),
       ])
-      expect(items.filter((e) => e.type === 'modelContentBlockStopEvent')).toHaveLength(2)
-      expect(formatMessages([result.message])[0]!.parts![1]).toEqual({
-        text: '',
-        thought: true,
-        thoughtSignature: 'YWJj',
-      })
+      expect(formatMessages([result.message])[0]!.parts).toEqual([
+        { text: 'The time is 12:00 and it is sunny.' },
+        { text: '', thought: true, thoughtSignature: 'YWJj' },
+      ])
     })
 
     it('keeps every signature that arrives inside one text block', async () => {
@@ -1034,10 +1032,39 @@ describe('GoogleModel', () => {
         new ReasoningBlock({ signature: 'c2lnMQ==' }),
         new ReasoningBlock({ signature: 'c2lnMg==' }),
       ])
-      expect(formatMessages([result.message])[0]!.parts!.slice(1)).toEqual([
+      expect(formatMessages([result.message])[0]!.parts).toEqual([
+        { text: 'The time is 12:00 and it is sunny.' },
         { text: '', thought: true, thoughtSignature: 'c2lnMQ==' },
         { text: '', thought: true, thoughtSignature: 'c2lnMg==' },
       ])
+    })
+
+    it('flushes a deferred text signature at message end, after an interleaved function call', async () => {
+      const { provider, messages } = setupStreamTest(async function* () {
+        yield {
+          candidates: [
+            {
+              content: {
+                parts: [
+                  { text: 'hi', thoughtSignature: 'UzE=' },
+                  { functionCall: { id: 'tool-1', name: 'testTool', args: {} } },
+                ],
+              },
+            },
+          ],
+        }
+        yield { candidates: [{ content: { parts: [{ text: 'after' }] }, finishReason: 'STOP' }] }
+      })
+
+      const { result } = await collectGenerator(provider.streamAggregated(messages))
+
+      expect(result.message.content).toEqual([
+        new TextBlock('hi'),
+        new ToolUseBlock({ toolUseId: 'tool-1', name: 'testTool', input: {} }),
+        new TextBlock('after'),
+        new ReasoningBlock({ signature: 'UzE=' }),
+      ])
+      expect(result.stopReason).toBe('toolUse')
     })
 
     it('opens a reasoning block for a candidate whose only part carries a signature', async () => {
