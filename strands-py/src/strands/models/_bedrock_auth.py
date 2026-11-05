@@ -82,6 +82,8 @@ def _auth_class(http: ModuleType) -> type:
             if self._api_key:
                 request.headers["Authorization"] = f"Bearer {self._api_key}"
             else:
+                # Read a streamed body first, as httpx does for requires_request_body; this override skips that.
+                await request.aread()
                 # Resolving or refreshing credentials can block on network calls (IMDS, STS).
                 await asyncio.to_thread(self._sign, request)
             yield request

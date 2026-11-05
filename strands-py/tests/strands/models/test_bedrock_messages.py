@@ -196,6 +196,18 @@ def test_connection_pools_are_per_event_loop_and_released_with_the_loop():
     assert len(transport._clients) == 1
 
 
+def test_messages_client_uses_a_pool_per_event_loop(boto_session):
+    model = BedrockModel.Messages(model_id="m", max_tokens=16, boto_session=boto_session)
+    agent = Agent(model=model, callback_handler=None)
+
+    agent("one")
+    agent("two")
+
+    pools = model.client._client._transport._clients
+    assert len(pools) == 1
+    assert all(isinstance(pool, httpx.AsyncClient) for pool in pools.values())
+
+
 def test_proxy_environment_variables_apply(monkeypatch):
     monkeypatch.undo()
     seen = []
