@@ -3,7 +3,6 @@
 import pytest
 
 from strands_mcp_server import server
-from strands_mcp_server.utils import cache
 
 from .conftest import integ_marks
 
@@ -39,19 +38,12 @@ PARAPHRASES = {
 
 
 @pytest.fixture(scope="module")
-def fresh_top_3():
+def fresh_top_3(fresh_index):
     """Fused top 3 per conversational query on a fresh index, without hydrating any page."""
-    with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(cache, "_INDEX", None)
-        mp.setattr(cache, "_URL_CACHE", {})
-        mp.setattr(cache, "_URL_TITLES", {})
-        mp.setattr(cache, "_LINKS_LOADED", False)
-        cache.ensure_ready()
-        index = cache.get_index()
-        yield {
-            query: {doc.uri for _, doc in server._fused_search(index, [query, *alternates], 3)}
-            for query, (alternates, _) in PARAPHRASES.items()
-        }
+    return {
+        query: {doc.uri for _, doc in server._fused_search(fresh_index, [query, *alternates], 3)}
+        for query, (alternates, _) in PARAPHRASES.items()
+    }
 
 
 @pytest.mark.parametrize("query", PARAPHRASES)
