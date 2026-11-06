@@ -165,6 +165,17 @@ class TestFlattenMessagesToContent:
         ]
         assert tru_result == exp_result
 
+    def test_renders_summary_block_as_its_text(self):
+        messages: Messages = [
+            Message(
+                role="assistant",
+                content=[ContentBlock(summary={"provider": "anthropic", "signature": "sig", "text": "earlier facts"})],
+            ),
+        ]
+
+        tru_result = _flatten_messages_to_content(messages)
+        assert tru_result == [ContentBlock(text="\n---\n[assistant]"), ContentBlock(text="earlier facts")]
+
     def test_renders_tool_calls_and_their_results_as_labeled_text(self):
         # guards against tool-use blocks reaching the summarizer in a user turn (#5291)
         tool_use = ToolUse(toolUseId="call_1", name="shell", input={"command": "ls"})

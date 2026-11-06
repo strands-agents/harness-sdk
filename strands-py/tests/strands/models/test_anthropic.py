@@ -3327,6 +3327,112 @@ def test_format_request_logs_skipped_blocks_once_per_request(model, caplog):
     assert "count=<3> | Location sources are not supported by Anthropic" in messages_logged[0]
 
 
+def _compaction_model(anthropic_client):
+    anthropic_client.default_headers = {}
+    return AnthropicModel(
+        model_id="claude-sonnet-5-5",
+        max_tokens=1,
+        params={"stop_sequences": ["STOP"]},
+    )
+
+
+def _stored_compaction(text="summary", signature="sig"):
+    return {"summary": {"provider": "anthropic", "signature": signature, "text": text}}
+
+
+def _mock_compaction_response(anthropic_client, response):
+    final = unittest.mock.Mock()
+    final.to_dict.return_value = response
+    stream = unittest.mock.AsyncMock()
+    stream.get_final_message.return_value = final
+    anthropic_client.beta.messages.stream.return_value.__aenter__.return_value = stream
+
+
+@pytest.mark.asyncio
+async def test_summarize_sends_compaction_request_and_stores_block(anthropic_client):
+    model = _compaction_model(anthropic_client)
+    _mock_compaction_response(
+        anthropic_client,
+        {"stop_reason": "compaction", "content": [{"type": "compaction", "content": "the summary", "signature": "s1"}]},
+    )
+    messages = [{"role": "user", "content": [{"text": "hi"}]}, {"role": "assistant", "content": [{"text": "yo"}]}]
+
+    block = await model.summarize(messages, system_prompt="sys", instructions="keep ids")
+
+    request = anthropic_client.beta.messages.stream.call_args.kwargs
+    assert request["extra_body"]["compaction"] == {"type": "summarize", "instructions": "keep ids"}
+    assert request["extra_headers"]["anthropic-beta"] == "compact-2026-09-04"
+    assert "stop_sequences" not in request
+    assert request["system"] == "sys"
+    assert len(request["messages"]) == 2
+    assert block == _stored_compaction("the summary", "s1")
+
+
+@pytest.mark.asyncio
+async def test_summarize_raises_without_compaction_block(anthropic_client):
+    model = _compaction_model(anthropic_client)
+    _mock_compaction_response(anthropic_client, {"stop_reason": "end_turn", "content": [{"type": "text", "text": "x"}]})
+
+    with pytest.raises(RuntimeError, match="compaction returned no summary"):
+        await model.summarize([{"role": "user", "content": [{"text": "hi"}]}])
+
+
+def test_format_request_sends_from_last_compaction_block(anthropic_client):
+    model = _compaction_model(anthropic_client)
+    messages = [
+        {"role": "user", "content": [{"text": "first"}]},
+        {"role": "assistant", "content": [_stored_compaction("old")]},
+        {"role": "user", "content": [{"text": "more"}]},
+        {"role": "assistant", "content": [_stored_compaction("new", "s2"), {"text": "after"}]},
+        {"role": "user", "content": [{"text": "next"}]},
+    ]
+
+    request = model.format_request(messages)
+
+    assert request["messages"] == [
+        {
+            "role": "assistant",
+            "content": [{"type": "compaction", "content": "new", "signature": "s2"}, {"type": "text", "text": "after"}],
+        },
+        {"role": "user", "content": [{"type": "text", "text": "next"}]},
+    ]
+    assert request["extra_headers"]["anthropic-beta"] == "compact-2026-09-04"
+
+
+@pytest.mark.parametrize(
+    "model_id",
+    [
+        "claude-haiku-5-5",
+        "claude-sonnet-5-5",
+        "claude-opus-5-5",
+        "claude-fable-5-1",
+        "claude-sonnet-5-5-20260401",
+    ],
+)
+def test_server_side_summary_is_on_by_default_for_listed_models(anthropic_client, model_id):
+    assert AnthropicModel(model_id=model_id, max_tokens=1).model_info.capabilities.server_side_summary is True
+
+
+@pytest.mark.parametrize("model_id", ["claude-sonnet-4-5", "m1"])
+def test_server_side_summary_is_unset_for_other_models(anthropic_client, model_id):
+    assert AnthropicModel(model_id=model_id, max_tokens=1).model_info.capabilities.server_side_summary is None
+
+
+def test_format_request_sends_compaction_text_without_capability(model):
+    model.update_config(model_info=ModelInfo(capabilities=ModelCapabilities(server_side_summary=False)))
+    messages = [
+        {"role": "user", "content": [{"text": "first"}]},
+        {"role": "assistant", "content": [_stored_compaction("old")]},
+    ]
+
+    request = model.format_request(messages)
+
+    assert model.model_info.capabilities.server_side_summary is False
+
+    assert request["messages"][1]["content"] == [{"type": "text", "text": "old"}]
+    assert "extra_headers" not in request
+
+
 @pytest.fixture
 def wire():
     """A real client over a fake transport; records the request it receives and answers with a 400."""

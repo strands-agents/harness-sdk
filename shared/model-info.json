@@ -83,7 +83,8 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "forcedToolChoice": false,
-        "nativeStructuredOutput": true
+        "nativeStructuredOutput": true,
+        "serverSideSummary": true
       }
     },
     "claude-fable-5": {
@@ -102,7 +103,8 @@
       },
       "capabilities": {
         "promptCaching": "cachePoints",
-        "forcedToolChoice": false
+        "forcedToolChoice": false,
+        "serverSideSummary": true
       }
     },
     "claude-sonnet-5": {
@@ -124,7 +126,8 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "forcedToolChoice": false,
-        "nativeStructuredOutput": true
+        "nativeStructuredOutput": true,
+        "serverSideSummary": true
       }
     },
     "claude-haiku-5-5": {
@@ -135,7 +138,8 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "forcedToolChoice": true,
-        "nativeStructuredOutput": true
+        "nativeStructuredOutput": true,
+        "serverSideSummary": true
       }
     },
     "claude-opus-4-5": {

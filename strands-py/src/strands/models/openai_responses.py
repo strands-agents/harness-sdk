@@ -62,7 +62,7 @@ from ..types.exceptions import ContextWindowOverflowException, ModelThrottledExc
 from ..types.streaming import StreamEvent  # noqa: E402
 from ..types.tools import ToolChoice, ToolResult, ToolSpec, ToolUse  # noqa: E402
 from ._defaults import resolve_config_metadata  # noqa: E402
-from ._model_info import ModelCapabilities, ModelInfo  # noqa: E402
+from ._model_info import SERVER_SIDE_SUMMARY_OFF, ModelCapabilities, ModelInfo  # noqa: E402
 from ._openai_bedrock import BedrockMantleConfig, resolve_bedrock_client_args  # noqa: E402
 from ._openai_cache import CACHE_LIFETIMES, apply_cache_config  # noqa: E402
 from ._openai_errors import classify_openai_error  # noqa: E402
@@ -222,12 +222,13 @@ class OpenAIResponsesModel(Model):
     @property
     @override
     def model_info(self) -> ModelInfo:
-        """Adds whether server-side conversation storage is enabled.
+        """Adds whether server-side conversation storage is enabled, and reports server-side summary as off.
 
-        Taken from the ``stateful`` configuration option, which a ``model_info`` override still wins over.
+        Storage is taken from the ``stateful`` configuration option; a ``model_info`` override still wins over both.
         """
         return ModelInfo.merge(
             super().model_info,
+            SERVER_SIDE_SUMMARY_OFF,
             ModelInfo(capabilities=ModelCapabilities(stateful=bool(self.config.get("stateful")))),
             cast(ModelInfo | None, self.config.get("model_info")),
         )
