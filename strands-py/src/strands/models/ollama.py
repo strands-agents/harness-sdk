@@ -294,15 +294,18 @@ class OllamaModel(Model):
                 return {"messageStop": {"stopReason": reason}}
 
             case "metadata":
+                input_tokens = event["data"].prompt_eval_count or 0
+                output_tokens = event["data"].eval_count or 0
+                total_duration = event["data"].total_duration or 0
                 return {
                     "metadata": {
                         "usage": {
-                            "inputTokens": event["data"].prompt_eval_count,
-                            "outputTokens": event["data"].eval_count,
-                            "totalTokens": event["data"].eval_count + event["data"].prompt_eval_count,
+                            "inputTokens": input_tokens,
+                            "outputTokens": output_tokens,
+                            "totalTokens": input_tokens + output_tokens,
                         },
                         "metrics": {
-                            "latencyMs": int(event["data"].total_duration / 1e6),
+                            "latencyMs": int(total_duration / 1e6),
                         },
                     },
                 }
