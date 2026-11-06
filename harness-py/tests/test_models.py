@@ -25,7 +25,7 @@ def test_none_resolves_to_default_with_thinking():
     assert model.config["model_id"] == "global.anthropic.claude-opus-4-8"
     assert model.config["additional_request_fields"] == {
         "thinking": {"type": "adaptive", "display": "summarized"},
-        "output_config": {"effort": "high"},
+        "output_config": {"effort": "medium"},
     }
 
 
@@ -168,10 +168,19 @@ def test_default_effort_on_model_instance_does_not_warn(caplog):
     assert not any("not applied" in r.message for r in caplog.records)
 
 
+def _default_effort_at(spec, path):
+    config = resolve(spec, effort=DEFAULT_EFFORT).config
+    at = config
+    for key in path:
+        at = at[key]
+    return config, at
+
+
 # https://github.com/strands-agents/harness-sdk/issues/4472
 @pytest.mark.parametrize(
     ("spec", "path"),
     [
+        ("bedrock/global.anthropic.claude-opus-5-5", ("additional_request_fields", "output_config", "effort")),
         ("bedrock/global.anthropic.claude-opus-5", ("additional_request_fields", "output_config", "effort")),
         ("bedrock/global.anthropic.claude-sonnet-5", ("additional_request_fields", "output_config", "effort")),
         ("bedrock/us.anthropic.claude-sonnet-4-6", ("additional_request_fields", "output_config", "effort")),
@@ -186,17 +195,26 @@ def test_default_effort_on_model_instance_does_not_warn(caplog):
             "bedrock/global.amazon.nova-2-lite-v1:0",
             ("additional_request_fields", "reasoningConfig", "maxReasoningEffort"),
         ),
+        ("anthropic/claude-opus-5-5", ("params", "output_config", "effort")),
         ("anthropic/claude-opus-5", ("params", "output_config", "effort")),
+    ],
+)
+def test_default_effort_is_medium_on_bedrock_and_anthropic(spec, path):
+    config, at = _default_effort_at(spec, path)
+    assert at == "medium"
+    assert config == resolve(spec, effort="medium").config
+
+
+@pytest.mark.parametrize(
+    ("spec", "path"),
+    [
         ("openai/gpt-5.6-sol", ("params", "reasoning", "effort")),
         ("bedrock-mantle/openai.gpt-5.6-sol", ("params", "reasoning", "effort")),
         ("google/gemini-3.5-flash", ("params", "thinking_config", "thinking_level")),
     ],
 )
-def test_default_effort_is_high_where_the_model_has_levels(spec, path):
-    config = resolve(spec, effort=DEFAULT_EFFORT).config
-    at = config
-    for key in path:
-        at = at[key]
+def test_default_effort_is_high_on_the_other_providers(spec, path):
+    config, at = _default_effort_at(spec, path)
     assert at == "high"
     assert config == resolve(spec, effort="high").config
 
@@ -204,11 +222,11 @@ def test_default_effort_is_high_where_the_model_has_levels(spec, path):
 @pytest.mark.parametrize(
     "spec", ["bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0", "anthropic/claude-haiku-4-5-20251001"]
 )
-def test_default_effort_is_the_high_budget_on_extended_thinking_claude(spec):
+def test_default_effort_is_the_medium_budget_on_extended_thinking_claude(spec):
     config = resolve(spec, effort=DEFAULT_EFFORT).config
     block = config["additional_request_fields"] if spec.startswith("bedrock/") else config["params"]
-    assert block == {"thinking": {"type": "enabled", "budget_tokens": 16_384}}
-    assert config == resolve(spec, effort="high").config
+    assert block == {"thinking": {"type": "enabled", "budget_tokens": 8_192}}
+    assert config == resolve(spec, effort="medium").config
 
 
 @pytest.mark.parametrize(
@@ -248,7 +266,7 @@ def test_openai_on_bedrock_maps_effort_to_reasoning_effort():
     "model_id", ["openai.gpt-6-astra", "global.openai.gpt-6-astra", "us.openai.gpt-6-astra", "us.openai.gpt-6.1-sol"]
 )
 def test_astra_and_6_1_sol_on_bedrock_resolve_effort_without_none(model_id):
-    for effort, level in [("auto", "high"), ("low", "low"), ("max", "max")]:
+    for effort, level in [("auto", "medium"), ("low", "low"), ("max", "max")]:
         model = resolve(f"bedrock/{model_id}", effort=effort)
         assert model.config["additional_request_fields"] == {"reasoning": {"effort": level}}
     assert "additional_request_fields" not in resolve(f"bedrock/{model_id}", effort="off").config
@@ -261,7 +279,7 @@ def test_astra_and_6_1_sol_on_bedrock_resolve_effort_without_none(model_id):
 )
 def test_gpt_5_4_and_5_5_on_bedrock_resolve_effort_without_max(model_id):
     # https://github.com/strands-agents/harness-sdk/issues/5191
-    for effort, level in [("auto", "high"), ("low", "low"), ("xhigh", "xhigh"), ("off", "none")]:
+    for effort, level in [("auto", "medium"), ("low", "low"), ("xhigh", "xhigh"), ("off", "none")]:
         model = resolve(f"bedrock/{model_id}", effort=effort)
         assert model.config["additional_request_fields"] == {"reasoning": {"effort": level}}
     for effort in ("minimal", "max"):
@@ -280,7 +298,7 @@ def test_gpt_5_4_and_5_5_on_bedrock_resolve_effort_without_max(model_id):
     ],
 )
 def test_gpt_5_6_6_and_daybreak_on_bedrock_resolve_every_effort(model_id):
-    for effort, level in [("auto", "high"), ("low", "low"), ("max", "max"), ("off", "none")]:
+    for effort, level in [("auto", "medium"), ("low", "low"), ("max", "max"), ("off", "none")]:
         model = resolve(f"bedrock/{model_id}", effort=effort)
         assert model.config["additional_request_fields"] == {"reasoning": {"effort": level}}
     with pytest.raises(ValueError, match="not supported"):
@@ -336,7 +354,7 @@ def test_xai_grok_on_bedrock_uses_its_reasoning_field_and_levels():
     model = resolve("bedrock/us.xai.grok-4.6", effort="xhigh")
     assert model.config["additional_request_fields"] == {"reasoning_effort": "xhigh"}
     automatic = resolve("bedrock/us.xai.grok-4.6", effort="auto")
-    assert automatic.config["additional_request_fields"] == {"reasoning_effort": "high"}
+    assert automatic.config["additional_request_fields"] == {"reasoning_effort": "medium"}
     with pytest.raises(ValueError, match="not supported by Bedrock model us.xai.grok-4.6"):
         resolve("bedrock/us.xai.grok-4.6", effort="max")
 
@@ -581,10 +599,10 @@ HAIKU_ON_BEDROCK = "bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0"
 
 ADAPTIVE = {
     "thinking": {"type": "adaptive", "display": "summarized"},
-    "output_config": {"effort": "high"},
+    "output_config": {"effort": "medium"},
 }
 
-EXTENDED = {"thinking": {"type": "enabled", "budget_tokens": 16_384}}
+EXTENDED = {"thinking": {"type": "enabled", "budget_tokens": 8_192}}
 
 EXTENDED_CLAUDE = [
     "global.anthropic.claude-haiku-4-5-20251001-v1:0",
@@ -610,6 +628,7 @@ ADAPTIVE_CLAUDE = [
     "global.anthropic.claude-opus-4-7",
     "global.anthropic.claude-opus-4-8",
     "global.anthropic.claude-opus-5",
+    "global.anthropic.claude-opus-5-5",
     "global.anthropic.claude-sonnet-5",
     "global.anthropic.claude-haiku-5-5",
     "au.anthropic.claude-haiku-5-5",
@@ -714,6 +733,7 @@ def test_each_level_maps_to_a_budget_the_api_accepts(level, budget):
         ("claude-opus-4.5", 64_000),
         ("claude-opus-4-8", 128_000),
         ("claude-opus-5", 128_000),
+        ("claude-opus-5-5", 128_000),
         ("claude-haiku-4-5-20251001-v1:0", 64_000),
         ("claude-haiku-4.5", 64_000),
         ("claude-haiku-5-5", 128_000),
