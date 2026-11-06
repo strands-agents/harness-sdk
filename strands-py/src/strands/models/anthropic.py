@@ -11,7 +11,7 @@ import re
 import warnings
 from collections import Counter
 from collections.abc import AsyncGenerator, Mapping
-from typing import Any, Protocol, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 from urllib.parse import urlparse
 
 import anthropic
@@ -49,6 +49,12 @@ from ._validation import (
     validate_config_keys,
 )
 from .model import BaseModelConfig, CacheConfig, CacheToolsConfig, Model, _messages_cache_ttl
+
+if TYPE_CHECKING:
+    # AsyncAnthropicBedrockMantle needs anthropic>=0.91, so these are imported for typing only.
+    from anthropic import AsyncAnthropicBedrock, AsyncAnthropicBedrockMantle, AsyncAnthropicVertex
+
+    _AsyncClient = anthropic.AsyncAnthropic | AsyncAnthropicBedrock | AsyncAnthropicBedrockMantle | AsyncAnthropicVertex
 
 logger = logging.getLogger(__name__)
 
@@ -136,20 +142,6 @@ def _with_native_output(
     return {**request, "tool_choice": {"type": "none"}, "output_config": output_config}
 
 
-class Client(Protocol):
-    """The interface AnthropicModel uses on its client; satisfied by every async Anthropic SDK client."""
-
-    @property
-    def messages(self) -> Any:  # pragma: no cover
-        """Messages interface."""
-        ...
-
-    @property
-    def default_headers(self) -> Mapping[str, Any]:  # pragma: no cover
-        """Headers sent with every request."""
-        ...
-
-
 class AnthropicModel(Model):
     """Anthropic model provider implementation."""
 
@@ -208,7 +200,7 @@ class AnthropicModel(Model):
     def __init__(
         self,
         *,
-        client: Client | None = None,
+        client: "_AsyncClient | None" = None,
         client_args: dict[str, Any] | None = None,
         **model_config: Unpack[AnthropicConfig],
     ):
@@ -237,7 +229,7 @@ class AnthropicModel(Model):
 
         logger.debug("config=<%s> | initializing", self.config)
 
-        self.client: Client = client if client is not None else anthropic.AsyncAnthropic(**(client_args or {}))
+        self.client: _AsyncClient = client if client is not None else anthropic.AsyncAnthropic(**(client_args or {}))
         self._drop_stale_thinking_model_id: str | None = None
 
     @override
