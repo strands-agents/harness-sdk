@@ -48,16 +48,18 @@ def _pinned_before(messages: list[Message], end: int) -> list[Message]:
 def _block_request(block: ContentBlock, message: Message, messages: Messages) -> Messages:
     """Return the summarizer input for one block of ``message``.
 
-    The block goes in a message of ``message``'s role. A tool result follows the tool use it answers, when the
-    history holds it, so the summarizer sees which tool produced it.
+    The block goes in a message of ``message``'s role. A tool result follows the name of the tool that produced it,
+    when the history holds its tool use; the tool's input is left out, since it can be far larger than the result.
     """
     request = [Message(role=message["role"], content=[block])]
     if "toolResult" not in block:
         return request
     tool_use_id = block["toolResult"]["toolUseId"]
-    uses = (candidate for turn in messages for candidate in turn["content"] if "toolUse" in candidate)
-    tool_use = next((use for use in uses if use["toolUse"]["toolUseId"] == tool_use_id), None)
-    return [Message(role="assistant", content=[tool_use]), *request] if tool_use else request
+    uses = (candidate["toolUse"] for turn in messages for candidate in turn["content"] if "toolUse" in candidate)
+    name = next((use["name"] for use in uses if use["toolUseId"] == tool_use_id), None)
+    if name is None:
+        return request
+    return [Message(role="assistant", content=[ContentBlock(text=f"[tool call: {name}]")]), *request]
 
 
 async def _place_text_summary(messages: list[Message], end: int, summary: str, model: Model) -> None:
@@ -302,7 +304,13 @@ class SummarizeStrategy(BaseOffloadStrategy):
                 system_prompt_content=agent.system_prompt_content,
                 instructions=instructions,
             )
-        return summary.get("text", "")
+        if "text" not in summary:
+            logger.warning(
+                "model=<%s> | summarize returned no text summary | leaving the content unsummarized",
+                type(model).__name__,
+            )
+            return ""
+        return summary["text"]
 
     def _resolve_model(self, agent: Agent) -> Model | None:
         return self._config.get("model") or agent.aux_model

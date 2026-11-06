@@ -433,7 +433,7 @@ class Model(abc.ABC):
                 implementation ignores it.
             system_prompt_content: The live conversation's structured system prompt, for overrides. The base
                 implementation ignores it.
-            instructions: Summarization instructions replacing the default prompt.
+            instructions: Summarization instructions replacing the default prompt, which ``None`` keeps.
             **kwargs: Additional keyword arguments for future extensibility.
 
         Returns:

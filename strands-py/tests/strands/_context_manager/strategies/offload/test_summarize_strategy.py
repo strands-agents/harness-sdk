@@ -622,7 +622,7 @@ class TestClientSideSummariesUseModelSummarize:
         assert failure.exc_info
 
     @pytest.mark.asyncio
-    async def test_a_block_summary_sends_a_tool_result_after_its_tool_use(self, mock_agent):
+    async def test_a_block_summary_sends_a_tool_result_after_its_tool_name(self, mock_agent):
         tool_use = ContentBlock(toolUse=ToolUse(toolUseId="t1", name="read_file", input={"path": "a.py"}))
         messages = self._tool_result_messages()
         messages.insert(1, Message(role="assistant", content=[tool_use]))
@@ -633,6 +633,21 @@ class TestClientSideSummariesUseModelSummarize:
         assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.5)) is True
 
         assert mock_agent.model.summarize.await_args.args[0] == [
-            Message(role="assistant", content=[tool_use]),
+            Message(role="assistant", content=[ContentBlock(text="[tool call: read_file]")]),
             Message(role="user", content=[tool_result]),
         ]
+
+    @pytest.mark.asyncio
+    async def test_warns_when_summarize_returns_no_text(self, mock_agent, caplog):
+        mock_agent.model.summarize = unittest.mock.AsyncMock(
+            return_value=ContentBlock(summary={"provider": "custom", "text": "compacted"})
+        )
+        messages = self._tool_result_messages()
+        mock_agent.messages = messages
+        strategy = Offload.summarize("tool_results").when(threshold=100)
+
+        with caplog.at_level(logging.WARNING):
+            assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.5)) is False
+
+        assert "summarize returned no text summary" in caplog.text
+        assert messages == self._tool_result_messages()

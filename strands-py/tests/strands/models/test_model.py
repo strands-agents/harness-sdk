@@ -871,6 +871,15 @@ async def test_summarize_base_uses_the_default_prompt_without_instructions():
 
 
 @pytest.mark.asyncio
+async def test_summarize_base_sends_empty_instructions_as_given():
+    model = RecordingModel()
+
+    await model.summarize([{"role": "user", "content": [{"text": "hi"}]}], instructions="")
+
+    assert model.calls[0]["system_prompt"] == ""
+
+
+@pytest.mark.asyncio
 async def test_summarize_base_keeps_a_reply_cut_off_at_the_output_limit():
     model = RecordingModel(reply=("partial",), stop_reason="max_tokens")
 

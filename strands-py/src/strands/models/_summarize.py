@@ -36,7 +36,7 @@ async def _summarize_with_stream(model: "Model", messages: Messages, instruction
     chunks = model.stream(
         [Message(role="user", content=content)],
         tool_specs=None,
-        system_prompt=instructions or DEFAULT_SUMMARIZE_INSTRUCTIONS,
+        system_prompt=DEFAULT_SUMMARIZE_INSTRUCTIONS if instructions is None else instructions,
     )
 
     reply: Message | None = None
