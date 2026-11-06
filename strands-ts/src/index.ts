@@ -210,7 +210,6 @@ export {
   DecisionsAPIDecisionModel,
   defineQuestions,
   LLMDecisionModel,
-  SageMakerDecisionModel,
   TypeSafeDecisionModel,
   Uncertain,
 } from './decisions/index.js'
@@ -223,7 +222,6 @@ export type {
   DecisionsAPIDecisionModelOptions,
   LLMDecisionModelOptions,
   Question,
-  SageMakerDecisionModelOptions,
   TypeSafeDecisionModelOptions,
 } from './decisions/index.js'
 

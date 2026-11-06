@@ -4,7 +4,7 @@
  * that transitively pulls an optional peer fails at module load.
  *
  * Subpaths deliberately NOT imported because they require optional peers:
- *   models/{anthropic,openai,google,vercel}, a2a, a2a/express,
+ *   models/{anthropic,openai,google,vercel}, decisions/sagemaker, a2a, a2a/express,
  *   session/s3-storage, telemetry. Those are covered by the sibling
  *   `../esm-module` and `../cjs-module` suites.
  */

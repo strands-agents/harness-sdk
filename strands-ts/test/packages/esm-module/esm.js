@@ -27,6 +27,7 @@ import { BedrockModel as BedrockFromSubpath } from '@strands-agents/sdk/models/b
 import { OpenAIModel } from '@strands-agents/sdk/models/openai'
 import { AnthropicModel } from '@strands-agents/sdk/models/anthropic'
 import { GoogleModel } from '@strands-agents/sdk/models/google'
+import { SageMakerDecisionModel } from '@strands-agents/sdk/decisions/sagemaker'
 
 import { z } from 'zod'
 

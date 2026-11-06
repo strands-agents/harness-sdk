@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
-import { DecisionsAPIDecisionModel, SageMakerDecisionModel, TypeSafeDecisionModel } from '@strands-agents/sdk'
+import { DecisionsAPIDecisionModel, TypeSafeDecisionModel } from '@strands-agents/sdk'
+import { SageMakerDecisionModel } from '@strands-agents/sdk/decisions/sagemaker'
 import type { DecisionModel } from '@strands-agents/sdk'
 
 interface SystemOneProvider {

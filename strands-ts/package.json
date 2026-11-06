@@ -40,6 +40,10 @@
       "types": "./dist/src/models/google/index.d.ts",
       "default": "./dist/src/models/google/index.js"
     },
+    "./decisions/sagemaker": {
+      "types": "./dist/src/decisions/sagemaker-decision-model.d.ts",
+      "default": "./dist/src/decisions/sagemaker-decision-model.js"
+    },
     "./models/vercel": {
       "types": "./dist/src/models/vercel.d.ts",
       "default": "./dist/src/models/vercel.js"
