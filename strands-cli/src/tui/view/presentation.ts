@@ -485,7 +485,7 @@ export function summarizeToolResult(result: NonNullable<Extract<ChatEntry, { typ
   const lines = result
     .map((item) => {
       if (item.type === 'text') {
-        return item.text
+        return item.text.replaceAll('\t', '    ')
       }
       if (item.type === 'json') {
         return formatValue(item.value)

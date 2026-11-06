@@ -92,7 +92,7 @@ export function ToolResultContentView({ content }: { content: readonly ChatToolR
         if (item.type === 'text' || item.type === 'json') {
           return (
             <Text key={`${item.type}-${index}`} dimColor>
-              {item.type === 'text' ? item.text : formatValue(item.value)}
+              {item.type === 'text' ? item.text.replaceAll('\t', '    ') : formatValue(item.value)}
             </Text>
           )
         }
