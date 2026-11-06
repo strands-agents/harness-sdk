@@ -1,5 +1,3 @@
-import { readFile } from 'node:fs/promises'
-import { resolve } from 'node:path'
 import {
   DEFAULT_HARNESS_AGENT_CONFIG,
   harnessAgentOptionsFromConfig,
@@ -7,13 +5,16 @@ import {
   type HarnessAgentOptions,
 } from '@strands-agents/harness'
 import { AgentSkills } from '@strands-agents/sdk/vended-plugins/skills'
+import { readFile } from 'node:fs/promises'
+import { resolve } from 'node:path'
 
+import type { ResolvedMcpConfig } from '../config/trust.js'
+import { requireBedrockRegion } from '../model/aws-config.js'
+import { importAgentProject, type ImportedAgentProject } from '../project/import.js'
+import type { AgentFactory } from '../project/typescript.js'
+import { restoreSessionAgentDefinition } from '../session/agent-definition.js'
+import { isRecord } from '../values.js'
 import { agentConfig, projectConfigOverrides, type ParsedArgs } from './arguments.js'
-import { restoreSessionAgentDefinition } from '../tui/session/agent-definition.js'
-import { importAgentProject, type ImportedAgentProject } from '../tui/project/import.js'
-import type { AgentFactory } from '../tui/project/typescript.js'
-import { requireBedrockRegion } from '../tui/provider/aws-config.js'
-import type { ResolvedMcpConfig } from '../tui/workspace/trust.js'
 
 interface InvocationAgent {
   profile?: HarnessAgentConfig
@@ -42,7 +43,7 @@ export async function invocationAgentForRun(
     if (project.language !== 'typescript') {
       throw new Error('Python agents must run with the Python runtime.')
     }
-    const { loadTypescriptProject } = await import('../tui/project/typescript.js')
+    const { loadTypescriptProject } = await import('../project/typescript.js')
     const authored = await loadTypescriptProject(project, () => config.applyProviderEnvironment())
     const options = {
       ...authored.options,
@@ -92,7 +93,7 @@ async function projectOverrides(
         const document = JSON.parse(await readFile(resolve(root, value), 'utf8'))
         value = document.mcpServers ?? document
       }
-      if (value && typeof value === 'object' && !Array.isArray(value)) {
+      if (isRecord(value)) {
         if (field === 'agentConfig') {
           base.agentConfig = { ...base.agentConfig, [option]: globalThis.structuredClone(value) }
         } else {
@@ -130,10 +131,10 @@ export async function pythonInvocationOptions(
   cwd: string,
   settings: { skillDiscovery: boolean },
   mcp: ResolvedMcpConfig
-): Promise<import('../tui/project/python.js').PythonOptions> {
+): Promise<import('../project/python.js').PythonOptions> {
   const [{ readMcpDefinitions }, { resolveSkillPaths }] = await Promise.all([
-    import('../tui/mcp.js'),
-    import('../tui/skills.js'),
+    import('../agent/mcp.js'),
+    import('../agent/skills.js'),
   ])
   const { definitions } = await readMcpDefinitions({
     cwd,
@@ -154,9 +155,10 @@ export async function withDiscoveredSkills(
   options: HarnessAgentOptions,
   discovery: boolean
 ): Promise<HarnessAgentOptions> {
-  const cwd = process.cwd()
-  const { resolveSkillPaths } = await import('../tui/skills.js')
-  const skills = options.skills instanceof AgentSkills ? undefined : options.skills
-  const skillPaths = resolveSkillPaths(skills, cwd, discovery)
-  return { ...options, skills: skillPaths.length > 0 ? skillPaths : false }
+  if (options.skills instanceof AgentSkills || options.plugins?.some((plugin) => plugin instanceof AgentSkills)) {
+    return options
+  }
+  const { resolveSkillSources } = await import('../agent/skills.js')
+  const sources = resolveSkillSources(options.skills, process.cwd(), discovery)
+  return { ...options, skills: sources.length > 0 ? sources : false }
 }

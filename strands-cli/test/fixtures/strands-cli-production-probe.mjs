@@ -30,4 +30,5 @@ for (let index = 0; index < 20; index++) {
 assert.ok(renders > initialRenders)
 assert.equal(process.env.NODE_ENV, environment)
 assert.equal(performance.getEntriesByType('measure').length, 0)
+process.stderr.write('Startup assertions passed\n')
 process.exit(0)
