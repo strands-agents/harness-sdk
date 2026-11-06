@@ -34,7 +34,7 @@ from ..types.event_loop import Usage
 from ..types.exceptions import ContextWindowOverflowException, ModelThrottledException
 from ..types.streaming import CitationsDelta, StreamEvent
 from ..types.tools import ToolChoice, ToolChoiceAuto, ToolChoiceToolDict, ToolSpec
-from ._defaults import resolve_config_metadata
+from ._defaults import resolve_config_metadata, resolve_max_tokens
 from ._native_output import (
     StructuredOutputMechanism,
     handle_rejected_mechanism,
@@ -193,8 +193,11 @@ class AnthropicModel(Model):
                 caching everything before it. Caching is off when unset.
             cache_tools: Caches the tool definitions (deprecated, use CacheConfig(tools_ttl=...)). Superseded
                 by an explicitly set cache_config.tools_ttl.
-            max_tokens: Maximum number of tokens to generate.
-            model_id: Calude model ID (e.g., "claude-3-7-sonnet-latest").
+            max_tokens: Maximum number of tokens to generate. Defaults to the model's output limit from the
+                model info (``model_info.limits.max_output_tokens``), which can move when the shared model
+                info is updated; set it explicitly to pin it. Required when the model info has no output
+                limit for the model, since the Anthropic API needs the field.
+            model_id: Claude model ID (e.g., "claude-sonnet-4-6").
                 For a complete list of supported models, see
                 https://docs.anthropic.com/en/docs/about-claude/models/all-models.
             params: Additional model parameters (e.g., metadata, stop_sequences).
@@ -214,7 +217,7 @@ class AnthropicModel(Model):
 
         cache_config: CacheConfig | None
         cache_tools: str | CacheToolsConfig | None
-        max_tokens: Required[int]
+        max_tokens: int
         model_id: Required[str]
         params: dict[str, Any] | None
         anthropic_tools: list[dict[str, Any]]
@@ -238,7 +241,8 @@ class AnthropicModel(Model):
             **model_config: Configuration options for the Anthropic model.
 
         Raises:
-            ValueError: If both ``client`` and ``client_args`` are provided.
+            ValueError: If both ``client`` and ``client_args`` are provided, or if max_tokens is not set and the
+                model info has no output limit for model_id.
         """
         if client is not None and client_args:
             raise ValueError("Only one of 'client' or 'client_args' should be provided, not both.")
@@ -246,6 +250,7 @@ class AnthropicModel(Model):
         validate_config_keys(model_config, self.AnthropicConfig)
         _warn_on_deprecated_cache_tools(model_config, stacklevel=3)
         self.config = AnthropicModel.AnthropicConfig(**model_config)
+        self._resolve_max_tokens(self.config)
 
         if "anthropic_tools" in self.config:
             self._validate_anthropic_tools(self.config["anthropic_tools"])
@@ -261,23 +266,59 @@ class AnthropicModel(Model):
 
         Args:
             **model_config: Configuration overrides.
+
+        Raises:
+            ValueError: If the merged config has no max_tokens and the model info has no output limit for
+                its model_id. The config is left unchanged.
         """
         validate_config_keys(model_config, self.AnthropicConfig)
 
         if "anthropic_tools" in model_config:
             self._validate_anthropic_tools(model_config["anthropic_tools"])
 
+        self._resolve_max_tokens(cast(AnthropicModel.AnthropicConfig, {**self.config, **model_config}))
         _warn_on_deprecated_cache_tools(model_config, stacklevel=3)
         self.config.update(model_config)
 
     @override
     def get_config(self) -> AnthropicConfig:
-        """Get the Anthropic model configuration.
+        """Get the Anthropic model configuration, with ``max_tokens`` resolved when it was not set.
+
+        Passing the result back to ``update_config`` pins ``max_tokens`` to the resolved value, so it no longer
+        follows ``model_id`` changes.
 
         Returns:
             The Anthropic model configuration.
         """
-        return resolve_config_metadata(self.config, self.config["model_id"])
+        config = resolve_config_metadata(self.config, self.config["model_id"])
+        return {**config, "max_tokens": self._resolve_max_tokens(self.config)}
+
+    @staticmethod
+    def _resolve_max_tokens(config: AnthropicConfig) -> int:
+        """The ``max_tokens`` to send: ``params["max_tokens"]``, else configured, else the model info's limit.
+
+        ``params`` comes first because ``format_request`` spreads it last, so it is what goes on the wire.
+
+        Raises:
+            ValueError: If max_tokens is neither configured nor known from the model info.
+        """
+        params_max_tokens = (config.get("params") or {}).get("max_tokens")
+        if params_max_tokens is not None:
+            return cast(int, params_max_tokens)
+
+        if "max_tokens" in config and config["max_tokens"] is None:
+            raise ValueError(
+                "max_tokens=<None> | the Anthropic API requires max_tokens | omit the key to use the model's "
+                "output limit from the model info"
+            )
+
+        max_tokens = resolve_max_tokens(config, config["model_id"])
+        if max_tokens is None:
+            raise ValueError(
+                f"model_id=<{config['model_id']}> | max_tokens is required | the model info has no output token "
+                "limit for this model, set max_tokens explicitly"
+            )
+        return max_tokens
 
     def _format_request_message_content(self, content: ContentBlock) -> dict[str, Any] | None:
         """Format an Anthropic content block.
@@ -695,7 +736,7 @@ class AnthropicModel(Model):
         system = self._format_system_prompt(system_prompt, system_prompt_content)
 
         request = {
-            "max_tokens": self.config["max_tokens"],
+            "max_tokens": self._resolve_max_tokens(self.config),
             "messages": self._format_request_messages(messages, cache_target_idx, dynamic_trailing_blocks),
             "model": self.config["model_id"],
             **(self._format_tool_choice(tool_choice)),
