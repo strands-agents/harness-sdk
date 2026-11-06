@@ -475,6 +475,38 @@ def test_docstring_preserves_other_sections():
     assert "This should be excluded" not in description
 
 
+def test_docstring_entries_named_like_section_headers():
+    """Indented entries such as "note:" or "args:" do not start or end a section."""
+
+    @strands.tool
+    def save_note(title: str, note: str, ref: str) -> str:
+        """Save a note to the repository.
+
+        Args:
+            title: Title of the note.
+            note: The note body to save.
+            ref: Git ref to commit on.
+
+        Returns:
+            The saved path.
+
+        Examples:
+            args: {"title": "todo"}
+        """
+        return title
+
+    assert (
+        save_note.tool_spec["description"]
+        == """Save a note to the repository.
+
+Returns:
+    The saved path.
+
+Examples:
+    args: {"title": "todo"}"""
+    )
+
+
 @pytest.mark.asyncio
 async def test_tool_error_handling(alist):
     """Test error handling in tool decorator."""
