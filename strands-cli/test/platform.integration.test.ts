@@ -117,10 +117,16 @@ describe('cross-platform exported agent E2E', () => {
       await exited
     }
     let settled = 0
+    let failure: unknown
     const imports = [0, 1, 2].map((index) =>
-      run(process.execPath, ['--input-type=module', '-e', script, String(index)], options).finally(() => {
-        settled++
-      })
+      run(process.execPath, ['--input-type=module', '-e', script, String(index)], options)
+        .catch((error: unknown) => {
+          failure ??= error
+          throw error
+        })
+        .finally(() => {
+          settled++
+        })
     )
     const finished = Promise.allSettled(imports)
     try {
@@ -129,6 +135,7 @@ describe('cross-platform exported agent E2E', () => {
         .toBe(true)
       await expect.poll(() => existsSync(join(concurrentHome, 'install-started')), { timeout: 15_000 }).toBe(true)
       await delay(1_000)
+      if (failure) throw failure
       expect(settled).toBe(0)
       const installing = await readFile(join(concurrentHome, 'install-started'), 'utf8')
       expect(await readFile(join(installing, 'installation-count'), 'utf8')).toBe('installed\n')

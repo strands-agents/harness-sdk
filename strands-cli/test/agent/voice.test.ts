@@ -81,9 +81,15 @@ describe('PythonVoiceSession', () => {
     await vi.waitFor(() => expect(statuses.filter((status) => status === 'speaking')).toHaveLength(2))
     await vi.waitFor(() => expect(session.getSnapshot().status).toBe('listening'))
 
+    const restarted = new Promise<boolean>((resolve, reject) => {
+      const unsubscribe = session.subscribe(() => {
+        if (session.getSnapshot().status !== 'speaking') return
+        unsubscribe()
+        session.setEndpointingSensitivity('MEDIUM').then(resolve, reject)
+      })
+    })
     expect(session.narrate('Stop this reply.')).toBe(true)
-    await vi.waitFor(() => expect(session.getSnapshot().status).toBe('speaking'))
-    expect(await session.setEndpointingSensitivity('MEDIUM')).toBe(true)
+    expect(await restarted).toBe(true)
     expect(session.getSnapshot()).toMatchObject({
       status: 'listening',
       endpointingSensitivity: 'MEDIUM',
@@ -101,8 +107,9 @@ describe('PythonVoiceSession', () => {
       provider: 'openai',
       voice: 'coral',
     })
+    statuses.length = 0
     expect(session.narrate('A reply from the new voice provider.')).toBe(true)
-    await vi.waitFor(() => expect(session.getSnapshot().status).toBe('speaking'))
+    await vi.waitFor(() => expect(statuses).toContain('speaking'))
 
     await session.dispose()
   })
@@ -397,15 +404,17 @@ describe('PythonVoiceSession', () => {
   })
 
   it('returns to listening after a playback interruption', async () => {
+    const statuses: VoiceSessionSnapshot['status'][] = []
     const session = new PythonVoiceSession({
       command: process.execPath,
       args: [resolve(import.meta.dirname, '../fixtures/voice-sidecar.mjs'), '--interrupt-speech'],
       startTimeoutMs: START_TIMEOUT_MS,
       stopTimeoutMs: 500,
     })
+    session.subscribe(() => statuses.push(session.getSnapshot().status))
     await session.start()
     expect(session.narrate('A requested spoken reply.')).toBe(true)
-    await vi.waitFor(() => expect(session.getSnapshot().status).toBe('speaking'))
+    await vi.waitFor(() => expect(statuses).toContain('speaking'))
     await vi.waitFor(() => expect(session.getSnapshot().status).toBe('listening'))
 
     await session.dispose()
