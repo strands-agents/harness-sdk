@@ -16,6 +16,7 @@ import os
 import re
 import sys
 import threading
+import time
 import uuid
 from asyncio import AbstractEventLoop
 from collections.abc import Callable, Coroutine, Sequence
@@ -168,7 +169,8 @@ class MCPServerConfig(TypedDict, total=False):
     'disabled' skips the server entirely. 'continue_on_error' keeps the rest of the servers usable
     when this one fails: a config-resolution failure (e.g. a missing env var) skips it during
     load_servers instead of raising, and a connection failure yields no tools instead of raising
-    when the agent loads them.
+    when the agent loads them. 'auto_reconnect' rebuilds a dropped session around a tool call and
+    retries the call once (see MCPClient).
     """
 
     command: str
@@ -181,6 +183,7 @@ class MCPServerConfig(TypedDict, total=False):
     auth: MCPClientCredentials
     disabled: bool
     continue_on_error: bool
+    auto_reconnect: bool
     prefix: str
     tool_filters: ToolFilters
     startup_timeout: int
@@ -210,7 +213,25 @@ _NON_FATAL_ERROR_PATTERNS = [
     "unknown request id",
 ]
 
+# The error the streamable HTTP transports produce when the server no longer knows the session (a 404
+# after a server restart): the connection is alive but every call on it will fail. Matching the code
+# too keeps a tool's own "session not found" failure from tearing the transport down. The mcp 1.x
+# transport emits INVALID_REQUEST with the sign dropped.
+_SESSION_LOST_ERROR_CODES = {-32600, 32600}
+_SESSION_LOST_ERROR_PATTERNS = [
+    "session terminated",
+    "session not found",
+]
+
 _TOOLS_CHANGED_DEBOUNCE_SECONDS = 0.3
+
+# auto_reconnect: connection attempts per rebuild, with the delay doubling between them (0.5s, 1s, 2s)
+# so a server that is still restarting when the drop is noticed gets a chance to come back. A rebuild
+# that fails within the cooldown of the previous failure makes a single attempt instead, so callers
+# queued behind a failed rebuild fail fast rather than each sitting out the whole backoff.
+_RECONNECT_MAX_ATTEMPTS = 4
+_RECONNECT_INITIAL_DELAY_SECONDS = 0.5
+_RECONNECT_FAILURE_COOLDOWN_SECONDS = 5.0
 
 
 class MCPClient(ToolProvider):
@@ -320,6 +341,7 @@ class MCPClient(ToolProvider):
         tasks_config: TasksConfig | None = None,
         on_tools_changed: ToolsChanged | None = None,
         meta: dict[str, Any] | None = None,
+        auto_reconnect: bool = False,
     ) -> None:
         """Initialize a new MCP Server connection.
 
@@ -368,6 +390,14 @@ class MCPClient(ToolProvider):
                 `call_tool_sync`/`call_tool_async`, including model-driven calls dispatched via `MCPAgentTool`,
                 which routes through `call_tool_async`. Trace context is merged on top. A per-call `meta`
                 argument to either method takes precedence over this client-level value.
+            auto_reconnect: When True, a tool call that finds the session dropped (the transport
+                closed, timed out, or the server reports the session as terminated) tears the
+                connection down, opens a fresh one through the transport callable, and retries the
+                call once before surfacing an error result. A refused connection is attempted up to
+                four times with exponential backoff (0.5s, 1s, 2s), within one ``startup_timeout``
+                budget for the whole rebuild. Concurrent calls share one reconnect.
+                A call that already reached the server may run twice, so leave this off for servers
+                whose tools are not safe to repeat or that keep per-session state. Defaults to False.
 
         Raises:
             ValueError: If neither or both of `transport_callable` and `url` are provided, if
@@ -386,6 +416,13 @@ class MCPClient(ToolProvider):
         self._elicitation_callback = elicitation_callback
         self._progress_callback = progress_callback
         self._meta = meta
+        self._auto_reconnect = auto_reconnect
+        # Re-entrant: _reconnect holds it across its own stop() and start().
+        self._reconnect_lock = threading.RLock()
+        self._reconnect_failed_at: float | None = None
+        # True after a reconnect attempt failed, so the next tool call tries again instead of
+        # treating the (now stopped) client as never started.
+        self._session_lost = False
         self._on_tools_changed = on_tools_changed
         self._tools_refresh_in_progress = False
         self._tools_refresh_pending = False
@@ -451,6 +488,10 @@ class MCPClient(ToolProvider):
         Raises:
             Exception: If the MCP connection fails to initialize within the timeout period
         """
+        with self._reconnect_lock:
+            return self._start()
+
+    def _start(self) -> "MCPClient":
         if self._is_session_active():
             raise MCPClientInitializationError("the client session is currently running")
 
@@ -466,6 +507,8 @@ class MCPClient(ToolProvider):
         try:
             # Blocking main thread until session is initialized in other thread or if the thread stops
             self._init_future.result(timeout=self._startup_timeout)
+            self._session_lost = False
+            self._reconnect_failed_at = None
             self._log_debug_with_thread("the client initialization was successful")
         except futures.TimeoutError as e:
             logger.exception("client initialization timed out")
@@ -665,6 +708,15 @@ class MCPClient(ToolProvider):
             exc_val: Exception value if an exception was raised in the context
             exc_tb: Exception traceback if an exception was raised in the context
         """
+        with self._reconnect_lock:
+            self._stop(exc_type, exc_val, exc_tb)
+
+    def _stop(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         self._log_debug_with_thread("exiting MCPClient context")
 
         # Skip cleanup during interpreter finalization. On Python 3.14+, joining a
@@ -678,8 +730,9 @@ class MCPClient(ToolProvider):
 
         # Only try to signal close future if we have a background thread
         if self._background_thread is not None:
-            # Signal close future if event loop exists
-            if self._background_thread_event_loop is not None:
+            # Signal close future if the event loop is still running; a loop whose thread already
+            # exited (the connection dropped) would never run the coroutine.
+            if self._background_thread_event_loop is not None and self._background_thread.is_alive():
 
                 async def _set_close_event() -> None:
                     if self._close_future and not self._close_future.done():
@@ -706,6 +759,7 @@ class MCPClient(ToolProvider):
         self._loaded_tools = None
         self._tool_provider_started = False
         self._connection_failed = False
+        self._session_lost = False
         self._consumers = set()
         self._background_cleanup_tasks.clear()
         self._server_task_capable = None
@@ -1057,13 +1111,18 @@ class MCPClient(ToolProvider):
         Returns:
             MCPToolResult: The tool result. Locally observed cancellation returns an error result with
                 ``cancelled=True`` rather than raising. Cancelling the outer asyncio task is separate
-                and still raises ``asyncio.CancelledError`` for ``call_tool_async``.
+                and still raises ``asyncio.CancelledError`` for ``call_tool_async``. With
+                ``auto_reconnect``, a dropped session is rebuilt and the call re-sent once; a failure
+                to do so is returned as an error result.
+
+        Raises:
+            MCPClientInitializationError: If the client is not running and ``auto_reconnect`` cannot
+                rebuild the session (the client was never started or was stopped).
         """
         self._log_debug_with_thread("calling MCP tool '%s' synchronously with tool_use_id=%s", name, tool_use_id)
-        if not self._is_session_active():
-            raise MCPClientInitializationError(CLIENT_SESSION_NOT_RUNNING_ERROR_MESSAGE)
+        self._check_session_for_tool_call()
 
-        try:
+        def run_call() -> MCPCallToolResult:
             cancellation_state = _CallCancellationState()
             coro = self._create_call_tool_coroutine(
                 name,
@@ -1073,12 +1132,32 @@ class MCPClient(ToolProvider):
                 progress_callback=progress_callback,
                 cancellation_state=cancellation_state,
             )
-            call_tool_result: MCPCallToolResult = self._invoke_on_background_thread(
+            return self._invoke_on_background_thread(
                 coro, cancel_signal=cancel_signal, cancellation_state=cancellation_state
             ).result()
-            return self._handle_tool_result(tool_use_id, call_tool_result)
+
+        retry_allowed = self._auto_reconnect
+        session_id = self._session_id
+        try:
+            if self._auto_reconnect and not self._is_session_ready():
+                # One rebuild per call: a failed or completed rebuild here ends the budget, a rebuild
+                # another caller already finished does not.
+                retry_allowed = False
+                retry_allowed = not self._reconnect(None)
+                session_id = self._session_id
+            return self._handle_tool_result(tool_use_id, run_call())
         except Exception as e:
-            logger.exception("tool execution failed")
+            if not (retry_allowed and self._is_session_lost_error(e)):
+                logger.exception("tool execution failed")
+                return self._handle_tool_execution_error(tool_use_id, e)
+            logger.warning("tool_name=<%s>, error=<%s> | mcp session lost, retrying tool call once", name, e)
+            broken_session_id = session_id if self._is_session_terminated_error(e) else None
+
+        try:
+            self._reconnect(broken_session_id)
+            return self._handle_tool_result(tool_use_id, run_call())
+        except Exception as e:
+            logger.exception("tool execution failed after reconnect")
             return self._handle_tool_execution_error(tool_use_id, e)
 
     async def call_tool_async(
@@ -1122,13 +1201,18 @@ class MCPClient(ToolProvider):
         Returns:
             MCPToolResult: The tool result. Locally observed cancellation returns an error result with
                 ``cancelled=True`` rather than raising. Cancelling the outer asyncio task is separate
-                and still raises ``asyncio.CancelledError`` for ``call_tool_async``.
+                and still raises ``asyncio.CancelledError`` for ``call_tool_async``. With
+                ``auto_reconnect``, a dropped session is rebuilt and the call re-sent once; a failure
+                to do so is returned as an error result.
+
+        Raises:
+            MCPClientInitializationError: If the client is not running and ``auto_reconnect`` cannot
+                rebuild the session (the client was never started or was stopped).
         """
         self._log_debug_with_thread("calling MCP tool '%s' asynchronously with tool_use_id=%s", name, tool_use_id)
-        if not self._is_session_active():
-            raise MCPClientInitializationError(CLIENT_SESSION_NOT_RUNNING_ERROR_MESSAGE)
+        self._check_session_for_tool_call()
 
-        try:
+        async def run_call() -> MCPCallToolResult:
             cancellation_state = _CallCancellationState()
             coro = self._create_call_tool_coroutine(
                 name,
@@ -1141,10 +1225,30 @@ class MCPClient(ToolProvider):
             future = self._invoke_on_background_thread(
                 coro, cancel_signal=cancel_signal, cancellation_state=cancellation_state
             )
-            call_tool_result: MCPCallToolResult = await asyncio.wrap_future(future)
-            return self._handle_tool_result(tool_use_id, call_tool_result)
+            return await asyncio.wrap_future(future)
+
+        retry_allowed = self._auto_reconnect
+        session_id = self._session_id
+        try:
+            if self._auto_reconnect and not self._is_session_ready():
+                # One rebuild per call: a failed or completed rebuild here ends the budget, a rebuild
+                # another caller already finished does not.
+                retry_allowed = False
+                retry_allowed = not await asyncio.to_thread(self._reconnect, None)
+                session_id = self._session_id
+            return self._handle_tool_result(tool_use_id, await run_call())
         except Exception as e:
-            logger.exception("tool execution failed")
+            if not (retry_allowed and self._is_session_lost_error(e)):
+                logger.exception("tool execution failed")
+                return self._handle_tool_execution_error(tool_use_id, e)
+            logger.warning("tool_name=<%s>, error=<%s> | mcp session lost, retrying tool call once", name, e)
+            broken_session_id = session_id if self._is_session_terminated_error(e) else None
+
+        try:
+            await asyncio.to_thread(self._reconnect, broken_session_id)
+            return self._handle_tool_result(tool_use_id, await run_call())
+        except Exception as e:
+            logger.exception("tool execution failed after reconnect")
             return self._handle_tool_execution_error(tool_use_id, e)
 
     def submit_tool_sync(
@@ -1381,6 +1485,108 @@ class MCPClient(ToolProvider):
         return await asyncio.wrap_future(
             self._invoke_on_background_thread(self._cancel_task_async(task_id, read_timeout_seconds))
         )
+
+    def _check_session_for_tool_call(self) -> None:
+        """Raise unless the session is active or ``auto_reconnect`` can rebuild it."""
+        if not self._is_session_active() and not self._can_reconnect():
+            raise MCPClientInitializationError(CLIENT_SESSION_NOT_RUNNING_ERROR_MESSAGE)
+
+    def _can_reconnect(self) -> bool:
+        """Whether a dropped session may be rebuilt: ``auto_reconnect`` is on and the client was started."""
+        return self._auto_reconnect and (self._background_thread is not None or self._session_lost)
+
+    def _is_session_ready(self) -> bool:
+        """Whether the session is active and has finished its handshake, so calls can be dispatched to it."""
+        return self._is_session_active() and self._background_thread_session is not None
+
+    def _is_session_lost_error(self, error: Exception) -> bool:
+        """Whether a failed tool call points at a dropped session rather than at the tool itself."""
+        if isinstance(error, _MCPCallCancelledError):
+            return False
+        if not self._is_session_ready():
+            return True
+        if isinstance(error, (MCPClientInitializationError, anyio.ClosedResourceError, anyio.BrokenResourceError)):
+            return True
+        return self._is_session_terminated_error(error)
+
+    def _is_session_terminated_error(self, error: Exception) -> bool:
+        """Whether the server rejected the call because it no longer knows this session (transport still alive)."""
+        if not isinstance(error, MCPError) or error.error.code not in _SESSION_LOST_ERROR_CODES:
+            return False
+        error_msg = error.error.message.lower()
+        return any(pattern in error_msg for pattern in _SESSION_LOST_ERROR_PATTERNS)
+
+    def _reconnect(self, broken_session_id: uuid.UUID | None) -> bool:
+        """Rebuild the connection unless a usable session is already up.
+
+        ``broken_session_id`` names a session whose transport is alive but which the server has
+        terminated; it is replaced even though it looks active. With ``None``, any ready session
+        is accepted, so concurrent callers that saw the same drop share a single reconnect.
+
+        Returns:
+            True if this call rebuilt the connection, False if a usable session was already up.
+
+        Raises:
+            MCPClientInitializationError: If the client was stopped meanwhile or the new connection fails.
+        """
+        with self._reconnect_lock:
+            if self._is_session_ready() and self._session_id != broken_session_id:
+                return False
+            if not self._can_reconnect():
+                raise MCPClientInitializationError(CLIENT_SESSION_NOT_RUNNING_ERROR_MESSAGE)
+            logger.warning("session_id=<%s> | mcp session lost, reconnecting", self._session_id)
+
+            # stop() resets the tool-provider bookkeeping too; carry it across so the consumers that
+            # already hold this client's tools keep their cleanup path.
+            consumers = self._consumers
+            provider_started = self._tool_provider_started
+            loaded_tools = self._loaded_tools
+            try:
+                self.stop(None, None, None)
+            except RuntimeError as close_error:
+                logger.debug("error=<%s> | lost session closed with error", close_error.__cause__)
+            try:
+                self._start_with_backoff()
+            except Exception:
+                self._session_lost = True
+                self._reconnect_failed_at = time.monotonic()
+                raise
+            finally:
+                self._consumers = consumers
+                self._tool_provider_started = provider_started
+                self._loaded_tools = loaded_tools
+            return True
+
+    def _start_with_backoff(self) -> None:
+        """Call ``start()`` up to ``_RECONNECT_MAX_ATTEMPTS`` times, doubling the delay between attempts.
+
+        The whole rebuild shares one ``startup_timeout`` budget, so only fast failures (e.g.
+        connection refused) are retried; an attempt that waited the server out is the last. A single
+        attempt is made when the previous rebuild failed less than
+        ``_RECONNECT_FAILURE_COOLDOWN_SECONDS`` ago.
+        """
+        recently_failed = (
+            self._reconnect_failed_at is not None
+            and time.monotonic() - self._reconnect_failed_at < _RECONNECT_FAILURE_COOLDOWN_SECONDS
+        )
+        max_attempts = 1 if recently_failed else _RECONNECT_MAX_ATTEMPTS
+        deadline = time.monotonic() + self._startup_timeout
+        for attempt in range(1, max_attempts + 1):
+            try:
+                self.start()
+                return
+            except MCPClientInitializationError as e:
+                delay = _RECONNECT_INITIAL_DELAY_SECONDS * 2 ** (attempt - 1)
+                if attempt == max_attempts or time.monotonic() + delay >= deadline:
+                    raise
+                logger.warning(
+                    "attempt=<%d/%d>, delay=<%.1fs>, error=<%s> | mcp reconnect failed, retrying",
+                    attempt,
+                    max_attempts,
+                    delay,
+                    e,
+                )
+                time.sleep(delay)
 
     def _handle_tool_execution_error(self, tool_use_id: str, exception: Exception) -> MCPToolResult:
         """Create error ToolResult with consistent logging and elicitation callback support.
@@ -2638,6 +2844,7 @@ def _build_client_from_config(
         application_name=server.get("application_name", name),
         application_version=server.get("application_version"),
         continue_on_error=server.get("continue_on_error", continue_on_error),
+        auto_reconnect=server.get("auto_reconnect", False),
     )
 
 
