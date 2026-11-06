@@ -175,9 +175,10 @@ class OpenAIResponsesModel(Model):
 
     def __init__(
         self,
-        client: Client | None = None,
         client_args: dict[str, Any] | None = None,
         bedrock_mantle_config: BedrockMantleConfig | None = None,
+        *,
+        client: Client | None = None,
         **model_config: Unpack[OpenAIResponsesConfig],
     ) -> None:
         """Initialize provider instance.
