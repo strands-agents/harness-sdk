@@ -319,7 +319,7 @@ def handle_content_block_stop(state: dict[str, Any]) -> dict[str, Any]:
         tool_use_name = current_tool_use.get("name", "")
 
         if not tool_use_id or not tool_use_name:
-            # Skip, don't raise: an empty tool_uses list still appends a valid toolResult, so the loop continues.
+            # Skip, don't raise: if no complete tool use block remains, handle_message_stop ends the turn.
             logger.warning(
                 "tool_use_id=<%s>, tool_name=<%s> | incomplete tool use block, skipping content block "
                 "(model may be using a non-standard streaming format)",
@@ -375,7 +375,8 @@ def handle_message_stop(event: MessageStopEvent, content: list[dict[str, Any]]) 
     """Handles the end of a message by returning the stop reason.
 
     Some models return "end_turn" even when tool calls are present, which prevents the event loop from processing
-    those tool calls. This function overrides to "tool_use" so tool execution proceeds correctly.
+    those tool calls. This function overrides to "tool_use" so tool execution proceeds correctly. Conversely, a
+    "tool_use" stop with no tool use blocks is overridden to "end_turn", since there is nothing to execute.
 
     Args:
         event: Stop event.
@@ -394,6 +395,14 @@ def handle_message_stop(event: MessageStopEvent, content: list[dict[str, Any]]) 
             "tool_use",
         )
         stop_reason = "tool_use"
+    elif stop_reason == "tool_use" and not any("toolUse" in item for item in content):
+        logger.warning(
+            "original_stop_reason=<%s>, new_stop_reason=<%s> | "
+            "overriding stop reason due to no toolUse blocks in response",
+            "tool_use",
+            "end_turn",
+        )
+        stop_reason = "end_turn"
 
     return stop_reason
 
