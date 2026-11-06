@@ -144,7 +144,8 @@ export async function generateSummary(
 
   const stream = new ModelProxy(model).streamAggregated(
     summarizationMessages,
-    { systemPrompt: systemPrompt ?? DEFAULT_SUMMARIZATION_PROMPT },
+    // The summary replaces these messages, so a cache point on them would be written and never read.
+    { systemPrompt: systemPrompt ?? DEFAULT_SUMMARIZATION_PROMPT, cacheMessages: false },
     invocationContext
   )
 

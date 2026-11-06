@@ -744,7 +744,8 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
   private _formatRequest(messages: Message[], options?: StreamOptions): Anthropic.MessageStreamParams {
     if (!this._config.modelId) throw new Error('Model ID is required')
 
-    const messagesCache = this._cacheSection('messagesTTL')
+    const messagesCache: ResolvedCacheSection =
+      options?.cacheMessages === false ? { enabled: false } : this._cacheSection('messagesTTL')
     // The cache point goes on the last user message with content, not counting cache point blocks.
     let cacheTargetMessage = -1
     if (messagesCache.enabled) {

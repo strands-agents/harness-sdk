@@ -253,6 +253,11 @@ describe('Responses durable prompt caching', () => {
     expect(req).toStrictEqual({ model: 'gpt-6-sol', input: textInput('question'), stream: true, store: false })
   })
 
+  it('does not opt in when the call passes cacheMessages: false', () => {
+    const req = format({ modelId: 'gpt-6-sol', cacheConfig: {} }, [user('question')], { cacheMessages: false })
+    expect(req).toStrictEqual({ model: 'gpt-6-sol', input: textInput('question'), stream: true, store: false })
+  })
+
   it.each<[CacheConfig, Record<string, unknown>, object, object]>([
     [{ messagesTTL: '12h' }, {}, { mode: 'explicit', ttl: '12h' }, { mode: 'explicit' }],
     [{ ttl: '12h' }, {}, marker, { mode: 'explicit', ttl: '12h' }],

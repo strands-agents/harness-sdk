@@ -2426,6 +2426,25 @@ def test_message_cache_opt_out_keeps_original_shape(cache_config, captured_warni
     assert not captured_warnings
 
 
+@pytest.mark.asyncio
+async def test_stream_cache_messages_false_skips_message_checkpoints(openai_client, agenerator, alist):
+    model = OpenAIResponsesModel(model_id="gpt-5.6", cache_config=CacheConfig())
+    mock_complete_event = unittest.mock.Mock(
+        type="response.completed",
+        response=unittest.mock.Mock(
+            usage=unittest.mock.Mock(input_tokens=1, output_tokens=1, total_tokens=2, input_tokens_details=None)
+        ),
+    )
+    openai_client.responses.create = unittest.mock.AsyncMock(return_value=agenerator([mock_complete_event]))
+    messages = [{"role": "user", "content": [{"text": "test"}]}]
+
+    await alist(model.stream(messages, cache_messages=False))
+
+    request = openai_client.responses.create.call_args.kwargs
+    assert request["input"] == OpenAIResponsesModel._format_request_messages(messages)
+    assert "prompt_cache_options" not in request
+
+
 @pytest.mark.parametrize("options", [{"mode": "implicit", "ttl": "30m"}, {"mode": "explicit"}, {"ttl": "30m"}])
 def test_message_cache_preserves_native_options(options, messages):
     params = {"prompt_cache_options": options}

@@ -182,6 +182,7 @@ describe('generateSummary', () => {
 
     expect(model.streamAggregated).toHaveBeenCalledWith(expect.any(Array), {
       systemPrompt: DEFAULT_SUMMARIZATION_PROMPT,
+      cacheMessages: false,
     })
   })
 
@@ -191,6 +192,7 @@ describe('generateSummary', () => {
 
     expect(model.streamAggregated).toHaveBeenCalledWith(expect.any(Array), {
       systemPrompt: 'Custom prompt',
+      cacheMessages: false,
     })
   })
 

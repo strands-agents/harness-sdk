@@ -520,7 +520,7 @@ class AnthropicModel(Model):
             cache_control["ttl"] = ttl
         return cache_control
 
-    def _manage_cache_points(self, messages: Messages) -> tuple[Messages, int | None]:
+    def _manage_cache_points(self, messages: Messages, cache_messages: bool = True) -> tuple[Messages, int | None]:
         """Return a copy of messages carrying at most one cache point, and the message that owns it.
 
         A cache point in the last user message is kept where it sits; extras there, and points in earlier
@@ -528,6 +528,7 @@ class AnthropicModel(Model):
 
         Args:
             messages: List of message objects to manage cache points for.
+            cache_messages: Whether ``cache_config`` may place a cache point in the messages.
 
         Returns:
             A new list of messages and the index of the message that owns the cache point, or None when no
@@ -546,7 +547,7 @@ class AnthropicModel(Model):
             )
             return messages, None
 
-        if self._auto_caching_unsupported() or cache_config.messages_ttl is False:
+        if self._auto_caching_unsupported() or cache_config.messages_ttl is False or not cache_messages:
             return messages, None
 
         target_idx = next(
@@ -594,6 +595,7 @@ class AnthropicModel(Model):
         dynamic_trailing_blocks: int = 0,
         *,
         system_prompt_content: list[SystemContentBlock] | None = None,
+        cache_messages: bool = True,
     ) -> dict[str, Any]:
         """Format an Anthropic streaming request.
 
@@ -605,6 +607,7 @@ class AnthropicModel(Model):
             dynamic_trailing_blocks: How many trailing blocks of the last user message are rebuilt on
                 every call, so the cache point stays ahead of them.
             system_prompt_content: Structured system prompt content blocks, which can carry a cache point.
+            cache_messages: Whether ``cache_config`` may place a cache point in the messages.
 
         Returns:
             An Anthropic streaming request.
@@ -615,7 +618,7 @@ class AnthropicModel(Model):
             ValueError: If params sets a sampling parameter both directly and in extra_body, or sets one while the
                 request uses API version 2026-10-21 or later.
         """
-        messages, cache_target_idx = self._manage_cache_points(messages)
+        messages, cache_target_idx = self._manage_cache_points(messages, cache_messages)
 
         tools: list[dict[str, Any]] = [
             {
@@ -1120,6 +1123,7 @@ class AnthropicModel(Model):
             system_prompt_content=system_prompt_content,
             tool_choice=_mechanism_tool_choice(mechanism, tool_choice),
             dynamic_trailing_blocks=kwargs.get("dynamic_trailing_blocks", 0),
+            cache_messages=kwargs.get("cache_messages", True),
         )
         request = _with_native_output(request, mechanism, structured_output_model)
         logger.debug("request=<%s>", request)

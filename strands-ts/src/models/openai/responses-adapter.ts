@@ -69,7 +69,8 @@ export function formatResponsesRequest(
 ): ResponseCreateParamsStreaming {
   const { cacheConfig } = config
   const cachePoints = modelInfo.capabilities?.promptCaching === 'cachePoints'
-  const cacheMessages = cachePoints && cacheConfig !== undefined && cacheConfig.messagesTTL !== false
+  const cacheMessages =
+    cachePoints && cacheConfig !== undefined && cacheConfig.messagesTTL !== false && options?.cacheMessages !== false
   const { input, explicitCache } = cacheMessages
     ? formatCacheableResponsesMessages(messages, options?.dynamicTrailingBlocks, cacheConfig.messagesTTL)
     : { input: formatResponsesMessages(messages), explicitCache: false }

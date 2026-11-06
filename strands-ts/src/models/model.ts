@@ -280,6 +280,9 @@ export interface StreamOptions {
   /** How many trailing blocks of the last user message are rebuilt on every call. */
   dynamicTrailingBlocks?: number
 
+  /** Whether `cacheConfig` may place a cache point in the messages. Defaults to true. */
+  cacheMessages?: boolean
+
   /** Metadata of the invoking agent, supplied per request. */
   agentMetadata?: AgentMetadata
 

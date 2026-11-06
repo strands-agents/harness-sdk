@@ -198,7 +198,14 @@ export class VercelModel extends Model<VercelModelConfig> {
       ...callSettings,
     }
 
-    applyVercelCacheConfig(callOptions, this._provider, cacheConfig, this.modelInfo, options?.dynamicTrailingBlocks)
+    applyVercelCacheConfig(
+      callOptions,
+      this._provider,
+      cacheConfig,
+      this.modelInfo,
+      options?.dynamicTrailingBlocks,
+      options?.cacheMessages
+    )
 
     let result
     try {
@@ -267,6 +274,7 @@ export class VercelModel extends Model<VercelModelConfig> {
  * @param modelInfo - What the SDK knows about the wrapped model; decides the default `'auto'` strategy
  * @param dynamicTrailingBlocks - Trailing content parts of the last user message a context injector
  * rebuilds every call; the conversation breakpoint stays ahead of them so the cached prefix is stable.
+ * @param cacheMessages - Whether a cache breakpoint may be placed in the messages.
  * @internal
  */
 function applyVercelCacheConfig(
@@ -274,19 +282,22 @@ function applyVercelCacheConfig(
   model: LanguageModelV3,
   cacheConfig: CacheConfig | undefined,
   modelInfo: ModelInfo,
-  dynamicTrailingBlocks = 0
+  dynamicTrailingBlocks = 0,
+  cacheMessages = true
 ): void {
   if (!cacheConfig) return
+  // Only the anthropic and bedrock routes place message breakpoints, so only they see the override.
+  const placementConfig = cacheMessages ? cacheConfig : { ...cacheConfig, messagesTTL: false }
 
   // The segment before the first '.' is the provider namespace in the ai-sdk
   switch (model.provider.split('.')[0]) {
     case 'anthropic':
       if (!infoForbidsAutoCaching(cacheConfig, modelInfo, model.modelId)) {
-        applyAnthropicCache(callOptions, cacheConfig, dynamicTrailingBlocks)
+        applyAnthropicCache(callOptions, placementConfig, dynamicTrailingBlocks)
       }
       break
     case 'amazon-bedrock':
-      applyBedrockCache(callOptions, cacheConfig, dynamicTrailingBlocks, model.modelId, modelInfo)
+      applyBedrockCache(callOptions, placementConfig, dynamicTrailingBlocks, model.modelId, modelInfo)
       break
     case 'openai':
       if (!infoForbidsAutoCaching(cacheConfig, modelInfo, model.modelId)) {

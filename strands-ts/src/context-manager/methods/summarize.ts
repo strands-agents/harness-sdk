@@ -82,7 +82,8 @@ export async function summarizeContent(
 
   const stream = new ModelProxy(model).streamAggregated(
     messages,
-    { systemPrompt: config?.systemPrompt ?? DEFAULT_SYSTEM_PROMPT },
+    // A one-shot request: a cache point on its messages would be written and never read.
+    { systemPrompt: config?.systemPrompt ?? DEFAULT_SYSTEM_PROMPT, cacheMessages: false },
     invocationContext
   )
 

@@ -49,9 +49,12 @@ describe('cacheConfig portability across providers', () => {
   const messages = [new Message({ role: 'user', content: [new TextBlock('durable prefix')] })]
 
   /** Cache points per section, normalized to `ttl ?? null` so the two wire formats are comparable. */
-  const bedrockSections = async (cacheConfig: object): Promise<Record<string, (string | null)[]>> => {
+  const bedrockSections = async (
+    cacheConfig: object,
+    options: StreamOptions = {}
+  ): Promise<Record<string, (string | null)[]>> => {
     const provider = new BedrockModel({ modelId: 'global.anthropic.claude-sonnet-4-6', cacheConfig })
-    await collectIterator(provider.stream(messages, { toolSpecs } as StreamOptions))
+    await collectIterator(provider.stream(messages, { toolSpecs, ...options }))
 
     const request = vi.mocked(ConverseStreamCommand).mock.lastCall?.[0] as any
     const tools = (request?.toolConfig?.tools ?? []).filter((entry: any) => entry.cachePoint)
@@ -65,7 +68,10 @@ describe('cacheConfig portability across providers', () => {
     }
   }
 
-  const anthropicSections = async (cacheConfig: object): Promise<Record<string, (string | null)[]>> => {
+  const anthropicSections = async (
+    cacheConfig: object,
+    options: StreamOptions = {}
+  ): Promise<Record<string, (string | null)[]>> => {
     const captured: { request: any } = { request: null }
     const client = {
       messages: {
@@ -76,7 +82,7 @@ describe('cacheConfig portability across providers', () => {
       },
     } as unknown as Anthropic
     const provider = new AnthropicModel({ client, modelId: 'claude-sonnet-4-6', cacheConfig })
-    await collectIterator(provider.stream(messages, { toolSpecs } as StreamOptions))
+    await collectIterator(provider.stream(messages, { toolSpecs, ...options }))
 
     const messagePoints: any[] = []
     for (const message of captured.request?.messages ?? []) {
@@ -91,7 +97,10 @@ describe('cacheConfig portability across providers', () => {
     }
   }
 
-  const vercelAnthropicSections = async (cacheConfig: object): Promise<Record<string, (string | null)[]>> => {
+  const vercelAnthropicSections = async (
+    cacheConfig: object,
+    options: StreamOptions = {}
+  ): Promise<Record<string, (string | null)[]>> => {
     const captured: { callOptions: LanguageModelV3CallOptions | null } = { callOptions: null }
     const provider = {
       specificationVersion: 'v3',
@@ -105,7 +114,7 @@ describe('cacheConfig portability across providers', () => {
       }),
     } as unknown as LanguageModelV3
     const model = new VercelModel({ provider, cacheConfig })
-    await collectIterator(model.stream(messages, { toolSpecs } as StreamOptions))
+    await collectIterator(model.stream(messages, { toolSpecs, ...options }))
 
     const cacheControl = (options: any): any => options?.anthropic?.cacheControl
     const tools = (captured.callOptions?.tools ?? [])
@@ -138,5 +147,15 @@ describe('cacheConfig portability across providers', () => {
     expect(bedrock).toStrictEqual(expected)
     expect(anthropic).toStrictEqual(expected)
     expect(vercelAnthropic).toStrictEqual(expected)
+  })
+
+  it('agrees that cacheMessages: false drops only the conversation cache point', async () => {
+    const cacheConfig = { ttl: '1h' }
+    const options = { cacheMessages: false }
+    const expected = { tools: ['1h'], messages: [] }
+
+    expect(await bedrockSections(cacheConfig, options)).toStrictEqual(expected)
+    expect(await anthropicSections(cacheConfig, options)).toStrictEqual(expected)
+    expect(await vercelAnthropicSections(cacheConfig, options)).toStrictEqual(expected)
   })
 })

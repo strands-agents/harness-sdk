@@ -191,6 +191,13 @@ class TestGenerateSummary:
         _, kwargs = model.stream.call_args
         assert kwargs["system_prompt"] == "Custom prompt"
 
+    async def test_requests_no_message_cache_point(self):
+        model = mock_model("Summary")
+        await generate_summary([text_msg("user", "hello")], model)
+
+        _, kwargs = model.stream.call_args
+        assert kwargs["cache_messages"] is False
+
     async def test_appends_summarization_request_message(self):
         model = mock_model("Summary")
         original = [text_msg("user", "hello"), text_msg("assistant", "hi")]

@@ -74,7 +74,8 @@ async def _summarize_content(
         )
     ]
 
-    chunks = model.stream(messages, tool_specs=None, system_prompt=system_prompt)
+    # A one-shot request: a cache point on its messages would be written and never read.
+    chunks = model.stream(messages, tool_specs=None, system_prompt=system_prompt, cache_messages=False)
 
     result_message: Message | None = None
     async for event in process_stream(chunks, invocation_context=invocation_context):

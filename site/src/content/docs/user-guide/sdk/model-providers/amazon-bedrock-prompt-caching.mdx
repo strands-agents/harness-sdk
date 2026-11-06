@@ -171,7 +171,7 @@ print(f"Cache read tokens: {response2.metrics.accumulated_usage.get('cacheReadIn
 </Tab>
 </Tabs>
 
-<Syntax py="messages_ttl" ts="messagesTTL" /> controls this cache point: set it to `False` (`false`) to turn it off, or to a TTL string such as `"5m"` to set its duration. Left unset, it takes the duration from `ttl`.
+<Syntax py="messages_ttl" ts="messagesTTL" /> controls this cache point: set it to `False` (`false`) to turn it off, or to a TTL string such as `"5m"` to set its duration. Left unset, it takes the duration from `ttl`. To skip it for a single call, pass `cache_messages=False` (`{ cacheMessages: false }`) to `model.stream`. The SDK's summarizers do this, since a one-shot summary request would write a cache entry that is never read.
 
 > **Note**: Cache misses occur if you intentionally modify past conversation context (e.g., summarization or editing previous messages).
 

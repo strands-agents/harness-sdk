@@ -246,6 +246,14 @@ class TestSummarizeContent:
         assert tru_result == "custom summary"
 
     @pytest.mark.asyncio
+    async def test_requests_no_message_cache_point(self, mock_model):
+        mock_model.stream = unittest.mock.Mock(side_effect=_make_stream_events("summary"))
+
+        await _summarize_content([ContentBlock(text="content")], mock_model, {})
+
+        assert mock_model.stream.call_args.kwargs["cache_messages"] is False
+
+    @pytest.mark.asyncio
     async def test_propagates_model_error_without_retrying(self, mock_model):
         # guards against summarizer failures being hidden by a lossy retry (#5291)
         mock_model.stream = unittest.mock.Mock(side_effect=RuntimeError("images unsupported"))
