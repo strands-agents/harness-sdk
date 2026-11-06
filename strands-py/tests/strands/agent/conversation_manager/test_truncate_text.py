@@ -108,6 +108,13 @@ class TestTruncateLargestTextBlocks:
 
         assert message["content"] == [{"text": _truncated(str(i % 10) * 250, 62)} for i in range(80)]
 
+    def test_zero_keep_width_drops_the_whole_text(self):
+        messages = [_text_message("abc")]
+
+        assert _truncate_largest_text_blocks(messages, preserve_chars=2) == 1
+
+        assert messages == [_text_message("...\n\n... [truncated: 3 chars removed] ...\n\n...")]
+
     def test_returns_zero_when_nothing_qualifies(self):
         messages = [_text_message("short"), _tool_result_message("also short"), {"role": "user", "content": ["raw"]}]
 

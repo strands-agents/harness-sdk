@@ -33,7 +33,8 @@ def _truncate_largest_text_blocks(messages: Messages, budget: int = 1, preserve_
     Up to ``budget`` blocks are truncated, largest first (ties go to the oldest). Each end keeps
     ``preserve_chars`` characters, or a quarter of the block when it is shorter than ``4 * preserve_chars``,
     so every truncation drops at least half of the block. Blocks of ``preserve_chars`` or fewer characters
-    are never touched: an overflow made of such blocks is not something truncation can fix.
+    are never touched, and a block is truncated at most once, keeping about ``min(len / 2, 2 * preserve_chars)``
+    characters: an overflow that is still too large once every block is truncated cannot be fixed here.
 
     Args:
         messages: The conversation history, modified in place.
@@ -63,5 +64,5 @@ def _truncate_largest_text_blocks(messages: Messages, budget: int = 1, preserve_
         keep = min(preserve_chars, len(text) // 4)
         removed = len(text) - 2 * keep
         marker = f"...\n\n... [truncated: {removed} chars removed] ...\n\n..."
-        block["text"] = f"{text[:keep]}{marker}{text[-keep:]}"
+        block["text"] = f"{text[:keep]}{marker}{text[len(text) - keep :]}"
     return len(qualifying)

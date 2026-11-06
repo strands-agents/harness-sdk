@@ -342,12 +342,11 @@ def test_reduce_context_truncation_fallback_handles_many_blocks_below_the_full_p
     manager = SummarizingConversationManager(summary_ratio=0.5, preserve_recent_messages=3)
     mock_agent.messages = [{"role": "user", "content": [{"text": str(i % 10) * 5_000} for i in range(80)]}]
 
-    rounds = 0
-    while any("[truncated:" not in block["text"] for block in mock_agent.messages[0]["content"]):
+    for _ in range(6):
         manager.reduce_context(mock_agent, e=RuntimeError("overflow"))
-        rounds += 1
+    assert sum("[truncated:" in block["text"] for block in mock_agent.messages[0]["content"]) == 63  # 1 + 2 + … + 32
 
-    assert rounds == 7  # 1 + 2 + 4 + ... + 64 >= 80 blocks
+    manager.reduce_context(mock_agent, e=RuntimeError("overflow"))
     assert mock_agent.messages[0]["content"] == [{"text": _truncated(str(i % 10) * 5_000, 1_250)} for i in range(80)]
     with pytest.raises(ContextWindowOverflowException, match="insufficient messages for summarization"):
         manager.reduce_context(mock_agent, e=RuntimeError("overflow"))
