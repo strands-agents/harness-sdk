@@ -423,6 +423,26 @@ class TestServerSideSummary:
         ]
 
     @pytest.mark.asyncio
+    async def test_places_a_text_summary_as_a_client_side_marker(self, mock_agent):
+        mock_agent.model.model_info.capabilities.server_side_summary = True
+        mock_agent.model.summarize = unittest.mock.AsyncMock(return_value=ContentBlock(text="written client-side"))
+        messages = self._messages()
+        mock_agent.messages = messages
+        strategy = Offload.summarize("*").when(utilization=0.8, preserve_recent=1)
+
+        assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is True
+
+        mock_agent.model.count_tokens.assert_awaited_once_with(self._messages()[1:4])
+        assert messages == [
+            Message(role="user", content=[ContentBlock(text="task")]),
+            Message(
+                role="assistant",
+                content=[ContentBlock(text="[Summarized: 3 messages, ~5,000 tokens]\n\nwritten client-side")],
+            ),
+            Message(role="user", content=[ContentBlock(text="recent")]),
+        ]
+
+    @pytest.mark.asyncio
     async def test_falls_back_to_client_side_when_a_pin_is_summarized(self, mock_agent, caplog):
         mock_agent.model.model_info.capabilities.server_side_summary = True
         mock_agent.model.summarize = unittest.mock.AsyncMock()

@@ -5,15 +5,12 @@ import unittest.mock
 
 import pytest
 
-from strands._context_manager.methods.summarize import (
-    _flatten_messages_to_content,
-    _summarize_content,
-    _tool_result_to_content_blocks,
-)
+from strands._context_manager.methods.summarize import _summarize_content
 from strands.agent.invocation_context import (
     _create_auxiliary_invocation_context,
     _create_invocation_context,
 )
+from strands.models._summarize import _flatten_messages_to_content, _tool_result_to_content_blocks
 from strands.types.content import ContentBlock, Message, Messages
 from strands.types.tools import ToolResult, ToolUse
 

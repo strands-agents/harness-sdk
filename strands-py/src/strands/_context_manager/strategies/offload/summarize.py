@@ -6,15 +6,10 @@ import logging
 from typing import TYPE_CHECKING
 
 from ....agent.conversation_manager.compression.pin_message import is_pinned
+from ....models._summarize import _flatten_messages_to_content, _tool_result_to_content_blocks
 from ....types.content import ContentBlock, Message
 from ....types.tools import ToolResult, ToolResultContent
-from ...methods.summarize import (
-    SummarizeConfig,
-    _flatten_messages_to_content,
-    _format_summarized,
-    _summarize_content,
-    _tool_result_to_content_blocks,
-)
+from ...methods.summarize import SummarizeConfig, _format_summarized, _summarize_content
 from ...stash import _format_stash_refs
 from ...types import ContextState
 from .base import (
@@ -48,6 +43,14 @@ def _warn_client_side_fallback(model: Model, reason: str, *, exc_info: bool = Fa
 
 def _pinned_before(messages: list[Message], end: int) -> list[Message]:
     return [message for index, message in enumerate(messages[1:end], start=1) if is_pinned(messages, index)]
+
+
+async def _place_text_summary(messages: list[Message], end: int, summary: str, model: Model) -> None:
+    """Replace ``messages[1:end]`` with a client-side summary marker holding ``summary``."""
+    tokens = await model.count_tokens(messages[1:end])
+    del messages[1:end]
+    _insert_marker(messages, 1, _format_summarized(f"{end - 1} messages", tokens, summary))
+    logger.debug("summarized=<%s>, tokens=<%s> | placed a text summary of the opening messages", end - 1, tokens)
 
 
 class SummarizeStrategy(BaseOffloadStrategy):
@@ -144,8 +147,9 @@ class SummarizeStrategy(BaseOffloadStrategy):
 
         A server-side summary can only stand in for the conversation's exact start, so every message up to the last
         of ``safe`` is sent, even ones ``safe`` leaves out. The summary becomes an assistant message at index 1 and
-        leads any assistant content after it once alternation is repaired. Pinned messages are not supported on this
-        path, so a pin among the summarized messages hands the pass to the client-side summary.
+        leads any assistant content after it once alternation is repaired. A text block, which the base
+        :meth:`Model.summarize` returns, is placed as a client-side summary marker instead. Pinned messages are not
+        supported on this path, so a pin among the summarized messages hands the pass to the client-side summary.
 
         Returns:
             False when the server-side summary was skipped or failed, so the caller summarizes client-side instead.
@@ -175,9 +179,12 @@ class SummarizeStrategy(BaseOffloadStrategy):
         summary = await self._request_server_side_summary(model, context.agent, messages[:end])
         if summary is None:
             return False
-        messages[1:end] = [Message(role="assistant", content=[summary])]
+        if "text" in summary:
+            await _place_text_summary(messages, end, summary["text"], model)
+        else:
+            messages[1:end] = [Message(role="assistant", content=[summary])]
+            logger.debug("summarized=<%s> | summarized opening messages server-side", replaced)
         _repair_alternation(messages)
-        logger.debug("summarized=<%s> | summarized opening messages server-side", replaced)
         return True
 
     async def _request_server_side_summary(

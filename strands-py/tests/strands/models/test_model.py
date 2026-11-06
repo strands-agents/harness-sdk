@@ -1,5 +1,6 @@
 import json
 import math
+import re
 import warnings
 from unittest.mock import MagicMock
 
@@ -798,10 +799,99 @@ class TestCacheConfig:
         assert CacheConfig(cache_key="tenant-42").cache_key == "tenant-42"
 
 
+class RecordingModel(TestModel):
+    """Replies with ``reply`` blocks and ``stop_reason``, recording each stream call."""
+
+    def __init__(self, reply=("the summary",), stop_reason="end_turn", error=None):
+        self.reply = reply
+        self.stop_reason = stop_reason
+        self.error = error
+        self.calls = []
+
+    async def stream(self, messages, tool_specs=None, system_prompt=None, **kwargs):
+        self.calls.append({"messages": messages, "tool_specs": tool_specs, "system_prompt": system_prompt, **kwargs})
+        if self.error:
+            raise self.error
+        yield {"messageStart": {"role": "assistant"}}
+        for text in self.reply:
+            yield {"contentBlockStart": {"start": {}}}
+            yield {"contentBlockDelta": {"delta": {"text": text}}}
+            yield {"contentBlockStop": {}}
+        yield {"messageStop": {"stopReason": self.stop_reason}}
+
+
 @pytest.mark.asyncio
-async def test_summarize_base_has_no_server_side_summary(model):
-    with pytest.raises(NotImplementedError, match="model has no server-side summary"):
+async def test_summarize_base_sends_one_tool_less_request_with_the_transcript(tool_specs):
+    model = RecordingModel(reply=("first", "second"))
+    messages = [
+        {"role": "user", "content": [{"text": "task"}]},
+        {
+            "role": "assistant",
+            "content": [
+                {"reasoningContent": {"reasoningText": {"text": "hidden", "signature": "sig"}}},
+                {"toolUse": {"toolUseId": "t1", "name": "lookup", "input": {"q": "x"}}},
+            ],
+        },
+        {
+            "role": "user",
+            "content": [{"toolResult": {"toolUseId": "t1", "status": "success", "content": [{"text": "42"}]}}],
+        },
+    ]
+
+    summary = await model.summarize(
+        messages, tool_specs=tool_specs, system_prompt="live prompt", instructions="Summarize briefly."
+    )
+
+    assert summary == {"text": "first\nsecond"}
+    assert len(model.calls) == 1
+    call = model.calls[0]
+    assert call["tool_specs"] is None
+    assert call["system_prompt"] == "Summarize briefly."
+    assert [message["role"] for message in call["messages"]] == ["user"]
+    assert [block["text"] for block in call["messages"][0]["content"]] == [
+        "<content>",
+        "\n---\n[user]",
+        "task",
+        "\n---\n[assistant]",
+        '[tool call: lookup] {"q":"x"}',
+        "\n---\n[user]",
+        "[tool result: lookup]",
+        "42",
+        "</content>",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_summarize_base_uses_the_default_prompt_without_instructions():
+    model = RecordingModel()
+
+    await model.summarize([{"role": "user", "content": [{"text": "hi"}]}])
+
+    assert model.calls[0]["system_prompt"].startswith("You are a summarization assistant.")
+
+
+@pytest.mark.asyncio
+async def test_summarize_base_keeps_a_reply_cut_off_at_the_output_limit():
+    model = RecordingModel(reply=("partial",), stop_reason="max_tokens")
+
+    assert await model.summarize([{"role": "user", "content": [{"text": "hi"}]}]) == {"text": "partial"}
+
+
+@pytest.mark.asyncio
+async def test_summarize_base_raises_when_the_reply_holds_no_text():
+    model = RecordingModel(reply=("  ",))
+
+    with pytest.raises(RuntimeError, match=re.escape("model=<RecordingModel> | summary reply held no text")):
         await model.summarize([{"role": "user", "content": [{"text": "hi"}]}])
+
+
+@pytest.mark.asyncio
+async def test_summarize_base_propagates_stream_errors():
+    model = RecordingModel(error=RuntimeError("images unsupported"))
+
+    with pytest.raises(RuntimeError, match="images unsupported"):
+        await model.summarize([{"role": "user", "content": [{"text": "hi"}]}])
+    assert len(model.calls) == 1
 
 
 def test_heuristic_counts_summary_text():

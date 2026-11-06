@@ -19,6 +19,7 @@ from ..types.streaming import StreamEvent
 from ..types.tools import ToolChoice, ToolSpec
 from ._defaults import DEFAULT_CONTEXT_WINDOW_LIMIT
 from ._model_info import ModelInfo, ModelLimits, lookup_model_info
+from ._summarize import _summarize_with_stream
 
 if TYPE_CHECKING:
     from ..agent.agent import Agent
@@ -410,28 +411,36 @@ class Model(abc.ABC):
         instructions: str | None = None,
         **kwargs: Any,
     ) -> ContentBlock:
-        """Summarize the conversation's opening ``messages`` server-side.
+        """Summarize the conversation's opening ``messages``.
 
-        The summarize strategy calls this instead of its client-side summary when
-        ``model_info.capabilities.server_side_summary`` is True, with the messages from message 0 through the
-        last one it summarizes. Providers with server-side summaries override it. When this raises, the strategy
-        summarizes client-side instead.
+        The base implementation summarizes client-side: one tool-less :meth:`stream` call on a single user message
+        holding the delimited, flattened transcript of ``messages``, with ``instructions`` (or a default prompt) as
+        the system prompt. Reasoning blocks are left out of the transcript. It returns the reply's text as a text
+        block, including a reply cut off at the output limit.
+
+        Providers with server-side summaries override it, return a ``summary`` block, and report
+        ``model_info.capabilities.server_side_summary`` as True. The summarize strategy calls this method only for
+        such models, with the messages from message 0 through the last one it summarizes; when this raises, the
+        strategy summarizes client-side instead.
 
         Args:
             messages: The opening messages to summarize, from message 0, left unmodified.
-            tool_specs: The live conversation's tool specifications.
-            system_prompt: The live conversation's plain string system prompt.
-            system_prompt_content: The live conversation's structured system prompt.
-            instructions: Summarization instructions replacing the provider's own prompt.
+            tool_specs: The live conversation's tool specifications, for overrides. The base implementation
+                ignores them.
+            system_prompt: The live conversation's plain string system prompt, for overrides. The base
+                implementation ignores it.
+            system_prompt_content: The live conversation's structured system prompt, for overrides. The base
+                implementation ignores it.
+            instructions: Summarization instructions replacing the default prompt.
             **kwargs: Additional keyword arguments for future extensibility.
 
         Returns:
-            A ``summary`` block that takes the summarized messages' place.
+            A text block holding the summary, or a ``summary`` block from a provider's server-side summary.
 
         Raises:
-            NotImplementedError: If the model has no server-side summary.
+            RuntimeError: If the base implementation's reply holds no text.
         """
-        raise NotImplementedError(f"model=<{type(self).__name__}> | model has no server-side summary")
+        return await _summarize_with_stream(self, messages, instructions)
 
     def estimate_utilization(self, input_tokens: int) -> float:
         """Estimate the fraction of the model's context window consumed by the given input token count.
