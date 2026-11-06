@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useSyncExternalStore, type ReactElement } from 'react'
+import { useCallback, useMemo, useSyncExternalStore, type ReactElement, type ReactNode } from 'react'
 import type { DOMElement } from 'ink'
 
 import type { ChatAttachmentSummary, ChatConfigurationLanguage, ChatTask } from '../../agent/types.js'
@@ -57,6 +57,7 @@ export function ChatView(props: Parameters<typeof ChatViewContent>[0]): ReactEle
 }
 
 function ChatViewContent({
+  startupContent,
   onActionElement,
   snapshot,
   input,
@@ -123,6 +124,7 @@ function ChatViewContent({
   party = false,
   entranceFade = true,
 }: {
+  startupContent?: ReactNode
   onActionElement?: (action: FooterAction, element: DOMElement | null) => void
   snapshot: ChatSnapshot
   input: string
@@ -442,6 +444,28 @@ function ChatViewContent({
             ) : (
               startupView
             )}
+          </Box>
+        ) : null}
+        {startupContent ? (
+          <Box
+            position="absolute"
+            width="100%"
+            height="100%"
+            flexDirection="column"
+            justifyContent="flex-end"
+            paddingX={1}
+            paddingBottom={1}
+          >
+            <Box
+              flexDirection="column"
+              borderStyle="round"
+              borderColor={accent}
+              backgroundColor={canvas}
+              paddingX={1}
+              paddingY={1}
+            >
+              {startupContent}
+            </Box>
           </Box>
         ) : null}
         {showConfigurationDock && liveConfiguration ? (

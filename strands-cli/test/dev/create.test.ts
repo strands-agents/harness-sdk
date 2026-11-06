@@ -29,6 +29,32 @@ const fakeLibrary = (): void => {
 afterEach(() => vi.restoreAllMocks())
 
 describe('createDevWorkspace', () => {
+  it('shouldCopySavedLocalModelWithoutAnExplicitFilesListWhenCreatingAWorkspace', async () => {
+    const cwd = await temporaryDirectory()
+    const modelRoot = join(cwd, '.strands', 'models')
+    await mkdir(modelRoot, { recursive: true })
+    const modelPath = join(modelRoot, 'gpt-6_1-sol-ultrafast.mjs')
+    const modelSource = "import { modelId } from './model-id.mjs'\nexport const model = { modelId }\n"
+    await writeFile(modelPath, modelSource)
+    await writeFile(join(modelRoot, 'model-id.mjs'), "export const modelId = 'test-model'\n")
+    await writeFile(join(modelRoot, '.env'), 'API_KEY=not-for-export\n')
+    const saved = snapshot()
+    saved.profile.modelModule = { kind: 'model', module: modelPath, export: 'model' }
+    const original = globalThis.structuredClone(saved)
+
+    const workspace = await createDevWorkspace({ cwd, destination: 'workspace', kind: 'typescript', snapshot: saved })
+
+    expect(saved).toEqual(original)
+    expect(await readFile(join(workspace.root, 'agent/extensions/model/gpt-6_1-sol-ultrafast.mjs'), 'utf8')).toBe(
+      modelSource
+    )
+    expect(await readFile(join(workspace.root, 'agent/extensions/model/model-id.mjs'), 'utf8')).toContain('test-model')
+    await expect(readFile(join(workspace.root, 'agent/extensions/model/.env'))).rejects.toMatchObject({
+      code: 'ENOENT',
+    })
+    expect(await readFile(workspace.entrypoint, 'utf8')).not.toContain(modelRoot)
+  })
+
   it('shouldCopyTheBaseHarnessWhenCliIsSelected', async () => {
     const cwd = await temporaryDirectory()
     fakeLibrary()
@@ -87,6 +113,28 @@ describe('createDevWorkspace', () => {
     expect(next).toEqual(first)
     expect(await readFile(next.entrypoint, 'utf8')).toBe('edited')
     expect(harnessSource.copyHarnessSource).toHaveBeenCalledTimes(1)
+  })
+
+  it('shouldLeaveNoWorkspaceWhenCreationIsCancelledBeforePublication', async () => {
+    const cwd = await temporaryDirectory()
+    const cancellation = new AbortController()
+    vi.spyOn(harnessSource, 'copyHarnessSource').mockImplementation(async (path) => {
+      await mkdir(path)
+      cancellation.abort(new Error('Creation cancelled'))
+      return { path, version: '0.3.4', digest: 'fixture' }
+    })
+
+    await expect(
+      createDevWorkspace({
+        cwd,
+        destination: 'workspace',
+        kind: 'cli',
+        snapshot: snapshot(),
+        signal: cancellation.signal,
+      })
+    ).rejects.toThrow('Creation cancelled')
+
+    expect(await readdir(cwd)).toEqual([])
   })
 
   it('shouldRemoveOnlyStagedFilesWhenSourceCopyFails', async () => {

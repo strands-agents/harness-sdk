@@ -9,6 +9,8 @@ import { sanitizeTerminalText } from '../terminal/text.js'
 import { createDevWorkspace } from './create.js'
 import { discoverHarnesses } from './search.js'
 import { initializeDevWorkspace, readDevWorkspace, type DevWorkspace } from './workspace.js'
+import type { StartupScreen } from '../ui/run.js'
+import type { HarnessChoice } from './picker.js'
 
 export interface PreparedDevRun {
   args: ParsedArgs
@@ -16,7 +18,11 @@ export interface PreparedDevRun {
   workspace: DevWorkspace
 }
 
-const selectWorkspace = async (args: ParsedArgs, config: CliConfigStore): Promise<DevWorkspace | undefined> => {
+const selectWorkspace = async (
+  args: ParsedArgs,
+  config: CliConfigStore,
+  screen?: StartupScreen
+): Promise<DevWorkspace | undefined> => {
   const dev = args.dev!
   const cwd = process.cwd()
   const destination = dev.workspace ? resolve(cwd, expandHome(dev.workspace)) : undefined
@@ -26,25 +32,39 @@ const selectWorkspace = async (args: ParsedArgs, config: CliConfigStore): Promis
       kind: dev.create,
       snapshot: config.snapshot(),
       cwd,
+      ...(screen ? { signal: screen.signal } : {}),
     })
   if (args.agent) return openExplicitHarness(resolve(cwd, expandHome(args.agent)), destination)
   const existing = await readDevWorkspace(destination ?? cwd)
   if (existing) return existing
   if (destination && !dev.init)
     throw new Error(`No dev workspace at ${destination}. Run strands dev init --workspace <path> --create cli.`)
-  if (!process.stdin.isTTY || !process.stdout.isTTY)
+  if (!screen)
     throw new Error('Run strands dev init in a terminal, or select --workspace, --agent, or --create explicitly.')
+  screen.show(undefined, 'Discovering local harnesses…')
   const discovery = await discoverHarnesses([cwd, ...dev.searchRoots.map((path) => resolve(cwd, expandHome(path)))])
-  for (const warning of discovery.warnings) process.stderr.write(`warning: ${sanitizeTerminalText(warning)}\n`)
+  screen.signal.throwIfAborted()
   const { chooseHarness } = await import('./picker.js')
-  const choice = await chooseHarness({ cliName: config.snapshot().profile.name, harnesses: discovery.harnesses })
-  if (!choice) return undefined
-  if (choice.kind === 'discovered') return openExplicitHarness(choice.harness.entrypoint, destination)
-  const kind = choice.kind === 'cli' ? 'cli' : choice.language
-  const name = choice.kind === 'cli' ? 'base-cli' : choice.name
-  const snapshot = config.snapshot()
-  if (choice.kind === 'create') snapshot.profile = { ...snapshot.profile, name: choice.name }
-  return createDevWorkspace({ destination: destination ?? join(cwd, 'strands-dev', name), kind, snapshot, cwd })
+  const open = async (choice: HarnessChoice, signal: AbortSignal): Promise<DevWorkspace> => {
+    signal.throwIfAborted()
+    if (choice.kind === 'discovered') return openExplicitHarness(choice.harness.entrypoint, destination)
+    const kind = choice.kind === 'cli' ? 'cli' : choice.language
+    const name = choice.kind === 'cli' ? 'base-cli' : choice.name
+    const snapshot = config.snapshot()
+    if (choice.kind === 'create') snapshot.profile = { ...snapshot.profile, name: choice.name }
+    return createDevWorkspace({
+      destination: destination ?? join(cwd, 'strands-dev', name),
+      kind,
+      snapshot,
+      cwd,
+      signal,
+    })
+  }
+  return chooseHarness(
+    { cliName: config.snapshot().profile.name, harnesses: discovery.harnesses, warnings: discovery.warnings },
+    screen,
+    open
+  )
 }
 
 const openExplicitHarness = async (path: string, root?: string): Promise<DevWorkspace> => {
@@ -81,10 +101,17 @@ const openExplicitHarness = async (path: string, root?: string): Promise<DevWork
   })
 }
 
-export const prepareDevRun = async (args: ParsedArgs): Promise<PreparedDevRun | undefined> => {
-  const config = await CliConfigStore.load(undefined, { persist: false })
+export const prepareDevRun = async (
+  args: ParsedArgs,
+  options: { config?: CliConfigStore; screen?: StartupScreen } = {}
+): Promise<PreparedDevRun | undefined> => {
+  const { screen } = options
+  const config = options.config ?? (await CliConfigStore.load(undefined, { persist: false }))
   config.useEnvironmentFiles(args.envFiles)
-  const workspace = await selectWorkspace(args, config)
+  screen?.signal.throwIfAborted()
+  screen?.show(undefined, 'Preparing local workspace…')
+  const workspace = await selectWorkspace(args, config, screen)
+  screen?.signal.throwIfAborted()
   if (!workspace) return undefined
   const state = join(workspace.root, '.strands/state')
   const localArgs: ParsedArgs = {
@@ -99,14 +126,18 @@ export const prepareDevRun = async (args: ParsedArgs): Promise<PreparedDevRun | 
   await config.useAgentProject(workspace.entrypoint)
   const label = sanitizeTerminalText(workspace.config.name)
   const entrypoint = sanitizeTerminalText(workspace.entrypoint)
-  process.stderr.write(
-    `strands dev · ${label}\nWorkspace: ${sanitizeTerminalText(workspace.root)}\nHarness: ${entrypoint} (${workspace.config.origin.kind})\nModel, tools, and instructions come from this workspace, not the saved CLI profile.\nState: ${sanitizeTerminalText(state)}\n`
-  )
-  if (args.dev?.init) process.stderr.write('Workspace ready. Run strands dev --workspace <path> to start it.\n')
+  if (!screen) {
+    process.stderr.write(
+      `strands dev · ${label}\nWorkspace: ${sanitizeTerminalText(workspace.root)}\nHarness: ${entrypoint} (${workspace.config.origin.kind})\nModel, tools, and instructions come from this workspace, not the saved CLI profile.\nState: ${sanitizeTerminalText(state)}\n`
+    )
+    if (args.dev?.init) process.stderr.write('Workspace ready. Run strands dev --workspace <path> to start it.\n')
+  }
   if (!args.dev?.init && workspace.config.origin.kind !== 'discovered') {
-    process.stderr.write('Preparing workspace dependencies...\n')
+    if (screen) screen.show(undefined, 'Installing workspace dependencies…')
+    else process.stderr.write('Preparing workspace dependencies...\n')
     await prepareWorkspaceDependencies(workspace.root, workspace.config.language)
   }
+  screen?.signal.throwIfAborted()
   await readFile(workspace.entrypoint)
   return { args: localArgs, config, workspace }
 }

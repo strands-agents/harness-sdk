@@ -1,4 +1,4 @@
-import { type ReactElement, useCallback, useEffect, useRef, useState } from 'react'
+import { type ReactElement, type ReactNode, useCallback, useEffect, useRef, useState } from 'react'
 import { Box, useInput } from 'ink'
 import { sanitizeTerminalText } from '../terminal/text.js'
 import { Text, useTheme, ThemeProvider } from './theme.js'
@@ -56,6 +56,8 @@ export interface SetupBridge {
 }
 
 interface ChatRootProps {
+  startupContent?: ReactNode
+  startupStatus?: string
   controller?: ChatControllerApi
   intro: boolean
   setup: boolean
@@ -71,6 +73,8 @@ interface ChatRootProps {
 }
 
 export function ChatRoot({
+  startupContent,
+  startupStatus,
   controller,
   intro,
   setup,
@@ -214,7 +218,8 @@ export function ChatRoot({
     deckShown.current = true
     return (
       <ChatView
-        snapshot={startupSnapshot(settings, config)}
+        snapshot={{ ...startupSnapshot(settings, config), ...(startupStatus ? { composerStatus: startupStatus } : {}) }}
+        {...(startupContent ? { startupContent } : {})}
         entranceFade={placeholderEntranceFade.current}
         input=""
         cursor={0}

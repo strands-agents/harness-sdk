@@ -10,6 +10,7 @@ import { agentProjectSource } from '../project/source.js'
 import { importAgentProject } from '../project/import.js'
 import { isRecord } from '../values.js'
 import { copyHarnessSource } from './harness-source.js'
+import { withDevModuleFiles } from './module-files.js'
 import { initializeDevWorkspace, readDevWorkspace, type DevWorkspace } from './workspace.js'
 
 export interface CreateDevWorkspaceOptions {
@@ -17,6 +18,7 @@ export interface CreateDevWorkspaceOptions {
   kind: 'cli' | 'typescript' | 'python'
   snapshot: CliConfigSnapshot
   cwd: string
+  signal?: AbortSignal
 }
 
 const exists = async (path: string): Promise<boolean> => {
@@ -65,7 +67,7 @@ interface CreatedProject {
 const writeFreshProject = async (root: string, options: CreateDevWorkspaceOptions): Promise<CreatedProject> => {
   const language = options.kind === 'python' ? 'python' : 'typescript'
   const baseDir = options.snapshot.profileBaseDir ?? options.cwd
-  const profile = options.snapshot.profile
+  const profile = await withDevModuleFiles(options.snapshot.profile, baseDir, language)
   const skills = resolveSkillPaths(
     typeof profile.skills === 'object' ? [...profile.skills] : profile.skills,
     baseDir,
@@ -98,6 +100,7 @@ const writeFreshProject = async (root: string, options: CreateDevWorkspaceOption
 }
 
 export const createDevWorkspace = async (options: CreateDevWorkspaceOptions): Promise<DevWorkspace> => {
+  options.signal?.throwIfAborted()
   const destination = resolve(options.cwd, options.destination)
   const existing = await readDevWorkspace(destination)
   if (existing) return existing
@@ -115,11 +118,13 @@ export const createDevWorkspace = async (options: CreateDevWorkspaceOptions): Pr
     const project = sourceProject
       ? await copyDefaultProject(sourceProject, staging, options.snapshot.profile.name)
       : await writeFreshProject(staging, options)
+    options.signal?.throwIfAborted()
     const source =
       project.harness ??
       (options.kind === 'cli' && project.language === 'typescript'
         ? { ...(await copyHarnessSource(join(staging, 'harness'))), path: 'harness' }
         : undefined)
+    options.signal?.throwIfAborted()
     if (source) await configureLocalDependency(staging, source.version)
     await initializeDevWorkspace(staging, {
       version: 1,
@@ -134,6 +139,7 @@ export const createDevWorkspace = async (options: CreateDevWorkspaceOptions): Pr
       ...(source ? { harness: { path: 'harness', version: source.version } } : {}),
     })
     await writeFile(join(staging, '.strands-entrypoint'), `./${project.entrypoint}\n`)
+    options.signal?.throwIfAborted()
     await rename(staging, destination)
     const workspace = await readDevWorkspace(destination)
     if (!workspace) throw new Error(`Workspace metadata is missing in ${destination}.`)

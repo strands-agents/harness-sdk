@@ -115,11 +115,18 @@ describe('prepareDevRun', () => {
     vi.spyOn(process.stderr, 'write').mockReturnValue(true)
     const harness = { name: 'Found', entrypoint: join(root, 'agent.ts'), root, language: 'typescript' as const }
     vi.spyOn(search, 'discoverHarnesses').mockResolvedValue({ harnesses: [harness], warnings: [] })
-    vi.spyOn(picker, 'chooseHarness').mockResolvedValue({ kind: 'discovered', harness })
+    vi.spyOn(picker, 'chooseHarness').mockImplementation(async (_options, _screen, open) =>
+      open({ kind: 'discovered', harness }, _screen.signal)
+    )
+    const screen = { signal: new AbortController().signal, show: vi.fn() }
 
-    const prepared = await prepareDevRun(parseArgs(['dev', '--search-root', '../other']))
+    const prepared = await prepareDevRun(parseArgs(['dev', '--search-root', '../other']), { screen })
 
-    expect(picker.chooseHarness).toHaveBeenCalledWith({ cliName: 'Saved CLI', harnesses: [harness] })
+    expect(picker.chooseHarness).toHaveBeenCalledWith(
+      { cliName: 'Saved CLI', harnesses: [harness], warnings: [] },
+      screen,
+      expect.any(Function)
+    )
     expect(prepared?.workspace.root).toBe(root)
     expect(search.discoverHarnesses).toHaveBeenCalledWith([cwd, join(cwd, '../other')])
   })
@@ -132,7 +139,8 @@ describe('prepareDevRun', () => {
     vi.spyOn(search, 'discoverHarnesses').mockResolvedValue({ harnesses: [], warnings: [] })
     vi.spyOn(picker, 'chooseHarness').mockResolvedValue(undefined)
 
-    expect(await prepareDevRun(parseArgs(['dev']))).toBeUndefined()
+    const screen = { signal: new AbortController().signal, show: vi.fn() }
+    expect(await prepareDevRun(parseArgs(['dev']), { screen })).toBeUndefined()
     await expect(readFile(join(cwd, '.strands/config.json'))).rejects.toMatchObject({ code: 'ENOENT' })
   })
 })

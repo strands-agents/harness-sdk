@@ -64,6 +64,10 @@ describe('dev ingress', () => {
       async (factory: Parameters<typeof runInkChat>[0], options: Parameters<typeof runInkChat>[1]) => {
         expect(typeof factory).toBe('function')
         if (typeof factory !== 'function') throw new Error('expected a controller factory')
+        expect(process.cwd()).toBe(cwd)
+        expect(options?.prepare).toBeDefined()
+        const ready = await options?.prepare?.({ signal: new AbortController().signal, show: vi.fn() })
+        expect(ready).toBe(true)
         expect(process.cwd()).toBe(root)
         await factory(
           new AbortController().signal,

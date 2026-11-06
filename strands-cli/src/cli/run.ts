@@ -13,6 +13,7 @@ import { runPlainChat, runTurn } from './console.js'
 import { invocationAgentForRun, pythonInvocationOptions, withDiscoveredSkills } from './invocation.js'
 import { buildTelemetryPing, sendTelemetryPing, telemetryEnabled } from './telemetry.js'
 import type { CliConfigStore } from '../config/store.js'
+import type { StartupScreen } from '../ui/run.js'
 
 export { runPlainChat, runTurn, TurnRenderer } from './console.js'
 
@@ -38,11 +39,16 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
   if (args.dev) {
     const previousDirectory = process.cwd()
     try {
-      const { prepareDevRun } = await import('../dev/prepare.js')
-      const prepared = await prepareDevRun(args)
-      if (!prepared || prepared.args.dev?.init) return
-      process.chdir(prepared.workspace.root)
-      await runSession(prepared.args, prepared.config)
+      if (stdin.isTTY && stdout.isTTY && !args.oneShot) {
+        initLogging('ink')
+        await runInteractive(args, args.request)
+      } else {
+        const { prepareDevRun } = await import('../dev/prepare.js')
+        const prepared = await prepareDevRun(args)
+        if (!prepared || prepared.args.dev?.init) return
+        process.chdir(prepared.workspace.root)
+        await runSession(prepared.args, prepared.config)
+      }
     } catch (error) {
       process.stderr.write(`error: ${errorMessage(error)}\n`)
       process.exitCode = 1
@@ -230,9 +236,25 @@ async function runInteractive(
       import('../ui/run.js'),
       import('../config/store.js'),
     ])
-    const config = suppliedConfig ?? (await CliConfigStore.load())
+    const config =
+      suppliedConfig ??
+      (args.dev ? await CliConfigStore.load(undefined, { persist: false }) : await CliConfigStore.load())
     config.useEnvironmentFiles(args.envFiles)
-    const initialWorkspace = process.cwd()
+    let initialWorkspace = process.cwd()
+    if (args.dev) await config.setSettings({ updatePrompts: false, telemetry: false })
+    const prepare =
+      args.dev && !suppliedConfig
+        ? async (screen: StartupScreen): Promise<boolean> => {
+            const { prepareDevRun } = await import('../dev/prepare.js')
+            const prepared = await prepareDevRun(args, { config, screen })
+            if (!prepared || screen.signal.aborted) return false
+            args = prepared.args
+            if (args.dev?.init) return false
+            initialWorkspace = prepared.workspace.root
+            process.chdir(initialWorkspace)
+            return true
+          }
+        : undefined
     let pinged = false
     let updateRequested = false
     const exitCode = await runInkChat(
@@ -332,7 +354,8 @@ async function runInteractive(
       {
         ...(request ? { firstRequest: request } : {}),
         intro: config.snapshot().settings.animations,
-        setup: args.setup || (!args.agent && !config.snapshot().agentProject && config.needsSetup()),
+        setup: !args.dev && (args.setup || (!args.agent && !config.snapshot().agentProject && config.needsSetup())),
+        ...(prepare ? { prepare } : {}),
         config,
         onUpdateRequested: () => {
           updateRequested = true

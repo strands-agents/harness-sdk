@@ -89,7 +89,8 @@ strands dev --agent ./my-project/agent.py
 strands dev init --create python --workspace ./strands-dev/new-agent
 ```
 
-The picker lists the current CLI harness first, discovered harnesses next, and a new-harness option last.
+The full TUI opens before discovery. Its picker lists the current CLI harness first, discovered harnesses next, and a new-harness option last.
+Creation errors stay in the picker so you can retry without restarting the CLI.
 Discovery reads the current folder and any explicit search roots. It does not execute source or follow symbolic links.
 It skips dependency folders, build output, private state, and copied harness libraries.
 
@@ -100,6 +101,9 @@ Without a terminal, select an existing workspace, an entrypoint, or a creation o
 Selecting the base CLI copies its profile into a project entrypoint and copies the harness implementation into `harness/`.
 The workspace uses that local implementation. It does not link back to the installed harness.
 For a saved source agent, dev copies its project instead of regenerating its settings.
+Dev includes undeclared local model and tool modules with their static relative imports. It leaves unrelated files and the saved profile unchanged.
+Imported npm packages use declared versions or versions resolved from the local module and CLI installation.
+Dynamic imports and extra runtime assets still require an explicit `files` list.
 
 The copy contains source, build files, dependencies metadata, and license files. It excludes credentials, existing sessions, memory, and `node_modules`.
 When an installed release lacks TypeScript source, dev downloads its matching `harness-typescript/v<version>` tag from GitHub.
