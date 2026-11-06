@@ -164,7 +164,7 @@ function translateSageMakerError(error: unknown): Error {
     return new ModelThrottledError(message, { cause: error })
   }
   // strands-decider refuses a prompt longer than the model's context window with HTTP 422.
-  if (status === 413 || (status === 422 && /context window/i.test(originalMessage ?? ''))) {
+  if (status === 413 || (status === 422 && /context (window|length)/i.test(originalMessage ?? ''))) {
     return new ContextWindowOverflowError(message)
   }
   return new ModelError(message, { cause: error })
