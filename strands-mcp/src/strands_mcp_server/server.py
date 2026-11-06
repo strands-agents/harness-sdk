@@ -258,9 +258,7 @@ def fetch_doc(
 def main() -> None:
     """Main entry point for the MCP server.
 
-    Initializes the document cache and starts the FastMCP server.
-    The cache is loaded with document titles only for fast startup,
-    with full content fetched on-demand.
+    Starts the transport without fetching documentation. The first tool call
+    initializes the document index, and later calls retry if loading fails.
     """
-    cache.ensure_ready()
     mcp.run()

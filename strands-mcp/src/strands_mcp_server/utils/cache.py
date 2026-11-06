@@ -20,6 +20,7 @@ _PREFETCH_STARTED = False
 # in ensure_page atomic; _PREFETCH_LOCK makes the prefetch start-once idempotent.
 _CACHE_LOCK = threading.Lock()
 _PREFETCH_LOCK = threading.Lock()
+_INIT_LOCK = threading.Lock()
 
 SNIPPET_HYDRATE_MAX = 5  # how many top results to hydrate with content
 
@@ -129,8 +130,9 @@ def ensure_ready() -> None:
     Calls load_links_only() if the index hasn't been loaded yet.
     This is the main entry point for index initialization.
     """
-    if not _LINKS_LOADED:
-        load_links_only()
+    with _INIT_LOCK:
+        if not _LINKS_LOADED:
+            load_links_only()
 
 
 def ensure_page(url: str) -> doc_fetcher.Page | None:
