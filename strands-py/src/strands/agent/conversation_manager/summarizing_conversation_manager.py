@@ -21,7 +21,7 @@ from .compression.context_compression import (
     generate_summary,
 )
 from .compression.pin_message import apply_pin_first, partition_pinned
-from .compression.truncate_text import _text_blocks, _truncate_largest_text_blocks
+from .compression.truncate_text import _block_text, _text_blocks, _truncate_largest_text_blocks
 from .conversation_manager import ConversationManager, ProactiveCompressionConfig
 
 if TYPE_CHECKING:
@@ -94,16 +94,17 @@ class SummarizingConversationManager(ConversationManager):
     def register_hooks(self, registry: HookRegistry, **kwargs: Any) -> None:
         """Register hooks for agent lifecycle events.
 
-        Besides the base proactive-compression hook, resets the truncation budget once a model call ends
-        the run of consecutive overflows, so each overflow episode starts by truncating a single block again.
+        Besides the base proactive-compression hook, resets the overflow fallback state once a model call ends
+        the run of consecutive overflows, so the next episode retries summarization from a clean state.
         """
         super().register_hooks(registry, **kwargs)
-        registry.add_callback(AfterModelCallEvent, self._on_after_model_call_reset_budget)
+        registry.add_callback(AfterModelCallEvent, self._on_after_model_call_reset_overflow_state)
 
-    def _on_after_model_call_reset_budget(self, event: AfterModelCallEvent) -> None:
+    def _on_after_model_call_reset_overflow_state(self, event: AfterModelCallEvent) -> None:
         """End the overflow episode on any outcome other than a further overflow."""
         if not isinstance(event.exception, ContextWindowOverflowException):
             self._truncation_budget = 1
+            self._overflowed_range_fingerprint = None
 
     @override
     def restore_from_session(self, state: dict[str, Any]) -> list[Message] | None:
@@ -240,7 +241,10 @@ class SummarizingConversationManager(ConversationManager):
         remaining_messages = agent.messages[messages_to_summarize_count:]
 
         # Truncation elsewhere in the history leaves this range as it was, so the summary call would overflow again.
-        fingerprint = (len(to_summarize), sum(len(block["text"]) for m in to_summarize for block in _text_blocks(m)))
+        fingerprint = (
+            len(to_summarize),
+            sum(len(_block_text(block)) for m in to_summarize for block in _text_blocks(m)),
+        )
         if fingerprint == self._overflowed_range_fingerprint:
             raise ContextWindowOverflowException("Cannot summarize: the summary call itself exceeds the context window")
         try:

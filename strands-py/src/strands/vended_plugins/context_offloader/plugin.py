@@ -518,7 +518,7 @@ class ContextOffloader(Plugin):
             if block.get("text"):
                 text_preview_parts.append(block["text"])
             elif "json" in block:
-                text_preview_parts.append(json.dumps(block["json"], indent=2))
+                text_preview_parts.append(json.dumps(block["json"], indent=2, ensure_ascii=False))
 
         full_text = "\n".join(text_preview_parts) if text_preview_parts else ""
 
@@ -534,7 +534,7 @@ class ContextOffloader(Plugin):
                     references.append((ref, "text/plain", f"text, {len(block['text']):,} chars"))
                     self._track_stored_cycle(event.agent, ref, cycle)
                 elif "json" in block:
-                    json_bytes = json.dumps(block["json"], indent=2).encode("utf-8")
+                    json_bytes = json.dumps(block["json"], indent=2, ensure_ascii=False).encode("utf-8")
                     ref = await _store_content(storage, key, json_bytes, "application/json")
                     references.append((ref, "application/json", f"json, {len(json_bytes):,} bytes"))
                     self._track_stored_cycle(event.agent, ref, cycle)

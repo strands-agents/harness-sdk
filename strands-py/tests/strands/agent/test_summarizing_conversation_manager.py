@@ -406,6 +406,65 @@ def test_summary_call_is_not_repeated_while_the_overflowed_range_is_unchanged(mo
     assert mock_agent.model.stream.call_count == 2
 
 
+def test_summary_overflow_fingerprint_handles_structured_tool_results(mock_agent):
+    manager = SummarizingConversationManager(summary_ratio=0.5, preserve_recent_messages=2)
+    mock_agent.model.stream = Mock(
+        side_effect=lambda *a, **kw: _mock_model_stream_error(ContextWindowOverflowException("Input is too long"))
+    )
+    mock_agent.messages = [
+        {
+            "role": "assistant",
+            "content": [{"toolUse": {"toolUseId": "t1", "name": "lookup", "input": {}}}],
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "toolResult": {
+                        "toolUseId": "t1",
+                        "status": "success",
+                        "content": [{"json": {"payload": "a" * 20_000}}],
+                    }
+                }
+            ],
+        },
+        {"role": "user", "content": [{"text": "p" * 50_000}]},
+        {"role": "assistant", "content": [{"text": "Noted."}]},
+    ]
+
+    manager.reduce_context(mock_agent, e=RuntimeError("overflow"))
+    assert mock_agent.model.stream.call_count == 1
+    assert "json" in mock_agent.messages[1]["content"][0]["toolResult"]["content"][0]
+
+    manager.reduce_context(mock_agent, e=RuntimeError("overflow"))
+    assert mock_agent.model.stream.call_count == 1
+    result_content = mock_agent.messages[1]["content"][0]["toolResult"]["content"][0]
+    assert "json" not in result_content
+    assert "[truncated:" in result_content["text"]
+
+
+def test_successful_model_call_retries_the_same_overflowed_summary_range(mock_agent):
+    manager = SummarizingConversationManager(summary_ratio=0.5, preserve_recent_messages=2)
+    registry = HookRegistry()
+    manager.register_hooks(registry)
+    mock_agent.model.stream = Mock(
+        side_effect=lambda *a, **kw: _mock_model_stream_error(ContextWindowOverflowException("Input is too long"))
+    )
+    mock_agent.messages = [
+        {"role": "user", "content": [{"text": "a" * 20_000}]},
+        {"role": "assistant", "content": [{"text": "Noted."}]},
+        {"role": "user", "content": [{"text": "p" * 50_000}]},
+        {"role": "assistant", "content": [{"text": "Noted."}]},
+    ]
+
+    manager.reduce_context(mock_agent, e=RuntimeError("overflow"))
+    assert mock_agent.model.stream.call_count == 1
+
+    registry.invoke_callbacks(AfterModelCallEvent(agent=mock_agent, invocation_state={}))
+    manager.reduce_context(mock_agent, e=RuntimeError("overflow"))
+    assert mock_agent.model.stream.call_count == 2
+
+
 def test_summary_call_is_retried_each_round_when_a_summarization_agent_overflows(mock_agent):
     """A summarization agent with tools is not deterministic, so its overflow does not arm the range fingerprint."""
     summarization_agent = Mock(side_effect=ContextWindowOverflowException("Input is too long"))

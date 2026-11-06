@@ -76,6 +76,28 @@ class TestTruncateLargestTextBlocks:
         exp_messages = [_text_message(_truncated("a" * 1_000, 10)), _text_message("b" * 1_000)]
         assert messages == exp_messages
 
+    def test_truncates_oversized_json_tool_result(self):
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "toolResult": {
+                            "toolUseId": "t1",
+                            "status": "success",
+                            "content": [{"json": {"payload": "... [truncated: 100 chars removed] ..." + "j" * 1_000}}],
+                        }
+                    }
+                ],
+            }
+        ]
+
+        assert _truncate_largest_text_blocks(messages, preserve_chars=10) == 1
+
+        result_content = messages[0]["content"][0]["toolResult"]["content"][0]
+        assert "json" not in result_content
+        assert "[truncated:" in result_content["text"]
+
     def test_requires_a_meaningful_saving(self):
         # Saving must exceed preserve_chars: 3 * preserve is the floor.
         messages = [_text_message("z" * 300), _text_message("y" * 301)]

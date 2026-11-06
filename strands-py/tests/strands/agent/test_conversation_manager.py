@@ -638,6 +638,33 @@ def test_large_tool_result_partially_truncated_with_context_preserved():
     assert f"... [truncated: {removed} chars removed] ..." in result_text
 
 
+def test_large_json_tool_result_partially_truncated_as_text():
+    """Large JSON tool results remain reducible during context overflow recovery."""
+    manager = SlidingWindowConversationManager(window_size=10)
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "toolResult": {
+                        "toolUseId": "1",
+                        "content": [{"json": {"payload": "M" * 1_000}}],
+                        "status": "success",
+                    }
+                }
+            ],
+        }
+    ]
+
+    truncated = manager._truncate_tool_results(messages, 0)
+
+    assert truncated
+    result_content = messages[0]["content"][0]["toolResult"]["content"][0]
+    assert "json" not in result_content
+    assert "... [truncated:" in result_content["text"]
+    assert result_content["text"].startswith('{"payload": "')
+
+
 def test_truncation_does_not_change_status_to_error():
     """Partial truncation must not change the tool result status."""
     large_text = "Z" * 15000
