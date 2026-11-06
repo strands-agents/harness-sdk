@@ -202,7 +202,9 @@ class SageMakerAIModel(OpenAIModel):
             top_p: Nucleus sampling parameter (optional)
             top_k: Top-k sampling parameter (optional)
             stop: List of stop sequences to use for the model (optional)
-            tool_results_as_user_messages: Convert tool result to user messages (optional)
+            tool_results_as_user_messages: Send tool results as user messages, for endpoints that reject the
+                tool role (optional). Each result becomes its own user message, so parallel tool calls produce
+                consecutive user messages.
             additional_args: Additional request parameters, as supported by https://bit.ly/djl-lmi-request-schema
         """
 
