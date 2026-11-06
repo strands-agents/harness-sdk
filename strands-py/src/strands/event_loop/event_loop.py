@@ -37,6 +37,7 @@ from ..types._events import (
     ForceStopEvent,
     ModelMessageEvent,
     ModelStopReason,
+    ModelStreamChunkEvent,
     StartEvent,
     StartEventLoopEvent,
     StructuredOutputEvent,
@@ -54,11 +55,11 @@ from ..types.exceptions import (
     MaxTokensReachedException,
     StructuredOutputException,
 )
-from ..types.streaming import StopReason
+from ..types.streaming import MetadataEvent, StopReason
 from ..types.tools import ToolChoiceToolDict, ToolResult, ToolSpec, ToolUse
 from ._recover_message_on_max_tokens_reached import recover_message_on_max_tokens_reached
 from ._retry import ModelRetryStrategy
-from .streaming import stream_messages
+from .streaming import extract_usage_metrics, stream_messages
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
@@ -624,6 +625,7 @@ async def _handle_model_execution(
     # Retry loop - actual retry logic is handled by retry_strategy hook
     # Hooks control when to stop retrying via the event.retry flag
     while True:
+        stop_event: ModelStopReason | None = None
         try:
             # Estimate input tokens for the upcoming model call (non-fatal)
             projected_input_tokens: int | None = None
@@ -731,7 +733,6 @@ async def _handle_model_execution(
 
             # Run through the middleware chain. The ModelStopReason is the stage result; middleware
             # may yield other events around it, so it is selected by type and the last one wins.
-            stop_event: ModelStopReason | None = None
             async for event in agent._middleware_registry.invoke(
                 InvokeModelStage,
                 middleware_context,
@@ -801,6 +802,11 @@ async def _handle_model_execution(
         except InterruptException:
             raise
         except Exception as e:
+            if stop_event is not None:
+                _, _, finished_usage, finished_metrics = stop_event["stop"]
+                agent.event_loop_metrics.update_usage(finished_usage)
+                agent.event_loop_metrics.update_metrics(finished_metrics)
+
             after_model_call_event = AfterModelCallEvent(
                 agent=agent,
                 invocation_state=invocation_state,
@@ -874,8 +880,8 @@ def _make_invoke_model_terminal(
     Streams against ``model_state`` (a snapshot owned by the caller) rather than
     ``agent._model_state`` directly, so middleware cannot influence model state. The
     caller writes this dict back to the agent after the chain completes successfully.
-    A call that returns normally adds its reported usage to ``invocation_context``; a
-    middleware short-circuit or a raised error adds nothing.
+    A call adds the usage its stream reported to ``invocation_context``, even if it then
+    raises; a middleware short-circuit adds nothing.
     """
 
     async def terminal(ctx: InvokeModelContext) -> AsyncGenerator[Any, None]:
@@ -895,6 +901,7 @@ def _make_invoke_model_terminal(
             system_prompt=system_prompt_str,
             system_prompt_content=system_prompt_content,
         )
+        streamed_metadata: MetadataEvent | None = None
         with trace_api.use_span(model_invoke_span, end_on_exit=False):
             try:
                 async for event in stream_messages(
@@ -912,11 +919,17 @@ def _make_invoke_model_terminal(
                     structured_output_model=structured_output_model,
                     invocation_context=invocation_context,
                 ):
+                    if isinstance(event, ModelStreamChunkEvent) and "metadata" in event.chunk:
+                        streamed_metadata = event.chunk["metadata"]
                     yield event
 
                 stop_reason, message, usage, metrics = event["stop"]
                 tracer.end_model_invoke_span(model_invoke_span, message, usage, metrics, stop_reason)
             except Exception as e:
+                if streamed_metadata is not None:
+                    failed_usage, failed_metrics = extract_usage_metrics(streamed_metadata)
+                    agent.event_loop_metrics.update_usage(failed_usage)
+                    agent.event_loop_metrics.update_metrics(failed_metrics)
                 tracer.end_span_with_error(model_invoke_span, str(e), e)
                 raise
 

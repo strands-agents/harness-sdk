@@ -575,12 +575,11 @@ describe('Agent', () => {
         await expect(agent.invoke('Test')).rejects.toThrow(MaxTokensError)
 
         expect(meter.metrics.cycleCount).toBe(2)
-        // Only the first turn's usage is accumulated; the second turn throws
-        // MaxTokensError inside streamAggregated before metadata reaches updateCycle
+        // The second turn throws MaxTokensError after streaming its usage, which still counts
         expect(meter.metrics.accumulatedUsage).toStrictEqual({
-          inputTokens: 100,
-          outputTokens: 50,
-          totalTokens: 150,
+          inputTokens: 180,
+          outputTokens: 70,
+          totalTokens: 250,
         })
         expect(meter.metrics.accumulatedMetrics).toStrictEqual({
           latencyMs: expect.any(Number),

@@ -1302,11 +1302,21 @@ async def test_process_stream_adds_the_usage_when_the_consumer_stops_at_the_stop
 
 
 @pytest.mark.asyncio
-async def test_process_stream_adds_nothing_to_the_invocation_context_when_the_stream_raises(alist):
+@pytest.mark.parametrize(
+    ("chunks", "expected_tokens"),
+    [
+        pytest.param([_USAGE_METADATA], (3, 4, 7), id="after_metadata"),
+        pytest.param([{"messageStart": {"role": "assistant"}}], (0, 0, 0), id="before_metadata"),
+    ],
+)
+async def test_process_stream_adds_the_reported_usage_to_the_invocation_context_when_the_stream_raises(
+    alist, chunks, expected_tokens
+):
     invocation_context = _create_invocation_context()
 
     async def failing_stream():
-        yield _USAGE_METADATA
+        for chunk in chunks:
+            yield chunk
         raise RuntimeError("stream failed")
 
     with pytest.raises(RuntimeError, match="stream failed"):
@@ -1314,7 +1324,13 @@ async def test_process_stream_adds_nothing_to_the_invocation_context_when_the_st
             strands.event_loop.streaming.process_stream(failing_stream(), invocation_context=invocation_context)
         )
 
-    assert invocation_context.usage == {"turns_taken": 0, "inputTokens": 0, "outputTokens": 0, "totalTokens": 0}
+    input_tokens, output_tokens, total_tokens = expected_tokens
+    assert invocation_context.usage == {
+        "turns_taken": 0,
+        "inputTokens": input_tokens,
+        "outputTokens": output_tokens,
+        "totalTokens": total_tokens,
+    }
 
 
 def _get_message_from_event(event: ModelStopReason) -> Message:

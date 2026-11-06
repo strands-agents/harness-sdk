@@ -35,7 +35,7 @@ import { ModelProxy } from '../models/model-proxy.js'
 import { ModelRouter } from '../models/routing/router.js'
 import type { BaseModelConfig, StreamAggregatedResult, StreamOptions } from '../models/model.js'
 import { ModelPlugin } from '../plugins/model-plugin.js'
-import { totalPromptTokens, isModelStreamEvent } from '../models/streaming.js'
+import { totalPromptTokens, isModelStreamEvent, type ModelMetadataEvent } from '../models/streaming.js'
 import { InvocationContextImpl, reachedLimit, resolveInvocationContext } from './invocation-context.js'
 import { ToolRegistry } from '../registry/tool-registry.js'
 import { StateStore } from '../state-store.js'
@@ -2707,6 +2707,7 @@ export class Agent implements LocalAgent, InvokableAgent {
     messages = fillEmptyAssistantMessages(normalizeToolUseNames(messages))
     const proxy = new ModelProxy(model)
     const streamGenerator = proxy.streamAggregated(messages, streamOptions, invocationContext)
+    let streamedMetadata: ModelMetadataEvent | undefined
     try {
       let result = await streamGenerator.next()
 
@@ -2716,6 +2717,9 @@ export class Agent implements LocalAgent, InvokableAgent {
         const event = result.value
 
         if (isModelStreamEvent(event)) {
+          if (event.type === 'modelMetadataEvent') {
+            streamedMetadata = event
+          }
           // ModelStreamEvent: wrap in ModelStreamUpdateEvent
           yield new ModelStreamUpdateEvent({ agent: this, invocationContext, event, invocationState })
         } else {
@@ -2728,6 +2732,10 @@ export class Agent implements LocalAgent, InvokableAgent {
       // result.done is true, result.value contains the return value
       return result.value
     } catch (error) {
+      // An in-loop cancellation abandons the proxy without counting its usage, so the meter skips it too.
+      if (!(error instanceof CancelledError)) {
+        this._meter.updateCycle(streamedMetadata)
+      }
       // Provider transports typically surface cancellation as AbortError.
       // Preserve the Agent cancellation contract when the shared signal fired.
       this._throwIfCancelled()

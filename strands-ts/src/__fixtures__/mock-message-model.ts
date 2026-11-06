@@ -22,7 +22,7 @@ type ContentBlockInput = PlainContentBlock | PlainContentBlock[] | Error
  */
 type Turn =
   | { type: 'content'; content: PlainContentBlock[]; stopReason: StopReason; usage?: Usage }
-  | { type: 'error'; error: Error }
+  | { type: 'error'; error: Error; usage?: Usage }
 
 /**
  * Test model provider that operates at the content block level.
@@ -67,6 +67,7 @@ export class MockMessageModel extends Model<BaseModelConfig> {
    *   .addTurn({ type: 'textBlock', text: 'Done' }, { stopReason: 'maxTokens' })  // Explicit stopReason
    *   .addTurn({ type: 'textBlock', text: 'Hi' }, { usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } })
    *   .addTurn(new Error('Failed'))  // Error turn
+   *   .addTurn(new Error('Failed'), { usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } })  // Streams usage, then throws
    * ```
    */
   addTurn(turn: ContentBlockInput, options?: { stopReason?: StopReason; usage?: Usage }): this {
@@ -124,6 +125,9 @@ export class MockMessageModel extends Model<BaseModelConfig> {
 
     // Handle error turns
     if (turn.type === 'error') {
+      if (turn.usage) {
+        yield { type: 'modelMetadataEvent', usage: turn.usage }
+      }
       throw turn.error
     }
 
@@ -163,7 +167,7 @@ export class MockMessageModel extends Model<BaseModelConfig> {
    */
   private _createTurn(turn: ContentBlockInput, explicitStopReason?: StopReason, usage?: Usage): Turn {
     if (turn instanceof Error) {
-      return { type: 'error', error: turn }
+      return { type: 'error', error: turn, ...(usage && { usage }) }
     }
 
     // Normalize to array

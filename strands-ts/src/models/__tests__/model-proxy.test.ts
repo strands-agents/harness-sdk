@@ -5,6 +5,7 @@ import { type ModelStreamEvent } from '../streaming.js'
 import { InvocationContextImpl } from '../../agent/invocation-context.js'
 import { anyTrackingId } from '../../__fixtures__/message-helpers.js'
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
+import { TestModelProvider } from '../../__fixtures__/model-test-helpers.js'
 import { Message, TextBlock, type ContentBlock } from '../../types/messages.js'
 
 function userMessage(text: string): Message {
@@ -66,6 +67,19 @@ describe('ModelProxy', () => {
       expect(invocationContext.usage).toEqual(new InvocationContextImpl().usage)
     })
 
+    it('records the usage the model streamed before it threw', async () => {
+      const model = new MockMessageModel().addTurn(new Error('boom'), {
+        usage: { inputTokens: 3, outputTokens: 4, totalTokens: 7 },
+      })
+      const invocationContext = new InvocationContextImpl()
+
+      await expect(
+        drain(new ModelProxy(model).streamAggregated([userMessage('go')], undefined, invocationContext))
+      ).rejects.toThrow('boom')
+
+      expect(invocationContext.usage).toEqual({ turnsTaken: 0, inputTokens: 3, outputTokens: 4, totalTokens: 7 })
+    })
+
     it('records nothing when the model reports no usage', async () => {
       const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'hi' })
       const invocationContext = new InvocationContextImpl()
@@ -88,6 +102,24 @@ describe('ModelProxy', () => {
   })
 
   describe('pass-through', () => {
+    it('closes the model stream when the consumer stops early', async () => {
+      let closed = false
+      const model = new TestModelProvider(async function* () {
+        try {
+          yield { type: 'modelMessageStartEvent', role: 'assistant' }
+          yield { type: 'modelMessageStopEvent', stopReason: 'endTurn' }
+        } finally {
+          closed = true
+        }
+      })
+
+      for await (const _event of new ModelProxy(model).streamAggregated([userMessage('go')])) {
+        break
+      }
+
+      expect(closed).toBe(true)
+    })
+
     it('yields the same events as the underlying model', async () => {
       const build = (): MockMessageModel =>
         new MockMessageModel().addTurn(
