@@ -66,7 +66,7 @@
   "devDependencies": {
     "@astrojs/markdown-remark": "^7.3.5",
     "@astrojs/markdown-satteri": "^0.4.6",
-    "@astrojs/starlight": "^0.42.7",
+    "@astrojs/starlight": "^0.42.8",
     "@octokit/rest": "^22.0.1",
     "@types/js-yaml": "^4.0.9",
     "@types/jsdom": "^30.0.0",
