@@ -9,7 +9,10 @@ import type { ToolResultContent } from '../../types/messages.js'
 
 export const TRUNCATED_PREFIX = '[Truncated:'
 
-const DEFAULT_PREVIEW_TOKENS = 1000
+/** Matches the header `buildPreview` puts in front of a preview. */
+export const TRUNCATED_HEADER = /^\[Truncated: \d+ blocks?, ~[\d,]+ tokens\]\n\n/
+
+export const DEFAULT_PREVIEW_TOKENS = 1000
 const CHARS_PER_TOKEN = 4
 
 /**
@@ -23,6 +26,22 @@ export interface TruncateConfig {
 
   /** Which portion of the text to keep as preview. Defaults to 'headTail'. */
   preview?: 'head' | 'tail' | 'headTail'
+
+  /**
+   * Let the model choose, per tool call, how many tokens of that call's result stay in context.
+   * Adds an optional `_max_result_tokens` integer to the input schema of the tools this strategy
+   * targets; when the model sets it, that result is kept whole up to the value and otherwise
+   * truncated to a preview of that size, in place of `threshold` and `previewTokens`. Calls
+   * without it keep the configured defaults.
+   *
+   * The value caps what the model may pick: `true` caps at half the model's context window, a
+   * number caps at that many tokens. When several strategies with `dynamicLimit` target the same
+   * tool, the first in the pipeline sets the advertised cap; each still clamps to its own. Off
+   * when omitted.
+   *
+   * Each result truncated without a model-set limit carries a one-line hint naming the property.
+   */
+  dynamicLimit?: true | number
 }
 
 /**
@@ -52,6 +71,7 @@ export function buildPreview(fullText: string, blockCount: number, config?: Trun
   const marker = `[... ${elided.toLocaleString('en-US')} chars elided ...]`
   const preview = [head, marker, tail].filter(Boolean).join('\n\n')
 
+  // Keep in sync with TRUNCATED_HEADER.
   const result =
     `${TRUNCATED_PREFIX} ${blockCount} ${blockCount === 1 ? 'block' : 'blocks'}, ~${Math.ceil(totalChars / CHARS_PER_TOKEN).toLocaleString('en-US')} tokens]\n\n` +
     preview
