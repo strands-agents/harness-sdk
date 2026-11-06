@@ -82,14 +82,18 @@ describe('SageMakerDecisionModel', () => {
       const decision = new SageMakerDecisionModel({
         endpointName: ENDPOINT_NAME,
         region: 'us-east-1',
-        clientConfig: { region: 'us-west-2', maxAttempts: 5 },
+        clientConfig: { region: 'us-west-2', maxAttempts: 5, customUserAgent: 'my-app' },
       })
 
       await decision.ask('state', { q: { question: 'ok?', choices: 'boolean' } })
       await decision.ask('state', { q: { question: 'ok?', choices: 'boolean' } })
 
       expect(mockSageMakerRuntimeClient).toHaveBeenCalledTimes(1)
-      expect(mockSageMakerRuntimeClient).toHaveBeenCalledWith({ region: 'us-east-1', maxAttempts: 5 })
+      expect(mockSageMakerRuntimeClient).toHaveBeenCalledWith({
+        region: 'us-east-1',
+        maxAttempts: 5,
+        customUserAgent: 'my-app strands-agents-ts-sdk',
+      })
     })
 
     it('passes the cancel signal to the client', async () => {

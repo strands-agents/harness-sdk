@@ -64,7 +64,14 @@ export class SageMakerDecisionModel extends DecisionModel {
       throw new Error('SageMakerDecisionModel requires an endpointName')
     }
     this._endpointName = endpointName
-    this._clientConfig = { ...options.clientConfig, ...(options.region && { region: options.region }) }
+    const customUserAgent = options.clientConfig?.customUserAgent
+      ? `${options.clientConfig.customUserAgent} strands-agents-ts-sdk`
+      : 'strands-agents-ts-sdk'
+    this._clientConfig = {
+      ...options.clientConfig,
+      ...(options.region && { region: options.region }),
+      customUserAgent,
+    }
     this._requestConfig = {
       providerName: SAGEMAKER_PROVIDER_NAME,
       defaultMinConfidence: resolveDefaultMinConfidence(
