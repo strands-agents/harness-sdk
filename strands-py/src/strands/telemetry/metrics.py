@@ -110,7 +110,8 @@ class ToolMetrics:
     """Metrics for a specific tool's usage.
 
     Attributes:
-        tool: The tool being tracked.
+        tool: The most recent tool invocation being tracked (for backwards compatibility).
+        invocations: List of all tool invocations with their inputs.
         call_count: Number of times the tool has been called.
         success_count: Number of successful tool calls.
         error_count: Number of failed tool calls.
@@ -118,6 +119,7 @@ class ToolMetrics:
     """
 
     tool: ToolUse
+    invocations: list[ToolUse] = field(default_factory=list)
     call_count: int = 0
     success_count: int = 0
     error_count: int = 0
@@ -140,7 +142,8 @@ class ToolMetrics:
             metrics_client: The metrics client for recording the metrics.
             attributes: attributes of the metrics.
         """
-        self.tool = tool  # Update with latest tool state
+        self.tool = tool  # Update with latest tool state for backwards compatibility
+        self.invocations.append(tool)
         self.call_count += 1
         self.total_time += duration
         metrics_client.tool_call_count.add(1, attributes=attributes)
@@ -437,6 +440,13 @@ class EventLoopMetrics:
                         "name": metrics.tool.get("name", "unknown"),
                         "input_params": metrics.tool.get("input", {}),
                     },
+                    "invocations": [
+                        {
+                            "tool_use_id": inv.get("toolUseId", "N/A"),
+                            "input_params": inv.get("input", {}),
+                        }
+                        for inv in metrics.invocations
+                    ],
                     "execution_stats": {
                         "call_count": metrics.call_count,
                         "success_count": metrics.success_count,
