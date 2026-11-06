@@ -457,7 +457,6 @@ export class Graph implements MultiAgent {
 
       this._tracer.endMultiAgentSpan(multiAgentSpan, {
         duration: Date.now() - state.startTime,
-        ...(result && { usage: result.usage }),
         ...(caughtError && { error: caughtError }),
       })
 
@@ -571,7 +570,7 @@ export class Graph implements MultiAgent {
       }
 
       const result = next.value
-      this._tracer.endNodeSpan(nodeSpan, { status: result.status, duration: result.duration, usage: result.usage })
+      this._tracer.endNodeSpan(nodeSpan, { status: result.status, duration: result.duration })
       queue.push({ type: 'result', node, result })
 
       await queue.send({
