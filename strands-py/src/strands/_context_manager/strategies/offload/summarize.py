@@ -16,7 +16,7 @@ from ...methods.summarize import (
     _tool_result_to_content_blocks,
 )
 from ...stash import _format_stash_refs
-from ...types import ContextState, is_tool_result_block
+from ...types import ContextState
 from .base import (
     BaseOffloadStrategy,
     OffloadConditions,
@@ -46,37 +46,8 @@ def _warn_client_side_fallback(model: Model, reason: str, *, exc_info: bool = Fa
     )
 
 
-def _warn_kept_pins(model: Model, kept: int) -> None:
-    logger.warning(
-        "model=<%s>, kept=<%d> | pinned messages are kept after a server-side summary"
-        " | thinking in the messages kept after the summary will be dropped",
-        type(model).__name__,
-        kept,
-    )
-
-
 def _pinned_before(messages: list[Message], end: int) -> list[Message]:
     return [message for index, message in enumerate(messages[1:end], start=1) if is_pinned(messages, index)]
-
-
-def _cut_needs_moving(messages: list[Message], end: int, pinned: list[Message]) -> bool:
-    """Whether cutting at ``end`` lets the last kept pin merge into the next message, or splits a tool pair."""
-    if not pinned or end >= len(messages):
-        return False
-    after = messages[end]
-    return pinned[-1]["role"] == after["role"] or any(is_tool_result_block(block) for block in after["content"])
-
-
-def _is_summary(block: ContentBlock) -> bool:
-    return "summary" in block or ("text" in block and block["text"].startswith("[Summarized:"))
-
-
-def _without_summaries(message: Message) -> Message | None:
-    """Return ``message`` without the earlier summaries merged into it, or None when nothing else is left."""
-    content = [block for block in message["content"] if not _is_summary(block)]
-    if len(content) == len(message["content"]):
-        return message
-    return {**message, "content": content} if content else None
 
 
 class SummarizeStrategy(BaseOffloadStrategy):
@@ -172,24 +143,28 @@ class SummarizeStrategy(BaseOffloadStrategy):
         """Summarize message 0 through the last of ``safe`` server-side, keeping message 0 in place.
 
         A server-side summary can only stand in for the conversation's exact start, so every message up to the last
-        of ``safe`` is sent, even ones ``safe`` leaves out. The summary becomes an assistant message at index 1,
-        followed by the pinned messages it covered, without earlier summaries merged into them; it leads any
-        assistant content after it once alternation is repaired. Pinned messages kept after the summary invalidate
-        the thinking in the messages after them.
+        of ``safe`` is sent, even ones ``safe`` leaves out. The summary becomes an assistant message at index 1 and
+        leads any assistant content after it once alternation is repaired. Pinned messages are not supported on this
+        path, so a pin among the summarized messages hands the pass to the client-side summary.
 
         Returns:
-            False when the server-side summary failed, so the caller summarizes client-side instead.
+            False when the server-side summary was skipped or failed, so the caller summarizes client-side instead.
         """
         messages = context.messages
         safe_ids = {id(message) for message in safe}
         end = max(index for index, message in enumerate(messages) if id(message) in safe_ids) + 1
-        pinned = _pinned_before(messages, end)
-        while _cut_needs_moving(messages, end, pinned):
-            end -= 1
-            pinned = _pinned_before(messages, end)
-        replaced = end - 1 - len(pinned)
-        if replaced == 0:
+        if end <= 1:
             return False
+        pinned = _pinned_before(messages, end)
+        if pinned:
+            logger.warning(
+                "model=<%s>, pinned=<%d> | server-side summary does not support pinned messages"
+                " | falling back to client-side summary",
+                type(model).__name__,
+                len(pinned),
+            )
+            return False
+        replaced = end - 1
         if replaced > len(safe):
             logger.warning(
                 "covered=<%d>, eligible=<%d> | a server-side summary covers the conversation's start"
@@ -197,16 +172,12 @@ class SummarizeStrategy(BaseOffloadStrategy):
                 replaced,
                 len(safe),
             )
-        agent = context.agent
-        summary = await self._request_server_side_summary(model, agent, messages[:end])
+        summary = await self._request_server_side_summary(model, context.agent, messages[:end])
         if summary is None:
             return False
-        kept = [kept for message in pinned if (kept := _without_summaries(message))]
-        messages[1:end] = [Message(role="assistant", content=[summary]), *kept]
-        if kept:
-            _warn_kept_pins(model, len(kept))
+        messages[1:end] = [Message(role="assistant", content=[summary])]
         _repair_alternation(messages)
-        logger.debug("summarized=<%s>, kept=<%s> | summarized opening messages server-side", replaced, len(kept))
+        logger.debug("summarized=<%s> | summarized opening messages server-side", replaced)
         return True
 
     async def _request_server_side_summary(
