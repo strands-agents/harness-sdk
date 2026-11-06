@@ -1,0 +1,9 @@
+name: Tracekit
+description: Hook provider that has a Tracekit signer allow, deny or hold each tool call for a person before it runs, and records every call in a signed, hash-chained log.
+integrationType: intervention
+languages:
+  python:
+    package: tracekit-ai
+github: https://github.com/Cygnux-Labs/Tracekit
+docsUrl: https://github.com/Cygnux-Labs/Tracekit/blob/main/docs/integrations/strands.md
+addedDate: 2026-10-18
