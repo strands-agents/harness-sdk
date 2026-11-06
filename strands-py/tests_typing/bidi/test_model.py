@@ -7,6 +7,7 @@ from strands.bidi.models import (
     ModelUpdateConfig,
     OpenAIRealtimeModel,
 )
+from strands.types.tools import ToolChoice
 
 
 def config_requires_model_id() -> None:
@@ -25,6 +26,12 @@ def providers_require_model_id() -> None:
     BedrockNovaSonicModel(model_id=None)  # type: ignore[arg-type]
     GoogleGeminiLiveModel(model_id=None)  # type: ignore[arg-type]
     OpenAIRealtimeModel(model_id=None, transcription_model_id=None)  # type: ignore[arg-type]
+
+
+def nova_sonic_accepts_tool_choice(tool_choice: ToolChoice) -> None:
+    BedrockNovaSonicModel(model_id="model-id", tool_choice=tool_choice)
+    BedrockNovaSonicModel(model_id="model-id", tool_choice=None)
+    BedrockNovaSonicModel(model_id="model-id", tool_choice="any")  # type: ignore[arg-type]
 
 
 def providers_accept_partial_updates() -> None:
