@@ -1,0 +1,125 @@
+name: "Integ Canary"
+
+# Nightly full integration run of main for both SDKs, reported to GitHub issues.
+#
+# Runs the same reusable integ workflows that PRs and releases use (same matrix, credentials and CloudWatch
+# publishing), so the dashboards keep their nightly `Event=schedule` baseline that no PR's own breakage can pollute.
+# The `report` job then keeps one `integ-canary` issue per SDK in sync with the result; see
+# test-infra/dashboards/README.md.
+on:
+  schedule:
+    - cron: '17 6 * * *'
+  # Maintainers can re-run the canary by hand, e.g. to confirm a fix and close the issue. Only runs on main report.
+  workflow_dispatch:
+
+concurrency:
+  group: integ-canary-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  # Both callers pin this run's commit, so the two SDKs test the same main even if main moves in between.
+  python:
+    name: Python
+    uses: ./.github/workflows/python-integration-test.yml
+    permissions:
+      id-token: write
+      contents: read
+      pull-requests: read
+    secrets: inherit
+    with:
+      ref: ${{ github.sha }}
+
+  # Sequential, so the two suites do not compete for provider quotas.
+  typescript:
+    name: TypeScript
+    needs: python
+    if: ${{ !cancelled() }}
+    uses: ./.github/workflows/typescript-integration-test.yml
+    permissions:
+      id-token: write
+      contents: read
+      pull-requests: read
+    secrets: inherit
+    with:
+      ref: ${{ github.sha }}
+      full_suite: true
+
+  # !cancelled(), not always(): a run a maintainer cancels is not reported, but a run whose test jobs failed to
+  # produce reports is, as broken legs.
+  report:
+    name: Report to integ-canary issues
+    needs: [python, typescript]
+    if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
+    runs-on: strands-agents_ubuntu-latest_4-core
+    permissions:
+      actions: read  # find the previous canary run and download its artifacts
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          sparse-checkout: |
+            .github/scripts
+          persist-credentials: false
+
+      # One directory per artifact. A missing artifact is reported as a broken leg, so it must not fail the job.
+      - name: Download test results
+        uses: actions/download-artifact@v8.0.2
+        continue-on-error: true
+        with:
+          merge-multiple: false
+          path: ${{ runner.temp }}/current
+
+      # PY_LEGS are `<leg>:<artifact>` and must match the matrix in python-integration-test.yml; TS_ARTIFACT and
+      # TS_REPORT match the upload in typescript-integration-test.yml.
+      - name: Sync the integ-canary issues
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CURRENT: ${{ runner.temp }}/current
+          PREVIOUS: ${{ runner.temp }}/previous
+          PY_LEGS: all:test-results bidi:bidi-test-results mcp-1x:mcp-1x-test-results
+          TS_ARTIFACT: test-artifacts-integ
+          TS_REPORT: test-report/junit/report.xml
+        run: |
+          set -euo pipefail
+          # The reporter reuses the metrics publisher's JUnit parser, which imports boto3.
+          pip install --no-cache-dir boto3
+
+          prev_id="" prev_sha=""
+          while read -r id sha; do
+            if [ "$id" != "$GITHUB_RUN_ID" ]; then prev_id=$id prev_sha=$sha; break; fi
+          done < <(gh run list -R "$GITHUB_REPOSITORY" --workflow integ-canary.yml --branch main \
+            --status completed --limit 2 --json databaseId,headSha -q '.[] | "\(.databaseId) \(.headSha)"')
+
+          artifacts=("$TS_ARTIFACT")
+          for entry in $PY_LEGS; do artifacts+=("${entry#*:}"); done
+          downloaded=0
+          if [ -n "$prev_id" ]; then
+            for artifact in "${artifacts[@]}"; do
+              if gh run download "$prev_id" -R "$GITHUB_REPOSITORY" -n "$artifact" -D "$PREVIOUS/$artifact"; then
+                downloaded=$((downloaded + 1))
+              fi
+            done
+          fi
+          py=(--sdk python --workflow integ-canary.yml)
+          ts=(--sdk typescript --workflow integ-canary.yml --report "all=$CURRENT/$TS_ARTIFACT/$TS_REPORT")
+          for entry in $PY_LEGS; do py+=(--report "${entry%%:*}=$CURRENT/${entry#*:}/test-results.xml"); done
+          if [ "$downloaded" -gt 0 ]; then
+            py+=(--previous-run-id "$prev_id" --previous-sha "$prev_sha")
+            ts+=(--previous-run-id "$prev_id" --previous-sha "$prev_sha")
+            for entry in $PY_LEGS; do
+              py+=(--previous-report "${entry%%:*}=$PREVIOUS/${entry#*:}/test-results.xml")
+            done
+            ts+=(--previous-report "all=$PREVIOUS/$TS_ARTIFACT/$TS_REPORT")
+          else
+            echo "::warning::No artifacts from a previous canary run; reporting without a comparison."
+          fi
+
+          # Sync both issues even if the first sync fails.
+          status=0
+          python .github/scripts/report-integ-canary.py "${py[@]}" || status=1
+          python .github/scripts/report-integ-canary.py "${ts[@]}" || status=1
+          exit "$status"
