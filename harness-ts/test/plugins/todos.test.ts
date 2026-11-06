@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { BeforeModelCallEvent, InvokeModelStage } from '@strands-agents/sdk'
 import type { Agent, Plugin, ToolContext } from '@strands-agents/sdk'
 import type { InjectionContext } from '@strands-agents/sdk/vended-plugins/context-injector'
 
@@ -88,9 +89,15 @@ describe('Todos', () => {
   })
 
   it('registers a context injector on initAgent', () => {
+    // CI runs these tests against both the published SDK and the one in this repo, which register the
+    // injector differently.
     const added: unknown[] = []
-    const stub = { addMiddleware: (_stage: unknown, handler: unknown) => added.push(handler) }
+    const stub = {
+      addMiddleware: (stage: unknown) => added.push(stage),
+      addHook: (eventType: unknown) => added.push(eventType),
+    }
     new Todos().initAgent(stub as unknown as LocalAgent)
     expect(added).toHaveLength(1)
+    expect([InvokeModelStage.Input, BeforeModelCallEvent]).toContain(added[0])
   })
 })

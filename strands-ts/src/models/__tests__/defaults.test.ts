@@ -50,6 +50,7 @@ describe('getContextWindowLimit', () => {
     expect(getContextWindowLimit('gpt-6.1-terra')).toBe(1_050_000)
     expect(getContextWindowLimit('gpt-6-sol')).toBe(1_050_000)
     expect(getContextWindowLimit('gpt-6-luna')).toBe(1_050_000)
+    expect(getContextWindowLimit('gpt-6-cyber')).toBe(1_050_000)
     expect(getContextWindowLimit('gpt-5.4')).toBe(1_050_000)
     expect(getContextWindowLimit('gpt-4o')).toBe(128_000)
     expect(getContextWindowLimit('o3')).toBe(200_000)

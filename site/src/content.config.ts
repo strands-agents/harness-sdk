@@ -1,12 +1,31 @@
+import { fileURLToPath } from 'node:url'
+
 import { defineCollection, type SchemaContext } from 'astro:content'
 import { z } from 'astro/zod'
 import { docsSchema } from '@astrojs/starlight/schema'
 import { glob, file } from 'astro/loaders'
+import fastGlob from 'fast-glob'
 import { pathToDocsSlug } from './util/links'
 import { TagSchema } from './config/tags'
 import { SDK_META, hasLanguageStreams, type Sdk } from './config/changelog'
 
 export const ALL_SDK_LANGUAGES = ['python', 'typescript'] as const
+
+function optionalGlob(options: Parameters<typeof glob>[0]) {
+  const loader = glob(options)
+  return {
+    ...loader,
+    async load(context: Parameters<typeof loader.load>[0]) {
+      const base = options.base ? new URL(options.base, context.config.root) : context.config.root
+      const basePath = fileURLToPath(base)
+      const files = await fastGlob(options.pattern, { cwd: basePath, onlyFiles: true })
+      if (files.length > 0) return loader.load(context)
+
+      context.store.clear()
+      context.watcher?.add(basePath)
+    },
+  }
+}
 
 export const docsLanguagesSchema = z
   .union([z.string(), z.array(z.string())])
@@ -274,12 +293,28 @@ export type Announcement = z.infer<typeof announcementSchema>
 
 const sampleGuideSchema = z
   .object({
+    catalogMode: z.enum(['legacy', 'curated']),
     title: z.string(),
     description: z.string(),
     slug: z.string(),
     language: z.enum(ALL_SDK_LANGUAGES),
     category: z.string(),
     categoryLabel: z.string(),
+    collection: z
+      .object({
+        id: z.string(),
+        label: z.string(),
+        description: z.string().optional(),
+        order: z.number().int().nonnegative(),
+      })
+      .optional(),
+    docs: z.array(
+      z.object({
+        label: z.string(),
+        url: z.string().url().startsWith('https://', 'documentation links must use https'),
+      })
+    ),
+    family: z.string().optional(),
     sourceUrl: z.string().url(),
     order: z.number().int().nonnegative(),
   })
@@ -350,7 +385,7 @@ export const collections = {
     schema: eventSchema,
   }),
   announcements: defineCollection({
-    loader: glob({
+    loader: optionalGlob({
       base: 'src/content/announcements',
       pattern: '**/*.{yml,yaml}',
     }),
@@ -377,7 +412,7 @@ export const collections = {
         'docs/integrations/**/*.mdx',
         'docs/contribute/**/*.mdx',
         'docs/examples/**/[!index]*.mdx',
-        'docs/labs/**/*.mdx',
+        'docs/labs/**/*.{md,mdx}',
         'docs/api/python/**/*.mdx',
         'docs/api/typescript/**/*.(md|mdx)',
       ],

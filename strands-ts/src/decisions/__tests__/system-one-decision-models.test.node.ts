@@ -281,7 +281,7 @@ describe.each(PROVIDERS)('$name', ({ create, endpoint, defaultModelId, providerN
       await expect(pending).rejects.toBeInstanceOf(ModelError)
     })
 
-    it.each([429, 529])('maps HTTP %s to ModelThrottledError with the HTTP failure as cause', async (status) => {
+    it.each([429, 503, 529])('maps HTTP %s to ModelThrottledError with the HTTP failure as cause', async (status) => {
       const decision = create({
         apiKey: 'test-key',
         fetch: fakeFetch({ error: 'retry later' }, { status }),

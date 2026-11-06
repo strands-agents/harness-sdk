@@ -7,4 +7,4 @@ languages:
   typescript: {}
 github: https://github.com/strands-agents/harness-sdk/tree/main/strands-py/src/strands/vended_tools/file_editor
 docsPage: docs/user-guide/sdk/tools/vended-tools/file-editor
-addedDate: 2025-11-10
+addedDate: 2026-06-16
