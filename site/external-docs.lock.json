@@ -4,6 +4,10 @@
     {
       "id": "strands-box",
       "revision": "e39544d49188b82933264b83159c7ccc278ced5a"
+    },
+    {
+      "id": "strands-decider",
+      "revision": "3370856604960e86b9112b3a45b18a6f71854848"
     }
   ]
 }

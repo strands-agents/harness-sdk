@@ -580,6 +580,35 @@ describe('resolveModel', () => {
     expect(model.getConfig().cacheConfig).toBeUndefined()
   })
 
+  it.each([
+    { spec: 'openai/gpt-5.6-sol', modelId: 'gpt-5.6-sol', searchTool: { type: 'web_search' }, caching: true },
+    { spec: 'openai/gpt-5.6-sol', modelId: 'gpt-5.6-sol', searchTool: { type: 'web_search' }, caching: false },
+    {
+      spec: 'bedrock-mantle/openai.gpt-6-luna',
+      modelId: 'openai.gpt-6-luna',
+      searchTool: { type: 'web_search', external_web_access: true },
+      caching: true,
+    },
+    {
+      spec: 'bedrock-mantle/openai.gpt-6-luna',
+      modelId: 'openai.gpt-6-luna',
+      searchTool: { type: 'web_search', external_web_access: true },
+      caching: false,
+    },
+  ])(
+    'configures $spec caching=$caching without changing reasoning or search',
+    async ({ spec, modelId, searchTool, caching }) => {
+      const model = await resolve(spec, 'high', true, caching)
+      // contextWindowLimit comes from the SDK's model info, not the harness.
+      const { contextWindowLimit: _, ...config } = model.getConfig()
+      expect(config).toStrictEqual({
+        modelId,
+        ...(caching ? { cacheConfig: { strategy: 'auto' } } : {}),
+        params: { reasoning: { effort: 'high' }, tools: [searchTool] },
+      })
+    }
+  )
+
   it('warns instead of throwing when caching is explicitly requested on a Model instance', async () => {
     const warn = vi.fn()
     configureLogging({ debug: () => {}, info: () => {}, warn, error: () => {} })
