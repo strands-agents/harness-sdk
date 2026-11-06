@@ -54,7 +54,8 @@ import type {
   Metrics,
 } from './types.js'
 import type { ContentBlock, Message, SystemPrompt } from '../types/messages.js'
-import type { JSONSerializable } from '../types/json.js'
+import type { JSONSchema, JSONSerializable } from '../types/json.js'
+import type { ToolSpec } from '../tools/types.js'
 import { jsonReplacer } from './json.js'
 import { getServiceName } from './utils.js'
 import { totalPromptTokens } from '../models/streaming.js'
@@ -292,7 +293,7 @@ export class Tracer {
       }
 
       if (this._includeToolDefinitions && toolsConfig) {
-        attributes['gen_ai.tool.definitions'] = JSON.stringify(toolsConfig, jsonReplacer)
+        attributes['gen_ai.tool.definitions'] = JSON.stringify(this._constructToolDefinitions(toolsConfig), jsonReplacer)
       }
 
       if (systemPrompt !== undefined) {
@@ -1073,6 +1074,27 @@ export class Tracer {
     }
 
     return attributes
+  }
+
+  /**
+   * Constructs the gen_ai.tool.definitions attribute value from the agent's
+   * tools config, mirroring the Python SDK's `_construct_tool_definitions`.
+   *
+   * @param toolsConfig - Map of tool name to tool spec
+   * @returns List of tool definitions with name, description, and schemas
+   */
+  private _constructToolDefinitions(toolsConfig: Record<string, ToolSpec>): Array<{
+    name: string
+    description: string | undefined
+    inputSchema: JSONSchema | undefined
+    outputSchema: JSONSchema | undefined
+  }> {
+    return Object.entries(toolsConfig).map(([name, spec]) => ({
+      name,
+      description: spec.description,
+      inputSchema: spec.inputSchema,
+      outputSchema: spec.outputSchema,
+    }))
   }
 
   /**
