@@ -75,8 +75,8 @@ export abstract class Sandbox {
    *
    * @param path - Path to the file to read.
    * @returns The file contents as raw bytes.
-   * @throws Error with a Node fs-style `code`: `ENOENT` if the path does not exist, `EISDIR` if it is a directory,
-   *   `EACCES` if it cannot be read. Other failures throw a plain Error.
+   * @throws `SandboxPathNotFoundError` if the path does not exist, `SandboxIsADirectoryError` if it is a directory,
+   *   `SandboxPermissionError` if it cannot be read (each also has a Node fs-style `code`). Other failures throw an Error.
    */
   abstract readFile(path: string): Promise<Uint8Array>
 

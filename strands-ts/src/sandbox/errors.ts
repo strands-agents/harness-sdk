@@ -31,7 +31,7 @@ export class SandboxAbortError extends Error {
 }
 
 /**
- * Thrown by {@link Sandbox.listFiles} and `PosixShellSandbox.readFile` when the path does not exist, distinguishing
+ * Thrown by {@link Sandbox.listFiles} and {@link Sandbox.readFile} when the path does not exist, distinguishing
  * genuine absence from permission failures ({@link SandboxPermissionError} from `readFile`) and transport failures
  * (plain errors).
  *
@@ -40,36 +40,36 @@ export class SandboxAbortError extends Error {
 export class SandboxPathNotFoundError extends Error {
   readonly code = 'ENOENT'
 
-  constructor(path: string) {
-    super(`Path not found: ${path}`)
+  constructor(path: string, options?: ErrorOptions) {
+    super(`Path not found: ${path}`, options)
     this.name = 'SandboxPathNotFoundError'
   }
 }
 
 /**
- * Thrown by `PosixShellSandbox.readFile` when the path is a directory.
+ * Thrown by {@link Sandbox.readFile} when the path is a directory.
  *
  * `code` is `'EISDIR'`, so checks written for Node fs errors also match it.
  */
 export class SandboxIsADirectoryError extends Error {
   readonly code = 'EISDIR'
 
-  constructor(path: string) {
-    super(`Is a directory: ${path}`)
+  constructor(path: string, options?: ErrorOptions) {
+    super(`Is a directory: ${path}`, options)
     this.name = 'SandboxIsADirectoryError'
   }
 }
 
 /**
- * Thrown by `PosixShellSandbox.readFile` when the file, or a directory above it, is not accessible.
+ * Thrown by {@link Sandbox.readFile} when the file, or a directory above it, is not accessible.
  *
  * `code` is `'EACCES'`, so checks written for Node fs errors also match it.
  */
 export class SandboxPermissionError extends Error {
   readonly code = 'EACCES'
 
-  constructor(path: string) {
-    super(`Permission denied: ${path}`)
+  constructor(path: string, options?: ErrorOptions) {
+    super(`Permission denied: ${path}`, options)
     this.name = 'SandboxPermissionError'
   }
 }

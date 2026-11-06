@@ -155,8 +155,10 @@ describe('NotASandboxLocalEnvironment', () => {
       expect(await sandbox.readText(file)).toBe('deep')
     })
 
-    it('throws when reading a nonexistent file', async () => {
-      await expect(sandbox.readFile(path.join(TEST_DIR, 'nope.txt'))).rejects.toThrow()
+    it('keeps the original fs error as the cause of a typed read error', async () => {
+      const error = await sandbox.readFile(path.join(TEST_DIR, 'nope.txt')).catch((caught: unknown) => caught)
+      expect(error).toBeInstanceOf(SandboxPathNotFoundError)
+      expect((error as Error).cause).toMatchObject({ code: 'ENOENT', syscall: 'open' })
     })
 
     // Contract: on POSIX, `\` in a path is a legal filename character, not a
