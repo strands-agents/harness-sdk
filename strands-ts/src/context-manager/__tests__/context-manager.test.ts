@@ -374,6 +374,37 @@ describe('ContextManager', () => {
   })
 
   describe('truncation', () => {
+    // The default pipeline retries after shrinking a 3-message history that nothing could drop (#5794).
+    it('recovers an overflow carried by one message of many mid-sized blocks', async () => {
+      const messages = [
+        new Message({
+          role: 'user',
+          content: Array.from({ length: 80 }, (_, i) => new TextBlock(String(i % 10).repeat(5_000))),
+        }),
+        new Message({ role: 'assistant', content: [new TextBlock('ok')] }),
+        new Message({ role: 'user', content: [new TextBlock('next')] }),
+      ]
+      const chars = (msgs: Message[]) =>
+        msgs.reduce(
+          (sum, m) => sum + m.content.reduce((s, b) => s + (b instanceof TextBlock ? b.text.length : 0), 0),
+          0
+        )
+      const cm = new ContextManager({ stash: false })
+      const agent = makeMockAgent({
+        messages,
+        countTokens: async (msgs) => Math.floor(chars(msgs) / 4),
+        estimateUtilization: (tokens) => tokens / 80_000,
+      })
+      await cm.initAgent(agent)
+
+      const event = makeOverflowEvent(agent)
+      await invokeTrackedHook(agent, event)
+
+      expect(event.retry).toBe(true)
+      expect(messages).toHaveLength(3)
+      expect(Math.floor(chars(messages) / 4)).toBeLessThanOrEqual(80_000 * 0.9)
+    })
+
     it('preserves the first message content', async () => {
       const messages = [
         new Message({ role: 'user', content: [new TextBlock('system prompt')] }),

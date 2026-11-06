@@ -112,6 +112,30 @@ class TestContextManagerRunStrategies:
         assert event.retry is True
 
     @pytest.mark.asyncio
+    async def test_overflow_carried_by_one_message_of_many_mid_sized_blocks_is_recovered(self, mock_agent):
+        """The default pipeline retries after shrinking a 3-message history that nothing could drop (#5794)."""
+        mock_agent.messages = [
+            Message(role="user", content=[ContentBlock(text=str(i % 10) * 5_000) for i in range(80)]),
+            Message(role="assistant", content=[ContentBlock(text="ok")]),
+            Message(role="user", content=[ContentBlock(text="next")]),
+        ]
+
+        def chars(msgs):
+            return sum(len(b.get("text", "")) for m in msgs for b in m["content"])
+
+        mock_agent.model.count_tokens = unittest.mock.AsyncMock(side_effect=lambda msgs, **_: chars(msgs) // 4)
+        mock_agent.model.estimate_utilization = unittest.mock.MagicMock(side_effect=lambda tokens: tokens / 80_000)
+        cm = ContextManager(stash=False)
+        cm.init_agent(mock_agent)
+
+        event = AfterModelCallEvent(agent=mock_agent, exception=ContextWindowOverflowException("Input is too long"))
+        await mock_agent.hooks.invoke_callbacks_async(event)
+
+        assert event.retry is True
+        assert len(mock_agent.messages) == 3
+        assert chars(mock_agent.messages) // 4 <= 80_000 * 0.9
+
+    @pytest.mark.asyncio
     async def test_overflow_retry_cap_at_three(self, mock_agent):
         strategy = unittest.mock.AsyncMock()
         strategy.name = "mock-strategy"

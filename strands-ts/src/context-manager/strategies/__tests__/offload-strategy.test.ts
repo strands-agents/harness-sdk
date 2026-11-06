@@ -1,12 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { Offload } from '../offload/index.js'
-import {
-  getOldestMatches,
-  buildToolNameMap,
-  collectRemovableWithPair,
-  insertMarker,
-  EmergencyTruncateStrategy,
-} from '../offload/base.js'
+import { getOldestMatches, buildToolNameMap, collectRemovableWithPair, insertMarker } from '../offload/base.js'
+import { EmergencyTruncateStrategy } from '../offload/truncate.js'
 import { Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../../types/messages.js'
 import type { Role } from '../../../types/messages.js'
 import { createMockAgent } from '../../../__fixtures__/agent-helpers.js'
@@ -874,6 +869,193 @@ describe('EmergencyTruncateStrategy', () => {
       ['assistant', ['a2', '[... 2 messages elided ...]']],
       ['user', ['u3']],
     ])
+  })
+
+  it('does nothing with three or fewer short messages', async () => {
+    const messages = [text('user', 'pin'), text('assistant', 'a'), text('user', 'u')]
+    expect(await new EmergencyTruncateStrategy().apply(makeContext(messages, 1.1, true))).toBe(false)
+  })
+
+  // Too few messages to drop: the largest blocks are cut, largest first, and the rest stay intact (#5794).
+  it('truncates the largest text blocks until the estimate fits', async () => {
+    const big = new Message({
+      role: 'user',
+      content: Array.from({ length: 80 }, (_, i) => new TextBlock(String(i % 10).repeat(5_000 + 10 * i))),
+    })
+    const messages = [big, text('assistant', 'ok'), text('user', 'next')]
+    const charsBefore = big.content.reduce((sum, block) => sum + (block as TextBlock).text.length, 0)
+
+    expect(await new EmergencyTruncateStrategy().apply(makeContext(messages, 1.25, true))).toBe(true)
+
+    expect(messages).toHaveLength(3)
+    const texts = big.content.map((block) => (block as TextBlock).text)
+    const truncated = texts.flatMap((t, i) => (t.startsWith('[Truncated:') ? [i] : []))
+    // Largest first: the truncated blocks are exactly the last N (sizes grow with the index).
+    expect(truncated).toEqual(Array.from({ length: truncated.length }, (_, k) => 80 - truncated.length + k))
+    expect(truncated.length).toBeGreaterThan(0)
+    expect(truncated.length).toBeLessThan(80)
+    // Each kept preview is at most a quarter of the block plus the header, so each cut removes most of it.
+    for (const i of truncated) expect(texts[i]!.length).toBeLessThan(Math.floor((5_000 + 10 * i) / 4) + 100)
+    // Enough was removed to bring the char-scaled estimate under the 0.9 target.
+    const charsAfter = texts.reduce((sum, t) => sum + t.length, 0)
+    expect(charsAfter).toBeLessThanOrEqual((charsBefore * 0.9) / 1.25)
+  })
+
+  it('truncates at least one block when the model overflowed but the estimate disagrees', async () => {
+    const messages = [
+      new Message({ role: 'user', content: [new TextBlock('x'.repeat(10_000)), new TextBlock('y'.repeat(3_000))] }),
+      text('assistant', 'ok'),
+      text('user', 'next'),
+    ]
+
+    expect(await new EmergencyTruncateStrategy().apply(makeContext(messages, 0.5, true))).toBe(true)
+
+    expect((messages[0]!.content[0] as TextBlock).text.startsWith('[Truncated: 1 block, ~2,500 tokens]')).toBe(true)
+    expect((messages[0]!.content[1] as TextBlock).text).toBe('y'.repeat(3_000))
+  })
+
+  it('truncates tool result text and skips already truncated blocks', async () => {
+    const messages = [
+      text('user', '[Truncated: 1 block, ~9,000 tokens]\n\n' + 'x'.repeat(2_000)),
+      new Message({
+        role: 'assistant',
+        content: [new ToolUseBlock({ toolUseId: 't1', name: 'read', input: {} })],
+      }),
+      makeToolResultMessage('r'.repeat(8_000), 't1'),
+    ]
+    const strategy = new EmergencyTruncateStrategy()
+
+    expect(await strategy.apply(makeContext(messages, 1.1, true))).toBe(true)
+
+    expect((messages[0]!.content[0] as TextBlock).text).toBe(
+      '[Truncated: 1 block, ~9,000 tokens]\n\n' + 'x'.repeat(2_000)
+    )
+    const resultText = ((messages[2]!.content[0] as ToolResultBlock).content[0] as TextBlock).text
+    expect(resultText.startsWith('[Truncated: 1 block, ~2,000 tokens]')).toBe(true)
+    expect(resultText.length).toBeLessThan(2_100)
+
+    // A second pass finds nothing left that is not already truncated.
+    expect(await strategy.apply(makeContext(messages, 1.1, true))).toBe(false)
+  })
+
+  it('cuts head, pinned and summary blocks only after everything else', async () => {
+    const messages = [
+      text('user', 'h'.repeat(50_000)),
+      text('assistant', '[Summarized: 3 messages, ~12,000 tokens]\n\n' + 's'.repeat(30_000)),
+      text('user', 'u'.repeat(48_000)),
+    ]
+    const strategy = new EmergencyTruncateStrategy()
+
+    expect(await strategy.apply(makeContext(messages, 1.05, true))).toBe(true)
+
+    expect((messages[0]!.content[0] as TextBlock).text).toBe('h'.repeat(50_000))
+    expect((messages[1]!.content[0] as TextBlock).text.startsWith('[Summarized:')).toBe(true)
+    expect((messages[2]!.content[0] as TextBlock).text.startsWith('[Truncated: 1 block, ~12,000 tokens]')).toBe(true)
+
+    // Once nothing unprotected is left, the protected blocks are cut too (largest first) rather than giving up.
+    expect(await strategy.apply(makeContext(messages, 1.05, true))).toBe(true)
+    expect((messages[0]!.content[0] as TextBlock).text.startsWith('[Truncated: 1 block, ~12,500 tokens]')).toBe(true)
+    expect((messages[1]!.content[0] as TextBlock).text.startsWith('[Summarized:')).toBe(true)
+  })
+
+  it('cuts equal-sized blocks oldest first', async () => {
+    const messages = [
+      text('user', 'task'),
+      new Message({
+        role: 'assistant',
+        content: Array.from({ length: 6 }, (_, i) => new TextBlock(String(i).repeat(5_000))),
+      }),
+      text('user', 'next'),
+    ]
+
+    expect(await new EmergencyTruncateStrategy().apply(makeContext(messages, 1.05, true))).toBe(true)
+
+    const truncated = messages[1]!.content.flatMap((block, i) =>
+      (block as TextBlock).text.startsWith('[Truncated:') ? [i] : []
+    )
+    expect(truncated).toEqual(Array.from({ length: truncated.length }, (_, k) => k))
+    expect(truncated.length).toBeGreaterThan(0)
+    expect(truncated.length).toBeLessThan(6)
+  })
+
+  // The local count omits the system prompt and tool specs, so an overflow can arrive with utilization < 0.9.
+  it('still cuts a quarter of the text on overflow when the estimate is under the target', async () => {
+    const big = new Message({
+      role: 'user',
+      content: Array.from({ length: 80 }, (_, i) => new TextBlock(String(i % 10).repeat(5_000))),
+    })
+    const messages = [big, text('assistant', 'ok'), text('user', 'next')]
+
+    expect(await new EmergencyTruncateStrategy().apply(makeContext(messages, 0.85, true))).toBe(true)
+
+    const charsAfter = big.content.reduce((sum, block) => sum + (block as TextBlock).text.length, 0)
+    expect(charsAfter).toBeLessThanOrEqual(400_000 * 0.75)
+  })
+
+  it('cuts an oversized block even when it already starts with the marker', async () => {
+    const messages = [
+      text('user', '[Truncated: 1 block, ~9,000 tokens]\n\n' + 'x'.repeat(500_000)),
+      text('assistant', 'ok'),
+      text('user', 'next'),
+    ]
+
+    expect(await new EmergencyTruncateStrategy().apply(makeContext(messages, 1.1, true))).toBe(true)
+    expect((messages[0]!.content[0] as TextBlock).text.length).toBeLessThan(4_100)
+  })
+
+  it('sizes tool result items as the joined text the preview replaces', async () => {
+    const items = Array.from({ length: 30 }, () => new TextBlock('ab'))
+    const messages = [
+      text('user', 'task'),
+      new Message({
+        role: 'assistant',
+        content: [new ToolUseBlock({ toolUseId: 't1', name: 'ls', input: {} })],
+      }),
+      new Message({
+        role: 'user',
+        content: [new ToolResultBlock({ toolUseId: 't1', status: 'success', content: [...items] })],
+      }),
+    ]
+
+    expect(await new EmergencyTruncateStrategy().apply(makeContext(messages, 1.1, true))).toBe(true)
+
+    // The preview replaces the newline-joined items (89 chars), so it is only applied when shorter than that.
+    const [preview] = (messages[2]!.content[0] as ToolResultBlock).content
+    expect((preview as TextBlock).text.startsWith('[Truncated: 30 blocks, ~23 tokens]')).toBe(true)
+    expect((preview as TextBlock).text.length).toBeLessThan(items.map((i) => i.text).join('\n').length)
+  })
+
+  it('drops messages first and truncates what the drop did not cover', async () => {
+    const messages = [
+      text('user', 'p'.repeat(40_000)),
+      text('assistant', 'a1'),
+      text('user', 'u2'),
+      text('assistant', 'a2'),
+      text('user', 'u3'),
+    ]
+
+    expect(await new EmergencyTruncateStrategy().apply(makeContext(messages, 1.2, true))).toBe(true)
+
+    expect(messages.map((m) => m.role)).toEqual(['user', 'assistant', 'user'])
+    expect((messages[0]!.content[0] as TextBlock).text.startsWith('[Truncated: 1 block, ~10,000 tokens]')).toBe(true)
+  })
+
+  it('keeps every block when the drop already removed a quarter of the text', async () => {
+    const paste = 'p'.repeat(30_000)
+    const messages = [
+      text('user', 'task'),
+      text('assistant', 'o'.repeat(40_000)),
+      text('user', 'u2'),
+      text('assistant', 'a3'),
+      text('user', 'u4'),
+      text('assistant', 'a5'),
+      text('user', paste),
+    ]
+
+    expect(await new EmergencyTruncateStrategy().apply(makeContext(messages, 1.03, true))).toBe(true)
+
+    expect(messages).toHaveLength(5)
+    expect((messages.at(-1)!.content[0] as TextBlock).text).toBe(paste)
   })
 })
 
