@@ -36,7 +36,7 @@ export default class TextCache {
 
 const legacyCacheImport = "import TextCache from './strands-text-cache.js';"
 const cacheImport = `import TextCache from ${JSON.stringify(new URL('./ink.js', import.meta.url).href)};`
-const patches = new Map<string, [string, string][]>([
+const patches = new Map<string, [string, string, number?][]>([
   ['measure-text.js', [['const cache = new Map();', 'const cache = new TextCache();']]],
   [
     'wrap-text.js',
@@ -44,6 +44,27 @@ const patches = new Map<string, [string, string][]>([
       ['const cache = {};', 'const cache = new TextCache();'],
       ['cache[cacheKey];', 'cache.get(cacheKey);'],
       ['cache[cacheKey] = wrappedText;', 'cache.set(cacheKey, wrappedText);'],
+    ],
+  ],
+  [
+    'log-update.js',
+    // Fullscreen output has no trailing newline: the cursor is on the last line, not below it.
+    [
+      [
+        'buildCursorSuffix(visibleCount, activeCursor)',
+        "buildCursorSuffix(str.endsWith('\\n') ? visibleCount : visibleCount - 1, activeCursor)",
+        3,
+      ],
+      [
+        'visibleLineCount: visibleCount,',
+        "visibleLineCount: str.endsWith('\\n') ? visibleCount : visibleCount - 1,",
+        2,
+      ],
+      [
+        'buildCursorSuffix(visibleLineCount(lines, str), activeCursor)',
+        'buildCursorSuffix(lines.length - 1, activeCursor)',
+        2,
+      ],
     ],
   ],
   [
@@ -106,6 +127,8 @@ const patches = new Map<string, [string, string][]>([
         this.hasPendingThrottledRender = false;`,
         `    onRender = () => {
         if (this.resizePending) return;
+        // Child-only animation commits must preserve the focused input's cursor intent.
+        this.log.setCursorPosition(this.cursorPosition);
         this.hasPendingThrottledRender = false;`,
       ],
       [
@@ -132,7 +155,7 @@ const patches = new Map<string, [string, string][]>([
     ],
   ],
 ])
-let targets: Map<string, [string, string][]>
+let targets: Map<string, [string, string, number?][]>
 
 export function initialize({ entrypoint }: { entrypoint: string }): void {
   targets = new Map([...patches].map(([name, replacements]) => [new URL(name, entrypoint).href, replacements]))
@@ -161,11 +184,11 @@ function patch(url: string, loaded: module.LoadFnOutput): module.LoadFnOutput {
   if (source.startsWith(legacyCacheImport)) {
     source = source.slice(legacyCacheImport.length)
   } else {
-    for (const [before, after] of replacements) {
-      if (source.split(before).length !== 2) {
+    for (const [before, after, occurrences = 1] of replacements) {
+      if (source.split(before).length !== occurrences + 1) {
         throw new Error(`Cannot apply the Ink runtime patch to ${url}.`)
       }
-      source = source.replace(before, after)
+      source = source.replaceAll(before, after)
     }
   }
   return { ...loaded, source: `${cacheImport}\n${source}` }
