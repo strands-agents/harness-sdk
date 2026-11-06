@@ -40,7 +40,7 @@ When one agent isn't enough, coordinate several. Strands offers several ways to 
   <LinkCard
     title="Workflow"
     href="../workflow/"
-    description="Run a fixed task graph (DAG) as a single, reusable tool, with independent tasks in parallel."
+    description="Call agents from your own code in a fixed order, passing each agent's output to the next."
   />
 </CardGrid>
 
@@ -115,15 +115,15 @@ They share some common things within Strands system:
 
 | Field                   | Graph                                                                                                                                 | Swarm                                                                                                                                                             | Workflow                                                                                                                          |
 |-------------------------|---------------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------|
-| Core Concept            | A structured, developer-defined flowchart where an agent decides which path to take.                                                  | A dynamic, collaborative team of agents that autonomously hand off tasks.                                                                                         | A pre-defined Task Graph (DAG) executed as a single, non-conversational tool.                                                     |
+| Core Concept            | A structured, developer-defined flowchart where an agent decides which path to take.                                                  | A dynamic, collaborative team of agents that autonomously hand off tasks.                                                                                         | A fixed sequence of tasks that your code runs in a defined order.                                                                 |
 | Structure               | A developer defines all nodes (agents) and edges (transitions) in advance.                                                            | A developer provides a pool of agents. The agents themselves decide the path.                                                                                     | A developer defines all tasks and their dependencies in code.                                                                     |
-| Execution Flow          | Controlled but Dynamic. <br/>The flow follows graph edges, but an LLM's decision at each node determines the path.                    | Sequential & Autonomous.<br/> An agent performs a task and then hands off control to the most suitable peer.                           | Deterministic & Parallel. <br/>The flow is fixed by the dependency graph. Independent tasks run in parallel.                      |
+| Execution Flow          | Controlled but Dynamic. <br/>The flow follows graph edges, but an LLM's decision at each node determines the path.                    | Sequential & Autonomous.<br/> An agent performs a task and then hands off control to the most suitable peer.                                                      | Deterministic.<br/>Your code fixes the order. Independent tasks can run in parallel.                                              |
 | Allow Cycle?            | Yes.                                                                                                                                  | Yes.                                                                                                                                                              | No.                                                                                                                               |
-| State Sharing Mechanism | A shared state object is passed to all agents, who can freely read and modify it.                                              | A shared context or working memory is available to all agents, containing the original request, task history, and knowledge from previous agents. | The tool automatically captures task outputs and passes them as inputs to dependent tasks.                                        |
-| Conversation History    | Full Transcript.<br/>The entire dialogue history is part of the shared state, giving every agent complete and open context.      | Shared Transcript.<br/>The shared context provides a full history of agent handoffs and knowledge contributed by previous agents, available to the current agent. | Task-Specific context. <br/>A task receives a curated summary of relevant results from its dependencies, not the full history.    |
+| State Sharing Mechanism | A shared state object is passed to all agents, who can freely read and modify it.                                              | A shared context or working memory is available to all agents, containing the original request, task history, and knowledge from previous agents.                 | Your code passes each task's output as input to the tasks that depend on it.                                                      |
+| Conversation History    | Full Transcript.<br/>The entire dialogue history is part of the shared state, giving every agent complete and open context.      | Shared Transcript.<br/>The shared context provides a full history of agent handoffs and knowledge contributed by previous agents, available to the current agent. | Task-specific context.<br/>A task receives only the results your code passes from its dependencies, not the full history.         |
 | Behavior Control        | The user's input at each step can directly influence which path the graph takes next.                                                 | The user's initial prompt defines the goal, but the swarm runs autonomously from there.                                                                           | The user's prompt can trigger a pre-defined workflow, but it cannot alter its internal structure.                                 |
 | Scalability             | Scales well with process complexity (many branches, conditions).                                                                      | Scales with the number of specialized agents in the team and the complexity of the collaborative task.                                                            | Scales well for repeatable, complex operations.                                                                                   |
-| Error handling          | Controllable.<br/> A developer can define explicit "error" edges to route the flow to a specific error-handling node if a step fails. | Agent-driven.<br/>An agent can decide to hand off to an error-handling specialist. The system relies on timeouts and handoff limits to prevent indefinite loops.  | Systemic. A failure in one task will halt all downstream dependent tasks. The entire workflow will likely enter a `Failed` state. |
+| Error handling          | Controllable.<br/> A developer can define explicit "error" edges to route the flow to a specific error-handling node if a step fails. | Agent-driven.<br/>An agent can decide to hand off to an error-handling specialist. The system relies on timeouts and handoff limits to prevent indefinite loops.  | Developer-defined.<br/>Your code decides whether a failed task is retried or halts the tasks that depend on it.                   |
 
 ## When to Use Each Pattern
 
@@ -149,12 +149,12 @@ Some Examples:
 
 ### When to Use [Workflow](./workflow.md)
 
-When you have a complex but repeatable process that you want to encapsulate into a single, reliable, and reusable tool. A `Workflow` is a developer-defined task graph that an agent can execute as a single, powerful action.
+When you have a repeatable process whose steps always run in the same order. A workflow is a pattern you implement in your own code: you call each agent in turn and pass its output to the next step, so every run follows the same path.
 
 Some Examples:
 
 - Automated Data Pipelines: A fixed set of tasks to extract, analyze, and report on data, where independent analysis steps can run in parallel.
-- Standard Business Processes: Onboarding a new employee by creating accounts, assigning training, and sending a welcome email, all triggered by a single agent action.
+- Standard Business Processes: Onboarding a new employee by creating accounts, assigning training, and sending a welcome email, in the same order every time.
 
 ## Shared State Across Multi-Agent Patterns
 
@@ -209,7 +209,7 @@ def query_data(query: str, tool_context: ToolContext) -> str:
 </Tab>
 <Tab label="TypeScript">
 
-Both Graph and Swarm support passing per-invocation state to all nodes through the `invocationState` option. This is a mutable `Record<string, unknown>` shared by reference — one node's hooks/tools can read state written by a previous node.
+Both Graph and Swarm support passing per-invocation state to all nodes through the `invocationState` option. This is a mutable `Record<string, unknown>` shared by reference: one node's hooks/tools can read state written by a previous node.
 
 **How Invocation State Works**
 
@@ -235,10 +235,10 @@ The `invocationState` is automatically forwarded to:
 
 In addition to `invocationState`, the orchestrator's `MultiAgentState` is shared across all nodes and provides access to execution progress, node results, and custom application state:
 
-- `results` — all `NodeResult` entries in completion order
-- `nodes` — per-node state (status, results) accessible via `state.node(id)`
-- `steps` — number of node executions so far
-- `app` — a `StateStore` key-value store for custom data shared across hooks, edge handlers, and custom nodes
+- `results`: all `NodeResult` entries in completion order
+- `nodes`: per-node state (status, results) accessible via `state.node(id)`
+- `steps`: number of node executions so far
+- `app`: a `StateStore` key-value store for custom data shared across hooks, edge handlers, and custom nodes
 
 ```typescript
 --8<-- "user-guide/sdk/multi-agent/multi-agent-patterns.ts:multi_agent_state"
@@ -255,6 +255,6 @@ Use shared state for context and configuration that shouldn't appear in prompts,
 
 ## Where to go next
 
-New to composing agents? Start with [Agents as tools](./agents-as-tools.md) — the smallest pattern shown above — then reach for a built-in orchestrator once you need structured coordination. Choose by how the execution path is determined: [Graph](./graph.md) when a developer-defined flowchart with branching and loops fits the process, [Swarm](./swarm.md) when specialized agents should hand off autonomously, and [Workflow](./workflow.md) when a fixed task graph should run as a single reusable tool.
+New to composing agents? Start with [Agents as tools](./agents-as-tools.md) (the smallest pattern shown above), then reach for a more structured pattern once you need it. Choose by how the execution path is determined: [Graph](./graph.md) when a developer-defined flowchart with branching and loops fits the process, [Swarm](./swarm.md) when specialized agents should hand off autonomously, and [Workflow](./workflow.md) when your own code should call agents in a fixed order.
 
 To connect agents that run as separate services, see [Agent-to-Agent (A2A)](./agent-to-agent.md).
