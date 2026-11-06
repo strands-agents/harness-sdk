@@ -100,6 +100,11 @@ describe('cross-platform exported agent E2E', () => {
       import { extractAgentArchive, prepareArchiveDependencies } from ${JSON.stringify(module)}
       const root = extractAgentArchive(${JSON.stringify(path)})
       writeFileSync(join(process.env.STRANDS_TEST_BARRIER, 'ready-' + process.argv[1]), '')
+      if (process.argv[1] === 'blocked') {
+        const now = Date.now()
+        let calls = 0
+        Date.now = () => now + (calls++ === 0 ? 0 : 540001)
+      }
       await prepareArchiveDependencies(root, 'typescript')
       console.log(extractAgentArchive(${JSON.stringify(path)}))
     `
@@ -134,6 +139,14 @@ describe('cross-platform exported agent E2E', () => {
         .poll(() => [0, 1, 2].every((index) => existsSync(join(concurrentHome, `ready-${index}`))), { timeout: 15_000 })
         .toBe(true)
       await expect.poll(() => existsSync(join(concurrentHome, 'install-started')), { timeout: 15_000 }).toBe(true)
+      if (state === 'interrupted') {
+        const blocked = await run(process.execPath, ['--input-type=module', '-e', script, 'blocked'], options).catch(
+          (error: unknown) => error as { code: number; stderr: string }
+        )
+        expect(blocked).toMatchObject({ code: 1, stderr: expect.stringMatching(/recorded process IDs: \d+/u) })
+        expect(blocked.stderr).toContain('.dependencies.lock')
+        expect(blocked.stderr).toContain('Once no installer is running')
+      }
       await delay(1_000)
       if (failure) throw failure
       expect(settled).toBe(0)

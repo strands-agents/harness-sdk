@@ -18,14 +18,21 @@ vi.mock('node:child_process', async (importOriginal) => {
         pid: process.pid,
         stdout: new PassThrough(),
         stderr: new PassThrough(),
+        kill: vi.fn(() => true),
       })
       process.nextTick(() => {
-        execute(command, args, options, (error: Error | null) => {
-          if (error) child.stderr.write(error.message)
-          child.stdout.end()
-          child.stderr.end()
-          child.emit('close', error ? 1 : 0, null)
-        })
+        execute(
+          command,
+          args,
+          options,
+          (error: Error | null) => {
+            if (error) child.stderr.write(error.message)
+            child.stdout.end()
+            child.stderr.end()
+            child.emit('close', error ? 1 : 0, null)
+          },
+          child
+        )
       })
       return child
     },
@@ -45,9 +52,119 @@ function stubHome(home: string): void {
 }
 
 afterEach(async () => {
+  vi.useRealTimers()
+  vi.restoreAllMocks()
   vi.unstubAllEnvs()
   execute.mockReset()
   if (temporary) await rm(temporary, { recursive: true, force: true })
+})
+
+// https://github.com/strands-agents/harness-sdk/pull/5194#discussion_r4488017925
+it.each(['timeout', 'stdout', 'stderr', 'signal'] as const)(
+  'rejects installer %s failures, retains ownership until close, and allows retry',
+  async (failure) => {
+    temporary = await mkdtemp(join(tmpdir(), 'strands-archive-'))
+    stubHome(temporary)
+    const archive = join(temporary, 'agent.zip')
+    await writeFile(archive, zipSync({ 'agent.ts': strToU8(''), 'package.json': strToU8('{"private":true}') }))
+    const project = importAgentProject(archive)
+    const lock = `${project.root}.dependencies.lock`
+    execute.mockImplementation((_command, _args, _options, callback) => callback(null))
+    const started = new Promise<ChildProcessWithoutNullStreams>((resolve) => {
+      execute.mockImplementationOnce((_command, _args, _options, _callback, child) => resolve(child))
+    })
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const installing = prepareArchiveDependencies(project.root, 'typescript')
+    let settled = false
+    void installing.then(
+      () => {
+        settled = true
+      },
+      () => {
+        settled = true
+      }
+    )
+    const rejected = expect(installing).rejects.toMatchObject({
+      cause: {
+        message: expect.stringMatching(
+          failure === 'timeout'
+            ? /timed out after 180 seconds/u
+            : failure === 'signal'
+              ? /SIGTERM[\s\S]*installer diagnostic/u
+              : /output exceeded 8 MB/u
+        ),
+      },
+    })
+    const child = await started
+    if (failure === 'timeout') {
+      await vi.advanceTimersByTimeAsync(179_999)
+      expect(child.kill).not.toHaveBeenCalled()
+      expect(settled).toBe(false)
+      await vi.advanceTimersByTimeAsync(1)
+    } else if (failure === 'signal') {
+      child.stderr.push('installer diagnostic')
+    } else {
+      child[failure].push(Buffer.alloc(8 * 1024 * 1024, 'x'))
+      expect(child.kill).not.toHaveBeenCalled()
+      expect(child[failure].destroyed).toBe(false)
+      expect(settled).toBe(false)
+      child[failure].push('x')
+    }
+    if (failure !== 'signal') {
+      expect(child.kill).toHaveBeenCalledOnce()
+      expect(child.stdout.destroyed).toBe(true)
+      expect(child.stderr.destroyed).toBe(true)
+    }
+    expect(await readdir(lock)).toHaveLength(2)
+    expect(settled).toBe(false)
+    child.emit('close', null, 'SIGTERM')
+    await rejected
+    expect(vi.getTimerCount()).toBe(0)
+    await expect(stat(lock)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(stat(join(project.root, '.strands-dependencies'))).rejects.toMatchObject({ code: 'ENOENT' })
+
+    vi.useRealTimers()
+    await mkdir(join(project.root, 'node_modules'))
+    await prepareArchiveDependencies(project.root, 'typescript')
+    expect(await readFile(join(project.root, '.strands-dependencies'), 'utf8')).toMatch(/^[a-f0-9]{64}$/u)
+    expect(execute).toHaveBeenCalledTimes(2)
+  }
+)
+
+// https://github.com/strands-agents/harness-sdk/pull/5194#discussion_r4488018108
+it('reports live lock owners and safe recovery without removing their lock', async () => {
+  temporary = await mkdtemp(join(tmpdir(), 'strands-archive-'))
+  stubHome(temporary)
+  const archive = join(temporary, 'agent.zip')
+  await writeFile(archive, zipSync({ 'agent.ts': strToU8(''), 'package.json': strToU8('{"private":true}') }))
+  const project = importAgentProject(archive)
+  const lock = `${project.root}.dependencies.lock`
+  const owner = `${process.pid}-${randomUUID()}`
+  await mkdir(lock)
+  await writeFile(join(lock, owner), '')
+  const kill = process.kill
+  const signals = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+    expect(signal).toBe(0)
+    return kill(pid, signal)
+  })
+  const clock = vi.spyOn(Date, 'now').mockReturnValueOnce(0).mockReturnValue(540_001)
+  const error = await prepareArchiveDependencies(project.root, 'typescript').catch((error: unknown) => error)
+  expect(error).toBeInstanceOf(Error)
+  expect((error as Error).message).toContain(lock)
+  expect((error as Error).message).toContain(String(process.pid))
+  expect((error as Error).message).toMatch(/stop.*installer/iu)
+  expect(await readdir(lock)).toEqual([owner])
+  expect(signals).toHaveBeenCalledWith(process.pid, 0)
+  expect(execute).not.toHaveBeenCalled()
+
+  clock.mockRestore()
+  signals.mockRestore()
+  await rm(join(lock, owner))
+  await mkdir(join(project.root, 'node_modules'))
+  execute.mockImplementation((_command, _args, _options, callback) => callback(null))
+  await prepareArchiveDependencies(project.root, 'typescript')
+  expect(await readFile(join(project.root, '.strands-dependencies'), 'utf8')).toMatch(/^[a-f0-9]{64}$/u)
+  await expect(stat(lock)).rejects.toMatchObject({ code: 'ENOENT' })
 })
 
 it('removes the extraction directory when the ZIP contains no agent', async () => {
@@ -231,3 +348,5 @@ async function archiveWithMode(mode: number, zip64: boolean, compress = true): P
   await writeFile(archive, await completed)
   return archive
 }
+import type { ChildProcessWithoutNullStreams } from 'node:child_process'
+import { randomUUID } from 'node:crypto'

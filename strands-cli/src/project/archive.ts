@@ -201,11 +201,15 @@ export async function prepareArchiveDependencies(root: string, language: AgentPr
       if (!['EEXIST', 'ENOTEMPTY', 'ENOTDIR', 'EPERM'].includes((error as NodeJS.ErrnoException).code ?? '')) {
         throw error
       }
-      if (removeStoppedInstallers(lockPath)) continue
+      const running = removeStoppedInstallers(lockPath)
+      if (!running.length) continue
       if (Date.now() >= deadline) {
-        throw new Error(`Another process is installing this agent's dependencies. Retry after it finishes.`, {
-          cause: error,
-        })
+        throw new Error(
+          `Agent dependency installation is still locked (recorded process IDs: ${running.join(', ')}). ` +
+            `Inspect these processes and stop any stalled npm/pip installer and its children. ` +
+            `Once no installer is running, remove ${lockPath} and retry.`,
+          { cause: error }
+        )
       }
       await delay(100)
     }
@@ -239,25 +243,28 @@ function removeEmptyInstallLock(path: string): void {
   }
 }
 
-function removeStoppedInstallers(path: string): boolean {
+function removeStoppedInstallers(path: string): number[] {
   let owners: string[]
   try {
     owners = readdirSync(path)
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return true
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
     if ((error as NodeJS.ErrnoException).code !== 'ENOTDIR') throw error
     // Older locks did not record installer children, so a dead CLI alone cannot prove they stopped.
     try {
-      if (installerRunning(readFileSync(path, 'utf8'))) return false
+      const owner = readFileSync(path, 'utf8')
+      if (installerRunning(owner)) return [Number(owner)]
     } catch (error) {
-      if (['ENOENT', 'EISDIR'].includes((error as NodeJS.ErrnoException).code ?? '')) return true
+      if (['ENOENT', 'EISDIR'].includes((error as NodeJS.ErrnoException).code ?? '')) return []
       throw error
     }
     throw new Error(`An older installation left ${path}. Stop any npm or pip installer, remove this file, and retry.`, {
       cause: error,
     })
   }
-  if (owners.some(installerRunning)) return false
+  const running = owners.filter(installerRunning).map((owner) => Number(owner.split('-')[0]))
+  // An old live owner may still be writing dependencies; age alone cannot make its lock safe to remove.
+  if (running.length) return running
   if (owners.some((owner) => !/^\d+-[0-9a-f-]{36}$/u.test(owner))) {
     throw new Error(
       `An installation was interrupted while starting. Stop any npm or pip installer, remove ${path}, and retry.`
@@ -268,7 +275,7 @@ function removeStoppedInstallers(path: string): boolean {
     rmSync(join(path, owner), { force: true })
   }
   removeEmptyInstallLock(path)
-  return true
+  return []
 }
 
 async function runInstaller(
