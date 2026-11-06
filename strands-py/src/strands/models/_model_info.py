@@ -114,7 +114,8 @@ def _merge_section(parts: list[_SectionT], empty: _SectionT) -> _SectionT:
 
 
 SERVER_SIDE_SUMMARY_OFF = ModelInfo(capabilities=ModelCapabilities(server_side_summary=False))
-"""Turns ``server_side_summary`` off for providers that do not override ``Model.summarize``."""
+"""Turns ``server_side_summary`` off for providers that serve a model the shared info lists it for but have no
+server-side summary of their own."""
 
 _CAPABILITY_FIELDS = {
     "stateful": "stateful",
