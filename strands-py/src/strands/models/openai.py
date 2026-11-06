@@ -169,9 +169,7 @@ class OpenAIModel(Model):
 
         The Chat Completions API has no server-side summary, including for Claude models served through it.
         """
-        return ModelInfo.merge(
-            super().model_info, SERVER_SIDE_SUMMARY_OFF, cast(ModelInfo | None, self.config.get("model_info"))
-        )
+        return ModelInfo.merge(super().model_info, SERVER_SIDE_SUMMARY_OFF, self.get_config().get("model_info"))
 
     @classmethod
     def format_request_message_content(cls, content: ContentBlock, **kwargs: Any) -> dict[str, Any]:

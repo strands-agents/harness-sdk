@@ -16,7 +16,7 @@ from ...methods.summarize import (
     _tool_result_to_content_blocks,
 )
 from ...stash import _format_stash_refs
-from ...types import ContextState
+from ...types import ContextState, is_tool_result_block
 from .base import (
     BaseOffloadStrategy,
     OffloadConditions,
@@ -53,6 +53,18 @@ def _warn_kept_pins(model: Model, kept: int) -> None:
         type(model).__name__,
         kept,
     )
+
+
+def _pinned_before(messages: list[Message], end: int) -> list[Message]:
+    return [message for index, message in enumerate(messages[1:end], start=1) if is_pinned(messages, index)]
+
+
+def _cut_needs_moving(messages: list[Message], end: int, pinned: list[Message]) -> bool:
+    """Whether cutting at ``end`` lets the last kept pin merge into the next message, or splits a tool pair."""
+    if not pinned or end >= len(messages):
+        return False
+    after = messages[end]
+    return pinned[-1]["role"] == after["role"] or any(is_tool_result_block(block) for block in after["content"])
 
 
 def _is_summary(block: ContentBlock) -> bool:
@@ -171,8 +183,13 @@ class SummarizeStrategy(BaseOffloadStrategy):
         messages = context.messages
         safe_ids = {id(message) for message in safe}
         end = max(index for index, message in enumerate(messages) if id(message) in safe_ids) + 1
-        pinned = [message for index, message in enumerate(messages[1:end], start=1) if is_pinned(messages, index)]
+        pinned = _pinned_before(messages, end)
+        while _cut_needs_moving(messages, end, pinned):
+            end -= 1
+            pinned = _pinned_before(messages, end)
         replaced = end - 1 - len(pinned)
+        if replaced == 0:
+            return False
         if replaced > len(safe):
             logger.warning(
                 "covered=<%d>, eligible=<%d> | a server-side summary covers the conversation's start"

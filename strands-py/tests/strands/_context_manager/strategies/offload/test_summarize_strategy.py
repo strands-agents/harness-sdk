@@ -458,6 +458,69 @@ class TestServerSideSummary:
         assert "not eligible" not in caplog.text
 
     @pytest.mark.asyncio
+    async def test_kept_pin_does_not_merge_into_the_next_message(self, mock_agent):
+        mock_agent.model.model_info.capabilities.server_side_summary = True
+        summary = ContentBlock(summary={"provider": "anthropic", "text": "compacted"})
+        mock_agent.model.summarize = unittest.mock.AsyncMock(return_value=summary)
+        pinned = {"custom": {"pinned": True}}
+        messages: Messages = [
+            Message(role="user", content=[ContentBlock(text="task")]),
+            Message(role="assistant", content=[ContentBlock(text="old1")]),
+            Message(role="user", content=[ContentBlock(text="old2")]),
+            Message(role="assistant", content=[ContentBlock(text="old3")]),
+            Message(role="user", content=[ContentBlock(text="pin")], metadata=pinned),
+            Message(role="assistant", content=[ContentBlock(text="old5")]),
+            Message(role="user", content=[ContentBlock(text="recent")]),
+        ]
+        mock_agent.messages = messages
+        strategy = Offload.summarize("*").when(utilization=0.8, preserve_recent=1)
+
+        assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is True
+
+        assert len(mock_agent.model.summarize.call_args.args[0]) == 5
+        assert messages == [
+            Message(role="user", content=[ContentBlock(text="task")]),
+            Message(role="assistant", content=[summary]),
+            Message(role="user", content=[ContentBlock(text="pin")], metadata=pinned),
+            Message(role="assistant", content=[ContentBlock(text="old5")]),
+            Message(role="user", content=[ContentBlock(text="recent")]),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_kept_pin_cut_keeps_tool_pairs_whole(self, mock_agent):
+        mock_agent.model.model_info.capabilities.server_side_summary = True
+        summary = ContentBlock(summary={"provider": "anthropic", "text": "compacted"})
+        mock_agent.model.summarize = unittest.mock.AsyncMock(return_value=summary)
+        pinned = {"custom": {"pinned": True}}
+        tool_use = ContentBlock(toolUse={"toolUseId": "t1", "name": "read", "input": {}})
+        tool_result = ContentBlock(toolResult={"toolUseId": "t1", "status": "success", "content": [{"text": "r"}]})
+        messages: Messages = [
+            Message(role="user", content=[ContentBlock(text="task")]),
+            Message(role="assistant", content=[ContentBlock(text="old1")]),
+            Message(role="user", content=[ContentBlock(text="old2")]),
+            Message(role="assistant", content=[ContentBlock(text="pin")], metadata=pinned),
+            Message(role="user", content=[ContentBlock(text="old4")]),
+            Message(role="assistant", content=[tool_use]),
+            Message(role="user", content=[tool_result]),
+            Message(role="assistant", content=[ContentBlock(text="old7")]),
+            Message(role="user", content=[ContentBlock(text="recent")]),
+        ]
+        mock_agent.messages = messages
+        strategy = Offload.summarize("*").when(utilization=0.8, preserve_recent=2)
+
+        assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is True
+
+        assert len(mock_agent.model.summarize.call_args.args[0]) == 4
+        assert [block for message in messages[2:] for block in message["content"]] == [
+            ContentBlock(text="old4"),
+            tool_use,
+            tool_result,
+            ContentBlock(text="old7"),
+            ContentBlock(text="recent"),
+        ]
+        assert [message.get("metadata") for message in messages[2:]] == [None] * 5
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize(
         ("agent_supports", "aux_supports"),
         [pytest.param(False, True, id="agent_model_unsupported"), pytest.param(True, False, id="aux_unsupported")],
