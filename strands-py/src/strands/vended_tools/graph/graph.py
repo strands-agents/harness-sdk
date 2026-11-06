@@ -200,8 +200,7 @@ def make_graph(
                 child = build(spec)
                 for tool_name, child_tool in list(child.tool_registry.registry.items()):
                     if child_tool in _GRAPH_TOOLS:
-                        del child.tool_registry.registry[tool_name]
-                        child.tool_registry.dynamic_tools.pop(tool_name, None)
+                        child.tool_registry.remove(tool_name)
                 graph_builder.add_node(child, node_id=spec.name)
         except Exception as error:
             if not tool_streamer.is_resuming():
