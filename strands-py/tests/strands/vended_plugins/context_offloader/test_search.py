@@ -192,6 +192,40 @@ class TestSearchContentTruncation:
         assert "output truncated, narrow your range" in result
 
 
+class TestSearchContentLongMatchedLine:
+    """A match deep inside a long line must be visible in the output (#5688)."""
+
+    @staticmethod
+    def _line_with_deep_match(offset: int = 15_000, tail: int = 5_000) -> str:
+        filler = "x" * offset
+        return filler + "NEEDLE=deadbeef" + "y" * tail
+
+    def test_match_deep_inside_long_line_is_visible(self):
+        text = "\n".join(["line %d" % (i + 1) for i in range(149)] + [self._line_with_deep_match()] + ["line 151"])
+        result = _search_content(text, pattern="NEEDLE=", context_lines=0, max_chars=6_000)
+        assert "[1 match for /NEEDLE=/]" in result
+        assert "NEEDLE=deadbeef" in result
+
+    def test_window_is_marked_where_the_line_was_cut(self):
+        text = self._line_with_deep_match()
+        result = _search_content(text, pattern="NEEDLE=", context_lines=0, max_chars=6_000)
+        body = result.split("\n\n", 1)[1]
+        assert "\u2026" in body
+
+    def test_short_matched_line_is_shown_whole(self):
+        text = "NEEDLE=deadbeef"
+        result = _search_content(text, pattern="NEEDLE=", context_lines=0, max_chars=6_000)
+        assert "NEEDLE=deadbeef" in result
+        assert "\u2026" not in result
+
+    def test_match_at_the_start_of_a_long_line_keeps_the_line_start(self):
+        text = "NEEDLE=deadbeef" + "y" * 20_000
+        result = _search_content(text, pattern="NEEDLE=", context_lines=0, max_chars=6_000)
+        assert "NEEDLE=deadbeef" in result
+        body = result.split("\n\n", 1)[1]
+        assert body.startswith("> 1| NEEDLE=deadbeef")
+
+
 class TestSearchContentEdgeCases:
     def test_negative_context_lines_clamps_to_zero(self):
         text = "\n".join(f"line {i + 1}" for i in range(10))
