@@ -134,7 +134,7 @@ export class CliConfigStore {
         : requiredPath(_document.profileBaseDir, `Invalid CLI config at ${_path}: profileBaseDir`)
   }
 
-  static async load(path = userConfigPath()): Promise<CliConfigStore> {
+  static async load(path = userConfigPath(), options: { persist?: boolean } = {}): Promise<CliConfigStore> {
     const { document: loadedDocument, legacyPath } = await readConfigDocument(path)
     const document = withoutProviderCredentials(loadedDocument)
     const store = new CliConfigStore(
@@ -145,9 +145,10 @@ export class CliConfigStore {
       parseProviderEnvironment(document.providers, path),
       parseProfile(document.profile, path),
       parsePermissions(document.permissions, path),
-      parseSettings(document.settings, path)
+      parseSettings(document.settings, path),
+      options.persist !== false
     )
-    if (document !== loadedDocument || legacyPath) {
+    if (options.persist !== false && (document !== loadedDocument || legacyPath)) {
       await writeConfigDocument(path, document)
     }
     return store

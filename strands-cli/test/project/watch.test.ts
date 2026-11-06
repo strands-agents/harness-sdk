@@ -26,6 +26,8 @@ it('ignores custom session and memory paths while reloading neighboring source f
     const notify = vi.mocked(watch).mock.calls[0]!.at(-1) as (event: string, filename: string) => void
     notify('change', join('state', 'sessions', 'snapshot.json'))
     notify('change', join('state', 'memory', 'record.json'))
+    notify('change', join('.strands', 'state', 'sessions', 'snapshot.json'))
+    notify('change', join('.strands', 'reports', 'report.json'))
     vi.advanceTimersByTime(250)
     expect(changed).not.toHaveBeenCalled()
 

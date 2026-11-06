@@ -20,7 +20,13 @@ import { observeTerminalColorMode } from '../terminal/theme-detection.js'
 import { sessionResumeCommand } from '../session/sessions.js'
 import { sanitizeTerminalText } from '../terminal/text.js'
 
+export interface StartupScreen {
+  signal: AbortSignal
+  show(content: ReactElement | undefined, status?: string): void
+}
+
 interface RunInkChatOptions {
+  prepare?: (screen: StartupScreen) => Promise<boolean>
   firstRequest?: string
   input?: NodeJS.ReadStream
   output?: NodeJS.WriteStream
@@ -121,6 +127,8 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
   let replacementTask: Promise<void> | undefined
   let launchOptions: ChatLaunch | undefined
   let trustRequest: McpTrustRequest | undefined
+  let startupContent: ReactElement | undefined
+  let startupStatus: string | undefined
   const setupBridge: SetupBridge = {
     request: (): void => {},
     confirmMcp: (workspace, paths): Promise<boolean> =>
@@ -256,6 +264,8 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
       setup: options.setup === true,
       ...(options.config ? { config: options.config } : {}),
       ...(trustRequest ? { trustRequest } : {}),
+      ...(startupContent ? { startupContent } : {}),
+      ...(startupStatus ? { startupStatus } : {}),
       setupBridge,
       onSetupComplete: completeSetup,
       ...(options.checkForUpdate ? { checkForUpdate: options.checkForUpdate } : {}),
@@ -355,7 +365,27 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
       controller = source
       watchTerminalTitle(controller)
     }
-    if (controller || controllerFactory || options.setup) renderChat()
+    if (controller || controllerFactory || options.setup || options.prepare) renderChat()
+    if (options.prepare) {
+      const prepareTask = options.prepare({
+        signal: startupAbort.signal,
+        show: (content, status): void => {
+          if (startupAbort.signal.aborted) return
+          startupContent = content
+          startupStatus = status
+          renderChat()
+        },
+      })
+      const prepared = await Promise.race([
+        prepareTask.then((ready) => ({ ready })),
+        startupExitTask.then((exitCode) => ({ exitCode })),
+      ])
+      if ('exitCode' in prepared) return prepared.exitCode
+      if (!prepared.ready) return 0
+      startupContent = undefined
+      startupStatus = undefined
+      renderChat()
+    }
     const setupExit = await Promise.race([setupTask, startupExitTask])
     if (setupExit !== 0 || exitAfterSetup) {
       instance?.unmount()

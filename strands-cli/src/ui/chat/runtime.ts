@@ -28,6 +28,7 @@ import { PythonVoiceSession } from '../../agent/voice.js'
 import { importAgentProject } from '../../project/import.js'
 import { PythonBackend, type PythonOptions } from '../../project/python.js'
 import { TypescriptBackend, type TypescriptInit } from '../../project/typescript-backend.js'
+import { readDevWorkspace } from '../../dev/workspace.js'
 import {
   createInteractiveRuntime,
   type CreateInteractiveRuntimeOptions,
@@ -44,8 +45,11 @@ export async function createTypescriptChat(
   conversationId = conversations?.activeId
 ): Promise<ConversationManager> {
   const project = importAgentProject(path)
+  const devWorkspace = options.args.dev?.workspace ? await readDevWorkspace(options.args.dev.workspace) : undefined
   const messaging = new AgentMessaging()
-  const catalog = await SessionRootCatalog.load().catch(() => undefined)
+  const catalog = await SessionRootCatalog.load(
+    options.args.dev?.workspace ? resolve(options.args.dev.workspace, '.strands/state/catalog') : undefined
+  ).catch(() => undefined)
   let nextEndpoint = 1
   for (const entry of conversations?.entries ?? []) {
     nextEndpoint = Math.max(nextEndpoint, Number(entry.id.slice('agent-'.length)) + 1)
@@ -77,6 +81,15 @@ export async function createTypescriptChat(
       const controller = new ChatController(backend, {
         runtime: {
           version: HARNESS_VERSION,
+          ...(devWorkspace
+            ? {
+                devWorkspace: {
+                  root: devWorkspace.root,
+                  entrypoint: project.entrypoint,
+                  origin: devWorkspace.config.origin.kind,
+                },
+              }
+            : {}),
           cwd: backend.cwd,
           session: sessionName ?? backend.sessionId ?? (backend.state.managedSession ? 'managed' : 'in-memory'),
           ...(sessionName ? { sessionName } : {}),
@@ -247,6 +260,7 @@ export async function createPythonChat(
   conversationId = conversations?.activeId
 ): Promise<ConversationManager> {
   const project = importAgentProject(path)
+  const devWorkspace = options.devWorkspace ? await readDevWorkspace(options.devWorkspace) : undefined
   const createController = async (backend: PythonBackend, conversation?: ChatConversation): Promise<ChatController> => {
     const snapshot = config.snapshot()
     const sessions = new FileSessionRuntime(backend, backend.sessionDirectory, {
@@ -258,6 +272,15 @@ export async function createPythonChat(
       runtime: {
         cwd: backend.cwd,
         version: HARNESS_VERSION,
+        ...(devWorkspace
+          ? {
+              devWorkspace: {
+                root: devWorkspace.root,
+                entrypoint: project.entrypoint,
+                origin: devWorkspace.config.origin.kind,
+              },
+            }
+          : {}),
         session: sessionName ?? backend.sessionId ?? 'managed',
         ...(sessionName ? { sessionName } : {}),
       },

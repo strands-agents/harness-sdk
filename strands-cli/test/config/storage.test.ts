@@ -17,6 +17,34 @@ afterEach(() => {
 })
 
 describe('CliConfigStore', () => {
+  it('shouldLeaveGlobalConfigUntouchedWhenLoadedWithoutPersistence', async () => {
+    const path = join(await temporaryDirectory(), 'cli.toml')
+    const original = stringify({ profile: { name: 'Original' }, settings: { animations: true } })
+    await writeFile(path, original)
+
+    const config = await CliConfigStore.load(path, { persist: false })
+    await config.useAgentProject('/local/agent.ts')
+    await config.setSettings({ animations: false })
+    await config.saveProfile({ ...config.snapshot().profile, name: 'Dev' })
+
+    expect(await readFile(path, 'utf8')).toBe(original)
+    expect(config.snapshot().profile.name).toBe('Dev')
+  })
+
+  it('shouldLeaveLegacyConfigUnmigratedWhenLoadedWithoutPersistence', async () => {
+    const root = await temporaryDirectory()
+    const path = join(root, 'cli.toml')
+    await mkdir(join(root, 'cli'))
+    const original = JSON.stringify({ profile: { name: 'Legacy' } })
+    await writeFile(join(root, 'cli/config.json'), original)
+
+    const config = await CliConfigStore.load(path, { persist: false })
+
+    expect(config.snapshot().profile.name).toBe('Legacy')
+    await expect(readFile(path, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await readFile(join(root, 'cli/config.json'), 'utf8')).toBe(original)
+  })
+
   it.each([
     ['unavailable-theme', 'green'],
     ['solar', 'scarlet'],

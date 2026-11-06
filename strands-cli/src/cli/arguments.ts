@@ -5,7 +5,15 @@ import { Command } from 'commander'
 import { readCliVersion } from '../package-version.js'
 import { isRecord } from '../values.js'
 
+export interface DevArgs {
+  init: boolean
+  workspace?: string
+  searchRoots: string[]
+  create?: 'cli' | 'typescript' | 'python'
+}
+
 export interface ParsedArgs {
+  dev?: DevArgs
   update: boolean
   request: string | undefined
   oneShot: boolean
@@ -39,11 +47,18 @@ export function parseArgs(argv: string[]): ParsedArgs {
   if (argv[0] === 'update') {
     return parseUpdateArgs(argv.slice(1))
   }
+  if (argv[0] === 'dev') {
+    const init = argv[1] === 'init'
+    return parseChatArgs(argv.slice(init ? 2 : 1), init)
+  }
+  return parseChatArgs(argv)
+}
 
+const parseChatArgs = (argv: string[], devInit?: boolean): ParsedArgs => {
   const collect = (value: string, previous: string[]): string[] => [...previous, value]
   const program = new Command()
   program
-    .name('strands')
+    .name(devInit === undefined ? 'strands' : devInit ? 'strands dev init' : 'strands dev')
     .description('Chat with a Strands harness agent.')
     .version(readCliVersion())
     .argument('[request]', 'an initial request to answer')
@@ -74,14 +89,37 @@ export function parseArgs(argv: string[]): ParsedArgs {
     .option('--mcp-config <path>', 'additional MCP configuration file (repeatable)', collect, [])
     .allowExcessArguments(false)
     .exitOverride()
-    .addHelpText('after', '\nCommands:\n  update                    update the globally installed CLI\n')
 
+  if (devInit === undefined) {
+    program.addHelpText(
+      'after',
+      '\nCommands:\n  dev                       open a local harness workspace\n  update                    update the globally installed CLI\n'
+    )
+  } else {
+    program
+      .option('--workspace <path>', 'open or create this dev workspace')
+      .option('--search-root <path>', 'search another folder for harnesses (repeatable)', collect, [])
+      .option('--create <language>', 'create a cli, typescript, or python harness')
+  }
   program.parse(argv, { from: 'user' })
   const opts = program.opts()
+  if (devInit !== undefined) {
+    if (opts.setup || opts.acpServer) program.error('error: strands dev does not support --setup or --acp-server.')
+    if (opts.create !== undefined && !['cli', 'typescript', 'python'].includes(opts.create)) {
+      program.error('error: --create must be cli, typescript, or python.')
+    }
+    if (opts.create && opts.agent) program.error('error: --create and --agent cannot be combined.')
+    if (devInit && (opts.print || opts.prompt !== undefined || program.args.length > 0)) {
+      program.error('error: strands dev init configures a workspace and does not accept a request.')
+    }
+  }
   if (opts.prompt !== undefined && program.args[0] !== undefined) {
     program.error('error: pass the initial request either positionally or with --prompt, not both.')
   }
   return {
+    ...(devInit === undefined
+      ? {}
+      : { dev: { init: devInit, workspace: opts.workspace, searchRoots: opts.searchRoot, create: opts.create } }),
     update: false,
     request: opts.prompt ?? program.args[0],
     oneShot: Boolean(opts.print),
