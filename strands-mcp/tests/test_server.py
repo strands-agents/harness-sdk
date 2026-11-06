@@ -190,3 +190,69 @@ class TestFetchDocErrors:
         tru_result = fetch_doc(uri="https://strandsagents.com/missing.md")
 
         assert tru_result["error"] == "fetch failed"
+
+
+class _FailedSentinel:
+    """Stands in for a negatively cached failed fetch.
+
+    It deliberately has no ``content`` attribute, matching the shape of the
+    failure entry cached by ``cache.ensure_page``.
+    """
+
+
+@patch("strands_mcp_server.server.cache")
+def test_fetch_doc_bounds_no_sections_content(mock_cache):
+    """A large document with no parseable sections is bounded, not dumped."""
+    from strands_mcp_server.utils import text_processor
+
+    body = "Lorem ipsum dolor sit amet. " * 1000
+    content = "# Title Only\n\n" + body
+    assert len(content.encode("utf-8")) > text_processor.SMALL_DOC_THRESHOLD
+
+    mock_cache.ensure_page.return_value = Page(
+        url="https://strandsagents.com/no-h2.md",
+        title="No H2 Doc",
+        content=content,
+    )
+
+    tru_result = fetch_doc(uri="https://strandsagents.com/no-h2.md")
+
+    assert tru_result["reason"] == "no_sections"
+    assert tru_result["truncated"] is True
+    assert len(tru_result["content"].encode("utf-8")) <= text_processor.SMALL_DOC_THRESHOLD
+    assert "truncated" in tru_result["content"]
+
+
+@patch("strands_mcp_server.server.cache")
+def test_fetch_doc_small_document_returned_whole(mock_cache):
+    """A document under the threshold is returned whole, unchanged."""
+    content = "# Title Only\n\nShort body."
+    mock_cache.ensure_page.return_value = Page(
+        url="https://strandsagents.com/no-h2-small.md",
+        title="No H2 Small Doc",
+        content=content,
+    )
+
+    tru_result = fetch_doc(uri="https://strandsagents.com/no-h2-small.md")
+
+    assert tru_result["reason"] == "size"
+    assert tru_result["content"] == content
+
+
+@patch("strands_mcp_server.server.cache")
+def test_search_docs_tolerates_negative_cache_entry(mock_cache):
+    """search_docs must not crash when the cache holds a failed-fetch entry."""
+    doc = Doc(
+        uri="https://strandsagents.com/failed.md",
+        display_title="Failed Doc",
+        content="",
+        index_title="",
+    )
+    mock_cache.get_index.return_value.search.return_value = [(0.9, doc)]
+    mock_cache.get_url_cache.return_value = {"https://strandsagents.com/failed.md": _FailedSentinel()}
+    mock_cache.SNIPPET_HYDRATE_MAX = 5
+
+    tru_result = search_docs("agent")
+
+    assert tru_result[0]["url"] == doc.uri
+    assert tru_result[0]["snippet"] == "Failed Doc"

@@ -154,3 +154,47 @@ class TestBackgroundPrefetch:
                         cache.load_links_only()
 
                         mock_thread.assert_called_once()
+
+
+class TestFetchFailureIsObservable:
+    """A failed fetch is logged, and stays retryable (#3328)."""
+
+    def test_failed_fetch_is_logged(self):
+        """The swallowed fetch error is surfaced in the log."""
+        cache._URL_CACHE["https://strandsagents.com/broken.md"] = None
+
+        with patch("strands_mcp_server.utils.cache.logger") as mock_logger:
+            with patch(
+                "strands_mcp_server.utils.cache.doc_fetcher.fetch_and_clean",
+                side_effect=RuntimeError("boom"),
+            ):
+                assert cache.ensure_page("https://strandsagents.com/broken.md") is None
+
+        assert mock_logger.exception.called
+
+    def test_failed_fetch_stays_retryable(self):
+        """A failed fetch leaves the cache unset, so the next call retries."""
+        url = "https://strandsagents.com/broken.md"
+        cache._URL_CACHE[url] = None
+
+        with patch(
+            "strands_mcp_server.utils.cache.doc_fetcher.fetch_and_clean",
+            side_effect=RuntimeError("boom"),
+        ):
+            assert cache.ensure_page(url) is None
+
+        assert cache._URL_CACHE.get(url) is None
+
+        mock_raw = MagicMock()
+        mock_raw.title = "Recovered Doc"
+        mock_raw.content = "The fetch works now."
+
+        with patch("strands_mcp_server.utils.cache.doc_fetcher.fetch_and_clean", return_value=mock_raw):
+            with patch(
+                "strands_mcp_server.utils.cache.text_processor.format_display_title",
+                return_value="Recovered Doc",
+            ):
+                page = cache.ensure_page(url)
+
+        assert page is not None
+        assert page.content == "The fetch works now."
