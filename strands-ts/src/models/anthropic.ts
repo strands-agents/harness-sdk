@@ -219,15 +219,23 @@ export interface AnthropicModelConfig extends BaseModelConfig {
   cacheConfig?: CacheConfig
 }
 
+type AnthropicMessagesClient = {
+  messages: Pick<Anthropic['messages'], 'stream'> & Partial<Pick<Anthropic['messages'], 'countTokens'>>
+}
+
 export interface AnthropicModelOptions extends AnthropicModelConfig {
   apiKey?: string
-  client?: Anthropic
+  /**
+   * Pre-built client for any Anthropic Messages API endpoint, such as `Anthropic`, or
+   * `AnthropicBedrock` / `AnthropicBedrockMantle` from `@anthropic-ai/bedrock-sdk`.
+   */
+  client?: AnthropicMessagesClient
   clientConfig?: ClientOptions
 }
 
 export class AnthropicModel extends Model<AnthropicModelConfig> {
   private _config: AnthropicModelConfig
-  private _client: Anthropic
+  private _client: AnthropicMessagesClient
   private _dropStaleThinkingModelId: string | undefined
   private _clientBetas: string[]
   // Unknown for an injected client, which may not be this SDK's `Anthropic` (e.g. a Bedrock or Vertex client).
@@ -308,6 +316,10 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
   override async countTokens(messages: Message[], options?: CountTokensOptions): Promise<number> {
     if (this._config.useNativeTokenCount !== true) return super.countTokens(messages, options)
 
+    // Bedrock clients omit `countTokens`.
+    const countTokens = this._client.messages.countTokens?.bind(this._client.messages)
+    if (!countTokens) return super.countTokens(messages, options)
+
     try {
       const request = this._formatRequest(messages, options)
       const params: Anthropic.MessageCountTokensParams = {
@@ -319,9 +331,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
       }
 
       const requestOptions = this._buildRequestOptions()
-      const response = requestOptions
-        ? await this._client.messages.countTokens(params, requestOptions)
-        : await this._client.messages.countTokens(params)
+      const response = requestOptions ? await countTokens(params, requestOptions) : await countTokens(params)
 
       logger.debug(`total_tokens=<${response.input_tokens}> | native token count`)
       return response.input_tokens
