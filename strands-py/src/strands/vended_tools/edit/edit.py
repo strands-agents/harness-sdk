@@ -10,6 +10,7 @@ Pairs with the companion ``read`` and ``write`` vended tools.
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 
 from ...tools.decorator import tool
@@ -24,6 +25,17 @@ DEFAULT_EDIT_DESCRIPTION = (
     "Replace an exact string in a text file. `old_str` must appear in the "
     "file exactly once. Files must use absolute paths."
 )
+
+# The model writes LF and cannot see a file's CRLF, so any line break matches either.
+_LINE_BREAK = re.compile(r"\r?\n")
+
+
+def _line_ending_at(content: str, index: int) -> str:
+    """Return the ending of the line containing ``index``, or of the last line break before it."""
+    newline = content.find("\n", index)
+    if newline == -1:
+        newline = content.rfind("\n")
+    return "\r\n" if newline > 0 and content[newline - 1] == "\r" else "\n"
 
 
 def make_edit(
@@ -70,12 +82,15 @@ def make_edit(
         active = sandbox if sandbox is not None else tool_context.agent.sandbox
 
         content = await active.read_text(path)
-        occurrences = content.count(old_str)
-        if occurrences == 0:
+        pattern = r"\r?\n".join(re.escape(line) for line in _LINE_BREAK.split(old_str))
+        matches = list(re.finditer(pattern, content))
+        if not matches:
             raise ValueError(f"old_str did not appear verbatim in {path}.")
-        if occurrences > 1:
-            raise ValueError(f"old_str appears {occurrences} times in {path}; make it unique.")
-        await active.write_text(path, content.replace(old_str, new_str, 1))
+        if len(matches) > 1:
+            raise ValueError(f"old_str appears {len(matches)} times in {path}; make it unique.")
+        match = matches[0]
+        replacement = _LINE_BREAK.sub(_line_ending_at(content, match.start()), new_str)
+        await active.write_text(path, content[: match.start()] + replacement + content[match.end() :])
         return f"Edited {path}."
 
     return edit_tool
