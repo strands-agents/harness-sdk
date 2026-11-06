@@ -7,4 +7,4 @@ languages:
   typescript: {}
 github: https://github.com/strands-agents/harness-sdk/tree/main/strands-py/src/strands/vended_tools/web_fetch
 docsPage: docs/user-guide/sdk/tools/vended-tools/web-fetch
-addedDate: 2026-09-08
+addedDate: 2026-09-15
