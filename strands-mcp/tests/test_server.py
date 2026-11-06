@@ -2,7 +2,7 @@
 
 import asyncio
 from threading import Event, Lock
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 import pytest
 
@@ -51,11 +51,20 @@ class TestServerMetadata:
 
         assert (k_schema["minimum"], k_schema["maximum"]) == (1, 20)
 
-    def test_alternate_queries_are_bounded(self):
-        alternates_schema = _listed_tools()["search_docs"]["inputSchema"]["properties"]["alternate_queries"]
-        array_schema = next(option for option in alternates_schema["anyOf"] if option.get("type") == "array")
+    def test_alternate_queries_are_an_optional_bounded_string_array(self):
+        input_schema = _listed_tools()["search_docs"]["inputSchema"]
+        alternates_schema = {
+            key: value for key, value in input_schema["properties"]["alternate_queries"].items() if key != "description"
+        }
 
-        assert array_schema["maxItems"] == 4
+        assert alternates_schema == {
+            "type": "array",
+            "items": {"type": "string"},
+            "maxItems": 4,
+            "default": [],
+            "title": "Alternate Queries",
+        }
+        assert input_schema["required"] == ["query"]
 
 
 def _doc(name: str) -> Doc:
@@ -85,6 +94,10 @@ class TestSearchDocsAlternateQueries:
 
         tru_result = search_docs("stop after 5 turns", k=3, alternate_queries=["turn limit"])
 
+        assert mock_cache.get_index.return_value.search.call_args_list == [
+            call("stop after 5 turns", k=20),
+            call("turn limit", k=20),
+        ]
         assert tru_result == [
             {"url": "https://strandsagents.com/b.md", "title": "b", "score": 0.033, "snippet": "b"},
             {"url": "https://strandsagents.com/a.md", "title": "a", "score": 0.016, "snippet": "a"},
@@ -96,12 +109,40 @@ class TestSearchDocsAlternateQueries:
         mock_cache.get_url_cache.return_value = {}
         mock_cache.SNIPPET_HYDRATE_MAX = 5
 
-        search_docs("turn limit", alternate_queries=["turn limit", "  ", "max cycles"])
+        search_docs("turn limit", alternate_queries=["Turn Limit", "turn  limit", "  ", "max cycles"])
 
-        assert [call.args[0] for call in mock_cache.get_index.return_value.search.call_args_list] == [
-            "turn limit",
-            "max cycles",
+        assert mock_cache.get_index.return_value.search.call_args_list == [
+            call("turn limit", k=20),
+            call("max cycles", k=20),
         ]
+
+    @pytest.mark.parametrize(
+        ("query", "alternate_queries", "searched"),
+        [
+            ("  ", ["turn limit"], "turn limit"),
+            ("turn limit", ["Turn-Limit", " turn limit "], "turn limit"),
+        ],
+        ids=["blank-query", "alternates-collapse"],
+    )
+    def test_single_distinct_phrasing_keeps_bm25_scores(self, mock_cache, query, alternate_queries, searched):
+        mock_cache.get_index.return_value.search.return_value = [(2.5, _doc("a"))]
+        mock_cache.get_url_cache.return_value = {}
+        mock_cache.SNIPPET_HYDRATE_MAX = 5
+
+        tru_result = search_docs(query, k=3, alternate_queries=alternate_queries)
+
+        assert mock_cache.get_index.return_value.search.call_args_list == [call(searched, k=3)]
+        assert tru_result == [{"url": "https://strandsagents.com/a.md", "title": "a", "score": 2.5, "snippet": "a"}]
+
+    @pytest.mark.parametrize("alternate_queries", [[], ["", " ", "?!"]], ids=["no-alternates", "blank-alternates"])
+    def test_all_blank_phrasings_return_no_results_without_searching(self, mock_cache, alternate_queries):
+        mock_cache.get_url_cache.return_value = {}
+        mock_cache.SNIPPET_HYDRATE_MAX = 5
+
+        tru_result = search_docs("  ", alternate_queries=alternate_queries)
+
+        assert tru_result == []
+        mock_cache.get_index.return_value.search.assert_not_called()
 
 
 @patch("strands_mcp_server.server.cache")

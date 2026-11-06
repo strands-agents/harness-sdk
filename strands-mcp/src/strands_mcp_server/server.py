@@ -15,7 +15,7 @@ except ImportError:
     ToolError = import_module("mcp.server.mcpserver.exceptions").ToolError
 
 from .utils import cache, text_processor
-from .utils.indexer import Doc, IndexSearch
+from .utils.indexer import Doc, IndexSearch, _tokenize
 
 APP_NAME = "strands-agents-mcp-server"
 
@@ -84,6 +84,15 @@ def _section_index(sections: list[dict]) -> list[dict]:
     return [{"id": s["id"], "title": s["title"], "children": s["children"]} for s in sections]
 
 
+def _distinct_queries(phrasings: List[str]) -> List[str]:
+    queries: Dict[Tuple[str, ...], str] = {}
+    for phrasing in phrasings:
+        tokens = tuple(_tokenize(phrasing))
+        if tokens:
+            queries.setdefault(tokens, phrasing)
+    return list(queries.values())
+
+
 def _fused_search(index: IndexSearch, queries: List[str], k: int) -> List[Tuple[float, Doc]]:
     if len(queries) == 1:
         return index.search(queries[0], k=k)
@@ -134,7 +143,7 @@ def search_docs(
     ],
     k: Annotated[int, Field(ge=1, le=20, description="Maximum number of results to return.")] = 5,
     alternate_queries: Annotated[
-        List[str] | None,
+        Tuple[str, ...],
         Field(
             max_length=ALTERNATE_QUERY_LIMIT,
             description=(
@@ -143,7 +152,7 @@ def search_docs(
                 '"lifecycle controls"]. Pages matched by several phrasings rank first.'
             ),
         ),
-    ] = None,
+    ] = (),
 ) -> List[Dict[str, Any]]:
     """Search the official Strands Agents docs: user guides, API reference pages, and examples.
 
@@ -160,7 +169,7 @@ def search_docs(
     """
     cache.ensure_ready()
     index = cache.get_index()
-    queries = list(dict.fromkeys(q for q in [query, *(alternate_queries or [])] if q.strip()))
+    queries = _distinct_queries([query, *alternate_queries])
     results = _fused_search(index, queries, k) if index and queries else []
     url_cache = cache.get_url_cache()
 
