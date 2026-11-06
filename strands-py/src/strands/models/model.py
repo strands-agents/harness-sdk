@@ -418,13 +418,15 @@ class Model(abc.ABC):
         the system prompt. Reasoning blocks are left out of the transcript. It returns the reply's text as a text
         block, including a reply cut off at the output limit.
 
-        Providers with server-side summaries override it, return a ``summary`` block, and report
-        ``model_info.capabilities.server_side_summary`` as True. The summarize strategy calls this method only for
-        such models, with the messages from message 0 through the last one it summarizes; when this raises, the
-        strategy summarizes client-side instead.
+        A provider that reports ``model_info.capabilities.server_side_summary`` as True must override this method to
+        summarize server-side and return a ``summary`` block. The summarize strategy then calls the override only
+        with the conversation's opening messages, from message 0, and writes every other summary with the base
+        implementation; when the override raises, the strategy summarizes client-side instead. For a model without
+        the capability, the strategy calls this method for every summary with any messages, so an override must use
+        the base implementation for them, as ``AnthropicModel`` does.
 
         Args:
-            messages: The opening messages to summarize, from message 0, left unmodified.
+            messages: The messages to summarize, left unmodified.
             tool_specs: The live conversation's tool specifications, for overrides. The base implementation
                 ignores them.
             system_prompt: The live conversation's plain string system prompt, for overrides. The base

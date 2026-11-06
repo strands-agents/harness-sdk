@@ -6,7 +6,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from ....agent.conversation_manager.compression.pin_message import is_pinned
-from ....models.model import Model
+from ....models._summarize import _summarize_with_stream
 from ....types.content import ContentBlock, Message, Messages
 from ....types.tools import ToolResult, ToolResultContent
 from ...methods.summarize import SummarizeConfig, _format_summarized
@@ -26,6 +26,7 @@ from .base import (
 if TYPE_CHECKING:
     from ....agent.agent import Agent
     from ....agent.invocation_context import InvocationContext
+    from ....models.model import Model
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,21 @@ def _warn_client_side_fallback(model: Model, reason: str, *, exc_info: bool = Fa
 
 def _pinned_before(messages: list[Message], end: int) -> list[Message]:
     return [message for index, message in enumerate(messages[1:end], start=1) if is_pinned(messages, index)]
+
+
+def _block_request(block: ContentBlock, message: Message, messages: Messages) -> Messages:
+    """Return the summarizer input for one block of ``message``.
+
+    The block goes in a message of ``message``'s role. A tool result follows the tool use it answers, when the
+    history holds it, so the summarizer sees which tool produced it.
+    """
+    request = [Message(role=message["role"], content=[block])]
+    if "toolResult" not in block:
+        return request
+    tool_use_id = block["toolResult"]["toolUseId"]
+    uses = (candidate for turn in messages for candidate in turn["content"] if "toolUse" in candidate)
+    tool_use = next((use for use in uses if use["toolUse"]["toolUseId"] == tool_use_id), None)
+    return [Message(role="assistant", content=[tool_use]), *request] if tool_use else request
 
 
 async def _place_text_summary(messages: list[Message], end: int, summary: str, model: Model) -> None:
@@ -127,7 +143,7 @@ class SummarizeStrategy(BaseOffloadStrategy):
         try:
             summary = await self._summarize_client_side(model, context.agent, safe)
         except Exception as error:
-            logger.warning("messages=<%d>, error=<%s> | summarization failed", len(safe), error)
+            logger.warning("messages=<%d>, error=<%s> | summarization failed", len(safe), error, exc_info=True)
             return False
         if not summary:
             return False
@@ -262,7 +278,7 @@ class SummarizeStrategy(BaseOffloadStrategy):
     async def _try_summarize(self, block: ContentBlock, model: Model, message: Message, agent: Agent) -> str:
         """Summarize one block; a failure is logged and leaves the block unsummarized so the pass continues."""
         try:
-            return await self._summarize_client_side(model, agent, [Message(role=message["role"], content=[block])])
+            return await self._summarize_client_side(model, agent, _block_request(block, message, agent.messages))
         except Exception as error:
             logger.warning(
                 "tracking_id=<%s>, error=<%s> | block summarization failed", message.get("tracking_id"), error
@@ -277,7 +293,7 @@ class SummarizeStrategy(BaseOffloadStrategy):
         """
         instructions = self._config.get("system_prompt")
         if model.model_info.capabilities.server_side_summary is True:
-            summary = await Model.summarize(model, messages, instructions=instructions)
+            summary = await _summarize_with_stream(model, messages, instructions)
         else:
             summary = await model.summarize(
                 messages,

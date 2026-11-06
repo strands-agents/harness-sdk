@@ -617,4 +617,22 @@ class TestClientSideSummariesUseModelSummarize:
             assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is False
 
         assert messages == TestServerSideSummary._messages()
-        assert "error=<throttled> | summarization failed" in caplog.text
+        failure = next(record for record in caplog.records if "summarization failed" in record.getMessage())
+        assert "error=<throttled>" in failure.getMessage()
+        assert failure.exc_info
+
+    @pytest.mark.asyncio
+    async def test_a_block_summary_sends_a_tool_result_after_its_tool_use(self, mock_agent):
+        tool_use = ContentBlock(toolUse=ToolUse(toolUseId="t1", name="read_file", input={"path": "a.py"}))
+        messages = self._tool_result_messages()
+        messages.insert(1, Message(role="assistant", content=[tool_use]))
+        tool_result = messages[2]["content"][0]
+        mock_agent.messages = messages
+        strategy = Offload.summarize("tool_results").when(threshold=100)
+
+        assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.5)) is True
+
+        assert mock_agent.model.summarize.await_args.args[0] == [
+            Message(role="assistant", content=[tool_use]),
+            Message(role="user", content=[tool_result]),
+        ]
