@@ -48,6 +48,18 @@ import { ContextOffloader, InMemoryStorage } from '@strands-agents/sdk/vended-pl
 import { GoalLoop } from '@strands-agents/sdk/vended-plugins/goal'
 
 import { z } from 'zod'
+import { MockMessageModel, TestModelProvider } from '@strands-agents/sdk/testing'
+import type { MockMessageTurn, MockMessageTurnOptions, ModelEventGenerator } from '@strands-agents/sdk/testing'
+
+const offlineTurn: MockMessageTurn = { type: 'textBlock', text: 'offline response' }
+const offlineOptions: MockMessageTurnOptions = { usage: { inputTokens: 1, outputTokens: 2, totalTokens: 3 } }
+const offlineModel = new MockMessageModel().addTurn(offlineTurn, offlineOptions)
+const offlineAgent = new Agent({ model: offlineModel, printer: false })
+await offlineAgent.invoke('hello')
+if (offlineModel.callCount !== 1) throw new Error('Public mock did not run an offline agent')
+const factory: ModelEventGenerator = () => offlineModel.stream([])
+await new Agent({ model: new TestModelProvider(factory), printer: false }).invoke('hello')
+console.log('[pack-test] Public testing models run without optional providers or test fixtures')
 
 console.log('[pack-test] Imports resolved')
 
