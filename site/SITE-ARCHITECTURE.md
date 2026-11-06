@@ -437,7 +437,7 @@ Replaces the default anchor element to enable MkDocs-style relative linking. Res
 
 These override default Starlight components:
 
-- **`Head.astro`**: Adds Mermaid diagram support and loads `SiteScripts` (Shortbread + WebSDK).
+- **`Head.astro`**: Adds Mermaid diagram support, loads `SiteScripts` (Shortbread + WebSDK), and emits the page JSON-LD `@graph` built by `src/util/structured-data.ts`. Non-docs pages add their own nodes (blog post, changelog release, integrations list, sample guide) by setting `Astro.locals.structuredData` in frontmatter.
 - **`Header.astro`**: Custom header with navigation tabs and theme-aware logos (see [Header Navigation](#header-navigation) below).
 - **`Hero.astro`**: Suppresses the Starlight hero on `/blog/` paths. Blog pages pass a dummy `hero: { actions: [] }` to collapse Starlight's two-panel layout, and this override ensures that dummy hero has no visual output.
 - **`MarkdownContent.astro`**: Injects the custom frontmatter banners (experimental, external preview, community, languages) at the top of page content.
@@ -1009,7 +1009,7 @@ Helper functions used across all blog pages:
 
 **`BlogLayout.astro`** — Base layout for all blog pages. Uses Starlight's `<StarlightPage>` component to get the full page shell (head, styles, theme, header) for free. Passes `hasSidebar={false}` and `template: 'splash'` to suppress sidebar and doc-page chrome. Passes `hero: { actions: [] }` to collapse Starlight's two-panel layout into a single content panel (suppressing the auto-generated `PageTitle`). Extra head tags (canonical URL, OG/Twitter meta, RSS autodiscovery) are injected via the `frontmatter.head` array. A named `<slot name="head" />` is forwarded for page-specific head content (e.g. JSON-LD). The `Hero` component override (`src/components/overrides/Hero.astro`) suppresses the hero on `/blog/` paths so the dummy hero value has no visual effect.
 
-**`BlogPostLayout.astro`** — Wraps `BlogLayout` with article-specific chrome: title, date, reading time, description, author byline, tags, cover image. Injects JSON-LD Article schema via the head slot. OG image URL: `/blog/og/{slug}.png`.
+**`BlogPostLayout.astro`** — Wraps `BlogLayout` with article-specific chrome: title, date, reading time, description, author byline, tags, cover image. Passes its `BlogPosting` node to the page JSON-LD graph through `Astro.locals.structuredData` (see `src/util/structured-data.ts`). OG image URL: `/blog/og/{slug}.png`.
 
 ### Components (`src/components/blog/`)
 
