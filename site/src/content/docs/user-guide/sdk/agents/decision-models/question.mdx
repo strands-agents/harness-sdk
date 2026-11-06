@@ -1,0 +1,23 @@
+---
+title: Question
+description: Define the text and closed answer choices for one decision.
+languages: [typescript]
+sourceLinks:
+  - path: strands-ts/src/decisions/types.ts
+  - path: strands-ts/src/decisions/decision-model.ts
+---
+
+Use a `Question` to give a decision model the prompt and the values it may return.
+The question map key becomes the key for that answer in `DecisionResult.answers`.
+
+`question` must be a non-empty string. Set `choices` to `'boolean'` for a yes-or-no
+answer, or to a non-empty readonly tuple of unique strings for a closed set of
+labels. A tuple such as `['red', 'green']` narrows the answer to those literals.
+
+By default, uncertainty is allowed. Set `uncertainty: false` to require one of the
+listed choices. The `{ minConfidence }` form supports implementations that return
+per-answer confidence; `LLMDecisionModel` ignores that threshold.
+
+The inferred answer type still includes `Uncertain`, even when uncertainty is
+disabled. This lets callers handle an abstention defensively. See
+[AnswerOf](answer-of/) for the conditional type.

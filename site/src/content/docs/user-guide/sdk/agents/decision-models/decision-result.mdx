@@ -1,0 +1,22 @@
+---
+title: DecisionResult
+description: Read the typed answers and optional usage and metadata from a decision call.
+languages: [typescript]
+sourceLinks:
+  - path: strands-ts/src/decisions/types.ts
+  - path: strands-ts/src/decisions/decision-model.ts
+---
+
+Read `DecisionResult<Q>` after `DecisionModel.ask` resolves. Its `answers` object
+uses the same keys as the input question map, and each value is narrowed from that
+question's choices.
+
+`usage` is optional because the underlying provider may not report token counts.
+When present, it contains input, output, and total token counts.
+
+`metadata.latencyMs` is required and records the time spent in the underlying
+model call. Implementations may also provide the provider name, model ID,
+per-question probability distributions, and confidence values.
+
+See [AnswerOf](answer-of/) for how each answer type is derived and
+[Uncertain](uncertain/) for the abstention value.

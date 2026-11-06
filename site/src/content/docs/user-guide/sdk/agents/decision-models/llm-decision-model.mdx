@@ -1,0 +1,27 @@
+---
+title: LLMDecisionModel
+description: Use a vended model to answer closed questions in one structured-output call.
+languages: [typescript]
+sourceLinks:
+  - path: strands-ts/src/decisions/llm-decision-model.ts
+  - path: strands-ts/src/decisions/decision-model.ts
+---
+
+Use `LLMDecisionModel` when a single model call can answer a fixed set of
+questions. It adapts a vended `Model` to the `DecisionModel` contract and returns
+answers in the question map's statically narrowed shape.
+
+The constructor accepts an optional `model` and `systemPrompt`. Without a model,
+it creates a default `BedrockModel`. A supplied model must support forced
+`toolChoice`, because the implementation requires the structured-output tool to
+return the answers.
+
+The model receives the input state and all questions in one request. A question
+that allows uncertainty adds an `uncertain` choice; a returned value becomes an
+`Uncertain` instance and can carry the model's reason. See [Question](question/)
+for how to configure abstention.
+
+The result includes the model's token usage when available and always includes
+`metadata.latencyMs`. See [DecisionResult](decision-result/) for the full result
+shape, and the [decision guide](./) to compare this API with `Agent.invoke` and
+`structuredOutputSchema`.
