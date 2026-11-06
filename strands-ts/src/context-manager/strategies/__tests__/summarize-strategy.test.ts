@@ -456,7 +456,7 @@ describe('server-side summary', () => {
     const fallback = warnSpy.mock.calls.find(([message]) =>
       String(message).includes('falling back to client-side summary')
     )!
-    expect(fallback[0]).toContain(`reason=<${error.message}>`)
+    expect(fallback[0]).toContain(`reason=<${error.name}(${error.message})>`)
     expect(fallback[0]).toContain('thinking blocks kept after it will be dropped')
     expect(fallback.length > 1).toBe(traceback)
     warnSpy.mockRestore()

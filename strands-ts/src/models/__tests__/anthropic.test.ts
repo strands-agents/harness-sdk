@@ -3458,6 +3458,29 @@ describe('AnthropicModel server-side summary', () => {
     expect(captured.options).toEqual({ headers: { 'anthropic-beta': 'compact-2026-09-04' } })
   })
 
+  it('counts tokens from the last compaction block', async () => {
+    const countTokens = vi.fn(async () => ({ input_tokens: 7 }))
+    const client = { messages: { countTokens } } as unknown as Anthropic
+    const model = new AnthropicModel({ client, modelId: 'claude-sonnet-5-5', maxTokens: 1, useNativeTokenCount: true })
+    const messages = [
+      new Message({ role: 'user', content: [new TextBlock('first '.repeat(500))] }),
+      new Message({ role: 'assistant', content: [storedCompaction('new', 's2')] }),
+      new Message({ role: 'user', content: [new TextBlock('next')] }),
+    ]
+
+    expect(await model.countTokens(messages)).toBe(7)
+
+    const [params, options] = countTokens.mock.calls[0] as unknown as [any, any]
+    expect(params.messages).toEqual([
+      { role: 'assistant', content: [{ type: 'compaction', content: 'new', signature: 's2' }] },
+      { role: 'user', content: [{ type: 'text', text: 'next' }] },
+    ])
+    expect(options).toEqual({ headers: { 'anthropic-beta': 'compact-2026-09-04' } })
+
+    const estimating = new AnthropicModel({ client, modelId: 'claude-sonnet-5-5', maxTokens: 1 })
+    expect(await estimating.countTokens(messages)).toBe(await estimating.countTokens(messages.slice(1)))
+  })
+
   it.each([
     'claude-haiku-5-5',
     'claude-sonnet-5-5',

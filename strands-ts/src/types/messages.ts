@@ -666,6 +666,8 @@ export interface SummaryBlockData {
 
 /**
  * A summary of earlier conversation history that takes the summarized messages' place.
+ *
+ * Through an agent, a model without `serverSideSummary`, or one that did not write it (`provider`), gets the text.
  */
 export class SummaryBlock implements SummaryBlockData, JSONSerializable<{ summary: SummaryBlockData }> {
   /**
@@ -689,8 +691,8 @@ export class SummaryBlock implements SummaryBlockData, JSONSerializable<{ summar
   readonly text: string
 
   constructor(data: SummaryBlockData) {
-    if (data.provider !== undefined) this.provider = data.provider
-    if (data.signature !== undefined) this.signature = data.signature
+    if (data.provider != null) this.provider = data.provider
+    if (data.signature != null) this.signature = data.signature
     this.text = data.text
   }
 

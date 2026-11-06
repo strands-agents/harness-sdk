@@ -31,7 +31,10 @@ export interface ModelCapabilities {
   readonly forcedToolChoice?: boolean | undefined
   /** Whether the provider can make the model's text output conform to a JSON schema. */
   readonly nativeStructuredOutput?: boolean | undefined
-  /** Whether the model can summarize conversation history server-side. */
+  /**
+   * Whether the model summarizes history server-side through {@link Model.summarize}; set `false` in `modelInfo`
+   * to summarize client-side.
+   */
   readonly serverSideSummary?: boolean | undefined
   /**
    * Whether the model and provider take temporary messages: injected text the model reads only until the next user

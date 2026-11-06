@@ -9,7 +9,7 @@ import { normalizeError, NotImplementedError } from '../../../errors.js'
 import { isPinned } from '../../../conversation-manager/compression/pin-message.js'
 import { Message, TextBlock, ToolResultBlock } from '../../../types/messages.js'
 import { DocumentBlock, ImageBlock } from '../../../types/media.js'
-import type { ContentBlock } from '../../../types/messages.js'
+import type { ContentBlock, SummaryBlock } from '../../../types/messages.js'
 import type { Model } from '../../../models/model.js'
 import type { InvocationContext } from '../../../agent/invocation-context.js'
 import type { LocalAgent } from '../../../types/agent.js'
@@ -152,7 +152,7 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
     model: Model,
     agent: LocalAgent,
     messages: Message[]
-  ): Promise<ContentBlock | undefined> {
+  ): Promise<SummaryBlock | undefined> {
     try {
       return await model.summarize(messages, {
         toolSpecs: agent.toolRegistry.list().map((tool) => tool.toolSpec),
@@ -160,7 +160,8 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
         ...(this._config.systemPrompt !== undefined && { instructions: this._config.systemPrompt }),
       })
     } catch (error) {
-      const reason = normalizeError(error).message
+      const normalized = normalizeError(error)
+      const reason = `${normalized.name}(${normalized.message})`
       warnClientSideFallback(model, reason, error instanceof NotImplementedError ? undefined : error)
       return undefined
     }

@@ -178,7 +178,7 @@ function headerValues(headers: ClientOptions['defaultHeaders'], name: string): s
 }
 
 /** Beta that enables on-demand compaction, and compaction blocks in later requests. */
-export const COMPACTION_BETA = 'compact-2026-09-04'
+const COMPACTION_BETA = 'compact-2026-09-04'
 
 /** Whether `block` holds a compaction block Anthropic returned. */
 function isCompaction(block: ContentBlock): block is SummaryBlock {
@@ -639,7 +639,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
    * @returns The summary block
    * @throws Error - When the response holds no compaction block
    */
-  override async summarize(messages: Message[], options?: SummarizeOptions): Promise<ContentBlock> {
+  override async summarize(messages: Message[], options?: SummarizeOptions): Promise<SummaryBlock> {
     const request = this._formatRequest(messages, {
       ...(options?.systemPrompt !== undefined && { systemPrompt: options.systemPrompt }),
       ...(options?.toolSpecs !== undefined && { toolSpecs: options.toolSpecs }),

@@ -5,6 +5,7 @@ import {
   ReasoningBlock,
   type Role,
   type StopReason,
+  type SummaryBlock,
   type SystemPrompt,
   TextBlock,
   ToolUseBlock,
@@ -312,7 +313,7 @@ export interface CountTokensOptions {
  */
 export interface SummarizeOptions {
   /**
-   * The live conversation's system prompt.
+   * The live conversation's system prompt, not the summarizer's.
    */
   systemPrompt?: SystemPrompt
 
@@ -322,7 +323,8 @@ export interface SummarizeOptions {
   toolSpecs?: ToolSpec[]
 
   /**
-   * Summarization instructions replacing the provider's own prompt.
+   * Summarization instructions replacing the provider's own prompt. The summarize strategy passes its
+   * `systemPrompt` config here.
    */
   instructions?: string
 }
@@ -464,7 +466,7 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
    * @returns A summary block that takes the summarized messages' place
    * @throws NotImplementedError - When the model has no server-side summary
    */
-  async summarize(_messages: Message[], _options?: SummarizeOptions): Promise<ContentBlock> {
+  async summarize(_messages: Message[], _options?: SummarizeOptions): Promise<SummaryBlock> {
     throw new NotImplementedError(`model=<${this.constructor.name}> | model has no server-side summary`)
   }
 
