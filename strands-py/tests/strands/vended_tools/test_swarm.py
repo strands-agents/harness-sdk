@@ -24,6 +24,7 @@ from strands.multiagent.swarm import SwarmResult
 from strands.telemetry.metrics import EventLoopMetrics
 from strands.tools.registry import ToolRegistry
 from strands.types._events import ToolInterruptEvent, ToolResultEvent, ToolStreamEvent
+from strands.types.event_loop import _limit_stop_message
 from strands.types.tools import ToolContext
 from strands.vended_tools.handoff_to_user import handoff_to_user
 from strands.vended_tools.swarm import make_swarm, swarm
@@ -319,6 +320,35 @@ class TestEndToEnd:
 
         assert reasons == ["A", "B"]
         assert str(result).strip() == "parent final"
+
+    def test_counts_the_swarm_turns_toward_the_parent_request(self):
+        model = MockedModelProvider(
+            [
+                _tool_use("swarm", {"task": "go", "agents": [_spec("a", instructions="Do.")]}, "p1"),
+                {"role": "assistant", "content": [{"text": "child done"}]},
+                {"role": "assistant", "content": [{"text": "parent final"}]},
+            ]
+        )
+
+        result = Agent(model=model, tools=[swarm], callback_handler=None)("start")
+
+        assert result.invocation_context.usage["turns_taken"] == 3
+
+    def test_fails_the_swarm_once_the_parent_request_reaches_its_limit(self):
+        model = MockedModelProvider(
+            [
+                _tool_use("swarm", {"task": "go", "agents": [_spec("a", instructions="Do.")]}, "p1"),
+                {"role": "assistant", "content": [{"text": "never reached"}]},
+            ]
+        )
+        agent = Agent(model=model, tools=[swarm], callback_handler=None)
+
+        result = agent("start", limits={"turns": 1})
+
+        [tool_result] = agent.messages[2]["content"]
+        assert result.stop_reason == "limit_turns"
+        assert tool_result["toolResult"]["status"] == "error"
+        assert _limit_stop_message("a", "limit_turns") in tool_result["toolResult"]["content"][0]["text"]
 
 
 class TestChildren:
