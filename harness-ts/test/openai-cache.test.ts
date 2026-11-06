@@ -50,6 +50,17 @@ async function* responseStream(id: string, reply: string | TodoItem[]) {
 }
 
 // Mantle mints its bearer token locally from these fake credentials; OpenAI needs only a key.
+/**
+ * The conversation without injected blocks. The SDK in this repo keeps injected text in history, where the model
+ * reads each block only for its own turn; a published SDK without injected blocks keeps none. CI runs both.
+ */
+function durableHistoryOf(agent: { messages: { toJSON(): { content: object[] } }[] }) {
+  return agent.messages.map((message) => {
+    const data = message.toJSON()
+    return { ...data, content: data.content.filter((block) => !('injected' in block)) }
+  })
+}
+
 function stubOfflineCredentials() {
   vi.stubEnv('OPENAI_API_KEY', 'offline-test-key')
   vi.stubEnv('AWS_ACCESS_KEY_ID', 'testing')
@@ -137,7 +148,7 @@ describe('OpenAI and Bedrock Mantle harness prompt caching (offline)', () => {
         ])
         expect(JSON.stringify(requests[0]?.input)).toContain(projectDoc)
         expect(JSON.stringify(requests[0]?.input)).toContain('Working directory: ')
-        const firstHistory = agent.messages.map((message) => message.toJSON())
+        const firstHistory = durableHistoryOf(agent)
         expect(firstHistory).toEqual([
           { role: 'user', content: [{ text: 'First question' }], trackingId: expect.any(String) },
           { role: 'assistant', content: [{ text: 'First answer' }], trackingId: expect.any(String) },
@@ -210,7 +221,7 @@ describe('OpenAI and Bedrock Mantle harness prompt caching (offline)', () => {
         expect(latestInput).not.toContain('2030-01-01')
         expect(latestInput).not.toContain('2030-01-02')
 
-        const history = agent.messages.map((message) => message.toJSON())
+        const history = durableHistoryOf(agent)
         expect(history.slice(0, firstHistory.length)).toEqual(firstHistory)
         expect(history).toHaveLength(8)
         const durableHistory = JSON.stringify(history)
