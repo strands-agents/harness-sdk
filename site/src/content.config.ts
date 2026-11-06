@@ -130,6 +130,7 @@ export const catalogEntrySchema = z
     // import from components without tangling content config into the UI).
     integrationType: z.enum([
       'model-provider',
+      'decision-model',
       'tool',
       'session-manager',
       'memory-store',
@@ -414,6 +415,7 @@ export const collections = {
         integrationType: z
           .enum([
             'model-provider',
+            'decision-model',
             'tool',
             'session-manager',
             'memory-store',

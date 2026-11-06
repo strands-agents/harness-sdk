@@ -14,6 +14,13 @@ export const CATALOG_TYPES = [
     icon: 'M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-8 11.5L10.5 10 7 8.5 10.5 7 12 3.5 13.5 7 17 8.5 13.5 10 12 13.5z',
   },
   {
+    value: 'decision-model',
+    label: 'Decision Model',
+    labelPlural: 'Decision Models',
+    // forking arrows
+    icon: 'M14 4l2.29 2.29-2.88 2.88 1.42 1.42 2.88-2.88L20 10V4zm-4 0H4v6l2.29-2.29 4.71 4.7V20h2v-8.41l-5.29-5.3z',
+  },
+  {
     value: 'tool',
     label: 'Tool',
     labelPlural: 'Tools',
