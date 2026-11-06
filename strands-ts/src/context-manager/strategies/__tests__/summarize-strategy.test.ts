@@ -446,6 +446,25 @@ describe('server-side summary', () => {
     expect(hasClientSideSummary(messages)).toBe(true)
   })
 
+  it('falls back to client-side when message 0 is pinned', async () => {
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    const summarize = vi.fn()
+    const messages = openingMessages()
+    messages[0] = new Message({
+      role: 'user',
+      content: [new TextBlock('task')],
+      metadata: { custom: { pinned: true } },
+    })
+    const strategy = Offload.summarize('*').when({ utilization: 0.8, preserveRecent: 1 })
+
+    expect(await strategy.apply(makeContext(messages, 0.9, serverSideModel(summarize)))).toBe(true)
+
+    expect(summarize).not.toHaveBeenCalled()
+    expect(hasClientSideSummary(messages)).toBe(true)
+    expect(texts(messages)[0]).toBe('task')
+    warnSpy.mockRestore()
+  })
+
   it('falls back to client-side when a pin is summarized', async () => {
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
     const summarize = vi.fn()

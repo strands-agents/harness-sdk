@@ -40,8 +40,9 @@ function warnClientSideFallback(model: Model, reason: string, error?: unknown): 
   else logger.warn(message, error)
 }
 
+// Message 0 counts too: it stays in history, but requests start at the compaction block after it.
 function pinnedBefore(messages: Message[], end: number): Message[] {
-  return messages.slice(1, end).filter((_, offset) => isPinned(messages, offset + 1))
+  return messages.slice(0, end).filter((_, index) => isPinned(messages, index))
 }
 
 export class SummarizeStrategy extends BaseOffloadStrategy {
