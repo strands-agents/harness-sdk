@@ -27,6 +27,12 @@ def file_manager(temp_dir):
     return FileSessionManager(session_id="test", storage_dir=temp_dir)
 
 
+def test__init__emits_deprecation_warning(temp_dir):
+    """FileSessionManager is deprecated in favor of SnapshotSessionManager."""
+    with pytest.warns(DeprecationWarning, match="FileSessionManager is deprecated"):
+        FileSessionManager(session_id="test", storage_dir=temp_dir)
+
+
 @pytest.fixture
 def sample_session():
     """Create sample session for testing."""

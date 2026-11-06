@@ -3,6 +3,7 @@
 # --8<-- [start:graph_migrated_imports]
 from strands import Agent, tool
 from strands.multiagent import GraphBuilder
-from strands.session import FileSessionManager
+from strands.session import SnapshotSessionManager
+from strands.storage import LocalFileStorage
 
 # --8<-- [end:graph_migrated_imports]

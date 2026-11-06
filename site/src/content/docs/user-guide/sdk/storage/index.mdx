@@ -26,7 +26,7 @@ single place persistence backends are documented.
 Storage backend the same way in both SDKs: TypeScript's
 `SessionManager` and Python's recommended `SnapshotSessionManager`
 both persist snapshots through a Storage backend you pass them.
-Python's repository-based managers (`FileSessionManager`,
+Python's deprecated repository-based managers (`FileSessionManager`,
 `S3SessionManager`) are the exception: they configure storage
 directly rather than through a Storage backend, a difference the
 session management page documents.
@@ -107,8 +107,10 @@ Storage resolves in this order for each subsystem:
    error in TypeScript
 
 :::note
-Python `SessionManager` is deprecated, and does not use
-the provided `Storage` parameter. Use
+Python's repository-based managers
+(`RepositorySessionManager`, `FileSessionManager`,
+`S3SessionManager`) are deprecated and do not use the
+provided `Storage` parameter. Use
 `SnapshotSessionManager` in Python or `SessionManager` in
 TypeScript to take advantage of agent-level storage.
 :::
