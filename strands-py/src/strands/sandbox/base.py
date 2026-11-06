@@ -28,7 +28,7 @@ from collections.abc import AsyncGenerator
 from typing import Any
 
 from ..types.tools import AgentTool
-from .types import ExecutionResult, FileInfo, StreamChunk
+from .types import ExecutionResult, FileInfo, HttpResult, StreamChunk
 
 logger = logging.getLogger(__name__)
 
@@ -199,6 +199,44 @@ class Sandbox(ABC):
             FileNotFoundError: If the directory does not exist.
         """
         ...
+
+    async def request(
+        self,
+        method: str,
+        url: str,
+        *,
+        headers: dict[str, str] | None = None,
+        body: bytes | str | None = None,
+        timeout: float | None = None,
+        max_bytes: int | None = None,
+        **kwargs: Any,
+    ) -> HttpResult:
+        """Make an HTTP request inside the sandbox.
+
+        Works with any HTTP method. Optional because not every sandbox needs
+        HTTP access.
+
+        Args:
+            method: HTTP method (e.g. ``GET``, ``POST``, ``PUT``, ``DELETE``,
+                ``PATCH``, ``HEAD``, ``OPTIONS``).
+            url: The http(s) URL to request.
+            headers: Request headers.
+            body: Request body. ``str`` is sent as UTF-8; ``bytes`` is sent as-is.
+                ``None`` sends no body.
+            timeout: Maximum execution time in seconds. ``None`` means no timeout.
+            max_bytes: Bound the response body to this many bytes. ``None`` means
+                no limit. A response exceeding the cap raises
+                :class:`SandboxHttpError` rather than returning a truncated body.
+            **kwargs: Additional keyword arguments for forward compatibility.
+
+        Returns:
+            An :class:`HttpResult`. HTTP error statuses (4xx/5xx) are returned in ``status`` rather than raised.
+
+        Raises:
+            SandboxHttpError: On network/transport errors, or when the response
+                body exceeds ``max_bytes``.
+        """
+        raise NotImplementedError(f"{type(self).__name__} does not implement request()")
 
     # ---- Tool vending ----
 

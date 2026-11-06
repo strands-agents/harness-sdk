@@ -32,16 +32,19 @@ Example:
 
 from .base import Sandbox
 from .constants import LANGUAGE_PATTERN
+from .errors import SandboxHttpError
 from .posix_shell import PosixShellSandbox
-from .types import ExecutionResult, FileInfo, OutputFile, StreamChunk, StreamType
+from .types import ExecutionResult, FileInfo, HttpResult, OutputFile, StreamChunk, StreamType
 
 __all__ = [
     "ExecutionResult",
     "FileInfo",
+    "HttpResult",
     "LANGUAGE_PATTERN",
     "OutputFile",
     "PosixShellSandbox",
     "Sandbox",
+    "SandboxHttpError",
     "StreamChunk",
     "StreamType",
 ]
