@@ -583,6 +583,33 @@ describe('BedrockModel', () => {
         expect(sentInferenceConfig()).toStrictEqual({ maxTokens: 1 })
       })
 
+      // https://github.com/strands-agents/harness-sdk/issues/5753
+      it('merges an additionalArgs inferenceConfig over the default maxTokens', () => {
+        const provider = new BedrockModel({
+          modelId: 'anthropic.claude-sonnet-4-6',
+          additionalArgs: { inferenceConfig: { stopSequences: ['ZZQXJ'] } },
+        })
+
+        collectIterator(provider.stream(messages))
+
+        expect(sentInferenceConfig()).toStrictEqual({ maxTokens: 128_000, stopSequences: ['ZZQXJ'] })
+      })
+
+      it('lets additionalArgs inferenceConfig keys win over the typed options', () => {
+        const provider = new BedrockModel({
+          modelId: 'anthropic.claude-sonnet-4-6',
+          maxTokens: 1,
+          temperature: 0.5,
+          additionalArgs: { inferenceConfig: { maxTokens: 2 }, performanceConfig: { latency: 'optimized' } },
+        })
+
+        collectIterator(provider.stream(messages))
+
+        const request = vi.mocked(ConverseStreamCommand).mock.lastCall?.[0]
+        expect(request?.inferenceConfig).toStrictEqual({ maxTokens: 2, temperature: 0.5 })
+        expect(request?.performanceConfig).toStrictEqual({ latency: 'optimized' })
+      })
+
       it('re-resolves the default maxTokens when modelId changes', () => {
         const provider = new BedrockModel({ modelId: 'anthropic.claude-sonnet-4-6' })
         provider.updateConfig({ modelId: 'anthropic.claude-haiku-4-5-20251001-v1:0' })

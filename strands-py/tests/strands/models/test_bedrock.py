@@ -604,6 +604,31 @@ def test_format_request_explicit_none_max_tokens_opts_out_of_the_default(bedrock
     assert model.format_request(messages)["inferenceConfig"] == {}
 
 
+def test_format_request_merges_additional_args_inference_config_over_the_default_max_tokens(bedrock_client, messages):
+    """https://github.com/strands-agents/harness-sdk/issues/5753"""
+    _ = bedrock_client
+    model = BedrockModel(
+        model_id="anthropic.claude-sonnet-4-6", additional_args={"inferenceConfig": {"stopSequences": ["ZZQXJ"]}}
+    )
+
+    assert model.format_request(messages)["inferenceConfig"] == {"maxTokens": 128_000, "stopSequences": ["ZZQXJ"]}
+
+
+def test_format_request_additional_args_inference_config_keys_win_over_typed_options(bedrock_client, messages):
+    _ = bedrock_client
+    model = BedrockModel(
+        model_id="anthropic.claude-sonnet-4-6",
+        max_tokens=1,
+        temperature=0.5,
+        additional_args={"inferenceConfig": {"maxTokens": 2}, "performanceConfig": {"latency": "optimized"}},
+    )
+
+    request = model.format_request(messages)
+
+    assert request["inferenceConfig"] == {"maxTokens": 2, "temperature": 0.5}
+    assert request["performanceConfig"] == {"latency": "optimized"}
+
+
 @pytest.mark.parametrize(
     "config",
     [
