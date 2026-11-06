@@ -930,6 +930,47 @@ describe('ConversationManager', () => {
     await manager.dispose()
   })
 
+  it.each(['fork', 'resume'] as const)('waits for %s startup before opening another conversation', async (opening) => {
+    const target = {
+      sessionId: 'saved-two',
+      sessionDirectory: '/work/two/.agent/sessions',
+      workspace: '/work/two',
+      active: false,
+    }
+    const primary = new ChatController(backend('primary', emptyRun), {
+      sessions: {
+        current: undefined,
+        directory: target.sessionDirectory,
+        list: async () => [{ id: target.sessionId, reference: target.sessionId, active: false }],
+        resolve: async () => target,
+      },
+    })
+    const fork = vi.fn(async () => new ChatController(backend('fork', emptyRun)))
+    const resume = vi.fn(async () => new ChatController(backend('resume', emptyRun)))
+    let finish!: (controller: ChatController) => void
+    const ready = new Promise<ChatController>((resolve) => {
+      finish = resolve
+    })
+    const firstFactory = opening === 'fork' ? fork : resume
+    const secondFactory = opening === 'fork' ? resume : fork
+    firstFactory.mockImplementationOnce(() => ready)
+    const manager = new ConversationManager(primary, { fork, resume })
+    await manager.submit('/sessions')
+    const row = manager.getSnapshot().panel!.rows[0]!
+    const first = opening === 'fork' ? manager.submit('/fork') : manager.activatePanelRow(row)
+    try {
+      await vi.waitFor(() => expect(firstFactory).toHaveBeenCalledOnce())
+      if (opening === 'fork') await manager.activatePanelRow(row)
+      else await manager.submit('/fork')
+      expect(secondFactory).not.toHaveBeenCalled()
+      expect(manager.busy).toBe(true)
+    } finally {
+      finish(new ChatController(backend(opening, emptyRun)))
+      await first
+      await manager.dispose()
+    }
+  })
+
   it('retries failed session lookup and startup before opening a separate workspace conversation', async () => {
     const reference = 'strands-session:remote'
     const target = {

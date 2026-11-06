@@ -64,8 +64,7 @@ export class ConversationManager implements ChatControllerApi {
   private _snapshot: ChatSnapshot
   private _nextConversation = 2
   private _nextPanel = 1
-  private _forking = false
-  private _resuming = false
+  private _opening: 'fork' | 'resume' | undefined
   private _projectReloadPending = false
   private _closed = false
   private _disposed = false
@@ -162,8 +161,7 @@ export class ConversationManager implements ChatControllerApi {
 
   async captureConversations(): Promise<ChatConversations> {
     if (
-      this._forking ||
-      this._resuming ||
+      this._opening ||
       [...this._conversations.values()].some(
         ({ controller }) => controller.busy || controller.getSnapshot().tasks.some(isUnresolvedBackgroundTask)
       )
@@ -186,7 +184,7 @@ export class ConversationManager implements ChatControllerApi {
   }
 
   get busy(): boolean {
-    return this._forking || this._resuming || this._active.controller.busy
+    return this._opening !== undefined || this._active.controller.busy
   }
 
   get hardExitCode(): number | undefined {
@@ -358,14 +356,14 @@ export class ConversationManager implements ChatControllerApi {
   }
 
   openMcpDetail(name: string): boolean {
-    if (this._panel || this._closed || this._forking || this._resuming) {
+    if (this._panel || this._closed || this._opening) {
       return false
     }
     return this._active.controller.openMcpDetail(name)
   }
 
   async retryMcpServer(name: string): Promise<boolean> {
-    if (this._panel || this._closed || this._forking || this._resuming) {
+    if (this._panel || this._closed || this._opening) {
       return false
     }
     return this._active.controller.retryMcpServer(name)
@@ -396,11 +394,11 @@ export class ConversationManager implements ChatControllerApi {
       this._openError('session resume blocked', target.sessionId, blocked)
       return false
     }
-    if (this._resuming || !this._resume) {
+    if (this._opening || !this._resume) {
       return false
     }
 
-    this._resuming = true
+    this._opening = 'resume'
     const workspace = sessionWorkspaceLabel(target.workspace, target.sessionDirectory)
     const title = target.name ?? target.sessionId
     this._panel = this._makePanel({
@@ -431,7 +429,7 @@ export class ConversationManager implements ChatControllerApi {
       this._openError('session resume failed', target.sessionId, errorMessage(error))
       return false
     } finally {
-      this._resuming = false
+      this._opening = undefined
       this._emit()
       this._reloadProjectIfReady()
     }
@@ -455,11 +453,11 @@ export class ConversationManager implements ChatControllerApi {
       )
       return undefined
     }
-    if (this._forking) {
+    if (this._opening) {
       return undefined
     }
 
-    this._forking = true
+    this._opening = 'fork'
     this._panel = undefined
     this._emit()
     try {
@@ -480,7 +478,7 @@ export class ConversationManager implements ChatControllerApi {
       this._openError('fork failed', source.title, errorMessage(error))
       return undefined
     } finally {
-      this._forking = false
+      this._opening = undefined
       this._emit()
       this._reloadProjectIfReady()
     }
@@ -514,8 +512,7 @@ export class ConversationManager implements ChatControllerApi {
       !this._reloadProject ||
       this._closed ||
       this._disposed ||
-      this._forking ||
-      this._resuming ||
+      this._opening ||
       [...this._conversations.values()].some(
         ({ controller }) => controller.busy || controller.getSnapshot().tasks.some(isUnresolvedBackgroundTask)
       )
@@ -614,7 +611,7 @@ export class ConversationManager implements ChatControllerApi {
       conversationId: this._activeId,
       ...(panel ? { panel } : {}),
       notices:
-        this._forking && !this._closed && !this._disposed
+        this._opening === 'fork' && !this._closed && !this._disposed
           ? [
               ...active.notices,
               {
