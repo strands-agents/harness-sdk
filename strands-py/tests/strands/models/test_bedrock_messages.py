@@ -2,6 +2,7 @@ import base64
 import importlib
 import inspect
 import json
+import os
 import re
 import struct
 import subprocess
@@ -138,6 +139,19 @@ def test_importing_bedrock_does_not_import_provider_sdks():
     code = "import sys, strands.models.bedrock; assert not {'anthropic', 'openai'} & set(sys.modules)"
 
     subprocess.run([sys.executable, "-c", code], check=True)
+
+
+def test_converse_and_the_default_agent_work_without_the_vendor_sdks():
+    code = (
+        "import sys; sys.modules['anthropic'] = None; sys.modules['openai'] = None\n"
+        "from strands import Agent\n"
+        "from strands.models import BedrockModel\n"
+        "assert type(Agent(callback_handler=None).model) is BedrockModel\n"
+        "assert BedrockModel.ConverseStream is BedrockModel\n"
+        "assert not any(hasattr(BedrockModel, name) for name in ('Messages', 'ChatCompletions', 'Responses'))"
+    )
+
+    subprocess.run([sys.executable, "-c", code], check=True, env={**os.environ, "AWS_REGION": "us-west-2"})
 
 
 def test_missing_extra_is_reported_as_an_absent_attribute():
