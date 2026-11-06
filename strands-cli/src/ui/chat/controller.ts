@@ -265,6 +265,14 @@ export class ChatController implements ChatControllerApi {
       this._configurationBaseline = options.initialConfigurationBaseline
       this._configurationDiffs = configurationDiffs(options.initialConfigurationBaseline.source, this._configuration)
     }
+    if (this._runtime.devWorkspace) {
+      const { root, entrypoint, origin } = this._runtime.devWorkspace
+      this._notices.push({
+        id: 'dev-workspace',
+        status: 'success',
+        text: `strands dev · ${backend.name}\nWorkspace: ${root}\nHarness: ${entrypoint} (${origin})\nModel, tools, and instructions come from this workspace, not the saved CLI profile.`,
+      })
+    }
     this._snapshot = this._createSnapshot()
     this._stopWatchingTasks = this._backend.watchTasks?.((tasks) => {
       if (this._closed) {

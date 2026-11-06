@@ -5,7 +5,7 @@ import { containsPath } from '../paths.js'
 import type { ImportedAgentProject } from './import.js'
 import { hasIgnoredDirectory, IGNORED_DIRECTORIES } from './packaging.js'
 
-const WATCH_IGNORED_DIRECTORIES = new Set([...IGNORED_DIRECTORIES, '.agent', 'dist'])
+const WATCH_IGNORED_DIRECTORIES = new Set([...IGNORED_DIRECTORIES, '.agent', '.strands', 'dist'])
 const RELOAD_DEBOUNCE_MS = 200
 
 export function watchAgentProject(

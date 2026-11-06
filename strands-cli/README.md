@@ -76,6 +76,82 @@ lets you choose a provider and model, then launch. Customize lets you select too
 other capabilities individually or together, and edit the agent instructions, data paths, and approval
 controls. The CLI detects standard credential sources but never writes API keys to its config.
 
+## Local harness development
+
+`strands dev` runs a harness from a local workspace. It does not change the default agent for plain `strands`.
+
+```bash
+strands dev
+strands dev --search-root ../other-projects
+strands dev init --create cli --workspace ./strands-dev/base-cli
+strands dev --workspace ./strands-dev/base-cli
+strands dev --agent ./my-project/agent.py
+strands dev init --create python --workspace ./strands-dev/new-agent
+```
+
+The picker lists the current CLI harness first, discovered harnesses next, and a new-harness option last.
+Discovery reads the current folder and any explicit search roots. It does not execute source or follow symbolic links.
+It skips dependency folders, build output, private state, and copied harness libraries.
+
+An existing workspace reopens without a new copy. `--agent` selects another entrypoint for one launch without changing the manifest.
+Without a terminal, select an existing workspace, an entrypoint, or a creation option explicitly.
+`strands dev init` prepares the workspace and exits without a model request.
+
+Selecting the base CLI copies its profile into a project entrypoint and copies the harness implementation into `harness/`.
+The workspace uses that local implementation. It does not link back to the installed harness.
+For a saved source agent, dev copies its project instead of regenerating its settings.
+
+The copy contains source, build files, dependencies metadata, and license files. It excludes credentials, existing sessions, memory, and `node_modules`.
+When an installed release lacks TypeScript source, dev downloads its matching `harness-typescript/v<version>` tag from GitHub.
+A failed source download stops setup. Dev never substitutes the latest source or the installed implementation.
+The first launch installs dependencies for generated projects. Discovered projects keep their existing dependency setup.
+
+The dev session reads the workspace entrypoint for model, tool, and instruction settings. Provider credentials remain external.
+`--env-file` still requires an explicit trusted file. Dev does not save profile, permission, or default-agent changes to the global CLI config.
+Sessions and memory use `.strands/state/`. Unsupported custom state managers produce an error instead of sharing existing history.
+The launch message identifies the harness and source. The status bar shows the dev harness and actual file-watch status.
+
+### Workspace format, version 1
+
+Each workspace contains one selected harness. Paths in `.strands/config.json` are relative to the workspace and use forward slashes.
+
+| Path                             | Purpose                                                                                  |
+| -------------------------------- | ---------------------------------------------------------------------------------------- |
+| `src/agent.ts` or `src/agent.py` | Generated entrypoint and harness settings. Existing projects keep their entrypoint path. |
+| `harness/`                       | Independent harness library for a TypeScript base-CLI copy.                              |
+| `agent/`                         | Exported skills, tools, and other local resources, when present.                         |
+| `.strands/config.json`           | Workspace identity, entrypoint, language, and source origin.                             |
+| `.strands/cases/`                | Reserved for experiment cases.                                                           |
+| `.strands/state/`                | Private sessions, memory, and dependency setup state. Excluded from Git.                 |
+| `.strands/reports/`              | Reserved for reports. Excluded from Git.                                                 |
+
+```json
+{
+  "version": 1,
+  "name": "My harness",
+  "language": "typescript",
+  "entrypoint": "src/agent.ts",
+  "origin": {
+    "kind": "cli",
+    "source": "/home/user/.strands/cli.toml",
+    "version": "0.3.4"
+  },
+  "harness": {
+    "path": "harness",
+    "version": "0.3.4"
+  }
+}
+```
+
+`origin.kind` is `cli`, `discovered`, or `created`. Its `source` and `version` fields are optional.
+The optional `harness` object selects a local TypeScript harness library and records its version.
+The manifest describes the workspace. Agent settings remain in source, not in a second configuration snapshot.
+Unknown format versions, invalid paths, and symbolic links in selected workspace paths cause an error.
+
+This command does not add experiments, tests, optimization, or automatic import into the normal CLI.
+A future manual import can select the workspace as the default agent. Dev startup never makes that change.
+The checkout command `strands-dev` is separate: use `strands-dev dev` to run this workflow from a source checkout.
+
 ## Using it
 
 Run from the repository root with:

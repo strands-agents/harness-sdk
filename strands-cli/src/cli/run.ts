@@ -12,6 +12,7 @@ import { parseArgs, shouldPersistModelChanges, type CliRunMode, type ParsedArgs 
 import { runPlainChat, runTurn } from './console.js'
 import { invocationAgentForRun, pythonInvocationOptions, withDiscoveredSkills } from './invocation.js'
 import { buildTelemetryPing, sendTelemetryPing, telemetryEnabled } from './telemetry.js'
+import type { CliConfigStore } from '../config/store.js'
 
 export { runPlainChat, runTurn, TurnRenderer } from './console.js'
 
@@ -34,7 +35,26 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     process.exitCode = await updateCli()
     return
   }
+  if (args.dev) {
+    const previousDirectory = process.cwd()
+    try {
+      const { prepareDevRun } = await import('../dev/prepare.js')
+      const prepared = await prepareDevRun(args)
+      if (!prepared || prepared.args.dev?.init) return
+      process.chdir(prepared.workspace.root)
+      await runSession(prepared.args, prepared.config)
+    } catch (error) {
+      process.stderr.write(`error: ${errorMessage(error)}\n`)
+      process.exitCode = 1
+    } finally {
+      process.chdir(previousDirectory)
+    }
+    return
+  }
+  await runSession(args)
+}
 
+const runSession = async (args: ParsedArgs, suppliedConfig?: CliConfigStore): Promise<void> => {
   const stdinIsTty = stdin.isTTY === true
   const mode = selectRunMode(args, { stdinIsTty, stdoutIsTty: stdout.isTTY === true })
   initLogging(mode)
@@ -64,9 +84,9 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     return
   }
   if (mode === 'print' || mode === 'plain') {
-    await runConsole(args, request, mode)
+    await runConsole(args, request, mode, suppliedConfig)
   } else {
-    await runInteractive(args, request)
+    await runInteractive(args, request, suppliedConfig)
   }
 }
 
@@ -120,7 +140,12 @@ async function runAcp(args: ParsedArgs): Promise<void> {
   }
 }
 
-async function runConsole(args: ParsedArgs, request: string | undefined, mode: 'print' | 'plain'): Promise<void> {
+async function runConsole(
+  args: ParsedArgs,
+  request: string | undefined,
+  mode: 'print' | 'plain',
+  suppliedConfig?: CliConfigStore
+): Promise<void> {
   let loadedMcp: Awaited<ReturnType<(typeof import('../agent/mcp.js'))['loadMcp']>> | undefined
   let agent: Awaited<ReturnType<typeof createHarness>> | undefined
   try {
@@ -128,7 +153,7 @@ async function runConsole(args: ParsedArgs, request: string | undefined, mode: '
       import('../agent/mcp.js'),
       import('../config/store.js'),
     ])
-    const config = await CliConfigStore.load()
+    const config = suppliedConfig ?? (await CliConfigStore.load())
     config.useEnvironmentFiles(args.envFiles)
     const projectPath = args.agent ?? config.snapshot().agentProject
     const project = projectPath ? importAgentProject(projectPath) : undefined
@@ -181,7 +206,11 @@ async function runConsole(args: ParsedArgs, request: string | undefined, mode: '
   }
 }
 
-async function runInteractive(args: ParsedArgs, request: string | undefined): Promise<void> {
+async function runInteractive(
+  args: ParsedArgs,
+  request: string | undefined,
+  suppliedConfig?: CliConfigStore
+): Promise<void> {
   try {
     await import('../terminal/ink.js')
     // React's development timing buffer retains rendered props in Node. Load the production UI
@@ -201,7 +230,7 @@ async function runInteractive(args: ParsedArgs, request: string | undefined): Pr
       import('../ui/run.js'),
       import('../config/store.js'),
     ])
-    const config = await CliConfigStore.load()
+    const config = suppliedConfig ?? (await CliConfigStore.load())
     config.useEnvironmentFiles(args.envFiles)
     const initialWorkspace = process.cwd()
     let pinged = false
@@ -216,8 +245,15 @@ async function runInteractive(args: ParsedArgs, request: string | undefined): Pr
         })
         signal.throwIfAborted()
         const profile = launch?.profile ?? launch?.configuration?.profile
-        const projectPath =
-          launch?.agentProject ?? (profile ? undefined : (args.agent ?? config.snapshot().agentProject))
+        if (args.dev && launch?.agentProject && launch.agentProject !== args.agent) {
+          throw new Error(
+            'A dev session stays with its workspace harness. Restart strands dev to select another workspace.'
+          )
+        }
+        const projectPath = args.dev
+          ? args.agent
+          : (launch?.agentProject ?? (profile ? undefined : (args.agent ?? config.snapshot().agentProject)))
+        if (args.dev && !projectPath) throw new Error('The dev workspace has no harness entrypoint.')
         const project = projectPath ? importAgentProject(projectPath) : undefined
         if (project?.language === 'python') {
           const { createPythonChat } = await import('../ui/chat/runtime.js')

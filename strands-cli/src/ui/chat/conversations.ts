@@ -66,6 +66,7 @@ export class ConversationManager implements ChatControllerApi {
   private _nextPanel = 1
   private _opening: 'fork' | 'resume' | undefined
   private _projectReloadPending = false
+  private _sourceWatching = false
   private _closed = false
   private _disposed = false
 
@@ -109,6 +110,7 @@ export class ConversationManager implements ChatControllerApi {
     }
     this._snapshot = this._buildSnapshot()
     const project = options.project
+    this._sourceWatching = Boolean(project && options.reloadProject && options.projectPrivatePaths !== null)
     this._stopProjectWatch =
       project && options.reloadProject && options.projectPrivatePaths !== null
         ? watchAgentProject(
@@ -120,7 +122,10 @@ export class ConversationManager implements ChatControllerApi {
               this._projectReloadPending = true
               this._reloadProjectIfReady()
             },
-            (error) => this._openError('live reload unavailable', project.root, errorMessage(error)),
+            (error) => {
+              this._sourceWatching = false
+              this._openError('live reload unavailable', project.root, errorMessage(error))
+            },
             options.projectPrivatePaths
           )
         : undefined
@@ -137,6 +142,7 @@ export class ConversationManager implements ChatControllerApi {
       }
       this._emit()
     })
+    this._snapshot = this._buildSnapshot()
     this._voice.connect(() => {
       if (this._panel?.kind === 'voice') {
         const id = this._panel.id
@@ -629,6 +635,7 @@ export class ConversationManager implements ChatControllerApi {
       ...(this._voice.snapshot ? { voice: { ...this._voice.snapshot } } : {}),
       runtime: {
         ...active.runtime,
+        ...(active.runtime.devWorkspace ? { sourceWatching: this._sourceWatching } : {}),
         configuration: [
           ...(active.runtime.configuration ?? []),
           { label: 'agent', value: `${this._active.title} (${this._conversations.size} total)` },

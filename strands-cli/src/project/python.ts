@@ -83,6 +83,7 @@ type WorkerMessage =
   | { type: 'error'; message: string }
 
 export interface PythonOptions {
+  devWorkspace?: string
   sourceSelection?: ChatConversation['sourceSelection']
   restoreSession?: { identity: NonNullable<ChatConversation['session']>; preserve: boolean }
   overrides?: Partial<HarnessAgentConfig>

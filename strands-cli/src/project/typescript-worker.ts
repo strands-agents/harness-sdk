@@ -199,6 +199,9 @@ async function initialize(
       ...(invocation.buildAgent ? { buildAgent: invocation.buildAgent } : {}),
       project: input.project,
       cwd: input.initialWorkspace,
+      ...(input.args.dev?.workspace
+        ? { sessionRoot: resolve(input.args.dev.workspace, '.strands/state/catalog') }
+        : {}),
       config: runtimeConfig,
       mcpPaths: input.mcpPaths,
       mcpStrictPaths: input.mcpStrictPaths,

@@ -350,6 +350,11 @@ class Runtime:
         self.options = overrides_from_config(partial)
         self.explicit_option_keys = set(self.options)
         authored = getattr(module, "_strands_options", {})
+        if command.get("devWorkspace"):
+            isolated = isolate_dev_options({**authored, **self.options}, Path(command["devWorkspace"]).resolve())
+            for key in ("session", "memory"):
+                self.options[key] = isolated.get(key, False)
+                self.explicit_option_keys.add(key)
         model = self.options.get("model", authored.get("model"))
         if model is None and hasattr(module, "_strands_options"):
             model = DEFAULT_MODEL
@@ -946,7 +951,26 @@ def direct_harness_assignment(entrypoint):
     )
 
 
-def load_project(entrypoint, root):
+def isolate_dev_options(options, root):
+    if any(options.get(key) is not None for key in ("session_manager", "memory_manager", "storage")):
+        raise ValueError("Dev cannot isolate custom session, memory, or storage managers.")
+    result = dict(options)
+    for key, directory in (("session", "sessions"), ("memory", "memory")):
+        configured = options.get(key, True)
+        if configured is False:
+            continue
+        if configured is not True and not isinstance(configured, dict):
+            raise ValueError(f"Dev cannot isolate a custom {key} manager.")
+        if isinstance(configured, dict) and configured.get("stores"):
+            raise ValueError("Dev cannot isolate custom memory stores.")
+        result[key] = {
+            **(configured if isinstance(configured, dict) else {}),
+            "dir": str(root / ".strands" / "state" / directory),
+        }
+    return result
+
+
+def load_project(entrypoint, root, dev_root=None):
     sys.meta_path.insert(0, ProjectImports(root))
     sys.path[:0] = [str(root), str(entrypoint.parent)]
     relative = entrypoint.relative_to(root)
@@ -960,6 +984,8 @@ def load_project(entrypoint, root):
     original_create_harness = strands_harness.create_harness
 
     def capture_create_harness(*args, **options):
+        if dev_root is not None:
+            options = isolate_dev_options(options, dev_root)
         agent = original_create_harness(*args, **options)
         if captured is not None:
             captured.append((agent, args, options))
@@ -997,8 +1023,9 @@ def load_project(entrypoint, root):
 
 
 async def main():
-    module = load_project(Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve())
     command = json.loads(await asyncio.to_thread(sys.stdin.readline))
+    dev_root = Path(command["devWorkspace"]).resolve() if command.get("devWorkspace") else None
+    module = load_project(Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve(), dev_root)
     runtime = Runtime(module, command)
     await runtime.build(runtime.options, resume=command.get("resume", False))
     send({"type": "ready", "state": runtime.state()})

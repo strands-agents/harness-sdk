@@ -16,6 +16,7 @@ import { restoreSessionAgentDefinition } from '../session/agent-definition.js'
 import { withWorkspaceSessionDirectory } from '../session/sessions.js'
 import { isRecord } from '../values.js'
 import { agentConfig, projectConfigOverrides, type ParsedArgs } from './arguments.js'
+import { isolateDevState } from '../dev/runtime.js'
 
 interface InvocationAgent {
   profile?: HarnessAgentConfig
@@ -46,11 +47,12 @@ export async function invocationAgentForRun(
     }
     const { loadTypescriptProject } = await import('../project/typescript.js')
     const authored = await loadTypescriptProject(project, () => config.applyProviderEnvironment())
-    const options = {
+    const configured = {
       ...authored.options,
       ...(await projectOverrides(args, cwd, authored.options)),
       printer: false,
     }
+    const options = args.dev?.workspace ? isolateDevState(configured, args.dev.workspace) : configured
     requireBedrockRegion(options.model)
     return {
       options,
@@ -145,6 +147,7 @@ export async function pythonInvocationOptions(
   })
   return {
     cwd,
+    ...(args.dev?.workspace ? { devWorkspace: args.dev.workspace } : {}),
     overrides: projectConfigOverrides(args),
     assignments: args.configSet,
     mcpServers: definitions,
