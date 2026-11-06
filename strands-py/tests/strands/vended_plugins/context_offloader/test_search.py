@@ -166,15 +166,15 @@ class TestSearchContentTruncation:
         result = _search_content(long_json, pattern="key", context_lines=0, max_chars=500)
         assert "[1 match for /key/]" in result
         assert '> 1| {"key":"xxxx' in result
-        assert "output truncated, narrow your search" in result
+        assert result.endswith("…")
 
     def test_long_matched_line_after_context_is_kept(self):
-        """A matched line longer than the remaining budget is hard-cut, not dropped (#5597)."""
+        """A matched line longer than the budget is clipped, not dropped (#5597), and its context survives."""
         text = "\n".join(["ctx 1", "ctx 2", "needle " + "x" * 5_000, "ctx 3"])
         result = _search_content(text, pattern="needle", context_lines=2, max_chars=500)
         assert "[1 match for /needle/]" in result
         assert "> 3| needle xxxx" in result
-        assert "output truncated, narrow your search" in result
+        assert "…\n  4| ctx 3" in result
 
     def test_match_beyond_budget_still_cuts_at_line_boundary(self):
         # Context lines alone exhaust the budget: no partial line is kept and the match is simply not shown.
@@ -182,6 +182,44 @@ class TestSearchContentTruncation:
         result = _search_content(text, pattern="needle", context_lines=2, max_chars=500)
         assert "needle" not in result.split("\n\n", 1)[1]
         assert result.split("\n\n[output truncated")[0].endswith("c" * 300)
+
+    def test_long_matched_line_is_clipped_around_match(self):
+        """A match deep inside a line longer than the budget is shown in a window around the match, not cut away."""
+        text = "\n".join(["ctx"] * 149 + ["a" * 15_000 + "NEEDLE=deadbeef" + "b" * 5_000] + ["ctx"] * 150)
+        result = _search_content(text, pattern="NEEDLE=", context_lines=0, max_chars=6_000)
+        assert "[1 match for /NEEDLE=/]" in result
+        assert "NEEDLE=deadbeef" in result
+        assert "> 150| …a" in result
+        # The window is half the budget, centered on the match, so the whole window fits without a second cut.
+        body = result.split("\n\n", 1)[1]
+        assert body.endswith("…")
+        assert "output truncated" not in result
+        assert 1_400 < body.index("NEEDLE=") < 1_600
+
+    def test_long_matched_line_clip_clamps_to_line_edges(self):
+        at_start = "NEEDLE " + "x" * 2_000
+        result = _search_content(at_start, pattern="NEEDLE", context_lines=0, max_chars=500)
+        assert "> 1| NEEDLE xxx" in result
+        assert "…" not in result.split("\n\n", 1)[1][:10]
+
+        at_end = "x" * 2_000 + " NEEDLE"
+        result = _search_content(at_end, pattern="NEEDLE", context_lines=0, max_chars=500)
+        assert "> 1| …" in result
+        assert result.endswith(" NEEDLE")
+
+    def test_match_wider_than_window_shows_its_head_and_tail(self):
+        line = "a" * 3_000 + "NEEDLE" + "b" * 3_000 + "TAIL" + "c" * 3_000
+        result = _search_content(line, pattern="NEEDLE.*TAIL", context_lines=0, max_chars=1_000)
+        body = result.split("\n\n", 1)[1]
+        assert body.startswith("> 1| …NEEDLE")
+        assert body.endswith("TAIL…")
+        assert body.count("…") == 3
+
+    def test_matched_line_within_budget_is_not_clipped(self):
+        line = "x" * 400 + "NEEDLE" + "y" * 90
+        result = _search_content(line, pattern="NEEDLE", context_lines=0, max_chars=1_000)
+        assert "…" not in result
+        assert line in result
 
     def test_single_long_line_range_result_keeps_body(self):
         # Same guarantee on the line-range path: a single long line survives truncation.
