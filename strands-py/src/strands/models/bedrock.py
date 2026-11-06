@@ -70,6 +70,15 @@ BEDROCK_CONTEXT_WINDOW_OVERFLOW_MESSAGES = [
     "Input Tokens Exceeded",
 ]
 
+# Transient capacity errors surfaced as ModelThrottledException so the default retry strategy retries them.
+# Converse reports PascalCase codes; ConverseStream event-stream errors report camelCase codes.
+_BEDROCK_THROTTLING_ERROR_CODES = {
+    "ThrottlingException",
+    "throttlingException",
+    "ServiceUnavailableException",
+    "serviceUnavailableException",
+}
+
 # Bedrock reports this exact substring for the Converse incompatibility tracked in #1223.
 _TOOL_RESULT_TURN_VALIDATION_MESSAGE = "Conversation blocks and tool result blocks cannot be provided in the same turn."
 
@@ -1573,7 +1582,7 @@ class BedrockModel(Model):
 
         Raises:
             ContextWindowOverflowException: If the input exceeds the model's context window.
-            ModelThrottledException: If the model service is throttling requests.
+            ModelThrottledException: If the model service is throttling requests or temporarily unavailable.
         """
 
         def callback(event: StreamEvent | None = None) -> None:
@@ -1654,7 +1663,7 @@ class BedrockModel(Model):
 
         Raises:
             ContextWindowOverflowException: If the input exceeds the model's context window.
-            ModelThrottledException: If the model service is throttling requests.
+            ModelThrottledException: If the model service is throttling requests or temporarily unavailable.
         """
         try:
             logger.debug("formatting request")
@@ -1738,10 +1747,7 @@ class BedrockModel(Model):
         except ClientError as e:
             error_message = str(e)
 
-            if (
-                e.response["Error"]["Code"] == "ThrottlingException"
-                or e.response["Error"]["Code"] == "throttlingException"
-            ):
+            if e.response["Error"]["Code"] in _BEDROCK_THROTTLING_ERROR_CODES:
                 raise ModelThrottledException(error_message) from e
 
             if any(overflow_message in error_message for overflow_message in BEDROCK_CONTEXT_WINDOW_OVERFLOW_MESSAGES):
