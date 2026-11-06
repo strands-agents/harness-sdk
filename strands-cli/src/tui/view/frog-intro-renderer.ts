@@ -599,6 +599,9 @@ function drawSolidWord(canvas: Canvas, word: WordShape, originX: number, originY
 }
 
 function wordColor(canvas: Canvas, point: WordPoint): Color {
+  if ('╔╗╚╝║═'.includes(point.character)) {
+    return canvas.colorMode === 'light' ? 'ink' : 'white'
+  }
   if (canvas.theme === 'homeland') {
     const region = (Math.floor(point.localX / 3) + Math.floor(point.localY / 2) + point.letterIndex * 2) % 5
     return region < 2 ? (region === 0 ? 'lime' : 'green') : region === 2 ? 'cyan' : 'blue'

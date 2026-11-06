@@ -40,11 +40,13 @@ export function PromptEditor({
   busyStatus,
   actionableCommandToken,
   width = 80,
+  height: fixedHeight,
   maxRows = DEFAULT_MAX_PROMPT_ROWS,
   maxHeight = Infinity,
   party = false,
   partyFrame = 0,
   animateCursor = true,
+  transparent = false,
   children,
 }: {
   input: string
@@ -53,19 +55,22 @@ export function PromptEditor({
   busyStatus?: string
   actionableCommandToken?: string
   width?: number
+  height?: number
   maxRows?: number
   maxHeight?: number
   party?: boolean
   partyFrame?: number
   animateCursor?: boolean
+  transparent?: boolean
   children?: ReactNode
 }): ReactElement {
   const theme = useTheme()
   const status = busyStatus ?? panelStatus
-  const height = promptEditorHeight(input, cursor, width, maxRows, Boolean(status && !children), party, maxHeight)
+  const height =
+    fixedHeight ?? promptEditorHeight(input, cursor, width, maxRows, Boolean(status && !children), party, maxHeight)
   if (children || status) {
     return (
-      <PromptSurface width={width} height={height} party={party} partyFrame={partyFrame}>
+      <PromptSurface width={width} height={height} party={party} partyFrame={partyFrame} transparent={transparent}>
         {children ?? <Text {...(busyStatus ? { color: theme.accent } : { dimColor: true })}>{status}</Text>}
       </PromptSurface>
     )
@@ -74,14 +79,15 @@ export function PromptEditor({
   const promptPrefix = shellMode ? '◆ shell ' : ''
   const prefixWidth = stringWidth(promptPrefix)
   const continuationPrefix = ' '.repeat(prefixWidth)
+  const frameSize = party || !transparent ? 2 : 0
   const rows = promptViewport(
     input,
     cursor,
-    width - prefixWidth - PROMPT_PADDING_WIDTH,
-    Math.max(1, Math.min(Math.max(MIN_PROMPT_ROWS, maxRows), height - (party ? 2 : 0)))
+    width - prefixWidth - PROMPT_PADDING_WIDTH - frameSize,
+    Math.max(1, Math.min(Math.max(MIN_PROMPT_ROWS, maxRows), height - frameSize))
   )
   return (
-    <PromptSurface width={width} height={height} party={party} partyFrame={partyFrame}>
+    <PromptSurface width={width} height={height} party={party} partyFrame={partyFrame} transparent={transparent}>
       {input ? (
         rows.map((row, index) => (
           <Box key={index} height={1} flexShrink={0}>
@@ -99,7 +105,7 @@ export function PromptEditor({
         <Box height={1} flexShrink={0}>
           <Text wrap="truncate-end">
             <BlinkingCursor animate={animateCursor} />
-            <Text dimColor>{promptPlaceholder(width - prefixWidth - PROMPT_PADDING_WIDTH - 1 - (party ? 2 : 0))}</Text>
+            <Text dimColor>{promptPlaceholder(width - prefixWidth - PROMPT_PADDING_WIDTH - 1 - frameSize)}</Text>
           </Text>
         </Box>
       )}
@@ -118,30 +124,45 @@ function promptPlaceholder(width: number): string {
   )
 }
 
+// Matches PromptSurface's border and horizontal padding.
+export function promptContentSize(width: number, height: number, outlined: boolean): { width: number; height: number } {
+  return { width: Math.max(1, width - (outlined ? 4 : 0)), height: Math.max(1, height - (outlined ? 2 : 0)) }
+}
+
 function PromptSurface({
   width,
   height,
   party,
   partyFrame,
+  transparent,
   children,
 }: {
   width: number
   height: number
   party: boolean
   partyFrame: number
+  transparent: boolean
   children: ReactNode
 }): ReactElement {
   const theme = useTheme()
+  if (transparent) {
+    return (
+      <Box height={height} width={width} flexShrink={0} flexDirection="column" overflow="hidden">
+        {children}
+      </Box>
+    )
+  }
   if (!party) {
     return (
       <Box
-        backgroundColor={theme.surface}
         height={height}
         width={width}
         flexShrink={0}
         paddingX={1}
         flexDirection="column"
         overflow="hidden"
+        borderStyle="single"
+        borderColor={theme.accent}
       >
         {children}
       </Box>
@@ -154,13 +175,7 @@ function PromptSurface({
       <PartyBorder length={width} frame={partyFrame} top />
       <Box height={innerHeight} width={width} flexShrink={0}>
         <PartyBorder length={innerHeight} offset={2 * width + innerHeight} frame={partyFrame} reverse vertical />
-        <Box
-          backgroundColor={theme.surface}
-          height={innerHeight}
-          width={innerWidth}
-          paddingX={1}
-          flexDirection="column"
-        >
+        <Box height={innerHeight} width={innerWidth} paddingX={1} flexDirection="column">
           {children}
         </Box>
         <PartyBorder length={innerHeight} offset={width} frame={partyFrame} vertical />

@@ -1,12 +1,13 @@
 import type { ReactElement } from 'react'
 import type { DOMElement } from 'ink'
 
-import type { ChatPanelRow, ChatPanelSlider } from '../chat/controller.js'
-import { MODEL_COPY_TARGET, type ModelPanelFocus } from './interaction.js'
-import { PanelOverlay, type PanelRowsProps } from './panel-components.js'
+import type { ChatModelPanel, ChatPanelFilter, ChatPanelRow, ChatPanelSlider } from '../chat/controller.js'
+import type { ModelPanelFocus } from './interaction.js'
+import type { PanelRowsProps } from './panel-components.js'
 import { ProviderList } from './provider-list.js'
 import { BlinkingCursor } from './text-input.js'
 import { Box, Text, useTheme } from './theme.js'
+import { useSpinner } from './use-spinner.js'
 
 export function ModelPicker({
   panel,
@@ -19,255 +20,140 @@ export function ModelPicker({
   query,
   filter,
   focus,
-  animateCursor,
+  animate,
   pressedFilter,
   hoveredFilter,
   pressedRow,
   hoveredRow,
-  pressedSlider,
-  hoveredSlider,
-  pressedControl,
-  hoveredControl,
-  onPanelElement,
   onRowElement,
   onFilterElement,
   onSearchElement,
-  onSliderElement,
-  onControlElement,
-}: PanelRowsProps & {
+}: Omit<PanelRowsProps, 'panel' | 'onPanelElement'> & {
+  panel: ChatModelPanel
   allRows: readonly ChatPanelRow[]
   height: number
   query: string
   filter: string
   focus: ModelPanelFocus
-  animateCursor: boolean
+  animate: boolean
   pressedFilter?: string
   hoveredFilter?: string
-  pressedSlider: boolean
-  hoveredSlider?: boolean
-  pressedControl?: string
-  hoveredControl?: string
   onFilterElement?: (id: string, element: DOMElement | null) => void
   onSearchElement?: (element: DOMElement | null) => void
-  onSliderElement?: (element: DOMElement | null) => void
-  onControlElement?: (key: string, element: DOMElement | null) => void
 }): ReactElement {
-  const { accent, hover, selection } = useTheme()
-  const compact = height < 30
-  const wide = width >= 72 && !compact
-  const showDetails = width >= 96 && !compact
-  const detailWidth = Math.min(56, Math.max(38, Math.floor(width * 0.4)))
-  const condensedFilters = width < 52 || height < 20
+  const { accent } = useTheme()
+  const spinner = useSpinner(panel.loading === true, animate)
+  if (panel.loading) {
+    return (
+      <Box flexGrow={1} height={height} alignItems="center" justifyContent="center">
+        <Text color={accent}>{spinner} </Text>
+        <Text dimColor>Loading models</Text>
+      </Box>
+    )
+  }
   const filters = panel.filters ?? []
-  const filterIndex = Math.max(
-    0,
-    filters.findIndex((item) => item.id === filter)
-  )
-  const previousFilter = filters[(filterIndex + filters.length - 1) % filters.length]
-  const visibleFilters = condensedFilters
-    ? [...new Set([previousFilter, filters[filterIndex], filters[(filterIndex + 1) % filters.length]])].filter(
-        (item) => item !== undefined
-      )
-    : filters
-  const [currentModelName = '', currentModelId = ''] = panel.body?.split('\n') ?? []
-  const selectedModel = allRows[Math.max(0, Math.min(selected, allRows.length - 1))]
   const emptyMessage = query.trim()
     ? 'No matching models'
     : filter === 'all' || filter === 'current'
       ? 'No models available'
       : 'No models available. Configure this provider with /setup.'
-  const modelRows = (
-    <ModelRows
-      panel={panel}
-      rows={rows}
-      selected={selected}
-      focused={focus === 'models'}
-      start={start}
-      emptyMessage={emptyMessage}
-      {...(pressedRow !== undefined ? { pressed: pressedRow } : {})}
-      {...(hoveredRow !== undefined ? { hovered: hoveredRow } : {})}
-      {...(onRowElement ? { onRowElement } : {})}
-    />
-  )
   return (
-    <PanelOverlay width={width} {...(onPanelElement ? { onElement: onPanelElement } : {})}>
-      <Box flexDirection="column" overflow="hidden">
-        <Box justifyContent="space-between">
-          <Text color={accent} bold>
-            Models
-          </Text>
-          <Text dimColor>
-            {allRows.length > rows.length
-              ? `${start + 1}-${Math.min(start + rows.length, allRows.length)} / ${allRows.length}`
-              : `${allRows.length}`}
-          </Text>
-        </Box>
-        {!showDetails && (currentModelName || currentModelId) ? (
-          <Box flexDirection="column" alignItems="center">
-            <Text wrap="truncate-end">
-              <Text dimColor>Current model </Text>
-              <Text bold>{currentModelName || currentModelId}</Text>
+    <Box flexGrow={1} height={height} overflow="hidden">
+      <ProviderColumn
+        filters={filters}
+        filter={filter}
+        focused={focus === 'providers'}
+        width={Math.max(1, Math.floor(width / 3))}
+        height={height}
+        {...(pressedFilter ? { pressed: pressedFilter } : {})}
+        {...(hoveredFilter ? { hovered: hoveredFilter } : {})}
+        {...(onFilterElement ? { onElement: onFilterElement } : {})}
+      />
+      <Box
+        flexGrow={1}
+        flexDirection="column"
+        overflow="hidden"
+        borderStyle="single"
+        borderColor={focus === 'models' || focus === 'search' ? accent : undefined}
+        borderDimColor={focus === 'providers'}
+      >
+        <Box paddingX={1} marginBottom={1} justifyContent="space-between">
+          <Box ref={onSearchElement} flexShrink={1}>
+            <Box flexShrink={0} marginRight={1}>
+              <Text {...(focus === 'search' ? { color: accent } : { dimColor: true })}>/</Text>
+            </Box>
+            <Text {...(query ? {} : { dimColor: true })} wrap={query ? 'truncate-start' : 'truncate-end'}>
+              {query || (focus === 'search' ? '' : 'Search models')}
+              {focus === 'search' ? <BlinkingCursor animate={animate} /> : null}
             </Text>
-            {currentModelId && !compact ? (
-              <Text dimColor wrap="truncate-end">
-                {currentModelId}
-              </Text>
-            ) : null}
-            {selectedModel?.value ? (
-              <Box width="100%" justifyContent="center">
-                <Box flexShrink={1} overflow="hidden">
-                  <Text dimColor>Selected ID </Text>
-                  <Text wrap="truncate-end">{selectedModel.value}</Text>
-                </Box>
-                <Box marginLeft={1} flexShrink={0}>
-                  <ModelCopyButton
-                    compact
-                    focused={focus === 'copy'}
-                    pressed={pressedControl === MODEL_COPY_TARGET}
-                    hovered={hoveredControl === MODEL_COPY_TARGET}
-                    {...(onControlElement ? { onElement: onControlElement } : {})}
-                  />
-                </Box>
-              </Box>
-            ) : null}
           </Box>
-        ) : null}
-        {!showDetails && panel.slider ? (
-          <EffortSlider
-            slider={panel.slider}
-            width={Math.max(18, Math.min(36, Math.floor(width / 3)))}
-            compact={compact}
-            pressed={pressedSlider}
-            {...(hoveredSlider !== undefined ? { hovered: hoveredSlider } : {})}
-            focused={focus === 'effort'}
-            {...(onSliderElement ? { onElement: onSliderElement } : {})}
-          />
-        ) : null}
-        <Box
-          ref={onSearchElement}
-          marginTop={compact ? 0 : 1}
-          backgroundColor={focus === 'search' ? selection : undefined}
-        >
-          <Text dimColor>/ </Text>
-          <Text wrap="truncate-start">
-            {query || <Text dimColor>Search models</Text>}
-            {focus === 'search' ? <BlinkingCursor animate={animateCursor} /> : null}
-          </Text>
+          <Box flexShrink={0} marginLeft={1}>
+            <Text dimColor>
+              {allRows.length > rows.length
+                ? `${start + 1}-${Math.min(start + rows.length, allRows.length)} / ${allRows.length}`
+                : `${allRows.length}`}
+            </Text>
+          </Box>
         </Box>
-        {wide ? (
-          <Box marginTop={1}>
-            <Box width={Math.min(26, Math.floor(width / 3))} marginRight={1} flexDirection="column" flexShrink={0}>
-              <Text dimColor>Provider</Text>
-              <ProviderList
-                items={filters}
-                selected={filter}
-                width={Math.min(26, Math.floor(width / 3))}
-                focused={focus === 'providers'}
-                {...(hoveredFilter ? { hovered: hoveredFilter } : {})}
-                {...(pressedFilter ? { pressed: pressedFilter } : {})}
-                {...(onFilterElement ? { onElement: onFilterElement } : {})}
-              />
-            </Box>
-            {modelRows}
-            {showDetails ? (
-              <Box
-                width={detailWidth}
-                marginLeft={1}
-                paddingLeft={1}
-                flexDirection="column"
-                flexShrink={0}
-                overflow="hidden"
-              >
-                <Text bold color={accent}>
-                  Model details
-                </Text>
-                <Text bold wrap="truncate-end">
-                  {selectedModel?.label ?? 'Select a model'}
-                </Text>
-                {selectedModel?.value ? (
-                  <>
-                    <Text dimColor>Model ID</Text>
-                    <Text wrap="wrap">{selectedModel.value}</Text>
-                    <ModelCopyButton
-                      focused={focus === 'copy'}
-                      pressed={pressedControl === MODEL_COPY_TARGET}
-                      hovered={hoveredControl === MODEL_COPY_TARGET}
-                      {...(onControlElement ? { onElement: onControlElement } : {})}
-                    />
-                  </>
-                ) : null}
-                {panel.slider ? (
-                  <EffortSlider
-                    slider={panel.slider}
-                    width={26}
-                    compact={false}
-                    pressed={pressedSlider}
-                    {...(hoveredSlider !== undefined ? { hovered: hoveredSlider } : {})}
-                    focused={focus === 'effort'}
-                    {...(onSliderElement ? { onElement: onSliderElement } : {})}
-                  />
-                ) : null}
-              </Box>
-            ) : null}
-          </Box>
-        ) : (
-          <>
-            <Box marginTop={compact ? 0 : 1} flexWrap={condensedFilters ? 'nowrap' : 'wrap'}>
-              {condensedFilters ? <Text dimColor>Provider </Text> : null}
-              {visibleFilters.map((item, index) => {
-                const active = item.id === filter
-                const pressed = item.id === pressedFilter
-                return (
-                  <Box
-                    key={item.id}
-                    ref={(element) => onFilterElement?.(item.id, element)}
-                    backgroundColor={
-                      item.id === hoveredFilter || pressed || (focus === 'providers' && active) ? selection : undefined
-                    }
-                  >
-                    {index > 0 ? <Text dimColor>{condensedFilters ? ' ' : ' · '}</Text> : null}
-                    <Text {...(pressed ? { color: hover } : active ? { color: accent } : {})} bold={active}>
-                      {index === 0 && !condensedFilters ? '◆ ' : ''}
-                      {condensedFilters && !active ? (item === previousFilter ? '‹' : '›') : item.label}
-                    </Text>
-                  </Box>
-                )
-              })}
-            </Box>
-            <Box marginTop={compact ? 0 : 1}>{modelRows}</Box>
-          </>
-        )}
+        <ModelRows
+          panel={panel}
+          rows={rows}
+          selected={selected}
+          focused={focus === 'models'}
+          start={start}
+          emptyMessage={emptyMessage}
+          {...(pressedRow !== undefined ? { pressed: pressedRow } : {})}
+          {...(hoveredRow !== undefined ? { hovered: hoveredRow } : {})}
+          {...(onRowElement ? { onRowElement } : {})}
+        />
       </Box>
-    </PanelOverlay>
+    </Box>
   )
 }
 
-function ModelCopyButton({
-  compact,
-  focused,
-  pressed,
-  hovered,
-  onElement,
+function ProviderColumn({
+  width,
+  height,
+  ...props
 }: {
-  compact?: boolean
+  width: number
+  height: number
+  filters: readonly ChatPanelFilter[]
+  filter: string
   focused: boolean
-  pressed: boolean
-  hovered: boolean
-  onElement?: (key: string, element: DOMElement | null) => void
+  pressed?: string
+  hovered?: string
+  onElement?: (id: string, element: DOMElement | null) => void
 }): ReactElement {
-  const { accent, hover, selection, surface } = useTheme()
+  const { accent } = useTheme()
+  const capacity = Math.max(1, height - 3)
+  const index = Math.max(
+    0,
+    props.filters.findIndex((item) => item.id === props.filter)
+  )
+  const start = Math.max(0, Math.min(index - capacity + 1, props.filters.length - capacity))
   return (
     <Box
-      ref={(element) => onElement?.(MODEL_COPY_TARGET, element)}
-      width={compact ? 11 : 18}
-      marginTop={compact ? 0 : 1}
-      paddingX={1}
-      backgroundColor={pressed || hovered || focused ? selection : surface}
+      width={width}
+      height={height}
+      flexShrink={0}
+      flexDirection="column"
+      overflow="hidden"
+      borderStyle="single"
+      borderColor={props.focused ? accent : undefined}
+      borderDimColor={!props.focused}
+      paddingLeft={1}
     >
-      <Text {...(pressed ? { color: hover } : focused ? { color: accent } : {})} bold={focused}>
-        {focused ? '› ' : '  '}
-        {compact ? 'Copy ID' : 'Copy model ID'}
-      </Text>
+      <Text dimColor>Providers</Text>
+      <ProviderList
+        items={props.filters.slice(start, start + capacity)}
+        selected={props.filter}
+        width={Math.max(1, width - 3)}
+        focused={props.focused}
+        {...(props.hovered ? { hovered: props.hovered } : {})}
+        {...(props.pressed ? { pressed: props.pressed } : {})}
+        {...(props.onElement ? { onElement: props.onElement } : {})}
+      />
     </Box>
   )
 }
@@ -276,8 +162,6 @@ export function EffortSlider({
   slider,
   width,
   compact,
-  pressed = false,
-  hovered,
   focused = false,
   onElement,
   showStops = false,
@@ -285,13 +169,11 @@ export function EffortSlider({
   slider: ChatPanelSlider
   width: number
   compact: boolean
-  pressed?: boolean
-  hovered?: boolean
   focused?: boolean
   onElement?: (element: DOMElement | null) => void
   showStops?: boolean
 }): ReactElement {
-  const { accent, hover, selection } = useTheme()
+  const { accent, selection } = useTheme()
   const activeIndex = Math.max(
     0,
     slider.options.findIndex((option) => option.active)
@@ -316,10 +198,7 @@ export function EffortSlider({
       {!showStops ? (
         <Box>
           <Text dimColor>{slider.label} </Text>
-          <Text
-            {...(slider.disabled ? { dimColor: true } : { color: pressed ? hover : accent })}
-            bold={slider.disabled !== true}
-          >
+          <Text {...(slider.disabled ? { dimColor: true } : { color: accent })} bold={slider.disabled !== true}>
             {activeOption?.label ?? 'Unavailable'}
           </Text>
         </Box>
@@ -327,7 +206,7 @@ export function EffortSlider({
       <Box
         ref={onElement}
         width={width}
-        backgroundColor={!showStops && (hovered || pressed || focused) ? selection : undefined}
+        backgroundColor={!showStops && focused ? selection : undefined}
         flexDirection="column"
       >
         <Text {...(slider.disabled ? { dimColor: true } : { color: accent })}>{track.join('')}</Text>
@@ -385,7 +264,7 @@ function ModelRows({
   focused: boolean
   emptyMessage: string
 }): ReactElement {
-  const { hover, selection } = useTheme()
+  const { accent, hover, selection, warning } = useTheme()
   return (
     <Box flexGrow={1} flexDirection="column" overflow="hidden">
       {rows.length === 0 ? (
@@ -401,11 +280,26 @@ function ModelRows({
               ref={(element) => onRowElement?.(index, element)}
               width="100%"
               paddingX={1}
-              backgroundColor={index === hovered || pressedRow || (focused && active) ? selection : undefined}
+              justifyContent="space-between"
+              backgroundColor={index === hovered || pressedRow ? selection : undefined}
             >
-              <Text wrap="truncate-end" {...(pressedRow && row.value ? { color: hover } : {})} bold={focused && active}>
-                {row.label}
-              </Text>
+              <Box flexShrink={1} overflow="hidden">
+                <Text
+                  wrap="truncate-end"
+                  {...(pressedRow && row.value ? { color: hover } : focused && active ? { color: accent } : {})}
+                  bold={focused && active}
+                >
+                  {focused && active ? '› ' : '  '}
+                  {row.label}
+                </Text>
+              </Box>
+              {row.badge ? (
+                <Box marginLeft={1} flexShrink={0}>
+                  <Text color={row.badge.tone === 'success' ? 'green' : row.badge.tone === 'danger' ? 'red' : warning}>
+                    {row.badge.text}
+                  </Text>
+                </Box>
+              ) : null}
             </Box>
           )
         })

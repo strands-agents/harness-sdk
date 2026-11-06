@@ -25,7 +25,7 @@ import {
 } from '../../config.js'
 import { importAgentProject } from '../../project/import.js'
 import { configurationFromStore, type SetupChange } from '../../agent-configuration.js'
-import type { ChatSettings } from '../../chat/types.js'
+import type { ChatSettings, ThemeSettings } from '../../chat/types.js'
 import type { SettingsCategory } from '../../settings.js'
 import { DEFAULT_SETTINGS_CATEGORY, SETTINGS_CATEGORIES } from '../../settings.js'
 import { parseMouseInput, type MouseInput } from '../../terminal/mouse-input.js'
@@ -45,7 +45,7 @@ import {
 import { wrapLines } from '../presentation.js'
 import { Text, ThemeProvider, useTheme } from '../theme.js'
 import { BlinkingCursor, EditableText } from '../text-input.js'
-import { CustomThemeEditor, type Appearance } from '../custom-theme-editor.js'
+import { CustomThemeEditor } from '../custom-theme-editor.js'
 import { Fade, mixHexColors, useFadeTransition } from '../fade-in.js'
 
 import {
@@ -146,7 +146,7 @@ function SetupWizardContent({
     setAppearanceOpen(true)
   }, [appearance])
   const previewAppearance = useCallback(
-    (next: Appearance): void => {
+    (next: ThemeSettings): void => {
       setAppearance((current) => ({ ...current, ...next }))
     },
     [setAppearance]
@@ -1996,14 +1996,7 @@ function SetupWizardContent({
   ) : null
 
   return (
-    <Box
-      width={width}
-      height={height}
-      paddingX={1}
-      flexDirection="column"
-      overflow="hidden"
-      backgroundColor={palette.canvas}
-    >
+    <Box width={width} height={height} paddingX={1} flexDirection="column" overflow="hidden">
       {showBrand ? (
         <SetupBrand
           frame={brandFrame}
@@ -2404,7 +2397,6 @@ function SetupWizardContent({
                                   slider={reasoningSlider}
                                   width={26}
                                   compact={false}
-                                  pressed={false}
                                   focused={reasoningRowIndex === selection}
                                   onElement={(element) => {
                                     setupEffortSliderElement.current = element

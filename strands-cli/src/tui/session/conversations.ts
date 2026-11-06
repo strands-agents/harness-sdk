@@ -1,8 +1,9 @@
 import { ConversationVoice } from './voice.js'
-import { sanitizePanelRow } from '../chat/panels.js'
+import { makePanel } from '../chat/panels.js'
 import type {
   ChatController,
   ChatControllerApi,
+  NewChatPanel,
   ChatPanel,
   ChatPanelRow,
   ChatSnapshot,
@@ -63,7 +64,7 @@ export class ConversationManager implements ChatControllerApi {
     this._agentMessaging = options.agentMessaging
     this._voice = new ConversationVoice(options.voice, () => this._active, {
       panel: (rows): void => {
-        this._panel = rows ? this._makePanel('voice', 'voice', rows) : undefined
+        this._panel = rows ? this._makePanel({ kind: 'voice', title: 'voice', rows }) : undefined
         this._emit()
       },
       error: (title, label, message): void => this._openError(title, label, message),
@@ -88,7 +89,7 @@ export class ConversationManager implements ChatControllerApi {
     this._voice.connect(() => {
       if (this._panel?.kind === 'voice') {
         const id = this._panel.id
-        this._panel = { ...this._makePanel('voice', 'voice', this._voice.rows()), id }
+        this._panel = { ...this._makePanel({ kind: 'voice', title: 'voice', rows: this._voice.rows() }), id }
       }
       this._emit()
     })
@@ -328,12 +329,16 @@ export class ConversationManager implements ChatControllerApi {
     this._resuming = true
     const workspace = sessionWorkspaceLabel(target.workspace, target.sessionDirectory)
     const title = target.name ?? target.sessionId
-    this._panel = this._makePanel('sessions', 'Opening saved session', [
-      {
-        label: title,
-        description: `Starting a separate conversation in ${target.workspace}.`,
-      },
-    ])
+    this._panel = this._makePanel({
+      kind: 'sessions',
+      title: 'Opening saved session',
+      rows: [
+        {
+          label: title,
+          description: `Starting a separate conversation in ${target.workspace}.`,
+        },
+      ],
+    })
     this._emit()
     try {
       const controller = await this._resume(source.controller, target)
@@ -380,12 +385,16 @@ export class ConversationManager implements ChatControllerApi {
     }
 
     this._forking = true
-    this._panel = this._makePanel('agents', 'Forking agent', [
-      {
-        label: prompt ? conversationTitle(prompt) : `Fork ${this._nextConversation}`,
-        description: `Copying ${source.title} with its current conversation and agent configuration.`,
-      },
-    ])
+    this._panel = this._makePanel({
+      kind: 'agents',
+      title: 'Forking agent',
+      rows: [
+        {
+          label: prompt ? conversationTitle(prompt) : `Fork ${this._nextConversation}`,
+          description: `Copying ${source.title} with its current conversation and agent configuration.`,
+        },
+      ],
+    })
     this._emit()
     try {
       const controller = await this._fork(source.controller)
@@ -453,9 +462,11 @@ export class ConversationManager implements ChatControllerApi {
   }
 
   private _openRenamePanel(): void {
-    this._panel = this._makePanel('rename', 'Rename agent', [
-      { label: 'Current name', description: this._active.title },
-    ])
+    this._panel = this._makePanel({
+      kind: 'rename',
+      title: 'Rename agent',
+      rows: [{ label: 'Current name', description: this._active.title }],
+    })
     this._emit()
   }
 
@@ -501,7 +512,11 @@ export class ConversationManager implements ChatControllerApi {
             },
           }) satisfies ChatPanelRow
       )
-    this._panel = this._makePanel('agents', AGENTS_PANEL_TITLE, [...conversations, ...generalists])
+    this._panel = this._makePanel({
+      kind: 'agents',
+      title: AGENTS_PANEL_TITLE,
+      rows: [...conversations, ...generalists],
+    })
     if (existingId) {
       this._panel = { ...this._panel, id: existingId }
     }
@@ -511,20 +526,16 @@ export class ConversationManager implements ChatControllerApi {
   }
 
   private _openError(title: string, label: string, description: string): void {
-    this._panel = this._makePanel('error', title, [{ label, description, tone: 'danger' }])
+    this._panel = this._makePanel({
+      kind: 'error',
+      title,
+      rows: [{ label, description, tone: 'danger' }],
+    })
     this._emit()
   }
 
-  private _makePanel(kind: ChatPanel['kind'], title: string, rows: readonly ChatPanelRow[]): ChatPanel {
-    return {
-      id: `manager-panel-${this._nextPanel++}`,
-      kind,
-      title: sanitizeTerminalText(title),
-      rows: rows.map((row) => ({
-        ...sanitizePanelRow(row),
-        ...(row.section !== undefined ? { section: sanitizeTerminalText(row.section) } : {}),
-      })),
-    }
+  private _makePanel(panel: NewChatPanel): ChatPanel {
+    return makePanel(`manager-panel-${this._nextPanel++}`, panel)
   }
 
   private _buildSnapshot(): ChatSnapshot {
