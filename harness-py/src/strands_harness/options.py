@@ -65,6 +65,7 @@ def _check_builtin_tool_config_value(tool: str, key: str, value: object) -> None
         ),
         "timeout": ("a positive number of seconds", number and math.isfinite(value) and value > 0),
         "media": ("a bool", isinstance(value, bool)),
+        "quiet_fallback": ("a bool", isinstance(value, bool)),
         "max_depth": ("a non-negative int", isinstance(value, int) and not isinstance(value, bool) and value >= 0),
     }[key]
     if not accepted:
