@@ -272,7 +272,6 @@ export class Swarm implements MultiAgent {
       new MultiAgentState({
         nodeIds: [...this.nodes.keys()],
       })
-    delete this._pendingInterruptState
     // Rebound on every run: a resumed run reuses the state but may belong to another request.
     state._bindInvocationContext(invocationContext)
 
@@ -332,6 +331,9 @@ export class Swarm implements MultiAgent {
       node = resumeNode?.node ?? this.start
       handoff = resumeNode?.lastHandoff
     }
+
+    // Consume the paused run only after resume input and targets validate.
+    delete this._pendingInterruptState
 
     let caughtError: Error | undefined
     let result: MultiAgentResult | undefined
