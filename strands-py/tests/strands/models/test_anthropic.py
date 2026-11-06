@@ -130,7 +130,12 @@ async def test__init__with_client_uses_injected_client(model_id, max_tokens, ali
 
     assert model.client is injected_client
     mock_client_cls.assert_not_called()
-    injected_client.messages.stream.assert_called_once()
+    injected_client.messages.stream.assert_called_once_with(
+        max_tokens=max_tokens,
+        messages=[{"role": "user", "content": [{"type": "text", "text": "hi"}]}],
+        model=model_id,
+        tools=[],
+    )
 
 
 def test__init__with_client_and_client_args_raises(model_id, max_tokens):

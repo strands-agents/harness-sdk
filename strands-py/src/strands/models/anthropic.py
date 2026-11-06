@@ -11,7 +11,7 @@ import re
 import warnings
 from collections import Counter
 from collections.abc import AsyncGenerator, Mapping
-from typing import Any, TypeVar, cast
+from typing import Any, Protocol, TypeVar, cast
 from urllib.parse import urlparse
 
 import anthropic
@@ -136,6 +136,20 @@ def _with_native_output(
     return {**request, "tool_choice": {"type": "none"}, "output_config": output_config}
 
 
+class _Client(Protocol):
+    """The interface AnthropicModel uses on its client; satisfied by every async Anthropic SDK client."""
+
+    @property
+    def messages(self) -> Any:  # pragma: no cover
+        """Messages interface."""
+        ...
+
+    @property
+    def default_headers(self) -> Mapping[str, Any]:  # pragma: no cover
+        """Headers sent with every request."""
+        ...
+
+
 class AnthropicModel(Model):
     """Anthropic model provider implementation."""
 
@@ -171,7 +185,8 @@ class AnthropicModel(Model):
             params: Additional model parameters (e.g., metadata, stop_sequences).
                 For a complete list of supported parameters, see https://docs.anthropic.com/en/api/messages.
                 Sampling parameters (temperature, top_k, top_p) are rejected from API version 2026-10-21 on;
-                pin 2023-06-01 with client_args={"default_headers": {"anthropic-version": "2023-06-01"}}.
+                pin 2023-06-01 with client_args={"default_headers": {"anthropic-version": "2023-06-01"}}
+                (or the same default_headers on a client passed as client=).
             anthropic_tools: Anthropic-specific server-side tools that are not function tools
                 (e.g., web_search, web_fetch, code_execution). Appended alongside the agent's function tools.
                 Use the standard tools interface for function calling tools.
@@ -193,7 +208,7 @@ class AnthropicModel(Model):
     def __init__(
         self,
         *,
-        client: Any = None,
+        client: _Client | None = None,
         client_args: dict[str, Any] | None = None,
         **model_config: Unpack[AnthropicConfig],
     ):
@@ -221,9 +236,7 @@ class AnthropicModel(Model):
 
         logger.debug("config=<%s> | initializing", self.config)
 
-        self.client: anthropic.AsyncAnthropic = (
-            client if client is not None else anthropic.AsyncAnthropic(**(client_args or {}))
-        )
+        self.client: _Client = client if client is not None else anthropic.AsyncAnthropic(**(client_args or {}))
         self._drop_stale_thinking_model_id: str | None = None
 
     @override
@@ -701,6 +714,7 @@ class AnthropicModel(Model):
                 f"params=<{sorted(sent_sampling_params)}>, anthropic_version=<{api_version}> | sampling parameters "
                 f"are not accepted by this API version; remove them, or pin the API version with "
                 f'client_args={{"default_headers": {{"anthropic-version": "{_LEGACY_API_VERSION}"}}}} '
+                "or the same default_headers on the client passed as client= "
                 "(Claude 4.6 and earlier honor them; Claude 4.7 and later accept only the defaults)"
             )
         return params
