@@ -74,6 +74,50 @@ def test_update_config(model, model_id):
     assert tru_model_id == exp_model_id
 
 
+def test_context_window_limit_resolves_from_num_ctx(host, model_id):
+    """The context window limit is the num_ctx Ollama allocates, not the 200k default (#4620)."""
+    model = OllamaModel(host, model_id=model_id, options={"num_ctx": 32768})
+
+    assert model.context_window_limit == 32768
+    assert model.estimate_utilization(16384) == 0.5
+
+
+def test_context_window_limit_explicit_value_takes_precedence(host, model_id):
+    model = OllamaModel(host, model_id=model_id, options={"num_ctx": 32768}, context_window_limit=8192)
+
+    assert model.context_window_limit == 8192
+
+
+def test_context_window_limit_unset_without_num_ctx(host, model_id):
+    model = OllamaModel(host, model_id=model_id, options={"top_k": 40})
+
+    assert model.context_window_limit is None
+
+
+@pytest.mark.parametrize("num_ctx", [0, -1, True, "4096", 4096.0, None])
+def test_context_window_limit_ignores_invalid_num_ctx(host, model_id, num_ctx):
+    model = OllamaModel(host, model_id=model_id, options={"num_ctx": num_ctx})
+
+    assert model.context_window_limit is None
+
+
+def test_context_window_limit_follows_num_ctx_updates(host, model_id):
+    model = OllamaModel(host, model_id=model_id, options={"num_ctx": 4096})
+
+    model.update_config(options={"num_ctx": 16384})
+
+    assert model.context_window_limit == 16384
+
+
+def test_context_window_limit_not_sent_to_ollama(host, model_id, messages):
+    model = OllamaModel(host, model_id=model_id, options={"num_ctx": 4096})
+
+    request = model.format_request(messages)
+
+    assert "context_window_limit" not in request
+    assert request["options"]["num_ctx"] == 4096
+
+
 def test_format_request_default(model, messages, model_id):
     tru_request = model.format_request(messages)
     exp_request = {
