@@ -169,18 +169,14 @@ export class VercelModel extends Model<VercelModelConfig> {
   }
 
   /**
-   * Reports that the AI SDK takes no temporary messages, and reports OpenAI models on Bedrock as implicitly cached.
-   * A `modelInfo` override still wins over both. The shared model info lists cache points for their
-   * OpenAI-compatible APIs, but Converse caches them implicitly and rejects cache points.
+   * Reports OpenAI models on Bedrock as implicitly cached, which a `modelInfo` override still wins over.
+   * The shared model info lists cache points for their OpenAI-compatible APIs, but Converse caches them
+   * implicitly and rejects cache points.
    */
   override get modelInfo(): ModelInfo {
     const bedrock = this._provider.provider.split('.')[0] === 'amazon-bedrock'
-    const implicitCache = bedrock && this.modelId.toLowerCase().includes('openai.')
-    return mergeModelInfo(
-      super.modelInfo,
-      { capabilities: { temporaryMessages: false, ...(implicitCache && { promptCaching: 'auto' as const }) } },
-      this._config.modelInfo
-    )
+    if (!bedrock || !this.modelId.toLowerCase().includes('openai.')) return super.modelInfo
+    return mergeModelInfo(super.modelInfo, { capabilities: { promptCaching: 'auto' } }, this._config.modelInfo)
   }
 
   updateConfig(config: VercelModelConfig): void {

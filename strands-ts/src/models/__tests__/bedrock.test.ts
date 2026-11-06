@@ -486,11 +486,6 @@ describe('BedrockModel', () => {
       expect(vi.mocked(ConverseStreamCommand).mock.lastCall?.[0].system).toEqual([{ text: 'Be helpful' }])
     })
 
-    it('reports no temporary messages, since Converse ignores clear_at', () => {
-      const provider = new BedrockModel({ modelId: 'us.anthropic.claude-opus-5-5' })
-      expect(provider.modelInfo.capabilities?.temporaryMessages).toBe(false)
-    })
-
     it('skips an injected block it receives, with a warning', async () => {
       const provider = new BedrockModel({
         modelId: 'us.anthropic.claude-opus-5-5',

@@ -14,7 +14,8 @@ import type { ModelStreamEvent } from './streaming.js'
  *
  * An `InjectedBlock` reaches a model whose `modelInfo.capabilities.temporaryMessages` is `true` as it is
  * stored, and that provider sends it so the model reads it only until the next user message. Every
- * other model gets the latest user message's injected blocks as text and none of the earlier ones.
+ * other model, custom ones included, gets the latest user message's injected blocks as text and none
+ * of the earlier ones.
  *
  * @internal
  */

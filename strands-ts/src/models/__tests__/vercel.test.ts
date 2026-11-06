@@ -133,11 +133,6 @@ describe('VercelModel', () => {
       expect(config1).toStrictEqual({ modelId: 'updated', maxTokens: 200 })
       expect(config1).not.toBe(config2)
     })
-
-    it('reports no temporary messages, even for a model that takes them', () => {
-      const model = new VercelModel({ provider: createMockModel([], 'anthropic.messages', 'claude-opus-5-5') })
-      expect(model.modelInfo.capabilities?.temporaryMessages).toBe(false)
-    })
   })
 
   describe('stream', () => {
