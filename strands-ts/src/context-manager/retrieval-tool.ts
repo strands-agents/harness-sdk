@@ -75,13 +75,17 @@ export function createRetrievalTool(stash: Stash, maxResultTokens?: number): Too
           const media = restoreMedia(result.data as Record<string, unknown>)
           if (media) return media as unknown as JSONValue
         }
+        const shellResult = renderShellResult(result.data)
+        if (shellResult !== null) {
+          return truncateShellResult(shellResult, maxChars)
+        }
         const serialized = JSON.stringify(result.data)
         if (serialized.length <= maxChars) return result.data as JSONValue
         return `${serialized.slice(0, maxChars)}\n\n[truncated]`
       }
 
-      const text = extractText(result.data)
-      if (!text || !isSearchableContent('text/plain')) {
+      const text = renderShellResult(result.data) ?? extractText(result.data)
+      if (text === null || !isSearchableContent('text/plain')) {
         return `Error: cannot search non-text content. Omit pattern/line_range to retrieve full content.`
       }
 
@@ -116,6 +120,61 @@ function restoreMedia(data: Record<string, unknown>): ImageBlock | DocumentBlock
   if ('document' in data) return DocumentBlock.fromJSON(data as Parameters<typeof DocumentBlock.fromJSON>[0])
   if ('video' in data) return VideoBlock.fromJSON(data as Parameters<typeof VideoBlock.fromJSON>[0])
   return null
+}
+
+function renderShellResult(data: unknown): string | null {
+  if (typeof data === 'string') {
+    try {
+      const parsed: unknown = JSON.parse(data)
+      return renderShellResult(parsed)
+    } catch {
+      return null
+    }
+  }
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return null
+
+  const record = data as Record<string, unknown>
+  if (typeof record.output === 'string' && typeof record.error === 'string' && Number.isInteger(record.exit_code)) {
+    const parts = record.output ? [record.output] : []
+    if (record.error) parts.push(`[stderr]\n${record.error}`)
+    parts.push(`[exit_code: ${record.exit_code}]`)
+
+    const additionalData = Object.fromEntries(
+      Object.entries(record).filter(([key]) => !['output', 'error', 'exit_code'].includes(key))
+    )
+    if (Object.keys(additionalData).length > 0) parts.push(JSON.stringify(additionalData, null, 2))
+
+    return parts.join('\n\n')
+  }
+  for (const key of ['text', 'json'] as const) {
+    if (key in record) {
+      const rendered = renderShellResult(record[key])
+      if (rendered !== null) return rendered
+    }
+  }
+  return null
+}
+
+function truncateShellResult(text: string, maxChars: number): string {
+  if (text.length <= maxChars) return text
+  const trailerStarts = ['\n\n[stderr]\n', '\n\n[exit_code: ']
+    .map((marker) => text.indexOf(marker))
+    .filter((index) => index >= 0)
+  const trailerStart = trailerStarts.length > 0 ? Math.min(...trailerStarts) : -1
+  if (trailerStart < 0) return `${text.slice(0, maxChars)}\n\n[truncated]`
+  const trailer = text.slice(trailerStart)
+  const truncation = '\n\n[truncated]'
+  const available = maxChars - truncation.length - trailer.length
+  if (available <= 0) {
+    const exitStart = text.lastIndexOf('\n\n[exit_code: ')
+    if (exitStart >= 0) {
+      const exitMarker = text.slice(exitStart + 2)
+      if (truncation.length + exitMarker.length <= maxChars) return `${truncation}${exitMarker}`
+      return exitMarker.slice(0, maxChars)
+    }
+    return text.slice(0, maxChars)
+  }
+  return `${text.slice(0, available)}${truncation}${trailer}`
 }
 
 function extractText(data: unknown): string | null {

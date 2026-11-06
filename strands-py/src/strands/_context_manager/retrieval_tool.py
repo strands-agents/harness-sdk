@@ -42,8 +42,66 @@ def _restore_media(data: dict[str, Any]) -> ToolResultContent | None:
     return None
 
 
+def _render_shell_result(data: object) -> str | None:
+    """Render a serialized shell tool result with stdout first."""
+    if isinstance(data, dict):
+        if (
+            isinstance(data.get("output"), str)
+            and isinstance(data.get("error"), str)
+            and isinstance(data.get("exit_code"), int)
+        ):
+            parts = [data["output"]] if data["output"] else []
+            if data["error"]:
+                parts.append(f"[stderr]\n{data['error']}")
+            parts.append(f"[exit_code: {data['exit_code']}]")
+            additional_data = {key: value for key, value in data.items() if key not in {"output", "error", "exit_code"}}
+            if additional_data:
+                parts.append(json.dumps(additional_data, indent=2))
+            return "\n\n".join(parts)
+        for key in ("text", "json"):
+            if key in data:
+                rendered = _render_shell_result(data[key])
+                if rendered is not None:
+                    return rendered
+    elif isinstance(data, str):
+        try:
+            return _render_shell_result(json.loads(data))
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def _truncate_shell_result(text: str, max_chars: int) -> str:
+    """Keep shell diagnostics visible when stdout fills the retrieval budget."""
+    if len(text) <= max_chars:
+        return text
+    trailer_starts = [
+        index
+        for marker in ("\n\n[stderr]\n", "\n\n[exit_code: ")
+        if (index := text.find(marker)) >= 0
+    ]
+    trailer_start = min(trailer_starts, default=-1)
+    if trailer_start < 0:
+        return text[:max_chars] + "\n\n[truncated]"
+    trailer = text[trailer_start:]
+    truncation = "\n\n[truncated]"
+    available = max_chars - len(truncation) - len(trailer)
+    if available <= 0:
+        exit_start = text.rfind("\n\n[exit_code: ")
+        if exit_start >= 0:
+            exit_marker = text[exit_start + 2 :]
+            if len(truncation) + len(exit_marker) <= max_chars:
+                return truncation + exit_marker
+            return exit_marker[:max_chars]
+        return text[:max_chars]
+    return text[:available] + truncation + trailer
+
+
 def _extract_text(data: object) -> str | None:
     """Extract searchable text from decoded stash data."""
+    shell_result = _render_shell_result(data)
+    if shell_result is not None:
+        return shell_result
     if isinstance(data, str):
         return data
     if isinstance(data, dict):
@@ -81,8 +139,11 @@ def _create_retrieval_tool(stash: Stash, max_result_tokens: int | None = None) -
                 media = _restore_media(result)
                 if media is not None:
                     return ToolResult(toolUseId=tool_use_id, status="success", content=[media])
-            full_text = json.dumps(result)
-            if len(full_text) > max_chars:
+            shell_result = _render_shell_result(result)
+            full_text = shell_result if shell_result is not None else json.dumps(result)
+            if shell_result is not None:
+                full_text = _truncate_shell_result(full_text, max_chars)
+            elif len(full_text) > max_chars:
                 full_text = full_text[:max_chars] + "\n\n[truncated]"
             content: list[ToolResultContent] = [ToolResultContent(text=full_text)]
             return ToolResult(toolUseId=tool_use_id, status="success", content=content)
