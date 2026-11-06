@@ -2943,12 +2943,28 @@ def test_message_cache_tool_output_form(content, dynamic_trailing_blocks, output
 
 
 @pytest.mark.parametrize(
-    "kwargs",
-    [{"client_args": {"api_key": "k"}}, {"bedrock_mantle_config": {"region": "us-east-1"}}],
+    ("kwargs", "match"),
+    [
+        ({"client_args": {"api_key": "k"}}, "Only one of 'client' or 'client_args'"),
+        ({"bedrock_mantle_config": {"region": "us-east-1"}}, "'bedrock_mantle_config' cannot be combined"),
+    ],
 )
-def test_init_rejects_client_with_other_client_options(kwargs):
-    with pytest.raises(ValueError):
+def test_init_rejects_client_with_other_client_options(kwargs, match):
+    with pytest.raises(ValueError, match=match):
         OpenAIResponsesModel(client=unittest.mock.AsyncMock(), model_id="gpt-4o", **kwargs)
+
+
+@pytest.mark.asyncio
+async def test_injected_client_serves_native_count_tokens():
+    client = unittest.mock.AsyncMock()
+    client.responses.input_tokens.count.return_value = unittest.mock.Mock(input_tokens=42)
+    model = OpenAIResponsesModel(client=client, model_id="gpt-4o", use_native_token_count=True)
+
+    with unittest.mock.patch.object(strands.models.openai_responses.openai, "AsyncOpenAI") as mock_client_cls:
+        result = await model.count_tokens(messages=[{"role": "user", "content": [{"text": "hello"}]}])
+
+    assert result == 42
+    mock_client_cls.assert_not_called()
 
 
 @pytest.mark.asyncio

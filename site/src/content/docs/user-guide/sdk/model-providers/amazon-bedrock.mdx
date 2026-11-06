@@ -785,11 +785,10 @@ const model = new BedrockModel({
 
 ### Other Bedrock APIs
 
-`BedrockModel` calls the Converse API, which gives every model on `bedrock-runtime` the
-same request shape. Bedrock also serves models through their vendors' own APIs. Use one
-of these when the model is only served on `bedrock-mantle`, or when you need a vendor
-feature that Converse doesn't expose, such as an Anthropic beta. Otherwise, stay on
-`BedrockModel`.
+To use a model that Amazon Bedrock only serves on `bedrock-mantle`, or a vendor feature
+that the Converse API doesn't expose (such as an Anthropic beta), call the model through
+its vendor's API instead of `BedrockModel`. For everything else, stay on `BedrockModel`:
+its Converse API gives every model on `bedrock-runtime` the same request shape.
 
 [`bedrock-mantle`](https://docs.aws.amazon.com/bedrock/latest/userguide/bedrock-mantle.html)
 isn't a separate service or model catalog. It is Bedrock's second endpoint family, and
@@ -851,8 +850,19 @@ Requires `npm install @anthropic-ai/sdk @anthropic-ai/bedrock-sdk`.
 </Tab>
 </Tabs>
 
-That client calls InvokeModel on `bedrock-runtime`. To reach Claude on `bedrock-mantle`,
-swap in the Mantle client:
+Two differences from the Anthropic API apply on `bedrock-runtime`:
+
+- **Sampling parameters.** With Python `anthropic` 2.x or TypeScript
+  `@anthropic-ai/sdk` 1.x, Bedrock rejects `temperature` with
+  `Extra inputs are not permitted` unless the request body pins the Bedrock API version.
+  In Python, add `"extra_body": {"anthropic_version": "bedrock-2023-05-31"}` to
+  `params`. In TypeScript, add `anthropic_version: 'bedrock-2023-05-31'` to `params`.
+- **Throttling.** In Python, a throttling error that arrives in the middle of an
+  InvokeModel stream isn't raised as `ModelThrottledException`, so the agent doesn't
+  retry it. Use `BedrockModel` if you rely on Strands retrying throttled requests.
+
+To reach Claude on `bedrock-mantle` instead of InvokeModel on `bedrock-runtime`, swap in
+the `bedrock-mantle` client:
 
 <Tabs>
 <Tab label="Python">
@@ -882,18 +892,10 @@ print(response)
 
 --8<-- "user-guide/sdk/model-providers/amazon-bedrock.ts:anthropic_bedrock_mantle"
 ```
+
+Requires `npm install @anthropic-ai/sdk @anthropic-ai/bedrock-sdk`.
 </Tab>
 </Tabs>
-
-Two differences from the Anthropic API apply on `bedrock-runtime`:
-
-- **Sampling parameters.** If Bedrock rejects `temperature` with
-  `Extra inputs are not permitted`, pin the Bedrock API version in the request body.
-  In Python, add `"extra_body": {"anthropic_version": "bedrock-2023-05-31"}` to
-  `params`. In TypeScript, add `anthropic_version: 'bedrock-2023-05-31'` to `params`.
-- **Throttling.** In Python, a throttling error that arrives in the middle of an
-  InvokeModel stream isn't raised as `ModelThrottledException`, so the agent doesn't
-  retry it.
 
 #### OpenAI models through the OpenAI-compatible APIs
 
@@ -966,9 +968,9 @@ profile IDs such as `global.openai.gpt-5.6-luna`. AWS compares the two endpoints
 
 #### Letting Strands build the OpenAI client
 
-The OpenAI model providers can also build the client for you. Pass
-<Syntax py="bedrock_mantle_config" ts="bedrockMantleConfig" /> and the provider derives
-the endpoint from your region, picks the Mantle base path for the model, and mints
+To skip building the client yourself, pass
+<Syntax py="bedrock_mantle_config" ts="bedrockMantleConfig" />. The provider derives
+the endpoint from your region, picks the `bedrock-mantle` base path for the model, and mints
 bearer tokens from your AWS credentials:
 
 <Tabs>

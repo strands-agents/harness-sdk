@@ -136,7 +136,7 @@ def _with_native_output(
     return {**request, "tool_choice": {"type": "none"}, "output_config": output_config}
 
 
-class _Client(Protocol):
+class Client(Protocol):
     """The interface AnthropicModel uses on its client; satisfied by every async Anthropic SDK client."""
 
     @property
@@ -208,7 +208,7 @@ class AnthropicModel(Model):
     def __init__(
         self,
         *,
-        client: _Client | None = None,
+        client: Client | None = None,
         client_args: dict[str, Any] | None = None,
         **model_config: Unpack[AnthropicConfig],
     ):
@@ -216,7 +216,8 @@ class AnthropicModel(Model):
 
         Args:
             client: A pre-configured Anthropic-compatible async client, e.g. ``anthropic.AsyncAnthropicBedrock()``,
-                ``AsyncAnthropicBedrockMantle()`` or ``AsyncAnthropicVertex()``. The caller owns its lifecycle.
+                ``anthropic.AsyncAnthropicBedrockMantle()`` (anthropic>=0.91) or ``anthropic.AsyncAnthropicVertex()``.
+                The model does not close it.
             client_args: Arguments for the underlying Anthropic client (e.g., api_key).
                 For a complete list of supported arguments, see https://docs.anthropic.com/en/api/client-sdks.
             **model_config: Configuration options for the Anthropic model.
@@ -236,7 +237,7 @@ class AnthropicModel(Model):
 
         logger.debug("config=<%s> | initializing", self.config)
 
-        self.client: _Client = client if client is not None else anthropic.AsyncAnthropic(**(client_args or {}))
+        self.client: Client = client if client is not None else anthropic.AsyncAnthropic(**(client_args or {}))
         self._drop_stale_thinking_model_id: str | None = None
 
     @override
@@ -714,7 +715,7 @@ class AnthropicModel(Model):
                 f"params=<{sorted(sent_sampling_params)}>, anthropic_version=<{api_version}> | sampling parameters "
                 f"are not accepted by this API version; remove them, or pin the API version with "
                 f'client_args={{"default_headers": {{"anthropic-version": "{_LEGACY_API_VERSION}"}}}} '
-                "or the same default_headers on the client passed as client= "
+                "(or set the same default_headers on your client=) "
                 "(Claude 4.6 and earlier honor them; Claude 4.7 and later accept only the defaults)"
             )
         return params

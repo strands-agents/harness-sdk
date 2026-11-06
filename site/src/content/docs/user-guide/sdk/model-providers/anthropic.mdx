@@ -133,7 +133,7 @@ If you encounter import errors for `@anthropic-ai/sdk`, ensure the package is in
 
 `strands-agents[anthropic]` installs any `anthropic` release from 0.21 up to, but not including, 3.0. The 1.0 and 2.0 releases changed behavior that reaches `AnthropicModel`:
 
-- **Sampling parameters.** `temperature`, `top_p`, and `top_k` in `params` are sent in the request body, so they keep working on every SDK version. API version `2026-10-21`, the default on `anthropic` 2.x, rejects them, and the provider raises a `ValueError` before sending the request. Remove them, or pin the API version with `client_args={"default_headers": {"anthropic-version": "2023-06-01"}}` (or the same `default_headers` on an Anthropic API client passed as `client=`; for Bedrock InvokeModel see [Claude through the Anthropic Messages API](./amazon-bedrock#claude-through-the-anthropic-messages-api)). The pin only helps on models that still honor sampling parameters (Claude 4.6 and earlier); Claude 4.7 and later accept only the defaults.
+- **Sampling parameters.** `temperature`, `top_p`, and `top_k` in `params` are sent in the request body, so they keep working on every SDK version. API version `2026-10-21`, the default on `anthropic` 2.x, rejects them, and the provider raises a `ValueError` before sending the request. Remove them, or pin the API version with `client_args={"default_headers": {"anthropic-version": "2023-06-01"}}`. On a client passed as `client=`, set the same `default_headers`. For Claude on Amazon Bedrock InvokeModel, see [Claude through the Anthropic Messages API](./amazon-bedrock#claude-through-the-anthropic-messages-api). The pin only helps on models that still honor sampling parameters (Claude 4.6 and earlier); Claude 4.7 and later accept only the defaults.
 - **Documents in assistant messages.** API version `2026-10-21` rejects a `document` block placed directly in an assistant message, so the provider drops those blocks and logs a warning. Put documents in user messages; a document nested inside a tool result is unaffected.
 - **`http_client`.** From 1.0 the SDK is built on `httpx2`, so a custom `http_client` passed through `client_args` must be an `httpx2.AsyncClient`, not an `httpx.AsyncClient`.
 - **Authentication.** From 2.0 the API key is sent as `Authorization: Bearer`, which matters behind a proxy that reads `X-Api-Key`. A client also holds one credential, so pass either `api_key` or `auth_token` in `client_args`, not both.
@@ -204,6 +204,7 @@ Use this for clients `client_args` can't build, such as Claude on Amazon Bedrock
 
 ```python
 import anthropic
+from strands import Agent
 from strands.models.anthropic import AnthropicModel
 
 model = AnthropicModel(
@@ -211,9 +212,13 @@ model = AnthropicModel(
     max_tokens=4096,
     client=anthropic.AsyncAnthropicBedrock(aws_region="us-west-2"),
 )
+
+agent = Agent(model=model)
+response = agent("What is 2+2?")
+print(response)
 ```
 
-For Claude on Amazon Bedrock, including the Mantle client and the differences from the Anthropic API, see [Other Bedrock APIs](./amazon-bedrock#claude-through-the-anthropic-messages-api).
+For the `bedrock-mantle` client and the differences from the Anthropic API, see [Claude through the Anthropic Messages API](./amazon-bedrock#claude-through-the-anthropic-messages-api) on the Amazon Bedrock page.
 </Tab>
 <Tab label="TypeScript">
 

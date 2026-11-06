@@ -184,9 +184,6 @@ class OpenAIResponsesModel(Model):
         """Initialize provider instance.
 
         Args:
-            client: Pre-configured OpenAI-compatible async client to reuse across requests, e.g. an
-                ``openai.AsyncOpenAI`` pointed at an Amazon Bedrock endpoint. The model does not close it,
-                and it should not be shared across asyncio event loops.
             client_args: Arguments for the OpenAI client.
                 For a complete list of supported arguments, see https://pypi.org/project/openai/.
                 May be combined with ``bedrock_mantle_config``; when both are set, the config
@@ -196,6 +193,9 @@ class OpenAIResponsesModel(Model):
                 ``bedrock-runtime`` via the config's ``endpoint`` key. See
                 :class:`BedrockMantleConfig` for accepted keys. When set, a fresh bearer
                 token is minted on every request. Cannot be combined with ``client``.
+            client: Pre-configured OpenAI-compatible async client to reuse across requests, e.g. an
+                ``openai.AsyncOpenAI`` pointed at an Amazon Bedrock endpoint. The model does not close it,
+                and it should not be shared across asyncio event loops.
             **model_config: Configuration options for the OpenAI Responses API model.
 
         Raises:
