@@ -133,7 +133,7 @@ If you encounter import errors for `@anthropic-ai/sdk`, ensure the package is in
 
 `strands-agents[anthropic]` installs any `anthropic` release from 0.21 up to, but not including, 3.0. The 1.0 and 2.0 releases changed behavior that reaches `AnthropicModel`:
 
-- **Sampling parameters.** `temperature`, `top_p`, and `top_k` in `params` are sent in the request body, so they keep working on every SDK version. API version `2026-10-21`, the default on `anthropic` 2.x, rejects them, and the provider raises a `ValueError` before sending the request. Remove them, or pin the API version with `client_args={"default_headers": {"anthropic-version": "2023-06-01"}}` (or the same `default_headers` on a client passed as `client=`). The pin only helps on models that still honor sampling parameters (Claude 4.6 and earlier); Claude 4.7 and later accept only the defaults.
+- **Sampling parameters.** `temperature`, `top_p`, and `top_k` in `params` are sent in the request body, so they keep working on every SDK version. API version `2026-10-21`, the default on `anthropic` 2.x, rejects them, and the provider raises a `ValueError` before sending the request. Remove them, or pin the API version with `client_args={"default_headers": {"anthropic-version": "2023-06-01"}}` (or the same `default_headers` on an Anthropic API client passed as `client=`; for Bedrock InvokeModel see [Custom Client](#custom-client)). The pin only helps on models that still honor sampling parameters (Claude 4.6 and earlier); Claude 4.7 and later accept only the defaults.
 - **Documents in assistant messages.** API version `2026-10-21` rejects a `document` block placed directly in an assistant message, so the provider drops those blocks and logs a warning. Put documents in user messages; a document nested inside a tool result is unaffected.
 - **`http_client`.** From 1.0 the SDK is built on `httpx2`, so a custom `http_client` passed through `client_args` must be an `httpx2.AsyncClient`, not an `httpx.AsyncClient`.
 - **Authentication.** From 2.0 the API key is sent as `Authorization: Bearer`, which matters behind a proxy that reads `X-Api-Key`. A client also holds one credential, so pass either `api_key` or `auth_token` in `client_args`, not both.
@@ -212,6 +212,8 @@ model = AnthropicModel(
     client=anthropic.AsyncAnthropicBedrock(aws_region="us-west-2"),
 )
 ```
+
+With `AsyncAnthropicBedrock` (InvokeModel), the API version travels in the request body, not the `anthropic-version` header, so the `default_headers` pin above doesn't apply. On `anthropic` 2.x, send sampling parameters with `params={"extra_body": {"anthropic_version": "bedrock-2023-05-31"}}`. Throttling reported in the middle of an InvokeModel stream also isn't mapped to `ModelThrottledException` on this path.
 </Tab>
 <Tab label="TypeScript">
 
