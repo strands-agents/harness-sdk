@@ -1,7 +1,14 @@
+import { stdin, stdout } from 'node:process'
+import { createInterface } from 'node:readline/promises'
 import { Agent } from '@strands-agents/sdk'
-import { BeforeModelCallEvent } from '@strands-agents/sdk'
 import { tool } from '@strands-agents/sdk'
-import { Graph, BeforeNodeCallEvent, Status } from '@strands-agents/sdk/multiagent'
+import type { InterruptResponseContentData } from '@strands-agents/sdk'
+import {
+  Graph,
+  BeforeNodeCallEvent,
+  NodeCancelEvent,
+  Status,
+} from '@strands-agents/sdk/multiagent'
 import { z } from 'zod'
 
 async function invocationStateGraphExample() {
@@ -50,10 +57,10 @@ async function invocationStateToolExample() {
 }
 
 async function multiAgentStateExample() {
+  // --8<-- [start:multi_agent_state]
   const researcher = new Agent({ id: 'researcher' })
   const writer = new Agent({ id: 'writer' })
 
-  // --8<-- [start:multi_agent_state]
   const graph = new Graph({
     nodes: [researcher, writer],
     edges: [['researcher', 'writer']],
@@ -73,6 +80,8 @@ async function multiAgentStateExample() {
     event.state.app.set('requestId', 'req-123')
     const requestId = event.state.app.get('requestId')
   })
+
+  await graph.invoke('Write a short report on customer churn')
   // --8<-- [end:multi_agent_state]
 }
 
@@ -120,12 +129,17 @@ async function supervisorExample() {
       ['research', 'analysis'],
       ['analysis', 'review'],
     ],
-    // 1. Per-node and overall deadlines so no single node can stall the run.
+    // 1. Per-node and overall deadlines; exceeding either makes invoke() throw.
     nodeTimeout: 60_000, // each node must finish within 60s
     timeout: 300_000, // the whole graph within 5 minutes
   })
 
   const gatedNode = 'review'
+
+  // 2. The cancellation reason is recorded on NodeCancelEvent.
+  graph.addHook(NodeCancelEvent, (event) => {
+    console.log(`[cancelled] ${event.nodeId}: ${event.message}`)
+  })
 
   graph.addHook(BeforeNodeCallEvent, (event) => {
     // 4. Record every handoff: the hook fires before each node runs.
@@ -138,26 +152,34 @@ async function supervisorExample() {
       name: 'myapp-approval',
       reason: { node: event.nodeId },
     })
-    if (approval.toLowerCase() !== 'y') {
-      // 2. Propagate cancellation with a recorded reason.
+    if (approval.trim().toLowerCase() !== 'y') {
+      // 2. Cancel the node before it runs, with a recorded reason.
       event.cancel = `Human denied the ${event.nodeId} step`
     }
   })
 
   // Interrupt/resume loop: the graph pauses at the approval gate and resumes
-  // once the human answers.
+  // only after the human answers.
   let result = await graph.invoke('Research, analyze, and review the Q4 incident')
   while (result.status === Status.INTERRUPTED) {
-    const responses = result.interrupts!.map((interrupt) => ({
-      interruptResponse: {
-        interruptId: interrupt.id,
-        // In a real app, collect user input here
-        response: 'y',
-      },
-    }))
+    const responses: InterruptResponseContentData[] = []
+    const prompt = createInterface({ input: stdin, output: stdout })
+    try {
+      for (const interrupt of result.interrupts ?? []) {
+        if (interrupt.name !== 'myapp-approval') continue
+        const { node } = interrupt.reason as { node: string }
+        const answer = await prompt.question(`Approve the ${node} step? (y/N): `)
+        responses.push({
+          interruptResponse: { interruptId: interrupt.id, response: answer },
+        })
+      }
+    } finally {
+      prompt.close()
+    }
     result = await graph.invoke(responses)
   }
 
+  // COMPLETED when approved; CANCELLED when the human denied the review step.
   console.log('Status:', result.status)
   // --8<-- [end:supervisor]
 }

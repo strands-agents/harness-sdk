@@ -94,8 +94,8 @@ of three phases: **research** (gather), **analysis** (reason), and **review**
 | Pattern | How the path is decided | Research → analysis → review shape it fits |
 |---|---|---|
 | **[Agents as tools](./agents-as-tools.md)** | The orchestrator LLM picks a specialist per query. | One agent delegates a research or analysis sub-question to an expert, then folds the answer back in. |
-| **[Workflow](./workflow.md)** | Fixed in code. A task graph (DAG) runs as one reusable tool; independent tasks run in parallel. | A repeatable pipeline: research, analysis, and review are the same every time and dependencies never change. |
-| **[Graph](./graph.md)** | Controlled but dynamic. Flow follows developer-defined edges; an LLM decision at each node picks the branch. Cycles allowed. | Research feeds analysis feeds review, but review can loop back to analysis or branch to an error path. |
+| **[Workflow](./workflow.md)** | Fixed in code. A task graph (DAG) runs as one reusable tool; independent tasks run in parallel. | A repeatable pipeline packaged behind a single tool call: research, analysis, and review are the same every time. |
+| **[Graph](./graph.md)** | Developer-defined edges. Unconditional edges are always followed; a conditional edge is followed only when your predicate, which can inspect model output or app state, returns true. Fixed, parallel, and cyclic flows. | Research feeds analysis feeds review as a fixed chain, or a conditional edge sends the work back to analysis when the review's verdict is a rejection. |
 | **[Swarm](./swarm.md)** | Emergent. Agents hand off autonomously through shared context, with no fixed path. | A research, analysis, and review team that reorders itself; review can hand straight back to research. |
 
 <CardGrid>
@@ -114,8 +114,8 @@ of three phases: **research** (gather), **analysis** (reason), and **review**
   <LinkCard
     title="Graph"
     href="../graph/"
-    description="A flowchart of agents where an LLM decision at each node picks the
-      path, with branching and loops."
+    description="Agents as nodes joined by edges you define: fixed, parallel, or
+      conditional on your own predicates, with loops."
   />
   <LinkCard
     title="Swarm"
@@ -140,25 +140,28 @@ information between components toward a final answer. They diverge on control.
 
 | Dimension | Graph | Swarm | Workflow |
 |---|---|---|---|
-| Core concept | Developer-defined flowchart; an LLM picks the path at each node. | A team that autonomously hands off tasks. | A pre-defined task graph (DAG) run as one non-conversational tool. |
-| Who defines the path | Developer defines nodes and edges up front. | Developer provides a pool; agents decide. | Developer defines tasks and dependencies in code. |
-| Execution flow | Controlled but dynamic. | Sequential and autonomous. | Deterministic and parallel. |
+| Core concept | Agents as nodes joined by developer-defined edges; optional conditions route on model output or app state. | A team that autonomously hands off tasks. | A pre-defined task graph (DAG) run as one non-conversational tool. |
+| Who defines the path | Developer defines nodes, edges, and edge conditions up front. | Developer provides a pool; agents decide. | Developer defines tasks and dependencies in code. |
+| Execution flow | Follows the edges: fixed chains, parallel branches, or conditional routes. | Sequential and autonomous. | Deterministic and parallel. |
 | Cycles | Yes. | Yes. | No. |
 | State sharing | Shared state object all nodes read and write. | Shared context and working memory. | Task outputs auto-passed to dependents. |
-| Error handling | Error edges route failures to a handler node. | Hand off to an error specialist; timeouts and handoff limits bound loops. | A failed task halts downstream tasks; the run enters `Failed`. |
+| Error handling | A conditional edge can route on a result a node returns, such as a validator's verdict. Execution errors are not routed to another node. In Python, a node exception raises from the graph call and ends the run. In TypeScript, the failed node records `FAILED`, its downstream nodes do not run, and parallel branches continue. Timeouts end the run in both (see [Graph](./graph.md)). | Agents can hand off to an error specialist; handoff limits and timeouts stop runaway loops by ending the run. | A task whose dependency errored never starts and stays pending. The overall workflow status does not reliably report failure, so check each task's status. |
 
 The sections below give one or two concrete triggers for each.
 
 #### Reach for a Graph
 
-When the process needs conditional logic, branching, or loops with a controlled
-execution flow. A `Graph` models a business process where the next step depends
-on the outcome of the current one.
+When you want to own the execution path in code: a fixed sequence, parallel
+branches, or conditional routes and loops. Unconditional edges run every time;
+conditional edges let the next step depend on what the current one returned.
 
 - **Interactive support routing**: branch a conversation on user intent
   ("order question" vs. "address change" vs. "needs a human").
-- **Validation with error paths**: an agent validates data and a conditional
-  edge routes it to a processing node or a pre-defined error-handling node.
+- **Validation with a rejection path**: an agent validates data, and conditional
+  edges that read its verdict route the data to a processing node or a
+  rejection-handling node. This routes on a returned result. An exception
+  raised while a node runs is never routed: in Python it ends the run, and in
+  TypeScript the node records `FAILED` and its downstream nodes do not run.
 
 #### Reach for a Swarm
 
@@ -173,8 +176,9 @@ sources through collaborative handoffs.
 
 #### Reach for a Workflow
 
-When you have a complex but repeatable process you want to encapsulate as one
-reliable, reusable tool.
+When you have a complex but repeatable process you want an agent to start as
+one reusable tool call. If you only need a fixed pipeline in your own code, a
+Graph with unconditional edges covers that too.
 
 - **Data pipeline**: a fixed set of extract, analyze, and report tasks, where
   independent analysis steps run in parallel.
@@ -191,9 +195,10 @@ human, and every handoff must be recorded for audit.
 The example below is one supervisor Graph that layers all four onto the
 research → analysis → review shape:
 
-1. **Per-node deadlines** so a single slow node cannot stall the run.
-2. **Cancellation propagation** so denying a step stops it cleanly with a
-   recorded reason rather than failing silently.
+1. **Per-node and overall deadlines** so a slow node fails the run instead of
+   stalling it.
+2. **Cancellation with a recorded reason** so denying a step stops it before it
+   runs and records why.
 3. **An approval gate** that interrupts before the one high-impact node and
    waits for a human `y/N`.
 4. **Handoff logging through a hook** so every node transition is recorded.
@@ -232,7 +237,7 @@ class SupervisorHook(HookProvider):
             f"{self.app_name}-approval",
             reason={"node": event.node_id},
         )
-        if approval.lower() != "y":
+        if approval.strip().lower() != "y":
             # 2. Propagate cancellation: deny the node with a recorded reason
             #    instead of letting it run.
             event.cancel_node = f"Human denied the {event.node_id} step"
@@ -262,7 +267,9 @@ builder.add_edge("research", "analysis")
 builder.add_edge("analysis", "review")
 builder.set_entry_point("research")
 
-# 1. Per-node and overall deadlines so no single node can stall the run.
+# 1. Per-node and overall deadlines. A node that exceeds its timeout raises
+#    from the graph call; the execution timeout is checked before each batch
+#    of nodes and ends the run with Status.FAILED.
 builder.set_node_timeout(60)        # each node must finish within 60s
 builder.set_execution_timeout(300)  # the whole graph within 5 minutes
 
@@ -272,24 +279,28 @@ builder.set_hook_providers([SupervisorHook("myapp", gated_node="review")])
 graph = builder.build()
 
 # Interrupt/resume loop: the graph pauses at the approval gate and resumes
-# once the human answers.
-result = graph("Research, analyze, and review the Q4 incident")
-while result.status == Status.INTERRUPTED:
-    responses = []
-    for interrupt in result.interrupts:
-        if interrupt.name == "myapp-approval":
-            node = interrupt.reason["node"]
-            answer = input(f"Approve the {node} step? (y/N): ")
-            responses.append({
-                "interruptResponse": {
-                    "interruptId": interrupt.id,
-                    "response": answer,
-                },
-            })
-    result = graph(responses)
-
-print(f"Status: {result.status}")
-print(f"Execution order: {[node.node_id for node in result.execution_order]}")
+# only after the human answers.
+try:
+    result = graph("Research, analyze, and review the Q4 incident")
+    while result.status == Status.INTERRUPTED:
+        responses = []
+        for interrupt in result.interrupts:
+            if interrupt.name == "myapp-approval":
+                node = interrupt.reason["node"]
+                answer = input(f"Approve the {node} step? (y/N): ")
+                responses.append({
+                    "interruptResponse": {
+                        "interruptId": interrupt.id,
+                        "response": answer,
+                    },
+                })
+        result = graph(responses)
+except RuntimeError as error:
+    # 2. A cancelled node raises with its recorded reason and the run ends FAILED.
+    print(f"Stopped: {error} (status: {graph.state.status})")
+else:
+    print(f"Status: {result.status}")
+    print(f"Execution order: {[node.node_id for node in result.execution_order]}")
 ```
 
 </Tab>
@@ -306,16 +317,23 @@ print(f"Execution order: {[node.node_id for node in result.execution_order]}")
 
 ### How each guardrail works
 
-- **Per-node deadlines**:
+- **Deadlines**:
   <Syntax py="builder.set_node_timeout(seconds)" ts="nodeTimeout" />
-  bounds any single node;
+  bounds any single node and
   <Syntax py="builder.set_execution_timeout(seconds)" ts="timeout" />
-  bounds the whole run. Timeouts are cooperative: a tool that never checks its
+  bounds the whole run. A timeout fails the run; it is not routed to another
+  node. In Python, a node timeout raises from the graph call, while the
+  execution timeout is checked before each batch of nodes and returns a
+  `FAILED` result, so it does not stop a node that is already running. In
+  TypeScript, either deadline makes `invoke()` throw once the in-flight node
+  settles. Timeouts are cooperative: a tool or model call that ignores its
   cancel signal can still run past the deadline.
-- **Cancellation propagation**: setting
-  <Syntax py="event.cancel_node" ts="event.cancel" /> to a message cancels the
-  node with that reason recorded, so a denied step stops cleanly instead of
-  failing opaquely.
+- **Cancellation with a recorded reason**: setting
+  <Syntax py="event.cancel_node" ts="event.cancel" /> to a message skips the
+  node and records that message. In Python, the graph call raises a
+  `RuntimeError` carrying the message and the run ends `FAILED`. In TypeScript,
+  the node and the run end `CANCELLED` and a `NodeCancelEvent` carries the
+  message.
 - **Approval gate**:
   <Syntax
     py="event.interrupt(name, reason=...)"
@@ -331,8 +349,9 @@ print(f"Execution order: {[node.node_id for node in result.execution_order]}")
   from the event stream instead, watch for the `multiagent_handoff` event in
   [`stream_async`](./graph.md#streaming-events).
 
-The same hook, timeout, and interrupt interfaces work on a [Swarm](./swarm.md),
-so you can apply this supervision to autonomous handoffs as well.
+A [Swarm](./swarm.md) supports the same `BeforeNodeCallEvent` hook and
+interrupts, and takes its own node and execution timeouts, so you can apply
+this supervision to autonomous handoffs as well.
 
 ## Shared state across multi-agent patterns
 
@@ -354,12 +373,25 @@ The `invocation_state` is automatically propagated to:
   [Hooks](../agents/hooks.md#accessing-invocation-state-in-hooks))
 
 ```python
+import sqlite3
+
+from strands import Agent
+from strands.multiagent import GraphBuilder, Swarm
+
+builder = GraphBuilder()
+builder.add_node(Agent(name="researcher"), "researcher")
+builder.add_node(Agent(name="writer"), "writer")
+builder.add_edge("researcher", "writer")
+graph = builder.build()
+
+swarm = Swarm([Agent(name="analyst"), Agent(name="reporter")])
+
 # The same invocation_state works for both Graph and Swarm
 shared_state = {
     "user_id": "user123",
     "session_id": "sess456",
     "debug_mode": True,
-    "database_connection": db_connection_object,
+    "database_connection": sqlite3.connect(":memory:"),
 }
 
 result = graph("Analyze customer data", invocation_state=shared_state)
@@ -369,13 +401,14 @@ result = swarm("Analyze customer data", invocation_state=shared_state)
 Access it inside a tool:
 
 ```python
-from strands import tool, ToolContext
+from strands import ToolContext, tool
 
 @tool(context=True)
 def query_data(query: str, tool_context: ToolContext) -> str:
     user_id = tool_context.invocation_state.get("user_id")
     debug_mode = tool_context.invocation_state.get("debug_mode", False)
     # Use context for personalized queries...
+    return f"Results for {user_id}"
 ```
 
 </Tab>
@@ -387,6 +420,8 @@ reference, so one node's hooks and tools can read state written by a previous
 node.
 
 ```typescript
+--8<-- "user-guide/sdk/multi-agent/multi-agent-patterns_imports.ts:invocation_state_graph_imports"
+
 --8<-- "user-guide/sdk/multi-agent/multi-agent-patterns.ts:invocation_state_graph"
 ```
 
@@ -395,6 +430,8 @@ to tools via `context.invocationState`, and to all hook events on both the
 orchestrator and the individual agents.
 
 ```typescript
+--8<-- "user-guide/sdk/multi-agent/multi-agent-patterns_imports.ts:invocation_state_tool_imports"
+
 --8<-- "user-guide/sdk/multi-agent/multi-agent-patterns.ts:invocation_state_tool"
 ```
 
@@ -403,6 +440,8 @@ across all nodes and exposes execution progress (`results`, `nodes`, `steps`)
 and a `StateStore` (`app`) for custom shared data.
 
 ```typescript
+--8<-- "user-guide/sdk/multi-agent/multi-agent-patterns_imports.ts:multi_agent_state_imports"
+
 --8<-- "user-guide/sdk/multi-agent/multi-agent-patterns.ts:multi_agent_state"
 ```
 
@@ -417,8 +456,8 @@ inputs for graphs) for data the LLM should reason about.
 
 Start with [Agents as tools](./agents-as-tools.md), the smallest step above a
 single agent. Reach for an orchestrator once the order of work matters
-or agents must hand off among themselves: [Graph](./graph.md) for a
-developer-defined flowchart with branching and loops, [Swarm](./swarm.md) for
+or agents must hand off among themselves: [Graph](./graph.md) for
+developer-defined edges (fixed, parallel, or conditional), [Swarm](./swarm.md) for
 autonomous handoffs, and [Workflow](./workflow.md) for a fixed task graph run
 as a reusable tool. To connect agents running as separate services, see
 [Agent-to-Agent (A2A)](./agent-to-agent.md). To add supervision (deadlines,
