@@ -143,6 +143,14 @@ it elsewhere:
   </Tab>
 </Tabs>
 
+:::caution[Session files are trusted input]
+Resuming a session loads its saved files into the agent as-is, so whatever they contain reaches the
+model. The default directory is inside the working directory, so resume only sessions you created
+there, not session files that came with a cloned repository. To keep session state out of the
+project, point the session directory somewhere outside it. See
+[Trusted Message History](../../sdk/safety-security/trusted-message-history.md).
+:::
+
 When a session is active, offloaded tool results (from context management) are kept under
 the session directory too, so they stay durable across restarts alongside the conversation.
 Without a session, they stay in memory and do not outlive the process.
