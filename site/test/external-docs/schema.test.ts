@@ -12,7 +12,7 @@ function manifest() {
     pages: [
       {
         id: 'getting-started',
-        source: 'docs/user/getting-started.md',
+        source: 'docs/getting-started.md',
         slug: 'quickstart',
         title: 'Getting started',
         description: 'Install and run Box.',
@@ -57,7 +57,7 @@ describe('external docs schema', () => {
     duplicate.pages.push({
       ...duplicate.pages[0]!,
       id: 'configuration',
-      source: 'docs/user/configuration.md',
+      source: 'docs/configuration.md',
     })
     expect(() => parseExternalDocsManifest(duplicate)).toThrow(/page slug "quickstart" is duplicated/)
 
@@ -70,8 +70,8 @@ describe('external docs schema', () => {
     'docs/user/../design/architecture.md',
     'docs/user\\getting-started.md',
     '../docs/user/getting-started.md',
-    'docs/design/architecture.md',
-  ])('rejects unsafe or unpublished source path %s', (source) => {
+    'README.md',
+  ])('rejects unsafe or non-docs source path %s', (source) => {
     const invalid = manifest()
     invalid.pages[0]!.source = source
     expect(() => parseExternalDocsManifest(invalid)).toThrow()
