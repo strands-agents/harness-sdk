@@ -540,6 +540,9 @@ class Tracer:
         span_name = f"execute_tool {tool['name']}"
         span = self._start_span(span_name, parent_span, attributes=attributes, span_kind=trace_api.SpanKind.INTERNAL)
 
+        if not span.is_recording():
+            return span
+
         if self.use_latest_genai_conventions:
             # The execute_tool span convention records tool inputs in the dedicated
             # gen_ai.tool.call.arguments span attribute (Opt-In), which spec-compliant
@@ -1313,7 +1316,7 @@ class Tracer:
             system_prompt: Optional system prompt string.
             system_prompt_content: Optional list of system prompt content blocks.
         """
-        if system_prompt is None and system_prompt_content is None:
+        if not span.is_recording() or (system_prompt is None and system_prompt_content is None):
             return
 
         if self.use_latest_genai_conventions:
@@ -1360,6 +1363,9 @@ class Tracer:
             span: The span to which events will be added.
             messages: List of messages being sent to the agent.
         """
+        if not span.is_recording():
+            return
+
         if self.use_latest_genai_conventions:
             input_messages: list = []
             for message in messages:
