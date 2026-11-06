@@ -514,12 +514,12 @@ async function main() {
       }
     } else if (shellMode === 'command') {
       const input = windows
-        ? "!Write-Output '__SHELL_LINE_1__','__SHELL_LINE_2__','__SHELL_LINE_3__','__SHELL_LINE_4__'"
-        : "!printf '__SHELL_LINE_1__\\n__SHELL_LINE_2__\\n__SHELL_LINE_3__\\n__SHELL_LINE_4__\\n'"
+        ? "!1..4 | ForEach-Object { '__SHELL_LINE_' + $_ + '__' }"
+        : "!printf '__SHELL_LINE_%s__\\n' 1 2 3 4"
       terminal.write(input)
-      await waitFor([input.slice(0, input.indexOf('__SHELL_LINE_1__') + '__SHELL_LINE_1__'.length)], 2_000, false)
+      await waitFor([`${input}▌`], 2_000, false)
       terminal.write('\r')
-      await waitFor(['__SHELL_LINE_1__', '__SHELL_LINE_4__', '__SHELL_IDLE__'], 8_000, false)
+      await waitFor(['__SHELL_LINE_1__', '__SHELL_LINE_4__', '__SHELL_IDLE__'], windows ? 15_000 : 8_000, false)
     } else if (shellMode === 'interrupt') {
       terminal.write('!sleep 30')
       await waitFor(['!sleep 30'], 2_000, false)
