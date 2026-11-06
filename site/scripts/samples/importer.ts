@@ -21,6 +21,8 @@ const MAX_GUIDE_BYTES = 2 * 1024 * 1024
 const MIN_DESCRIPTION_LENGTH = 140
 const MAX_DESCRIPTION_LENGTH = 160
 const SNIPPET_DIRECTIVE_PATTERN = /^-+8<-+\s*"[^"]+"$/
+// Legacy manifests treat the ordered 01-learn curricula as workshop content, not standalone guides.
+const WORKSHOP_SAMPLE_PREFIXES = ['python/01-learn/', 'typescript/01-learn/']
 
 const htmlConverter = new TurndownService({
   headingStyle: 'atx',
@@ -68,7 +70,22 @@ const categorySchema = z
   })
   .strict()
 
-// Other catalog consumers use the accepted metadata omitted by the rendering transform below.
+const collectionSchema = z
+  .object({
+    id: nonEmptyString,
+    label: nonEmptyString,
+    description: nonEmptyString.optional(),
+    samples: z.array(nonEmptyString),
+  })
+  .strict()
+
+const documentationSchema = z
+  .object({
+    label: nonEmptyString,
+    url: z.string().url().startsWith('https://', 'must use https'),
+  })
+  .strict()
+
 const sampleSchema = z
   .object({
     id: nonEmptyString.optional(),
@@ -82,6 +99,11 @@ const sampleSchema = z
     path: relativePathSchema,
     notebook: relativePathSchema.optional(),
     url: nonEmptyString.optional(),
+    docs: z.array(documentationSchema).optional(),
+    family: z
+      .string()
+      .regex(/^[a-z0-9][a-z0-9-]*$/)
+      .optional(),
   })
   .strict()
   .transform((sample, context) => {
@@ -105,6 +127,8 @@ const sampleSchema = z
       return z.NEVER
     }
     return {
+      id: sample.id ?? sample.path,
+      hasCanonicalSlug: sample.slug !== undefined,
       language: sample.language,
       category: sample.category,
       title: sample.title,
@@ -112,13 +136,17 @@ const sampleSchema = z
       path: sample.path,
       notebook: sample.notebook,
       slug: slug.data,
+      docs: sample.docs ?? [],
+      family: sample.family,
     }
   })
 
 const manifestSchema = z
   .object({
     version: z.literal(1),
+    catalog: z.literal('curated').optional(),
     categories: z.array(categorySchema),
+    collections: z.array(collectionSchema).optional(),
     samples: z.array(sampleSchema),
   })
   .strict()
@@ -126,6 +154,15 @@ type ParsedManifest = z.infer<typeof manifestSchema>
 
 function parseManifest(value: unknown) {
   const manifest: ParsedManifest = manifestSchema.parse(value)
+  const catalogMode = manifest.catalog === 'curated' ? 'curated' : 'legacy'
+  const curated = catalogMode === 'curated'
+  if (curated && manifest.collections === undefined) {
+    throw new Error('Curated samples manifest must define collections')
+  }
+  if (!curated && manifest.collections !== undefined) {
+    throw new Error('Samples manifest collections require catalog: "curated"')
+  }
+
   const categoryLabels = new Map<string, string>()
   for (const category of manifest.categories) {
     const key = `${category.language}/${category.id}`
@@ -133,20 +170,99 @@ function parseManifest(value: unknown) {
     categoryLabels.set(key, category.label)
   }
 
+  const collections = new Map<string, { id: string; label: string; description?: string; order: number }>()
+  const collectionMembership = new Map<string, string>()
+  for (const [order, collection] of (manifest.collections ?? []).entries()) {
+    if (collections.has(collection.id)) throw new Error(`Duplicate sample collection: ${collection.id}`)
+    collections.set(collection.id, {
+      id: collection.id,
+      label: collection.label,
+      description: collection.description,
+      order,
+    })
+    const members = new Set<string>()
+    for (const sampleId of collection.samples) {
+      if (members.has(sampleId)) {
+        throw new Error(`Duplicate sample ${sampleId} in collection ${collection.id}`)
+      }
+      members.add(sampleId)
+      const existingCollection = collectionMembership.get(sampleId)
+      if (existingCollection) {
+        throw new Error(`Sample ${sampleId} belongs to multiple collections: ${existingCollection}, ${collection.id}`)
+      }
+      collectionMembership.set(sampleId, collection.id)
+    }
+  }
+
+  const ids = new Set<string>()
   const paths = new Set<string>()
   const slugs = new Set<string>()
   const samples = manifest.samples.map((sample) => {
+    if (ids.has(sample.id)) throw new Error(`Duplicate sample id: ${sample.id}`)
+    ids.add(sample.id)
     if (paths.has(sample.path)) throw new Error(`Duplicate sample path: ${sample.path}`)
     paths.add(sample.path)
     if (slugs.has(sample.slug)) throw new Error(`Duplicate sample slug: ${sample.slug}`)
     slugs.add(sample.slug)
+    if (curated && !sample.hasCanonicalSlug) {
+      throw new Error(`${sample.id} has no canonical catalog slug`)
+    }
 
     const category = `${sample.language}/${sample.category}`
     const categoryLabel = categoryLabels.get(category)
     if (categoryLabel === undefined) throw new Error(`${sample.path} references unknown category ${category}`)
-    return { ...sample, categoryLabel }
+
+    const collectionId = collectionMembership.get(sample.id)
+    const collection = collectionId ? collections.get(collectionId) : undefined
+
+    return {
+      ...sample,
+      catalogMode,
+      categoryLabel,
+      docs: curated ? sample.docs : [],
+      family: curated ? sample.family : undefined,
+      collection: curated ? collection : undefined,
+    }
   })
-  return { samples }
+
+  for (const [sampleId, collectionId] of collectionMembership) {
+    if (!ids.has(sampleId)) {
+      throw new Error(`Collection ${collectionId} references unknown sample ${sampleId}`)
+    }
+  }
+
+  const publishedSamples = curated
+    ? samples.filter((sample) => sample.collection !== undefined)
+    : samples.filter((sample) => !WORKSHOP_SAMPLE_PREFIXES.some((prefix) => sample.path.startsWith(prefix)))
+  const familyLanguages = new Set<string>()
+  const familyCollections = new Map<string, string>()
+  for (const sample of publishedSamples) {
+    if (!curated) continue
+    if (sample.docs.length === 0) {
+      throw new Error(`Published sample ${sample.id} has no documentation links`)
+    }
+    if (!sample.family) continue
+    const familyLanguage = `${sample.family}/${sample.language}`
+    if (familyLanguages.has(familyLanguage)) {
+      throw new Error(`Duplicate published sample family language: ${familyLanguage}`)
+    }
+    familyLanguages.add(familyLanguage)
+    const collectionId = sample.collection!.id
+    const familyCollection = familyCollections.get(sample.family)
+    if (familyCollection && familyCollection !== collectionId) {
+      throw new Error(
+        `Published sample family ${sample.family} belongs to multiple collections: ${familyCollection}, ${collectionId}`
+      )
+    }
+    familyCollections.set(sample.family, collectionId)
+  }
+  const orderedIds = [...(manifest.collections ?? [])].flatMap((collection) => collection.samples)
+  const catalogOrder = new Map<string, number>()
+  for (const sampleId of orderedIds) {
+    if (!catalogOrder.has(sampleId)) catalogOrder.set(sampleId, catalogOrder.size)
+  }
+
+  return { samples: publishedSamples, catalogOrder, catalogMode }
 }
 
 type SampleManifest = ReturnType<typeof parseManifest>
@@ -611,12 +727,16 @@ function sourceUrl(commit: string, samplePath: string): string {
 function frontmatter(sample: ManifestSample, description: string, commit: string, order: number): string {
   return [
     '---',
+    `catalogMode: ${JSON.stringify(sample.catalogMode)}`,
     `title: ${JSON.stringify(sample.title)}`,
     `description: ${JSON.stringify(description)}`,
     `slug: ${JSON.stringify(sample.slug)}`,
     `language: ${JSON.stringify(sample.language)}`,
     `category: ${JSON.stringify(sample.category)}`,
     `categoryLabel: ${JSON.stringify(sample.categoryLabel)}`,
+    ...(sample.collection ? [`collection: ${JSON.stringify(sample.collection)}`] : []),
+    `docs: ${JSON.stringify(sample.docs)}`,
+    ...(sample.family ? [`family: ${JSON.stringify(sample.family)}`] : []),
     `sourceUrl: ${JSON.stringify(sourceUrl(commit, sample.path))}`,
     `order: ${order}`,
     '---',
@@ -634,7 +754,12 @@ export async function buildSampleGuides(options: BuildSampleGuidesOptions): Prom
   }
 
   await rm(options.outputDir, { recursive: true, force: true })
-  const samples = [...manifest.samples].sort((left, right) => left.path.localeCompare(right.path))
+  const samples = [...manifest.samples].sort((left, right) => {
+    if (manifest.catalogMode === 'legacy') return left.path.localeCompare(right.path)
+    const leftOrder = manifest.catalogOrder.get(left.id) ?? Number.MAX_SAFE_INTEGER
+    const rightOrder = manifest.catalogOrder.get(right.id) ?? Number.MAX_SAFE_INTEGER
+    return leftOrder - rightOrder || left.path.localeCompare(right.path)
+  })
   let shortDescriptions = 0
   let longDescriptions = 0
   for (const [index, sample] of samples.entries()) {

@@ -234,6 +234,8 @@ sidebar:
             slug: docs/user-guide/migrate/langgraph
           - label: "Migrate from OpenAI"
             slug: docs/user-guide/migrate/openai
+          - label: "Migrate from strands-agents-tools"
+            slug: docs/user-guide/migrate/strands-agents-tools
       - label: Build guides
         items:
           - label: Tools
@@ -375,7 +377,6 @@ sidebar:
               - docs/user-guide/sdk/tools/tool-results
               - docs/user-guide/sdk/tools/mcp-transports
               - docs/user-guide/sdk/tools/executors
-              - docs/user-guide/sdk/tools/community-tools-package
               - label: Vended Tools
                 items:
                   - label: "Overview"

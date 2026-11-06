@@ -1,4 +1,6 @@
 import copy
+import importlib
+import json
 import logging
 import mimetypes
 import re
@@ -161,10 +163,110 @@ def test_format_request_with_params(model, messages, model_id, max_tokens):
         "messages": [{"role": "user", "content": [{"type": "text", "text": "test"}]}],
         "model": model_id,
         "tools": [],
-        "temperature": 1,
+        "extra_body": {"temperature": 1},
     }
 
     assert tru_request == exp_request
+
+
+def test_format_request_routes_sampling_params_through_extra_body(model, messages):
+    params = {"temperature": 0.2, "top_k": 4, "metadata": {"user_id": "u1"}, "extra_body": {"service_tier": "auto"}}
+    model.update_config(params=copy.deepcopy(params))
+
+    tru_request = model.format_request(messages)
+
+    assert tru_request["extra_body"] == {"temperature": 0.2, "top_k": 4, "service_tier": "auto"}
+    assert tru_request["metadata"] == {"user_id": "u1"}
+    assert not {"temperature", "top_k"} & tru_request.keys()
+    assert model.get_config()["params"] == params
+
+
+def test_format_request_rejects_sampling_param_set_in_params_and_extra_body(model, messages):
+    model.update_config(params={"temperature": 0.2, "extra_body": {"temperature": 0.5}})
+
+    with pytest.raises(
+        ValueError, match=r"params=<\['temperature'\]> \| set both in params and in params\['extra_body'\]"
+    ):
+        model.format_request(messages)
+
+
+@pytest.mark.parametrize("params", [{"temperature": 0.2}, {"extra_body": {"top_p": 0.9}}])
+def test_format_request_rejects_sampling_params_on_current_api_version(anthropic_client, model, messages, params):
+    anthropic_client.default_headers = {"anthropic-version": "2026-10-21"}
+    model.update_config(params=params)
+
+    with pytest.raises(ValueError) as exc_info:
+        model.format_request(messages)
+
+    assert "anthropic_version=<2026-10-21>" in str(exc_info.value)
+    assert '"anthropic-version": "2023-06-01"' in str(exc_info.value)
+
+
+@pytest.mark.parametrize(
+    ("default_headers", "params"),
+    [
+        ({"anthropic-version": "2023-06-01"}, {"temperature": 0.2}),
+        # A user header cased unlike the SDK default is listed ahead of it and is what reaches the wire.
+        ({"Anthropic-Version": "2023-06-01", "anthropic-version": "2026-10-21"}, {"temperature": 0.2}),
+        (
+            {"anthropic-version": "2026-10-21"},
+            {"temperature": 0.2, "extra_headers": {"Anthropic-Version": "2023-06-01"}},
+        ),
+        ({"anthropic-version": "2026-10-21"}, {"metadata": {"user_id": "u1"}}),
+    ],
+)
+def test_format_request_allows_sampling_params_on_legacy_api_version(
+    anthropic_client, model, messages, default_headers, params
+):
+    anthropic_client.default_headers = default_headers
+    model.update_config(params=params)
+
+    tru_request = model.format_request(messages)
+
+    assert tru_request.get("extra_body", {}).get("temperature") == params.get("temperature")
+
+
+@pytest.mark.parametrize(
+    ("api_version", "exp_assistant_content"),
+    [
+        (
+            "2023-06-01",
+            [
+                {"type": "text", "text": "see"},
+                {
+                    "type": "document",
+                    "source": {"data": "a", "media_type": "text/plain", "type": "text"},
+                    "title": "doc",
+                },
+            ],
+        ),
+        ("2026-10-21", [{"type": "text", "text": "see"}]),
+    ],
+)
+def test_format_request_assistant_document_blocks_by_api_version(
+    anthropic_client, model, caplog, api_version, exp_assistant_content
+):
+    caplog.set_level(logging.WARNING, logger="strands.models.anthropic")
+    anthropic_client.default_headers = {"anthropic-version": api_version}
+    document = {"document": {"format": "txt", "name": "doc", "source": {"bytes": b"a"}}}
+    messages = [
+        {"role": "user", "content": [{"text": "read"}, document]},
+        {"role": "assistant", "content": [{"text": "see"}, document]},
+        {"role": "user", "content": [{"text": "ok"}]},
+    ]
+
+    tru_request = model.format_request(messages)
+
+    assert tru_request["messages"][1]["content"] == exp_assistant_content
+    assert tru_request["messages"][0]["content"][1]["type"] == "document"
+    skipped_logs = [
+        record.getMessage() for record in caplog.records if "Assistant document blocks" in record.getMessage()
+    ]
+    assert skipped_logs == (
+        []
+        if api_version == "2023-06-01"
+        else ["count=<1> | Assistant document blocks are not supported by this API version | skipping content block"]
+    )
 
 
 def test_format_request_with_system_prompt(model, messages, model_id, max_tokens, system_prompt):
@@ -1818,6 +1920,20 @@ class TestPromptCaching:
 
         assert self._breakpoints(request) == [("messages", 0, {"type": "ephemeral", "ttl": "1h"})]
 
+    def test_messages_ttl_false_disables_the_message_breakpoint(self, model, messages):
+        model.update_config(cache_config=CacheConfig(strategy="auto", messages_ttl=False))
+
+        request = model.format_request(messages)
+
+        assert self._breakpoints(request) == []
+
+    def test_messages_ttl_string_sets_the_message_breakpoint_ttl(self, model, messages):
+        model.update_config(cache_config=CacheConfig(strategy="auto", ttl="1h", messages_ttl="5m"))
+
+        request = model.format_request(messages)
+
+        assert self._breakpoints(request) == [("messages", 0, {"type": "ephemeral", "ttl": "5m"})]
+
     def test_cache_tools_caches_only_the_last_tool(self, model, messages, tool_specs):
         """One cache_control on the final tool caches the whole tool block, so one breakpoint is enough."""
         model.update_config(cache_tools="default")
@@ -3193,3 +3309,67 @@ def test_format_request_logs_skipped_blocks_once_per_request(model, caplog):
     messages_logged = [record.getMessage() for record in caplog.records]
     assert len(messages_logged) == 1
     assert "count=<3> | Location sources are not supported by Anthropic" in messages_logged[0]
+
+
+@pytest.fixture
+def wire():
+    """A real client over a fake transport; records the request it receives and answers with a 400."""
+    # anthropic 1.0 moved from httpx to httpx2, so the transport comes from whichever the installed SDK uses.
+    httpx_module = importlib.import_module("httpx2" if int(anthropic.__version__.split(".")[0]) >= 1 else "httpx")
+    recorded = {}
+
+    def handler(request):
+        recorded["headers"] = request.headers
+        recorded["body"] = json.loads(request.content)
+        return httpx_module.Response(
+            400, json={"type": "error", "error": {"type": "invalid_request_error", "message": "x"}}
+        )
+
+    recorded["client_args"] = {
+        "api_key": "test",
+        "max_retries": 0,
+        "http_client": httpx_module.AsyncClient(transport=httpx_module.MockTransport(handler)),
+    }
+    return recorded
+
+
+@pytest.mark.asyncio
+async def test_stream_sends_sampling_params_in_request_body(wire, alist, messages):
+    model = AnthropicModel(
+        client_args={**wire["client_args"], "default_headers": {"anthropic-version": "2023-06-01"}},
+        model_id="m1",
+        max_tokens=1,
+        params={"temperature": 0.2, "top_k": 4, "metadata": {"user_id": "u1"}},
+    )
+
+    with pytest.raises(anthropic.BadRequestError):
+        await alist(model.stream(messages))
+
+    assert wire["body"]["temperature"] == 0.2
+    assert wire["body"]["top_k"] == 4
+    assert wire["body"]["metadata"] == {"user_id": "u1"}
+    assert wire["headers"]["anthropic-version"] == "2023-06-01"
+
+
+def test_api_version_reads_the_client_default(wire):
+    model = AnthropicModel(client_args=wire["client_args"], model_id="m1", max_tokens=1)
+
+    assert model._api_version() == model.client.default_headers["anthropic-version"]
+
+
+def test_api_version_prefers_a_user_header_in_any_case(wire):
+    client_args = {**wire["client_args"], "default_headers": {"Anthropic-Version": "2023-06-01"}}
+    model = AnthropicModel(client_args=client_args, model_id="m1", max_tokens=1)
+
+    assert model._api_version() == "2023-06-01"
+
+
+@pytest.mark.parametrize("client", [unittest.mock.Mock(), unittest.mock.AsyncMock(), unittest.mock.MagicMock()])
+def test_format_request_with_stubbed_client(model, messages, client):
+    model.client = client
+    model.update_config(params={"temperature": 0.2})
+
+    tru_request = model.format_request(messages)
+
+    assert tru_request["extra_body"] == {"temperature": 0.2}
+    assert model._api_version() is None
