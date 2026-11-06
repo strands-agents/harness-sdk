@@ -2,7 +2,8 @@ import { describe, it, expect, vi } from 'vitest'
 import { Offload } from '../offload/index.js'
 import { summarizeContent } from '../../methods/summarize.js'
 import { InvocationContextImpl } from '../../../agent/invocation-context.js'
-import { Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../../types/messages.js'
+import { Message, SummaryBlock, TextBlock, ToolResultBlock, ToolUseBlock } from '../../../types/messages.js'
+import { NotImplementedError } from '../../../errors.js'
 import { ImageBlock, VideoBlock } from '../../../types/media.js'
 import { logger } from '../../../logging/logger.js'
 import { createMockAgent } from '../../../__fixtures__/agent-helpers.js'
@@ -52,7 +53,7 @@ function heuristicCountTokens(messages: Message[]): number {
 
 function makeContext(messages: Message[], utilization = 0.5, model?: unknown): ContextState {
   const resolvedModel = model
-    ? { countTokens: async (msgs: Message[]) => heuristicCountTokens(msgs), ...(model as object) }
+    ? { countTokens: async (msgs: Message[]) => heuristicCountTokens(msgs), modelInfo: {}, ...(model as object) }
     : undefined
   const mockData = resolvedModel ? { messages, extra: { model: resolvedModel } as Partial<Agent> } : { messages }
   const agent = createMockAgent(mockData)
@@ -354,5 +355,132 @@ describe('repeated summarization', () => {
       .flatMap((message) => message.content)
       .filter((block) => block instanceof TextBlock && block.text.startsWith('[Summarized:'))
     expect(summaries).toHaveLength(1)
+  })
+})
+describe('server-side summary', () => {
+  const openingMessages = (): Message[] => [
+    new Message({ role: 'user', content: [new TextBlock('task')] }),
+    new Message({ role: 'assistant', content: [new TextBlock('old1')] }),
+    new Message({ role: 'user', content: [new TextBlock('old2')] }),
+    new Message({ role: 'assistant', content: [new TextBlock('old3')] }),
+    new Message({ role: 'user', content: [new TextBlock('recent')] }),
+  ]
+
+  const serverSideModel = (summarize: ReturnType<typeof vi.fn>, serverSideSummary: boolean | undefined = true) => ({
+    stream: vi.fn(),
+    countTokens: vi.fn(async () => 5000),
+    modelInfo: { capabilities: { serverSideSummary } },
+    summarize,
+  })
+
+  const texts = (messages: Message[]): string[] =>
+    messages.flatMap((message) => message.content.map((block) => (block as TextBlock).text))
+
+  const hasClientSideSummary = (messages: Message[]): boolean =>
+    messages.some((message) =>
+      message.content.some((block) => block instanceof TextBlock && block.text.includes('[Summarized:'))
+    )
+
+  it('replaces the opening run with the server-side summary', async () => {
+    const summary = new SummaryBlock({ provider: 'anthropic', text: 'compacted' })
+    const summarize = vi.fn(async (_messages: Message[]) => summary)
+    const messages = openingMessages()
+    const strategy = Offload.summarize('*').when({ utilization: 0.8, preserveRecent: 1 })
+
+    expect(await strategy.apply(makeContext(messages, 0.9, serverSideModel(summarize)))).toBe(true)
+
+    const sent = summarize.mock.calls[0]![0]
+    expect(texts(sent)).toEqual(['task', 'old1', 'old2', 'old3'])
+    expect(messages).toEqual([
+      expect.objectContaining({ role: 'user', content: [new TextBlock('task')] }),
+      expect.objectContaining({ role: 'assistant', content: [summary] }),
+      expect.objectContaining({ role: 'user', content: [new TextBlock('recent')] }),
+    ])
+  })
+
+  it('falls back to client-side when a pin is summarized', async () => {
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    const summarize = vi.fn()
+    const messages = openingMessages()
+    messages[2] = new Message({ role: 'user', content: [new TextBlock('pin')], metadata: { custom: { pinned: true } } })
+    const strategy = Offload.summarize('*').when({ utilization: 0.8, preserveRecent: 1 })
+
+    expect(await strategy.apply(makeContext(messages, 0.9, serverSideModel(summarize)))).toBe(true)
+
+    expect(summarize).not.toHaveBeenCalled()
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('pinned=<1> | server-side summary does not support pinned messages')
+    )
+    expect(texts(messages)).toEqual([
+      'task',
+      '[Summarized: 2 messages, ~5,000 tokens]\n\nSummary of multimodal content',
+      'pin',
+      'recent',
+    ])
+    warnSpy.mockRestore()
+  })
+
+  it.each([
+    { name: 'agent model unsupported', agentSupports: false, auxSupports: true },
+    { name: 'aux model unsupported', agentSupports: true, auxSupports: false },
+  ])('requires both models to support server-side summary: $name', async ({ agentSupports, auxSupports }) => {
+    const auxModel = serverSideModel(vi.fn(), auxSupports)
+    const messages = openingMessages()
+    const agent = createMockAgent({
+      messages,
+      extra: { model: serverSideModel(vi.fn(), agentSupports), auxModel } as unknown as Partial<Agent>,
+    })
+    const strategy = Offload.summarize('*').when({ utilization: 0.8, preserveRecent: 1 })
+
+    expect(await strategy.apply({ messages, agent, utilization: 0.9 })).toBe(true)
+
+    expect(auxModel.summarize).not.toHaveBeenCalled()
+    expect(hasClientSideSummary(messages)).toBe(true)
+  })
+
+  it.each([
+    { name: 'not implemented', error: new NotImplementedError('no server-side summary'), traceback: false },
+    { name: 'error', error: new Error('compaction rejected'), traceback: true },
+  ])('falls back to client-side: $name', async ({ error, traceback }) => {
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    const summarize = vi.fn(async () => {
+      throw error
+    })
+    const messages = openingMessages()
+    const strategy = Offload.summarize('*').when({ utilization: 0.8, preserveRecent: 1 })
+
+    expect(await strategy.apply(makeContext(messages, 0.9, serverSideModel(summarize)))).toBe(true)
+
+    expect(summarize).toHaveBeenCalledOnce()
+    expect(hasClientSideSummary(messages)).toBe(true)
+    const fallback = warnSpy.mock.calls.find(([message]) =>
+      String(message).includes('falling back to client-side summary')
+    )!
+    expect(fallback[0]).toContain(`reason=<${error.message}>`)
+    expect(fallback[0]).toContain('thinking blocks kept after it will be dropped')
+    expect(fallback.length > 1).toBe(traceback)
+    warnSpy.mockRestore()
+  })
+
+  it('keeps an earlier server-side summary in the client-side fallback', async () => {
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    vi.mocked(summarizeContent).mockClear()
+    const summarize = vi.fn(async () => {
+      throw new Error('overloaded')
+    })
+    const messages = [
+      new Message({ role: 'user', content: [new TextBlock('task')] }),
+      new Message({ role: 'assistant', content: [new SummaryBlock({ provider: 'anthropic', text: 'fact' })] }),
+      new Message({ role: 'user', content: [new TextBlock('old1')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('old2')] }),
+      new Message({ role: 'user', content: [new TextBlock('recent')] }),
+    ]
+    const strategy = Offload.summarize('*').when({ utilization: 0.8, preserveRecent: 1 })
+
+    expect(await strategy.apply(makeContext(messages, 0.9, serverSideModel(summarize)))).toBe(true)
+
+    const sent = vi.mocked(summarizeContent).mock.calls.flatMap(([content]) => content)
+    expect(sent).toContainEqual(new TextBlock('fact'))
+    warnSpy.mockRestore()
   })
 })

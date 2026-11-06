@@ -61,7 +61,7 @@ import {
   resolveConfigMetadata,
   resolveMaxTokens,
 } from '../models/model.js'
-import { mergeModelInfo, type ModelInfo } from './model-info.js'
+import { mergeModelInfo, SERVER_SIDE_SUMMARY_OFF, type ModelInfo } from './model-info.js'
 import { THINKING_BINDING_BETA, isThinkingBindingError, thinkingWithDropBlock } from './thinking-binding.js'
 import type { ContentBlock, Message, ReasoningBlock, StopReason, ToolUseBlock } from '../types/messages.js'
 import type { AudioSource, ImageSource, VideoSource, DocumentSource } from '../types/media.js'
@@ -527,13 +527,18 @@ export class BedrockModel extends Model<BedrockModelConfig> {
   }
 
   /**
-   * Reports OpenAI models as implicitly cached, which a `modelInfo` override still wins over. The
-   * shared model info lists cache points for their OpenAI-compatible APIs, but Converse caches them
-   * implicitly and rejects cache points.
+   * Reports server-side summary as off and OpenAI models as implicitly cached. A `modelInfo` override
+   * still wins over both. Converse has no server-side summary. The shared model info lists cache points
+   * for OpenAI models' OpenAI-compatible APIs, but Converse caches them implicitly and rejects cache points.
    */
   override get modelInfo(): ModelInfo {
-    if (!this.modelId?.toLowerCase().includes('openai.')) return super.modelInfo
-    return mergeModelInfo(super.modelInfo, { capabilities: { promptCaching: 'auto' } }, this._config.modelInfo)
+    const openaiCaching: ModelInfo = { capabilities: { promptCaching: 'auto' } }
+    return mergeModelInfo(
+      super.modelInfo,
+      SERVER_SIDE_SUMMARY_OFF,
+      this.modelId?.toLowerCase().includes('openai.') ? openaiCaching : undefined,
+      this._config.modelInfo
+    )
   }
 
   /**
@@ -1650,6 +1655,8 @@ export class BedrockModel extends Model<BedrockModelConfig> {
         // turns temporaryMessages on gets here.
         warnOnce(logger, 'block_type=<injectedBlock> | bedrock does not send injected blocks | skipping it')
         return undefined
+      case 'summaryBlock':
+        throw new Error(`content_type=<${block.type}> | unsupported type`)
     }
   }
 

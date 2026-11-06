@@ -15,6 +15,7 @@ import {
   JsonBlock,
   ReasoningBlock,
   InjectedBlock,
+  SummaryBlock,
 } from '../../types/messages.js'
 import { ImageBlock, DocumentBlock, VideoBlock } from '../../types/media.js'
 import { warnOnce } from '../../logging/warn-once.js'
@@ -3371,5 +3372,123 @@ describe('AnthropicModel', () => {
         content: [{ type: 'text', text: 'Agents are autonomous.' }],
       })
     })
+  })
+})
+
+describe('AnthropicModel server-side summary', () => {
+  const storedCompaction = (text = 'summary', signature = 'sig'): SummaryBlock =>
+    new SummaryBlock({ provider: 'anthropic', signature, text })
+
+  const compactionClient = (response: Record<string, unknown>) => {
+    const captured: { request: any; options: any } = { request: null, options: null }
+    const client = {
+      messages: {
+        stream: vi.fn((req, opts) => {
+          captured.request = req
+          captured.options = opts
+          return (async function* () {})()
+        }),
+      },
+      beta: {
+        messages: {
+          stream: vi.fn((req, opts) => {
+            captured.request = req
+            captured.options = opts
+            return { finalMessage: async () => response }
+          }),
+        },
+      },
+    } as unknown as Anthropic
+    return { captured, client }
+  }
+
+  const compactionModel = (client: Anthropic) =>
+    new AnthropicModel({ client, modelId: 'claude-sonnet-5-5', maxTokens: 1, stopSequences: ['STOP'] })
+
+  it('sends a compaction request and returns the summary block', async () => {
+    const { captured, client } = compactionClient({
+      stop_reason: 'compaction',
+      content: [{ type: 'compaction', content: 'the summary', signature: 's1' }],
+    })
+    const messages = [
+      new Message({ role: 'user', content: [new TextBlock('hi')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('yo')] }),
+    ]
+
+    const block = await compactionModel(client).summarize(messages, { systemPrompt: 'sys', instructions: 'keep ids' })
+
+    expect(captured.request.compaction).toEqual({ type: 'summarize', instructions: 'keep ids' })
+    expect(captured.options).toEqual({ headers: { 'anthropic-beta': 'compact-2026-09-04' } })
+    expect(captured.request).not.toHaveProperty('stop_sequences')
+    expect(captured.request.system).toBe('sys')
+    expect(captured.request.messages).toHaveLength(2)
+    expect(block).toEqual(storedCompaction('the summary', 's1'))
+  })
+
+  it('throws without a compaction block', async () => {
+    const { client } = compactionClient({ stop_reason: 'end_turn', content: [{ type: 'text', text: 'x' }] })
+
+    await expect(
+      compactionModel(client).summarize([new Message({ role: 'user', content: [new TextBlock('hi')] })])
+    ).rejects.toThrow('compaction returned no summary')
+  })
+
+  it('sends messages from the last compaction block', async () => {
+    const { captured, client } = compactionClient({})
+    const messages = [
+      new Message({ role: 'user', content: [new TextBlock('first')] }),
+      new Message({ role: 'assistant', content: [storedCompaction('old')] }),
+      new Message({ role: 'user', content: [new TextBlock('more')] }),
+      new Message({ role: 'assistant', content: [storedCompaction('new', 's2'), new TextBlock('after')] }),
+      new Message({ role: 'user', content: [new TextBlock('next')] }),
+    ]
+
+    await collectIterator(compactionModel(client).stream(messages))
+
+    expect(captured.request.messages).toEqual([
+      {
+        role: 'assistant',
+        content: [
+          { type: 'compaction', content: 'new', signature: 's2' },
+          { type: 'text', text: 'after' },
+        ],
+      },
+      { role: 'user', content: [{ type: 'text', text: 'next' }] },
+    ])
+    expect(captured.options).toEqual({ headers: { 'anthropic-beta': 'compact-2026-09-04' } })
+  })
+
+  it.each([
+    'claude-haiku-5-5',
+    'claude-sonnet-5-5',
+    'claude-opus-5-5',
+    'claude-fable-5-1',
+    'claude-sonnet-5-5-20260401',
+  ])('turns server-side summary on by default for listed model %s', (modelId) => {
+    const model = new AnthropicModel({ apiKey: 'sk-ant-test', modelId, maxTokens: 1 })
+
+    expect(model.modelInfo.capabilities?.serverSideSummary).toBe(true)
+  })
+
+  it.each(['claude-sonnet-4-5', 'm1'])('leaves server-side summary unset for other model %s', (modelId) => {
+    const model = new AnthropicModel({ apiKey: 'sk-ant-test', modelId, maxTokens: 1 })
+
+    expect(model.modelInfo.capabilities?.serverSideSummary).toBeUndefined()
+  })
+
+  it('sends the compaction text without the capability', async () => {
+    const { captured, client } = compactionClient({})
+    const model = compactionModel(client)
+    model.updateConfig({ modelInfo: { capabilities: { serverSideSummary: false } } })
+    const messages = [
+      new Message({ role: 'user', content: [new TextBlock('first')] }),
+      new Message({ role: 'assistant', content: [storedCompaction('old')] }),
+    ]
+
+    await collectIterator(model.stream(messages))
+
+    expect(model.modelInfo.capabilities?.serverSideSummary).toBe(false)
+    expect(captured.request.messages[1].content).toEqual([{ type: 'text', text: 'old' }])
+    expect(captured.options).toBeUndefined()
   })
 })

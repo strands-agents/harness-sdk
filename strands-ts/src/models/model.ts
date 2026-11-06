@@ -25,7 +25,7 @@ import {
   ModelRedactionEvent,
   type ModelStreamEvent,
 } from './streaming.js'
-import { MaxTokensError, ModelError, normalizeError } from '../errors.js'
+import { MaxTokensError, ModelError, NotImplementedError, normalizeError } from '../errors.js'
 import type { Redaction } from '../hooks/events.js'
 import { logger } from '../logging/logger.js'
 import { DEFAULT_CONTEXT_WINDOW_LIMIT } from './defaults.js'
@@ -308,6 +308,26 @@ export interface CountTokensOptions {
 }
 
 /**
+ * Options for a server-side summary.
+ */
+export interface SummarizeOptions {
+  /**
+   * The live conversation's system prompt.
+   */
+  systemPrompt?: SystemPrompt
+
+  /**
+   * The live conversation's tool specifications.
+   */
+  toolSpecs?: ToolSpec[]
+
+  /**
+   * Summarization instructions replacing the provider's own prompt.
+   */
+  instructions?: string
+}
+
+/**
  * Result interface for the streamAggregated method.
  * Contains the complete message, stop reason, and optional metadata.
  */
@@ -429,6 +449,23 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
    */
   async countTokens(messages: Message[], options?: CountTokensOptions): Promise<number> {
     return estimateTokensHeuristic(messages, options)
+  }
+
+  /**
+   * Summarizes the conversation's opening `messages` server-side.
+   *
+   * The summarize strategy calls this instead of its client-side summary when
+   * `modelInfo.capabilities.serverSideSummary` is `true`, with the messages from message 0 through the last
+   * one it summarizes. Providers with server-side summaries override it. When this throws, the strategy
+   * summarizes client-side instead.
+   *
+   * @param _messages - The opening messages to summarize, from message 0, left unmodified
+   * @param _options - The live system prompt and tools, and summarization instructions
+   * @returns A summary block that takes the summarized messages' place
+   * @throws NotImplementedError - When the model has no server-side summary
+   */
+  async summarize(_messages: Message[], _options?: SummarizeOptions): Promise<ContentBlock> {
+    throw new NotImplementedError(`model=<${this.constructor.name}> | model has no server-side summary`)
   }
 
   /**
@@ -753,6 +790,9 @@ function estimateContentBlockTokens(block: ContentBlock): number {
       break
     case 'injectedBlock':
       total += heuristicText(block.injected.text)
+      break
+    case 'summaryBlock':
+      total += heuristicText(block.text)
       break
     default:
       break

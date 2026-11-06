@@ -188,6 +188,7 @@ export type ContentBlockData =
   | { document: DocumentBlockData }
   | { citations: CitationsBlockData }
   | { injected: InjectedBlockData }
+  | { summary: SummaryBlockData }
 
 export type ContentBlock =
   | TextBlock
@@ -202,6 +203,7 @@ export type ContentBlock =
   | DocumentBlock
   | CitationsBlock
   | InjectedBlock
+  | SummaryBlock
 
 /**
  * Data for a text block.
@@ -639,6 +641,81 @@ export class CachePointBlock implements CachePointBlockData, JSONSerializable<{ 
    */
   static fromJSON(data: { cachePoint: CachePointBlockData }): CachePointBlock {
     return new CachePointBlock(data.cachePoint)
+  }
+}
+
+/**
+ * Data for a summary block.
+ */
+export interface SummaryBlockData {
+  /**
+   * Name of the provider that wrote the summary server-side, for example `'anthropic'`.
+   */
+  provider?: string
+
+  /**
+   * Signature the provider returned with the summary, sent back unchanged.
+   */
+  signature?: string
+
+  /**
+   * The summary text.
+   */
+  text: string
+}
+
+/**
+ * A summary of earlier conversation history that takes the summarized messages' place.
+ */
+export class SummaryBlock implements SummaryBlockData, JSONSerializable<{ summary: SummaryBlockData }> {
+  /**
+   * Discriminator for summary content.
+   */
+  readonly type = 'summaryBlock' as const
+
+  /**
+   * Name of the provider that wrote the summary server-side, for example `'anthropic'`.
+   */
+  readonly provider?: string
+
+  /**
+   * Signature the provider returned with the summary, sent back unchanged.
+   */
+  readonly signature?: string
+
+  /**
+   * The summary text.
+   */
+  readonly text: string
+
+  constructor(data: SummaryBlockData) {
+    if (data.provider !== undefined) this.provider = data.provider
+    if (data.signature !== undefined) this.signature = data.signature
+    this.text = data.text
+  }
+
+  /**
+   * Serializes the SummaryBlock to a JSON-compatible ContentBlockData object.
+   * Called automatically by JSON.stringify().
+   */
+  toJSON(): { summary: SummaryBlockData } {
+    return {
+      summary: {
+        ...(this.provider !== undefined && { provider: this.provider }),
+        ...(this.signature !== undefined && { signature: this.signature }),
+        text: this.text,
+      },
+    }
+  }
+
+  /**
+   * Creates a SummaryBlock instance from its wrapped data format.
+   *
+   * @param data - Wrapped SummaryBlockData to deserialize
+   * @returns SummaryBlock instance
+   */
+  static fromJSON(data: { summary: SummaryBlockData }): SummaryBlock {
+    return new SummaryBlock(data.summary)
   }
 }
 
@@ -1094,6 +1171,8 @@ export function contentBlockFromData(data: ContentBlockData): ContentBlock {
     return CitationsBlock.fromJSON(data)
   } else if ('injected' in data) {
     return InjectedBlock.fromJSON(data)
+  } else if ('summary' in data) {
+    return SummaryBlock.fromJSON(data)
   } else {
     throw new Error('Unknown ContentBlockData type')
   }

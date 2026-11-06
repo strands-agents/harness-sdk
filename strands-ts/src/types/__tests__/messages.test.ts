@@ -9,6 +9,8 @@ import {
   GuardContentBlock,
   JsonBlock,
   InjectedBlock,
+  SummaryBlock,
+  contentBlockFromData,
   generateTrackingId,
   type MessageData,
   type SystemPromptData,
@@ -270,6 +272,19 @@ describe('CachePointBlock', () => {
       cacheType: 'default',
       ttl: '1h',
     })
+  })
+})
+
+describe('SummaryBlock', () => {
+  test('roundtrips through toJSON and contentBlockFromData', () => {
+    const block = new SummaryBlock({ provider: 'anthropic', signature: 'sig', text: 'summary' })
+
+    expect(block.toJSON()).toEqual({ summary: { provider: 'anthropic', signature: 'sig', text: 'summary' } })
+    expect(contentBlockFromData(block.toJSON())).toEqual(block)
+  })
+
+  test('omits unset provider and signature in toJSON', () => {
+    expect(new SummaryBlock({ text: 'summary' }).toJSON()).toEqual({ summary: { text: 'summary' } })
   })
 })
 

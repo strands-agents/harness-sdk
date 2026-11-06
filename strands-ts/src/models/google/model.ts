@@ -14,6 +14,7 @@ import {
   type GenerateContentParameters,
 } from '@google/genai'
 import { Model, resolveConfigMetadata } from '../model.js'
+import { mergeModelInfo, SERVER_SIDE_SUMMARY_OFF, type ModelInfo } from '../model-info.js'
 import type { CountTokensOptions, StreamOptions } from '../model.js'
 import type { Message } from '../../types/messages.js'
 import type { ModelStreamEvent, Usage } from '../streaming.js'
@@ -164,6 +165,14 @@ export class GoogleModel extends Model<GoogleModelConfig> {
   /** The configured model ID, else the default one that gets sent. */
   override get modelId(): string {
     return this._config.modelId ?? MODEL_DEFAULTS.gemini.modelId
+  }
+
+  /**
+   * Reports server-side summary as off, which a `modelInfo` override still wins over. The Gemini API
+   * has no server-side summary, including for Claude models served through it.
+   */
+  override get modelInfo(): ModelInfo {
+    return mergeModelInfo(super.modelInfo, SERVER_SIDE_SUMMARY_OFF, this._config.modelInfo)
   }
 
   /**

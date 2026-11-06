@@ -97,6 +97,14 @@ const DATE_SUFFIX = /[-@]\d{8}$/
 
 const data = modelInfoData as ModelInfoData
 
+/**
+ * Turns `serverSideSummary` off for providers that serve a model the shared info lists it for but have no
+ * server-side summary of their own.
+ *
+ * @internal
+ */
+export const SERVER_SIDE_SUMMARY_OFF: ModelInfo = { capabilities: { serverSideSummary: false } }
+
 /** Context window limit (in tokens) assumed for a model whose window is unknown. */
 export const DEFAULT_CONTEXT_WINDOW_LIMIT = data.defaults.limits.contextWindow
 

@@ -12,7 +12,7 @@ import OpenAI, { APIUserAbortError } from 'openai'
 import type { ResponseStreamEvent } from 'openai/resources/responses/responses'
 import { Model, resolveConfigMetadata } from '../model.js'
 import type { StreamOptions } from '../model.js'
-import { mergeModelInfo, type ModelInfo } from '../model-info.js'
+import { mergeModelInfo, SERVER_SIDE_SUMMARY_OFF, type ModelInfo } from '../model-info.js'
 import type { Message } from '../../types/messages.js'
 import type { ModelStreamEvent, Usage } from '../streaming.js'
 import { ContextWindowOverflowError, ModelThrottledError } from '../../errors.js'
@@ -127,13 +127,18 @@ export class OpenAIModel extends Model<OpenAIModelConfig> {
   }
 
   /**
-   * Adds whether this model manages conversation state server-side: `true` only for
-   * `api: 'responses'` with `stateful === true`. Chat Completions is always stateless, and
-   * Responses defaults to stateless.
+   * Adds whether this model manages conversation state server-side, and reports server-side summary as off.
+   * `stateful` is `true` only for `api: 'responses'` with `stateful === true`; Chat Completions is always
+   * stateless, and Responses defaults to stateless. A `modelInfo` override still wins over both.
    */
   override get modelInfo(): ModelInfo {
     const stateful = this._api === 'responses' && this._config.stateful === true
-    return mergeModelInfo(super.modelInfo, { capabilities: { stateful } }, this._config.modelInfo)
+    return mergeModelInfo(
+      super.modelInfo,
+      { capabilities: { stateful } },
+      SERVER_SIDE_SUMMARY_OFF,
+      this._config.modelInfo
+    )
   }
 
   /**
