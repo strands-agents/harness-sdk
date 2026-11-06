@@ -384,6 +384,11 @@
         "promptCaching": "cachePoints"
       }
     },
+    "gpt-6-cyber": {
+      "limits": {
+        "contextWindow": 1050000
+      }
+    },
     "gpt-5.6": {
       "limits": {
         "contextWindow": 1050000

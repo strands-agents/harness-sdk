@@ -121,11 +121,17 @@ _SDK_SUPPORTS_NATIVE_OUTPUT = tuple(int(part) for part in re.findall(r"\d+", ant
 
 # anthropic 1.0 removed the sampling parameters from the messages method signatures, so they travel in
 # ``extra_body`` (merged into the request body on every SDK version). API version 2026-10-21, the default
-# on anthropic 2.x, rejects them outright; only the 2023-06-01 API version still accepts them.
+# on anthropic 2.x, and later versions reject them outright; earlier versions such as 2023-06-01 accept them.
 # https://platform.claude.com/docs/en/api/migration-2026-10-21#sampling-parameters
 _SAMPLING_PARAMS = frozenset({"temperature", "top_k", "top_p"})
 _LEGACY_API_VERSION = "2023-06-01"
+_SAMPLING_PARAMS_REMOVED_VERSION = "2026-10-21"
 _API_VERSION_HEADER = "anthropic-version"
+
+
+def _is_current_api_version(api_version: str | None) -> bool:
+    """Whether the API version drops sampling parameters and assistant documents; None means unknown."""
+    return api_version is not None and api_version >= _SAMPLING_PARAMS_REMOVED_VERSION
 
 
 def _mechanism_tool_choice(
@@ -187,8 +193,8 @@ class AnthropicModel(Model):
                 https://docs.anthropic.com/en/docs/about-claude/models/all-models.
             params: Additional model parameters (e.g., metadata, stop_sequences).
                 For a complete list of supported parameters, see https://docs.anthropic.com/en/api/messages.
-                Sampling parameters (temperature, top_k, top_p) are accepted only by API version 2023-06-01;
-                pin it with client_args={"default_headers": {"anthropic-version": "2023-06-01"}}.
+                Sampling parameters (temperature, top_k, top_p) are rejected from API version 2026-10-21 on;
+                pin 2023-06-01 with client_args={"default_headers": {"anthropic-version": "2023-06-01"}}.
             anthropic_tools: Anthropic-specific server-side tools that are not function tools
                 (e.g., web_search, web_fetch, code_execution). Appended alongside the agent's function tools.
                 Use the standard tools interface for function calling tools.
@@ -382,7 +388,7 @@ class AnthropicModel(Model):
         formatted_messages = []
         dropped_unsigned_reasoning = False
         skipped: Counter[str] = Counter()
-        drop_assistant_documents = self._api_version() not in (None, _LEGACY_API_VERSION)
+        drop_assistant_documents = _is_current_api_version(self._api_version())
 
         for message_idx, message in enumerate(messages):
             formatted_contents: list[dict[str, Any]] = []
@@ -633,7 +639,7 @@ class AnthropicModel(Model):
             TypeError: If a message contains a content block type that cannot be converted to an Anthropic-compatible
                 format.
             ValueError: If params sets a sampling parameter both directly and in extra_body, or sets one while the
-                request uses an API version other than 2023-06-01.
+                request uses API version 2026-10-21 or later.
         """
         if self.model_info.capabilities.server_side_summary is True:
             messages = _from_last_compaction(messages)
@@ -712,7 +718,7 @@ class AnthropicModel(Model):
 
         Raises:
             ValueError: If a sampling parameter is set both in params and in params["extra_body"], or if sampling
-                parameters are set while the request uses an API version other than 2023-06-01.
+                parameters are set while the request uses API version 2026-10-21 or later.
         """
         params = dict(self.config.get("params") or {})
         sampling_params = {key: params.pop(key) for key in _SAMPLING_PARAMS & params.keys()}
@@ -725,7 +731,7 @@ class AnthropicModel(Model):
 
         sent_sampling_params = _SAMPLING_PARAMS & extra_body.keys()
         api_version = self._api_version()
-        if sent_sampling_params and api_version not in (None, _LEGACY_API_VERSION):
+        if sent_sampling_params and _is_current_api_version(api_version):
             raise ValueError(
                 f"params=<{sorted(sent_sampling_params)}>, anthropic_version=<{api_version}> | sampling parameters "
                 f"are not accepted by this API version; remove them, or pin the API version with "
@@ -1148,7 +1154,7 @@ class AnthropicModel(Model):
             ModelThrottledException: If the request is throttled by Anthropic.
             RuntimeError: If a paused server-side tool turn is still paused after the continuation limit.
             ValueError: If params sets a sampling parameter both directly and in extra_body, or sets one while the
-                request uses an API version other than 2023-06-01.
+                request uses API version 2026-10-21 or later.
         """
         mechanism = self._structured_output_mechanism(structured_output_model, tool_choice)
 

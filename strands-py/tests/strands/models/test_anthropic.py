@@ -190,15 +190,18 @@ def test_format_request_rejects_sampling_param_set_in_params_and_extra_body(mode
         model.format_request(messages)
 
 
+@pytest.mark.parametrize("api_version", ["2026-10-21", "2027-01-01"])
 @pytest.mark.parametrize("params", [{"temperature": 0.2}, {"extra_body": {"top_p": 0.9}}])
-def test_format_request_rejects_sampling_params_on_current_api_version(anthropic_client, model, messages, params):
-    anthropic_client.default_headers = {"anthropic-version": "2026-10-21"}
+def test_format_request_rejects_sampling_params_on_current_api_version(
+    anthropic_client, model, messages, params, api_version
+):
+    anthropic_client.default_headers = {"anthropic-version": api_version}
     model.update_config(params=params)
 
     with pytest.raises(ValueError) as exc_info:
         model.format_request(messages)
 
-    assert "anthropic_version=<2026-10-21>" in str(exc_info.value)
+    assert f"anthropic_version=<{api_version}>" in str(exc_info.value)
     assert '"anthropic-version": "2023-06-01"' in str(exc_info.value)
 
 
@@ -206,6 +209,7 @@ def test_format_request_rejects_sampling_params_on_current_api_version(anthropic
     ("default_headers", "params"),
     [
         ({"anthropic-version": "2023-06-01"}, {"temperature": 0.2}),
+        ({"anthropic-version": "2023-01-01"}, {"temperature": 0.2}),
         # A user header cased unlike the SDK default is listed ahead of it and is what reaches the wire.
         ({"Anthropic-Version": "2023-06-01", "anthropic-version": "2026-10-21"}, {"temperature": 0.2}),
         (
@@ -240,7 +244,19 @@ def test_format_request_allows_sampling_params_on_legacy_api_version(
                 },
             ],
         ),
+        (
+            "2023-01-01",
+            [
+                {"type": "text", "text": "see"},
+                {
+                    "type": "document",
+                    "source": {"data": "a", "media_type": "text/plain", "type": "text"},
+                    "title": "doc",
+                },
+            ],
+        ),
         ("2026-10-21", [{"type": "text", "text": "see"}]),
+        ("2027-01-01", [{"type": "text", "text": "see"}]),
     ],
 )
 def test_format_request_assistant_document_blocks_by_api_version(
@@ -264,7 +280,7 @@ def test_format_request_assistant_document_blocks_by_api_version(
     ]
     assert skipped_logs == (
         []
-        if api_version == "2023-06-01"
+        if api_version < "2026-10-21"
         else ["count=<1> | Assistant document blocks are not supported by this API version | skipping content block"]
     )
 
