@@ -37,6 +37,21 @@ describe('file change previews', () => {
     )
   })
 
+  // Guards #4678: replacement patterns ($$, $&, $', $`) in new_str appear verbatim in the preview.
+  it('previews an edit whose new_str contains replacement patterns verbatim', async () => {
+    const preview = await buildFileChangePreview(
+      toolEvent(
+        'edit',
+        { path: '/workspace/file.txt', old_str: 'beta', new_str: "$$ $& $' end" },
+        vi.fn(async () => 'alpha\nbeta\n')
+      )
+    )
+
+    expect(preview?.lines).toEqual(
+      expect.arrayContaining([expect.objectContaining({ kind: 'add', text: "$$ $& $' end" })])
+    )
+  })
+
   it('omits an edit preview when the replacement is not uniquely applicable', async () => {
     const preview = await buildFileChangePreview(
       toolEvent(
