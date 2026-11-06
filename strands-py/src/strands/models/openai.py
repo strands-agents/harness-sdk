@@ -393,11 +393,15 @@ class OpenAIModel(Model):
         ]
 
     @classmethod
-    def _format_regular_messages(cls, messages: Messages, **kwargs: Any) -> list[dict[str, Any]]:
+    def _format_regular_messages(
+        cls, messages: Messages, *, preserve_reasoning: bool = False, **kwargs: Any
+    ) -> list[dict[str, Any]]:
         """Format regular messages for OpenAI-compatible providers.
 
         Args:
             messages: List of message objects to be processed by the model.
+            preserve_reasoning: Whether to replay ``reasoningContent`` blocks instead of dropping them.
+                Subclasses whose backend accepts the blocks opt in.
             **kwargs: Additional keyword arguments for future extensibility.
 
         Returns:
@@ -412,7 +416,7 @@ class OpenAIModel(Model):
             # Filter out content blocks that shouldn't be formatted
             filtered_contents = []
             for content in contents:
-                if "reasoningContent" in content:
+                if "reasoningContent" in content and not preserve_reasoning:
                     skipped[
                         "reasoningContent is not supported in multi-turn conversations with the Chat Completions API"
                     ] += 1
@@ -466,6 +470,7 @@ class OpenAIModel(Model):
         system_prompt: str | None = None,
         *,
         system_prompt_content: list[SystemContentBlock] | None = None,
+        preserve_reasoning: bool = False,
         **kwargs: Any,
     ) -> list[dict[str, Any]]:
         """Format an OpenAI compatible messages array.
@@ -474,15 +479,24 @@ class OpenAIModel(Model):
             messages: List of message objects to be processed by the model.
             system_prompt: System prompt to provide context to the model.
             system_prompt_content: System prompt content blocks to provide context to the model.
+            preserve_reasoning: Whether to replay ``reasoningContent`` blocks instead of dropping them.
             **kwargs: Additional keyword arguments for future extensibility.
 
         Returns:
             An OpenAI compatible messages array.
         """
         formatted_messages = cls._format_system_messages(system_prompt, system_prompt_content=system_prompt_content)
-        formatted_messages.extend(cls._format_regular_messages(messages))
+        formatted_messages.extend(cls._format_regular_messages(messages, preserve_reasoning=preserve_reasoning))
 
         return [message for message in formatted_messages if "content" in message or "tool_calls" in message]
+
+    def _preserve_reasoning_in_history(self) -> bool:
+        """Whether ``reasoningContent`` blocks from history may be replayed to this backend.
+
+        OpenAI's Chat Completions API rejects them, so the default drops them. Subclasses whose
+        backend accepts the blocks override this to opt in.
+        """
+        return False
 
     def format_request(
         self,
@@ -519,7 +533,10 @@ class OpenAIModel(Model):
 
         request = {
             "messages": self.format_request_messages(
-                messages, system_prompt, system_prompt_content=system_prompt_content
+                messages,
+                system_prompt,
+                system_prompt_content=system_prompt_content,
+                preserve_reasoning=self._preserve_reasoning_in_history(),
             ),
             "model": self.config["model_id"],
             "stream": stream,
