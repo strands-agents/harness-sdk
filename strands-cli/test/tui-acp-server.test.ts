@@ -880,6 +880,71 @@ describe('ACP background tasks', () => {
     }
   }, 30_000)
 
+  it('makes an empty prompt wait for a running turn, then deliver the ready results', async () => {
+    const tasks: Record<string, unknown>[] = [task('working')]
+    const { connection, stream, open, close } = connect(tasks)
+    const release = deferred()
+    stream.mockImplementationOnce(async function* () {
+      yield* []
+      await release.promise
+      return finished
+    })
+    try {
+      const { sessionId } = await open(optIn)
+      const running = connection.agent.request(acp.methods.agent.session.prompt, {
+        sessionId,
+        prompt: [{ type: 'text', text: 'go' }],
+      })
+      await vi.waitFor(() => expect(stream).toHaveBeenCalledOnce())
+      let answered = false
+      const delivery = connection.agent
+        .request(acp.methods.agent.session.prompt, { sessionId, prompt: [] })
+        .finally(() => {
+          answered = true
+        })
+      tasks[0] = task('completed', { result: { content: [{ text: 'BG-RESULT' }] } })
+      await settle()
+      expect(answered).toBe(false)
+
+      release.resolve()
+      await expect(running).resolves.toMatchObject({ stopReason: 'end_turn' })
+      await expect(delivery).resolves.toMatchObject({ stopReason: 'end_turn' })
+      expect(stream).toHaveBeenCalledTimes(2)
+      expect(stream).toHaveBeenLastCalledWith([])
+    } finally {
+      await close()
+    }
+  })
+
+  it('ends a waiting empty prompt as cancelled when the client cancels', async () => {
+    const tasks: Record<string, unknown>[] = [task('completed', { result: { content: [{ text: 'BG-RESULT' }] } })]
+    const { service, connection, stream, open, close } = connect(tasks)
+    const release = deferred()
+    stream.mockImplementationOnce(async function* () {
+      yield* []
+      await release.promise
+      return finished
+    })
+    try {
+      const { sessionId } = await open(optIn)
+      const running = connection.agent.request(acp.methods.agent.session.prompt, {
+        sessionId,
+        prompt: [{ type: 'text', text: 'go' }],
+      })
+      await vi.waitFor(() => expect(stream).toHaveBeenCalledOnce())
+      const delivery = connection.agent.request(acp.methods.agent.session.prompt, { sessionId, prompt: [] })
+      await settle()
+
+      service.cancel(sessionId)
+      release.resolve()
+      await running
+      await expect(delivery).resolves.toEqual({ stopReason: 'cancelled' })
+      expect(stream).toHaveBeenCalledOnce()
+    } finally {
+      await close()
+    }
+  })
+
   it('answers an empty prompt at once with no ready results, and delivers ready ones', async () => {
     const tasks: Record<string, unknown>[] = [task('working')]
     const { connection, stream, open, close } = connect(tasks)

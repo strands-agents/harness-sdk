@@ -48,6 +48,8 @@ interface AcpSession {
   /** Sends an update for each background task whose status changed. */
   publishBackgroundTasks?: () => Promise<void>
   stopBackgroundWatch?: () => void
+  /** Counts cancels, so an empty prompt that waited for a turn can see one. */
+  cancels?: number
 }
 
 export class AcpService {
@@ -146,13 +148,15 @@ export class AcpService {
     if (!session) {
       throw new Error(`Unknown session ${params.sessionId}.`)
     }
-    if (session.activePrompt) {
+    // An empty prompt asks for finished background results. A running turn hands those over by
+    // itself, so the empty prompt waits for it, and the client learns when that turn ends.
+    if (session.backgroundUpdates && params.prompt.length === 0) {
+      const cancels = session.cancels ?? 0
+      while (session.activePrompt) await session.activePrompt
+      if ((session.cancels ?? 0) !== cancels) return { stopReason: 'cancelled' }
+      if (!hasReadyBackgroundResults(session.agent)) return { stopReason: 'end_turn' }
+    } else if (session.activePrompt) {
       throw new Error(`Session ${params.sessionId} is already processing a prompt.`)
-    }
-    // An empty prompt asks for finished background results. With none ready, there is nothing to
-    // give the model, so the turn ends at once with no model call.
-    if (session.backgroundUpdates && params.prompt.length === 0 && !hasReadyBackgroundResults(session.agent)) {
-      return { stopReason: 'end_turn' }
     }
     let settlePrompt: () => void
     session.activePrompt = new Promise<void>((resolve) => {
@@ -199,13 +203,17 @@ export class AcpService {
   }
 
   cancel(sessionId: string): void {
-    this._sessions.get(sessionId)?.agent.cancel()
+    const session = this._sessions.get(sessionId)
+    if (!session) return
+    session.cancels = (session.cancels ?? 0) + 1
+    session.agent.cancel()
   }
 
   async dispose(): Promise<void> {
     const sessions = [...this._sessions.values()]
     for (const session of sessions) {
       session.stopBackgroundWatch?.()
+      session.cancels = (session.cancels ?? 0) + 1
       session.agent.cancel()
     }
     await Promise.allSettled(sessions.map((session) => settleWithin(session.activePrompt)))

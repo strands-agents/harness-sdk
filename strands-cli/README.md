@@ -483,6 +483,8 @@ in `_meta["strands/backgroundTasks"]` as `{ "version": 1 }`. To opt in, send
   The first read also reports the tasks that a loaded session restores.
 - An empty `session/prompt` gives the finished results to the model. When no result is ready, the
   turn ends at once with no model call.
+- When a turn runs, an empty `session/prompt` waits until that turn ends, because the running turn
+  gives ready results to the model. A cancel during the wait ends the empty prompt as `cancelled`.
 - When the connection closes, the server stops the updates. It does not cancel the background tasks
   that still run.
 
