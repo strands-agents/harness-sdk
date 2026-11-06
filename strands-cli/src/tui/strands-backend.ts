@@ -24,7 +24,7 @@ import type {
 import { projectAgentEvent, projectAgentResult } from './chat/sdk-projector.js'
 import { sanitizeTerminalText } from './terminal/sanitize.js'
 import type { BackgroundAgentActivity, BackgroundAgentActivityStore } from './background/activity.js'
-import { readBackgroundTasks } from './background/tasks.js'
+import { hasReadyBackgroundResults, readBackgroundTasks } from './background/tasks.js'
 import { peerMessageMetadata, peerMessagePrompt, type PeerMessage } from './messaging.js'
 import { effortDisplayLabel } from './model/selection.js'
 import type { AgentModelRuntime } from './model/runtime.js'
@@ -318,7 +318,7 @@ export class StrandsChatBackend implements ChatBackend {
   }
 
   hasReadyBackgroundResults(): boolean {
-    return readBackgroundTasks(this._runtime.agent).some((task) => task.deliveryState === 'ready')
+    return hasReadyBackgroundResults(this._runtime.agent)
   }
 
   async *stream(prompt: string): AsyncGenerator<ChatEvent, ChatRunResult, undefined> {

@@ -13,6 +13,7 @@ import type { ImportedAgentProject } from './project/import.js'
 import type { AgentFactory } from './project/typescript.js'
 import { BackgroundAgentActivityStore, observeSubagentActivity } from './background/activity.js'
 import { BackgroundAgentInbox } from './background/inbox.js'
+import { interactiveBackgroundTasks } from './background/tasks.js'
 import {
   ChatController,
   type ChatConversation,
@@ -570,17 +571,6 @@ function createInteractiveSessionId(): string {
   return `${timestamp}-${randomUUID().slice(0, 8)}`
 }
 
-export function interactiveBackgroundTasks(
-  options: HarnessAgentOptions,
-  waitForCompletion = false
-): Exclude<HarnessAgentOptions['backgroundTasks'], undefined> {
-  const configured = options.backgroundTasks
-  if (configured === false) {
-    return false
-  }
-  return { ...(configured === true ? {} : configured), waitForCompletion }
-}
-
 async function loadSessionCatalog(path: string | undefined): Promise<SessionRootCatalog | undefined> {
   try {
     return await SessionRootCatalog.load(path)
@@ -638,3 +628,5 @@ async function workspaceMcpOptions(
     expectedDigests: inspection.digests,
   }
 }
+
+export { interactiveBackgroundTasks }

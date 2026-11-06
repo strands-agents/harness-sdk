@@ -469,6 +469,25 @@ Python sidecar; `uv` installs its Python dependencies on first use.
 stdin/stdout. It creates a harness agent for each ACP session, supports client-supplied MCP servers, and
 supports loading saved sessions with transcript replay. Start a separate process for each workspace.
 
+An ACP client can let turns end while background tasks run, as Ink does. `initialize` advertises this
+in `_meta["strands/backgroundTasks"]` as `{ "version": 1 }`. To opt in, send
+`_meta: { "strands/backgroundTasks": { "waitForCompletion": false } }` with `session/new` or
+`session/load`. For such a session:
+
+- A turn ends when the model stops. It does not wait for background tasks.
+- When a background task changes status, the server sends a `tool_call_update` for the tool call
+  that started the task. The `status` is `in_progress`, `completed`, or `failed`. A finished task has
+  its result or error in `content`, and `_meta["strands/backgroundTask"]` holds `{ taskId, status }`.
+- The server reads task status every 200 ms, before each model call, and at the end of each turn. Thus
+  it can skip a short status, but the final status always arrives before the model gets the result.
+  The first read also reports the tasks that a loaded session restores.
+- An empty `session/prompt` gives the finished results to the model. When no result is ready, the
+  turn ends at once with no model call.
+- When the connection closes, the server stops the updates. It does not cancel the background tasks
+  that still run.
+
+A session that does not opt in keeps the wait-for-completion behavior.
+
 ## Models, sessions, and background work
 
 ### Choosing a model
@@ -520,10 +539,11 @@ total updates; the context meter continues to measure the parent agent's prompt.
 Live subagents also appear in `/agents` while they are available for peer messages. They are
 status rows rather than switchable conversations and disappear when the delegated task finishes.
 
-Plain, print, ACP-server, and direct library invocations use the normal wait-for-completion
-behavior. Ink blocks model-family restarts, session replacement, and wait-mode changes while
-Background Tasks are running or waiting for delivery. Use the library's `backgroundTasks` option
-for custom policy or to disable the feature.
+Plain, print, and direct library invocations use the normal wait-for-completion behavior. So do
+ACP-server sessions, unless the client opts in (see [ACP server](#acp-server)). Ink blocks
+model-family restarts, session replacement, and wait-mode changes while Background Tasks are running
+or waiting for delivery. Use the library's `backgroundTasks` option for custom policy or to disable
+the feature.
 
 ## Debug logging
 

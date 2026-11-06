@@ -22,7 +22,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { projectMessages } from '../src/tui/chat/projector.js'
 import { DEFAULT_CHAT_SETTINGS, type ChatSnapshot } from '../src/tui/chat/controller.js'
-import { createAcpApp, AcpService } from '../src/tui/acp/server.js'
+import { createAcpApp, AcpService, BACKGROUND_TASKS_META_KEY, BACKGROUND_TASK_META_KEY } from '../src/tui/acp/server.js'
 import { restoreSessionAgentDefinition, AGENT_DEFINITION_META_KEY } from '../src/tui/session/agent-definition.js'
 import { ChatView } from '../src/tui/view/chat-view.js'
 
@@ -547,3 +547,355 @@ async function writeSavedSession(sessionDirectory: string, sessionId: string): P
   await mkdir(snapshots, { recursive: true })
   await writeFile(join(snapshots, 'snapshot_latest.json'), '{"data":{"messages":[]}}')
 }
+
+describe('ACP background tasks', () => {
+  const finished = {
+    stopReason: 'endTurn',
+    metrics: { latestAgentInvocation: { usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } } },
+  } as unknown as AgentResult
+  const optIn = { [BACKGROUND_TASKS_META_KEY]: { waitForCompletion: false } }
+
+  function connect(tasks: Record<string, unknown>[]) {
+    const stream = vi.fn(async function* (_input: ContentBlockData[]): AsyncGenerator<AgentStreamEvent, AgentResult> {
+      yield* []
+      return finished
+    })
+    const fakeAgent = {
+      addHook: vi.fn(),
+      cancel: vi.fn(),
+      initialize: vi.fn(async () => undefined),
+      messages: [],
+      model: { getConfig: () => ({ contextWindowLimit: 1_000 }) },
+      appState: { get: (key: string) => (key === 'strands.backgroundTasks' ? tasks : undefined) },
+      stream,
+    } as unknown as Agent
+    const buildAgent = vi.fn(async (_options: HarnessAgentOptions) => fakeAgent)
+    const service = new AcpService({}, { buildAgent })
+    const updates: acp.SessionUpdate[] = []
+    const client = acp.client({ name: 'test-client' }).onNotification(acp.methods.client.session.update, (context) => {
+      updates.push(context.params.update)
+    })
+    const connection = client.connect(createAcpApp(service))
+    const open = (meta?: Record<string, unknown>) =>
+      connection.agent.request(acp.methods.agent.session.new, {
+        cwd: process.cwd(),
+        mcpServers: [],
+        ...(meta ? { _meta: meta } : {}),
+      })
+    const close = async (): Promise<void> => {
+      connection.close()
+      await connection.closed
+      await service.dispose()
+    }
+    return { service, connection, updates, buildAgent, stream, open, close }
+  }
+
+  const task = (status: string, extra: Record<string, unknown> = {}) => ({
+    taskId: 'task-1',
+    toolUseId: 'call-1',
+    toolName: 'shell',
+    status,
+    ...extra,
+  })
+  const taskUpdates = (updates: acp.SessionUpdate[]) =>
+    updates.filter((update) => update.sessionUpdate === 'tool_call_update' && update.toolCallId === 'call-1')
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 500))
+
+  class BackgroundModel extends Model {
+    private calls = 0
+    private config = { modelId: 'background-test', contextWindowLimit: 10_000 }
+    private readonly command: string
+    private readonly pauseMs: number
+
+    constructor(command: string, pauseMs = 0) {
+      super()
+      this.command = command
+      this.pauseMs = pauseMs
+    }
+
+    updateConfig(config: { modelId?: string; contextWindowLimit?: number }): void {
+      this.config = { ...this.config, ...config }
+    }
+
+    getConfig(): { modelId: string; contextWindowLimit: number } {
+      return this.config
+    }
+
+    async *stream(messages: readonly Message[]): AsyncIterable<ModelStreamEvent> {
+      this.calls += 1
+      const delivered = JSON.stringify(messages).includes('BG-42')
+      if (this.calls > 1 && !delivered && this.pauseMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, this.pauseMs))
+      }
+      yield { type: 'modelMessageStartEvent', role: 'assistant' }
+      if (this.calls === 1) {
+        yield {
+          type: 'modelContentBlockStartEvent',
+          start: { type: 'toolUseStart', name: 'shell', toolUseId: 'call-shell' },
+        }
+        yield {
+          type: 'modelContentBlockDeltaEvent',
+          delta: {
+            type: 'toolUseInputDelta',
+            input: JSON.stringify({ command: this.command, _background_execution: true }),
+          },
+        }
+        yield { type: 'modelContentBlockStopEvent' }
+        yield { type: 'modelMessageStopEvent', stopReason: 'toolUse' }
+      } else {
+        yield { type: 'modelContentBlockStartEvent' }
+        yield {
+          type: 'modelContentBlockDeltaEvent',
+          delta: { type: 'textDelta', text: delivered ? 'got BG-42' : 'dispatched' },
+        }
+        yield { type: 'modelContentBlockStopEvent' }
+        yield { type: 'modelMessageStopEvent', stopReason: 'endTurn' }
+      }
+      yield {
+        type: 'modelMetadataEvent',
+        usage: { inputTokens: 3, outputTokens: 2, totalTokens: 5 },
+        metrics: { latencyMs: 1 },
+      }
+    }
+  }
+
+  async function harnessSession(model: Model, options: { backgroundTaskPollMs?: number } = {}) {
+    const originalCwd = process.cwd()
+    const root = await mkdtemp(join(tmpdir(), 'strands-acp-background-'))
+    const workspace = join(root, 'workspace')
+    await mkdir(workspace, { recursive: true })
+    const buildAgent = (agentOptions: HarnessAgentOptions): Promise<Agent> =>
+      createHarness({ ...agentOptions, model, builtinTools: ['shell'], contextManager: false, printer: false })
+    const updates: acp.SessionUpdate[] = []
+    const client = {
+      notify: vi.fn(async (_method: string, params: acp.SessionNotification) => {
+        updates.push(params.update)
+      }),
+    } as unknown as acp.AgentContext
+    const service = new AcpService(
+      { session: { dir: join(workspace, '.agent', 'sessions') } },
+      { buildAgent, ...options }
+    )
+    const close = async (): Promise<void> => {
+      await service.dispose()
+      process.chdir(originalCwd)
+      await rm(root, { recursive: true, force: true })
+    }
+    let sessionId: string
+    try {
+      ;({ sessionId } = await service.newSession({ cwd: workspace, mcpServers: [], _meta: optIn }, client))
+    } catch (error) {
+      await close()
+      throw error
+    }
+    return {
+      updates,
+      close,
+      prompt: (text?: string) =>
+        service.prompt({ sessionId, prompt: text === undefined ? [] : [{ type: 'text', text }] }, client),
+      text: (): string =>
+        updates
+          .flatMap((update) =>
+            update.sessionUpdate === 'agent_message_chunk' && update.content.type === 'text'
+              ? [update.content.text]
+              : []
+          )
+          .join(''),
+      settledAt: (): number =>
+        updates.findIndex(
+          (update) =>
+            update.sessionUpdate === 'tool_call_update' &&
+            update.toolCallId === 'call-shell' &&
+            update.status === 'completed' &&
+            update._meta?.[BACKGROUND_TASK_META_KEY] !== undefined
+        ),
+    }
+  }
+
+  it('advertises background-task updates and builds an opted-in session that does not wait for tasks', async () => {
+    const { connection, buildAgent, open, close } = connect([])
+    try {
+      const initialized = await connection.agent.request(acp.methods.agent.initialize, {
+        protocolVersion: acp.PROTOCOL_VERSION,
+        clientCapabilities: {},
+        clientInfo: { name: 'test', version: '1' },
+      })
+      expect(initialized._meta?.[BACKGROUND_TASKS_META_KEY]).toEqual({ version: 1 })
+
+      await open()
+      await open(optIn)
+
+      expect(buildAgent.mock.calls[0]![0]).not.toHaveProperty('backgroundTasks')
+      expect(buildAgent.mock.calls[1]![0]).toMatchObject({ backgroundTasks: { waitForCompletion: false } })
+    } finally {
+      await close()
+    }
+  })
+
+  it('reports each background task change as an update of the tool call that started it', async () => {
+    const tasks: Record<string, unknown>[] = []
+    const { updates, open, close } = connect(tasks)
+    try {
+      await open(optIn)
+      tasks.push(task('working'))
+      await vi.waitFor(() =>
+        expect(taskUpdates(updates)).toEqual([
+          {
+            sessionUpdate: 'tool_call_update',
+            toolCallId: 'call-1',
+            status: 'in_progress',
+            _meta: { [BACKGROUND_TASK_META_KEY]: { taskId: 'task-1', status: 'working' } },
+          },
+        ])
+      )
+      tasks[0] = task('completed', { result: { content: [{ text: 'BG-RESULT' }] } })
+      await vi.waitFor(() => expect(taskUpdates(updates)).toHaveLength(2))
+      expect(taskUpdates(updates)[1]).toEqual({
+        sessionUpdate: 'tool_call_update',
+        toolCallId: 'call-1',
+        status: 'completed',
+        content: [{ type: 'content', content: { type: 'text', text: 'BG-RESULT' } }],
+        _meta: { [BACKGROUND_TASK_META_KEY]: { taskId: 'task-1', status: 'completed' } },
+      })
+      await settle()
+      expect(taskUpdates(updates)).toHaveLength(2)
+
+      tasks[0] = task('failed', { error: { message: 'exit 1' } })
+      await vi.waitFor(() => expect(taskUpdates(updates)).toHaveLength(3))
+      expect(taskUpdates(updates)[2]).toMatchObject({
+        status: 'failed',
+        content: [{ type: 'content', content: { type: 'text', text: 'exit 1' } }],
+      })
+    } finally {
+      await close()
+    }
+  })
+
+  it('reports nothing to a session that did not opt in, and reports tasks present at open once', async () => {
+    const tasks: Record<string, unknown>[] = [task('working')]
+    const { updates, open, close } = connect(tasks)
+    try {
+      await open()
+      tasks[0] = task('completed', { result: { content: [{ text: 'BG-RESULT' }] } })
+      await settle()
+      expect(taskUpdates(updates)).toEqual([])
+    } finally {
+      await close()
+    }
+
+    const present: Record<string, unknown>[] = [task('working')]
+    const watched = connect(present)
+    try {
+      await watched.open(optIn)
+      await vi.waitFor(() => expect(taskUpdates(watched.updates)).toHaveLength(1))
+      await settle()
+      expect(taskUpdates(watched.updates)).toMatchObject([{ status: 'in_progress' }])
+      present[0] = task('completed', { result: { content: [{ text: 'BG-RESULT' }] } })
+      await vi.waitFor(() => expect(taskUpdates(watched.updates)).toHaveLength(2))
+    } finally {
+      await watched.close()
+    }
+  })
+
+  it('reports a task found in a loaded session to a client that opted in', async () => {
+    const sessionDirectory = await mkdtemp(join(tmpdir(), 'strands-acp-session-'))
+    const sessionId = 'saved-session'
+    await writeSavedSession(sessionDirectory, sessionId)
+    const stale = task('failed', {
+      error: { message: 'Background task cannot resume after restoring persisted state' },
+    })
+    const fakeAgent = {
+      cancel: vi.fn(),
+      initialize: vi.fn(async () => undefined),
+      messages: [],
+      appState: { get: (key: string) => (key === 'strands.backgroundTasks' ? [stale] : undefined) },
+    } as unknown as Agent
+    const buildAgent = vi.fn(async (_options: HarnessAgentOptions) => fakeAgent)
+    const service = new AcpService({ session: { dir: sessionDirectory } }, { buildAgent })
+    const updates: acp.SessionUpdate[] = []
+    const client = {
+      notify: vi.fn(async (_method: string, params: acp.SessionNotification) => {
+        updates.push(params.update)
+      }),
+    } as unknown as acp.AgentContext
+
+    try {
+      await service.loadSession({ sessionId, cwd: process.cwd(), mcpServers: [], _meta: optIn }, client)
+      expect(buildAgent.mock.calls[0]![0]).toMatchObject({ backgroundTasks: { waitForCompletion: false } })
+      await vi.waitFor(() => expect(taskUpdates(updates)).toHaveLength(1))
+      expect(taskUpdates(updates)[0]).toMatchObject({
+        status: 'failed',
+        content: [
+          {
+            type: 'content',
+            content: { type: 'text', text: 'Background task cannot resume after restoring persisted state' },
+          },
+        ],
+      })
+    } finally {
+      await service.dispose()
+      await rm(sessionDirectory, { recursive: true, force: true })
+    }
+  })
+
+  it('ends an opted-in turn while a real background shell task runs, then delivers its output', async () => {
+    const session = await harnessSession(new BackgroundModel('sleep 2 && echo BG-$((40+2))'))
+    try {
+      const turn = await session.prompt('run it in the background')
+
+      expect(turn.stopReason).toBe('end_turn')
+      expect(session.text()).toBe('dispatched')
+      expect(session.settledAt()).toBe(-1)
+
+      await vi.waitFor(() => expect(session.settledAt()).toBeGreaterThan(-1), { timeout: 15_000, interval: 100 })
+      expect(JSON.stringify(session.updates[session.settledAt()])).toContain('BG-42')
+
+      const delivered = await session.prompt()
+      expect(delivered.stopReason).toBe('end_turn')
+      expect(session.text()).toBe('dispatchedgot BG-42')
+    } finally {
+      await session.close()
+    }
+  }, 30_000)
+
+  it('reports a task that finishes during a turn before the model reads its output', async () => {
+    const session = await harnessSession(new BackgroundModel('echo BG-$((40+2))', 1_000), {
+      backgroundTaskPollMs: 60_000,
+    })
+    try {
+      const turn = await session.prompt('run it in the background')
+
+      expect(turn.stopReason).toBe('end_turn')
+      expect(session.text()).toMatch(/got BG-42$/)
+      const reply = session.updates.findIndex(
+        (update) =>
+          update.sessionUpdate === 'agent_message_chunk' &&
+          update.content.type === 'text' &&
+          update.content.text.includes('BG-42')
+      )
+      expect(session.settledAt()).toBeGreaterThan(-1)
+      expect(session.settledAt()).toBeLessThan(reply)
+    } finally {
+      await session.close()
+    }
+  }, 30_000)
+
+  it('answers an empty prompt at once with no ready results, and delivers ready ones', async () => {
+    const tasks: Record<string, unknown>[] = [task('working')]
+    const { connection, stream, open, close } = connect(tasks)
+    try {
+      const { sessionId } = await open(optIn)
+      const idle = await connection.agent.request(acp.methods.agent.session.prompt, { sessionId, prompt: [] })
+      expect(idle).toEqual({ stopReason: 'end_turn' })
+      expect(stream).not.toHaveBeenCalled()
+
+      tasks[0] = task('completed', { result: { content: [{ text: 'BG-RESULT' }] } })
+      const delivered = await connection.agent.request(acp.methods.agent.session.prompt, { sessionId, prompt: [] })
+      expect(delivered).toMatchObject({ stopReason: 'end_turn' })
+      expect(stream).toHaveBeenCalledOnce()
+      expect(stream).toHaveBeenCalledWith([])
+    } finally {
+      await close()
+    }
+  })
+})
