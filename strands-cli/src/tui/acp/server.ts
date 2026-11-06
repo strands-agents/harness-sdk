@@ -8,6 +8,7 @@ import { McpClient, type Agent, type McpServerConfig, type Usage } from '@strand
 import { projectAgentEvent, projectAgentResult } from '../chat/sdk-projector.js'
 import { upgradeDesktopAgentProfileMessages } from '../session/desktop-profile.js'
 import {
+  initializeAgentDefinition,
   persistSessionAgentDefinition,
   restoreSessionAgentDefinition,
   sessionAgentDefinitionFromMeta,
@@ -180,7 +181,7 @@ export class AcpService {
       }
       requireBedrockRegion(agentOptions.model)
       const agent = await this._buildAgent(agentOptions)
-      await agent.initialize()
+      await initializeAgentDefinition(agent)
       agent.messages = upgradeDesktopAgentProfileMessages(agent.messages)
       await persistSessionAgentDefinition(agentOptions)
       const session = { agent, mcpClients }

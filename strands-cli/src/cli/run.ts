@@ -8,6 +8,7 @@ import { initLogging } from '../logging.js'
 import { runPlainChat, runTurn } from '../console.js'
 import { importAgentProject } from '../tui/project/import.js'
 import { rethrowWithProviderHint } from '../tui/provider/packages.js'
+import { initializeAgentDefinition } from '../tui/session/agent-definition.js'
 import { buildTelemetryPing, sendTelemetryPing, telemetryEnabled } from '../tui/telemetry.js'
 import { errorMessage } from '../tui/terminal/sanitize.js'
 import { confirmWorkspaceMcp, resolveMcpConfig } from '../tui/workspace/trust.js'
@@ -160,6 +161,7 @@ async function runConsole(args: ParsedArgs, request: string | undefined, mode: '
       options.tools = [...(options.tools ?? []), ...loadedMcp.clients]
     }
     agent = await (invocation.buildAgent ?? createHarness)(options).catch(rethrowWithProviderHint)
+    await initializeAgentDefinition(agent)
     if (mode === 'print') {
       await runTurn(agent, request!)
     } else {

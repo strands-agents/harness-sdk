@@ -25,6 +25,12 @@ import { DEFAULT_CHAT_SETTINGS, type ChatSnapshot } from '../src/tui/chat/contro
 import { createAcpApp, AcpService } from '../src/tui/acp/server.js'
 import { restoreSessionAgentDefinition, AGENT_DEFINITION_META_KEY } from '../src/tui/session/agent-definition.js'
 import { ChatView } from '../src/tui/view/chat-view.js'
+import {
+  harnessSystemPrompt,
+  SAVED_SYSTEM_PROMPT,
+  SystemPromptRecordingModel,
+  writeSessionWithSavedSystemPrompt,
+} from './fixtures/saved-system-prompt.js'
 
 function event(value: unknown): AgentStreamEvent {
   return value as AgentStreamEvent
@@ -430,6 +436,35 @@ describe('ACP server', () => {
       await first?.dispose()
       process.chdir(originalCwd)
       await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps the CLI system prompt when a loaded session saved a different one', async () => {
+    const originalCwd = process.cwd()
+    const workspace = await mkdtemp(join(tmpdir(), 'strands-acp-system-prompt-'))
+    const sessionDirectory = join(workspace, '.agent', 'sessions')
+    await writeSessionWithSavedSystemPrompt(sessionDirectory, 'saved-session')
+    const model = new SystemPromptRecordingModel()
+    const service = new AcpService(
+      { session: { dir: sessionDirectory } },
+      {
+        buildAgent: (options) =>
+          createHarness({ ...options, model, builtinTools: [], contextManager: false, printer: false }),
+      }
+    )
+    const client = { notify: vi.fn(async () => undefined) } as unknown as acp.AgentContext
+
+    try {
+      await service.loadSession({ sessionId: 'saved-session', cwd: workspace, mcpServers: [] }, client)
+      await service.prompt({ sessionId: 'saved-session', prompt: [{ type: 'text', text: 'continue' }] }, client)
+
+      expect(model.systemPrompts).toEqual([harnessSystemPrompt()])
+      expect(model.systemPrompts[0]).not.toContain(SAVED_SYSTEM_PROMPT)
+      expect(model.firstMessageTexts).toEqual(['earlier request'])
+    } finally {
+      await service.dispose()
+      process.chdir(originalCwd)
+      await rm(workspace, { recursive: true, force: true })
     }
   })
 
