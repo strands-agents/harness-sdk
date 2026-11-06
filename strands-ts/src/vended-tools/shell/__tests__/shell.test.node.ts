@@ -4,6 +4,8 @@ import { BashTimeoutError, BashSessionError } from '../../bash/types.js'
 import type { ToolContext } from '../../../index.js'
 import { createMockAgent } from '../../../__fixtures__/agent-helpers.js'
 import { TestSandbox } from '../../../__fixtures__/test-sandbox.node.js'
+import type { ExecuteOptions } from '../../../sandbox/base.js'
+import type { ExecutionResult } from '../../../sandbox/types.js'
 import { mkdtempSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
@@ -103,6 +105,42 @@ describe.skipIf(process.platform === 'win32')('makeShell', () => {
 
   it('ShellExecutionError still matches the pre-rename BashSessionError', () => {
     expect(new ShellExecutionError('boom')).toBeInstanceOf(BashSessionError)
+  })
+
+  describe('defaultTimeout', () => {
+    class RecordingSandbox extends TestSandbox {
+      timeouts: (number | undefined)[] = []
+
+      override execute(command: string, options?: ExecuteOptions): Promise<ExecutionResult> {
+        this.timeouts.push(options?.timeout)
+        return super.execute(command, options)
+      }
+    }
+
+    it('does not hard-code a default in the schema the model sees', () => {
+      expect(makeShell({ defaultTimeout: 300 }).toolSpec.inputSchema).toMatchObject({
+        properties: { timeout: { description: 'Optional per-execution timeout in seconds.' } },
+      })
+    })
+
+    it('reaches the sandbox when the model omits timeout', async () => {
+      const sandbox = new RecordingSandbox(mkdtempSync(join(tmpdir(), 'shell-sandbox-test-')))
+      const { context } = createSandboxShell()
+      await makeShell(sandbox, { defaultTimeout: 300 }).invoke({ command: 'true' }, context)
+      expect(sandbox.timeouts).toEqual([300])
+    })
+
+    it('loses to an explicit timeout from the model', async () => {
+      const sandbox = new RecordingSandbox(mkdtempSync(join(tmpdir(), 'shell-sandbox-test-')))
+      const { context } = createSandboxShell()
+      await makeShell(sandbox, { defaultTimeout: 300 }).invoke({ command: 'true', timeout: 7 }, context)
+      expect(sandbox.timeouts).toEqual([7])
+    })
+
+    // Infinity would reach setTimeout, which clamps the overflow to 1 ms and times out every call.
+    it.each([0, -1, Infinity, NaN])('rejects a non-positive or non-finite default (%s) at construction', (value) => {
+      expect(() => makeShell({ defaultTimeout: value })).toThrow('defaultTimeout must be a positive finite number')
+    })
   })
 })
 

@@ -122,6 +122,46 @@ class TestToolMetadata:
         assert "timeout" in props
         assert "tool_context" not in props
 
+    def test_default_timeout_in_schema(self):
+        timeout = shell.tool_spec["inputSchema"]["json"]["properties"]["timeout"]
+        assert timeout["default"] == 120
+        assert timeout["description"] == "Optional per-execution timeout in seconds."
+
+    def test_custom_default_timeout_in_schema(self):
+        timeout = make_shell(default_timeout=300).tool_spec["inputSchema"]["json"]["properties"]["timeout"]
+        assert timeout["default"] == 300
+        assert timeout["description"] == "Optional per-execution timeout in seconds."
+
+    @pytest.mark.parametrize("default_timeout", [0, -1, float("inf"), float("nan")])
+    def test_default_timeout_must_be_positive_and_finite(self, default_timeout):
+        with pytest.raises(ValueError, match="default_timeout must be a positive finite number"):
+            make_shell(default_timeout=default_timeout)
+
+
+class TestDefaultTimeout:
+    """``default_timeout`` is what reaches the sandbox when the model omits ``timeout``."""
+
+    class _RecordingSandbox(NotASandboxLocalEnvironment):
+        def __init__(self):
+            super().__init__()
+            self.timeouts: list[int] = []
+
+        async def execute(self, command, *, timeout=None, **kwargs):
+            self.timeouts.append(timeout)
+            return await super().execute(command, timeout=timeout, **kwargs)
+
+    @pytest.mark.asyncio
+    async def test_custom_default_reaches_sandbox(self):
+        sandbox = self._RecordingSandbox()
+        await make_shell(sandbox=sandbox, default_timeout=300)(command="true", tool_context=_tool_context())
+        assert sandbox.timeouts == [300]
+
+    @pytest.mark.asyncio
+    async def test_explicit_timeout_wins_over_default(self):
+        sandbox = self._RecordingSandbox()
+        await make_shell(sandbox=sandbox, default_timeout=300)(command="true", tool_context=_tool_context(), timeout=7)
+        assert sandbox.timeouts == [7]
+
 
 class TestDeprecatedBashAliases:
     """The ``bash`` aliases are retained until v2.0.0, warn, and keep the pre-rename name.

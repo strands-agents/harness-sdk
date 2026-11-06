@@ -15,15 +15,19 @@ import { SandboxTimeoutError } from '../../sandbox/errors.js'
 import { Sandbox } from '../../sandbox/base.js'
 import { ShellTimeoutError, ShellExecutionError, SANDBOX_SHELL_DESCRIPTION, type ShellOutput } from './types.js'
 
+const DEFAULT_TIMEOUT = 120
+
 const sandboxShellInputSchema = z.object({
   command: z.string().describe('The shell command to execute.'),
-  timeout: z.number().positive().optional().describe('Timeout in seconds (default: 120).'),
+  timeout: z.number().positive().optional().describe('Optional per-execution timeout in seconds.'),
 })
 
 export interface MakeShellOptions {
   name?: string
   description?: string
   inputSchema?: z.ZodType
+  /** Timeout in seconds used when the model omits `timeout`. Defaults to 120. */
+  defaultTimeout?: number
 }
 
 /**
@@ -47,6 +51,10 @@ export function makeShell(
   maybeOptions?: MakeShellOptions
 ): ReturnType<typeof tool> {
   const { boundSandbox, options } = resolveShellArgs(sandboxOrOptions, maybeOptions)
+  const defaultTimeout = options.defaultTimeout ?? DEFAULT_TIMEOUT
+  if (!Number.isFinite(defaultTimeout) || defaultTimeout <= 0) {
+    throw new Error(`defaultTimeout must be a positive finite number, got ${defaultTimeout}`)
+  }
 
   return tool({
     name: options.name ?? 'shell',
@@ -59,7 +67,7 @@ export function makeShell(
 
       const sandbox = boundSandbox ?? context.agent.sandbox
       try {
-        const result = await sandbox.execute(input.command, { timeout: input.timeout ?? 120 })
+        const result = await sandbox.execute(input.command, { timeout: input.timeout ?? defaultTimeout })
         return { output: result.stdout, error: result.stderr, exit_code: result.exitCode } as ShellOutput
       } catch (err) {
         // Shell* extends Bash* so pre-rename catch clauses keep matching.
