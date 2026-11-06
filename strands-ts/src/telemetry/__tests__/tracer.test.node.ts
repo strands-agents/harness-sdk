@@ -110,16 +110,23 @@ describe('Tracer', () => {
     it('includes tool definitions when gen_ai_tool_definitions opt-in is set', () => {
       vi.stubEnv('OTEL_SEMCONV_STABILITY_OPT_IN', 'gen_ai_tool_definitions')
       const tracer = new Tracer()
-      const toolsConfig = { calc: { name: 'calc', description: 'Calculator' } }
+      const inputSchema = { type: 'object' as const, properties: { expression: { type: 'string' as const } } }
+      const outputSchema = { type: 'object' as const, properties: { value: { type: 'number' as const } } }
 
       tracer.startAgentSpan({
         messages: [textMessage('user', 'Hello')],
         agentName: 'test-agent',
-        toolsConfig,
+        toolsConfig: {
+          calc: { name: 'calc', description: 'Calculator', inputSchema, outputSchema },
+          clock: { name: 'clock', description: 'Current time' },
+        },
       })
 
       const [, options] = getStartSpanCall()
-      expect(options.attributes['gen_ai.tool.definitions']).toBe(JSON.stringify(toolsConfig))
+      expect(JSON.parse(options.attributes['gen_ai.tool.definitions'] as string)).toStrictEqual([
+        { name: 'calc', description: 'Calculator', inputSchema, outputSchema },
+        { name: 'clock', description: 'Current time', inputSchema: null, outputSchema: null },
+      ])
     })
 
     it('serializes system prompt into attribute', () => {
@@ -1200,7 +1207,7 @@ describe('Tracer', () => {
 
       const [, options] = getStartSpanCall()
       expect(options.attributes['gen_ai.provider.name']).toBeDefined()
-      expect(options.attributes['gen_ai.tool.definitions']).toBe(JSON.stringify(toolsConfig))
+      expect(options.attributes['gen_ai.tool.definitions']).toBeDefined()
     })
 
     it('handles whitespace in opt-in values', () => {
