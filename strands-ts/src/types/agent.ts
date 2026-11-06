@@ -684,7 +684,8 @@ export class AgentResult {
  * allowing for type-safe event handling using switch statements.
  *
  * Every member extends {@link HookableEvent} (which extends {@link StreamEvent}),
- * making all events both streamable and subscribable via hook callbacks.
+ * making all events both streamable and subscribable via hook callbacks. Hook-only
+ * events, such as `MessageUpdatedEvent`, are left out of this union.
  * Raw data objects from lower layers (model, tools) should be wrapped
  * in a StreamEvent subclass at the agent boundary rather than added directly.
  */
