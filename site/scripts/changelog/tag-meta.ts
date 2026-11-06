@@ -31,7 +31,7 @@ export function streamKey(sdk: Sdk, language?: Language): string {
 }
 
 /**
- * @param repo  e.g. 'strands-agents/harness-sdk' | 'strands-agents/evals' | 'strands-agents/box'
+ * @param repo  e.g. 'strands-agents/harness-sdk' | 'strands-agents/evals' | 'strands-agents/box' | 'strands-agents/shell'
  * @param tag   the release tag
  */
 export function tagToMeta(repo: string, tag: string): TagMeta | null {

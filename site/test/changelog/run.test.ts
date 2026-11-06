@@ -119,11 +119,19 @@ describe('run', () => {
       },
     })
 
-    expect(Object.keys(written)).toEqual([path])
-    expect(written[path]).toContain('sdk: shell')
-    expect(written[path]).not.toContain('\nlanguage:')
-    expect(written[path]).toContain('https://github.com/strands-agents/shell/releases/tag/v0.6.0')
-    expect(written[path]).toContain('https://github.com/strands-agents/shell/pull/1')
+    expect(written).toEqual({
+      [path]: `---
+sdk: shell
+version: "0.6.0"
+tag: v0.6.0
+date: 2026-11-04
+releaseUrl: https://github.com/strands-agents/shell/releases/tag/v0.6.0
+packageUrl: https://github.com/strands-agents/shell/releases/tag/v0.6.0
+entries:
+  - { type: feat, breaking: false, scope: null, areas: [], title: "a", pr: 1, prUrl: "https://github.com/strands-agents/shell/pull/1", commit: "abc1234", commitUrl: "https://github.com/strands-agents/shell/commit/abc1234", author: x }
+---
+`,
+    })
     expect(await check()).toEqual([])
   })
 
