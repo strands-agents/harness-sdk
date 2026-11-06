@@ -108,6 +108,23 @@ def _is_http_stream_completed_error(error: BaseException) -> bool:
     return isinstance(error, RuntimeError) and "AWS_ERROR_HTTP_STREAM_HAS_COMPLETED" in str(error)
 
 
+def _resolve_credentials(session: Session) -> tuple[str, str, str | None]:
+    """Resolve the boto3 credential chain on the calling thread.
+
+    The default chain can reach IMDS, SSO or STS, and botocore resolves deferred credentials
+    lazily on the first attribute read, so both the lookup and the reads below it block.
+    """
+    credentials = session.get_credentials()
+
+    if not credentials:
+        raise ValueError(
+            "no AWS credentials found. configure credentials via environment variables, "
+            "credential files, IAM roles, or SSO."
+        )
+
+    return credentials.access_key, credentials.secret_key, credentials.token
+
+
 class _BedrockAWSCRTHTTPClient(AWSCRTHTTPClient):
     """Observe CRT request writers so their terminal results are always consumed."""
 
@@ -361,14 +378,8 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
 
         self._connection_id = str(uuid.uuid4())
 
-        # Get credentials from boto3 session (full credential chain)
-        credentials = self._session.get_credentials()
-
-        if not credentials:
-            raise ValueError(
-                "no AWS credentials found. configure credentials via environment variables, "
-                "credential files, IAM roles, or SSO."
-            )
+        # Resolving the chain can reach the network (IMDS, SSO, STS), so it runs off the event loop.
+        access_key, secret_key, session_token = await asyncio.to_thread(_resolve_credentials, self._session)
 
         # Use static resolver with credentials configured as properties
         resolver = StaticCredentialsResolver()
@@ -380,9 +391,9 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
             auth_scheme_resolver=HTTPAuthSchemeResolver(),
             auth_schemes={ShapeID("aws.auth#sigv4"): SigV4AuthScheme(service="bedrock")},
             # Configure static credentials as properties
-            aws_access_key_id=credentials.access_key,
-            aws_secret_access_key=credentials.secret_key,
-            aws_session_token=credentials.token,
+            aws_access_key_id=access_key,
+            aws_secret_access_key=secret_key,
+            aws_session_token=session_token,
             transport=_BedrockAWSCRTHTTPClient(),
             user_agent_extra=_STRANDS_USER_AGENT_EXTRA,
         )
