@@ -193,7 +193,7 @@ class SummarizeStrategy(BaseOffloadStrategy):
                 instructions=self._config.get("system_prompt"),
             )
         except Exception as error:
-            _warn_client_side_fallback(model, repr(error), exc_info=True)
+            _warn_client_side_fallback(model, repr(error), exc_info=not isinstance(error, NotImplementedError))
             return None
         return summary
 

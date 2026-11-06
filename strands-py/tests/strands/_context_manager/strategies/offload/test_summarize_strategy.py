@@ -474,17 +474,18 @@ class TestServerSideSummary:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ("summarize_result", "reason"),
+        ("summarize_result", "reason", "traceback"),
         [
             pytest.param(
                 {"side_effect": NotImplementedError("no server-side summary")},
                 "no server-side summary",
+                False,
                 id="not_implemented",
             ),
-            pytest.param({"side_effect": RuntimeError("compaction rejected")}, "compaction rejected", id="error"),
+            pytest.param({"side_effect": RuntimeError("compaction rejected")}, "compaction rejected", True, id="error"),
         ],
     )
-    async def test_falls_back_to_client_side(self, mock_agent, caplog, summarize_result, reason):
+    async def test_falls_back_to_client_side(self, mock_agent, caplog, summarize_result, reason, traceback):
         mock_agent.model.model_info.capabilities.server_side_summary = True
         mock_agent.model.summarize = unittest.mock.AsyncMock(**summarize_result)
         messages = self._messages()
@@ -499,6 +500,8 @@ class TestServerSideSummary:
         assert reason in caplog.text
         assert "falling back to client-side summary" in caplog.text
         assert "thinking blocks kept after it will be dropped" in caplog.text
+        fallback = next(r for r in caplog.records if "falling back to client-side summary" in r.getMessage())
+        assert bool(fallback.exc_info) is traceback
 
     @pytest.mark.asyncio
     async def test_client_side_fallback_keeps_earlier_server_side_summary(self, mock_agent):
