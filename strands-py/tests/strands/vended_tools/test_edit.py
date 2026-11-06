@@ -182,6 +182,34 @@ class TestLineEndings:
         assert file_path.read_bytes() == b"head\r\nX\r\ntail\r\n"
 
     @pytest.mark.asyncio
+    async def test_lf_match_in_crlf_file_keeps_lf(self, edit_tool, ctx, tmp_path):
+        file_path = tmp_path / "f.txt"
+        file_path.write_bytes(b"head\r\na\nb\r\ntail\r\n")
+        await edit_tool(path=str(file_path), tool_context=ctx, old_str="a\nb", new_str="x\ny")
+        assert file_path.read_bytes() == b"head\r\nx\ny\r\ntail\r\n"
+
+    @pytest.mark.asyncio
+    async def test_single_line_match_takes_its_own_line_ending(self, edit_tool, ctx, tmp_path):
+        file_path = tmp_path / "f.txt"
+        file_path.write_bytes(b"a\nb\nc\nlast\r\n")
+        await edit_tool(path=str(file_path), tool_context=ctx, old_str="b", new_str="b1\nb2")
+        assert file_path.read_bytes() == b"a\nb1\nb2\nc\nlast\r\n"
+
+    @pytest.mark.asyncio
+    async def test_match_on_unterminated_last_line_takes_previous_line_ending(self, edit_tool, ctx, tmp_path):
+        file_path = tmp_path / "f.txt"
+        file_path.write_bytes(b"a\r\nb")
+        await edit_tool(path=str(file_path), tool_context=ctx, old_str="b", new_str="b1\nb2")
+        assert file_path.read_bytes() == b"a\r\nb1\r\nb2"
+
+    @pytest.mark.asyncio
+    async def test_regex_metacharacters_in_old_str_match_literally(self, edit_tool, ctx, tmp_path):
+        file_path = tmp_path / "f.txt"
+        file_path.write_bytes(b"f(a.b)\r\n[x]\r\n")
+        await edit_tool(path=str(file_path), tool_context=ctx, old_str="f(a.b)\n[x]", new_str="ok")
+        assert file_path.read_bytes() == b"ok\r\n"
+
+    @pytest.mark.asyncio
     async def test_lf_file_is_unchanged_in_behaviour(self, edit_tool, ctx, tmp_path):
         file_path = tmp_path / "f.txt"
         file_path.write_bytes(b"a\nb\nc\n")

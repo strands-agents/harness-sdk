@@ -125,6 +125,18 @@ describe('edit tool', () => {
       expect(await editBytes('head\r\na\nb\r\ntail\r\n', 'a\nb', 'X')).toBe('head\r\nX\r\ntail\r\n')
     })
 
+    it('keeps LF for an LF match inside a CRLF file', async () => {
+      expect(await editBytes('head\r\na\nb\r\ntail\r\n', 'a\nb', 'x\ny')).toBe('head\r\nx\ny\r\ntail\r\n')
+    })
+
+    it('writes a single-line match with its own line ending', async () => {
+      expect(await editBytes('a\nb\nc\nlast\r\n', 'b', 'b1\nb2')).toBe('a\nb1\nb2\nc\nlast\r\n')
+    })
+
+    it('takes the previous line ending for a match on an unterminated last line', async () => {
+      expect(await editBytes('a\r\nb', 'b', 'b1\nb2')).toBe('a\r\nb1\r\nb2')
+    })
+
     it('deletes across CRLF', async () => {
       expect(await editBytes('keep\r\nremove-me\r\nkeep\r\n', 'remove-me\n', '')).toBe('keep\r\nkeep\r\n')
     })

@@ -30,6 +30,14 @@ DEFAULT_EDIT_DESCRIPTION = (
 _LINE_BREAK = re.compile(r"\r?\n")
 
 
+def _line_ending_at(content: str, index: int) -> str:
+    """Return the ending of the line containing ``index``, or of the last line break before it."""
+    newline = content.find("\n", index)
+    if newline == -1:
+        newline = content.rfind("\n")
+    return "\r\n" if newline > 0 and content[newline - 1] == "\r" else "\n"
+
+
 def make_edit(
     *,
     sandbox: Sandbox | None = None,
@@ -81,8 +89,7 @@ def make_edit(
         if len(matches) > 1:
             raise ValueError(f"old_str appears {len(matches)} times in {path}; make it unique.")
         match = matches[0]
-        sample = match.group() if "\n" in match.group() else content
-        replacement = _LINE_BREAK.sub("\r\n" if "\r\n" in sample else "\n", new_str)
+        replacement = _LINE_BREAK.sub(_line_ending_at(content, match.start()), new_str)
         await active.write_text(path, content[: match.start()] + replacement + content[match.end() :])
         return f"Edited {path}."
 

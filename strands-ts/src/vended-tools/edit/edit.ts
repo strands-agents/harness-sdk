@@ -21,6 +21,15 @@ export const DEFAULT_EDIT_DESCRIPTION =
 // The model writes LF and cannot see a file's CRLF, so any line break matches either.
 const LINE_BREAK = /\r?\n/g
 
+/**
+ * Return the ending of the line containing `index`, or of the last line break before it.
+ */
+function lineEndingAt(content: string, index: number): string {
+  let newline = content.indexOf('\n', index)
+  if (newline === -1) newline = content.lastIndexOf('\n')
+  return newline > 0 && content[newline - 1] === '\r' ? '\r\n' : '\n'
+}
+
 const editInputSchema = z.object({
   path: z.string().describe('Absolute path to the file.'),
   old_str: z.string().describe('Exact text to find. Must be unique within the file.'),
@@ -81,8 +90,7 @@ export function makeEdit(
       if (matches.length > 1)
         throw new Error(`old_str appears ${matches.length} times in ${input.path}; make it unique.`)
       const [matched] = match
-      const sample = matched.includes('\n') ? matched : content
-      const replacement = input.new_str.replace(LINE_BREAK, sample.includes('\r\n') ? '\r\n' : '\n')
+      const replacement = input.new_str.replace(LINE_BREAK, lineEndingAt(content, match.index))
       await sandbox.writeText(
         input.path,
         content.slice(0, match.index) + replacement + content.slice(match.index + matched.length)
