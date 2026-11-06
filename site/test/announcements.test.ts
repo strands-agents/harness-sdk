@@ -1,6 +1,13 @@
 import { describe, it, expect } from 'vitest'
 import { getCollection } from 'astro:content'
-import { activeAnnouncement, announcementExpires, ANNOUNCEMENT_DAYS, homepageBanner } from '../src/util/announcements'
+import {
+  activeAnnouncement,
+  announcementExpires,
+  ANNOUNCEMENT_DAYS,
+  homepageBanner,
+  homepageCommunityPost,
+  latestPostBanner,
+} from '../src/util/announcements'
 import { announcementSchema } from '../src/content.config'
 import type { Announcement } from '../src/content.config'
 
@@ -62,26 +69,50 @@ describe('activeAnnouncement', () => {
   })
 })
 
-describe('homepageBanner', () => {
-  it('uses the latest blog post when there is no manual announcement', () => {
+describe('latestPostBanner', () => {
+  it('uses the latest blog post', () => {
     const posts = [
       makePost('2026-10-14', 'Old post'),
       makePost('2026-10-16', 'Newest post'),
       makePost('2026-10-15', 'New post'),
     ]
-    expect(homepageBanner([], posts, day('2026-10-16'))).toEqual({
+    expect(latestPostBanner(posts)).toEqual({
       title: 'Newest post',
       href: '/blog/newest-post/',
       linkText: 'Read the post',
+      date: new Date('2026-10-16T00:00:00Z'),
     })
   })
 
+  it('returns undefined when there are no posts', () => {
+    expect(latestPostBanner([])).toBeUndefined()
+  })
+})
+
+describe('homepageCommunityPost', () => {
+  const posts = [makePost('2026-10-16', 'Newest post'), makePost('2026-10-15', 'Older post')]
+
+  it('skips the post already promoted by the banner', () => {
+    expect(homepageCommunityPost(posts, '/blog/newest-post/')).toEqual(posts[1])
+  })
+
+  it('keeps the newest post when a manual announcement owns the banner', () => {
+    expect(homepageCommunityPost(posts, '/campaign/')).toEqual(posts[0])
+  })
+
+  it('returns undefined when the banner uses the only post', () => {
+    expect(homepageCommunityPost([posts[0]], '/blog/newest-post/')).toBeUndefined()
+  })
+})
+
+describe('homepageBanner', () => {
   it('lets a newer blog post replace an older manual announcement', () => {
     const manual = makeAnnouncement('2026-10-07', 'Campaign')
     expect(homepageBanner([manual], [makePost('2026-10-15', 'New post')], day('2026-10-15'))).toEqual({
       title: 'New post',
       href: '/blog/new-post/',
       linkText: 'Read the post',
+      date: new Date('2026-10-15T00:00:00Z'),
     })
   })
 
@@ -93,7 +124,22 @@ describe('homepageBanner', () => {
       title: 'Campaign',
       href: '/blog/post/',
       linkText: 'Learn more',
+      date: new Date('2026-10-15T00:00:00Z'),
       expires: '2026-10-28',
+    })
+  })
+
+  it('pins a manual announcement with an explicit expiry', () => {
+    const manual = {
+      ...makeAnnouncement('2026-10-01', 'Campaign'),
+      expires: new Date('2026-10-20T00:00:00Z'),
+    }
+    expect(homepageBanner([manual], [makePost('2026-10-15', 'New post')], day('2026-10-15'))).toEqual({
+      title: 'Campaign',
+      href: '/blog/post/',
+      linkText: 'Learn more',
+      date: new Date('2026-10-01T00:00:00Z'),
+      expires: '2026-10-20',
     })
   })
 
@@ -103,7 +149,23 @@ describe('homepageBanner', () => {
       title: 'Latest post',
       href: '/blog/latest-post/',
       linkText: 'Read the post',
+      date: new Date('2026-09-30T00:00:00Z'),
     })
+  })
+
+  it('uses a manual announcement when there are no posts', () => {
+    const manual = makeAnnouncement('2026-10-15', 'Campaign')
+    expect(homepageBanner([manual], [], day('2026-10-15'))).toEqual({
+      title: 'Campaign',
+      href: '/blog/post/',
+      linkText: 'Learn more',
+      date: new Date('2026-10-15T00:00:00Z'),
+      expires: '2026-10-28',
+    })
+  })
+
+  it('returns undefined when there are no announcements or posts', () => {
+    expect(homepageBanner([], [], day('2026-10-15'))).toBeUndefined()
   })
 })
 

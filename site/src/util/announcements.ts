@@ -15,6 +15,7 @@ export interface HomepageBanner {
   title: string
   href: string
   linkText: string
+  date: Date
   expires?: string
 }
 
@@ -32,9 +33,29 @@ export function activeAnnouncement(announcements: Announcement[], today: Date): 
     .sort((a, b) => b.date.getTime() - a.date.getTime())[0]
 }
 
+/** Convert the newest blog post into homepage banner content. */
+export function latestPostBanner(posts: BannerBlogPost[]): HomepageBanner | undefined {
+  const latestPost = [...posts].sort((a, b) => b.data.date.getTime() - a.data.date.getTime())[0]
+  if (!latestPost) return undefined
+
+  return {
+    title: latestPost.data.title,
+    href: `/blog/${latestPost.id}/`,
+    linkText: 'Read the post',
+    date: latestPost.data.date,
+  }
+}
+
+/** Newest blog post not already promoted by the homepage banner. */
+export function homepageCommunityPost(posts: BannerBlogPost[], bannerHref?: string): BannerBlogPost | undefined {
+  return [...posts]
+    .sort((a, b) => b.data.date.getTime() - a.data.date.getTime())
+    .find((post) => `/blog/${post.id}/` !== bannerHref)
+}
+
 /**
  * Use the newest blog post unless an active manual announcement is at least
- * as recent. A same-day manual announcement is an explicit override.
+ * as recent. An explicit expiry pins the manual announcement through that day.
  */
 export function homepageBanner(
   announcements: Announcement[],
@@ -42,21 +63,17 @@ export function homepageBanner(
   today: Date
 ): HomepageBanner | undefined {
   const manual = activeAnnouncement(announcements, today)
-  const latestPost = [...posts].sort((a, b) => b.data.date.getTime() - a.data.date.getTime())[0]
+  const latestPost = latestPostBanner(posts)
 
-  if (manual && (!latestPost || toIsoDate(manual.date) >= toIsoDate(latestPost.data.date))) {
+  if (manual && (manual.expires || !latestPost || toIsoDate(manual.date) >= toIsoDate(latestPost.date))) {
     return {
       title: manual.title,
       href: manual.href,
       linkText: manual.linkText,
+      date: manual.date,
       expires: announcementExpires(manual),
     }
   }
 
-  if (!latestPost) return undefined
-  return {
-    title: latestPost.data.title,
-    href: `/blog/${latestPost.id}/`,
-    linkText: 'Read the post',
-  }
+  return latestPost
 }

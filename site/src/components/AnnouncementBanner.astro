@@ -2,7 +2,7 @@
 import { getCollection } from 'astro:content';
 import frog from '../assets/nav/frog-hop.svg?raw';
 import arrow from '../assets/banner/arrow.svg?raw';
-import { homepageBanner } from '../util/announcements';
+import { homepageBanner, latestPostBanner } from '../util/announcements';
 import { getPublishedPosts } from '../util/blog';
 import { pathWithBase } from '../util/links';
 
@@ -16,7 +16,7 @@ const announcement = homepageBanner(
   posts,
   today,
 );
-const fallback = announcement?.expires ? homepageBanner([], posts, today) : undefined;
+const fallback = announcement?.expires ? latestPostBanner(posts) : undefined;
 const isExternal = announcement && /^https?:\/\//.test(announcement.href);
 const href = announcement && (isExternal ? announcement.href : pathWithBase(announcement.href));
 const fallbackHref = fallback && pathWithBase(fallback.href);
@@ -53,20 +53,15 @@ const fallbackHref = fallback && pathWithBase(fallback.href);
           )
         }
       </aside>
-      {/* Manual overrides can expire between deploys, so restore the blog fallback without waiting for another build. */}
-      <script is:inline>
-        (function () {
-          var el = document.querySelector('.announcement');
-          if (el && el.dataset.expires && el.dataset.expires < new Date().toISOString().slice(0, 10)) {
-            var fallback = el.querySelector('template');
-            if (fallback) el.replaceChildren(fallback.content.cloneNode(true));
-            else el.remove();
-          }
-        })();
-      </script>
     </>
   )
 }
+
+<script>
+  import { expireAnnouncement } from '../util/expire-announcement';
+
+  expireAnnouncement(document, new Date().toISOString().slice(0, 10));
+</script>
 
 <style>
   .announcement {

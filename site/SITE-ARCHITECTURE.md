@@ -1009,7 +1009,10 @@ Helper functions used across all blog pages:
 
 `AnnouncementBanner.astro` compares the newest published blog post with the newest active entry in
 `src/content/announcements/`. The newer item appears in the banner. A same-day manual announcement wins as an explicit
-override. Manual announcements expire after 14 days by default, then the banner returns to the newest blog post.
+override, while an explicit `expires` date pins the manual announcement through that day. Manual announcements expire
+after 14 days by default, then the banner returns to the newest blog post. When the banner promotes the newest post, the
+homepage community panel features the next-most-recent post instead. During a manual campaign, the panel keeps the newest
+blog post visible.
 
 ### Layouts
 
