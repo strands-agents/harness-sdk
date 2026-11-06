@@ -458,6 +458,12 @@ class TypescriptConnection {
   }
 }
 
+interface StreamInvocation {
+  cancelled: boolean
+  connection?: TypescriptConnection
+  cancelTimeout?: NodeJS.Timeout
+}
+
 export class TypescriptBackend implements ChatBackend {
   readonly id = 'typescript'
   readonly protocol = 'strands'
@@ -472,15 +478,12 @@ export class TypescriptBackend implements ChatBackend {
   private readonly _steering = new Map<number, { prompt: string; consumed: () => void }>()
   private readonly _options: Omit<TypescriptInit, 'config'>
   private _sequence = 0
-  private _running = false
-  private _streamCancelled = false
-  private _streamConnection: TypescriptConnection | undefined
+  private _invocation: StreamInvocation | undefined
   private _loading: { controller: AbortController; promise: Promise<void> } | undefined
   private _draining = false
   private _thinking: ChatForkState['thinking'] | undefined
   private _configuration: TypescriptSetupChange | undefined
   private _disposal: Promise<void> | undefined
-  private _cancelTimeout: NodeJS.Timeout | undefined
 
   private constructor(
     private _connection: TypescriptConnection,
@@ -699,9 +702,9 @@ export class TypescriptBackend implements ChatBackend {
   }
 
   private async *_stream(input: TypescriptStream): AsyncGenerator<ChatEvent, ChatRunResult, undefined> {
-    if (this._running) throw new Error('The TypeScript agent is busy.')
-    this._running = true
-    this._streamCancelled = false
+    if (this._invocation) throw new Error('The TypeScript agent is busy.')
+    const invocation: StreamInvocation = { cancelled: false }
+    this._invocation = invocation
     let connection = this._connection
     let streamId: number | undefined
     let completed = false
@@ -713,10 +716,10 @@ export class TypescriptBackend implements ChatBackend {
         await this._rotate({ kind: 'effort', thinking: this.modelSelection().thinking })
         connection = this._connection
       }
-      if (this._streamCancelled) throw new Error('TypeScript invocation cancelled.')
-      this._streamConnection = connection
+      if (invocation.cancelled) throw new Error('TypeScript invocation cancelled.')
+      invocation.connection = connection
       streamId = await connection.call('start', input)
-      if (this._streamCancelled) throw new Error('TypeScript invocation cancelled.')
+      if (invocation.cancelled) throw new Error('TypeScript invocation cancelled.')
       while (true) {
         const result = await connection.call('next', streamId)
         if (result.done) {
@@ -730,30 +733,31 @@ export class TypescriptBackend implements ChatBackend {
         this.cancel()
         await connection.call('return', streamId).catch(() => {})
       }
-      this._running = false
-      this._streamConnection = undefined
-      clearTimeout(this._cancelTimeout)
-      this._cancelTimeout = undefined
+      this._invocation = undefined
+      clearTimeout(invocation.cancelTimeout)
     }
   }
 
   cancel(): void {
-    this._streamCancelled = true
-    if (this._running) this._loading?.controller.abort()
+    const invocation = this._invocation
+    if (invocation) {
+      invocation.cancelled = true
+      this._loading?.controller.abort()
+    }
     this._connection.notify('cancel', undefined)
-    if (!this._running || this._cancelTimeout) return
+    if (!invocation || invocation.cancelTimeout) return
     const connection = this._connection
-    this._cancelTimeout = setTimeout(() => {
+    invocation.cancelTimeout = setTimeout(() => {
       connection.fail(new Error('The TypeScript agent did not stop after cancellation. Reload it to continue.'))
       void connection.dispose()
     }, 3_000)
   }
 
   queueSteering(prompt: string, onConsumed: () => void): boolean {
-    if (!this._streamConnection || this._draining || this._disposal || !prompt.trim()) return false
+    const connection = this._invocation?.connection
+    if (!connection || this._draining || this._disposal || !prompt.trim()) return false
     const id = ++this._sequence
     this._steering.set(id, { prompt, consumed: onConsumed })
-    const connection = this._streamConnection
     void connection.call('steer', { id, prompt }).catch((error: unknown) => {
       connection.fail(new Error(errorMessage(error)))
     })
@@ -906,7 +910,7 @@ export class TypescriptBackend implements ChatBackend {
     for (const listener of this._disposeListeners) listener()
     this._disposeListeners.clear()
     this._loading?.controller.abort()
-    clearTimeout(this._cancelTimeout)
+    clearTimeout(this._invocation?.cancelTimeout)
     this._steering.clear()
     this._configuration = undefined
     this._taskListeners.clear()

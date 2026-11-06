@@ -411,8 +411,7 @@ class ControlledAudioOutput:
     def __init__(self, output_stream: OutputStream) -> None:
         self._output_stream = output_stream
         self._response_id: str | None = None
-        self._play_current = False
-        self._audio_started = False
+        self._playback: Literal["stopped", "ready", "playing"] = "stopped"
         self._tool_response = False
         self._interrupted_response_id: str | None = None
         self._idle = asyncio.Event()
@@ -435,17 +434,16 @@ class ControlledAudioOutput:
         elif isinstance(event, BidiResponseStartEvent):
             self._response_id = event.response_id
             self._idle.clear()
-            self._play_current = True
-            self._audio_started = False
+            self._playback = "ready"
             self._tool_response = False
         elif isinstance(event, BidiToolUseBlocksEvent):
             self._tool_response = True
         elif isinstance(event, BidiAudioDeltaEvent):
             self._tool_response = False
-            if not self._play_current:
+            if self._playback == "stopped":
                 return
-            if not self._audio_started:
-                self._audio_started = True
+            if self._playback == "ready":
+                self._playback = "playing"
                 emit("speech_output_start")
             await self._output_stream(event)
         elif isinstance(event, BidiBargeInEvent):
@@ -453,7 +451,7 @@ class ControlledAudioOutput:
             if self._response_id is None:
                 self._idle.clear()
                 return
-            if self._audio_started:
+            if self._playback == "playing":
                 emit("speech_output_interrupted")
             self._interrupted_response_id = self._response_id
             self._finish_response(idle=False)
@@ -464,7 +462,7 @@ class ControlledAudioOutput:
             if self._tool_response:
                 self._finish_response(idle=False)
                 return
-            if self._audio_started:
+            if self._playback == "playing":
                 emit("speech_output_complete", response_id=event.response_id)
             self._finish_response()
         elif isinstance(event, (BidiConnectionRestartEvent, BidiConnectionStopEvent)):
@@ -482,17 +480,15 @@ class ControlledAudioOutput:
 
     async def stop_speaking(self) -> None:
         """Clear speaker output without ending the model's turn."""
-        was_speaking = self._audio_started
+        was_speaking = self._playback == "playing"
         await self._output_stream(BidiBargeInEvent())
-        self._play_current = False
-        self._audio_started = False
+        self._playback = "stopped"
         if was_speaking:
             emit("speech_output_stopped")
 
     def _finish_response(self, *, idle: bool = True) -> None:
         self._response_id = None
-        self._play_current = False
-        self._audio_started = False
+        self._playback = "stopped"
         self._tool_response = False
         if idle:
             self._idle.set()

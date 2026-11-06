@@ -133,6 +133,12 @@ type PendingSubmission = PendingUserSubmission | { kind: 'peer'; id: string; mes
 type PendingSteering = { prompt: string }
 type SteeringDrain = { projector: TurnProjector; pending?: Promise<void> }
 
+interface TurnExecution {
+  phase: 'running' | 'interrupting'
+  projector: TurnProjector
+  presentationAbort: AbortController
+}
+
 export class ChatController implements ChatControllerApi {
   readonly peerEndpointId: string | undefined
   private readonly _listeners = new Set<() => void>()
@@ -172,9 +178,7 @@ export class ChatController implements ChatControllerApi {
   private _configurationBaseline: ChatConfigurationBaseline | undefined
 
   private readonly _backend: ChatBackend
-  private _activeProjector: TurnProjector | undefined
-  private _drainingProjector: TurnProjector | undefined
-  private _presentationAbort: AbortController | undefined
+  private _execution: TurnExecution | undefined
   private readonly _pendingSubmissions: PendingSubmission[] = []
   private readonly _pendingSteering: PendingSteering[] = []
   private _steeringDrain: SteeringDrain | undefined
@@ -325,12 +329,15 @@ export class ChatController implements ChatControllerApi {
 
   get busy(): boolean {
     return (
-      this._activeProjector !== undefined ||
-      this._drainingProjector !== undefined ||
+      this._execution !== undefined ||
       this._pendingSubmissions.length > 0 ||
       this._pendingSubmissionRun !== undefined ||
       this._resourceChanging
     )
+  }
+
+  private get _activeProjector(): TurnProjector | undefined {
+    return this._execution?.phase === 'running' ? this._execution.projector : undefined
   }
 
   get hardExitCode(): number | undefined {
@@ -450,12 +457,7 @@ export class ChatController implements ChatControllerApi {
     ) {
       return this._executeSubmission(prompt)
     }
-    if (
-      this._activeProjector ||
-      this._drainingProjector ||
-      this._pendingSubmissionRun ||
-      this._pendingSubmissions.length > 0
-    ) {
+    if (this._execution || this._pendingSubmissionRun || this._pendingSubmissions.length > 0) {
       return this._enqueueSubmission(submission)
     }
     if (this._resourceChanging) {
@@ -497,8 +499,7 @@ export class ChatController implements ChatControllerApi {
     }
     if (
       this._resourceChanging &&
-      !this._activeProjector &&
-      !this._drainingProjector &&
+      !this._execution &&
       !this._pendingSubmissionRun &&
       this._pendingSubmissions.length === 0
     ) {
@@ -599,7 +600,7 @@ export class ChatController implements ChatControllerApi {
   }
 
   private async _runPrompt(input: ChatInput, displayPrompt?: string): Promise<ChatTurn | undefined> {
-    if (this._closed || this._activeProjector || this._drainingProjector || this._resourceChanging) {
+    if (this._closed || this._execution || this._resourceChanging) {
       return undefined
     }
     const submission = normalizeChatInput(input)
@@ -618,13 +619,7 @@ export class ChatController implements ChatControllerApi {
   }
 
   private async _runPeerMessage(message: PeerMessage): Promise<ChatTurn | undefined> {
-    if (
-      this._closed ||
-      this._activeProjector ||
-      this._drainingProjector ||
-      this._resourceChanging ||
-      !this._backend.streamPeer
-    ) {
+    if (this._closed || this._execution || this._resourceChanging || !this._backend.streamPeer) {
       return undefined
     }
     this._panel = undefined
@@ -635,8 +630,7 @@ export class ChatController implements ChatControllerApi {
   private async _runBackgroundContinuation(): Promise<void> {
     if (
       this._closed ||
-      this._activeProjector !== undefined ||
-      this._drainingProjector !== undefined ||
+      this._execution !== undefined ||
       this._pendingSubmissionRun !== undefined ||
       this._resourceChanging ||
       this._pendingSubmissions.some((pending) => pending.kind === 'user') ||
@@ -660,6 +654,7 @@ export class ChatController implements ChatControllerApi {
     const projector = new TurnProjector(turnId, prompt, this._backend.name, turnSource, peer, attachments)
     const usageGeneration = this._usageGeneration
     const presentationAbort = new AbortController()
+    const execution: TurnExecution = { phase: 'running', projector, presentationAbort }
     let toolOutputEmitTimer: ReturnType<typeof setTimeout> | undefined
     let responseDelayTimer: ReturnType<typeof setTimeout> | undefined
     const runningTools = new Set<string>()
@@ -688,8 +683,7 @@ export class ChatController implements ChatControllerApi {
         this._emit()
       }, TOOL_OUTPUT_EMIT_INTERVAL_MS)
     }
-    this._activeProjector = projector
-    this._presentationAbort = presentationAbort
+    this._execution = execution
     resetResponseDelay()
     this._emit()
 
@@ -724,21 +718,14 @@ export class ChatController implements ChatControllerApi {
       if (steeringDrain) {
         await steeringDrain
       }
-      const wasDetachedByCancellation = this._drainingProjector === projector
-      if (!wasDetachedByCancellation) {
+      if (execution.phase === 'running') {
         this._completedTurns.push(projector.snapshot())
       }
-      if (this._activeProjector === projector) {
-        this._activeProjector = undefined
-      }
-      if (wasDetachedByCancellation) {
-        this._drainingProjector = undefined
+      if (this._execution === execution) {
+        this._execution = undefined
       }
       this._steeringDrain = undefined
       this._clearDeliveredBackgroundTaskNotices()
-      if (this._presentationAbort === presentationAbort) {
-        this._presentationAbort = undefined
-      }
       this._emit()
       if (!this._closed) {
         await this._applyDeferredModelRestart()
@@ -815,24 +802,19 @@ export class ChatController implements ChatControllerApi {
   }
 
   cancel(): boolean {
-    if (this._activeProjector) {
-      const projector = this._activeProjector
-      projector.markCancelled()
-      this._completedTurns.push(projector.snapshot())
-      this._activeProjector = undefined
-      this._drainingProjector = projector
-      void this._drainSteering(projector)
-      this._presentationAbort?.abort()
-      this._backend.cancel()
-      this._emit()
-      return true
+    const execution = this._execution
+    if (!execution) return false
+    const running = execution.phase === 'running'
+    if (running) {
+      execution.projector.markCancelled()
+      this._completedTurns.push(execution.projector.snapshot())
+      execution.phase = 'interrupting'
+      void this._drainSteering(execution.projector)
     }
-    if (this._drainingProjector) {
-      this._presentationAbort?.abort()
-      this._backend.cancel()
-      return true
-    }
-    return false
+    execution.presentationAbort.abort()
+    this._backend.cancel()
+    if (running) this._emit()
+    return true
   }
 
   close(exitCode = 0): void {
@@ -843,13 +825,13 @@ export class ChatController implements ChatControllerApi {
     this._sessionNaming?.abort()
     this._stopWatchingUsage()
     this._backgroundContinuationPending = false
-    const interrupted = this._activeProjector !== undefined || this._drainingProjector !== undefined
+    const interrupted = this._execution !== undefined
     this._exitCode = interrupted && exitCode === 0 ? 130 : exitCode
-    if (interrupted) {
+    if (this._execution) {
       this._hardExitCode = this._exitCode
       this._activeProjector?.markCancelled()
-      this._presentationAbort?.abort()
-      void this._drainSteering(this._activeProjector ?? this._drainingProjector!)
+      this._execution.presentationAbort.abort()
+      void this._drainSteering(this._execution.projector)
       this._pendingSteering.length = 0
       this._backend.cancel()
     }
@@ -861,9 +843,9 @@ export class ChatController implements ChatControllerApi {
     this._closed = true
     this._sessionNaming?.abort()
     this._stopWatchingUsage()
-    if (this._activeProjector || this._drainingProjector) {
-      this._presentationAbort?.abort()
-      void this._drainSteering(this._activeProjector ?? this._drainingProjector!)
+    if (this._execution) {
+      this._execution.presentationAbort.abort()
+      void this._drainSteering(this._execution.projector)
       this._pendingSteering.length = 0
       this._backend.cancel()
     }
@@ -995,8 +977,7 @@ export class ChatController implements ChatControllerApi {
       this._pendingSubmissionRun ||
       this._pendingSubmissions.length === 0 ||
       this._closed ||
-      this._activeProjector ||
-      this._drainingProjector ||
+      this._execution ||
       this._resourceChanging
     ) {
       return
@@ -1014,7 +995,7 @@ export class ChatController implements ChatControllerApi {
   }
 
   private async _drainPendingSubmissions(): Promise<void> {
-    while (!this._closed && !this._activeProjector && !this._drainingProjector && !this._resourceChanging) {
+    while (!this._closed && !this._execution && !this._resourceChanging) {
       if (
         !this._pendingSubmissions.some((pending) => pending.kind === 'user') &&
         this._backgroundContinuationPending &&
@@ -1182,7 +1163,7 @@ export class ChatController implements ChatControllerApi {
       this._openError('model change unavailable', modelId, 'This backend cannot change to this model.')
       return false
     }
-    if (this._activeProjector || this._drainingProjector) {
+    if (this._execution) {
       const supersededModelId = this._deferredModelRestart
       const supersededNotice = this._notices.find((candidate) => candidate.id === this._deferredModelNoticeId)
       if (supersededModelId && supersededNotice) {
@@ -1297,7 +1278,7 @@ export class ChatController implements ChatControllerApi {
       notices: this._notices.map((notice) => ({ ...notice })),
       tasks: this._tasks.map(cloneTask),
       context: { ...this._context },
-      status: this._closed ? 'closed' : activeTurn ? 'running' : this._drainingProjector ? 'interrupting' : 'idle',
+      status: this._closed ? 'closed' : (this._execution?.phase ?? 'idle'),
       ...(this._mcpStartup ? { mcpStartup: { ...this._mcpStartup } } : {}),
       ...(this._composerStatus ? { composerStatus: this._composerStatus } : {}),
       ...(this._panel ? { panel: makePanel(this._panel.id, this._panel) } : {}),
@@ -1603,7 +1584,7 @@ export class ChatController implements ChatControllerApi {
       const selected = await this._backend.switchModel!(modelId)
       this._context = {}
       this._refreshRuntime(selected ?? modelId)
-      if (this._activeProjector || this._drainingProjector) {
+      if (this._execution) {
         this._addNotice('delivered', `Model updated for the next model call: ${modelDisplayName(modelId)}`)
       }
       this._updateOpenModelPanel(modelId)
@@ -2683,8 +2664,7 @@ export class ChatController implements ChatControllerApi {
       !this._backgroundContinuationPending ||
       this._backgroundContinuationRun ||
       this._closed ||
-      this._activeProjector !== undefined ||
-      this._drainingProjector !== undefined ||
+      this._execution !== undefined ||
       this._pendingSubmissionRun !== undefined ||
       this._resourceChanging ||
       this._pendingSubmissions.some((pending) => pending.kind === 'user') ||
@@ -2803,7 +2783,7 @@ export class ChatController implements ChatControllerApi {
 
   private _markBackgroundTaskDelivered(taskId: string): void {
     this._deliveredBackgroundTaskIds.add(taskId)
-    if (!this._activeProjector && !this._drainingProjector) {
+    if (!this._execution) {
       this._clearDeliveredBackgroundTaskNotices()
     }
   }
@@ -2833,14 +2813,7 @@ export class ChatController implements ChatControllerApi {
 
   private async _applyDeferredModelRestart(): Promise<void> {
     const modelId = this._deferredModelRestart
-    if (
-      !modelId ||
-      this._closed ||
-      this._activeProjector ||
-      this._drainingProjector ||
-      this._resourceChanging ||
-      !this._backend.restartModel
-    ) {
+    if (!modelId || this._closed || this._execution || this._resourceChanging || !this._backend.restartModel) {
       return
     }
     this._deferredModelRestart = undefined
