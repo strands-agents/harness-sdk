@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { flattenMessagesToContent, summarizeContent } from '../summarize.js'
+import { flattenMessagesToContent, formatSummarized, hasMessageSummary, summarizeContent } from '../summarize.js'
 import { MockMessageModel } from '../../../__fixtures__/mock-message-model.js'
 import { AudioBlock, ImageBlock, VideoBlock } from '../../../types/media.js'
 import { CitationsBlock } from '../../../types/citations.js'
@@ -13,6 +13,18 @@ import {
   ToolResultBlock,
   ToolUseBlock,
 } from '../../../types/messages.js'
+
+describe('hasMessageSummary', () => {
+  it.each([
+    ['message summary', [new TextBlock(formatSummarized('7 messages', 1234, 'facts'))], true],
+    ['appended to carrier', [new TextBlock('a1'), new TextBlock(formatSummarized('1 messages', 50))], true],
+    ['block summary', [new TextBlock(formatSummarized('tool result', 1234, 'facts'))], false],
+    ['elided marker', [new TextBlock('[... 2 messages elided ...]')], false],
+    ['tool use', [new ToolUseBlock({ toolUseId: 't1', name: 'tool', input: {} })], false],
+  ])('%s', (_name, content, expected) => {
+    expect(hasMessageSummary(new Message({ role: 'assistant', content }))).toBe(expected)
+  })
+})
 
 describe('flattenMessagesToContent', () => {
   it('excludes reasoning blocks', () => {
