@@ -140,7 +140,12 @@ If you encounter import errors for `@anthropic-ai/sdk`, ensure the package is in
 </Tab>
 <Tab label="TypeScript">
 
-The TypeScript provider pins `@anthropic-ai/sdk` separately; see the package's `peerDependencies`.
+`@strands-agents/sdk` works with any `@anthropic-ai/sdk` release from 0.109.1 up to, but not including, 2.0. In TypeScript the new API version arrives with the SDK's 1.0 release (in Python it's 2.0): `@anthropic-ai/sdk` 1.x sends `2026-10-21` by default ([migration guide](https://platform.claude.com/docs/en/api/migration-2026-10-21)), which changes behavior that reaches `AnthropicModel`:
+
+- **Sampling parameters.** API version `2026-10-21` rejects `temperature`, `top_p`, and `top_k`, so when one is set (`temperature`, `topP`, or in `params`) the provider throws before sending the request. Remove them, or pin the API version with `clientConfig: { defaultHeaders: { 'anthropic-version': '2023-06-01' } }` or `ANTHROPIC_CUSTOM_HEADERS='anthropic-version: 2023-06-01'`. The pin only helps on models that still honor sampling parameters (Claude 4.6 and earlier); Claude 4.7 and later accept only the defaults.
+- **Documents in assistant messages.** API version `2026-10-21` rejects a `document` block placed directly in an assistant message, so the provider drops those blocks and logs a warning. Put documents in user messages.
+- **Injected clients.** With a `client` you pass in, the provider doesn't know which API version it sends, so neither check above runs and the API's own error surfaces instead.
+- **Authentication.** From 1.0 the API key is sent as `Authorization: Bearer`, which matters behind a proxy that reads `X-Api-Key`. A client also holds one credential, so pass either `apiKey` or `authToken` in `clientConfig`, not both.
 </Tab>
 </Tabs>
 

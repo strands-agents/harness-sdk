@@ -29,7 +29,7 @@ from ..types.citations import (
     WebLocation,
     WebLocationDict,
 )
-from ..types.content import ContentBlock, Message, Messages, SystemContentBlock
+from ..types.content import ContentBlock, Message, Messages, SummaryBlock, SystemContentBlock
 from ..types.event_loop import Usage
 from ..types.exceptions import ContextWindowOverflowException, ModelThrottledException
 from ..types.streaming import CitationsDelta, StreamEvent
@@ -49,6 +49,29 @@ from ._validation import (
     validate_config_keys,
 )
 from .model import BaseModelConfig, CacheConfig, CacheToolsConfig, Model, _messages_cache_ttl
+
+COMPACTION_BETA = "compact-2026-09-04"
+"""Beta that enables on-demand compaction, and compaction blocks in later requests."""
+
+
+def _is_compaction(block: ContentBlock) -> bool:
+    """Whether ``block`` holds a compaction block Anthropic returned."""
+    return "summary" in block and block["summary"].get("provider") == "anthropic"
+
+
+def _from_last_compaction(messages: Messages) -> Messages:
+    """Return the messages from the last compaction block, which stands in for everything before it, or all of them.
+
+    The API rejects any content before a compaction block.
+    """
+    for index in reversed(range(len(messages))):
+        content = messages[index]["content"]
+        positions = [position for position, block in enumerate(content) if _is_compaction(block)]
+        if positions:
+            first = Message(role=messages[index]["role"], content=content[positions[-1] :])
+            return [first, *messages[index + 1 :]]
+    return messages
+
 
 logger = logging.getLogger(__name__)
 
@@ -98,11 +121,17 @@ _SDK_SUPPORTS_NATIVE_OUTPUT = tuple(int(part) for part in re.findall(r"\d+", ant
 
 # anthropic 1.0 removed the sampling parameters from the messages method signatures, so they travel in
 # ``extra_body`` (merged into the request body on every SDK version). API version 2026-10-21, the default
-# on anthropic 2.x, rejects them outright; only the 2023-06-01 API version still accepts them.
+# on anthropic 2.x, and later versions reject them outright; earlier versions such as 2023-06-01 accept them.
 # https://platform.claude.com/docs/en/api/migration-2026-10-21#sampling-parameters
 _SAMPLING_PARAMS = frozenset({"temperature", "top_k", "top_p"})
 _LEGACY_API_VERSION = "2023-06-01"
+_SAMPLING_PARAMS_REMOVED_VERSION = "2026-10-21"
 _API_VERSION_HEADER = "anthropic-version"
+
+
+def _is_current_api_version(api_version: str | None) -> bool:
+    """Whether the API version drops sampling parameters and assistant documents; None means unknown."""
+    return api_version is not None and api_version >= _SAMPLING_PARAMS_REMOVED_VERSION
 
 
 def _mechanism_tool_choice(
@@ -164,8 +193,8 @@ class AnthropicModel(Model):
                 https://docs.anthropic.com/en/docs/about-claude/models/all-models.
             params: Additional model parameters (e.g., metadata, stop_sequences).
                 For a complete list of supported parameters, see https://docs.anthropic.com/en/api/messages.
-                Sampling parameters (temperature, top_k, top_p) are accepted only by API version 2023-06-01;
-                pin it with client_args={"default_headers": {"anthropic-version": "2023-06-01"}}.
+                Sampling parameters (temperature, top_k, top_p) are rejected from API version 2026-10-21 on;
+                pin 2023-06-01 with client_args={"default_headers": {"anthropic-version": "2023-06-01"}}.
             anthropic_tools: Anthropic-specific server-side tools that are not function tools
                 (e.g., web_search, web_fetch, code_execution). Appended alongside the agent's function tools.
                 Use the standard tools interface for function calling tools.
@@ -242,6 +271,9 @@ class AnthropicModel(Model):
             TypeError: If the content block type or document format cannot be converted to an
                 Anthropic-compatible format.
         """
+        if "summary" in content:
+            return self._format_summary(content["summary"])
+
         if "document" in content:
             document_format = content["document"]["format"]
             if document_format == "pdf":
@@ -356,7 +388,7 @@ class AnthropicModel(Model):
         formatted_messages = []
         dropped_unsigned_reasoning = False
         skipped: Counter[str] = Counter()
-        drop_assistant_documents = self._api_version() not in (None, _LEGACY_API_VERSION)
+        drop_assistant_documents = _is_current_api_version(self._api_version())
 
         for message_idx, message in enumerate(messages):
             formatted_contents: list[dict[str, Any]] = []
@@ -607,8 +639,10 @@ class AnthropicModel(Model):
             TypeError: If a message contains a content block type that cannot be converted to an Anthropic-compatible
                 format.
             ValueError: If params sets a sampling parameter both directly and in extra_body, or sets one while the
-                request uses an API version other than 2023-06-01.
+                request uses API version 2026-10-21 or later.
         """
+        if self.model_info.capabilities.server_side_summary is True:
+            messages = _from_last_compaction(messages)
         messages, cache_target_idx = self._manage_cache_points(messages)
 
         tools: list[dict[str, Any]] = [
@@ -649,10 +683,32 @@ class AnthropicModel(Model):
             "tools": tools,
         }
 
+        if self.model_info.capabilities.server_side_summary is True and any(
+            _is_compaction(block) for message in messages for block in message["content"]
+        ):
+            request = self._with_beta(request, COMPACTION_BETA)
         if self._drop_stale_thinking_model_id == self.config["model_id"]:
             request = self._request_with_drop_block(request) or request
 
         return request
+
+    def _format_summary(self, summary: SummaryBlock) -> dict[str, Any]:
+        """Format a summary as a compaction block when Anthropic wrote it and compaction is enabled, else as text."""
+        if summary.get("provider") != "anthropic" or self.model_info.capabilities.server_side_summary is not True:
+            return {"type": "text", "text": summary["text"]}
+        signature = summary.get("signature")
+        return {"type": "compaction", "content": summary["text"], **({"signature": signature} if signature else {})}
+
+    def _with_beta(self, request: dict[str, Any], beta: str) -> dict[str, Any]:
+        """Return the request with ``beta`` added to its ``anthropic-beta`` header."""
+        extra_headers = dict(request.get("extra_headers") or {})
+        # Request headers replace client headers of the same name, so betas set on the client are carried over.
+        configured = extra_headers.get("anthropic-beta") or self.client.default_headers.get("anthropic-beta")
+        betas = [value.strip() for value in configured.split(",")] if isinstance(configured, str) else []
+        if beta not in betas:
+            betas.append(beta)
+        extra_headers["anthropic-beta"] = ",".join(value for value in betas if value)
+        return {**request, "extra_headers": extra_headers}
 
     def _format_request_params(self) -> dict[str, Any]:
         """Return the config params with sampling parameters routed through ``extra_body``.
@@ -662,7 +718,7 @@ class AnthropicModel(Model):
 
         Raises:
             ValueError: If a sampling parameter is set both in params and in params["extra_body"], or if sampling
-                parameters are set while the request uses an API version other than 2023-06-01.
+                parameters are set while the request uses API version 2026-10-21 or later.
         """
         params = dict(self.config.get("params") or {})
         sampling_params = {key: params.pop(key) for key in _SAMPLING_PARAMS & params.keys()}
@@ -675,7 +731,7 @@ class AnthropicModel(Model):
 
         sent_sampling_params = _SAMPLING_PARAMS & extra_body.keys()
         api_version = self._api_version()
-        if sent_sampling_params and api_version not in (None, _LEGACY_API_VERSION):
+        if sent_sampling_params and _is_current_api_version(api_version):
             raise ValueError(
                 f"params=<{sorted(sent_sampling_params)}>, anthropic_version=<{api_version}> | sampling parameters "
                 f"are not accepted by this API version; remove them, or pin the API version with "
@@ -702,14 +758,7 @@ class AnthropicModel(Model):
         thinking = thinking_with_drop_block(request.get("thinking"))
         if thinking is None:
             return None
-        extra_headers = dict(request.get("extra_headers") or {})
-        # Request headers replace client headers of the same name, so betas set on the client are carried over.
-        configured = extra_headers.get("anthropic-beta") or self.client.default_headers.get("anthropic-beta")
-        betas = [beta.strip() for beta in configured.split(",")] if isinstance(configured, str) else []
-        if THINKING_BINDING_BETA not in betas:
-            betas.append(THINKING_BINDING_BETA)
-        extra_headers["anthropic-beta"] = ",".join(beta for beta in betas if beta)
-        return {**request, "thinking": thinking, "extra_headers": extra_headers}
+        return {**self._with_beta(request, THINKING_BINDING_BETA), "thinking": thinking}
 
     def _format_system_prompt(
         self, system_prompt: str | None, system_prompt_content: list[SystemContentBlock] | None
@@ -1039,6 +1088,9 @@ class AnthropicModel(Model):
         Returns:
             Total input token count.
         """
+        if self.model_info.capabilities.server_side_summary is True:
+            # Count what a request sends, which starts at the last compaction block.
+            messages = _from_last_compaction(messages)
         if self.config.get("use_native_token_count") is not True:
             return await super().count_tokens(messages, tool_specs, system_prompt, system_prompt_content)
 
@@ -1047,7 +1099,7 @@ class AnthropicModel(Model):
                 messages, tool_specs, system_prompt, system_prompt_content=system_prompt_content
             )
             # Keep only fields accepted by count_tokens; strip inference params (max_tokens, temperature, etc.)
-            count_tokens_fields = {"model", "messages", "tools", "tool_choice", "system"}
+            count_tokens_fields = {"model", "messages", "tools", "tool_choice", "system", "extra_headers"}
             request = {k: request[k] for k in request.keys() & count_tokens_fields}
 
             response = await self.client.messages.count_tokens(**request)
@@ -1102,7 +1154,7 @@ class AnthropicModel(Model):
             ModelThrottledException: If the request is throttled by Anthropic.
             RuntimeError: If a paused server-side tool turn is still paused after the continuation limit.
             ValueError: If params sets a sampling parameter both directly and in extra_body, or sets one while the
-                request uses an API version other than 2023-06-01.
+                request uses API version 2026-10-21 or later.
         """
         mechanism = self._structured_output_mechanism(structured_output_model, tool_choice)
 
@@ -1243,6 +1295,64 @@ class AnthropicModel(Model):
             return
 
         logger.debug("finished streaming response from model")
+
+    @override
+    async def summarize(
+        self,
+        messages: Messages,
+        *,
+        tool_specs: list[ToolSpec] | None = None,
+        system_prompt: str | None = None,
+        system_prompt_content: list[SystemContentBlock] | None = None,
+        instructions: str | None = None,
+        **kwargs: Any,
+    ) -> ContentBlock:
+        """Summarize the conversation's opening ``messages`` with Anthropic on-demand compaction.
+
+        Sends the live system prompt and tools unchanged under beta ``compact-2026-09-04``, so the thinking kept
+        after the summary stays valid. The returned compaction block is stored as a ``summary`` block holding its
+        text and signature; later requests from a model with ``server_side_summary`` rebuild the compaction block
+        from it and start from it, and requests without it send the summary text.
+
+        Args:
+            messages: The opening messages to summarize, from message 0, left unmodified.
+            tool_specs: The live conversation's tool specifications.
+            system_prompt: The live conversation's plain string system prompt.
+            system_prompt_content: The live conversation's structured system prompt.
+            instructions: Summarization instructions replacing the API's own prompt.
+            **kwargs: Additional keyword arguments for future extensibility.
+
+        Returns:
+            The summary block.
+
+        Raises:
+            RuntimeError: If the response holds no compaction block.
+        """
+        request = self.format_request(messages, tool_specs, system_prompt, system_prompt_content=system_prompt_content)
+        # The API rejects these on a compaction request.
+        request.pop("stop_sequences", None)
+        request.pop("context_management", None)
+        compaction: dict[str, Any] = {"type": "summarize", **({"instructions": instructions} if instructions else {})}
+        request["extra_body"] = {**(request.get("extra_body") or {}), "compaction": compaction}
+        request = self._with_beta(request, COMPACTION_BETA)
+
+        async with self.client.beta.messages.stream(**request) as stream:
+            response = cast(dict[str, Any], (await stream.get_final_message()).to_dict())
+
+        block = next((block for block in response.get("content") or [] if block.get("type") == "compaction"), None)
+        if response.get("stop_reason") != "compaction" or not block or not block.get("content"):
+            raise RuntimeError(
+                f"model_id=<{self.config['model_id']}>, stop_reason=<{response.get('stop_reason')}>"
+                " | compaction returned no summary"
+            )
+        signature = block.get("signature")
+        return ContentBlock(
+            summary=SummaryBlock(
+                provider="anthropic",
+                signature=signature if isinstance(signature, str) else None,
+                text=block["content"],
+            )
+        )
 
     def _record_rejected_mechanism(
         self,

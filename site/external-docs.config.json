@@ -8,7 +8,7 @@
       "manifest": "docs/site-manifest.json",
       "routePrefix": "docs/user-guide/box",
       "navLabel": "Box",
-      "publicationStatus": "preview"
+      "publicationStatus": "stable"
     }
   ]
 }

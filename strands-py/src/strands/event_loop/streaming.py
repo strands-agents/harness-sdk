@@ -574,6 +574,14 @@ async def stream_messages(
     # Whitelist only role and content before sending to the model provider.
     # This ensures metadata (and any future non-model fields) never leak to providers.
     messages = [Message(role=msg["role"], content=msg["content"]) for msg in messages]
+    has_summary = any("summary" in block for message in messages for block in message["content"])
+    if has_summary and model.model_info.capabilities.server_side_summary is not True:
+        # Only a provider with server-side summaries reads a summary block; others get its text.
+        for message in messages:
+            message["content"] = [
+                ContentBlock(text=block["summary"]["text"]) if "summary" in block else block
+                for block in message["content"]
+            ]
     start_time = time.time()
 
     # Omitted when unset, so an ordinary call's arguments are unchanged.
