@@ -1,3 +1,4 @@
+import asyncio
 import unittest.mock
 from unittest.mock import ANY, MagicMock
 
@@ -1112,3 +1113,44 @@ async def test_executor_stream_cancel_duration_is_none(
     after_event = hook_events[-1]
     assert isinstance(after_event, AfterToolCallEvent)
     assert after_event.duration is None
+
+
+@pytest.mark.asyncio
+async def test_executor_stream_skips_tool_when_cancel_arrives_during_before_hook(
+    executor, agent, tool_results, invocation_state, weather_tool, alist
+):
+    """Cancel during an awaiting BeforeToolCallEvent must skip the tool callback."""
+    call_count = {"n": 0}
+    gate = asyncio.Event()
+
+    @strands.tool(name="marker_tool")
+    def marker_tool():
+        call_count["n"] += 1
+        return "wrote"
+
+    agent.tool_registry.register_tool(marker_tool)
+
+    async def slow_before(event):
+        gate.set()
+        await asyncio.sleep(0.05)
+        return event
+
+    agent.hooks.add_callback(BeforeToolCallEvent, slow_before)
+    tool_use: ToolUse = {"name": "marker_tool", "toolUseId": "1", "input": {}}
+
+    async def cancel_while_hook_awaits():
+        await gate.wait()
+        agent._cancel_signal.set()
+
+    cancel_task = asyncio.create_task(cancel_while_hook_awaits())
+    events = await alist(executor._stream(agent, tool_use, tool_results, invocation_state))
+    await cancel_task
+
+    assert call_count["n"] == 0
+    assert isinstance(events[0], ToolCancelEvent)
+    assert events[-1].tool_result == {
+        "toolUseId": "1",
+        "status": "error",
+        "content": [{"text": "Tool execution cancelled"}],
+    }
+    assert tool_results == [events[-1].tool_result]
