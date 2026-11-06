@@ -26,15 +26,7 @@ import {
 
 import type { HarnessAgentOptions } from './agent.js'
 import type { InterventionValue } from './interventions.js'
-import {
-  DEFAULT_BUILTIN_PLUGINS,
-  DEFAULT_BUILTIN_TOOLS,
-  DEFAULT_CONTEXT_MANAGER,
-  DEFAULT_EFFORT,
-  DEFAULT_MEMORY_DIR,
-  DEFAULT_MODEL,
-  DEFAULT_SESSION_DIR,
-} from './defaults.js'
+import { DEFAULT_MEMORY, DEFAULT_MEMORY_DIR, DEFAULT_SESSION, DEFAULT_SESSION_DIR } from './defaults.js'
 import { warnOnce } from './logging.js'
 import { canonicalCommonJsLoader, isHostPackage, resolveReloadUrl, shareHostModules } from './config-module-loader.js'
 import { EFFORT_LEVELS } from './models.js'
@@ -139,8 +131,8 @@ function moduleReferenceSchema<K extends HarnessModuleKind>(kind: K): z.ZodType<
 }
 function moduleReferencesSchema<K extends HarnessModuleKind>(
   kind: K
-): z.ZodDefault<z.ZodArray<z.ZodType<HarnessModuleReference & { kind: K }>>> {
-  return z.array(moduleReferenceSchema(kind), { error: `must be an array of ${kind} module references.` }).default([])
+): z.ZodOptional<z.ZodArray<z.ZodType<HarnessModuleReference & { kind: K }>>> {
+  return z.array(moduleReferenceSchema(kind), { error: `must be an array of ${kind} module references.` }).optional()
 }
 
 // The interfaces are hand-written rather than inferred: zod would infer `?: T | undefined`, which
@@ -262,74 +254,44 @@ export interface HarnessDependencies {
 }
 
 /**
- * The complete portable form of a harness definition.
+ * The portable form of a harness definition. Every key is optional: an omitted key leaves the matching
+ * `createHarness` option unset, so the factory's default applies.
  *
  * `agentConfig` carries JSON-compatible SDK `AgentConfig` fields that are not owned by the harness. Values
  * requiring executable code belong in a typed module reference instead.
  */
 export interface HarnessAgentConfig {
-  name: string
-  description: string
-  instructions: string
-  model: string
-  modelModule: HarnessModuleReference | null
-  effort: Effort
-  tools: readonly HarnessModuleReference[]
-  subagents: readonly HarnessModuleReference[]
-  mcpServers: Record<string, unknown> | string
-  builtinTools: readonly BuiltinToolName[] | HarnessConfigBuiltinTools
-  caching: boolean
-  contextManager: HarnessConfigContextManager
-  session: boolean | SessionConfig
-  skills: boolean | string | readonly string[]
-  memory: boolean | HarnessConfigMemory
-  memoryStores: readonly HarnessModuleReference[]
-  plugins: readonly HarnessModuleReference[]
-  builtinPlugins: readonly BuiltinPluginName[]
-  interventions: string | readonly string[] | null
-  interventionModules: readonly HarnessModuleReference[]
-  sandbox: HarnessModuleReference | null
-  agentConfigModules: Record<string, HarnessModuleReference>
-  dependencies: HarnessDependencies
-  agentConfig: Record<string, unknown>
-}
-
-export const DEFAULT_HARNESS_AGENT_CONFIG: HarnessAgentConfig = {
-  name: 'Strands harness',
-  description: '',
-  instructions: '',
-  model: DEFAULT_MODEL,
-  modelModule: null,
-  effort: DEFAULT_EFFORT,
-  tools: [],
-  subagents: [],
-  mcpServers: {},
-  builtinTools: [...DEFAULT_BUILTIN_TOOLS],
-  caching: true,
-  contextManager: DEFAULT_CONTEXT_MANAGER,
-  session: true,
-  skills: true,
-  memory: true,
-  memoryStores: [],
-  plugins: [],
-  builtinPlugins: [...DEFAULT_BUILTIN_PLUGINS],
-  interventions: null,
-  interventionModules: [],
-  sandbox: null,
-  agentConfigModules: {},
-  dependencies: { typescript: {}, python: [] },
-  agentConfig: {},
-}
-
-export function defineHarnessAgentConfig(config: Partial<HarnessAgentConfig>): HarnessAgentConfig {
-  return normalizeHarnessAgentConfig({ ...DEFAULT_HARNESS_AGENT_CONFIG, ...config })
+  name?: string
+  description?: string
+  instructions?: string
+  model?: string
+  modelModule?: HarnessModuleReference | null
+  effort?: Effort
+  tools?: readonly HarnessModuleReference[]
+  subagents?: readonly HarnessModuleReference[]
+  mcpServers?: Record<string, unknown> | string
+  builtinTools?: readonly BuiltinToolName[] | HarnessConfigBuiltinTools
+  caching?: boolean
+  contextManager?: HarnessConfigContextManager
+  session?: boolean | SessionConfig
+  skills?: boolean | string | readonly string[]
+  memory?: boolean | HarnessConfigMemory
+  memoryStores?: readonly HarnessModuleReference[]
+  plugins?: readonly HarnessModuleReference[]
+  builtinPlugins?: readonly BuiltinPluginName[]
+  interventions?: string | readonly string[] | null
+  interventionModules?: readonly HarnessModuleReference[]
+  sandbox?: HarnessModuleReference | null
+  agentConfigModules?: Record<string, HarnessModuleReference>
+  dependencies?: HarnessDependencies
+  agentConfig?: Record<string, unknown>
 }
 
 export function normalizeHarnessAgentConfig(value: unknown): HarnessAgentConfig {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error('agent config must be an object.')
   }
-  const known = Object.keys(HarnessAgentConfigSchema.shape)
+  const known: readonly string[] = HARNESS_AGENT_CONFIG_KEYS
   const unknown = Object.keys(value).filter((key) => !known.includes(key))
   if (unknown.length > 0) {
     warnOnce(`Ignoring unknown agent config keys: ${[...unknown].sort().join(', ')}.`)
@@ -342,7 +304,7 @@ export function normalizeHarnessAgentConfig(value: unknown): HarnessAgentConfig 
   }
   // Sound: zod only differs by typing absent optional keys as `| undefined`.
   const config = parsed.data as HarnessAgentConfig
-  if (config.memory === false && config.memoryStores.length > 0) {
+  if (config.memory === false && config.memoryStores !== undefined && config.memoryStores.length > 0) {
     warnOnce('Ignoring memoryStores because memory is false.')
   }
   return config
@@ -356,59 +318,61 @@ export async function harnessAgentOptionsFromConfig(
   const generation = sourceGeneration(config, baseDir)
   const [tools, subagents, plugins, sandbox, memoryStores, model, builtinTools, interventions, agentConfigModules] =
     await Promise.all([
-      loadMany<ToolList[number]>(config.tools, baseDir, generation),
-      loadMany<Agent>(config.subagents, baseDir, generation),
-      loadMany<Plugin>(config.plugins, baseDir, generation),
-      loadOptional<Sandbox | false>(config.sandbox, baseDir, generation),
-      loadMany<MemoryStore>(config.memoryStores, baseDir, generation),
-      loadOptional<Model>(config.modelModule, baseDir, generation),
-      builtinToolsOption(config.builtinTools, baseDir, generation),
-      loadMany<InterventionValue>(config.interventionModules, baseDir, generation),
-      loadReferenceRecord(config.agentConfigModules, baseDir, generation),
+      loadMany<ToolList[number]>(config.tools ?? [], baseDir, generation),
+      loadMany<Agent>(config.subagents ?? [], baseDir, generation),
+      loadMany<Plugin>(config.plugins ?? [], baseDir, generation),
+      loadOptional<Sandbox | false>(config.sandbox ?? null, baseDir, generation),
+      loadMany<MemoryStore>(config.memoryStores ?? [], baseDir, generation),
+      loadOptional<Model>(config.modelModule ?? null, baseDir, generation),
+      config.builtinTools === undefined ? undefined : builtinToolsOption(config.builtinTools, baseDir, generation),
+      loadMany<InterventionValue>(config.interventionModules ?? [], baseDir, generation),
+      loadReferenceRecord(config.agentConfigModules ?? {}, baseDir, generation),
     ])
+  const resolvedModel = model ?? config.model
   return {
     ...config.agentConfig,
     ...agentConfigModules,
-    name: config.name,
+    ...(config.name !== undefined && { name: config.name }),
     ...(config.description ? { description: config.description } : {}),
     ...(config.instructions ? { instructions: config.instructions } : {}),
-    model: model ?? config.model,
-    effort: config.effort,
+    ...(resolvedModel !== undefined && { model: resolvedModel }),
+    ...(config.effort !== undefined && { effort: config.effort }),
     // Specialist agents declared as `subagents` module refs are wired the same way as any tool: each
     // is exposed via `Agent.asTool()` and appended to `tools` (the harness has no separate subagents param).
     ...(tools.length > 0 || subagents.length > 0
       ? { tools: [...tools, ...subagents.map((agent) => agent.asTool())] }
       : {}),
-    ...mcpServerOptions(config.mcpServers, baseDir),
-    ...(builtinTools === undefined ? {} : { builtinTools }),
-    ...(config.caching ? {} : { caching: false }),
-    contextManager: config.contextManager,
-    session: sessionOption(config.session, baseDir),
-    skills: skillsOption(config.skills, baseDir),
-    memory: memoryOption(config.memory, memoryStores, baseDir),
+    ...(config.mcpServers !== undefined && mcpServerOptions(config.mcpServers, baseDir)),
+    ...(builtinTools !== undefined && { builtinTools }),
+    // `true` is the factory's own default, so only `false` is forwarded; an explicit `true` would make
+    // unsupported providers raise instead of warn.
+    ...(config.caching === false && { caching: false }),
+    ...(config.contextManager !== undefined && { contextManager: config.contextManager }),
+    session: sessionOption(config.session ?? DEFAULT_SESSION, baseDir),
+    ...(config.skills !== undefined && { skills: skillsOption(config.skills, baseDir) }),
+    memory: memoryOption(config.memory ?? DEFAULT_MEMORY, memoryStores, baseDir),
     ...(plugins.length > 0 ? { plugins } : {}),
-    ...(sameStrings(config.builtinPlugins, DEFAULT_HARNESS_AGENT_CONFIG.builtinPlugins)
-      ? {}
-      : { builtinPlugins: [...config.builtinPlugins] }),
-    ...interventionOptions(config.interventions, interventions, baseDir),
+    ...(config.builtinPlugins !== undefined && { builtinPlugins: [...config.builtinPlugins] }),
+    ...interventionOptions(config.interventions ?? null, interventions, baseDir),
     ...(sandbox !== undefined ? { sandbox } : {}),
   }
 }
 
 function sourceGeneration(config: HarnessAgentConfig, baseDir: string): string {
   const references = [
-    ...config.tools,
-    ...config.subagents,
-    ...config.plugins,
-    ...config.memoryStores,
-    ...config.interventionModules,
-    ...Object.values(config.agentConfigModules),
+    ...(config.tools ?? []),
+    ...(config.subagents ?? []),
+    ...(config.plugins ?? []),
+    ...(config.memoryStores ?? []),
+    ...(config.interventionModules ?? []),
+    ...Object.values(config.agentConfigModules ?? {}),
     ...(config.modelModule ? [config.modelModule] : []),
     ...(config.sandbox ? [config.sandbox] : []),
   ]
-  const webFetch = Array.isArray(config.builtinTools)
-    ? undefined
-    : (config.builtinTools as HarnessConfigBuiltinTools).web_fetch
+  const webFetch =
+    config.builtinTools === undefined || Array.isArray(config.builtinTools)
+      ? undefined
+      : (config.builtinTools as HarnessConfigBuiltinTools).web_fetch
   if (typeof webFetch === 'object' && typeof webFetch.model === 'object') {
     references.push(webFetch.model)
   }
@@ -456,15 +420,13 @@ function hashSourcePath(hash: Hash, path: string): void {
   }
 }
 
-// A pinned list equal to the default is omitted so the factory's own default applies.
 async function builtinToolsOption(
   value: readonly BuiltinToolName[] | HarnessConfigBuiltinTools,
   baseDir: string,
   generation: string
 ): Promise<HarnessAgentOptions['builtinTools']> {
   if (Array.isArray(value)) {
-    const names = value as readonly BuiltinToolName[]
-    return sameStrings(names, DEFAULT_BUILTIN_TOOLS) ? undefined : [...names]
+    return [...(value as readonly BuiltinToolName[])]
   }
   const mapping = value as HarnessConfigBuiltinTools
   const webFetch = mapping.web_fetch
@@ -480,7 +442,7 @@ async function builtinToolsOption(
 }
 
 // Directory options in a portable config resolve against the project root (`baseDir`) even when
-// they are the defaults, so an exported project keeps its state under its own folder wherever it is
+// they are omitted, so an exported project keeps its state under its own folder wherever it is
 // launched from.
 function sessionOption(value: boolean | SessionConfig, baseDir: string): false | SessionConfig {
   if (value === false) {
@@ -527,7 +489,7 @@ function resolvePath(value: string, baseDir: string): string {
 // `${env:VAR}` placeholders are resolved here, with a missing variable failing loudly, so the same
 // manifest behaves identically under both runtimes.
 function mcpServerOptions(
-  value: HarnessAgentConfig['mcpServers'],
+  value: NonNullable<HarnessAgentConfig['mcpServers']>,
   baseDir: string
 ): Partial<Pick<HarnessAgentOptions, 'mcpServers'>> {
   const servers = Object.fromEntries(
@@ -597,7 +559,7 @@ function expandEnv(value: unknown): unknown {
 }
 
 function interventionOptions(
-  configured: HarnessAgentConfig['interventions'],
+  configured: Exclude<HarnessAgentConfig['interventions'], undefined>,
   loaded: InterventionValue[],
   baseDir: string
 ): Partial<Pick<HarnessAgentOptions, 'interventions'>> {
@@ -716,21 +678,19 @@ const MemorySchema = z.union([Bool, strictObject({ dir: NonEmptyString.optional(
   error: 'must be a boolean or an object.',
 })
 
-/** `HarnessAgentConfig` as read from `config.json`; every key is optional and defaults to `DEFAULT_HARNESS_AGENT_CONFIG`. */
+/** `HarnessAgentConfig` as read from `config.json`; every key is optional and an omitted key stays omitted. */
 const HarnessAgentConfigSchema = z.object({
-  name: NonEmptyString.default(DEFAULT_HARNESS_AGENT_CONFIG.name),
-  description: z.string({ error: 'must be a string.' }).default(DEFAULT_HARNESS_AGENT_CONFIG.description),
-  instructions: z.string({ error: 'must be a string.' }).default(DEFAULT_HARNESS_AGENT_CONFIG.instructions),
-  model: NonEmptyString.default(DEFAULT_HARNESS_AGENT_CONFIG.model),
-  modelModule: moduleReferenceSchema('model').nullable().default(null),
-  effort: z
-    .enum(EFFORT_LEVELS, { error: `must be one of: ${EFFORT_LEVELS.join(', ')}.` })
-    .default(DEFAULT_HARNESS_AGENT_CONFIG.effort),
+  name: NonEmptyString.optional(),
+  description: z.string({ error: 'must be a string.' }).optional(),
+  instructions: z.string({ error: 'must be a string.' }).optional(),
+  model: NonEmptyString.optional(),
+  modelModule: moduleReferenceSchema('model').nullable().optional(),
+  effort: z.enum(EFFORT_LEVELS, { error: `must be one of: ${EFFORT_LEVELS.join(', ')}.` }).optional(),
   tools: moduleReferencesSchema('tool'),
   subagents: moduleReferencesSchema('subagent'),
   mcpServers: z
     .union([NonEmptyString, JsonRecord], { error: 'must be a path string or a mapping of server name to config.' })
-    .default(() => ({})),
+    .optional(),
   builtinTools: z
     .union(
       [
@@ -743,22 +703,22 @@ const HarnessAgentConfigSchema = z.object({
       ],
       { error: 'must be an array of tool names or a mapping of tool name to setting.' }
     )
-    .default(() => [...DEFAULT_BUILTIN_TOOLS]),
-  caching: Bool.default(DEFAULT_HARNESS_AGENT_CONFIG.caching),
+    .optional(),
+  caching: Bool.optional(),
   // JSON also accepts "off" as the spelling of `false`, matching the CLI flag and the Python loader.
   contextManager: z
     .union([z.enum(['auto', 'agentic', 'off']), z.literal(false)], {
       error: 'must be one of: auto, agentic, off, false.',
     })
     .transform((value) => (value === 'off' ? false : value))
-    .default(DEFAULT_CONTEXT_MANAGER),
-  session: SessionSchema.default(DEFAULT_HARNESS_AGENT_CONFIG.session),
+    .optional(),
+  session: SessionSchema.optional(),
   skills: z
     .union([Bool, NonEmptyString, uniqueStrings(NonEmptyStrings)], {
       error: 'must be a boolean, a path string, or an array of path strings.',
     })
-    .default(true),
-  memory: MemorySchema.default(DEFAULT_HARNESS_AGENT_CONFIG.memory),
+    .optional(),
+  memory: MemorySchema.optional(),
   memoryStores: moduleReferencesSchema('memory-store'),
   plugins: moduleReferencesSchema('plugin'),
   builtinPlugins: z
@@ -766,17 +726,17 @@ const HarnessAgentConfigSchema = z.object({
       error: 'must be an array.',
     })
     .refine((names) => new Set(names).size === names.length, 'must not contain duplicates.')
-    .default(() => [...DEFAULT_BUILTIN_PLUGINS]),
+    .optional(),
   interventions: z
     .union([NonEmptyString, NonEmptyStrings, z.null()], {
       error: 'must be a string, an array of strings, or null.',
     })
-    .default(null),
+    .optional(),
   interventionModules: moduleReferencesSchema('intervention'),
-  sandbox: moduleReferenceSchema('sandbox').nullable().default(null),
+  sandbox: moduleReferenceSchema('sandbox').nullable().optional(),
   agentConfigModules: z
     .record(NonEmptyString, moduleReferenceSchema('agent-config'), { error: 'must be an object.' })
-    .default(() => ({})),
+    .optional(),
   dependencies: z
     .object(
       {
@@ -792,9 +752,14 @@ const HarnessAgentConfigSchema = z.object({
       },
       { error: 'must be an object.' }
     )
-    .default(() => ({ typescript: {}, python: [] })),
-  agentConfig: JsonRecord.default(() => ({})),
+    .optional(),
+  agentConfig: JsonRecord.optional(),
 })
+
+/** Every top-level `HarnessAgentConfig` key, in schema order. */
+export const HARNESS_AGENT_CONFIG_KEYS = Object.keys(
+  HarnessAgentConfigSchema.shape
+) as readonly (keyof HarnessAgentConfig)[]
 
 function formatPath(path: readonly PropertyKey[]): string {
   const text = path.reduce<string>(
@@ -830,8 +795,4 @@ function formatIssues(issues: readonly z.core.$ZodIssue[], prefix: readonly Prop
     }
     return [`${formatPath(path)} ${issue.message}`]
   })
-}
-
-function sameStrings(left: readonly string[], right: readonly string[]): boolean {
-  return left.length === right.length && left.every((value, index) => value === right[index])
 }
