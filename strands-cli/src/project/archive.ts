@@ -1,4 +1,4 @@
-import { execFile, type ExecFileOptions } from 'node:child_process'
+import { spawn, type SpawnOptionsWithoutStdio } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import {
   lstatSync,
@@ -274,7 +274,7 @@ function removeStoppedInstallers(path: string): boolean {
 async function runInstaller(
   command: string,
   args: string[],
-  options: ExecFileOptions,
+  options: SpawnOptionsWithoutStdio,
   lockPath: string
 ): Promise<void> {
   const starting = join(lockPath, 'starting')
@@ -283,18 +283,42 @@ async function runInstaller(
     let failure: Error | null = null
     let child
     try {
-      child = execFile(command, args, options, (error) => {
-        failure ??= error
-      })
+      child = spawn(command, args, options)
     } catch (error) {
       unlinkSync(starting)
       reject(error)
       return
     }
+    const stop = (error: Error): void => {
+      failure ??= error
+      child.stdout.destroy()
+      child.stderr.destroy()
+      child.kill()
+    }
+    const timeout = setTimeout(() => stop(new Error(`${command} installer timed out after 180 seconds`)), 180_000)
+    let stderr = ''
+    for (const stream of [child.stdout, child.stderr]) {
+      let bytes = 0
+      stream.setEncoding('utf8').on('data', (data: string) => {
+        bytes += Buffer.byteLength(data)
+        if (bytes > 8 * 1024 * 1024) {
+          stop(new Error(`${command} installer output exceeded 8 MB`))
+        } else if (stream === child.stderr) {
+          stderr += data
+        }
+      })
+    }
+    child.once('error', (error) => {
+      failure ??= error
+    })
     const owner = child.pid ? join(lockPath, `${child.pid}-${randomUUID()}`) : undefined
-    child.once('close', () => {
+    child.once('close', (code, signal) => {
+      clearTimeout(timeout)
       try {
         if (owner) rmSync(owner, { force: true })
+        if (code !== 0) {
+          failure ??= new Error(`Command failed: ${command} ${args.join(' ')} (${signal ?? code})\n${stderr}`)
+        }
         if (failure) reject(failure)
         else resolve()
       } catch (error) {
@@ -306,8 +330,7 @@ async function runInstaller(
       unlinkSync(starting)
     } catch (error) {
       // Keep the starting marker if ownership could not be recorded.
-      failure = error as Error
-      child.kill()
+      stop(error as Error)
     }
   })
 }
@@ -346,7 +369,12 @@ async function installDependencies(root: string, language: AgentProjectLanguage,
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
   }
-  const options = { cwd: root, timeout: 180_000, maxBuffer: 8 * 1024 * 1024 }
+  const options = {
+    cwd: root,
+    // Windows ties non-detached children to the CLI's lifetime, but leaves grandchildren running.
+    detached: process.platform === 'win32',
+    windowsHide: true,
+  }
   try {
     if (nodeDependencies) {
       const npm = npmInvocation([npmCommand, '--no-audit', '--no-fund'])

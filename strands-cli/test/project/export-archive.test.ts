@@ -7,15 +7,24 @@ import { strToU8, zipSync } from 'fflate'
 import { ZipFile } from 'yazl'
 
 const execute = vi.hoisted(() => vi.fn())
-vi.mock('node:child_process', async () => {
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>()
   const { EventEmitter } = await import('node:events')
+  const { PassThrough } = await import('node:stream')
   return {
-    execFile: (command: string, args: string[], options: object, callback: (error: Error | null) => void) => {
-      const child = Object.assign(new EventEmitter(), { pid: process.pid })
+    ...actual,
+    spawn: (command: string, args: string[], options: object) => {
+      const child = Object.assign(new EventEmitter(), {
+        pid: process.pid,
+        stdout: new PassThrough(),
+        stderr: new PassThrough(),
+      })
       process.nextTick(() => {
         execute(command, args, options, (error: Error | null) => {
-          callback(error)
-          child.emit('close')
+          if (error) child.stderr.write(error.message)
+          child.stdout.end()
+          child.stderr.end()
+          child.emit('close', error ? 1 : 0, null)
         })
       })
       return child
