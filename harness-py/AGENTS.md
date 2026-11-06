@@ -17,7 +17,7 @@ harness-py/
 │   ├── models.py      # resolve_model(): "provider/name" -> Model, per-provider effort (reasoning) config
 │   ├── prompt.py      # HARNESS_CONTRACT + build_system_prompt()
 │   ├── defaults.py    # default model, effort, context manager, tools, session/skills/memory dirs
-│   ├── tools/         # harness-authored built-in tools: file_tools.py (read/write/edit), web_fetch.py
+│   ├── tools/         # harness-authored built-in tools: web_fetch.py (read/write/edit are re-exported from the SDK)
 │   └── plugins/       # built-in feature plugins: todos.py, environment.py
 ├── tests/             # pytest suite (mirrors the module layout)
 └── pyproject.toml     # build config, dependencies, package-local tool settings
