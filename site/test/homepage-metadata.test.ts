@@ -65,6 +65,44 @@ describe('homepage machine-readable metadata', () => {
     expect(main?.querySelectorAll('h1')).toHaveLength(1)
   })
 
+  it('groups products under the Build, Control, and Validate pillars', () => {
+    const toolkit = homepage.querySelector('.toolkit')
+    const pillars = toolkit?.querySelectorAll('.toolkit__section') ?? []
+
+    expect(toolkit?.querySelector('.toolkit__cards-title')?.tagName).toBe('H2')
+    expect(
+      pillars.map((pillar) => ({
+        title: {
+          tagName: pillar.querySelector('.toolkit__section-title')?.tagName,
+          text: pillar.querySelector('.toolkit__section-title')?.text.trim(),
+        },
+        products: pillar.querySelectorAll('.toolkit__card').map((card) => {
+          const heading = card.querySelector('.toolkit__card-slug')
+          return { tagName: heading?.tagName, text: heading?.text.trim() }
+        }),
+      }))
+    ).toEqual([
+      {
+        title: { tagName: 'H3', text: 'Build' },
+        products: [
+          { tagName: 'H4', text: '/harness' },
+          { tagName: 'H4', text: '/harness-sdk' },
+        ],
+      },
+      {
+        title: { tagName: 'H3', text: 'Control' },
+        products: [
+          { tagName: 'H4', text: '/box' },
+          { tagName: 'H4', text: '/shell' },
+        ],
+      },
+      {
+        title: { tagName: 'H3', text: 'Validate' },
+        products: [{ tagName: 'H4', text: '/evals' }],
+      },
+    ])
+  })
+
   it('publishes a concise Markdown homepage with official resources', () => {
     const markdown = readFileSync(new URL('../dist/index.md', import.meta.url), 'utf8')
 
