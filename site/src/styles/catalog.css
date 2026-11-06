@@ -306,6 +306,10 @@ body:has(.cat-page) {
   color: var(--sl-color-gray-3);
   white-space: nowrap;
 }
+/* Keeps a hyphenated GitHub owner (ag-ui-protocol) on one line. */
+.cat-maintainer {
+  white-space: nowrap;
+}
 .cat-stat {
   display: inline-flex;
   align-items: center;
