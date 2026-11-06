@@ -45,6 +45,8 @@ _HEADERS = {
 
 _DEFAULT_MAX_BYTES = 5 * 1024 * 1024  # 5 MiB
 _DEFAULT_MAX_CONTENT_CHARS = 50_000
+# Share of body bytes that decode to U+FFFD above which the body is not shown; random bytes measure ~0.41.
+_UNDECODABLE_RATIO = 0.3
 
 _ANALYST_PROMPT = (
     "You answer a request about a single fetched web page. Use only the provided "
@@ -93,6 +95,9 @@ def make_web_fetch(
           the main agent's context.
         - ``markdown``: HTML converted to clean markdown; other content
           types returned as-is.
+        In both modes a body that contains NUL or largely fails to decode is replaced
+        by a short marker such as ``[binary image/png, 48,213 bytes; not shown]``
+        (``[undecodable text/...]`` for text types).
     """
     if max_bytes <= 0:
         raise ValueError(f"max_bytes must be positive, got {max_bytes}")
@@ -121,12 +126,14 @@ def make_web_fetch(
                 agent so the tool can read its cancel signal.
         """
         cancel_signal = tool_context.cancel_signal if tool_context else None
-        content_type, raw = await _fetch_once(
+        content_type, raw, binary_marker = await _fetch_once(
             url=url,
             max_bytes=max_bytes,
             client=external_client,
             cancel_signal=cancel_signal,
         )
+        if binary_marker:
+            return binary_marker
 
         is_markup = "html" in content_type.lower() or "xml" in content_type.lower()
         content = html_to_markdown(raw) if is_markup else raw
@@ -166,12 +173,14 @@ def make_web_fetch(
             )
 
         cancel_signal = tool_context.cancel_signal if tool_context else None
-        content_type, raw = await _fetch_once(
+        content_type, raw, binary_marker = await _fetch_once(
             url=url,
             max_bytes=max_bytes,
             client=external_client,
             cancel_signal=cancel_signal,
         )
+        if binary_marker:
+            return binary_marker
 
         # Fresh agent per call — no history from one fetch bleeds into the next.
         analyst = Agent(
@@ -212,8 +221,10 @@ async def _fetch_once(
     max_bytes: int,
     client: httpx.AsyncClient | None,
     cancel_signal: threading.Event | None,
-) -> tuple[str, str]:
-    """Perform one HTTP GET, returning ``(content_type, body_text)``.
+) -> tuple[str, str, str | None]:
+    """Perform one HTTP GET, returning ``(content_type, body_text, binary_marker)``.
+
+    ``binary_marker`` is a short placeholder for the model when the body is binary, else ``None``.
 
     Raises:
         asyncio.CancelledError: When the agent cancel signal is set.
@@ -259,7 +270,16 @@ async def _fetch_once(
     except LookupError:
         raw = body.decode("utf-8", errors="replace")
 
-    return content_type, raw
+    return content_type, raw, _binary_marker(content_type, raw, len(body))
+
+
+def _binary_marker(content_type: str, text: str, size: int) -> str | None:
+    """Return a placeholder when the body contains NUL or largely fails to decode, else ``None``."""
+    if "\x00" not in text and text.count("\ufffd") <= size * _UNDECODABLE_RATIO:
+        return None
+    media_type = content_type.split(";")[0].strip().lower()
+    kind = "undecodable" if media_type.startswith("text/") else "binary"
+    return f"[{kind} {media_type or 'content'}, {size:,} bytes; not shown]"
 
 
 def _parse_charset(content_type: str) -> str:
