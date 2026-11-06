@@ -4,6 +4,10 @@
 import { Agent, HookOrder, BeforeToolCallEvent } from '@strands-agents/sdk'
 // --8<-- [end:hook_ordering_imports]
 
+// --8<-- [start:modify_invocation_messages_imports]
+import { Agent, BeforeInvocationEvent, TextBlock } from '@strands-agents/sdk'
+// --8<-- [end:modify_invocation_messages_imports]
+
 // --8<-- [start:tool_interception_imports]
 import {
   BeforeToolCallEvent,

@@ -8,12 +8,23 @@ from typing_extensions import Required, TypedDict
 class Usage(TypedDict, total=False):
     """Token usage information for model interactions.
 
+    Providers differ on whether ``inputTokens`` includes cached tokens. Some count cache reads and
+    writes inside ``inputTokens``; others count them only in ``cacheReadInputTokens`` and
+    ``cacheWriteInputTokens``. ``totalTokens`` always includes cached tokens, so for a single model call:
+    if ``inputTokens + outputTokens == totalTokens``, ``inputTokens`` already includes the cache fields;
+    otherwise, total input is ``inputTokens + cacheReadInputTokens + cacheWriteInputTokens``. Adding the
+    cache fields to an ``inputTokens`` that already includes them counts cached tokens twice.
+
+    Custom model providers should include cached tokens in ``inputTokens`` (matching the OpenTelemetry
+    GenAI conventions), so that ``totalTokens == inputTokens + outputTokens``.
+
     Attributes:
-        inputTokens: Number of tokens sent in the request to the model.
+        inputTokens: Number of input tokens, as the model provider counts them. May or may not include
+            cached tokens, depending on the provider.
         outputTokens: Number of tokens that the model generated for the request.
-        totalTokens: Total number of tokens (input + output).
-        cacheReadInputTokens: Number of tokens read from cache (optional).
-        cacheWriteInputTokens: Number of tokens written to cache (optional).
+        totalTokens: Total number of tokens processed, including any cached input tokens.
+        cacheReadInputTokens: Number of input tokens read from cache (optional).
+        cacheWriteInputTokens: Number of input tokens written to cache (optional).
     """
 
     inputTokens: Required[int]

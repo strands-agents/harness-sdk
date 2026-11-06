@@ -512,7 +512,8 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
   ): AsyncGenerator<ModelStreamEvent | ContentBlock, StreamAggregatedResult, undefined> {
     try {
       // State maintained in closure
-      let messageRole: Role | null = null
+      // Providers can end an empty turn with only a stop event, so a message is assumed to be the assistant's.
+      let messageRole: Role = 'assistant'
       const contentBlocks: ContentBlock[] = []
       let accumulatedText = ''
       let accumulatedToolInput = ''
@@ -623,16 +624,11 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
 
           case 'modelMessageStopEvent':
             // Store message and stop reason
-            if (messageRole) {
-              const filtered = contentBlocks.filter(
-                (block) => !(block instanceof TextBlock && block.text.trim() === '')
-              )
-              stoppedMessage = new Message({
-                role: messageRole,
-                content: filtered,
-              })
-              finalStopReason = event.stopReason!
-            }
+            stoppedMessage = new Message({
+              role: messageRole,
+              content: contentBlocks.filter((block) => !(block instanceof TextBlock && block.text.trim() === '')),
+            })
+            finalStopReason = event.stopReason!
             break
 
           case 'modelMetadataEvent':

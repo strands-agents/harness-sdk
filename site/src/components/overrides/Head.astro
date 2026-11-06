@@ -7,8 +7,8 @@
 import { getCollection } from 'astro:content'
 import SiteScripts from '../SiteScripts.astro'
 import Analytics from '../Analytics.astro'
-import { baseSchemas } from '../../util/structured-data'
-import { getDocsIds } from '../../util/docs-ids'
+import { baseSchemas, buildBreadcrumbItems, serializeJsonLd } from '../../util/structured-data'
+import { getDocsIds, getSampleGuideRouteIds } from '../../util/docs-ids'
 import { relatedUserGuideFor } from '../../util/related-docs'
 import { resolveLanguage, sourceLinkUrl } from '../../util/source-links'
 import type { SourceLink } from '../../content.config'
@@ -20,58 +20,18 @@ const route = Astro.locals.starlightRoute
 const base = import.meta.env.BASE_URL || '/'
 const faviconHref = base.endsWith('/') ? `${base}favicon.svg` : `${base}/favicon.svg`
 
-// Raw markdown twin served by src/pages/[...slug]/index.md.ts — one endpoint per docs
-// collection entry, at `/{entry.id}/index.md`. Only advertise it for routes backed by a
-// docs entry (blog/changelog pages flow through Starlight with synthetic entries).
-const docIds = await getDocsIds()
+// Raw markdown twins are available for generated sample guides and non-preview docs.
+const [docIds, sampleGuideRouteIds] = await Promise.all([getDocsIds(), getSampleGuideRouteIds()])
 const baseNoSlash = base.replace(/\/$/, '')
-const markdownHref = docIds.has(route.entry.id) ? `${baseNoSlash}/${route.entry.id}/index.md` : null
+const hasMarkdownTwin =
+  sampleGuideRouteIds.has(route.entry.id) ||
+  (docIds.has(route.entry.id) && route.entry.data.externalDocs?.status !== 'preview')
+const markdownHref = hasMarkdownTwin ? `${baseNoSlash}/${route.entry.id}/index.md` : null
 
-// Build breadcrumb list from URL path
+// Build breadcrumb list from the canonical route id rather than the deployed URL,
+// which may contain a preview base path.
 const siteUrl = Astro.site?.origin || 'https://strandsagents.com'
-const pathSegments = Astro.url.pathname.replace(/^\/|\/$/g, '').split('/').filter(Boolean)
-const breadcrumbLabels: Record<string, string> = {
-  'docs': 'Docs',
-  'user-guide': 'User Guide',
-  'concepts': 'Concepts',
-  'agents': 'Agents',
-  'tools': 'Tools',
-  'multi-agent': 'Multi-Agent',
-  'model-providers': 'Model Providers',
-  'streaming': 'Streaming',
-  'bidi': 'Voice',
-  'deploy': 'Deploy',
-  'safety-security': 'Safety & Security',
-  'observability-evaluation': 'Observability',
-  'evals-sdk': 'Evals SDK',
-  'examples': 'Examples',
-  'community': 'Community',
-  'labs': 'Labs',
-  'contribute': 'Contribute',
-  'api': 'API Reference',
-  'plugins': 'Plugins',
-  'quickstart': 'Quickstart',
-  'experimental': 'Experimental',
-  'python': 'Python',
-  'typescript': 'TypeScript',
-  'integrations': 'Integrations',
-  'session-managers': 'Session Managers',
-  'contributing': 'Contributing',
-}
-
-const breadcrumbItems = pathSegments.map((segment, i) => {
-  const path = '/' + pathSegments.slice(0, i + 1).join('/') + '/'
-  const isLast = i === pathSegments.length - 1
-  const name = isLast
-    ? (route.entry.data.title || segment)
-    : (breadcrumbLabels[segment] || segment.replace(/-/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase()))
-  return {
-    "@type": "ListItem" as const,
-    position: i + 1,
-    name,
-    ...(isLast ? {} : { item: siteUrl + path })
-  }
-})
+const breadcrumbItems = buildBreadcrumbItems(route.entry.id, route.entry.data.title, siteUrl, baseNoSlash)
 
 // TechArticle node for docs pages with tags or sourceLinks. Reaches HTML-only
 // crawlers that don't follow the llms.txt convention.
@@ -143,7 +103,7 @@ const structuredData = {
 <Analytics />
 
 <!-- Structured Data -->
-<script type="application/ld+json" set:html={JSON.stringify(structuredData)} />
+<script type="application/ld+json" set:html={serializeJsonLd(structuredData)} />
 
 <!-- Embed mode: with `?embed` in the URL the page renders chromeless (no site
      header/sidebar/TOC/footers) for the /integrations docs drawer iframe. The

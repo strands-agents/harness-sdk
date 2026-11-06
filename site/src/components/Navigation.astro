@@ -11,11 +11,13 @@ import LanguageToggle from './LanguageToggle.astro';
 import { getStarCount } from '../util/github';
 import { products } from '../config/navbar';
 import { pathWithBase } from '../util/links';
-import { getProductNav } from '../util/product-nav';
+import { getProductNav, normalizedSidebarToProductNav } from '../util/product-nav';
+import { isSampleGuidePath } from '../util/sample-guides';
 import MobileNavTree from './MobileNavTree.astro';
 
 const stars = await getStarCount();
 const currentPath = Astro.url.pathname.replace(/\/?$/, '/');
+const isExamplesPage = isSampleGuidePath(currentPath);
 
 // The "Docs" dropdown is organized around products (Strands harness, SDK,
 // Shell, Evals) from navigation.yml, so the dropdown and the docs stay
@@ -51,6 +53,9 @@ const learnCategories = [
     title: 'Examples',
     description: 'Runnable samples you can drop into your own project.',
     href: pathWithBase('/examples/'),
+    nav: isExamplesPage
+      ? normalizedSidebarToProductNav(Astro.locals.starlightRoute.sidebar)
+      : undefined,
   },
 ];
 
@@ -961,8 +966,8 @@ const learnCategories = [
       opacity: 0.75;
     }
 
-    /* Page links (sub-items): indented under an accent rail and dimmed so they
-       read as children of the category, not siblings of the section titles. */
+    /* Page links (sub-items): indented and dimmed so they read as children of
+       the category, without adding another visual rail to the navigation. */
     .mobile-menu__pages {
       display: none;
       flex-direction: column;
@@ -970,7 +975,6 @@ const learnCategories = [
       margin: 8px 0 0;
       padding: 2px 0 2px 14px;
       list-style: none;
-      border-left: 2px solid var(--accent-green);
     }
 
     .mobile-menu__cat.is-open .mobile-menu__pages {
@@ -1168,6 +1172,14 @@ const learnCategories = [
       inerted.forEach((el) => (el.inert = true));
     };
 
+    const positionMobileMenu = () => {
+      if (!navInner) return;
+      // Include the homepage announcement offset, but reserve the full bar
+      // height while a hidden header is sliding back into view.
+      const bottom = Math.max(navInner.getBoundingClientRect().bottom, navInner.offsetHeight);
+      mobileMenu.style.top = `${bottom}px`;
+    };
+
     const setMenuOpen = (open: boolean) => {
       mobileMenu.classList.toggle('is-open', open);
       setPageInert(open);
@@ -1177,11 +1189,14 @@ const learnCategories = [
       // not the page behind it (the menu can overflow the viewport).
       document.body.style.overflow = open ? 'hidden' : '';
       if (open) {
-        // Pin the fixed overlay directly below the header. Its height, not its
-        // rect, so a header still sliding back in doesn't skew the position.
-        const bottom = navInner?.offsetHeight ?? 0;
-        mobileMenu.style.top = `${bottom}px`;
+        window.addEventListener('resize', positionMobileMenu);
+        // Focus-driven scrolling can still move the page with body overflow hidden.
+        window.addEventListener('scroll', positionMobileMenu, { passive: true });
+        positionMobileMenu();
         revealCurrent();
+      } else {
+        window.removeEventListener('resize', positionMobileMenu);
+        window.removeEventListener('scroll', positionMobileMenu);
       }
     };
 

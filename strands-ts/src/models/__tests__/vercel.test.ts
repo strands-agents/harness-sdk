@@ -7,7 +7,7 @@ import type {
 } from '@ai-sdk/provider'
 import { APICallError } from '@ai-sdk/provider'
 import { VercelModel } from '../vercel.js'
-import { ContextWindowOverflowError, ModelError, ModelThrottledError } from '../../errors.js'
+import { ContextWindowOverflowError, ModelError, ModelThrottledError, ModelNetworkError } from '../../errors.js'
 import { logger } from '../../logging/logger.js'
 import { warnOnce } from '../../logging/warn-once.js'
 import { collectIterator } from '../../__fixtures__/model-test-helpers.js'
@@ -470,6 +470,48 @@ describe('VercelModel', () => {
         await expect(collectIterator(model.stream([]))).rejects.toThrow(ModelThrottledError)
       })
 
+      it('throws ModelNetworkError when doStream fails with a fetch network error', async () => {
+        const { mock, model } = setupCaptureTest()
+        const networkError = new TypeError('Failed to fetch')
+        ;(mock.doStream as ReturnType<typeof vi.fn>).mockRejectedValue(networkError)
+
+        const error = await collectIterator(model.stream([])).catch((caught: unknown) => caught)
+
+        expect(error).toBeInstanceOf(ModelNetworkError)
+        expect(error).toMatchObject({ message: 'Language model stream error: Failed to fetch', cause: networkError })
+      })
+
+      it('throws ModelNetworkError for the APICallError ai-sdk raises when it cannot connect', async () => {
+        const { mock, model } = setupCaptureTest()
+        ;(mock.doStream as ReturnType<typeof vi.fn>).mockRejectedValue(
+          new APICallError({
+            message: 'Cannot connect to API: other side closed',
+            url: 'https://api.example.com',
+            requestBodyValues: {},
+            isRetryable: true,
+          })
+        )
+
+        await expect(collectIterator(model.stream([]))).rejects.toThrow(ModelNetworkError)
+      })
+
+      it('throws a plain ModelError for a server error response', async () => {
+        const { mock, model } = setupCaptureTest()
+        ;(mock.doStream as ReturnType<typeof vi.fn>).mockRejectedValue(
+          new APICallError({
+            message: 'Service Unavailable',
+            url: 'https://api.example.com',
+            requestBodyValues: {},
+            statusCode: 503,
+          })
+        )
+
+        const error = await collectIterator(model.stream([])).catch((caught: unknown) => caught)
+
+        expect(error).toBeInstanceOf(ModelError)
+        expect(error).not.toBeInstanceOf(ModelNetworkError)
+      })
+
       it('throws ContextWindowOverflowError for APICallError with context overflow in responseBody', async () => {
         const { mock, model } = setupCaptureTest()
         ;(mock.doStream as ReturnType<typeof vi.fn>).mockRejectedValue(
@@ -514,6 +556,21 @@ describe('VercelModel', () => {
         const model = new VercelModel({ provider: mock })
 
         await expect(collectIterator(model.stream([]))).rejects.toThrow(ModelThrottledError)
+      })
+
+      it('throws ModelNetworkError when the connection drops while reading the stream', async () => {
+        const mock = createMockModel([])
+        ;(mock.doStream as ReturnType<typeof vi.fn>).mockResolvedValue({
+          stream: new ReadableStream({
+            start(controller) {
+              controller.enqueue({ type: 'stream-start', warnings: [] })
+              controller.error(new TypeError('network error'))
+            },
+          }),
+        })
+        const model = new VercelModel({ provider: mock })
+
+        await expect(collectIterator(model.stream([]))).rejects.toThrow(ModelNetworkError)
       })
     })
 
@@ -1571,6 +1628,30 @@ describe('VercelModel', () => {
         await collect(userMessages, { systemPrompt: 'be helpful' })
 
         expect(bedrockSystemCachePoint(callArgs())).toBeUndefined()
+      })
+
+      it('under the default auto strategy, reports an OpenAI model as implicitly cached and skips it', async () => {
+        const modelId = 'us.openai.gpt-6-luna'
+        const { collect, callArgs, model } = setupCaptureTest(
+          minimalParts,
+          { cacheConfig: {} },
+          'amazon-bedrock',
+          modelId
+        )
+        await collect(userMessages, { systemPrompt: 'be helpful' })
+
+        expect(model.modelInfo.capabilities?.promptCaching).toBe('auto')
+        expect(bedrockSystemCachePoint(callArgs())).toBeUndefined()
+      })
+
+      it('lets a modelInfo override win over implicit caching for an OpenAI model', () => {
+        const { model } = setupCaptureTest(
+          minimalParts,
+          { modelInfo: { capabilities: { promptCaching: 'cachePoints' } } },
+          'amazon-bedrock',
+          'us.openai.gpt-6-luna'
+        )
+        expect(model.modelInfo.capabilities?.promptCaching).toBe('cachePoints')
       })
 
       it('under the default auto strategy, caches a model the modelInfo override says takes cache points', async () => {
