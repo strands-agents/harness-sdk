@@ -128,6 +128,8 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
       if (safeSet.has(message)) end = index + 1
     })
     if (end <= 1) return false
+    // The summary replaces message 0's tool results, which would orphan a tool use kept there.
+    if (messages[0]!.content.some((block) => block.type === 'toolUseBlock')) return false
     const pinned = pinnedBefore(messages, end)
     if (pinned.length > 0) {
       logger.warn(

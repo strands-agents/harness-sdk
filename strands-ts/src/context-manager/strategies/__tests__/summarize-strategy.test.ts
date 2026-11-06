@@ -446,6 +446,21 @@ describe('server-side summary', () => {
     expect(hasClientSideSummary(messages)).toBe(true)
   })
 
+  it('summarizes client-side when message 0 holds a tool use', async () => {
+    const summarize = vi.fn()
+    const messages = [
+      new Message({ role: 'assistant', content: [new ToolUseBlock({ toolUseId: 't0', name: 'read', input: {} })] }),
+      makeToolResultMessage('done', 't0'),
+      ...openingMessages().slice(1),
+    ]
+    const strategy = Offload.summarize('*').when({ utilization: 0.8, preserveRecent: 1 })
+
+    await strategy.apply(makeContext(messages, 0.9, serverSideModel(summarize)))
+
+    expect(summarize).not.toHaveBeenCalled()
+    expect(messages[0]!.content[0]).toBeInstanceOf(ToolUseBlock)
+  })
+
   it('falls back to client-side when message 0 is pinned', async () => {
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
     const summarize = vi.fn()
