@@ -793,6 +793,62 @@ def test_end_tool_call_span_error_result_no_exception(mock_span):
     mock_span.end.assert_called_once()
 
 
+@pytest.mark.parametrize(
+    "conventions",
+    ["", "gen_ai_latest_experimental", "gen_ai_latest_experimental,gen_ai_span_attributes_only"],
+)
+@pytest.mark.parametrize("status", ["success", "error"])
+def test_end_tool_call_span_redacted_content_is_not_serialized(mock_span, monkeypatch, conventions, status):
+    """Redacted tool payloads preserve span metadata without serialization."""
+    monkeypatch.setenv("OTEL_SEMCONV_STABILITY_OPT_IN", f"{conventions},gen_ai_unredacted_attributes=")
+    tracer = Tracer()
+    tool_result = {"toolUseId": "abc", "status": status, "content": [{"text": "sensitive result"}]}
+
+    with mock.patch("strands.telemetry.tracer.serialize", side_effect=AssertionError("Redacted payload serialized")):
+        tracer.end_tool_call_span(mock_span, tool_result)
+
+    exp_attributes = {"gen_ai.tool.status": status}
+    if "gen_ai_latest_experimental" in conventions:
+        if status == "success":
+            exp_attributes["gen_ai.tool.call.result"] = "[REDACTED]"
+        exp_output = {"gen_ai.output.messages": "[REDACTED]"}
+        if "gen_ai_span_attributes_only" in conventions:
+            mock_span.set_attributes.assert_any_call(exp_output)
+        else:
+            mock_span.add_event.assert_called_once_with(
+                "gen_ai.client.inference.operation.details", attributes=exp_output
+            )
+    else:
+        mock_span.add_event.assert_called_once_with("gen_ai.choice", attributes={"message": "[REDACTED]", "id": "abc"})
+    mock_span.set_attributes.assert_any_call(exp_attributes)
+    mock_span.set_attribute.assert_any_call("gen_ai.event.end_time", mock.ANY)
+    if status == "error":
+        mock_span.set_status.assert_called_once_with(StatusCode.ERROR, "sensitive result")
+    else:
+        mock_span.set_status.assert_called_once_with(StatusCode.OK)
+    mock_span.end.assert_called_once()
+
+
+@pytest.mark.parametrize("conventions", ["", "gen_ai_latest_experimental"])
+def test_end_tool_call_span_nonrecording_content_is_not_serialized(mock_span, monkeypatch, conventions):
+    """Nonrecording spans never prepare tool payload attributes or events."""
+    monkeypatch.setenv("OTEL_SEMCONV_STABILITY_OPT_IN", conventions)
+    mock_span.is_recording.return_value = False
+    tracer = Tracer()
+    tool_result = {"status": "success", "content": [{"text": "result"}]}
+
+    with mock.patch(
+        "strands.telemetry.tracer.serialize", side_effect=AssertionError("Nonrecording payload serialized")
+    ):
+        tracer.end_tool_call_span(mock_span, tool_result)
+
+    mock_span.add_event.assert_not_called()
+    mock_span.set_attribute.assert_not_called()
+    mock_span.set_attributes.assert_not_called()
+    mock_span.set_status.assert_not_called()
+    mock_span.end.assert_not_called()
+
+
 def test_start_event_loop_cycle_span(mock_tracer):
     """Test starting an event loop cycle span."""
     with mock.patch("strands.telemetry.tracer.trace_api.get_tracer", return_value=mock_tracer):
