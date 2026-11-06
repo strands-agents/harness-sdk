@@ -1330,6 +1330,10 @@ export class Tracer {
           return { type: 'tool_call', name: block.name, id: block.toolUseId, arguments: block.input }
         case 'toolResultBlock':
           return { type: 'tool_call_response', id: block.toolUseId, response: block.content }
+        case 'reasoningBlock':
+          // ReasoningPart in the GenAI semantic conventions. A block with no text (redacted thinking)
+          // keeps only its type, and the signature is an opaque token that is never exported.
+          return block.text ? { type: 'reasoning', content: block.text } : { type: block.type }
         default:
           return { type: block.type }
       }
@@ -1352,6 +1356,8 @@ export class Tracer {
             return { type: 'toolUse', name: block.name, toolUseId: block.toolUseId, input: block.input }
           case 'toolResultBlock':
             return { type: 'toolResult', toolUseId: block.toolUseId, content: block.content }
+          case 'reasoningBlock':
+            return block.text ? { type: 'reasoning', text: block.text } : null
           default:
             return null
         }
