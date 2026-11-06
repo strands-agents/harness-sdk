@@ -84,7 +84,7 @@ export abstract class PosixShellSandbox extends Sandbox {
     const result = await this.execute(
       `{ test -e ${quoted} || { p=${quoted}; while p=$(dirname -- "$p"); ! test -d "$p"; do :; done; ` +
         `test -x "$p" || exit 79; exit 77; }; ` +
-        `test -d ${quoted} && exit 78; test -r ${quoted} || exit 79; base64 < ${quoted}; }`
+        `test -r ${quoted} || exit 79; test -d ${quoted} && exit 78; base64 < ${quoted}; }`
     )
     if (result.exitCode === 77) {
       throw new SandboxPathNotFoundError(path)

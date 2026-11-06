@@ -436,6 +436,19 @@ async def test_read_file_under_missing_or_file_ancestor_raises_not_found(sandbox
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(not hasattr(os, "geteuid") or os.geteuid() == 0, reason="root bypasses directory permissions")
+async def test_read_unreadable_directory_raises_permission_error(sandbox, tmp_path):
+    # Matches the local sandbox, where open() on a mode-000 directory fails with EACCES.
+    locked = tmp_path / "locked"
+    locked.mkdir(mode=0o000)
+    try:
+        with pytest.raises(PermissionError):
+            await sandbox.read_file("locked")
+    finally:
+        locked.chmod(0o700)
+
+
+@pytest.mark.asyncio
 @pytest.mark.skipif(not hasattr(os, "geteuid") or os.geteuid() == 0, reason="root bypasses file permissions")
 async def test_read_unreadable_file_raises_permission_error(sandbox, tmp_path):
     secret = tmp_path / "secret.txt"

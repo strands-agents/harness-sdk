@@ -168,7 +168,7 @@ class PosixShellSandbox(Sandbox, ABC):
         result = await self.execute(
             f'{{ test -e {quoted} || {{ p={quoted}; while p=$(dirname -- "$p"); ! test -d "$p"; do :; done; '
             f'test -x "$p" || exit 79; exit 77; }}; '
-            f"test -d {quoted} && exit 78; test -r {quoted} || exit 79; base64 < {quoted}; }}"
+            f"test -r {quoted} || exit 79; test -d {quoted} && exit 78; base64 < {quoted}; }}"
         )
         if result.exit_code == 77:
             raise SandboxPathNotFoundError(path)

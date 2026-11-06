@@ -25,7 +25,6 @@ describe.skipIf(process.platform === 'win32').each([
   })
 
   afterEach(() => {
-    fs.chmodSync(TEST_DIR, 0o700)
     fs.rmSync(TEST_DIR, { recursive: true, force: true })
   })
 
@@ -47,6 +46,16 @@ describe.skipIf(process.platform === 'win32').each([
     const target = `${TEST_DIR}/file.txt`
     fs.chmodSync(target, 0o200)
     await expect(sandbox.readFile(target)).rejects.toStrictEqual(new SandboxPermissionError(target))
+  })
+
+  it.skipIf(IS_ROOT)('throws SandboxPermissionError for an unreadable directory', async () => {
+    const target = `${TEST_DIR}/locked`
+    fs.mkdirSync(target, 0o000)
+    try {
+      await expect(sandbox.readFile(target)).rejects.toStrictEqual(new SandboxPermissionError(target))
+    } finally {
+      fs.chmodSync(target, 0o700)
+    }
   })
 
   it.skipIf(IS_ROOT)('throws SandboxPermissionError under an unsearchable directory', async () => {
