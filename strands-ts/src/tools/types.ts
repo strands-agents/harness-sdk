@@ -41,6 +41,16 @@ export interface ToolSpec {
    * entirely for non-MCP tools.
    */
   annotations?: Record<string, JSONValue | undefined>
+
+  /**
+   * Keep the input schema out of the model's context until the model loads it.
+   *
+   * Providers with native deferred loading send the tool with their deferral flag. At least one tool
+   * must stay non-deferred. Other providers ignore this field and send the full specification.
+   *
+   * @internal Set by context manager strategies; tool authors should configure the strategy instead.
+   */
+  deferLoading?: boolean
 }
 
 /**
