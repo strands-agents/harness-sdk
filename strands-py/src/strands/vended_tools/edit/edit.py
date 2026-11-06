@@ -26,38 +26,8 @@ DEFAULT_EDIT_DESCRIPTION = (
     "file exactly once. Files must use absolute paths."
 )
 
-# A line break in the requested text may be LF or CRLF in the file.
-_LINE_BREAK = r"(?:\r\n|\n)"
-
-
-def _old_str_pattern(old_str: str) -> re.Pattern[str]:
-    """Build a matcher for ``old_str`` that tolerates the file's line endings.
-
-    The model emits ``\\n`` line breaks and cannot see whether the file on disk
-    uses ``\\r\\n``. Matching the text verbatim therefore fails on a CRLF file
-    even though the text is identical. Each line break in ``old_str`` is
-    matched against any line break in the file; every other character is
-    matched literally.
-    """
-    lines = re.split(r"\r\n|\n", old_str)
-    return re.compile(_LINE_BREAK.join(re.escape(line) for line in lines))
-
-
-def _detect_line_ending(text: str) -> str:
-    """Return the dominant line ending of ``text`` (``\\r\\n`` or ``\\n``)."""
-    crlf = text.count("\r\n")
-    lf = text.count("\n") - crlf
-    return "\r\n" if crlf > lf else "\n"
-
-
-def _match_line_ending(matched: str, fallback: str) -> str:
-    """Return the line ending used by the matched region of the file."""
-    return "\r\n" if "\r\n" in matched else fallback
-
-
-def _convert_line_endings(text: str, line_ending: str) -> str:
-    """Rewrite every line break in ``text`` to ``line_ending``."""
-    return re.sub(r"\r\n|\n", line_ending, text)
+# The model writes LF and cannot see a file's CRLF, so any line break matches either.
+_LINE_BREAK = re.compile(r"\r?\n")
 
 
 def make_edit(
@@ -104,17 +74,15 @@ def make_edit(
         active = sandbox if sandbox is not None else tool_context.agent.sandbox
 
         content = await active.read_text(path)
-        matches = list(_old_str_pattern(old_str).finditer(content))
+        pattern = r"\r?\n".join(re.escape(line) for line in _LINE_BREAK.split(old_str))
+        matches = list(re.finditer(pattern, content))
         if not matches:
             raise ValueError(f"old_str did not appear verbatim in {path}.")
         if len(matches) > 1:
             raise ValueError(f"old_str appears {len(matches)} times in {path}; make it unique.")
-
         match = matches[0]
-        file_line_ending = _detect_line_ending(content)
-        line_ending = _match_line_ending(match.group(0), file_line_ending)
-        replacement = _convert_line_endings(new_str, line_ending)
-
+        sample = match.group() if "\n" in match.group() else content
+        replacement = _LINE_BREAK.sub("\r\n" if "\r\n" in sample else "\n", new_str)
         await active.write_text(path, content[: match.start()] + replacement + content[match.end() :])
         return f"Edited {path}."
 

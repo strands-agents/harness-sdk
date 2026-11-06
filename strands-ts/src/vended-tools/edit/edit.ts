@@ -18,6 +18,9 @@ import { validateAbsolutePath } from '../paths.js'
 export const DEFAULT_EDIT_DESCRIPTION =
   'Replace an exact string in a text file. `old_str` must appear in the file exactly once. Files must use absolute paths.'
 
+// The model writes LF and cannot see a file's CRLF, so any line break matches either.
+const LINE_BREAK = /\r?\n/g
+
 const editInputSchema = z.object({
   path: z.string().describe('Absolute path to the file.'),
   old_str: z.string().describe('Exact text to find. Must be unique within the file.'),
@@ -68,13 +71,21 @@ export function makeEdit(
       const sandbox = boundSandbox ?? context.agent.sandbox
 
       const content = await sandbox.readText(input.path)
-      const occurrences = content.split(input.old_str).length - 1
-      if (occurrences === 0) throw new Error(`old_str did not appear verbatim in ${input.path}.`)
-      if (occurrences > 1) throw new Error(`old_str appears ${occurrences} times in ${input.path}; make it unique.`)
-      // Function replacer so `$&`-style patterns in new_str are inserted literally.
+      const pattern = input.old_str
+        .split(LINE_BREAK)
+        .map((line) => line.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+        .join('\\r?\\n')
+      const matches = [...content.matchAll(new RegExp(pattern, 'g'))]
+      const match = matches[0]
+      if (!match) throw new Error(`old_str did not appear verbatim in ${input.path}.`)
+      if (matches.length > 1)
+        throw new Error(`old_str appears ${matches.length} times in ${input.path}; make it unique.`)
+      const [matched] = match
+      const sample = matched.includes('\n') ? matched : content
+      const replacement = input.new_str.replace(LINE_BREAK, sample.includes('\r\n') ? '\r\n' : '\n')
       await sandbox.writeText(
         input.path,
-        content.replace(input.old_str, () => input.new_str)
+        content.slice(0, match.index) + replacement + content.slice(match.index + matched.length)
       )
       return `Edited ${input.path}.`
     },

@@ -145,14 +145,6 @@ class TestSandboxBinding:
 
 @posix_only
 class TestLineEndings:
-    """A model emits ``\\n`` line breaks and cannot see the file's own endings.
-
-    An ``old_str`` that spans a line break therefore never matches a CRLF file
-    byte-for-byte, even though the text is identical. The match must tolerate
-    the difference, and the replacement must be written back with the file's
-    line ending so untouched bytes stay untouched.
-    """
-
     @pytest.mark.asyncio
     async def test_multiline_old_str_matches_crlf_file(self, edit_tool, ctx, tmp_path):
         file_path = tmp_path / "f.txt"
@@ -169,12 +161,17 @@ class TestLineEndings:
         assert file_path.read_bytes() == b"alpha\r\nBETA\r\n"
 
     @pytest.mark.asyncio
+    async def test_single_line_match_takes_file_line_ending(self, edit_tool, ctx, tmp_path):
+        file_path = tmp_path / "f.txt"
+        file_path.write_bytes(b"alpha\r\nbeta\r\n")
+        await edit_tool(path=str(file_path), tool_context=ctx, old_str="beta", new_str="b1\nb2")
+        assert file_path.read_bytes() == b"alpha\r\nb1\r\nb2\r\n"
+
+    @pytest.mark.asyncio
     async def test_crlf_old_str_matches_lf_file(self, edit_tool, ctx, tmp_path):
         file_path = tmp_path / "f.txt"
         file_path.write_bytes(b"a\nb\nc\n")
         await edit_tool(path=str(file_path), tool_context=ctx, old_str="a\r\nb", new_str="x\r\ny")
-        # The replacement is written with the FILE's line ending (LF), not the
-        # one the caller happened to use.
         assert file_path.read_bytes() == b"x\ny\nc\n"
 
     @pytest.mark.asyncio
