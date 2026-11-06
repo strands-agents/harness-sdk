@@ -33,9 +33,6 @@ model = AnthropicModel(
     # **model_config
     max_tokens=1028,
     model_id="claude-sonnet-5",
-    params={
-        "temperature": 0.7,
-    }
 )
 
 agent = Agent(model=model, tools=[notebook])
@@ -54,7 +51,7 @@ const model = new AnthropicModel({
   modelId: 'claude-sonnet-5',
   maxTokens: 1028,
   params: {
-    temperature: 0.7,
+    metadata: { user_id: 'u1' },
   },
 })
 
@@ -114,6 +111,26 @@ If you encounter the error `ModuleNotFoundError: No module named 'anthropic'`, t
 ### Import Errors
 
 If you encounter import errors for `@anthropic-ai/sdk`, ensure the package is installed: `npm install @anthropic-ai/sdk`.
+(( /tab "TypeScript" ))
+
+### Anthropic SDK 1.x and 2.x
+
+(( tab "Python" ))
+`strands-agents[anthropic]` installs any `anthropic` release from 0.21 up to, but not including, 3.0. The 1.0 and 2.0 releases changed behavior that reaches `AnthropicModel`:
+
+-   **Sampling parameters.** `temperature`, `top_p`, and `top_k` in `params` are sent in the request body, so they keep working on every SDK version. API version `2026-10-21`, the default on `anthropic` 2.x, rejects them, and the provider raises a `ValueError` before sending the request. Remove them, or pin the API version with `client_args={"default_headers": {"anthropic-version": "2023-06-01"}}`. The pin only helps on models that still honor sampling parameters (Claude 4.6 and earlier); Claude 4.7 and later accept only the defaults.
+-   **Documents in assistant messages.** API version `2026-10-21` rejects a `document` block placed directly in an assistant message, so the provider drops those blocks and logs a warning. Put documents in user messages; a document nested inside a tool result is unaffected.
+-   **`http_client`.** From 1.0 the SDK is built on `httpx2`, so a custom `http_client` passed through `client_args` must be an `httpx2.AsyncClient`, not an `httpx.AsyncClient`.
+-   **Authentication.** From 2.0 the API key is sent as `Authorization: Bearer`, which matters behind a proxy that reads `X-Api-Key`. A client also holds one credential, so pass either `api_key` or `auth_token` in `client_args`, not both.
+(( /tab "Python" ))
+
+(( tab "TypeScript" ))
+`@strands-agents/sdk` works with any `@anthropic-ai/sdk` release from 0.109.1 up to, but not including, 2.0. In TypeScript the new API version arrives with the SDK’s 1.0 release (in Python it’s 2.0): `@anthropic-ai/sdk` 1.x sends `2026-10-21` by default ([migration guide](https://platform.claude.com/docs/en/api/migration-2026-10-21)), which changes behavior that reaches `AnthropicModel`:
+
+-   **Sampling parameters.** API version `2026-10-21` rejects `temperature`, `top_p`, and `top_k`, so when one is set (`temperature`, `topP`, or in `params`) the provider throws before sending the request. Remove them, or pin the API version with `clientConfig: { defaultHeaders: { 'anthropic-version': '2023-06-01' } }` or `ANTHROPIC_CUSTOM_HEADERS='anthropic-version: 2023-06-01'`. The pin only helps on models that still honor sampling parameters (Claude 4.6 and earlier); Claude 4.7 and later accept only the defaults.
+-   **Documents in assistant messages.** API version `2026-10-21` rejects a `document` block placed directly in an assistant message, so the provider drops those blocks and logs a warning. Put documents in user messages.
+-   **Injected clients.** With a `client` you pass in, the provider doesn’t know which API version it sends, so neither check above runs and the API’s own error surfaces instead.
+-   **Authentication.** From 1.0 the API key is sent as `Authorization: Bearer`, which matters behind a proxy that reads `X-Api-Key`. A client also holds one credential, so pass either `apiKey` or `authToken` in `clientConfig`, not both.
 (( /tab "TypeScript" ))
 
 ### Thinking block is bound to a different conversation

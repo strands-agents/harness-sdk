@@ -2,7 +2,7 @@ An agent that answers with UI, not just text. You ask a question, the agent pick
 
 The sample is a small workout log, but the pattern carries over to any app: define your components as a schema, give the agent a tool that takes that schema, and render what it sends.
 
-![The agent rendering stats, a weekly chart, a table, and a workout form](https://raw.githubusercontent.com/strands-agents/samples/3c9ebca88ad8906ca77147753d951c5e2a7123bd/typescript/03-ux-demos/dynamic-ui/images/demo.png)
+![The agent rendering stats, a weekly chart, a table, and a workout form](https://raw.githubusercontent.com/strands-agents/samples/07afeeefe416b9c1885e03f82057dee2264a485e/typescript/03-ux-demos/dynamic-ui/images/demo.png)
 
 ## Overview
 
@@ -121,14 +121,14 @@ tool({
 | `web/` | Browser client and renderer |
 | `data/workouts.json` | Sample workouts, with dates relative to today |
 
-A Python version of this sample lives in [`python/07-ux-demos/dynamic-ui`](https://github.com/strands-agents/samples/tree/3c9ebca88ad8906ca77147753d951c5e2a7123bd/python/07-ux-demos/dynamic-ui/) and uses the same web client.
+A Python version of this sample lives in [`python/07-ux-demos/dynamic-ui`](https://github.com/strands-agents/samples/tree/07afeeefe416b9c1885e03f82057dee2264a485e/python/07-ux-demos/dynamic-ui/) and uses the same web client.
 
 ## Additional Resources
 
 -   [Custom tools](https://strandsagents.com/docs/user-guide/sdk/tools/custom-tools/): defining tools like `render_ui` with typed input schemas
 -   [Streaming](https://strandsagents.com/docs/user-guide/sdk/streaming/): rendering components while the model is still writing
 -   [Session management](https://strandsagents.com/docs/user-guide/sdk/agents/session-management/): persisting conversations across restarts
--   [AG-UI and CopilotKit sample](https://github.com/strands-agents/samples/tree/3c9ebca88ad8906ca77147753d951c5e2a7123bd/python/07-ux-demos/ag-ui-copilotkit-integration/): tool-based generative UI with a protocol and frontend framework
+-   [AG-UI and CopilotKit sample](https://github.com/strands-agents/samples/tree/07afeeefe416b9c1885e03f82057dee2264a485e/python/07-ux-demos/ag-ui-copilotkit-integration/): tool-based generative UI with a protocol and frontend framework
 
 ## Disclaimer
 
@@ -136,4 +136,4 @@ This sample is provided for educational and demonstration purposes only. It is n
 
 ## Upstream source
 
-- [View this sample at the imported commit](https://github.com/strands-agents/samples/tree/3c9ebca88ad8906ca77147753d951c5e2a7123bd/typescript/03-ux-demos/dynamic-ui)
+- [View this sample at the imported commit](https://github.com/strands-agents/samples/tree/07afeeefe416b9c1885e03f82057dee2264a485e/typescript/03-ux-demos/dynamic-ui)

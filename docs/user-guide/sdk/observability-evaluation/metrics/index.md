@@ -77,6 +77,12 @@ if (result.metrics) {
 The `metrics` property on `AgentResult` is an instance of `AgentMetrics` that holds the performance data for the agent’s execution.
 (( /tab "TypeScript" ))
 
+Input tokens and cached tokens
+
+Providers differ on whether `inputTokens` includes cached tokens. Some count cache reads and writes inside `inputTokens`; others count them only in `cacheReadInputTokens` and `cacheWriteInputTokens`. `totalTokens` always includes cached tokens, so you can tell which applies: if `inputTokens + outputTokens` equals `totalTokens`, `inputTokens` already includes the cache fields. Otherwise, total input is `inputTokens + cacheReadInputTokens + cacheWriteInputTokens`. Adding the cache fields to an `inputTokens` that already includes them counts cached tokens twice.
+
+The check holds for each model call. Accumulated usage from an agent that mixes providers can combine both conventions, so apply it per call in that case.
+
 ## Agent Loop Metrics
 
 (( tab "Python" ))

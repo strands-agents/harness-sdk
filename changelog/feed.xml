@@ -1,4 +1,12 @@
-<?xml version="1.0" encoding="UTF-8"?><rss version="2.0"><channel><title>Strands Agents Changelog</title><description>Releases across Strands Agents products.</description><link>https://strandsagents.com/</link><language>en-us</language><item><title>SDK Python v1.64.0</title><link>https://strandsagents.com/changelog/sdk/python-v1.64.0/</link><guid isPermaLink="true">https://strandsagents.com/changelog/sdk/python-v1.64.0/</guid><description>• load samples in documentation previews
+<?xml version="1.0" encoding="UTF-8"?><rss version="2.0"><channel><title>Strands Agents Changelog</title><description>Releases across Strands Agents products.</description><link>https://strandsagents.com/</link><language>en-us</language><item><title>Box v0.2.1</title><link>https://strandsagents.com/changelog/box/v0.2.1/</link><guid isPermaLink="true">https://strandsagents.com/changelog/box/v0.2.1/</guid><description>• add Linux cloud deployment profiles
+• refuse Linux root sandbox directory writes
+• remove the startup opt-in requirement
+• demonstrate deployment retry cooldowns with Claude Code
+• enable the tool packs feature behind a feature flag</description><pubDate>Fri, 06 Nov 2026 00:00:00 GMT</pubDate></item><item><title>Box v0.2.0</title><link>https://strandsagents.com/changelog/box/v0.2.0/</link><guid isPermaLink="true">https://strandsagents.com/changelog/box/v0.2.0/</guid><description>• follow the redirect when resolving the latest release
+• give each box its own alias image inode
+• measure fresh workload startup
+• port the jailbreak test from bash to rust
+• run the workload suite nightly on a pinned model</description><pubDate>Thu, 05 Nov 2026 00:00:00 GMT</pubDate></item><item><title>SDK Python v1.64.0</title><link>https://strandsagents.com/changelog/sdk/python-v1.64.0/</link><guid isPermaLink="true">https://strandsagents.com/changelog/sdk/python-v1.64.0/</guid><description>• load samples in documentation previews
 • add S3 Vectors search strategy for S3Storage in Python
 • send toolResult status to Amazon Nova models (Python)
 • render samples as documentation guides

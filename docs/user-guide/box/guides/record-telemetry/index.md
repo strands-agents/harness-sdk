@@ -1,0 +1,227 @@
+A box records every policy decision it makes, every change to its own authority, and every span, log record, and metric the workload exports. A `[telemetry.*]` table in `box.toml` declares the target those records reach, and `include` states which records that target receives.
+
+This page covers a `file` target, which appends records to a path the operator names. A box that declares no table writes to a default target. See [The default target](#the-default-target).
+
+## The default target
+
+A box with no `[telemetry]` table writes one file inside its own box directory:
+
+```text
+<box_dir>/private/telemetry/records.jsonl
+```
+
+That target receives every record: each effective denial, each effective permit, the box’s own control-plane records, and the workload’s relayed spans, log records, and metrics. The workload cannot reach the file.
+
+The file grows for as long as the box is used. Rotate or remove it as the operator’s own task.
+
+The file is not tamper evident. Box signs no record and chains no record to the next, so anything running under the operator’s own account can edit it afterwards. What the box keeps out is the workload.
+
+A declared target replaces this default rather than adding to it, so a box that declares a file of its own writes no record to `private/telemetry/records.jsonl`.
+
+## `[telemetry.decisions]`
+
+`[telemetry.decisions]` is the target a box declares:
+
+```toml
+[telemetry.decisions]                  # every decision this box takes, recorded
+kind        = "file"
+destination = "~/boxes/codex/records.jsonl"
+include     = ["deny", "permit", "trace"]
+```
+
+Each table takes three keys. An unknown key is refused.
+
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `kind` | string | none, required | `file`, which this page covers. |
+| `destination` | string | none, required | The file the records go to, as stated below. |
+| `include` | array of strings | every record | Which records reach this target: `deny`, `permit`, or `trace`. |
+
+## `kind = "file"`
+
+A file target receives one OTLP-JSON request per line, appended. Each line is a complete `resourceLogs`, `resourceSpans`, or `resourceMetrics` request.
+
+The destination is an absolute path, `~`, or a path that begins with `~/`. Box expands a leading `~` to the operator’s home. These destinations are refused:
+
+| Destination | Message |
+| --- | --- |
+| A relative path, such as `records.jsonl` | `` a file destination must be absolute or begin with `~/` `` |
+| A path that carries a `..` component | ``carries a `..` component`` |
+| A path inside `box_dir` and outside `private/` | `is inside the box directory ... but outside its private tree` |
+
+**Name a destination outside every path the agent may write.** Box does not compare the destination against `[agent.filesystem]`, so a file inside a granted directory is a file the agent can truncate. The default destination needs no such care, because it sits in the box directory, which the agent cannot reach.
+
+Declare one target per file. Two boxes that append to one file can tear a line.
+
+## `include`
+
+Omit `include` and the target receives every record. Write `include` and the target receives only the records the words in the list name:
+
+| Word | The target then receives |
+| --- | --- |
+| `deny` | Every effective denial. |
+| `permit` | Every effective permit. |
+| `trace` | The workload’s own spans, and this box’s control-plane records. |
+
+So `include = ["deny"]` writes a file of refusals, and leaves out the permits and the control-plane records.
+
+**The workload’s log records and metrics are on by default.** They reach every target, and no value of `include` keeps them out, so the list never needs the words `logs` and `metrics`. The file `include = ["deny"]` writes therefore holds the denials, plus whatever log records and metrics the workload itself exported.
+
+`trace` names two things at once. A target that omits `trace` receives no control-plane record, so this box’s `box_started`, `policy_installed`, and `box_stopped` records are absent from it.
+
+An empty list is refused, and so is a repeated word.
+
+## The workload’s own signals
+
+OpenTelemetry calls each kind of telemetry a signal. Three of them apply here: traces, logs, and metrics.
+
+Box relays the workload’s spans, log records, and metrics, and generates no signal of that kind itself. A target receives one only when the workload exports it, so two settings apply: the workload’s own exporter setting, and a target that accepts the signal.
+
+Box binds one loopback port for the workload and sets three variables in its environment:
+
+| Variable | Value |
+| --- | --- |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://127.0.0.1:<port>`, where the port is this box’s own |
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | the same address with `/v1/traces` appended |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` | `http/protobuf` |
+
+Box owns every name that begins with `OTEL_EXPORTER_OTLP_`, so `[agent] env` may not set one. The receiver answers `/v1/traces`, `/v1/logs`, and `/v1/metrics`, and answers `404` on every other route.
+
+The exporter switches belong to the workload, so write them in `[agent] env`:
+
+```toml
+[agent.env]
+OTEL_TRACES_EXPORTER = "otlp"
+OTEL_LOGS_EXPORTER = "otlp"
+OTEL_METRICS_EXPORTER = "otlp"
+```
+
+A switch left at `none` means that signal never arrives, whatever `include` names. The OpenTelemetry default metric interval is 60 seconds, so a short run ends before the first metric leaves. Set `OTEL_METRIC_EXPORT_INTERVAL` in `[agent] env` for a short run.
+
+## What a record carries
+
+Each box record names its origin on its resource:
+
+| Key | Value |
+| --- | --- |
+| `service.name` | `strands-box` |
+| `strands.box.name` | this box’s generated identifier, as `box-` and 16 hexadecimal characters |
+| `strands.box.source` | `box` for a record the box wrote, and `agent` for a relayed payload |
+| `strands.box.run.id` | one identifier per `strands-box run` invocation |
+
+### A decision
+
+Each effective decision produces one log record and one span that share a trace ID and a span ID. The log record’s `event_name` field is `strands.box.policy.decision`, and the scope is `strands-box.policy`.
+
+| Group | Keys |
+| --- | --- |
+| The decision | `strands.box.policy.action`, `.resource`, `.verdict`, `.cause`, `.reason` on a denial, and `.principal` |
+| The governing rule | `strands.box.policy.rule`, `.description`, `.category`, and `.determining.ids`, which lists every policy that determined the decision |
+| Correlation | `strands.box.request.id` on an egress decision, `jsonrpc.request.id` on an MCP request, and `strands.box.trace.parent_span_id` on the log record |
+| What it was about | `server.address` and `server.port` on a network decision, `http.request.method` on a request, `file.path` on an `fs:*` decision, and `process.command`, `process.command_args`, and `process.working_directory` on a shell decision |
+
+`strands.box.policy.verdict` holds `deny` or `permit`. `strands.box.policy.cause` holds one of six values: `permitted`, `forbidden`, `no_match`, `policy_pending`, `internal_fault`, and `enforcement`.
+
+A record whose cause is `internal_fault` also carries the key `error.type`, with the value `strands.box.policy.evaluation_error`.
+
+The action value carries the vocabulary term alone, so a reader sees `fs:read` rather than `Box::Action::"fs:read"`. Every other value is reported as the enforcement point holds it.
+
+Two keys are excluded: `url.full` and `process.command_line`.
+
+`process.command_args` reports an argument the script stated literally. For an argument that arrived from an expansion, the record reports:
+
+| The expanded argument | What the record carries |
+| --- | --- |
+| A short flag, such as `-l` | the flag |
+| A long flag of at most 32 lowercase letters and dashes, such as `--verbose` | the flag |
+| A long flag with a value, such as `--output=secret` | the name, and `<redacted>` for the value |
+| Anything else | `<redacted>` |
+
+At most 64 arguments are reported. One attribute carries at most 4 KiB, and a longer value is cut on a character boundary and ends with `… (truncated)`.
+
+### A control-plane record
+
+A control-plane record states one change to the authority this box holds. The scope is `strands-box.control`, and each operation also produces a span named `control <operation>`.
+
+| Key | Value |
+| --- | --- |
+| `strands.box.control.operation` | `policy_installed`, `policy_refused`, `schema_installed`, `discovery_complete`, `box_started`, or `box_stopped` |
+| `strands.box.control.outcome` | `ok`, or `refused` |
+| `strands.box.control.subject` | what the operation was about |
+| `strands.box.control.reason` | why a refusal happened |
+| `strands.box.control.detail` | further text the operation carries |
+
+## Reading a records file
+
+A records file holds both scopes, so a query selects one. A box records that it started before it decides anything, so the first record in the file is a control-plane record.
+
+Every denial, one per line:
+
+```sh
+jq -r 'select(.resourceLogs)
+       | .resourceLogs[].scopeLogs[]
+       | select(.scope.name == "strands-box.policy")
+       | .logRecords[].attributes
+       | map({(.key): .value.stringValue}) | add
+       | select(.["strands.box.policy.verdict"] == "deny")
+       | "\(.["strands.box.policy.action"]) \(.["strands.box.policy.resource"])"' \
+  ~/boxes/codex/records.jsonl
+```
+
+Example output:
+
+```text
+fs:read ~/.ssh/id_rsa
+```
+
+What this box did to its own authority:
+
+```sh
+jq -r 'select(.resourceLogs)
+       | .resourceLogs[].scopeLogs[]
+       | select(.scope.name == "strands-box.control")
+       | .logRecords[].attributes
+       | map({(.key): .value.stringValue}) | add
+       | "\(.["strands.box.control.operation"]) \(.["strands.box.control.outcome"])"' \
+  ~/boxes/codex/records.jsonl
+```
+
+Example output:
+
+```text
+box_started ok
+policy_installed ok
+discovery_complete ok
+box_stopped ok
+```
+
+Select on `strands.box.source` to tell a box record from a relayed one. A severity number is the box’s own routing, and it is not a filter for a reader.
+
+The file needs no conversion, so any viewer that reads OTLP-JSON opens it directly. `otel-tui` is one such tool:
+
+```sh
+otel-tui --from-json-file ~/boxes/codex/records.jsonl
+```
+
+## Errors and exit codes
+
+A telemetry error stops the run before the workload starts, so the agent never runs. `strands-box` prints the reason on stderr and exits `1`.
+
+Exit `1` alone does not prove that Box refused, because a workload is free to exit `1` as well. The message does: Box prefixes every line it prints with `strands-box:`.
+
+| What the operator sees | Cause |
+| --- | --- |
+| `names no signal, so nothing would reach it` | `include` is an empty list. |
+| `names <word> twice` | `include` repeats a word. |
+| `` a file destination must be absolute or begin with `~/` `` | A file destination is relative. |
+| ``carries a `..` component`` | A destination carries `..`. |
+| `is inside the box directory ... but outside its private tree` | A file destination sits where a process could truncate it. |
+
+Each message names the table it came from.
+
+A target that fails while the box runs loses the record. Box reports no such loss, and it does not retry.
+
+## See also
+
+-   [Getting started](../../quickstart/index.md): install Box, then run Claude Code or Codex in a box.
+-   [How telemetry works](https://github.com/strands-agents/box/blob/e39544d49188b82933264b83159c7ccc278ced5a/docs/design/telemetry.md): which process records, what a workload cannot forge, and where a record can be lost.

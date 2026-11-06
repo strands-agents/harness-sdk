@@ -231,6 +231,36 @@
 - Reference
   - [Reference](https://strandsagents.com/docs/user-guide/shell/reference/index.md): The one place to look up Strands Shell's surface, the command-line interface, the Python and Node.js API, the command inventory, the configuration and TOML schema, and the MCP server tools.
 
+## Box
+
+- Overview
+  - [Getting started with Box](https://strandsagents.com/docs/user-guide/box/quickstart/index.md): Download Box, configure the Strands CLI, observe a refused write, and permit it with policy.
+- Guides
+  - [Write a policy and read what it decided](https://strandsagents.com/docs/user-guide/box/guides/write-a-policy/index.md): Write permit and forbid rules, observe a refusal, and inspect Box decision records.
+  - [Write policy for shell commands](https://strandsagents.com/docs/user-guide/box/guides/write-shell-policy/index.md): Control shell commands, file operations, host programs, and built programs with policy.
+  - [Egress credential configuration](https://strandsagents.com/docs/user-guide/box/guides/network-and-credentials/index.md): Bind credentials to permitted network destinations with Box configuration.
+  - [MCP server configuration](https://strandsagents.com/docs/user-guide/box/guides/add-an-mcp-server/index.md): Configure local stdio and remote HTTP MCP servers for a boxed agent.
+  - [Write policy for an MCP server](https://strandsagents.com/docs/user-guide/box/guides/write-mcp-policy/index.md): Permit and restrict MCP server tools and arguments with Dogwood policy.
+  - [Telemetry](https://strandsagents.com/docs/user-guide/box/guides/record-telemetry/index.md): Configure decision and workload telemetry targets, filters, and records.
+  - [Run a Strands Agents SDK agent in a box](https://strandsagents.com/docs/user-guide/box/guides/run-strands-harness/index.md): Run a Strands Agents SDK agent in Box and control its commands and files with policy.
+  - [Run Claude Code in a box](https://strandsagents.com/docs/user-guide/box/guides/run-claude-code/index.md): Run Claude Code with project access routed through Box policy.
+  - [Run Codex CLI in a box](https://strandsagents.com/docs/user-guide/box/guides/run-codex-cli/index.md): Run Codex CLI with project access routed through Box policy.
+  - [Run pi in a box](https://strandsagents.com/docs/user-guide/box/guides/run-pi/index.md): Run pi with project access routed through Box policy.
+  - [Collect the Strands CLI's traces and metrics](https://strandsagents.com/docs/user-guide/box/guides/strands-cli-telemetry/index.md): Send Strands CLI traces and metrics to the Box records file and inspect them together.
+  - [Run Box on Amazon EKS](https://strandsagents.com/docs/user-guide/box/guides/deploy-to-eks/index.md): Deploy Box as an Amazon EKS Job, verify policy enforcement, and optionally run Claude Code with Pod Identity.
+  - [Run a Box shipment agent on AgentCore Runtime](https://strandsagents.com/docs/user-guide/box/guides/deploy-to-agentcore-runtime/index.md): Package, deploy, invoke, and verify a Box-contained shipment agent on Amazon Bedrock AgentCore Runtime.
+  - [Run Strands Box on Google Cloud](https://strandsagents.com/docs/user-guide/box/guides/deploy-to-google-cloud/index.md): Deploy a Strands agent with Gemini to a Google Compute Engine VM and verify Box's deployment retry cooldown.
+- Security
+  - [Security: what Box governs, and what you own](https://strandsagents.com/docs/user-guide/box/security/index.md): Understand Box enforcement tiers, trust boundaries, operator duties, and policy limitations.
+  - [Experimental native filesystem policy](https://strandsagents.com/docs/user-guide/box/security/native-filesystem-policy/index.md): Enable and configure the experimental macOS native filesystem policy.
+- Reference
+  - [box.toml configuration reference](https://strandsagents.com/docs/user-guide/box/reference/configuration/index.md): Configure every Box input, process, filesystem grant, credential, MCP server, and telemetry target.
+  - [Policy](https://strandsagents.com/docs/user-guide/box/reference/policy/index.md): Understand how Box loads, evaluates, and records Dogwood policy decisions.
+  - [Policy action reference](https://strandsagents.com/docs/user-guide/box/reference/policy-actions/index.md): Look up every Box policy action, its input fields, and its enforcement point.
+  - [Strands Shell reference](https://strandsagents.com/docs/user-guide/box/reference/shell/index.md): Look up shell invocation forms, commands, host programs, policy fields, and exit statuses.
+  - [Python in a box](https://strandsagents.com/docs/user-guide/box/reference/python/index.md): Run Python through Monty and control its file and network operations with policy.
+  - [Cloud deployment profiles](https://strandsagents.com/docs/user-guide/box/reference/cloud-deployments/index.md): Check Linux environment requirements and service configuration for AgentCore Runtime and Lambda MicroVM deployments.
+
 ## Evals SDK
 
 - Get started
@@ -900,103 +930,73 @@
 - [ZodTool](https://strandsagents.com/docs/api/typescript/ZodTool/index.md)
 - [ZodToolConfig](https://strandsagents.com/docs/api/typescript/ZodToolConfig/index.md)
 
+## Additional documentation
+
+- [strands-code-agent](https://strandsagents.com/docs/integrations/agent-extensions/strands-code-agent/index.md): A coding agent that replaces tool-calling with code generation in a persistent Python REPL
+- [Add Your Integration](https://strandsagents.com/docs/integrations/get-featured/index.md): How to list your integration on the Strands Agents integrations page, from package requirements to submitting an entry.
+- [Build chat experiences with AG-UI and CopilotKit](https://strandsagents.com/docs/integrations/integrations/ag-ui/index.md): Build streaming chat interfaces for Strands agents with the AG-UI protocol and CopilotKit front-end components.
+- [Chat with your Strands agent from Slack using Welt](https://strandsagents.com/docs/integrations/integrations/welt/index.md): Slack front end for Strands agents on Amazon Bedrock AgentCore — streaming replies, file exchange, and human-in-the-loop approvals in Slack threads
+- [Community Interventions](https://strandsagents.com/docs/integrations/interventions/overview/index.md): Community-built intervention handlers for authorization, guardrails, and steering.
+- [Agent Governance Toolkit](https://strandsagents.com/docs/integrations/interventions/strands-agt/index.md): Deterministic policy enforcement via Microsoft Agent Governance Toolkit
+- [AgentCore Memory Store](https://strandsagents.com/docs/integrations/memory-stores/agentcore-memory-store/index.md): Amazon Bedrock AgentCore Memory as a MemoryStore for long-term recall and server-side extraction
+- [Community Memory Stores](https://strandsagents.com/docs/integrations/memory-stores/overview/index.md): Community-built memory stores that give agents long-term memory across sessions.
+- [strands-dakera](https://strandsagents.com/docs/integrations/memory-stores/strands-dakera/index.md): Persistent, decay-weighted MemoryStore for agents — self-hosted, with a full-CRUD tool
+- [CLOVA Studio](https://strandsagents.com/docs/integrations/model-providers/clova-studio/index.md): Connect Strands agents to Naver CLOVA Studio, Korean-optimized language models on Naver Cloud Platform, via strands-clova.
+- [Cohere](https://strandsagents.com/docs/integrations/model-providers/cohere/index.md): Use Cohere language models with Strands agents through the OpenAI compatibility layer for chat, tool calling, and streaming.
+- [Crusoe](https://strandsagents.com/docs/integrations/model-providers/crusoe/index.md): Run Strands agents on Crusoe Managed Inference, open-weight models on renewable-powered GPUs, through the OpenAI-compatible API.
+- [FireworksAI](https://strandsagents.com/docs/integrations/model-providers/fireworksai/index.md): Run Strands agents on Fireworks AI, fast hosted inference for open-source models, using the OpenAI-compatible API.
+- [MLX](https://strandsagents.com/docs/integrations/model-providers/mlx/index.md): Run Strands agents locally on Apple Silicon with the MLX model provider, supporting inference, LoRA fine-tuning, and vision.
+- [Nebius Token Factory](https://strandsagents.com/docs/integrations/model-providers/nebius-token-factory/index.md): Use Nebius Token Factory with Strands agents for fast open-source model inference through the OpenAI-compatible API.
+- [NVIDIA NIM](https://strandsagents.com/docs/integrations/model-providers/nvidia-nim/index.md): Connect Strands agents to NVIDIA NIM inference microservices with the strands-nvidia-nim community model provider.
+- [OpenRouter](https://strandsagents.com/docs/integrations/model-providers/openrouter/index.md): Run Strands agents on hundreds of models through OpenRouter, using the SDK's built-in OpenAI provider against the OpenAI-compatible endpoint.
+- [OrcaRouter](https://strandsagents.com/docs/integrations/model-providers/orcarouter/index.md): Run Strands agents on many models through OrcaRouter, using the SDK's built-in OpenAI provider against the OpenAI-compatible endpoint.
+- [OVHcloud AI Endpoints](https://strandsagents.com/docs/integrations/model-providers/ovhcloud-ai-endpoints/index.md): Run Strands agents on OVHcloud AI Endpoints, a European, GDPR-compliant model service with an OpenAI-compatible API.
+- [SGLang](https://strandsagents.com/docs/integrations/model-providers/sglang/index.md): Use SGLang servers as a Strands model provider with Token-In/Token-Out support for agentic reinforcement learning training.
+- [vLLM](https://strandsagents.com/docs/integrations/model-providers/vllm/index.md): Serve Strands agents from vLLM with Token-In/Token-Out support for agentic RL training via the OpenAI-compatible API.
+- [xAI](https://strandsagents.com/docs/integrations/model-providers/xai/index.md): Use xAI Grok models with Strands agents, including server-side tools for web search, X platform access, and code execution.
+- [Agent Control](https://strandsagents.com/docs/integrations/plugins/agent-control/index.md): Enforce centrally managed runtime policies on Strands agents with Agent Control, blocking or steering violations at every step.
+- [Amazon AgentCore Payments](https://strandsagents.com/docs/integrations/plugins/agentcore-payments/index.md): Automated payment processing for agents using Amazon Bedrock AgentCore
+- [Amazon AgentCore Tool Search](https://strandsagents.com/docs/integrations/plugins/agentcore-tool-search/index.md): Semantic tool discovery for agents using Amazon Bedrock AgentCore Gateway
+- [Datadog AI Guard](https://strandsagents.com/docs/integrations/plugins/datadog-ai-guard/index.md): Protect Strands agents in real time with Datadog AI Guard, blocking prompt injection, jailbreaks, and unsafe tool calls.
+- [S3 Vectors Memory Plugin](https://strandsagents.com/docs/integrations/plugins/s3-vectors-memory/index.md): Long-term semantic memory for Strands Agents backed by Amazon S3 Vectors
+- [AgentCore Memory Session Manager](https://strandsagents.com/docs/integrations/session-managers/agentcore-memory/index.md): Persist Strands agent conversations with Amazon Bedrock AgentCore Memory, including short-term and long-term memory strategies.
+- [Strands Valkey Session Manager](https://strandsagents.com/docs/integrations/session-managers/strands-valkey-session-manager/index.md): Store Strands agent sessions in Valkey or Redis for low-latency, distributed conversation persistence across interactions.
+- [GitHub Storage](https://strandsagents.com/docs/integrations/storage/github/index.md): GitHub-repository Storage backend for Strands — persists each entry as a versioned, diffable file in a repo you can browse on GitHub.
+- [Community Storage Backends](https://strandsagents.com/docs/integrations/storage/overview/index.md): Community-built storage backends for persisting raw bytes under string keys.
+- [strands-apify](https://strandsagents.com/docs/integrations/tools/strands-apify/index.md): Web scraping for social media, search engines, e-commerce, and more via Apify Actors
+- [strands-deepgram](https://strandsagents.com/docs/integrations/tools/strands-deepgram/index.md): Add speech-to-text, text-to-speech, and audio intelligence to Strands agents with the Deepgram voice AI platform.
+- [strands-google](https://strandsagents.com/docs/integrations/tools/strands-google/index.md): Give Strands agents access to 200+ Google APIs, including Gmail, Drive, Calendar, Sheets, and YouTube, from a single tool.
+- [strands-hubspot](https://strandsagents.com/docs/integrations/tools/strands-hubspot/index.md): Query HubSpot CRM data from Strands agents with read-only tools for sales intelligence, customer research, and analytics.
+- [strands-perplexity](https://strandsagents.com/docs/integrations/tools/strands-perplexity/index.md): Real-time web search for Strands agents using the Perplexity Search API, with citations and regional filtering.
+- [strands-spraay](https://strandsagents.com/docs/integrations/tools/strands-spraay/index.md): Send batch crypto payments from Strands agents with the Spraay Protocol: ETH or ERC-20 tokens to up to 200 recipients on Base.
+- [strands-sql](https://strandsagents.com/docs/integrations/tools/strands-sql/index.md): General-purpose SQL tool for Strands Agents — PostgreSQL, MySQL, and SQLite via SQLAlchemy.
+- [strands-teams](https://strandsagents.com/docs/integrations/tools/strands-teams/index.md): Send Microsoft Teams notifications from Strands agents with rich Adaptive Cards and custom messaging support.
+- [strands-telegram](https://strandsagents.com/docs/integrations/tools/strands-telegram/index.md): Control Telegram bots from Strands agents with 60+ Bot API methods for messaging, media, and chat management.
+- [strands-telegram-listener](https://strandsagents.com/docs/integrations/tools/strands-telegram-listener/index.md): Process incoming Telegram messages in real time with Strands agents, with AI-powered auto-replies and event handling.
+- [Universal Tool Calling Protocol (UTCP)](https://strandsagents.com/docs/integrations/tools/utcp/index.md): Let Strands agents discover and call tools directly over native protocols with the Universal Tool Calling Protocol (UTCP).
+- [Anatomy of an agent](https://strandsagents.com/docs/user-guide/sdk/agents/index.md): The parts you compose into a Strands agent: the loop that reasons and calls tools, the prompts and state that shape it, and the hooks and interventions that control it.
+- [Deploy to production](https://strandsagents.com/docs/user-guide/sdk/deploy/index.md): Take a Strands agent to production: pick a target such as Bedrock AgentCore, Lambda, Fargate, or EKS, and ship the agent you already built.
+- [Observe your agent](https://strandsagents.com/docs/user-guide/sdk/observability-evaluation/index.md): See what your agent does in production: capture traces of every model and tool call, read performance metrics, and stream logs from the SDK.
+- [Get started](https://strandsagents.com/docs/user-guide/sdk/quickstart/overview/index.md): Documentation for the Strands Agents SDK. Learn to build, deploy, and scale AI agents with tools, multi-agent patterns, and any model provider.
+- [Secure for production](https://strandsagents.com/docs/user-guide/sdk/safety-security/index.md): Run a Strands agent safely in production: add guardrails, harden prompts against injection, keep message history trusted, and redact PII.
+
 ## Examples
 
-- [First Agent (Python)](https://strandsagents.com/examples/python/first-agent/index.md): Create your first agent with system prompts
-- [Tools And MCP (Python)](https://strandsagents.com/examples/python/tools-and-mcp/index.md): Build custom tools and connect MCP servers
-- [Model Providers (Python)](https://strandsagents.com/examples/python/model-providers/index.md): Run a local Ollama model, reach Azure OpenAI via LiteLLM, and call OpenAI on Amazon Bedrock
-- [Streaming (Python)](https://strandsagents.com/examples/python/streaming/index.md): Stream responses in async/FastAPI apps
-- [Guardrails (Python)](https://strandsagents.com/examples/python/guardrails/index.md): Add content filtering with Bedrock Guardrails
-- [Memory (Python)](https://strandsagents.com/examples/python/memory/index.md): Persist agent memory across sessions
-- [AWS Services (Python)](https://strandsagents.com/examples/python/aws-services/index.md): Connect to Knowledge Bases and DynamoDB
-- [Observability (Python)](https://strandsagents.com/examples/python/observability/index.md): Trace with Langfuse, evaluate with RAGAS
-- [Bidi Streaming (Python)](https://strandsagents.com/examples/python/bidi-streaming/index.md): Build real-time voice agents
-- [Agents As Tools (Python)](https://strandsagents.com/examples/python/agents-as-tools/index.md): Compose agents as callable tools
-- [Swarm (Python)](https://strandsagents.com/examples/python/swarm/index.md): Build self-organizing agent teams
-- [Graph (Python)](https://strandsagents.com/examples/python/graph/index.md): Create deterministic agent workflows
-- [Human In The Loop (Python)](https://strandsagents.com/examples/python/human-in-the-loop/index.md): Implement approval workflows with human oversight
-- [Plugins (Python)](https://strandsagents.com/examples/python/plugins/index.md): Build reusable plugins that bundle hooks, tools, and state
-- [Skills (Python)](https://strandsagents.com/examples/python/skills/index.md): Load specialized instructions on demand with skills
-- [Hooks Lifecycle (Python)](https://strandsagents.com/examples/python/hooks-lifecycle/index.md): Tour the full hook lifecycle and use writable fields to control agent behavior
-- [Conversation Management (Python)](https://strandsagents.com/examples/python/conversation-management/index.md): Control agent message history with sliding window, null, and summarizing strategies
-- [Self Improving Agents (Python)](https://strandsagents.com/examples/python/self-improving-agents/index.md): Build a self-extending, self-modifying, autonomous agent and deploy it (6 steps, AIM308)
-- [Structured Output (Python)](https://strandsagents.com/examples/python/structured-output/index.md): Get validated, typed Pydantic objects back from agents instead of free-form text
-- [Session Management (Python)](https://strandsagents.com/examples/python/session-management/index.md): Persist agent state across restarts with pluggable backends
-- [Lambda (Python)](https://strandsagents.com/examples/python/lambda/index.md): Deploy agents as serverless functions
-- [Fargate (Python)](https://strandsagents.com/examples/python/fargate/index.md): Run agents in serverless containers
-- [AgentCore (Python)](https://strandsagents.com/examples/python/agentcore/index.md): Host agents on purpose-built runtime
-- [A2A Orchestration (Python)](https://strandsagents.com/examples/python/agentcore-multi-agent/a2a-orchestration/index.md): This tutorial demonstrates how to use the Strands Agents SDK to build and deploy a multi-agent system on Amazon Bedrock AgentCore. You will create three specialized agents, each running in its own managed runtime, that discover and…
-- [Aurora DSQL (Python)](https://strandsagents.com/examples/python/databases/aurora-dsql/index.md): Amazon Aurora DSQL is a serverless, distributed relational database service optimized for transactional workloads. Aurora DSQL offers virtually unlimited scale and doesn't require you to manage infrastructure. The active-active highly…
-- [Neptune (Python)](https://strandsagents.com/examples/python/databases/neptune/index.md): Amazon Neptune is a fully managed graph database service by Amazon Web Services (AWS). It's designed to store and query billions of relationships with low latency, making it suitable for applications that rely on highly connected datasets.
-- [Supabase (Python)](https://strandsagents.com/examples/python/databases/supabase/index.md): Supabase is an open-source Firebase alternative providing all the backend services you need to build a product: a PostgreSQL database, authentication, instant APIs, edge functions, realtime subscriptions, and storage. This integration…
-- [Alice Wonderfence (Python)](https://strandsagents.com/examples/python/guardrails/alice-wonderfence/index.md): Example for integrating Strands Agent with Alice WonderFence for adaptive, real-time protection of production AI systems.
-- [Llama Firewall (Python)](https://strandsagents.com/examples/python/guardrails/llama-firewall/index.md): Example for integrating Strands Agent with Meta's Llama Firewall for local model-based input filtering and safety checks.
-- [NVIDIA Nemo (Python)](https://strandsagents.com/examples/python/guardrails/nvidia-nemo/index.md): Example for integrating Strands Agent with NVIDIA NeMo Guardrails for configurable, rule-based content filtering and conversation flow control.
-- [Zep AI (Python)](https://strandsagents.com/examples/python/memory/zep-ai/index.md): Minimal proof-of-concept for a personal dining assistant agent using Zep AI's graph-based memory and the Strands framework.
-- [Arize (Python)](https://strandsagents.com/examples/python/observability/arize/index.md): This integration demonstrates how to use Strands Agents with OpenInference and Arize AI for observability. The example builds a restaurant assistant agent that helps customers with restaurant information and reservations.
-- [A2A (Python)](https://strandsagents.com/examples/python/protocols/a2a/index.md): An example Strands agent that helps with searching AWS documentation.
-- [A2A Native (Python)](https://strandsagents.com/examples/python/protocols/a2a-native/index.md): This sample demonstrates Strands' native support for the Agent-to-Agent (A2A) protocol, showcasing how to create both A2A servers and clients for inter-agent communication.
-- [Exa (Python)](https://strandsagents.com/examples/python/tools/exa/index.md): A conversational AI agent that demonstrates the full power of Exa's search and content extraction capabilities through a practical research workflow using Strands Agents.
-- [Nova Act (Python)](https://strandsagents.com/examples/python/tools/nova-act/index.md): Amazon Nova Act is an AI model trained to perform actions within a web browser. Nova Act is currently in research preview and can be accesed via the Nova Act SDK on Amazon Nova. Nova Act is an agentic model which can accept natural…
-- [Tavily (Python)](https://strandsagents.com/examples/python/tools/tavily/index.md): This tutorial is designed for Python developers who want to empower their Strands agents with real-time web access, enabling agents to utilize up-to-date information as context. Live web information is critical for AI agents tasked with…
-- [Nova Sonic (Python)](https://strandsagents.com/examples/python/voice/nova-sonic/index.md): The Amazon Nova Sonic model provides real-time, conversational interactions through bidirectional audio streaming, enabling natural, human-like conversational experiences.
-- [Finance Assistant Swarm Agent (Python)](https://strandsagents.com/examples/python/finance/finance-assistant-swarm-agent/index.md): Multi-agent swarm system that autonomously generates comprehensive equity research reports with stock analysis, financial metrics, and news sentiment tracking
-- [GenAI Powered Financial Advisor Tools (Python)](https://strandsagents.com/examples/python/finance/genai-powered-financial-advisor-tools/index.md): Wealth advisory tool suite with Streamlit UI for client meeting analysis, portfolio performance tracking, and PDF report generation using MCP and Graph patterns
-- [Personal Finance Assistant (Python)](https://strandsagents.com/examples/python/finance/personal-finance-assistant/index.md): Three-part workshop teaching Strands agent fundamentals through personal budget analysis and expense tracking
-- [WhatsApp Fintech (Python)](https://strandsagents.com/examples/python/finance/whatsapp-fintech/index.md): WhatsApp for Business integration with multi-agent architecture handling daily promotions, credit card transactions, and payment scheduling
-- [Medical Document Processing Assistant (Python)](https://strandsagents.com/examples/python/healthcare/medical-document-processing-assistant/index.md): Clinical document processing agent that extracts diagnoses, medications, and treatments, enriching them with ICD-10, RxNorm, and SNOMED CT medical codes
-- [Custom Orchestration Airline Assistant (Python)](https://strandsagents.com/examples/python/logistics/custom-orchestration-airline-assistant/index.md): Airline customer service demonstrating four orchestration patterns (ReAct, REWOO, REWOO-ReAct Hybrid, Reflexion) using GraphBuilder with tau-bench dataset
-- [AI Ads Generation Agent With Crypto Payments (Python)](https://strandsagents.com/examples/python/marketing/ai-ads-generation-agent-with-crypto-payments/index.md): Autonomous agent that creates complete advertising campaigns and pays for premium services using cryptocurrency and blockchain integration
-- [Startup Advisor MCP (Python)](https://strandsagents.com/examples/python/marketing/startup-advisor-mcp/index.md): Startup advisory swarm agent for market research, competitive analysis, and campaign copywriting using Perplexity MCP server for web search
-- [Multi Modal Email Assistant Agent (Python)](https://strandsagents.com/examples/python/productivity/multi-modal-email-assistant-agent/index.md): Multi-modal email assistant with RAG pipeline for document ingestion (audio, video, text) and AI image generation for enterprise communication
-- [Personal Assistant (Python)](https://strandsagents.com/examples/python/productivity/personal-assistant/index.md): Productivity assistant using agents-as-tools pattern with calendar management, coding REPL, and web search via Perplexity MCP
-- [Research Agent (Python)](https://strandsagents.com/examples/python/productivity/research-agent/index.md): Self-improving autonomous research agent with hot-reload tool creation, persistent memory, and multi-model support (Bedrock, OpenAI, Ollama)
-- [Scrum Master Assistant (Python)](https://strandsagents.com/examples/python/productivity/scrum-master-assistant/index.md): Agile development assistant that converts meeting notes and sprint planning discussions into structured, actionable JIRA tickets
-- [Restaurant Assistant (Python)](https://strandsagents.com/examples/python/retail/restaurant-assistant/index.md): Restaurant assistant using Amazon Bedrock Knowledge Bases for menu recommendations, table reservations, and customer interaction management
-- [Amazon Dataprocessing Agent (Python)](https://strandsagents.com/examples/python/software-engineering/amazon-dataprocessing-agent/index.md): Natural language interface for AWS data engineering with Streamlit UI - manage AWS Glue ETL jobs, Athena SQL queries, and EMR clusters via MCP
-- [AWS Assistant MCP (Python)](https://strandsagents.com/examples/python/software-engineering/aws-assistant-mcp/index.md): AWS cloud resource management assistant using Model Context Protocol (MCP) for infrastructure operations
-- [AWS Audit Assistant (Python)](https://strandsagents.com/examples/python/software-engineering/aws-audit-assistant/index.md): AWS compliance auditor that checks EC2, S3, IAM, and other resources against security best practices and generates remediation reports
-- [Code Assistant (Python)](https://strandsagents.com/examples/python/software-engineering/code-assistant/index.md): Coding companion with Python REPL, shell access, and file editing capabilities for development workflows
-- [Data Warehouse Optimizer (Python)](https://strandsagents.com/examples/python/software-engineering/data-warehouse-optimizer/index.md): Multi-agent system for SQLite query optimization with OpenTelemetry observability logging and collaborative agent coordination
-- [Lambda Error Analysis Agent (Python)](https://strandsagents.com/examples/python/software-engineering/lambda-error-analysis-agent/index.md): Event-driven Lambda error diagnostics using CDK, EventBridge, and Bedrock Knowledge Base RAG for root cause analysis with confidence scoring
-- [SRE Incident Response Agent (Python)](https://strandsagents.com/examples/python/software-engineering/sre-incident-response-agent/index.md): Multi-agent SRE incident response system that detects CloudWatch alarms, performs AI-powered root cause analysis, applies Kubernetes/Helm remediations, and posts Slack incident reports
-- [FastAPI Strands Production Starter (Python)](https://strandsagents.com/examples/python/fastapi-strands-production-starter/index.md): A single runnable Python service, in the shape of a benchmark chatbot repo (FastAPI, three tools, one model call), rebuilt on Strands Agents. It wires the production concerns you actually ship with: an OpenAI or Bedrock provider, max…
-- [Pokemon Team Advisor (Python)](https://strandsagents.com/examples/python/pokemon-team-advisor/index.md): An agent that picks the best Pokémon for competitive team building. Demonstrates three Strands features working together:
-- [Adaptive Structured RAG (Python)](https://strandsagents.com/examples/python/rag/agentic-rag/adaptive-structured-rag/index.md): An Adaptive Structured RAG agent that converts natural language questions into SQL queries with self-correcting feedback loops. This agent features dual-mode support for both local SQLite databases and AWS Athena, and intelligent error…
-- [Corrective RAG (Python)](https://strandsagents.com/examples/python/rag/agentic-rag/corrective-rag/index.md): This project demonstrates a Corrective Retrieval-Augmented Generation (RAG) system built using Strand Agents. The system is designed to identify low relevance responses to users questions responses and automatically refine queries or…
-- [Unstructured Structured RAG (Python)](https://strandsagents.com/examples/python/rag/agentic-rag/unstructured-structured-rag/index.md): This project demonstrates how to build an intelligent RAG system that can route queries between structured and unstructured knowledge bases using Strands Agents.
-- [Library Book Renewal Agent (Python)](https://strandsagents.com/examples/python/steering/library-book-renewal-agent/index.md): Demonstrates different approaches to controlling AI agent behavior with a librarian agent. Users can chat with the agent, ask questions, and request to renew a book.
-- [A/B Testing Models (Python)](https://strandsagents.com/examples/python/ab-testing-models/index.md): This tutorial demonstrates how to systematically compare different language models in production agent systems through A/B testing. Learn to build multiple agent variants, evaluate them on identical tasks, and make data-driven model…
-- [Built In Evaluators (Python)](https://strandsagents.com/examples/python/built-in-evaluators/index.md): This tutorial introduces the complete toolkit of built-in evaluators provided by Strands Evals. You'll learn how to measure different aspects of agent performance using standardized evaluation metrics, from response quality to tool…
-- [Custom Evaluators (Python)](https://strandsagents.com/examples/python/custom-evaluators/index.md): This tutorial teaches you how to create custom evaluators for domain-specific evaluation criteria. You'll learn to design rubrics, extend the base Evaluator class, and implement multi-metric evaluation workflows tailored to your specific…
-- [Dataset Generation (Python)](https://strandsagents.com/examples/python/dataset-generation/index.md): This tutorial demonstrates automated test case generation for agent evaluation using the Strands Evals DatasetGenerator API. Learn how to generate diverse, high-quality test datasets and persist them for reuse across evaluation runs.
-- [Multi Agent Evaluation (Python)](https://strandsagents.com/examples/python/multi-agent-evaluation/index.md): This tutorial demonstrates comprehensive evaluation of multi-agent systems where multiple specialized agents collaborate to complete complex tasks. You'll learn to assess individual agent performance, collective system outcomes, and the…
-- [Multi Turn Actor Simulator (Python)](https://strandsagents.com/examples/python/multi-turn-actor-simulator/index.md): This tutorial demonstrates how to use ActorSimulator to evaluate conversational agents through realistic multi-turn interactions. Learn how to create AI-powered user personas, test agents with diverse behaviors, and implement…
-- [Red Teaming (Python)](https://strandsagents.com/examples/python/red-teaming/index.md): This sample red-teams a small returns-desk agent for a made-up shop, Tidewater Outfitters, built on Strands Agents. The attacks come from the red-teaming feature in Strands Evals 1.7.0. The point of the sample: an eval's score and the…
-- [Trajectory Evaluation (Python)](https://strandsagents.com/examples/python/trajectory-evaluation/index.md): This tutorial demonstrates how to evaluate agent trajectories - the sequences of tool calls, reasoning steps, and decisions agents make to complete tasks. Learn to evaluate not just what agents produce, but how they think and execute.
-- [AG UI CopilotKit Integration (Python)](https://strandsagents.com/examples/python/ag-ui-copilotkit-integration/index.md): A sample demonstrating how to build rich, interactive AI chat experiences using Strands Agents SDK with AG-UI protocol and CopilotKit frontend. The sample app is an AgentCore documentation assistant that helps users learn about Amazon…
-- [Dynamic UI (Python)](https://strandsagents.com/examples/python/dynamic-ui/index.md): An agent that answers with UI, not just text. You ask a question, the agent picks components from a catalog the app defines (stats, charts, tables, forms, buttons), and the browser renders them. When someone submits a form or clicks a…
-- [Human In The Loop Approval Agent (Python)](https://strandsagents.com/examples/python/human-in-the-loop-approval-agent/index.md): An order approval system that demonstrates human-in-the-loop workflows using Strands Agents' interrupt/resume pattern. A multi-agent graph evaluates incoming orders — assessing risk factors like customer history, order value, and…
-- [HVAC Data Analytics Agent (Python)](https://strandsagents.com/examples/python/hvac-data-analytics-agent/index.md): A lightweight conversational AI agent built with Strands SDK that assists facility managers and building operators with HVAC (Heating, Ventilation, and Air Conditioning) data analytics in physical smart buildings. The agent queries…
-- [Slack Assistant (Python)](https://strandsagents.com/examples/python/slack-assistant/index.md): This sample application demonstrates a simple chat assistant built with Strands that has two basic tools available: a calculator and a timer. Once installed into a Slack workspace, the app backend can be run on a development machine in…
-- [Strands Playground (Python)](https://strandsagents.com/examples/python/strands-playground/index.md): A web-based interactive playground for experimenting with the Strands SDK, allowing users to quickly test and prototype AI agents with configurable system prompts, model parameters, and tool selection. The Strands Playground provides the…
-- [Streamlit Template (Python)](https://strandsagents.com/examples/python/streamlit-template/index.md): This app demonstrates how to build and deploy a GenAI agent with a web user interface using Streamlit and AWS CDK. While the demo uses a simple appointment management agent (described in the agent description section), the main focus is…
-- [Triage Agent (Python)](https://strandsagents.com/examples/python/triage-agent/index.md): This is AI Triage Agent, a demonstration of an AI-powered medical triage system that showcases intelligent patient assessment through "structured decision tree navigation". The project leverages Amazon Bedrock through the Strands AI…
-- [Video Games Sales Assistant (Python)](https://strandsagents.com/examples/python/video-games-sales-assistant/index.md): This solution provides a Generative AI application reference that allows users to interact with data through a natural language interface. The solution leverages Strands Agents SDK to build an agent that connects to a PostgreSQL database…
-- [Strands Spot Agent (Python)](https://strandsagents.com/examples/python/strands-spot-agent/index.md): An AI-powered control system for Boston Dynamics Spot robots using the Strands framework. Works with any LLM supported by Strands (Claude, GPT-4, Llama, etc.).
-- [First Agent (TypeScript)](https://strandsagents.com/examples/typescript/first-agent/index.md): Create your first agent
-- [Custom Tools (TypeScript)](https://strandsagents.com/examples/typescript/custom-tools/index.md): Build custom tools
-- [Model Providers (TypeScript)](https://strandsagents.com/examples/typescript/model-providers/index.md): Configure different model providers
-- [Streaming (TypeScript)](https://strandsagents.com/examples/typescript/streaming/index.md): Stream responses (Coming Soon)
-- [Agent State (TypeScript)](https://strandsagents.com/examples/typescript/agent-state/index.md): Manage agent state
-- [Browser Agent (TypeScript)](https://strandsagents.com/examples/typescript/browser-agent/index.md): Build browser-based agents
-- [Express Chatbot (TypeScript)](https://strandsagents.com/examples/typescript/express-chatbot/index.md): Express chatbot with SSE streaming, Zod tools and MCP
-- [AgentCore (TypeScript)](https://strandsagents.com/examples/typescript/agentcore/index.md): Host agents on purpose-built runtime
-- [Next.js Vercel Adapter (TypeScript)](https://strandsagents.com/examples/typescript/nextjs-vercel-adapter/index.md): Next.js chat app: Vercel AI SDK client + Strands server via the VercelModel adapter
-- [Dynamic UI (TypeScript)](https://strandsagents.com/examples/typescript/dynamic-ui/index.md): An agent that chooses which UI components to render and reacts to form and button interactions
+- [Self-Improving Agent Workshop (Python)](https://strandsagents.com/examples/python/self-improving-agents/index.md): Build a self-extending, self-modifying, autonomous agent and deploy it (6 steps, AIM308)
+- [Streaming Express Chatbot with MCP (TypeScript)](https://strandsagents.com/examples/typescript/express-chatbot/index.md): Express chatbot with SSE streaming, Zod tools and MCP
+- [A2A Shopping Assistant on AgentCore (Python)](https://strandsagents.com/examples/python/agentcore-multi-agent/a2a-orchestration/index.md): This tutorial demonstrates how to use the Strands Agents SDK to build and deploy a multi-agent system on Amazon Bedrock AgentCore. You will create three specialized agents, each running in its own managed runtime, that discover and…
+- [Next.js Chat App with Vercel AI SDK (TypeScript)](https://strandsagents.com/examples/typescript/nextjs-vercel-adapter/index.md): Next.js chat app: Vercel AI SDK client + Strands server via the VercelModel adapter
+- [AWS Lambda Failure Analysis Agent (Python)](https://strandsagents.com/examples/python/software-engineering/lambda-error-analysis-agent/index.md): Event-driven Lambda error diagnostics using CDK, EventBridge, and Bedrock Knowledge Base RAG for root cause analysis with confidence scoring
+- [Production Agent API with FastAPI (Python)](https://strandsagents.com/examples/python/fastapi-strands-production-starter/index.md): A single runnable Python service, in the shape of a benchmark chatbot repo (FastAPI, three tools, one model call), rebuilt on Strands Agents. It wires the production concerns you actually ship with: an OpenAI or Bedrock provider, max…
+- [Book Renewal Agent: Control Strategies (Python)](https://strandsagents.com/examples/python/steering/library-book-renewal-agent/index.md): Demonstrates different approaches to controlling AI agent behavior with a librarian agent. Users can chat with the agent, ask questions, and request to renew a book.
+- [Red-Team a Refund Agent (Python)](https://strandsagents.com/examples/python/red-teaming/index.md): This sample red-teams a small returns-desk agent for a made-up shop, Tidewater Outfitters, built on Strands Agents. The attacks come from the red-teaming feature in Strands Evals 1.7.0. The point of the sample: an eval's score and the…
+- [Human-in-the-Loop Order Approval (Python)](https://strandsagents.com/examples/python/human-in-the-loop-approval-agent/index.md): An order approval system that demonstrates human-in-the-loop workflows using Strands Agents' interrupt/resume pattern. A multi-agent graph evaluates incoming orders — assessing risk factors like customer history, order value, and…
+- [Agent-Generated Workout Tracker UI (Python)](https://strandsagents.com/examples/python/dynamic-ui/index.md): An agent that answers with UI, not just text. You ask a question, the agent picks components from a catalog the app defines (stats, charts, tables, forms, buttons), and the browser renders them. When someone submits a form or clicks a…
+- [Agent-Generated Workout Tracker UI (TypeScript)](https://strandsagents.com/examples/typescript/dynamic-ui/index.md): An agent that chooses which UI components to render and reacts to form and button interactions
 
 ## Blog
 
+- [Strands Box brings its open source sandbox to Linux](https://strandsagents.com/blog/strands-box-linux-sandbox/index.md): Strands Box now supports Linux, bringing file and network controls, credential protection, and Dogwood policies to agents on Kubernetes, Amazon Bedrock AgentCore Runtime, and Linux hosts across cloud providers or your own infrastructure.
 - [Strands adds more built-in tools for Python and TypeScript](https://strandsagents.com/blog/more-built-in-tools-python-typescript/index.md): Built-in file, web, and multi-agent tools for your Strands agents, available in both Python and TypeScript.
 - [Red team your harness before your customers do, with Strands Evals](https://strandsagents.com/blog/red-team-your-agent-strands-evals/index.md): Red teaming in Strands Evals 1.7.0 runs adversarial conversations against your agent or harness. Attack a refund agent with GOAT, then check its tool calls, not just the score.
 - [Evaluating structured agent output, field by field, with Strands Evals](https://strandsagents.com/blog/structured-output-similarity-strands-evals/index.md): StructuredOutputSimilarity scores structured agent output field by field with Stickler: deterministic, per-field accuracy with no LLM judge in the default path.
@@ -1036,6 +1036,10 @@
 ## Changelog
 
 - [Changelog](https://strandsagents.com/changelog/index.md): All releases across the SDK, Harness, Harness CLI, Evals, and Box
+- Box
+  - [v0.2.1](https://strandsagents.com/changelog/box/v0.2.1/index.md): Box v0.2.1 (2026-11-06)
+  - [v0.2.0](https://strandsagents.com/changelog/box/v0.2.0/index.md): Box v0.2.0 (2026-11-05)
+  - [v0.1.0](https://strandsagents.com/changelog/box/v0.1.0/index.md): Box v0.1.0 (2026-10-07)
 - SDK Python
   - [v1.64.0](https://strandsagents.com/changelog/sdk/python-v1.64.0/index.md): SDK Python v1.64.0 (2026-11-04)
   - [v1.63.0](https://strandsagents.com/changelog/sdk/python-v1.63.0/index.md): SDK Python v1.63.0 (2026-10-30)
@@ -1240,5 +1244,3 @@
   - [v0.1.2](https://strandsagents.com/changelog/cli/v0.1.2/index.md): Harness CLI v0.1.2 (2026-09-23)
   - [v0.1.1](https://strandsagents.com/changelog/cli/v0.1.1/index.md): Harness CLI v0.1.1 (2026-09-22)
   - [v0.1.0](https://strandsagents.com/changelog/cli/v0.1.0/index.md): Harness CLI v0.1.0 (2026-09-21)
-- Box
-  - [v0.1.0](https://strandsagents.com/changelog/box/v0.1.0/index.md): Box v0.1.0 (2026-10-07)

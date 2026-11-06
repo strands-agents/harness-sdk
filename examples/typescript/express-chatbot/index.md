@@ -15,7 +15,7 @@ A Node.js + Express chatbot service built on the Strands Agents TypeScript SDK. 
 
 ### Architecture
 
-![Architecture Diagram](https://raw.githubusercontent.com/strands-agents/samples/3c9ebca88ad8906ca77147753d951c5e2a7123bd/typescript/01-learn/07-express-chatbot/images/architecture.png)
+![Architecture Diagram](https://raw.githubusercontent.com/strands-agents/samples/07afeeefe416b9c1885e03f82057dee2264a485e/typescript/01-learn/07-express-chatbot/images/architecture.png)
 
 The user talks to an Express server that runs a Strands Agent per turn. The agent applies a moderation intervention before each model call and a rate-limit intervention before each tool call, calls the local Zod tools (plus the tools loaded from a remote MCP server at startup), and invokes Amazon Bedrock for inference. By default the MCP client connects to the public **AWS Knowledge MCP Server**, so the agent can search and read up-to-date AWS documentation. Conversation history is persisted per session and replayed on the next turn. Responses are returned as JSON (`/chat`) or streamed as Server-Sent Events (`/chat/stream`).
 
@@ -173,4 +173,4 @@ This sample is provided for educational and demonstration purposes only. It is n
 
 ## Upstream source
 
-- [View this sample at the imported commit](https://github.com/strands-agents/samples/tree/3c9ebca88ad8906ca77147753d951c5e2a7123bd/typescript/01-learn/07-express-chatbot)
+- [View this sample at the imported commit](https://github.com/strands-agents/samples/tree/07afeeefe416b9c1885e03f82057dee2264a485e/typescript/01-learn/07-express-chatbot)

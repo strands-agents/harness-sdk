@@ -1,6 +1,6 @@
 An order approval system that demonstrates human-in-the-loop workflows using Strands Agents’ interrupt/resume pattern. A multi-agent graph evaluates incoming orders — assessing risk factors like customer history, order value, and inventory levels — then pauses execution to let a human approver make the final call. The Streamlit UI provides an interactive dashboard where approvers can review AI-generated risk assessments, inspect each agent’s reasoning by clicking through the workflow graph, and approve or reject orders in real time.
 
-![Streamlit UI](https://raw.githubusercontent.com/strands-agents/samples/3c9ebca88ad8906ca77147753d951c5e2a7123bd/python/07-ux-demos/human-in-the-loop-approval-agent/images/streamlit-ui-screenshot.png)
+![Streamlit UI](https://raw.githubusercontent.com/strands-agents/samples/07afeeefe416b9c1885e03f82057dee2264a485e/python/07-ux-demos/human-in-the-loop-approval-agent/images/streamlit-ui-screenshot.png)
 
 ## Overview
 
@@ -28,7 +28,7 @@ The system uses a five-node agent graph deployed to AgentCore Runtime, with a St
 
 Session state is persisted in S3 via `S3SessionManager`, enabling the interrupt/resume cycle across stateless HTTP calls.
 
-![Architecture Diagram](https://raw.githubusercontent.com/strands-agents/samples/3c9ebca88ad8906ca77147753d951c5e2a7123bd/python/07-ux-demos/human-in-the-loop-approval-agent/images/strands-hitl-architecture.png)
+![Architecture Diagram](https://raw.githubusercontent.com/strands-agents/samples/07afeeefe416b9c1885e03f82057dee2264a485e/python/07-ux-demos/human-in-the-loop-approval-agent/images/strands-hitl-architecture.png)
 
 ### Demo Scenarios
 
@@ -173,4 +173,4 @@ For production deployments, consider:
 
 ## Upstream source
 
-- [View this sample at the imported commit](https://github.com/strands-agents/samples/tree/3c9ebca88ad8906ca77147753d951c5e2a7123bd/python/07-ux-demos/human-in-the-loop-approval-agent)
+- [View this sample at the imported commit](https://github.com/strands-agents/samples/tree/07afeeefe416b9c1885e03f82057dee2264a485e/python/07-ux-demos/human-in-the-loop-approval-agent)

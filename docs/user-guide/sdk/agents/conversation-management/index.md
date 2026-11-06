@@ -302,7 +302,6 @@ from strands.models import AnthropicModel
 summarization_model = AnthropicModel(
     model_id="claude-haiku-4-5-20251001",  # More cost-effective for summarization
     max_tokens=1000,
-    params={"temperature": 0.1}  # Low temperature for consistent summaries
 )
 custom_summarization_agent = Agent(model=summarization_model)
 
@@ -329,7 +328,6 @@ import { AnthropicModel } from '@strands-agents/sdk/models/anthropic'
 const summarizationModel = new AnthropicModel({
   modelId: 'claude-haiku-4-5-20251001',
   maxTokens: 1000,
-  params: { temperature: 0.1 }, // Low temperature for consistent summaries
 })
 
 const conversationManager = new SummarizingConversationManager({

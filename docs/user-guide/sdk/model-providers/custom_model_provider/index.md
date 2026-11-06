@@ -516,6 +516,15 @@ Events use the dictionary-based [StreamEvent](/docs/api/python/strands.types.str
 ```
 
 -   [`metadata`](/docs/api/python/strands.types.streaming#MetadataEvent): Event representing the metadata of the response. This contains the input, output, and total token count, along with the latency of the request.
+    
+    Report usage in this form, whatever your provider’s API returns:
+    
+    -   `inputTokens` counts every input token, cached or not. If your provider reports cached tokens separately, add them in.
+    -   `cacheReadInputTokens` and `cacheWriteInputTokens` (optional) are the parts of `inputTokens` that were read from or written to the cache, not extra tokens.
+    -   `totalTokens` is `inputTokens + outputTokens`.
+    
+    This matches the OpenTelemetry GenAI semantic conventions, and the SDK’s token accounting handles it correctly; see [Metrics](/docs/user-guide/sdk/observability-evaluation/metrics/index.md#overview).
+    
 
 ```python
 {
@@ -523,9 +532,10 @@ Events use the dictionary-based [StreamEvent](/docs/api/python/strands.types.str
         "latencyMs": 123 # Latency of the model request in milliseconds.
     },
     "usage": {
-        "inputTokens": 234, # Number of tokens sent in the request to the model.
+        "inputTokens": 234, # All input tokens, including cached tokens.
+        "cacheReadInputTokens": 200, # Part of inputTokens read from the cache (optional).
         "outputTokens": 234, # Number of tokens that the model generated for the request.
-        "totalTokens": 468 # Total number of tokens (input + output).
+        "totalTokens": 468 # inputTokens + outputTokens.
     }
 }
 ```
@@ -618,14 +628,24 @@ const messageStop: ModelMessageStopEventData = {
 ```
 
 -   `ModelMetadataEvent`: Provides usage and metrics information
+    
+    Report usage in this form, whatever your provider’s API returns:
+    
+    -   `inputTokens` counts every input token, cached or not. If your provider reports cached tokens separately, add them in.
+    -   `cacheReadInputTokens` and `cacheWriteInputTokens` (optional) are the parts of `inputTokens` that were read from or written to the cache, not extra tokens.
+    -   `totalTokens` is `inputTokens + outputTokens`.
+    
+    This matches the OpenTelemetry GenAI semantic conventions, and the SDK’s token accounting handles it correctly; see [Metrics](/docs/user-guide/sdk/observability-evaluation/metrics/index.md#overview).
+    
 
 ```typescript
 const metadata: ModelMetadataEventData = {
   type: 'modelMetadataEvent',
   usage: {
-    inputTokens: 234,
+    inputTokens: 234, // All input tokens, including cached tokens.
+    cacheReadInputTokens: 200, // Part of inputTokens read from the cache (optional).
     outputTokens: 234,
-    totalTokens: 468,
+    totalTokens: 468, // inputTokens + outputTokens.
   },
   metrics: {
     latencyMs: 123,

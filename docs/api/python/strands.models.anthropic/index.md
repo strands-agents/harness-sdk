@@ -9,7 +9,7 @@ Anthropic Claude model provider.
 class AnthropicModel(Model)
 ```
 
-Defined in: [src/strands/models/anthropic.py:125](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/anthropic.py#L125)
+Defined in: [src/strands/models/anthropic.py:133](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/anthropic.py#L133)
 
 Anthropic model provider implementation.
 
@@ -19,7 +19,7 @@ Anthropic model provider implementation.
 class AnthropicConfig(BaseModelConfig)
 ```
 
-Defined in: [src/strands/models/anthropic.py:145](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/anthropic.py#L145)
+Defined in: [src/strands/models/anthropic.py:153](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/anthropic.py#L153)
 
 Configuration options for Anthropic models.
 
@@ -29,7 +29,7 @@ Configuration options for Anthropic models.
 -   `cache_tools` - Caches the tool definitions (deprecated, use CacheConfig(tools\_ttl=…)). Superseded by an explicitly set cache\_config.tools\_ttl.
 -   `max_tokens` - Maximum number of tokens to generate.
 -   `model_id` - Calude model ID (e.g., “claude-3-7-sonnet-latest”). For a complete list of supported models, see [https://docs.anthropic.com/en/docs/about-claude/models/all-models](https://docs.anthropic.com/en/docs/about-claude/models/all-models).
--   `params` - Additional model parameters (e.g., temperature). For a complete list of supported parameters, see [https://docs.anthropic.com/en/api/messages](https://docs.anthropic.com/en/api/messages).
+-   `params` - Additional model parameters (e.g., metadata, stop\_sequences). For a complete list of supported parameters, see [https://docs.anthropic.com/en/api/messages](https://docs.anthropic.com/en/api/messages). Sampling parameters (temperature, top\_k, top\_p) are accepted only by API version 2023-06-01; pin it with client\_args={“default\_headers”: {“anthropic-version”: “2023-06-01”}}.
 -   `anthropic_tools` - Anthropic-specific server-side tools that are not function tools (e.g., web\_search, web\_fetch, code\_execution). Appended alongside the agent’s function tools. Use the standard tools interface for function calling tools. For a complete list of supported tools, see [https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/overview](https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/overview)
 -   `use_native_token_count` - Whether to use the native Anthropic count\_tokens API. When True, count\_tokens() calls the Anthropic API for accurate counts. When False (default), skips the API call and uses the local estimator.
 
@@ -41,7 +41,7 @@ def __init__(*,
              **model_config: Unpack[AnthropicConfig])
 ```
 
-Defined in: [src/strands/models/anthropic.py:177](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/anthropic.py#L177)
+Defined in: [src/strands/models/anthropic.py:187](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/anthropic.py#L187)
 
 Initialize provider instance.
 
@@ -57,7 +57,7 @@ Initialize provider instance.
 def update_config(**model_config: Unpack[AnthropicConfig]) -> None
 ```
 
-Defined in: [src/strands/models/anthropic.py:199](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/anthropic.py#L199)
+Defined in: [src/strands/models/anthropic.py:209](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/anthropic.py#L209)
 
 Update the Anthropic model configuration with the provided arguments.
 
@@ -72,7 +72,7 @@ Update the Anthropic model configuration with the provided arguments.
 def get_config() -> AnthropicConfig
 ```
 
-Defined in: [src/strands/models/anthropic.py:214](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/anthropic.py#L214)
+Defined in: [src/strands/models/anthropic.py:224](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/anthropic.py#L224)
 
 Get the Anthropic model configuration.
 
@@ -94,7 +94,7 @@ def format_request(
 ) -> dict[str, Any]
 ```
 
-Defined in: [src/strands/models/anthropic.py:565](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/anthropic.py#L565)
+Defined in: [src/strands/models/anthropic.py:582](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/anthropic.py#L582)
 
 Format an Anthropic streaming request.
 
@@ -114,6 +114,7 @@ An Anthropic streaming request.
 **Raises**:
 
 -   `TypeError` - If a message contains a content block type that cannot be converted to an Anthropic-compatible format.
+-   `ValueError` - If params sets a sampling parameter both directly and in extra\_body, or sets one while the request uses an API version other than 2023-06-01.
 
 #### format\_chunk
 
@@ -121,7 +122,7 @@ An Anthropic streaming request.
 def format_chunk(event: dict[str, Any]) -> StreamEvent
 ```
 
-Defined in: [src/strands/models/anthropic.py:820](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/anthropic.py#L820)
+Defined in: [src/strands/models/anthropic.py:882](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/anthropic.py#L882)
 
 Format the Anthropic response events into standardized message chunks.
 
@@ -148,7 +149,7 @@ async def count_tokens(
         system_prompt_content: list[SystemContentBlock] | None = None) -> int
 ```
 
-Defined in: [src/strands/models/anthropic.py:959](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/anthropic.py#L959)
+Defined in: [src/strands/models/anthropic.py:1021](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/anthropic.py#L1021)
 
 Count tokens using Anthropic’s native count\_tokens API.
 
@@ -179,7 +180,7 @@ async def stream(messages: Messages,
                  **kwargs: Any) -> AsyncGenerator[StreamEvent, None]
 ```
 
-Defined in: [src/strands/models/anthropic.py:1009](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/anthropic.py#L1009)
+Defined in: [src/strands/models/anthropic.py:1071](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/anthropic.py#L1071)
 
 Stream conversation with the Anthropic model.
 
@@ -204,6 +205,7 @@ A server-side tool turn that Anthropic pauses is resumed with follow-up requests
 -   `ContextWindowOverflowException` - If the input exceeds the model’s context window.
 -   `ModelThrottledException` - If the request is throttled by Anthropic.
 -   `RuntimeError` - If a paused server-side tool turn is still paused after the continuation limit.
+-   `ValueError` - If params sets a sampling parameter both directly and in extra\_body, or sets one while the request uses an API version other than 2023-06-01.
 
 #### structured\_output
 
@@ -216,7 +218,7 @@ async def structured_output(
         **kwargs: Any) -> AsyncGenerator[dict[str, T | Any], None]
 ```
 
-Defined in: [src/strands/models/anthropic.py:1221](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/anthropic.py#L1221)
+Defined in: [src/strands/models/anthropic.py:1285](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/anthropic.py#L1285)
 
 Get structured output from the model.
 

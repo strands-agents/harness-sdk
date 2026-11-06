@@ -1,0 +1,187 @@
+---
+title: "Strands Box brings its open source sandbox to Linux"
+date: 2026-11-05T00:00:00.000Z
+description: "Strands Box now supports Linux, bringing file and network controls, credential protection, and Dogwood policies to agents on Kubernetes, Amazon Bedrock AgentCore Runtime, and Linux hosts across cloud providers or your own infrastructure."
+tags: ["Announcement", "Open Source", "Strands Box"]
+---
+An agent can pick up a new issue or investigate an alert without waiting for someone to open a laptop. Running that work in the cloud means it can happen whenever it’s needed, without someone approving every action. Before the agent starts, though, we need to define what it can access and what it’s allowed to do, then enforce those limits as it works.
+
+Teams commonly deploy agents in containers or micro-VMs to isolate them from other workloads and help limit the blast radius of a compromise. Micro-VMs strengthen that separation with a hardware-backed boundary and their own operating system kernel. Within that environment, we still need to define which files and tools the agent can use, where it can send network requests, and what checks must pass before it takes certain actions. We also need to let the agent call APIs without giving it direct access to credentials.
+
+[Strands Box](https://github.com/strands-agents/box) is an open source, operating-system-level sandbox that lets you define and enforce those limits. We first launched Box on macOS, and now it supports Linux, bringing a complementary layer of containment and policy enforcement to agents running on your own Linux hosts or in the cloud on AWS and other providers. Linux support is in preview and runs on ARM64 hosts.
+
+With Box, you control which files an agent can read or change, which tools it can call, which commands it can run, and where it can send network requests. Box enforces those limits so the agent cannot freely use every file or permission available in its deployment environment. It also injects credentials into approved requests, letting the agent call APIs without being able to read the secrets directly.
+
+Even within those boundaries, some actions should only happen after specific checks have passed. An incident response agent might need to pause deployment retries after several failures in a short period while continuing to check the service’s status. A customer service agent might need confirmation that an order qualifies before requesting a replacement. Box lets you express these requirements as custom rules written in Dogwood, the policy language it supports. These rules can check earlier actions and results, including how long ago they happened, and Box enforces them outside the agent’s control.
+
+Box can also enforce these rules when agents write code to complete a task. Its built-in Shell and Python interpreters check operations like file access and network requests against Dogwood policies before allowing them. The [original launch post](https://aws.amazon.com/blogs/opensource/introducing-strands-box-ai-agent-sandboxes-powered-by-dogwood/) explains how these interpreters work alongside Box’s other enforcement points.
+
+If your application uses multiple agents, you can run each one in a separate Box and define its controls independently.
+
+Box works with custom agents built using frameworks like the Strands Harness SDK or LangChain, as well as prebuilt agent harnesses like Claude Code, Codex CLI, Pi, Strands CLI, Strands harness, or Kiro CLI.
+
+We’ll start by deploying a customer service agent with Box on Amazon Bedrock AgentCore Runtime. Then we’ll run Claude Code inside Strands Box on Amazon Elastic Kubernetes Service, or EKS, as an incident response agent. Both examples include links to the full code and deployment guides so you can try them yourself.
+
+## Run a customer service agent in Box on AgentCore Runtime
+
+A customer service agent might look up an order and arrange a replacement if it qualifies. Before requesting a shipment, it needs confirmation from the order service that a replacement is allowed.
+
+Box can enforce that sequence with a temporal policy, a rule written in Dogwood that checks earlier actions and results before allowing the next step.
+
+You can deploy this agent to [Amazon Bedrock AgentCore Runtime](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/agents-tools-runtime.html) with a dedicated micro-VM for each session. The micro-VM gives that session its own memory and filesystem, keeping it separate from other sessions.
+
+Box runs inside the micro-VM and adds controls within that environment. You decide which files the agent can change, which services it can call, and which credentials Box can use on its behalf.
+
+The [customer service sample](https://github.com/strands-agents/box/tree/main/examples/cloud-deployments/agentcore-runtime) includes scripts that build Box, install the agent’s dependencies, and package them together in a ZIP file for AgentCore Runtime. The [deployment guide](https://github.com/strands-agents/box/blob/main/docs/user/tutorials/agentcore-runtime.md) walks through preparing and deploying that package.
+
+Box uses two files to define the agent’s environment and the rules it must follow. `box.toml` is the configuration file, where you specify what to run, which files the agent can use, and how Box handles credentials. `policy.dw` is the policy file, where you write Dogwood rules for tool calls and network requests.
+
+The sample generates `box.toml` at runtime in [`sdk/run-demo.py`](https://github.com/strands-agents/box/blob/main/examples/cloud-deployments/agentcore-runtime/sdk/run-demo.py) or [`langchain-example/run-demo.py`](https://github.com/strands-agents/box/blob/main/examples/cloud-deployments/agentcore-runtime/langchain-example/run-demo.py), depending on the framework. Its `[agent.filesystem]` section defines which files and directories the agent can read or change. This excerpt uses simplified paths to show how the sample separates application files from the agent’s writable workspace.
+
+box.toml
+
+```toml
+[agent.filesystem]
+read = [
+    "/app/sdk/vendor",
+    "/usr/local/lib/python3.12",
+    "/app/workspace"
+]
+read_file = ["/app/sdk/agent.py"]
+write = ["/app/workspace"]
+```
+
+This configuration gives the agent a writable workspace while keeping the application code and dependencies read-only. Box enforces that boundary through the operating system, so the agent can save working files without modifying the application running it.
+
+The agent also needs a credential to call its model in Amazon Bedrock, but we don’t want to put that credential somewhere the agent can read it. The sample’s setup script gets a temporary token and passes it to Box. In `box.toml`, the `[egress.model]` section specifies where to read that token and which Bedrock endpoint can receive it.
+
+box.toml
+
+```toml
+[egress.model]
+destinations = ["bedrock-runtime.us-west-2.amazonaws.com"]
+secret.ref = "env://AWS_BEARER_TOKEN_BEDROCK"
+```
+
+The agent receives a placeholder instead of the real token. When Box permits a model request, its egress gateway, the proxy that handles outgoing traffic, replaces the placeholder in the `Authorization` header with the real token. The agent can use the model while the credential stays outside its sandbox. The same approach works with API keys and tokens for other services.
+
+Suppose your order service is available at `orders.example.com`. An agent can check whether order `42` qualifies for a replacement by calling `GET /orders/42/replacement`. For this example, the service returns `200` only when the order qualifies. The agent can then request the replacement by sending a `POST` to the same path.
+
+The Dogwood rules in [`policy.dw`](https://github.com/strands-agents/box/blob/main/examples/cloud-deployments/agentcore-runtime/policy.dw) specify which network requests are allowed and can add conditions based on earlier actions and results. The following excerpt adapts the sample’s local test service to `orders.example.com` over HTTPS. It blocks a shipment unless Box has recorded that confirmation in the last five minutes.
+
+policy.dw
+
+```text
+@id("dispatch_requires_eligibility")
+@description("Check eligibility for this order before dispatch.")
+forbid(principal == Box::Agent::"self", action == Box::Action::"http:request", resource)
+when {
+    context.input.host == "orders.example.com" &&
+    context.input.port == 443 &&
+    context.input.method == "POST" &&
+    context.input.path like "/orders/*/replacement"
+}
+unless temporal {
+    formerly within 300s (
+        Box::Action::"http:request"::response{
+            input.host: "orders.example.com",
+            input.port: 443,
+            input.method: "GET",
+            // Require eligibility for the same order.
+            input.path: context.input.path,
+            output.status: 200
+        }
+    )
+};
+```
+
+The host identifies the order service, and the path identifies the order being checked. The `input.path: context.input.path` condition matches the earlier eligibility check to the current replacement request, so a successful check for a different service or order doesn’t count. The `formerly within 300s` expression looks back five minutes for the matching response.
+
+This rule works alongside the permit rules that allow the agent to contact the order service. A matching `forbid` overrides those permit rules, so Box can let the agent check an order while blocking a shipment until the check succeeds.
+
+The full example also includes a rule that blocks repeat shipments and refunds for five minutes after a confirmed shipment. The diagram follows a shipment request through both checks.
+
+> **Diagram:** An agent requests a shipment. If the order service has not confirmed eligibility for this order in the last five minutes, Box blocks the request. If eligibility was confirmed, Box checks whether the service has also confirmed a shipment for this order in that period. If so, Box blocks the request. Otherwise, Box forwards the request to the order service. The allowed path goes straight down. Both blocked paths branch to the right.
+
+The customer service example includes versions built with the Strands Harness SDK and LangChain. The framework runs the agent, and Box enforces the access limits and policies you set.
+
+## Run an incident response agent in Box on EKS
+
+An incident response agent may respond to a failed deployment by trying again, then again. Those repeated requests can put extra load on an already struggling service and consume capacity that other workloads need. Teams need to control how often agents call critical services, as well as which services they can call. Pausing deployment retries after repeated failures gives the service time to recover while the agent continues checking status.
+
+In this example, we’ll run Claude Code inside Strands Box on EKS with a demo deployment service. After three failed deployment attempts within five minutes, Box blocks further attempts for ten minutes while allowing the agent to continue checking deployment status.
+
+Amazon Bedrock provides the model, and Claude Code’s `-p` flag lets the agent run without opening an interactive chat. EKS runs it as a Kubernetes Job, which starts the container and tracks whether the task finishes successfully. Claude runs without asking for approval at each step, while Box enforces the limits and policies we’ve defined.
+
+The container needs a few things in place before Box can start the agent.
+
+| What to set up | What it does |
+| --- | --- |
+| Package Box with the agent. | The container includes Claude Code, Box, and the tools Claude needs to complete the task. |
+| Choose what the agent can access. | `box.toml` names the command to start, the files and programs Claude can use, and where Box gets its credentials. |
+| Set rules for requests. | `policy.dw` allows requests to Bedrock and the deployment service and enforces the pause after repeated deployment failures. |
+| Start the agent through Box. | The script passes the configuration file to `box run --config`, which starts Claude Code inside the sandbox. |
+
+Claude uses `deploy_checkout` to request a deployment and `deployment_status` to read diagnostics. Both tools send requests through Box before reaching the service.
+
+The Box setup works the same way as in the customer service example, including file and network restrictions and Bedrock credential injection. The [Dogwood rule below](https://github.com/strands-agents/box/blob/main/examples/cloud-deployments/eks/claude/deployment_policy.py) adds the deployment cooldown. It uses a local demo service, but the same policy pattern works with remote deployment APIs too.
+
+policy.dw
+
+```text
+@id("deployment_cooldown")
+forbid(principal == Box::Agent::"self", action == Box::Action::"http:request", resource)
+when {
+    context.input.host == "127.0.0.1" && context.input.port == 8080 &&
+    context.input.method == "POST" && context.input.path == "/deployments/checkout"
+}
+when temporal {
+    formerly within 600s (
+        exists (trigger_status: Long). (
+            Box::Action::"http:request"::response{
+                input.host: "127.0.0.1", input.port: 8080,
+                input.method: "POST", input.path: "/deployments/checkout",
+                output.status: trigger_status
+            }
+            && trigger_status >= 400 && trigger_status < 600
+            && exists (failures: Long). (
+                (count for (t: Timepoint). where (
+                    formerly within 300s (
+                        exists (status: Long). (
+                            Box::Action::"http:request"::response{
+                                input.host: "127.0.0.1", input.port: 8080,
+                                input.method: "POST", input.path: "/deployments/checkout",
+                                output.status: status
+                            }
+                            && status >= 400 && status < 600 && tp(t)
+                        )
+                    )
+                )) == failures
+                && failures >= 3
+            )
+        )
+    )
+};
+```
+
+The `count` expression counts deployment responses with HTTP status codes from 400 through 599 within a five-minute window. Once three failures occur within that window, `formerly within 600s` keeps further deployment requests blocked for ten minutes while status checks remain available.
+
+To build on this example, you can connect the tools to your own deployment and diagnostic APIs and configure alerts or other events to trigger the agent when it’s needed. It can then run autonomously on EKS within the boundaries you define with Box. You can add tools for logs and metrics and bring in a person when a decision needs human judgment.
+
+To try this on EKS, follow the [deployment guide](https://github.com/strands-agents/box/blob/main/docs/user/tutorials/eks.md#run-claude-code) for the required container settings and AWS permissions. The [full example](https://github.com/strands-agents/box/tree/main/examples/cloud-deployments/eks/claude) includes the container setup, Python scripts, and Kubernetes configuration.
+
+## Box for multi-agent architectures
+
+When an agent delegates work, your application can run the subagent in a separate Box on the same host. Each Box has its own configuration and policy, so you can define controls for each agent based on its task. Those controls govern which files, tools, and services it can use and which credentials Box uses for approved requests.
+
+You can also write different Dogwood policies for each Box. This lets agents collaborate under different boundaries and business rules, which Box enforces independently for each agent.
+
+## Control deployed agents using Strands Box
+
+Use Strands Box to give deployed agents the access they need while protecting credentials and enforcing rules about what they can do. The same approach works with prebuilt harnesses and custom agents, whether you’re automating incident response, handling customer support, or building other agent workflows.
+
+With Linux support, you can bring these controls to agents running in containers, micro-VMs, or on your own Linux host. Strands Box works across cloud providers. The [Linux VM deployment example](https://github.com/strands-agents/box/tree/main/examples/cloud-deployments/gcp) runs a Strands agent on a Linux VM using the same deployment cooldown policy shown above.
+
+Read the [Box architecture overview](/blog/strands-box-the-big-picture/index.md) to learn more about how Box works. The [original launch post](https://aws.amazon.com/blogs/opensource/introducing-strands-box-ai-agent-sandboxes-powered-by-dogwood/) explains how its operating system restrictions, credential protection, and policy enforcement work together.
+
+[Download Strands Box](https://github.com/strands-agents/box/releases) and try it with your own agents. Then [join us on Discord](https://discord.gg/strands) and tell us what you’re building with Box. We’d love to see it.

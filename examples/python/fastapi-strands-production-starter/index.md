@@ -15,7 +15,7 @@ A single runnable Python service, in the shape of a benchmark chatbot repo (Fast
 
 ### Architecture
 
-![Architecture Diagram](https://raw.githubusercontent.com/strands-agents/samples/3c9ebca88ad8906ca77147753d951c5e2a7123bd/python/05-technical-use-cases/fastapi-strands-production-starter/images/architecture.png)
+![Architecture Diagram](https://raw.githubusercontent.com/strands-agents/samples/07afeeefe416b9c1885e03f82057dee2264a485e/python/05-technical-use-cases/fastapi-strands-production-starter/images/architecture.png)
 
 A user calls the FastAPI service, which runs a Strands agent per request. Each `POST /chat` applies per-request lifecycle limits (max turns and a token budget) and a cancel signal wired to client disconnect. The agent makes one model call per turn against Amazon Bedrock (or OpenAI), calls its three local tools plus the tools loaded from the MCP server at startup, and persists conversation history in the SQLite session store built on `RepositorySessionManager`. OpenTelemetry export is configured at startup.
 
@@ -162,4 +162,4 @@ This sample is provided for educational and demonstration purposes only. It is n
 
 ## Upstream source
 
-- [View this sample at the imported commit](https://github.com/strands-agents/samples/tree/3c9ebca88ad8906ca77147753d951c5e2a7123bd/python/05-technical-use-cases/fastapi-strands-production-starter)
+- [View this sample at the imported commit](https://github.com/strands-agents/samples/tree/07afeeefe416b9c1885e03f82057dee2264a485e/python/05-technical-use-cases/fastapi-strands-production-starter)
