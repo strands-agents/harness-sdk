@@ -104,7 +104,7 @@ bidi-pyaudio = ["pyaudio>=0.2.0,<0.3.0"]
 bidi-all = ["strands-agents[a2a,bidi,bidi-aec,bidi-google,bidi-io,bidi-openai,docs,otel]"]
 
 all = [
-    "strands-agents[a2a,anthropic,bidi-all,cedar,docs,gemini,litellm,llamaapi,mistral,ollama,openai,writer,sagemaker,otel,web-fetch]"
+    "strands-agents[a2a,anthropic,bedrock,bidi-all,cedar,docs,gemini,litellm,llamaapi,mistral,ollama,openai,writer,sagemaker,otel,web-fetch]"
 ]
 
 dev = [
