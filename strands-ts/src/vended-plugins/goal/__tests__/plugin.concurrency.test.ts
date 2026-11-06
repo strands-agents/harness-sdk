@@ -374,4 +374,27 @@ describe('GoalLoop with concurrent invocations', () => {
       ])
     }
   )
+
+  it('a cancel during grading ends the run without rewinding the conversation for a retry', async () => {
+    const model = new MockMessageModel()
+      .addTurn({ type: 'textBlock', text: 'answer' })
+      .addTurn({ type: 'textBlock', text: 'retry' })
+    let agent!: Agent
+    const goal = new GoalLoop({
+      maxAttempts: 3,
+      preserveContext: false,
+      goal: () => {
+        agent.cancel()
+        return { passed: false, feedback: 'try again' }
+      },
+    })
+    agent = new Agent({ model, plugins: [goal], printer: false })
+
+    const result = await agent.invoke('go')
+
+    expect(text(result.lastMessage)).toBe('answer')
+    expect(goal.lastResult(agent)).toMatchObject({ stopReason: 'stopped', agentStopReason: 'cancelled' })
+    expect(history(agent)).toEqual(['user: go', 'assistant: answer'])
+    expect(model.callCount).toBe(1)
+  })
 })
