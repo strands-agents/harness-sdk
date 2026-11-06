@@ -44,7 +44,7 @@ describe('TUI mouse input', () => {
     if (width === 80) {
       await vi.waitFor(() => expect(controller.getSnapshot().settings.frogTheme).toBe('minimal'))
       input.write('\u001b[B')
-      await vi.waitFor(() => expect(controller.getSnapshot().settings.frogTheme).toBe('kikker'))
+      await vi.waitFor(() => expect(controller.getSnapshot().settings.frogTheme).toBe('circuit'))
     } else {
       await vi.waitFor(() => expect(controller.getSnapshot().settings.colorMode).toBe('dark'))
       input.write('\u001b[B')
@@ -53,6 +53,46 @@ describe('TUI mouse input', () => {
       await vi.waitFor(() => expect(controller.getSnapshot().settings.frogTheme).toBe('minimal'))
     }
     expect(frame().join('\n')).not.toContain('Choose a theme')
+  })
+
+  it.each([
+    ['circuit', 'spectre'],
+    ['spectre', 'solar'],
+    ['solar', 'knicks'],
+  ] as const)('keeps Up and Down in the theme grid off Custom from %s', async (frogTheme, nextTheme) => {
+    const input = ttyInput()
+    const output = ttyOutput(80, 30)
+    const frame = captureFrame(output)
+    const controller = new ChatController(backend(), {
+      settings: { frogTheme },
+      runtime: { version: '1.2.3', model: 'model-00', cwd: '/work' },
+    })
+    const instance = render(createElement(ChatApp, { controller }), {
+      stdin: input,
+      stdout: output,
+      stderr: ttyOutput(80, 30),
+      exitOnCtrlC: false,
+      patchConsole: false,
+      interactive: true,
+    })
+    instances.push(instance)
+    await controller.submit('/settings')
+    await instance.waitUntilRenderFlush()
+    await vi.waitFor(() => expect(controller.getSnapshot().panel?.settingsCategory).toBe('Appearance'))
+
+    input.write('\u001b[B')
+    await instance.waitUntilRenderFlush()
+    input.write('\u001b[B')
+    await instance.waitUntilRenderFlush()
+    input.write('\u001b[D')
+    await vi.waitFor(() => expect(controller.getSnapshot().settings.transcriptSpacing).toBe('compact'))
+    expect(controller.getSnapshot().settings.frogTheme).toBe(frogTheme)
+
+    input.write('\u001b[A')
+    await instance.waitUntilRenderFlush()
+    input.write('\u001b[C')
+    await vi.waitFor(() => expect(controller.getSnapshot().settings.frogTheme).toBe(nextTheme))
+    expect(frame().join('\n')).not.toContain('Customize theme')
   })
 
   it('activates model metadata and the Settings button from direct clicks', async () => {
@@ -392,7 +432,17 @@ describe('TUI mouse input', () => {
     await vi.waitFor(() => expect(controller.getSnapshot().panel?.settingsCategory).toBe('Appearance'))
     await instance.waitUntilRenderFlush()
 
-    for (const theme of ['Classic', 'Minimal', 'Homeland', 'Merlin', 'Kikker', 'Cyborg', 'Spectre', 'Custom']) {
+    for (const theme of [
+      'Classic',
+      'Minimal',
+      'Homeland',
+      'Merlin',
+      'Kikker',
+      'Cyborg',
+      'Spectre',
+      'Knicks',
+      'Custom',
+    ]) {
       expect(frame().join('\n')).toContain(theme)
     }
 

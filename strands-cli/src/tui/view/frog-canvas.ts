@@ -144,6 +144,19 @@ const FROG_PALETTES = {
     dim: [96, 70, 31],
     tongue: [255, 143, 105],
   },
+  knicks: {
+    ...BASE_PALETTE,
+    white: [242, 246, 250],
+    mint: [125, 185, 235],
+    lime: [0, 107, 182],
+    green: [0, 90, 156],
+    emerald: [0, 72, 128],
+    forest: [0, 50, 92],
+    ink: [4, 17, 33],
+    gray: [190, 192, 194],
+    dim: [52, 72, 96],
+    orange: [245, 132, 38],
+  },
 } satisfies Record<Exclude<FrogTheme, 'custom'>, FrogPalette>
 
 const PARTY_COLORS = ['pink', 'yellow', 'cyan', 'purple', 'orange', 'lime', 'blue'] as const

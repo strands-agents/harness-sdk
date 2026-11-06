@@ -43,6 +43,23 @@ function ansi(hex: string, background = false): string {
   return `\u001b[${background ? 48 : 38};2;${channels.join(';')}m`
 }
 
+function characterColors(output: string): { character: string; color: string | undefined }[] {
+  let color: string | undefined
+  return output.split('\u001b').flatMap((segment) => {
+    const [sequence = '', code = ''] = /^\[([\d;]*)m/u.exec(segment) ?? []
+    if (code.startsWith('38;2;')) {
+      color = `#${code
+        .slice(5)
+        .split(';')
+        .map((channel) => Number(channel).toString(16).padStart(2, '0'))
+        .join('')}`
+    } else if (code === '39' || code === '0') {
+      color = undefined
+    }
+    return [...segment.slice(sequence.length)].map((character) => ({ character, color }))
+  })
+}
+
 function luminance(hex: string): number {
   const channels = [1, 3, 5].map((offset) => {
     const channel = Number.parseInt(hex.slice(offset, offset + 2), 16) / 255
@@ -250,6 +267,52 @@ describe('themed Ink output', () => {
       expect(output).toContain(`${ansi(theme[key])}${key}`)
     }
     expect(output).not.toContain('\u001b[2m')
+  })
+
+  it.each([
+    ['Knicks', 'dark', 'knicks', ['#4aa3f0', '#f58426']],
+    ['Knicks', 'light', 'knicks', ['#0061a8', '#934f17']],
+    ['Custom', 'dark', 'custom', ['#ff6b82', '#ffb454', '#ffe066', '#68f58a', '#5ad3f4', '#79aaff', '#c49bff']],
+    ['Custom', 'light', 'custom', ['#b42332', '#934600', '#766000', '#166534', '#006581', '#234e96', '#7036a8']],
+  ] as const)('colors each letter of the selected %s theme choice in %s mode', (label, mode, theme, palette) => {
+    const { selection } = getTheme(settings(mode))
+    const output = renderToString(
+      h(ThemeProvider, {
+        settings: settings(mode),
+        children: h(SettingsControl, {
+          rowIndex: 0,
+          spacious: true,
+          setting: 'frogTheme',
+          columns: 2,
+          optionWidth: 14,
+          control: {
+            kind: 'segmented',
+            options: [
+              { label: 'Classic', value: 'green', active: false },
+              { label, value: theme, active: true },
+            ],
+          },
+        }),
+      })
+    )
+    const letters = characterColors(output)
+    const start = letters.findIndex(
+      (_, index) =>
+        letters
+          .slice(index, index + label.length)
+          .map(({ character }) => character)
+          .join('') === label
+    )
+    const colors = letters.slice(start, start + label.length).map(({ color }) => color!)
+    const contrast = (color: string): number => {
+      const [light, dark] = [luminance(color), luminance(selection)].sort((left, right) => right - left)
+      return (light! + 0.05) / (dark! + 0.05)
+    }
+
+    expect(colors).toEqual([...label].map((_, index) => palette[index % palette.length]))
+    expect(colors.every((color) => contrast(color) >= 4.5)).toBe(true)
+    expect(output).toContain('◆')
+    expect(output).not.toContain(ansi(getTheme(settings(mode, theme)).accent, true))
   })
 
   it('propagates custom colors through child views', () => {

@@ -9,7 +9,7 @@ import { ChatView } from '../src/tui/view/chat-view.js'
 import { Markdown } from '../src/tui/view/markdown.js'
 import { panelControlTarget, panelRowCapacity, revealPanelSelection } from '../src/tui/view/interaction.js'
 import { formatContext, maxPermissionScroll, permissionLines } from '../src/tui/view/presentation.js'
-import { DEFAULT_CHAT_SETTINGS, type ChatPanel } from '../src/tui/chat/controller.js'
+import { DEFAULT_CHAT_SETTINGS, type ChatPanel, type FrogTheme } from '../src/tui/chat/controller.js'
 import { formatPermissionPanelBody, settingsRows } from '../src/tui/chat/panels.js'
 import { SETTINGS_CATEGORIES } from '../src/tui/settings.js'
 import { sanitizeTerminalText } from '../src/tui/terminal/sanitize.js'
@@ -1097,6 +1097,31 @@ describe('ChatView', () => {
     expect(output).toContain('Off')
   })
 
+  it.each([
+    ['knicks', true],
+    ['green', false],
+  ] as const)('shows the New York note beside Theme only for its theme (%s)', (frogTheme, shown) => {
+    const output = renderAppearance(frogTheme, 120).join('\n')
+
+    expect(output.includes('The Strands team is in New York, so Knicks is here.')).toBe(shown)
+  })
+
+  it.each([30, 40, 60, 80])('keeps the Knicks note on the Theme line at %i columns', (width) => {
+    const knicks = renderAppearance('knicks', width)
+    const classic = renderAppearance('green', width)
+    const gridTop = (lines: string[]): number => lines.findIndex((line) => line.includes('Classic'))
+
+    expect(knicks.find((line) => line.includes('Theme'))).toMatch(/Theme {2}The Strands/u)
+    expect(gridTop(knicks)).toBe(gridTop(classic))
+  })
+
+  it.each([66, 80])('fits Color mode and every theme in a %ix24 Appearance view', (width) => {
+    const rows = settingsRows(DEFAULT_CHAT_SETTINGS, 'Appearance')
+
+    expect(rows.slice(0, 2).map((row) => row.value)).toEqual(['colorMode', 'frogTheme'])
+    expect(panelRowCapacity('settings', 24, width, rows)).toBeGreaterThanOrEqual(2)
+  })
+
   it('renders permission tool grants as toggles', () => {
     const rendered = renderView({
       snapshot: snapshot({
@@ -1380,6 +1405,31 @@ describe('panel helpers', () => {
     expect(highlighted).toBe(output)
   })
 })
+
+function renderAppearance(frogTheme: FrogTheme, terminalWidth: number): string[] {
+  const settings = { ...DEFAULT_CHAT_SETTINGS, frogTheme }
+  return sanitizeTerminalText(
+    renderView(
+      {
+        snapshot: snapshot({
+          settings,
+          panel: {
+            id: 'settings',
+            kind: 'settings',
+            title: 'Appearance',
+            rows: settingsRows(settings, 'Appearance'),
+            settingsCategory: 'Appearance',
+            settingsCategories: SETTINGS_CATEGORIES,
+          },
+        }),
+        terminalWidth,
+        terminalHeight: 30,
+        panelSelection: 1,
+      },
+      { columns: terminalWidth }
+    )
+  ).split('\n')
+}
 
 function renderView(
   props: Omit<Parameters<typeof ChatView>[0], 'input' | 'cursor'> & { input?: string; cursor?: number },

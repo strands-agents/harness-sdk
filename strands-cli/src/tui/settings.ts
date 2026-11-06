@@ -7,6 +7,7 @@ export const FROG_THEMES = [
   'circuit',
   'spectre',
   'solar',
+  'knicks',
   'custom',
 ] as const
 
@@ -21,7 +22,12 @@ export const FROG_THEME_LABELS: Record<FrogTheme, string> = {
   kikker: 'Kikker',
   spectre: 'Spectre',
   solar: 'Solar',
+  knicks: 'Knicks',
   custom: 'Custom',
+}
+
+export const FROG_THEME_NOTES: Partial<Record<FrogTheme, string>> = {
+  knicks: 'The Strands team is in New York, so Knicks is here.',
 }
 
 export type ColorMode = 'auto' | 'light' | 'dark'

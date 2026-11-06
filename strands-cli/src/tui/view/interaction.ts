@@ -44,7 +44,8 @@ export function settingsThemeLayout(panelWidth: number): {
   const { contentWidth, labelWidth } = settingsLayout(panelWidth)
   const offset = contentWidth >= 54 ? labelWidth : 0
   const gridWidth = contentWidth - offset
-  const columns = gridWidth >= 30 ? 3 : gridWidth >= 20 ? 2 : 1
+  // Four columns keep the theme grid at three rows, so it still fits beside Color mode in an 80×24 terminal.
+  const columns = gridWidth >= 36 ? 4 : gridWidth >= 30 ? 3 : gridWidth >= 20 ? 2 : 1
   return {
     columns,
     optionWidth: Math.floor(gridWidth / columns),
@@ -53,28 +54,47 @@ export function settingsThemeLayout(panelWidth: number): {
   }
 }
 
+type SegmentedControl = Extract<NonNullable<ChatPanelRow['control']>, { kind: 'segmented' }>
+
+// The theme grid passes skipLastOption: its last option is Custom, and landing on Custom opens the editor.
 export function adjacentSettingOption(
   control: NonNullable<ChatPanelRow['control']>,
   key: Partial<Key>,
-  columns: number
+  columns: number,
+  skipLastOption = false
 ): number | undefined {
   if (control.kind !== 'segmented') {
     return undefined
   }
-  const active = Math.max(
-    0,
-    control.options.findIndex((option) => option.active)
-  )
+  const active = activeSettingOption(control)
+  const last = control.options.length - 1
   if (key.leftArrow || key.rightArrow) {
-    return Math.max(0, Math.min(control.options.length - 1, active + (key.leftArrow ? -1 : 1)))
+    return Math.max(0, Math.min(last, active + (key.leftArrow ? -1 : 1)))
   }
   if (key.upArrow && active >= columns) {
     return active - columns
   }
-  if (key.downArrow && Math.floor(active / columns) < Math.floor((control.options.length - 1) / columns)) {
-    return Math.min(control.options.length - 1, active + columns)
+  if (key.downArrow && Math.floor(active / columns) < Math.floor(last / columns)) {
+    const below = Math.min(last, active + columns)
+    return skipLastOption && below === last ? undefined : below
   }
   return undefined
+}
+
+export function settingOptionFromBelow(control: SegmentedControl, columns: number, skipLastOption = false): number {
+  const active = activeSettingOption(control)
+  const last = control.options.length - 1
+  const column = active % columns
+  const lastRow = Math.floor(last / columns) * columns
+  const target = Math.min(last, lastRow + column)
+  return skipLastOption && target === last && active !== last ? lastRow - columns + column : target
+}
+
+function activeSettingOption(control: SegmentedControl): number {
+  return Math.max(
+    0,
+    control.options.findIndex((option) => option.active)
+  )
 }
 
 const AGENT_GRID_TILE_ROWS = 8

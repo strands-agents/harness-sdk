@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  adjacentSettingOption,
   agentGridCapacity,
   agentGridColumns,
   filterPanelRows,
@@ -14,6 +15,7 @@ import {
   scrollAgentGridViewport,
   scrollPanelViewport,
   scrollTranscript,
+  settingOptionFromBelow,
   shouldToggleVoiceMute,
 } from '../src/tui/view/interaction.js'
 import { planTranscriptLayout, transcriptWindow } from '../src/tui/view/transcript-layout.js'
@@ -28,6 +30,41 @@ describe('voice input', () => {
     expect(shouldToggleVoiceMute(' ', { shift: true }, '', 'listening')).toBe(false)
     expect(shouldToggleVoiceMute(' ', {}, '', 'off')).toBe(false)
   })
+})
+
+describe('segmented grid navigation', () => {
+  const grid = (active: number) => ({
+    kind: 'segmented' as const,
+    options: Array.from({ length: 10 }, (_, index) => ({
+      label: `Option ${index}`,
+      value: String(index),
+      ...(index === active ? { active: true } : {}),
+    })),
+  })
+
+  it.each([
+    [4, 8, 8],
+    [5, 9, undefined],
+    [6, 9, undefined],
+    [7, 9, undefined],
+  ])('moves Down from option %i to %s, or to %s when it must skip the last option', (active, clamped, skipped) => {
+    expect(adjacentSettingOption(grid(active), { downArrow: true }, 4)).toBe(clamped)
+    expect(adjacentSettingOption(grid(active), { downArrow: true }, 4, true)).toBe(skipped)
+  })
+
+  it.each([
+    [0, 8, 8],
+    [1, 9, 5],
+    [2, 9, 6],
+    [3, 9, 7],
+    [9, 9, 9],
+  ])(
+    'enters the grid from below at option %i -> %i, or %i when it must skip the last option',
+    (active, clamped, skipped) => {
+      expect(settingOptionFromBelow(grid(active), 4)).toBe(clamped)
+      expect(settingOptionFromBelow(grid(active), 4, true)).toBe(skipped)
+    }
+  )
 })
 
 describe('panel helpers', () => {
