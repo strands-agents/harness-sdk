@@ -1005,6 +1005,15 @@ Helper functions used across all blog pages:
 | `tagToSlug(tag)` / `slugToTag(slug)` | Bidirectional tag↔URL conversion |
 | `formatDate(date)` | Human-readable date (e.g., "February 20, 2026") |
 
+### Homepage Banner
+
+`AnnouncementBanner.astro` compares the newest published blog post with the newest active entry in
+`src/content/announcements/`. The newer item appears in the banner. A same-day manual announcement wins as an explicit
+override, while an explicit `expires` date pins the manual announcement through that day. Manual announcements expire
+after 14 days by default, then the banner returns to the newest blog post. When the banner promotes the newest post, the
+homepage community panel features the next-most-recent post instead. During a manual campaign, the panel keeps the newest
+blog post visible.
+
 ### Layouts
 
 **`BlogLayout.astro`** — Base layout for all blog pages. Uses Starlight's `<StarlightPage>` component to get the full page shell (head, styles, theme, header) for free. Passes `hasSidebar={false}` and `template: 'splash'` to suppress sidebar and doc-page chrome. Passes `hero: { actions: [] }` to collapse Starlight's two-panel layout into a single content panel (suppressing the auto-generated `PageTitle`). Extra head tags (canonical URL, OG/Twitter meta, RSS autodiscovery) are injected via the `frontmatter.head` array. A named `<slot name="head" />` is forwarded for page-specific head content (e.g. JSON-LD). The `Hero` component override (`src/components/overrides/Hero.astro`) suppresses the hero on `/blog/` paths so the dummy hero value has no visual effect.

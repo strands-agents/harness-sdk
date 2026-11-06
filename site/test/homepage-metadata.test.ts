@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 
+import { getCollection } from 'astro:content'
 import { parse } from 'node-html-parser'
 import { describe, expect, it } from 'vitest'
 
@@ -63,6 +64,27 @@ describe('homepage machine-readable metadata', () => {
     expect(main?.text.trim().length).toBeGreaterThan(500)
     expect(headings[0]?.tagName).toBe('H1')
     expect(main?.querySelectorAll('h1')).toHaveLength(1)
+  })
+
+  it('promotes distinct recent blog posts', async () => {
+    const posts = await getCollection('blog', ({ data }) => !data.draft)
+    posts.sort((a, b) => b.data.date.getTime() - a.data.date.getTime())
+
+    const latestPost = posts[0]
+    if (!latestPost) throw new Error('expected at least one published blog post')
+    const communityPost = posts[1] ?? latestPost
+
+    const announcement = homepage.querySelector('.announcement')
+    const bannerLink = announcement?.querySelector('.announcement__link')
+    const communityLink = homepage.querySelector('.community__blog-link')
+
+    expect(bannerLink?.getAttribute('href')).toBe(configuredPathWithBase(`/blog/${latestPost.id}/`))
+    expect(bannerLink?.querySelector('.announcement__title')?.text.trim()).toBe(latestPost.data.title)
+    expect(announcement?.getAttribute('data-expires')).toBeUndefined()
+    expect(announcement?.querySelector('.announcement__fallback')).toBeNull()
+    expect(communityLink?.getAttribute('href')).toBe(configuredPathWithBase(`/blog/${communityPost.id}/`))
+    expect(communityLink?.text.trim()).toBe(communityPost.data.title)
+    if (posts.length > 1) expect(communityLink?.getAttribute('href')).not.toBe(bannerLink?.getAttribute('href'))
   })
 
   it('publishes a concise Markdown homepage with official resources', () => {

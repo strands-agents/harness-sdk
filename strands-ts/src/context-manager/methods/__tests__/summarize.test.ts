@@ -6,6 +6,7 @@ import { CitationsBlock } from '../../../types/citations.js'
 import {
   CachePointBlock,
   GuardContentBlock,
+  InjectedBlock,
   JsonBlock,
   Message,
   ReasoningBlock,
@@ -32,6 +33,20 @@ describe('flattenMessagesToContent', () => {
     ]
 
     expect(flattenMessagesToContent(messages)).toEqual([new TextBlock('\n---\n[user]'), new TextBlock('next')])
+  })
+
+  it('leaves out injected text', () => {
+    const messages = [
+      new Message({
+        role: 'user',
+        content: [
+          new TextBlock('fix the build'),
+          new InjectedBlock({ text: '<todos>v1</todos>', source: 'strands:todos:injector' }),
+        ],
+      }),
+    ]
+
+    expect(flattenMessagesToContent(messages)).toEqual([new TextBlock('\n---\n[user]'), new TextBlock('fix the build')])
   })
 
   it('passes only text, images, and documents through and renders other blocks as text', () => {
