@@ -87,7 +87,7 @@ export const changelogFrontmatterSchema = z
   })
   // Tie `language` to `sdk` so bad data can't create bogus streams/routes:
   // per-language products (sdk, harness) require it; single-stream products
-  // (evals, cli, box) omit the field entirely.
+  // (evals, cli, box, shell) omit the field entirely.
   .superRefine((d, ctx) => {
     if (hasLanguageStreams(d.sdk) && d.language === undefined) {
       ctx.addIssue({

@@ -84,11 +84,15 @@ describe('compact docs footer output', () => {
     expectDocumentationIssue(linkByText(footer, 'Open an issue'), 'samples', route)
   })
 
-  it('omits releases for Shell while keeping its issue tracker', () => {
+  it('shows the single Shell stream and links to the Shell changelog and issue tracker', () => {
     const footer = footerFor('docs/user-guide/shell')
+    const releases = [...footer.querySelectorAll<HTMLElement>('.site-footer__release')]
 
-    expect(footer.querySelector('.site-footer__release')).toBeNull()
-    expect(footer.querySelector('.site-footer__more')).toBeNull()
+    expect(releases).toHaveLength(1)
+    expect(releases[0]?.hasAttribute('data-release-lang')).toBe(false)
+    expect(releases[0]?.textContent?.trim()).toEqual(expect.stringMatching(/^Shell v\S+.+$/))
+    expect(releases[0]?.querySelector('a')?.getAttribute('href')).toMatch(/^\/changelog\/shell\/v[^/]+\/$/)
+    expect(linkByText(footer, 'Changelog →').getAttribute('href')).toBe('/changelog/?sdk=shell')
     expectDocumentationIssue(linkByText(footer, 'Open an issue'), 'shell', 'docs/user-guide/shell')
   })
 

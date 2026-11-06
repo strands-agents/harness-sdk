@@ -85,6 +85,48 @@ describe('run', () => {
     expect(Object.keys(written)).toEqual(['site/src/content/changelog/sdk/python-v1.42.0.md'])
   })
 
+  it('syncs a shared Shell release with Shell PR links and clears the missing-release check', async () => {
+    const shellRelease = {
+      tag_name: 'v0.6.0',
+      published_at: '2026-11-04T23:03:33Z',
+      html_url: 'https://github.com/strands-agents/shell/releases/tag/v0.6.0',
+      body: '',
+    }
+    const repo = 'strands-agents/shell'
+    const client = fakeClient({
+      listReleases: async () => [shellRelease],
+      getRelease: async () => shellRelease,
+      listTags: async () => [{ name: 'v0.6.0' }, { name: 'v0.5.0' }],
+      compareCommits: async (source: string, base: string, head: string) => {
+        expect([source, base, head]).toEqual([repo, 'v0.5.0', 'v0.6.0'])
+        return { commits: [{ sha: 's1' }] }
+      },
+      getPr: async () => ({ labels: [], merge_commit_sha: 'abc1234', user: 'x', files: ['src/exec.rs'] }),
+    })
+    const written: Record<string, string> = {}
+    const check = () => findMissing({ repo, client, exists: async (p) => p in written })
+    const path = 'site/src/content/changelog/shell/v0.6.0.md'
+    expect(await check()).toEqual([{ tag: 'v0.6.0', path }])
+
+    await run({
+      repo,
+      mode: 'single',
+      tag: shellRelease.tag_name,
+      client,
+      readExisting: async () => null,
+      writeFile: async (p, c) => {
+        written[p] = c
+      },
+    })
+
+    expect(Object.keys(written)).toEqual([path])
+    expect(written[path]).toContain('sdk: shell')
+    expect(written[path]).not.toContain('\nlanguage:')
+    expect(written[path]).toContain('https://github.com/strands-agents/shell/releases/tag/v0.6.0')
+    expect(written[path]).toContain('https://github.com/strands-agents/shell/pull/1')
+    expect(await check()).toEqual([])
+  })
+
   it('single mode with unknown tag writes nothing and warns', async () => {
     const written: Record<string, string> = {}
     const res = await run({
