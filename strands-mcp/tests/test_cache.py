@@ -1,6 +1,8 @@
 """Tests for cache module hydration and prefetch functionality."""
 
 import os
+from concurrent.futures import ThreadPoolExecutor, wait
+from threading import Event
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -23,6 +25,38 @@ def reset_cache_state():
     cache._URL_TITLES = {}
     cache._LINKS_LOADED = False
     cache._PREFETCH_STARTED = False
+
+
+class TestEnsureReady:
+    """First-use initialization must not duplicate documents across concurrent calls (#5860)."""
+
+    def test_concurrent_calls_load_index_once(self):
+        first_fetch = Event()
+        release_fetch = Event()
+        url = "https://strandsagents.com/test.md"
+
+        def parse_links(_source):
+            if not first_fetch.is_set():
+                first_fetch.set()
+                assert release_fetch.wait(5)
+            return [("Test guide", url, "")]
+
+        with (
+            patch.object(cache.doc_fetcher, "parse_llms_txt", side_effect=parse_links),
+            patch.dict(os.environ, {cache.PREFETCH_ENV_VAR: "0"}),
+            ThreadPoolExecutor(max_workers=2) as executor,
+        ):
+            first = executor.submit(cache.ensure_ready)
+            try:
+                assert first_fetch.wait(5)
+                second = executor.submit(cache.ensure_ready)
+                wait([second], timeout=1)
+            finally:
+                release_fetch.set()
+            first.result(timeout=5)
+            second.result(timeout=5)
+
+        assert [doc.uri for doc in cache.get_index().docs] == [url]
 
 
 class TestEnsurePageIndexUpdate:

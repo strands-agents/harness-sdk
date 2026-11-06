@@ -14,7 +14,7 @@ class Config:
 
     llm_texts_url: list[str] = field(
         default_factory=lambda: ["https://strandsagents.com/llms.txt"]
-    )  # Curated list of llms.txt files to index at startup
+    )  # Curated list of llms.txt files to index on first use
     title_only_urls: frozenset[str] = frozenset({"https://strandsagents.com/changelog/index.md"})
     timeout: float = 30.0  # HTTP request timeout in seconds
     user_agent: str = "strands-mcp-docs/1.0"  # User agent for HTTP requests
