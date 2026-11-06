@@ -3,6 +3,7 @@ import { Model, ModelRouter } from '@strands-agents/sdk'
 import { BedrockModel } from '@strands-agents/sdk/models/bedrock'
 
 import {
+  imageLimits,
   resolveModel,
   resolveWebFetchModel,
   supportsMedia,
@@ -911,5 +912,37 @@ describe('web_fetch summarizer on a repointed endpoint', () => {
     process.env.ANTHROPIC_BASE_URL = 'https://example.invalid/anthropic'
     const model = await resolveWebFetchModel('bedrock/global.anthropic.claude-opus-4-8', undefined)
     expect(model.getConfig().modelId).toBe('global.anthropic.claude-haiku-4-5-20251001-v1:0')
+  })
+})
+
+describe('imageLimits', () => {
+  const bedrockClaude = { maxImageBytes: 3_932_160, maxImageDimension: 8000 }
+
+  it('applies to Claude only', async () => {
+    expect(await imageLimits('bedrock/global.anthropic.claude-opus-5')).toEqual(bedrockClaude)
+    expect(await imageLimits('us.anthropic.claude-sonnet-4-6')).toEqual(bedrockClaude)
+    expect(await imageLimits(undefined)).toEqual(bedrockClaude)
+    expect(await imageLimits('anthropic/claude-haiku-4-5')).toEqual({
+      maxImageBytes: 7_864_320,
+      maxImageDimension: 8000,
+    })
+    expect(await imageLimits('bedrock/us.amazon.nova-2-lite-v1:0')).toEqual({})
+    expect(await imageLimits('openai/gpt-5.6')).toEqual({})
+  })
+
+  it('reads a Bedrock instance model id', async () => {
+    expect(await imageLimits(new BedrockModel({ modelId: 'global.anthropic.claude-opus-5' }))).toEqual(bedrockClaude)
+    expect(await imageLimits(new BedrockModel({ modelId: 'us.meta.llama4-maverick-17b-instruct-v1:0' }))).toEqual({})
+  })
+
+  it('takes the strictest router candidate', async () => {
+    const router = new ModelRouter([
+      new BedrockModel({ modelId: 'us.amazon.nova-2-lite-v1:0' }),
+      new BedrockModel({ modelId: 'global.anthropic.claude-opus-5' }),
+    ])
+    expect(await imageLimits(router)).toEqual(bedrockClaude)
+    expect(await imageLimits(new ModelRouter([new BedrockModel({ modelId: 'us.amazon.nova-2-lite-v1:0' })]))).toEqual(
+      {}
+    )
   })
 })

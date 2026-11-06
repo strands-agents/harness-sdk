@@ -14,6 +14,8 @@ import re
 from strands.tools.decorator import tool
 from strands.types.tools import ToolContext, ToolResult
 
+from .media_validation import document_problem, image_problem, image_size
+
 _READ_DEFAULT_LIMIT = 2000
 
 # Media formats the SDK accepts in tool results, selected by file extension because the sandbox seam
@@ -75,13 +77,69 @@ def _media_placeholder(path: str, kind: str, media_format: str, size: int) -> st
     )
 
 
-def make_read(media: bool = True):
+def _check_media(extension: str, data: bytes) -> tuple[str, str, str, str | None]:
+    """The block kind and format for ``data``, what it should be, and why it is not (``None`` if it is)."""
+    if extension in _DOCUMENT_FORMATS:
+        return "document", extension, f"a valid {extension} document", document_problem(data, extension)
+    image_format = _sniff_image_format(data)
+    if image_format is None:
+        return "image", extension, "a png, jpeg, gif, or webp image", ""
+    return "image", image_format, f"a valid {image_format} image", image_problem(data, image_format)
+
+
+def _media_result(
+    path: str, kind: str, media_format: str, data: bytes, media: bool, tool_use_id: str
+) -> ToolResult | str:
+    if not media:
+        return _media_placeholder(path, kind.capitalize(), media_format, len(data))
+    block = {"format": media_format, "source": {"bytes": data}}
+    if kind == "document":
+        block["name"] = _document_name(path)
+    return {"toolUseId": tool_use_id, "status": "success", "content": [{kind: block}]}
+
+
+def _raise_if_too_large(
+    path: str, image_format: str, data: bytes, max_bytes: int | None, max_dimension: int | None
+) -> None:
+    # The model rejects a larger image, and the rejected block stays in history, failing every later turn.
+    width, height = image_size(data, image_format) or (0, 0)
+    too_heavy = max_bytes is not None and len(data) > max_bytes
+    too_wide = max_dimension is not None and max(width, height) > max_dimension
+    if not too_heavy and not too_wide:
+        return
+    limits = [f"{max_bytes} bytes" if max_bytes else "", f"{max_dimension} px per side" if max_dimension else ""]
+    raise ValueError(
+        f"{path} is a {width}x{height} px {image_format} image of {len(data)} bytes, larger than this model accepts "
+        f"({' and '.join(filter(None, limits))}). Write a smaller copy with a shell tool (for example ImageMagick "
+        "`magick`, macOS `sips`, or Python Pillow) and read that."
+    )
+
+
+def _invalid_media_as_text(path: str, extension: str, data: bytes, expected: str, problem: str) -> tuple[str, str]:
+    # Sending it as media would fail the request and every later one, so show text or raise instead.
+    reason = f": {problem}" if problem else ""
+    try:
+        content = data.decode("utf-8")
+    except UnicodeDecodeError:
+        content = ""
+    if not content or "\x00" in content:
+        raise ValueError(
+            f"{path} has a .{extension} extension but its {len(data)} bytes are not {expected}{reason}. "
+            "Identify it with `file`."
+        )
+    return f"[{path} is not {expected}{reason}. Showing it as text.]\n", content
+
+
+def make_read(media: bool = True, max_image_bytes: int | None = None, max_image_dimension: int | None = None):
     """Build the ``read`` tool.
 
     Args:
         media: Return images and binary documents as viewable media. Set ``False`` for a model that
             rejects media blocks, and ``read`` describes those files in text instead. See
             ``_supports_media`` in ``models``.
+        max_image_bytes: Largest image file, in bytes, the model accepts; a larger one fails the call.
+        max_image_dimension: Largest image width or height, in pixels, the model accepts; a larger one
+            fails the call. See ``_image_limits`` in ``models``.
     """
 
     @tool(name="read", context="tool_context")
@@ -100,44 +158,26 @@ def make_read(media: bool = True):
         _validate_path(path)
         extension = _extension(path)
 
-        if extension in _IMAGE_EXTENSIONS:
+        note = ""
+        if extension in _IMAGE_EXTENSIONS or extension in _DOCUMENT_FORMATS:
             data = await tool_context.agent.sandbox.read_file(path)
-            image_format = _sniff_image_format(data)
-            if image_format is None:
-                raise ValueError(
-                    f"{path} has a .{extension} extension but its {len(data)} bytes are not a png, jpeg, gif, or webp "
-                    f"image. Identify it with `file`; if it is text, read it with `cat`."
-                )
-            if not media:
-                return _media_placeholder(path, "Image", image_format, len(data))
-            return {
-                "toolUseId": tool_context.tool_use["toolUseId"],
-                "status": "success",
-                "content": [{"image": {"format": image_format, "source": {"bytes": data}}}],
-            }
-
-        if extension in _DOCUMENT_FORMATS:
-            data = await tool_context.agent.sandbox.read_file(path)
-            if not media:
-                return _media_placeholder(path, "Document", extension, len(data))
-            return {
-                "toolUseId": tool_context.tool_use["toolUseId"],
-                "status": "success",
-                "content": [
-                    {"document": {"format": extension, "name": _document_name(path), "source": {"bytes": data}}}
-                ],
-            }
-
-        content = await tool_context.agent.sandbox.read_text(path)
+            kind, media_format, expected, problem = _check_media(extension, data)
+            if problem is None:
+                if media and kind == "image":
+                    _raise_if_too_large(path, media_format, data, max_image_bytes, max_image_dimension)
+                return _media_result(path, kind, media_format, data, media, tool_context.tool_use["toolUseId"])
+            note, content = _invalid_media_as_text(path, extension, data, expected, problem)
+        else:
+            content = await tool_context.agent.sandbox.read_text(path)
 
         lines = content.split("\n")
         start = max(0, (offset - 1) if offset else 0)
         count = limit if limit is not None else _READ_DEFAULT_LIMIT
         window = lines[start : start + count]
         if not window:
-            return f"[File has {len(lines)} lines; offset {offset} is past the end.]"
+            return f"{note}[File has {len(lines)} lines; offset {offset} is past the end.]"
 
-        numbered = _number_lines("\n".join(window), start + 1)
+        numbered = note + _number_lines("\n".join(window), start + 1)
         if start > 0 or start + count < len(lines):
             shown_end = start + len(window)
             numbered += f"\n[Showing lines {start + 1}-{shown_end} of {len(lines)}. Use offset/limit to read more.]"

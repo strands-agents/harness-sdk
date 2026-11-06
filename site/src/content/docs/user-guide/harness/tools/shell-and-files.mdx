@@ -32,8 +32,12 @@ The three file tools are thin wrappers over the agent's sandbox:
   cite `path:line` and page through a large file with `offset` and `limit` (default limit
   2000 lines). Images (`png`, `jpg`, `jpeg`, `gif`, `webp`) and binary documents (`pdf`,
   `doc`, `docx`, `xls`, `xlsx`) are returned as media the model can view directly. An image's
-  format comes from its bytes, not its extension, and a file with an image extension that is not
-  an image fails the call instead of being sent to the model.
+  format comes from its bytes, not its extension. Each file is checked before it is sent: one that
+  is truncated, corrupt, empty, or not the format its extension claims is returned as text when it
+  decodes as text (for example an HTML error page saved as `report.pdf`), and otherwise fails the
+  call instead of being sent to the model. An image larger than the model accepts also fails the
+  call (Claude takes up to 8000 px a side and 3.75 MiB on Bedrock or 7.5 MiB on the Anthropic API), so
+  the model can make a smaller copy with a shell tool and read that.
 - `write` creates a file or overwrites it with the content you give.
 - `edit` replaces an exact string in a file. The `old_str` must appear exactly once, so an
   ambiguous edit fails rather than changing the wrong place.
