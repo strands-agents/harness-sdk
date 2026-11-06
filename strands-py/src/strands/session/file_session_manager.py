@@ -266,7 +266,11 @@ class FileSessionManager(RepositorySessionManager, SessionRepository):
         for filename in os.listdir(messages_dir):
             if filename.startswith(MESSAGE_PREFIX) and filename.endswith(".json"):
                 # Extract index from message_<index>.json format
-                index = int(filename[len(MESSAGE_PREFIX) : -5])  # Remove prefix and .json suffix
+                try:
+                    index = int(filename[len(MESSAGE_PREFIX) : -5])  # Remove prefix and .json suffix
+                except ValueError:
+                    logger.warning("Skipping malformed message file: %s", filename)
+                    continue
                 message_index_files.append((index, filename))
 
         # Sort by index and extract just the filenames
