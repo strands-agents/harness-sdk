@@ -9,8 +9,6 @@ import { projectAgentEvent, projectAgentResult } from '../chat/sdk-projector.js'
 import { upgradeDesktopAgentProfileMessages } from '../session/desktop-profile.js'
 import {
   initializeAgentDefinition,
-  persistSessionAgentDefinition,
-  restoreSessionAgentDefinition,
   sessionAgentDefinitionFromMeta,
   AGENT_DEFINITION_META_KEY,
 } from '../session/agent-definition.js'
@@ -36,7 +34,6 @@ export class AcpService {
   private readonly _agentOptions: HarnessAgentOptions
   private readonly _buildAgent: AgentBuilder
   private readonly _sharedMcpClients: readonly McpClient[]
-  private readonly _sourceAgent: boolean
   private readonly _sessions = new Map<string, AcpSession>()
 
   private _workspace: string | undefined
@@ -46,13 +43,11 @@ export class AcpService {
     options: {
       buildAgent?: AgentBuilder
       sharedMcpClients?: readonly McpClient[]
-      sourceAgent?: boolean
     } = {}
   ) {
     this._agentOptions = { ...agentOptions, printer: false }
     this._buildAgent = options.buildAgent ?? createHarness
     this._sharedMcpClients = options.sharedMcpClients ?? []
-    this._sourceAgent = options.sourceAgent ?? false
   }
 
   initialize(params: acp.InitializeRequest): acp.InitializeResponse {
@@ -171,10 +166,8 @@ export class AcpService {
     }
     const mcpClients = await loadAcpMcpClients(mcpServers)
     try {
-      const baseOptions = withSession(this._agentOptions, { id: sessionId })
-      const restoredAgentOptions = this._sourceAgent ? baseOptions : await restoreSessionAgentDefinition(baseOptions)
       const agentOptions = {
-        ...restoredAgentOptions,
+        ...withSession(this._agentOptions, { id: sessionId }),
         ...sessionAgentDefinition,
         tools: [...(this._agentOptions.tools ?? []), ...this._sharedMcpClients, ...mcpClients],
         printer: false,
@@ -183,7 +176,6 @@ export class AcpService {
       const agent = await this._buildAgent(agentOptions)
       await initializeAgentDefinition(agent)
       agent.messages = upgradeDesktopAgentProfileMessages(agent.messages)
-      await persistSessionAgentDefinition(agentOptions)
       const session = { agent, mcpClients }
       this._sessions.set(sessionId, session)
       return session
@@ -226,7 +218,6 @@ export async function runAcpServer(
   agentOptions: HarnessAgentOptions = {},
   options: {
     buildAgent?: AgentBuilder
-    sourceAgent?: boolean
     mcpPaths?: readonly string[]
     mcpStrictPaths?: readonly string[]
     mcpDigests?: Readonly<Record<string, string>>
@@ -242,7 +233,6 @@ export async function runAcpServer(
   const service = new AcpService(agentOptions, {
     sharedMcpClients: sharedMcp?.clients ?? [],
     ...(options.buildAgent ? { buildAgent: options.buildAgent } : {}),
-    ...(options.sourceAgent ? { sourceAgent: true } : {}),
   })
   try {
     const stream = acp.ndJsonStream(Writable.toWeb(process.stdout), Readable.toWeb(process.stdin))

@@ -218,7 +218,7 @@ describe('delegated run usage', () => {
           await backend.dispose()
         }
       } else if (mode === 'acp') {
-        const service = new AcpService({ session: false }, { buildAgent: async () => root, sourceAgent: true })
+        const service = new AcpService({ session: false }, { buildAgent: async () => root })
         const notify = vi.fn(async () => {})
         try {
           const session = await service.newSession({ cwd: process.cwd(), mcpServers: [] })

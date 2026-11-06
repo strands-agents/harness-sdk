@@ -5,8 +5,12 @@ import { Model, type Message, type ModelStreamEvent, type StreamOptions } from '
 import { expect } from 'vitest'
 
 export const SAVED_SYSTEM_PROMPT = 'Saved system prompt.'
+export const SAVED_INSTRUCTIONS = 'Saved agent definition instructions.'
 
-/** Writes a session snapshot whose system prompt differs from the one the CLI builds. */
+/**
+ * Writes a session whose files carry a system prompt and agent instructions different from the ones
+ * the CLI builds: a snapshot with its own `systemPrompt`, and an `agent.json` agent definition.
+ */
 export async function writeSessionWithSavedSystemPrompt(sessionDirectory: string, sessionId: string): Promise<void> {
   const snapshots = join(sessionDirectory, sessionId, 'scopes', 'agent', 'agent', 'snapshots')
   await mkdir(snapshots, { recursive: true })
@@ -22,6 +26,10 @@ export async function writeSessionWithSavedSystemPrompt(sessionDirectory: string
       },
       appData: {},
     })
+  )
+  await writeFile(
+    join(sessionDirectory, sessionId, 'agent.json'),
+    JSON.stringify({ version: 1, instructions: SAVED_INSTRUCTIONS })
   )
 }
 

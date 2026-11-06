@@ -502,11 +502,10 @@ strands --session-id my-project "where did we leave off?"
 
 Pass `--session off` for a throwaway run that persists nothing.
 
-Resuming restores the saved conversation. For the built-in harness agent it also restores the name,
-description, and instructions saved with the session (`agent.json`) wherever your profile does not set
-its own. In every mode the CLI builds the system prompt from those settings and never takes a saved
-system prompt from the session files. Session files are trusted input: resume only sessions you
-created, not ones that came with a cloned repository.
+Resuming restores the saved conversation only. The agent's name, description, instructions, and
+system prompt always come from the current profile (or, over ACP, from the client's agent definition),
+never from the session files. Session files are trusted input: resume only sessions you created, not
+ones that came with a cloned repository.
 
 In Ink, `/sessions` combines saved sessions from workspaces previously seen on the machine and
 can resume any of them, including from another worktree. Session data stays in each workspace's

@@ -7,6 +7,7 @@ import type { AgentStreamEvent } from '@strands-agents/sdk'
 import { CliConfigStore } from '../src/tui/config.js'
 import {
   harnessSystemPrompt,
+  SAVED_INSTRUCTIONS,
   SAVED_SYSTEM_PROMPT,
   SystemPromptRecordingModel,
   writeSessionWithSavedSystemPrompt,
@@ -73,7 +74,7 @@ describe('main', () => {
     expect(writes.join('')).toContain('ok')
   })
 
-  it('keeps the CLI system prompt when --session-id resumes a session that saved a different one', async () => {
+  it('builds the system prompt from the profile when --session-id resumes a session that saved its own', async () => {
     const workspace = await mkdtemp(join(tmpdir(), 'strands-print-system-prompt-'))
     await writeSessionWithSavedSystemPrompt(join(workspace, '.agent', 'sessions'), 'saved-session')
     const model = new SystemPromptRecordingModel()
@@ -100,6 +101,7 @@ describe('main', () => {
     expect(errWrites.join('')).toBe('')
     expect(model.systemPrompts).toEqual([harnessSystemPrompt()])
     expect(model.systemPrompts[0]).not.toContain(SAVED_SYSTEM_PROMPT)
+    expect(model.systemPrompts[0]).not.toContain(SAVED_INSTRUCTIONS)
     expect(model.firstMessageTexts).toEqual(['earlier request'])
   })
 
