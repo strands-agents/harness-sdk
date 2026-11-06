@@ -5,6 +5,8 @@ import * as acp from '@agentclientprotocol/sdk'
 import { createHarness, type HarnessAgentOptions } from '@strands-agents/harness'
 import { McpClient, type Agent, type McpServerConfig, type Usage } from '@strands-agents/sdk'
 
+import { hasReadyBackgroundResults, interactiveBackgroundTasks, readBackgroundTasks } from '../background/tasks.js'
+import type { ChatTask } from '../chat/controller.js'
 import { projectAgentEvent, projectAgentResult } from '../chat/sdk-projector.js'
 import { upgradeDesktopAgentProfileMessages } from '../session/desktop-profile.js'
 import {
@@ -23,12 +25,31 @@ import { loadMcp } from '../mcp.js'
 
 const SESSION_SHUTDOWN_TIMEOUT_MS = 1_000
 
+/**
+ * `_meta` key for background-task updates. `initialize` advertises `{ version: 1 }`. A session opts in
+ * with `{ waitForCompletion: false }` on `session/new` or `session/load`: its turns then end while
+ * background tasks run, each task change is sent as a `tool_call_update` for the call that started
+ * it, and an empty `session/prompt` delivers finished results. See "ACP server" in README.md.
+ */
+export const BACKGROUND_TASKS_META_KEY = 'strands/backgroundTasks'
+/** `_meta` key on a background-task `tool_call_update`: `{ taskId, status }`. */
+export const BACKGROUND_TASK_META_KEY = 'strands/backgroundTask'
+/** The interval at which an opted-in session's background tasks are read, as the terminal UI reads them. */
+const BACKGROUND_TASK_POLL_MS = 200
+
 type AgentBuilder = (options: HarnessAgentOptions) => Promise<Agent>
 
 interface AcpSession {
   agent: Agent
   mcpClients: readonly McpClient[]
   activePrompt?: Promise<void>
+  /** Set when the client opted in to background-task updates. See `BACKGROUND_TASKS_META_KEY`. */
+  backgroundUpdates?: boolean
+  /** Sends an update for each background task whose status changed. */
+  publishBackgroundTasks?: () => Promise<void>
+  stopBackgroundWatch?: () => void
+  /** Counts cancels, so an empty prompt that waited for a turn can see one. */
+  cancels?: number
 }
 
 export class AcpService {
@@ -36,6 +57,7 @@ export class AcpService {
   private readonly _buildAgent: AgentBuilder
   private readonly _sharedMcpClients: readonly McpClient[]
   private readonly _sourceAgent: boolean
+  private readonly _backgroundTaskPollMs: number
   private readonly _sessions = new Map<string, AcpSession>()
 
   private _workspace: string | undefined
@@ -46,12 +68,15 @@ export class AcpService {
       buildAgent?: AgentBuilder
       sharedMcpClients?: readonly McpClient[]
       sourceAgent?: boolean
+      /** How often, in milliseconds, an opted-in session reads its background tasks. */
+      backgroundTaskPollMs?: number
     } = {}
   ) {
     this._agentOptions = { ...agentOptions, printer: false }
     this._buildAgent = options.buildAgent ?? createHarness
     this._sharedMcpClients = options.sharedMcpClients ?? []
     this._sourceAgent = options.sourceAgent ?? false
+    this._backgroundTaskPollMs = options.backgroundTaskPollMs ?? BACKGROUND_TASK_POLL_MS
   }
 
   initialize(params: acp.InitializeRequest): acp.InitializeResponse {
@@ -69,14 +94,24 @@ export class AcpService {
       },
       _meta: {
         [AGENT_DEFINITION_META_KEY]: true,
+        [BACKGROUND_TASKS_META_KEY]: { version: 1 },
       },
     }
   }
 
-  async newSession(params: acp.NewSessionRequest): Promise<acp.NewSessionResponse> {
+  async newSession(params: acp.NewSessionRequest, client?: acp.AgentContext): Promise<acp.NewSessionResponse> {
     this._setWorkspace(params.cwd)
     const sessionId = randomUUID()
-    await this._openSession(sessionId, params.mcpServers, sessionAgentDefinitionFromMeta(params._meta))
+    const backgroundUpdates = backgroundUpdatesRequested(params._meta)
+    const session = await this._openSession(
+      sessionId,
+      params.mcpServers,
+      sessionAgentDefinitionFromMeta(params._meta),
+      backgroundUpdates
+    )
+    if (backgroundUpdates && client) {
+      this._watchBackgroundTasks(sessionId, session, client)
+    }
     return { sessionId }
   }
 
@@ -87,7 +122,13 @@ export class AcpService {
     if (!(await hasSavedSession(sessionDirectory, sessionId))) {
       throw acp.RequestError.resourceNotFound(sessionId)
     }
-    const session = await this._openSession(sessionId, params.mcpServers, sessionAgentDefinitionFromMeta(params._meta))
+    const backgroundUpdates = backgroundUpdatesRequested(params._meta)
+    const session = await this._openSession(
+      sessionId,
+      params.mcpServers,
+      sessionAgentDefinitionFromMeta(params._meta),
+      backgroundUpdates
+    )
     try {
       await replaySessionHistory(session.agent, sessionId, client)
     } catch (error) {
@@ -95,6 +136,9 @@ export class AcpService {
       session.agent.cancel()
       await disconnectMcpClients(session.mcpClients)
       throw error
+    }
+    if (backgroundUpdates) {
+      this._watchBackgroundTasks(sessionId, session, client)
     }
     return {}
   }
@@ -104,7 +148,14 @@ export class AcpService {
     if (!session) {
       throw new Error(`Unknown session ${params.sessionId}.`)
     }
-    if (session.activePrompt) {
+    // An empty prompt asks for finished background results. A running turn hands those over by
+    // itself, so the empty prompt waits for it, and the client learns when that turn ends.
+    if (session.backgroundUpdates && params.prompt.length === 0) {
+      const cancels = session.cancels ?? 0
+      while (session.activePrompt) await session.activePrompt
+      if ((session.cancels ?? 0) !== cancels) return { stopReason: 'cancelled' }
+      if (!hasReadyBackgroundResults(session.agent)) return { stopReason: 'end_turn' }
+    } else if (session.activePrompt) {
       throw new Error(`Session ${params.sessionId} is already processing a prompt.`)
     }
     let settlePrompt: () => void
@@ -117,6 +168,11 @@ export class AcpService {
       let latestModelUsage: Usage | undefined
       let next = await stream.next()
       while (!next.done) {
+        // The SDK hands finished tasks to the model at these two points and then drops them from
+        // state, which can happen between two polls. Publishing here sends their final status first.
+        if (next.value.type === 'beforeModelCallEvent' || next.value.type === 'afterInvocationEvent') {
+          await session.publishBackgroundTasks?.()
+        }
         latestModelUsage = latestRootModelUsage(session.agent, next.value) ?? latestModelUsage
         for (const event of projectAgentEvent(next.value)) {
           await sendChatEvent(client, params.sessionId, event)
@@ -147,12 +203,17 @@ export class AcpService {
   }
 
   cancel(sessionId: string): void {
-    this._sessions.get(sessionId)?.agent.cancel()
+    const session = this._sessions.get(sessionId)
+    if (!session) return
+    session.cancels = (session.cancels ?? 0) + 1
+    session.agent.cancel()
   }
 
   async dispose(): Promise<void> {
     const sessions = [...this._sessions.values()]
     for (const session of sessions) {
+      session.stopBackgroundWatch?.()
+      session.cancels = (session.cancels ?? 0) + 1
       session.agent.cancel()
     }
     await Promise.allSettled(sessions.map((session) => settleWithin(session.activePrompt)))
@@ -163,7 +224,8 @@ export class AcpService {
   private async _openSession(
     sessionId: string,
     mcpServers: readonly acp.McpServer[],
-    sessionAgentDefinition?: Pick<HarnessAgentOptions, 'name' | 'description' | 'instructions'>
+    sessionAgentDefinition?: Pick<HarnessAgentOptions, 'name' | 'description' | 'instructions'>,
+    backgroundUpdates = false
   ): Promise<AcpSession> {
     if (this._sessions.has(sessionId)) {
       throw acp.RequestError.invalidParams({ sessionId }, `Session ${sessionId} is already loaded.`)
@@ -177,19 +239,49 @@ export class AcpService {
         ...sessionAgentDefinition,
         tools: [...(this._agentOptions.tools ?? []), ...this._sharedMcpClients, ...mcpClients],
         printer: false,
+        ...(backgroundUpdates ? { backgroundTasks: interactiveBackgroundTasks(restoredAgentOptions, false) } : {}),
       }
       requireBedrockRegion(agentOptions.model)
       const agent = await this._buildAgent(agentOptions)
       await agent.initialize()
       agent.messages = upgradeDesktopAgentProfileMessages(agent.messages)
       await persistSessionAgentDefinition(agentOptions)
-      const session = { agent, mcpClients }
+      const session: AcpSession = { agent, mcpClients, ...(backgroundUpdates ? { backgroundUpdates } : {}) }
       this._sessions.set(sessionId, session)
       return session
     } catch (error) {
       await disconnectMcpClients(mcpClients)
       throw error
     }
+  }
+
+  /**
+   * Sends a `tool_call_update` each time one of the session's background tasks changes status, for the
+   * tool call that started it. Runs between turns too: a client learns there that results are ready.
+   * Tasks present when the session opens are sent once, so a loaded session reports the stale tasks
+   * that the SDK marked failed, whose results wait for delivery.
+   */
+  private _watchBackgroundTasks(sessionId: string, session: AcpSession, client: acp.AgentContext): void {
+    const statuses = new Map<string, string>()
+    session.publishBackgroundTasks = async (): Promise<void> => {
+      const changed = readBackgroundTasks(session.agent).filter(
+        (task) => task.toolUseId !== undefined && statuses.get(task.id) !== task.status
+      )
+      for (const task of changed) statuses.set(task.id, task.status)
+      await Promise.all(
+        changed.map((task) =>
+          client
+            .notify(acp.methods.client.session.update, {
+              sessionId,
+              update: backgroundTaskUpdate(task, task.toolUseId!),
+            })
+            .catch(() => {})
+        )
+      )
+    }
+    const timer = setInterval(() => void session.publishBackgroundTasks?.(), this._backgroundTaskPollMs)
+    timer.unref()
+    session.stopBackgroundWatch = (): void => clearInterval(timer)
   }
 
   private _setWorkspace(cwd: string): void {
@@ -212,7 +304,7 @@ export function createAcpApp(
   return acp
     .agent({ name: 'strands' })
     .onRequest(acp.methods.agent.initialize, (context) => service.initialize(context.params))
-    .onRequest(acp.methods.agent.session.new, (context) => service.newSession(context.params))
+    .onRequest(acp.methods.agent.session.new, (context) => service.newSession(context.params, context.client))
     .onRequest(acp.methods.agent.session.load, (context) => service.loadSession(context.params, context.client))
     .onRequest(acp.methods.agent.authenticate, () => ({}))
     .onRequest(acp.methods.agent.session.prompt, (context) => service.prompt(context.params, context.client))
@@ -310,4 +402,33 @@ export function validateSessionId(sessionId: string): string {
     )
   }
   return sessionId
+}
+
+/** Whether a `session/new` or `session/load` asked for background-task updates. See `BACKGROUND_TASKS_META_KEY`. */
+function backgroundUpdatesRequested(meta: Record<string, unknown> | null | undefined): boolean {
+  const requested = meta?.[BACKGROUND_TASKS_META_KEY]
+  return (
+    typeof requested === 'object' &&
+    requested !== null &&
+    (requested as { waitForCompletion?: unknown }).waitForCompletion === false
+  )
+}
+
+/** A background task's state as an update of the tool call that started it. */
+function backgroundTaskUpdate(task: ChatTask, toolCallId: string): acp.SessionUpdate {
+  const terminal =
+    task.status === 'completed'
+      ? 'completed'
+      : task.status === 'failed' || task.status === 'cancelled'
+        ? 'failed'
+        : undefined
+  const text =
+    task.status === 'completed' ? task.result : (task.error ?? (task.status === 'cancelled' ? 'Cancelled.' : undefined))
+  return {
+    sessionUpdate: 'tool_call_update',
+    toolCallId,
+    status: terminal ?? 'in_progress',
+    ...(terminal && text ? { content: [{ type: 'content', content: { type: 'text', text } }] } : {}),
+    _meta: { [BACKGROUND_TASK_META_KEY]: { taskId: task.id, status: task.status } },
+  }
 }

@@ -1,3 +1,4 @@
+import type { HarnessAgentOptions } from '@strands-agents/harness'
 import type { Agent } from '@strands-agents/sdk'
 
 import type { ChatTask } from '../chat/controller.js'
@@ -116,4 +117,21 @@ function stringValue(value: unknown): string | undefined {
   }
   const clean = sanitizeTerminalText(value).trim()
   return clean || undefined
+}
+
+/** The configured background-task policy with `waitForCompletion` set, or false when background tasks are disabled. */
+export function interactiveBackgroundTasks(
+  options: HarnessAgentOptions,
+  waitForCompletion = false
+): Exclude<HarnessAgentOptions['backgroundTasks'], undefined> {
+  const configured = options.backgroundTasks
+  if (configured === false) {
+    return false
+  }
+  return { ...(configured === true ? {} : configured), waitForCompletion }
+}
+
+/** Whether any background task has finished and waits to be delivered to the agent. */
+export function hasReadyBackgroundResults(agent: Agent): boolean {
+  return readBackgroundTasks(agent).some((task) => task.deliveryState === 'ready')
 }
