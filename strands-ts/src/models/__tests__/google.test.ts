@@ -482,6 +482,29 @@ describe('GoogleModel', () => {
       expect(stopEvent).toBeDefined()
       expect(stopEvent!.stopReason).toBe('maxTokens')
     })
+
+    // guards against SAFETY and RECITATION stops being reported as endTurn (#5127)
+    it.each([
+      { finishReason: 'SAFETY', stopReason: 'guardrailIntervened' },
+      { finishReason: 'RECITATION', stopReason: 'contentFiltered' },
+    ])('maps $finishReason finish reason to $stopReason', async ({ finishReason, stopReason }) => {
+      const { provider, messages } = setupStreamTest(async function* () {
+        yield {
+          candidates: [
+            {
+              content: { parts: [{ text: 'Partial' }] },
+            },
+          ],
+        }
+        yield { candidates: [{ finishReason }] }
+      })
+
+      const events = await collectIterator(provider.stream(messages))
+
+      const stopEvent = events.find((e) => e.type === 'modelMessageStopEvent')
+      expect(stopEvent).toBeDefined()
+      expect(stopEvent!.stopReason).toBe(stopReason)
+    })
   })
 
   describe('error handling', () => {
