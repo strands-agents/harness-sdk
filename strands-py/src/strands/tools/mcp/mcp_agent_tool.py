@@ -15,6 +15,7 @@ from typing_extensions import override
 from ...types._events import ToolResultEvent
 from ...types.tools import AgentTool, ToolGenerator, ToolSpec, ToolUse
 from ._compat import input_schema, output_schema
+from .mcp_types import MetaProvider
 
 if TYPE_CHECKING:
     from .mcp_client import MCPClient
@@ -36,6 +37,7 @@ class MCPAgentTool(AgentTool):
         mcp_client: "MCPClient",
         name_override: str | None = None,
         timeout: timedelta | None = None,
+        meta_provider: MetaProvider | None = None,
     ) -> None:
         """Initialize a new MCPAgentTool instance.
 
@@ -46,6 +48,10 @@ class MCPAgentTool(AgentTool):
                            If None, uses the original MCP tool name
             timeout: Optional timeout duration for tool execution. On the mcp 2.x line, the timeout
                      bounds each request round of a multi round-trip tool call rather than the call as a whole.
+            meta_provider: Optional callback that computes the request metadata (`_meta`) for each
+                     model-driven call. It is called with the tool use and the agent's invocation
+                     state, and its result is sent as the `_meta` field of the request. Tools
+                     created by `MCPClient.load_tools` inherit the client's provider.
         """
         super().__init__()
         logger.debug("tool_name=<%s> | creating mcp agent tool", mcp_tool.name)
@@ -53,6 +59,7 @@ class MCPAgentTool(AgentTool):
         self.mcp_client = mcp_client
         self._agent_tool_name = name_override or mcp_tool.name
         self.timeout = timeout
+        self._meta_provider = meta_provider
 
     @property
     def tool_name(self) -> str:
@@ -124,11 +131,33 @@ class MCPAgentTool(AgentTool):
         """
         logger.debug("tool_name=<%s>, tool_use_id=<%s> | streaming", self.tool_name, tool_use["toolUseId"])
 
+        # A model-driven call carries no per-call meta of its own, so the metadata is
+        # resolved here. Without a provider the client-level meta still applies: the
+        # client falls back to it when no per-call meta is passed.
+        meta = self._resolve_meta(tool_use, invocation_state)
+        extra = {} if meta is None else {"meta": meta}
+
         result = await self.mcp_client.call_tool_async(
             tool_use_id=tool_use["toolUseId"],
             name=self.mcp_tool.name,  # Use original MCP name for server communication
             arguments=tool_use["input"],
             read_timeout_seconds=self.timeout,
             cancel_signal=getattr(invocation_state.get("agent"), "_cancel_signal", None),
+            **extra,
         )
         yield ToolResultEvent(result)
+
+    def _resolve_meta(self, tool_use: ToolUse, invocation_state: dict[str, Any]) -> dict[str, Any] | None:
+        """Resolve the request metadata for a model-driven tool call.
+
+        Args:
+            tool_use: The tool use the call was made with.
+            invocation_state: The agent's invocation state for this call.
+
+        Returns:
+            The `_meta` to send with the call, or None to leave it unset - in which case
+            the client-level meta applies.
+        """
+        if self._meta_provider is None:
+            return None
+        return self._meta_provider(tool_use, invocation_state)
