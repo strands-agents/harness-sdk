@@ -102,6 +102,12 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 120_000
 const MODELS_INCLUDE_STATUS = ['amazon.nova', 'anthropic.claude']
 
 /**
+ * Models that hallucinate when a tool result contains `json` content blocks; their JSON is sent as text instead.
+ * @see https://github.com/strands-agents/harness-sdk/issues/1095
+ */
+const MODELS_CONVERT_JSON_TO_TEXT = ['amazon.nova']
+
+/**
  * Models that reject any reasoning text block replayed in history
  * ("User messages cannot contain reasoning content").
  */
@@ -1486,6 +1492,15 @@ export class BedrockModel extends Model<BedrockModelConfig> {
   }
 
   /**
+   * Determines whether `json` tool-result blocks should be sent as text.
+   *
+   * @returns True if the model id matches a model that hallucinates on `json` blocks
+   */
+  private _shouldConvertJsonToText(): boolean {
+    return MODELS_CONVERT_JSON_TO_TEXT.some((pattern) => this._config.modelId?.includes(pattern))
+  }
+
+  /**
    * Formats a content block for Bedrock API.
    *
    * @param block - SDK content block
@@ -1511,7 +1526,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
             case 'textBlock':
               return { text: content.text }
             case 'jsonBlock':
-              return { json: content.json }
+              return this._shouldConvertJsonToText() ? { text: JSON.stringify(content.json) } : { json: content.json }
             case 'imageBlock':
               return {
                 image: {

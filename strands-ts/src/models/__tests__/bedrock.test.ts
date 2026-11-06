@@ -5119,6 +5119,77 @@ describe('BedrockModel', () => {
     })
   })
 
+  // https://github.com/strands-agents/harness-sdk/issues/1095
+  describe('json tool result conversion for Amazon Nova models', () => {
+    const mockConverseStreamCommand = vi.mocked(ConverseStreamCommand)
+
+    const toolResultContent = (modelId: string, content: ToolResultBlock['content']) => {
+      const provider = new BedrockModel({ modelId })
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [new ToolResultBlock({ toolUseId: 'tool-123', status: 'success', content })],
+        }),
+      ]
+
+      collectIterator(provider.stream(messages))
+
+      return mockConverseStreamCommand.mock.lastCall?.[0].messages?.[0]?.content?.[0]?.toolResult?.content
+    }
+
+    it('converts json blocks to text for Nova models', () => {
+      const content = toolResultContent('us.amazon.nova-pro-v1:0', [
+        new JsonBlock({ json: { key: 'value', number: 42 } }),
+      ])
+
+      expect(content).toEqual([{ text: '{"key":"value","number":42}' }])
+    })
+
+    it('converts json blocks while preserving text blocks', () => {
+      const content = toolResultContent('amazon.nova-lite-v1:0', [
+        new TextBlock('Some text output'),
+        new JsonBlock({ json: { status: 'ok' } }),
+      ])
+
+      expect(content).toEqual([{ text: 'Some text output' }, { text: '{"status":"ok"}' }])
+    })
+
+    it('preserves json blocks for Claude models', () => {
+      const content = toolResultContent('global.anthropic.claude-sonnet-4-6', [
+        new JsonBlock({ json: { key: 'value' } }),
+      ])
+
+      expect(content).toEqual([{ json: { key: 'value' } }])
+    })
+
+    it('round-trips nested json through text', () => {
+      const nested = {
+        results: [
+          { id: 1, data: { nested: true } },
+          { id: 2, data: { nested: false } },
+        ],
+        metadata: { total: 2 },
+      }
+      const content = toolResultContent('us.amazon.nova-pro-v1:0', [new JsonBlock({ json: nested })])
+
+      expect(JSON.parse((content?.[0] as { text: string }).text)).toEqual(nested)
+    })
+
+    it.each(['amazon.nova-pro-v1:0', 'us.amazon.nova-pro-v1:0', 'amazon.nova-lite-v1:0', 'amazon.nova-micro-v1:0'])(
+      'converts for Nova variant %s',
+      (modelId) => {
+        expect(toolResultContent(modelId, [new JsonBlock({ json: { a: 1 } })])).toEqual([{ text: '{"a":1}' }])
+      }
+    )
+
+    it.each(['global.anthropic.claude-sonnet-4-6', 'amazon.titan-text-v1', 'us.meta.llama3-1-70b-instruct-v1:0'])(
+      'does not convert for non-Nova model %s',
+      (modelId) => {
+        expect(toolResultContent(modelId, [new JsonBlock({ json: { a: 1 } })])).toEqual([{ json: { a: 1 } }])
+      }
+    )
+  })
+
   describe('region configuration', () => {
     beforeEach(() => {
       vi.clearAllMocks()
