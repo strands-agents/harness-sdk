@@ -61,9 +61,14 @@ When authoring or reviewing documentation pages, follow the voice guide and the 
 ├── AGENTS.md
 ├── CODE_OF_CONDUCT.md
 ├── CONTRIBUTING.md
+├── external-docs.config.json    # Upstream refs plus site-owned routes and navigation
+├── external-docs.lock.json      # Immutable upstream documentation revisions
 ├── SITE-ARCHITECTURE.md          # Detailed Astro/Starlight customizations
 ├── .build/
 │   ├── api-docs/                 # Generated Python and TypeScript API reference
+│   ├── external-docs/
+│   │   ├── strands-box/          # Generated imported Box docs (not committed)
+│   │   └── strands-decider/      # Generated imported Decider docs (not committed)
 │   └── samples/pages/            # Generated sample guides (not committed)
 ├── src/                          # Astro source files
 │   ├── components/               # Custom Astro components
@@ -89,8 +94,10 @@ When authoring or reviewing documentation pages, follow the voice guide and the 
 │   │       ├── examples/
 │   │       ├── integrations/
 │   │       ├── labs/
+│   │       │   └── strands-decider # Symlink to .build/external-docs/strands-decider/content
 │   │       ├── learning/         # Course lesson pages
 │   │       └── user-guide/
+│   │           └── box           # Symlink to .build/external-docs/strands-box/content
 │   ├── data/                     # Workflow-maintained catalog-stats.json (do not hand-edit)
 │   ├── layouts/                  # Custom layouts
 │   ├── pages/                    # Astro pages, including generated /examples routes
@@ -106,6 +113,7 @@ When authoring or reviewing documentation pages, follow the voice guide and the 
 ├── overrides/                    # Legacy MkDocs overrides (being migrated)
 ├── scripts/                      # Build and utility scripts
 │   ├── catalog/                  # Catalog stats refresh
+│   ├── external-docs/            # External Markdown import and lock updates
 │   └── samples/                  # Import samples metadata and guides at build time
 ├── test/                         # Test files
 └── test-snippets/                # TypeScript snippet test files

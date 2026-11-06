@@ -31,6 +31,16 @@ export interface ModelCapabilities {
   readonly forcedToolChoice?: boolean | undefined
   /** Whether the provider can make the model's text output conform to a JSON schema. */
   readonly nativeStructuredOutput?: boolean | undefined
+  /** Whether the model can summarize conversation history server-side. */
+  readonly serverSideSummary?: boolean | undefined
+  /**
+   * Whether the model and provider take temporary messages: injected text the model reads only until the next user
+   * message, such as Anthropic's turn-scoped system messages. When `true`, the provider receives each `InjectedBlock`
+   * as stored and formats it; otherwise it receives only the latest user message's injected text, as text. The shared
+   * data lists the models that take them, but `Model.modelInfo` reports `false` unless the provider can send them
+   * (`AnthropicModel`). A `modelInfo` override that turns it on for another provider drops the injected text.
+   */
+  readonly temporaryMessages?: boolean | undefined
 }
 
 /** Size limits of the model. */

@@ -1,6 +1,7 @@
 import os
 import uuid
 
+import anthropic
 import pydantic
 import pytest
 
@@ -84,6 +85,34 @@ def test_agent_invoke(agent):
     text = result.message["content"][0]["text"].lower()
 
     assert all(string in text for string in ["12:00", "sunny"])
+
+
+def test_sampling_params_with_legacy_api_version_pin():
+    model = AnthropicModel(
+        client_args={"api_key": os.getenv("ANTHROPIC_API_KEY"), "default_headers": {"anthropic-version": "2023-06-01"}},
+        model_id=MODEL_ID,
+        max_tokens=64,
+        params={"temperature": 0.2},
+    )
+
+    result = Agent(model=model)("Reply with the single word: ok")
+
+    assert "ok" in result.message["content"][0]["text"].lower()
+
+
+@pytest.mark.skipif(
+    int(anthropic.__version__.split(".")[0]) < 2, reason="anthropic<2 defaults to API version 2023-06-01"
+)
+def test_sampling_params_without_pin_raise_before_the_request():
+    model = AnthropicModel(
+        client_args={"api_key": os.getenv("ANTHROPIC_API_KEY")},
+        model_id=MODEL_ID,
+        max_tokens=64,
+        params={"temperature": 0.2},
+    )
+
+    with pytest.raises(ValueError, match="anthropic_version=<"):
+        Agent(model=model)("Reply with the single word: ok")
 
 
 @pytest.mark.asyncio

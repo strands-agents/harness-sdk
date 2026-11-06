@@ -12,7 +12,8 @@ import NextSteps from '../components/NextSteps.astro';
 import Footer from '../components/Footer.astro';
 import SiteScripts from '../components/SiteScripts.astro';
 import Analytics from '../components/Analytics.astro';
-import { baseSchemas } from '../util/structured-data';
+import { products } from '../config/navbar';
+import { baseSchemas, productSchema, serializeJsonLd } from '../util/structured-data';
 import '../styles/fonts.css';
 
 // Base-path-aware favicon href — matches the docs override in Head.astro so
@@ -32,7 +33,7 @@ const pageDescription =
 const siteUrl = Astro.site?.origin || 'https://strandsagents.com';
 const structuredData = {
   '@context': 'https://schema.org',
-  '@graph': baseSchemas(siteUrl),
+  '@graph': [...baseSchemas(siteUrl), ...products.map((product) => productSchema(product, siteUrl))],
 };
 ---
 
@@ -59,7 +60,7 @@ const structuredData = {
     <meta name="twitter:title" content={pageTitle} />
     <meta name="twitter:description" content={pageDescription} />
     <meta name="twitter:image" content={ogImageHref} />
-    <script type="application/ld+json" set:html={JSON.stringify(structuredData)} />
+    <script type="application/ld+json" set:html={serializeJsonLd(structuredData)} />
     <script is:inline>
       // Apply the theme before first paint to avoid a flash. With no saved
       // preference, follow the system color scheme (matches Starlight's docs

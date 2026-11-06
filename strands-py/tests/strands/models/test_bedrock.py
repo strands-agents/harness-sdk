@@ -2785,6 +2785,8 @@ async def test_add_note_on_validation_exception_throughput(bedrock_client, model
         "too many total text bytes",
         "prompt is too long: 903884 tokens > 200000 maximum",
         "This model's maximum context length is 202752 tokens.",
+        # Nova wording (#5739)
+        "Input Tokens Exceeded: Number of input tokens exceeds maximum length. Please update the input to try again.",
     ],
 )
 @pytest.mark.asyncio
@@ -4325,7 +4327,7 @@ def test_model_info_treats_a_non_string_model_id_as_unknown(bedrock_client):
     model = BedrockModel(model_id=None)
 
     assert "context_window_limit" not in model.get_config()
-    assert model.model_info == ModelInfo()
+    assert model.model_info == ModelInfo(capabilities=ModelCapabilities(server_side_summary=False))
     assert model.stateful is False
 
 
@@ -4345,7 +4347,7 @@ def test_cache_strategy_auto_falls_back_to_the_claude_name_test_for_ids_the_mode
 
     model = BedrockModel(model_id=model_id, cache_config=CacheConfig(strategy="auto"))
 
-    assert model.model_info.capabilities == ModelCapabilities()
+    assert model.model_info.capabilities == ModelCapabilities(server_side_summary=False)
     assert model._cache_strategy == "anthropic"
 
 
@@ -4357,8 +4359,32 @@ def test_cache_strategy_auto_is_none_for_an_unlisted_id_that_is_not_claude(bedro
         cache_config=CacheConfig(strategy="auto"),
     )
 
-    assert model.model_info.capabilities == ModelCapabilities()
+    assert model.model_info.capabilities == ModelCapabilities(server_side_summary=False)
     assert model._cache_strategy is None
+
+
+@pytest.mark.parametrize("model_id", ["us.openai.gpt-6-luna", "openai.gpt-6.1-sol", "openai.gpt-5.6-sol"])
+def test_model_info_reports_openai_models_as_implicitly_cached(bedrock_client, model_id):
+    """The listed cache points are for Bedrock's OpenAI-compatible APIs; Converse takes none for these models."""
+    _ = bedrock_client
+
+    model = BedrockModel(model_id=model_id, cache_config=CacheConfig(strategy="auto"))
+
+    assert model.model_info.capabilities.prompt_caching == "auto"
+    assert model._cache_strategy is None
+    request = model.format_request([{"role": "user", "content": [{"text": "hi"}]}], system_prompt="sys")
+    assert "cachePoint" not in str(request)
+
+
+def test_model_info_override_wins_over_openai_implicit_caching(bedrock_client):
+    _ = bedrock_client
+
+    model = BedrockModel(
+        model_id="us.openai.gpt-6-luna",
+        model_info=ModelInfo(capabilities=ModelCapabilities(prompt_caching="cache_points")),
+    )
+
+    assert model.model_info.capabilities.prompt_caching == "cache_points"
 
 
 def test_cache_strategy_auto_maps_to_anthropic_when_the_model_info_override_says_cache_points(bedrock_client):
@@ -4635,6 +4661,43 @@ def test_inject_cache_point_applies_configured_ttl_to_an_honored_point(bedrock_c
     tru_point = cleaned_messages[0]["content"][1]
     exp_point = {"cachePoint": {"type": "default", "ttl": "1h"}}
     assert tru_point == exp_point
+
+
+def test_messages_ttl_false_disables_the_message_cache_point(bedrock_client):
+    _ = bedrock_client
+    model = BedrockModel(
+        model_id="us.anthropic.claude-haiku-4-5-20251001-v1:0", cache_config=CacheConfig(messages_ttl=False)
+    )
+
+    request = model.format_request([{"role": "user", "content": [{"text": "hi"}]}])
+
+    assert request["messages"] == [{"role": "user", "content": [{"text": "hi"}]}]
+
+
+def test_messages_ttl_string_sets_the_message_cache_point_ttl(bedrock_client):
+    _ = bedrock_client
+    model = BedrockModel(
+        model_id="us.anthropic.claude-haiku-4-5-20251001-v1:0",
+        cache_config=CacheConfig(ttl="1h", messages_ttl="5m", system_prompt_ttl=False),
+    )
+
+    request = model.format_request([{"role": "user", "content": [{"text": "hi"}]}])
+
+    assert request["messages"] == [
+        {"role": "user", "content": [{"text": "hi"}, {"cachePoint": {"type": "default", "ttl": "5m"}}]}
+    ]
+
+
+def test_inject_cache_point_applies_messages_ttl_to_an_honored_point(bedrock_client):
+    _ = bedrock_client
+    model = BedrockModel(cache_config=CacheConfig(strategy="anthropic", ttl="1h", messages_ttl="5m"))
+    cleaned_messages = [
+        {"role": "user", "content": [{"text": "ask"}, {"cachePoint": {"type": "default"}}, {"text": "per-call"}]}
+    ]
+
+    model._inject_cache_point(cleaned_messages)
+
+    assert cleaned_messages[0]["content"][1] == {"cachePoint": {"type": "default", "ttl": "5m"}}
 
 
 def test_inject_cache_point_normalizes_the_ttl_of_a_relocated_point(bedrock_client):
