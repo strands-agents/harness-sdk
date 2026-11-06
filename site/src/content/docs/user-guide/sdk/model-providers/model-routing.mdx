@@ -166,7 +166,7 @@ router = ModelRouter(
     ],
     strategy=ClassifierStrategy(
         classifier_model,
-        system_prompt=routing_policy,
+        routing_policy=routing_policy,
     ),
 )
 agent = Agent(model=router)
@@ -188,11 +188,13 @@ agent(
 With two or more candidates, the classifier makes one additional model call before
 the first serving call. Choose a classifier model that supports
 <Syntax py="structured output" ts="tool calling and forced tool selection" plain />.
+You can also pass a `DecisionModel`, such as a System One provider, in place of the
+classifier model; the strategy then asks it for one candidate key directly.
 
-Set <Syntax py="system_prompt" ts="systemPrompt" /> to supply your routing policy.
+Set <Syntax py="routing_policy" ts="routingPolicy" /> to supply your routing policy.
 The policy can prioritize cost, latency, region, capabilities, or another criterion
-represented in candidate evidence. The SDK appends mandatory isolation, valid-index,
-and structured-output rules to every custom policy.
+represented in candidate evidence. The SDK places fixed isolation and candidate-key
+rules before every policy.
 
 The classifier receives a bounded representation of the latest request-bearing user
 message, textual agent instructions, and candidate names, descriptions, and

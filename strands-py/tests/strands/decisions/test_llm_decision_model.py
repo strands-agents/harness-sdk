@@ -213,6 +213,31 @@ async def test_omits_uncertain_from_the_enum_when_a_question_opts_out():
 
 
 @pytest.mark.asyncio
+async def test_offers_a_reason_only_on_questions_that_allow_uncertainty():
+    # A reason only ever reaches Uncertain; offering it on a closed question invites the model to
+    # spend output tokens on a field that is discarded (and can truncate tight budgets).
+    model = RecordingModel({"open": "yes", "closed": "yes"})
+    decision = LLMDecisionModel(model=model)
+
+    await decision.ask(
+        "state",
+        {
+            "open": {"question": "ok?", "choices": ["yes", "no"]},
+            "closed": {"question": "ok?", "choices": ["yes", "no"], "uncertainty": False},
+        },
+    )
+
+    schema = model.calls[0]["output_model"].model_json_schema()
+
+    def entry_properties(question_id: str) -> set[str]:
+        ref = schema["properties"][question_id]["$ref"]
+        return set(schema["$defs"][ref.rsplit("/", 1)[-1]]["properties"])
+
+    assert entry_properties("open") == {"answer", "reason"}
+    assert entry_properties("closed") == {"answer"}
+
+
+@pytest.mark.asyncio
 async def test_appends_uncertain_to_the_enum_by_default():
     model = RecordingModel({"q": "uncertain"})
     decision = LLMDecisionModel(model=model)
