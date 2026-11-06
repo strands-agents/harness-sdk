@@ -4327,7 +4327,7 @@ def test_model_info_treats_a_non_string_model_id_as_unknown(bedrock_client):
     model = BedrockModel(model_id=None)
 
     assert "context_window_limit" not in model.get_config()
-    assert model.model_info == ModelInfo(capabilities=ModelCapabilities(server_side_summary=False))
+    assert model.model_info == ModelInfo()
     assert model.stateful is False
 
 
@@ -4347,7 +4347,7 @@ def test_cache_strategy_auto_falls_back_to_the_claude_name_test_for_ids_the_mode
 
     model = BedrockModel(model_id=model_id, cache_config=CacheConfig(strategy="auto"))
 
-    assert model.model_info.capabilities == ModelCapabilities(server_side_summary=False)
+    assert model.model_info.capabilities == ModelCapabilities()
     assert model._cache_strategy == "anthropic"
 
 
@@ -4359,7 +4359,7 @@ def test_cache_strategy_auto_is_none_for_an_unlisted_id_that_is_not_claude(bedro
         cache_config=CacheConfig(strategy="auto"),
     )
 
-    assert model.model_info.capabilities == ModelCapabilities(server_side_summary=False)
+    assert model.model_info.capabilities == ModelCapabilities()
     assert model._cache_strategy is None
 
 

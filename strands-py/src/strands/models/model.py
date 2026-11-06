@@ -18,7 +18,7 @@ from ..types.content import ContentBlock, Messages, SystemContentBlock
 from ..types.streaming import StreamEvent
 from ..types.tools import ToolChoice, ToolSpec
 from ._defaults import DEFAULT_CONTEXT_WINDOW_LIMIT
-from ._model_info import ModelInfo, ModelLimits, lookup_model_info
+from ._model_info import SERVER_SIDE_SUMMARY_OFF, ModelInfo, ModelLimits, lookup_model_info
 
 if TYPE_CHECKING:
     from ..agent.agent import Agent
@@ -239,7 +239,8 @@ class Model(abc.ABC):
         """Everything the SDK knows about the configured model, resolved on each read.
 
         Layers, later ones winning: the shared model info for the configured model id, the
-        ``context_window_limit`` config value, and the ``model_info`` config override. Each read
+        ``context_window_limit`` config value, and the ``model_info`` config override. Shared server-side
+        summary reads as off under the override unless the provider overrides :meth:`summarize`. Each read
         returns a new record, so do not compare reads by identity.
 
         A provider that knows better than the shared model info overrides this property: put its
@@ -269,8 +270,11 @@ class Model(abc.ABC):
             context_window_limit = getattr(config, "context_window_limit", None)
             override = getattr(config, "model_info", None)
 
+        shared = lookup_model_info(model_id)
+        unimplemented = shared.capabilities.server_side_summary and type(self).summarize is Model.summarize
         return ModelInfo.merge(
-            lookup_model_info(model_id),
+            shared,
+            SERVER_SIDE_SUMMARY_OFF if unimplemented else None,
             ModelInfo(limits=ModelLimits(context_window=context_window_limit)),
             override,
         )

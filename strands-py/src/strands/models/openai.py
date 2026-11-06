@@ -24,7 +24,6 @@ from ..types.exceptions import ContextWindowOverflowException, ModelThrottledExc
 from ..types.streaming import StreamEvent
 from ..types.tools import ToolChoice, ToolResult, ToolSpec, ToolUse
 from ._defaults import resolve_config_metadata
-from ._model_info import SERVER_SIDE_SUMMARY_OFF, ModelInfo
 from ._openai_bedrock import BedrockMantleConfig, resolve_bedrock_client_args
 from ._openai_cache import apply_cache_config
 from ._openai_errors import classify_openai_error
@@ -161,15 +160,6 @@ class OpenAIModel(Model):
         return cast(
             OpenAIModel.OpenAIConfig, resolve_config_metadata(self.config, str(self.config.get("model_id", "")))
         )
-
-    @property
-    @override
-    def model_info(self) -> ModelInfo:
-        """Reports server-side summary as off, which a ``model_info`` override still wins over.
-
-        The Chat Completions API has no server-side summary, including for Claude models served through it.
-        """
-        return ModelInfo.merge(super().model_info, SERVER_SIDE_SUMMARY_OFF, self.get_config().get("model_info"))
 
     @classmethod
     def format_request_message_content(cls, content: ContentBlock, **kwargs: Any) -> dict[str, Any]:

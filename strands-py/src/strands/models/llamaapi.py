@@ -23,7 +23,6 @@ from ..types.content import ContentBlock, Messages
 from ..types.exceptions import ContextWindowOverflowException, ModelThrottledException
 from ..types.streaming import StreamEvent, Usage
 from ..types.tools import ToolChoice, ToolResult, ToolSpec, ToolUse
-from ._model_info import SERVER_SIDE_SUMMARY_OFF, ModelInfo
 from ._validation import (
     _has_location_source,
     _log_skipped_blocks,
@@ -107,15 +106,6 @@ class LlamaAPIModel(Model):
         """
         validate_config_keys(model_config, self.LlamaConfig)
         self.config.update(model_config)
-
-    @property
-    @override
-    def model_info(self) -> ModelInfo:
-        """Reports server-side summary as off, which a ``model_info`` override still wins over.
-
-        The Llama API has no server-side summary, including for Claude models served through it.
-        """
-        return ModelInfo.merge(super().model_info, SERVER_SIDE_SUMMARY_OFF, self.get_config().get("model_info"))
 
     @override
     def get_config(self) -> LlamaConfig:

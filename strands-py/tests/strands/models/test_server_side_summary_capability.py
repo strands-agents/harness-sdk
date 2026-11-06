@@ -1,10 +1,10 @@
-"""Providers whose APIs have no server-side summary turn the capability off unless the caller sets it."""
+"""Providers that do not implement ``summarize`` report server-side summary as off unless the caller sets it."""
 
 import unittest.mock
 
 import pytest
 
-from strands.models import ModelCapabilities, ModelInfo
+from strands.models import Model, ModelCapabilities, ModelInfo
 from strands.models.gemini import GeminiModel
 from strands.models.litellm import LiteLLMModel
 from strands.models.llamaapi import LlamaAPIModel
@@ -69,6 +69,40 @@ def _bedrock_model(**config):
     ],
 )
 def test_providers_without_server_side_summary_turn_it_off_for_listed_models(make_model):
-    assert make_model().model_info.capabilities.server_side_summary is False
+    assert make_model().model_info.capabilities.server_side_summary is not True
     override = ModelInfo(capabilities=ModelCapabilities(server_side_summary=True))
     assert make_model(model_info=override).model_info.capabilities.server_side_summary is True
+
+
+class _CustomModel(Model):
+    def __init__(self, **config):
+        self.config = {"model_id": MODEL_ID, **config}
+
+    def update_config(self, **model_config):
+        self.config.update(model_config)
+
+    def get_config(self):
+        return self.config
+
+    async def structured_output(self, output_model, prompt, system_prompt=None, **kwargs):
+        yield {}
+
+    async def stream(self, messages, tool_specs=None, system_prompt=None, **kwargs):
+        yield {}
+
+
+class _CustomSummarizingModel(_CustomModel):
+    async def summarize(self, messages, **kwargs):
+        return {"summary": {"text": "s"}}
+
+
+def test_custom_provider_without_summarize_reports_server_side_summary_off():
+    assert _CustomModel().model_info.capabilities.server_side_summary is False
+    override = ModelInfo(capabilities=ModelCapabilities(server_side_summary=True))
+    assert _CustomModel(model_info=override).model_info.capabilities.server_side_summary is True
+
+
+def test_custom_provider_with_summarize_keeps_shared_server_side_summary():
+    assert _CustomSummarizingModel().model_info.capabilities.server_side_summary is True
+    override = ModelInfo(capabilities=ModelCapabilities(server_side_summary=False))
+    assert _CustomSummarizingModel(model_info=override).model_info.capabilities.server_side_summary is False

@@ -22,7 +22,6 @@ from ..types.exceptions import ContextWindowOverflowException, ModelThrottledExc
 from ..types.streaming import StreamEvent
 from ..types.tools import ToolChoice, ToolChoiceToolDict, ToolSpec
 from ._defaults import resolve_config_metadata
-from ._model_info import SERVER_SIDE_SUMMARY_OFF, ModelInfo
 from ._validation import _has_location_source, _log_skipped_blocks, validate_config_keys
 from .model import BaseModelConfig, Model
 
@@ -128,15 +127,6 @@ class GeminiModel(Model):
             self._validate_gemini_tools(model_config["gemini_tools"])
 
         self.config.update(model_config)
-
-    @property
-    @override
-    def model_info(self) -> ModelInfo:
-        """Reports server-side summary as off, which a ``model_info`` override still wins over.
-
-        The Gemini API has no server-side summary, including for Claude models served through it.
-        """
-        return ModelInfo.merge(super().model_info, SERVER_SIDE_SUMMARY_OFF, self.get_config().get("model_info"))
 
     @override
     def get_config(self) -> GeminiConfig:
