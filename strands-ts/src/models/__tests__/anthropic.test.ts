@@ -1554,6 +1554,16 @@ describe('AnthropicModel', () => {
       expect(mockCountTokens).toHaveBeenCalledOnce()
     })
 
+    it('should fall back to the heuristic when the client has no countTokens', async () => {
+      const model = new AnthropicModel({
+        client: { messages: { stream: vi.fn() } },
+        modelId: 'claude-sonnet-4-6',
+        useNativeTokenCount: true,
+      })
+
+      expect(await model.countTokens(messages)).toBe(2)
+    })
+
     it('should include system prompt in request', async () => {
       const mockCountTokens = vi.fn(async () => ({ input_tokens: 55 }))
       const client = createCountTokensClient(mockCountTokens)

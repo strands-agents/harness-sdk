@@ -62,8 +62,8 @@ In TypeScript, both the Responses API and Chat Completions API are available thr
 </Tab>
 </Tabs>
 
-To connect to Amazon Bedrock's OpenAI-compatible Mantle endpoints, see
-[OpenAI-compatible endpoints (Mantle)](./amazon-bedrock#openai-compatible-endpoints-mantle)
+To run OpenAI models on Amazon Bedrock, see
+[OpenAI models through the OpenAI-compatible APIs](./amazon-bedrock#openai-models-through-the-openai-compatible-apis)
 on the Amazon Bedrock page.
 
 ## Configuration
@@ -74,6 +74,8 @@ on the Amazon Bedrock page.
 <Tab label="Python">
 
 The `client_args` configure the underlying OpenAI client. For a complete list of available arguments, refer to the [OpenAI Python SDK](https://github.com/openai/openai-python).
+
+To reuse a client you built yourself, such as an `openai.AsyncOpenAI` pointed at Amazon Bedrock, pass it as `client` instead of `client_args`. The model doesn't close it.
 </Tab>
 <Tab label="TypeScript">
 
