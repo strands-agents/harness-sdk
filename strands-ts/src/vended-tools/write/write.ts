@@ -65,9 +65,9 @@ export function makeWrite(
     description: options.description ?? DEFAULT_WRITE_DESCRIPTION,
     inputSchema: writeInputSchema,
     callback: async (input, context) => {
-      if (!context) throw new Error('Tool context is required for write operations')
       validateAbsolutePath(input.path)
-      const sandbox = boundSandbox ?? context.agent.sandbox
+      if (!boundSandbox && !context) throw new Error('Tool context is required for write operations')
+      const sandbox = boundSandbox ?? context!.agent.sandbox
 
       await sandbox.writeText(input.path, input.content)
       const lineCount = input.content === '' ? 0 : input.content.split('\n').length
