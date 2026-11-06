@@ -252,6 +252,7 @@ export class GoogleModel extends Model<GoogleModelConfig> {
         messageStarted: false,
         textContentBlockStarted: false,
         reasoningContentBlockStarted: false,
+        deferredSignatures: [],
         hasToolCalls: false,
         inputTokens: 0,
         outputTokens: 0,
