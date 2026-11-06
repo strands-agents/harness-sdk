@@ -89,6 +89,7 @@ describe('Graph tracer integration', () => {
       expect(endOpts).toEqual({
         duration: expect.any(Number),
         usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        status: Status.COMPLETED,
       })
       expect(endOpts.duration).toBeGreaterThanOrEqual(0)
     })
@@ -176,11 +177,13 @@ describe('Graph tracer integration', () => {
       expect(result.status).toBe(Status.FAILED)
       const [span, endOpts] = tracer.endNodeSpan.mock.calls[0]!
       expect(span).toStrictEqual({ mock: 'nodeSpan' })
-      expect(endOpts).toEqual({
-        status: Status.FAILED,
-        duration: expect.any(Number),
-      })
+      expect(endOpts.status).toBe(Status.FAILED)
+      expect(endOpts.error).toEqual(expect.objectContaining({ message: 'agent exploded' }))
       expect(endOpts.duration).toBeGreaterThanOrEqual(0)
+
+      const [, graphEndOpts] = tracer.endMultiAgentSpan.mock.calls[0]!
+      expect(graphEndOpts.status).toBe(Status.FAILED)
+      expect(graphEndOpts.error).toBeUndefined()
     })
 
     it('ends node span with CANCELLED status and zero duration when cancelled by hook', async () => {
