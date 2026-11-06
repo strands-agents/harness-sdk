@@ -73,6 +73,7 @@ create_harness(
     skills=True,                            # True (./.agent/skills) | path(s) or git URLs | an AgentSkills | False
     memory=True,                            # True (./.agent/memory) | {"dir": ..., "stores": [...]} | a MemoryManager | False
     interventions=None,                     # gate tool calls: "ask" | "smart" | a policy string | a .cedar file
+    verify=None,                            # run your checks before a change counts as done: "pytest -q" | [...] | "auto"
     **agent_kwargs,                         # anything else goes straight to strands.Agent
 )
 ```
@@ -480,6 +481,38 @@ from inside its sandbox run through the same executor, so they are gated too (a 
 the code; one that needs interactive approval is refused). This is sugar over the SDK's `HumanInTheLoop` and
 `CedarAuthorization`; pass those directly for anything the presets don't cover. (The `strands` CLI
 exposes the same via `--interventions`, prompting inline in the terminal.)
+
+## Checking its work before it says "done"
+
+By default the agent decides for itself whether a change works. Pass `verify` and the harness runs
+your project's own checks whenever the agent finishes a request that changed something:
+
+```python
+create_harness(verify="python -m pytest -q")              # one command
+create_harness(verify=["ruff check .", "pytest -q"])      # several, run in order
+create_harness(verify="auto")                             # detect one from the project files
+create_harness(verify={"commands": ["pytest -q"], "max_attempts": 3, "timeout": 600})
+```
+
+`verify` is sugar over [`GoalLoop`](https://strandsagents.com/docs/user-guide/sdk/plugins/goal-loop/):
+it adds a `Verification` plugin, a GoalLoop whose goal is your checks passing. If every command exits
+`0`, the answer is returned as usual. If one fails, its exit code and the end of its output go back to
+the agent, which keeps working. After `max_attempts` failed check runs (3 by default) the loop stops and
+returns the agent's last answer, unverified, with a warning in the log. The outcome is in
+`agent.state["verification"]`: `status` is `"passed"`, `"failed"`, `"no_checks"` or `"pending"`, so treat
+anything but `"passed"` as unverified.
+
+An invocation stopped early (an approval interrupt, a cancellation, `max_tokens`, a limit) runs no checks.
+Its changes are `"pending"` until a later invocation ends normally, and `max_attempts` keeps counting
+across such stops.
+
+A request that only read files, searched or planned runs no checks. Checks run in the agent's
+`sandbox`, a timed-out command counts as a failure, and a `subagent` child never runs them itself.
+`"auto"` picks `npm test` (a `package.json` with a `test` script), `python -m pytest -q`
+(`pyproject.toml`), `cargo test`, `go test ./...` or `make test`, and warns when it finds none.
+Because detected commands run project-defined scripts outside any approval gate, `"auto"` can't be
+combined with `interventions`; name the commands instead. `verify` can't be combined with another
+`GoalLoop` plugin either, since an agent runs only one.
 
 ## It's just a Strands Agent
 
