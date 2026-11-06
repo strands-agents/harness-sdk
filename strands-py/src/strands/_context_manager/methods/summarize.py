@@ -1,7 +1,6 @@
-"""Summarize reduction method.
+"""Summarize reduction method: its configuration and the marker that holds a summary.
 
-Compresses text via an LLM call. The method is target-agnostic — it operates
-on any content. Strategies handle selection and placement.
+Summaries are written by :meth:`Model.summarize`; strategies handle selection and placement.
 """
 
 from __future__ import annotations
@@ -10,11 +9,7 @@ from typing import TYPE_CHECKING
 
 from typing_extensions import TypedDict
 
-from ...models._summarize import _summarize_blocks
-from ...types.content import ContentBlock
-
 if TYPE_CHECKING:
-    from ...agent.invocation_context import InvocationContext
     from ...models.model import Model
 
 
@@ -37,13 +32,3 @@ class SummarizeConfig(TypedDict, total=False):
 
     model: Model
     system_prompt: str
-
-
-async def _summarize_content(
-    content: list[ContentBlock],
-    model: Model,
-    config: SummarizeConfig | None = None,
-    invocation_context: InvocationContext | None = None,
-) -> str | None:
-    """Summarize content blocks via an LLM call. Model errors propagate to the caller."""
-    return await _summarize_blocks(model, content, (config or {}).get("system_prompt"), invocation_context)

@@ -13,7 +13,7 @@ import pydantic
 import pytest
 
 import strands
-from strands.models import ModelCapabilities, ModelInfo, ModelLimits
+from strands.models import Model, ModelCapabilities, ModelInfo, ModelLimits
 from strands.models.anthropic import AnthropicModel
 from strands.models.model import CacheConfig, CacheToolsConfig
 from strands.tools import convert_pydantic_to_tool_spec
@@ -3403,6 +3403,31 @@ async def test_summarize_raises_without_compaction_block(anthropic_client):
 
     with pytest.raises(RuntimeError, match="compaction returned no summary"):
         await model.summarize([{"role": "user", "content": [{"text": "hi"}]}])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "config",
+    [
+        pytest.param({"model_id": "claude-sonnet-4-5"}, id="unlisted"),
+        pytest.param(
+            {
+                "model_id": "claude-sonnet-5-5",
+                "model_info": ModelInfo(capabilities=ModelCapabilities(server_side_summary=False)),
+            },
+            id="turned_off",
+        ),
+    ],
+)
+async def test_summarize_without_the_capability_uses_the_base_implementation(anthropic_client, config):
+    model = AnthropicModel(max_tokens=1, **config)
+
+    with unittest.mock.patch.object(Model, "summarize", return_value={"text": "client-side"}) as base_summarize:
+        summary = await model.summarize([{"role": "user", "content": [{"text": "hi"}]}], instructions="keep ids")
+
+    assert summary == {"text": "client-side"}
+    assert base_summarize.call_args.kwargs["instructions"] == "keep ids"
+    anthropic_client.beta.messages.stream.assert_not_called()
 
 
 def test_format_request_sends_from_last_compaction_block(anthropic_client):

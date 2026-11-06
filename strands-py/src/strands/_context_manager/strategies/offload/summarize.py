@@ -6,10 +6,10 @@ import logging
 from typing import TYPE_CHECKING
 
 from ....agent.conversation_manager.compression.pin_message import is_pinned
-from ....models._summarize import _flatten_messages_to_content, _tool_result_to_content_blocks
-from ....types.content import ContentBlock, Message
+from ....models.model import Model
+from ....types.content import ContentBlock, Message, Messages
 from ....types.tools import ToolResult, ToolResultContent
-from ...methods.summarize import SummarizeConfig, _format_summarized, _summarize_content
+from ...methods.summarize import SummarizeConfig, _format_summarized
 from ...stash import _format_stash_refs
 from ...types import ContextState
 from .base import (
@@ -26,7 +26,6 @@ from .base import (
 if TYPE_CHECKING:
     from ....agent.agent import Agent
     from ....agent.invocation_context import InvocationContext
-    from ....models.model import Model
 
 logger = logging.getLogger(__name__)
 
@@ -125,8 +124,11 @@ class SummarizeStrategy(BaseOffloadStrategy):
         if server_side and await self._summarize_server_side(context, model, safe):
             return True
 
-        content_blocks = _flatten_messages_to_content(safe)
-        summary = await _summarize_content(content_blocks, model, self._config, context.invocation_context)
+        try:
+            summary = await self._summarize_client_side(model, context.agent, safe)
+        except Exception as error:
+            logger.warning("messages=<%d>, error=<%s> | summarization failed", len(safe), error)
+            return False
         if not summary:
             return False
 
@@ -221,8 +223,7 @@ class SummarizeStrategy(BaseOffloadStrategy):
 
         if "toolResult" in block:
             tool_result = block["toolResult"]
-            content_blocks = _tool_result_to_content_blocks(tool_result["content"])
-            summary = await self._try_summarize(content_blocks, model, message, invocation_context)
+            summary = await self._try_summarize(block, model, message, agent)
             if not summary:
                 return None
 
@@ -238,7 +239,7 @@ class SummarizeStrategy(BaseOffloadStrategy):
             )
 
         if "text" in block:
-            summary = await self._try_summarize([ContentBlock(text=block["text"])], model, message, invocation_context)
+            summary = await self._try_summarize(block, model, message, agent)
             if not summary:
                 return None
 
@@ -247,7 +248,7 @@ class SummarizeStrategy(BaseOffloadStrategy):
             return ContentBlock(text=marker)
 
         if "image" in block or "document" in block:
-            summary = await self._try_summarize([block], model, message, invocation_context)
+            summary = await self._try_summarize(block, model, message, agent)
             if summary:
                 logger.debug(
                     "tracking_id=<%s>, tokens=<%s> | summarized media block", message.get("tracking_id"), tokens
@@ -258,21 +259,34 @@ class SummarizeStrategy(BaseOffloadStrategy):
         logger.debug("tracking_id=<%s>, tokens=<%s> | offloaded media block", message.get("tracking_id"), tokens)
         return ContentBlock(text=f"[Offloaded: ~{tokens} tokens]{refs}")
 
-    async def _try_summarize(
-        self,
-        content: list[ContentBlock],
-        model: Model,
-        message: Message,
-        invocation_context: InvocationContext | None = None,
-    ) -> str | None:
+    async def _try_summarize(self, block: ContentBlock, model: Model, message: Message, agent: Agent) -> str:
         """Summarize one block; a failure is logged and leaves the block unsummarized so the pass continues."""
         try:
-            return await _summarize_content(content, model, self._config, invocation_context)
+            return await self._summarize_client_side(model, agent, [Message(role=message["role"], content=[block])])
         except Exception as error:
             logger.warning(
                 "tracking_id=<%s>, error=<%s> | block summarization failed", message.get("tracking_id"), error
             )
-            return None
+            return ""
+
+    async def _summarize_client_side(self, model: Model, agent: Agent, messages: Messages) -> str:
+        """Return the model's client-side summary of ``messages``.
+
+        A model with server-side summaries summarizes only the conversation's opening messages through its own
+        ``summarize()``, so its other summaries use the base implementation.
+        """
+        instructions = self._config.get("system_prompt")
+        if model.model_info.capabilities.server_side_summary is True:
+            summary = await Model.summarize(model, messages, instructions=instructions)
+        else:
+            summary = await model.summarize(
+                messages,
+                tool_specs=agent.tool_registry.get_all_tool_specs(),
+                system_prompt=agent.system_prompt,
+                system_prompt_content=agent.system_prompt_content,
+                instructions=instructions,
+            )
+        return summary.get("text", "")
 
     def _resolve_model(self, agent: Agent) -> Model | None:
         return self._config.get("model") or agent.aux_model

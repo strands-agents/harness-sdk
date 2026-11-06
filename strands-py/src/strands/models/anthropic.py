@@ -1334,7 +1334,8 @@ class AnthropicModel(Model):
         Sends the live system prompt and tools unchanged under beta ``compact-2026-09-04``, so the thinking kept
         after the summary stays valid. The returned compaction block is stored as a ``summary`` block holding its
         text and signature; later requests from a model with ``server_side_summary`` rebuild the compaction block
-        from it and start from it, and requests without it send the summary text.
+        from it and start from it, and requests without it send the summary text. Uses the base
+        :meth:`Model.summarize` when ``model_info.capabilities.server_side_summary`` is not True.
 
         Args:
             messages: The opening messages to summarize, from message 0, left unmodified.
@@ -1348,8 +1349,19 @@ class AnthropicModel(Model):
             The summary block.
 
         Raises:
-            RuntimeError: If the response holds no compaction block.
+            RuntimeError: If the response holds no compaction block, or the base implementation's reply holds no
+                text.
         """
+        if self.model_info.capabilities.server_side_summary is not True:
+            return await super().summarize(
+                messages,
+                tool_specs=tool_specs,
+                system_prompt=system_prompt,
+                system_prompt_content=system_prompt_content,
+                instructions=instructions,
+                **kwargs,
+            )
+
         request = self.format_request(messages, tool_specs, system_prompt, system_prompt_content=system_prompt_content)
         # The API rejects these on a compaction request.
         request.pop("stop_sequences", None)

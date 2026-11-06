@@ -1,17 +1,13 @@
 """Client-side summarizer behind the base :meth:`Model.summarize` and the context manager's summaries."""
 
 import json
-import logging
 from typing import TYPE_CHECKING, cast
 
 from ..types.content import ContentBlock, Message, Messages
 from ..types.tools import ToolResult, ToolResultContent
 
 if TYPE_CHECKING:
-    from ..agent.invocation_context import InvocationContext
     from .model import Model
-
-logger = logging.getLogger(__name__)
 
 # Subject to change based on benchmarking.
 DEFAULT_SUMMARIZE_INSTRUCTIONS = (
@@ -33,38 +29,26 @@ async def _summarize_with_stream(model: "Model", messages: Messages, instruction
     Raises:
         RuntimeError: If the reply holds no text.
     """
-    summary = await _summarize_blocks(model, _flatten_messages_to_content(messages), instructions)
-    if not summary:
-        raise RuntimeError(f"model=<{type(model).__name__}> | summary reply held no text")
-    return ContentBlock(text=summary)
-
-
-async def _summarize_blocks(
-    model: "Model",
-    content: list[ContentBlock],
-    instructions: str | None = None,
-    invocation_context: "InvocationContext | None" = None,
-) -> str | None:
-    """Summarize ``content`` with one tool-less :meth:`Model.stream` call; None when the reply holds no text.
-
-    The call's usage is added to ``invocation_context``. Model errors propagate to the caller.
-    """
     # Imported here: event_loop.streaming imports models.model, which imports this module.
     from ..event_loop.streaming import process_stream
 
-    delimited = [ContentBlock(text="<content>"), *content, ContentBlock(text="</content>")]
-    request = [Message(role="user", content=delimited)]
-    chunks = model.stream(request, tool_specs=None, system_prompt=instructions or DEFAULT_SUMMARIZE_INSTRUCTIONS)
+    content = [ContentBlock(text="<content>"), *_flatten_messages_to_content(messages), ContentBlock(text="</content>")]
+    chunks = model.stream(
+        [Message(role="user", content=content)],
+        tool_specs=None,
+        system_prompt=instructions or DEFAULT_SUMMARIZE_INSTRUCTIONS,
+    )
 
     reply: Message | None = None
-    async for event in process_stream(chunks, invocation_context=invocation_context):
+    async for event in process_stream(chunks):
         if "stop" in event:
             _, reply, _, _ = event["stop"]
 
-    if reply is None:
-        logger.warning("result=<empty> | summarization produced no response")
-        return None
-    return "\n".join(block["text"] for block in reply.get("content", []) if "text" in block).strip() or None
+    reply_content = reply["content"] if reply else []
+    summary = "\n".join(block["text"] for block in reply_content if "text" in block).strip()
+    if not summary:
+        raise RuntimeError(f"model=<{type(model).__name__}> | summary reply held no text")
+    return ContentBlock(text=summary)
 
 
 def _flatten_messages_to_content(messages: Messages) -> list[ContentBlock]:
