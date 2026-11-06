@@ -200,7 +200,16 @@ You can pass a pre-configured Anthropic client directly to `AnthropicModel`. You
 <Tabs>
 <Tab label="Python">
 
-The Python SDK does not currently support passing a pre-configured client. Use `client_args` to configure the client at initialization.
+```python
+import anthropic
+from strands.models.anthropic import AnthropicModel
+
+model = AnthropicModel(
+    model_id="claude-sonnet-4-6",
+    max_tokens=4096,
+    client=anthropic.AsyncAnthropic(api_key="<KEY>"),
+)
+```
 </Tab>
 <Tab label="TypeScript">
 

@@ -190,14 +190,28 @@ class AnthropicModel(Model):
         anthropic_tools: list[dict[str, Any]]
         use_native_token_count: bool
 
-    def __init__(self, *, client_args: dict[str, Any] | None = None, **model_config: Unpack[AnthropicConfig]):
+    def __init__(
+        self,
+        *,
+        client: Any = None,
+        client_args: dict[str, Any] | None = None,
+        **model_config: Unpack[AnthropicConfig],
+    ):
         """Initialize provider instance.
 
         Args:
+            client: A pre-configured Anthropic-compatible async client, e.g. ``anthropic.AsyncAnthropicBedrock()``,
+                ``AsyncAnthropicBedrockMantle()`` or ``AsyncAnthropicVertex()``. The caller owns its lifecycle.
             client_args: Arguments for the underlying Anthropic client (e.g., api_key).
                 For a complete list of supported arguments, see https://docs.anthropic.com/en/api/client-sdks.
             **model_config: Configuration options for the Anthropic model.
+
+        Raises:
+            ValueError: If both ``client`` and ``client_args`` are provided.
         """
+        if client is not None and client_args:
+            raise ValueError("Only one of 'client' or 'client_args' should be provided, not both.")
+
         validate_config_keys(model_config, self.AnthropicConfig)
         _warn_on_deprecated_cache_tools(model_config, stacklevel=3)
         self.config = AnthropicModel.AnthropicConfig(**model_config)
@@ -207,8 +221,9 @@ class AnthropicModel(Model):
 
         logger.debug("config=<%s> | initializing", self.config)
 
-        client_args = client_args or {}
-        self.client = anthropic.AsyncAnthropic(**client_args)
+        self.client: anthropic.AsyncAnthropic = (
+            client if client is not None else anthropic.AsyncAnthropic(**(client_args or {}))
+        )
         self._drop_stale_thinking_model_id: str | None = None
 
     @override

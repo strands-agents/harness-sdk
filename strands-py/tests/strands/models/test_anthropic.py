@@ -117,6 +117,29 @@ def test__init__unknown_model_no_context_window_limit(anthropic_client):
     assert model.get_config().get("context_window_limit") is None
 
 
+@pytest.mark.asyncio
+async def test__init__with_client_uses_injected_client(model_id, max_tokens, alist):
+    injected_client = unittest.mock.Mock()
+    injected_client.messages.stream.return_value = generate_mock_stream_context(
+        [], final_message=unittest.mock.Mock(usage=unittest.mock.Mock(model_dump=lambda: {}))
+    )
+
+    with unittest.mock.patch.object(strands.models.anthropic.anthropic, "AsyncAnthropic") as mock_client_cls:
+        model = AnthropicModel(client=injected_client, model_id=model_id, max_tokens=max_tokens)
+        await alist(model.stream([{"role": "user", "content": [{"text": "hi"}]}]))
+
+    assert model.client is injected_client
+    mock_client_cls.assert_not_called()
+    injected_client.messages.stream.assert_called_once()
+
+
+def test__init__with_client_and_client_args_raises(model_id, max_tokens):
+    with pytest.raises(ValueError, match="Only one of 'client' or 'client_args'"):
+        AnthropicModel(
+            client=unittest.mock.Mock(), client_args={"api_key": "k"}, model_id=model_id, max_tokens=max_tokens
+        )
+
+
 def test_update_config(model, model_id):
     model.update_config(model_id=model_id)
 
