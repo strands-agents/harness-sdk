@@ -191,7 +191,7 @@ export interface Storage<ListQuery = string, SearchQuery = string> {
  * @returns A namespaced Storage view
  */
 export function namespace(storage: Storage, prefix: string): Storage {
-  const normalized = normalizePrefix(prefix)
+  const normalized = normalizePrefix(prefix).replace(/\/$/, '')
   const p = normalized ? `${normalized}/` : ''
   const view: Storage & { [NAMESPACED]: true } = {
     write: (key, data) => storage.write(`${p}${key}`, data),

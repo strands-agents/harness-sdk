@@ -3,13 +3,14 @@ import { InMemoryStorage } from '../in-memory-storage.js'
 import { NAMESPACED, namespace } from '../storage.js'
 import type { Storage } from '../storage.js'
 
-describe('namespace', () => {
+// Preserve relative keys and search hits with trailing slashes: https://github.com/strands-agents/harness-sdk/issues/5685
+describe.each(['prefix', 'prefix/', '/prefix//'])('namespace(%j)', (prefix) => {
   let backend: InMemoryStorage
   let namespaced: Storage
 
   beforeEach(() => {
     backend = new InMemoryStorage()
-    namespaced = namespace(backend, 'prefix')
+    namespaced = namespace(backend, prefix)
   })
 
   it('prepends namespace to write keys', async () => {
@@ -58,19 +59,29 @@ describe('namespace', () => {
   })
 
   it('composes nested namespaces', async () => {
-    const nested = namespace(namespace(backend, 'prefix'), 'sub')
+    const nested = namespaced.namespace!('sub/')
     await nested.write('key', new Uint8Array([9]))
 
     const result = await backend.read('prefix/sub/key')
     expect(result).toEqual(new Uint8Array([9]))
+    expect(await nested.list('')).toEqual(['key'])
   })
 
-  it('handles empty namespace as no-op prefix', async () => {
-    const empty = namespace(backend, '')
+  it.each(['', '/', '///'])('handles %j as no-op prefix', async (emptyPrefix) => {
+    const empty = namespace(backend, emptyPrefix)
     await empty.write('key', new Uint8Array([7]))
 
     const result = await backend.read('key')
     expect(result).toEqual(new Uint8Array([7]))
+    expect(await empty.list('')).toEqual(['key'])
+  })
+
+  it('searches within the namespace and returns relative keys', async () => {
+    const data = new TextEncoder().encode('dragonfruit')
+    await namespaced.write('note.txt', data)
+    await backend.write('prefix-other/note.txt', data)
+
+    expect(await namespaced.search!('dragonfruit')).toEqual([{ key: 'note.txt', score: 1, data }])
   })
 
   it('sets NAMESPACED symbol on returned view', () => {
