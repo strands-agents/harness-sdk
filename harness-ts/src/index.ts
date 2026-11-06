@@ -49,6 +49,7 @@ export {
   Fixed,
   Inherit,
   makeExaWebSearch,
+  makeSerperWebSearch,
   makeProgrammaticToolCaller,
   makeSubagent,
   makeWebFetch,
