@@ -81,6 +81,45 @@ describe('resolveInterventions', () => {
     await expect(resolveInterventions(123 as never)).rejects.toThrow(/Invalid interventions value/)
   })
 
+  // https://github.com/strands-agents/harness-sdk/issues/4676
+  describe('strings that are not a policy', () => {
+    it.each(['', '   ', '\n'])('throws on a blank policy %j', async (value) => {
+      await expect(resolveInterventions(value)).rejects.toThrow(/Blank interventions policy/)
+    })
+
+    it.each([
+      ['OFF', 'off'],
+      ['Off', 'off'],
+      [' Ask ', 'ask'],
+      ['SMART', 'smart'],
+    ])('throws on a preset in the wrong case %j', async (value, preset) => {
+      await expect(resolveInterventions(value)).rejects.toThrow(`did you mean '${preset}'`)
+    })
+
+    it.each(['false', 'False', 'none', 'true', 'yes', 'no', 'on', 'null', 'disabled'])(
+      'throws on a switch-like word %j',
+      async (value) => {
+        await expect(resolveInterventions(value)).rejects.toThrow(/Ambiguous interventions value/)
+      }
+    )
+
+    it('throws on a bad string inside a list', async () => {
+      await expect(resolveInterventions(['OFF'])).rejects.toThrow("did you mean 'off'")
+    })
+
+    it('still registers nothing for off with surrounding whitespace', async () => {
+      expect(await resolveInterventions(' off ')).toEqual([])
+    })
+
+    it.each(['No deletes without approval', 'none of the writes need approval'])(
+      'still resolves a policy that starts with a switch word %j',
+      async (value) => {
+        const [handler] = await resolveInterventions(value)
+        expect(handler).toBeInstanceOf(HumanInTheLoop)
+      }
+    )
+  })
+
   it('passes a handler instance through untouched', async () => {
     const handler = new HumanInTheLoop({ ask: 'stdio', enableTrust: true })
     expect(await resolveInterventions(handler)).toEqual([handler])
