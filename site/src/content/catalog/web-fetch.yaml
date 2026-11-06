@@ -1,0 +1,10 @@
+name: Web Fetch
+description: Fetch a URL and return its content as markdown, or have an analyst agent answer a prompt about the page.
+integrationType: tool
+maintainedBy: strands
+languages:
+  python: {}
+  typescript: {}
+github: https://github.com/strands-agents/harness-sdk/tree/main/strands-py/src/strands/vended_tools/web_fetch
+docsPage: docs/user-guide/sdk/tools/vended-tools/web-fetch
+addedDate: 2026-09-08

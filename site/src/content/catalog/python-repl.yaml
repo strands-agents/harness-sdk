@@ -1,0 +1,10 @@
+name: Python REPL
+description: Run model-generated Python in the agent's sandbox, with files persisting across calls.
+integrationType: tool
+maintainedBy: strands
+languages:
+  python: {}
+  typescript: {}
+github: https://github.com/strands-agents/harness-sdk/tree/main/strands-py/src/strands/vended_tools/python_repl
+docsPage: docs/user-guide/sdk/tools/vended-tools/python-repl
+addedDate: 2026-10-12
