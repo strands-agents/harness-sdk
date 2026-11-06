@@ -526,6 +526,22 @@ describe('ContextOffloader', () => {
       expect(result).toContain("No matches found for pattern 'nonexistent'")
     })
 
+    it('keeps the pagination notice when nothing matches', async () => {
+      const storage = new InMemoryStorage()
+      const notice = '[Showing lines 1-200 of 5000. Use offset/limit to read more.]'
+      const content = Array.from({ length: 200 }, (_, i) => `line ${i + 1}`).join('\n') + '\n' + notice
+      const ref = await storage.store('k1', new TextEncoder().encode(content), 'text/plain')
+
+      const plugin = new ContextOffloader({ storage, includeRetrievalTool: true })
+      const result = (await getRetrievalTool(plugin).invoke({ reference: ref, pattern: 'needle' })) as string
+
+      expect(result.startsWith("No matches found for pattern 'needle' (searched 201 lines).\n\n")).toBe(true)
+      expect(result).toContain(
+        '[This reference holds only a window of the original output ("Showing lines 1-200 of 5000. Use offset/limit ' +
+          'to read more."). The rest is not stored here; call the original tool again with an offset to get it.]'
+      )
+    })
+
     it('truncates output when too many matches', async () => {
       const storage = new InMemoryStorage()
       const content = Array.from({ length: 500 }, (_, i) => `match line ${i + 1}`).join('\n')
