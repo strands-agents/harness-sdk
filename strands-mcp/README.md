@@ -261,6 +261,8 @@ pytest tests_integ/ -v
 pytest tests/ tests_integ/ -v
 ```
 
+The integration suite also runs for MCP pull requests and daily against the public documentation site. An unavailable required page or an index fetch failure fails the run instead of skipping the check.
+
 To skip integration tests (e.g., in CI environments without network access):
 
 ```bash

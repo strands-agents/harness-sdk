@@ -7,7 +7,7 @@ from strands_mcp_server.utils.text_processor import SMALL_DOC_THRESHOLD
 
 # Known stable documentation URLs for regression testing.
 # These are core pages unlikely to be removed.
-LARGE_DOC_URL = "https://strandsagents.com/docs/user-guide/concepts/agents/hooks/index.md"
+LARGE_DOC_URL = "https://strandsagents.com/docs/user-guide/sdk/agents/hooks/index.md"
 
 integ_marks = [
     pytest.mark.integ,
@@ -38,9 +38,9 @@ def large_doc_page(live_cache):
     """
     page = live_cache.ensure_page(LARGE_DOC_URL)
     if page is None:
-        pytest.skip(f"Could not fetch {LARGE_DOC_URL}")
+        pytest.fail(f"Could not fetch required documentation page {LARGE_DOC_URL}")
     if len(page.content.encode("utf-8")) <= SMALL_DOC_THRESHOLD:
-        pytest.skip(
+        pytest.fail(
             f"Doc at {LARGE_DOC_URL} is only {len(page.content.encode('utf-8'))} bytes (need >{SMALL_DOC_THRESHOLD})"
         )
     return page
