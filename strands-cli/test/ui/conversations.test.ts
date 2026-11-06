@@ -964,6 +964,11 @@ describe('ConversationManager', () => {
       else await manager.submit('/fork')
       expect(secondFactory).not.toHaveBeenCalled()
       expect(manager.busy).toBe(true)
+      expect(manager.getSnapshot().panel).toMatchObject({
+        kind: 'error',
+        title: opening === 'fork' ? 'session resume blocked' : 'fork unavailable',
+        rows: [{ description: 'Wait for the conversation that is opening to finish.' }],
+      })
     } finally {
       finish(new ChatController(backend(opening, emptyRun)))
       await first

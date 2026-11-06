@@ -389,12 +389,14 @@ export class ConversationManager implements ChatControllerApi {
       source.controller.dismissPanel()
       return true
     }
-    const blocked = source.controller.sessionResumeBlockReason()
+    const blocked =
+      source.controller.sessionResumeBlockReason() ??
+      (this._opening ? 'Wait for the conversation that is opening to finish.' : undefined)
     if (blocked) {
       this._openError('session resume blocked', target.sessionId, blocked)
       return false
     }
-    if (this._opening || !this._resume) {
+    if (!this._resume) {
       return false
     }
 
@@ -454,6 +456,7 @@ export class ConversationManager implements ChatControllerApi {
       return undefined
     }
     if (this._opening) {
+      this._openError('fork unavailable', source.title, 'Wait for the conversation that is opening to finish.')
       return undefined
     }
 
