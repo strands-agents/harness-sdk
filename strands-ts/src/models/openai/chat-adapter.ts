@@ -373,15 +373,11 @@ function splitToolResultMedia(
 
 /**
  * Maps a Chat Completions streaming chunk to one or more SDK events. Mutates
- * `state` and `activeToolCalls` as a side effect.
+ * `state` as a side effect.
  *
  * @internal
  */
-export function mapChatChunkToEvents(
-  chunk: { choices: unknown[] },
-  state: ChatStreamState,
-  activeToolCalls: Map<number, boolean>
-): ModelStreamEvent[] {
+export function mapChatChunkToEvents(chunk: { choices: unknown[] }, state: ChatStreamState): ModelStreamEvent[] {
   const events: ModelStreamEvent[] = []
 
   if (!chunk.choices || chunk.choices.length === 0) return events
@@ -421,18 +417,16 @@ export function mapChatChunkToEvents(
       }
 
       if (toolCall.id && toolCall.function?.name) {
-        events.push({
-          type: 'modelContentBlockStartEvent',
-          start: { type: 'toolUseStart', name: toolCall.function.name, toolUseId: toolCall.id },
+        state.toolCalls.set(toolCall.index, {
+          name: toolCall.function.name,
+          toolUseId: toolCall.id,
+          inputDeltas: [],
         })
-        activeToolCalls.set(toolCall.index, true)
       }
 
-      if (toolCall.function?.arguments) {
-        events.push({
-          type: 'modelContentBlockDeltaEvent',
-          delta: { type: 'toolUseInputDelta', input: toolCall.function.arguments },
-        })
+      const bufferedCall = state.toolCalls.get(toolCall.index)
+      if (bufferedCall && toolCall.function?.arguments) {
+        bufferedCall.inputDeltas.push(toolCall.function.arguments)
       }
     }
   }
@@ -443,10 +437,22 @@ export function mapChatChunkToEvents(
       state.textContentBlockStarted = false
     }
 
-    for (const [index] of activeToolCalls) {
+    // Blocks accumulate one at a time in streamAggregated, so buffered parallel
+    // tool calls flush as sequential start/deltas/stop sequences.
+    for (const [, toolCall] of state.toolCalls) {
+      events.push({
+        type: 'modelContentBlockStartEvent',
+        start: { type: 'toolUseStart', name: toolCall.name, toolUseId: toolCall.toolUseId },
+      })
+      for (const input of toolCall.inputDeltas) {
+        events.push({
+          type: 'modelContentBlockDeltaEvent',
+          delta: { type: 'toolUseInputDelta', input },
+        })
+      }
       events.push({ type: 'modelContentBlockStopEvent' })
-      activeToolCalls.delete(index)
     }
+    state.toolCalls.clear()
 
     const stopReasonMap: Record<string, StopReason> = {
       stop: 'endTurn',
