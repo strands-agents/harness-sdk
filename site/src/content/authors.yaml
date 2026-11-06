@@ -287,3 +287,8 @@
   name: Arnaud Jean
   role: "Developer Advocate, AWS"
   bio: Arnaud Jean is a Developer Advocate at AWS working with developers building agents on Strands.
+
+- id: kevin-orellana
+  name: Kevin Orellana
+  role: "Software Developer"
+  bio: Kevin Orellana is a Strands contributor.
