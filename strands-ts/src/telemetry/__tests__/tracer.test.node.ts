@@ -9,6 +9,7 @@ import {
   ToolUseBlock,
   CachePointBlock,
   InjectedBlock,
+  SummaryBlock,
 } from '../../types/messages.js'
 import { MockSpan, eventAttr } from '../../__fixtures__/mock-span.js'
 import { textMessage } from '../../__fixtures__/agent-helpers.js'
@@ -937,6 +938,18 @@ describe('Tracer', () => {
         { type: 'text', content: 'Hi' },
         { type: 'text', content: 'cwd: /repo' },
       ])
+    })
+
+    it('maps summary blocks to text parts in latest conventions', () => {
+      vi.stubEnv('OTEL_SEMCONV_STABILITY_OPT_IN', 'gen_ai_latest_experimental')
+      const tracer = new Tracer()
+      const messages = [
+        new Message({ role: 'assistant', content: [new SummaryBlock({ provider: 'anthropic', text: 'compacted' })] }),
+      ]
+      tracer.startModelInvokeSpan({ messages })
+      const detailEvents = mockSpan.getEvents('gen_ai.client.inference.operation.details')
+      const parsed = JSON.parse(eventAttr(detailEvents[0]!, 'gen_ai.input.messages'))
+      expect(parsed[0].parts).toStrictEqual([{ type: 'text', content: 'compacted' }])
     })
 
     it('serializes text block content in stable convention events', () => {
