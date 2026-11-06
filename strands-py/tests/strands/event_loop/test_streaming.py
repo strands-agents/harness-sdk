@@ -1556,6 +1556,48 @@ async def test_stream_messages_strips_id_before_model_call(agenerator, alist):
     assert "metadata" not in sent_messages[0]
 
 
+def _summary_history():
+    summary = {"provider": "anthropic", "signature": "SIG", "text": "SUMMARY"}
+    return [
+        {"role": "assistant", "content": [{"summary": summary}, {"text": "next"}]},
+        {"role": "user", "content": [{"text": "go"}]},
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("server_side_summary", [None, False])
+async def test_stream_messages_sends_summary_text_to_model_without_server_side_summary(
+    server_side_summary, agenerator, alist
+):
+    mock_model = unittest.mock.MagicMock()
+    mock_model.model_info.capabilities.server_side_summary = server_side_summary
+    mock_model.stream.return_value = agenerator([{"contentBlockStop": {}}])
+    messages = _summary_history()
+
+    await alist(
+        strands.event_loop.streaming.stream_messages(mock_model, system_prompt=None, messages=messages, tool_specs=None)
+    )
+
+    sent_messages = mock_model.stream.call_args[0][0]
+    assert sent_messages[0]["content"] == [{"text": "SUMMARY"}, {"text": "next"}]
+    assert messages == _summary_history()
+
+
+@pytest.mark.asyncio
+async def test_stream_messages_keeps_summary_block_for_model_with_server_side_summary(agenerator, alist):
+    mock_model = unittest.mock.MagicMock()
+    mock_model.model_info.capabilities.server_side_summary = True
+    mock_model.stream.return_value = agenerator([{"contentBlockStop": {}}])
+
+    await alist(
+        strands.event_loop.streaming.stream_messages(
+            mock_model, system_prompt=None, messages=_summary_history(), tool_specs=None
+        )
+    )
+
+    assert mock_model.stream.call_args[0][0] == _summary_history()
+
+
 @pytest.mark.asyncio
 async def test_stream_messages_with_system_prompt_content(agenerator, alist):
     """Test stream_messages with SystemContentBlock input."""
