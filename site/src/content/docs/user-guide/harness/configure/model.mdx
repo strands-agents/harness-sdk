@@ -158,6 +158,46 @@ the levels the provider documents for your model.
 Reasoning does not apply to a pre-built `Model` instance: configure reasoning on the
 instance itself when you pass one.
 
+## Cap output tokens
+
+Each model call stops at `max_tokens` output tokens. The default is 32,000. The cap limits the
+cost of one long or looping response. Pass `max_tokens` to set a different cap:
+
+<Tabs>
+  <Tab label="Python">
+    ```python
+    from strands_harness import create_harness
+
+    agent = create_harness(model="anthropic/claude-opus-5", max_tokens=16_000)
+    ```
+  </Tab>
+  <Tab label="TypeScript">
+    ```typescript
+    import { createHarness } from '@strands-agents/harness'
+
+    const agent = await createHarness({ model: 'anthropic/claude-opus-5', maxTokens: 16_000 })
+    ```
+  </Tab>
+</Tabs>
+
+Strands harness sends the lower of `max_tokens` and the output limit of the model, when it knows
+that limit. If your value is above the limit, Strands harness sends the limit and logs a warning.
+A value above the 32,000 default also logs a warning, because each model call can then cost more.
+
+The default applies to Claude 4 and later on Amazon Bedrock, and to all Anthropic, OpenAI,
+bedrock-mantle, and Google models. Other Amazon Bedrock models, Ollama, and LiteLLM get only a value
+that you set, because Strands harness does not know their output limits.
+
+The Claude 4.5 models use a fixed thinking budget. On these models, Strands harness keeps part of
+the cap for the answer. If the cap is too small for the minimum budget of 1,024 tokens, the
+construction fails. Set a larger cap, or set `effort` to off.
+
+When a model call stops at the default cap, Strands harness logs a warning. The call then fails
+with the max-tokens error of the SDK: `MaxTokensReachedException` in Python or `MaxTokensError` in
+TypeScript. Raise `max_tokens` if your agent must write longer responses.
+
+The cap does not apply to a pre-built `Model` instance. Set the output limit on the instance itself.
+
 ## Note on web search and caching
 
 Two model-level features follow from the provider you pick. Native `web_search` works on

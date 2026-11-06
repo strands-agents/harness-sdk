@@ -127,6 +127,26 @@ def test_config_maps_to_harness_agent_kwargs(tmp_path):
     }
 
 
+def test_config_max_tokens_reaches_create_harness(tmp_path):
+    kwargs = harness_agent_kwargs_from_config({**DEFAULT_HARNESS_AGENT_CONFIG, "maxTokens": 8_000}, tmp_path)
+    assert kwargs["max_tokens"] == 8_000
+
+
+@pytest.mark.parametrize(
+    ("value", "message"),
+    [
+        (0, "maxTokens: Input should be greater than 0"),
+        (-1, "maxTokens: Input should be greater than 0"),
+        (True, "maxTokens: Input should be a valid integer"),
+        (1.5, "maxTokens: Input should be a positive integer or null"),
+        ("8000", "maxTokens: Input should be a positive integer or null"),
+    ],
+)
+def test_config_rejects_a_max_tokens_that_is_not_a_positive_integer(value, message):
+    with pytest.raises(ValueError, match=f"^{message}$"):
+        normalize_harness_agent_config({"maxTokens": value})
+
+
 def test_config_every_create_harness_parameter_has_a_bridge_key_or_is_factory_only():
     """§4: each ``create_harness`` parameter is reachable from JSON or deliberately code-only."""
     factory_only = {"tools", "mcp_servers", "plugins", "background_tasks"}
@@ -134,6 +154,7 @@ def test_config_every_create_harness_parameter_has_a_bridge_key_or_is_factory_on
         "instructions": "instructions",
         "model": "model",
         "effort": "effort",
+        "max_tokens": "maxTokens",
         "builtin_tools": "builtinTools",
         "caching": "caching",
         "context_manager": "contextManager",

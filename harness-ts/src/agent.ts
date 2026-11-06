@@ -6,11 +6,13 @@ import { randomUUID } from 'node:crypto'
 import { statSync } from 'node:fs'
 import { join } from 'node:path'
 import {
+  AfterModelCallEvent,
   Agent,
   type AgentConfig,
   type BackgroundTasksConfig,
   FileStorage as SessionFileStorage,
   InitializedEvent,
+  MaxTokensError,
   McpClient,
   type McpServerConfig,
   MemoryManager,
@@ -48,7 +50,8 @@ import {
 } from './defaults.js'
 import { type InterventionsOption, resolveInterventions } from './interventions.js'
 import { resolveMemory } from './memory.js'
-import { resolveModel } from './models.js'
+import { logger } from './logging.js'
+import { defaultMaxTokens, resolveModel } from './models.js'
 import { buildSystemPrompt } from './prompt.js'
 import { setupTelemetry } from './telemetry.js'
 import type { BuiltinPluginName, BuiltinToolName } from './config.js'
@@ -90,6 +93,7 @@ export interface HarnessAgentOptions extends Omit<
    * does not support throws. Ignored when `model` is a `Model` or `ModelRouter` instance.
    */
   effort?: Effort
+  maxTokens?: number
   /** A domain block appended after the harness contract. Ignored when `systemPrompt` is passed. */
   instructions?: string
   /**
@@ -331,6 +335,21 @@ function resolveBackgroundTasks(
   }
 }
 
+function warnWhenDefaultMaxTokensIsHit(agent: Agent, model: Model | ModelRouter | string | undefined): void {
+  const limit = defaultMaxTokens(model)
+  if (limit === undefined) {
+    return
+  }
+  const label = typeof model === 'string' ? model : DEFAULT_MODEL
+  agent.addHook(AfterModelCallEvent, (event) => {
+    if (event.error instanceof MaxTokensError) {
+      logger.warn(
+        `model=<${label}>, max_tokens=<${limit}> | model output stopped at the harness default maxTokens | pass maxTokens to createHarness to raise it`
+      )
+    }
+  })
+}
+
 /**
  * Build a preconfigured Strands agent with the harness's defaults enabled.
  *
@@ -348,6 +367,7 @@ export async function createHarness(options: HarnessAgentOptions = {}): Promise<
   const {
     model,
     effort = DEFAULT_EFFORT,
+    maxTokens,
     instructions,
     tools,
     plugins: consumerPluginsOption,
@@ -382,7 +402,8 @@ export async function createHarness(options: HarnessAgentOptions = {}): Promise<
     effort,
     webSearch === 'native',
     cachingOn,
-    cachingExplicit
+    cachingExplicit,
+    maxTokens
   )
 
   if (agentConfig.systemPrompt === undefined) {
@@ -417,6 +438,7 @@ export async function createHarness(options: HarnessAgentOptions = {}): Promise<
     tools: consumer,
     builtinTools: forwardedBuiltins,
     ...(model !== undefined && { model }),
+    ...(maxTokens !== undefined && { maxTokens }),
     ...(caching !== undefined && { caching }),
     ...(builtinPlugins !== undefined && { builtinPlugins }),
     ...(consumerPluginsOption !== undefined && { plugins: consumerPluginsOption }),
@@ -523,6 +545,9 @@ export async function createHarness(options: HarnessAgentOptions = {}): Promise<
   if (agentConfig.sandbox) {
     // The SDK registers sandbox tools lazily in initialize(), so dedupe once that has run.
     agent.addHook(InitializedEvent, () => dropSandboxTools(agent))
+  }
+  if (maxTokens === undefined) {
+    warnWhenDefaultMaxTokensIsHit(agent, model)
   }
   return agent
 }

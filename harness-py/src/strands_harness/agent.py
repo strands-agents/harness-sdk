@@ -10,6 +10,7 @@ from typing import Any, Literal
 
 from strands import Agent, BackgroundTasksConfig
 from strands.experimental.context_manager import ContextManager
+from strands.hooks import AfterModelCallEvent
 from strands.memory import MemoryManager
 from strands.models import Model, ModelRouter
 from strands.plugins import Plugin
@@ -24,6 +25,7 @@ from strands_harness import defaults
 from strands_harness.interventions import InterventionsOption, resolve_interventions
 from strands_harness.memory import resolve_memory
 from strands_harness.models import (
+    _default_max_tokens,
     _supports_media,
     resolve_model,
     resolve_web_fetch_model,
@@ -235,10 +237,28 @@ def _resolve_background_tasks(
     return resolved
 
 
+def _warn_when_default_max_tokens_is_hit(agent: Agent, model: Model | ModelRouter | str | None) -> None:
+    limit = _default_max_tokens(model)
+    if limit is None:
+        return
+
+    def warn(event: AfterModelCallEvent) -> None:
+        if event.stop_response is not None and event.stop_response.stop_reason == "max_tokens":
+            logger.warning(
+                "model=<%s>, max_tokens=<%s> | model output stopped at the harness default max_tokens "
+                "| pass max_tokens to create_harness to raise it",
+                model or defaults.DEFAULT_MODEL,
+                limit,
+            )
+
+    agent.add_hook(warn, AfterModelCallEvent)
+
+
 def create_harness(
     *,
     model: Model | ModelRouter | str | None = None,
     effort: Effort = defaults.DEFAULT_EFFORT,
+    max_tokens: int | None = None,
     instructions: str | None = None,
     tools: list[Any] | None = None,
     plugins: list[Plugin] | None = None,
@@ -412,6 +432,7 @@ def create_harness(
         web_search=web_search == "native",
         caching=caching_on,
         caching_explicit=caching_explicit,
+        max_tokens=max_tokens,
     )
 
     if "system_prompt" not in agent_kwargs:
@@ -441,6 +462,7 @@ def create_harness(
     parent_config: dict[str, Any] = {
         "model": model,
         "effort": effort,
+        "max_tokens": max_tokens,
         "caching": caching,
         "context_manager": context_manager,
         "builtin_tools": enabled_tools,
@@ -534,4 +556,6 @@ def create_harness(
         **agent_kwargs,
     )
     _drop_sandbox_tools(agent)
+    if max_tokens is None:
+        _warn_when_default_max_tokens_is_hit(agent, model)
     return agent

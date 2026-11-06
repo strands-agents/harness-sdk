@@ -60,6 +60,7 @@ agent("Find the slowest test in this repo and explain why it's slow")
 create_harness(
     model="bedrock/global.anthropic.claude-opus-5",  # "provider/name", a bare Bedrock id, or a Model instance
     effort="auto",                          # "auto" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"
+    max_tokens=None,                        # output cap for each model call (None = 32_000)
     instructions=None,                      # domain text appended to the system prompt
     tools=None,                             # your tools, added alongside the built-ins
     mcp_servers=None,                       # MCP servers: a mcpServers JSON path or the mapping itself
@@ -149,6 +150,19 @@ create_harness(effort="off")      # no reasoning
 A level the provider doesn't offer raises, so a typo or an unsupported request never passes
 silently. When you pass a `Model` instance, `effort` (like `caching`) is ignored with a logged
 warning: configure reasoning on the instance itself.
+
+Each model call stops at `max_tokens` output tokens. The default is 32,000:
+
+```python
+create_harness(max_tokens=8_000)    # a lower cap
+create_harness(max_tokens=64_000)   # a higher cap, which logs a warning
+```
+
+The harness sends the lower of `max_tokens` and the output limit of the model, when it knows that
+limit. Claude 4 and later on Bedrock, and all Anthropic, OpenAI, bedrock-mantle, and Google models,
+get the default. Other Bedrock models, Ollama, and LiteLLM get only a value that you set, because the
+harness does not know their limits. When a model call stops at the default cap, the harness logs a warning.
+`max_tokens` does not apply to a `Model` instance. Set the cap on the instance itself.
 
 ## Giving it your own instructions and tools
 

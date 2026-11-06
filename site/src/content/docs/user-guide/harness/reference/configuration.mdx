@@ -20,6 +20,7 @@ option is used in practice, follow the links into the configure and tools guides
 |---|---|---|---|
 | `model` | `model` | `bedrock/global.anthropic.claude-opus-5` | A `provider/name` string, a bare Amazon Bedrock id, or a `Model` instance. See [choose a model](../../configure/model/). |
 | `effort` | `effort` | `"auto"` | Reasoning effort: `"auto"`, `"low"`, `"medium"`, `"high"`, or off. Ignored for a `Model` instance. |
+| `max_tokens` | `maxTokens` | `32000` | The output token cap for each model call. Ignored for a `Model` instance. See [cap output tokens](../../configure/model/#cap-output-tokens). |
 | `instructions` | `instructions` | none | A domain block appended after the harness contract. Ignored when a full system prompt is passed. |
 | `tools` | `tools` | none | Consumer tools, added alongside the built-ins. See [add tools](../../configure/tools-and-instructions/). |
 | `plugins` | `plugins` | none | Consumer Strands Harness SDK plugins, added alongside the built-in plugins. |
@@ -43,6 +44,11 @@ option is used in practice, follow the links into the configure and tools guides
 - **`effort`** accepts `"auto"` (provider recommended), `"low"`/`"medium"`/`"high"`
   (explicit; some providers accept finer levels), and `"off"`. A level the
   resolved provider rejects fails at construction.
+- **`max_tokens`** accepts a positive integer. Strands harness sends the lower of this value and
+  the output limit of the model, when it knows that limit. Without a value, Strands harness sends
+  32,000 to Claude 4 and later on Amazon Bedrock, and to all Anthropic, OpenAI, bedrock-mantle, and
+  Google models.
+  Other Amazon Bedrock models, Ollama, and LiteLLM get only a value that you set.
 - **`caching`** accepts `"auto"`/`True` (on), `False`/`None` (off). Off has no effect where
   caching is automatic (OpenAI, Google, bedrock-mantle). Enabling it explicitly on a
   `Model` instance is ignored with a warning.
