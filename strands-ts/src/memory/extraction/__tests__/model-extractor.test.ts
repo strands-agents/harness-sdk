@@ -37,6 +37,42 @@ describe('ModelExtractor', () => {
     expect(entries).toEqual([{ content: 'fact' }])
   })
 
+  describe('reasoning content', () => {
+    it('parses the answer without JSON examples from reasoning', async () => {
+      const model = new MockMessageModel().addTurn([
+        { type: 'reasoningBlock', text: 'Return [{"content": "fact1"}, ...]. The user prefers dark mode.' },
+        { type: 'textBlock', text: '```json\n[{"content": "User prefers dark mode"}]\n```' },
+      ])
+
+      const entries = await new ModelExtractor({ model }).extract([userTurn('I prefer dark mode')])
+
+      expect(entries).toEqual([{ content: 'User prefers dark mode' }])
+    })
+
+    it('joins text blocks separated by reasoning', async () => {
+      const model = new MockMessageModel().addTurn([
+        { type: 'textBlock', text: '[{"content": "User ' },
+        { type: 'reasoningBlock', text: 'Keep this as one entry, not [].' },
+        { type: 'textBlock', text: 'prefers dark mode"}]' },
+      ])
+
+      const entries = await new ModelExtractor({ model }).extract([userTurn('I prefer dark mode')])
+
+      expect(entries).toEqual([{ content: 'User prefers dark mode' }])
+    })
+
+    it('returns no entries when only reasoning contains JSON', async () => {
+      const model = new MockMessageModel().addTurn({
+        type: 'reasoningBlock',
+        text: '[{"content": "An unconfirmed fact"}]',
+      })
+
+      const entries = await new ModelExtractor({ model }).extract([userTurn('Hello')])
+
+      expect(entries).toEqual([])
+    })
+  })
+
   it('preserves entry metadata', async () => {
     const model = new MockMessageModel()
     model.addTurn({ type: 'textBlock', text: '[{"content": "fact", "metadata": {"topic": "pref"}}]' })
