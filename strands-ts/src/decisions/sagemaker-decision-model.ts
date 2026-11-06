@@ -14,7 +14,7 @@ const SAGEMAKER_DEFAULT_MIN_CONFIDENCE = 0.5
 // InvokeEndpoint rejects request bodies larger than 6 MB.
 const SAGEMAKER_MAX_BODY_BYTES = 6 * 1024 * 1024
 const THROTTLING_ERROR_NAMES = new Set(['ThrottlingException', 'ModelNotReadyException', 'ServiceUnavailable'])
-const THROTTLING_CONTAINER_STATUSES = new Set([429, 503, 529])
+const THROTTLING_STATUSES = new Set([429, 503, 529])
 
 /** Options for constructing a {@link SageMakerDecisionModel}. */
 export interface SageMakerDecisionModelOptions {
@@ -144,28 +144,44 @@ async function loadSageMakerRuntime(): Promise<typeof import('@aws-sdk/client-sa
 
 /**
  * Maps SageMaker Runtime errors to SDK model errors. A container's own HTTP error arrives as a
- * SageMaker `ModelError` that carries the container's status in `OriginalStatusCode`.
+ * SageMaker `ModelError` that carries the container's status in `OriginalStatusCode`; any other
+ * failure carries the HTTP status of the SageMaker response in `$metadata.httpStatusCode`.
  */
 function translateSageMakerError(error: unknown): Error {
   const message = `${SAGEMAKER_PROVIDER_NAME} decision request failed: ${normalizeError(error).message}`
-  const {
-    name,
-    OriginalStatusCode: status,
-    OriginalMessage: originalMessage,
-  } = (error ?? {}) as {
-    name?: string
-    OriginalStatusCode?: number
-    OriginalMessage?: string
+  const { name, OriginalStatusCode, OriginalMessage, $metadata } = (error ?? {}) as {
+    name?: unknown
+    OriginalStatusCode?: unknown
+    OriginalMessage?: unknown
+    $metadata?: { httpStatusCode?: unknown }
   }
-  if (
-    (name !== undefined && THROTTLING_ERROR_NAMES.has(name)) ||
-    (status !== undefined && THROTTLING_CONTAINER_STATUSES.has(status))
-  ) {
+  const status = Number(OriginalStatusCode ?? $metadata?.httpStatusCode)
+  if ((typeof name === 'string' && THROTTLING_ERROR_NAMES.has(name)) || THROTTLING_STATUSES.has(status)) {
     return new ModelThrottledError(message, { cause: error })
   }
-  // strands-decider refuses a prompt longer than the model's context window with HTTP 422.
-  if (status === 413 || (status === 422 && /context (window|length)/i.test(originalMessage ?? ''))) {
+  if (status === 413 || (status === 422 && isContextOverflowMessage(OriginalMessage))) {
     return new ContextWindowOverflowError(message)
   }
   return new ModelError(message, { cause: error })
+}
+
+/**
+ * Whether a container's 422 body reports a prompt longer than the model's context window.
+ * strands-decider sends `{"detail": "... exceeds the context window ..."}`; vLLM sends
+ * `{"message": "... maximum context length ..."}`. Validation errors also use 422, but their
+ * `detail` is a list that echoes the request, so only a string `detail` or `message` is matched.
+ */
+function isContextOverflowMessage(originalMessage: unknown): boolean {
+  if (typeof originalMessage !== 'string') return false
+  let text: unknown = originalMessage
+  try {
+    const body = JSON.parse(originalMessage) as unknown
+    if (typeof body === 'object' && body !== null) {
+      const { detail, message } = body as { detail?: unknown; message?: unknown }
+      text = typeof detail === 'string' ? detail : message
+    }
+  } catch {
+    // A non-JSON body is matched as plain text.
+  }
+  return typeof text === 'string' && /context (window|length)/i.test(text)
 }

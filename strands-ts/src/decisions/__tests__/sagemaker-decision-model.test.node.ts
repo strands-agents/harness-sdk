@@ -112,6 +112,10 @@ describe('SageMakerDecisionModel', () => {
       ['ServiceUnavailable', {}],
       ['ModelError', { OriginalStatusCode: 429 }],
       ['ModelError', { OriginalStatusCode: 503 }],
+      ['ModelError', { OriginalStatusCode: '429' }],
+      // A proxy or load balancer throttle has no SageMaker error type, only the HTTP status.
+      ['Unknown', { $metadata: { httpStatusCode: 429 } }],
+      ['SyntaxError', { $metadata: { httpStatusCode: 503 } }],
     ])('maps %s %o to ModelThrottledError', async (name, fields) => {
       const cause = sageMakerError(name, fields)
       mockSend.mockRejectedValue(cause)
@@ -132,6 +136,12 @@ describe('SageMakerDecisionModel', () => {
         OriginalStatusCode: 422,
         OriginalMessage: "This model's maximum context length is 8192 tokens. However, you requested 9000 tokens.",
       },
+      {
+        OriginalStatusCode: 422,
+        OriginalMessage: '{"object":"error","message":"This model\'s maximum context length is 8192 tokens."}',
+      },
+      { OriginalStatusCode: '413' },
+      { $metadata: { httpStatusCode: 413 } },
     ])('maps a container error %o to ContextWindowOverflowError', async (fields) => {
       mockSend.mockRejectedValue(sageMakerError('ModelError', fields))
 
@@ -145,6 +155,15 @@ describe('SageMakerDecisionModel', () => {
         'ModelError',
         { OriginalStatusCode: 422, OriginalMessage: '{"detail":[{"msg":"choice requires at least 2 options"}]}' },
       ],
+      // A validation error echoes the request, which may itself mention the context window.
+      [
+        'ModelError',
+        {
+          OriginalStatusCode: 422,
+          OriginalMessage: '{"detail":[{"msg":"choice requires at least 2 options","input":{"context window":null}}]}',
+        },
+      ],
+      ['ModelError', { $metadata: { httpStatusCode: 424 } }],
       ['ValidationError', {}],
       ['InternalFailure', {}],
     ])('maps %s %o to ModelError with the original cause', async (name, fields) => {
