@@ -25,7 +25,13 @@ import { Message, SummaryBlock } from '../types/messages.js'
 import type { ContentBlock, SystemPrompt } from '../types/messages.js'
 import type { ModelStreamEvent } from '../models/streaming.js'
 import { createEmptyUsage } from '../models/streaming.js'
-import { ContextWindowOverflowError, ModelError, ModelThrottledError, normalizeError } from '../errors.js'
+import {
+  ContextWindowOverflowError,
+  ModelError,
+  ModelThrottledError,
+  NotImplementedError,
+  normalizeError,
+} from '../errors.js'
 import type { Citation } from '../types/citations.js'
 import type { ImageBlock, DocumentBlock } from '../types/media.js'
 import { encodeBase64, decodeBase64 } from '../types/media.js'
@@ -324,10 +330,14 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
     }
   }
 
-  /** Turns temporary messages back on for the models the shared model info lists. */
+  /** Turns temporary messages and server-side summary back on for the models the shared model info lists. */
   override get modelInfo(): ModelInfo {
-    const temporaryMessages = lookupModelInfo(this.modelId ?? '').capabilities?.temporaryMessages
-    return mergeModelInfo(super.modelInfo, { capabilities: { temporaryMessages } }, this._config.modelInfo)
+    const { temporaryMessages, serverSideSummary } = lookupModelInfo(this.modelId ?? '').capabilities ?? {}
+    return mergeModelInfo(
+      super.modelInfo,
+      { capabilities: { temporaryMessages, serverSideSummary } },
+      this._config.modelInfo
+    )
   }
 
   updateConfig(modelConfig: AnthropicModelConfig): void {
@@ -609,22 +619,27 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
         return
       }
 
-      const error = normalizeError(unknownError)
-
-      const lowered = error.message.toLowerCase()
-      if (CONTEXT_WINDOW_OVERFLOW_ERRORS.some((msg) => lowered.includes(msg))) {
-        throw new ContextWindowOverflowError(error.message)
-      }
-
-      const err = unknownError as Error & { status?: number }
-      if (err.status === 429) {
-        const message = error.message ?? 'Request was throttled by the model provider'
-        logger.debug(`throttled | error_message=<${message}>`)
-        throw new ModelThrottledError(message, { cause: err })
-      }
-
-      throw error
+      throw this._translateError(unknownError)
     }
+  }
+
+  /** Maps a context overflow or a 429 to the SDK's error types; any other error is normalized. */
+  private _translateError(unknownError: unknown): Error {
+    const error = normalizeError(unknownError)
+
+    const lowered = error.message.toLowerCase()
+    if (CONTEXT_WINDOW_OVERFLOW_ERRORS.some((msg) => lowered.includes(msg))) {
+      return new ContextWindowOverflowError(error.message)
+    }
+
+    const err = unknownError as Error & { status?: number }
+    if (err.status === 429) {
+      const message = error.message ?? 'Request was throttled by the model provider'
+      logger.debug(`throttled | error_message=<${message}>`)
+      return new ModelThrottledError(message, { cause: err })
+    }
+
+    return error
   }
 
   /**
@@ -656,7 +671,15 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
     } as unknown as Anthropic.Beta.Messages.MessageCreateParamsStreaming
     const requestOptions = this._buildRequestOptions(request, [COMPACTION_BETA])
 
-    const response = await this._client.beta.messages.stream(params, requestOptions).finalMessage()
+    // On-demand compaction is only on the beta endpoint, which a narrower injected client may not have.
+    const beta = (this._client as Partial<Pick<Anthropic, 'beta'>>).beta
+    if (!beta) throw new NotImplementedError(`model_id=<${this._config.modelId}> | client has no beta messages API`)
+    let response: Anthropic.Beta.Messages.BetaMessage
+    try {
+      response = await beta.messages.stream(params, requestOptions).finalMessage()
+    } catch (error) {
+      throw this._translateError(error)
+    }
 
     const block = (response.content as unknown as Record<string, unknown>[]).find((item) => item.type === 'compaction')
     if ((response.stop_reason as string) !== 'compaction' || !block || !block.content) {

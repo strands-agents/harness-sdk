@@ -88,10 +88,13 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
     const safe = messages.filter((message) => safeSet.has(message))
     if (safe.length === 0) return false
 
-    // The agent's model replays the summary block, so both it and the summarizer must support it.
+    // The agent's model replays the summary block, so it must be the same provider and model as the summarizer.
+    const agentModel = context.agent.model
     const serverSide =
       model.modelInfo.capabilities?.serverSideSummary === true &&
-      context.agent.model.modelInfo.capabilities?.serverSideSummary === true
+      agentModel.modelInfo.capabilities?.serverSideSummary === true &&
+      model.constructor === agentModel.constructor &&
+      model.modelId === agentModel.modelId
     if (serverSide && (await this._summarizeServerSide(context, model, safe))) return true
 
     const contentBlocks = flattenMessagesToContent(safe)

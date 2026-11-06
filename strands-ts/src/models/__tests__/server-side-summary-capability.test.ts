@@ -1,11 +1,13 @@
 import { describe, it, expect, vi } from 'vitest'
 import type { LanguageModelV3 } from '@ai-sdk/provider'
+import type OpenAI from 'openai'
 import { BedrockModel } from '../bedrock.js'
 import { GoogleModel } from '../google/index.js'
 import { OpenAIModel } from '../openai/index.js'
 import { VercelModel } from '../vercel.js'
 import type { Model } from '../model.js'
 import type { ModelInfo } from '../model-info.js'
+import { TestModelProvider } from '../../__fixtures__/model-test-helpers.js'
 
 const MODEL_ID = 'claude-sonnet-5-5'
 
@@ -20,7 +22,7 @@ function vercelProvider(): LanguageModelV3 {
   } as unknown as LanguageModelV3
 }
 
-describe('providers without server-side summary', () => {
+describe('models without server-side summary', () => {
   it.each<[string, (modelInfo?: ModelInfo) => Model]>([
     [
       'bedrock',
@@ -29,15 +31,24 @@ describe('providers without server-side summary', () => {
     ],
     [
       'openai chat',
-      (modelInfo) => new OpenAIModel({ api: 'chat', modelId: MODEL_ID, apiKey: 'k', ...(modelInfo && { modelInfo }) }),
+      (modelInfo) =>
+        new OpenAIModel({ api: 'chat', modelId: MODEL_ID, client: {} as OpenAI, ...(modelInfo && { modelInfo }) }),
     ],
     [
       'openai responses',
       (modelInfo) =>
-        new OpenAIModel({ api: 'responses', modelId: MODEL_ID, apiKey: 'k', ...(modelInfo && { modelInfo }) }),
+        new OpenAIModel({ api: 'responses', modelId: MODEL_ID, client: {} as OpenAI, ...(modelInfo && { modelInfo }) }),
     ],
     ['google', (modelInfo) => new GoogleModel({ modelId: MODEL_ID, apiKey: 'k', ...(modelInfo && { modelInfo }) })],
     ['vercel', (modelInfo) => new VercelModel({ provider: vercelProvider(), ...(modelInfo && { modelInfo }) })],
+    [
+      'a custom Model subclass',
+      (modelInfo) => {
+        const model = new TestModelProvider()
+        model.updateConfig({ modelId: MODEL_ID, ...(modelInfo && { modelInfo }) })
+        return model
+      },
+    ],
   ])('%s turns it off for listed models unless the modelInfo override sets it', (_name, makeModel) => {
     expect(makeModel().modelInfo.capabilities?.serverSideSummary).toBe(false)
     const override: ModelInfo = { capabilities: { serverSideSummary: true } }

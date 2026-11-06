@@ -10,6 +10,7 @@ import { createMockAgent } from '../../../__fixtures__/agent-helpers.js'
 import { MockMessageModel } from '../../../__fixtures__/mock-message-model.js'
 import type { Agent } from '../../../agent/agent.js'
 import type { ContextState } from '../../types.js'
+import type { ToolRegistry } from '../../../registry/tool-registry.js'
 
 vi.mock('../../methods/summarize.js', async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>
@@ -396,6 +397,53 @@ describe('server-side summary', () => {
       expect.objectContaining({ role: 'assistant', content: [summary] }),
       expect.objectContaining({ role: 'user', content: [new TextBlock('recent')] }),
     ])
+  })
+
+  it.each([
+    {
+      name: 'with summarizer instructions',
+      config: { systemPrompt: 'keep ids' },
+      instructions: { instructions: 'keep ids' },
+    },
+    { name: 'without summarizer instructions', config: {}, instructions: {} },
+  ])('passes the live system prompt and tools to the server-side summary $name', async ({ config, instructions }) => {
+    const toolSpec = { name: 'read', description: 'Read a file', inputSchema: { type: 'object' as const } }
+    const summarize = vi.fn(async () => new SummaryBlock({ provider: 'anthropic', text: 'compacted' }))
+    const model = serverSideModel(summarize)
+    const messages = openingMessages()
+    const agent = createMockAgent({
+      messages,
+      toolRegistry: { list: () => [{ toolSpec }] } as unknown as ToolRegistry,
+      extra: { model, systemPrompt: 'be terse' } as unknown as Partial<Agent>,
+    })
+    const strategy = Offload.summarize('*', config).when({ utilization: 0.8, preserveRecent: 1 })
+
+    expect(await strategy.apply({ messages, agent, utilization: 0.9 })).toBe(true)
+
+    expect(summarize).toHaveBeenCalledWith(expect.any(Array), {
+      systemPrompt: 'be terse',
+      toolSpecs: [toolSpec],
+      ...instructions,
+    })
+  })
+
+  it.each<{ name: string; other: Record<string, unknown> }>([
+    { name: 'a different model id', other: { modelId: 'claude-opus-5-5' } },
+    { name: 'a different provider', other: { constructor: class OtherModel {} } },
+  ])('summarizes client-side when the agent model is $name', async ({ other }) => {
+    const auxModel = { ...serverSideModel(vi.fn()), modelId: 'claude-haiku-5-5' }
+    const agentModel = { ...serverSideModel(vi.fn()), modelId: 'claude-haiku-5-5', ...other }
+    const messages = openingMessages()
+    const agent = createMockAgent({
+      messages,
+      extra: { model: agentModel, auxModel } as unknown as Partial<Agent>,
+    })
+    const strategy = Offload.summarize('*').when({ utilization: 0.8, preserveRecent: 1 })
+
+    expect(await strategy.apply({ messages, agent, utilization: 0.9 })).toBe(true)
+
+    expect(auxModel.summarize).not.toHaveBeenCalled()
+    expect(hasClientSideSummary(messages)).toBe(true)
   })
 
   it('falls back to client-side when a pin is summarized', async () => {

@@ -1335,9 +1335,9 @@ describe('countTokens', () => {
 })
 
 describe('info', () => {
-  it('knows only that temporary messages are off for a provider with no model id, and unknown stateful reads as false', () => {
+  it('knows only that temporary messages and server-side summary are off for a provider with no model id, and unknown stateful reads as false', () => {
     const provider = new TestModelProvider()
-    expect(provider.modelInfo).toEqual({ capabilities: { temporaryMessages: false } })
+    expect(provider.modelInfo).toEqual({ capabilities: { temporaryMessages: false, serverSideSummary: false } })
     expect(provider.stateful).toBe(false)
   })
 

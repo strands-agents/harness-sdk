@@ -4,7 +4,7 @@ import { VERSION as SDK_VERSION } from '@anthropic-ai/sdk/version'
 import { isNode } from '../../__fixtures__/environment.js'
 import { AnthropicModel } from '../anthropic.js'
 import { ModelProxy } from '../model-proxy.js'
-import { ContextWindowOverflowError, ModelError, ModelThrottledError } from '../../errors.js'
+import { ContextWindowOverflowError, ModelError, ModelThrottledError, NotImplementedError } from '../../errors.js'
 import { collectGenerator, collectIterator } from '../../__fixtures__/model-test-helpers.js'
 import {
   Message,
@@ -3415,14 +3415,56 @@ describe('AnthropicModel server-side summary', () => {
       new Message({ role: 'assistant', content: [new TextBlock('yo')] }),
     ]
 
-    const block = await compactionModel(client).summarize(messages, { systemPrompt: 'sys', instructions: 'keep ids' })
+    const toolSpec = { name: 'read', description: 'Read a file', inputSchema: { type: 'object' as const } }
+    const model = compactionModel(client)
+    model.updateConfig({ params: { context_management: { edits: [] } } })
 
-    expect(captured.request.compaction).toEqual({ type: 'summarize', instructions: 'keep ids' })
+    const block = await model.summarize(messages, {
+      systemPrompt: 'sys',
+      toolSpecs: [toolSpec],
+      instructions: 'keep ids',
+    })
+
+    expect(captured.request).toEqual({
+      model: 'claude-sonnet-5-5',
+      max_tokens: 1,
+      stream: true,
+      system: 'sys',
+      tools: [{ name: 'read', description: 'Read a file', input_schema: { type: 'object' } }],
+      messages: [
+        { role: 'user', content: [{ type: 'text', text: 'hi' }] },
+        { role: 'assistant', content: [{ type: 'text', text: 'yo' }] },
+      ],
+      compaction: { type: 'summarize', instructions: 'keep ids' },
+    })
     expect(captured.options).toEqual({ headers: { 'anthropic-beta': 'compact-2026-09-04' } })
-    expect(captured.request).not.toHaveProperty('stop_sequences')
-    expect(captured.request.system).toBe('sys')
-    expect(captured.request.messages).toHaveLength(2)
     expect(block).toEqual(storedCompaction('the summary', 's1'))
+  })
+
+  it.each([
+    { name: 'a 429', error: Object.assign(new Error('rate limited'), { status: 429 }), type: ModelThrottledError },
+    {
+      name: 'a context overflow',
+      error: new Error('prompt is too long: 300000 tokens'),
+      type: ContextWindowOverflowError,
+    },
+  ])('maps $name from the compaction request like stream()', async ({ error, type }) => {
+    const client = {
+      messages: { stream: vi.fn() },
+      beta: { messages: { stream: vi.fn(() => ({ finalMessage: async () => Promise.reject(error) })) } },
+    } as unknown as Anthropic
+
+    await expect(
+      compactionModel(client).summarize([new Message({ role: 'user', content: [new TextBlock('hi')] })])
+    ).rejects.toThrow(type)
+  })
+
+  it('throws NotImplementedError for a client without the beta messages API', async () => {
+    const client = { messages: { stream: vi.fn() } } as unknown as Anthropic
+
+    await expect(
+      compactionModel(client).summarize([new Message({ role: 'user', content: [new TextBlock('hi')] })])
+    ).rejects.toThrow(NotImplementedError)
   })
 
   it('throws without a compaction block', async () => {
@@ -3493,10 +3535,10 @@ describe('AnthropicModel server-side summary', () => {
     expect(model.modelInfo.capabilities?.serverSideSummary).toBe(true)
   })
 
-  it.each(['claude-sonnet-4-5', 'm1'])('leaves server-side summary unset for other model %s', (modelId) => {
+  it.each(['claude-sonnet-4-5', 'm1'])('turns server-side summary off for other model %s', (modelId) => {
     const model = new AnthropicModel({ apiKey: 'sk-ant-test', modelId, maxTokens: 1 })
 
-    expect(model.modelInfo.capabilities?.serverSideSummary).toBeUndefined()
+    expect(model.modelInfo.capabilities?.serverSideSummary).toBe(false)
   })
 
   it('sends the compaction text without the capability', async () => {
