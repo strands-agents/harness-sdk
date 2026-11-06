@@ -47,7 +47,7 @@ def test_model_router_selects_expected_model_from_three_candidates(caplog):
         strategy=ClassifierStrategy(
             BedrockModel(
                 model_id=_HAIKU_MODEL_ID,
-                max_tokens=512,
+                max_tokens=64,
                 streaming=False,
                 temperature=0,
             )
@@ -86,9 +86,7 @@ def test_model_router_classifies_with_a_decision_model(caplog):
     """An explicit LLMDecisionModel routes the same request to the same candidate as a plain Model."""
     routine_model = BedrockModel(model_id=_NOVA_LITE_MODEL_ID, max_tokens=512, streaming=False)
     advanced_model = BedrockModel(model_id=_NOVA_PRO_MODEL_ID, max_tokens=512, streaming=False)
-    classifier = LLMDecisionModel(
-        BedrockModel(model_id=_HAIKU_MODEL_ID, max_tokens=512, streaming=False, temperature=0)
-    )
+    classifier = LLMDecisionModel(BedrockModel(model_id=_HAIKU_MODEL_ID, max_tokens=64, streaming=False, temperature=0))
     router = ModelRouter(
         models=[
             RoutingCandidate(

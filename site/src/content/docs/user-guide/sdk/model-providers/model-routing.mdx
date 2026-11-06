@@ -142,7 +142,7 @@ routing_policy = (
 )
 classifier_model = BedrockModel(
     model_id="us.anthropic.claude-haiku-4-5-20251001-v1:0",
-    max_tokens=512,
+    max_tokens=64,
     streaming=False,
     temperature=0,
 )
@@ -261,7 +261,7 @@ class ClassifyThenFallback:
 
 classifier_model = BedrockModel(
     model_id="us.anthropic.claude-haiku-4-5-20251001-v1:0",
-    max_tokens=512,
+    max_tokens=64,
     streaming=False,
     temperature=0,
 )
