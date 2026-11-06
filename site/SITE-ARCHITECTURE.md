@@ -910,6 +910,7 @@ Our implementation renders documentation through Astro's container API, applies 
 - `/llms-full.txt` - Complete docs, generated sample guide, and blog content (excludes API reference)
 - `/{slug}/index.md` - Any doc page in raw markdown format
 - `/examples/{sample}/index.md` - Any generated sample guide in raw markdown format
+- `/integrations.json` - Integrations catalog feed built from the `catalog` collection, described by `/integrations.schema.json`
 
 ### Implementation Files
 
@@ -919,6 +920,7 @@ Our implementation renders documentation through Astro's container API, applies 
 | `src/pages/llms-full.txt.ts` | Renders all docs inline |
 | `src/pages/[...slug]/index.md.ts` | Dynamic endpoint for individual pages |
 | `src/pages/examples/[...sample]/index.md.ts` | Dynamic endpoint for generated sample guides |
+| `src/pages/integrations.json.ts`, `src/pages/integrations.schema.json.ts` | Integrations feed and its JSON Schema (`src/util/catalog-feed.ts`) |
 | `src/util/render-to-markdown.ts` | Renders MDX entries via AstroContainer |
 | `src/util/html-to-markdown.ts` | HTML→Markdown conversion with custom rules |
 
