@@ -47,6 +47,9 @@ dependencies = [
 
 [project.optional-dependencies]
 anthropic = ["anthropic>=0.21.0,<3.0.0"]
+# The vendor SDKs behind BedrockModel.Messages/.ChatCompletions/.Responses. BedrockModel (Converse) needs no extra:
+# it uses boto3, a core dependency. anthropic 0.91.0 adds the bedrock-mantle client.
+bedrock = ["anthropic>=0.91.0,<3.0.0", "openai>=1.68.0,<4.0.0", "aws-bedrock-token-generator>=1.1.0,<2.0.0"]
 gemini = ["google-genai>=1.68.0,<3.0.0"]
 # Ceiling is the last known-good release rather than the major: 1.107.0 was a compromised
 # build (credential stealer, removed from PyPI 2026-10-21). Given that history the cap moves
@@ -101,7 +104,7 @@ bidi-pyaudio = ["pyaudio>=0.2.0,<0.3.0"]
 bidi-all = ["strands-agents[a2a,bidi,bidi-aec,bidi-google,bidi-io,bidi-openai,docs,otel]"]
 
 all = [
-    "strands-agents[a2a,anthropic,bidi-all,cedar,docs,gemini,litellm,llamaapi,mistral,ollama,openai,writer,sagemaker,otel,web-fetch]"
+    "strands-agents[a2a,anthropic,bedrock,bidi-all,cedar,docs,gemini,litellm,llamaapi,mistral,ollama,openai,writer,sagemaker,otel,web-fetch]"
 ]
 
 dev = [
