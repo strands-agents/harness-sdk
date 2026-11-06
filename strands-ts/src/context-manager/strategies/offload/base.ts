@@ -4,6 +4,7 @@
 
 import { logger } from '../../../logging/logger.js'
 import { MessageAddedEvent } from '../../../hooks/events.js'
+import { ModelProxy } from '../../../models/model-proxy.js'
 import {
   Message,
   TextBlock,
@@ -11,6 +12,7 @@ import {
   ToolUseBlock,
   CachePointBlock,
   ReasoningBlock,
+  InjectedBlock,
 } from '../../../types/messages.js'
 import type { ContentBlock } from '../../../types/messages.js'
 import type { InvocationContext } from '../../../agent/invocation-context.js'
@@ -430,6 +432,8 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
     if (block instanceof ToolUseBlock) return false
     if (block instanceof CachePointBlock) return false
     if (block instanceof ReasoningBlock) return false
+    // Injected text is written after its message was stashed, so a ref to it would point at nothing.
+    if (block instanceof InjectedBlock) return false
     if (block instanceof TextBlock) return targetMatchesMessage(this._target, message)
     if (block instanceof ToolResultBlock) {
       if (this._stash && toolNameMap.get(block.toolUseId) === RETRIEVAL_TOOL_NAME) return false
@@ -553,7 +557,7 @@ export class EmergencyTruncateStrategy extends BaseOffloadStrategy {
   override async apply(context: ContextState): Promise<boolean> {
     if (context.messages.length <= 3) return false
     if (!context.overflow) {
-      const tokens = await context.agent.model.countTokens(context.messages)
+      const tokens = await new ModelProxy(context.agent.model).countTokens(context.messages)
       const utilization = context.agent.model.estimateUtilization(tokens)
       if (utilization < 1.0) return false
     }

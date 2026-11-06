@@ -22,6 +22,7 @@ import {
   limitStopMessage,
   Message,
   ReasoningBlock,
+  InjectedBlock,
   TextBlock,
   ToolResultBlock,
   ToolUseBlock,
@@ -413,11 +414,14 @@ describe('subagent tool', () => {
     const toolUse = (toolUseId: string, name: string): Message =>
       new Message({ role: 'assistant', content: [new ToolUseBlock({ toolUseId, name, input: {} })] })
 
-    it("forks messages for 'all', dropping reasoning and in-flight tool calls", async () => {
+    it("forks messages for 'all', dropping reasoning, injected text and in-flight tool calls", async () => {
       const { builder, child } = capturingBuilder()
       const tool = makeSubagent({ builder, context: allContext() })
       const parent = parentAgent([
-        textMessage('user', 'go'),
+        new Message({
+          role: 'user',
+          content: [new TextBlock('go'), new InjectedBlock({ text: '<todos>v1</todos>', source: 'todos' })],
+        }),
         new Message({
           role: 'assistant',
           content: [

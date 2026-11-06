@@ -3,6 +3,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { VERSION as SDK_VERSION } from '@anthropic-ai/sdk/version'
 import { isNode } from '../../__fixtures__/environment.js'
 import { AnthropicModel } from '../anthropic.js'
+import { ModelProxy } from '../model-proxy.js'
 import { ContextWindowOverflowError, ModelError, ModelThrottledError } from '../../errors.js'
 import { collectGenerator, collectIterator } from '../../__fixtures__/model-test-helpers.js'
 import {
@@ -13,6 +14,7 @@ import {
   ToolResultBlock,
   JsonBlock,
   ReasoningBlock,
+  InjectedBlock,
 } from '../../types/messages.js'
 import { ImageBlock, DocumentBlock, VideoBlock } from '../../types/media.js'
 import { warnOnce } from '../../logging/warn-once.js'
@@ -196,8 +198,26 @@ describe('AnthropicModel', () => {
   describe('info', () => {
     it('reads cache points from the shared model info', () => {
       const model = new AnthropicModel({ apiKey: 'sk-ant-test', modelId: 'claude-sonnet-4-6' })
-
       expect(model.modelInfo.capabilities?.promptCaching).toBe('cachePoints')
+    })
+
+    it.each([
+      ['claude-opus-5-5', true],
+      ['claude-opus-5-5-20260401', true],
+      ['claude-sonnet-5', false],
+      ['claude-sonnet-4-6', false],
+    ])('reports temporary messages from the shared model info for %s: %s', (modelId, expected) => {
+      const model = new AnthropicModel({ apiKey: 'sk-ant-test', modelId })
+      expect(model.modelInfo.capabilities?.temporaryMessages).toBe(expected)
+    })
+
+    it('lets the modelInfo config turn temporary messages off', () => {
+      const model = new AnthropicModel({
+        apiKey: 'sk-ant-test',
+        modelId: 'claude-opus-5-5',
+        modelInfo: { capabilities: { temporaryMessages: false } },
+      })
+      expect(model.modelInfo.capabilities?.temporaryMessages).toBe(false)
     })
 
     it('re-resolves the default maxTokens when modelId changes', () => {
@@ -1347,6 +1367,109 @@ describe('AnthropicModel', () => {
         expect(content.content).toBe('result')
         expect(warnSpy).toHaveBeenCalled()
         warnSpy.mockRestore()
+      })
+    })
+
+    describe('injected blocks', () => {
+      const injected = (text: string) => new InjectedBlock({ text, source: 'test' })
+      const turnScoped = (text: string) => ({
+        role: 'system',
+        content: [{ type: 'text', text }],
+        clear_at: 'next_user_message',
+      })
+
+      it('sends each user message its injected text as a turn-scoped system message after it', async () => {
+        const { captured, mockClient } = setupCapture()
+        const provider = new AnthropicModel({
+          client: mockClient,
+          modelId: 'claude-opus-5-5',
+          betas: ['interleaved-thinking-2025-05-14'],
+          cacheConfig: {},
+        })
+        const messages = [
+          new Message({ role: 'user', content: [new TextBlock('first'), injected('one')] }),
+          new Message({ role: 'assistant', content: [new TextBlock('ok')] }),
+          new Message({ role: 'user', content: [new TextBlock('second'), injected('two'), injected('three')] }),
+        ]
+
+        await collectIterator(provider.stream(messages))
+
+        expect(captured.request.messages).toEqual([
+          { role: 'user', content: [{ type: 'text', text: 'first' }] },
+          turnScoped('one'),
+          { role: 'assistant', content: [{ type: 'text', text: 'ok' }] },
+          { role: 'user', content: [{ type: 'text', text: 'second', cache_control: { type: 'ephemeral' } }] },
+          {
+            role: 'system',
+            content: [
+              { type: 'text', text: 'two' },
+              { type: 'text', text: 'three' },
+            ],
+            clear_at: 'next_user_message',
+          },
+        ])
+        expect(captured.options).toEqual({
+          headers: { 'anthropic-beta': 'interleaved-thinking-2025-05-14,mid-conversation-system-clear-at-2026-08-21' },
+        })
+      })
+
+      it('leaves out the system message of a user message followed directly by another', async () => {
+        const { captured, mockClient } = setupCapture()
+        const provider = new AnthropicModel({ client: mockClient, modelId: 'claude-opus-5-5' })
+        const messages = [
+          new Message({ role: 'user', content: [new TextBlock('first'), injected('one')] }),
+          new Message({ role: 'user', content: [new TextBlock('second'), injected('two')] }),
+        ]
+
+        await collectIterator(provider.stream(messages))
+
+        expect(captured.request.messages).toEqual([
+          { role: 'user', content: [{ type: 'text', text: 'first' }] },
+          { role: 'user', content: [{ type: 'text', text: 'second' }] },
+          turnScoped('two'),
+        ])
+      })
+
+      it('sends no injected text and no beta to a model without temporary messages', async () => {
+        const { captured, mockClient } = setupCapture()
+        const provider = new AnthropicModel({ client: mockClient, modelId: 'claude-sonnet-4-6' })
+        const messages = [new Message({ role: 'user', content: [new TextBlock('first'), injected('one')] })]
+
+        await collectIterator(provider.stream(messages))
+
+        expect(captured.request.messages).toEqual([{ role: 'user', content: [{ type: 'text', text: 'first' }] }])
+        expect(captured.options).toBeUndefined()
+      })
+
+      it('leaves cleared injected blocks out of the token estimate', async () => {
+        const proxy = new ModelProxy(new AnthropicModel({ apiKey: 'sk-ant-test', modelId: 'claude-opus-5-5' }))
+        const conversation = (first: Message): Message[] => [
+          first,
+          new Message({ role: 'assistant', content: [new TextBlock('ok')] }),
+          new Message({ role: 'user', content: [new TextBlock('second'), injected('two')] }),
+        ]
+        const withEarlier = conversation(
+          new Message({ role: 'user', content: [new TextBlock('first'), injected('x'.repeat(400))] })
+        )
+        const withoutEarlier = conversation(new Message({ role: 'user', content: [new TextBlock('first')] }))
+
+        expect(await proxy.countTokens(withEarlier)).toBe(await proxy.countTokens(withoutEarlier))
+      })
+
+      it('counts the system message natively, with the beta', async () => {
+        const countTokens = vi.fn(async () => ({ input_tokens: 9 }))
+        const client = { messages: { stream: vi.fn(), countTokens } } as unknown as Anthropic
+        const provider = new AnthropicModel({ client, modelId: 'claude-opus-5-5', useNativeTokenCount: true })
+        const messages = [new Message({ role: 'user', content: [new TextBlock('first'), injected('one')] })]
+
+        expect(await provider.countTokens(messages)).toBe(9)
+        expect(countTokens).toHaveBeenCalledWith(
+          {
+            model: 'claude-opus-5-5',
+            messages: [{ role: 'user', content: [{ type: 'text', text: 'first' }] }, turnScoped('one')],
+          },
+          { headers: { 'anthropic-beta': 'mid-conversation-system-clear-at-2026-08-21' } }
+        )
       })
     })
 
