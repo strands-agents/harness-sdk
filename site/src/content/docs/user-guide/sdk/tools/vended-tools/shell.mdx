@@ -14,6 +14,8 @@ different tools here:
 - **TypeScript `bash`** spawns a persistent `bash` process on the host. Shell state (variables, working directory, exported functions) persists across invocations within the same session, so the agent can build up context incrementally. Sessions can be restarted to clear state.
 - **Python `shell`** (and TypeScript's `makeShell`) routes each command through the agent's [Sandbox](../../sandbox/index.mdx) and is stateless: every call runs in a fresh shell, so variables and the working directory do not carry over. The sandbox decides the interpreter (`sh` locally and in Docker, the remote login shell over SSH), so use portable POSIX syntax.
 
+The sandbox-routed tool returns `{output, error, exit_code}` by default. Pass `result_keys="stdout_stderr"` to `make_shell` (`resultKeys: 'stdout_stderr'` to `makeShell`) to get `{stdout, stderr, exit_code}` instead; stderr is often progress or warnings, so check `exit_code` for failure.
+
 _Supported in: Node.js on Unix/Linux/macOS (TypeScript), all platforms (Python)._
 
 :::caution[Security Warning]
@@ -46,6 +48,7 @@ agent("List all Python files in the current directory and count them")
 </Tabs>
 
 **Example - Session Persistence (TypeScript):**
+
 ```typescript
 --8<-- "user-guide/sdk/tools/vended-tools/shell_imports.ts:bash_import"
 

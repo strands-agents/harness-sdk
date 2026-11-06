@@ -12,17 +12,26 @@ export const SANDBOX_SHELL_DESCRIPTION =
   'command failed). Each call runs in a fresh shell; ' +
   'state such as variables and the working directory does not persist across calls.'
 
+/** Description for the shell tool when it returns `{ stdout, stderr, exit_code }`. */
+export const SANDBOX_SHELL_STDIO_DESCRIPTION =
+  'Executes shell commands and returns stdout, stderr, and exit_code (non-zero means the command failed). ' +
+  'Each call runs in a fresh shell; ' +
+  'state such as variables and the working directory does not persist across calls.'
+
+/** Key names for the shell tool's result: `{ output, error, exit_code }` or `{ stdout, stderr, exit_code }`. */
+export type ShellResultKeys = 'output_error' | 'stdout_stderr'
+
 /**
  * Error thrown when a sandbox-routed shell command exceeds its timeout.
  *
  * Extends {@link BashTimeoutError} so that callers who caught the previous error
  * type keep working; new code should catch this instead.
  */
-export class ShellTimeoutError extends BashTimeoutError {
-  /** Output captured before the command was killed, when the sandbox reported it. */
-  readonly partial?: ShellOutput
+export class ShellTimeoutError<T extends ShellOutput | ShellStdioOutput = ShellOutput> extends BashTimeoutError {
+  /** Output captured before the command was killed, when the sandbox reported it. Keys follow `resultKeys`. */
+  readonly partial?: T
 
-  constructor(message: string, partial?: ShellOutput) {
+  constructor(message: string, partial?: T) {
     super(message)
     this.name = 'ShellTimeoutError'
     if (partial) this.partial = partial
@@ -57,6 +66,32 @@ export interface ShellOutput {
    * Empty string if no errors occurred.
    */
   error: string
+
+  /**
+   * Exit code of the command. Non-zero means the command failed.
+   */
+  exit_code: number
+
+  /**
+   * Allow indexing with string keys for JSONValue compatibility.
+   */
+  [key: string]: string | number
+}
+
+/**
+ * Output format for shell command execution with `resultKeys: 'stdout_stderr'`. Mirrors the
+ * Python SDK's `ShellStdioOutput`.
+ */
+export interface ShellStdioOutput {
+  /**
+   * Standard output from the command.
+   */
+  stdout: string
+
+  /**
+   * Standard error from the command. Not a failure signal; check `exit_code`.
+   */
+  stderr: string
 
   /**
    * Exit code of the command. Non-zero means the command failed.
