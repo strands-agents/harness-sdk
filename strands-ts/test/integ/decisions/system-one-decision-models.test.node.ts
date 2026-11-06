@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { DecisionsAPIDecisionModel, TypeSafeDecisionModel } from '@strands-agents/sdk'
+import { DecisionsAPIDecisionModel, SageMakerDecisionModel, TypeSafeDecisionModel } from '@strands-agents/sdk'
 import type { DecisionModel } from '@strands-agents/sdk'
 
 interface SystemOneProvider {
@@ -22,6 +22,13 @@ const providers: readonly SystemOneProvider[] = [
     skip: !process.env['JEV_API_KEY'],
     providerName: 'decisionsApi',
     create: () => new DecisionsAPIDecisionModel(),
+  },
+  {
+    name: 'SageMakerDecisionModel',
+    // A strands-decider endpoint deployed with strands-decider's deploy/sagemaker, in the default AWS region.
+    skip: !process.env['SAGEMAKER_DECISION_ENDPOINT'],
+    providerName: 'sagemaker',
+    create: () => new SageMakerDecisionModel({ endpointName: process.env['SAGEMAKER_DECISION_ENDPOINT']! }),
   },
 ]
 
