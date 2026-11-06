@@ -117,12 +117,12 @@ def search_docs(
 ) -> List[Dict[str, Any]]:
     """Search the official Strands Agents docs: user guides, API reference pages, and examples.
 
-    Ranking uses document titles and, once a page has been fetched, its content, so both title-like keywords
-    and body terms work. The top results are fetched on demand to build snippets. Call fetch_doc with a result
-    URL to read the page or one of its sections. If you already have a strandsagents.com URL, call fetch_doc
-    directly instead of searching.
+    Ranking uses page titles, URL paths, and catalog descriptions, plus a page's content once it has been
+    fetched, so both title-like keywords and body terms work. The top results are fetched on demand to build
+    snippets. Call fetch_doc with a result URL to read the page or one of its sections. If you already have a
+    strandsagents.com URL, call fetch_doc directly instead of searching.
 
-    Each result has url, title, snippet, and score. The score is an unbounded TF-IDF value: higher is better
+    Each result has url, title, snippet, and score. The score is an unbounded BM25 value: higher is better
     within one result set; it is not a probability and is not comparable across queries. Returns an empty list
     when nothing matches. If a result page cannot be fetched, its title is used as the snippet.
     """
