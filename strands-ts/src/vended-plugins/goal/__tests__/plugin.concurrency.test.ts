@@ -327,4 +327,51 @@ describe('GoalLoop with concurrent invocations', () => {
     expect(text(resumed.lastMessage)).toBe('GOOD')
     expect(goal.lastResult(agent)).toMatchObject({ passed: true, stopReason: 'satisfied' })
   })
+
+  it.each(['stopPrevious', 'cancelPrevious'] as const)(
+    "'%s': a caller arriving while A's answer is being graded gets a fresh run, not A's retry",
+    async (mode) => {
+      let signalGrading!: () => void
+      const grading = new Promise<void>((resolve) => (signalGrading = resolve))
+      let releaseGrade!: () => void
+      const gradeReleased = new Promise<void>((resolve) => (releaseGrade = resolve))
+      const graded: string[] = []
+      const goal = new GoalLoop({
+        maxAttempts: 3,
+        preserveContext: false,
+        goal: async (message) => {
+          graded.push(text(message))
+          if (graded.length === 1) {
+            signalGrading()
+            await gradeReleased
+          }
+          return { passed: text(message) === 'GOOD-B', feedback: 'try again' }
+        },
+      })
+      const model = new MockMessageModel()
+        .addTurn({ type: 'textBlock', text: 'A-answer' })
+        .addTurn({ type: 'textBlock', text: 'B-first' })
+        .addTurn({ type: 'textBlock', text: 'GOOD-B' })
+      const agent = new Agent({ model, plugins: [goal], printer: false, concurrentInvocationMode: mode })
+
+      const first = agent.invoke('a')
+      await grading
+      const second = agent.invoke('b')
+      releaseGrade()
+
+      // A's grade failed, but B was waiting, so A ends with its answer instead of a retry.
+      expect(text((await first).lastMessage)).toBe('A-answer')
+      expect(text((await second).lastMessage)).toBe('GOOD-B')
+      expect(history(agent).slice(0, 3)).toEqual(['user: a', 'assistant: A-answer', 'user: b'])
+
+      // B got a run of its own: attempts 1-2, and its retry restored B's snapshot, not A's.
+      expect(graded).toEqual(['A-answer', 'B-first', 'GOOD-B'])
+      expect(goal.lastResult(agent)?.attempts.map((attempt) => attempt.attempt)).toEqual([1, 2])
+      expect(history(agent).slice(-3)).toEqual([
+        'user: b',
+        expect.stringMatching(/^user: Your previous attempt/),
+        'assistant: GOOD-B',
+      ])
+    }
+  )
 })

@@ -100,8 +100,9 @@ export type Validator = (
 
 /**
  * Why a goal run ended. `'limit'` means one of the request's `limits` was reached, so no
- * further attempt could run; `'stopped'` means the pass was cancelled or superseded by
- * another invocation, so there was no answer to grade — see {@link GoalResult.agentStopReason}.
+ * further attempt could run; `'stopped'` means the invocation was cancelled or superseded by
+ * another caller, either mid-pass or while its answer was being graded, so no retry could run —
+ * see {@link GoalResult.agentStopReason}.
  */
 export type GoalStopReason = 'satisfied' | 'maxAttempts' | 'timeout' | 'limit' | 'stopped'
 
@@ -117,7 +118,7 @@ export interface GoalAttempt {
 export interface GoalResult {
   passed: boolean
   stopReason: GoalStopReason
-  /** The agent's own stop reason when `stopReason` is `'stopped'`. */
+  /** Why the run was stopped (`'cancelled'` or `'superseded'`) when `stopReason` is `'stopped'`. */
   agentStopReason?: StopReason
   attempts: readonly GoalAttempt[]
 }
@@ -438,6 +439,17 @@ export class GoalLoop implements Plugin {
       }
       if (invocationContext && reachedLimit(invocationContext)) {
         finishRun(run, 'limit')
+        return
+      }
+      // A caller that arrived while this answer was graded takes the turn instead of a retry:
+      // the agent drops the resume, so don't arm it (or rewind the conversation for it).
+      const takenOver = agent.cancelSignal.aborted
+        ? 'cancelled'
+        : (agent as Agent).pendingInvocations.some((pending) => pending.mode === 'stopPrevious')
+          ? 'superseded'
+          : undefined
+      if (takenOver) {
+        finishRun(run, 'stopped', takenOver)
         return
       }
 
