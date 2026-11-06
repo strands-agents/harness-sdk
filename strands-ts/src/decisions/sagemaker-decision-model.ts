@@ -34,7 +34,8 @@ export interface SageMakerDecisionModelOptions {
  *
  * Requests are signed with AWS Signature Version 4 using the standard AWS credential chain;
  * callers need `sagemaker:InvokeEndpoint` on the endpoint. `@aws-sdk/client-sagemaker-runtime`
- * is an optional peer dependency, loaded on the first request.
+ * is an optional peer dependency, loaded on the first request. Install it with
+ * `npm install @aws-sdk/client-sagemaker-runtime`.
  *
  * @example
  * ```typescript
@@ -87,7 +88,7 @@ export class SageMakerDecisionModel extends DecisionModel {
   }
 
   private async _invoke(body: string, cancelSignal?: AbortSignal): Promise<unknown> {
-    const { InvokeEndpointCommand } = await import('@aws-sdk/client-sagemaker-runtime')
+    const { InvokeEndpointCommand } = await loadSageMakerRuntime()
     const client = await this._getClient()
     let responseBody: Uint8Array | undefined
     try {
@@ -113,10 +114,22 @@ export class SageMakerDecisionModel extends DecisionModel {
   }
 
   private _getClient(): Promise<SageMakerRuntimeClient> {
-    this._client ??= import('@aws-sdk/client-sagemaker-runtime').then(
+    this._client ??= loadSageMakerRuntime().then(
       ({ SageMakerRuntimeClient }) => new SageMakerRuntimeClient(this._clientConfig)
     )
     return this._client
+  }
+}
+
+async function loadSageMakerRuntime(): Promise<typeof import('@aws-sdk/client-sagemaker-runtime')> {
+  try {
+    return await import('@aws-sdk/client-sagemaker-runtime')
+  } catch (cause) {
+    throw new Error(
+      "SageMakerDecisionModel requires the '@aws-sdk/client-sagemaker-runtime' package | " +
+        "install it with: npm install '@aws-sdk/client-sagemaker-runtime'",
+      { cause }
+    )
   }
 }
 
