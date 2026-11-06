@@ -95,7 +95,7 @@ of three phases: **research** (gather), **analysis** (reason), and **review**
 |---|---|---|
 | **[Agents as tools](./agents-as-tools.md)** | The orchestrator LLM picks a specialist per query. | One agent delegates a research or analysis sub-question to an expert, then folds the answer back in. |
 | **[Workflow](./workflow.md)** | Fixed in code. A task graph (DAG) runs as one reusable tool; independent tasks run in parallel. | A repeatable pipeline packaged behind a single tool call: research, analysis, and review are the same every time. |
-| **[Graph](./graph.md)** | Developer-defined edges. Unconditional edges are always followed; a conditional edge is followed only when your predicate, which can inspect model output or app state, returns true. Fixed, parallel, and cyclic flows. | Research feeds analysis feeds review as a fixed chain, or a conditional edge sends the work back to analysis when the review's verdict is a rejection. |
+| **[Graph](./graph.md)** | Developer-defined edges. Unconditional edges are always followed; a conditional edge is followed only when your predicate, which can inspect model output or app state, returns true. Fixed, parallel, and cyclic flows. | Research feeds analysis feeds review as a fixed chain, or a conditional edge loops the work back for another pass when the review's verdict is a rejection (Python and TypeScript resolve nodes with several incoming edges differently; see [Graph](./graph.md#sdk-differences)). |
 | **[Swarm](./swarm.md)** | Emergent. Agents hand off autonomously through shared context, with no fixed path. | A research, analysis, and review team that reorders itself; review can hand straight back to research. |
 
 <CardGrid>
@@ -108,8 +108,8 @@ of three phases: **research** (gather), **analysis** (reason), and **review**
   <LinkCard
     title="Workflow"
     href="../workflow/"
-    description="A fixed task graph (DAG) run as a single reusable tool, with
-      independent tasks in parallel."
+    description="A fixed task graph (DAG) run as a single reusable tool. Removed
+      in strands-agents-tools 0.9.0."
   />
   <LinkCard
     title="Graph"
@@ -137,6 +137,12 @@ Graph and Swarm are SDK orchestrators; Workflow is the `workflow` community tool
 All three share the same foundations: they solve a problem too large for one
 agent, they use a single Strands `Agent` as the unit of work, and they pass
 information between components toward a final answer. They diverge on control.
+
+The `workflow` community tool was removed in `strands-agents-tools` 0.9.0. On
+current versions, use the [`graph` vended tool](../tools/vended-tools/graph.md)
+from `strands.vended_tools.graph` (Python SDK 1.63.0 and later), or build a
+[Graph](./graph.md) directly. See the
+[migration guide](../../migrate/strands-agents-tools.md#workflow).
 
 | Dimension | Graph | Swarm | Workflow |
 |---|---|---|---|
@@ -180,6 +186,11 @@ When you have a complex but repeatable process you want an agent to start as
 one reusable tool call. If you only need a fixed pipeline in your own code, a
 Graph with unconditional edges covers that too.
 
+The `workflow` tool was removed in `strands-agents-tools` 0.9.0, so on current
+versions build the same pipeline with the
+[`graph` vended tool](../tools/vended-tools/graph.md) or a [Graph](./graph.md)
+(see the [migration guide](../../migrate/strands-agents-tools.md#workflow)).
+
 - **Data pipeline**: a fixed set of extract, analyze, and report tasks, where
   independent analysis steps run in parallel.
 - **Standard business process**: onboarding (create accounts, assign training,
@@ -207,8 +218,6 @@ research → analysis → review shape:
 <Tab label="Python">
 
 ```python
-import json
-
 from strands import Agent
 from strands.hooks import BeforeNodeCallEvent, HookProvider, HookRegistry
 from strands.multiagent import GraphBuilder, Status
@@ -267,9 +276,10 @@ builder.add_edge("research", "analysis")
 builder.add_edge("analysis", "review")
 builder.set_entry_point("research")
 
-# 1. Per-node and overall deadlines. A node that exceeds its timeout raises
-#    from the graph call; the execution timeout is checked before each batch
-#    of nodes and ends the run with Status.FAILED.
+# 1. Per-node and overall deadlines. A node that exceeds its timeout raises an
+#    Exception from the graph call (not caught by the RuntimeError handler
+#    below); the execution timeout is checked before each batch of nodes and
+#    ends the run with Status.FAILED.
 builder.set_node_timeout(60)        # each node must finish within 60s
 builder.set_execution_timeout(300)  # the whole graph within 5 minutes
 
@@ -326,8 +336,8 @@ else:
   execution timeout is checked before each batch of nodes and returns a
   `FAILED` result, so it does not stop a node that is already running. In
   TypeScript, either deadline makes `invoke()` throw once the in-flight node
-  settles. Timeouts are cooperative: a tool or model call that ignores its
-  cancel signal can still run past the deadline.
+  settles, and the timeouts are cooperative: a tool or model call that ignores
+  its cancel signal can still run past the deadline.
 - **Cancellation with a recorded reason**: setting
   <Syntax py="event.cancel_node" ts="event.cancel" /> to a message skips the
   node and records that message. In Python, the graph call raises a
@@ -346,8 +356,10 @@ else:
   interrupt/resume contract.
 - **Handoff logging**: because `BeforeNodeCallEvent` fires before every node, a
   single callback records each transition. If you prefer to consume handoffs
-  from the event stream instead, watch for the `multiagent_handoff` event in
-  [`stream_async`](./graph.md#streaming-events).
+  from the event stream instead, watch for the
+  <Syntax py="multiagent_handoff" ts="multiAgentHandoffEvent" /> event in
+  <Syntax py="stream_async" ts="stream" /> (see
+  [Graph](./graph.md#streaming-events)).
 
 A [Swarm](./swarm.md) supports the same `BeforeNodeCallEvent` hook and
 interrupts, and takes its own node and execution timeouts, so you can apply
