@@ -6,7 +6,6 @@ import { confirmWorkspaceMcp, resolveMcpConfig } from '../config/trust.js'
 import { initLogging } from '../logging.js'
 import { rethrowWithProviderHint } from '../model/packages.js'
 import { importAgentProject } from '../project/import.js'
-import { withWorkspaceSessionDirectory } from '../session/sessions.js'
 import { errorMessage } from '../terminal/text.js'
 import { parseArgs, shouldPersistModelChanges, type CliRunMode, type ParsedArgs } from './arguments.js'
 import { runPlainChat, runTurn } from './console.js'
@@ -257,10 +256,9 @@ async function runInteractive(args: ParsedArgs, request: string | undefined): Pr
           profile && !launch?.agentProject
             ? {
                 profile,
-                options: withWorkspaceSessionDirectory(
-                  await harnessAgentOptionsFromConfig(profile, config.snapshot().profileBaseDir ?? initialWorkspace),
+                options: await harnessAgentOptionsFromConfig(
                   profile,
-                  initialWorkspace
+                  config.snapshot().profileBaseDir ?? initialWorkspace
                 ),
               }
             : await invocationAgentForRun(launch?.agentProject ? { ...args, agent: launch.agentProject } : args, config)

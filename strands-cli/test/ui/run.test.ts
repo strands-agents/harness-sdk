@@ -14,7 +14,6 @@ import { configurationFromStore, type RequestSetup, type SetupChange } from '../
 import { runInkChat } from '../../src/ui/run.js'
 import * as processTree from '../../src/terminal/process-tree.js'
 import { ConversationManager } from '../../src/ui/chat/conversations.js'
-import { workspaceSessionDirectory } from '../../src/session/catalog.js'
 import { idleBackend } from '../fixtures/chat-backend.js'
 
 describe('runInkChat', () => {
@@ -505,7 +504,7 @@ describe('runInkChat', () => {
       Object.defineProperty(controller, 'resumeSession', {
         value: {
           sessionId: 'saved-session',
-          sessionDirectory: workspaceSessionDirectory(process.cwd()),
+          sessionDirectory: join(process.cwd(), '.agent', 'sessions'),
           workspace: process.cwd(),
         },
       })
@@ -564,7 +563,7 @@ describe('runInkChat', () => {
     Object.defineProperty(controller, 'resumeSession', {
       value: {
         sessionId: 'interrupted-session',
-        sessionDirectory: workspaceSessionDirectory(process.cwd()),
+        sessionDirectory: join(process.cwd(), '.agent', 'sessions'),
         workspace: process.cwd(),
       },
     })

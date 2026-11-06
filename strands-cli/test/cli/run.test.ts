@@ -314,6 +314,52 @@ describe('profile model persistence', () => {
 })
 
 describe('project invocation', () => {
+  it.each([
+    { argv: [], expected: { dir: '.agent/sessions' } },
+    { argv: ['--session-id', 'saved-session'], expected: { id: 'saved-session', dir: '.agent/sessions' } },
+    { argv: ['--set', 'session.dir="custom-sessions"'], expected: { dir: 'custom-sessions' } },
+    { argv: ['--session', 'off'], expected: false as const },
+  ])('preserves Harness session storage for $argv', async ({ argv, expected }) => {
+    const workspace = join(tmpdir(), 'strands-invocation-workspace')
+    const invocation = await invocationAgentForRun(parseArgs(argv), CliConfigStore.memory(), workspace)
+    expect(invocation.options.session).toEqual(
+      expected === false ? false : { ...expected, dir: join(workspace, expected.dir) }
+    )
+  })
+
+  it.each([true, { id: 'saved-session' }, { dir: 'custom-sessions' }] as const)(
+    'resolves profile session storage against its base directory: %j',
+    async (session) => {
+      const workspace = join(tmpdir(), 'strands-invocation-workspace')
+      const profileBaseDir = join(tmpdir(), 'strands-profile-base')
+      const config = {
+        snapshot: () => ({
+          profile: defineHarnessAgentConfig({ model: 'openai/gpt-5', session }),
+          profileBaseDir,
+        }),
+        applyProviderEnvironment: () => {},
+      }
+      const invocation = await invocationAgentForRun(parseArgs([]), config, workspace)
+      expect(invocation.options.session).toEqual({
+        ...(session === true ? {} : session),
+        dir: join(profileBaseDir, session !== true && 'dir' in session ? session.dir : '.agent/sessions'),
+      })
+    }
+  )
+
+  it('preserves an absolute session directory when resuming from another workspace', async () => {
+    const workspace = join(tmpdir(), 'strands-invocation-workspace')
+    const sessionDirectory = join(tmpdir(), 'strands-saved-sessions')
+    const args = parseArgs([
+      '--session-id',
+      'saved-session',
+      '--set',
+      `session.dir=${JSON.stringify(sessionDirectory)}`,
+    ])
+    const invocation = await invocationAgentForRun(args, CliConfigStore.memory(), workspace)
+    expect(invocation.options.session).toEqual({ id: 'saved-session', dir: sessionDirectory })
+  })
+
   it('loads saved-profile packages and explicitly selected environment files', async () => {
     const directory = await realpath(await mkdtemp(join(tmpdir(), 'strands-cli-profile-')))
     const root = join(directory, 'project')

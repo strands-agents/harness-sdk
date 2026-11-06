@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { promises as fs } from 'node:fs'
-import { basename, dirname, join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { userDirectory } from '../config/store.js'
 import { strandsUserPath } from '../paths.js'
 import { isRecord } from '../values.js'
@@ -20,21 +20,13 @@ interface WorkspaceDocument {
   lastSeenAt: string
 }
 
-export function sessionRootDirectory(): string {
+function sessionRootDirectory(): string {
   return strandsUserPath('sessions')
 }
 
-/** The built-in agent's session directory for a workspace: `<root>/<workspace name>-<path hash>`. */
-export function workspaceSessionDirectory(workspace: string, root = sessionRootDirectory()): string {
-  const normalized = resolve(workspace)
-  const name = (basename(normalized).replace(/[^A-Za-z0-9_.-]/g, '-') || 'root').slice(0, 64)
-  const hash = createHash('sha256').update(normalized).digest('hex').slice(0, 12)
-  return join(resolve(root), `${name}-${hash}`)
-}
-
 /**
- * Session directories across workspaces: each workspace directory under the central root carries a
- * `workspace.json` naming its workspace; custom directories have an `external-<hash>.json` reference.
+ * Indexes session directories across workspaces with `external-<hash>.json` references.
+ * Existing directories under the catalog root are discovered through their `workspace.json`.
  * `session-roots.json` beside the root is read for existing registrations and is never written.
  */
 export class SessionRootCatalog {

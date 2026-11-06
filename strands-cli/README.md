@@ -534,11 +534,12 @@ strands --session-id my-project "where did we leave off?"
 
 Pass `--session off` to disable conversation saving. Long-term memory is controlled separately by `--memory`.
 
-The built-in agent saves sessions under `~/.strands/sessions/`, grouped by workspace, so nothing is
-written into your project. Sessions written by earlier versions under `~/.strands/cli/sessions/`
-remain available. Set `session.dir` to keep them somewhere else; authored agents (`--agent`) keep
-their own `session.dir`, which defaults to `./.agent/sessions`. In Ink, `/sessions` lists saved
-sessions from every workspace and can resume any of them, including from another worktree.
+Sessions use the Harness default, `./.agent/sessions`. Set `session.dir` to keep them somewhere else;
+authored agents (`--agent`) keep their own session configuration. Relative paths resolve against
+the profile's base directory, or the current workspace when no base directory is set.
+In Ink, `/sessions` lists sessions from registered workspaces and can resume them across worktrees.
+The CLI keeps this catalog under `~/.strands/sessions/`; existing sessions there or under
+`~/.strands/cli/sessions/` remain available without moving them.
 
 `/rename <name>` (or `/sessions rename <name>`) names the current saved session and updates the terminal
 title. Saved names return when you reopen the session. Leave out the name to have the agent's

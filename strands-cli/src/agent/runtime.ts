@@ -57,7 +57,7 @@ export interface CreateInteractiveRuntimeOptions {
   mcpPaths?: readonly string[]
   mcpStrictPaths?: readonly string[]
   mcpDigests?: Readonly<Record<string, string>>
-  /** Directory holding the built-in agent's per-workspace session directories; defaults to `~/.strands/sessions`. */
+  /** Directory holding the session catalog; defaults to `~/.strands/sessions`. */
   sessionRoot?: string
   config: RuntimeConfig
   agentMessaging?: AgentMessaging

@@ -1,5 +1,5 @@
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
-import { homedir, tmpdir } from 'node:os'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -7,13 +7,7 @@ import { sessionRows } from '../../src/ui/chat/panel-state.js'
 import { ChatController } from '../../src/ui/chat/controller.js'
 import { filterPanelRows } from '../../src/ui/interaction.js'
 import { idleBackend } from '../fixtures/chat-backend.js'
-import {
-  FileSessionRuntime,
-  sessionRootDirectory,
-  SessionRootCatalog,
-  withWorkspaceSessionDirectory,
-  workspaceSessionDirectory,
-} from '../../src/session/sessions.js'
+import { FileSessionRuntime, SessionRootCatalog } from '../../src/session/sessions.js'
 
 describe('session catalog', () => {
   it.skipIf(process.platform === 'win32')(
@@ -80,16 +74,14 @@ describe('session catalog', () => {
     expect(disabled.currentTarget).toBeUndefined()
   })
 
-  it.each(['central', 'custom'])('lists and resolves %s sessions across registered workspaces', async (storage) => {
+  it.each(['workspace', 'custom'])('lists and resolves %s sessions across registered workspaces', async (storage) => {
     const directory = await mkdtemp(join(tmpdir(), 'strands-session-catalog-'))
     const root = join(directory, 'cli', 'sessions')
     const firstWorkspace = join(directory, 'first-worktree')
     const secondWorkspace = join(directory, 'second-worktree')
-    const firstSessions = workspaceSessionDirectory(firstWorkspace, root)
+    const firstSessions = join(firstWorkspace, '.agent', 'sessions')
     const secondSessions =
-      storage === 'central'
-        ? workspaceSessionDirectory(secondWorkspace, root)
-        : join(secondWorkspace, 'private-sessions')
+      storage === 'workspace' ? join(secondWorkspace, '.agent', 'sessions') : join(secondWorkspace, 'private-sessions')
     const catalog = await SessionRootCatalog.load(root)
     await mkdir(join(firstSessions, 'shared-name'), { recursive: true })
     await mkdir(join(secondSessions, 'shared-name'), { recursive: true })
@@ -164,7 +156,7 @@ describe('session catalog', () => {
     await mkdir(join(directory, 'cli'), { recursive: true })
     await writeFile(join(directory, 'cli', 'session-roots.json'), JSON.stringify({ version: 1, roots: legacyRoots }))
     const catalog = await SessionRootCatalog.load(root)
-    const currentDirectory = workspaceSessionDirectory(join(directory, 'current'), root)
+    const currentDirectory = join(directory, 'current', '.agent', 'sessions')
     const sessions = new FileSessionRuntime(
       {
         sessionId: undefined,
@@ -188,30 +180,39 @@ describe('session catalog', () => {
     }
   })
 
-  it('writes to the current root while discovering sessions from the previous root', async () => {
+  it('indexes workspace sessions while discovering sessions stored under both home roots', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'strands-session-root-migration-'))
     const root = join(directory, '.strands', 'sessions')
     const previousRoot = join(directory, '.strands', 'cli', 'sessions')
     const previousWorkspace = join(directory, 'previous-workspace')
     const currentWorkspace = join(directory, 'current-workspace')
-    const previousSessions = workspaceSessionDirectory(previousWorkspace, previousRoot)
-    const currentSessions = workspaceSessionDirectory(currentWorkspace, root)
+    const previousSessions = join(previousRoot, 'previous-workspace-0123456789ab')
+    const centralSessions = join(root, 'current-workspace-0123456789ab')
+    const currentSessions = join(currentWorkspace, '.agent', 'sessions')
     const previousCatalog = await SessionRootCatalog.load(previousRoot)
 
     try {
       await previousCatalog.register(previousSessions, previousWorkspace)
+      await mkdir(centralSessions, { recursive: true })
+      await writeFile(
+        join(centralSessions, 'workspace.json'),
+        JSON.stringify({ version: 1, workspace: currentWorkspace, lastSeenAt: '2020-01-01T00:00:00.000Z' })
+      )
       const catalog = await SessionRootCatalog.load(root, previousRoot)
       await catalog.register(currentSessions, currentWorkspace)
 
       expect(catalog.roots()).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ directory: previousSessions, workspace: previousWorkspace }),
+          expect.objectContaining({ directory: centralSessions, workspace: currentWorkspace }),
           expect.objectContaining({ directory: currentSessions, workspace: currentWorkspace }),
         ])
       )
-      expect(JSON.parse(await readFile(join(currentSessions, 'workspace.json'), 'utf8'))).toMatchObject({
-        workspace: currentWorkspace,
-      })
+      await expect(readdir(currentSessions)).rejects.toMatchObject({ code: 'ENOENT' })
+      const reloaded = await SessionRootCatalog.load(root, previousRoot)
+      expect(reloaded.roots()).toContainEqual(
+        expect.objectContaining({ directory: currentSessions, workspace: currentWorkspace })
+      )
       await writeFile(
         join(previousSessions, 'workspace.json'),
         JSON.stringify({ version: 1, workspace: previousWorkspace, lastSeenAt: '2020-01-01T00:00:00.000Z' })
@@ -273,15 +274,15 @@ describe('session catalog', () => {
     }
   })
 
-  it('registers directories concurrently without changing custom storage or a malformed legacy catalog', async () => {
+  it('registers directories concurrently without changing session storage or a malformed legacy catalog', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'strands-session-catalog-race-'))
     const root = join(directory, 'cli', 'sessions')
     const legacyPath = join(directory, 'cli', 'session-roots.json')
     const firstWorkspace = join(directory, 'first')
     const secondWorkspace = join(directory, 'second')
-    const firstSessions = workspaceSessionDirectory(firstWorkspace, root)
-    const secondSessions = workspaceSessionDirectory(secondWorkspace, root)
-    const customSessions = join(firstWorkspace, '.agent', 'sessions')
+    const firstSessions = join(firstWorkspace, '.agent', 'sessions')
+    const secondSessions = join(secondWorkspace, '.agent', 'sessions')
+    const customSessions = join(firstWorkspace, 'custom-sessions')
     await mkdir(join(directory, 'cli'), { recursive: true })
     await writeFile(legacyPath, '{ invalid json')
     const [first, second] = await Promise.all([SessionRootCatalog.load(root), SessionRootCatalog.load(root)])
@@ -294,7 +295,7 @@ describe('session catalog', () => {
         second.register(customSessions, firstWorkspace),
       ])
       const referenceFiles = (await readdir(root)).filter((name) => /^external-[a-f0-9]{12}\.json$/.test(name))
-      expect(referenceFiles).toHaveLength(1)
+      expect(referenceFiles).toHaveLength(3)
       const unrelatedDocument = JSON.stringify({
         version: 1,
         directory: join(directory, 'unrelated'),
@@ -318,36 +319,6 @@ describe('session catalog', () => {
     } finally {
       await rm(directory, { recursive: true, force: true })
     }
-  })
-
-  it('points default sessions at the central workspace directory and keeps a configured one', () => {
-    const workspace = join(tmpdir(), 'workspace')
-    const central = { session: { dir: workspaceSessionDirectory(workspace) } }
-    expect(sessionRootDirectory()).toBe(join(homedir(), '.strands', 'sessions'))
-    expect(central.session.dir.startsWith(sessionRootDirectory())).toBe(true)
-    expect(
-      withWorkspaceSessionDirectory({ session: { dir: '/w/.agent/sessions' } }, { session: true }, workspace)
-    ).toEqual(central)
-    expect(
-      withWorkspaceSessionDirectory(
-        { session: { id: 'u1', dir: '/w/.agent/sessions' } },
-        { session: { id: 'u1' } },
-        workspace
-      )
-    ).toEqual({ session: { id: 'u1', dir: central.session.dir } })
-    expect(
-      withWorkspaceSessionDirectory({ session: { dir: '/w/custom' } }, { session: { dir: 'custom' } }, workspace)
-    ).toEqual({ session: { dir: '/w/custom' } })
-    expect(withWorkspaceSessionDirectory({ session: false }, { session: false }, workspace)).toEqual({ session: false })
-  })
-
-  it('names a workspace directory after the workspace and a hash of its path', () => {
-    const root = join(tmpdir(), 'sessions')
-    const first = workspaceSessionDirectory(join(tmpdir(), 'a', 'my project'), root)
-    const second = workspaceSessionDirectory(join(tmpdir(), 'b', 'my project'), root)
-    expect(first.startsWith(root)).toBe(true)
-    expect(second).not.toBe(first)
-    expect(workspaceSessionDirectory(join(tmpdir(), 'a', 'my project'), root)).toBe(first)
   })
 })
 

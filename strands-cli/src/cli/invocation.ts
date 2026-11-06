@@ -13,7 +13,6 @@ import { requireBedrockRegion } from '../model/aws-config.js'
 import { importAgentProject, type ImportedAgentProject } from '../project/import.js'
 import type { AgentFactory } from '../project/typescript.js'
 import { restoreSessionAgentDefinition } from '../session/agent-definition.js'
-import { withWorkspaceSessionDirectory } from '../session/sessions.js'
 import { isRecord } from '../values.js'
 import { agentConfig, projectConfigOverrides, type ParsedArgs } from './arguments.js'
 
@@ -63,7 +62,7 @@ export async function invocationAgentForRun(
   config.applyProviderEnvironment()
   requireBedrockRegion(profile.model)
   const options = {
-    ...withWorkspaceSessionDirectory(await harnessAgentOptionsFromConfig(profile, baseDir), profile, cwd),
+    ...(await harnessAgentOptionsFromConfig(profile, baseDir)),
     printer: false,
   }
   return {

@@ -50,8 +50,7 @@ vi.mock('../../src/agent/mcp.js', async (importOriginal) => ({
 import { createInteractiveChat as createInteractiveChatRuntime } from '../../src/ui/chat/runtime.js'
 import { createInteractiveRuntime, interactiveBackgroundTasks } from '../../src/agent/runtime.js'
 import { CliConfigStore } from '../../src/config/store.js'
-import { sessionId } from '../../src/session/sessions.js'
-import { workspaceSessionDirectory } from '../../src/session/sessions.js'
+import { sessionId, SessionRootCatalog } from '../../src/session/sessions.js'
 import { StrandsChatBackend } from '../../src/agent/backend.js'
 import { LiveSteering } from '../../src/agent/messaging.js'
 import { defineHarnessAgentConfig } from '@strands-agents/harness'
@@ -1550,18 +1549,16 @@ describe('interactive runtime lifecycle', () => {
     const secondWorkspace = join(directory, 'second')
     const explicitMcp = join(directory, '.claude.json')
     const sessionRoot = join(directory, 'config', 'sessions')
-    const firstSessions = workspaceSessionDirectory(firstWorkspace, sessionRoot)
-    const secondSessions = workspaceSessionDirectory(secondWorkspace, sessionRoot)
+    const firstSessions = join(firstWorkspace, '.agent', 'sessions')
+    const secondSessions = join(secondWorkspace, '.agent', 'sessions')
     await mkdir(join(secondWorkspace, '.agent', 'skills', 'remote'), { recursive: true })
     await writeFile(
       join(secondWorkspace, '.agent', 'skills', 'remote', 'SKILL.md'),
       '---\nname: remote\ndescription: Remote workspace skill\n---\nRemote instructions.'
     )
     await mkdir(join(secondSessions, 'saved-two'), { recursive: true })
-    await writeFile(
-      join(secondSessions, 'workspace.json'),
-      JSON.stringify({ version: 1, workspace: secondWorkspace, lastSeenAt: '2026-08-15T00:00:00.000Z' })
-    )
+    const catalog = await SessionRootCatalog.load(sessionRoot)
+    await catalog.register(secondSessions, secondWorkspace)
     mocks.createHarness
       .mockResolvedValueOnce(fakeAgent('old', 'first-agent'))
       .mockResolvedValueOnce(fakeAgent('old', 'second-agent'))
@@ -1640,9 +1637,10 @@ describe('interactive runtime lifecycle', () => {
         completedTurns: [{ prompt: 'keep the first workspace alive' }],
       })
 
-      await expect(readFile(join(firstSessions, 'workspace.json'), 'utf8').then(JSON.parse)).resolves.toMatchObject({
-        workspace: firstWorkspace,
-      })
+      await catalog.refresh()
+      expect(catalog.roots()).toEqual(
+        expect.arrayContaining([expect.objectContaining({ directory: firstSessions, workspace: firstWorkspace })])
+      )
 
       await controller.dispose()
       disposed = true

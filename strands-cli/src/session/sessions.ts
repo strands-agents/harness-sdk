@@ -1,11 +1,11 @@
-import { type HarnessAgentConfig, type HarnessAgentOptions, type SessionConfig } from '@strands-agents/harness'
+import { type HarnessAgentOptions, type SessionConfig } from '@strands-agents/harness'
 import { SessionManager } from '@strands-agents/sdk'
 import { promises as fs } from 'node:fs'
 import { basename, join, posix, resolve, win32 } from 'node:path'
 import { isMissingPathError } from '../paths.js'
 import { errorMessage, graphemes, sanitizeTerminalText } from '../terminal/text.js'
 import { isRecord } from '../values.js'
-import { workspaceSessionDirectory, type SessionRootCatalog } from './catalog.js'
+import type { SessionRootCatalog } from './catalog.js'
 
 /** The `session` option unpacked: `enabled` mirrors the harness toggle (`undefined` leaves the default on). */
 export interface SessionSettings {
@@ -80,7 +80,7 @@ export function sessionResumeCommand(
   const command = ['strands']
   if (session.agentProject) command.push('--agent', quote(session.agentProject))
   command.push('--session-id', quote(session.sessionId))
-  if (session.agentProject || directory !== workspaceSessionDirectory(workspace)) {
+  if (session.agentProject || directory !== paths.resolve(workspace, DEFAULT_SESSION_DIR)) {
     command.push('--set', quote(`session.dir=${JSON.stringify(directory)}`))
   }
   const resume = command.join(' ')
@@ -97,26 +97,11 @@ function quoteArgument(value: string, platform: NodeJS.Platform): string {
   return platform === 'win32' ? `'${value.replaceAll("'", "''")}'` : `'${value.replaceAll("'", "'\\''")}'`
 }
 
-export { SessionRootCatalog, sessionRootDirectory, workspaceSessionDirectory } from './catalog.js'
+export { SessionRootCatalog } from './catalog.js'
 
 const SESSION_REFERENCE_PREFIX = 'strands-session:'
 const SESSION_METADATA_FILE = 'cli-session.json'
 export const DEFAULT_SESSION_DIR = './.agent/sessions'
-
-/**
- * Points the built-in agent's sessions at its central workspace directory unless the profile disables
- * sessions or chooses its own `session.dir`.
- */
-export function withWorkspaceSessionDirectory(
-  options: HarnessAgentOptions,
-  profile: Pick<HarnessAgentConfig, 'session'>,
-  workspace: string
-): HarnessAgentOptions {
-  if (profile.session === false || (typeof profile.session === 'object' && profile.session.dir !== undefined)) {
-    return options
-  }
-  return withSession(options, { dir: workspaceSessionDirectory(workspace) })
-}
 
 interface SessionInfo extends Partial<SessionMetadata> {
   id: string
