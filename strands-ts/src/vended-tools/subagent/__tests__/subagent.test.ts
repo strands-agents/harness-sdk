@@ -568,6 +568,7 @@ describe('subagent tool', () => {
     })
 
     it.each([
+      ['a superseded child', fakeResult('Superseded by a new request', 'superseded'), 'Subagent superseded'],
       ['a missing child result', undefined, 'Subagent did not produce a result.'],
       ['a child stopped by a limit', fakeResult('partial', 'limitTurns'), limitStopMessage('subagent', 'limitTurns')],
     ])('turns %s into an error result', async (_, childResult, message) => {

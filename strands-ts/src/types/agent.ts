@@ -9,6 +9,7 @@ import type { Checkpoint, CheckpointResumeContent } from '../experimental/checkp
 import type { AgentTrace } from '../telemetry/tracer.js'
 import type { Snapshot } from './snapshot.js'
 import type { TakeSnapshotOptions } from '../agent/snapshot.js'
+import type { ConcurrentInvocationMode } from '../agent/invocation-queue.js'
 import type {
   BeforeInvocationEvent,
   AfterInvocationEvent,
@@ -139,6 +140,13 @@ export interface InvokeOptions {
 
   /** Runs this call as a nested call in the request a hook event's or {@link ToolContext.invocationContext} handle belongs to, sharing its limits and usage even after that request returned; `limits` set alongside it only add stricter limits. */
   invocationContext?: InvocationContext
+
+  /**
+   * Behavior when the agent is already processing an invocation, overriding the
+   * agent's `concurrentInvocationMode` for this call only. Same values: `'throw'`,
+   * `'cancelPrevious'`, `'stopPrevious'`, or `'queue'`.
+   */
+  ifBusy?: ConcurrentInvocationMode
 
   /**
    * Limits for the whole request this `invoke()` / `stream()` call starts. They
