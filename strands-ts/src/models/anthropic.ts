@@ -72,8 +72,11 @@ const ANTHROPIC_CACHE_TYPE = 'ephemeral' as const
  */
 const TURN_SCOPED_SYSTEM_BETA = 'mid-conversation-system-clear-at-2026-08-21'
 
-/** A system message cleared at the next user message. The SDK types lack `clear_at`. */
-interface TurnScopedSystemMessage extends Anthropic.MessageParam {
+/**
+ * A system message cleared at the next user message. Declared here because the SDK types lack `clear_at`, and
+ * because `MessageParam` is an interface before SDK 1.x and a union from it.
+ */
+interface TurnScopedSystemMessage {
   role: 'system'
   content: Anthropic.TextBlockParam[]
   clear_at: 'next_user_message'
