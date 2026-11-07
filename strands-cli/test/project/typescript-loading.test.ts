@@ -86,6 +86,93 @@ console.log(JSON.stringify({options: loaded.options, agents}))
 }
 
 describe('TypeScript source loading', () => {
+  it.each([
+    {
+      session: '{ id: "authored", dir: "custom-sessions" }',
+      argv: ['--session-id', 'chosen'],
+      expected: { id: 'chosen', dir: 'custom-sessions' },
+    },
+    { session: 'false', argv: ['--session-id', 'chosen'], expected: false },
+    {
+      session: '{ id: "authored", dir: "custom-sessions" }',
+      argv: ['--session', 'on', '--set', 'session.id="chosen"'],
+      expected: { id: 'chosen', dir: 'custom-sessions' },
+    },
+    { session: 'manager', argv: ['--session', 'on', '--session-id', 'chosen'], expected: 'manager' },
+  ])('preserves authored storage with $argv and session=$session', async ({ session, argv, expected }) => {
+    await writeFile(
+      join(root, 'agent.ts'),
+      `import { createHarness } from '@strands-agents/harness'
+import { SessionManager, MemoryManager } from '@strands-agents/sdk'
+import { LocalFileStorage } from '@strands-agents/sdk/storage'
+import { FileMemoryStore } from '@strands-agents/sdk/vended-memory-stores/file-memory-store'
+const manager = new SessionManager({ sessionId: 'managed', storage: new LocalFileStorage('custom-sessions') })
+const memory = new MemoryManager({ stores: [new FileMemoryStore({ name: 'memory', storage: new LocalFileStorage('custom-memory'), extraction: false })], injection: false, searchToolConfig: false })
+export const agent = createHarness({ ...${JSON.stringify(defaults)}, session: ${session}, memory })
+`
+    )
+    const invocationUrl = new URL('../../src/cli/invocation.ts', import.meta.url).href
+    const argumentsUrl = new URL('../../src/cli/arguments.ts', import.meta.url).href
+    const storeUrl = new URL('../../src/config/store.ts', import.meta.url).href
+    const script = `
+const { invocationAgentForRun } = await import(${JSON.stringify(invocationUrl)})
+const { parseArgs } = await import(${JSON.stringify(argumentsUrl)})
+const { CliConfigStore } = await import(${JSON.stringify(storeUrl)})
+const { SessionManager, MemoryManager } = await import(${JSON.stringify(import.meta.resolve('@strands-agents/sdk'))})
+const invocation = await invocationAgentForRun(parseArgs(['--agent', ${JSON.stringify(join(root, 'agent.ts'))}, '--memory', 'on', ...${JSON.stringify(argv)}]), CliConfigStore.memory())
+console.log(JSON.stringify({ session: invocation.options.session instanceof SessionManager ? 'manager' : invocation.options.session, memory: invocation.options.memory instanceof MemoryManager }))
+`
+    const { stdout } = await run(
+      process.execPath,
+      ['--import', import.meta.resolve('tsx/esm'), '--input-type=module', '--eval', script],
+      { cwd: root }
+    )
+    expect(JSON.parse(stdout)).toEqual({
+      session: expected,
+      memory: true,
+    })
+  })
+
+  it.each([
+    'builtinTools={"*":false,"web_fetch":{"model":{"kind":"model","module":"./model.mjs","export":"model"}}}',
+    'builtinTools.web_fetch.transport="direct"',
+    'builtinTools.web_fetch.model={"kind":"model","module":"./model.mjs","export":"model"}',
+    'builtinTools.read.media=false',
+  ])('preserves authored tools and models with --set %s', async (assignment) => {
+    await writeFile(
+      join(root, 'agent.ts'),
+      `import { createHarness } from '@strands-agents/harness'
+import { model } from './model.mjs'
+export const agent = createHarness({ ...${JSON.stringify(defaults)}, builtinTools: ${assignment.includes('.read.') ? "['read']" : "{ '*': false, web_fetch: { model } }"} })
+`
+    )
+    await writeFile(
+      join(root, 'model.mjs'),
+      `import { BedrockModel } from '@strands-agents/sdk'
+export const model = new BedrockModel({ modelId: 'fixture', region: 'us-east-1' })
+`
+    )
+    const script = `
+const { invocationAgentForRun } = await import(${JSON.stringify(new URL('../../src/cli/invocation.ts', import.meta.url).href)})
+const { parseArgs } = await import(${JSON.stringify(new URL('../../src/cli/arguments.ts', import.meta.url).href)})
+const { CliConfigStore } = await import(${JSON.stringify(new URL('../../src/config/store.ts', import.meta.url).href)})
+const args = parseArgs(['--agent', ${JSON.stringify(join(root, 'agent.ts'))}, '--set', ${JSON.stringify(assignment)}])
+const invocation = await invocationAgentForRun(args, CliConfigStore.memory())
+const agent = await invocation.buildAgent(invocation.options)
+console.log(JSON.stringify(agent.tools.map(tool => tool.name)))
+await agent.shutdown()
+`
+    const { stdout } = await run(
+      process.execPath,
+      ['--import', import.meta.resolve('tsx/esm'), '--input-type=module', '--eval', script],
+      { cwd: root }
+    )
+    expect(JSON.parse(stdout)).toEqual([
+      assignment.includes('.read.') ? 'read' : 'web_fetch',
+      'strands_manage_background_task',
+    ])
+  })
+
   // Authored project options preserve HTTPS skill sources (#4574).
   it('preserves HTTPS skills while resolving authored project paths', () => {
     const url = 'https://example.com/SKILL.md'

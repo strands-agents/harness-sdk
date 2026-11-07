@@ -87,6 +87,7 @@ export interface PythonOptions {
   restoreSession?: { identity: NonNullable<ChatConversation['session']>; preserve: boolean }
   overrides?: Partial<HarnessAgentConfig>
   assignments?: readonly string[]
+  configFlags?: { session?: string | undefined; memory?: string | undefined; sessionId?: string | undefined }
   interactive?: boolean
   sessionId?: string
   sessionDir?: string

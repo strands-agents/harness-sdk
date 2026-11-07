@@ -8,6 +8,8 @@ import { unzipSync } from 'fflate'
 
 import type { ChatEvent, ChatPermissionRequest, ChatRunResult } from '../../src/agent/types.js'
 import { CliConfigStore } from '../../src/config/store.js'
+import { parseArgs } from '../../src/cli/arguments.js'
+import { pythonInvocationOptions } from '../../src/cli/invocation.js'
 import { PythonBackend, type PythonOptions } from '../../src/project/python.js'
 import { createPythonChat } from '../../src/ui/chat/runtime.js'
 import { exportSourceProject } from '../../src/project/export.js'
@@ -36,6 +38,11 @@ def build(**overrides):
 
 agent = build()
 `
+
+const factorySource = baseSource.replace(
+  'agent = build()',
+  'def create_agent(**overrides):\n    return build(**overrides)\n\nagent = create_agent()'
+)
 
 describe.skipIf(!existsSync(python))('Python source loading', () => {
   let root: string
@@ -306,7 +313,16 @@ def build(**overrides):`
       await writeFile(entrypoint, source)
       const config = CliConfigStore.memory()
       await config.setPermissionMode('bypassPermissions')
-      const options = { cwd: root }
+      const options = await pythonInvocationOptions(
+        parseArgs([
+          '--session-id',
+          'launch-session',
+          ...(session.includes('authored') ? ['--session', 'on', '--set', 'session.id="assigned"'] : []),
+        ]),
+        root,
+        { skillDiscovery: false },
+        { paths: [], strictPaths: [] }
+      )
       const requestSetup = vi.fn()
       const previous = await createPythonChat(entrypoint, config, options, AbortSignal.timeout(30_000), requestSetup)
       chats.push(previous)
@@ -314,6 +330,12 @@ def build(**overrides):`
       await previous.submit('/fork')
       await previous.submit('{"tool":"status","chat":"fork"}')
       const captured = await previous.captureConversations()
+      if (session.includes('authored')) {
+        expect(captured.entries[0]!.conversation.session).toMatchObject({
+          sessionId: 'launch-session',
+          sessionDirectory: join(root, 'custom-sessions', 'session'),
+        })
+      }
       expect(captured.entries).toHaveLength(2)
       expect(captured.activeId).toBe('agent-2')
       await writeFile(entrypoint, source.replace('"authored tool"', '"updated tool"'))
@@ -384,7 +406,7 @@ def build(**overrides):`
         chats.push(changed)
         const changedState = await changed.captureConversations()
         expect(changedState.entries[0]!.conversation.session).toMatchObject({
-          sessionId: 'changed',
+          sessionId: 'launch-session',
           sessionDirectory: join(root, 'changed-sessions', 'session'),
         })
         expect(changedState.entries[1]!.conversation.session?.sessionId).toBe(
@@ -653,6 +675,82 @@ agent.name = "Customized"
     expect(backend.reconstructable()).toBe(true)
     await backend.clear()
     expect(backend.name).toBe('Overridden')
+  })
+
+  it('preserves authored memory and gives flags precedence over --set', async () => {
+    const backend = await open(
+      factorySource.replace('"memory": False', '"memory": {"dir": "custom-memory"}'),
+      await pythonInvocationOptions(
+        parseArgs([
+          '--memory',
+          'on',
+          '--set',
+          'name="assigned"',
+          '--name',
+          'Flagged',
+          '--set',
+          'builtinTools.shell.description="Run a command"',
+        ]),
+        root,
+        { skillDiscovery: false },
+        { paths: [], strictPaths: [] }
+      )
+    )
+    expect(backend.name).toBe('Flagged')
+    expect(backend.privatePaths).toContain(join(root, 'custom-memory'))
+    expect(
+      backend
+        .info()
+        .tools?.map((tool) => tool.name)
+        .sort()
+    ).toEqual(['search_memory', 'shell', 'status'])
+    expect((await runTurn(backend)).stopReason).toBe('end_turn')
+  })
+
+  it.each([
+    { tools: [], plugins: [], mcpServers: {}, interventions: null },
+    { subagents: [], plugins: [], mcpServers: {}, interventionModules: [] },
+  ])('clears authored tools, plugins, MCP servers, and interventions: %j', async (overrides) => {
+    const backend = await open(
+      baseSource.replace(
+        'agent = build()',
+        `from strands.plugins import Plugin
+class DisabledPlugin(Plugin):
+    name = "disabled-plugin"
+    def init_agent(self, agent):
+        agent.name = "plugin-active"
+
+def create_agent(**overrides):
+    assert overrides.get("interventions", "missing") is None
+    return build(**{"plugins": [DisabledPlugin()], "mcp_servers": {"disabled": {"url": "http://127.0.0.1:1/mcp"}}, **overrides})
+
+agent = build()`
+      ),
+      { overrides }
+    )
+    expect(backend.info().tools).toEqual([])
+    expect(backend.name).not.toBe('plugin-active')
+  })
+
+  it('loads memory store references and converted built-in tool settings', async () => {
+    await writeFile(
+      join(root, 'memory_store.py'),
+      `from strands.storage import LocalFileStorage
+from strands.vended_memory_stores.file_memory_store import FileMemoryStore
+store = FileMemoryStore(name="authored", storage=LocalFileStorage("referenced-memory"), extraction=False)
+`
+    )
+    const backend = await open(factorySource, {
+      overrides: {
+        memory: { dir: 'unused-memory' },
+        memoryStores: [{ kind: 'memory-store', module: './memory_store.py', export: 'store' }],
+        builtinTools: { '*': false, subagent: { maxDepth: 2 } },
+      },
+      assignments: ['memory.dir="unused-memory"'],
+    })
+    expect(backend.privatePaths).toContain(join(root, 'referenced-memory', 'memory', 'authored'))
+    expect(backend.info().tools?.map((tool) => tool.name)).toContain('subagent')
+    expect((await runTurn(backend)).stopReason).toBe('end_turn')
   })
 
   it('releases replaced agents from authored factories', async () => {
