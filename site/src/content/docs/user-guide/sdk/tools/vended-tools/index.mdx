@@ -115,6 +115,8 @@ agent("Have a subagent summarize the latest Python release notes, then run the t
 
 Tools that accept axis policies use a default builder to turn resolved specs into child agents. By default, it produces child agents that inherit the parent's tools, model, and interventions, so a child's tool calls go through the same approval and authorization checks as the parent's. Each child gets <Syntax py='context_manager="auto"' ts="contextManager: 'auto'" /> (unless its model is stateful) in place of the parent's context-management tools, and accesses the parent's long-term memory through inherited memory tools.
 
+Hooks and plugins registered on the parent are not passed to the child. A check written as a hook, such as a `BeforeToolCallEvent` hook that asks for approval, does not run on the child's tool calls. To apply the same check to children, register it as an [intervention](../../agents/interventions/) or attach the hook in a custom builder.
+
 To replace the default builder, pass any callable that takes an `AgentSpec` and returns an `Agent`. A custom builder decides everything the child inherits, including interventions.
 
 <Tabs>
