@@ -402,7 +402,7 @@ class Runtime:
         self.factory = getattr(module, "create_agent", None)
         self.interactive = command.get("interactive", False)
         self.mcp_servers = command.get("mcpServers", {})
-        self.skill_paths = command.get("skillPaths", [])
+        self.skill_paths = command.get("skillPaths", []) if self.options.get("skills", authored.get("skills", True)) else []
         self.cancel_signal = threading.Event()
         self.reload_requested = False
         self.context_estimates = None
@@ -469,8 +469,13 @@ class Runtime:
                 None,
             )
             if skills:
-                skills.set_available_skills([*skills.get_available_skills(agent), *self.skill_paths])
+                authored_skills = {skill.name: skill for skill in skills.get_available_skills(agent)}
+                skills.set_available_skills([*authored_skills.values(), *self.skill_paths])
                 await skills.init_agent(agent)
+                # Merge resolved skills: the SDK loads filesystem paths after Skill instances.
+                skills.set_available_skills(
+                    [authored_skills.get(skill.name, skill) for skill in skills.get_available_skills(agent)]
+                )
             else:
                 agent._plugin_registry.add_and_init(AgentSkills(skills=self.skill_paths))
         self.attach_context_capture(agent)

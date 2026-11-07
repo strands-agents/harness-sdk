@@ -596,30 +596,47 @@ agent.name = "Customized"
     }
   })
 
-  it('adds CLI-discovered skills and MCP servers to arbitrary instances', async () => {
-    const skillDirectory = join(root, 'discovered-skill')
+  it.each([true, false])('merges discoveries while respecting authored skills=%s', async (skillsEnabled) => {
+    const skillDirectory = join(root, 'discovered')
     await writeFile(join(root, 'mcp-marker.txt'), 'ready')
-    await mkdir(skillDirectory)
-    await writeFile(
-      join(skillDirectory, 'SKILL.md'),
-      '---\nname: discovered-skill\ndescription: Discovered skill\n---\nUse the discovered skill.\n'
-    )
-    const backend = await open(baseSource, {
-      skillPaths: [skillDirectory],
-      mcpServers: {
-        external: {
-          command: process.execPath,
-          args: [fileURLToPath(new URL('../fixtures/self-building-mcp.mjs', import.meta.url))],
-          cwd: root,
+    for (const [directory, name, instructions] of [
+      [join(root, 'authored'), 'shared-skill', 'Follow the authored instructions.'],
+      [skillDirectory, 'shared-skill', 'Follow the discovered replacement.'],
+      [skillDirectory, 'discovered-skill', 'Use the discovered skill.'],
+    ] as const) {
+      await mkdir(join(directory, name), { recursive: true })
+      await writeFile(
+        join(directory, name, 'SKILL.md'),
+        `---\nname: ${name}\ndescription: Test skill\n---\n${instructions}\n`
+      )
+    }
+    const backend = await open(
+      baseSource.replace('"skills": False', `"skills": ${skillsEnabled ? '["./authored"]' : 'False'}`),
+      {
+        skillPaths: [skillDirectory],
+        mcpServers: {
+          external: {
+            command: process.execPath,
+            args: [fileURLToPath(new URL('../fixtures/self-building-mcp.mjs', import.meta.url))],
+            cwd: root,
+          },
         },
-      },
-    })
+      }
+    )
 
-    expect(backend.skills.map((skill) => skill.name)).toContain('discovered-skill')
-    await expect(backend.activateSkill('discovered-skill')).resolves.toMatchObject({
-      skill: { name: 'discovered-skill', active: true },
-      content: expect.stringContaining('Use the discovered skill.'),
-    })
+    expect(backend.skills.map((skill) => skill.name).sort()).toEqual(
+      skillsEnabled ? ['discovered-skill', 'shared-skill'] : []
+    )
+    if (skillsEnabled) {
+      await expect(backend.activateSkill('shared-skill')).resolves.toMatchObject({
+        skill: { name: 'shared-skill', instructions: 'Follow the authored instructions.', active: true },
+        content: expect.stringContaining('Follow the authored instructions.'),
+      })
+      await expect(backend.activateSkill('discovered-skill')).resolves.toMatchObject({
+        skill: { name: 'discovered-skill', active: true },
+        content: expect.stringContaining('Use the discovered skill.'),
+      })
+    }
     expect(backend.info().tools?.map((tool) => tool.name)).toContain('external_probe')
   })
 
