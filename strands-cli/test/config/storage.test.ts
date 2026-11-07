@@ -200,13 +200,51 @@ describe('CliConfigStore', () => {
     })
   })
 
-  it('rejects non-boolean discovery settings', async () => {
+  it('ignores obsolete preference values while preserving valid settings and permission rules', async () => {
     const path = join(await temporaryDirectory(), 'cli.toml')
-    await writeFile(path, stringify({ settings: { mcpDiscovery: 'yes' } }))
-
-    await expect(CliConfigStore.load(path)).rejects.toThrow(
-      `Invalid CLI config at ${path}: settings.mcpDiscovery must be a boolean`
+    await writeFile(
+      path,
+      stringify({
+        permissions: { mode: 'default', allow: ['read'], deny: ['shell'] },
+        settings: {
+          animations: false,
+          showReasoning: 'obsolete',
+          mcpDiscovery: 'yes',
+          telemetry: false,
+          disabledMcpServers: ['disabled-server', 42],
+          futureSetting: true,
+        },
+      })
     )
+    const config = await CliConfigStore.load(path)
+
+    expect(config.snapshot()).toMatchObject({
+      permissions: { mode: 'default', allow: ['read'], deny: ['shell'] },
+      settings: {
+        animations: false,
+        showReasoning: true,
+        mcpDiscovery: false,
+        telemetry: false,
+        disabledMcpServers: ['disabled-server'],
+      },
+    })
+    await config.setSettings({ toolOutput: 'full' })
+    expect((await CliConfigStore.load(path)).snapshot()).toEqual(config.snapshot())
+    expect(parse(await readFile(path, 'utf8')).settings).toMatchObject({ futureSetting: true })
+  })
+
+  it('loads defaults for an obsolete settings container without losing the saved profile', async () => {
+    const path = join(await temporaryDirectory(), 'cli.toml')
+    await writeFile(path, stringify({ profile: { name: 'My agent' }, settings: 'obsolete' }))
+
+    const config = await CliConfigStore.load(path)
+
+    expect(config.snapshot()).toMatchObject({
+      profile: { name: 'My agent' },
+      settings: { frogTheme: 'green', animations: true, mcpDiscovery: false, disabledMcpServers: [] },
+    })
+    await config.setSettings({ animations: false })
+    expect((await CliConfigStore.load(path)).snapshot()).toEqual(config.snapshot())
   })
 
   it('persists setup while preserving unrelated settings', async () => {
