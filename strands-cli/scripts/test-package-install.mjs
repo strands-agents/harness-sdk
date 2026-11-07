@@ -124,7 +124,7 @@ try {
   process.stdout.write(`PASS packed install · ${process.platform} · ${filename}\n`)
 } finally {
   await new Promise((resolve) => server.close(resolve))
-  await rm(installRoot, { recursive: true, force: true })
+  await rm(installRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })
   if (process.env.STRANDS_CLI_KEEP_TARBALL !== 'true') {
     await rm(tarball, { force: true })
   }
