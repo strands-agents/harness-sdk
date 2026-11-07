@@ -3,7 +3,7 @@ import { Agent } from '../../agent/agent.js'
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
 import { textMessage } from '../../__fixtures__/agent-helpers.js'
 import { collectGenerator } from '../../__fixtures__/model-test-helpers.js'
-import { Interrupt, InterruptState } from '../../interrupt.js'
+import { Interrupt, InterruptError, InterruptState } from '../../interrupt.js'
 import { logger } from '../../logging/logger.js'
 import { AgentResult } from '../../types/agent.js'
 import { InterruptResponseContent } from '../../types/interrupt.js'
@@ -145,6 +145,28 @@ describe('AgentToolStreamer', () => {
 
     expect(items).toEqual(['progress'])
     expect(tool.error).toBe('Child did not produce a result.')
+  })
+
+  it('throws the unfinished state from stream and resume when raiseUnfinished is set', async () => {
+    vi.spyOn(logger, 'error').mockImplementation(() => {})
+    const parentState = new InterruptState()
+    const result = agentResult('interrupt', [new Interrupt({ id: 'approval', name: 'confirm' })])
+    const child = new Agent({ model: new MockMessageModel(), printer: false })
+    const config = { interruptState: parentState, toolUseId: 't', namespace: 'test', raiseUnfinished: true }
+
+    const error = await collectGenerator(
+      new AgentToolStreamer(config).stream(AGENT_ADAPTER, child, events(result))
+    ).catch((caught: unknown) => caught)
+    expect((error as InterruptError).interrupts).toEqual([
+      new Interrupt({ id: 'test:t:approval', name: 'confirm', source: 'tool' }),
+    ])
+
+    parentState.activate()
+    parentState.resume([new InterruptResponseContent({ interruptId: 'test:t:approval', response: 'yes' })])
+    const resumed = new AgentToolStreamer<AgentResult>(config)
+    await expect(
+      resumed.resume(AGENT_ADAPTER, new Agent({ model: new MockMessageModel(), printer: false }), 'unavailable')
+    ).rejects.toThrow(/^unavailable$/)
   })
 
   it('clears the completed child turn and preserves siblings', async () => {

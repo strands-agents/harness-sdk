@@ -34,7 +34,8 @@ from ..types.exceptions import (
 )
 from ..types.streaming import CitationsDelta, StreamEvent
 from ..types.tools import ToolChoice, ToolChoiceAuto, ToolSpec
-from ._defaults import resolve_config_metadata
+from ._defaults import resolve_config_metadata, resolve_max_tokens
+from ._model_info import SERVER_SIDE_SUMMARY_OFF, ModelCapabilities, ModelInfo
 from ._native_output import (
     StructuredOutputMechanism,
     handle_rejected_mechanism,
@@ -45,7 +46,7 @@ from ._native_output import (
 from ._strict_schema import ensure_strict_json_schema
 from ._thinking_binding import THINKING_BINDING_BETA, is_thinking_binding_error, thinking_with_drop_block
 from ._validation import _warn_on_deprecated_cache_tools, validate_config_keys
-from .model import BaseModelConfig, CacheConfig, CacheToolsConfig, Model
+from .model import BaseModelConfig, CacheConfig, CacheToolsConfig, Model, _messages_cache_ttl
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +67,7 @@ BEDROCK_CONTEXT_WINDOW_OVERFLOW_MESSAGES = [
     "too many total text bytes",
     "prompt is too long",
     "This model's maximum context length is",
+    "Input Tokens Exceeded",
 ]
 
 # Transient capacity errors surfaced as ModelThrottledException so the default retry strategy retries them.
@@ -80,8 +82,11 @@ _BEDROCK_THROTTLING_ERROR_CODES = {
 # Bedrock reports this exact substring for the Converse incompatibility tracked in #1223.
 _TOOL_RESULT_TURN_VALIDATION_MESSAGE = "Conversation blocks and tool result blocks cannot be provided in the same turn."
 
-# Models that should include tool result status (include_tool_result_status = True)
+# Models Bedrock documents as supporting the toolResult status field. Deliberately an allow-list: undocumented
+# models may accept it (Llama 4) or reject it with a ValidationException (Writer).
+# https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ToolResultBlock.html
 _MODELS_INCLUDE_STATUS = [
+    "amazon.nova",
     "anthropic.claude",
 ]
 
@@ -103,6 +108,7 @@ _MODELS_REJECT_REASONING_TEXT = [
     "nvidia.nemotron-super",
     "openai.gpt-5",
     "openai.gpt-6",
+    "openai.gpt-daybreak",
     "qwen.qwen3-235b",
     "qwen.qwen3-coder",
     "writer.palmyra",
@@ -247,7 +253,10 @@ class BedrockModel(Model):
             guardrail_redact_output_message: If a Bedrock Output guardrail triggers, replace output with this message.
             guardrail_latest_message: Flag to send only the lastest user message to guardrails.
                 Defaults to False.
-            max_tokens: Maximum number of tokens to generate in the response
+            max_tokens: Maximum number of tokens to generate in the response. Defaults to the model's
+                output limit from the model info (``model_info.limits.max_output_tokens``) when known;
+                otherwise ``maxTokens`` is not sent and Bedrock's per-model default applies. Pass ``None`` to
+                opt out of the default and leave ``maxTokens`` unset.
             model_id: The Bedrock model ID (e.g., "global.anthropic.claude-sonnet-4-6")
             include_tool_result_status: Flag to include status field in tool results.
                 True includes status, False removes status, "auto" determines based on model_id. Defaults to "auto".
@@ -376,22 +385,43 @@ class BedrockModel(Model):
         logger.debug("region=<%s> | bedrock client created", self.client.meta.region_name)
 
     @property
+    @override
+    def model_info(self) -> ModelInfo:
+        """Reports server-side summary as off and OpenAI models as implicitly cached.
+
+        A ``model_info`` override still wins over both. Converse has no server-side summary. The shared model
+        info lists cache points for OpenAI models' OpenAI-compatible APIs, but Converse caches them implicitly
+        and rejects cache points.
+        """
+        openai_caching = ModelInfo(capabilities=ModelCapabilities(prompt_caching="auto"))
+        return ModelInfo.merge(
+            super().model_info,
+            SERVER_SIDE_SUMMARY_OFF,
+            openai_caching if "openai." in str(self.config.get("model_id", "")).lower() else None,
+            self.config.get("model_info"),
+        )
+
+    @property
     def _cache_strategy(self) -> str | None:
         """The effective cache strategy for this request, or None when caching is off or unsupported.
 
         Resolves ``cache_config.strategy``: an explicit strategy is returned as written, while ``"auto"``
-        maps to ``"anthropic"`` for Claude/Anthropic model IDs and None for models without automatic
-        caching support.
+        maps to ``"anthropic"`` for models the model info says take cache points, and None for models
+        without automatic caching support. For an id the model info does not list at all, Claude/Anthropic
+        ids still map to ``"anthropic"``.
         """
         cache_config = self.config.get("cache_config")
         if not cache_config:
             return None
         if cache_config.strategy != "auto":
             return cache_config.strategy
-        model_id = self.config.get("model_id", "").lower()
-        if "claude" in model_id or "anthropic" in model_id:
-            return "anthropic"
-        return None
+        prompt_caching = self.model_info.capabilities.prompt_caching
+        if prompt_caching is None:
+            # Unlisted ids (a Claude release newer than the data, a prompt-router or custom-model ARN)
+            # keep the historical name test so caching does not turn off until the data catches up.
+            model_id = str(self.config.get("model_id", "")).lower()
+            return "anthropic" if "claude" in model_id or "anthropic" in model_id else None
+        return "anthropic" if prompt_caching == "cache_points" else None
 
     @override
     def update_config(self, **model_config: Unpack[BedrockConfig]) -> None:  # type: ignore
@@ -412,7 +442,12 @@ class BedrockModel(Model):
         Returns:
             The Bedrock model configuration.
         """
-        return resolve_config_metadata(self.config, self.config.get("model_id", ""))
+        model_id = self.config.get("model_id", "")
+        config = resolve_config_metadata(self.config, model_id)
+        max_tokens = resolve_max_tokens(self.config, model_id)
+        if max_tokens is None or "max_tokens" in config:
+            return config
+        return {**config, "max_tokens": max_tokens}
 
     def format_request(
         self,
@@ -521,7 +556,7 @@ class BedrockModel(Model):
             "inferenceConfig": {
                 key: value
                 for key, value in [
-                    ("maxTokens", self.config.get("max_tokens")),
+                    ("maxTokens", self.get_config().get("max_tokens")),
                     ("temperature", self.config.get("temperature")),
                     ("topP", self.config.get("top_p")),
                     ("stopSequences", self.config.get("stop_sequences")),
@@ -712,27 +747,20 @@ class BedrockModel(Model):
 
         return [{"cachePoint": cache_point}]
 
-    def _honor_placed_cache_point(
-        self,
-        content: list[dict[str, Any]],
-        placed_idx: int,
-        msg_idx: int,
-        cache_config: CacheConfig | None,
-    ) -> bool:
+    def _honor_placed_cache_point(self, content: list[dict[str, Any]], placed_idx: int, msg_idx: int) -> bool:
         """Keep a caller-placed cache point, taking the configured TTL and the document rule.
 
         The caller's *position* is honored; their TTL is not. Bedrock processes cache points in the
         order toolConfig, system, messages and rejects a longer TTL that follows a shorter one, so a
         TTL written here can turn a working configuration into a rejected request - verified against
         the API: tools at 5m with a hand-placed 1h on the message is rejected, the same shape at 5m is
-        accepted. Normalizing to ``cache_config.ttl`` is what makes the honored path TTL-identical to
-        the automatic one, which is the only behaviour this method should be changing.
+        accepted. Normalizing to the configured messages TTL is what makes the honored path TTL-identical
+        to the automatic one, which is the only behaviour this method should be changing.
 
         Args:
             content: Content blocks of the last user message (modified in place).
             placed_idx: Index of the caller-placed cache point.
             msg_idx: Index of the message, for logging.
-            cache_config: The configured cache settings, if any.
 
         Returns:
             True when the point was kept, possibly relocated. False when nothing cacheable precedes it,
@@ -756,8 +784,8 @@ class BedrockModel(Model):
         # Bedrock respectively reject before the request can even be judged on placement. The
         # non-increasing rule itself is documented on CacheConfig.
         cache_point.pop("ttl", None)
-        if cache_config and cache_config.ttl:
-            cache_point["ttl"] = cache_config.ttl
+        if ttl := _messages_cache_ttl(self.config.get("cache_config")):
+            cache_point["ttl"] = ttl
 
         # Bedrock only rejects a cache point *directly* preceded by a non-PDF document, so step back
         # over the adjacent run of them. Moving further would evict durable content - usually the
@@ -822,9 +850,8 @@ class BedrockModel(Model):
 
         if last_user_idx is not None and messages[last_user_idx].get("content"):
             cache_point: dict[str, Any] = {"type": "default"}
-            cache_config = self.config.get("cache_config")
-            if cache_config and cache_config.ttl:
-                cache_point["ttl"] = cache_config.ttl
+            if ttl := _messages_cache_ttl(self.config.get("cache_config")):
+                cache_point["ttl"] = ttl
 
             content = messages[last_user_idx]["content"]
 
@@ -843,7 +870,7 @@ class BedrockModel(Model):
                         last_user_idx,
                         extra_idx,
                     )
-                if self._honor_placed_cache_point(content, placed_idxs[0], last_user_idx, cache_config):
+                if self._honor_placed_cache_point(content, placed_idxs[0], last_user_idx):
                     return
                 if not content:
                     # Removing the point emptied the message, so there is nothing left to cache and
@@ -862,7 +889,7 @@ class BedrockModel(Model):
                 content.insert(boundary_idx, {"cachePoint": cache_point})
                 # A False here means a leading document left no prefix to cache; automatic placement
                 # declines for the same reason, so there is nothing to fall back to.
-                self._honor_placed_cache_point(content, boundary_idx, last_user_idx, cache_config)
+                self._honor_placed_cache_point(content, boundary_idx, last_user_idx)
                 return
 
             # Insert before non-PDF document blocks to avoid Bedrock ValidationException
@@ -1032,7 +1059,7 @@ class BedrockModel(Model):
                     "model_id=<%s> | cache_config is enabled but this model does not support automatic caching",
                     self.config.get("model_id"),
                 )
-            if cache_strategy == "anthropic":
+            if cache_strategy == "anthropic" and cache_config.messages_ttl is not False:
                 self._inject_cache_point(cleaned_messages, dynamic_trailing_blocks)
 
         return cleaned_messages
@@ -1054,6 +1081,7 @@ class BedrockModel(Model):
             unsupported_mechanisms("bedrock", model_id, structured_output_model),
             request.get("toolConfig", {}).get("toolChoice"),
             structured_output_model,
+            self.model_info,
         )
         if "native" in mechanisms and not self._client_supports_native_output():
             warnings.warn(

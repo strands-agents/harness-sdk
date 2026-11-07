@@ -5,7 +5,7 @@ import unittest.mock
 
 import pytest
 
-from strands._context_manager.stash import Stash, _BytesEncoder, _format_stash_refs
+from strands._context_manager.stash import Stash, _BytesEncoder, _format_stash_refs, _is_offload_placeholder
 from strands.storage.in_memory_storage import InMemoryStorage
 from strands.types.content import ContentBlock, Message
 from strands.types.tools import ToolResult
@@ -193,6 +193,43 @@ class TestStoreMessage:
         }
         assert tru_entries == exp_entries
 
+    @pytest.mark.asyncio
+    async def test_skips_tool_result_carrying_stash_refs(self, stash):
+        message = Message(
+            role="user",
+            content=[
+                ContentBlock(
+                    toolResult=ToolResult(
+                        toolUseId="tu-1",
+                        status="success",
+                        content=[
+                            {"text": "[Truncated: 1 block, ~10,973 tokens]\n\nrow-1\n\n[Stashed] [ref: tu-1_0]"},
+                            {"image": {"format": "png", "source": {"bytes": b"img"}}},
+                        ],
+                    )
+                )
+            ],
+        )
+
+        await stash.store_message(message)
+
+        assert await stash.take_snapshot() == {}
+
+    @pytest.mark.asyncio
+    async def test_skips_text_placeholder_and_keeps_other_blocks(self, stash):
+        message = Message(
+            role="user",
+            content=[
+                ContentBlock(text="[Dropped] [refs: track-1_0, track-1_1]"),
+                ContentBlock(text="see [ref: x] for details"),
+            ],
+            tracking_id="track-1",
+        )
+
+        await stash.store_message(message)
+
+        assert await stash.take_snapshot() == {"track-1_1": {"text": "see [ref: x] for details"}}
+
 
 class TestNamespacing:
     """Tests for storage namespace isolation."""
@@ -231,6 +268,26 @@ class TestFormatStashRefs:
     def test_multiple_refs(self):
         result = _format_stash_refs(["tu-1_0", "tu-1_1"])
         assert result == " [refs: tu-1_0, tu-1_1]"
+
+
+class TestIsOffloadPlaceholder:
+    """Tests for the _is_offload_placeholder helper."""
+
+    @pytest.mark.parametrize("refs", [["tu-1_0"], ["tu-1_0", "tu-1_1"]])
+    def test_detects_formatted_refs(self, refs):
+        assert _is_offload_placeholder({"text": f"[Dropped]{_format_stash_refs(refs)}"})
+
+    @pytest.mark.parametrize(
+        "block",
+        [
+            {"text": "plain text"},
+            {"text": "see [ref: x] for details"},
+            {"json": {"text": "[Dropped] [ref: tu-1_0]"}},
+            "[Dropped] [ref: tu-1_0]",
+        ],
+    )
+    def test_ignores_non_placeholders(self, block):
+        assert not _is_offload_placeholder(block)
 
 
 class TestBytesEncoder:

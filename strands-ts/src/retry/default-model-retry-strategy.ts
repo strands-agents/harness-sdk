@@ -7,7 +7,7 @@
  */
 
 import type { AfterModelCallEvent } from '../hooks/events.js'
-import { ModelThrottledError } from '../errors.js'
+import { ModelThrottledError, ModelNetworkError } from '../errors.js'
 import { logger } from '../logging/logger.js'
 import type { BackoffContext, BackoffStrategy } from './backoff-strategy.js'
 import { ExponentialBackoff } from './backoff-strategy.js'
@@ -37,9 +37,9 @@ export interface DefaultModelRetryStrategyOptions {
 /**
  * Retries failed model calls classified by the SDK as retryable.
  *
- * Today, only {@link ModelThrottledError} is treated as retryable — subclass
- * and override {@link isRetryable} to expand or narrow that set without
- * reimplementing the rest of the retry policy.
+ * {@link ModelThrottledError} and {@link ModelNetworkError} are treated as
+ * retryable — subclass and override {@link isRetryable} to expand or narrow
+ * that set without reimplementing the rest of the retry policy.
  *
  * State is per retry budget: timing state resets in {@link onFirstModelAttempt}, which the base class
  * calls when `event.attemptCount === 1`. A new turn and a router candidate switch each start a fresh
@@ -84,10 +84,10 @@ export class DefaultModelRetryStrategy extends ModelRetryStrategy {
 
   /**
    * Whether `error` should be retried. Override to extend or narrow the
-   * retryable set (e.g. to also retry transient 5xx errors).
+   * retryable set.
    */
   protected isRetryable(error: Error): boolean {
-    return error instanceof ModelThrottledError
+    return error instanceof ModelThrottledError || error instanceof ModelNetworkError
   }
 
   protected override computeRetryDecision(event: AfterModelCallEvent): RetryDecision {

@@ -1,4 +1,5 @@
 import path from 'node:path'
+import type { StarlightRouteData } from '@astrojs/starlight/route-data'
 import { getCollection } from 'astro:content'
 import { loadSidebarFromConfig, type StarlightSidebarItem } from '../sidebar'
 import { pathWithBase } from './links'
@@ -7,6 +8,24 @@ import { pathWithBase } from './links'
 export type ProductNavItem =
   | { type: 'link'; label: string; href: string; external?: boolean }
   | { type: 'group'; label: string; items: ProductNavItem[] }
+
+/** Convert Starlight's normalized route sidebar into the mobile navigation shape. */
+export function normalizedSidebarToProductNav(sidebar: StarlightRouteData['sidebar']): ProductNavItem[] {
+  return sidebar.map((entry) =>
+    entry.type === 'group'
+      ? {
+          type: 'group',
+          label: entry.label,
+          items: normalizedSidebarToProductNav(entry.entries),
+        }
+      : {
+          type: 'link',
+          label: entry.label,
+          href: entry.href,
+          ...(/^https?:\/\//.test(entry.href) && { external: true }),
+        }
+  )
+}
 
 // Built once per build: the nav renders on every page but the tree is static.
 let cached: Promise<StarlightSidebarItem[]> | undefined
@@ -40,9 +59,9 @@ function toNavItem(item: StarlightSidebarItem, labels: Map<string, string>): Pro
   return { type: 'link', label, href: pathWithBase(`/${item.slug}/`) }
 }
 
-function hasSlug(item: StarlightSidebarItem, slug: string): boolean {
-  if ('items' in item) return item.items.some((child) => hasSlug(child, slug))
-  return 'slug' in item && item.slug === slug
+function hasSlugAtOrBelow(item: StarlightSidebarItem, slug: string): boolean {
+  if ('items' in item) return item.items.some((child) => hasSlugAtOrBelow(child, slug))
+  return 'slug' in item && (item.slug === slug || item.slug.startsWith(`${slug}/`))
 }
 
 /**
@@ -53,7 +72,7 @@ function hasSlug(item: StarlightSidebarItem, slug: string): boolean {
 export async function getProductNav(hubHref: string): Promise<ProductNavItem[]> {
   const [sidebar, labels] = await Promise.all([getSidebar(), getLabels()])
   const hubSlug = hubHref.replace(pathWithBase('/'), '').replace(/\/$/, '')
-  const group = sidebar.find((item) => 'items' in item && hasSlug(item, hubSlug))
+  const group = sidebar.find((item) => 'items' in item && hasSlugAtOrBelow(item, hubSlug))
   if (!group || !('items' in group)) return []
   return group.items.map((item) => toNavItem(item, labels)).filter((i) => i !== null)
 }

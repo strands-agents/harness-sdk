@@ -2464,3 +2464,30 @@ def test_swarm_interrupt_on_agent(agenerator):
     assert tru_status == exp_status
 
     agent.stream_async.assert_called_once_with(responses, invocation_state={}, invocation_context=ANY)
+
+
+@pytest.mark.asyncio
+async def test_swarm_node_failure_on_resume_clears_interrupt_state(mock_strands_tracer, mock_use_span, agenerator):
+    """A node that fails while resuming an interrupt must not leave the swarm expecting responses (#5340)."""
+    agent = create_mock_agent("test_agent")
+    swarm = Swarm([agent])
+
+    agent.stream_async = Mock(return_value=agenerator([{"result": build_interrupt_result("test_id")}]))
+    interrupted = await swarm.invoke_async("task")
+    assert interrupted.status == Status.INTERRUPTED
+
+    async def fail_stream(*args, **kwargs):
+        yield {"agent_start": True}
+        raise RuntimeError("boom")
+
+    agent.stream_async = Mock(side_effect=fail_stream)
+    responses = [{"interruptResponse": {"interruptId": "test_id", "response": "ok"}}]
+    failed = await swarm.invoke_async(responses)
+
+    assert failed.status == Status.FAILED
+    assert swarm._interrupt_state.activated is False
+    assert agent._interrupt_state.activated is False
+
+    agent.stream_async = create_mock_agent("test_agent").stream_async
+    result = await swarm.invoke_async("new task")
+    assert result.status == Status.COMPLETED

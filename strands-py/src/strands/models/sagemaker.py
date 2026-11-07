@@ -10,11 +10,13 @@ from typing import Any, Literal, TypedDict, TypeVar
 
 import boto3
 from botocore.config import Config as BotocoreConfig
+from botocore.exceptions import ClientError
 from mypy_boto3_sagemaker_runtime import SageMakerRuntimeClient
 from pydantic import BaseModel
 from typing_extensions import Unpack, override
 
 from ..types.content import ContentBlock, Messages
+from ..types.exceptions import ModelThrottledException
 from ..types.streaming import StreamEvent
 from ..types.tools import ToolChoice, ToolResult, ToolSpec
 from ._validation import validate_config_keys, warn_on_cache_config_not_supported, warn_on_tool_choice_not_supported
@@ -91,6 +93,21 @@ class ToolCall:
         self.id = str(kwargs.get("id", ""))
         self.type = "function"
         self.function = FunctionCall(**kwargs.get("function", {"name": "", "arguments": ""}))
+
+
+def _is_container_throttling(error: ClientError) -> bool:
+    """Return whether a SageMaker runtime error wraps an HTTP 429 from the model container.
+
+    SageMaker reports container errors as ``ModelError`` (HTTP 424) with the container's status in
+    ``OriginalStatusCode``.
+
+    Args:
+        error: The SageMaker runtime client error.
+
+    Returns:
+        True if the container responded with HTTP 429.
+    """
+    return error.response.get("OriginalStatusCode") == 429
 
 
 def _strip_sse_framing(line: str) -> str | None:
@@ -185,7 +202,9 @@ class SageMakerAIModel(OpenAIModel):
             top_p: Nucleus sampling parameter (optional)
             top_k: Top-k sampling parameter (optional)
             stop: List of stop sequences to use for the model (optional)
-            tool_results_as_user_messages: Convert tool result to user messages (optional)
+            tool_results_as_user_messages: Send tool results as user messages, for endpoints that reject the
+                tool role (optional). Each result becomes its own user message, so parallel tool calls produce
+                consecutive user messages.
             additional_args: Additional request parameters, as supported by https://bit.ly/djl-lmi-request-schema
         """
 
@@ -352,9 +371,10 @@ class SageMakerAIModel(OpenAIModel):
                 message.pop("content", None)
             if message.get("role") == "tool" and self.payload_config.get("tool_results_as_user_messages", False):
                 # Convert tool message to user message
-                tool_call_id = message.get("tool_call_id", "ABCDEF")
+                tool_call_id = message.pop("tool_call_id", "ABCDEF")
                 content = message.get("content", "")
-                message = {"role": "user", "content": f"Tool call ID '{tool_call_id}' returned: {content}"}
+                message["role"] = "user"
+                message["content"] = f"Tool call ID '{tool_call_id}' returned: {content}"
             # Cannot have both reasoning_text and text - if "text", content becomes an array of content["text"]
             for c in message.get("content", []):
                 if "text" in c:
@@ -432,6 +452,9 @@ class SageMakerAIModel(OpenAIModel):
 
         Yields:
             Formatted message chunks from the model.
+
+        Raises:
+            ModelThrottledException: If the model container responds with HTTP 429.
         """
         warn_on_tool_choice_not_supported(tool_choice)
 
@@ -608,6 +631,8 @@ class SageMakerAIModel(OpenAIModel):
             self.client.exceptions.InternalDependencyException,
             self.client.exceptions.ModelNotReadyException,
         ) as e:
+            if _is_container_throttling(e):
+                raise ModelThrottledException(str(e)) from e
             logger.error("SageMaker error: %s", str(e))
             raise e
 
@@ -696,6 +721,9 @@ class SageMakerAIModel(OpenAIModel):
 
         Yields:
             Model events with the last being the structured output.
+
+        Raises:
+            ModelThrottledException: If the model container responds with HTTP 429.
         """
         # Format the request for structured output
         request = self.format_request(prompt, system_prompt=system_prompt)
@@ -734,5 +762,7 @@ class SageMakerAIModel(OpenAIModel):
             self.client.exceptions.InternalDependencyException,
             self.client.exceptions.ModelNotReadyException,
         ) as e:
+            if _is_container_throttling(e):
+                raise ModelThrottledException(str(e)) from e
             logger.error("SageMaker structured output error: %s", str(e))
             raise ValueError(f"SageMaker structured output error: {str(e)}") from e

@@ -197,7 +197,7 @@ runtime.
 
 ### Web search and Exa
 
-`web_search` uses the model provider's own search where it has one (OpenAI, Google, GPT-5/GPT-6
+`web_search` uses the model provider's own search where it has one (OpenAI, Google, GPT-5, GPT-6, and Daybreak
 models on `bedrock-mantle`, Anthropic). On a model without native search the Tools step offers
 `web_search` through [Exa](https://exa.ai) instead, unchecked; ticking it writes
 `"web_search": "exa"` to the profile.
@@ -501,6 +501,11 @@ strands --session-id my-project "where did we leave off?"
 ```
 
 Pass `--session off` for a throwaway run that persists nothing.
+
+Resuming restores the saved conversation only. The agent's name, description, instructions, and
+system prompt always come from the current profile (or, over ACP, from the client's agent definition),
+never from the session files. Session files are trusted input: resume only sessions you created, not
+ones that came with a cloned repository.
 
 In Ink, `/sessions` combines saved sessions from workspaces previously seen on the machine and
 can resume any of them, including from another worktree. Session data stays in each workspace's

@@ -1,12 +1,31 @@
+import { fileURLToPath } from 'node:url'
+
 import { defineCollection, type SchemaContext } from 'astro:content'
 import { z } from 'astro/zod'
 import { docsSchema } from '@astrojs/starlight/schema'
 import { glob, file } from 'astro/loaders'
+import fastGlob from 'fast-glob'
 import { pathToDocsSlug } from './util/links'
 import { TagSchema } from './config/tags'
 import { SDK_META, hasLanguageStreams, type Sdk } from './config/changelog'
 
 export const ALL_SDK_LANGUAGES = ['python', 'typescript'] as const
+
+function optionalGlob(options: Parameters<typeof glob>[0]) {
+  const loader = glob(options)
+  return {
+    ...loader,
+    async load(context: Parameters<typeof loader.load>[0]) {
+      const base = options.base ? new URL(options.base, context.config.root) : context.config.root
+      const basePath = fileURLToPath(base)
+      const files = await fastGlob(options.pattern, { cwd: basePath, onlyFiles: true })
+      if (files.length > 0) return loader.load(context)
+
+      context.store.clear()
+      context.watcher?.add(basePath)
+    },
+  }
+}
 
 export const docsLanguagesSchema = z
   .union([z.string(), z.array(z.string())])
@@ -46,6 +65,17 @@ export const sourceLinkSchema = z.object({
   repo: z.string().default('harness-sdk'),
 })
 export type SourceLink = z.infer<typeof sourceLinkSchema>
+
+export const externalDocsSchema = z.object({
+  product: z.string(),
+  productId: z.string(),
+  status: z.enum(['preview', 'stable']),
+  repository: z.string().url().startsWith('https://github.com/'),
+  ref: z.string(),
+  revision: z.string().regex(/^[0-9a-f]{40}$/),
+  source: z.string(),
+})
+export type ExternalDocsProvenance = z.infer<typeof externalDocsSchema>
 
 export const changelogEntrySchema = z.object({
   type: z.enum(['feat', 'fix', 'breaking', 'chore', 'docs', 'perf', 'refactor', 'test', 'other']),
@@ -261,6 +291,44 @@ export const announcementSchema = z
   })
 export type Announcement = z.infer<typeof announcementSchema>
 
+const sampleGuideSchema = z
+  .object({
+    catalogMode: z.enum(['legacy', 'curated']),
+    title: z.string(),
+    description: z.string(),
+    slug: z.string(),
+    language: z.enum(ALL_SDK_LANGUAGES),
+    category: z.string(),
+    categoryLabel: z.string(),
+    collection: z
+      .object({
+        id: z.string(),
+        label: z.string(),
+        description: z.string().optional(),
+        order: z.number().int().nonnegative(),
+      })
+      .optional(),
+    docs: z.array(
+      z.object({
+        label: z.string(),
+        url: z.string().url().startsWith('https://', 'documentation links must use https'),
+      })
+    ),
+    family: z.string().optional(),
+    sourceUrl: z.string().url(),
+    order: z.number().int().nonnegative(),
+  })
+  .strict()
+  .superRefine((guide, context) => {
+    if (!guide.slug.startsWith(`${guide.language}/`)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['slug'],
+        message: `slug must begin with the guide language "${guide.language}/"`,
+      })
+    }
+  })
+
 export const collections = {
   authors: defineCollection({
     loader: file('src/content/authors.yaml'),
@@ -317,11 +385,18 @@ export const collections = {
     schema: eventSchema,
   }),
   announcements: defineCollection({
-    loader: glob({
+    loader: optionalGlob({
       base: 'src/content/announcements',
       pattern: '**/*.{yml,yaml}',
     }),
     schema: announcementSchema,
+  }),
+  sampleGuides: defineCollection({
+    loader: glob({
+      base: '.build/samples/pages',
+      pattern: '**/*.md',
+    }),
+    schema: sampleGuideSchema,
   }),
   docs: defineCollection({
     loader: glob({
@@ -332,12 +407,12 @@ export const collections = {
       pattern: [
         '404.mdx',
 
-        'docs/user-guide/**/*.mdx',
+        'docs/user-guide/**/*.{md,mdx}',
         'docs/learning/**/*.mdx',
         'docs/integrations/**/*.mdx',
         'docs/contribute/**/*.mdx',
         'docs/examples/**/[!index]*.mdx',
-        'docs/labs/**/*.mdx',
+        'docs/labs/**/*.{md,mdx}',
         'docs/api/python/**/*.mdx',
         'docs/api/typescript/**/*.(md|mdx)',
       ],
@@ -378,6 +453,8 @@ export const collections = {
         // Pointers to the SDK implementation behind this page. Rendered as an
         // "Implementation" section on headless surfaces only (index.md, llms-full.txt).
         sourceLinks: z.array(sourceLinkSchema).optional(),
+        // Provenance for generated pages imported from another repository.
+        externalDocs: externalDocsSchema.optional(),
       }),
     }),
   }),

@@ -39,6 +39,7 @@ import {
   type CacheTTL,
   type StreamOptions,
 } from './model.js'
+import { mergeModelInfo, type ModelInfo } from './model-info.js'
 import { resolveOpenAICache, warnUnsupportedRetention } from './openai/cache.js'
 import {
   ModelContentBlockDeltaEvent,
@@ -48,7 +49,13 @@ import {
   ModelMessageStopEvent,
   ModelMetadataEvent,
 } from './streaming.js'
-import { ContextWindowOverflowError, ModelError, ModelThrottledError } from '../errors.js'
+import {
+  ContextWindowOverflowError,
+  ModelError,
+  ModelThrottledError,
+  ModelNetworkError,
+  isFetchNetworkError,
+} from '../errors.js'
 import { toMimeType } from '../mime.js'
 import { logger } from '../logging/logger.js'
 import { warnOnce } from '../logging/warn-once.js'
@@ -153,6 +160,25 @@ export class VercelModel extends Model<VercelModelConfig> {
     return { ...this._config }
   }
 
+  /**
+   * The model the model info describes: the configured `modelId`, else the wrapped provider's. Set it
+   * when the provider's id does not name the model, like a gateway or a Bedrock inference profile ARN.
+   */
+  override get modelId(): string {
+    return this._config.modelId ?? this._provider.modelId
+  }
+
+  /**
+   * Reports OpenAI models on Bedrock as implicitly cached, which a `modelInfo` override still wins over.
+   * The shared model info lists cache points for their OpenAI-compatible APIs, but Converse caches them
+   * implicitly and rejects cache points.
+   */
+  override get modelInfo(): ModelInfo {
+    const bedrock = this._provider.provider.split('.')[0] === 'amazon-bedrock'
+    if (!bedrock || !this.modelId.toLowerCase().includes('openai.')) return super.modelInfo
+    return mergeModelInfo(super.modelInfo, { capabilities: { promptCaching: 'auto' } }, this._config.modelInfo)
+  }
+
   updateConfig(config: VercelModelConfig): void {
     this._config = { ...this._config, ...config }
   }
@@ -162,7 +188,7 @@ export class VercelModel extends Model<VercelModelConfig> {
     const tools = options?.toolSpecs ? formatTools(options.toolSpecs) : undefined
     const toolChoice = options?.toolChoice ? formatToolChoice(options.toolChoice) : undefined
 
-    const { modelId: _, maxTokens, cacheConfig, ...callSettings } = this._config
+    const { modelId: _, maxTokens, cacheConfig, modelInfo: _modelInfo, ...callSettings } = this._config
 
     const callOptions: LanguageModelV3CallOptions = {
       prompt,
@@ -172,7 +198,7 @@ export class VercelModel extends Model<VercelModelConfig> {
       ...callSettings,
     }
 
-    applyVercelCacheConfig(callOptions, this._provider, cacheConfig, options?.dynamicTrailingBlocks)
+    applyVercelCacheConfig(callOptions, this._provider, cacheConfig, this.modelInfo, options?.dynamicTrailingBlocks)
 
     let result
     try {
@@ -238,6 +264,7 @@ export class VercelModel extends Model<VercelModelConfig> {
  * Applies a `CacheConfig` to a Vercel call by the underlying provider. See
  * {@link VercelModelConfig.cacheConfig} for the per-provider routing.
  *
+ * @param modelInfo - What the SDK knows about the wrapped model; decides the default `'auto'` strategy
  * @param dynamicTrailingBlocks - Trailing content parts of the last user message a context injector
  * rebuilds every call; the conversation breakpoint stays ahead of them so the cached prefix is stable.
  * @internal
@@ -246,6 +273,7 @@ function applyVercelCacheConfig(
   callOptions: LanguageModelV3CallOptions,
   model: LanguageModelV3,
   cacheConfig: CacheConfig | undefined,
+  modelInfo: ModelInfo,
   dynamicTrailingBlocks = 0
 ): void {
   if (!cacheConfig) return
@@ -253,17 +281,41 @@ function applyVercelCacheConfig(
   // The segment before the first '.' is the provider namespace in the ai-sdk
   switch (model.provider.split('.')[0]) {
     case 'anthropic':
-      applyAnthropicCache(callOptions, cacheConfig, dynamicTrailingBlocks)
+      if (!infoForbidsAutoCaching(cacheConfig, modelInfo, model.modelId)) {
+        applyAnthropicCache(callOptions, cacheConfig, dynamicTrailingBlocks)
+      }
       break
     case 'amazon-bedrock':
-      applyBedrockCache(callOptions, cacheConfig, dynamicTrailingBlocks, model.modelId)
+      applyBedrockCache(callOptions, cacheConfig, dynamicTrailingBlocks, model.modelId, modelInfo)
       break
     case 'openai':
-      applyOpenAICache(callOptions, cacheConfig)
+      if (!infoForbidsAutoCaching(cacheConfig, modelInfo, model.modelId)) {
+        applyOpenAICache(callOptions, cacheConfig)
+      }
       break
     default:
       warnOnce(logger, `provider=<${model.provider}> | cacheConfig is not supported for this vercel provider, ignoring`)
   }
+}
+
+/**
+ * Reports whether the default `'auto'` strategy is turned off by a `promptCaching: 'unsupported'` override,
+ * warning once when it is. An explicit strategy is never turned off.
+ *
+ * @param cacheConfig - The caller's cache configuration
+ * @param modelInfo - What the SDK knows about the model
+ * @param modelId - The model id, used in the warning
+ * @returns True when caching must be skipped
+ * @internal
+ */
+function infoForbidsAutoCaching(cacheConfig: CacheConfig, modelInfo: ModelInfo, modelId: string): boolean {
+  const auto = (cacheConfig.strategy ?? 'auto') === 'auto'
+  if (!auto || modelInfo.capabilities?.promptCaching !== 'unsupported') return false
+  warnOnce(
+    logger,
+    `model_id=<${modelId}> | cacheConfig is enabled but the model info says this model does not support prompt caching, ignoring`
+  )
+  return true
 }
 
 /**
@@ -323,26 +375,23 @@ function applyAnthropicCache(
   }
 }
 
-// Bedrock models that support the Anthropic-style caching strategy, mirroring `BedrockModel`'s
-// auto-detect list. Kept local rather than imported so the caching path does not widen bedrock.ts's
-// surface for a two-element constant.
-const BEDROCK_MODELS_SUPPORTING_CACHING = ['anthropic', 'claude']
-
 /**
  * Injects Bedrock `cachePoint` breakpoints on system and the last user message.
  *
- * @param modelId - The wrapped Bedrock model id; the default `'auto'` strategy caches only models
- * known to support it, matching `BedrockModel`.
+ * @param modelId - The wrapped Bedrock model id, used in the skip warning
+ * @param modelInfo - What the SDK knows about the wrapped model; the default `'auto'` strategy follows its
+ * `promptCaching`, falling back to the Claude name test for unlisted ids, matching `BedrockModel`
  * @internal
  */
 function applyBedrockCache(
   callOptions: LanguageModelV3CallOptions,
   cacheConfig: CacheConfig,
   dynamicTrailingBlocks: number,
-  modelId: string
+  modelId: string,
+  modelInfo: ModelInfo
 ): void {
   if (!isCacheStrategySupported(cacheConfig)) return
-  if (!bedrockModelSupportsCaching(cacheConfig, modelId)) return
+  if (!bedrockModelSupportsCaching(cacheConfig, modelId, modelInfo)) return
 
   // The amazon-bedrock ai-sdk adapter accepts no tool-level cache point, so toolsTTL does nothing here.
   // Tool definitions are cached only as part of the system/messages prefix.
@@ -375,20 +424,29 @@ function applyBedrockCache(
 }
 
 /**
- * Reports whether the wrapped Bedrock model supports Anthropic-style caching. An explicit
- * `'anthropic'` strategy opts in regardless; the default `'auto'` caches only models known to support
- * it, warning once and skipping otherwise (mirroring `BedrockModel`).
+ * Reports whether the wrapped Bedrock model takes cache points. An explicit `'anthropic'` strategy
+ * opts in regardless; the default `'auto'` caches when `modelInfo` says `'cachePoints'`, or when the id is
+ * unlisted and names Claude, warning once and skipping otherwise (mirroring `BedrockModel`).
  *
+ * @param cacheConfig - The caller's cache configuration
+ * @param modelId - The wrapped Bedrock model id, used in the skip warning
+ * @param modelInfo - What the SDK knows about the wrapped model
  * @internal
  */
-function bedrockModelSupportsCaching(cacheConfig: CacheConfig, modelId: string): boolean {
+function bedrockModelSupportsCaching(cacheConfig: CacheConfig, modelId: string, modelInfo: ModelInfo): boolean {
   if ((cacheConfig.strategy ?? 'auto') !== 'auto') return true
 
-  const supported = BEDROCK_MODELS_SUPPORTING_CACHING.some((pattern) => modelId.includes(pattern))
+  const promptCaching = modelInfo.capabilities?.promptCaching
+  // Unlisted ids (a Claude release newer than the data, a prompt-router or custom-model ARN)
+  // keep the historical name test so caching does not turn off until the data catches up.
+  const supported =
+    promptCaching === undefined
+      ? modelId.toLowerCase().includes('claude') || modelId.toLowerCase().includes('anthropic')
+      : promptCaching === 'cachePoints'
   if (!supported) {
     warnOnce(
       logger,
-      `model_id=<${modelId}> | cacheConfig is enabled but this bedrock model does not support automatic caching, ignoring`
+      `model_id=<${modelId}> | cacheConfig is enabled but this bedrock model is not known to support automatic caching, ignoring`
     )
   }
   return supported
@@ -513,7 +571,7 @@ function applyOpenAICache(callOptions: LanguageModelV3CallOptions, cacheConfig: 
  * Classifies an error from doStream into the appropriate Strands error type.
  *
  * @param error - The error thrown by the Vercel provider
- * @returns A classified error (ContextWindowOverflowError, ModelThrottledError, or ModelError)
+ * @returns A classified error (ContextWindowOverflowError, ModelThrottledError, ModelNetworkError, or ModelError)
  */
 function classifyError(error: unknown): Error {
   const message = error instanceof Error ? error.message : String(error)
@@ -534,7 +592,20 @@ function classifyError(error: unknown): Error {
     return new ContextWindowOverflowError(message)
   }
 
+  if (isNetworkError(error)) {
+    return new ModelNetworkError(`Language model stream error: ${message}`, { cause: error })
+  }
+
   return new ModelError(`Language model stream error: ${message}`, { cause: error })
+}
+
+/**
+ * Whether a Vercel provider error is a network failure. In Node, ai-sdk wraps fetch failures as a
+ * retryable `APICallError` with no status code; in browsers they surface as a raw `TypeError`.
+ */
+function isNetworkError(error: unknown): boolean {
+  if (isFetchNetworkError(error)) return true
+  return APICallError.isInstance(error) && error.isRetryable && error.statusCode === undefined
 }
 
 /**

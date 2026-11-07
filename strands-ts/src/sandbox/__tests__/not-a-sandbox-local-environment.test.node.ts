@@ -3,7 +3,7 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 import { NotASandboxLocalEnvironment } from '../not-a-sandbox-local-environment.js'
-import { SandboxPathNotFoundError } from '../errors.js'
+import { SandboxIsADirectoryError, SandboxPathNotFoundError } from '../errors.js'
 
 const WINDOWS = process.platform === 'win32'
 const TEST_DIR = path.join(os.tmpdir(), 'strands-test-not-a-sandbox')
@@ -155,8 +155,23 @@ describe('NotASandboxLocalEnvironment', () => {
       expect(await sandbox.readText(file)).toBe('deep')
     })
 
-    it('throws when reading a nonexistent file', async () => {
-      await expect(sandbox.readFile(path.join(TEST_DIR, 'nope.txt'))).rejects.toThrow()
+    it.each([
+      { name: 'nope.txt', ErrorClass: SandboxPathNotFoundError, code: 'ENOENT' },
+      { name: '', ErrorClass: SandboxIsADirectoryError, code: 'EISDIR' },
+    ])('keeps the original $code fs error as the cause of a typed read error', async ({ name, ErrorClass, code }) => {
+      const error = await sandbox.readFile(path.join(TEST_DIR, name)).catch((caught: unknown) => caught)
+      expect(error).toBeInstanceOf(ErrorClass)
+      expect((error as Error).cause).toMatchObject({ code })
+    })
+
+    // Contract: on POSIX, `\` in a path is a legal filename character, not a
+    // separator. Containment logic in tools above the sandbox relies on this.
+    it.skipIf(WINDOWS)('treats a backslash in a filename as a literal character', async () => {
+      const file = path.join(TEST_DIR, 'weird\\name.txt')
+      await sandbox.writeText(file, 'ok')
+      expect(await sandbox.readText(file)).toBe('ok')
+      const entries = await sandbox.listFiles(TEST_DIR)
+      expect(entries.some((entry) => entry.name === 'weird\\name.txt')).toBe(true)
     })
   })
 

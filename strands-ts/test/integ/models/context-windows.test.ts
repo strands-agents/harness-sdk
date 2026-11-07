@@ -1,12 +1,12 @@
 import { describe, expect, inject, it } from 'vitest'
 import Anthropic from '@anthropic-ai/sdk'
 import { ApiError, GoogleGenAI } from '@google/genai'
-import { CONTEXT_WINDOW_LIMITS } from '$/sdk/models/defaults.js'
+import modelInfo from '$/sdk/models/model-info.json' with { type: 'json' }
 
 import { anthropic, gemini } from '../__fixtures__/model-providers.js'
 
 /**
- * Table-wide drift check: every direct-API key in CONTEXT_WINDOW_LIMITS matches the provider's reported limit.
+ * Table-wide drift check: every direct-API key in shared/model-info.json matches the provider's reported limit.
  * Keys the provider no longer serves skip (not fail), so the skip list doubles as a report of stale rows.
  * Metadata calls only; no model turns. Bedrock-style `vendor.` keys match neither prefix.
  */
@@ -37,7 +37,9 @@ const lookups = [
 ]
 
 describe.each(lookups)('$name context-window table', ({ prefix, name, skip, apiContextWindow }) => {
-  const rows = Object.entries(CONTEXT_WINDOW_LIMITS).filter(([modelId]) => modelId.startsWith(prefix))
+  const rows = Object.entries(modelInfo.models)
+    .filter(([modelId]) => modelId.startsWith(prefix))
+    .map(([modelId, info]) => [modelId, info.limits?.contextWindow] as const)
 
   describe.each(rows)('%s', (modelId, tableWindow) => {
     it.skipIf(skip)('matches the provider API', async (ctx) => {
@@ -46,7 +48,7 @@ describe.each(lookups)('$name context-window table', ({ prefix, name, skip, apiC
 
       expect(
         tableWindow,
-        `${modelId}: table says ${tableWindow}, provider API reports ${apiWindow}; update src/models/defaults.ts`
+        `${modelId}: table says ${tableWindow}, provider API reports ${apiWindow}; update shared/model-info.json`
       ).toBe(apiWindow)
     })
   })

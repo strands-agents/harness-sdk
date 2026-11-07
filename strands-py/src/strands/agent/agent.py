@@ -954,10 +954,11 @@ class Agent(AgentBase, LocalAgent):
                 still fires once with it. Matched by ``==`` (any equatable object; need not be hashable).
                 Raises ``IdempotencyAbortedError`` if the original is aborted before producing a result.
             limits: Limits for the whole request this call starts (turns / output_tokens /
-                total_tokens). See :class:`~strands.types.agent.Limits`. When a limit is reached,
-                the loop stops at the next turn boundary with a corresponding ``stop_reason``
-                (e.g. ``"limit_turns"``); no exception is raised. Token limits are soft — a single
-                oversized model response can overshoot them, since checks run at turn boundaries.
+                total_tokens / structured_output_attempts). See :class:`~strands.types.agent.Limits`.
+                When a limit is reached, the loop stops at the next turn boundary with a corresponding
+                ``stop_reason`` (e.g. ``"limit_turns"``); no exception is raised. Token limits are
+                soft — a single oversized model response can overshoot them, since checks run at turn
+                boundaries.
             cancel_signal: Caller-owned event that cancels this invocation. Use it when cancellation is
                 driven from outside the agent — a client disconnect, a request lifecycle, a timeout. The
                 agent observes both this event and ``cancel()``, so either cancels independently, and it
@@ -1054,10 +1055,11 @@ class Agent(AgentBase, LocalAgent):
                 still fires once with it. Matched by ``==`` (any equatable object; need not be hashable).
                 Raises ``IdempotencyAbortedError`` if the original is aborted before producing a result.
             limits: Limits for the whole request this call starts (turns / output_tokens /
-                total_tokens). See :class:`~strands.types.agent.Limits`. When a limit is reached,
-                the loop stops at the next turn boundary with a corresponding ``stop_reason``
-                (e.g. ``"limit_turns"``); no exception is raised. Token limits are soft — a single
-                oversized model response can overshoot them, since checks run at turn boundaries.
+                total_tokens / structured_output_attempts). See :class:`~strands.types.agent.Limits`.
+                When a limit is reached, the loop stops at the next turn boundary with a corresponding
+                ``stop_reason`` (e.g. ``"limit_turns"``); no exception is raised. Token limits are
+                soft — a single oversized model response can overshoot them, since checks run at turn
+                boundaries.
             cancel_signal: Caller-owned event that cancels this invocation. Use it when cancellation is
                 driven from outside the agent — a client disconnect, a request lifecycle, a timeout. The
                 agent observes both this event and ``cancel()``, so either cancels independently, and it
@@ -1469,10 +1471,11 @@ class Agent(AgentBase, LocalAgent):
                 still fires once with it. Matched by ``==`` (any equatable object; need not be hashable).
                 Raises ``IdempotencyAbortedError`` if the original is aborted before producing a result.
             limits: Limits for the whole request this call starts (turns / output_tokens /
-                total_tokens). See :class:`~strands.types.agent.Limits`. When a limit is reached,
-                the loop stops at the next turn boundary with a corresponding ``stop_reason``
-                (e.g. ``"limit_turns"``); no exception is raised. Token limits are soft — a single
-                oversized model response can overshoot them, since checks run at turn boundaries.
+                total_tokens / structured_output_attempts). See :class:`~strands.types.agent.Limits`.
+                When a limit is reached, the loop stops at the next turn boundary with a corresponding
+                ``stop_reason`` (e.g. ``"limit_turns"``); no exception is raised. Token limits are
+                soft — a single oversized model response can overshoot them, since checks run at turn
+                boundaries.
             cancel_signal: Caller-owned event that cancels this invocation. Use it when cancellation is
                 driven from outside the agent — a client disconnect, a request lifecycle, a timeout. The
                 agent observes both this event and ``cancel()``, so either cancels independently, and it

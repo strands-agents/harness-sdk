@@ -6,11 +6,13 @@ import {
   ToolResultBlock,
   ReasoningBlock,
   GuardContentBlock,
+  InjectedBlock,
 } from '../../types/messages.js'
 import { CitationsBlock } from '../../types/citations.js'
 import { TestModelProvider, collectGenerator } from '../../__fixtures__/model-test-helpers.js'
 import { MaxTokensError, ModelError } from '../../errors.js'
 import { Model } from '../model.js'
+import { mergeModelInfo, type ModelInfo } from '../model-info.js'
 import type { BaseModelConfig, StreamOptions } from '../model.js'
 import { isModelStreamEvent, type ModelStreamEvent } from '../streaming.js'
 import { anyTrackingId } from '../../__fixtures__/message-helpers.js'
@@ -121,6 +123,85 @@ describe('Model', () => {
         await expect(async () => await collectGenerator(provider.streamAggregated(messages))).rejects.toThrow(
           'Model reached maximum token limit. This is an unrecoverable state that requires intervention.'
         )
+      })
+    })
+
+    // Guards against https://github.com/strands-agents/harness-sdk/issues/5763 and
+    // https://github.com/strands-agents/harness-sdk/issues/3189: a stream without a message start
+    // still completes as an assistant message.
+    describe('when the stream has no message start event', () => {
+      it('completes a message with streamed text and tool use as the assistant', async () => {
+        const provider = new TestModelProvider(async function* () {
+          yield { type: 'modelContentBlockStartEvent' }
+          yield {
+            type: 'modelContentBlockDeltaEvent',
+            delta: { type: 'textDelta', text: 'Checking' },
+          }
+          yield { type: 'modelContentBlockStopEvent' }
+          yield {
+            type: 'modelContentBlockStartEvent',
+            start: { type: 'toolUseStart', toolUseId: 'tool1', name: 'get_weather' },
+          }
+          yield {
+            type: 'modelContentBlockDeltaEvent',
+            delta: { type: 'toolUseInputDelta', input: '{"location": "Paris"}' },
+          }
+          yield { type: 'modelContentBlockStopEvent' }
+          yield { type: 'modelMessageStopEvent', stopReason: 'toolUse' }
+        })
+
+        const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+
+        const { result } = await collectGenerator(provider.streamAggregated(messages))
+
+        expect(result).toEqual({
+          message: {
+            type: 'message',
+            role: 'assistant',
+            content: [
+              { type: 'textBlock', text: 'Checking' },
+              {
+                type: 'toolUseBlock',
+                toolUseId: 'tool1',
+                name: 'get_weather',
+                input: { location: 'Paris' },
+              },
+            ],
+            trackingId: anyTrackingId,
+          },
+          stopReason: 'toolUse',
+        })
+      })
+
+      it('returns an empty assistant message when the turn is empty', async () => {
+        const provider = new TestModelProvider(async function* () {
+          yield { type: 'modelMessageStopEvent', stopReason: 'endTurn' }
+          yield {
+            type: 'modelMetadataEvent',
+            usage: { inputTokens: 10, outputTokens: 1, totalTokens: 11 },
+          }
+        })
+
+        const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+
+        const { result } = await collectGenerator(provider.streamAggregated(messages))
+
+        expect(result).toEqual({
+          message: {
+            type: 'message',
+            role: 'assistant',
+            content: [],
+            trackingId: anyTrackingId,
+            metadata: {
+              usage: { inputTokens: 10, outputTokens: 1, totalTokens: 11 },
+            },
+          },
+          stopReason: 'endTurn',
+          metadata: {
+            type: 'modelMetadataEvent',
+            usage: { inputTokens: 10, outputTokens: 1, totalTokens: 11 },
+          },
+        })
       })
     })
 
@@ -1115,6 +1196,28 @@ describe('countTokens', () => {
     expect(result).toBe(Math.ceil('cited text here'.length / 4))
   })
 
+  it('estimates injected block tokens', async () => {
+    const provider = new TestModelProvider()
+    const messages = [
+      new Message({ role: 'user', content: [new InjectedBlock({ text: 'cwd: /repo, date: today', source: 'test' })] }),
+    ]
+
+    const result = await provider.countTokens(messages)
+
+    expect(result).toBe(Math.ceil('cwd: /repo, date: today'.length / 4))
+  })
+
+  it('counts only the injected blocks of the latest user message', async () => {
+    const provider = new TestModelProvider()
+    const messages = [
+      new Message({ role: 'user', content: [new InjectedBlock({ text: 'x'.repeat(400), source: 'test' })] }),
+      new Message({ role: 'assistant', content: [new TextBlock('ok')] }),
+      new Message({ role: 'user', content: [new InjectedBlock({ text: 'cwd: /repo', source: 'test' })] }),
+    ]
+    const result = await provider.countTokens(messages)
+    expect(result).toBe(Math.ceil('ok'.length / 4) + Math.ceil('cwd: /repo'.length / 4))
+  })
+
   it('estimates string system prompt tokens', async () => {
     const provider = new TestModelProvider()
     const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
@@ -1207,7 +1310,102 @@ describe('countTokens', () => {
   })
 })
 
+describe('info', () => {
+  it('knows only that temporary messages are off for a provider with no model id, and unknown stateful reads as false', () => {
+    const provider = new TestModelProvider()
+    expect(provider.modelInfo).toEqual({ capabilities: { temporaryMessages: false } })
+    expect(provider.stateful).toBe(false)
+  })
+
+  it('resolves facts from the shared model info for any provider by modelId', () => {
+    const provider = new TestModelProvider()
+    provider.updateConfig({ modelId: 'us.anthropic.claude-sonnet-4-6' })
+
+    expect(provider.modelInfo.limits?.contextWindow).toBe(1_000_000)
+    expect(provider.modelInfo.capabilities?.promptCaching).toBe('cachePoints')
+  })
+
+  it('leaves temporary messages off for a model the shared data says takes them', () => {
+    const provider = new TestModelProvider()
+    provider.updateConfig({ modelId: 'vertex.claude-opus-5-5' })
+    expect(provider.modelInfo.capabilities?.temporaryMessages).toBe(false)
+  })
+
+  it('lets a provider put its facts over the shared model info, with the user override over both', () => {
+    class GatewayProvider extends TestModelProvider {
+      override get modelInfo(): ModelInfo {
+        return mergeModelInfo(
+          super.modelInfo,
+          { capabilities: { promptCaching: 'unsupported' } },
+          this.getConfig().modelInfo
+        )
+      }
+    }
+    const provider = new GatewayProvider()
+    provider.updateConfig({ modelId: 'claude-sonnet-4-6', contextWindowLimit: 8_000 })
+    expect(provider.modelInfo.capabilities?.promptCaching).toBe('unsupported') // shared file says cachePoints
+    expect(provider.modelInfo.limits?.contextWindow).toBe(8_000)
+    expect(Object.isFrozen(provider.modelInfo)).toBe(true)
+
+    provider.updateConfig({ modelInfo: { capabilities: { promptCaching: 'cachePoints' } } })
+    expect(provider.modelInfo.capabilities?.promptCaching).toBe('cachePoints')
+  })
+
+  it('lets the info override set stateful, and the stateful getter reads it', () => {
+    const provider = new TestModelProvider()
+    expect(provider.stateful).toBe(false)
+
+    provider.updateConfig({ modelInfo: { capabilities: { stateful: true } } })
+
+    expect(provider.modelInfo.capabilities?.stateful).toBe(true)
+    expect(provider.stateful).toBe(true)
+  })
+
+  it('lets the info override win over contextWindowLimit', () => {
+    const provider = new TestModelProvider()
+    provider.updateConfig({ contextWindowLimit: 50_000, modelInfo: { limits: { contextWindow: 10_000 } } })
+
+    expect(provider.modelInfo.limits?.contextWindow).toBe(10_000)
+  })
+
+  it('takes the context window from the config', () => {
+    const provider = new TestModelProvider()
+    provider.updateConfig({ contextWindowLimit: 50_000 })
+
+    expect(provider.modelInfo.limits?.contextWindow).toBe(50_000)
+  })
+
+  it('reads stateful from what a provider puts in the record', () => {
+    class StatefulProvider extends TestModelProvider {
+      override get modelInfo(): ModelInfo {
+        return mergeModelInfo(super.modelInfo, { capabilities: { stateful: true } }, this.getConfig().modelInfo)
+      }
+    }
+    const provider = new StatefulProvider()
+    expect(provider.stateful).toBe(true)
+
+    provider.updateConfig({ modelInfo: { capabilities: { stateful: false } } })
+    expect(provider.stateful).toBe(false)
+  })
+
+  it('reflects config changes on the next read', () => {
+    const provider = new TestModelProvider()
+    expect(provider.modelInfo.limits?.contextWindow).toBeUndefined()
+
+    provider.updateConfig({ contextWindowLimit: 4_096 })
+
+    expect(provider.modelInfo.limits?.contextWindow).toBe(4_096)
+  })
+})
+
 describe('estimateUtilization', () => {
+  it('uses the context window from info, including an info override', () => {
+    const provider = new TestModelProvider()
+    provider.updateConfig({ modelInfo: { limits: { contextWindow: 10_000 } } })
+
+    expect(provider.estimateUtilization(5_000)).toBe(0.5)
+  })
+
   it('returns ratio of inputTokens to contextWindowLimit', () => {
     const provider = new TestModelProvider()
     provider.updateConfig({ contextWindowLimit: 100_000 })

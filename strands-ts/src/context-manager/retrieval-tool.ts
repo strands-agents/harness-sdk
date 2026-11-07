@@ -13,7 +13,7 @@ import { DocumentBlock, ImageBlock, VideoBlock } from '../types/media.js'
 import type { JSONValue } from '../types/json.js'
 import type { Tool } from '../tools/tool.js'
 import { Message, ToolUseBlock } from '../types/messages.js'
-import type { Stash } from './stash.js'
+import { isOffloadPlaceholder, type Stash } from './stash.js'
 
 export const RETRIEVAL_TOOL_NAME = 'retrieve_context'
 
@@ -65,6 +65,9 @@ export function createRetrievalTool(stash: Stash, maxResultTokens?: number): Too
       const result = await stash.retrieve(input.reference)
       if (!result) {
         return `Error: reference not found: ${input.reference}`
+      }
+      if (isOffloadPlaceholder(result.data)) {
+        return `Error: original content for reference ${input.reference} is no longer available`
       }
 
       if (!input.pattern && !input.line_range) {

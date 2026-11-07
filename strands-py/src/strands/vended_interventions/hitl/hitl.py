@@ -224,8 +224,8 @@ class HumanInTheLoop(InterventionHandler):
             **kwargs: Additional keyword arguments for future extensibility.
 
         Returns:
-            Proceed if the tool is allow-listed, trusted, or approved inline;
-            otherwise a Confirm action (pausing via interrupt when no ``ask`` is set).
+            Proceed if the tool is allow-listed, trusted, or approved inline; Deny if the inline
+            answer rejects it; otherwise a Confirm action that pauses via interrupt.
         """
         tool_name = event.tool_use["name"]
         classifier_result = await self._requires_approval(event)
@@ -252,8 +252,7 @@ class HumanInTheLoop(InterventionHandler):
             return Confirm(prompt=prompt, evaluate=evaluate)
 
         # Inline mode: collect the response now (awaiting async ``ask`` callbacks). A
-        # trust response short-circuits to Proceed; anything else is handed to the
-        # standard evaluator via Confirm so the normal approve/deny path applies.
+        # trust response short-circuits to Proceed; anything else is evaluated directly.
         response = self._ask(prompt)
         if inspect.isawaitable(response):
             response = await response
@@ -270,7 +269,21 @@ class HumanInTheLoop(InterventionHandler):
             self._trust_tool(event, tool_name)
             return Proceed()
 
-        return Confirm(prompt=prompt, response=response, evaluate=self._evaluate)
+        return self._decide_ask_response(tool_name, response)
+
+    def _decide_ask_response(self, tool_name: str, response: Any) -> InterventionAction:
+        """Decide on the answer the human just gave, without consulting stored interrupt responses.
+
+        Args:
+            tool_name: Name of the tool awaiting approval.
+            response: The human's answer from the inline ``ask`` callback.
+
+        Returns:
+            Proceed if the answer approves the call, otherwise Deny.
+        """
+        if self._evaluate(response):
+            return Proceed()
+        return Deny(reason=f'Tool "{tool_name}" denied: the human rejected the call.')
 
     async def _requires_approval(self, event: BeforeToolCallEvent) -> ClassifierResult:
         """Decide whether the tool call needs human approval.
@@ -278,7 +291,8 @@ class HumanInTheLoop(InterventionHandler):
         Precedence (first match wins):
 
         1. Negated (``!tool``) -> always requires approval (cannot be trusted)
-        2. Trusted at runtime via trust response (stored in ``agent.state``) -> runs freely
+        2. Trusted at runtime via trust response (stored in ``agent.state``, only read when
+           ``enable_trust``) -> runs freely
         3. Wildcard (``*``) -> runs freely
         4. Explicitly listed -> runs freely
         5. Classifier (if provided) -> its decision
@@ -293,8 +307,7 @@ class HumanInTheLoop(InterventionHandler):
         tool_name = event.tool_use["name"]
         if f"!{tool_name}" in self._allowed_tools:
             return ClassifierResult(requires_human_in_the_loop=True)
-        trusted = event.agent.state.get(_TRUSTED_TOOLS_KEY) or []
-        if tool_name in trusted:
+        if self._enable_trust and tool_name in self._trusted_tools(event):
             return ClassifierResult(requires_human_in_the_loop=False)
         if "*" in self._allowed_tools:
             return ClassifierResult(requires_human_in_the_loop=False)
@@ -343,9 +356,26 @@ class HumanInTheLoop(InterventionHandler):
             event: The tool call event (provides access to the agent).
             tool_name: Name of the tool to trust.
         """
-        trusted = event.agent.state.get(_TRUSTED_TOOLS_KEY) or []
+        trusted = self._trusted_tools(event)
         if tool_name not in trusted:
             event.agent.state.set(_TRUSTED_TOOLS_KEY, [*trusted, tool_name])
+
+    @staticmethod
+    def _trusted_tools(event: BeforeToolCallEvent) -> list[str]:
+        """Read the trusted tool names from agent state.
+
+        Agent state can be restored from a session, so anything other than a list of strings counts as empty.
+
+        Args:
+            event: The tool call event (provides access to the agent).
+
+        Returns:
+            The trusted tool names.
+        """
+        trusted = event.agent.state.get(_TRUSTED_TOOLS_KEY)
+        if isinstance(trusted, list) and all(isinstance(tool_name, str) for tool_name in trusted):
+            return trusted
+        return []
 
     @staticmethod
     def _is_trust_response(response: Any) -> bool:

@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest'
-import { Stash } from '../stash.js'
+import { Stash, formatStashRefs, isOffloadPlaceholder } from '../stash.js'
 import { InMemoryStorage } from '../../storage/in-memory-storage.js'
+import { Message, TextBlock, ToolResultBlock } from '../../types/messages.js'
+import { ImageBlock } from '../../types/media.js'
 
 describe('Stash', () => {
   describe('store and retrieve', () => {
@@ -132,6 +134,57 @@ describe('Stash', () => {
       await stash.clearSession()
 
       expect(await storage.list('')).toStrictEqual(['team/tool-1_0'])
+    })
+  })
+
+  describe('offload placeholders', () => {
+    it.each([[['tu-1_0']], [['tu-1_0', 'tu-1_1']]])('detects formatted refs %j', (refs) => {
+      expect(isOffloadPlaceholder({ text: `[Dropped]${formatStashRefs(refs)}` })).toBe(true)
+      expect(isOffloadPlaceholder(new TextBlock(`[Dropped]${formatStashRefs(refs)}`))).toBe(true)
+    })
+
+    it.each([
+      { text: 'plain text' },
+      { text: 'see [ref: x] for details' },
+      { json: { text: '[Dropped] [ref: tu-1_0]' } },
+      '[Dropped] [ref: tu-1_0]',
+      null,
+    ])('ignores non-placeholder %j', (block) => {
+      expect(isOffloadPlaceholder(block)).toBe(false)
+    })
+
+    it('skips a tool result carrying stash refs, including its other items', async () => {
+      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+      const message = new Message({
+        role: 'user',
+        content: [
+          new ToolResultBlock({
+            toolUseId: 'tu-1',
+            status: 'success',
+            content: [
+              new TextBlock('[Truncated: 1 block, ~10,973 tokens]\n\nrow-1\n\n[Stashed] [ref: tu-1_0]'),
+              new ImageBlock({ format: 'png', source: { bytes: new Uint8Array([1, 2, 3]) } }),
+            ],
+          }),
+        ],
+      })
+
+      await stash.storeMessage(message)
+
+      expect(await stash.takeSnapshot()).toStrictEqual({})
+    })
+
+    it('skips a text placeholder and keeps other blocks', async () => {
+      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+      const message = new Message({
+        role: 'user',
+        content: [new TextBlock('[Dropped] [refs: track-1_0, track-1_1]'), new TextBlock('see [ref: x] for details')],
+        trackingId: 'track-1',
+      })
+
+      await stash.storeMessage(message)
+
+      expect(await stash.takeSnapshot()).toStrictEqual({ 'track-1_1': { text: 'see [ref: x] for details' } })
     })
   })
 })
