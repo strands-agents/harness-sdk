@@ -1,7 +1,7 @@
 import { BedrockModel } from '@strands-agents/sdk/models/bedrock'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -24,7 +24,15 @@ import {
 import { describe, expect, it, vi } from 'vitest'
 
 import { createAcpApp, AcpService } from '../../src/cli/acp.js'
-import { restoreSessionAgentDefinition, AGENT_DEFINITION_META_KEY } from '../../src/session/agent-definition.js'
+import { initializeAgentDefinition, AGENT_DEFINITION_META_KEY } from '../../src/session/agent-definition.js'
+import {
+  harnessSystemPrompt,
+  SAVED_INSTRUCTIONS,
+  SAVED_SYSTEM_PROMPT,
+  SystemPromptRecordingModel,
+  writeSessionWithSavedSystemPrompt,
+} from '../fixtures/saved-system-prompt.js'
+
 import * as acpServer from '../../src/cli/acp.js'
 import { CliConfigStore } from '../../src/config/store.js'
 import { runPythonAcpServer } from '../../src/cli/acp-python.js'
@@ -356,17 +364,9 @@ describe('ACP server', () => {
       await first.dispose()
       first = undefined
 
-      const restoredOptions = await restoreSessionAgentDefinition(
-        { session: { id: sessionId, dir: sessionDirectory } },
-        workspace
-      )
-      expect(restoredOptions).toMatchObject({
-        name: 'John',
-        description: 'Another tester',
-        instructions: 'Helpful agent who speaks like Tony Stark',
-      })
-      const cliAgent = await buildAgent(restoredOptions)
-      await cliAgent.initialize()
+      expect(existsSync(join(sessionDirectory, sessionId, 'agent.json'))).toBe(false)
+      const cliAgent = await buildAgent({ session: { id: sessionId, dir: sessionDirectory } })
+      await initializeAgentDefinition(cliAgent)
       expect(cliAgent.messages).toHaveLength(2)
 
       const replayed: string[] = []
@@ -385,14 +385,7 @@ describe('ACP server', () => {
       await second.dispose()
 
       expect(replayed).toEqual(['persist this request', 'persisted reply'])
-      expect(buildAgent).toHaveBeenLastCalledWith(
-        expect.objectContaining({
-          name: 'John',
-          description: 'Another tester',
-          instructions: 'Helpful agent who speaks like Tony Stark',
-          session: expect.objectContaining({ id: sessionId }),
-        })
-      )
+      expect(buildAgent.mock.calls.at(-1)?.[0]).not.toHaveProperty('instructions')
 
       const resumed = cliAgent.stream('what was the request?')
       for await (const _event of resumed) {
@@ -419,6 +412,36 @@ describe('ACP server', () => {
       await first?.dispose()
       process.chdir(originalCwd)
       await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('builds the system prompt from the profile when a loaded session saved its own', async () => {
+    const originalCwd = process.cwd()
+    const workspace = await mkdtemp(join(tmpdir(), 'strands-acp-system-prompt-'))
+    const sessionDirectory = join(workspace, '.agent', 'sessions')
+    await writeSessionWithSavedSystemPrompt(sessionDirectory, 'saved-session')
+    const model = new SystemPromptRecordingModel()
+    const service = new AcpService(
+      { session: { dir: sessionDirectory } },
+      {
+        buildAgent: (options) =>
+          createHarness({ ...options, model, builtinTools: [], contextManager: false, printer: false }),
+      }
+    )
+    const client = { notify: vi.fn(async () => undefined) } as unknown as acp.AgentContext
+
+    try {
+      await service.loadSession({ sessionId: 'saved-session', cwd: workspace, mcpServers: [] }, client)
+      await service.prompt({ sessionId: 'saved-session', prompt: [{ type: 'text', text: 'continue' }] }, client)
+
+      expect(model.systemPrompts).toEqual([harnessSystemPrompt()])
+      expect(model.systemPrompts[0]).not.toContain(SAVED_SYSTEM_PROMPT)
+      expect(model.systemPrompts[0]).not.toContain(SAVED_INSTRUCTIONS)
+      expect(model.firstMessageTexts).toEqual(['earlier request'])
+    } finally {
+      await service.dispose()
+      process.chdir(originalCwd)
+      await rm(workspace, { recursive: true, force: true })
     }
   })
 
@@ -506,10 +529,7 @@ describe('ACP server', () => {
       printer: false,
     })
     const initialize = vi.spyOn(agent, 'initialize')
-    const service = new AcpService(
-      { session: { dir: sessionDirectory } },
-      { buildAgent: async () => agent, sourceAgent: true }
-    )
+    const service = new AcpService({ session: { dir: sessionDirectory } }, { buildAgent: async () => agent })
     const notify = vi.fn()
     try {
       await expect(

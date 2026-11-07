@@ -17,11 +17,7 @@ import { AgentModelRuntime } from '../model/runtime.js'
 import { profileEffort } from '../model/selection.js'
 import type { ImportedAgentProject } from '../project/import.js'
 import type { AgentFactory } from '../project/typescript.js'
-import {
-  initializeAgentDefinition,
-  persistSessionAgentDefinition,
-  restoreSessionAgentDefinition,
-} from '../session/agent-definition.js'
+import { initializeAgentDefinition } from '../session/agent-definition.js'
 import { upgradeDesktopAgentProfileMessages } from '../session/desktop-profile.js'
 import {
   DEFAULT_SESSION_DIR,
@@ -210,7 +206,6 @@ export async function createInteractiveRuntime(options: CreateInteractiveRuntime
       if (disposed) throw new Error('Runtime was disposed while building an agent.')
       await initializeAgentDefinition(agent)
       agent.messages = upgradeDesktopAgentProfileMessages(agent.messages)
-      await persistSessionAgentDefinition(agentOptions)
       if (disposed) throw new Error('Runtime was disposed while building an agent.')
       agents.add(agent)
       if (skills) skillsByAgent.set(agent, skills)
@@ -295,9 +290,6 @@ export async function createInteractiveRuntime(options: CreateInteractiveRuntime
     const baseAgentOptions: HarnessAgentOptions = sessionEnabled
       ? withSession(selectedAgentOptions, { id: sessionId, dir: sessionDirectory })
       : { ...selectedAgentOptions, session: false }
-    const restoredAgentOptions = options.project
-      ? baseAgentOptions
-      : await restoreSessionAgentDefinition(baseAgentOptions, workspace)
     const sandbox =
       configuredSandbox === undefined || configuredSandbox === false
         ? new WorkspaceSandbox(workspace)
@@ -314,7 +306,7 @@ export async function createInteractiveRuntime(options: CreateInteractiveRuntime
       dispose: (): Promise<void> => (mcpDisposal ??= loadedMcp.dispose()),
     }
     const configuredTools: NonNullable<HarnessAgentOptions['tools']> = [
-      ...(restoredAgentOptions.tools ?? []),
+      ...(baseAgentOptions.tools ?? []),
       ...mcp.clients,
     ]
     const permissionBroker = new ToolPermissionBroker()
@@ -331,7 +323,7 @@ export async function createInteractiveRuntime(options: CreateInteractiveRuntime
       return backgroundInbox.observeAgent((prompt): boolean => liveSteering.enqueue(candidate, prompt))
     })
     const controllerOptions: HarnessAgentOptions = {
-      ...withSession(restoredAgentOptions, { id: sessionId, dir: sessionDirectory }),
+      ...withSession(baseAgentOptions, { id: sessionId, dir: sessionDirectory }),
       ...(request.seed ? { model: request.seed.model, effort: profileEffort(request.seed.thinking) } : {}),
       ...(request.sessionManager !== undefined ? { sessionManager: request.sessionManager } : {}),
       sandbox,

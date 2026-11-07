@@ -11,11 +11,10 @@ import remarkStringify from 'remark-stringify'
 import TurndownService from 'turndown'
 import { unified } from 'unified'
 import { visit } from 'unist-util-visit'
+import { CANONICAL_SAMPLES_REPOSITORY } from '../../src/config/samples'
 
 const execFileAsync = promisify(execFile)
 
-// Generated links intentionally target the canonical repository, including builds from local forks.
-const CANONICAL_SAMPLES_REPOSITORY = 'strands-agents/samples'
 const MAX_MANIFEST_BYTES = 2 * 1024 * 1024
 const MAX_GUIDE_BYTES = 2 * 1024 * 1024
 const MIN_DESCRIPTION_LENGTH = 140

@@ -3,6 +3,7 @@ import { LocalFileStorage } from '../local-file-storage.js'
 import { QmdSearchStrategy } from '../search/qmd.js'
 import type { SearchStrategy } from '../search/types.js'
 import { NotASandboxLocalEnvironment } from '../../sandbox/not-a-sandbox-local-environment.js'
+import { SandboxPathNotFoundError } from '../../sandbox/errors.js'
 import { logger } from '../../logging/logger.js'
 import { rm, readFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -196,6 +197,15 @@ describe('LocalFileStorage', () => {
 
       await configured.write('a.txt', new Uint8Array([1]))
       expect(writeFile).toHaveBeenCalledWith(`${baseDir}/a.txt`, new Uint8Array([1]))
+    })
+
+    it('treats SandboxPathNotFoundError from the sandbox as a missing key', async () => {
+      const sandbox = new NotASandboxLocalEnvironment()
+      vi.spyOn(sandbox, 'readFile').mockRejectedValue(new SandboxPathNotFoundError(`${baseDir}/missing.txt`))
+      const sandboxed = new LocalFileStorage(baseDir, sandbox)
+
+      expect(await sandboxed.read('missing.txt')).toBeNull()
+      expect(await sandboxed.list('no-such-dir/')).toEqual([])
     })
 
     it('accepts a positional sandbox and search strategy', async () => {

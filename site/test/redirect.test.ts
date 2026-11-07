@@ -43,6 +43,11 @@ const redirectCases: Array<{ description: string; input: string; expected: strin
     input: 'docs/examples/python/multi_agent_example',
     expected: 'examples',
   },
+  {
+    description: 'Strands Decider root redirects to inference guide',
+    input: 'docs/labs/strands-decider',
+    expected: 'docs/labs/strands-decider/inference',
+  },
   // Vanity URLs → external
   { description: '/discord redirects to Discord invite', input: 'discord', expected: 'https://discord.gg/strands' },
   // No redirect

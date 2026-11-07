@@ -6,6 +6,7 @@ import {
   ToolResultBlock,
   ReasoningBlock,
   GuardContentBlock,
+  InjectedBlock,
 } from '../../types/messages.js'
 import { CitationsBlock } from '../../types/citations.js'
 import { TestModelProvider, collectGenerator } from '../../__fixtures__/model-test-helpers.js'
@@ -1195,6 +1196,28 @@ describe('countTokens', () => {
     expect(result).toBe(Math.ceil('cited text here'.length / 4))
   })
 
+  it('estimates injected block tokens', async () => {
+    const provider = new TestModelProvider()
+    const messages = [
+      new Message({ role: 'user', content: [new InjectedBlock({ text: 'cwd: /repo, date: today', source: 'test' })] }),
+    ]
+
+    const result = await provider.countTokens(messages)
+
+    expect(result).toBe(Math.ceil('cwd: /repo, date: today'.length / 4))
+  })
+
+  it('counts only the injected blocks of the latest user message', async () => {
+    const provider = new TestModelProvider()
+    const messages = [
+      new Message({ role: 'user', content: [new InjectedBlock({ text: 'x'.repeat(400), source: 'test' })] }),
+      new Message({ role: 'assistant', content: [new TextBlock('ok')] }),
+      new Message({ role: 'user', content: [new InjectedBlock({ text: 'cwd: /repo', source: 'test' })] }),
+    ]
+    const result = await provider.countTokens(messages)
+    expect(result).toBe(Math.ceil('ok'.length / 4) + Math.ceil('cwd: /repo'.length / 4))
+  })
+
   it('estimates string system prompt tokens', async () => {
     const provider = new TestModelProvider()
     const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
@@ -1288,10 +1311,9 @@ describe('countTokens', () => {
 })
 
 describe('info', () => {
-  it('is all unknown for a provider with no model id, and unknown stateful reads as false', () => {
+  it('knows only that temporary messages are off for a provider with no model id, and unknown stateful reads as false', () => {
     const provider = new TestModelProvider()
-
-    expect(provider.modelInfo).toEqual({})
+    expect(provider.modelInfo).toEqual({ capabilities: { temporaryMessages: false } })
     expect(provider.stateful).toBe(false)
   })
 
@@ -1301,6 +1323,12 @@ describe('info', () => {
 
     expect(provider.modelInfo.limits?.contextWindow).toBe(1_000_000)
     expect(provider.modelInfo.capabilities?.promptCaching).toBe('cachePoints')
+  })
+
+  it('leaves temporary messages off for a model the shared data says takes them', () => {
+    const provider = new TestModelProvider()
+    provider.updateConfig({ modelId: 'vertex.claude-opus-5-5' })
+    expect(provider.modelInfo.capabilities?.temporaryMessages).toBe(false)
   })
 
   it('lets a provider put its facts over the shared model info, with the user override over both', () => {

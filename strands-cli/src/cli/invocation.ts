@@ -12,7 +12,6 @@ import type { ResolvedMcpConfig } from '../config/trust.js'
 import { requireBedrockRegion } from '../model/aws-config.js'
 import { importAgentProject, type ImportedAgentProject } from '../project/import.js'
 import type { AgentFactory } from '../project/typescript.js'
-import { restoreSessionAgentDefinition } from '../session/agent-definition.js'
 import { isRecord } from '../values.js'
 import { agentConfig, projectConfigOverrides, type ParsedArgs } from './arguments.js'
 
@@ -32,8 +31,7 @@ export async function invocationAgentForRun(
   args: ParsedArgs,
   config: InvocationConfigStore,
   cwd = process.cwd(),
-  project?: ImportedAgentProject,
-  restoreDefinition = false
+  project?: ImportedAgentProject
 ): Promise<InvocationAgent> {
   const snapshot = config.snapshot()
   const projectPath = args.agent ?? snapshot.agentProject
@@ -67,7 +65,7 @@ export async function invocationAgentForRun(
   }
   return {
     profile,
-    options: restoreDefinition ? await restoreSessionAgentDefinition(options, cwd) : options,
+    options,
   }
 }
 

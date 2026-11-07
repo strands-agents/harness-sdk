@@ -11,8 +11,7 @@ import { requireBedrockRegion } from '../model/aws-config.js'
 import { HARNESS_VERSION, readCliVersion } from '../package-version.js'
 import {
   AGENT_DEFINITION_META_KEY,
-  persistSessionAgentDefinition,
-  restoreSessionAgentDefinition,
+  initializeAgentDefinition,
   sessionAgentDefinitionFromMeta,
 } from '../session/agent-definition.js'
 import { upgradeDesktopAgentProfileMessages } from '../session/desktop-profile.js'
@@ -34,7 +33,6 @@ export class AcpService {
   private readonly _agentOptions: HarnessAgentOptions
   private readonly _buildAgent: AgentBuilder
   private readonly _sharedMcpClients: readonly McpClient[]
-  private readonly _sourceAgent: boolean
   private readonly _sessions = new Map<string, AcpSession>()
   private readonly _openingSessions = new Set<string>()
 
@@ -46,13 +44,11 @@ export class AcpService {
     options: {
       buildAgent?: AgentBuilder
       sharedMcpClients?: readonly McpClient[]
-      sourceAgent?: boolean
     } = {}
   ) {
     this._agentOptions = { ...agentOptions, printer: false }
     this._buildAgent = options.buildAgent ?? createHarness
     this._sharedMcpClients = options.sharedMcpClients ?? []
-    this._sourceAgent = options.sourceAgent ?? false
   }
 
   initialize(params: acp.InitializeRequest): acp.InitializeResponse {
@@ -187,10 +183,8 @@ export class AcpService {
     try {
       mcpClients = await loadAcpMcpClients(mcpServers)
       this._assertOpen()
-      const baseOptions = withSession(this._agentOptions, { id: sessionId })
-      const restoredAgentOptions = this._sourceAgent ? baseOptions : await restoreSessionAgentDefinition(baseOptions)
       const agentOptions = {
-        ...restoredAgentOptions,
+        ...withSession(this._agentOptions, { id: sessionId }),
         ...sessionAgentDefinition,
         tools: [...(this._agentOptions.tools ?? []), ...this._sharedMcpClients, ...mcpClients],
         printer: false,
@@ -201,9 +195,8 @@ export class AcpService {
       if (resume && agent.sessionManager?.sessionId !== sessionId) {
         throw acp.RequestError.resourceNotFound(sessionId)
       }
-      await agent.initialize()
+      await initializeAgentDefinition(agent)
       agent.messages = upgradeDesktopAgentProfileMessages(agent.messages)
-      await persistSessionAgentDefinition(agentOptions)
       this._assertOpen()
       const session = { agent, mcpClients }
       this._sessions.set(sessionId, session)
@@ -262,7 +255,6 @@ export async function runAcpServer(
   agentOptions: HarnessAgentOptions = {},
   options: {
     buildAgent?: AgentBuilder
-    sourceAgent?: boolean
     mcpPaths?: readonly string[]
     mcpStrictPaths?: readonly string[]
     mcpDigests?: Readonly<Record<string, string>>
@@ -278,7 +270,6 @@ export async function runAcpServer(
   const service = new AcpService(agentOptions, {
     sharedMcpClients: sharedMcp?.clients ?? [],
     ...(options.buildAgent ? { buildAgent: options.buildAgent } : {}),
-    ...(options.sourceAgent ? { sourceAgent: true } : {}),
   })
   try {
     const stream = acp.ndJsonStream(Writable.toWeb(process.stdout), Readable.toWeb(process.stdin))

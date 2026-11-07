@@ -534,6 +534,10 @@ strands --session-id my-project "where did we leave off?"
 
 Pass `--session off` to disable conversation saving. Long-term memory is controlled separately by `--memory`.
 
+For built-in profiles and TypeScript agents, resuming restores the saved conversation while keeping
+the current agent's instructions and system prompt. Python agents use their SDK's session restoration.
+Session files are trusted input: resume only sessions you created, not ones that came with a cloned repository.
+
 Sessions use the Harness default, `./.agent/sessions`. Set `session.dir` to keep them somewhere else;
 authored agents (`--agent`) keep their own session configuration. Relative paths resolve against
 the profile's base directory, or the current workspace when no base directory is set.
