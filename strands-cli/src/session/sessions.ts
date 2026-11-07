@@ -80,9 +80,7 @@ export function sessionResumeCommand(
   const command = ['strands']
   if (session.agentProject) command.push('--agent', quote(session.agentProject))
   command.push('--session-id', quote(session.sessionId))
-  if (session.agentProject || directory !== paths.resolve(workspace, DEFAULT_SESSION_DIR)) {
-    command.push('--set', quote(`session.dir=${JSON.stringify(directory)}`))
-  }
+  command.push('--set', quote(`session.dir=${JSON.stringify(directory)}`))
   const resume = command.join(' ')
   if (workspace === paths.resolve(options.cwd ?? process.cwd())) return resume
   const changeDirectory =

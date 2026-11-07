@@ -543,7 +543,8 @@ describe('runInkChat', () => {
     expect(writes[0]).toContain('?1049h')
     const outputText = writes.join('')
     if (saved) {
-      expect(writes.at(-1)).toBe('\nResume with: strands --session-id saved-session\n')
+      expect(writes.at(-1)).toContain('\nResume with: strands --session-id saved-session --set ')
+      expect(writes.at(-1)).toContain(`session.dir=${JSON.stringify(join(process.cwd(), '.agent', 'sessions'))}`)
       expect(outputText.indexOf('?1049l')).toBeLessThan(outputText.indexOf('Resume with:'))
     } else {
       expect(writes.at(-1)).toContain('?1049l')

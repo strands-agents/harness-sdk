@@ -7,15 +7,17 @@ import { agentConfig, parseArgs } from '../../src/cli/arguments.js'
 import { sessionResumeCommand } from '../../src/session/sessions.js'
 
 describe('session resume commands', () => {
-  it('uses the session-id flag for a built-in session in the current workspace', () => {
-    const workspace = process.cwd()
+  it('pins the saved directory even when it matches the workspace default', () => {
     expect(
-      sessionResumeCommand({
-        sessionId: 'saved-session',
-        sessionDirectory: join(workspace, '.agent', 'sessions'),
-        workspace,
-      })
-    ).toBe('strands --session-id saved-session')
+      sessionResumeCommand(
+        {
+          sessionId: 'saved-session',
+          sessionDirectory: '/workspace/.agent/sessions',
+          workspace: '/workspace',
+        },
+        { cwd: '/workspace', platform: 'linux' }
+      )
+    ).toBe(`strands --session-id saved-session --set 'session.dir="/workspace/.agent/sessions"'`)
   })
 
   it('includes the directory when resuming sessions stored under the home catalog', () => {
@@ -33,7 +35,7 @@ describe('session resume commands', () => {
     )
   })
 
-  it('uses the session-id flag for the Harness default directory on Windows', () => {
+  it('pins the Harness default directory on Windows', () => {
     expect(
       sessionResumeCommand(
         {
@@ -43,7 +45,7 @@ describe('session resume commands', () => {
         },
         { cwd: 'C:\\workspace', platform: 'win32' }
       )
-    ).toBe('strands --session-id saved-session')
+    ).toBe(`strands --session-id saved-session --set 'session.dir="C:\\\\workspace\\\\.agent\\\\sessions"'`)
   })
 
   it('quotes imported agents and custom directories as literal shell arguments', () => {
