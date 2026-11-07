@@ -29,19 +29,6 @@ const SIGNAL_CODES: Partial<Record<NodeJS.Signals, number>> = {
   SIGTERM: 15,
 }
 
-const PLATFORM_LABELS: Partial<Record<NodeJS.Platform, string>> = {
-  win32: 'Windows',
-  darwin: 'Darwin',
-  linux: 'Linux',
-}
-
-export interface WorkspaceEnvironment {
-  readonly platform: string
-  readonly cwd: string
-  readonly shell: 'sh' | 'PowerShell'
-  readonly tempDir: string
-}
-
 interface Invocation {
   command: string
   args: string[]
@@ -51,19 +38,12 @@ interface Invocation {
 
 export class WorkspaceSandbox extends Sandbox {
   readonly cwd: string
-  readonly environment: WorkspaceEnvironment
   private readonly platform: NodeJS.Platform
 
   constructor(cwd: string, options: { platform?: NodeJS.Platform } = {}) {
     super()
     this.cwd = resolve(cwd)
     this.platform = options.platform ?? process.platform
-    this.environment = {
-      platform: PLATFORM_LABELS[this.platform] ?? this.platform,
-      cwd: this.cwd,
-      shell: this.platform === 'win32' ? 'PowerShell' : 'sh',
-      tempDir: tmpdir(),
-    }
   }
 
   override async readFile(path: string): Promise<Uint8Array> {
@@ -170,9 +150,18 @@ export class WorkspaceSandbox extends Sandbox {
     args: string[],
     options: ExecuteOptions
   ): AsyncGenerator<StreamChunk | ExecutionResult, void, undefined> {
+    const env = { ...process.env }
+    for (const [key, value] of Object.entries(options.env ?? {})) {
+      if (this.platform === 'win32') {
+        for (const existing of Object.keys(env)) {
+          if (existing.toLowerCase() === key.toLowerCase()) delete env[existing]
+        }
+      }
+      env[key] = value
+    }
     const child = spawn(invocation.command, args, {
       cwd: options.cwd ? resolve(this.cwd, options.cwd) : this.cwd,
-      env: { ...process.env, ...options.env },
+      env,
       stdio: [invocation.input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
       detached: process.platform !== 'win32',
       windowsHide: true,
@@ -217,11 +206,17 @@ export class WorkspaceSandbox extends Sandbox {
     child.stdout!.on('data', (data: string) => appendOutput(data, 'stdout'))
     child.stderr!.on('data', (data: string) => appendOutput(data, 'stderr'))
     child.on('error', (error) => {
-      failure = error
+      if ('code' in error && error.code === 'ENOENT') {
+        exitCode = 127
+        stderr = `Command not found: ${invocation.command}`
+      } else {
+        failure = error
+      }
       done = true
       notify()
     })
     child.on('close', (code, signal) => {
+      if (done) return
       exitCode = code ?? (signal ? 128 + (SIGNAL_CODES[signal] ?? 1) : 1)
       done = true
       notify()
@@ -238,7 +233,10 @@ export class WorkspaceSandbox extends Sandbox {
       options.signal?.addEventListener('abort', onAbort, { once: true })
     }
     if (options.timeout !== undefined) {
-      timeout = setTimeout(() => terminate(new SandboxTimeoutError(options.timeout!)), options.timeout * 1_000)
+      timeout = setTimeout(
+        () => terminate(new SandboxTimeoutError(options.timeout!, stdout, stderr)),
+        options.timeout * 1_000
+      )
     }
 
     try {

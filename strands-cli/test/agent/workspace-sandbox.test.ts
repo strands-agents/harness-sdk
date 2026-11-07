@@ -1,8 +1,9 @@
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { SandboxAbortError, SandboxPathNotFoundError } from '@strands-agents/sdk'
-import { describe, expect, it } from 'vitest'
+import { Agent, SandboxAbortError, SandboxPathNotFoundError } from '@strands-agents/sdk'
+import { makeShell } from '@strands-agents/sdk/vended-tools/shell'
+import { describe, expect, it, vi } from 'vitest'
 
 import { WorkspaceSandbox } from '../../src/agent/sandbox.js'
 
@@ -63,6 +64,43 @@ describe('WorkspaceSandbox', () => {
       stdout: 'ok',
     })
     await expect(sandbox.executeCode('x', 'python; rm -rf /')).rejects.toThrow('invalid characters')
+    await expect(sandbox.executeCode('x', 'strands-missing-interpreter')).resolves.toMatchObject({
+      exitCode: 127,
+      stderr: expect.stringContaining('strands-missing-interpreter'),
+    })
+  })
+
+  it('includes partial output in the shell tool timeout error', async () => {
+    const sandbox = new WorkspaceSandbox(process.cwd())
+    const command =
+      process.platform === 'win32'
+        ? '[Console]::Out.Write("progress`n"); [Console]::Error.Write("warning`n"); Start-Sleep 10'
+        : 'printf "progress\\n"; printf "warning\\n" >&2; exec sleep 10'
+    const input = { command, timeout: 2 }
+    await expect(
+      makeShell(sandbox).invoke(input, {
+        agent: new Agent({ sandbox }),
+        toolUse: { name: 'shell', toolUseId: 'timeout', input },
+        invocationState: {},
+        cancelSignal: new AbortController().signal,
+        interrupt: vi.fn(),
+      })
+    ).rejects.toThrow(JSON.stringify({ output: 'progress\n', error: 'warning\n', exit_code: 124 }))
+  })
+
+  it('replaces Windows environment names regardless of case', async () => {
+    vi.stubEnv('STRANDS_ENV_TEST', 'inherited')
+    try {
+      const sandbox = new WorkspaceSandbox(process.cwd(), { platform: 'win32' })
+      const result = await sandbox.executeCode(
+        'process.stdout.write(JSON.stringify(Object.entries(process.env).filter(([key]) => key.toLowerCase() === "strands_env_test")))',
+        'node',
+        { env: { strands_env_test: 'override' } }
+      )
+      expect(JSON.parse(result.stdout)).toEqual([['strands_env_test', 'override']])
+    } finally {
+      vi.unstubAllEnvs()
+    }
   })
 
   it('decodes UTF-8 characters split across stdout and stderr chunks', async () => {
