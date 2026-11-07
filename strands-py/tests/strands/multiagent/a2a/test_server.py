@@ -1,14 +1,19 @@
 """Tests for the A2AServer class."""
 
 from collections import OrderedDict
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
+from a2a.client import ClientConfig
 from a2a.types import AgentCapabilities, AgentCard, AgentSkill
 from fastapi import FastAPI
 from starlette.applications import Starlette
 
+from strands import Agent, ToolContext, tool
+from strands.agent.a2a_agent import A2AAgent
 from strands.multiagent.a2a.server import A2AServer
+from tests.fixtures.mocked_model_provider import MockedModelProvider
 
 # Tests here intentionally exercise the deprecated single-agent path.
 pytestmark = pytest.mark.filterwarnings("ignore:Passing a single 'agent'.*:DeprecationWarning")
@@ -1066,3 +1071,58 @@ def test_http_url_explicit_flag_set_correctly(mock_strands_agent):
     # With explicit http_url
     server2 = A2AServer(mock_strands_agent, http_url="http://example.com/agent", skills=[])
     assert server2._http_url_explicit is True
+
+
+@tool(context=True)
+def approve_deletion(tool_context: ToolContext) -> str:
+    """Pause until a human approves the deletion."""
+    return tool_context.interrupt("approval", reason="Delete report.txt?")
+
+
+def _interrupting_model() -> MockedModelProvider:
+    tool_use = {"toolUse": {"toolUseId": "t1", "name": "approve_deletion", "input": {}}}
+    return MockedModelProvider([{"role": "assistant", "content": [tool_use]}])
+
+
+def _failing_model() -> MockedModelProvider:
+    model = MockedModelProvider([])
+    model.stream = MagicMock(side_effect=RuntimeError("model unavailable"))
+    return model
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("build_model", "exp_stop_reason", "exp_task_state"),
+    [
+        (_interrupting_model, "interrupt", "input-required"),
+        (_failing_model, "end_turn", "failed"),
+    ],
+)
+async def test_a2a_agent_reads_task_state_from_non_streaming_server(build_model, exp_stop_reason, exp_task_state):
+    """An A2AAgent calling a real A2AServer that does not stream still sees the task state.
+
+    With streaming off in the card, the client sends message/send and receives a bare (Task, None),
+    so the state is only on the task itself.
+    """
+    server = A2AServer(
+        agent_factory=lambda _context_id: Agent(
+            name="File agent",
+            description="Deletes files once a human approves",
+            model=build_model(),
+            tools=[approve_deletion],
+            callback_handler=None,
+        ),
+        http_url="http://a2a.test",
+        skills=[],
+        enable_a2a_compliant_streaming=True,
+    )
+    # A2AServer always advertises streaming, so switch it off on the card.
+    server.capabilities = AgentCapabilities(streaming=False)
+    transport = httpx.ASGITransport(app=server.to_starlette_app())
+
+    async with httpx.AsyncClient(transport=transport) as httpx_client:
+        a2a_agent = A2AAgent(endpoint="http://a2a.test", client_config=ClientConfig(httpx_client=httpx_client))
+        result = await a2a_agent.invoke_async("Delete report.txt")
+
+    assert result.stop_reason == exp_stop_reason
+    assert result.state == {"a2a_task_state": exp_task_state}
