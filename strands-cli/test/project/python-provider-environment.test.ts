@@ -86,9 +86,12 @@ agent.name = agent.model.client.meta.region_name if isinstance(agent.model, Bedr
     15_000
   )
 
-  it('applies model overrides to direct generated source', async () => {
+  it('applies model and effort overrides to direct generated source', async () => {
     expect((await openAgent('"openai/gpt-5"', { model: bedrockModel, session: false })).info().model).toBe(bedrockModel)
-    expect((await openAgent(undefined, { model: 'openai/gpt-5' })).info().model).toBe('openai/gpt-5')
+    const backend = await openAgent(undefined, { model: 'openai/gpt-5' })
+    expect(backend.info().model).toBe('openai/gpt-5')
+    await expect(backend.setEffort('none')).resolves.toBe('Off')
+    expect(backend.modelSelection().thinking).toBe('off')
   })
 
   it('leaves a supplied Model instance untouched', async () => {

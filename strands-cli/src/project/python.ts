@@ -317,7 +317,7 @@ export class PythonBackend implements ChatBackend {
 
   async setEffort(thinking: string): Promise<string> {
     validateEffortSelection(thinking, this.listEfforts())
-    await this._request({ type: 'reset', thinking: thinking === 'none' ? null : thinking })
+    await this._request({ type: 'reset', thinking: profileEffort(thinking) })
     return effortDisplayLabel(this._state.thinking)
   }
 

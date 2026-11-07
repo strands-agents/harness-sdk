@@ -99,7 +99,7 @@ export async function validateModelSelection(
 }
 
 export function validateEffortSelection(effort: string, options: readonly ChatEffortOption[]): void {
-  const supported = [...options.map((option) => option.id), 'auto']
+  const supported = [...options.map((option) => option.id), 'auto', 'off']
   if (!supported.includes(effort)) {
     throw new ModelControlError(
       `Reasoning effort ${JSON.stringify(effort)} is not supported. Choose: ${supported.join(', ')}.`
@@ -204,7 +204,10 @@ export function effortForModel(
 ): Exclude<EffortInput, undefined> {
   const levels = effortLevels(modelId)
   const current = effortValue(thinking)
-  if (levels.includes(current) || (current === 'off' && levels.includes('none'))) {
+  if (current === 'none') {
+    return 'off'
+  }
+  if (current === 'off' || levels.includes(current)) {
     return thinking
   }
   return 'auto'
