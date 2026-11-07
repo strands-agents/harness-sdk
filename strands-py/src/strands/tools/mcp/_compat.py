@@ -21,7 +21,7 @@ from typing import Any
 
 import httpx
 from mcp import ClientSession
-from mcp.types import ServerCapabilities, ToolListChangedNotification
+from mcp.types import Implementation, ServerCapabilities, ToolListChangedNotification
 
 __all__ = [
     "MCP_V2",
@@ -519,7 +519,9 @@ def task_session_kwargs(enabled: bool) -> dict[str, Any]:
     }
 
 
-async def negotiate_session(session: ClientSession) -> tuple[str | None, ServerCapabilities | None]:
+async def negotiate_session(
+    session: ClientSession,
+) -> tuple[str | None, ServerCapabilities | None, Implementation | None]:
     """Negotiate the connection on an entered session, on either `mcp` major line.
 
     The 2026-07-28 spec (SEP-2575) removed the `initialize` handshake and
@@ -536,16 +538,18 @@ async def negotiate_session(session: ClientSession) -> tuple[str | None, ServerC
         session: An entered `ClientSession` that has not yet negotiated.
 
     Returns:
-        The server's instructions (if any) and advertised capabilities.
+        The server's instructions (if any), advertised capabilities, and
+        reported server info (name and version, if any).
     """
     if MCP_V2:
         from mcp.client.client import negotiate_auto  # type: ignore[import-not-found]
 
         await negotiate_auto(session)
-        return session.instructions, session.server_capabilities  # type: ignore[attr-defined]
+        return session.instructions, session.server_capabilities, session.server_info  # type: ignore[attr-defined]
 
     init_result = await session.initialize()
-    return init_result.instructions, session.get_server_capabilities()  # type: ignore[attr-defined]
+    server_info: Implementation | None = init_result.serverInfo  # type: ignore[attr-defined]
+    return init_result.instructions, session.get_server_capabilities(), server_info  # type: ignore[attr-defined]
 
 
 @asynccontextmanager

@@ -10,6 +10,7 @@ from mcp import ListToolsResult
 from mcp.types import CallToolResult as MCPCallToolResult
 from mcp.types import (
     GetPromptResult,
+    Implementation,
     ListPromptsResult,
     ListResourcesResult,
     ListResourceTemplatesResult,
@@ -74,6 +75,38 @@ def test_server_instructions_from_server(mock_transport, mock_session):
     mock_session.instructions = "Use tool A before tool B."
     with MCPClient(mock_transport["transport_callable"]) as client:
         assert client.server_instructions == "Use tool A before tool B."
+
+
+def test_server_info_default_before_start(mock_transport):
+    """Test that server_info is None before the client has started."""
+    client = MCPClient(mock_transport["transport_callable"])
+    assert client.server_info is None
+
+
+def test_server_info_default(mock_transport, mock_session):
+    """Test that server_info defaults to None when the server reports no server info."""
+    mock_session.initialize.return_value.serverInfo = None
+    mock_session.server_info = None
+    with MCPClient(mock_transport["transport_callable"]) as client:
+        assert client.server_info is None
+
+
+def test_server_info_from_server(mock_transport, mock_session):
+    """Test that server_info is populated from the negotiated session."""
+    tru_server_info = Implementation(name="test-server", version="1.2.3")
+    mock_session.initialize.return_value.serverInfo = tru_server_info
+    mock_session.server_info = tru_server_info
+    with MCPClient(mock_transport["transport_callable"]) as client:
+        assert client.server_info == tru_server_info
+        assert client.server_info.name == "test-server"
+        assert client.server_info.version == "1.2.3"
+
+
+def test_server_info_is_read_only(mock_transport, mock_session):
+    """Test that server_info cannot be assigned to."""
+    with MCPClient(mock_transport["transport_callable"]) as client:
+        with pytest.raises(AttributeError):
+            client.server_info = Implementation(name="other-server", version="9.9.9")
 
 
 def test_list_tools_sync(mock_transport, mock_session):

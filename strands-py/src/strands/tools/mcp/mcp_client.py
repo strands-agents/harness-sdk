@@ -411,6 +411,7 @@ class MCPClient(ToolProvider):
         self._loaded_tools: list[MCPAgentTool] | None = None
         self._tool_provider_started = False
         self.server_instructions: str | None = None
+        self._server_info: Implementation | None = None
         self._consumers: set[Any] = set()
         # Keep detached cleanup tasks alive until they finish; asyncio only retains weak references.
         self._background_cleanup_tasks: set[asyncio.Task[Any]] = set()
@@ -488,6 +489,15 @@ class MCPClient(ToolProvider):
         Defaults to the config key for ``load_servers`` clients.
         """
         return self._application_name
+
+    @property
+    def server_info(self) -> Implementation | None:
+        """The server's ``serverInfo`` (name and version) from the initialize handshake.
+
+        Populated once the client has started; ``None`` before start and when
+        the server does not report server info.
+        """
+        return self._server_info
 
     @property
     def continue_on_error(self) -> bool:
@@ -1496,11 +1506,12 @@ class MCPClient(ToolProvider):
                     **task_session_kwargs(self._is_tasks_enabled()),
                 ) as session:
                     self._log_debug_with_thread("initializing MCP session")
-                    instructions, caps = await negotiate_session(session)
+                    instructions, caps, server_info = await negotiate_session(session)
 
                     self._log_debug_with_thread("session initialized successfully")
                     # Store server instructions from the handshake for Host applications
                     self.server_instructions = instructions
+                    self._server_info = server_info
                     # Store the session for use while we await the close event
                     self._background_thread_session = session
 
