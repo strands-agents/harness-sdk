@@ -16,7 +16,7 @@ import { clearStoredContext, persistContext, restoreContext, storeContext } from
 import { sanitizeTerminalText } from '../terminal/text.js'
 import { latestRootModelUsage, RunUsage } from '../usage.js'
 import type { BackgroundAgentActivity, BackgroundAgentActivityStore } from './background.js'
-import { readBackgroundTasks } from './background.js'
+import { hasReadyBackgroundResults, readBackgroundTasks } from './background.js'
 import { ContextBreakdownCapture } from './context.js'
 import { projectAgentEvent, projectAgentResult } from './events.js'
 import type { LiveSteering } from './messaging.js'
@@ -369,7 +369,7 @@ export class StrandsChatBackend implements ChatBackend {
   }
 
   hasReadyBackgroundResults(): boolean {
-    return readBackgroundTasks(this._runtime.agent).some((task) => task.deliveryState === 'ready')
+    return hasReadyBackgroundResults(this._runtime.agent)
   }
 
   async *stream(prompt: string | ContentBlockData[]): AsyncGenerator<ChatEvent, ChatRunResult, undefined> {

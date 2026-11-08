@@ -501,6 +501,22 @@ includes the Python sidecar; `uv` installs its Python dependencies on first use.
 stdin/stdout. It creates a harness agent for each ACP session, supports client-supplied MCP servers, and
 supports loading saved sessions with transcript replay. Start a separate process for each workspace.
 
+The built-in and TypeScript ACP server advertises background updates through
+`_meta["strands/backgroundTasks"] = { "version": 1 }` in `initialize`. A client opts in on
+`session/new` or `session/load` with `_meta: { "strands/backgroundTasks": { "waitForCompletion": false } }`.
+For an opted-in session:
+
+- Turns can finish while background tasks run. Explicitly disabled background tasks stay disabled.
+- Task changes arrive as `tool_call_update` notifications for the original tool call, with
+  `_meta["strands/backgroundTask"] = { taskId, status }`. Final updates include the result or error.
+- An empty `session/prompt` delivers ready results through the SDK. It makes no model call when
+  nothing is ready. Like other prompts, it gets a busy error while a turn is running.
+- Restoring a session reports tasks the SDK recovered as failed; it does not restart their work.
+
+Updates are checked between turns and before the SDK consumes results. Closing the connection stops
+notifications and uses normal agent shutdown; it does not add a background-task cancellation policy.
+Clients that do not opt in, and the Python ACP server, keep their existing behavior.
+
 ## Models, sessions, and background work
 
 ### Choosing a model
@@ -563,8 +579,9 @@ total updates; the context meter continues to measure the parent agent's prompt.
 Live subagents also appear in `/agents` while they are available for peer messages. They are
 status rows rather than switchable conversations and disappear when the delegated task finishes.
 
-Plain, print, ACP-server, and direct library invocations use the normal wait-for-completion
-behavior. Ink blocks model-family restarts and session replacement while
+Plain, print, and direct library invocations use the normal wait-for-completion behavior, as do
+ACP sessions unless the client opts in to [background updates](#acp-server).
+Ink blocks model-family restarts and session replacement while
 Background Tasks are running or waiting for delivery. Use the library's `backgroundTasks` option
 for custom policy or to disable the feature.
 

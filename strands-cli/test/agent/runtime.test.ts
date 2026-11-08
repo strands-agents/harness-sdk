@@ -48,7 +48,8 @@ vi.mock('../../src/agent/mcp.js', async (importOriginal) => ({
 }))
 
 import { createInteractiveChat as createInteractiveChatRuntime } from '../../src/ui/chat/runtime.js'
-import { createInteractiveRuntime, interactiveBackgroundTasks } from '../../src/agent/runtime.js'
+import { createInteractiveRuntime } from '../../src/agent/runtime.js'
+import { interactiveBackgroundTasks } from '../../src/agent/background.js'
 import { CliConfigStore } from '../../src/config/store.js'
 import { sessionId, SessionRootCatalog } from '../../src/session/sessions.js'
 import { StrandsChatBackend } from '../../src/agent/backend.js'

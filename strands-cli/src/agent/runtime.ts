@@ -28,7 +28,7 @@ import {
 } from '../session/sessions.js'
 import { graphemes } from '../terminal/text.js'
 import { StrandsChatBackend } from './backend.js'
-import { BackgroundAgentActivityStore, observeSubagentActivity } from './background.js'
+import { BackgroundAgentActivityStore, interactiveBackgroundTasks, observeSubagentActivity } from './background.js'
 import { CONFIGURATION_INSTRUCTIONS, createConfigurationTool } from './configuration.js'
 import { loadMcp, type LoadedMcp, type LoadMcpOptions } from './mcp.js'
 import {
@@ -556,16 +556,6 @@ function createInteractiveSessionId(): string {
     .replace(/\.\d{3}Z$/, 'z')
     .toLowerCase()
   return `${timestamp}-${randomUUID().slice(0, 8)}`
-}
-
-export function interactiveBackgroundTasks(
-  options: HarnessAgentOptions
-): Exclude<HarnessAgentOptions['backgroundTasks'], undefined> {
-  const configured = options.backgroundTasks
-  if (configured === false) {
-    return false
-  }
-  return { ...(configured === true ? {} : configured), waitForCompletion: false }
 }
 
 async function loadSessionCatalog(root: string | undefined): Promise<SessionRootCatalog | undefined> {

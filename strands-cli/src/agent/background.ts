@@ -6,6 +6,7 @@ import {
   type ToolResultContent,
   type ToolStreamGenerator,
 } from '@strands-agents/sdk'
+import type { HarnessAgentOptions } from '@strands-agents/harness'
 import { sanitizeTerminalText, sanitizeTerminalValue } from '../terminal/text.js'
 import { isRecord } from '../values.js'
 import { type BackgroundAgentInbox } from './messaging.js'
@@ -371,6 +372,20 @@ interface StoredBackgroundTask {
   result?: { content?: unknown }
   error?: { message?: string }
   lastUpdatedAt?: string
+}
+
+export function interactiveBackgroundTasks(
+  options: HarnessAgentOptions
+): Exclude<HarnessAgentOptions['backgroundTasks'], undefined> {
+  const configured = options.backgroundTasks
+  if (configured === false) {
+    return false
+  }
+  return { ...(configured === true ? {} : configured), waitForCompletion: false }
+}
+
+export function hasReadyBackgroundResults(agent: Agent): boolean {
+  return readBackgroundTasks(agent).some((task) => task.deliveryState === 'ready')
 }
 
 export function readBackgroundTasks(agent: Agent): ChatTask[] {
