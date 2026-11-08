@@ -200,6 +200,8 @@ export type AgentConfig = {
    * {@link Agent} instances are automatically wrapped as tools via {@link Agent.asTool}.
    */
   tools?: ToolList
+  /** Sort specs by name after middleware (default true); false preserves outgoing order. Registry order is unchanged. */
+  sortTools?: boolean
   /**
    * A system prompt which guides model behavior.
    */
@@ -536,6 +538,7 @@ export class Agent implements LocalAgent, InvokableAgent {
   private readonly _pluginRegistry: PluginRegistry
   private readonly _interventionRegistry: InterventionRegistry
   private _toolRegistry: ToolRegistry
+  private readonly _sortTools: boolean
   private _mcpClients: McpClient[]
   private _initialized: boolean
   private _isInvoking: boolean = false
@@ -564,6 +567,7 @@ export class Agent implements LocalAgent, InvokableAgent {
    * @param config - The configuration for the agent.
    */
   constructor(config?: AgentConfig) {
+    this._sortTools = config?.sortTools ?? true
     // Initialize public fields
     this.messages = (config?.messages ?? []).map((msg) => (msg instanceof Message ? msg : Message.fromMessageData(msg)))
     this.appState = new StateStore(config?.appState)
@@ -2623,7 +2627,9 @@ export class Agent implements LocalAgent, InvokableAgent {
           tempModelState = new StateStore(modelStateSnapshot)
           const streamOptions: StreamOptions = {
             cancelSignal: self._abortSignal,
-            toolSpecs: ctx.toolSpecs as ToolSpec[],
+            toolSpecs: self._sortTools
+              ? [...ctx.toolSpecs].sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0))
+              : (ctx.toolSpecs as ToolSpec[]),
             modelState: tempModelState,
             ...(ctx.systemPrompt !== undefined && { systemPrompt: ctx.systemPrompt }),
             ...(ctx.toolChoice && { toolChoice: ctx.toolChoice }),
