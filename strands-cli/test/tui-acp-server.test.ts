@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
+import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -23,8 +24,15 @@ import { describe, expect, it, vi } from 'vitest'
 import { projectMessages } from '../src/tui/chat/projector.js'
 import { DEFAULT_CHAT_SETTINGS, type ChatSnapshot } from '../src/tui/chat/controller.js'
 import { createAcpApp, AcpService } from '../src/tui/acp/server.js'
-import { restoreSessionAgentDefinition, AGENT_DEFINITION_META_KEY } from '../src/tui/session/agent-definition.js'
+import { AGENT_DEFINITION_META_KEY } from '../src/tui/session/agent-definition.js'
 import { ChatView } from '../src/tui/view/chat-view.js'
+import {
+  harnessSystemPrompt,
+  SAVED_INSTRUCTIONS,
+  SAVED_SYSTEM_PROMPT,
+  SystemPromptRecordingModel,
+  writeSessionWithSavedSystemPrompt,
+} from './fixtures/saved-system-prompt.js'
 
 function event(value: unknown): AgentStreamEvent {
   return value as AgentStreamEvent
@@ -271,7 +279,7 @@ describe('ACP server', () => {
     }
   })
 
-  it('persists an ACP prompt for direct CLI restore and a fresh ACP replay', async () => {
+  it('persists an ACP conversation for direct CLI restore and a fresh ACP replay', async () => {
     const modelInputs: string[][] = []
 
     class PersistenceModel extends Model {
@@ -349,16 +357,8 @@ describe('ACP server', () => {
       await first.dispose()
       first = undefined
 
-      const restoredOptions = await restoreSessionAgentDefinition(
-        { session: { id: sessionId, dir: sessionDirectory } },
-        workspace
-      )
-      expect(restoredOptions).toMatchObject({
-        name: 'John',
-        description: 'Another tester',
-        instructions: 'Helpful agent who speaks like Tony Stark',
-      })
-      const cliAgent = await buildAgent(restoredOptions)
+      expect(existsSync(join(sessionDirectory, sessionId, 'agent.json'))).toBe(false)
+      const cliAgent = await buildAgent({ session: { id: sessionId, dir: sessionDirectory } })
       await cliAgent.initialize()
       expect(cliAgent.messages).toHaveLength(2)
       const snapshot: ChatSnapshot = {
@@ -408,14 +408,9 @@ describe('ACP server', () => {
       await second.dispose()
 
       expect(replayed).toEqual(['persist this request', 'persisted reply'])
-      expect(buildAgent).toHaveBeenLastCalledWith(
-        expect.objectContaining({
-          name: 'John',
-          description: 'Another tester',
-          instructions: 'Helpful agent who speaks like Tony Stark',
-          session: expect.objectContaining({ id: sessionId }),
-        })
-      )
+      const loadedOptions = buildAgent.mock.lastCall?.[0]
+      expect(loadedOptions?.session).toMatchObject({ id: sessionId })
+      expect(loadedOptions).not.toHaveProperty('instructions')
 
       const resumed = cliAgent.stream('what was the request?')
       for await (const _event of resumed) {
@@ -430,6 +425,36 @@ describe('ACP server', () => {
       await first?.dispose()
       process.chdir(originalCwd)
       await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('builds the system prompt from the profile when a loaded session saved its own', async () => {
+    const originalCwd = process.cwd()
+    const workspace = await mkdtemp(join(tmpdir(), 'strands-acp-system-prompt-'))
+    const sessionDirectory = join(workspace, '.agent', 'sessions')
+    await writeSessionWithSavedSystemPrompt(sessionDirectory, 'saved-session')
+    const model = new SystemPromptRecordingModel()
+    const service = new AcpService(
+      { session: { dir: sessionDirectory } },
+      {
+        buildAgent: (options) =>
+          createHarness({ ...options, model, builtinTools: [], contextManager: false, printer: false }),
+      }
+    )
+    const client = { notify: vi.fn(async () => undefined) } as unknown as acp.AgentContext
+
+    try {
+      await service.loadSession({ sessionId: 'saved-session', cwd: workspace, mcpServers: [] }, client)
+      await service.prompt({ sessionId: 'saved-session', prompt: [{ type: 'text', text: 'continue' }] }, client)
+
+      expect(model.systemPrompts).toEqual([harnessSystemPrompt()])
+      expect(model.systemPrompts[0]).not.toContain(SAVED_SYSTEM_PROMPT)
+      expect(model.systemPrompts[0]).not.toContain(SAVED_INSTRUCTIONS)
+      expect(model.firstMessageTexts).toEqual(['earlier request'])
+    } finally {
+      await service.dispose()
+      process.chdir(originalCwd)
+      await rm(workspace, { recursive: true, force: true })
     }
   })
 

@@ -8,7 +8,7 @@
  */
 
 import type { Agent } from '../../agent/agent.js'
-import { InterruptError, type InterruptState } from '../../interrupt.js'
+import type { InterruptState } from '../../interrupt.js'
 import { logger } from '../../logging/logger.js'
 import { AgentToolStreamer, ChildMultiAgentAdapter } from '../../multiagent/agent-tool-streamer.js'
 import {
@@ -148,6 +148,7 @@ export function makeSwarm({
         interruptState: (toolContext.agent as unknown as { _interruptState?: InterruptState })._interruptState,
         toolUseId,
         namespace: 'swarm',
+        raiseUnfinished: true,
       })
       const { task, specs, entryIndex } = resolveSwarm(input, { axes, maxAgents })
       const build = builder ?? _defaultBuilder(toolContext.agent as unknown as Agent)
@@ -158,8 +159,9 @@ export function makeSwarm({
         if (!streamer.isResuming()) throw error
         const message = error instanceof Error ? error.message : String(error)
         logger.warn(`tool_use_id=<${toolUseId}>, error=<${message}> | failed to rebuild interrupted swarm`)
+        // Always throws: a missing child leaves the streamer unfinished.
         await streamer.resume(SWARM_ADAPTER, undefined, UNAVAILABLE_MESSAGE)
-        return raiseUnfinished(streamer)
+        throw error
       }
 
       // A stable id lets the stored turn be loaded into the swarm rebuilt on resume.
@@ -169,12 +171,8 @@ export function makeSwarm({
         start: agents[entryIndex]!.id,
         ...limits,
       })
-      let swarmInput: MultiAgentInput = task
-      if (streamer.isResuming()) {
-        const resumed = await streamer.resume(SWARM_ADAPTER, swarm, UNAVAILABLE_MESSAGE)
-        if (resumed === undefined) return raiseUnfinished(streamer)
-        swarmInput = resumed
-      }
+      const resumed = await streamer.resume(SWARM_ADAPTER, swarm, UNAVAILABLE_MESSAGE)
+      const swarmInput: MultiAgentInput = resumed ?? task
       logger.debug(`task=<${task.slice(0, 120)}>, agents=<${agents.length}> | starting swarm`)
       // Step and time limits throw, so node results are collected as they stream to keep the partial output.
       const nodeResults: NodeResult[] = []
@@ -190,14 +188,12 @@ export function makeSwarm({
           yield event as unknown as JSONValue
         }
       } catch (error) {
+        // The streamer's own interrupt or error is already model-facing.
+        if (streamer.interrupts !== undefined || streamer.error !== undefined) throw error
         const message = error instanceof Error ? error.message : String(error)
         throw new Error(`Swarm stopped before completing (${message}). Partial output:\n${renderOutput(nodeResults)}`, {
           cause: error,
         })
-      }
-
-      if (streamer.interrupts !== undefined || streamer.error !== undefined) {
-        raiseUnfinished(streamer)
       }
       return renderOutput(streamer.result!.results)
     },
@@ -291,19 +287,6 @@ function buildAgents(specs: AgentSpec[], builder: AgentBuilder): Agent[] {
     }
     return agent
   })
-}
-
-/**
- * Raises the streamer's unfinished terminal state.
- *
- * @throws InterruptError if the swarm stopped on interrupts.
- * @throws Error with the streamer's error message otherwise.
- */
-function raiseUnfinished(streamer: AgentToolStreamer<MultiAgentResult>): never {
-  if (streamer.interrupts?.length) {
-    throw new InterruptError(streamer.interrupts)
-  }
-  throw new Error(streamer.error)
 }
 
 /**

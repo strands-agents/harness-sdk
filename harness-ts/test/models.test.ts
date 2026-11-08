@@ -455,7 +455,9 @@ describe('resolveModel', () => {
 
   it('does not force max tokens on a legacy claude 3 bedrock id', async () => {
     const model = await resolve('bedrock/anthropic.claude-3-haiku-20240307-v1:0')
-    expect(model.getConfig().maxTokens).toBeUndefined()
+    // The SDK may default maxTokens from its model info; the harness must not pass its own.
+    const config = (model as unknown as { _config: { maxTokens?: number } })._config
+    expect(config.maxTokens).toBeUndefined()
   })
 
   it('builds bedrock-mantle via the OpenAI provider', async () => {
@@ -577,6 +579,35 @@ describe('resolveModel', () => {
     const model = await resolve('anthropic/claude-opus-4-8', 'auto', false, false)
     expect(model.getConfig().cacheConfig).toBeUndefined()
   })
+
+  it.each([
+    { spec: 'openai/gpt-5.6-sol', modelId: 'gpt-5.6-sol', searchTool: { type: 'web_search' }, caching: true },
+    { spec: 'openai/gpt-5.6-sol', modelId: 'gpt-5.6-sol', searchTool: { type: 'web_search' }, caching: false },
+    {
+      spec: 'bedrock-mantle/openai.gpt-6-luna',
+      modelId: 'openai.gpt-6-luna',
+      searchTool: { type: 'web_search', external_web_access: true },
+      caching: true,
+    },
+    {
+      spec: 'bedrock-mantle/openai.gpt-6-luna',
+      modelId: 'openai.gpt-6-luna',
+      searchTool: { type: 'web_search', external_web_access: true },
+      caching: false,
+    },
+  ])(
+    'configures $spec caching=$caching without changing reasoning or search',
+    async ({ spec, modelId, searchTool, caching }) => {
+      const model = await resolve(spec, 'high', true, caching)
+      // contextWindowLimit comes from the SDK's model info, not the harness.
+      const { contextWindowLimit: _, ...config } = model.getConfig()
+      expect(config).toStrictEqual({
+        modelId,
+        ...(caching ? { cacheConfig: { strategy: 'auto' } } : {}),
+        params: { reasoning: { effort: 'high' }, tools: [searchTool] },
+      })
+    }
+  )
 
   it('warns instead of throwing when caching is explicitly requested on a Model instance', async () => {
     const warn = vi.fn()

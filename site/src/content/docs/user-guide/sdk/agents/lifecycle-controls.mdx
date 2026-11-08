@@ -26,8 +26,9 @@ combines them into one request handler.
 ## Cap the work one call can do
 
 To bound a single invocation, pass a set of limits alongside the prompt. You can
-cap the number of turns (loop iterations), the output tokens, or the total
-tokens. All three are optional.
+cap the number of turns (loop iterations), the output tokens, the total tokens, or
+[failed structured output attempts](./structured-output-behavior.md#limit-attempts).
+Each is optional.
 
 <Tabs>
   <Tab label="Python">
@@ -74,7 +75,7 @@ Limits are checked at the top of each loop iteration, not mid-call. A single
 turn can overshoot its token budget, but the check fires before the next turn
 starts, and tools requested by the previous turn always finish first. When
 several caps trip at once, the reported stop reason follows priority order:
-turns, then total tokens, then output tokens.
+turns, then total tokens, then output tokens, then structured output attempts.
 
 Limits apply to the current invocation only. A reused agent starts each call
 with fresh counters, and the message history stays in a valid, reinvokable
@@ -89,9 +90,10 @@ what to do next. Read it from
 - <Syntax py="end_turn" ts="endTurn" /> or
   <Syntax py="stop_sequence" ts="stopSequence" />: return the completed result.
 - <Syntax py="limit_turns" ts="limitTurns" />,
-  <Syntax py="limit_total_tokens" ts="limitTotalTokens" />, or
-  <Syntax py="limit_output_tokens" ts="limitOutputTokens" />: report budget
-  exhaustion or reinvoke with a higher limit.
+  <Syntax py="limit_total_tokens" ts="limitTotalTokens" />,
+  <Syntax py="limit_output_tokens" ts="limitOutputTokens" />, or
+  <Syntax py="limit_structured_output_attempts" ts="limitStructuredOutputAttempts" />:
+  report budget exhaustion or reinvoke with a higher limit.
 - `cancelled`: treat the result as a caller- or application-initiated stop.
   The incomplete assembled model message is omitted from the result and
   history. Streamed deltas already delivered to your consumer remain visible.
@@ -101,7 +103,7 @@ what to do next. Read it from
 - `interrupt`: collect the requested human input and resume the agent. See
   [Interrupts](../interrupts.md).
 
-The three limit reasons signal graceful budget exhaustion, not failure. Content
+The limit reasons signal graceful budget exhaustion, not failure. Content
 filtering and guardrail intervention both terminate the loop and should be
 handled deliberately rather than retried blindly.
 
@@ -356,7 +358,12 @@ can branch on.
           return Outcome.COMPLETED
       if stop_reason == "cancelled":
           return Outcome.CANCELLED
-      if stop_reason in ("limit_turns", "limit_total_tokens", "limit_output_tokens"):
+      if stop_reason in (
+          "limit_turns",
+          "limit_total_tokens",
+          "limit_output_tokens",
+          "limit_structured_output_attempts",
+      ):
           return Outcome.BUDGET_EXCEEDED
       if stop_reason in ("content_filtered", "guardrail_intervened"):
           return Outcome.BLOCKED

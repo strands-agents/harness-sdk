@@ -35,6 +35,9 @@ export interface ChildAdapter<TChild, TResult> {
   /** Model-facing name of the child, used in terminal error messages. */
   readonly label: string
 
+  /** Discriminant of the stream event that carries the child's final `TResult`, so the streamer can classify mid-stream — before `stream()`'s finally resets transient state like the cancel signal. */
+  readonly resultEventType: string
+
   /** Capture the snapshot needed to resume the child invocation. */
   takeSnapshot(child: TChild): Snapshot
 
@@ -59,6 +62,7 @@ export interface ChildAdapter<TChild, TResult> {
  */
 export class ChildAgentAdapter implements ChildAdapter<Agent, AgentResult> {
   readonly label: string
+  readonly resultEventType = 'agentResultEvent'
   private readonly _name: string
 
   /**
@@ -83,12 +87,14 @@ export class ChildAgentAdapter implements ChildAdapter<Agent, AgentResult> {
     return child._interruptState.activated
   }
 
-  classify(_child: Agent, result: AgentResult): Interrupt[] | string | undefined {
+  classify(child: Agent, result: AgentResult): Interrupt[] | string | undefined {
     if (result.stopReason === 'interrupt') {
       return result.interrupts?.length ? [...result.interrupts] : `${this.label} interrupted without any interrupts`
     }
     if (result.stopReason === 'cancelled') {
-      return `${this.label} cancelled`
+      // Called mid-stream on `agentResultEvent`, so the signal is still live:
+      // deferred cancel (stop tool) never flips it → success; immediate cancel is an abort.
+      return child.cancelSignal.aborted ? `${this.label} cancelled` : undefined
     }
     if (LIMIT_STOP_REASONS.has(result.stopReason)) {
       return limitStopMessage(this._name, result.stopReason)
@@ -109,6 +115,7 @@ export class ChildAgentAdapter implements ChildAdapter<Agent, AgentResult> {
  */
 export class ChildMultiAgentAdapter implements ChildAdapter<Swarm | Graph, MultiAgentResult> {
   readonly label: string
+  readonly resultEventType = 'multiAgentResultEvent'
   private readonly _render: (result: MultiAgentResult) => string
 
   /**
@@ -185,21 +192,25 @@ export class AgentToolStreamer<TResult = unknown> {
   private readonly _toolUseId: string
   private readonly _prefix: string
   private readonly _persistInterruptedTurn: boolean
+  private readonly _raiseUnfinished: boolean
 
   /**
-   * @param config - The parent's interrupt state, the tool call id, the interrupt id namespace, and whether to
-   * store the child's interrupted turn on the parent.
+   * @param config - The parent's interrupt state, the tool call id, the interrupt id namespace, whether to
+   * store the child's interrupted turn on the parent, and whether {@link stream} and {@link resume} throw the
+   * recorded interrupts or error, for tools that do not build their result with {@link terminalResult}.
    */
   constructor(config: {
     interruptState: InterruptState | undefined
     toolUseId: string
     namespace: string
     persistInterruptedTurn?: boolean
+    raiseUnfinished?: boolean
   }) {
     this._interruptState = config.interruptState
     this._toolUseId = config.toolUseId
     this._prefix = `${config.namespace}:${encodeURIComponent(config.toolUseId)}:`
     this._persistInterruptedTurn = config.persistInterruptedTurn ?? true
+    this._raiseUnfinished = config.raiseUnfinished ?? false
   }
 
   /**
@@ -208,6 +219,7 @@ export class AgentToolStreamer<TResult = unknown> {
    * @param adapter - Child-specific persistence and result handling.
    * @param child - The child being streamed.
    * @param events - The child's stream, returning its result.
+   * @throws InterruptError or Error if the child did not complete and `raiseUnfinished` is set.
    */
   async *stream<TChild, TEvent>(
     adapter: ChildAdapter<TChild, TResult>,
@@ -215,46 +227,52 @@ export class AgentToolStreamer<TResult = unknown> {
     events: AsyncGenerator<TEvent, TResult | undefined, undefined>
   ): AsyncGenerator<TEvent, void, undefined> {
     let next = await events.next()
+    // Classify on the result event (while transient state like the child's cancel signal is still
+    // live), falling back to a post-stream classify if that event never arrived.
+    let outcome: Interrupt[] | string | undefined
+    let classified = false
     while (!next.done) {
+      const event = next.value as { type?: string; result?: TResult }
+      if (!classified && event.type === adapter.resultEventType && event.result !== undefined) {
+        outcome = adapter.classify(child, event.result)
+        classified = true
+      }
       yield next.value
       next = await events.next()
     }
 
     this.result = next.value
+    if (!classified && this.result !== undefined) {
+      outcome = adapter.classify(child, this.result)
+    }
+    const state = this._interruptState
     if (this.result === undefined) {
       this.error = `${adapter.label} did not produce a result.`
-      return
-    }
-
-    const outcome = adapter.classify(child, this.result)
-    if (!Array.isArray(outcome)) {
+    } else if (!Array.isArray(outcome)) {
       delete this._turns()?.[this._toolUseId]
       this.error = outcome
-      return
-    }
-
-    const state = this._interruptState
-    // Without a parent interrupt state there is nothing to resume against, so ids pass through raw.
-    if (state === undefined) {
+    } else if (state === undefined) {
+      // Without a parent interrupt state there is nothing to resume against, so ids pass through raw.
       this.interrupts = outcome
-      return
-    }
-    if (this._persistInterruptedTurn) {
-      const turns = (state.context[INTERRUPTED_TURNS_KEY] ??= {}) as Record<string, JSONValue>
-      turns[this._toolUseId] = deepCopy(adapter.takeSnapshot(child) as unknown as JSONValue)
-    }
-    // Registered here, not only when the orchestrator catches the error: the concurrent executor keeps
-    // one InterruptError per batch, so a second interrupting child would otherwise be dropped.
-    this.interrupts = outcome.map((interrupt) =>
-      state.registerInterrupt(
-        new Interrupt({
-          id: `${this._prefix}${interrupt.id}`,
-          name: interrupt.name,
-          ...(interrupt.reason !== undefined && { reason: interrupt.reason }),
-          source: 'tool',
-        })
+    } else {
+      if (this._persistInterruptedTurn) {
+        const turns = (state.context[INTERRUPTED_TURNS_KEY] ??= {}) as Record<string, JSONValue>
+        turns[this._toolUseId] = deepCopy(adapter.takeSnapshot(child) as unknown as JSONValue)
+      }
+      // Registered here, not only when the orchestrator catches the error: the concurrent executor keeps
+      // one InterruptError per batch, so a second interrupting child would otherwise be dropped.
+      this.interrupts = outcome.map((interrupt) =>
+        state.registerInterrupt(
+          new Interrupt({
+            id: `${this._prefix}${interrupt.id}`,
+            name: interrupt.name,
+            ...(interrupt.reason !== undefined && { reason: interrupt.reason }),
+            source: 'tool',
+          })
+        )
       )
-    )
+    }
+    this._raiseIfUnfinished()
   }
 
   /**
@@ -297,6 +315,7 @@ export class AgentToolStreamer<TResult = unknown> {
    * @param unavailableMessage - Error message for a turn that cannot be resumed.
    * @returns The responses to resume the child with, or `undefined` if it cannot be resumed.
    * @throws InterruptError if none of this call's interrupts were answered.
+   * @throws InterruptError or Error if the child cannot be resumed and `raiseUnfinished` is set.
    */
   async resume<TChild>(
     adapter: ChildAdapter<TChild, TResult>,
@@ -317,28 +336,32 @@ export class AgentToolStreamer<TResult = unknown> {
       )
     }
 
-    if (child === undefined) {
-      this._handleFailedRestore(adapter, unavailableMessage)
-      return undefined
-    }
     const turn = this._turns()?.[this._toolUseId]
-    let awaitingResponses: boolean
-    try {
-      awaitingResponses = await adapter.restore(child, turn as unknown as Snapshot | undefined)
-    } catch (error) {
-      logger.error(
-        `tool_use_id=<${this._toolUseId}>, error=<${String(error)}> | failed to restore interrupted sub-agent turn`
-      )
-      this._handleFailedRestore(adapter, unavailableMessage)
-      return undefined
+    let restored = false
+    let awaitingResponses = false
+    if (child !== undefined) {
+      try {
+        awaitingResponses = await adapter.restore(child, turn as unknown as Snapshot | undefined)
+        restored = true
+      } catch (error) {
+        logger.error(
+          `tool_use_id=<${this._toolUseId}>, error=<${String(error)}> | failed to restore interrupted sub-agent turn`
+        )
+      }
     }
-
-    // The restored child owns its turn now; an interrupt stores it again. Clearing before the child runs is what
-    // lets a re-interrupt persist, at the cost of losing the turn if the child throws.
-    delete this._turns()?.[this._toolUseId]
+    if (!restored) {
+      this._handleFailedRestore(adapter, unavailableMessage)
+    } else {
+      // The restored child owns its turn now; an interrupt stores it again. Clearing before the child runs is what
+      // lets a re-interrupt persist, at the cost of losing the turn if the child throws.
+      delete this._turns()?.[this._toolUseId]
+      if (!awaitingResponses) {
+        logger.error(`tool_use_id=<${this._toolUseId}> | interrupted sub-agent turn is not available to resume`)
+        this.error = unavailableMessage
+      }
+    }
+    this._raiseIfUnfinished()
     if (!awaitingResponses) {
-      logger.error(`tool_use_id=<${this._toolUseId}> | interrupted sub-agent turn is not available to resume`)
-      this.error = unavailableMessage
       return undefined
     }
     return responses.map(
@@ -348,6 +371,17 @@ export class AgentToolStreamer<TResult = unknown> {
           response: r.interruptResponse.response,
         })
     )
+  }
+
+  /** Throws the recorded interrupts or error when `raiseUnfinished` is set. */
+  private _raiseIfUnfinished(): void {
+    if (!this._raiseUnfinished) return
+    if (this.interrupts?.length) {
+      throw new InterruptError(this.interrupts)
+    }
+    if (this.error !== undefined) {
+      throw new Error(this.error)
+    }
   }
 
   /** Re-raises the interrupts the stored turn still awaits when the child cannot be restored. */

@@ -284,7 +284,7 @@ class SubagentTool extends Tool {
         }
       }
 
-      return streamer.terminalResult()
+      return streamer.terminalResult((result) => [new TextBlock(result.toString())])
     } catch (error) {
       if (error instanceof InterruptError) {
         throw error
@@ -435,7 +435,11 @@ class SubagentTool extends Tool {
     let forked: Message[] = []
     for (const message of parent.messages) {
       const content = message.content.filter(
-        (block) => block.type !== 'reasoningBlock' && (block.type !== 'toolUseBlock' || answered.has(block.toolUseId))
+        (block) =>
+          block.type !== 'reasoningBlock' &&
+          // Context for the parent's own turn.
+          block.type !== 'injectedBlock' &&
+          (block.type !== 'toolUseBlock' || answered.has(block.toolUseId))
       )
       if (content.length === 0) {
         continue

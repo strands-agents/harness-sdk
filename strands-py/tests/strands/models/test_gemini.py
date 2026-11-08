@@ -991,6 +991,117 @@ async def test_stream_response_signature_after_text_opens_reasoning_block(
 
 
 @pytest.mark.asyncio
+async def test_stream_response_signature_on_text_part_keeps_text_contiguous(
+    gemini_client, model, messages, agenerator, alist
+):
+    """Test that a signature riding on a text part mid-answer does not split the answer text.
+
+    Gemini can sign an early text part and keep streaming text after it, so the whole answer must
+    still aggregate into one text block, with the signature in its own reasoning block.
+    """
+    gemini_client.aio.models.generate_content_stream.return_value = agenerator(
+        [
+            genai.types.GenerateContentResponse(
+                candidates=[
+                    genai.types.Candidate(
+                        content=genai.types.Content(
+                            parts=[genai.types.Part(text="The time is 12:00", thought_signature=b"abc")],
+                        ),
+                    ),
+                ],
+            ),
+            genai.types.GenerateContentResponse(
+                candidates=[
+                    genai.types.Candidate(
+                        content=genai.types.Content(
+                            parts=[genai.types.Part(text=" and it is sunny.")],
+                        ),
+                        finish_reason="STOP",
+                    ),
+                ],
+                usage_metadata=genai.types.GenerateContentResponseUsageMetadata(
+                    prompt_token_count=1,
+                    total_token_count=3,
+                ),
+            ),
+        ]
+    )
+
+    stream = strands.event_loop.streaming.process_stream(model.stream(messages))
+    events = await alist(stream)
+    message = events[-1]["stop"][1]
+
+    tru_content = message["content"]
+    exp_content = [
+        {"text": "The time is 12:00 and it is sunny."},
+        {"reasoningContent": {"reasoningText": {"text": "", "signature": "YWJj"}}},
+    ]
+    assert tru_content == exp_content
+
+    # Feeding the aggregated message back must reproduce the original signature bytes.
+    tru_part = model._format_request_content_part(message["content"][1], {})
+    assert tru_part.thought_signature == b"abc"
+
+
+@pytest.mark.asyncio
+async def test_stream_response_every_signature_inside_text_block_survives(
+    gemini_client, model, messages, agenerator, alist
+):
+    """Test that each signature arriving inside one text block keeps its own reasoning block.
+
+    An early signed text part can be followed by a trailing signature-only part, so holding the
+    signatures until the text block ends must not drop any of them from the round-trip.
+    """
+    gemini_client.aio.models.generate_content_stream.return_value = agenerator(
+        [
+            genai.types.GenerateContentResponse(
+                candidates=[
+                    genai.types.Candidate(
+                        content=genai.types.Content(
+                            parts=[genai.types.Part(text="The time is 12:00", thought_signature=b"sig1")],
+                        ),
+                    ),
+                ],
+            ),
+            genai.types.GenerateContentResponse(
+                candidates=[
+                    genai.types.Candidate(
+                        content=genai.types.Content(
+                            parts=[
+                                genai.types.Part(text=" and it is sunny."),
+                                genai.types.Part(thought=True, thought_signature=b"sig2"),
+                            ],
+                        ),
+                        finish_reason="STOP",
+                    ),
+                ],
+                usage_metadata=genai.types.GenerateContentResponseUsageMetadata(
+                    prompt_token_count=1,
+                    total_token_count=3,
+                ),
+            ),
+        ]
+    )
+
+    stream = strands.event_loop.streaming.process_stream(model.stream(messages))
+    events = await alist(stream)
+    message = events[-1]["stop"][1]
+
+    tru_content = message["content"]
+    exp_content = [
+        {"text": "The time is 12:00 and it is sunny."},
+        {"reasoningContent": {"reasoningText": {"text": "", "signature": "c2lnMQ=="}}},
+        {"reasoningContent": {"reasoningText": {"text": "", "signature": "c2lnMg=="}}},
+    ]
+    assert tru_content == exp_content
+
+    # Feeding the aggregated message back must reproduce each original signature's bytes.
+    tru_signatures = [model._format_request_content_part(block, {}).thought_signature for block in tru_content[1:]]
+    exp_signatures = [b"sig1", b"sig2"]
+    assert tru_signatures == exp_signatures
+
+
+@pytest.mark.asyncio
 async def test_stream_response_signature_only_part_opens_reasoning_block(
     gemini_client, model, messages, agenerator, alist
 ):
@@ -1920,7 +2031,17 @@ class TestCountTokens:
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "finish_reason,stop_reason",
-    [("STOP", "end_turn"), ("SAFETY", "guardrail_intervened"), ("RECITATION", "content_filtered")],
+    [
+        ("STOP", "end_turn"),
+        ("SAFETY", "guardrail_intervened"),
+        ("BLOCKLIST", "content_filtered"),
+        ("PROHIBITED_CONTENT", "content_filtered"),
+        ("SPII", "content_filtered"),
+        ("IMAGE_SAFETY", "content_filtered"),
+        ("IMAGE_PROHIBITED_CONTENT", "content_filtered"),
+        ("RECITATION", "content_filtered"),
+        ("IMAGE_RECITATION", "content_filtered"),
+    ],
 )
 async def test_stream_response_without_usage_metadata(
     gemini_client, model, messages, agenerator, alist, finish_reason, stop_reason

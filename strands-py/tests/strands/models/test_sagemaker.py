@@ -11,6 +11,7 @@ import boto3
 import pydantic
 import pytest
 from botocore.config import Config as BotocoreConfig
+from botocore.stub import Stubber
 
 from strands.models.model import CacheConfig
 from strands.models.sagemaker import (
@@ -21,6 +22,7 @@ from strands.models.sagemaker import (
     _parse_event_stream,
 )
 from strands.types.content import Messages
+from strands.types.exceptions import ModelThrottledException
 from strands.types.tools import ToolSpec
 
 
@@ -395,6 +397,56 @@ class TestSageMakerAIModel:
     #     payload = json.loads(request["Body"])
     #     assert "tools" in payload
     #     assert payload["tools"] == []
+
+    @pytest.mark.parametrize(
+        ("tool_results_as_user_messages", "expected_message"),
+        [
+            (
+                True,
+                {"role": "user", "content": "Tool call ID 'tool-call-1' returned: 72F"},
+            ),
+            (
+                False,
+                {"role": "tool", "tool_call_id": "tool-call-1", "content": "72F"},
+            ),
+        ],
+    )
+    def test_format_request_tool_results_as_user_messages(
+        self,
+        boto_session,
+        endpoint_config,
+        payload_config,
+        tool_results_as_user_messages,
+        expected_message,
+    ):
+        """Test optionally converting tool results to user messages."""
+        model = SageMakerAIModel(
+            endpoint_config=endpoint_config,
+            payload_config={
+                **payload_config,
+                "tool_results_as_user_messages": tool_results_as_user_messages,
+            },
+            boto_session=boto_session,
+        )
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "toolResult": {
+                            "toolUseId": "tool-call-1",
+                            "status": "success",
+                            "content": [{"text": "72F"}],
+                        }
+                    }
+                ],
+            }
+        ]
+
+        payload = json.loads(model.format_request(messages)["Body"])
+
+        assert payload["messages"] == [expected_message]
+        assert "tool_results_as_user_messages" not in payload
 
     def test_format_request_with_additional_args(self, boto_session, endpoint_config, messages, payload_config):
         """Test formatting a request's `additional_args` where provided"""
@@ -1209,3 +1261,71 @@ async def test_structured_output_runs_blocking_sagemaker_calls_off_the_event_loo
     exp_call_threads = [unittest.mock.ANY]
     assert tru_call_threads == exp_call_threads
     assert loop_thread not in tru_call_threads
+
+
+def _model_with_container_error(endpoint_config, stream: bool, operation: str, original_status_code: int):
+    model = SageMakerAIModel(
+        endpoint_config=endpoint_config,
+        payload_config={"max_tokens": 10, "stream": stream},
+        boto_session=boto3.Session(region_name="us-east-1"),
+    )
+    stubber = Stubber(model.client)
+    stubber.add_client_error(
+        operation,
+        service_error_code="ModelError",
+        service_message=f"Received client error ({original_status_code}) from primary",
+        http_status_code=424,
+        modeled_fields={"OriginalStatusCode": original_status_code, "OriginalMessage": "Model is overloaded"},
+    )
+    stubber.activate()
+    return model
+
+
+@pytest.mark.parametrize(
+    ("stream", "operation"),
+    [(True, "invoke_endpoint_with_response_stream"), (False, "invoke_endpoint")],
+)
+@pytest.mark.asyncio
+async def test_stream_container_throttling_raises_model_throttled(endpoint_config, messages, alist, stream, operation):
+    model = _model_with_container_error(endpoint_config, stream, operation, 429)
+
+    with pytest.raises(ModelThrottledException) as exc_info:
+        await alist(model.stream(messages))
+
+    cause = exc_info.value.__cause__
+    assert isinstance(cause, model.client.exceptions.ModelError)
+    assert cause.response["OriginalStatusCode"] == 429
+
+
+@pytest.mark.asyncio
+async def test_stream_container_non_throttling_error_is_reraised(endpoint_config, messages, alist):
+    model = _model_with_container_error(endpoint_config, True, "invoke_endpoint_with_response_stream", 400)
+
+    with pytest.raises(model.client.exceptions.ModelError):
+        await alist(model.stream(messages))
+
+
+@pytest.mark.asyncio
+async def test_structured_output_container_throttling_raises_model_throttled(endpoint_config, messages, alist):
+    class TestOutputModel(pydantic.BaseModel):
+        name: str
+
+    model = _model_with_container_error(endpoint_config, False, "invoke_endpoint", 429)
+
+    with pytest.raises(ModelThrottledException) as exc_info:
+        await alist(model.structured_output(TestOutputModel, messages))
+
+    cause = exc_info.value.__cause__
+    assert isinstance(cause, model.client.exceptions.ModelError)
+    assert cause.response["OriginalStatusCode"] == 429
+
+
+@pytest.mark.asyncio
+async def test_structured_output_container_non_throttling_error_raises_value_error(endpoint_config, messages, alist):
+    class TestOutputModel(pydantic.BaseModel):
+        name: str
+
+    model = _model_with_container_error(endpoint_config, False, "invoke_endpoint", 400)
+
+    with pytest.raises(ValueError, match="SageMaker structured output error"):
+        await alist(model.structured_output(TestOutputModel, messages))
