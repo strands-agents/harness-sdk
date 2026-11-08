@@ -6,10 +6,11 @@ id, or ``None`` for the harness default. Every provider uses its real model ids 
 value regardless of provider.
 
 Prompt caching is requested via ``caching`` and reaches the provider one of two ways: the harness
-configures Bedrock and Anthropic direct (cache points plus cached tool definitions), while OpenAI,
-Gemini, bedrock-mantle, and litellm cache automatically server-side (Gemini on models 2.5 and
-newer; litellm through its OpenAI-compatible backend). Only a pre-built ``Model`` or ``ModelRouter``
-instance can't be honored (its provider is unknown), so a warning is logged.
+passes an SDK cache config to Bedrock and Anthropic direct (cache points plus cached tool
+definitions) and to OpenAI and bedrock-mantle (a per-session cache key, plus cache points on
+models that take them), while Gemini and litellm cache automatically server-side (Gemini on models
+2.5 and newer; litellm through its OpenAI-compatible backend). Only a pre-built ``Model`` or
+``ModelRouter`` instance can't be honored (its provider is unknown), so a warning is logged.
 """
 
 from __future__ import annotations
@@ -244,7 +245,7 @@ def _anthropic(model_id: str, effort: str | None, web_search: bool, caching: boo
 
 
 def _openai(model_id: str, effort: str | None, web_search: bool, caching: bool) -> Model:
-    # ``caching`` is unused: OpenAI caches server-side with no opt-in.
+    from strands.models import CacheConfig
     from strands.models.openai_responses import OpenAIResponsesModel
 
     params: dict[str, Any] = {}
@@ -253,18 +254,30 @@ def _openai(model_id: str, effort: str | None, web_search: bool, caching: bool) 
     # The Responses API merges built-in tools carried in ``params`` with the agent's function tools.
     if web_search:
         params["tools"] = [{"type": "web_search"}]
-    return OpenAIResponsesModel(model_id=model_id, **({"params": params} if params else {}))
+    # The SDK derives a per-session ``prompt_cache_key`` from the cache config and, on models whose
+    # model info takes cache points (GPT-5.6 and later), places them on durable content so per-turn
+    # reminders stay out of the cached prefix.
+    return OpenAIResponsesModel(
+        model_id=model_id,
+        **({"cache_config": CacheConfig(strategy="auto")} if caching else {}),
+        **({"params": params} if params else {}),
+    )
 
 
 def _bedrock_mantle(model_id: str, effort: str | None, web_search: bool, caching: bool) -> Model:
-    # ``caching`` is unused: Mantle caches server-side automatically.
+    from strands.models import CacheConfig
     from strands.models.openai_responses import BedrockMantleConfig, OpenAIResponsesModel
 
     params: dict[str, Any] = {} if effort is None else {"reasoning": {"effort": effort}}
     if web_search:
         params["tools"] = [{"type": "web_search", "external_web_access": True}]
+    # Same cache config as ``_openai``: without explicit cache points, Mantle reads little or nothing
+    # from cache across the turns of a conversation.
     return OpenAIResponsesModel(
-        model_id=model_id, bedrock_mantle_config=BedrockMantleConfig(), **({"params": params} if params else {})
+        model_id=model_id,
+        bedrock_mantle_config=BedrockMantleConfig(),
+        **({"cache_config": CacheConfig(strategy="auto")} if caching else {}),
+        **({"params": params} if params else {}),
     )
 
 
@@ -317,8 +330,8 @@ class Provider(NamedTuple):
     bedrock-mantle to its GPT-5, GPT-6, and Daybreak models. Bedrock Converse has no mechanism.
 
     ``caching`` marks providers where prompt caching is in effect when requested, whether or not
-    the harness configures anything: Bedrock and Anthropic direct (the harness sets cache points and tool caching)
-    plus OpenAI, Gemini, bedrock-mantle, and litellm (automatic server-side). Only a pre-built
+    the harness configures anything: Bedrock, Anthropic direct, OpenAI, and bedrock-mantle (the harness
+    passes an SDK cache config) plus Gemini and litellm (automatic server-side). Only a pre-built
     ``Model`` instance can't be honored (its provider is unknown), so the factory warns there.
     """
 

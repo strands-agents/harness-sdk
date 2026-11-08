@@ -202,7 +202,9 @@ class SageMakerAIModel(OpenAIModel):
             top_p: Nucleus sampling parameter (optional)
             top_k: Top-k sampling parameter (optional)
             stop: List of stop sequences to use for the model (optional)
-            tool_results_as_user_messages: Convert tool result to user messages (optional)
+            tool_results_as_user_messages: Send tool results as user messages, for endpoints that reject the
+                tool role (optional). Each result becomes its own user message, so parallel tool calls produce
+                consecutive user messages.
             additional_args: Additional request parameters, as supported by https://bit.ly/djl-lmi-request-schema
         """
 
@@ -369,9 +371,10 @@ class SageMakerAIModel(OpenAIModel):
                 message.pop("content", None)
             if message.get("role") == "tool" and self.payload_config.get("tool_results_as_user_messages", False):
                 # Convert tool message to user message
-                tool_call_id = message.get("tool_call_id", "ABCDEF")
+                tool_call_id = message.pop("tool_call_id", "ABCDEF")
                 content = message.get("content", "")
-                message = {"role": "user", "content": f"Tool call ID '{tool_call_id}' returned: {content}"}
+                message["role"] = "user"
+                message["content"] = f"Tool call ID '{tool_call_id}' returned: {content}"
             # Cannot have both reasoning_text and text - if "text", content becomes an array of content["text"]
             for c in message.get("content", []):
                 if "text" in c:
