@@ -156,6 +156,33 @@ def test_agent_invoke_document_input(assistant_agent, letter_pdf):
     assert "shareholder" in text
 
 
+def test_agent_reads_media_returned_by_a_tool(yellow_img, letter_pdf):
+    @strands.tool
+    def fetch_attachments() -> dict:
+        """Fetch the attached photo and letter."""
+        return {
+            "status": "success",
+            "content": [
+                {"image": {"format": "png", "source": {"bytes": yellow_img}}},
+                {"document": {"format": "pdf", "name": "letter", "source": {"bytes": letter_pdf}}},
+            ],
+        }
+
+    # Only Gemini 3 and later models read media in function responses.
+    model = GeminiModel(
+        client_args={"api_key": os.getenv("GOOGLE_API_KEY")},
+        model_id="gemini-3.1-flash-lite",
+        params={"temperature": 0.15},
+    )
+    agent = Agent(model=model, tools=[fetch_attachments])
+
+    result = agent("Call fetch_attachments. What color is the photo, and who is the letter addressed to?")
+    text = str(result).lower()
+
+    assert "yellow" in text
+    assert "shareholder" in text
+
+
 def test_agent_structured_output(assistant_agent, weather):
     tru_weather = assistant_agent.structured_output(type(weather), "The time is 12:00 and the weather is sunny")
     exp_weather = weather
