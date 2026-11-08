@@ -496,6 +496,9 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
    * The method returns:
    * - StreamAggregatedResult containing the complete message, stop reason, and optional metadata
    *
+   * Lone UTF-16 surrogates in the request are replaced with U+FFFD before it reaches stream(), because some
+   * providers reject a whole request over one. Calling stream() directly skips this.
+   *
    * All exceptions thrown from this method are wrapped in ModelError to provide
    * a consistent error type for model-related errors. Specific error subtypes like
    * ContextWindowOverflowError, ModelThrottledError, and MaxTokensError are preserved.
