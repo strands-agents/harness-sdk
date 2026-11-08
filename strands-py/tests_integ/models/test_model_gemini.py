@@ -156,7 +156,7 @@ def test_agent_invoke_document_input(assistant_agent, letter_pdf):
     assert "shareholder" in text
 
 
-def test_agent_reads_media_returned_by_a_tool(yellow_img, letter_pdf):
+def test_agent_invoke_tool_returning_media(yellow_img, letter_pdf):
     @strands.tool
     def fetch_attachments() -> dict:
         """Fetch the attached photo and letter."""

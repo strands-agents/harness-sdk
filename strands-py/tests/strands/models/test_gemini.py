@@ -469,61 +469,6 @@ async def test_stream_request_with_tool_results(gemini_client, model, model_id):
     gemini_client.aio.models.generate_content_stream.assert_called_with(**exp_request)
 
 
-def test_format_request_tool_result_media_gets_unique_display_names(model):
-    png = {"image": {"format": "png", "source": {"bytes": b"png"}}}
-    report = {"document": {"format": "pdf", "name": "report", "source": {"bytes": b"pdf"}}}
-    report_1 = {"document": {"format": "pdf", "name": "report-1", "source": {"bytes": b"pdf"}}}
-    unnamed_notes = {"document": {"format": "txt", "source": {"bytes": b"txt"}}}
-    messages = [
-        {
-            "role": "user",
-            "content": [
-                {
-                    "toolResult": {
-                        "toolUseId": "c1",
-                        "status": "success",
-                        "content": [png, png, png, report, report_1, report],
-                    }
-                },
-                {"toolResult": {"toolUseId": "c2", "status": "success", "content": [png, unnamed_notes]}},
-            ],
-        }
-    ]
-
-    request = model._format_request(messages, None, None, None)
-
-    tru_display_names = [
-        [part["inline_data"]["display_name"] for part in content_part["function_response"]["parts"]]
-        for content_part in request["contents"][0]["parts"]
-    ]
-    exp_display_names = [
-        ["image.png", "image-1.png", "image-2.png", "report", "report-1", "report-2"],
-        ["image.png", "document.txt"],
-    ]
-    assert tru_display_names == exp_display_names
-
-
-def test_format_request_skips_tool_result_content_gemini_cannot_read(model, caplog):
-    caplog.set_level(logging.WARNING, logger="strands.models.gemini")
-    s3_image = {"image": {"format": "png", "source": {"location": {"type": "s3", "uri": "s3://bucket/key.png"}}}}
-    video = {"video": {"format": "mp4", "source": {"bytes": b"mp4"}}}
-    tool_result = {"toolUseId": "c1", "status": "success", "content": [{"text": "clip"}, s3_image, video]}
-    messages = [{"role": "user", "content": [{"toolResult": tool_result}]} for _ in range(2)]
-
-    request = model._format_request(messages, None, None, None)
-
-    tru_parts = request["contents"][0]["parts"]
-    exp_parts = [{"function_response": {"id": "c1", "name": "c1", "response": {"output": [{"text": "clip"}]}}}]
-    assert tru_parts == exp_parts
-
-    tru_logged = [record.getMessage() for record in caplog.records]
-    exp_logged = [
-        "count=<2> | Location sources in tool results are not supported by Gemini | skipping content block",
-        "count=<2> | Video content in tool results is not supported by Gemini | skipping content block",
-    ]
-    assert tru_logged == exp_logged
-
-
 @pytest.mark.asyncio
 async def test_stream_request_with_tool_results_preserving_name(gemini_client, model, model_id):
     messages = [
@@ -585,6 +530,40 @@ async def test_stream_request_with_tool_results_preserving_name(gemini_client, m
         "model": model_id,
     }
     gemini_client.aio.models.generate_content_stream.assert_called_with(**exp_request)
+
+
+def test_format_request_suffixes_duplicate_tool_result_display_names(model):
+    png = {"image": {"format": "png", "source": {"bytes": b"png"}}}
+    report = {"document": {"format": "pdf", "name": "report", "source": {"bytes": b"pdf"}}}
+    report_1 = {"document": {"format": "pdf", "name": "report-1", "source": {"bytes": b"pdf"}}}
+    unnamed_notes = {"document": {"format": "txt", "source": {"bytes": b"txt"}}}
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "toolResult": {
+                        "toolUseId": "c1",
+                        "status": "success",
+                        "content": [png, png, png, report, report_1, report],
+                    }
+                },
+                {"toolResult": {"toolUseId": "c2", "status": "success", "content": [png, unnamed_notes]}},
+            ],
+        }
+    ]
+
+    request = model._format_request(messages, None, None, None)
+
+    tru_display_names = [
+        [part["inline_data"]["display_name"] for part in content_part["function_response"]["parts"]]
+        for content_part in request["contents"][0]["parts"]
+    ]
+    exp_display_names = [
+        ["image.png", "image-1.png", "image-2.png", "report", "report-1", "report-2"],
+        ["image.png", "document.txt"],
+    ]
+    assert tru_display_names == exp_display_names
 
 
 @pytest.mark.asyncio
@@ -1984,6 +1963,27 @@ def test_format_request_filters_location_source_document(model, caplog):
     assert len(formatted_content) == 1
     assert "text" in formatted_content[0]
     assert "Location sources are not supported by Gemini" in caplog.text
+
+
+def test_format_request_skips_tool_result_location_source_and_video(model, caplog):
+    caplog.set_level(logging.WARNING, logger="strands.models.gemini")
+    s3_image = {"image": {"format": "png", "source": {"location": {"type": "s3", "uri": "s3://bucket/key.png"}}}}
+    video = {"video": {"format": "mp4", "source": {"bytes": b"mp4"}}}
+    tool_result = {"toolUseId": "c1", "status": "success", "content": [{"text": "clip"}, s3_image, video]}
+    messages = [{"role": "user", "content": [{"toolResult": tool_result}]} for _ in range(2)]
+
+    request = model._format_request(messages, None, None, None)
+
+    tru_parts = request["contents"][0]["parts"]
+    exp_parts = [{"function_response": {"id": "c1", "name": "c1", "response": {"output": [{"text": "clip"}]}}}]
+    assert tru_parts == exp_parts
+
+    tru_logged = [record.getMessage() for record in caplog.records]
+    exp_logged = [
+        "count=<2> | Location sources in tool results are not supported by Gemini | skipping content block",
+        "count=<2> | Video content in tool results is not supported by Gemini | skipping content block",
+    ]
+    assert tru_logged == exp_logged
 
 
 class TestCountTokens:
