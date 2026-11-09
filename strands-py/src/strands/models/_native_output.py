@@ -176,9 +176,7 @@ def find_unsupported_native_output_feature(schema: dict[str, Any]) -> str | None
 
     Native output requires ``additionalProperties: false`` on every object, has no tuple support, and needs a type on
     every node, so dict and tuple fields would be emptied or left unconstrained, and untyped fields such as ``Any``
-    cannot be converted. Such models must not use native output. A node constrained only by ``enum`` or ``const``,
-    such as a ``Literal`` mixing strings and numbers, also counts as untyped: ``AnthropicModel`` converts schemas with
-    ``anthropic.transform_schema``, which rejects such nodes before anthropic 2.7.0.
+    cannot be converted. Such models must not use native output.
 
     Args:
         schema: A JSON schema, for example from ``BaseModel.model_json_schema()``.
@@ -207,11 +205,10 @@ def find_unsupported_native_output_feature(schema: dict[str, Any]) -> str | None
 def to_native_output_schema(schema: dict[str, Any]) -> dict[str, Any]:
     """Convert a JSON schema to the subset native structured output accepts.
 
-    Mirrors ``anthropic.transform_schema`` (as of anthropic 2.7.0), which ``AnthropicModel`` uses directly, for
-    providers without the ``anthropic`` package: objects get ``additionalProperties: false``, a node whose ``enum`` or
-    ``const`` holds only primitive values keeps them in place of its ``type``, and keywords outside the supported subset
-    are moved into the field description, where the model can still follow them. Validate the result against the
-    original model, which still enforces every constraint.
+    Mirrors ``anthropic.transform_schema``, which ``AnthropicModel`` uses directly, for providers without the
+    ``anthropic`` package: objects get ``additionalProperties: false``, and keywords outside the supported subset are
+    moved into the field description, where the model can still follow them. Validate the result against the original
+    model, which still enforces every constraint.
 
     Args:
         schema: A JSON schema, for example from ``BaseModel.model_json_schema()``.
@@ -237,7 +234,6 @@ def to_native_output_schema(schema: dict[str, Any]) -> dict[str, Any]:
 
     type_ = remaining.pop("type", None)
     if _convert_literals(remaining, converted):
-        # Literals replace the type, so type-specific keywords such as format fall through to the description.
         type_ = None
     _convert_composition(remaining, converted, type_)
 
