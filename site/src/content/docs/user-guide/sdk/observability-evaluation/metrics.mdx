@@ -60,6 +60,11 @@ All these metrics are accessible through the `AgentResult` object returned when 
 ```
 
 The `metrics` property on `AgentResult` is an instance of `AgentMetrics` that holds the performance data for the agent's execution.
+
+When the TypeScript SDK exports metrics through OpenTelemetry, each built-in metric
+includes the agent's `id` as `gen_ai.agent.id`. Tool metrics also include
+`gen_ai.tool.name`. Agents with the same ID share a metric series. The default agent
+ID is `agent`.
 </Tab>
 </Tabs>
 

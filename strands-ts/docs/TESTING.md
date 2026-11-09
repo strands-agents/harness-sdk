@@ -593,14 +593,14 @@ import { MockMeter } from '../__fixtures__/mock-meter'
 const mockMeter = new MockMeter()
 vi.spyOn(otelMetrics, 'getMeter').mockReturnValue(mockMeter)
 
-const m = new Meter()
+const m = new Meter('test-agent')
 m.startNewInvocation()
 
 // Assert on collected metric values
 expect(mockMeter.getCounter('gen_ai.agent.invocation.count')?.sum).toBe(1)
 expect(mockMeter.getHistogram('gen_ai.agent.cycle.duration')?.sum).toBe(2000)
 expect(mockMeter.getCounter('gen_ai.agent.tool.call.count')?.dataPoints).toStrictEqual([
-  { value: 1, attributes: { 'gen_ai.tool.name': 'search' } },
+  { value: 1, attributes: { 'gen_ai.agent.id': 'test-agent', 'gen_ai.tool.name': 'search' } },
 ])
 ```
 

@@ -14,7 +14,7 @@ describe('Meter', () => {
   let meter: Meter
 
   beforeEach(() => {
-    meter = new Meter()
+    meter = new Meter('test-agent')
   })
 
   describe('metrics getter', () => {
@@ -563,6 +563,7 @@ describe('Meter', () => {
 
   describe('OTEL instrument emission', () => {
     let mockMeter: MockMeter
+    const agentAttributes = { 'gen_ai.agent.id': 'test-agent' }
 
     beforeEach(() => {
       mockMeter = new MockMeter()
@@ -570,64 +571,93 @@ describe('Meter', () => {
     })
 
     it('emits invocation counter on startNewInvocation', () => {
-      const m = new Meter()
+      const m = new Meter('test-agent')
 
       m.startNewInvocation()
 
       expect(mockMeter.getCounter('gen_ai.agent.invocation.count')?.sum).toBe(1)
+      expect(mockMeter.getCounter('gen_ai.agent.invocation.count')?.dataPoints).toStrictEqual([
+        { value: 1, attributes: agentAttributes },
+      ])
+    })
+
+    it('records agent id on each invocation counter', () => {
+      const firstAgentMeter = new MockMeter()
+      const secondAgentMeter = new MockMeter()
+      vi.spyOn(otelMetrics, 'getMeter')
+        .mockReturnValueOnce(firstAgentMeter as unknown as OtelMeter)
+        .mockReturnValueOnce(secondAgentMeter as unknown as OtelMeter)
+      const firstAgent = new Meter('agent-1')
+      const secondAgent = new Meter('agent-2')
+
+      firstAgent.startNewInvocation()
+      secondAgent.startNewInvocation()
+
+      expect(firstAgentMeter.getCounter('gen_ai.agent.invocation.count')?.dataPoints).toStrictEqual([
+        { value: 1, attributes: { 'gen_ai.agent.id': 'agent-1' } },
+      ])
+      expect(secondAgentMeter.getCounter('gen_ai.agent.invocation.count')?.dataPoints).toStrictEqual([
+        { value: 1, attributes: { 'gen_ai.agent.id': 'agent-2' } },
+      ])
     })
 
     it('emits cycle counter on startCycle', () => {
-      const m = new Meter()
+      const m = new Meter('test-agent')
 
       m.startCycle()
 
       expect(mockMeter.getCounter('gen_ai.agent.cycle.count')?.sum).toBe(1)
+      expect(mockMeter.getCounter('gen_ai.agent.cycle.count')?.dataPoints).toStrictEqual([
+        { value: 1, attributes: agentAttributes },
+      ])
     })
 
     it('emits cycle duration histogram on endCycle', () => {
       vi.useFakeTimers()
       vi.setSystemTime(5000)
-      const m = new Meter()
+      const m = new Meter('test-agent')
 
       m.endCycle(3000)
 
       expect(mockMeter.getHistogram('gen_ai.agent.cycle.duration')?.sum).toBe(2000)
+      expect(mockMeter.getHistogram('gen_ai.agent.cycle.duration')?.dataPoints).toStrictEqual([
+        { value: 2000, attributes: agentAttributes },
+      ])
       vi.useRealTimers()
     })
 
     it('emits tool call counter and duration on successful endToolCall', () => {
-      const m = new Meter()
+      const m = new Meter('test-agent')
 
       m.endToolCall({ tool: makeTool('search', 'id-1'), duration: 150, success: true })
 
       expect(mockMeter.getCounter('gen_ai.agent.tool.call.count')?.dataPoints).toStrictEqual([
-        { value: 1, attributes: { 'gen_ai.tool.name': 'search' } },
+        { value: 1, attributes: { ...agentAttributes, 'gen_ai.tool.name': 'search' } },
       ])
       expect(mockMeter.getHistogram('gen_ai.agent.tool.duration')?.dataPoints).toStrictEqual([
-        { value: 150, attributes: { 'gen_ai.tool.name': 'search' } },
+        { value: 150, attributes: { ...agentAttributes, 'gen_ai.tool.name': 'search' } },
       ])
       expect(mockMeter.getCounter('gen_ai.agent.tool.error.count')?.dataPoints).toStrictEqual([])
     })
 
     it('emits tool call counter, error counter, and duration on failed endToolCall', () => {
-      const m = new Meter()
+      const m = new Meter('test-agent')
 
       m.endToolCall({ tool: makeTool('search', 'id-1'), duration: 50, success: false })
 
       expect(mockMeter.getCounter('gen_ai.agent.tool.call.count')?.dataPoints).toStrictEqual([
-        { value: 1, attributes: { 'gen_ai.tool.name': 'search' } },
+        { value: 1, attributes: { ...agentAttributes, 'gen_ai.tool.name': 'search' } },
       ])
       expect(mockMeter.getCounter('gen_ai.agent.tool.error.count')?.dataPoints).toStrictEqual([
-        { value: 1, attributes: { 'gen_ai.tool.name': 'search' } },
+        { value: 1, attributes: { ...agentAttributes, 'gen_ai.tool.name': 'search' } },
       ])
       expect(mockMeter.getHistogram('gen_ai.agent.tool.duration')?.dataPoints).toStrictEqual([
-        { value: 50, attributes: { 'gen_ai.tool.name': 'search' } },
+        { value: 50, attributes: { ...agentAttributes, 'gen_ai.tool.name': 'search' } },
       ])
     })
 
     it('emits input token counter, output token counter, and model latency on updateCycle', () => {
-      const m = new Meter()
+      const m = new Meter('test-agent')
 
       m.updateCycle({
         type: 'modelMetadataEvent',
@@ -638,10 +668,19 @@ describe('Meter', () => {
       expect(mockMeter.getCounter('gen_ai.agent.tokens.input')?.sum).toBe(100)
       expect(mockMeter.getCounter('gen_ai.agent.tokens.output')?.sum).toBe(50)
       expect(mockMeter.getHistogram('gen_ai.agent.model.latency')?.sum).toBe(200)
+      expect(mockMeter.getCounter('gen_ai.agent.tokens.input')?.dataPoints).toStrictEqual([
+        { value: 100, attributes: agentAttributes },
+      ])
+      expect(mockMeter.getCounter('gen_ai.agent.tokens.output')?.dataPoints).toStrictEqual([
+        { value: 50, attributes: agentAttributes },
+      ])
+      expect(mockMeter.getHistogram('gen_ai.agent.model.latency')?.dataPoints).toStrictEqual([
+        { value: 200, attributes: agentAttributes },
+      ])
     })
 
     it('does not emit token counters or latency when updateCycle has no usage or metrics', () => {
-      const m = new Meter()
+      const m = new Meter('test-agent')
 
       m.updateCycle({ type: 'modelMetadataEvent' })
 
@@ -651,7 +690,7 @@ describe('Meter', () => {
     })
 
     it('does not emit any OTEL instruments when updateCycle is called with undefined', () => {
-      const m = new Meter()
+      const m = new Meter('test-agent')
 
       m.updateCycle(undefined)
 
@@ -661,7 +700,7 @@ describe('Meter', () => {
     })
 
     it('emits time-to-first-token histogram in seconds when timeToFirstByteMs is provided', () => {
-      const m = new Meter()
+      const m = new Meter('test-agent')
 
       m.updateCycle({
         type: 'modelMetadataEvent',
@@ -669,10 +708,13 @@ describe('Meter', () => {
       })
 
       expect(mockMeter.getHistogram('gen_ai.server.time_to_first_token')?.sum).toBeCloseTo(0.15)
+      expect(mockMeter.getHistogram('gen_ai.server.time_to_first_token')?.dataPoints).toStrictEqual([
+        { value: 0.15, attributes: agentAttributes },
+      ])
     })
 
     it('does not emit time-to-first-token histogram when timeToFirstByteMs is undefined', () => {
-      const m = new Meter()
+      const m = new Meter('test-agent')
 
       m.updateCycle({
         type: 'modelMetadataEvent',
@@ -683,7 +725,7 @@ describe('Meter', () => {
     })
 
     it('does not emit time-to-first-token histogram when timeToFirstByteMs is zero', () => {
-      const m = new Meter()
+      const m = new Meter('test-agent')
 
       m.updateCycle({
         type: 'modelMetadataEvent',
