@@ -91,11 +91,11 @@ class SummaryBlock(TypedDict, total=False):
     text: str
 
 
-class InjectedContent(TypedDict):
+class InjectedBlock(TypedDict):
     """Text the app adds to a user turn, such as a reminder, kept apart from the user's own words.
 
-    Readers of ``agent.messages`` can skip it. ``ContextInjector`` writes its text as injected blocks. It belongs in a
-    user message, after the existing content; in any other message it is left out.
+    Readers of ``agent.messages`` can skip it (``"injected" in block``). ``ContextInjector`` writes its text as injected
+    blocks. It belongs in a user message, after the existing content; in any other message it is left out.
 
     When the model takes temporary messages (``model_info.capabilities.temporary_messages``), the provider sends it as
     a system message the model reads only until the next user message, which the model ranks above the user. Every
@@ -135,7 +135,7 @@ class ContentBlock(TypedDict, total=False):
     document: DocumentContent
     guardContent: GuardContent
     image: ImageContent
-    injected: InjectedContent
+    injected: InjectedBlock
     reasoningContent: ReasoningContentBlock
     summary: SummaryBlock
     text: str

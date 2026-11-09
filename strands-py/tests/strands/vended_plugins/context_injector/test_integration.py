@@ -195,3 +195,84 @@ async def test_every_turn_injection_preserves_tool_result_adjacency(model_class,
     assert tru_roles == exp_roles
     assert all("EPHEMERAL" in json.dumps(request[-1]["content"]) for request in requests)
     assert all(json.dumps(request).count("EPHEMERAL") == 1 for request in requests)
+
+
+def test_injection_writes_with_the_agentic_context_manager(model, model_seen):
+    agent = Agent(
+        model=model,
+        callback_handler=None,
+        context_manager="agentic",
+        plugins=[ContextInjector(lambda context: "<now>T1</now>")],
+    )
+
+    agent("hello")
+
+    assert "<now>T1</now>" in _texts(model_seen[0])
+    assert {"injected": {"text": "<now>T1</now>", "source": "strands:context-injector"}} in agent.messages[0]["content"]
+
+
+def test_injected_block_is_saved_and_restored_by_file_session_manager(model, tmp_path):
+    from strands.session.file_session_manager import FileSessionManager
+
+    agent = Agent(
+        model=model,
+        callback_handler=None,
+        session_manager=FileSessionManager(session_id="s", storage_dir=str(tmp_path)),
+        plugins=[ContextInjector(lambda context: "<ctx>A</ctx>")],
+    )
+    agent("hello")
+
+    restored = Agent(
+        model=MockedModelProvider([]),
+        callback_handler=None,
+        session_manager=FileSessionManager(session_id="s", storage_dir=str(tmp_path)),
+    )
+
+    assert restored.messages[0]["content"] == [
+        {"text": "hello"},
+        {"injected": {"text": "<ctx>A</ctx>", "source": "strands:context-injector"}},
+    ]
+
+
+def test_a_later_middleware_editing_the_call_copy_leaves_history_unchanged(model):
+    from strands.middleware import InvokeModelStage
+
+    agent = Agent(
+        model=model,
+        callback_handler=None,
+        plugins=[ContextInjector(lambda context: "<ctx>A</ctx>")],
+    )
+
+    def redact(context):
+        context.messages[-1]["content"][-1]["injected"]["text"] = "[redacted]"
+        return context
+
+    agent.add_middleware(InvokeModelStage.Input, redact)
+    agent("hello")
+
+    assert agent.messages[0]["content"][-1] == {
+        "injected": {"text": "<ctx>A</ctx>", "source": "strands:context-injector"}
+    }
+
+
+def test_deprecated_structured_output_drops_injected_blocks_of_earlier_user_messages(model):
+    from pydantic import BaseModel
+
+    class Out(BaseModel):
+        value: str
+
+    agent = Agent(model=model, callback_handler=None, plugins=[ContextInjector(lambda context: "<ctx>A</ctx>")])
+    agent("hello")
+    seen: list = []
+
+    async def structured_output(output_model, messages, **kwargs):
+        seen.append(messages)
+        yield {"output": Out(value="x")}
+
+    model.structured_output = structured_output
+    with pytest.warns(DeprecationWarning):
+        agent.structured_output(Out, "again")
+
+    # Formatters other than Bedrock and Anthropic raise on an injected block.
+    assert not any("injected" in block for message in seen[0] for block in message["content"])
+    assert "<ctx>A</ctx>" not in _texts(seen[0])

@@ -44,8 +44,7 @@ class ModelCapabilities:
             provider receives each ``injected`` block as stored and formats it; otherwise it receives only the latest
             user message's injected text, as text. The shared data lists the models that take them, but
             :attr:`strands.models.Model.model_info` reports False unless the provider can send them
-            (``AnthropicModel``). A ``model_info`` override that turns it on for another provider drops the injected
-            text.
+            (``AnthropicModel``).
     """
 
     stateful: bool | None = None

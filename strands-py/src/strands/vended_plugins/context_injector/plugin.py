@@ -20,6 +20,7 @@ Example:
 
 from __future__ import annotations
 
+import copy
 import inspect
 import logging
 from dataclasses import replace
@@ -60,8 +61,9 @@ class ContextInjector(Plugin):
             surface: escape any attacker-influenced fields yourself. On a model that takes temporary
             messages it arrives as a system message, which the model ranks above the user, so never
             put content from outside the conversation (tool output, retrieved documents) in it.
-            Called at most once per user message: a retry, a forced structured output call or a
-            resume sends the text it returned the first time. A callback that raises fails open
+            Called at most once per user message: a retry or a resume sends the text it returned
+            the first time. A forced structured output call adds its own user message, which the
+            trigger sees like any other. A callback that raises fails open
             (injection is skipped, the model call proceeds).
         name: Plugin name, for logging and duplicate detection. Defaults to
             ``"strands:context-injector"``. The name is stored with every block the injector writes
@@ -123,14 +125,13 @@ class ContextInjector(Plugin):
         if latest is None or latest["role"] != "user" or any(self._wrote(block) for block in latest["content"]):
             return context
         # Another middleware may have replaced this call's messages.
-        index = next(
-            (
-                i
-                for i, message in enumerate(context.messages)
-                if message.get("tracking_id") == latest.get("tracking_id")
-            ),
-            -1,
-        )
+        tracking_id = latest.get("tracking_id")
+        if tracking_id is None:
+            # A message a hook appended this cycle has no id yet; only the call's last message can be it.
+            last = len(context.messages) - 1
+            index = last if last >= 0 and context.messages[last].get("tracking_id") is None else -1
+        else:
+            index = next((i for i, m in enumerate(context.messages) if m.get("tracking_id") == tracking_id), -1)
         if index < 0:
             return context
         injection_context = InjectionContext(
@@ -146,7 +147,7 @@ class ContextInjector(Plugin):
         position = len(latest["content"])
         history[-1] = _with_block(latest, block, position)
         messages = list(context.messages)
-        messages[index] = _with_block(messages[index], block, position)
+        messages[index] = _with_block(messages[index], copy.deepcopy(block), position)
         return replace(context, messages=messages)
 
     async def _render(self, context: InjectionContext) -> str | None:

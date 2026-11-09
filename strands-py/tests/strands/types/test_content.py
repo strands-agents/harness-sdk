@@ -1,6 +1,6 @@
 import json
 
-from strands.types.content import ContentBlock, InjectedContent, TextBlock
+from strands.types.content import ContentBlock, InjectedBlock, TextBlock
 
 
 def test_text_block_to_dict():
@@ -12,7 +12,7 @@ def test_text_block_to_dict():
 
 
 def test_injected_content_is_kept_under_injected_and_round_trips_through_json():
-    block = ContentBlock(injected=InjectedContent(text="reminder", source="test"))
+    block = ContentBlock(injected=InjectedBlock(text="reminder", source="test"))
 
     assert block == {"injected": {"text": "reminder", "source": "test"}}
     assert json.loads(json.dumps(block)) == block

@@ -990,7 +990,7 @@ class BedrockModel(Model):
                     filtered_unknown_members = True
                     continue
 
-                # Only a direct call or a model_info override that turns temporary_messages on gets here.
+                # Only a direct model call or a model_info override that turns temporary_messages on gets here.
                 if "injected" in content_block:
                     skipped_injected = True
                     continue

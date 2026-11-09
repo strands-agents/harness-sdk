@@ -118,7 +118,7 @@ def _estimate_tokens_with_heuristic(
     elif system_prompt:
         total += _heuristic_estimate_text(system_prompt)
 
-    latest_user = latest_user_index(messages)
+    latest_user = _latest_user_index(messages)
     for index, message in enumerate(messages):
         for block in message["content"]:
             if "injected" in block and index != latest_user:
@@ -132,7 +132,7 @@ def _estimate_tokens_with_heuristic(
     return total
 
 
-def latest_user_index(messages: Messages) -> int:
+def _latest_user_index(messages: Messages) -> int:
     """Index of the latest user message, or -1 when there is none."""
     for index in range(len(messages) - 1, -1, -1):
         if messages[index]["role"] == "user":

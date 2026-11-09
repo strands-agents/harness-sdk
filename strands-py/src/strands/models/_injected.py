@@ -8,7 +8,7 @@ included, gets the latest user message's injected blocks as text and none of the
 from typing import Any
 
 from ..types.content import ContentBlock, Message, Messages
-from .model import Model, latest_user_index
+from .model import Model, _latest_user_index
 
 
 def prepare_injected_blocks(model: Model, messages: Messages) -> tuple[Messages, int]:
@@ -26,7 +26,7 @@ def prepare_injected_blocks(model: Model, messages: Messages) -> tuple[Messages,
         return messages, 0
     if model.model_info.capabilities.temporary_messages is True:
         return messages, 0
-    return render_injected_blocks(messages)
+    return _render_injected_blocks(messages)
 
 
 async def count_tokens_as_sent(model: Model, messages: Messages, **kwargs: Any) -> int:
@@ -43,7 +43,7 @@ async def count_tokens_as_sent(model: Model, messages: Messages, **kwargs: Any) 
     return await model.count_tokens(prepare_injected_blocks(model, messages)[0], **kwargs)
 
 
-def render_injected_blocks(messages: Messages) -> tuple[Messages, int]:
+def _render_injected_blocks(messages: Messages) -> tuple[Messages, int]:
     """Return the messages as a model without temporary messages receives them.
 
     The latest user message's injected blocks become text blocks in their place, and every other injected block is
@@ -55,7 +55,7 @@ def render_injected_blocks(messages: Messages) -> tuple[Messages, int]:
     Returns:
         The messages to send, and how many trailing blocks the cache point must stay ahead of.
     """
-    latest_user = latest_user_index(messages)
+    latest_user = _latest_user_index(messages)
     dynamic_trailing_blocks = 0
     rendered: Messages = []
     for index, message in enumerate(messages):

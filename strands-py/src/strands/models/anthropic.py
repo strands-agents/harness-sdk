@@ -280,7 +280,10 @@ class AnthropicModel(Model):
     @property
     @override
     def model_info(self) -> ModelInfo:
-        """Turns temporary messages back on for the models the shared model info lists."""
+        """Everything the SDK knows about the configured model, with ``temporary_messages`` on for supported Claude.
+
+        See :attr:`strands.models.Model.model_info`.
+        """
         temporary_messages = lookup_model_info(self.config.get("model_id")).capabilities.temporary_messages
         return ModelInfo.merge(
             super().model_info,

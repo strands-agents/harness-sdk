@@ -88,6 +88,7 @@ class RepositorySessionManager(SessionManager[LocalAgent]):
             agent: Agent to append the message to
             **kwargs: Additional keyword arguments for future extensibility.
         """
+        self._save_injected_blocks(agent)
         # Calculate the next index (0 if this is the first message, otherwise increment the previous index)
         latest_agent_message = self._latest_agent_message[agent.agent_id]
         if latest_agent_message:
@@ -131,6 +132,7 @@ class RepositorySessionManager(SessionManager[LocalAgent]):
         """
         from ..agent.agent import Agent
 
+        self._save_injected_blocks(agent)
         if not isinstance(agent, Agent):
             # Prune held records so tracking state stays bounded.
             self._prune_held_records(agent)
@@ -195,6 +197,20 @@ class RepositorySessionManager(SessionManager[LocalAgent]):
             "conversation_manager_state": copy.deepcopy(current_conversation_manager_state),
             "model_state": copy.deepcopy(current_model_state),
         }
+
+    def _save_injected_blocks(self, agent: "LocalAgent") -> None:
+        """Rewrite held records whose message ``ContextInjector`` replaced to add an ``injected`` block.
+
+        The injector writes after the message was appended and fires no event, so the record is updated here.
+        """
+        current = {message["tracking_id"]: message for message in agent.messages if message.get("tracking_id")}
+        for record in self._held_records.get(agent.agent_id, []):
+            message = current.get(record.message.get("tracking_id", ""))
+            if record.redact_message is not None or message is None or message is record.message:
+                continue
+            if _injected_count(message) > _injected_count(record.message):
+                record.message = message
+                self.session_repository.update_message(self.session_id, agent.agent_id, record)
 
     def _prune_held_records(self, agent: "LocalAgent") -> None:
         """Drop held records whose message is no longer in ``agent.messages``.
@@ -415,3 +431,7 @@ class RepositorySessionManager(SessionManager[LocalAgent]):
             source.deserialize_state(state)
 
         self._is_new_session = False
+
+
+def _injected_count(message: Message) -> int:
+    return sum(1 for block in message["content"] if "injected" in block)
