@@ -34,6 +34,11 @@ function createMockClient(overrides?: Partial<McpClient>): McpClient {
   } as unknown as McpClient
 }
 
+/** Create a listed McpTool with an empty input schema. */
+function createListedTool(name: string): McpTool {
+  return new McpTool({ name, description: '', inputSchema: { type: 'object' }, client: createMockClient() })
+}
+
 describe('mcp_router tool', () => {
   let loadServersSpy: ReturnType<typeof vi.spyOn>
 
@@ -281,8 +286,56 @@ describe('mcp_router tool', () => {
       )
     })
 
+    it('rejects call_tool for a tool that list_tools does not return', async () => {
+      const mockClient = createMockClient({ listTools: vi.fn().mockResolvedValue([createListedTool('echo')]) })
+      loadServersSpy.mockResolvedValueOnce([mockClient])
+      const tool = makeMcpRouter({ servers: { mcp: { url: 'https://mcp.example.com/mcp' } } })
+      const agent = createMockAgent()
+
+      await tool.invoke({ command: 'connect', server_name: 'mcp', connection_id: 'c1' }, createContext(agent))
+      await expect(
+        tool.invoke({ command: 'call_tool', connection_id: 'c1', tool_name: 'missing' }, createContext(agent))
+      ).rejects.toThrow('Tool "missing" is not available on connection "c1"')
+      expect(mockClient.callTool).not.toHaveBeenCalled()
+    })
+
+    it.each([
+      { label: 'rejected', toolFilters: { rejected: ['delete_everything'] } },
+      { label: 'allowed', toolFilters: { allowed: ['list_items'] } },
+    ])('enforces $label toolFilters on call_tool', async ({ toolFilters }) => {
+      const serverTools = [
+        { name: 'list_items', inputSchema: { type: 'object' as const } },
+        { name: 'delete_everything', inputSchema: { type: 'object' as const } },
+      ]
+      const client = new McpClient({ transport: {} as never, toolFilters })
+      const sdkClient = (client as unknown as { _client: Record<string, unknown> })._client
+      sdkClient.listTools = vi.fn().mockResolvedValue({ tools: serverTools })
+      const sdkCallTool = vi.fn().mockResolvedValue({ content: [{ type: 'text', text: 'ok' }] })
+      sdkClient.callTool = sdkCallTool
+      vi.spyOn(client, 'connect').mockResolvedValue(undefined)
+      vi.spyOn(client, 'disconnect').mockResolvedValue(undefined)
+      loadServersSpy.mockResolvedValueOnce([client])
+      const tool = makeMcpRouter({ servers: { mcp: { url: 'https://mcp.example.com/mcp' } } })
+      const agent = createMockAgent()
+
+      await tool.invoke({ command: 'connect', server_name: 'mcp', connection_id: 'c1' }, createContext(agent))
+      const toolsResult = await tool.invoke({ command: 'list_tools', connection_id: 'c1' }, createContext(agent))
+      await expect(
+        tool.invoke({ command: 'call_tool', connection_id: 'c1', tool_name: 'delete_everything' }, createContext(agent))
+      ).rejects.toThrow('Tool "delete_everything" is not available on connection "c1"')
+      const callResult = await tool.invoke(
+        { command: 'call_tool', connection_id: 'c1', tool_name: 'list_items' },
+        createContext(agent)
+      )
+
+      expect((toolsResult as Array<{ name: string }>).map((spec) => spec.name)).toStrictEqual(['list_items'])
+      expect((callResult as Array<{ text: string }>)[0]!.text).toBe('ok')
+      expect(sdkCallTool.mock.calls.map((call) => (call[0] as { name: string }).name)).toStrictEqual(['list_items'])
+    })
+
     it('throws McpRouterToolError when MCP tool returns isError', async () => {
       const mockClient = createMockClient({
+        listTools: vi.fn().mockResolvedValue([createListedTool('fail')]),
         callTool: vi.fn().mockResolvedValue({ content: [{ type: 'text', text: 'boom' }], isError: true }),
       })
 
@@ -321,6 +374,7 @@ describe('mcp_router tool', () => {
 
     it('forwards cancel signal to callTool', async () => {
       const mockClient = createMockClient({
+        listTools: vi.fn().mockResolvedValue([createListedTool('slow')]),
         callTool: vi.fn().mockResolvedValue({ content: [] }),
       })
 
