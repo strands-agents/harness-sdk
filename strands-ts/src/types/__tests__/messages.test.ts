@@ -622,6 +622,35 @@ describe('restoring saved data with an unknown content block type', () => {
     ])
   })
 
+  it('contentBlockFromSavedData keeps unknown content inside a tool result and serializes it back unchanged', () => {
+    using _warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    const saved = {
+      toolResult: {
+        toolUseId: 'tool-1',
+        status: 'success',
+        content: [{ text: 'loaded' }, { toolReference: { name: 'shell' } }],
+      },
+    }
+
+    const block = contentBlockFromSavedData(saved as never)
+
+    expect(block).toEqual(
+      new ToolResultBlock({
+        toolUseId: 'tool-1',
+        status: 'success',
+        content: [new TextBlock('loaded'), new UnknownBlock({ toolReference: { name: 'shell' } })],
+      })
+    )
+    expect(block.toJSON()).toStrictEqual(saved)
+  })
+
+  it('ToolResultBlock.fromJSON still throws on unknown content in caller input', () => {
+    const data = { toolResult: { toolUseId: 'tool-1', status: 'success', content: [{ toolReference: {} }] } }
+
+    expect(() => ToolResultBlock.fromJSON(data as never)).toThrow('Unknown ToolResultContentData type')
+    expect(() => contentBlockFromData(data as never)).toThrow('Unknown ToolResultContentData type')
+  })
+
   it('contentBlockFromSavedData converts known types as usual, without a warning', () => {
     using warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
 

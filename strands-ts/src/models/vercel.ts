@@ -840,6 +840,8 @@ function formatUserMessage(message: Message, prompt: LanguageModelV3Prompt, tool
           output: formatToolResultOutput(block.status, block.content),
         })
         break
+      case 'unknownBlock':
+        break
       default:
         logger.warn(`block_type=<${block.type}> | unsupported content type in vercel user message, skipping`)
         break
@@ -891,6 +893,8 @@ function formatAssistantMessage(message: Message, prompt: LanguageModelV3Prompt)
       case 'documentBlock':
       case 'videoBlock':
         content.push(...formatMediaBlock(block))
+        break
+      case 'unknownBlock':
         break
       default:
         logger.warn(`block_type=<${block.type}> | unsupported content type in vercel assistant message, skipping`)
@@ -1014,6 +1018,8 @@ function formatToolResultOutput(
         }
         break
       }
+      case 'unknownBlock':
+        break
       default:
         logger.warn(
           `block_type=<${(c as unknown as { type: string }).type}> | unsupported content type in vercel tool result, skipping`

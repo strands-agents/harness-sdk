@@ -376,7 +376,7 @@ export type ToolResultContentData =
   | { video: VideoBlockData }
   | { document: DocumentBlockData }
 
-export type ToolResultContent = TextBlock | JsonBlock | ImageBlock | VideoBlock | DocumentBlock
+export type ToolResultContent = TextBlock | JsonBlock | ImageBlock | VideoBlock | DocumentBlock | UnknownBlock
 
 /**
  * Data for a tool result block.
@@ -467,13 +467,28 @@ export class ToolResultBlock implements JSONSerializable<{ toolResult: ToolResul
    * @returns ToolResultBlock instance
    */
   static fromJSON(data: { toolResult: ToolResultBlockData }): ToolResultBlock {
-    const content = data.toolResult.content.map(toolResultContentFromData)
-    return new ToolResultBlock({
-      toolUseId: data.toolResult.toolUseId,
-      status: data.toolResult.status,
-      content,
-    })
+    return toolResultBlockFromData(data, rejectUnknown)
   }
+
+  /**
+   * Creates a ToolResultBlock from data the SDK saved earlier. Unlike {@link ToolResultBlock.fromJSON}, it keeps
+   * content of a type this version does not recognize as an {@link UnknownBlock}.
+   *
+   * @param data - Saved ToolResultBlockData
+   * @returns ToolResultBlock instance
+   * @internal
+   */
+  static _fromSavedData(data: { toolResult: ToolResultBlockData }): ToolResultBlock {
+    return toolResultBlockFromData(data, keepUnknown())
+  }
+}
+
+function toolResultBlockFromData(data: { toolResult: ToolResultBlockData }, onUnknown: OnUnknown): ToolResultBlock {
+  return new ToolResultBlock({
+    toolUseId: data.toolResult.toolUseId,
+    status: data.toolResult.status,
+    content: data.toolResult.content.map((entry) => parseToolResultContent(entry, onUnknown)),
+  })
 }
 
 /**
@@ -484,12 +499,16 @@ export class ToolResultBlock implements JSONSerializable<{ toolResult: ToolResul
  * @throws Error if the content data type is unknown
  */
 export function toolResultContentFromData(data: ToolResultContentData): ToolResultContent {
+  return parseToolResultContent(data, rejectUnknown)
+}
+
+function parseToolResultContent(data: ToolResultContentData, onUnknown: OnUnknown): ToolResultContent {
   if ('text' in data) return new TextBlock(data.text)
   if ('json' in data) return new JsonBlock(data)
   if ('image' in data) return ImageBlock.fromJSON(data as { image: ImageBlockData })
   if ('video' in data) return VideoBlock.fromJSON(data as { video: VideoBlockData })
   if ('document' in data) return DocumentBlock.fromJSON(data as { document: DocumentBlockData })
-  throw new Error('Unknown ToolResultContentData type')
+  return onUnknown(data, 'ToolResultContentData')
 }
 
 /**
@@ -1205,17 +1224,13 @@ export class UnknownBlock implements JSONSerializable<Record<string, unknown>> {
  * @throws Error if the content block type is unknown
  */
 export function contentBlockFromData(data: ContentBlockData): ContentBlock {
-  const block = knownContentBlockFromData(data)
-  if (block === undefined) {
-    throw new Error('Unknown ContentBlockData type')
-  }
-  return block
+  return parseContentBlock(data, rejectUnknown)
 }
 
 /**
  * Converts content block data the SDK saved earlier, such as in a snapshot, to a ContentBlock instance.
  * Unlike {@link contentBlockFromData}, data of a type this version does not recognize becomes an
- * {@link UnknownBlock}, so data saved by a newer version still loads.
+ * {@link UnknownBlock}, also inside a tool result, so data saved by a newer version still loads.
  *
  * @param data - The saved content block data
  * @param options - `warn: false` skips the warning, for a block that was already loaded once
@@ -1223,25 +1238,37 @@ export function contentBlockFromData(data: ContentBlockData): ContentBlock {
  * @internal
  */
 export function contentBlockFromSavedData(data: ContentBlockData, options: { warn?: boolean } = {}): ContentBlock {
-  const block = knownContentBlockFromData(data)
-  if (block !== undefined) {
-    return block
-  }
-  if (options.warn !== false) {
-    logger.warn(
-      `block_keys=<${Object.keys(data).join(',')}> | unknown content block type | keeping it unchanged | model providers skip it`
-    )
-  }
-  return UnknownBlock.fromJSON(data as unknown as Record<string, unknown>)
+  return parseContentBlock(data, keepUnknown(options))
 }
 
-function knownContentBlockFromData(data: ContentBlockData): ContentBlock | undefined {
+/**
+ * What a parser does with data of a type this version does not recognize, at any depth: caller input throws, and
+ * data the SDK saved becomes an {@link UnknownBlock}.
+ */
+type OnUnknown = (data: object, kind: string) => UnknownBlock
+
+const rejectUnknown: OnUnknown = (_data, kind) => {
+  throw new Error(`Unknown ${kind} type`)
+}
+
+function keepUnknown(options: { warn?: boolean } = {}): OnUnknown {
+  return (data) => {
+    if (options.warn !== false) {
+      logger.warn(
+        `block_keys=<${Object.keys(data).join(',')}> | unknown content block type | keeping it unchanged | model providers skip it`
+      )
+    }
+    return UnknownBlock.fromJSON(data as Record<string, unknown>)
+  }
+}
+
+function parseContentBlock(data: ContentBlockData, onUnknown: OnUnknown): ContentBlock {
   if ('text' in data) {
     return new TextBlock(data.text)
   } else if ('toolUse' in data) {
     return new ToolUseBlock(data.toolUse)
   } else if ('toolResult' in data) {
-    return ToolResultBlock.fromJSON(data)
+    return toolResultBlockFromData(data, onUnknown)
   } else if ('reasoning' in data) {
     return ReasoningBlock.fromJSON(data)
   } else if ('cachePoint' in data) {
@@ -1263,5 +1290,5 @@ function knownContentBlockFromData(data: ContentBlockData): ContentBlock | undef
   } else if ('summary' in data) {
     return SummaryBlock.fromJSON(data)
   }
-  return undefined
+  return onUnknown(data, 'ContentBlockData')
 }

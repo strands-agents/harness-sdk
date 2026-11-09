@@ -891,19 +891,49 @@ describe('VercelModel', () => {
       })
     })
 
-    it('skips unknown blocks in user and assistant messages', async () => {
-      using _warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    it('skips unknown blocks in user and assistant messages and tool results, without a warning', async () => {
+      using warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
       const { collect, callArgs } = setupCaptureTest()
       const unknownBlock = new UnknownBlock({ futureBlock: { value: 1 } })
       await collect([
         new Message({ role: 'user', content: [new TextBlock('Hello'), unknownBlock] }),
-        new Message({ role: 'assistant', content: [new TextBlock('Hi'), unknownBlock] }),
+        new Message({
+          role: 'assistant',
+          content: [new TextBlock('Hi'), unknownBlock, new ToolUseBlock({ name: 'tool', toolUseId: 'tu1', input: {} })],
+        }),
+        new Message({
+          role: 'user',
+          content: [
+            new ToolResultBlock({
+              toolUseId: 'tu1',
+              status: 'success',
+              content: [new TextBlock('done'), unknownBlock],
+            }),
+          ],
+        }),
       ])
-
       expect(callArgs().prompt).toEqual([
         { role: 'user', content: [{ type: 'text', text: 'Hello' }] },
-        { role: 'assistant', content: [{ type: 'text', text: 'Hi' }] },
+        {
+          role: 'assistant',
+          content: [
+            { type: 'text', text: 'Hi' },
+            { type: 'tool-call', toolCallId: 'tu1', toolName: 'tool', input: {} },
+          ],
+        },
+        {
+          role: 'tool',
+          content: [
+            {
+              type: 'tool-result',
+              toolCallId: 'tu1',
+              toolName: 'tool',
+              output: { type: 'content', value: [{ type: 'text', text: 'done' }] },
+            },
+          ],
+        },
       ])
+      expect(warnSpy).not.toHaveBeenCalled()
     })
 
     describe('tool result output formatting', () => {

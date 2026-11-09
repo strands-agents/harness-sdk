@@ -209,7 +209,7 @@ export class InterruptState implements InterruptStateData {
 
     const completedToolResults = new Map<string, ToolResultBlock>()
     for (const [toolUseId, resultData] of Object.entries(this.pendingToolExecution.completedToolResults)) {
-      completedToolResults.set(toolUseId, ToolResultBlock.fromJSON(resultData))
+      completedToolResults.set(toolUseId, ToolResultBlock._fromSavedData(resultData))
     }
 
     return { assistantMessage, completedToolResults }
@@ -404,7 +404,7 @@ export class InterruptState implements InterruptStateData {
  */
 function validatePendingToolExecution(pending: PendingToolExecution): PendingToolExecution {
   const assistantMessage = parseRestoredData('field=<pendingToolExecution.assistantMessageData>', () =>
-    Message.fromMessageData(pending.assistantMessageData)
+    Message._fromSavedData(pending.assistantMessageData)
   )
   if (assistantMessage.role !== 'assistant') {
     throw new SessionError(
@@ -437,7 +437,7 @@ function validatePendingToolExecution(pending: PendingToolExecution): PendingToo
     if (!toolUseIds.has(toolUseId)) {
       throw new SessionError(`${field} | does not match a tool use in the pending assistant message`)
     }
-    parseRestoredData(field, () => ToolResultBlock.fromJSON(resultData))
+    parseRestoredData(field, () => ToolResultBlock._fromSavedData(resultData))
   }
 
   return pending

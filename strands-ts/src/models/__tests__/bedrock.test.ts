@@ -908,6 +908,26 @@ describe('BedrockModel', () => {
       })
     })
 
+    it('skips unknown content in a tool result', async () => {
+      const provider = new BedrockModel()
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [
+            new ToolResultBlock({
+              toolUseId: 'id-1',
+              status: 'success',
+              content: [new TextBlock('loaded'), new UnknownBlock({ toolReference: { name: 'shell' } })],
+            }),
+          ],
+        }),
+      ]
+      await collectIterator(provider.stream(messages))
+      expect(mockConverseStreamCommand.mock.lastCall?.[0]?.messages?.[0]?.content).toEqual([
+        { toolResult: { toolUseId: 'id-1', content: [{ text: 'loaded' }], status: 'success' } },
+      ])
+    })
+
     it('injects noop tool config when messages have tool blocks but no toolSpecs', async () => {
       const mockConverseStreamCommand = vi.mocked(ConverseStreamCommand)
       const provider = new BedrockModel()

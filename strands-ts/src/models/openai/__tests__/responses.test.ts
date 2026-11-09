@@ -589,16 +589,28 @@ describe("OpenAIModel (api: 'responses')", () => {
       expect(req.input[0]).toEqual({ role: 'user', content: [{ type: 'input_text', text: 'quoted passage' }] })
     })
 
-    it('skips unknown blocks', async () => {
-      using _warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    it('skips unknown blocks in messages and tool results, without a warning', async () => {
+      using warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      const unknownBlock = new UnknownBlock({ futureBlock: { value: 1 } })
       const messages = [
+        new Message({ role: 'user', content: [new TextBlock('hello'), unknownBlock] }),
+        new Message({ role: 'assistant', content: [new ToolUseBlock({ name: 'tool', toolUseId: 'tu1', input: {} })] }),
         new Message({
           role: 'user',
-          content: [new TextBlock('hello'), new UnknownBlock({ futureBlock: { value: 1 } })],
+          content: [
+            new ToolResultBlock({
+              toolUseId: 'tu1',
+              status: 'success',
+              content: [new TextBlock('done'), unknownBlock],
+            }),
+          ],
         }),
       ]
       const req = await runOnce({}, messages)
-      expect(req.input).toEqual([{ role: 'user', content: [{ type: 'input_text', text: 'hello' }] }])
+      expect(req.input[0]).toEqual({ role: 'user', content: [{ type: 'input_text', text: 'hello' }] })
+      expect(req.input.at(-1)).toMatchObject({ type: 'function_call_output', call_id: 'tu1' })
+      expect(JSON.stringify(req.input)).not.toContain('futureBlock')
+      expect(warnSpy).not.toHaveBeenCalled()
     })
   })
 

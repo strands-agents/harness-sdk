@@ -218,6 +218,41 @@ describe('Snapshot API', () => {
       expect(takeSnapshot(agent, { preset: 'session' }).data.messages).toEqual([savedMessage])
     })
 
+    it('restores a tool result holding content this version does not recognize, unchanged', () => {
+      using _warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      const savedMessage = {
+        role: 'user',
+        content: [
+          {
+            toolResult: {
+              toolUseId: 'tool-1',
+              status: 'success',
+              content: [{ toolReference: { name: 'shell' } }],
+            },
+          },
+        ],
+        trackingId: 'durable-1',
+      }
+      const snapshot: Snapshot = {
+        scope: 'agent',
+        schemaVersion: '1.0',
+        createdAt: createTimestamp(),
+        data: { messages: [savedMessage] },
+        appData: {},
+      }
+
+      loadSnapshot(agent, snapshot)
+
+      expect(agent.messages[0]!.content).toEqual([
+        new ToolResultBlock({
+          toolUseId: 'tool-1',
+          status: 'success',
+          content: [new UnknownBlock({ toolReference: { name: 'shell' } })],
+        }),
+      ])
+      expect(takeSnapshot(agent, { preset: 'session' }).data.messages).toEqual([savedMessage])
+    })
+
     it('restores state from snapshot', () => {
       const snapshot: Snapshot = {
         scope: 'agent',

@@ -1838,8 +1838,8 @@ describe('OpenAIModel', () => {
   })
 
   describe('unknown blocks in messages', () => {
-    it('skips unknown blocks in user and assistant messages', async () => {
-      using _warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    it('skips unknown blocks in user and assistant messages, without a warning', async () => {
+      using warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
       const captured: { request: any } = { request: null }
       const mockClient = createMockClientWithCapture(captured)
       const provider = new OpenAIModel({ api: 'chat', client: mockClient })
@@ -1855,6 +1855,7 @@ describe('OpenAIModel', () => {
         { role: 'user', content: [{ type: 'text', text: 'Hello' }] },
         { role: 'assistant', content: 'Hi' },
       ])
+      expect(warnSpy).not.toHaveBeenCalled()
     })
   })
 
