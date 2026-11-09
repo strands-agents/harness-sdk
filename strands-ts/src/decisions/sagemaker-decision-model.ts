@@ -59,7 +59,8 @@ export class SageMakerDecisionModel extends DecisionModel {
   private readonly _endpointName: string
   private readonly _clientConfig: SageMakerRuntimeClientConfig
   private readonly _requestConfig: SystemOneRequestConfig
-  private _client: Promise<SageMakerRuntimeClient> | undefined
+  private readonly _providedClient: SageMakerRuntimeClient | undefined
+  private _runtime: Promise<SageMakerRuntime> | undefined
 
   /**
    * @param options - Endpoint, client, and confidence configuration.
@@ -78,7 +79,7 @@ export class SageMakerDecisionModel extends DecisionModel {
       )
     }
     this._endpointName = endpointName
-    if (options.client) this._client = Promise.resolve(options.client)
+    this._providedClient = options.client
     const customUserAgent = options.clientConfig?.customUserAgent
       ? `${options.clientConfig.customUserAgent} strands-agents-ts-sdk`
       : 'strands-agents-ts-sdk'
@@ -97,23 +98,28 @@ export class SageMakerDecisionModel extends DecisionModel {
     }
   }
 
-  protected _ask<const Q extends Record<string, Question>>(
+  protected async _ask<const Q extends Record<string, Question>>(
     state: DecisionInput,
     questions: Q,
     options: DecisionCallOptions
   ): Promise<DecisionResult<Q>> {
+    // Load the SDK and build the client before the shared adapter starts its latency timer, so
+    // `metadata.latencyMs` measures the request alone, not that one-time setup.
+    const runtime = await this._getRuntime()
     return askSystemOneWith(
       this._requestConfig,
-      (body, cancelSignal) => this._invoke(body, cancelSignal),
+      (body, cancelSignal) => this._invoke(runtime, body, cancelSignal),
       state,
       questions,
       options.cancelSignal
     )
   }
 
-  private async _invoke(body: string, cancelSignal?: AbortSignal): Promise<unknown> {
-    const { InvokeEndpointCommand } = await loadSageMakerRuntime()
-    const client = await this._getClient()
+  private async _invoke(
+    { client, InvokeEndpointCommand }: SageMakerRuntime,
+    body: string,
+    cancelSignal?: AbortSignal
+  ): Promise<unknown> {
     let responseBody: Uint8Array | undefined
     try {
       const output = await client.send(
@@ -137,12 +143,19 @@ export class SageMakerDecisionModel extends DecisionModel {
     }
   }
 
-  private _getClient(): Promise<SageMakerRuntimeClient> {
-    this._client ??= loadSageMakerRuntime().then(
-      ({ SageMakerRuntimeClient }) => new SageMakerRuntimeClient(this._clientConfig)
-    )
-    return this._client
+  /** Loads the SDK module and resolves the client once; concurrent first calls share the result. */
+  private _getRuntime(): Promise<SageMakerRuntime> {
+    this._runtime ??= loadSageMakerRuntime().then(({ SageMakerRuntimeClient, InvokeEndpointCommand }) => ({
+      client: this._providedClient ?? new SageMakerRuntimeClient(this._clientConfig),
+      InvokeEndpointCommand,
+    }))
+    return this._runtime
   }
+}
+
+interface SageMakerRuntime {
+  client: SageMakerRuntimeClient
+  InvokeEndpointCommand: typeof import('@aws-sdk/client-sagemaker-runtime').InvokeEndpointCommand
 }
 
 async function loadSageMakerRuntime(): Promise<typeof import('@aws-sdk/client-sagemaker-runtime')> {
