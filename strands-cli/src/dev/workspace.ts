@@ -55,8 +55,31 @@ export async function readDevWorkspace(root: string): Promise<DevWorkspace | und
   const manifest = join(directory, '.strands', 'config.json')
   const details = await optionalDetails(manifest)
   if (!details) return undefined
-  const document: unknown = JSON.parse((await readRegularFile(manifest, details, MAX_METADATA_BYTES)).toString('utf8'))
-  return resolveWorkspace(directory, validateConfig(document))
+  let document: unknown
+  try {
+    document = JSON.parse((await readRegularFile(manifest, details, MAX_METADATA_BYTES)).toString('utf8'))
+  } catch (error) {
+    throw new Error(
+      `Cannot read workspace configuration at ${manifest}: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error }
+    )
+  }
+  if (
+    !isRecord(document) ||
+    !Object.hasOwn(document, 'origin') ||
+    (!Object.hasOwn(document, 'entrypoint') && !Object.hasOwn(document, 'language'))
+  )
+    return undefined
+  let config: DevWorkspaceConfig
+  try {
+    config = validateConfig(document)
+  } catch (error) {
+    throw new Error(
+      `Invalid workspace configuration at ${manifest}: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error }
+    )
+  }
+  return resolveWorkspace(directory, config)
 }
 
 export async function initializeDevWorkspace(root: string, config: DevWorkspaceConfig): Promise<DevWorkspace> {

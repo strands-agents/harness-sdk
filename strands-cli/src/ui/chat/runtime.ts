@@ -240,7 +240,9 @@ export async function createTypescriptChat(
               return [
                 backend.sessionDirectory,
                 ...(backend.privatePaths ?? []),
-                ...(devWorkspace?.directory && containsPath(project.root, devWorkspace.directory)
+                ...(devWorkspace?.directory &&
+                devWorkspace.directory !== project.root &&
+                containsPath(project.root, devWorkspace.directory)
                   ? [devWorkspace.directory]
                   : []),
               ].map((path) => resolve(backend.cwd, path))
@@ -381,7 +383,9 @@ export async function createPythonChat(
             ? null
             : [
                 ...privatePaths,
-                ...(devWorkspace?.directory && containsPath(project.root, devWorkspace.directory)
+                ...(devWorkspace?.directory &&
+                devWorkspace.directory !== project.root &&
+                containsPath(project.root, devWorkspace.directory)
                   ? [devWorkspace.directory]
                   : []),
               ],
