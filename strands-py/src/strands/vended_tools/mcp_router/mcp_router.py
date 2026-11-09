@@ -6,7 +6,8 @@ The tool exposes five commands — ``connect``, ``list_connections``, ``list_too
 ``call_tool``, ``disconnect`` — letting an agent open named connections to MCP servers,
 inspect active connections, discover their tools, invoke them, and close the connections.
 Each server is configured with a :class:`~strands.tools.mcp.MCPServerConfig`; all fields
-are forwarded to :class:`~strands.tools.mcp.MCPClient`. Connections are isolated per agent.
+are forwarded to :class:`~strands.tools.mcp.MCPClient`. A server's ``tool_filters`` limit both
+``list_tools`` and ``call_tool``. Connections are isolated per agent.
 """
 
 from __future__ import annotations
@@ -55,7 +56,8 @@ def make_mcp_router(
         description: Tool description shown to the model. Defaults to a description
             that includes the permitted server names.
         servers: Allowlisted servers keyed by name. The model identifies servers to connect to by name;
-            the config is forwarded to :class:`~strands.tools.mcp.MCPClient`. Must not be empty.
+            the config is forwarded to :class:`~strands.tools.mcp.MCPClient`. A server's ``tool_filters``
+            decide which tools ``list_tools`` returns and ``call_tool`` accepts. Must not be empty.
         max_connections: Maximum simultaneous open connections per agent. Defaults to ``10``.
 
     Returns:
@@ -101,7 +103,8 @@ def make_mcp_router(
         Raises:
             MCPRouterToolError: If a required argument is missing, the server is not on
                 the allowlist, the connection cap is reached, no matching connection exists,
-                or the connection fails to start.
+                the connection fails to start, or ``call_tool`` names a tool that the
+                connection's ``list_tools`` does not return.
         """
         agent = tool_context.agent
 
@@ -127,6 +130,7 @@ def make_mcp_router(
         if command == "call_tool":
             if not tool_name:
                 raise MCPRouterToolError("`tool_name` is required for command='call_tool'")
+            await _ensure_tool_listed(client, connection_id, tool_name)
             return await client.call_tool_async(
                 tool_use_id=str(uuid4()),
                 name=tool_name,
@@ -232,6 +236,16 @@ def _handle_list_tools(client: MCPClient) -> list[ToolSpec]:
             break
     # Get mcp_tool.name instead of tool_name (may be prefixed) so call_tool works verbatim.
     return [{**t.tool_spec, "name": t.mcp_tool.name} for t in all_tools]
+
+
+async def _ensure_tool_listed(client: MCPClient, connection_id: str, tool_name: str) -> None:
+    # MCPClient applies tool_filters only when listing, so a call is checked against the filtered listing.
+    listed = await asyncio.to_thread(_handle_list_tools, client)
+    if not any(spec["name"] == tool_name for spec in listed):
+        raise MCPRouterToolError(
+            f"Tool {tool_name!r} is not available on connection {connection_id!r}. "
+            f"Call list_tools to see the tools you can call."
+        )
 
 
 async def _handle_disconnect(connections: dict[str, MCPClient], connection_id: str) -> str:
