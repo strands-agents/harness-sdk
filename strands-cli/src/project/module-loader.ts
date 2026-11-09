@@ -100,6 +100,14 @@ export const load: LoadHook = async (url, context, nextLoad) => {
 
 export const resolve: ResolveHook = async (specifier, context, nextResolve) => {
   const input = sourceUrl(specifier)
+  if (localHarness && input.url.startsWith('file:')) {
+    const url = new URL(input.url)
+    const sdkPath = url.pathname.match(/\/node_modules\/@strands-agents\/sdk\/(.+)$/u)?.[1]
+    if (sdkPath) {
+      const shared = new URL(sdkPath, new URL('../../', runtimeSdkRoot))
+      return nextResolve(shared.href, context)
+    }
+  }
   const parent = context.parentURL ? sourceUrl(context.parentURL) : undefined
   const version = input.version ?? parent?.version
   const resolutionContext = parent ? { ...context, parentURL: parent.url } : context
