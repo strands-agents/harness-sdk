@@ -1,3 +1,4 @@
+import type { SageMakerRuntimeClient } from '@aws-sdk/client-sagemaker-runtime'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ContextWindowOverflowError, ModelError, ModelThrottledError } from '../../errors.js'
@@ -94,6 +95,20 @@ describe('SageMakerDecisionModel', () => {
         maxAttempts: 5,
         customUserAgent: 'my-app strands-agents-ts-sdk',
       })
+    })
+
+    it('uses a provided client as is instead of creating one', async () => {
+      const send = vi.fn().mockResolvedValue({
+        Body: new TextEncoder().encode(JSON.stringify({ model: 'm', answers: { q: { type: 'noul', noul: 1 } } })),
+      })
+      const client = { send } as unknown as SageMakerRuntimeClient
+      const decision = new SageMakerDecisionModel({ endpointName: ENDPOINT_NAME, client })
+
+      const result = await decision.ask('state', { q: { question: 'ok?', choices: 'boolean' } })
+
+      expect(result.answers).toEqual({ q: true })
+      expect(send).toHaveBeenCalledTimes(1)
+      expect(mockSageMakerRuntimeClient).not.toHaveBeenCalled()
     })
 
     it('passes the cancel signal to the client', async () => {
@@ -213,5 +228,16 @@ describe('SageMakerDecisionModel', () => {
         /defaultMinConfidence must be in \[0.0, 1.0\]/
       )
     })
+
+    it.each([{ region: 'us-east-1' }, { clientConfig: { maxAttempts: 5 } }])(
+      'rejects a provided client combined with %o',
+      (options) => {
+        const client = { send: vi.fn() } as unknown as SageMakerRuntimeClient
+
+        expect(() => new SageMakerDecisionModel({ endpointName: ENDPOINT_NAME, client, ...options })).toThrow(
+          /Cannot specify both client and region\/clientConfig/
+        )
+      }
+    )
   })
 })

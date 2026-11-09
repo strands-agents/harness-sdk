@@ -22,10 +22,16 @@ const CONTEXT_OVERFLOW_STATUSES = new Set([400, 422])
 export interface SageMakerDecisionModelOptions {
   /** Name of the SageMaker AI real-time endpoint that serves the System One model. */
   readonly endpointName: string
-  /** AWS region of the endpoint. Takes precedence over `clientConfig.region`. */
+  /** AWS region of the endpoint. Takes precedence over `clientConfig.region`. Cannot be combined with `client`. */
   readonly region?: string
-  /** Configuration for the SageMaker Runtime client. */
+  /** Configuration for the SageMaker Runtime client. Cannot be combined with `client`. */
   readonly clientConfig?: SageMakerRuntimeClientConfig
+  /**
+   * Pre-built SageMaker Runtime client, for example one shared with other components or configured
+   * with custom credentials, middleware, or an endpoint override. Used as is. Cannot be combined
+   * with `region` or `clientConfig`.
+   */
+  readonly client?: SageMakerRuntimeClient
   /** Default minimum confidence. Defaults to `0.5`. */
   readonly defaultMinConfidence?: number
 }
@@ -57,7 +63,8 @@ export class SageMakerDecisionModel extends DecisionModel {
 
   /**
    * @param options - Endpoint, client, and confidence configuration.
-   * @throws Error if the endpoint name or confidence threshold is invalid.
+   * @throws Error if the endpoint name or confidence threshold is invalid, or if `client` is
+   * combined with `region` or `clientConfig`.
    */
   constructor(options: SageMakerDecisionModelOptions) {
     super()
@@ -65,7 +72,13 @@ export class SageMakerDecisionModel extends DecisionModel {
     if (!endpointName) {
       throw new Error('SageMakerDecisionModel requires an endpointName')
     }
+    if (options.client && (options.region || options.clientConfig)) {
+      throw new Error(
+        'Cannot specify both client and region/clientConfig. Configure them on the SageMakerRuntimeClient instead.'
+      )
+    }
     this._endpointName = endpointName
+    if (options.client) this._client = Promise.resolve(options.client)
     const customUserAgent = options.clientConfig?.customUserAgent
       ? `${options.clientConfig.customUserAgent} strands-agents-ts-sdk`
       : 'strands-agents-ts-sdk'
