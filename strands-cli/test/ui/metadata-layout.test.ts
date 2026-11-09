@@ -21,14 +21,14 @@ describe('metadataPlacements', () => {
     const placements = metadataPlacements(current, 100)
     expect(placements[0]!.text).toContain('Claude Opus 4.6 • High • Ask')
     expect(placements.find(({ target }) => target === 'cwd')!.text).toMatch(/….*harness-sdk$/u)
-    expect(placements.at(-1)!.text).toBe('/voice  /settings')
+    expect(placements.at(-1)!.text).toBe('/setup  /settings')
   })
 
   it('preserves effort and settings when the model must be shortened', () => {
     const current = metadataSnapshot('large model '.repeat(20), '/work')
     const placements = metadataPlacements(current, 40)
     expect(placements[0]!.text).toContain('… • High • Ask')
-    expect(placements.at(-1)!.text).toBe('/voice  /settings')
+    expect(placements.at(-1)!.text).toBe('/setup  /settings')
     expect(metadataPlacements(current, 18).at(-1)!.text).toBe('/settings')
   })
 
@@ -45,7 +45,7 @@ describe('metadataPlacements', () => {
     const wide = metadataPlacements(current, 100, '0.2.1').at(-1)!
     expect(wide.actions).toEqual([
       { target: 'update', text: '↑ Update 0.2.1' },
-      { target: 'voice', text: '/voice' },
+      { target: 'setup', text: '/setup' },
       { target: 'settings', text: '/settings' },
     ])
 
@@ -63,7 +63,7 @@ describe('metadataPlacements', () => {
     const cwd = `/用户/${'👨‍👩‍👧‍👦e\u0301📁/'.repeat(20)}`
     const segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' })
     const allowed = new Set(
-      [...segmenter.segment(`${model}${cwd} • HighAsk…/voice/settings░—`)].map(({ segment }) => segment)
+      [...segmenter.segment(`${model}${cwd} • HighAsk…/setup/settings░—`)].map(({ segment }) => segment)
     )
     let offset = 0
     let previousEnd: number | undefined

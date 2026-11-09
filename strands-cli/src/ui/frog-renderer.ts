@@ -29,12 +29,12 @@ export type { FrogAnimationRun, FrogRenderOptions } from './frog-canvas.js'
 export const FROG_INTRO_DURATION_MS = 4_200
 // Quadrant blocks keep the reference's stepped edges within the eight-column glyph width.
 const GLYPHS = {
-  A: [' ▗▟█▙▖  ', '█▛▀╔▀▜█╗', '█▌   ▐█║', '███████║', '█▌╔══▐█║', '╚═╝  ╚═╝'],
-  D: ['████▙▖  ', '█▌╔═▀▜█╗', '█▌║  ▐█║', '█▌║ ▄▟█║', '████▛▘═╝', '╚═══╝   '],
-  N: ['█▙▄  ▐█ ', '█▛▜▄╗▐█║', '█▌▐█║▐█║', '█▌▐█▄▟█║', '█▌║╚▀▜█║', '╚═╝  ╚═╝'],
-  R: ['▄▟███▙▄ ', '█▌╔══▐█║', '█▌   ▐█║', '█████▌═╝', '█▌║▝▀█▌ ', '╚═╝ ╚═╝ '],
-  S: ['▄▟███▙▄ ', '█▌╔══▝▀║', '▀▜███▙▄╗', '▄▖╚══▐█║', '▀▜███▛▀╝', ' ╚════╝ '],
-  T: ['▄▟███▙▄ ', '▀▘▐█╔▝▀║', '╚═▐█║╚═╝', '  ▐█║   ', '  ▐█║   ', '  ╚═╝   '],
+  A: [' ▗▟█▙▖  ', '█▛▀ ▀▜█ ', '█▌   ▐█ ', '███████ ', '█▌   ▐█ ', '        '],
+  D: ['████▙▖  ', '█▌  ▀▜█ ', '█▌   ▐█ ', '█▌  ▄▟█ ', '████▛▘  ', '        '],
+  N: ['█▙▄  ▐█ ', '█▛▜▄ ▐█ ', '█▌▐█ ▐█ ', '█▌▐█▄▟█ ', '█▌  ▀▜█ ', '        '],
+  R: ['▄▟███▙▄ ', '█▌   ▐█ ', '█▌   ▐█ ', '█████▌  ', '█▌ ▝▀█▌ ', '        '],
+  S: ['▄▟███▙▄ ', '█▌   ▝▀ ', '▀▜███▙▄ ', '▄▖   ▐█ ', '▀▜███▛▀ ', '        '],
+  T: ['▄▟███▙▄ ', '▀▘▐█ ▝▀ ', '  ▐█    ', '  ▐█    ', '  ▐█    ', '        '],
 } as const
 
 const SMALL_GLYPHS = {
@@ -819,7 +819,7 @@ function wordShape(word: string, glyphs: Record<string, readonly string[]> = GLY
             letterIndex,
             localX,
             localY,
-            x: offset + localX + ('╔╗╚╝║═╠╣╦'.includes(character) ? 1 : 0),
+            x: offset + localX,
             y: localY,
           })
         }

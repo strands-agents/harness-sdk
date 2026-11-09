@@ -821,7 +821,7 @@ describe('runInkChat', () => {
       expect(source).toHaveBeenCalledOnce()
 
       input.write('/setup')
-      await vi.waitFor(() => expect(frame().join('\n')).toContain('/setup'))
+      await vi.waitFor(() => expect(frame().join('\n')).toContain('/setup▌'))
       input.write('\r')
       await vi.waitFor(() => expect(frame().join('\n')).toContain('Esc to return to chat'))
       input.write('\u001b')

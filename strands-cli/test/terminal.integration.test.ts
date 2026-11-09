@@ -56,7 +56,7 @@ describe('TUI shell integration', () => {
   })
 })
 
-const STRANDS_WORDMARK = /STRANDS|╚════╝|█▀▀ ▀█▀ █▀█ ▄▀█ █▄ █ █▀▄ █▀▀|▀▀ ▀ ▀ {2}▀ {2}▄▀ {3}▄ {4}▀▄ {2}▀▀/
+const STRANDS_WORDMARK = /STRANDS|▄▟[ █]{3}▙▄|█▀▀ ▀█▀ █▀█ ▄▀█ █▄ █ █▀▄ █▀▀|▀▀ ▀ ▀ {2}▀ {2}▄▀ {3}▄ {4}▀▄ {2}▀▀/
 
 describe('TUI startup integration', () => {
   it('bypasses the intro when the full frog does not fit', async () => {

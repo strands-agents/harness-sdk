@@ -2646,9 +2646,9 @@ describe('ChatController', () => {
       action: 'git status',
       options: [
         { id: 'allow-once', label: 'Allow once', kind: 'allow_once' },
-        { id: 'allow-always', label: 'Allow forever', kind: 'allow_always' },
+        { id: 'allow-always', label: 'Always allow', kind: 'allow_always' },
         { id: 'deny', label: 'Deny once', kind: 'reject_once' },
-        { id: 'deny-always', label: 'Deny forever', kind: 'reject_always' },
+        { id: 'deny-always', label: 'Always deny', kind: 'reject_always' },
       ],
       scopes: [
         { rule: 'bash(git status)', label: 'git status' },
@@ -2663,9 +2663,9 @@ describe('ChatController', () => {
         kind: 'permission',
         rows: [
           { label: 'Allow once' },
-          { label: 'Allow forever…', description: 'Always allow · choose how broadly' },
+          { label: 'Always allow…', description: 'Always allow · choose how broadly' },
           { label: 'Deny once', tone: 'danger' },
-          { label: 'Deny forever…', tone: 'danger' },
+          { label: 'Always deny…', tone: 'danger' },
         ],
       },
     })

@@ -322,7 +322,9 @@ describe('ChatView', () => {
       terminalHeight: 24,
     })
 
-    expect(output.indexOf('╚════╝')).toBeLessThan(output.indexOf('Nothing to compact yet'))
+    const plainOutput = sanitizeTerminalText(output)
+    expect(plainOutput).toContain('▄▟   ▙▄')
+    expect(plainOutput.indexOf('▄▟   ▙▄')).toBeLessThan(plainOutput.indexOf('Nothing to compact yet'))
   })
 
   it.each([80, 120])(
@@ -1134,9 +1136,9 @@ describe('ChatView', () => {
     expect(rows.at(-1)).toContain('bedrock/test')
     expect(rows.at(-1)).toContain('/work')
     expect(rows.at(-2)?.trim()).toBe('')
-    expect(rows.at(-1)).toContain('/settings')
+    expect(rows.at(-1)).toContain('/setup  /settings')
     expect(rows.at(-1)).not.toContain('Enter')
-    expect(output).not.toContain('/setup')
+    expect(output).not.toContain('/voice')
     expect(output).not.toContain('/help')
 
     const runningOutput = renderView({
@@ -1218,8 +1220,8 @@ describe('ChatView', () => {
       })
     )
 
-    expect(output).toContain('╚════╝')
-    expect(output.indexOf('╚════╝')).toBeLessThan(output.indexOf('hello'))
+    expect(output).toContain('▄▟   ▙▄')
+    expect(output.indexOf('▄▟   ▙▄')).toBeLessThan(output.indexOf('hello'))
     expect(output.indexOf('hello')).toBeLessThan(output.indexOf('answer'))
 
     const continuedOutput = sanitizeTerminalText(
@@ -1243,7 +1245,7 @@ describe('ChatView', () => {
         terminalHeight: 40,
       })
     )
-    expect(continuedOutput).not.toContain('╚════╝')
+    expect(continuedOutput).not.toContain('▄▟   ▙▄')
   })
 
   it('keeps the transcript on its latest rows in the frame where a turn completes', async () => {
@@ -1285,7 +1287,7 @@ describe('ChatView', () => {
       expect(frames.length).toBeGreaterThan(0)
       for (const frame of frames) {
         expect(frame).toContain('answer line 29')
-        expect(frame).not.toContain('╚════╝')
+        expect(frame).not.toContain('▄▟   ▙▄')
       }
     } finally {
       instance.unmount()
@@ -1809,9 +1811,9 @@ describe('ChatView', () => {
           },
           rows: [
             { label: 'Allow once', description: 'Run only this call', value: 'allow' },
-            { label: 'Allow forever…', description: 'Always allow · choose how broadly', value: 'always' },
+            { label: 'Always allow…', description: 'Always allow · choose how broadly', value: 'always' },
             { label: 'Deny once', description: 'Block this call', value: 'deny', tone: 'danger' },
-            { label: 'Deny forever…', description: 'Always block', value: 'never', tone: 'danger' },
+            { label: 'Always deny…', description: 'Always block', value: 'never', tone: 'danger' },
           ],
         },
       }),
@@ -1829,7 +1831,7 @@ describe('ChatView', () => {
     expect(divider).toBeLessThan(50)
     expect(row('Action')).toMatch(/Action\s+\/Users\/test\/Desktop/u)
     expect(sanitizeTerminalText(output)).toContain('test.txt')
-    expect(output).toContain('Deny forever…')
+    expect(output).toContain('Always deny…')
     expect(output).toContain('Run only this call')
     expect(output).not.toContain('The treasure is buried.')
     expect(output).toContain('Strands harness requests permission')
@@ -1911,7 +1913,7 @@ describe('ChatView', () => {
       request,
       rows: [
         { label: 'Allow once', description: 'Run only this call', value: 'allow', tone: 'success' },
-        { label: 'Allow forever…', description: 'Always allow', value: 'trust', tone: 'success' },
+        { label: 'Always allow…', description: 'Always allow', value: 'trust', tone: 'success' },
         { label: 'Deny once', description: 'Block this call', value: 'deny', tone: 'danger' },
       ],
     }

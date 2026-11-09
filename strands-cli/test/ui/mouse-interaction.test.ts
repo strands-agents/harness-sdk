@@ -10,15 +10,14 @@ import { ChatApp } from '../../src/ui/chat/screen.js'
 import { ChatController } from '../../src/ui/chat/controller.js'
 import { type ChatPermissionRequest, type ChatTask } from '../../src/agent/types.js'
 import { AgentMessaging } from '../../src/agent/messaging.js'
-import { PythonVoiceSession } from '../../src/agent/voice.js'
 import { ConversationManager } from '../../src/ui/chat/conversations.js'
 import { AgentSkillsRuntime } from '../../src/agent/skills.js'
 import { idleBackend } from '../fixtures/chat-backend.js'
 
 describe('TUI mouse input', () => {
   it.each([
-    ['Allow forever', 'allow-always'],
-    ['Deny forever', 'deny-always'],
+    ['Always allow', 'allow-always'],
+    ['Always deny', 'deny-always'],
   ])('navigates and clicks the %s scope buttons in a short terminal', async (label, optionId) => {
     const input = ttyInput()
     const output = ttyOutput(100, 16)
@@ -46,9 +45,9 @@ describe('TUI mouse input', () => {
       action: 'git status --short --branch',
       options: [
         { id: 'allow-once', label: 'Allow once', kind: 'allow_once' },
-        { id: 'allow-always', label: 'Allow forever', kind: 'allow_always' },
+        { id: 'allow-always', label: 'Always allow', kind: 'allow_always' },
         { id: 'deny', label: 'Deny once', kind: 'reject_once' },
-        { id: 'deny-always', label: 'Deny forever', kind: 'reject_always' },
+        { id: 'deny-always', label: 'Always deny', kind: 'reject_always' },
       ],
       scopes: [
         { rule: 'shell(git status --short --branch)', label: 'git status --short --branch' },
@@ -126,7 +125,7 @@ describe('TUI mouse input', () => {
     expect(controller.getSnapshot().panel?.kind).toBe('config')
   })
 
-  it('activates model and permission metadata and the Voice and Settings buttons from direct clicks', async () => {
+  it('activates model and permission metadata and the Setup and Settings buttons from direct clicks', async () => {
     const input = ttyInput()
     const output = ttyOutput(80, 16)
     const frame = captureFrame(output)
@@ -146,13 +145,14 @@ describe('TUI mouse input', () => {
       yield { type: 'textDelta', text: '' }
       return { stopReason: 'endTurn', context: { projectedTokens: 100, contextWindow: 1_000 } }
     }
+    const requestSetup = vi.fn()
     const controller = new ChatController(target, {
       settings: { animations: false },
       runtime: { version: '1.2.3', model: 'bedrock/test', cwd: '/work' },
+      requestSetup,
     })
     await controller.submit('measure context')
-    const voice = new PythonVoiceSession()
-    const manager = new ConversationManager(controller, { voice, fork: async () => controller })
+    const manager = new ConversationManager(controller, { fork: async () => controller })
     const instance = render(createElement(ChatApp, { controller: manager }), {
       stdin: input,
       stdout: output,
@@ -165,21 +165,20 @@ describe('TUI mouse input', () => {
       await instance.waitUntilRenderFlush()
 
       const settingsTarget = findText(frame(), '/settings')
-      const voiceTarget = findText(frame(), '/voice')
+      const setupTarget = findText(frame(), '/setup')
       const modelTarget = findText(frame(), 'bedrock/test')
       const permissionTarget = findText(frame(), 'Ask')
-      expect(voiceTarget.row).toBe(settingsTarget.row)
-      expect(voiceTarget.column).toBeLessThan(settingsTarget.column)
+      expect(setupTarget.row).toBe(settingsTarget.row)
+      expect(setupTarget.column).toBeLessThan(settingsTarget.column)
 
       input.write(mouseInputSequence(0, settingsTarget.column, settingsTarget.row, 'M'))
       input.write(mouseInputSequence(3, settingsTarget.column, settingsTarget.row, 'm'))
 
       await vi.waitFor(() => expect(manager.getSnapshot().panel?.kind).toBe('settings'))
       await instance.waitUntilRenderFlush()
-      input.write(mouseInputSequence(0, voiceTarget.column, voiceTarget.row, 'M'))
-      input.write(mouseInputSequence(3, voiceTarget.column, voiceTarget.row, 'm'))
-      await vi.waitFor(() => expect(manager.getSnapshot().panel?.kind).toBe('voice'))
-      expect(voice.getSnapshot().status).toBe('off')
+      input.write(mouseInputSequence(0, setupTarget.column, setupTarget.row, 'M'))
+      input.write(mouseInputSequence(3, setupTarget.column, setupTarget.row, 'm'))
+      await vi.waitFor(() => expect(requestSetup).toHaveBeenCalledOnce())
 
       manager.dismissPanel()
       controller.dismissPanel()

@@ -164,7 +164,7 @@ describe('frog themes', () => {
 })
 
 // Colored output paints solid cells as backgrounds, leaving only the half-block glyphs as text.
-const STRANDS_WORDMARK = /STRANDS|╚════╝|█▀▀ ▀█▀ █▀█ ▄▀█ █▄ █ █▀▄ █▀▀|▀▀ ▀ ▀ {2}▀ {2}▄▀ {3}▄ {4}▀▄ {2}▀▀/
+const STRANDS_WORDMARK = /STRANDS|▄▟[ █]{3}▙▄|█▀▀ ▀█▀ █▀█ ▄▀█ █▄ █ █▀▄ █▀▀|▀▀ ▀ ▀ {2}▀ {2}▄▀ {3}▄ {4}▀▄ {2}▀▀/
 
 describe('Strands intro', () => {
   it('renders STRANDS in compact layouts', () => {
@@ -176,19 +176,20 @@ describe('Strands intro', () => {
   })
 
   it('shows the frog only beside the wordmark and keeps the wordmark alone when narrower', () => {
-    const full = renderFrogStartupLockup(89, false, 0, 'green', false, {}, 12)
-    const wordOnly = renderFrogStartupLockup(88, false, 0, 'green', false, {}, 19)
+    const full = renderFrogStartupLockup(87, false, 0, 'green', false, {}, 12)
+    const wordOnly = renderFrogStartupLockup(86, false, 0, 'green', false, {}, 19)
     const small = renderFrogStartupLockup(56, false, 0, 'green', false, {}, 19)
 
     expect(full).toContain('▄▀▀▀▄')
-    expect(wordOnly).toContain('╚════╝')
+    expect(wordOnly).toContain('▄▟███▙▄')
+    expect(wordOnly).not.toMatch(/[╔╗╚╝║═]/u)
     expect(
       wordOnly
         .split('\n')
         .slice(6)
         .every((row) => !row.trim())
     ).toBe(true)
-    expect(small).not.toContain('╚════╝')
+    expect(small).not.toContain('▄▟███▙▄')
   })
 
   it('stays inside a 120x35 terminal', () => {

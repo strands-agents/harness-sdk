@@ -526,9 +526,7 @@ export function permissionSettingsRows(
   })
   const denyRows = status.deniedTools.map((rule): ChatPanelRow => ({
     label: `✕ ${rule}`,
-    description: custom
-      ? 'Denied forever · Enter removes this rule'
-      : 'Denied forever, even when all tools are allowed',
+    description: custom ? 'Always denied · Enter removes this rule' : 'Always denied, even when all tools are allowed',
     ...(custom ? { value: `permissions:deny:${encodeURIComponent(rule)}` } : {}),
     tone: 'danger',
   }))

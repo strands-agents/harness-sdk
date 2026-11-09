@@ -28,7 +28,7 @@ interface MetadataPlacement {
   width: number
   alignment: 'flex-start' | 'center' | 'flex-end'
   controls?: { target: 'model' | 'effort' | 'permissions' | 'context'; text: string }[]
-  actions?: { target: 'voice' | 'settings' | 'update'; text: string }[]
+  actions?: { target: 'setup' | 'settings' | 'update'; text: string }[]
 }
 
 export function maxPermissionScroll(
@@ -261,13 +261,13 @@ export function metadataPlacements(
       : compactActionsWidth <= available
         ? [compactUpdateAction, settingsAction]
         : [{ ...compactUpdateAction, text: truncateText(compactUpdateAction.text, available) }]
-  const voiceAction = { target: 'voice' as const, text: '/voice' }
+  const setupAction = { target: 'setup' as const, text: '/setup' }
   if (
     actions.at(-1)?.target === 'settings' &&
-    stringWidth(actions.map(({ text }) => text).join('  ')) + stringWidth(voiceAction.text) + separatorWidth <=
+    stringWidth(actions.map(({ text }) => text).join('  ')) + stringWidth(setupAction.text) + separatorWidth <=
       available
   ) {
-    actions.splice(actions.length - 1, 0, voiceAction)
+    actions.splice(actions.length - 1, 0, setupAction)
   }
   const settingsText = actions.map(({ text }) => text).join('  ')
   const settingsWidth = stringWidth(settingsText)

@@ -50,9 +50,9 @@ permit (
 
 const PERMISSION_OPTIONS: readonly ChatPermissionOption[] = [
   { id: 'allow-once', label: 'Allow once', kind: 'allow_once' },
-  { id: 'allow-always', label: 'Allow forever', kind: 'allow_always' },
+  { id: 'allow-always', label: 'Always allow', kind: 'allow_always' },
   { id: 'deny', label: 'Deny once', kind: 'reject_once' },
-  { id: 'deny-always', label: 'Deny forever', kind: 'reject_always' },
+  { id: 'deny-always', label: 'Always deny', kind: 'reject_always' },
 ]
 
 export type PermissionDecision =
