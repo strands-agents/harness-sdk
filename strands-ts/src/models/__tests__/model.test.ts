@@ -6,10 +6,12 @@ import {
   ToolResultBlock,
   ReasoningBlock,
   GuardContentBlock,
+  InjectedBlock,
+  SummaryBlock,
 } from '../../types/messages.js'
 import { CitationsBlock } from '../../types/citations.js'
 import { TestModelProvider, collectGenerator } from '../../__fixtures__/model-test-helpers.js'
-import { MaxTokensError, ModelError } from '../../errors.js'
+import { MaxTokensError, ModelError, NotImplementedError } from '../../errors.js'
 import { Model } from '../model.js'
 import { mergeModelInfo, type ModelInfo } from '../model-info.js'
 import type { BaseModelConfig, StreamOptions } from '../model.js'
@@ -1100,7 +1102,30 @@ describe('Model.modelId', () => {
   })
 })
 
+describe('summarize', () => {
+  it('has no server-side summary in the base model', async () => {
+    const provider = new TestModelProvider()
+
+    await expect(provider.summarize([new Message({ role: 'user', content: [new TextBlock('hi')] })])).rejects.toThrow(
+      new NotImplementedError('model=<TestModelProvider> | model has no server-side summary')
+    )
+  })
+})
+
 describe('countTokens', () => {
+  it('counts summary text like a text block', async () => {
+    const provider = new TestModelProvider()
+    const text = 'x'.repeat(400)
+
+    const summary = await provider.countTokens([
+      new Message({ role: 'assistant', content: [new SummaryBlock({ text })] }),
+    ])
+
+    expect(summary).toBe(
+      await provider.countTokens([new Message({ role: 'assistant', content: [new TextBlock(text)] })])
+    )
+  })
+
   it('estimates text block tokens using chars/4 heuristic', async () => {
     const provider = new TestModelProvider()
     const messages = [new Message({ role: 'user', content: [new TextBlock('Hello world')] })]
@@ -1193,6 +1218,28 @@ describe('countTokens', () => {
     const result = await provider.countTokens(messages)
 
     expect(result).toBe(Math.ceil('cited text here'.length / 4))
+  })
+
+  it('estimates injected block tokens', async () => {
+    const provider = new TestModelProvider()
+    const messages = [
+      new Message({ role: 'user', content: [new InjectedBlock({ text: 'cwd: /repo, date: today', source: 'test' })] }),
+    ]
+
+    const result = await provider.countTokens(messages)
+
+    expect(result).toBe(Math.ceil('cwd: /repo, date: today'.length / 4))
+  })
+
+  it('counts only the injected blocks of the latest user message', async () => {
+    const provider = new TestModelProvider()
+    const messages = [
+      new Message({ role: 'user', content: [new InjectedBlock({ text: 'x'.repeat(400), source: 'test' })] }),
+      new Message({ role: 'assistant', content: [new TextBlock('ok')] }),
+      new Message({ role: 'user', content: [new InjectedBlock({ text: 'cwd: /repo', source: 'test' })] }),
+    ]
+    const result = await provider.countTokens(messages)
+    expect(result).toBe(Math.ceil('ok'.length / 4) + Math.ceil('cwd: /repo'.length / 4))
   })
 
   it('estimates string system prompt tokens', async () => {
@@ -1288,10 +1335,9 @@ describe('countTokens', () => {
 })
 
 describe('info', () => {
-  it('is all unknown for a provider with no model id, and unknown stateful reads as false', () => {
+  it('knows only that temporary messages and server-side summary are off for a provider with no model id, and unknown stateful reads as false', () => {
     const provider = new TestModelProvider()
-
-    expect(provider.modelInfo).toEqual({})
+    expect(provider.modelInfo).toEqual({ capabilities: { temporaryMessages: false, serverSideSummary: false } })
     expect(provider.stateful).toBe(false)
   })
 
@@ -1301,6 +1347,12 @@ describe('info', () => {
 
     expect(provider.modelInfo.limits?.contextWindow).toBe(1_000_000)
     expect(provider.modelInfo.capabilities?.promptCaching).toBe('cachePoints')
+  })
+
+  it('leaves temporary messages off for a model the shared data says takes them', () => {
+    const provider = new TestModelProvider()
+    provider.updateConfig({ modelId: 'vertex.claude-opus-5-5' })
+    expect(provider.modelInfo.capabilities?.temporaryMessages).toBe(false)
   })
 
   it('lets a provider put its facts over the shared model info, with the user override over both', () => {

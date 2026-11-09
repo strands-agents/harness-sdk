@@ -10,13 +10,32 @@ They ship as part of the SDK package and are updated alongside it. See [Versioni
 
 ## Quickstart
 
-Each tool is imported from its own subpath under `@strands-agents/sdk/vended-tools`, with no additional packages required:
+Each tool is imported from its own module under <Syntax py="strands.vended_tools" ts="@strands-agents/sdk/vended-tools" />, with no additional packages required:
+
+<Tabs>
+<Tab label="TypeScript">
 
 ```typescript
 --8<-- "user-guide/sdk/tools/vended-tools/index_imports.ts:basic_import"
 
 --8<-- "user-guide/sdk/tools/vended-tools/index.ts:agent_with_vended_tools"
 ```
+
+</Tab>
+<Tab label="Python">
+
+```python
+from strands import Agent
+from strands.vended_tools.edit import edit
+from strands.vended_tools.http_request import http_request
+from strands.vended_tools.notebook import notebook
+from strands.vended_tools.shell import shell
+
+agent = Agent(tools=[shell, edit, http_request, notebook])
+```
+
+</Tab>
+</Tabs>
 
 ## Available tools
 

@@ -13,7 +13,7 @@ import type { BedrockModelOptions } from '../bedrock.js'
 import { ContextWindowOverflowError, ModelThrottledError } from '../../errors.js'
 import { Message, ReasoningBlock, ToolUseBlock, ToolResultBlock, JsonBlock } from '../../types/messages.js'
 import type { SystemContentBlock } from '../../types/messages.js'
-import { TextBlock, GuardContentBlock, CachePointBlock } from '../../types/messages.js'
+import { TextBlock, GuardContentBlock, CachePointBlock, InjectedBlock } from '../../types/messages.js'
 import { AudioBlock, ImageBlock, VideoBlock, DocumentBlock } from '../../types/media.js'
 import { CitationsBlock } from '../../types/citations.js'
 import type { StreamOptions } from '../model.js'
@@ -467,6 +467,7 @@ describe('BedrockModel', () => {
       collectIterator(provider.stream(messages, { systemPrompt: 'Be helpful' }))
 
       expect(provider.modelInfo.capabilities?.promptCaching).toBeUndefined()
+      expect(provider.modelInfo.capabilities?.serverSideSummary).toBe(false)
       expect(vi.mocked(ConverseStreamCommand).mock.lastCall?.[0].system).toEqual([
         { text: 'Be helpful' },
         { cachePoint: { type: 'default' } },
@@ -483,7 +484,27 @@ describe('BedrockModel', () => {
       collectIterator(provider.stream(messages, { systemPrompt: 'Be helpful' }))
 
       expect(provider.modelInfo.capabilities?.promptCaching).toBeUndefined()
+      expect(provider.modelInfo.capabilities?.serverSideSummary).toBe(false)
       expect(vi.mocked(ConverseStreamCommand).mock.lastCall?.[0].system).toEqual([{ text: 'Be helpful' }])
+    })
+
+    it('skips an injected block it receives, with a warning', async () => {
+      const provider = new BedrockModel({
+        modelId: 'us.anthropic.claude-opus-5-5',
+        modelInfo: { capabilities: { temporaryMessages: true } },
+      })
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [new TextBlock('Hello'), new InjectedBlock({ text: 'cwd: /repo', source: 'env' })],
+        }),
+      ]
+      collectIterator(provider.stream(messages))
+      expect(vi.mocked(ConverseStreamCommand).mock.lastCall?.[0].messages?.[0]?.content).toEqual([{ text: 'Hello' }])
+      expect(warnOnce).toHaveBeenCalledWith(
+        logger,
+        'block_type=<injectedBlock> | bedrock does not send injected blocks | skipping it'
+      )
     })
 
     it.each(['us.openai.gpt-6-luna', 'openai.gpt-6.1-sol', 'openai.gpt-5.6-sol'])(

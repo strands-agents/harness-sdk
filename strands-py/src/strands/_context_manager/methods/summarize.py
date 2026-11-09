@@ -105,6 +105,8 @@ def _to_summarizer_blocks(block: ContentBlock) -> list[ContentBlock]:
         return [ContentBlock(text=content["text"]) for content in block["citationsContent"].get("content", [])]
     if "guardContent" in block:
         return [ContentBlock(text=block["guardContent"]["text"]["text"])]
+    if "summary" in block:
+        return [ContentBlock(text=block["summary"]["text"])]
     if "video" in block:
         return [ContentBlock(text="[video omitted]")]
     if "audio" in block:
