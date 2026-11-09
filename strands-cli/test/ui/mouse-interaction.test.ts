@@ -879,15 +879,26 @@ describe('TUI mouse input', () => {
       expect(frame().join('\n')).toContain('↓ 0 hidden')
       expect(frame().join('\n')).toContain('Revised item')
       expect(frame().join('\n')).toContain('/settings')
+      for (const prompt of controller.getSnapshot().queuedPrompts.slice(0, -2)) {
+        controller.removeQueuedPrompt(prompt.id)
+      }
+      await vi.waitFor(() => expect(frame().join('\n')).toContain('Queued 1/2'))
+      expect(frame().join('\n')).not.toContain('hidden ·')
+      expect(frame().join('\n')).toContain('Revised item')
       release()
       await Promise.all([running, ...queued])
+      expect(controller.getSnapshot().completedTurns.map((turn) => turn.prompt)).toEqual([
+        'first',
+        'Revised item',
+        'Work item 39',
+      ])
       await vi.waitFor(() => expect(frame().join('\n')).not.toContain('hidden ·'))
       expect(frame().join('\n')).toContain('Keep draft')
     } finally {
-      release()
-      await Promise.all([running, ...queued])
       instance.unmount()
       await controller.dispose()
+      release()
+      await Promise.all([running, ...queued])
     }
   }, 15_000)
 
