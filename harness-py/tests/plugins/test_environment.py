@@ -1,12 +1,14 @@
 """Tests for the EnvironmentContext plugin: what it injects and how it reads the sandbox."""
 
 import re
+import sys
 
 from strands.sandbox.types import ExecutionResult, FileInfo
 
 from strands_harness import create_harness
 from strands_harness.plugins import EnvironmentContext
 from strands_harness.plugins import environment as env
+from strands_harness.sandbox import _SHELL_PROBE
 
 
 class _FakeSandbox:
@@ -29,11 +31,28 @@ class _FakeSandbox:
             raise FileNotFoundError(path)
         return self._tree[path]
 
-    async def execute(self, command: str) -> ExecutionResult:
+    async def execute(self, command: str, **kwargs: object) -> ExecutionResult:
         if self._cwd is None:
             raise RuntimeError("no shell")
+        if command == _SHELL_PROBE:
+            return ExecutionResult(exit_code=0, stdout="\n", stderr="")
         out = "Linux" if command.startswith("uname") else self._cwd
         return ExecutionResult(exit_code=0, stdout=f"{out}\n", stderr="")
+
+
+class _PowerShellSandbox(_FakeSandbox):
+    """The SDK's local sandbox on Windows: commands run in PowerShell, which has no ``uname``."""
+
+    platform = "Windows"
+
+    async def execute(self, command: str, **kwargs: object) -> ExecutionResult:
+        if command == _SHELL_PROBE:
+            return ExecutionResult(exit_code=0, stdout="Desktop\r\n", stderr="")
+        if command.startswith("if ($IsLinux"):
+            return ExecutionResult(exit_code=0, stdout=f"{self.platform}\r\n", stderr="")
+        if command.startswith("uname"):
+            return ExecutionResult(exit_code=1, stdout="", stderr="The term 'uname' is not recognized")
+        return ExecutionResult(exit_code=0, stdout=f"{self._cwd}\r\n", stderr="")
 
 
 class _FakeAgent:
@@ -82,6 +101,14 @@ async def test_render_reports_the_real_working_directory_from_the_local_sandbox(
     line = next((line for line in out.splitlines() if line.startswith("Working directory: ")), None)
     assert line is not None, out
     assert re.search(rf"[\\/]{re.escape(workdir.name)}$", line), out
+    # On Windows the shell depends on the installed SDK: PowerShell from 1.62, Git Bash (MINGW64_NT) before it.
+    match = re.search(r"^Platform: (.+)$", out, re.M)
+    assert match, out
+    platform = match.group(1)
+    if sys.platform == "win32":
+        assert re.match(r"^Windows$" if "Shell: PowerShell" in out else r"^(MINGW|MSYS|CYGWIN)", platform), out
+    else:
+        assert platform == ("Darwin" if sys.platform == "darwin" else "Linux"), out
 
 
 async def test_depth_limit_stops_the_walk():
@@ -104,6 +131,28 @@ async def test_oversize_agents_md_is_truncated():
     out = await env._render(_FakeAgent(sandbox), {})
     assert "truncated" in out
     assert len(out) < len(big)
+
+
+async def test_powershell_sandbox_reports_windows_and_the_shell():
+    sandbox = _PowerShellSandbox({"AGENTS.md": "x"}, {".": [FileInfo("AGENTS.md", False)]}, cwd="C:\\Users\\me\\proj")
+    out = await env._render(_FakeAgent(sandbox), {})
+    assert "Platform: Windows" in out
+    assert "Shell: PowerShell" in out
+    assert "Working directory: C:\\Users\\me\\proj" in out
+
+
+async def test_pwsh_sandbox_is_asked_for_its_platform_instead_of_assuming_windows():
+    sandbox = _PowerShellSandbox({}, {".": []}, cwd="/work")
+    sandbox.platform = "Linux"
+    out = await env._render(_FakeAgent(sandbox), {})
+    assert "Platform: Linux" in out
+    assert "Shell: PowerShell" in out
+
+
+async def test_sh_sandbox_adds_no_shell_line():
+    out = await env._render(_FakeAgent(_FakeSandbox({}, {".": []})), {})
+    assert "Platform: Linux" in out
+    assert "Shell:" not in out
 
 
 async def test_probe_failure_omits_platform_and_working_directory():

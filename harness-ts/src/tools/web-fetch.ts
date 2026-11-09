@@ -18,6 +18,7 @@ import { TextDecoder } from 'node:util'
 import { Agent, type Model, type Sandbox, tool, type Tool } from '@strands-agents/sdk'
 import { z } from 'zod'
 
+import { shellOf } from '../sandbox.js'
 import type { WebFetchTransport } from '../types/agent.js'
 
 const USER_AGENT = 'strands-harness/1.0'
@@ -111,23 +112,6 @@ function powershellCurlCommand(url: string): string {
     'Remove-Item -Force -LiteralPath $f, "$f.err" -ErrorAction SilentlyContinue',
     'exit $s',
   ].join('\n')
-}
-
-// The Sandbox contract names no shell dialect, so the only check that holds for every sandbox is to ask: PowerShell
-// prints its edition (`Desktop` or `Core`), `sh` expands the unset variable to an empty line.
-/** @internal Exported for tests. */
-export const SHELL_PROBE = 'echo "${PSEdition}"'
-const shells = new WeakMap<Sandbox, 'sh' | 'powershell'>()
-
-/** @internal Exported for tests. */
-export async function shellOf(sandbox: Sandbox): Promise<'sh' | 'powershell'> {
-  let shell = shells.get(sandbox)
-  if (!shell) {
-    const result = await sandbox.execute(SHELL_PROBE, { timeout: 10 })
-    shell = ['Desktop', 'Core'].includes(result.stdout.trim()) ? 'powershell' : 'sh'
-    shells.set(sandbox, shell)
-  }
-  return shell
 }
 
 function decode(data: Uint8Array, contentType: string): string {
