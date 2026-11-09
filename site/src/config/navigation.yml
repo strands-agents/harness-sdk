@@ -108,6 +108,10 @@ products:
     slug: "/harness"
     href: /docs/user-guide/harness/
     description: Strands harness is a state-of-the-art, fully assembled agent harness.
+    repository: https://github.com/strands-agents/harness-sdk
+    languages:
+      - Python
+      - TypeScript
     pages:
       - label: Overview
         href: /docs/user-guide/harness/
@@ -121,6 +125,10 @@ products:
     slug: "/harness-sdk"
     href: /docs/user-guide/sdk/
     description: The Strands Harness SDK for building an agent harness from the ground up.
+    repository: https://github.com/strands-agents/harness-sdk
+    languages:
+      - Python
+      - TypeScript
     pages:
       - label: Overview
         href: /docs/user-guide/sdk/
@@ -138,12 +146,18 @@ products:
     slug: "/box"
     href: /docs/user-guide/box/
     description: An agent sandbox that pairs OS containment with Dogwood policy.
+    repository: https://github.com/strands-agents/box
+    languages:
+      - Rust
   - label: Shell
     accent: yellow
     name: Strands Shell
     slug: "/shell"
     href: /docs/user-guide/shell/
     description: A virtual shell designed for AI agents to use safely.
+    repository: https://github.com/strands-agents/shell
+    languages:
+      - Rust
     pages:
       - label: Overview
         href: /docs/user-guide/shell/
@@ -161,6 +175,9 @@ products:
     slug: "/evals"
     href: /docs/user-guide/evals-sdk/
     description: Validate your agent before you ship.
+    repository: https://github.com/strands-agents/evals
+    languages:
+      - Python
     pages:
       - label: Overview
         href: /docs/user-guide/evals-sdk/
@@ -655,9 +672,7 @@ sidebar:
           - label: PyWebRTC Audio
             href: https://github.com/strands-labs/pywebrtc-audio
             external: true
-          - label: Strands Decider
-            href: https://github.com/strands-labs/strands-decider
-            external: true
+          - externalDocs: strands-decider
       # Feeds llms.txt lesson listing (src/pages/llms.txt.ts extractLinks); visual sidebar built by route-middleware.
       - label: Learning
         items:

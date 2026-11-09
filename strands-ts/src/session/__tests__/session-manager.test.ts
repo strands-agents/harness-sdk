@@ -13,6 +13,9 @@ import {
 } from '../../hooks/index.js'
 import { Agent } from '../../agent/agent.js'
 import { Message, TextBlock } from '../../types/messages.js'
+import type { MessageData } from '../../types/messages.js'
+import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
+import { ContextInjector } from '../../vended-plugins/context-injector/plugin.js'
 import {
   createMockAgent as createMockAgentWithHooks,
   invokeTrackedHook,
@@ -1671,5 +1674,39 @@ describe('SessionManager — multi-agent', () => {
       )
       expect(secondState.steps).toBe(0)
     })
+  })
+})
+
+describe('SessionManager with text injected into an added message', () => {
+  it("saves the text under 'message' with the next added message, with no update event", async () => {
+    const snapshotStorage = new MockSnapshotStorage()
+    const saved: MessageData[][] = []
+    const save = snapshotStorage.saveSnapshot.bind(snapshotStorage)
+    vi.spyOn(snapshotStorage, 'saveSnapshot').mockImplementation(async (params) => {
+      saved.push(JSON.parse(JSON.stringify(params.snapshot.data.messages)) as MessageData[])
+      await save(params)
+    })
+    const agent = new Agent({
+      model: new MockMessageModel().addTurn({ type: 'textBlock', text: 'ok' }),
+      printer: false,
+      sessionManager: new SessionManager({
+        sessionId: 'test-session',
+        storage: { snapshot: snapshotStorage },
+        saveLatestOn: 'message',
+      }),
+      plugins: [new ContextInjector({ renderContent: async () => 'cwd: /repo' })],
+    })
+
+    await agent.invoke('ask')
+
+    const injected = { injected: { text: 'cwd: /repo', source: 'strands:context-injector' } }
+    // Saved once when the user message was added, before the write.
+    expect(saved[0]!.map((message) => message.content)).toStrictEqual([[{ text: 'ask' }]])
+    // Every save from the reply on holds the text.
+    const withReply = saved.filter((messages) => messages.length === 2)
+    expect(withReply.length).toBeGreaterThan(0)
+    for (const messages of withReply) {
+      expect(messages[0]!.content).toStrictEqual([{ text: 'ask' }, injected])
+    }
   })
 })
