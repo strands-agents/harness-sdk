@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 import pytest
 from pydantic import BaseModel
 
+from strands.agent.invocation_context import _create_invocation_context
 from strands.hooks.events import AfterInvocationEvent
 from strands.models import CacheConfig, ModelCapabilities, ModelInfo, ModelLimits
 from strands.models import Model as SAModel
@@ -802,10 +803,11 @@ class TestCacheConfig:
 class RecordingModel(TestModel):
     """Replies with ``reply`` blocks and ``stop_reason``, recording each stream call."""
 
-    def __init__(self, reply=("the summary",), stop_reason="end_turn", error=None):
+    def __init__(self, reply=("the summary",), stop_reason="end_turn", error=None, usage=None):
         self.reply = reply
         self.stop_reason = stop_reason
         self.error = error
+        self.usage = usage
         self.calls = []
 
     async def stream(self, messages, tool_specs=None, system_prompt=None, **kwargs):
@@ -818,6 +820,8 @@ class RecordingModel(TestModel):
             yield {"contentBlockDelta": {"delta": {"text": text}}}
             yield {"contentBlockStop": {}}
         yield {"messageStop": {"stopReason": self.stop_reason}}
+        if self.usage:
+            yield {"metadata": {"usage": self.usage, "metrics": {"latencyMs": 0}}}
 
 
 @pytest.mark.asyncio
@@ -894,6 +898,18 @@ async def test_summarize_base_raises_when_the_reply_holds_no_text():
 
     with pytest.raises(RuntimeError, match=re.escape("model=<RecordingModel> | summary reply held no text")):
         await model.summarize([{"role": "user", "content": [{"text": "hi"}]}])
+
+
+@pytest.mark.asyncio
+async def test_summarize_base_adds_its_usage_to_the_request():
+    model = RecordingModel(usage={"inputTokens": 10, "outputTokens": 5, "totalTokens": 15})
+    request = _create_invocation_context()
+
+    await model.summarize([{"role": "user", "content": [{"text": "hi"}]}], invocation_context=request)
+
+    assert request.usage["inputTokens"] == 10
+    assert request.usage["outputTokens"] == 5
+    assert request.usage["totalTokens"] == 15
 
 
 @pytest.mark.asyncio

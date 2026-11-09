@@ -7,6 +7,7 @@ from ..types.content import ContentBlock, Message, Messages
 from ..types.tools import ToolResult, ToolResultContent
 
 if TYPE_CHECKING:
+    from ..agent.invocation_context import InvocationContext
     from .model import Model
 
 # Subject to change based on benchmarking.
@@ -23,8 +24,15 @@ DEFAULT_SUMMARIZE_INSTRUCTIONS = (
 )
 
 
-async def _summarize_with_stream(model: "Model", messages: Messages, instructions: str | None = None) -> ContentBlock:
+async def _summarize_with_stream(
+    model: "Model",
+    messages: Messages,
+    instructions: str | None = None,
+    invocation_context: "InvocationContext | None" = None,
+) -> ContentBlock:
     """Summarize ``messages`` with one tool-less :meth:`Model.stream` call on their delimited, flattened transcript.
+
+    The call's usage is added to ``invocation_context``, if given.
 
     Raises:
         RuntimeError: If the reply holds no text.
@@ -40,7 +48,7 @@ async def _summarize_with_stream(model: "Model", messages: Messages, instruction
     )
 
     reply: Message | None = None
-    async for event in process_stream(chunks):
+    async for event in process_stream(chunks, invocation_context=invocation_context):
         if "stop" in event:
             _, reply, _, _ = event["stop"]
 

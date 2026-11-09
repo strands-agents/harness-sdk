@@ -18,7 +18,7 @@ import anthropic
 from pydantic import BaseModel
 from typing_extensions import Required, Unpack, override
 
-from ..event_loop.streaming import process_stream
+from ..event_loop.streaming import _record_usage, process_stream
 from ..tools.structured_output._structured_output_context import json_object_from_message
 from ..tools.structured_output.structured_output_utils import convert_pydantic_to_tool_spec
 from ..types.citations import (
@@ -54,10 +54,32 @@ if TYPE_CHECKING:
     # AsyncAnthropicBedrockMantle needs anthropic>=0.91, so these are imported for typing only.
     from anthropic import AsyncAnthropicBedrock, AsyncAnthropicBedrockMantle, AsyncAnthropicVertex
 
+    from ..agent.invocation_context import InvocationContext
+
     _AsyncClient = anthropic.AsyncAnthropic | AsyncAnthropicBedrock | AsyncAnthropicBedrockMantle | AsyncAnthropicVertex
 
 COMPACTION_BETA = "compact-2026-09-04"
 """Beta that enables on-demand compaction, and compaction blocks in later requests."""
+
+
+def _format_usage(usage: Mapping[str, Any]) -> Usage:
+    """Convert an Anthropic usage payload to a Strands :class:`Usage`."""
+    input_tokens = usage["input_tokens"]
+    output_tokens = usage["output_tokens"]
+    cache_read = usage.get("cache_read_input_tokens") or 0
+    cache_write = usage.get("cache_creation_input_tokens") or 0
+    # Anthropic's input_tokens excludes tokens read from or written to the cache, so the
+    # billed total is the sum of all four counters.
+    formatted: Usage = {
+        "inputTokens": input_tokens,
+        "outputTokens": output_tokens,
+        "totalTokens": input_tokens + output_tokens + cache_read + cache_write,
+    }
+    if cache_read:
+        formatted["cacheReadInputTokens"] = cache_read
+    if cache_write:
+        formatted["cacheWriteInputTokens"] = cache_write
+    return formatted
 
 
 def _is_compaction(block: ContentBlock) -> bool:
@@ -1059,26 +1081,9 @@ class AnthropicModel(Model):
                 return {"messageStop": {"stopReason": message["stop_reason"]}}
 
             case "metadata":
-                usage = event["usage"]
-                input_tokens = usage["input_tokens"]
-                output_tokens = usage["output_tokens"]
-                cache_read = usage.get("cache_read_input_tokens") or 0
-                cache_write = usage.get("cache_creation_input_tokens") or 0
-                # Anthropic's input_tokens excludes tokens read from or written to the cache, so the
-                # billed total is the sum of all four counters.
-                usage_chunk: Usage = {
-                    "inputTokens": input_tokens,
-                    "outputTokens": output_tokens,
-                    "totalTokens": input_tokens + output_tokens + cache_read + cache_write,
-                }
-                if cache_read:
-                    usage_chunk["cacheReadInputTokens"] = cache_read
-                if cache_write:
-                    usage_chunk["cacheWriteInputTokens"] = cache_write
-
                 return {
                     "metadata": {
-                        "usage": usage_chunk,
+                        "usage": _format_usage(event["usage"]),
                         "metrics": {
                             "latencyMs": 0,  # TODO
                         },
@@ -1327,6 +1332,7 @@ class AnthropicModel(Model):
         system_prompt: str | None = None,
         system_prompt_content: list[SystemContentBlock] | None = None,
         instructions: str | None = None,
+        invocation_context: "InvocationContext | None" = None,
         **kwargs: Any,
     ) -> ContentBlock:
         """Summarize the conversation's opening ``messages`` with Anthropic on-demand compaction.
@@ -1343,6 +1349,8 @@ class AnthropicModel(Model):
             system_prompt: The live conversation's plain string system prompt.
             system_prompt_content: The live conversation's structured system prompt.
             instructions: Summarization instructions replacing the API's own prompt.
+            invocation_context: The request the compaction call's usage adds to, including a call that returns no
+                summary.
             **kwargs: Additional keyword arguments for future extensibility.
 
         Returns:
@@ -1359,6 +1367,7 @@ class AnthropicModel(Model):
                 system_prompt=system_prompt,
                 system_prompt_content=system_prompt_content,
                 instructions=instructions,
+                invocation_context=invocation_context,
                 **kwargs,
             )
 
@@ -1373,6 +1382,8 @@ class AnthropicModel(Model):
         # The Bedrock/Vertex beta resources alias the first-party stream method, which mypy rejects as a self type.
         async with self.client.beta.messages.stream(**request) as stream:  # type: ignore[misc]
             response = cast(dict[str, Any], (await stream.get_final_message()).to_dict())
+        if response.get("usage"):
+            _record_usage(invocation_context, _format_usage(response["usage"]))
 
         block = next((block for block in response.get("content") or [] if block.get("type") == "compaction"), None)
         if response.get("stop_reason") != "compaction" or not block or not block.get("content"):

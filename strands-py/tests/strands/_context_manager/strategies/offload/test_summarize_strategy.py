@@ -8,6 +8,7 @@ import pytest
 from strands._context_manager.strategies.offload import Offload
 from strands._context_manager.strategies.offload.summarize import _format_summarized
 from strands._context_manager.types import ContextState
+from strands.agent.invocation_context import _create_invocation_context
 from strands.models import Model
 from strands.types.content import ContentBlock, Message, Messages
 from strands.types.tools import ToolResult, ToolUse
@@ -657,6 +658,71 @@ class TestClientSideSummariesUseModelSummarize:
             Message(role="assistant", content=[ContentBlock(text="[tool call: read_file]")]),
             Message(role="user", content=[tool_result]),
         ]
+
+    @pytest.mark.asyncio
+    async def test_a_custom_system_prompt_reaches_client_side_summaries(self, mock_agent):
+        mock_agent.model.summarize = unittest.mock.AsyncMock(return_value=ContentBlock(text="provider summary"))
+        messages = self._tool_result_messages()
+        mock_agent.messages = messages
+        strategy = Offload.summarize("tool_results", {"system_prompt": "Be very brief."}).when(threshold=100)
+
+        assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.5)) is True
+
+        assert mock_agent.model.summarize.await_args.kwargs["instructions"] == "Be very brief."
+
+    @pytest.mark.asyncio
+    async def test_a_custom_system_prompt_reaches_block_summaries_on_a_server_side_model(self, mock_agent):
+        mock_agent.model.model_info.capabilities.server_side_summary = True
+        mock_agent.model.stream = unittest.mock.MagicMock(side_effect=_make_stream_events("Summary of content."))
+        messages = self._tool_result_messages()
+        mock_agent.messages = messages
+        strategy = Offload.summarize("tool_results", {"system_prompt": "Be very brief."}).when(threshold=100)
+
+        assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.5)) is True
+
+        assert mock_agent.model.stream.call_args.kwargs["system_prompt"] == "Be very brief."
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("server_side_summary", [False, True])
+    async def test_a_block_summary_adds_its_usage_to_the_request(self, mock_agent, server_side_summary):
+        mock_agent.model.model_info.capabilities.server_side_summary = server_side_summary
+        messages = self._tool_result_messages()
+        mock_agent.messages = messages
+        request = _create_invocation_context()
+        strategy = Offload.summarize("tool_results").when(threshold=100)
+
+        context = ContextState(messages=messages, agent=mock_agent, utilization=0.5, invocation_context=request)
+        assert await strategy.apply(context) is True
+
+        assert request.usage["inputTokens"] == 10
+        assert request.usage["outputTokens"] == 5
+
+    @pytest.mark.asyncio
+    async def test_a_per_message_summary_adds_its_usage_to_the_request(self, mock_agent):
+        messages = TestServerSideSummary._messages()
+        mock_agent.messages = messages
+        request = _create_invocation_context()
+        strategy = Offload.summarize("*").when(utilization=0.8, preserve_recent=1)
+
+        context = ContextState(messages=messages, agent=mock_agent, utilization=0.9, invocation_context=request)
+        assert await strategy.apply(context) is True
+
+        assert request.usage["totalTokens"] == 15
+
+    @pytest.mark.asyncio
+    async def test_a_server_side_summary_is_given_the_request(self, mock_agent):
+        mock_agent.model.model_info.capabilities.server_side_summary = True
+        summary = ContentBlock(summary={"provider": "anthropic", "text": "compacted"})
+        mock_agent.model.summarize = unittest.mock.AsyncMock(return_value=summary)
+        messages = TestServerSideSummary._messages()
+        mock_agent.messages = messages
+        request = _create_invocation_context()
+        strategy = Offload.summarize("*").when(utilization=0.8, preserve_recent=1)
+
+        context = ContextState(messages=messages, agent=mock_agent, utilization=0.9, invocation_context=request)
+        assert await strategy.apply(context) is True
+
+        assert mock_agent.model.summarize.await_args.kwargs["invocation_context"] is request
 
     @pytest.mark.asyncio
     async def test_warns_when_summarize_returns_no_text(self, mock_agent, caplog):

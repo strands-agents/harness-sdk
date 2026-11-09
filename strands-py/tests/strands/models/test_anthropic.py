@@ -13,6 +13,7 @@ import pydantic
 import pytest
 
 import strands
+from strands.agent.invocation_context import _create_invocation_context
 from strands.models import Model, ModelCapabilities, ModelInfo, ModelLimits
 from strands.models.anthropic import AnthropicModel
 from strands.models.model import CacheConfig, CacheToolsConfig
@@ -3396,6 +3397,45 @@ async def test_summarize_sends_compaction_request_and_stores_block(anthropic_cli
     assert block == _stored_compaction("the summary", "s1")
 
 
+_COMPACTION_USAGE = {
+    "input_tokens": 100,
+    "output_tokens": 20,
+    "cache_read_input_tokens": 30,
+    "cache_creation_input_tokens": 5,
+}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("response", "returns_summary"),
+    [
+        pytest.param(
+            {"stop_reason": "compaction", "content": [{"type": "compaction", "content": "the summary"}]},
+            True,
+            id="summary",
+        ),
+        pytest.param({"stop_reason": "end_turn", "content": []}, False, id="no_summary"),
+    ],
+)
+async def test_summarize_adds_the_compaction_usage_to_the_request(anthropic_client, response, returns_summary):
+    model = _compaction_model(anthropic_client)
+    _mock_compaction_response(anthropic_client, {**response, "usage": _COMPACTION_USAGE})
+    request = _create_invocation_context()
+    messages = [{"role": "user", "content": [{"text": "hi"}]}]
+
+    if returns_summary:
+        await model.summarize(messages, invocation_context=request)
+    else:
+        with pytest.raises(RuntimeError, match="compaction returned no summary"):
+            await model.summarize(messages, invocation_context=request)
+
+    assert request.usage["inputTokens"] == 100
+    assert request.usage["outputTokens"] == 20
+    assert request.usage["cacheReadInputTokens"] == 30
+    assert request.usage["cacheWriteInputTokens"] == 5
+    assert request.usage["totalTokens"] == 155
+
+
 @pytest.mark.asyncio
 async def test_summarize_raises_without_compaction_block(anthropic_client):
     model = _compaction_model(anthropic_client)
@@ -3424,12 +3464,21 @@ async def test_summarize_without_the_capability_uses_the_base_implementation(ant
 
     messages = [{"role": "user", "content": [{"text": "hi"}]}]
 
+    request = _create_invocation_context()
+
     with unittest.mock.patch.object(Model, "summarize", return_value={"text": "client-side"}) as base_summarize:
-        summary = await model.summarize(messages, system_prompt="sys", instructions="keep ids")
+        summary = await model.summarize(
+            messages, system_prompt="sys", instructions="keep ids", invocation_context=request
+        )
 
     assert summary == {"text": "client-side"}
     base_summarize.assert_awaited_once_with(
-        messages, tool_specs=None, system_prompt="sys", system_prompt_content=None, instructions="keep ids"
+        messages,
+        tool_specs=None,
+        system_prompt="sys",
+        system_prompt_content=None,
+        instructions="keep ids",
+        invocation_context=request,
     )
     anthropic_client.beta.messages.stream.assert_not_called()
 

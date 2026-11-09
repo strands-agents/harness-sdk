@@ -165,7 +165,7 @@ class SummarizeStrategy(BaseOffloadStrategy):
             return True
 
         try:
-            summary = await self._summarize_client_side(model, context.agent, safe)
+            summary = await self._summarize_client_side(model, context.agent, safe, context.invocation_context)
         except Exception as error:
             logger.warning("messages=<%d>, error=<%s> | summarization failed", len(safe), error, exc_info=True)
             return False
@@ -218,7 +218,7 @@ class SummarizeStrategy(BaseOffloadStrategy):
                 replaced,
                 len(safe),
             )
-        summary = await self._request_server_side_summary(model, context.agent, messages[:end])
+        summary = await self._request_server_side_summary(model, context, messages[:end])
         if summary is None:
             return False
         if "text" in summary:
@@ -230,9 +230,10 @@ class SummarizeStrategy(BaseOffloadStrategy):
         return True
 
     async def _request_server_side_summary(
-        self, model: Model, agent: Agent, messages: list[Message]
+        self, model: Model, context: ContextState, messages: list[Message]
     ) -> ContentBlock | None:
         """Return the model's server-side summary of ``messages``, or None after warning that client-side takes over."""
+        agent = context.agent
         try:
             summary = await model.summarize(
                 messages,
@@ -240,6 +241,7 @@ class SummarizeStrategy(BaseOffloadStrategy):
                 system_prompt=agent.system_prompt,
                 system_prompt_content=agent.system_prompt_content,
                 instructions=self._config.get("system_prompt"),
+                invocation_context=context.invocation_context,
             )
         except Exception as error:
             _warn_client_side_fallback(model, repr(error), exc_info=not isinstance(error, NotImplementedError))
@@ -263,7 +265,7 @@ class SummarizeStrategy(BaseOffloadStrategy):
 
         if "toolResult" in block:
             tool_result = block["toolResult"]
-            summary = await self._try_summarize(block, model, message, agent)
+            summary = await self._try_summarize(block, model, message, agent, invocation_context)
             if not summary:
                 return None
 
@@ -279,7 +281,7 @@ class SummarizeStrategy(BaseOffloadStrategy):
             )
 
         if "text" in block:
-            summary = await self._try_summarize(block, model, message, agent)
+            summary = await self._try_summarize(block, model, message, agent, invocation_context)
             if not summary:
                 return None
 
@@ -288,7 +290,7 @@ class SummarizeStrategy(BaseOffloadStrategy):
             return ContentBlock(text=marker)
 
         if "image" in block or "document" in block:
-            summary = await self._try_summarize(block, model, message, agent)
+            summary = await self._try_summarize(block, model, message, agent, invocation_context)
             if summary:
                 logger.debug(
                     "tracking_id=<%s>, tokens=<%s> | summarized media block", message.get("tracking_id"), tokens
@@ -299,17 +301,27 @@ class SummarizeStrategy(BaseOffloadStrategy):
         logger.debug("tracking_id=<%s>, tokens=<%s> | offloaded media block", message.get("tracking_id"), tokens)
         return ContentBlock(text=f"[Offloaded: ~{tokens} tokens]{refs}")
 
-    async def _try_summarize(self, block: ContentBlock, model: Model, message: Message, agent: Agent) -> str:
+    async def _try_summarize(
+        self,
+        block: ContentBlock,
+        model: Model,
+        message: Message,
+        agent: Agent,
+        invocation_context: InvocationContext | None,
+    ) -> str:
         """Summarize one block; a failure is logged and leaves the block unsummarized so the pass continues."""
         try:
-            return await self._summarize_client_side(model, agent, _block_request(block, message, agent.messages))
+            request = _block_request(block, message, agent.messages)
+            return await self._summarize_client_side(model, agent, request, invocation_context)
         except Exception as error:
             logger.warning(
                 "tracking_id=<%s>, error=<%s> | block summarization failed", message.get("tracking_id"), error
             )
             return ""
 
-    async def _summarize_client_side(self, model: Model, agent: Agent, messages: Messages) -> str:
+    async def _summarize_client_side(
+        self, model: Model, agent: Agent, messages: Messages, invocation_context: InvocationContext | None
+    ) -> str:
         """Return the model's client-side summary of ``messages``.
 
         A model with server-side summaries summarizes only the conversation's opening messages through its own
@@ -318,9 +330,9 @@ class SummarizeStrategy(BaseOffloadStrategy):
         """
         instructions = self._config.get("system_prompt")
         if model.model_info.capabilities.server_side_summary is True:
-            summary = await _summarize_with_stream(model, messages, instructions)
+            summary = await _summarize_with_stream(model, messages, instructions, invocation_context)
         else:
-            summary = await self._summarize_with_override(model, agent, messages, instructions)
+            summary = await self._summarize_with_override(model, agent, messages, instructions, invocation_context)
         if "text" not in summary:
             logger.warning(
                 "model=<%s> | summarize returned no text summary | leaving the content unsummarized",
@@ -330,7 +342,12 @@ class SummarizeStrategy(BaseOffloadStrategy):
         return summary["text"]
 
     async def _summarize_with_override(
-        self, model: Model, agent: Agent, messages: Messages, instructions: str | None
+        self,
+        model: Model,
+        agent: Agent,
+        messages: Messages,
+        instructions: str | None,
+        invocation_context: InvocationContext | None,
     ) -> ContentBlock:
         try:
             return await model.summarize(
@@ -339,9 +356,10 @@ class SummarizeStrategy(BaseOffloadStrategy):
                 system_prompt=agent.system_prompt,
                 system_prompt_content=agent.system_prompt_content,
                 instructions=instructions,
+                invocation_context=invocation_context,
             )
         except NotImplementedError:
-            return await _summarize_with_stream(model, messages, instructions)
+            return await _summarize_with_stream(model, messages, instructions, invocation_context)
 
     def _resolve_model(self, agent: Agent) -> Model | None:
         return self._config.get("model") or agent.aux_model

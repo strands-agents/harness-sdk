@@ -24,6 +24,7 @@ from ._summarize import _summarize_with_stream
 if TYPE_CHECKING:
     from ..agent.agent import Agent
     from ..agent.agent_metadata import AgentMetadata
+    from ..agent.invocation_context import InvocationContext
 
 logger = logging.getLogger(__name__)
 
@@ -409,6 +410,7 @@ class Model(abc.ABC):
         system_prompt: str | None = None,
         system_prompt_content: list[SystemContentBlock] | None = None,
         instructions: str | None = None,
+        invocation_context: "InvocationContext | None" = None,
         **kwargs: Any,
     ) -> ContentBlock:
         """Summarize ``messages``.
@@ -438,6 +440,8 @@ class Model(abc.ABC):
             system_prompt_content: The live conversation's structured system prompt, for overrides. The base
                 implementation ignores it.
             instructions: Summarization instructions replacing the default prompt, which ``None`` keeps.
+            invocation_context: The request the summary call's usage adds to, as with :meth:`stream`. An override
+                must record the usage of the calls it makes, and pass this on when it uses the base implementation.
             **kwargs: Additional keyword arguments for future extensibility.
 
         Returns:
@@ -446,7 +450,7 @@ class Model(abc.ABC):
         Raises:
             RuntimeError: If the base implementation's reply holds no text.
         """
-        return await _summarize_with_stream(self, messages, instructions)
+        return await _summarize_with_stream(self, messages, instructions, invocation_context)
 
     def estimate_utilization(self, input_tokens: int) -> float:
         """Estimate the fraction of the model's context window consumed by the given input token count.
