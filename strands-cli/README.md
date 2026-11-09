@@ -186,7 +186,7 @@ Run `strands --help` for the parser's current list.
 | `--mcp-config <path>`         | All modes       | Add an MCP configuration file; repeat for multiple files                                                                                |
 
 Explicit CLI values apply only to the current invocation. Dedicated flags override `--set`, which
-overrides the saved profile; imported agents take their configuration from their code:
+overrides the saved profile or authored agent configuration. Unspecified values keep the Harness defaults:
 
 ```bash
 strands --agent ./reviewer --prompt "Review this change"
@@ -418,7 +418,8 @@ interventions supplied by the caller or an operating-system sandbox. Permission 
 user-owned; the CLI does not load a project config file that could silently enable bypass mode.
 Use `/permissions` to inspect or change the mode and remove saved tool grants.
 Use `/settings` to persist presentation preferences in the same file. Disabling animations also
-skips the startup intro on later launches.
+skips the startup intro on later launches. Unrecognized or invalid presentation settings use their
+defaults without preventing startup; unknown settings keys are preserved when saving.
 
 This approval layer is not an operating-system sandbox. Unless a caller supplies a Strands
 `sandbox`, the harness's shell, file, MCP, delegate, and Background Task work runs in the host process with
@@ -554,12 +555,16 @@ strands --session-id my-project "where did we leave off?"
 Pass `--session off` to disable conversation saving. Long-term memory is controlled separately by `--memory`.
 
 For built-in profiles and TypeScript agents, resuming restores the saved conversation while keeping
-the current agent's instructions and system prompt. Python agents use their SDK's session restoration.
+the current agent's instructions and system prompt. Python agents follow the Python SDK: both resume
+and startup with a saved session ID restore the saved system prompt along with the conversation,
+replacing the current prompt.
 Session files are trusted input: resume only sessions you created, not ones that came with a cloned repository.
 
 Sessions use the Harness default, `./.agent/sessions`. Set `session.dir` to keep them somewhere else;
 authored agents (`--agent`) keep their own session configuration. Relative paths resolve against
 the profile's base directory, or the current workspace when no base directory is set.
+For authored agents with sessions disabled or a custom session manager, `--session-id` is ignored;
+the authored configuration controls session identity.
 In Ink, `/sessions` lists sessions from registered workspaces and can resume them across worktrees.
 The CLI keeps this catalog under `~/.strands/sessions/`; existing sessions there or under
 `~/.strands/cli/sessions/` remain available without moving them.
