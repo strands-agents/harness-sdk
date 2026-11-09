@@ -214,6 +214,8 @@ export class XModel extends Model<XModelConfig> {
 
 When writing tests, you **MUST** follow [docs/TESTING.md](./docs/TESTING.md). It is the authoritative reference for test file location and naming (co-location, environment suffixes), the nested `describe` pattern, batching strategy, whole-object assertions, fixtures, coverage requirements, and multi-environment testing.
 
+Name unit tests `*.test.ts` so they run in both Node.js and the browser. Use `*.test.node.ts` only when the test needs something Node-only (the filesystem, `process.env`, a code path that refuses to run in a browser), and say why in a comment; don't copy the suffix from a neighboring file.
+
 ## Quick Rules
 
 The un-lintable rules an agent most often misses — every one is **enforced by review**, not tooling (formatting, `no-explicit-any`, explicit return types, and TSDoc syntax are already handled by ESLint/Prettier; run `npm run lint`). Cross-SDK rules (plugin naming, parity, public/internal marking, logging format, evergreen comments) are in the [root AGENTS.md](../AGENTS.md).
