@@ -1367,9 +1367,9 @@ def test_restore_after_redacting_alias_records_returns_redacted_conversation(tmp
     assert restored.messages[1]["content"] == [{"text": "[redacted]"}]
 
 
-def _injected_session_setup(session_manager):
+def _injected_session_setup(session_manager, content=({"text": "hi"},)):
     agent = Agent(agent_id="a", conversation_manager=NullConversationManager(), session_manager=session_manager)
-    stored = {"role": "user", "content": [{"text": "hi"}], "tracking_id": "t1"}
+    stored = {"role": "user", "content": list(content), "tracking_id": "t1"}
     agent.messages = [stored]
     session_manager.append_message(stored, agent)
     session_manager.session_repository.update_message = Mock(wraps=session_manager.session_repository.update_message)
@@ -1401,6 +1401,17 @@ def test_append_message_saves_injected_block_once(session_manager):
 def test_append_message_skips_records_without_new_injected_block(session_manager, replace):
     agent, stored = _injected_session_setup(session_manager)
     agent.messages = [replace(stored)]
+
+    session_manager.append_message({"role": "assistant", "content": [{"text": "one"}]}, agent)
+
+    session_manager.session_repository.update_message.assert_not_called()
+
+
+def test_append_message_skips_replacement_that_drops_an_injected_block(session_manager):
+    agent, stored = _injected_session_setup(
+        session_manager, [{"text": "hi"}, {"injected": {"text": "c", "source": "s"}}]
+    )
+    agent.messages = [{**stored, "content": [{"text": "hi"}]}]
 
     session_manager.append_message({"role": "assistant", "content": [{"text": "one"}]}, agent)
 

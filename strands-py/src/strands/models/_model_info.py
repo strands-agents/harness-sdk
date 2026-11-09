@@ -44,8 +44,8 @@ class ModelCapabilities:
             provider receives each ``injected`` block as stored and formats it; otherwise it receives only the latest
             user message's injected text, as text. The shared data lists the models that take them, but
             :attr:`strands.models.Model.model_info` reports False unless the provider can send them
-            (``AnthropicModel``). Turning it on for a provider that cannot send them breaks the call: Bedrock skips
-            the block with a warning, other providers raise ``TypeError``.
+            (``AnthropicModel``). Turning it on for a provider that cannot send them loses the injected text: Bedrock
+            skips the block with a warning, Mistral drops it, other providers raise ``TypeError``.
     """
 
     stateful: bool | None = None
