@@ -6,6 +6,11 @@ const CONTROLS = [
   ['Send a message', 'Enter', 'Send your message, or queue it while the harness is working.'],
   ['Add a line', 'Ctrl+J', 'Ctrl+J inserts a newline without sending.'],
   [
+    'Queued message actions',
+    'Tab / Shift+Tab',
+    'Focus a queue button with Tab or Shift+Tab; Enter edits, steers, deletes, or reorders. Esc returns to your draft. Steer redirects running work, interrupting it first when live steering is unavailable.',
+  ],
+  [
     'Edit queued messages',
     'Alt+↑/↓',
     'Select a queued message with Alt+↑/↓ or click Edit. Enter saves; Esc restores your draft. Click Delete or press Ctrl+D while editing to remove it. Saving empty text also removes messages without attachments.',

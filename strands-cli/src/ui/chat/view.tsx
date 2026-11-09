@@ -45,7 +45,14 @@ import {
 } from '../panels/configuration.js'
 import { sanitizeTerminalText } from '../../terminal/text.js'
 
-export type QueuedPromptAction = 'edit' | 'delete' | 'up' | 'down'
+export const QUEUED_PROMPT_ACTIONS = [
+  { action: 'up', label: '↑' },
+  { action: 'down', label: '↓' },
+  { action: 'edit', label: 'Edit' },
+  { action: 'steer', label: 'Steer' },
+  { action: 'delete', label: 'Delete' },
+] as const
+export type QueuedPromptAction = (typeof QUEUED_PROMPT_ACTIONS)[number]['action']
 export type QueuedPromptTarget = `${string}:${QueuedPromptAction}`
 
 export function ChatView(props: Parameters<typeof ChatViewContent>[0]): ReactElement {
@@ -94,6 +101,7 @@ function ChatViewContent({
   hoveredSuggestion,
   pressedQueuedPrompt,
   editingQueuedPromptId,
+  focusedQueuedPrompt,
   onMetadataElement,
   onPanelElement,
   onDockElement,
@@ -160,6 +168,7 @@ function ChatViewContent({
   hoveredSuggestion?: number
   pressedQueuedPrompt?: QueuedPromptTarget
   editingQueuedPromptId?: string
+  focusedQueuedPrompt?: QueuedPromptTarget
   onMetadataElement?: (target: MetadataTarget, element: DOMElement | null) => void
   onPanelElement?: (element: DOMElement | null) => void
   onDockElement?: (element: DOMElement | null) => void
@@ -523,6 +532,7 @@ function ChatViewContent({
                     interrupting={snapshot.status === 'interrupting'}
                     {...(pressedQueuedPrompt ? { pressed: pressedQueuedPrompt } : {})}
                     {...(editingQueuedPromptId ? { editingId: editingQueuedPromptId } : {})}
+                    {...(focusedQueuedPrompt ? { focused: focusedQueuedPrompt } : {})}
                     {...(onQueuedPromptElement ? { onActionElement: onQueuedPromptElement } : {})}
                   />
                 ) : null}
@@ -569,11 +579,12 @@ function ChatViewContent({
               maxRows={editorMaxRows}
               maxHeight={editorMaxHeight}
               {...(snapshot.status === 'running' || snapshot.status === 'interrupting'
-                ? { placeholder: 'Enter to queue • Alt+↑ edit queue • / for commands' }
+                ? { placeholder: 'Enter to queue • Tab queue actions • Alt+↑ edit queue' }
                 : {})}
               {...(actionableCommandToken ? { actionableCommandToken } : {})}
               {...(snapshot.composerStatus ? { busyStatus: `${composerSpinner} ${snapshot.composerStatus}` } : {})}
               {...(snapshot.panel && !composerPanel ? { panelStatus: panelEditorStatus(snapshot.panel) } : {})}
+              {...(focusedQueuedPrompt ? { panelStatus: 'Queue · Tab/Shift+Tab move · Enter choose · Esc back' } : {})}
               party={party}
               partyFrame={partyFrame}
               energy={maxEffort}
@@ -779,12 +790,14 @@ function QueuedPromptSummary({
   interrupting,
   pressed,
   editingId,
+  focused,
   onActionElement,
 }: {
   prompts: ChatSnapshot['queuedPrompts']
   interrupting: boolean
   pressed?: QueuedPromptTarget
   editingId?: string
+  focused?: QueuedPromptTarget
   onActionElement?: (target: QueuedPromptTarget, element: DOMElement | null) => void
 }): ReactElement {
   const { warning, accent } = useTheme()
@@ -822,18 +835,18 @@ function QueuedPromptSummary({
               </Box>
               {prompt.source !== 'peer' ? (
                 <Box flexShrink={0}>
-                  {(
-                    [
-                      { target: `${prompt.id}:up`, label: '↑', disabled: userIndex === 0 },
-                      { target: `${prompt.id}:down`, label: '↓', disabled: userIndex === userPrompts.length - 1 },
-                      { target: `${prompt.id}:edit`, label: 'Edit', active: editingId === prompt.id },
-                      { target: `${prompt.id}:delete`, label: 'Delete' },
-                    ] as const
-                  ).map((button) => (
+                  {QUEUED_PROMPT_ACTIONS.map(({ action, label }) => (
                     <QueueButton
-                      key={button.target}
-                      {...button}
+                      key={action}
+                      target={`${prompt.id}:${action}`}
+                      label={label}
+                      disabled={
+                        (action === 'up' && userIndex === 0) ||
+                        (action === 'down' && userIndex === userPrompts.length - 1)
+                      }
+                      active={action === 'edit' && editingId === prompt.id}
                       {...(pressed ? { pressed } : {})}
+                      {...(focused ? { focused } : {})}
                       {...(onActionElement ? { onElement: onActionElement } : {})}
                     />
                   ))}
@@ -862,6 +875,7 @@ function QueueButton({
   disabled = false,
   active = false,
   pressed,
+  focused,
   onElement,
 }: {
   target: QueuedPromptTarget
@@ -869,9 +883,10 @@ function QueueButton({
   disabled?: boolean
   active?: boolean
   pressed?: QueuedPromptTarget
+  focused?: QueuedPromptTarget
   onElement?: (target: QueuedPromptTarget, element: DOMElement | null) => void
 }): ReactElement {
-  const { warning, accent, panel, selection, surface } = useTheme()
+  const { warning, accent, panel, selection, surface, foreground } = useTheme()
   const registerElement = useCallback(
     (element: DOMElement | null): void => {
       onElement?.(target, element)
@@ -883,11 +898,17 @@ function QueueButton({
       {...(!disabled && onElement ? { ref: registerElement } : {})}
       flexShrink={0}
       marginLeft={1}
-      paddingX={1}
-      backgroundColor={disabled ? panel : pressed === target ? selection : active ? warning : accent}
+      backgroundColor={
+        focused === target ? selection : disabled ? panel : pressed === target ? selection : active ? warning : accent
+      }
     >
-      <Text {...(!disabled ? { color: surface } : {})} dimColor={disabled} bold={!disabled}>
-        {label}
+      <Text
+        {...(focused === target ? { color: foreground } : !disabled ? { color: surface } : {})}
+        dimColor={disabled}
+        bold={!disabled}
+      >
+        {focused === target ? '›' : ' '}
+        {label}{' '}
       </Text>
     </Box>
   )

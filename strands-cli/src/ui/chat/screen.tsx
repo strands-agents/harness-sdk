@@ -51,7 +51,7 @@ import { copyTerminalText, setTerminalMouseMotion } from '../../terminal/termina
 import { openExternalUrl } from '../../terminal/open-url.js'
 import { openAgentProject } from '../../terminal/open-editor.js'
 import { canUseNativePicker, chooseFiles } from '../../terminal/directory-picker.js'
-import { ChatView, type QueuedPromptAction, type QueuedPromptTarget } from './view.js'
+import { ChatView, QUEUED_PROMPT_ACTIONS, type QueuedPromptAction, type QueuedPromptTarget } from './view.js'
 import {
   agentGridLayout,
   moveAgentGridSelection,
@@ -183,6 +183,7 @@ export function ChatApp({
   const [hoveredJumpToBottom, setHoveredJumpToBottom] = useState(false)
   const [updatePromptVersion, setUpdatePromptVersion] = useState<string>()
   const [pressedQueuedPrompt, setPressedQueuedPrompt] = useState<QueuedPromptTarget>()
+  const [focusedQueuedPrompt, setFocusedQueuedPrompt] = useState<QueuedPromptTarget>()
   const [editingQueuedPromptId, setEditingQueuedPromptId] = useState<string>()
   const [screenSelection, setScreenSelection] = useState<readonly ScreenSelectionSegment[]>([])
   const [clipboardNotice, setClipboardNotice] = useState<
@@ -370,6 +371,7 @@ export function ChatApp({
     (id: string): void => {
       const prompt = snapshot.queuedPrompts.find((candidate) => candidate.id === id && candidate.source !== 'peer')
       if (!prompt) return
+      setFocusedQueuedPrompt(undefined)
       const currentEditor = editorRef.current
       queuedPromptDraftRef.current ??= currentEditor
       setEditingQueuedPromptId(id)
@@ -382,6 +384,28 @@ export function ChatApp({
       })
     },
     [setEditor, snapshot.queuedPrompts]
+  )
+  const activateQueuedPrompt = useCallback(
+    (value: QueuedPromptTarget): void => {
+      const target = parseQueuedPromptTarget(value)
+      if (!target) return
+      if (target.action === 'up' || target.action === 'down') {
+        controller.moveQueuedPrompt(target.id, target.action === 'up' ? -1 : 1)
+      } else if (target.action === 'delete') {
+        controller.removeQueuedPrompt(target.id)
+      } else if (target.action === 'steer') {
+        if (editingQueuedPromptId === target.id) {
+          controller.updateQueuedPrompt(target.id, editorRef.current.input)
+          finishQueuedPromptEdit()
+        }
+        controller.steerQueued(target.id)
+      } else {
+        setFocusedQueuedPrompt(undefined)
+        if (editingQueuedPromptId === target.id) finishQueuedPromptEdit()
+        else editQueuedPrompt(target.id)
+      }
+    },
+    [controller, editingQueuedPromptId, editQueuedPrompt, finishQueuedPromptEdit]
   )
   const selectPanelRow = useCallback((selection: number, capacity: number, rowCount: number): void => {
     panelSelectionRef.current = selection
@@ -443,7 +467,31 @@ export function ChatApp({
   }, [statusLayout.maxScroll])
   useEffect(() => {
     setStatusScroll(0)
+    setFocusedQueuedPrompt(undefined)
   }, [controller, snapshot.conversationId])
+  useEffect(() => {
+    if (!focusedQueuedPrompt) return
+    const target = parseQueuedPromptTarget(focusedQueuedPrompt)
+    const index = snapshot.queuedPrompts.findIndex((prompt) => prompt.id === target?.id && prompt.source !== 'peer')
+    if (index < 0) {
+      setFocusedQueuedPrompt(undefined)
+      return
+    }
+    setStatusScroll((value) =>
+      revealPanelSelection(
+        snapshot.pendingSteering.length + index,
+        value,
+        statusLayout.viewportHeight,
+        statusLayout.maxScroll + statusLayout.viewportHeight
+      )
+    )
+  }, [
+    focusedQueuedPrompt,
+    snapshot.queuedPrompts,
+    snapshot.pendingSteering.length,
+    statusLayout.viewportHeight,
+    statusLayout.maxScroll,
+  ])
   const viewProps = {
     snapshot,
     input: editor.input,
@@ -697,6 +745,7 @@ export function ChatApp({
     setPressedPanelControl(undefined)
     resetHover()
     setPressedQueuedPrompt(undefined)
+    setFocusedQueuedPrompt(undefined)
     setDetailScroll(0)
     panelSliderDraggingRef.current = false
     panelSliderValueRef.current = activeSliderOption(snapshot.panel)
@@ -796,6 +845,7 @@ export function ChatApp({
       const button = mouse.button & 3
       const scroll = mouseScrollDirection(mouse)
       if (scroll !== undefined) {
+        setFocusedQueuedPrompt(undefined)
         resetHover()
         leftMouseDownRef.current = false
         frogPressRef.current = undefined
@@ -1011,6 +1061,7 @@ export function ChatApp({
         setPressedPanelControl(panelControlTarget)
         setPressedSuggestion(suggestionIndex)
         setPressedQueuedPrompt(queuedPromptTarget)
+        setFocusedQueuedPrompt(undefined)
         if (searchHit) {
           setModelPanelFocus('search')
         } else if (sliderHit && snapshot.panel?.kind === 'permissions') {
@@ -1182,18 +1233,7 @@ export function ChatApp({
           }
         }
       } else if (queuedPromptTarget) {
-        const target = parseQueuedPromptTarget(queuedPromptTarget)
-        if (!target) {
-          return
-        }
-        if (target.action === 'up' || target.action === 'down') {
-          controller.moveQueuedPrompt(target.id, target.action === 'up' ? -1 : 1)
-        } else if (target.action === 'delete') {
-          controller.removeQueuedPrompt(target.id)
-        } else {
-          if (editingQueuedPromptId === target.id) finishQueuedPromptEdit()
-          else editQueuedPrompt(target.id)
-        }
+        activateQueuedPrompt(queuedPromptTarget)
       } else if (footerAction) {
         if (footerAction === 'update' && availableUpdate) {
           startupUpdatePrompt.current = false
@@ -1207,13 +1247,11 @@ export function ChatApp({
     },
     [
       activateRow,
+      activateQueuedPrompt,
       availableUpdate,
       copyText,
       controller,
       dispatchPrompt,
-      editingQueuedPromptId,
-      editQueuedPrompt,
-      finishQueuedPromptEdit,
       footerElements,
       metadataElements,
       openConfigurationProject,
@@ -1818,6 +1856,25 @@ export function ChatApp({
         if (prompts[next]) editQueuedPrompt(prompts[next].id)
         return
       }
+      if (key.tab && (focusedQueuedPrompt || suggestions.length === 0)) {
+        const targets = [
+          undefined,
+          ...snapshot.queuedPrompts.flatMap((prompt) =>
+            QUEUED_PROMPT_ACTIONS.map(({ action }): QueuedPromptTarget => `${prompt.id}:${action}`)
+          ),
+        ]
+        let index = Math.max(0, targets.indexOf(focusedQueuedPrompt))
+        do {
+          index = (index + (key.shift ? -1 : 1) + targets.length) % targets.length
+        } while (targets[index] && !queuedPromptElements.has(targets[index]!))
+        setFocusedQueuedPrompt(targets[index])
+        return
+      }
+      if (focusedQueuedPrompt) {
+        if (key.escape) setFocusedQueuedPrompt(undefined)
+        else if (key.return) activateQueuedPrompt(focusedQueuedPrompt)
+        return
+      }
       if (editingQueuedPromptId && key.escape) {
         finishQueuedPromptEdit()
         return
@@ -1904,12 +1961,14 @@ export function ChatApp({
     },
     [
       activateRow,
+      activateQueuedPrompt,
       controller,
       copyText,
       dispatchPrompt,
       editingQueuedPromptId,
       editQueuedPrompt,
       finishQueuedPromptEdit,
+      focusedQueuedPrompt,
       frog,
       handleExit,
       handleMouse,
@@ -1918,6 +1977,7 @@ export function ChatApp({
       rememberDetailParent,
       resetHover,
       resetPanelPosition,
+      queuedPromptElements,
       selectPanelRow,
       setEditor,
     ]
@@ -2038,6 +2098,7 @@ export function ChatApp({
       {...(hoveredPanelFilter ? { hoveredPanelFilter } : {})}
       {...(hoveredSuggestion !== undefined ? { hoveredSuggestion } : {})}
       {...(pressedQueuedPrompt ? { pressedQueuedPrompt } : {})}
+      {...(focusedQueuedPrompt ? { focusedQueuedPrompt } : {})}
       {...(editingQueuedPromptId ? { editingQueuedPromptId } : {})}
       {...(frog ? { frog, onFrogComplete: finishFrog } : {})}
       {...(frogBrandAnimationId !== undefined ? { frogBrandAnimationId } : {})}
@@ -2096,7 +2157,7 @@ function parseQueuedPromptTarget(target: QueuedPromptTarget): { id: string; acti
   const separator = target.lastIndexOf(':')
   const id = target.slice(0, separator)
   const action = target.slice(separator + 1)
-  if (!id || (action !== 'edit' && action !== 'delete' && action !== 'up' && action !== 'down')) {
+  if (!id || (action !== 'edit' && action !== 'steer' && action !== 'delete' && action !== 'up' && action !== 'down')) {
     return undefined
   }
   return { id, action }

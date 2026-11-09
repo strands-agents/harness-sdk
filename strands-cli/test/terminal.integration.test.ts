@@ -146,10 +146,10 @@ describe('TUI workflow integration', () => {
     expectRestoredTerminal(result)
   })
 
-  it('deletes queued messages by mouse, keyboard, and blank edit without executing them', async () => {
+  it('edits, steers, deletes, and reorders queued messages through the keyboard', async () => {
     const result = await runTuiScenario('queue')
     expect(result.returnCode).toBe(0)
-    expect(result.screens.join('\n')).toContain('Executed: keep this')
+    expect(result.screens.join('\n')).toContain('Executed: edited keep')
     expectRestoredTerminal(result)
   })
 

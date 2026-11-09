@@ -146,6 +146,9 @@ discarding the current draft.
 Use Alt+↑/↓ or click Edit to edit a queued message. Enter saves and Esc restores your draft.
 Click Delete, or press Ctrl+D while editing, to remove it. Saving empty text deletes a message
 unless it has attachments.
+Tab and Shift+Tab focus the queue's Edit, Steer, Delete, and reorder buttons; Enter activates
+the focused button and Esc returns to your draft. Steer redirects the running turn, or interrupts
+it and runs that queued message next when live steering is unavailable.
 Prefix an Ink input with `!` to run a shell command directly in the active workspace without
 invoking the model, for example `!git status`. Each command runs once through the agent's shell
 sandbox while the full-screen UI remains open, and its output is rendered inline without compact

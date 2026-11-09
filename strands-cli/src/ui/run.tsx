@@ -56,6 +56,7 @@ function reloadingController(previous: ChatControllerApi, close: (exitCode: numb
     start: async (): Promise<void> => {},
     submit: async () => undefined,
     steer: async () => undefined,
+    steerQueued: () => false,
     updateQueuedPrompt: () => false,
     removeQueuedPrompt: () => false,
     moveQueuedPrompt: () => false,

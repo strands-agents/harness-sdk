@@ -273,6 +273,10 @@ export class ConversationManager implements ChatControllerApi {
     return this._active.controller.updateQueuedPrompt(id, prompt)
   }
 
+  steerQueued(id?: string): boolean {
+    return this._active.controller.steerQueued(id)
+  }
+
   removeQueuedPrompt(id: string): boolean {
     return this._active.controller.removeQueuedPrompt(id)
   }

@@ -1153,7 +1153,7 @@ describe('ChatView', () => {
       terminalWidth: 100,
       terminalHeight: 40,
     })
-    expect(runningOutput).toContain('Enter to queue • Alt+↑ edit queue • / for commands')
+    expect(runningOutput).toContain('Enter to queue • Tab queue actions • Alt+↑ edit queue')
     expect(runningOutput).not.toContain('Enter to send')
 
     const updateOutput = renderView({
@@ -1981,7 +1981,7 @@ describe('ChatView', () => {
     expect(output).toContain('Queued 1/2')
     expect(output).toContain('Run the focused tests')
     expect(output).toContain('Edit')
-    expect(lines.find((line) => line.includes('Queued 1/2'))).not.toContain('Steer')
+    expect(lines.find((line) => line.includes('Queued 1/2'))).toContain('Steer')
   })
 
   it('shows that cancellation is still draining before queued work can run', () => {
