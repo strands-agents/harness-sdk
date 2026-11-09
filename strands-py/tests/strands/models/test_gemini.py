@@ -1,3 +1,4 @@
+import collections
 import logging
 import unittest.mock
 
@@ -415,6 +416,7 @@ async def test_stream_request_with_tool_results(gemini_client, model, model_id):
                                     "source": {"bytes": b"base64encodedimage"},
                                 },
                             },
+                            {"document": {"format": "pdf", "name": "report", "source": {"bytes": b"pdf"}}},
                         ],
                     }
                 }
@@ -436,14 +438,26 @@ async def test_stream_request_with_tool_results(gemini_client, model, model_id):
                                 "output": [
                                     {"text": "see image"},
                                     {"json": ["see image"]},
-                                    {
-                                        "inline_data": {
-                                            "data": "YmFzZTY0ZW5jb2RlZGltYWdl",
-                                            "mime_type": "image/jpeg",
-                                        },
-                                    },
+                                    {"$ref": "image.jpg"},
+                                    {"$ref": "report"},
                                 ],
                             },
+                            "parts": [
+                                {
+                                    "inline_data": {
+                                        "data": "YmFzZTY0ZW5jb2RlZGltYWdl",
+                                        "display_name": "image.jpg",
+                                        "mime_type": "image/jpeg",
+                                    },
+                                },
+                                {
+                                    "inline_data": {
+                                        "data": "cGRm",
+                                        "display_name": "report",
+                                        "mime_type": "application/pdf",
+                                    },
+                                },
+                            ],
                         },
                     },
                 ],
@@ -518,6 +532,40 @@ async def test_stream_request_with_tool_results_preserving_name(gemini_client, m
     gemini_client.aio.models.generate_content_stream.assert_called_with(**exp_request)
 
 
+def test_format_request_suffixes_duplicate_tool_result_display_names(model):
+    png = {"image": {"format": "png", "source": {"bytes": b"png"}}}
+    report = {"document": {"format": "pdf", "name": "report", "source": {"bytes": b"pdf"}}}
+    report_1 = {"document": {"format": "pdf", "name": "report-1", "source": {"bytes": b"pdf"}}}
+    unnamed_notes = {"document": {"format": "txt", "source": {"bytes": b"txt"}}}
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "toolResult": {
+                        "toolUseId": "c1",
+                        "status": "success",
+                        "content": [png, png, png, report, report_1, report],
+                    }
+                },
+                {"toolResult": {"toolUseId": "c2", "status": "success", "content": [png, unnamed_notes]}},
+            ],
+        }
+    ]
+
+    request = model._format_request(messages, None, None, None)
+
+    tru_display_names = [
+        [part["inline_data"]["display_name"] for part in content_part["function_response"]["parts"]]
+        for content_part in request["contents"][0]["parts"]
+    ]
+    exp_display_names = [
+        ["image.png", "image-1.png", "image-2.png", "report", "report-1", "report-2"],
+        ["image.png", "document.txt"],
+    ]
+    assert tru_display_names == exp_display_names
+
+
 @pytest.mark.asyncio
 async def test_stream_request_with_empty_content(gemini_client, model, model_id):
     messages = [
@@ -536,12 +584,19 @@ async def test_stream_request_with_empty_content(gemini_client, model, model_id)
     gemini_client.aio.models.generate_content_stream.assert_called_with(**exp_request)
 
 
+@pytest.mark.parametrize(
+    "content",
+    [
+        {"unsupported": {}},
+        {"toolResult": {"toolUseId": "c1", "status": "success", "content": [{"unsupported": {}}]}},
+    ],
+)
 @pytest.mark.asyncio
-async def test_stream_request_with_unsupported_type(model):
+async def test_stream_request_with_unsupported_type(content, model):
     messages = [
         {
             "role": "user",
-            "content": [{"unsupported": {}}],
+            "content": [content],
         },
     ]
 
@@ -893,7 +948,7 @@ async def test_stream_response_reasoning_signature_survives_aggregation(
     assert tru_reasoning_text == exp_reasoning_text
 
     # Feeding the aggregated message back must reproduce the original signature bytes.
-    tru_part = model._format_request_content_part(message["content"][0], {})
+    tru_part = model._format_request_content_part(message["content"][0], {}, collections.Counter())
     assert tru_part.thought_signature == b"abc"
 
 
@@ -938,7 +993,7 @@ async def test_stream_response_reasoning_signature_on_empty_text_part_survives(
     assert tru_reasoning == exp_reasoning
 
     # Feeding the aggregated message back must reproduce the original signature bytes.
-    tru_part = model._format_request_content_part(message["content"][0], {})
+    tru_part = model._format_request_content_part(message["content"][0], {}, collections.Counter())
     assert tru_part.thought_signature == b"abc"
 
 
@@ -986,7 +1041,7 @@ async def test_stream_response_signature_after_text_opens_reasoning_block(
     assert tru_content == exp_content
 
     # Feeding the aggregated message back must reproduce the original signature bytes.
-    tru_part = model._format_request_content_part(message["content"][1], {})
+    tru_part = model._format_request_content_part(message["content"][1], {}, collections.Counter())
     assert tru_part.thought_signature == b"abc"
 
 
@@ -1039,7 +1094,7 @@ async def test_stream_response_signature_on_text_part_keeps_text_contiguous(
     assert tru_content == exp_content
 
     # Feeding the aggregated message back must reproduce the original signature bytes.
-    tru_part = model._format_request_content_part(message["content"][1], {})
+    tru_part = model._format_request_content_part(message["content"][1], {}, collections.Counter())
     assert tru_part.thought_signature == b"abc"
 
 
@@ -1096,7 +1151,10 @@ async def test_stream_response_every_signature_inside_text_block_survives(
     assert tru_content == exp_content
 
     # Feeding the aggregated message back must reproduce each original signature's bytes.
-    tru_signatures = [model._format_request_content_part(block, {}).thought_signature for block in tru_content[1:]]
+    tru_signatures = [
+        model._format_request_content_part(block, {}, collections.Counter()).thought_signature
+        for block in tru_content[1:]
+    ]
     exp_signatures = [b"sig1", b"sig2"]
     assert tru_signatures == exp_signatures
 
@@ -1138,7 +1196,7 @@ async def test_stream_response_signature_only_part_opens_reasoning_block(
     assert tru_content == exp_content
 
     # Feeding the aggregated message back must reproduce the original signature bytes.
-    tru_part = model._format_request_content_part(message["content"][0], {})
+    tru_part = model._format_request_content_part(message["content"][0], {}, collections.Counter())
     assert tru_part.thought_signature == b"abc"
 
 
@@ -1905,6 +1963,27 @@ def test_format_request_filters_location_source_document(model, caplog):
     assert len(formatted_content) == 1
     assert "text" in formatted_content[0]
     assert "Location sources are not supported by Gemini" in caplog.text
+
+
+def test_format_request_skips_tool_result_location_source_and_video(model, caplog):
+    caplog.set_level(logging.WARNING, logger="strands.models.gemini")
+    s3_image = {"image": {"format": "png", "source": {"location": {"type": "s3", "uri": "s3://bucket/key.png"}}}}
+    video = {"video": {"format": "mp4", "source": {"bytes": b"mp4"}}}
+    tool_result = {"toolUseId": "c1", "status": "success", "content": [{"text": "clip"}, s3_image, video]}
+    messages = [{"role": "user", "content": [{"toolResult": tool_result}]} for _ in range(2)]
+
+    request = model._format_request(messages, None, None, None)
+
+    tru_parts = request["contents"][0]["parts"]
+    exp_parts = [{"function_response": {"id": "c1", "name": "c1", "response": {"output": [{"text": "clip"}]}}}]
+    assert tru_parts == exp_parts
+
+    tru_logged = [record.getMessage() for record in caplog.records]
+    exp_logged = [
+        "count=<2> | Location sources in tool results are not supported by Gemini | skipping content block",
+        "count=<2> | Video content in tool results is not supported by Gemini | skipping content block",
+    ]
+    assert tru_logged == exp_logged
 
 
 class TestCountTokens:

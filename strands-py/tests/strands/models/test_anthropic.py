@@ -922,98 +922,21 @@ def test_format_chunk_content_block_start_other(model):
     assert tru_chunk == exp_chunk
 
 
-def test_format_chunk_content_block_delta_signature_delta(model):
-    event = {
-        "delta": {
-            "type": "signature_delta",
-            "signature": "s1",
-        },
-        "index": 0,
-        "type": "content_block_delta",
-    }
+@pytest.mark.parametrize(
+    ("delta", "exp_delta"),
+    [
+        ({"type": "signature_delta", "signature": "s1"}, {"reasoningContent": {"signature": "s1"}}),
+        ({"type": "thinking_delta", "thinking": "t1"}, {"reasoningContent": {"text": "t1"}}),
+        ({"type": "input_json_delta", "partial_json": "{"}, {"toolUse": {"input": "{"}}),
+        ({"type": "text_delta", "text": "hello"}, {"text": "hello"}),
+    ],
+    ids=["signature_delta", "thinking_delta", "input_json_delta", "text_delta"],
+)
+def test_format_chunk_content_block_delta(delta, exp_delta, model):
+    event = {"delta": delta, "index": 0, "type": "content_block_delta"}
 
     tru_chunk = model.format_chunk(event)
-    exp_chunk = {
-        "contentBlockDelta": {
-            "contentBlockIndex": 0,
-            "delta": {
-                "reasoningContent": {
-                    "signature": "s1",
-                },
-            },
-        },
-    }
-
-    assert tru_chunk == exp_chunk
-
-
-def test_format_chunk_content_block_delta_thinking_delta(model):
-    event = {
-        "delta": {
-            "type": "thinking_delta",
-            "thinking": "t1",
-        },
-        "index": 0,
-        "type": "content_block_delta",
-    }
-
-    tru_chunk = model.format_chunk(event)
-    exp_chunk = {
-        "contentBlockDelta": {
-            "contentBlockIndex": 0,
-            "delta": {
-                "reasoningContent": {
-                    "text": "t1",
-                },
-            },
-        },
-    }
-
-    assert tru_chunk == exp_chunk
-
-
-def test_format_chunk_content_block_delta_input_json_delta_delta(model):
-    event = {
-        "delta": {
-            "type": "input_json_delta",
-            "partial_json": "{",
-        },
-        "index": 0,
-        "type": "content_block_delta",
-    }
-
-    tru_chunk = model.format_chunk(event)
-    exp_chunk = {
-        "contentBlockDelta": {
-            "contentBlockIndex": 0,
-            "delta": {
-                "toolUse": {
-                    "input": "{",
-                },
-            },
-        },
-    }
-
-    assert tru_chunk == exp_chunk
-
-
-def test_format_chunk_content_block_delta_text_delta(model):
-    event = {
-        "delta": {
-            "type": "text_delta",
-            "text": "hello",
-        },
-        "index": 0,
-        "type": "content_block_delta",
-    }
-
-    tru_chunk = model.format_chunk(event)
-    exp_chunk = {
-        "contentBlockDelta": {
-            "contentBlockIndex": 0,
-            "delta": {"text": "hello"},
-        },
-    }
+    exp_chunk = {"contentBlockDelta": {"contentBlockIndex": 0, "delta": exp_delta}}
 
     assert tru_chunk == exp_chunk
 

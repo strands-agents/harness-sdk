@@ -91,6 +91,15 @@ describe('tag-meta', () => {
     expect(tagToMeta('strands-agents/box', 'nightly')).toBe(null)
   })
 
+  it('shell uses one stream for its Python and Node packages', () => {
+    expect(tagToMeta('strands-agents/shell', 'v0.6.0')).toEqual({
+      sdk: 'shell',
+      language: undefined,
+      version: '0.6.0',
+    })
+    expect(tagToMeta('strands-agents/shell', 'nightly')).toBe(null)
+  })
+
   it('package urls', () => {
     expect(getPackageUrl('sdk', 'python', '1.42.0')).toBe('https://pypi.org/project/strands-agents/1.42.0/')
     expect(getPackageUrl('sdk', 'typescript', '1.4.0')).toBe(
@@ -103,5 +112,8 @@ describe('tag-meta', () => {
     )
     expect(getPackageUrl('cli', undefined, '0.2.1')).toBe('https://www.npmjs.com/package/@strands-agents/cli/v/0.2.1')
     expect(getPackageUrl('box', undefined, '0.1.0')).toBe('https://github.com/strands-agents/box/releases/tag/v0.1.0')
+    expect(getPackageUrl('shell', undefined, '0.6.0')).toBe(
+      'https://github.com/strands-agents/shell/releases/tag/v0.6.0'
+    )
   })
 })
