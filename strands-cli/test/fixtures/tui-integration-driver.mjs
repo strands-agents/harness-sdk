@@ -430,8 +430,7 @@ async function main() {
       terminal.write('\r')
       await waitFor(['Approval accepted', '__CHAT_IDLE__'], 8_000, false)
     } else if (setupExportMode) {
-      terminal.write('/setup')
-      await waitFor(['/setup'], 2_000, false)
+      await typeInComposer('/setup')
       terminal.write('\r')
       await waitFor(['__SETUP_REQUESTED__'], 8_000, false)
       const command = `/export typescript ${process.env.STRANDS_CLI_TEST_EXPORT_PATH}`
