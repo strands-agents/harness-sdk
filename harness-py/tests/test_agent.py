@@ -1010,6 +1010,11 @@ def test_dropping_builtin_plugin_frees_the_name_for_consumer():
     assert "todo_write" in agent.tool_names
 
 
+def test_todos_is_opt_in():
+    assert "todo_write" not in create_harness().tool_names
+    assert "todo_write" in create_harness(builtin_plugins=["todos"]).tool_names
+
+
 def test_subagent_collides_with_consumer_tool_raises():
     with pytest.raises(ValueError, match=r"Tool name 'subagent' is registered more than once"):
         create_harness(tools=[subagent])

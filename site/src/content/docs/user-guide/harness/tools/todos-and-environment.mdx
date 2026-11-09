@@ -1,6 +1,6 @@
 ---
 title: Task tracking and environment
-description: "Strands harness's two default plugins: todos gives the agent a task list it keeps in view, and environment injects the platform, date, working directory, and AGENTS.md."
+description: "Strands harness's two built-in plugins: environment injects the platform, date, working directory, and AGENTS.md, and the opt-in todos gives the agent a task list it keeps in view."
 sourceLinks:
   - path: harness-py/src/strands_harness/plugins/todos.py
   - path: harness-py/src/strands_harness/plugins/environment.py
@@ -9,9 +9,10 @@ sidebar:
   label: "Task tracking and environment"
 ---
 
-Two of Strands harness's defaults are plugins rather than tools: `todos` and `environment`. Both are
-enabled by default through `builtin_plugins` and shape how the agent works without being
-things the model calls the way it calls `shell` or `read`.
+Two of Strands harness's built-ins are plugins rather than tools: `environment` and
+`todos`. Both are selected through `builtin_plugins` and shape how the agent works without
+being things the model calls the way it calls `shell` or `read`. `environment` is on by
+default; `todos` is opt-in.
 
 ## todos
 
@@ -45,8 +46,8 @@ change the cached prompt prefix; the rest is discovered once and reused.
 
 ## Select or disable them
 
-`builtin_plugins` selects these by name, defaulting to `["todos", "environment"]`. Pass a
-subset to keep one, or an empty list to turn both off:
+`builtin_plugins` selects these by name, defaulting to `["environment"]`. Name both to add
+todos, or pass an empty list to turn both off:
 
 <Tabs>
   <Tab label="Strands harness">
@@ -55,14 +56,14 @@ subset to keep one, or an empty list to turn both off:
         ```python
         from strands_harness import create_harness
 
-        agent = create_harness(builtin_plugins=["todos"])  # keep todos, drop environment; [] for none
+        agent = create_harness(builtin_plugins=["todos", "environment"])
         ```
       </Tab>
       <Tab label="TypeScript">
         ```typescript
         import { createHarness } from '@strands-agents/harness'
 
-        const agent = await createHarness({ builtinPlugins: ['todos'] }) // [] for none
+        const agent = await createHarness({ builtinPlugins: ['todos', 'environment'] })
         ```
       </Tab>
     </Tabs>
