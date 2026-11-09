@@ -28,7 +28,6 @@ import { BedrockModel } from '@strands-agents/sdk/models/bedrock'
 import { DockerSandbox } from '@strands-agents/sdk/sandbox/docker'
 import { makeFileEditor } from '@strands-agents/sdk/vended-tools/file-editor'
 import { makeShell } from '@strands-agents/sdk/vended-tools/shell'
-import { makeShell as makeShellFactory } from '@strands-agents/sdk/vended-tools/bash'
 import { AgentSkills } from '@strands-agents/sdk/vended-plugins/skills'
 import { HumanInTheLoop } from '@strands-agents/sdk/vended-interventions/hitl'
 import { z } from 'zod'
@@ -43,8 +42,8 @@ import type { HarnessAgentOptions } from '../src/agent.js'
 import { storeOf } from './memory-internals.js'
 
 // Wrap the configurable built-ins' factories so tests can see the config each was built with.
-vi.mock('@strands-agents/sdk/vended-tools/bash', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@strands-agents/sdk/vended-tools/bash')>()
+vi.mock('@strands-agents/sdk/vended-tools/shell', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@strands-agents/sdk/vended-tools/shell')>()
   return { ...actual, makeShell: vi.fn(actual.makeShell) }
 })
 vi.mock('../src/tools/programmatic-tool-caller.js', async (importOriginal) => {
@@ -306,7 +305,7 @@ describe('createHarness', () => {
   })
 
   it.each([
-    ['shell', { description: 'Run a command.' }, makeShellFactory, [{ description: 'Run a command.' }]],
+    ['shell', { description: 'Run a command.' }, makeShell, [{ description: 'Run a command.' }]],
     [
       'programmatic_tool_caller',
       { allowedTools: ['read'], timeout: 60 },
@@ -324,7 +323,7 @@ describe('createHarness', () => {
   })
 
   it.each([
-    ['shell', makeShellFactory, [{}]],
+    ['shell', makeShell, [{}]],
     ['programmatic_tool_caller', makeProgrammaticToolCaller, [{}]],
     ['subagent', makeSubagent, [expect.not.objectContaining({ maxDepth: expect.anything() })]],
   ] as const)('builds %s from its factory with no config when enabled with true', async (name, factory, args) => {

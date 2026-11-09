@@ -13,10 +13,19 @@ function findShell(a: Agent): Tool {
   return found
 }
 
-function invoke(input: unknown): Promise<{ output: string; error: string }> {
+function invoke(input: { command: string; timeout?: number }): Promise<{ output: string; error: string }> {
+  const context: ToolContext = {
+    agent,
+    cancelSignal: agent.cancelSignal,
+    toolUse: { name: 'shell', toolUseId: 'test-shell', input },
+    invocationState: {},
+    interrupt: () => {
+      throw new Error('interrupt not available in shell fixture')
+    },
+  }
   return (
     shell as unknown as { invoke: (i: unknown, c: ToolContext) => Promise<{ output: string; error: string }> }
-  ).invoke(input, { agent } as unknown as ToolContext)
+  ).invoke(input, context)
 }
 
 beforeEach(async () => {
