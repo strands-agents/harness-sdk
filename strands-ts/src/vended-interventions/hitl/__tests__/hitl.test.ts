@@ -1026,4 +1026,66 @@ describe('HumanInTheLoop', () => {
       expect(result).toEqual({ stopReason: 'endTurn', toolExecuted: true })
     })
   })
+
+  describe("'auto' mode", () => {
+    async function invokeAuto(
+      handler: HumanInTheLoop,
+      auxModel?: MockMessageModel
+    ): Promise<{ stopReason: string; toolExecuted: boolean }> {
+      let toolExecuted = false
+      const agent = new Agent({
+        model: new MockMessageModel()
+          .addTurn({ type: 'toolUseBlock', name: 'readFile', toolUseId: 'tool-1', input: { path: '/tmp/x' } })
+          .addTurn({ type: 'textBlock', text: 'Done' }),
+        ...(auxModel && { auxModel }),
+        tools: [
+          createMockTool('readFile', () => {
+            toolExecuted = true
+            return 'content'
+          }),
+        ],
+        interventions: [handler],
+        printer: false,
+      })
+      const result = await agent.invoke('Read the file')
+      return { stopReason: result.stopReason, toolExecuted }
+    }
+
+    it("'auto' uses the built-in LLM classifier on agent.auxModel", async () => {
+      const auxModel = new MockMessageModel().addTurn({
+        type: 'toolUseBlock',
+        name: 'strands_structured_output',
+        toolUseId: 'inner-1',
+        input: { requiresApproval: false, reason: 'read-only' },
+      })
+      const auxStreamSpy = vi.spyOn(auxModel, 'stream')
+
+      const result = await invokeAuto(new HumanInTheLoop('auto'), auxModel)
+
+      expect(result).toEqual({ stopReason: 'endTurn', toolExecuted: true })
+      expect(auxStreamSpy).toHaveBeenCalledTimes(1)
+    })
+
+    it("'auto' keeps the other options", async () => {
+      const result = await invokeAuto(new HumanInTheLoop('auto', { allowedTools: ['readFile'] }))
+
+      expect(result).toEqual({ stopReason: 'endTurn', toolExecuted: true })
+    })
+
+    it("'auto' uses a custom classifier when one is passed", async () => {
+      const result = await invokeAuto(
+        new HumanInTheLoop('auto', { classifier: () => ({ requiresHumanInTheLoop: true, reason: 'risky' }) })
+      )
+
+      expect(result).toEqual({ stopReason: 'interrupt', toolExecuted: false })
+    })
+
+    it("'auto' with classifier: false throws", () => {
+      expect(() => new HumanInTheLoop('auto', { classifier: false })).toThrow('requires a classifier')
+    })
+
+    it('an unknown mode throws', () => {
+      expect(() => new HumanInTheLoop('yolo' as 'auto')).toThrow("mode must be 'auto'")
+    })
+  })
 })

@@ -141,12 +141,14 @@ export interface HumanInTheLoopConfig {
  *   interventions: [new HumanInTheLoop({ allowedTools: ['readFile'] })],
  * })
  *
- * // LLM-driven risk classification — only risky calls get escalated
+ * // Auto mode — LLM risk classification, only risky calls get escalated
  * const agent = new Agent({
- *   interventions: [new HumanInTheLoop({
- *     allowedTools: ['readFile', 'listDir'],
- *     classifier: true,
- *   })],
+ *   interventions: [new HumanInTheLoop('auto')],
+ * })
+ *
+ * // Auto mode with options
+ * const agent = new Agent({
+ *   interventions: [new HumanInTheLoop('auto', { allowedTools: ['readFile', 'listDir'] })],
  * })
  *
  * // Risk classification via a DecisionModel
@@ -180,10 +182,17 @@ export class HumanInTheLoop extends InterventionHandler {
   private readonly _ask: ((prompt: string) => Promise<JSONValue>) | undefined
   private readonly _classifiedToolUseIds: Set<string> = new Set()
 
-  constructor(config?: HumanInTheLoopConfig) {
+  /**
+   * @param modeOrConfig - `'auto'` lets the LLM risk classifier approve low-risk calls on its own and asks the
+   *   human only about risky ones (shorthand for `classifier: true`). Or pass the config directly.
+   * @param config - Handler configuration when the first argument is `'auto'`. Pass `classifier` to customize it.
+   * @throws Error if the mode is unknown, or `'auto'` is combined with `classifier: false`.
+   */
+  constructor(modeOrConfig?: 'auto' | HumanInTheLoopConfig, config?: HumanInTheLoopConfig) {
     super()
+    if (typeof modeOrConfig === 'object') config = modeOrConfig
     this._allowedTools = new Set(config?.allowedTools ?? [])
-    this._classifier = this._resolveClassifier(config?.classifier)
+    this._classifier = this._resolveClassifier(resolveMode(modeOrConfig, config?.classifier))
     if (this._classifier && this._allowedTools.has('*')) {
       logger.warn('classifier has no effect when allowedTools contains "*" — all tools are already allowed')
     }
@@ -316,4 +325,22 @@ export class HumanInTheLoop extends InterventionHandler {
     if (typeof response === 'string') return TRUST_RESPONSES.has(response.toLowerCase().trim())
     return false
   }
+}
+
+/**
+ * Fold the `'auto'` mode into the `classifier` option.
+ *
+ * @param mode - The first constructor argument.
+ * @param classifier - The `classifier` option from the config.
+ * @returns The classifier option to resolve.
+ * @throws Error if the mode is unknown, or `'auto'` is combined with `classifier: false`.
+ */
+function resolveMode(
+  mode: 'auto' | HumanInTheLoopConfig | undefined,
+  classifier: HumanInTheLoopConfig['classifier']
+): HumanInTheLoopConfig['classifier'] {
+  if (mode === undefined || typeof mode === 'object') return classifier
+  if (mode !== 'auto') throw new Error(`mode must be 'auto' or omitted, got ${JSON.stringify(mode)}`)
+  if (classifier === false) throw new Error("mode 'auto' requires a classifier; remove classifier: false")
+  return classifier ?? true
 }

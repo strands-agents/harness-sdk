@@ -109,11 +109,11 @@ class HumanInTheLoop(InterventionHandler):
         # read_file runs freely, everything else pauses for approval
         agent = Agent(interventions=[HumanInTheLoop(allowed_tools=["read_file"])])
 
-        # LLM-driven risk classification — only risky calls get escalated
-        agent = Agent(interventions=[HumanInTheLoop(
-            allowed_tools=["read_file", "list_dir"],
-            classifier=True,
-        )])
+        # Auto mode - LLM risk classification, only risky calls get escalated
+        agent = Agent(interventions=[HumanInTheLoop("auto")])
+
+        # Auto mode with options
+        agent = Agent(interventions=[HumanInTheLoop("auto", allowed_tools=["read_file", "list_dir"])])
 
         # Risk classification via a DecisionModel, on the model you pass it
         agent = Agent(model=model, interventions=[HumanInTheLoop(classifier=LLMDecisionModel(model=model))])
@@ -133,6 +133,8 @@ class HumanInTheLoop(InterventionHandler):
 
     def __init__(
         self,
+        mode: Literal["auto"] | None = None,
+        /,
         *,
         allowed_tools: list[str] | None = None,
         classifier: bool | LLMClassifierConfig | DecisionModel | HumanInTheLoopClassifier | None = None,
@@ -144,6 +146,10 @@ class HumanInTheLoop(InterventionHandler):
         """Initialize the handler.
 
         Args:
+            mode: ``"auto"`` lets the LLM risk classifier approve low-risk calls on its own
+                and asks the human only about risky ones. Shorthand for ``classifier=True``;
+                pass ``classifier`` as well to customize it. Omitted: every tool not in
+                ``allowed_tools`` requires approval.
             allowed_tools: Tools that can execute WITHOUT human approval. All other
                 tools require approval. Use ``"*"`` to allow all tools. Prefix with
                 ``!`` to exclude specific tools from ``"*"`` (they still require
@@ -189,6 +195,7 @@ class HumanInTheLoop(InterventionHandler):
 
         Raises:
             ValueError: If ``allowed_tools`` is a single string rather than a list.
+            ValueError: If ``mode`` is unknown, or ``"auto"`` is combined with ``classifier=False``.
             TypeError: If ``classifier`` is not a bool, ``LLMClassifierConfig``, ``DecisionModel``, or callable.
 
         Note:
@@ -199,7 +206,7 @@ class HumanInTheLoop(InterventionHandler):
         if isinstance(allowed_tools, str):
             raise ValueError("allowed_tools must be a list of tool names, not a single string")
         self._allowed_tools = set(allowed_tools or [])
-        self._classifier = self._resolve_classifier(classifier)
+        self._classifier = self._resolve_classifier(self._resolve_mode(mode, classifier))
         if self._classifier and "*" in self._allowed_tools:
             logger.warning("classifier has no effect when allowed_tools contains '*' — all tools are already allowed")
         self._classified_tool_use_ids: set[str] = set()
@@ -390,6 +397,31 @@ class HumanInTheLoop(InterventionHandler):
         if isinstance(response, str):
             return response.lower().strip() in _TRUST_RESPONSES
         return False
+
+    @staticmethod
+    def _resolve_mode(
+        mode: Literal["auto"] | None,
+        classifier: bool | LLMClassifierConfig | DecisionModel | HumanInTheLoopClassifier | None,
+    ) -> bool | LLMClassifierConfig | DecisionModel | HumanInTheLoopClassifier | None:
+        """Fold ``mode`` into the ``classifier`` param.
+
+        Args:
+            mode: The raw mode param from the constructor.
+            classifier: The raw classifier param from the constructor.
+
+        Returns:
+            The classifier param to resolve.
+
+        Raises:
+            ValueError: If ``mode`` is unknown, or ``"auto"`` is combined with ``classifier=False``.
+        """
+        if mode is None:
+            return classifier
+        if mode != "auto":
+            raise ValueError(f'mode must be "auto" or omitted, got {mode!r}')
+        if classifier is False:
+            raise ValueError('mode="auto" requires a classifier; remove classifier=False')
+        return True if classifier is None else classifier
 
     @staticmethod
     def _resolve_classifier(
