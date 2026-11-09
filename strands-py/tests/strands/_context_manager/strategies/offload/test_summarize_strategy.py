@@ -6,6 +6,7 @@ import unittest.mock
 import pytest
 
 from strands._context_manager.strategies.offload import Offload
+from strands._context_manager.strategies.offload.summarize import _format_summarized
 from strands._context_manager.types import ContextState
 from strands.models import Model
 from strands.types.content import ContentBlock, Message, Messages
@@ -651,3 +652,7 @@ class TestClientSideSummariesUseModelSummarize:
 
         assert "summarize returned no text summary" in caplog.text
         assert messages == self._tool_result_messages()
+
+
+def test_format_summarized_uses_expected_prefix():
+    assert _format_summarized("test", 100).startswith("[Summarized:")

@@ -5,11 +5,12 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from typing_extensions import TypedDict
+
 from ....agent.conversation_manager.compression.pin_message import is_pinned
 from ....models._summarize import _summarize_with_stream
 from ....types.content import ContentBlock, Message, Messages
 from ....types.tools import ToolResult, ToolResultContent
-from ...methods.summarize import SummarizeConfig, _format_summarized
 from ...stash import _format_stash_refs
 from ...types import ContextState
 from .base import (
@@ -29,6 +30,27 @@ if TYPE_CHECKING:
     from ....models.model import Model
 
 logger = logging.getLogger(__name__)
+
+
+class SummarizeConfig(TypedDict, total=False):
+    """Configuration for the summarize strategy.
+
+    Attributes:
+        model: Model used for summarization. Resolution order: this ``model`` > ``agent.aux_model``
+            > ``agent.model``.
+        system_prompt: Custom system prompt for the summarization model.
+    """
+
+    model: Model
+    system_prompt: str
+
+
+def _format_summarized(description: str, tokens: int, summary: str | None = None) -> str:
+    """Format a ``[Summarized: ...]`` marker with an optional summary body."""
+    header = f"[Summarized: {description}, ~{tokens:,} tokens]"
+    if summary:
+        return f"{header}\n\n{summary}"
+    return header
 
 
 def _warn_client_side_fallback(model: Model, reason: str, *, exc_info: bool = False) -> None:
