@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
+// Node-only: in Vitest browser mode, a vi.mock factory that throws surfaces as an unhandled
+// rejection in the mocker instead of failing the import, so the missing peer can't be simulated.
 vi.mock('@aws-sdk/client-sagemaker-runtime', () => {
   throw new Error("Cannot find package '@aws-sdk/client-sagemaker-runtime'")
 })
