@@ -1,17 +1,27 @@
 """Tests for the SummarizeStrategy."""
 
 import logging
+import threading
 import unittest.mock
 
 import pytest
 
 from strands._context_manager.strategies.offload import Offload
-from strands._context_manager.strategies.offload.summarize import _format_summarized
+from strands._context_manager.strategies.offload.summarize import (
+    _format_summarized,
+    _tool_result_to_content_blocks,
+)
 from strands._context_manager.types import ContextState
 from strands.agent.invocation_context import _create_invocation_context
-from strands.models import Model
+from strands.models import Model, SummarizeResult
+from strands.models._summarize import DEFAULT_SUMMARIZE_INSTRUCTIONS, DEFAULT_SUMMARIZE_SYSTEM_PROMPT
 from strands.types.content import ContentBlock, Message, Messages
+from strands.types.event_loop import Usage
 from strands.types.tools import ToolResult, ToolUse
+
+AGENT_PROMPT = [{"text": "You are a coding agent."}]
+AGENT_TOOLS = [{"name": "shell", "description": "Run a command", "inputSchema": {"json": {}}}]
+INSTRUCTIONS = ContentBlock(text=DEFAULT_SUMMARIZE_INSTRUCTIONS)
 
 
 def _make_stream_events(text: str):
@@ -51,6 +61,10 @@ def _base_summarize(model):
     return unittest.mock.AsyncMock(side_effect=summarize)
 
 
+def _summary(text: str, provider: str | None = None) -> SummarizeResult:
+    return SummarizeResult(content=[ContentBlock(summary={"provider": provider, "text": text})])
+
+
 @pytest.fixture
 def mock_agent():
     agent = unittest.mock.MagicMock()
@@ -61,6 +75,9 @@ def mock_agent():
     agent.model.summarize = _base_summarize(agent.model)
     agent.aux_model = agent.model
     agent.messages = []
+    agent.system_prompt_content = AGENT_PROMPT
+    agent.tool_registry.get_all_tool_specs.return_value = AGENT_TOOLS
+    agent._cancel_signal = threading.Event()
     return agent
 
 
@@ -362,13 +379,13 @@ class TestSummarizationWithToolCalls:
     """Regression test for https://github.com/strands-agents/harness-sdk/issues/5291."""
 
     @pytest.mark.asyncio
-    async def test_summarizes_tool_calls_as_text_in_a_single_model_call(self, mock_agent):
-        tru_calls: list[Messages] = []
+    async def test_replays_tool_calls_in_a_single_model_call(self, mock_agent):
+        tru_calls: list[tuple] = []
         summary_stream = _make_stream_events("Listed the files")
 
-        def recording_stream(messages, *args, **kwargs):
-            tru_calls.append(messages)
-            return summary_stream(messages, *args, **kwargs)
+        def recording_stream(messages, tool_specs, system_prompt, **kwargs):
+            tru_calls.append((messages, tool_specs, kwargs["system_prompt_content"]))
+            return summary_stream(messages, **kwargs)
 
         mock_agent.model.stream = recording_stream
         strategy = Offload.summarize("*").when(utilization=0.7, preserve_recent=2)
@@ -385,22 +402,82 @@ class TestSummarizationWithToolCalls:
 
         assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is True
         exp_calls = [
-            [
-                Message(
-                    role="user",
-                    content=[
-                        ContentBlock(text="<content>"),
-                        ContentBlock(text="\n---\n[assistant]"),
-                        ContentBlock(text='[tool call: shell] {"command":"ls"}'),
-                        ContentBlock(text="\n---\n[user]"),
-                        ContentBlock(text="[tool result: shell]"),
-                        ContentBlock(text="a.ts b.ts"),
-                        ContentBlock(text="</content>"),
-                    ],
-                )
-            ]
+            (
+                [
+                    Message(role="user", content=[ContentBlock(text="fix the build")]),
+                    Message(role="assistant", content=[ContentBlock(toolUse=tool_use)]),
+                    Message(role="user", content=[ContentBlock(toolResult=tool_result), INSTRUCTIONS]),
+                ],
+                AGENT_TOOLS,
+                AGENT_PROMPT,
+            )
         ]
         assert tru_calls == exp_calls
+
+
+class TestBatchSummaryReplaysTheAgentRequest:
+    """Tests that a batched summary replays the agent's own request."""
+
+    @staticmethod
+    def _messages() -> Messages:
+        return [
+            Message(role="user", content=[ContentBlock(text="task")]),
+            Message(
+                role="assistant",
+                content=[
+                    ContentBlock(reasoningContent={"reasoningText": {"text": "think", "signature": "sig"}}),
+                    ContentBlock(text="old1"),
+                ],
+            ),
+            Message(role="user", content=[ContentBlock(text="old2")]),
+            Message(role="assistant", content=[ContentBlock(text="old3")]),
+            Message(role="user", content=[ContentBlock(text="recent")]),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_sends_the_history_prefix_with_the_agent_prompt_and_tools(self, mock_agent):
+        messages = self._messages()
+        mock_agent.messages = messages
+        strategy = Offload.summarize("*").when(utilization=0.8, preserve_recent=1)
+
+        assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is True
+
+        call = mock_agent.model.summarize.await_args
+        assert call.args[0] == self._messages()[:4]
+        assert call.kwargs["tool_specs"] == AGENT_TOOLS
+        assert call.kwargs["system_prompt_content"] == AGENT_PROMPT
+        assert call.kwargs["system_prompt"] == "You are a coding agent."
+        assert call.kwargs["cancel_signal"] is mock_agent._cancel_signal
+
+    @pytest.mark.asyncio
+    async def test_leaves_reasoning_out_for_a_model_other_than_the_agent_model(self, mock_agent):
+        aux_model = unittest.mock.AsyncMock()
+        aux_model.count_tokens = unittest.mock.AsyncMock(return_value=5000)
+        aux_model.summarize = unittest.mock.AsyncMock(return_value=_summary("aux summary"))
+        aux_model.model_info.capabilities.server_side_summary = False
+        mock_agent.aux_model = aux_model
+        messages = self._messages()
+        mock_agent.messages = messages
+        strategy = Offload.summarize("*").when(utilization=0.8, preserve_recent=1)
+
+        assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is True
+
+        exp_request = self._messages()[:4]
+        exp_request[1] = Message(role="assistant", content=[ContentBlock(text="old1")])
+        assert aux_model.summarize.await_args.args[0] == exp_request
+
+    @pytest.mark.asyncio
+    async def test_leaves_the_history_unchanged_when_the_reply_holds_no_text(self, mock_agent, caplog):
+        mock_agent.model.summarize = unittest.mock.AsyncMock(return_value=SummarizeResult())
+        messages = self._messages()
+        mock_agent.messages = messages
+        strategy = Offload.summarize("*").when(utilization=0.8, preserve_recent=1)
+
+        with caplog.at_level(logging.WARNING):
+            assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is False
+
+        assert messages == self._messages()
+        assert "summary held no text" in caplog.text
 
 
 class TestServerSideSummary:
@@ -420,7 +497,7 @@ class TestServerSideSummary:
     async def test_replaces_opening_run_with_server_side_summary(self, mock_agent):
         mock_agent.model.model_info.capabilities.server_side_summary = True
         summary = ContentBlock(summary={"provider": "anthropic", "text": "compacted"})
-        mock_agent.model.summarize = unittest.mock.AsyncMock(return_value=summary)
+        mock_agent.model.summarize = unittest.mock.AsyncMock(return_value=SummarizeResult(content=[summary]))
         messages = self._messages()
         mock_agent.messages = messages
         strategy = Offload.summarize("*").when(utilization=0.8, preserve_recent=1)
@@ -436,9 +513,9 @@ class TestServerSideSummary:
         ]
 
     @pytest.mark.asyncio
-    async def test_places_a_text_summary_as_a_client_side_marker(self, mock_agent):
+    async def test_places_a_summary_without_a_provider_as_a_client_side_marker(self, mock_agent):
         mock_agent.model.model_info.capabilities.server_side_summary = True
-        mock_agent.model.summarize = unittest.mock.AsyncMock(return_value=ContentBlock(text="written client-side"))
+        mock_agent.model.summarize = unittest.mock.AsyncMock(return_value=_summary("written client-side"))
         messages = self._messages()
         mock_agent.messages = messages
         strategy = Offload.summarize("*").when(utilization=0.8, preserve_recent=1)
@@ -502,8 +579,7 @@ class TestServerSideSummary:
 
         assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is True
 
-        sent = [call.args[0] for call in aux_model.summarize.await_args_list]
-        assert not any(request[0]["content"] == [ContentBlock(text="task")] for request in sent)
+        assert not any("summary" in block for message in messages for block in message["content"])
         assert any("[Summarized:" in block.get("text", "") for message in messages for block in message["content"])
 
     @pytest.mark.asyncio
@@ -517,6 +593,7 @@ class TestServerSideSummary:
                 id="not_implemented",
             ),
             pytest.param({"side_effect": RuntimeError("compaction rejected")}, "compaction rejected", True, id="error"),
+            pytest.param({"return_value": SummarizeResult()}, "no summary", False, id="empty"),
         ],
     )
     async def test_falls_back_to_client_side(self, mock_agent, caplog, summarize_result, reason, traceback):
@@ -561,8 +638,8 @@ class TestServerSideSummary:
 
         assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is True
 
-        sent_texts = [block.get("text") for sent in summarizer_inputs for m in sent for block in m["content"]]
-        assert "fact" in sent_texts
+        sent_blocks = [block for sent in summarizer_inputs for message in sent for block in message["content"]]
+        assert ContentBlock(summary={"provider": "anthropic", "text": "fact"}) in sent_blocks
 
 
 class TestClientSideSummariesUseModelSummarize:
@@ -592,7 +669,7 @@ class TestClientSideSummariesUseModelSummarize:
 
     @pytest.mark.asyncio
     async def test_a_provider_override_writes_client_side_summaries(self, mock_agent):
-        mock_agent.model.summarize = unittest.mock.AsyncMock(return_value=ContentBlock(text="provider summary"))
+        mock_agent.model.summarize = unittest.mock.AsyncMock(return_value=_summary("provider summary"))
         messages = self._tool_result_messages()
         mock_agent.messages = messages
         strategy = Offload.summarize("tool_results").when(threshold=100)
@@ -600,8 +677,20 @@ class TestClientSideSummariesUseModelSummarize:
         assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.5)) is True
 
         assert messages[1] == self._summarized_tool_result("provider summary")
-        request = mock_agent.model.summarize.await_args.args[0]
-        assert request == [Message(role="user", content=[self._tool_result_messages()[1]["content"][0]])]
+        call = mock_agent.model.summarize.await_args
+        assert call.args[0] == [
+            Message(
+                role="user",
+                content=[
+                    ContentBlock(text="<content>"),
+                    ContentBlock(text="[tool result]"),
+                    ContentBlock(text="x" * 10000),
+                    ContentBlock(text="</content>"),
+                ],
+            )
+        ]
+        assert "tool_specs" not in call.kwargs
+        assert "system_prompt_content" not in call.kwargs
 
     @pytest.mark.asyncio
     async def test_a_server_side_model_writes_block_summaries_with_the_base_implementation(self, mock_agent):
@@ -655,13 +744,20 @@ class TestClientSideSummariesUseModelSummarize:
         assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.5)) is True
 
         assert mock_agent.model.summarize.await_args.args[0] == [
-            Message(role="assistant", content=[ContentBlock(text="[tool call: read_file]")]),
-            Message(role="user", content=[tool_result]),
+            Message(
+                role="user",
+                content=[
+                    ContentBlock(text="<content>"),
+                    ContentBlock(text="[tool result: read_file]"),
+                    ContentBlock(text=tool_result["toolResult"]["content"][0]["text"]),
+                    ContentBlock(text="</content>"),
+                ],
+            )
         ]
 
     @pytest.mark.asyncio
     async def test_a_custom_system_prompt_reaches_client_side_summaries(self, mock_agent):
-        mock_agent.model.summarize = unittest.mock.AsyncMock(return_value=ContentBlock(text="provider summary"))
+        mock_agent.model.summarize = unittest.mock.AsyncMock(return_value=_summary("provider summary"))
         messages = self._tool_result_messages()
         mock_agent.messages = messages
         strategy = Offload.summarize("tool_results", {"system_prompt": "Be very brief."}).when(threshold=100)
@@ -680,7 +776,9 @@ class TestClientSideSummariesUseModelSummarize:
 
         assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.5)) is True
 
-        assert mock_agent.model.stream.call_args.kwargs["system_prompt"] == "Be very brief."
+        messages_sent, _, system_prompt = mock_agent.model.stream.call_args.args
+        assert messages_sent[-1]["content"][-1] == ContentBlock(text="Be very brief.")
+        assert system_prompt == DEFAULT_SUMMARIZE_SYSTEM_PROMPT
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("server_side_summary", [False, True])
@@ -710,10 +808,11 @@ class TestClientSideSummariesUseModelSummarize:
         assert request.usage["totalTokens"] == 15
 
     @pytest.mark.asyncio
-    async def test_a_server_side_summary_is_given_the_request(self, mock_agent):
+    @pytest.mark.parametrize("content", [[ContentBlock(summary={"provider": "anthropic", "text": "compacted"})], []])
+    async def test_a_server_side_summary_adds_its_usage_to_the_request(self, mock_agent, content):
         mock_agent.model.model_info.capabilities.server_side_summary = True
-        summary = ContentBlock(summary={"provider": "anthropic", "text": "compacted"})
-        mock_agent.model.summarize = unittest.mock.AsyncMock(return_value=summary)
+        usage = Usage(inputTokens=100, outputTokens=20, totalTokens=120)
+        mock_agent.model.summarize = unittest.mock.AsyncMock(return_value=SummarizeResult(content, usage))
         messages = TestServerSideSummary._messages()
         mock_agent.messages = messages
         request = _create_invocation_context()
@@ -722,13 +821,11 @@ class TestClientSideSummariesUseModelSummarize:
         context = ContextState(messages=messages, agent=mock_agent, utilization=0.9, invocation_context=request)
         assert await strategy.apply(context) is True
 
-        assert mock_agent.model.summarize.await_args.kwargs["invocation_context"] is request
+        assert request.usage["inputTokens"] == (100 if content else 110)
 
     @pytest.mark.asyncio
     async def test_warns_when_summarize_returns_no_text(self, mock_agent, caplog):
-        mock_agent.model.summarize = unittest.mock.AsyncMock(
-            return_value=ContentBlock(summary={"provider": "custom", "text": "compacted"})
-        )
+        mock_agent.model.summarize = unittest.mock.AsyncMock(return_value=SummarizeResult())
         messages = self._tool_result_messages()
         mock_agent.messages = messages
         strategy = Offload.summarize("tool_results").when(threshold=100)
@@ -736,9 +833,27 @@ class TestClientSideSummariesUseModelSummarize:
         with caplog.at_level(logging.WARNING):
             assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.5)) is False
 
-        assert "summarize returned no text summary" in caplog.text
+        assert "summary held no text" in caplog.text
         assert messages == self._tool_result_messages()
 
 
 def test_format_summarized_uses_expected_prefix():
     assert _format_summarized("test", 100).startswith("[Summarized:")
+
+
+class TestToolResultToContentBlocks:
+    """Tests for converting tool result content to summarizer content blocks."""
+
+    def test_converts_text_content(self):
+        assert _tool_result_to_content_blocks([{"text": "hello"}]) == [ContentBlock(text="hello")]
+
+    def test_passes_through_images(self):
+        image = {"image": {"format": "png", "source": {"bytes": b"data"}}}
+        assert _tool_result_to_content_blocks([image]) == [image]
+
+    def test_converts_json_content_to_text(self):
+        tru_result = _tool_result_to_content_blocks([{"text": "plain text"}, {"json": {"key": "value", "count": 42}}])
+        assert tru_result == [
+            ContentBlock(text="plain text"),
+            ContentBlock(text='{\n  "key": "value",\n  "count": 42\n}'),
+        ]

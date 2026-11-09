@@ -1,17 +1,17 @@
 import json
 import math
-import re
+import threading
 import warnings
 from unittest.mock import MagicMock
 
 import pytest
 from pydantic import BaseModel
 
-from strands.agent.invocation_context import _create_invocation_context
 from strands.hooks.events import AfterInvocationEvent
-from strands.models import CacheConfig, ModelCapabilities, ModelInfo, ModelLimits
+from strands.models import CacheConfig, ModelCapabilities, ModelInfo, ModelLimits, SummarizeResult
 from strands.models import Model as SAModel
 from strands.models._model_info import lookup_model_info
+from strands.models._summarize import DEFAULT_SUMMARIZE_INSTRUCTIONS, DEFAULT_SUMMARIZE_SYSTEM_PROMPT
 from strands.models.model import _estimate_tokens_with_heuristic, _ModelPlugin
 
 
@@ -824,92 +824,101 @@ class RecordingModel(TestModel):
             yield {"metadata": {"usage": self.usage, "metrics": {"latencyMs": 0}}}
 
 
-@pytest.mark.asyncio
-async def test_summarize_base_sends_one_tool_less_request_with_the_transcript(tool_specs):
-    model = RecordingModel(reply=("first", "second"))
-    messages = [
-        {"role": "user", "content": [{"text": "task"}]},
-        {
-            "role": "assistant",
-            "content": [
-                {"reasoningContent": {"reasoningText": {"text": "hidden", "signature": "sig"}}},
-                {"toolUse": {"toolUseId": "t1", "name": "lookup", "input": {"q": "x"}}},
-            ],
-        },
-        {
-            "role": "user",
-            "content": [{"toolResult": {"toolUseId": "t1", "status": "success", "content": [{"text": "42"}]}}],
-        },
-    ]
+HISTORY = [
+    {"role": "user", "content": [{"text": "task"}]},
+    {"role": "assistant", "content": [{"toolUse": {"toolUseId": "t1", "name": "lookup", "input": {"q": "x"}}}]},
+    {
+        "role": "user",
+        "content": [{"toolResult": {"toolUseId": "t1", "status": "success", "content": [{"text": "42"}]}}],
+    },
+]
 
-    summary = await model.summarize(
-        messages, tool_specs=tool_specs, system_prompt="live prompt", instructions="Summarize briefly."
+
+@pytest.mark.asyncio
+async def test_summarize_base_replays_the_request_with_the_instructions_closing_it(tool_specs):
+    model = RecordingModel(reply=("first", "second"))
+    prompt_content = [{"text": "live prompt"}, {"cachePoint": {"type": "default"}}]
+
+    result = await model.summarize(
+        HISTORY,
+        tool_specs=tool_specs,
+        system_prompt="live prompt",
+        system_prompt_content=prompt_content,
+        instructions="Summarize briefly.",
     )
 
-    assert summary == {"text": "first\nsecond"}
-    transcript = [
-        "<content>",
-        "\n---\n[user]",
-        "task",
-        "\n---\n[assistant]",
-        '[tool call: lookup] {"q":"x"}',
-        "\n---\n[user]",
-        "[tool result: lookup]",
-        "42",
-        "</content>",
+    assert result == SummarizeResult(
+        content=[{"summary": {"provider": None, "text": "first\nsecond"}}],
+        usage={"inputTokens": 0, "outputTokens": 0, "totalTokens": 0},
+    )
+    [call] = model.calls
+    assert call["messages"] == [
+        *HISTORY[:2],
+        {"role": "user", "content": [*HISTORY[2]["content"], {"text": "Summarize briefly."}]},
     ]
-    assert model.calls == [
-        {
-            "messages": [{"role": "user", "content": [{"text": text} for text in transcript]}],
-            "tool_specs": None,
-            "system_prompt": "Summarize briefly.",
-        }
+    assert call["tool_specs"] == tool_specs
+    assert call["system_prompt"] == "live prompt"
+    assert call["system_prompt_content"] == prompt_content
+    assert HISTORY[2]["content"] == [
+        {"toolResult": {"toolUseId": "t1", "status": "success", "content": [{"text": "42"}]}}
     ]
 
 
 @pytest.mark.asyncio
-async def test_summarize_base_uses_the_default_prompt_without_instructions():
+async def test_summarize_base_adds_a_user_turn_after_an_assistant_turn():
     model = RecordingModel()
 
-    await model.summarize([{"role": "user", "content": [{"text": "hi"}]}])
+    await model.summarize(HISTORY[:2], instructions="Summarize briefly.")
 
-    assert model.calls[0]["system_prompt"].startswith("You are a summarization assistant.")
+    assert model.calls[0]["messages"] == [*HISTORY[:2], {"role": "user", "content": [{"text": "Summarize briefly."}]}]
 
 
 @pytest.mark.asyncio
-async def test_summarize_base_sends_empty_instructions_as_given():
+@pytest.mark.parametrize("instructions", [None, ""])
+async def test_summarize_base_uses_the_defaults_without_a_system_prompt_or_instructions(instructions):
     model = RecordingModel()
 
-    await model.summarize([{"role": "user", "content": [{"text": "hi"}]}], instructions="")
+    await model.summarize([{"role": "user", "content": [{"text": "hi"}]}], instructions=instructions)
 
-    assert model.calls[0]["system_prompt"] == ""
+    assert model.calls[0]["system_prompt"] == DEFAULT_SUMMARIZE_SYSTEM_PROMPT
+    assert model.calls[0]["messages"][-1]["content"][-1] == {"text": DEFAULT_SUMMARIZE_INSTRUCTIONS}
 
 
 @pytest.mark.asyncio
 async def test_summarize_base_keeps_a_reply_cut_off_at_the_output_limit():
     model = RecordingModel(reply=("partial",), stop_reason="max_tokens")
 
-    assert await model.summarize([{"role": "user", "content": [{"text": "hi"}]}]) == {"text": "partial"}
+    result = await model.summarize([{"role": "user", "content": [{"text": "hi"}]}])
+
+    assert result.content == [{"summary": {"provider": None, "text": "partial"}}]
 
 
 @pytest.mark.asyncio
-async def test_summarize_base_raises_when_the_reply_holds_no_text():
-    model = RecordingModel(reply=("  ",))
+async def test_summarize_base_returns_an_empty_summary_when_the_reply_holds_no_text():
+    model = RecordingModel(reply=("  ",), usage={"inputTokens": 10, "outputTokens": 1, "totalTokens": 11})
 
-    with pytest.raises(RuntimeError, match=re.escape("model=<RecordingModel> | summary reply held no text")):
-        await model.summarize([{"role": "user", "content": [{"text": "hi"}]}])
+    result = await model.summarize([{"role": "user", "content": [{"text": "hi"}]}])
+
+    assert result == SummarizeResult(content=[], usage={"inputTokens": 10, "outputTokens": 1, "totalTokens": 11})
 
 
 @pytest.mark.asyncio
-async def test_summarize_base_adds_its_usage_to_the_request():
+async def test_summarize_base_returns_its_usage():
     model = RecordingModel(usage={"inputTokens": 10, "outputTokens": 5, "totalTokens": 15})
-    request = _create_invocation_context()
 
-    await model.summarize([{"role": "user", "content": [{"text": "hi"}]}], invocation_context=request)
+    result = await model.summarize([{"role": "user", "content": [{"text": "hi"}]}])
 
-    assert request.usage["inputTokens"] == 10
-    assert request.usage["outputTokens"] == 5
-    assert request.usage["totalTokens"] == 15
+    assert result.usage == {"inputTokens": 10, "outputTokens": 5, "totalTokens": 15}
+
+
+@pytest.mark.asyncio
+async def test_summarize_base_forwards_the_cancel_signal():
+    model = RecordingModel()
+    cancel_signal = threading.Event()
+
+    await model.summarize([{"role": "user", "content": [{"text": "hi"}]}], cancel_signal=cancel_signal)
+
+    assert model.calls[0]["cancel_signal"] is cancel_signal
 
 
 @pytest.mark.asyncio

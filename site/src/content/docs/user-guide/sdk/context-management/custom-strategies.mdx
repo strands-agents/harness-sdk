@@ -147,7 +147,9 @@ Offload.summarize("*").when(
 | Parameter | Key | Default |
 |-----------|-----|---------|
 | Model | `model` | `agent.aux_model` |
-| System prompt | `system_prompt` | Built-in |
+| Summarization instructions | `system_prompt` | Built-in |
+
+A batched summary resends the conversation with the agent's system prompt and tools, followed by the summarization instructions. When it runs on the agent's model, it can reuse the agent's prompt cache.
 
 </Tab>
 <Tab label="TypeScript">

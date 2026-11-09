@@ -8,6 +8,7 @@ import base64
 import json
 import logging
 import re
+import threading
 import warnings
 from collections import Counter
 from collections.abc import AsyncGenerator, Mapping
@@ -18,7 +19,7 @@ import anthropic
 from pydantic import BaseModel
 from typing_extensions import Required, Unpack, override
 
-from ..event_loop.streaming import _record_usage, process_stream
+from ..event_loop.streaming import process_stream
 from ..tools.structured_output._structured_output_context import json_object_from_message
 from ..tools.structured_output.structured_output_utils import convert_pydantic_to_tool_spec
 from ..types.citations import (
@@ -41,6 +42,7 @@ from ._native_output import (
     structured_output_mechanisms,
     unsupported_mechanisms,
 )
+from ._summarize import SummarizeResult
 from ._thinking_binding import THINKING_BINDING_BETA, is_thinking_binding_error, thinking_with_drop_block
 from ._validation import (
     _has_location_source,
@@ -53,8 +55,6 @@ from .model import BaseModelConfig, CacheConfig, CacheToolsConfig, Model, _messa
 if TYPE_CHECKING:
     # AsyncAnthropicBedrockMantle needs anthropic>=0.91, so these are imported for typing only.
     from anthropic import AsyncAnthropicBedrock, AsyncAnthropicBedrockMantle, AsyncAnthropicVertex
-
-    from ..agent.invocation_context import InvocationContext
 
     _AsyncClient = anthropic.AsyncAnthropic | AsyncAnthropicBedrock | AsyncAnthropicBedrockMantle | AsyncAnthropicVertex
 
@@ -1332,9 +1332,9 @@ class AnthropicModel(Model):
         system_prompt: str | None = None,
         system_prompt_content: list[SystemContentBlock] | None = None,
         instructions: str | None = None,
-        invocation_context: "InvocationContext | None" = None,
+        cancel_signal: threading.Event | None = None,
         **kwargs: Any,
-    ) -> ContentBlock:
+    ) -> SummarizeResult:
         """Summarize the conversation's opening ``messages`` with Anthropic on-demand compaction.
 
         Sends the live system prompt and tools unchanged under beta ``compact-2026-09-04``, so the thinking kept
@@ -1349,16 +1349,12 @@ class AnthropicModel(Model):
             system_prompt: The live conversation's plain string system prompt.
             system_prompt_content: The live conversation's structured system prompt.
             instructions: Summarization instructions replacing the API's own prompt.
-            invocation_context: The request the compaction call's usage adds to, including a call that returns no
-                summary.
+            cancel_signal: Event that aborts the base implementation's call.
             **kwargs: Additional keyword arguments for future extensibility.
 
         Returns:
-            The summary block.
-
-        Raises:
-            RuntimeError: If the response holds no compaction block, or the base implementation's reply holds no
-                text.
+            The summary and the compaction call's usage; the summary is empty when the response holds no compaction
+            block.
         """
         if self.model_info.capabilities.server_side_summary is not True:
             return await super().summarize(
@@ -1367,7 +1363,7 @@ class AnthropicModel(Model):
                 system_prompt=system_prompt,
                 system_prompt_content=system_prompt_content,
                 instructions=instructions,
-                invocation_context=invocation_context,
+                cancel_signal=cancel_signal,
                 **kwargs,
             )
 
@@ -1382,23 +1378,21 @@ class AnthropicModel(Model):
         # The Bedrock/Vertex beta resources alias the first-party stream method, which mypy rejects as a self type.
         async with self.client.beta.messages.stream(**request) as stream:  # type: ignore[misc]
             response = cast(dict[str, Any], (await stream.get_final_message()).to_dict())
-        if response.get("usage"):
-            _record_usage(invocation_context, _format_usage(response["usage"]))
+        usage = _format_usage(response["usage"]) if response.get("usage") else None
 
         block = next((block for block in response.get("content") or [] if block.get("type") == "compaction"), None)
         if response.get("stop_reason") != "compaction" or not block or not block.get("content"):
-            raise RuntimeError(
-                f"model_id=<{self.config['model_id']}>, stop_reason=<{response.get('stop_reason')}>"
-                " | compaction returned no summary"
+            logger.debug(
+                "model_id=<%s>, stop_reason=<%s> | compaction returned no summary",
+                self.config["model_id"],
+                response.get("stop_reason"),
             )
+            return SummarizeResult(usage=usage)
         signature = block.get("signature")
-        return ContentBlock(
-            summary=SummaryBlock(
-                provider="anthropic",
-                signature=signature if isinstance(signature, str) else None,
-                text=block["content"],
-            )
+        summary = SummaryBlock(
+            provider="anthropic", signature=signature if isinstance(signature, str) else None, text=block["content"]
         )
+        return SummarizeResult(content=[ContentBlock(summary=summary)], usage=usage)
 
     def _record_rejected_mechanism(
         self,

@@ -19,12 +19,11 @@ from ..types.streaming import StreamEvent
 from ..types.tools import ToolChoice, ToolSpec
 from ._defaults import DEFAULT_CONTEXT_WINDOW_LIMIT
 from ._model_info import ModelInfo, ModelLimits, lookup_model_info
-from ._summarize import _summarize_with_stream
+from ._summarize import SummarizeResult, _summarize_with_stream
 
 if TYPE_CHECKING:
     from ..agent.agent import Agent
     from ..agent.agent_metadata import AgentMetadata
-    from ..agent.invocation_context import InvocationContext
 
 logger = logging.getLogger(__name__)
 
@@ -410,47 +409,45 @@ class Model(abc.ABC):
         system_prompt: str | None = None,
         system_prompt_content: list[SystemContentBlock] | None = None,
         instructions: str | None = None,
-        invocation_context: "InvocationContext | None" = None,
+        cancel_signal: threading.Event | None = None,
         **kwargs: Any,
-    ) -> ContentBlock:
+    ) -> SummarizeResult:
         """Summarize ``messages``.
 
-        The base implementation summarizes client-side: one tool-less :meth:`stream` call on a single user message
-        holding the delimited, flattened transcript of ``messages``, with ``instructions`` (or a default prompt) as
-        the system prompt. Reasoning blocks are left out of the transcript. It returns the reply's text as a text
-        block, including a reply cut off at the output limit.
+        ``messages`` is a request as the caller would send it to :meth:`stream`, along with its ``tool_specs`` and
+        system prompt. The base implementation sends that request with ``instructions`` (or a default instruction)
+        closing it, so a caller that replays its own conversation can share its prompt cache. Without a system prompt
+        it uses a default summarizer prompt. The summary is the reply's text, including a reply cut off at the output
+        limit; a reply without text, such as one that calls a tool instead, gives an empty result.
 
-        ``messages`` is a transcript to summarize, not a request to send as is: it need not alternate roles, may
-        start with an assistant message, and may hold a tool result without the tool use it answers.
-
-        An override may customize client-side summaries by returning a text block. A provider that reports
-        ``model_info.capabilities.server_side_summary`` as True must override this method to summarize server-side
-        and return a ``summary`` block. The summarize strategy calls such an override only with the conversation's
-        opening messages, from message 0, and writes every other summary with the base implementation; when the
-        override raises, the strategy summarizes client-side instead. For a model without the capability, the
-        strategy calls this method for every summary, so a server-side override must use the base implementation
-        then, as ``AnthropicModel`` does.
+        Every summary is a ``summary`` block. The base implementation leaves its ``provider`` unset. A provider that
+        reports ``model_info.capabilities.server_side_summary`` as True overrides this method to summarize
+        server-side and sets ``provider`` to its own name. The summarize strategy calls such an override only with
+        the conversation's opening messages, from message 0, and writes every other summary with the base
+        implementation. For a model without the capability, the strategy calls this method for every summary, so a
+        server-side override must use the base implementation then, as ``AnthropicModel`` does.
 
         Args:
-            messages: The messages to summarize, left unmodified.
-            tool_specs: The live conversation's tool specifications, for overrides. The base implementation
-                ignores them.
-            system_prompt: The live conversation's plain string system prompt, for overrides. The base
-                implementation ignores it.
-            system_prompt_content: The live conversation's structured system prompt, for overrides. The base
-                implementation ignores it.
-            instructions: Summarization instructions replacing the default prompt, which ``None`` keeps.
-            invocation_context: The request the summary call's usage adds to, as with :meth:`stream`. An override
-                must record the usage of the calls it makes, and pass this on when it uses the base implementation.
+            messages: The request to summarize, left unmodified.
+            tool_specs: The request's tool specifications.
+            system_prompt: The request's plain string system prompt. Ignored if system_prompt_content is provided.
+            system_prompt_content: The request's structured system prompt. Takes priority over system_prompt.
+            instructions: Summarization instructions replacing the default ones, which ``None`` or ``""`` keeps.
+            cancel_signal: Event that aborts the call.
             **kwargs: Additional keyword arguments for future extensibility.
 
         Returns:
-            A text block holding the summary, or a ``summary`` block from a provider's server-side summary.
-
-        Raises:
-            RuntimeError: If the base implementation's reply holds no text.
+            The summary and the token usage of the calls made for it.
         """
-        return await _summarize_with_stream(self, messages, instructions, invocation_context)
+        return await _summarize_with_stream(
+            self,
+            messages,
+            tool_specs=tool_specs,
+            system_prompt=system_prompt,
+            system_prompt_content=system_prompt_content,
+            instructions=instructions,
+            cancel_signal=cancel_signal,
+        )
 
     def estimate_utilization(self, input_tokens: int) -> float:
         """Estimate the fraction of the model's context window consumed by the given input token count.
