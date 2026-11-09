@@ -390,15 +390,29 @@ describe('readDevWorkspace', () => {
     expect(await readDevWorkspace(join(root, 'missing'))).toBeUndefined()
   })
 
-  it.each([null, [], {}, { version: 2 }, config({ name: '' }), config({ entrypoint: '../agent.ts' })])(
-    'should reject malformed metadata When the document is %j',
+  it.each([null, [], {}, { version: 2 }, { agent: 'agent.ts' }, { model: 'example', tools: [] }])(
+    'shouldIgnoreUnrelatedProjectConfigWhenTheDocumentIs%j',
     async (document) => {
       const root = await project()
       await manifest(root, document)
+      const path = join(root, '.strands/config.json')
+      const before = await readFile(path)
 
-      await expect(readDevWorkspace(root)).rejects.toThrow()
+      expect(await readDevWorkspace(root)).toBeUndefined()
+      expect(await readFile(path)).toEqual(before)
     }
   )
+
+  it.each([
+    config({ version: 2 } as unknown as Partial<DevWorkspaceConfig>),
+    config({ name: '' }),
+    config({ entrypoint: '../agent.ts' }),
+  ])('should reject malformed metadata When the document is %j', async (document) => {
+    const root = await project()
+    await manifest(root, document)
+
+    await expect(readDevWorkspace(root)).rejects.toThrow()
+  })
 
   it('should reject nonportable stored paths When a manifest contains native separators', async () => {
     const root = await project()
