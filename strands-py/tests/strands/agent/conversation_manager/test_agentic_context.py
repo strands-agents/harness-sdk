@@ -10,7 +10,9 @@ from strands._context_manager.modes.agentic.agentic_context import (
     truncate_context,
 )
 from strands.agent.conversation_manager.compression.pin_message import pin_message
+from strands.agent.invocation_context import _create_invocation_context
 from strands.types.content import Message
+from strands.types.tools import ToolContext
 
 
 def text_msg(role: str, text: str) -> Message:
@@ -40,6 +42,12 @@ async def _mock_model_stream(response_text):
     yield {"messageStop": {"stopReason": "end_turn"}}
 
 
+async def _mock_model_stream_with_usage(response_text, usage):
+    async for event in _mock_model_stream(response_text):
+        yield event
+    yield {"metadata": {"usage": usage, "metrics": {"latencyMs": 0}}}
+
+
 async def _mock_model_stream_error(error):
     raise error
     yield  # pragma: no cover - makes this a generator
@@ -55,6 +63,7 @@ def make_agent(messages, model=None):
     agent = Mock()
     agent.messages = messages
     agent.model = model if model is not None else Mock()
+    agent.aux_model = agent.model
     return agent
 
 
@@ -83,6 +92,15 @@ class TestSummarizeContext:
         assert "message(s)" in result
         assert len(messages) < 20
         assert messages[0]["role"] == "user"
+
+    async def test_summarizes_with_the_agent_aux_model(self, alist):
+        messages = make_messages(20)
+        agent = make_agent(messages, mock_model())
+        agent.aux_model = mock_model("Summary")
+        result = await invoke_tool(summarize_context, agent, alist, keep_recent=10, summary_ratio=0.5)
+        assert "Summarized" in result
+        agent.model.stream.assert_not_called()
+        agent.aux_model.stream.assert_called_once()
 
     async def test_assigns_a_durable_tracking_id_to_the_generated_summary(self, alist):
         # The summary message is spliced straight into agent.messages, bypassing the append
@@ -401,3 +419,28 @@ class TestPinContextEmptyConversation:
         agent = make_agent([])
         result = await invoke_tool(pin_context, agent, alist, select="last_turn", action="pin")
         assert result == "No messages in the conversation."
+
+
+@pytest.mark.asyncio
+async def test_summarize_context_adds_its_usage_to_the_request_total(alist):
+    messages = make_messages(20)
+    model = Mock()
+    model.stream = Mock(
+        side_effect=lambda *a, **kw: _mock_model_stream_with_usage(
+            "Summary", {"inputTokens": 4, "outputTokens": 5, "totalTokens": 9}
+        )
+    )
+    agent = make_agent(messages, model)
+    request = _create_invocation_context({"turns": 1})
+    request._usage["turns_taken"] = 1
+    tool_use = {"toolUseId": "test-id", "name": summarize_context.tool_name, "input": {"keep_recent": 10}}
+    tool_context = ToolContext(
+        tool_use=tool_use, agent=agent, invocation_state={"agent": agent}, invocation_context=request
+    )
+
+    events = await alist(
+        summarize_context.stream(tool_use, {"agent": agent}, _tool_context=tool_context),
+    )
+
+    assert "Summarized" in events[-1].tool_result["content"][0]["text"]
+    assert request.usage == {"turns_taken": 1, "inputTokens": 4, "outputTokens": 5, "totalTokens": 9}

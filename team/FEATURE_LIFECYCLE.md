@@ -4,6 +4,8 @@
 
 This document establishes a standardized process for adding new features and deprecating existing functionality in the Strands SDK while maintaining semantic versioning compliance and community trust.
 
+It applies to the SDK packages (`strands-py`, `strands-ts`). Strands harness and the Strands CLI are 0.x and follow a different rule; see [Strands harness versioning](../site/src/content/docs/user-guide/harness/versioning.mdx).
+
 ## Vision for Major Releases
 
 Major releases should be viewed as opportunities to reduce technical debt and remove deprecated features while maintaining a smooth upgrade path for the community. The goal is to enable users to upgrade from version 1.11 to 2.0 with minimal code changes and minimal behavioral differences.
@@ -179,29 +181,33 @@ Typescript
 
 #### Deprecating a tool
 
-Apply the decorator **and** log the same message from inside the tool. Both are required,
-because they reach different audiences and neither covers the other:
+Deprecation is a developer-facing notice about how the SDK is being used, so it goes through
+`warnings.warn` — the mechanism defined for this audience in
+[strands-py/AGENTS.md](../strands-py/AGENTS.md#logging). Apply the decorator **and** call
+`warnings.warn` from inside the tool. Both are required, because they reach different
+audiences and neither covers the other:
 
-| | Reaches a user running an agent | Reaches type checkers, IDEs, `-W error` |
+| | Reaches the developer when the tool is invoked | Reaches type checkers, IDEs, `-W error` |
 |---|---|---|
 | `@deprecated` | no | yes |
-| `logger.warning` | yes | no |
+| `warnings.warn` | yes | no |
 
 `@deprecated` raises a `DeprecationWarning`, and Python's default filter only displays that
 warning when it originates in `__main__` — every other module is ignored. A tool is invoked
-by the framework, so the warning is attributed to SDK internals and suppressed. The user
-sees nothing.
+by the framework, so the decorator's warning is attributed to SDK internals and suppressed;
+the developer sees nothing.
 
-The log line is what they actually see. Keep the decorator anyway: it is what marks the
-call site for type checkers and IDEs, and what surfaces under `-W error` or in pytest.
+The `warnings.warn` call is what they actually see. Use the default `UserWarning` category
+so it is shown under Python's default filter regardless of where it fires from. Keep the
+decorator anyway: it is what marks the call site for type checkers and IDEs, and what
+surfaces under `-W error` or in pytest. The standard library dedupes `warnings.warn` once
+per call site under the default filter, so do not hand-roll a warn-once helper.
 
 ```python
-import logging
+import warnings
 
 from strands import tool
 from typing_extensions import deprecated
-
-logger = logging.getLogger(__name__)
 
 _DEPRECATION_MESSAGE = (
     "old_tool is deprecated and will be removed in v2.0.0. Use new_tool instead. "
@@ -217,14 +223,15 @@ def old_tool(query: str) -> str:
     Args:
         query: What to look up.
     """
-    logger.warning("tool_name=<old_tool> | %s", _DEPRECATION_MESSAGE)
+    warnings.warn(_DEPRECATION_MESSAGE, stacklevel=2)
     ...
 ```
 
 Order matters: `@tool` goes outermost so the tool spec is built from the real signature.
-Share the message through a constant so the two copies cannot drift. Log before any early
-return, so the warning fires on error paths too. The log call follows the
-[structured logging format](../AGENTS.md) used across both SDKs.
+Share the message through a constant so the two copies cannot drift. Warn before any early
+return, so the notice fires on error paths too. Pass an explicit `stacklevel` so the warning
+points at the caller rather than the tool body (see the `models/_validation.py` examples
+referenced in [strands-py/AGENTS.md](../strands-py/AGENTS.md#logging)).
 
 Note that a deprecated tool *instance* — as opposed to a factory function — cannot carry the
 decorator at all. Resolve those through a module-level `__getattr__` that warns and returns

@@ -1,0 +1,60 @@
+---
+title: Lua scripting
+description: Run sandboxed Lua 5.4 inside Strands Shell for multi-step transforms and structured data, and call nested MCP servers as Lua modules from a script.
+sidebar:
+  label: "Lua scripting"
+---
+
+Shell syntax gets awkward for multi-step transforms, structured-data manipulation, or
+logic that would sprawl across a chain of pipes. Reach for `lua` when it does. The shell
+runs a sandboxed Lua 5.4 interpreter with the virtual filesystem wired into its `io` and
+`os` libraries, so a script reads and writes the same sandboxed filesystem your commands
+see, mediated by the same Kernel boundary.
+
+## Run a script
+
+`lua` is a command like any other in the shell. Run a script from a file in the VFS, or
+pipe one in:
+
+```bash
+lua transform.lua
+```
+
+The working directory, environment, and VFS carry over from the surrounding shell, and a
+script's file access goes through the Kernel just as a command's does.
+
+## What the sandbox allows
+
+The interpreter is Lua 5.4 with a restricted global environment:
+
+- `io` and `os` are backed by the VFS, so file access stays inside the sandbox.
+- Metatables are disabled: `setmetatable` and `getmetatable` are removed.
+- `os.date` and the `debug` library are unavailable.
+- The escape hatches that would compile arbitrary chunks or reach around the sandbox are
+  removed, including `load`, `collectgarbage`, the raw accessors (`rawget`, `rawset`,
+  `rawequal`, `rawlen`), and `warn`.
+
+Under a bare `strands-shell -c`, a Lua script has no wall-clock timeout. Set a
+[`timeout`](configuration.md#behavioral-settings) on the shell, or pass a per-request
+`timeout_ms` through the MCP [`shell` tool](mcp-server.md#the-four-tools), to bound a
+long-running script.
+
+## Nested MCP servers as Lua modules
+
+A shell config can declare other MCP servers under `[[mcp]]` entries. Each one becomes a
+Lua module inside the shell, so a script can call your existing MCP tools through the
+same sandboxed shell, with each tool's response arriving as an ordinary Lua table.
+
+Declare the servers in your
+[TOML config](mcp-server.md#nested-mcp-servers-as-lua-modules), then `require` a server
+by name from `lua`. A server named `my-tools` is exposed as the module `my_tools`
+(hyphens become underscores):
+
+```lua
+local tools = require("my_tools")
+local result = tools.search({ query = "deny by default" })
+print(result)
+```
+
+Nested MCP servers are a native-target feature. They aren't available under the WASM
+build, which has no MCP client and no `--config` flag.

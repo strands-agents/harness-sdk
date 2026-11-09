@@ -1,0 +1,10 @@
+name: confident-trace
+description: Confident AI's OpenTelemetry-native tracing for Strands agents — captures agent, model, and tool spans for observability and online evals.
+integrationType: observability
+maintainedBy: partner
+languages:
+  python:
+    package: confident-trace
+github: https://github.com/confident-ai/confident-trace
+docsUrl: https://www.confident-ai.com/docs/integrations/third-party/strands
+addedDate: 2026-10-01

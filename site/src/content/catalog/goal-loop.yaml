@@ -6,5 +6,5 @@ languages:
   python: {}
   typescript: {}
 github: https://github.com/strands-agents/harness-sdk/tree/main/strands-py/src/strands/vended_plugins/goal
-docsPage: docs/user-guide/concepts/plugins/goal-loop
+docsPage: docs/user-guide/sdk/plugins/goal-loop
 addedDate: 2026-06-01

@@ -7,7 +7,7 @@ import type {
 } from '@ai-sdk/provider'
 import { APICallError } from '@ai-sdk/provider'
 import { VercelModel } from '../vercel.js'
-import { ContextWindowOverflowError, ModelError, ModelThrottledError } from '../../errors.js'
+import { ContextWindowOverflowError, ModelError, ModelThrottledError, ModelNetworkError } from '../../errors.js'
 import { logger } from '../../logging/logger.js'
 import { warnOnce } from '../../logging/warn-once.js'
 import { collectIterator } from '../../__fixtures__/model-test-helpers.js'
@@ -470,6 +470,48 @@ describe('VercelModel', () => {
         await expect(collectIterator(model.stream([]))).rejects.toThrow(ModelThrottledError)
       })
 
+      it('throws ModelNetworkError when doStream fails with a fetch network error', async () => {
+        const { mock, model } = setupCaptureTest()
+        const networkError = new TypeError('Failed to fetch')
+        ;(mock.doStream as ReturnType<typeof vi.fn>).mockRejectedValue(networkError)
+
+        const error = await collectIterator(model.stream([])).catch((caught: unknown) => caught)
+
+        expect(error).toBeInstanceOf(ModelNetworkError)
+        expect(error).toMatchObject({ message: 'Language model stream error: Failed to fetch', cause: networkError })
+      })
+
+      it('throws ModelNetworkError for the APICallError ai-sdk raises when it cannot connect', async () => {
+        const { mock, model } = setupCaptureTest()
+        ;(mock.doStream as ReturnType<typeof vi.fn>).mockRejectedValue(
+          new APICallError({
+            message: 'Cannot connect to API: other side closed',
+            url: 'https://api.example.com',
+            requestBodyValues: {},
+            isRetryable: true,
+          })
+        )
+
+        await expect(collectIterator(model.stream([]))).rejects.toThrow(ModelNetworkError)
+      })
+
+      it('throws a plain ModelError for a server error response', async () => {
+        const { mock, model } = setupCaptureTest()
+        ;(mock.doStream as ReturnType<typeof vi.fn>).mockRejectedValue(
+          new APICallError({
+            message: 'Service Unavailable',
+            url: 'https://api.example.com',
+            requestBodyValues: {},
+            statusCode: 503,
+          })
+        )
+
+        const error = await collectIterator(model.stream([])).catch((caught: unknown) => caught)
+
+        expect(error).toBeInstanceOf(ModelError)
+        expect(error).not.toBeInstanceOf(ModelNetworkError)
+      })
+
       it('throws ContextWindowOverflowError for APICallError with context overflow in responseBody', async () => {
         const { mock, model } = setupCaptureTest()
         ;(mock.doStream as ReturnType<typeof vi.fn>).mockRejectedValue(
@@ -514,6 +556,21 @@ describe('VercelModel', () => {
         const model = new VercelModel({ provider: mock })
 
         await expect(collectIterator(model.stream([]))).rejects.toThrow(ModelThrottledError)
+      })
+
+      it('throws ModelNetworkError when the connection drops while reading the stream', async () => {
+        const mock = createMockModel([])
+        ;(mock.doStream as ReturnType<typeof vi.fn>).mockResolvedValue({
+          stream: new ReadableStream({
+            start(controller) {
+              controller.enqueue({ type: 'stream-start', warnings: [] })
+              controller.error(new TypeError('network error'))
+            },
+          }),
+        })
+        const model = new VercelModel({ provider: mock })
+
+        await expect(collectIterator(model.stream([]))).rejects.toThrow(ModelNetworkError)
       })
     })
 
@@ -1260,7 +1317,7 @@ describe('VercelModel', () => {
 
     describe('bedrock underlying provider', () => {
       // A Bedrock model id the default 'auto' strategy recognizes as caching-capable, and one it does not.
-      const CACHING_MODEL_ID = 'anthropic.claude-sonnet-4-20250514-v1:0'
+      const CACHING_MODEL_ID = 'anthropic.claude-sonnet-4-6'
       const UNSUPPORTED_MODEL_ID = 'meta.llama3-70b-instruct-v1:0'
 
       /** cachePoint on the system message. */
@@ -1538,8 +1595,86 @@ describe('VercelModel', () => {
         expect(bedrockMessageCachePoint(args)).toBeUndefined()
         expect(warnOnce).toHaveBeenCalledWith(
           expect.objectContaining({ warn: expect.any(Function) }),
-          expect.stringContaining('does not support automatic caching')
+          expect.stringContaining('is not known to support automatic caching')
         )
+      })
+
+      it.each([
+        'anthropic.claude-future-9',
+        'arn:aws:bedrock:us-east-1:123456789012:default-prompt-router/anthropic.claude:1',
+        'US.ANTHROPIC.CLAUDE-SONNET-4-6',
+      ])('under the default auto strategy, caches an unlisted Claude id by name: %s', async (modelId) => {
+        const { collect, callArgs, model } = setupCaptureTest(
+          minimalParts,
+          { cacheConfig: {} },
+          'amazon-bedrock',
+          modelId
+        )
+        await collect(userMessages, { systemPrompt: 'be helpful' })
+
+        expect(model.modelInfo.capabilities?.promptCaching).toBeUndefined()
+        const args = callArgs()
+        expect(bedrockSystemCachePoint(args)).toEqual({ type: 'default' })
+        expect(bedrockMessageCachePoint(args)).toEqual({ type: 'default' })
+        expect(warnOnce).not.toHaveBeenCalledWith(
+          expect.objectContaining({ warn: expect.any(Function) }),
+          expect.stringContaining('is not known to support automatic caching')
+        )
+      })
+
+      it('under the default auto strategy, skips an unlisted id that is not Claude', async () => {
+        const modelId = 'arn:aws:bedrock:us-east-1:123456789012:custom-model/acme.foo/abc'
+        const { collect, callArgs } = setupCaptureTest(minimalParts, { cacheConfig: {} }, 'amazon-bedrock', modelId)
+        await collect(userMessages, { systemPrompt: 'be helpful' })
+
+        expect(bedrockSystemCachePoint(callArgs())).toBeUndefined()
+      })
+
+      it('under the default auto strategy, reports an OpenAI model as implicitly cached and skips it', async () => {
+        const modelId = 'us.openai.gpt-6-luna'
+        const { collect, callArgs, model } = setupCaptureTest(
+          minimalParts,
+          { cacheConfig: {} },
+          'amazon-bedrock',
+          modelId
+        )
+        await collect(userMessages, { systemPrompt: 'be helpful' })
+
+        expect(model.modelInfo.capabilities?.promptCaching).toBe('auto')
+        expect(bedrockSystemCachePoint(callArgs())).toBeUndefined()
+      })
+
+      it('lets a modelInfo override win over implicit caching for an OpenAI model', () => {
+        const { model } = setupCaptureTest(
+          minimalParts,
+          { modelInfo: { capabilities: { promptCaching: 'cachePoints' } } },
+          'amazon-bedrock',
+          'us.openai.gpt-6-luna'
+        )
+        expect(model.modelInfo.capabilities?.promptCaching).toBe('cachePoints')
+      })
+
+      it('under the default auto strategy, caches a model the modelInfo override says takes cache points', async () => {
+        const config = { cacheConfig: {}, modelInfo: { capabilities: { promptCaching: 'cachePoints' as const } } }
+        const { collect, callArgs } = setupCaptureTest(minimalParts, config, 'amazon-bedrock', UNSUPPORTED_MODEL_ID)
+        await collect(userMessages, { systemPrompt: 'be helpful' })
+
+        expect(bedrockSystemCachePoint(callArgs())).toBeDefined()
+      })
+
+      it('reads cache points for Claude from the shared model info, whatever the wrapping provider', () => {
+        expect(
+          setupCaptureTest(minimalParts, undefined, 'amazon-bedrock', CACHING_MODEL_ID).model.modelInfo.capabilities
+            ?.promptCaching
+        ).toBe('cachePoints')
+        expect(
+          setupCaptureTest(minimalParts, undefined, 'amazon-bedrock', UNSUPPORTED_MODEL_ID).model.modelInfo.capabilities
+            ?.promptCaching
+        ).toBeUndefined()
+        expect(
+          setupCaptureTest(minimalParts, undefined, 'anthropic', 'claude-sonnet-4-6').model.modelInfo.capabilities
+            ?.promptCaching
+        ).toBe('cachePoints')
       })
 
       it('caches on an unsupported model when the anthropic strategy is explicit', async () => {
@@ -1548,6 +1683,44 @@ describe('VercelModel', () => {
         await collect(userMessages)
 
         expect(bedrockMessageCachePoint(callArgs())).toEqual({ type: 'default', ttl: '1h' })
+      })
+
+      it('describes the configured model id over the wrapped one, for gateways and inference profiles', async () => {
+        const arn = 'arn:aws:bedrock:us-west-2:123:application-inference-profile/abc123'
+        const config = { modelId: CACHING_MODEL_ID, cacheConfig: { messagesTTL: '1h' as const } }
+        const { model, collect, callArgs } = setupCaptureTest(minimalParts, config, 'amazon-bedrock', arn)
+
+        expect(model.modelId).toBe(CACHING_MODEL_ID)
+        expect(model.modelInfo.capabilities?.promptCaching).toBe('cachePoints')
+        await collect(userMessages)
+        expect(bedrockMessageCachePoint(callArgs())).toEqual({ type: 'default', ttl: '1h' })
+      })
+    })
+
+    describe('modelInfo override says unsupported', () => {
+      const unsupported = { modelInfo: { capabilities: { promptCaching: 'unsupported' as const } } }
+
+      it.each(['anthropic', 'openai'])('under auto, adds no markers for %s', async (provider) => {
+        const config = { cacheConfig: { ttl: '1h' as const, cacheKey: 'k' }, ...unsupported }
+        const { collect, callArgs } = setupCaptureTest(minimalParts, config, provider, 'claude-sonnet-4-6')
+        await collect(userMessages, { toolSpecs })
+
+        const args = callArgs()
+        expect(toolCacheControl(args)).toBeUndefined()
+        expect(messageCacheControl(args)).toBeUndefined()
+        expect(args.providerOptions?.openai).toBeUndefined()
+        expect(warnOnce).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.stringContaining('does not support prompt caching')
+        )
+      })
+
+      it('still caches when the strategy is explicit', async () => {
+        const config = { cacheConfig: { strategy: 'anthropic' as const, messagesTTL: '1h' as const }, ...unsupported }
+        const { collect, callArgs } = setupCaptureTest(minimalParts, config, 'anthropic', 'claude-sonnet-4-6')
+        await collect(userMessages)
+
+        expect(messageCacheControl(callArgs())).toEqual({ type: 'ephemeral', ttl: '1h' })
       })
     })
 

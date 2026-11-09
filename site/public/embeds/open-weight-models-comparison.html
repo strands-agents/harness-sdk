@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cost against accuracy, by harness — Open-Weight Models</title>
+<style>
+  :root {
+    --brand:   #00FF77;   /* strands green, from strands.svg */
+    --harness: #2fd07f;   /* Strands harness marks */
+    --ink:     #ffffff;
+    --muted:   #ffffff;
+    --faint:   #ffffff;
+    --dim:     #9aa1ab;   /* competitor marks (non-text, stays grey) */
+    --rule:    #22252b;
+    --grid:    #2b2f37;
+    --axis:    #3a3f48;
+    --card:    #0a0b0d;
+    --mono: "SF Mono", "JetBrains Mono", "Roboto Mono", "Space Mono", ui-monospace, Menlo, Consolas, monospace;
+    /* left/right gutters that line the text up with the plot area: PL/W and PR/W of
+       the SVG viewBox (74/1400, 96/1400). */
+    --gl: 5.286%;
+    --gr: 6.857%;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 40px 28px;
+    background: #000;
+    color: var(--ink);
+    font-family: var(--mono); letter-spacing: 0.02em;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1680px; margin: 0 auto;
+    background: var(--card); border: 1px solid #33373f; border-radius: 14px;
+    padding: 44px 48px 38px; }
+
+  .head { padding: 0 var(--gr) 0 var(--gl); }
+  .head .tag { font-size: 30px; font-weight: 700; letter-spacing: 0.12em; color: var(--brand); margin: 0 0 12px; }
+  .head h1 { font-size: 48px; line-height: 1.1; color: var(--ink); max-width: none; }
+  .lgi.absent { display: none; }
+  .top { display: flex; justify-content: space-between; align-items: flex-start; gap: 40px 56px; flex-wrap: wrap;
+    padding: 0 var(--gr) 0 var(--gl); }
+  h1 { font-size: 74px; line-height: 1.0; font-weight: 700; margin: 0; letter-spacing: 0; max-width: 8ch; }
+  h1 .g { color: var(--brand); }
+
+  .stats { display: flex; gap: 44px; flex-wrap: wrap; padding-top: 4px; justify-content: flex-end; }
+  .stat { width: 440px; }
+  .stat .big { font-size: 60px; font-weight: 700; color: var(--brand); line-height: 1; letter-spacing: 0;
+    white-space: nowrap; text-align: left; }
+  .stat .big small { font-size: 40px; font-weight: 700; }
+  /* solid triangle as tall as the digits' cap height, sitting on the baseline, so it matches "34%" */
+  .stat .big .arrow { display: inline-block; width: 0.78em; height: 0.72em; vertical-align: 0; fill: var(--brand); margin-right: 8px; }
+  .stat .cap { font-size: 24px; color: var(--muted); margin-top: 14px; line-height: 1.4; text-align: left; }
+  .stat .cap .star { font-size: 0.7em; vertical-align: super; line-height: 0; }
+
+  .subtitle { color: var(--muted); font-size: 24px; letter-spacing: 0; line-height: 1.5; margin: 28px 0 8px;
+    padding: 0 var(--gr) 0 var(--gl); }
+  .subtitle .dir { display: inline-block; width: 1.15em; height: 1.15em; vertical-align: -0.22em;
+    fill: none; stroke: currentColor; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
+  .subtitle .nowrap { white-space: nowrap; }
+  .subtitle .hint { color: #8a8f98; }
+  .subtitle .dirline { display: block; margin-top: 6px; }
+
+  .tabs { display: flex; gap: 10px; margin: 22px 0 14px; padding: 0 var(--gr) 0 var(--gl); }
+  .tab {
+    font: inherit; font-size: 20px; letter-spacing: 0.06em; cursor: pointer;
+    color: var(--ink); background: transparent; border: 1px solid #33373f; border-radius: 999px;
+    padding: 9px 22px; transition: background .12s, border-color .12s, color .12s;
+  }
+  .tab:hover { border-color: #5a606b; }
+  .tab:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+  .tab[aria-selected="true"] { background: var(--brand); border-color: var(--brand); color: #000; font-weight: 700; }
+
+  .summary { margin: 0 0 26px; padding: 0 var(--gr) 0 var(--gl); font-size: 18px; color: var(--ink); line-height: 1.5; }
+  .summary b { color: var(--ink); font-weight: 700; }
+  .summary { letter-spacing: 0; }
+  .summary .nw { white-space: nowrap; }
+
+  svg { display: block; overflow: visible; }
+  .gridline { stroke: var(--grid); stroke-width: 1; vector-effect: non-scaling-stroke; shape-rendering: crispEdges; }
+  .axisline { stroke: var(--axis); stroke-width: 1; vector-effect: non-scaling-stroke; shape-rendering: crispEdges; }
+  .ticktext { fill: var(--muted); font-size: 18px; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  .axistitle { fill: var(--faint); font-size: 18px; letter-spacing: 0.12em; font-family: var(--mono); }
+  .mark { transition: opacity .12s; }
+  .lbl { font-family: var(--mono); font-size: 20px; letter-spacing: -0.04em; }
+  .lbl.harness { fill: var(--ink); font-weight: 700; }
+  .lbl.comp { fill: var(--muted); }
+
+  .legend {
+    display: flex; flex-wrap: wrap; gap: 12px 30px; align-items: center;
+    margin: 24px 0 10px; font-size: 21px; color: var(--muted);
+    padding: 0 var(--gr) 0 var(--gl);
+  }
+  .lgi { display: inline-flex; align-items: center; gap: 9px; }
+  .lgi.strong { color: var(--ink); font-weight: 700; }
+  .lgi.absent { opacity: 0.35; }
+  .lgi .lv { color: #8a8f98; font-weight: 400; font-size: 18px; }
+  .lgi .lv:empty { display: none; }
+
+  .footnote { color: #8a8f98; font-size: 21px; line-height: 1.65; margin: 18px 0 0;
+    padding: 0 var(--gr) 0 var(--gl); }
+  .footstar { color: #8a8f98; font-size: 21px; line-height: 1.6; margin: 12px 0 0; padding: 0 var(--gr) 0 var(--gl); }
+  .subtitle .star { font-size: 0.7em; vertical-align: super; line-height: 0; }
+
+  #tip {
+    position: fixed; z-index: 50; pointer-events: none; opacity: 0; transition: opacity .1s;
+    background: #14161a; border: 1px solid var(--rule); border-radius: 8px;
+    padding: 12px 15px; font-size: 17px; max-width: 360px; box-shadow: 0 8px 24px rgba(0,0,0,.6);
+  }
+  #tip .tv { font-size: 20px; font-weight: 700; color: var(--ink); }
+  #tip .tl { color: var(--muted); margin-top: 5px; }
+  #tip b { color: var(--ink); }
+</style>
+</head>
+<body>
+<div id="scaler">
+<div class="wrap">
+  <div class="head">
+    <div class="tag">OPEN-WEIGHT MODELS</div>
+    <h1>Cost against accuracy, by harness</h1>
+  </div>
+
+  <p class="subtitle"><span class="nowrap"><svg class="dir" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 18 L6 6 M6 6 L14 6 M6 6 L6 14"/></svg> up and left is better <span class="hint">(this chart is interactive)</span></span></p>
+
+  <p class="summary" id="summary" aria-live="polite"></p>
+
+  <div id="chart" role="tabpanel"></div>
+
+  <div class="legend" id="legend"></div>
+</div>
+</div>
+<div id="tip" role="tooltip" aria-hidden="true"></div>
+
+<script>
+"use strict";
+(function () {
+
+/* One point per harness per model family, from benchmark-full-with-new-gpt.xlsx (Results tab,
+   status "ok"). Each family is pooled over only the model × benchmark combinations that EVERY
+   harness in that family ran, so no harness gets credit for a combination its rivals skipped.
+     c   = estimated cost per trial (¢)  = Σ cost ÷ Σ trials (shown as dollars via usd())
+     s   = accuracy (%)                  = mean "Score excl. errored %" over the combinations
+     tok = tokens per trial (thousands)  = Σ (input + output tokens) ÷ Σ trials */
+const HARNESS = {
+  harness:            { label: "Strands harness",  shape: "circle",       hero: true, color: "var(--harness)" },
+  "claude-code":      { label: "Claude Code",      shape: "square",       color: "#e8843c" },
+  codex:              { label: "Codex",            shape: "diamond",      color: "#3f8ae0" },
+  omp:                { label: "oh-my-pi",         shape: "triangle",     color: "var(--dim)" },
+  opencode:           { label: "OpenCode",         shape: "triangleDown", color: "var(--dim)" },
+  "deepseek-harness": { label: "DeepSeek Harness", shape: "hexagon",      color: "var(--dim)" },
+};
+
+const FAMILIES = {
+  anthropic: { tab: "Anthropic", models: "Claude Fable 5, Claude Opus 5, Claude Opus 4.8 and Claude Sonnet 5",
+    combos: 32, trials: 8240, points: [
+    { h: "harness",          c: 73.9,  s: 80.41, tok: 835 },
+    { h: "opencode",         c: 86.8,  s: 79.78, tok: 961 },
+    { h: "deepseek-harness", c: 88.8,  s: 77.66, tok: 1098 },
+    { h: "omp",              c: 107.4, s: 78.22, tok: 1319 },
+    { h: "claude-code",      c: 157.4, s: 79.28, tok: 1645 },
+  ]},
+  openai: { tab: "OpenAI", models: "GPT-5.6 Luna, GPT-5.6 Sol and GPT-5.6 Terra",
+    combos: 24, trials: 6180, points: [
+    { h: "harness",          c: 20.1,  s: 71.02, tok: 516 },
+    { h: "opencode",         c: 25.9,  s: 66.18, tok: 493 },
+    { h: "codex",            c: 36.2,  s: 69.72, tok: 789 },
+    { h: "omp",              c: 49.2,  s: 69.73, tok: 1199 },
+  ]},
+  // Kimi 2.5 is left out: every oh-my-pi × Kimi 2.5 run failed (~3 model calls per task,
+  // 0–1.2% scores, no τ³-bench row), so it has no combination all four harnesses completed.
+  open: { tab: "Open-weight", models: "DeepSeek V3.2 and Qwen3 Coder Next",
+    combos: 16, trials: 4120, points: [
+    { h: "deepseek-harness", c: 62.4,  s: 37.93, tok: 1294 },
+    { h: "omp",              c: 116.9, s: 40.22, tok: 3655 },
+    { h: "harness",          c: 123.3, s: 41.82, tok: 2871 },
+    { h: "opencode",         c: 195.5, s: 42.93, tok: 3741 },
+  ]},
+};
+
+/* Per-family label nudges: harness -> { dx } shifts the name sideways where two
+   points sit close enough that centred labels would touch. */
+const FORCE = {
+  anthropic: { harness: { dx: -40 }, opencode: { dx: 40 } },
+  openai: {},
+  open: { harness: { dx: 30 }, omp: { dx: -40 } },
+};
+
+/* ---------------- geometry ---------------- */
+// Narrower than WIDE_MIN (embedded in a blog column, or on a phone) the chart is drawn at
+// its real pixel width with real-size text, instead of scaled down from the 1400-unit layout.
+const WIDE_MIN = 1000, PHONE_MAX = 620;
+let W, H, PL, PR, PT, PB, plotW, plotH, REAL, G, current;
+function setGeometry() {
+  const vw = window.innerWidth;
+  REAL = vw < WIDE_MIN;
+  if (!REAL) {
+    W = 1400; H = 730; PL = 74; PR = 96; PT = 34; PB = 60;
+    G = { tick: 18, axis: 18, tx: 10, ty: 4, xty: 22, att: -14, atb: 46, rh: 12, rc: 10, xt: 8 };
+  } else if (vw < PHONE_MAX) {
+    PL = 40; PR = 12; PT = 26; PB = 46;
+    G = { tick: 13, axis: 12, lbl: 15, tx: 6, ty: 4, xty: 18, att: -10, atb: 38, rh: 8, rc: 6.5, xt: 4 };
+  } else {
+    PL = 46; PR = 16; PT = 30; PB = 52;
+    G = { tick: 15, axis: 13, lbl: 17, tx: 8, ty: 5, xty: 22, att: -12, atb: 45, rh: 9, rc: 7.5, xt: 6 };
+  }
+  if (REAL) {
+    W = Math.max(280, Math.round(document.getElementById("chart").clientWidth));
+    H = Math.round(W * (vw < PHONE_MAX ? 0.85 : 0.6));
+  }
+  plotW = W - PL - PR; plotH = H - PT - PB;
+}
+
+/* Real-size layout: put each name in the first nearby slot that stays inside the plot and
+   clears every other mark and earlier name, clearly nearest its own mark. Strands harness goes
+   first and is always labelled; a name with no free slot is left off (the legend and tooltip
+   still identify it). */
+const SLOTS = [[0, -1], [0, 1], [1, 0], [-1, 0], [1, -1], [-1, -1], [1, 1], [-1, 1]];
+function placeLabels(svg, POINTS, X, Y) {
+  const fs = G.lbl, gap = 5;
+  const hit = (a, b) => a.x1 < b.x2 && b.x1 < a.x2 && a.y1 < b.y2 && b.y1 < a.y2;
+  const xy = p => [X(p.c), Y(p.s)];
+  // other harnesses' marks get extra clearance so a name never butts up against them
+  const taken = POINTS.map(p => {
+    const r = G.rh + 4, [x, y] = xy(p);
+    return { x1: x - r, x2: x + r, y1: y - r, y2: y + r, own: p };
+  });
+  const hero = POINTS.filter(p => p.h === "harness"), rest = POINTS.filter(p => p.h !== "harness");
+  const boxAt = (x0, y0, r, w, sx, sy) => {
+    // a centred name near the plot edge slides inward rather than being dropped
+    const x1 = sx === 0 ? Math.min(Math.max(x0 - w / 2, PL + 2), W - 2 - w)
+      : sx > 0 ? x0 + (sy ? 2 : r) : x0 - (sy ? 2 : r) - w;
+    const y1 = sy < 0 ? y0 - r - fs : sy > 0 ? y0 + r : y0 - fs / 2;
+    return { x1, x2: x1 + w, y1, y2: y1 + fs };
+  };
+  const inside = b => b.x1 >= PL + 2 && b.x2 <= W - 2 && b.y1 >= PT && b.y2 <= PT + plotH - 2;
+  // a name must sit closer to its own mark than to any other, or it reads as the wrong harness
+  const ownNearest = (b, p) => {
+    const d = q => {
+      const [x, y] = xy(q);
+      return Math.hypot(Math.max(b.x1 - x, 0, x - b.x2), Math.max(b.y1 - y, 0, y - b.y2));
+    };
+    return POINTS.every(q => q === p || d(p) * 1.6 < d(q));
+  };
+  const slotsFor = p => {
+    const isHero = p.h === "harness", w = HARNESS[p.h].label.length * fs * 0.62;
+    const [x0, y0] = xy(p), r0 = (isHero ? G.rh : G.rc) + gap, out = [];
+    for (const r of [r0, r0 + 8])
+      for (const [sx, sy] of SLOTS) {
+        const b = boxAt(x0, y0, r, w, sx, sy);
+        if (inside(b) && !taken.some(t => t.own !== p && hit(t, b)) && ownNearest(b, p)) out.push(b);
+      }
+    return out;
+  };
+  const draw = (p, box) => {
+    const t = E("text", { class: "lbl " + (p.h === "harness" ? "harness" : "comp"), x: box.x1.toFixed(1),
+      y: (box.y2 - fs * 0.22).toFixed(1), style: `font-size:${fs}px;letter-spacing:0` });
+    t.textContent = HARNESS[p.h].label; svg.appendChild(t);
+    taken.push({ x1: box.x1 - 3, x2: box.x2 + 3, y1: box.y1 - 2, y2: box.y2 + 2 });
+  };
+  for (const p of hero) {
+    let box = slotsFor(p)[0];
+    if (!box) {
+      const w = HARNESS[p.h].label.length * fs * 0.62, [x0, y0] = xy(p);
+      box = boxAt(x0, y0, G.rh + gap, w, 0, -1);
+    }
+    draw(p, box);
+  }
+  // Most-constrained first: the name with the fewest free slots goes next, into whichever
+  // of its slots blocks the fewest slots still open to the names after it.
+  const blocks = (box, others) => others.reduce((n, o) => n + o.slots.filter(s => hit(s, box)).length, 0);
+  while (rest.length) {
+    const open = rest.map(p => ({ p, slots: slotsFor(p) })).filter(o => o.slots.length)
+      .sort((a, b) => a.slots.length - b.slots.length);
+    if (!open.length) break;
+    const next = open[0], others = open.slice(1);
+    const box = next.slots.reduce((best, s) => blocks(s, others) < blocks(best, others) ? s : best);
+    draw(next.p, box);
+    rest.splice(rest.indexOf(next.p), 1);
+  }
+  // Still crowded out: set the name farther off with a leader line back to its mark. Phones
+  // skip this (too little room for lines to read) and rely on the legend below the chart.
+  if (window.innerWidth >= PHONE_MAX) for (const p of rest) {
+    const w = HARNESS[p.h].label.length * fs * 0.62, [x0, y0] = xy(p);
+    let box = null;
+    for (const r of [G.rc + 24, G.rc + 38, G.rc + 52]) {
+      for (const [sx, sy] of SLOTS) {
+        const b = boxAt(x0, y0, r, w, sx, sy);
+        if (inside(b) && !taken.some(t => t.own !== p && hit(t, b))) { box = b; break; }
+      }
+      if (box) break;
+    }
+    if (!box) continue;
+    const lx = Math.min(Math.max(x0, box.x1), box.x2), ly = Math.min(Math.max(y0, box.y1), box.y2);
+    const len = Math.hypot(lx - x0, ly - y0), k = (G.rc + 2) / len;
+    svg.insertBefore(E("line", { x1: (x0 + (lx - x0) * k).toFixed(1), y1: (y0 + (ly - y0) * k).toFixed(1),
+      x2: lx.toFixed(1), y2: ly.toFixed(1), stroke: "#6b717c", "stroke-width": 1 }), svg.firstChild.nextSibling);
+    draw(p, box);
+  }
+}
+const YSPAN = 20;   // every tab shows the same 20-pt accuracy window, so spreads compare across tabs
+
+const svgNS = "http://www.w3.org/2000/svg";
+const E = (tag, attrs) => { const n = document.createElementNS(svgNS, tag); for (const k in attrs) n.setAttribute(k, attrs[k]); return n; };
+
+function marker(shape, x, y, r, fill) {
+  const a = { fill, stroke: "var(--card)", "stroke-width": 2, "vector-effect": "non-scaling-stroke", class: "mark" };
+  switch (shape) {
+    case "square":       return E("rect", { ...a, x: x - r, y: y - r, width: 2*r, height: 2*r, rx: 1.5 });
+    case "diamond":      return E("polygon", { ...a, points: `${x},${y-r*1.3} ${x+r*1.3},${y} ${x},${y+r*1.3} ${x-r*1.3},${y}` });
+    case "triangle":     return E("polygon", { ...a, points: `${x},${y-r*1.2} ${x+r*1.1},${y+r*0.85} ${x-r*1.1},${y+r*0.85}` });
+    case "triangleDown": return E("polygon", { ...a, points: `${x},${y+r*1.2} ${x+r*1.1},${y-r*0.85} ${x-r*1.1},${y-r*0.85}` });
+    case "hexagon": {
+      const pts = [];
+      for (let i = 0; i < 6; i++) { const ang = Math.PI/6 + i*Math.PI/3; pts.push(`${(x+r*1.15*Math.cos(ang)).toFixed(1)},${(y+r*1.15*Math.sin(ang)).toFixed(1)}`); }
+      return E("polygon", { ...a, points: pts.join(" ") });
+    }
+    default:             return E("circle", { ...a, cx: x, cy: y, r });
+  }
+}
+
+const usd = (cents, dp) => "$" + (cents / 100).toFixed(dp);
+
+const tip = document.getElementById("tip");
+function showTip(ev, p) {
+  tip.innerHTML = `<div class="tv">${HARNESS[p.h].label}</div>` +
+    `<div class="tl"><b>${usd(p.c, 3)}</b> per trial · accuracy <b>${p.s.toFixed(1)}%</b></div>` +
+    `<div class="tl"><b>${p.tok.toLocaleString()}k</b> tokens per trial</div>`;
+  tip.style.opacity = "1"; tip.setAttribute("aria-hidden", "false");
+  moveTip(ev);
+}
+function moveTip(ev) {
+  const pad = 14, r = tip.getBoundingClientRect();
+  let x = ev.clientX + pad, y = ev.clientY + pad;
+  if (x + r.width > innerWidth - 8) x = ev.clientX - r.width - pad;
+  if (y + r.height > innerHeight - 8) y = ev.clientY - r.height - pad;
+  tip.style.left = Math.max(8, x) + "px"; tip.style.top = Math.max(8, y) + "px";
+}
+function hideTip() { tip.style.opacity = "0"; tip.setAttribute("aria-hidden", "true"); }
+
+function niceStep(range, target) {
+  const raw = range / target, mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const f = raw / mag;
+  return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10) * mag;
+}
+
+function render(key) {
+  current = key; setGeometry();
+  const fam = FAMILIES[key], POINTS = fam.points;
+  const cs = POINTS.map(p => p.c), ss = POINTS.map(p => p.s);
+  const cMax = Math.max(...cs), cMin = Math.min(...cs);
+  const sMax = Math.max(...ss), sMin = Math.min(...ss);
+
+  const xStep = niceStep(cMax, G.xt), XMAX = Math.ceil(cMax * 1.12 / xStep) * xStep;
+  const YMIN = Math.round(((sMax + sMin) / 2 - YSPAN / 2) / 5) * 5, YMAX = YMIN + YSPAN;
+  const X = c => PL + (c / XMAX) * plotW;
+  const Y = s => PT + plotH - ((s - YMIN) / (YMAX - YMIN)) * plotH;
+
+  const svg = E("svg", { viewBox: `0 0 ${W} ${H}`, width: "100%", role: "img",
+    "aria-label": `Cost per trial versus accuracy for each harness on ${fam.tab} models.` });
+
+  /* grid + axes */
+  for (let s = YMIN; s <= YMAX; s += 5) {
+    svg.appendChild(E("line", { class: "gridline", x1: PL, x2: W - PR, y1: Y(s), y2: Y(s) }));
+    const t = E("text", { class: "ticktext", style: `font-size:${G.tick}px`, x: PL - G.tx, y: Y(s) + G.ty, "text-anchor": "end" });
+    t.textContent = s + "%"; svg.appendChild(t);
+  }
+  for (let c = 0; c <= XMAX + 1e-9; c += xStep) {
+    svg.appendChild(E("line", { class: "gridline", x1: X(c), x2: X(c), y1: PT, y2: PT + plotH }));
+    const t = E("text", { class: "ticktext", style: `font-size:${G.tick}px`, x: X(c), y: PT + plotH + G.xty, "text-anchor": "middle" });
+    t.textContent = usd(c, 2); svg.appendChild(t);
+  }
+  svg.appendChild(E("line", { class: "axisline", x1: PL, x2: W - PR, y1: PT + plotH, y2: PT + plotH }));
+  svg.appendChild(E("line", { class: "axisline", x1: PL, x2: PL, y1: PT, y2: PT + plotH }));
+  let at = E("text", { class: "axistitle", style: `font-size:${G.axis}px`, x: PL, y: PT + G.att }); at.textContent = "ACCURACY"; svg.appendChild(at);
+  at = E("text", { class: "axistitle", style: `font-size:${G.axis}px`, x: W - PR, y: PT + plotH + G.atb, "text-anchor": "end" }); at.textContent = "EST. COST PER TRIAL ($)"; svg.appendChild(at);
+
+  // competitors first (dim, underneath), Strands harness on top (green)
+  POINTS.slice().sort((a, b) => (a.h === "harness") - (b.h === "harness")).forEach(p => {
+    const hero = p.h === "harness";
+    const m = marker(HARNESS[p.h].shape, X(p.c), Y(p.s), hero ? G.rh : G.rc, HARNESS[p.h].color);
+    if (!hero) m.setAttribute("opacity", "0.9");
+    m.style.cursor = "crosshair";
+    m.addEventListener("pointerenter", ev => showTip(ev, p));
+    m.addEventListener("pointermove", moveTip);
+    m.addEventListener("pointerleave", hideTip);
+    svg.appendChild(m);
+  });
+
+  /* labels: harness name beside its mark (cost · accuracy live in the legend) */
+  if (REAL) placeLabels(svg, POINTS, X, Y);
+  else POINTS.forEach(p => {
+    const x0 = X(p.c), y0 = Y(p.s), hero = p.h === "harness";
+    const x = x0 + ((FORCE[key][p.h] || {}).dx || 0);
+    const name = E("text", { class: "lbl " + (hero ? "harness" : "comp"), x: x.toFixed(1), y: (y0 - (hero ? 22 : 20)).toFixed(1), "text-anchor": "middle" });
+    name.textContent = HARNESS[p.h].label; svg.appendChild(name);
+  });
+
+  const chart = document.getElementById("chart");
+  chart.replaceChildren(svg);
+  chart.setAttribute("aria-labelledby", "tab-" + key);
+
+  // each model name and the run count wrap as whole units, never mid-name
+  const names = fam.models.split(/, | and /).map(n => `<span class="nw">${n}</span>`);
+  const models = names.length > 1 ? names.slice(0, -1).join(", ") + " and " + names[names.length - 1] : names[0];
+  document.getElementById("summary").innerHTML =
+    `<b>Models:</b> ${models} <span class="nw">· <b>${fam.trials.toLocaleString()} runs per harness</b></span>`;
+
+  /* legend: harnesses that didn't run this family are dimmed */
+  const present = new Set(POINTS.map(p => p.h));
+  document.querySelectorAll("#legend .lgi").forEach(el => {
+    el.classList.toggle("absent", !present.has(el.dataset.h));
+    const p = POINTS.find(q => q.h === el.dataset.h);
+    el.querySelector(".lv").textContent = p ? `${usd(p.c, 2)} · ${p.s.toFixed(1)}%` : "";
+  });
+}
+
+/* ---------------- legend ---------------- */
+const legend = document.getElementById("legend");
+Object.entries(HARNESS).forEach(([h, meta]) => {
+  const s = document.createElement("span");
+  s.className = "lgi" + (meta.hero ? " strong" : ""); s.dataset.h = h;
+  const k = E("svg", { width: 24, height: 24, viewBox: "0 0 24 24" });
+  const mk = marker(meta.shape, 12, 12, meta.hero ? 10 : 8.5, meta.color);
+  mk.setAttribute("stroke-width", 0); k.appendChild(mk);
+  s.appendChild(k);
+  s.appendChild(document.createTextNode(meta.label));
+  const lv = document.createElement("span"); lv.className = "lv"; s.appendChild(lv);
+  legend.appendChild(s);
+});
+
+
+render("open");
+let lastW = window.innerWidth;
+window.addEventListener("resize", () => {
+  const w = window.innerWidth;
+  if (w === lastW) return;
+  const redraw = w < WIDE_MIN || lastW < WIDE_MIN;
+  lastW = w;
+  if (redraw) render(current);
+});
+})();
+</script>
+<style>
+  /* Render the full wide layout in #scaler and scale it down to the iframe (column)
+     width so the clean label placement is preserved. #tip sits outside #scaler so the
+     fixed-position hover tooltip is not transformed. */
+  html, body { margin: 0; overflow: hidden; }
+  body { padding: 0; }
+  #scaler { width: 1320px; padding: 7px; transform-origin: top left; }
+
+  /* Blog column and phones: natural layout at real size; must match WIDE_MIN and
+     PHONE_MAX in the chart script. */
+  @media (max-width: 999px) {
+    #scaler { width: auto; padding: 0; }
+    .wrap { padding: 28px 26px 24px; }
+    .head, .top, .subtitle, .tabs, .summary, .legend, .footnote, .footstar { padding-left: 0; padding-right: 0; }
+    .head .tag { font-size: 16px; margin-bottom: 8px; }
+    .head h1 { font-size: 28px; }
+    h1 { font-size: 44px; }
+    .top { gap: 18px 32px; }
+    .stats { justify-content: flex-start; }
+    .stat { width: auto; max-width: 380px; }
+    .stat .big { font-size: 42px; }
+    .stat .big small { font-size: 24px; }
+    .stat .cap { font-size: 17px; margin-top: 10px; }
+    .subtitle { font-size: 17px; margin: 18px 0 6px; }
+    .tabs { flex-wrap: wrap; gap: 8px; margin: 16px 0 12px; }
+    .tab { font-size: 16px; padding: 8px 18px; }
+    .summary { font-size: 16px; margin-bottom: 16px; }
+    .legend { font-size: 17px; gap: 10px 24px; margin-top: 18px; }
+    .lgi .lv { font-size: 15px; }
+    .footnote, .footstar { font-size: 15px; line-height: 1.6; }
+    #tip { font-size: 15px; max-width: 280px; padding: 9px 12px; }
+    #tip .tv { font-size: 17px; }
+  }
+  @media (max-width: 619px) {
+    .wrap { padding: 20px 16px 18px; }
+    .head .tag { font-size: 14px; margin-bottom: 6px; }
+    .head h1 { font-size: 22px; }
+    h1 { font-size: 34px; }
+    .top { gap: 14px; }
+    .stat .big { font-size: 34px; }
+    .stat .big small { font-size: 20px; }
+    .stat .cap { font-size: 16px; margin-top: 8px; }
+    .subtitle { font-size: 16px; margin: 14px 0 6px; }
+    .subtitle .nowrap { white-space: normal; }
+    .tab { font-size: 15px; padding: 7px 14px; }
+    .summary { font-size: 15px; margin-bottom: 14px; }
+    .legend { font-size: 16px; gap: 8px 18px; margin-top: 16px; }
+    .lgi .lv { font-size: 14px; }
+    .footnote, .footstar { font-size: 14px; line-height: 1.55; }
+    #tip { font-size: 14px; max-width: 240px; padding: 8px 10px; }
+    #tip .tv { font-size: 16px; }
+  }
+</style>
+<script>
+  (function () {
+    var scaler = document.getElementById("scaler");
+    var DESIGN_W = 1320;
+    // Always scale the tuned wide layout down to the iframe (column) width, so the
+    // whole chart fits within the text column at every size — no horizontal scroll.
+    function fit() {
+      var mobile = window.innerWidth < 1000;
+      var scale = mobile ? 1 : window.innerWidth / DESIGN_W;
+      scaler.style.transform = mobile ? "none" : "scale(" + scale + ")";
+      // Same-origin: size our own iframe to the scaled content — no clip, no gap.
+      if (window.frameElement) {
+        window.frameElement.style.height = scaler.offsetHeight * scale + "px";
+        window.frameElement.style.aspectRatio = "auto";
+      }
+    }
+    fit();
+    window.addEventListener("resize", fit);
+    if (window.ResizeObserver) new ResizeObserver(fit).observe(scaler);
+  })();
+</script>
+</body>
+</html>

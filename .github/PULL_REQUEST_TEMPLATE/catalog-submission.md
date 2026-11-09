@@ -5,7 +5,7 @@
      The site build validates your YAML against the schema automatically — a CI failure here is a schema error in your entry file. -->
 
 **Package name:**
-**Integration type:** <!-- tool | model-provider | session-manager | memory-store | storage | integration | plugin | agent-extension | intervention -->
+**Integration type:** <!-- tool | model-provider | session-manager | memory-store | storage | integration | plugin | observability | agent-extension | intervention -->
 **Languages published:** <!-- Python / TypeScript — at least one required -->
 **GitHub repo:** <!-- source of truth for the maintainer shown on your card (the URL's owner/org) -->
 **What it does:** <!-- 1–2 sentences -->

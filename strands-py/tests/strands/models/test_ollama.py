@@ -854,3 +854,32 @@ def test_cache_config_unsupported_field_warns_and_is_not_routed(host, model_id, 
         request = model.format_request(messages)
 
     assert "cache_config" not in request
+
+
+@pytest.mark.parametrize("keep_alive", [0, 0.0, -1, "0", "5m"])
+def test_format_request_preserves_explicit_keep_alive(keep_alive):
+    model = OllamaModel("http://localhost:11434", model_id="test", keep_alive=keep_alive)
+    request = model.format_request([{"role": "user", "content": [{"text": "hello"}]}])
+    assert request["keep_alive"] == keep_alive
+
+
+@pytest.mark.parametrize("config", [{}, {"keep_alive": None}])
+def test_format_request_omits_unset_keep_alive(config):
+    model = OllamaModel("http://localhost:11434", model_id="test", **config)
+    request = model.format_request([{"role": "user", "content": [{"text": "hello"}]}])
+    assert "keep_alive" not in request
+
+
+def test_format_request_logs_skipped_blocks_once_per_request(model, caplog):
+    caplog.set_level(logging.WARNING, logger="strands.models.ollama")
+    s3_image = {"image": {"format": "png", "source": {"location": {"type": "s3", "uri": "s3://bucket/key.png"}}}}
+    messages = []
+    for turn in range(3):
+        messages.append({"role": "user", "content": [{"text": "look"}, s3_image]})
+        messages.append({"role": "assistant", "content": [{"text": f"answer {turn}"}]})
+
+    model.format_request(messages)
+
+    messages_logged = [record.getMessage() for record in caplog.records]
+    assert len(messages_logged) == 1
+    assert "count=<3> | Location sources are not supported by Ollama" in messages_logged[0]

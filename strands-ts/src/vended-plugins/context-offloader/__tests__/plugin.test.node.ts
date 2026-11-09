@@ -56,7 +56,7 @@ function makeToolContext(agent: MockAgent, reference: string): ToolContext {
 
 function getReference(event: AfterToolCallEvent): string {
   const preview = (event.result.content[0] as TextBlock).text
-  const match = preview.match(/\.\/artifacts\/\S+\.txt/)
+  const match = preview.match(/\b\d+_\d+_\S+\.txt/)
   expect(match).not.toBeNull()
   return match![0]
 }
@@ -101,10 +101,10 @@ describe.skipIf(process.platform === 'win32')('ContextOffloader with FileStorage
 
     const refA = getReference(eventA)
     const refB = getReference(eventB)
-    expect(existsSync(join(dirA, refA))).toBe(true)
-    expect(existsSync(join(dirB, refA))).toBe(false)
-    expect(existsSync(join(dirB, refB))).toBe(true)
-    expect(existsSync(join(dirA, refB))).toBe(false)
+    expect(existsSync(join(dirA, 'artifacts', refA))).toBe(true)
+    expect(existsSync(join(dirB, 'artifacts', refA))).toBe(false)
+    expect(existsSync(join(dirB, 'artifacts', refB))).toBe(true)
+    expect(existsSync(join(dirA, 'artifacts', refB))).toBe(false)
 
     await expect(retrievalTool.invoke({ reference: refA }, makeToolContext(agentA, refA))).resolves.toBe(contentA)
     await expect(retrievalTool.invoke({ reference: refB }, makeToolContext(agentB, refB))).resolves.toBe(contentB)

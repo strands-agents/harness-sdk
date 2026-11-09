@@ -43,7 +43,7 @@ describe('changelogEntrySchema', () => {
 describe('changelogFrontmatterSchema', () => {
   it('coerces a string date to a Date', () => {
     const fm = changelogFrontmatterSchema.parse({
-      sdk: 'harness',
+      sdk: 'sdk',
       language: 'python',
       version: '1.42.0',
       tag: 'python/v1.42.0',
@@ -71,7 +71,7 @@ describe('changelogFrontmatterSchema', () => {
   it('rejects a harness release with no language', () => {
     expect(() =>
       changelogFrontmatterSchema.parse({
-        sdk: 'harness',
+        sdk: 'sdk',
         version: '1.0.0',
         tag: 'v1.0.0',
         date: '2026-01-01',
@@ -80,6 +80,21 @@ describe('changelogFrontmatterSchema', () => {
         entries: [],
       })
     ).toThrow()
+  })
+
+  it('requires a language on harness releases and forbids one on cli and box', () => {
+    const base = {
+      version: '0.1.0',
+      tag: 'v0.1.0',
+      date: '2026-10-01',
+      releaseUrl: 'https://github.com/strands-agents/box/releases/tag/v0.1.0',
+      packageUrl: 'https://github.com/strands-agents/box/releases/tag/v0.1.0',
+    }
+    expect(() => changelogFrontmatterSchema.parse({ ...base, sdk: 'harness' })).toThrow()
+    expect(changelogFrontmatterSchema.parse({ ...base, sdk: 'harness', language: 'python' }).sdk).toBe('harness')
+    expect(changelogFrontmatterSchema.parse({ ...base, sdk: 'box' }).language).toBeUndefined()
+    expect(() => changelogFrontmatterSchema.parse({ ...base, sdk: 'cli', language: 'typescript' })).toThrow()
+    expect(() => changelogFrontmatterSchema.parse({ ...base, sdk: 'box', language: 'python' })).toThrow()
   })
 
   it('rejects an evals release that sets a language', () => {
@@ -98,7 +113,16 @@ describe('changelogFrontmatterSchema', () => {
   })
 })
 
-import { groupEntries, getAreaCounts, formatChangelogDate, escapeMarkdownInline } from '../src/util/changelog'
+import {
+  groupEntries,
+  getAreaCounts,
+  formatChangelogDate,
+  escapeMarkdownInline,
+  latestPerStream,
+  footerReleasesForProduct,
+  type FooterReleases,
+  type ChangelogRelease,
+} from '../src/util/changelog'
 
 describe('escapeMarkdownInline (.md endpoint safety)', () => {
   it('escapes snake_case so it does not render as italics', () => {
@@ -174,5 +198,61 @@ describe('getAreaCounts', () => {
 describe('formatChangelogDate', () => {
   it('formats as a short date', () => {
     expect(formatChangelogDate(new Date('2026-06-01T00:00:00Z'))).toMatch(/Jun 1, 2026/)
+  })
+})
+
+const mkRelease = (
+  date: string,
+  entries: ChangelogEntry[] = [],
+  stream: Partial<ChangelogRelease['data']> = {}
+): ChangelogRelease =>
+  ({
+    id: `${stream.sdk}-${stream.language}-${date}`,
+    data: { date: new Date(date), entries, ...stream },
+  }) as unknown as ChangelogRelease
+
+describe('latestPerStream', () => {
+  it('keeps the newest release of each language stream for the product', () => {
+    const releases = [
+      mkRelease('2026-10-21', [], { sdk: 'harness', language: 'typescript', version: '0.3.1' }),
+      mkRelease('2026-10-20', [], { sdk: 'sdk', language: 'python', version: '1.62.0' }),
+      mkRelease('2026-10-19', [], { sdk: 'harness', language: 'typescript', version: '0.3.0' }),
+      mkRelease('2026-10-18', [], { sdk: 'harness', language: 'python', version: '0.2.0' }),
+    ]
+    expect(latestPerStream(releases, 'harness').map((r) => r.data.version)).toEqual(['0.3.1', '0.2.0'])
+  })
+
+  it('returns one release for single-stream products', () => {
+    const releases = [
+      mkRelease('2026-10-21', [], { sdk: 'box', version: '0.2.0' }),
+      mkRelease('2026-10-01', [], { sdk: 'box', version: '0.1.0' }),
+    ]
+    expect(latestPerStream(releases, 'box').map((r) => r.data.version)).toEqual(['0.2.0'])
+  })
+})
+
+describe('footerReleasesForProduct', () => {
+  const sdk = mkRelease('2026-10-21', [], { sdk: 'sdk', language: 'python', version: '1.62.0' })
+  const box = mkRelease('2026-10-07', [], { sdk: 'box', version: '0.1.0' })
+  const releases: FooterReleases = {
+    byProduct: {
+      sdk: [sdk],
+      harness: [],
+      cli: [],
+      evals: [],
+      box: [box],
+    },
+  }
+
+  it('shows no release on pages outside a product', () => {
+    expect(footerReleasesForProduct(releases, undefined)).toEqual([])
+  })
+
+  it('shows the product stream', () => {
+    expect(footerReleasesForProduct(releases, 'box')).toEqual([box])
+  })
+
+  it('shows no release for a product without a stream rather than another product', () => {
+    expect(footerReleasesForProduct(releases, null)).toEqual([])
   })
 })

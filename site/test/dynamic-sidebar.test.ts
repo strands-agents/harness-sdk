@@ -27,9 +27,7 @@ describe('getDisplayName', () => {
 
 describe('buildPythonApiSidebar', () => {
   it('should create flat links for leaf modules', () => {
-    const docs: DocInfo[] = [
-      { id: 'docs/api/python/strands.interrupt.mdx', title: 'strands.interrupt' },
-    ]
+    const docs: DocInfo[] = [{ id: 'docs/api/python/strands.interrupt.mdx', title: 'strands.interrupt' }]
 
     const sidebar = buildPythonApiSidebar(docs, '')
 
@@ -82,9 +80,7 @@ describe('buildPythonApiSidebar', () => {
   })
 
   it('should mark current page as isCurrent', () => {
-    const docs: DocInfo[] = [
-      { id: 'docs/api/python/strands.interrupt.mdx', title: 'strands.interrupt' },
-    ]
+    const docs: DocInfo[] = [{ id: 'docs/api/python/strands.interrupt.mdx', title: 'strands.interrupt' }]
 
     const sidebar = buildPythonApiSidebar(docs, 'docs/api/python/strands.interrupt.mdx')
 
@@ -147,16 +143,14 @@ describe('buildCourseSidebar', () => {
     return ids.map((id) => ({ id, title: id.split('/').pop()! }))
   }
 
-  it('returns back-link as first entry followed by a group', () => {
+  it('returns a single group of lesson links (no back-link)', () => {
     const ids = ['docs/learning/alpha', 'docs/learning/beta', 'docs/learning/gamma']
     const docs = makeDocs(ids)
     const course = { ...COURSE, lessonIds: ids }
     const sidebar = buildCourseSidebar(docs, ids[0]!, course)
 
-    expect(sidebar).toHaveLength(2)
-    expect(sidebar[0]?.type).toBe('link')
-    expect((sidebar[0] as SidebarLink).label).toBe('← All courses')
-    expect(sidebar[1]?.type).toBe('group')
+    expect(sidebar).toHaveLength(1)
+    expect(sidebar[0]?.type).toBe('group')
   })
 
   it('respects array order — lesson 10 after lesson 9 even if passed out of order in docs', () => {
@@ -178,7 +172,7 @@ describe('buildCourseSidebar', () => {
     const course = { ...COURSE, lessonIds: ids }
     const sidebar = buildCourseSidebar(docs, '', course)
 
-    const group = sidebar[1] as SidebarGroup
+    const group = sidebar[0] as SidebarGroup
     const labels = group.entries.map((e) => e.label)
     expect(labels).toEqual(['Lesson 1', 'Lesson 2', 'Lesson 9', 'Lesson 10', 'Lesson 11'])
   })
@@ -190,27 +184,11 @@ describe('buildCourseSidebar', () => {
     const currentSlug = 'docs/learning/beta'
     const sidebar = buildCourseSidebar(docs, currentSlug, course)
 
-    const group = sidebar[1] as SidebarGroup
+    const group = sidebar[0] as SidebarGroup
     const links = group.entries as SidebarLink[]
     expect(links[0]?.isCurrent).toBe(false)
     expect(links[1]?.isCurrent).toBe(true)
     expect(links[2]?.isCurrent).toBe(false)
-  })
-
-  it('back-link is never marked as isCurrent', () => {
-    const ids = ['docs/learning/alpha']
-    const docs = makeDocs(ids)
-    const course = { ...COURSE, lessonIds: ids }
-    const sidebar = buildCourseSidebar(docs, ids[0]!, course)
-
-    const backLink = sidebar[0] as SidebarLink
-    expect(backLink.isCurrent).toBe(false)
-  })
-
-  it('back-link points to /community/', () => {
-    const sidebar = buildCourseSidebar([], '', { ...COURSE, lessonIds: [] })
-    const backLink = sidebar[0] as SidebarLink
-    expect(backLink.href).toMatch(/\/community\/$/)
   })
 
   it('excludes ids not in lessonIds (non-course pages under docs/learning/)', () => {
@@ -221,18 +199,16 @@ describe('buildCourseSidebar', () => {
     const course = { ...COURSE, lessonIds: ['docs/learning/alpha'] }
     const sidebar = buildCourseSidebar(docs, '', course)
 
-    const group = sidebar[1] as SidebarGroup
+    const group = sidebar[0] as SidebarGroup
     expect(group.entries).toHaveLength(1)
     expect((group.entries[0] as SidebarLink).label).toBe('Alpha')
   })
 
-  it('returns only the back-link (no empty group) when zero lessonIds match', () => {
+  it('returns an empty sidebar when zero lessonIds match', () => {
     const docs: DocInfo[] = [{ id: 'docs/learning/overview', title: 'Overview' }]
     const sidebar = buildCourseSidebar(docs, '', { ...COURSE, lessonIds: [] })
 
-    expect(sidebar).toHaveLength(1)
-    expect(sidebar[0]?.type).toBe('link')
-    expect((sidebar[0] as SidebarLink).label).toBe('← All courses')
+    expect(sidebar).toHaveLength(0)
   })
 
   it('uses course.title as the group label', () => {
@@ -241,7 +217,7 @@ describe('buildCourseSidebar', () => {
     const course = { title: 'My Custom Course', lessonIds: ids }
     const sidebar = buildCourseSidebar(docs, '', course)
 
-    const group = sidebar[1] as SidebarGroup
+    const group = sidebar[0] as SidebarGroup
     expect(group.label).toBe('My Custom Course')
   })
 })
@@ -258,7 +234,7 @@ describe('getPrevNextLinks over buildCourseSidebar lessons', () => {
   it('first lesson has no prev and next is the second lesson', () => {
     const sidebar = buildCourseSidebar(docs, 'docs/learning/alpha', course)
 
-    const group = sidebar[1] as SidebarGroup
+    const group = sidebar[0] as SidebarGroup
     const { prev, next } = getPrevNextLinks(group.entries)
 
     expect(prev).toBeUndefined()
@@ -268,7 +244,7 @@ describe('getPrevNextLinks over buildCourseSidebar lessons', () => {
   it('second lesson has prev first and next third', () => {
     const sidebar = buildCourseSidebar(docs, 'docs/learning/beta', course)
 
-    const group = sidebar[1] as SidebarGroup
+    const group = sidebar[0] as SidebarGroup
     const { prev, next } = getPrevNextLinks(group.entries)
 
     expect(prev?.label).toBe('Alpha')

@@ -1,0 +1,114 @@
+---
+/**
+ * "Copy prompt" call-to-action for the quickstarts. Copies a full, self-contained prompt
+ * that a reader can paste into their coding agent (Kiro, Claude Code, Cursor, ...) to
+ * have it walk them through the same steps as the page.
+ *
+ * Reuses the shared clipboard helper so the copy fires the same `strands:copy` analytics
+ * event as the other copy buttons on the site (label: `prompt:<language>`).
+ */
+import {
+  HARNESS_QUICKSTART_PROMPT,
+  PYTHON_QUICKSTART_PROMPT,
+  TYPESCRIPT_QUICKSTART_PROMPT,
+} from '../data/quickstart-prompts'
+
+interface Props {
+  language: 'python' | 'typescript' | 'harness'
+}
+
+const PROMPTS = {
+  python: PYTHON_QUICKSTART_PROMPT,
+  typescript: TYPESCRIPT_QUICKSTART_PROMPT,
+  'harness': HARNESS_QUICKSTART_PROMPT,
+} as const
+
+const { language } = Astro.props
+const prompt = PROMPTS[language]
+const asksLanguage = language === 'harness'
+---
+
+<div class="copy-prompt not-content" data-copy-prompt data-language={language}>
+  <div class="copy-prompt__text">
+    <strong>Using a coding agent?</strong> Copy this prompt into Codex, Claude Code, Kiro,
+    or any coding assistant and it will walk you through this page, ask which{' '}
+    {asksLanguage ? 'path, language, and model provider' : 'model provider'} you want, and offer
+    to set up the Strands MCP server.
+  </div>
+  <button type="button" class="copy-prompt__btn" data-copy-prompt-btn aria-label="Copy the quickstart prompt for a coding agent">
+    <span data-copy-prompt-label>Copy prompt</span>
+  </button>
+  <template data-copy-prompt-src set:text={prompt}></template>
+</div>
+
+<style>
+  .copy-prompt {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    margin: 1.25rem 0 1.5rem;
+    padding: 14px 16px;
+    background: var(--toggle-bg, var(--sl-color-gray-6));
+    border: 1px solid var(--toggle-inactive-border, var(--sl-color-gray-5));
+    border-radius: 12px;
+  }
+
+  .copy-prompt__text {
+    font-size: 0.9375rem;
+    line-height: 1.5;
+    color: var(--sl-color-text);
+  }
+
+  .copy-prompt__btn {
+    flex: none;
+    padding: 8px 16px;
+    border: 1px solid var(--toggle-inactive-border, var(--sl-color-gray-5));
+    border-radius: 999px;
+    background: var(--toggle-inactive-bg, transparent);
+    color: var(--toggle-inactive-fg, var(--sl-color-text));
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: 14px;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: color 0.15s ease, background 0.15s ease;
+  }
+
+  .copy-prompt__btn:hover {
+    color: var(--toggle-hover-fg, var(--sl-color-text-accent));
+  }
+
+  .copy-prompt__btn.is-copied {
+    background: var(--toggle-active-bg, var(--sl-color-accent));
+    border-color: transparent;
+    color: var(--strands-black, #000);
+  }
+
+  @media (max-width: 640px) {
+    .copy-prompt {
+      flex-direction: column;
+      align-items: stretch;
+    }
+    .copy-prompt__btn {
+      align-self: flex-start;
+    }
+  }
+</style>
+
+<script>
+  import { attachCopyButton } from '../util/clipboard'
+
+  for (const root of document.querySelectorAll<HTMLElement>('[data-copy-prompt]')) {
+    const btn = root.querySelector<HTMLButtonElement>('[data-copy-prompt-btn]')
+    const src = root.querySelector<HTMLTemplateElement>('[data-copy-prompt-src]')
+    if (!btn || !src) continue
+    const language = root.dataset.language ?? ''
+    attachCopyButton(btn, {
+      getText: () => src.content.textContent ?? '',
+      label: root.querySelector<HTMLElement>('[data-copy-prompt-label]'),
+      idleText: 'Copy prompt',
+      copiedText: 'Copied!',
+      track: { surface: 'prompt', detail: () => language },
+    })
+  }
+</script>

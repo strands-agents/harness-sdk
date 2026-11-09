@@ -6,5 +6,5 @@ languages:
   python: {}
   typescript: {}
 github: https://github.com/strands-agents/harness-sdk/tree/main/strands-py/src/strands/vended_plugins/steering
-docsPage: docs/user-guide/concepts/agents/interventions/steering
+docsPage: docs/user-guide/sdk/agents/interventions/steering
 addedDate: 2025-12-03

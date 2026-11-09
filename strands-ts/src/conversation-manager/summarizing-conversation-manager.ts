@@ -6,6 +6,7 @@
  * than simply discarding it.
  */
 
+import type { InvocationContext } from '../agent/invocation-context.js'
 import type { LocalAgent } from '../types/agent.js'
 import {
   ConversationManager,
@@ -27,9 +28,8 @@ import type { Model } from '../models/model.js'
  */
 export type SummarizingConversationManagerConfig = {
   /**
-   * Model to use for generating summaries. When provided, overrides the model
-   * attached to the agent. Useful when you want to use a different model than
-   * the one attached to the agent.
+   * Model to use for generating summaries. Resolution order:
+   * `this model > agent.auxModel > agent.model`.
    */
   model?: Model
 
@@ -103,12 +103,16 @@ export class SummarizingConversationManager extends ConversationManager {
    * When `error` is undefined (proactive compression), summarization failure is logged
    * and returns `false` — the model call proceeds regardless.
    *
+   * Summarizes with `this model > agent.auxModel > agent.model`; the triggering `model` in
+   * the options is not used.
+   *
    * @param options - The reduction options
    * @returns `true` if the history was reduced, `false` otherwise
    */
-  async reduce({ agent, model, error }: ConversationManagerReduceOptions): Promise<boolean> {
+  async reduce(options: ConversationManagerReduceOptions): Promise<boolean> {
+    const { agent, error } = options
     try {
-      return await this._summarizeOldest(agent, this._model ?? model)
+      return await this._summarizeOldest(agent, this._model ?? agent.auxModel, options.invocationContext)
     } catch (summarizationError) {
       if (error) {
         // Reactive: rethrow so the ContextWindowOverflowError propagates
@@ -128,9 +132,14 @@ export class SummarizingConversationManager extends ConversationManager {
    *
    * @param agent - The agent instance
    * @param model - The model to use for summarization
+   * @param invocationContext - The request the summary call's usage adds to
    * @returns `true` if the history was reduced, `false` otherwise
    */
-  private async _summarizeOldest(agent: LocalAgent, model: Model): Promise<boolean> {
+  private async _summarizeOldest(
+    agent: LocalAgent,
+    model: Model,
+    invocationContext?: InvocationContext
+  ): Promise<boolean> {
     const messages = agent.messages
 
     // Calculate how many messages to summarize
@@ -164,7 +173,7 @@ export class SummarizingConversationManager extends ConversationManager {
     }
 
     // Generate summary via model call
-    const summaryMessage = await generateSummary(toSummarize, model, this._summarizationSystemPrompt)
+    const summaryMessage = await generateSummary(toSummarize, model, this._summarizationSystemPrompt, invocationContext)
 
     // Replace summarized range with protected messages + summary
     messages.splice(0, messagesToSummarizeCount, ...protectedToPreserve, summaryMessage)

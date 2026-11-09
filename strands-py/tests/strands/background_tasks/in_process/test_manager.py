@@ -12,6 +12,7 @@ import pytest
 
 from strands import Agent, tool
 from strands._async import run_async
+from strands.agent.invocation_context import InvocationContext, _create_invocation_context
 from strands.background_tasks._errors import BackgroundTaskTimeoutError
 from strands.background_tasks.in_process._manager import InProcessTaskManager
 from strands.interrupt import Interrupt, InterruptException
@@ -466,3 +467,25 @@ async def test_wait_fails_interrupts_outside_the_tool_context() -> None:
         "error": {"type": "execution_error", "message": "Interrupt raised: approve_hook"},
     }
     assert tru_failed == exp_failed
+
+
+@pytest.mark.asyncio
+async def test_submit_runs_task_under_invocation_context_captured_at_submission() -> None:
+    invocation_context = _create_invocation_context()
+    seen: list[InvocationContext | None] = []
+
+    def callback(input_data: dict[str, str], context: ToolContext) -> str:
+        seen.append(context.invocation_context)
+        return "done"
+
+    fixture = _create_fixture(callback)
+    await fixture.manager.submit(
+        {"name": "work", "toolUseId": "tool-use-1", "input": {"value": "x"}},
+        {},
+        "pass-1",
+        fixture.work,
+        invocation_context=invocation_context,
+    )
+    await fixture.manager.wait_for_idle()
+
+    assert seen == [invocation_context]
