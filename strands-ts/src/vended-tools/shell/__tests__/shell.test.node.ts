@@ -1,5 +1,13 @@
 import { describe, it, expect } from 'vitest'
-import { makeBash, makeShell, ShellTimeoutError, ShellExecutionError, type ShellOutput } from '../index.js'
+import {
+  makeBash,
+  makeShell,
+  ShellTimeoutError,
+  ShellExecutionError,
+  SANDBOX_SHELL_STDIO_DESCRIPTION,
+  type MakeShellOptions,
+  type ShellOutput,
+} from '../index.js'
 import { BashTimeoutError, BashSessionError } from '../../bash/types.js'
 import type { ToolContext } from '../../../index.js'
 import { createMockAgent } from '../../../__fixtures__/agent-helpers.js'
@@ -9,10 +17,12 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 
 describe.skipIf(process.platform === 'win32')('makeShell', () => {
-  const createSandboxShell = (): { sandboxShell: ReturnType<typeof makeShell>; context: ToolContext } => {
+  const createSandboxShell = (
+    options?: MakeShellOptions
+  ): { sandboxShell: ReturnType<typeof makeShell>; context: ToolContext } => {
     const workDir = mkdtempSync(join(tmpdir(), 'shell-sandbox-test-'))
     const sandbox = new TestSandbox(workDir)
-    const sandboxShell = makeShell(sandbox)
+    const sandboxShell = makeShell(sandbox, options)
     const agent = createMockAgent()
     const context: ToolContext = {
       toolUse: { name: 'shell', toolUseId: 'test-id', input: {} },
@@ -101,8 +111,43 @@ describe.skipIf(process.platform === 'win32')('makeShell', () => {
     await expect(sandboxShell.invoke({ command: 'sleep 10', timeout: 0.1 }, context)).rejects.toThrow(BashTimeoutError)
   })
 
+  it('ShellTimeoutError.partial keeps the default ShellOutput typing', () => {
+    const err = new ShellTimeoutError('timed out', { output: 'a', error: '', exit_code: 124 })
+    const output: string = err.partial!.output
+    expect(output).toBe('a')
+  })
+
   it('ShellExecutionError still matches the pre-rename BashSessionError', () => {
     expect(new ShellExecutionError('boom')).toBeInstanceOf(BashSessionError)
+  })
+
+  describe("resultKeys: 'stdout_stderr'", () => {
+    it('returns stdout, stderr, and exit_code', async () => {
+      const { sandboxShell, context } = createSandboxShell({ resultKeys: 'stdout_stderr' })
+      const result = await sandboxShell.invoke({ command: 'echo out; echo warn >&2; exit 3' }, context)
+
+      expect(result).toStrictEqual({ stdout: 'out\n', stderr: 'warn\n', exit_code: 3 })
+    })
+
+    it('timeout partial uses the same keys', async () => {
+      const { sandboxShell, context } = createSandboxShell({ resultKeys: 'stdout_stderr' })
+      const error = await sandboxShell
+        .invoke({ command: 'echo partial; echo warn >&2; sleep 5', timeout: 0.3 }, context)
+        .catch((e) => e)
+
+      expect(error).toBeInstanceOf(ShellTimeoutError)
+      expect(error.partial).toStrictEqual({ stdout: 'partial\n', stderr: 'warn\n', exit_code: 124 })
+      expect(error.message).toBe(`Execution timed out after 0.3 seconds\n${JSON.stringify(error.partial)}`)
+    })
+
+    it('rejects an unknown resultKeys value', () => {
+      expect(() => makeShell({ resultKeys: 'stdout' } as unknown as MakeShellOptions)).toThrow(/resultKeys must be/)
+    })
+
+    it('defaults the description to match the keys; an explicit description wins', () => {
+      expect(makeShell({ resultKeys: 'stdout_stderr' }).description).toBe(SANDBOX_SHELL_STDIO_DESCRIPTION)
+      expect(makeShell({ resultKeys: 'stdout_stderr', description: 'custom' }).description).toBe('custom')
+    })
   })
 })
 
