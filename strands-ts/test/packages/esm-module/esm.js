@@ -132,6 +132,11 @@ if (ModelRouterFromSubpath !== ModelRouter) {
 }
 console.log('✓ Model subpath exports verified')
 
+if (typeof SageMakerDecisionModel !== 'function') {
+  throw new Error('SageMakerDecisionModel should be exported from decisions/sagemaker')
+}
+console.log('✓ decisions/sagemaker subpath export verified')
+
 // Verify barrel exports match individual subpath exports
 if (
   barrelBash !== bash ||
