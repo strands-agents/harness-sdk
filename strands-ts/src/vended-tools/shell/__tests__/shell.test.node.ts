@@ -11,12 +11,9 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 
 describe.skipIf(process.platform === 'win32')('makeShell', () => {
-  const createSandboxShell = (): { sandboxShell: ReturnType<typeof makeShell>; context: ToolContext } => {
-    const workDir = mkdtempSync(join(tmpdir(), 'shell-sandbox-test-'))
-    const sandbox = new TestSandbox(workDir)
-    const sandboxShell = makeShell(sandbox)
+  const createContext = (): ToolContext => {
     const agent = createMockAgent()
-    const context: ToolContext = {
+    return {
       toolUse: { name: 'shell', toolUseId: 'test-id', input: {} },
       agent,
       invocationState: {},
@@ -25,7 +22,11 @@ describe.skipIf(process.platform === 'win32')('makeShell', () => {
         throw new Error('interrupt not available in mock context')
       },
     }
-    return { sandboxShell, context }
+  }
+
+  const createSandboxShell = (): { sandboxShell: ReturnType<typeof makeShell>; context: ToolContext } => {
+    const workDir = mkdtempSync(join(tmpdir(), 'shell-sandbox-test-'))
+    return { sandboxShell: makeShell(new TestSandbox(workDir)), context: createContext() }
   }
 
   it('executes command via sandbox', async () => {
@@ -117,23 +118,32 @@ describe.skipIf(process.platform === 'win32')('makeShell', () => {
       }
     }
 
-    it('does not hard-code a default in the schema the model sees', () => {
-      expect(makeShell({ defaultTimeout: 300 }).toolSpec.inputSchema).toMatchObject({
-        properties: { timeout: { description: 'Optional per-execution timeout in seconds.' } },
+    it.each([
+      [{}, 120],
+      [{ defaultTimeout: 300 }, 300],
+    ])('shows the model the default in the schema (%o)', (options, expected) => {
+      const schema = makeShell(options).toolSpec.inputSchema as {
+        properties: Record<string, unknown>
+        required: string[]
+      }
+      expect(schema.required).toEqual(['command'])
+      expect(schema.properties.timeout).toEqual({
+        type: 'number',
+        exclusiveMinimum: 0,
+        default: expected,
+        description: 'Optional per-execution timeout in seconds.',
       })
     })
 
     it('reaches the sandbox when the model omits timeout', async () => {
       const sandbox = new RecordingSandbox(mkdtempSync(join(tmpdir(), 'shell-sandbox-test-')))
-      const { context } = createSandboxShell()
-      await makeShell(sandbox, { defaultTimeout: 300 }).invoke({ command: 'true' }, context)
+      await makeShell(sandbox, { defaultTimeout: 300 }).invoke({ command: 'true' }, createContext())
       expect(sandbox.timeouts).toEqual([300])
     })
 
     it('loses to an explicit timeout from the model', async () => {
       const sandbox = new RecordingSandbox(mkdtempSync(join(tmpdir(), 'shell-sandbox-test-')))
-      const { context } = createSandboxShell()
-      await makeShell(sandbox, { defaultTimeout: 300 }).invoke({ command: 'true', timeout: 7 }, context)
+      await makeShell(sandbox, { defaultTimeout: 300 }).invoke({ command: 'true', timeout: 7 }, createContext())
       expect(sandbox.timeouts).toEqual([7])
     })
 

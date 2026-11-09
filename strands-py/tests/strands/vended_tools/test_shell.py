@@ -122,15 +122,15 @@ class TestToolMetadata:
         assert "timeout" in props
         assert "tool_context" not in props
 
-    def test_default_timeout_in_schema(self):
-        timeout = shell.tool_spec["inputSchema"]["json"]["properties"]["timeout"]
-        assert timeout["default"] == 120
-        assert timeout["description"] == "Optional per-execution timeout in seconds."
-
-    def test_custom_default_timeout_in_schema(self):
-        timeout = make_shell(default_timeout=300).tool_spec["inputSchema"]["json"]["properties"]["timeout"]
-        assert timeout["default"] == 300
-        assert timeout["description"] == "Optional per-execution timeout in seconds."
+    @pytest.mark.parametrize(("tool", "exp_default"), [(shell, 120), (make_shell(default_timeout=300), 300)])
+    def test_timeout_schema(self, tool, exp_default):
+        tru_timeout = tool.tool_spec["inputSchema"]["json"]["properties"]["timeout"]
+        exp_timeout = {
+            "type": "integer",
+            "default": exp_default,
+            "description": "Optional per-execution timeout in seconds.",
+        }
+        assert tru_timeout == exp_timeout
 
     @pytest.mark.parametrize("default_timeout", [0, -1, float("inf"), float("nan")])
     def test_default_timeout_must_be_positive_and_finite(self, default_timeout):

@@ -17,11 +17,6 @@ import { ShellTimeoutError, ShellExecutionError, SANDBOX_SHELL_DESCRIPTION, type
 
 const DEFAULT_TIMEOUT = 120
 
-const sandboxShellInputSchema = z.object({
-  command: z.string().describe('The shell command to execute.'),
-  timeout: z.number().positive().optional().describe('Optional per-execution timeout in seconds.'),
-})
-
 export interface MakeShellOptions {
   name?: string
   description?: string
@@ -55,6 +50,15 @@ export function makeShell(
   if (!Number.isFinite(defaultTimeout) || defaultTimeout <= 0) {
     throw new Error(`defaultTimeout must be a positive finite number, got ${defaultTimeout}`)
   }
+  const sandboxShellInputSchema = z.object({
+    command: z.string().describe('The shell command to execute.'),
+    // .meta rather than .default: .default would mark timeout as required in the JSON schema.
+    timeout: z
+      .number()
+      .positive()
+      .optional()
+      .meta({ default: defaultTimeout, description: 'Optional per-execution timeout in seconds.' }),
+  })
 
   return tool({
     name: options.name ?? 'shell',
