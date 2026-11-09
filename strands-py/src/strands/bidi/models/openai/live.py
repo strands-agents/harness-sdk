@@ -444,7 +444,7 @@ class OpenAILiveModel(BidiModel, AudioCapable, Restartable):
                     {
                         "type": "input_image",
                         "image_url": f"data:image/{block.format};base64,{encoded}",
-                        "detail": "auto",
+                        "detail": block.detail or "auto",
                     }
                 )
             elif isinstance(block, ToolResultBlock):

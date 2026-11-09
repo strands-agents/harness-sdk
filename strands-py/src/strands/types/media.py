@@ -173,7 +173,8 @@ class ImageContent(TypedDict):
         format: The format of the image (e.g., "png", "jpeg").
         source: The source containing the image's binary content.
         detail: The resolution the model processes the image at. Used by `OpenAIModel`, `OpenAIResponsesModel`,
-            `OpenAIRealtimeModel`, and the providers built on `OpenAIModel`; ignored by other providers.
+            `OpenAIRealtimeModel`, `OpenAILiveModel`, `LlamaCppModel`, and the providers built on `OpenAIModel`;
+            ignored by other providers.
     """
 
     format: ImageFormat

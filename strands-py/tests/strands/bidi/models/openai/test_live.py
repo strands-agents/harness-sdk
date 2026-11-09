@@ -448,6 +448,24 @@ async def test_send_text_images_and_audio(started_model, connection):
 
 
 @pytest.mark.asyncio
+async def test_send_image_detail(started_model, connection):
+    await started_model.send(BidiMessage([ImageBlock("png", {"bytes": b"image"}, detail="low")]))
+
+    tru_calls = connection.mock_calls
+    exp_calls = [
+        call.response.item.create(
+            item={
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_image", "image_url": "data:image/png;base64,aW1hZ2U=", "detail": "low"}],
+            }
+        ),
+        call.response.create(),
+    ]
+    assert tru_calls == exp_calls
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("content", "message"),
     [
