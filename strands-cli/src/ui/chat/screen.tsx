@@ -1856,7 +1856,7 @@ export function ChatApp({
         if (prompts[next]) editQueuedPrompt(prompts[next].id)
         return
       }
-      if (key.tab && (focusedQueuedPrompt || suggestions.length === 0)) {
+      if (key.tab && (focusedQueuedPrompt || (suggestions.length === 0 && queuedPromptElements.size > 0))) {
         const targets = [
           undefined,
           ...snapshot.queuedPrompts.flatMap((prompt) =>

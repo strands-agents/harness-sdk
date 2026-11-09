@@ -131,7 +131,7 @@ async function main() {
       (marker) => !(styled || marker.startsWith('__') ? output : screen.text).includes(marker)
     )
     throw new Error(
-      `missing markers ${JSON.stringify(missing)}; returncode=${returnCode}; screen=${screen.text}; output=${transcript}`
+      `missing markers ${JSON.stringify(missing)}; unexpected markers ${JSON.stringify(absent.filter((marker) => screen.text.includes(marker)))}; returncode=${returnCode}; screen=${screen.text}; output=${transcript}`
     )
   }
   const waitForStableScreen = (markers, timeout = 8_000, start = 0, absent = []) =>
@@ -261,8 +261,9 @@ async function main() {
       await waitForStableScreen(['Queue gate waiting'])
       for (const prompt of ['delete by mouse', 'delete by keyboard', 'clear with enter', 'keep this']) {
         await typeInComposer(prompt)
+        const start = transcript.length
         terminal.write('\r')
-        await waitForStableScreen(['Queued', prompt])
+        await waitForStableScreen([`· ${prompt}  `], 8_000, start)
       }
       await clickText('Delete')
       await waitForStableScreen(['keep this'], 8_000, 0, ['delete by mouse'])
@@ -283,8 +284,9 @@ async function main() {
       await waitForStableScreen(['keep this'], 8_000, 0, ['delete by keyboard'])
       for (const prompt of ['steer this', 'delete button']) {
         await typeInComposer(prompt)
+        const start = transcript.length
         terminal.write('\r')
-        await waitForStableScreen(['Queued', prompt])
+        await waitForStableScreen([`· ${prompt}  `], 8_000, start)
       }
       await typeInComposer('Keep my draft')
       terminal.write('\t')

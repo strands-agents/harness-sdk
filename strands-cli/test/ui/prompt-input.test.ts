@@ -45,7 +45,8 @@ describe('prompt history', () => {
 })
 
 describe('slash palette during a turn', () => {
-  it('opens while the agent works, closes on Esc without cancelling, and runs live commands', async () => {
+  // https://github.com/strands-agents/harness-sdk/pull/5194#discussion_r4513831923
+  it('dismisses suggestions without cancelling, completes with Tab, and runs live commands', async () => {
     let finishTurn = (): void => {}
     const backend = idleBackend({
       async *stream() {
@@ -69,8 +70,8 @@ describe('slash palette during a turn', () => {
       expect(backend.cancel).not.toHaveBeenCalled()
       expect(controller.busy).toBe(true)
 
-      input.write('l')
-      await vi.waitFor(() => expect(frame()).toContain('Browse controls, commands'))
+      input.write('\t')
+      await vi.waitFor(() => expect(frame()).toContain('/help ▌'))
       input.write('\r')
       await vi.waitFor(() => expect(controller.getSnapshot().panel?.kind).toBe('help'))
       expect(controller.busy).toBe(true)
