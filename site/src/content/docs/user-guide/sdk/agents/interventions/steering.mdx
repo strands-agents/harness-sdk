@@ -13,6 +13,8 @@ redirectFrom:
   - docs/user-guide/concepts/plugins/steering
 ---
 
+import Diagram from '@components/Diagram.astro'
+
 Steering provides modular prompting for complex agent tasks through context-aware guidance that appears when relevant, rather than front-loading all instructions in monolithic prompts. Steering handlers observe agent activity and intervene at key moments, before a tool call or after a model response, with targeted feedback.
 
 The mechanism differs by SDK: in Python, steering handlers are [plugins](../../plugins/index.mdx); in TypeScript, they build on the [interventions](./index.mdx) framework and its typed action model. The concepts below are shared; the code in each tab shows the language-specific API.
@@ -39,12 +41,10 @@ Traditional prompting requires front-loading all instructions into a single prom
 
 To give the handler something to reason about, attach a provider that observes agent activity and records it as steering context.
 
-```mermaid
-flowchart LR
-    A[Hook Events] --> B[Context Providers]
-    B --> C[Update Steering Context]
-    C --> D[Handler Access]
-```
+<Diagram
+  name="steering-context-population"
+  alt="Context population. The agent fires hook events. Context providers registered on the steering handler, such as the tool ledger, observe those events and record structured data into the handler's steering context. The handler reads the steering context when deciding whether to intervene."
+/>
 
 **Context providers** observe agent activity and contribute structured data into the handler's steering context. The built-in tool ledger provider (<Syntax py="LedgerProvider" ts="ToolLedgerProvider" />) tracks tool call history, timing, and results. Steering handlers read from this context when deciding whether to intervene.
 
@@ -54,15 +54,10 @@ flowchart LR
 
 When you want the handler to validate a tool call before it runs, return a steering action from the before-tool-call moment:
 
-```mermaid
-flowchart LR
-    A[Tool Call Attempt] --> B[BeforeToolCallEvent]
-    B --> C[Handler Evaluates Call]
-    C --> D{Steering Action}
-    D -->|Approve| E[Tool Executes]
-    D -->|Guide| F[Cancel + Feedback]
-    D -->|Pause for Human| G[Human Input]
-```
+<Diagram
+  name="steering-before-tool-call"
+  alt="Steering before a tool call. The model's tool call reaches the steering handler on BeforeToolCallEvent, and the handler picks one of three outcomes. Proceed: the tool runs immediately. Guide: the tool call is cancelled and the agent gets the handler's feedback. Ask a human: execution pauses until a human approves or provides input."
+/>
 
 The handler returns one of three actions:
 
@@ -87,14 +82,10 @@ The handler returns one of three actions:
 
 When you want the handler to validate the model's output before it reaches the user, return a steering action from the after-model-call moment:
 
-```mermaid
-flowchart LR
-    A[Model Response] --> B[AfterModelCallEvent]
-    B --> C[Handler Evaluates Output]
-    C --> D{Steering Action}
-    D -->|Approve| E[Response Accepted]
-    D -->|Guide| F[Discard + Retry]
-```
+<Diagram
+  name="steering-after-model-call"
+  alt="Steering after a model response. The model's response reaches the steering handler on AfterModelCallEvent, and the handler picks one of two outcomes. Proceed: the response is accepted as-is. Guide: the response is discarded and the model retries with the guidance injected into the conversation."
+/>
 
 The handler returns one of two actions:
 
@@ -174,20 +165,10 @@ Attach the handler through the interventions framework:
 </Tab>
 </Tabs>
 
-```mermaid
-sequenceDiagram
-    participant U as User
-    participant A as Agent
-    participant S as Steering Handler
-    participant T as Tool
-
-    U->>A: "Send frustrated email to client"
-    A->>A: Reason about request
-    A->>S: Evaluate send_email tool call
-    S->>S: Evaluate tone in message
-    S->>A: Guide toward cheerful tone
-    A->>U: "Let me reframe this more positively..."
-```
+<Diagram
+  name="steering-llm-handler-sequence"
+  alt="A typical run of the cheerful-email example, in two phases. First attempt: the user asks the agent to send a frustrated email; the agent calls the email tool and the LLM steering handler intercepts the call. The handler evaluates the message's tone against its system prompt and returns guide, so the call is cancelled and the agent receives guidance toward a cheerful tone. Retry: the agent calls the email tool again with cheerier wording; the handler returns proceed; the email tool sends the email; and the agent gives the user its final response."
+/>
 
 For best practices on writing steering prompts, see the [Agent Standard Operating Procedures (SOP)](https://github.com/strands-agents/agent-sop) framework.
 
@@ -227,7 +208,7 @@ The wider intervention vocabulary (`Deny`, `Transform`) is excluded at the type 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `systemPrompt` | `string \| SystemContentBlock[]` | *(required)* | Steering rules for the evaluation LLM |
-| `model` | `Model` | Parent agent's model | Model used for steering evaluation |
+| `model` | `Model` | `agent.auxModel` | Model used for steering evaluation |
 | `contextProviders` | `SteeringContextProvider[]` | `[new ToolLedgerProvider()]` | Providers that supply evaluation context. Pass `[]` to disable |
 | `promptBuilder` | `PromptBuilder` | Built-in builder with cache points | Custom function to build evaluation prompts |
 | `name` | `string` | `'strands:llm-steering-handler'` | Unique handler name (must be distinct if multiple handlers are attached) |
@@ -268,3 +249,4 @@ The built-in `ToolLedgerProvider` accepts:
 - [Interventions](./index.mdx): the typed action model, lifecycle methods, evaluation order, and error handling
 - [Plugins](../../plugins/index.mdx): the Python interface steering handlers build on
 - [Hooks](../hooks.mdx): low-level event callbacks that context providers subscribe to
+rs subscribe to

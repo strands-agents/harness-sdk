@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 392" width="720" height="392">
+  <!-- Type: timeline (trace waterfall). Story: one bidi_session span parents every other span, and a tool span can overlap the responses around it. -->
+  <defs>
+    <marker id="arrow" viewBox="0 0 8 6" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+      <path class="dg-head" d="M0,0 L8,3 L0,6 Z"/>
+    </marker>
+  </defs>
+
+  <!-- Zone: the session's children -->
+  <rect class="dg-zone" x="16" y="72" width="688" height="276" rx="8"/>
+  <text class="dg-eyebrow" x="32" y="92">CHILD SPANS OF THE SESSION</text>
+
+  <!-- Time axis -->
+  <path class="dg-edge" d="M32,376 H686" marker-end="url(#arrow)"/>
+  <text class="dg-label" x="32" y="367">TIME</text>
+
+  <!-- Session span: covers the whole run -->
+  <rect class="dg-node is-focal" x="32" y="16" width="656" height="40" rx="6"/>
+  <text class="dg-code" x="44" y="40">bidi_session &lt;agent name&gt;</text>
+
+  <!-- Child spans, placed by when they run -->
+  <rect class="dg-node" x="32" y="104" width="112" height="36" rx="6"/>
+  <text class="dg-code" x="44" y="126">bidi_connect</text>
+
+  <rect class="dg-node" x="152" y="152" width="168" height="36" rx="6"/>
+  <text class="dg-code" x="164" y="174">bidi_response</text>
+
+  <rect class="dg-node" x="240" y="200" width="192" height="36" rx="6"/>
+  <text class="dg-code" x="252" y="222">execute_tool &lt;tool name&gt;</text>
+
+  <rect class="dg-node" x="328" y="248" width="168" height="36" rx="6"/>
+  <text class="dg-code" x="340" y="270">bidi_response</text>
+
+  <rect class="dg-node" x="504" y="296" width="184" height="36" rx="6"/>
+  <text class="dg-code" x="516" y="318">bidi_connection_restart</text>
+</svg>

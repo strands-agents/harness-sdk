@@ -10,13 +10,14 @@ import MobileMenuFooter from 'virtual:starlight/components/MobileMenuFooter'
 import SidebarPersister from '@astrojs/starlight/components/SidebarPersister.astro'
 import SidebarSublist from './SidebarSublist.astro'
 import { currentProduct } from '../../util/current-product'
+import { isSampleGuidePath, sampleGuideLanguageFromPath } from '../../util/sample-guides'
 
 const { sidebar } = Astro.locals.starlightRoute
 const product = currentProduct(Astro.url.pathname)
 // Learning (courses) and Examples aren't products, but their sidebars lead
 // with the same bordered slug box so they match the product pages.
 const isLearning = !product && Astro.url.pathname.includes('/docs/learning/')
-const isExamples = !product && /\/examples\/?$/.test(Astro.url.pathname)
+const isExamples = !product && isSampleGuidePath(Astro.url.pathname)
 // The catalog landing and the "Add your integration" page share the /integrations slug.
 const isIntegrations =
   !product &&
@@ -24,6 +25,7 @@ const isIntegrations =
     Astro.url.pathname.includes('/docs/integrations/get-featured'))
 const isLabs = !product && Astro.url.pathname.includes('/docs/labs')
 const isContribute = !product && Astro.url.pathname.includes('/docs/contribute')
+const sampleGuideLanguage = isExamples ? sampleGuideLanguageFromPath(Astro.url.pathname) : undefined
 const staticSlug = isLearning
   ? '/learn'
   : isExamples
@@ -37,15 +39,19 @@ const staticSlug = isLearning
           : null
 ---
 
-<script is:inline>
-  // Language-scoped sidebar entries (Quickstart / API reference) collapse to a
-  // single row that follows the header language toggle. Mirror the stored
-  // language onto <html data-lang-pref> so CSS can hide the other language's
-  // row before the list paints, then keep it in sync as the toggle changes.
+<script is:inline define:vars={{ SAMPLE_GUIDE_LANGUAGE: sampleGuideLanguage }}>
+  // Language-scoped sidebar entries (sample guides, Quickstart, API reference)
+  // follow the header language toggle. Mirror the stored language onto
+  // <html data-lang-pref> so CSS can hide the other language's row before the
+  // list paints, then keep it in sync as the toggle changes.
+  // A sample guide's route is authoritative because its content and navigation
+  // both belong to that language.
   // Key + label values mirror src/util/language-preference.ts + LanguageToggle.astro.
   ;(function () {
     var KEY = 'starlight-synced-tabs__jarkqt'
     function set(label) {
+      if (SAMPLE_GUIDE_LANGUAGE === 'python') label = 'Python'
+      if (SAMPLE_GUIDE_LANGUAGE === 'typescript') label = 'TypeScript'
       document.documentElement.dataset.langPref = label === 'Python' ? 'python' : 'typescript'
     }
     try {
@@ -178,6 +184,8 @@ const staticSlug = isLearning
     display: none;
   }
 
+  html:not([data-lang-pref='python']) .sidebar-content li:not(:only-child):has(> [data-sidebar-lang='python']),
+  html[data-lang-pref='python'] .sidebar-content li:not(:only-child):has(> [data-sidebar-lang='typescript']),
   html[data-lang-pref='python'] .sidebar-content li:has(> a[href*='/quickstart/typescript']),
   html[data-lang-pref='python'] .sidebar-content li:has(> a[href*='/api/typescript']) {
     display: none;

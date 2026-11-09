@@ -39,7 +39,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from strands._middleware.stages import InvokeModelContext, InvokeModelStage
+from strands.agent.invocation_context import _create_invocation_context, _reached_limit
 from strands.hooks.events import AfterInvocationEvent, MessageAddedEvent
 from strands.hooks.registry import HookOrder
 from strands.memory import AggregateMemoryError
@@ -60,6 +60,7 @@ from strands.memory.types import (
     _has_method,
     _has_write_sink,
 )
+from strands.middleware.stages import InvokeModelContext, InvokeModelStage
 from strands.tools.decorator import tool
 
 # --------------------------------------------------------------------------- #
@@ -204,10 +205,10 @@ class _FakeAgent:
     """Minimal agent stand-in for ``init_agent`` wiring.
 
     The manager uses ``agent.add_hook(callback, event_type, *, order=...)``,
-    ``agent.aux_model``, and ``agent._middleware_registry.add_middleware(...)`` (for
+    ``agent.aux_model``, and ``agent.add_middleware(...)`` (for
     default-on injection). Recorded hooks are kept as ``(callback, event_type,
-    order)`` triples so tests can fire the matching events manually; the
-    middleware registry is a mock so injection registration is a no-op here.
+    order)`` triples so tests can fire the matching events manually;
+    ``add_middleware`` is a mock so injection registration is a no-op here.
     """
 
     def __init__(self, model: Any = None, aux_model: Any = None) -> None:
@@ -215,7 +216,7 @@ class _FakeAgent:
         self.aux_model = aux_model if aux_model is not None else model
         self.state = MagicMock()
         self.hooks: list[tuple[Any, Any, float]] = []
-        self._middleware_registry = MagicMock()
+        self.add_middleware = MagicMock()
 
     def add_hook(self, callback: Any, event_type: Any = None, *, order: float = HookOrder.DEFAULT) -> None:
         self.hooks.append((callback, event_type, order))
@@ -1277,11 +1278,11 @@ class _InjectionAgent:
 
     def __init__(self) -> None:
         self.state = MagicMock()
-        self._middleware_registry = MagicMock()
+        self.add_middleware = MagicMock()
 
     @property
     def add_middleware_calls(self) -> Any:
-        return self._middleware_registry.add_middleware.call_args_list
+        return self.add_middleware.call_args_list
 
 
 def _invoke_ctx(messages: list[dict], agent: Any) -> Any:
@@ -1330,7 +1331,7 @@ def test_injection_config_object_passes_through_unchanged():
 async def test_init_agent_does_not_register_injection_middleware_when_disabled():
     agent = _InjectionAgent()
     await MemoryManager(stores=[_store("s")], injection=False).init_agent(agent)
-    agent._middleware_registry.add_middleware.assert_not_called()
+    agent.add_middleware.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -1338,7 +1339,7 @@ async def test_init_agent_registers_invoke_model_input_middleware_when_enabled()
     agent = _InjectionAgent()
     await MemoryManager(stores=[_store("s")], injection=True).init_agent(agent)
 
-    agent._middleware_registry.add_middleware.assert_called_once()
+    agent.add_middleware.assert_called_once()
     stage_or_phase, handler = agent.add_middleware_calls[0].args
     assert stage_or_phase is InvokeModelStage.Input
     assert callable(handler)
@@ -1555,3 +1556,28 @@ async def test_injection_fails_open_when_custom_format_raises(caplog):
     with caplog.at_level(logging.WARNING):
         assert await _provide(mm, [_assistant_msg("prior"), _user_msg("ask")]) is None
     assert "skipping injection" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_init_agent_trigger_forwards_the_firing_events_request_to_the_extractor():
+    extractor = _make_extractor([ExtractionResult(content="fact")])
+    store = _store(
+        "s",
+        writable=True,
+        sinks={"add"},
+        extraction=ExtractionConfig(trigger=InvocationTrigger(), extractor=extractor),
+    )
+    mm = MemoryManager(stores=[store])
+    agent = _FakeAgent()
+    await mm.init_agent(agent)
+    request = _create_invocation_context({"turns": 1})
+    request._usage["turns_taken"] = 1
+
+    await _add_messages(agent, _user_msg("I prefer dark mode"))
+    await _invoke_all(agent, AfterInvocationEvent(agent=agent, invocation_context=request))
+    await mm.flush()
+
+    handed = extractor.extract.call_args.args[1].invocation_context
+    handed._record_usage({"inputTokens": 1, "outputTokens": 2, "totalTokens": 3})
+    assert _reached_limit(handed) is None
+    assert request.usage == {"turns_taken": 1, "inputTokens": 1, "outputTokens": 2, "totalTokens": 3}

@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
-import { readFile, readdir, stat } from 'node:fs/promises'
-import { join, resolve } from 'node:path'
+import { mkdir, readFile, readdir, stat, unlink, writeFile } from 'node:fs/promises'
+import { dirname, join, resolve } from 'node:path'
 import { StringDecoder } from 'node:string_decoder'
 import {
   PosixShellSandbox,
@@ -36,6 +36,16 @@ export class WorkspaceSandbox extends PosixShellSandbox {
 
   override readFile(path: string): Promise<Uint8Array> {
     return readFile(resolve(this.cwd, path))
+  }
+
+  override async writeFile(path: string, content: Uint8Array): Promise<void> {
+    const fullPath = resolve(this.cwd, path)
+    await mkdir(dirname(fullPath), { recursive: true })
+    await writeFile(fullPath, content)
+  }
+
+  override async removeFile(path: string): Promise<void> {
+    await unlink(resolve(this.cwd, path))
   }
 
   override async listFiles(path: string): Promise<FileInfo[]> {

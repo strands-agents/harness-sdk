@@ -10,12 +10,14 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from opentelemetry.trace import StatusCode
 from pydantic import BaseModel
 
-from strands._middleware import MiddlewareRegistry
+from strands import tool
 from strands.event_loop.event_loop import event_loop_cycle, recurse_event_loop
+from strands.middleware._registry import MiddlewareRegistry
 from strands.telemetry.metrics import EventLoopMetrics
 from strands.telemetry.tracer import Tracer
 from strands.tools.registry import ToolRegistry
 from strands.tools.structured_output._structured_output_context import (
+    _NO_STRUCTURED_OUTPUT_MESSAGE,
     DEFAULT_STRUCTURED_OUTPUT_PROMPT,
     StructuredOutputContext,
 )
@@ -37,6 +39,12 @@ class ProductModel(BaseModel):
     title: str
     price: float
     in_stock: bool
+
+
+@tool
+def lookup(query: str) -> str:
+    """Look up a product."""
+    return query
 
 
 @pytest.fixture
@@ -66,6 +74,8 @@ def mock_agent():
     agent._interrupt_state.context = {}
     agent._cancel_signal = threading.Event()
     agent._observe_cancellation = agent._cancel_signal.is_set
+    agent._deferred_cancel = False
+    agent._cancel_message = None
     agent._model_state = {}
     agent._system_prompt_content = None
     agent._middleware_registry = MiddlewareRegistry()
@@ -294,7 +304,7 @@ async def test_event_loop_structured_output_failure_closes_cycle_span_with_error
         ]
     )
 
-    expected_message = "The model failed to invoke the structured output tool even after it was forced."
+    expected_message = _NO_STRUCTURED_OUTPUT_MESSAGE
     with pytest.raises(StructuredOutputException, match=expected_message):
         stream = event_loop_cycle(
             agent=mock_agent,
@@ -428,26 +438,27 @@ async def test_structured_output_context_not_enabled(mock_agent, agenerator, ali
     assert stop_events[0]["stop"][-1] is None
 
 
+@pytest.mark.parametrize(
+    ("model", "exp_tool_names", "exp_structured_output_model"),
+    [
+        (Mock(), ["ProductModel"], None),
+        (Mock(_supports_structured_output=True), ["lookup", "ProductModel"], ProductModel),
+    ],
+    ids=["narrowed", "enforced_by_model"],
+)
 @pytest.mark.asyncio
-async def test_structured_output_forced_mode(mock_agent, agenerator, alist):
-    """Test event loop with structured output in forced mode."""
-    # Create context in forced mode
+async def test_structured_output_forced_mode(
+    mock_agent, agenerator, alist, model, exp_tool_names, exp_structured_output_model
+):
+    """Only a model that enforces structured output itself receives the full tool list on the forced retry."""
     structured_output_context = StructuredOutputContext(structured_output_model=ProductModel)
     structured_output_context.set_forced_mode(tool_choice={"tool": {"name": "ProductModel"}})
-
-    # Model should be called with only the structured output tool spec
-    mock_agent.model.stream.return_value = agenerator(
+    mock_agent.tool_registry.register_tool(lookup)
+    structured_output_context.register_tool(mock_agent.tool_registry)
+    mock_agent.model = model
+    model.stream.return_value = agenerator(
         [
-            {
-                "contentBlockStart": {
-                    "start": {
-                        "toolUse": {
-                            "toolUseId": "t1",
-                            "name": "ProductModel",
-                        }
-                    }
-                }
-            },
+            {"contentBlockStart": {"start": {"toolUse": {"toolUseId": "t1", "name": "ProductModel"}}}},
             {
                 "contentBlockDelta": {
                     "delta": {"toolUse": {"input": '{"title": "Book", "price": 19.99, "in_stock": true}'}}
@@ -457,34 +468,44 @@ async def test_structured_output_forced_mode(mock_agent, agenerator, alist):
             {"messageStop": {"stopReason": "tool_use"}},
         ]
     )
-
-    # Mock tool executor
     mock_agent.tool_executor._execute = Mock(return_value=agenerator([]))
+    structured_output_context.extract_result = Mock(return_value=ProductModel(title="Book", price=19.99, in_stock=True))
 
-    # Mock extract_result
-    test_result = ProductModel(title="Book", price=19.99, in_stock=True)
-    structured_output_context.extract_result = Mock(return_value=test_result)
-
-    stream = event_loop_cycle(
-        agent=mock_agent,
-        invocation_state={},
-        structured_output_context=structured_output_context,
+    await alist(
+        event_loop_cycle(agent=mock_agent, invocation_state={}, structured_output_context=structured_output_context)
     )
-    await alist(stream)
 
-    # Verify model.stream was called with the forced tool spec
-    mock_agent.model.stream.assert_called_once()
-    call_args = mock_agent.model.stream.call_args
+    model.stream.assert_called_once()
+    tru_tool_names = [tool_spec["name"] for tool_spec in model.stream.call_args.args[1]]
+    assert tru_tool_names == exp_tool_names
+    assert model.stream.call_args.kwargs.get("structured_output_model") == exp_structured_output_model
 
-    # The model.stream method signature (from streaming.py) is:
-    # model.stream(messages, tool_specs, system_prompt, tool_choice=tool_choice)
-    tool_specs = call_args.args[1] if len(call_args.args) > 1 else None
 
-    # In forced mode, only the structured output tool spec should be passed
-    assert tool_specs is not None, "Expected tool_specs to be provided"
-    assert isinstance(tool_specs, list), f"Expected tool_specs to be a list, got {type(tool_specs)}"
-    assert len(tool_specs) == 1
-    assert tool_specs[0]["name"] == "ProductModel"
+@pytest.mark.asyncio
+async def test_event_loop_accepts_json_text_on_forced_retry(mock_agent, agenerator, alist):
+    """A provider that could not force the tool may end the forced retry with the result as JSON text."""
+    structured_output_context = StructuredOutputContext(structured_output_model=ProductModel)
+    mock_agent.model.stream.side_effect = [
+        agenerator(
+            [
+                {"contentBlockDelta": {"delta": {"text": text}}},
+                {"contentBlockStop": {}},
+                {"messageStop": {"stopReason": "end_turn"}},
+            ]
+        )
+        for text in ("Here is the product info", '{"title": "Book", "price": 19.99, "in_stock": true}')
+    ]
+
+    events = await alist(
+        event_loop_cycle(agent=mock_agent, invocation_state={}, structured_output_context=structured_output_context)
+    )
+
+    exp_result = ProductModel(title="Book", price=19.99, in_stock=True)
+    tru_results = [event["structured_output"] for event in events if isinstance(event, StructuredOutputEvent)]
+    assert tru_results == [exp_result]
+    stop_event = next(event for event in events if isinstance(event, EventLoopStopEvent))
+    assert stop_event["stop"][0] == "end_turn"
+    assert stop_event["stop"][5] == exp_result
 
 
 @pytest.mark.asyncio

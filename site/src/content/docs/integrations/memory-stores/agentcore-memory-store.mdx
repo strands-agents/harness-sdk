@@ -3,10 +3,10 @@ title: AgentCore Memory Store
 community: true
 description: Amazon Bedrock AgentCore Memory as a MemoryStore for long-term recall and server-side extraction
 integrationType: memory-store
-languages: TypeScript
 sidebar:
   label: "AgentCore Memory Store"
 project:
+  pypi: https://pypi.org/project/bedrock-agentcore/
   npm: https://www.npmjs.com/package/bedrock-agentcore
   github: https://github.com/aws/bedrock-agentcore-sdk-typescript/tree/main/src/memory/integrations/strands
   maintainer: aws
@@ -15,104 +15,246 @@ service:
   link: https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/memory.html
 ---
 
-The [AgentCore Memory Store](https://github.com/aws/bedrock-agentcore-sdk-typescript/tree/main/src/memory/integrations/strands)
+The AgentCore Memory Store, available in Python and TypeScript,
 implements the Strands [`MemoryStore`](../../user-guide/sdk/memory/managing-memory.md#custom-stores)
 interface on top of Amazon Bedrock AgentCore Memory. Search maps to AgentCore's
-`retrieveMemoryRecords`, and conversation turns are ingested for
+`RetrieveMemoryRecords`, and conversation turns are ingested for
 server-side memory extraction into long-term records. Attach it to an agent through a
 [`MemoryManager`](../../user-guide/sdk/memory/overview.md) like any other store. See
 the [Getting Started](../../user-guide/sdk/memory/overview.md) section for more information.
 
+Use this integration for long-term memory through a memory manager. To persist and restore
+conversation history, use
+<Syntax py="SnapshotSessionManager" ts="SessionManager" /> as described in the
+[single-agent session guide](../../user-guide/sdk/agents/session-management.md#single-agent-sessions).
+
 ## Requirements
 
-- `bedrock-agentcore >= 0.4.1`
-- `@strands-agents/sdk >= 1.5.0`
-- An [Amazon Bedrock AgentCore Memory](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/memory.html) resource, with AWS credentials to reach it
+Use an existing
+[Amazon Bedrock AgentCore Memory](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/memory.html)
+resource with extraction strategies and AWS credentials to access it. Match the examples'
+namespaces to those configured on your strategies. The store does not create the resource.
+
+<Tabs>
+  <Tab label="Python">
+    - `bedrock-agentcore >= 1.21.0`
+    - `strands-agents >= 1.56.0`
+  </Tab>
+  <Tab label="TypeScript">
+    - `bedrock-agentcore >= 0.4.1`
+    - `@strands-agents/sdk >= 1.5.0`
+  </Tab>
+</Tabs>
 
 ## Installation
 
-```bash
-npm install bedrock-agentcore @strands-agents/sdk
-```
+<Tabs>
+  <Tab label="Python">
+    ```bash
+    pip install "bedrock-agentcore[strands-agents]>=1.21.0"
+    ```
+  </Tab>
+  <Tab label="TypeScript">
+    ```bash
+    npm install bedrock-agentcore @strands-agents/sdk
+    ```
+  </Tab>
+</Tabs>
 
 ## Usage
 
-`createAgentCoreMemoryStores` builds one store per namespace over a shared client, and you
-attach them to an agent through a `MemoryManager`. Mark a namespace `writable` to capture the
-conversation into it; a namespace left unmarked stays read-only for recall.
+To recall from multiple namespaces, use
+<Syntax py="create_agentcore_memory_stores" ts="createAgentCoreMemoryStores" />.
+It builds one store per namespace over a shared client. Attach the stores to an agent
+through a `MemoryManager` and enable extraction on one writer to capture conversation
+turns. Writes go to the shared conversation stream; the memory resource's strategies
+decide which namespaces receive extracted records.
 
-```typescript
-import { Agent, MemoryManager, BedrockModel } from '@strands-agents/sdk'
-import { createAgentCoreMemoryStores } from 'bedrock-agentcore/memory/strands'
+<Tabs>
+  <Tab label="Python">
+    Set `AGENTCORE_MEMORY_ID` to your memory resource ID.
 
-const stores = createAgentCoreMemoryStores({
-  memoryId: 'mem-abc',
-  actorId: 'user-123',
-  sessionId: 'session-1',
-  namespaces: [
-    { namespace: '/facts/{actorId}', writable: true },
-    { namespace: '/preferences/{actorId}', minScore: 0.5 },
-  ],
-  extraction: true,
-})
+    ```python
+    import os
 
-const agent = new Agent({
-  model: new BedrockModel(),
-  memoryManager: new MemoryManager({ stores }),
-})
-```
+    from strands import Agent
+    from strands.memory import MemoryManager
+    from bedrock_agentcore.memory.integrations.strands.memorystore import (
+        create_agentcore_memory_stores,
+    )
+
+    stores = create_agentcore_memory_stores(
+        memory_id=os.environ["AGENTCORE_MEMORY_ID"],
+        actor_id="user-123",
+        session_id="session-1",
+        namespaces=[
+            {"namespace": "/facts/{actorId}", "writable": True},
+            {"namespace": "/preferences/{actorId}", "min_score": 0.5},
+        ],
+        extraction=True,
+        region_name="us-east-1",
+    )
+
+    manager = MemoryManager(stores=stores)
+    agent = Agent(memory_manager=manager)
+    ```
+
+    The import package is `memorystore`, without an underscore.
+    With extraction enabled, the factory selects the first namespace not explicitly
+    marked `writable=False` when no writer is specified. Set `writable=True` on one
+    namespace to choose the writer explicitly, as above. Omit `extraction` and writer
+    flags for recall-only stores.
+  </Tab>
+  <Tab label="TypeScript">
+    ```typescript
+    import { Agent, MemoryManager, BedrockModel } from '@strands-agents/sdk'
+    import { createAgentCoreMemoryStores } from 'bedrock-agentcore/memory/strands'
+
+    const stores = createAgentCoreMemoryStores({
+      memoryId: 'mem-abc',
+      actorId: 'user-123',
+      sessionId: 'session-1',
+      namespaces: [
+        { namespace: '/facts/{actorId}', writable: true },
+        { namespace: '/preferences/{actorId}', minScore: 0.5 },
+      ],
+      extraction: true,
+    })
+
+    const agent = new Agent({
+      model: new BedrockModel(),
+      memoryManager: new MemoryManager({ stores }),
+    })
+    ```
+  </Tab>
+</Tabs>
 
 A single `AgentCoreMemoryStore` can also be constructed directly when you only need one
 namespace:
 
-```typescript
-import { AgentCoreMemoryStore } from 'bedrock-agentcore/memory/strands'
+<Tabs>
+  <Tab label="Python">
+    ```python
+    import os
 
-const store = new AgentCoreMemoryStore({
-  memoryId: 'mem-abc',
-  actorId: 'user-123',
-  sessionId: 'session-1',
-  namespace: '/facts/{actorId}',
-  writable: true,
-  extraction: true,
-})
-```
+    from strands import Agent
+    from strands.memory import MemoryManager
+    from bedrock_agentcore.memory.integrations.strands.memorystore import (
+        AgentCoreMemoryStore,
+    )
+
+    store = AgentCoreMemoryStore(
+        memory_id=os.environ["AGENTCORE_MEMORY_ID"],
+        actor_id="user-123",
+        session_id="session-1",
+        namespace="/facts/{actorId}",
+        writable=True,
+        extraction=True,
+        region_name="us-east-1",
+    )
+    manager = MemoryManager(stores=[store])
+    agent = Agent(memory_manager=manager)
+    ```
+  </Tab>
+  <Tab label="TypeScript">
+    ```typescript
+    import { AgentCoreMemoryStore } from 'bedrock-agentcore/memory/strands'
+
+    const store = new AgentCoreMemoryStore({
+      memoryId: 'mem-abc',
+      actorId: 'user-123',
+      sessionId: 'session-1',
+      namespace: '/facts/{actorId}',
+      writable: true,
+      extraction: true,
+    })
+    ```
+  </Tab>
+</Tabs>
 
 ## Configuration
 
-In `createAgentCoreMemoryStores`, `namespace`, `writable`, and `minScore` are set per
-`namespaces` entry, while everything else is passed once at the top level. The direct
-`AgentCoreMemoryStore` constructor takes all options in one flat config.
+Set namespace-specific options on each factory entry, and identity and extraction
+options at the top level. The direct `AgentCoreMemoryStore` constructor takes all
+options in one flat config.
 
 | Option | Type | Description |
 |--------|------|-------------|
-| `memoryId` | `string` | The AgentCore Memory resource to read from and write to. |
-| `actorId` | `string` | Identifies the user; substituted into `{actorId}` placeholders. |
-| `sessionId` | `string` | Identifies the conversation; substituted into `{sessionId}` placeholders. |
-| `namespace` | `string` | Exact namespace prefix for recall. Use `namespacePath` instead to query a whole subtree. |
-| `writable` | `boolean` | Enables writing conversation turns for extraction. Defaults to `false`. |
-| `extraction` | `boolean \| object` | Turns on server-side extraction, with optional cadence and filter config. |
-| `minScore` | `number` | Drops recalled records below this relevance threshold. |
+| <Syntax py="memory_id" ts="memoryId" /> | string | Memory resource ID. |
+| <Syntax py="actor_id" ts="actorId" /> | string | Replaces `{actorId}`. |
+| <Syntax py="session_id" ts="sessionId" /> | string | Replaces `{sessionId}`. |
+| `namespace` | string | Exact namespace prefix for recall. |
+| <Syntax py="namespace_path" ts="namespacePath" /> | string | Subtree query; direct constructor only, instead of `namespace`. |
+| `writable` | boolean | Enables conversation writes; false by default on a direct store. |
+| `extraction` | boolean or config | Enables automatic dispatch, with cadence and filtering. |
+| <Syntax py="min_score" ts="minScore" /> | number | Minimum relevance score for recall. |
 
-See the [package README](https://github.com/aws/bedrock-agentcore-sdk-typescript/tree/main/src/memory/integrations/strands)
-for the full option reference, including subtree reads and over-fetch tuning.
+<Tabs>
+  <Tab label="Python">
+    For custom extraction cadence, pass an `extraction` dictionary with `cadence` and
+    `filter` to the factory. For example, use `IntervalTrigger(turns=10)` from
+    `strands.memory` as the cadence. The direct constructor uses the Strands
+    `ExtractionConfig`, whose cadence key is `trigger`.
+
+    See the [package README][python-integration] for batching, score filtering,
+    metadata, and the full namespace contract.
+  </Tab>
+  <Tab label="TypeScript">
+    See the [package README][typescript-integration] for the full option reference,
+    including subtree reads and over-fetch tuning.
+  </Tab>
+</Tabs>
+
+## Writes and shutdown
+
+Conversation writes use `CreateEvent` for server-side extraction, preserving user
+and assistant roles. Flush pending writes at a shutdown boundary after asynchronous
+invocation or streaming.
+
+<Tabs>
+  <Tab label="Python">
+    Synchronous `agent(...)` calls flush automatically. After `agent.invoke_async(...)`
+    or `agent.stream_async(...)`, call `await manager.flush()` before closing the event
+    loop. Reuse the manager while the same actor and session remain active to retain
+    buffered turns and cadence state.
+
+    Strands logs extraction write failures and retains failed batches for retry.
+    A completed `flush()` alone is not proof that events were persisted.
+
+    The store implements `add_messages()`, not the flat-string `add()` interface,
+    so it does not enable the manager's `add_memory` tool. Enable extraction to send
+    conversation turns instead.
+  </Tab>
+  <Tab label="TypeScript">
+    Await `agent.memoryManager?.flush()` at shutdown to settle pending writes.
+  </Tab>
+</Tabs>
+
+A completed flush does not confirm that server-side extraction has finished.
+Monitor write failures in logs; newly extracted records may not be immediately
+searchable.
 
 ## Notes
 
 - **One writable store per session.** Mark at most one store `writable` for a given
-  `(actorId, sessionId)`: because writes are namespace-free, multiple writable stores would
-  emit duplicate events to the same `(memoryId, actorId, sessionId)` stream.
-  `createAgentCoreMemoryStores` enforces this and throws if more than one store is writable.
+  memory resource, actor, and session: multiple writers would emit duplicate events
+  to the same stream. The factory rejects configurations with more than one writer.
 - **Placeholders resolve at construction.** Only `{actorId}` and `{sessionId}` are substituted
   client-side, into the namespace used for recall. Any other placeholder in a namespace causes
   construction to throw. Provision strategies with `{actorId}`/`{sessionId}`-only templates to
   match.
-- **Eventual consistency.** Writes and extraction are asynchronous, so a fact written this
-  turn may not be retrievable on the next one.
+- **Cross-session recall.** A namespace containing `{sessionId}` scopes recall to that
+  session. Use an actor-only namespace to recall memories across sessions.
 
 ## References
 
-- [Integration source](https://github.com/aws/bedrock-agentcore-sdk-typescript/tree/main/src/memory/integrations/strands)
+- [Python integration source and README][python-integration]
+- [`bedrock-agentcore` on PyPI](https://pypi.org/project/bedrock-agentcore/)
+- [TypeScript integration source and README][typescript-integration]
 - [`bedrock-agentcore` on npm](https://www.npmjs.com/package/bedrock-agentcore)
 - [Amazon Bedrock AgentCore Memory](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/memory.html)
-- [Report an issue](https://github.com/aws/bedrock-agentcore-sdk-typescript/issues/new/choose)
+- [Report a Python issue](https://github.com/aws/bedrock-agentcore-sdk-python/issues/new/choose)
+- [Report a TypeScript issue](https://github.com/aws/bedrock-agentcore-sdk-typescript/issues/new/choose)
+
+[python-integration]: https://github.com/aws/bedrock-agentcore-sdk-python/tree/main/src/bedrock_agentcore/memory/integrations/strands/memorystore
+[typescript-integration]: https://github.com/aws/bedrock-agentcore-sdk-typescript/tree/main/src/memory/integrations/strands

@@ -45,10 +45,6 @@
 	font-family: 'JetBrains Mono', ui-monospace, monospace;
 }
 
-.interrupt-flow .mermaid {
-	justify-content: center;
-}
-
 /* Brand palette and shared Starlight tokens live in fonts.css (loaded on every
    page). Only docs-specific tokens and rules remain here. */
 
@@ -66,7 +62,7 @@ a:hover {
 	color: var(--sl-color-link-hover);
 }
 
-/* LinkCards (e.g. the quick-start cards on the Overview pages) are whole-card
+/* LinkCards (e.g. the quickstart cards on the Overview pages) are whole-card
    anchors, so the global green `a:hover` recolors the card title and drops its
    contrast against the card surface. Keep card text at the standard foreground
    on hover; the border already signals the hover state. */

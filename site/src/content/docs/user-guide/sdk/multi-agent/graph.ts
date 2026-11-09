@@ -405,6 +405,8 @@ async function topologyFeedbackLoop() {
       { source: 'reviewer', target: 'draft_writer', handler: needsRevision },
       { source: 'reviewer', target: 'publisher', handler: isApproved },
     ],
+    // The loop gives draft_writer an incoming edge, so set the source explicitly
+    sources: ['draft_writer'],
     // Set execution limits to prevent infinite loops
     maxSteps: 10,
   })

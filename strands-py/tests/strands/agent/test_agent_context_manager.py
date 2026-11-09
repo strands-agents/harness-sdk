@@ -10,6 +10,11 @@ from strands.agent.conversation_manager import (
     NullConversationManager,
     SlidingWindowConversationManager,
 )
+from strands.session.file_session_manager import FileSessionManager
+from strands.session.repository_session_manager import RepositorySessionManager
+from strands.session.snapshot_session_manager import SnapshotSessionManager
+from strands.storage.in_memory_storage import InMemoryStorage
+from tests.fixtures.mock_session_repository import MockedSessionRepository
 
 
 @pytest.fixture
@@ -88,6 +93,34 @@ class TestContextManagerErrors:
     def test_raises_with_unsupported_value(self, mock_model):
         with pytest.raises(ValueError, match="Unknown context_manager preset"):
             Agent(model=mock_model, context_manager="manual")
+
+
+class TestContextManagerSessionManagerCompatibility:
+    @pytest.fixture
+    def repository_session_manager(self):
+        return RepositorySessionManager(session_id="s1", session_repository=MockedSessionRepository())
+
+    @pytest.mark.parametrize("context_manager", ["auto", ContextManager()])
+    def test_raises_with_repository_session_manager(self, mock_model, repository_session_manager, context_manager):
+        with pytest.raises(ValueError, match="cannot be used with a RepositorySessionManager"):
+            Agent(model=mock_model, session_manager=repository_session_manager, context_manager=context_manager)
+
+    def test_raises_with_repository_session_manager_subclass(self, mock_model, tmp_path):
+        session_manager = FileSessionManager(session_id="s1", storage_dir=str(tmp_path))
+        with pytest.raises(ValueError, match="cannot be used with a RepositorySessionManager"):
+            Agent(model=mock_model, session_manager=session_manager, context_manager="auto")
+
+    @pytest.mark.parametrize("context_manager", [None, False])
+    def test_allows_repository_session_manager_without_context_manager(
+        self, mock_model, repository_session_manager, context_manager
+    ):
+        agent = Agent(model=mock_model, session_manager=repository_session_manager, context_manager=context_manager)
+        assert agent.context_manager is None
+
+    def test_allows_snapshot_session_manager(self, mock_model):
+        session_manager = SnapshotSessionManager("s1", storage=InMemoryStorage())
+        agent = Agent(model=mock_model, session_manager=session_manager, context_manager="auto")
+        assert isinstance(agent.context_manager, ContextManager)
 
 
 class TestContextManagerProperty:

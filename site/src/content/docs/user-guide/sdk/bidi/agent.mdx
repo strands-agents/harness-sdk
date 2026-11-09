@@ -29,7 +29,15 @@ agent = BidiAgent(
 )
 ```
 
-By default, `BidiAgent` uses [Amazon Nova Sonic](models/bedrock.mdx). Pass a model instance through `model` to customize its configuration or choose [Google Gemini Live](models/google.mdx) or [OpenAI Realtime](models/openai.mdx). See the [`BidiAgent` API reference](@api/python/strands.bidi.agent#strands.bidi.agent.BidiAgent.__init__) for constructor options.
+By default, `BidiAgent` uses [Amazon Nova Sonic](models/bedrock.mdx). Pass a model
+instance through `model` to customize its configuration or choose
+[Google Gemini Live](models/google.mdx),
+[OpenAI Realtime](models/openai/realtime.mdx), or experimental
+[OpenAI Live](models/openai/live.mdx). See the
+[`BidiAgent` API reference][bidi-agent-api] for constructor options.
+
+[bidi-agent-api]:
+  @api/python/strands.bidi.agent#strands.bidi.agent.BidiAgent.__init__
 
 `BidiAgent` and `Agent` share the [`LocalAgent`](@api/python/strands.types.agent#strands.types.agent.LocalAgent) interface for common capabilities such as `messages` and registered tools. Tools and hooks can use this interface to work with either agent type. See [Hooks](hooks.mdx) for callback annotations.
 
@@ -37,7 +45,9 @@ By default, `BidiAgent` uses [Amazon Nova Sonic](models/bedrock.mdx). Pass a mod
 
 Creating the agent configures it; entering `async with` opens the model connection. Inside the block, `send()` submits input without waiting for a model response, and `receive()` yields output events as they arrive.
 
-This example sends a text prompt and prints the completed response, then ends the conversation. Follow the [OpenAI Realtime setup](models/openai.mdx) before running it:
+This example sends a text prompt and prints the completed response, then ends the
+conversation. Follow the [OpenAI Realtime setup](models/openai/realtime.mdx) before
+running it:
 
 ```python
 import asyncio

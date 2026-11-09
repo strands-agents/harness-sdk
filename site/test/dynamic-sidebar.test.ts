@@ -27,9 +27,7 @@ describe('getDisplayName', () => {
 
 describe('buildPythonApiSidebar', () => {
   it('should create flat links for leaf modules', () => {
-    const docs: DocInfo[] = [
-      { id: 'docs/api/python/strands.interrupt.mdx', title: 'strands.interrupt' },
-    ]
+    const docs: DocInfo[] = [{ id: 'docs/api/python/strands.interrupt.mdx', title: 'strands.interrupt' }]
 
     const sidebar = buildPythonApiSidebar(docs, '')
 
@@ -82,9 +80,7 @@ describe('buildPythonApiSidebar', () => {
   })
 
   it('should mark current page as isCurrent', () => {
-    const docs: DocInfo[] = [
-      { id: 'docs/api/python/strands.interrupt.mdx', title: 'strands.interrupt' },
-    ]
+    const docs: DocInfo[] = [{ id: 'docs/api/python/strands.interrupt.mdx', title: 'strands.interrupt' }]
 
     const sidebar = buildPythonApiSidebar(docs, 'docs/api/python/strands.interrupt.mdx')
 

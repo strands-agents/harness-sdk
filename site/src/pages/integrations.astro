@@ -12,6 +12,7 @@ import CatalogFacets from '../components/catalog/CatalogFacets.astro'
 import { CATALOG_TYPES, MAINTAINED_BY_TIERS } from '../components/catalog/types'
 import { toCardModel, sortEntries, type CatalogStatsFile } from '../util/catalog'
 import { pathWithBase } from '../util/links'
+import { integrationsSchema } from '../util/structured-data'
 import statsFile from '../data/catalog-stats.json'
 import '../styles/catalog.css'
 
@@ -19,6 +20,9 @@ const stats = statsFile as CatalogStatsFile
 const entries = await getCollection('catalog')
 const buildDate = new Date()
 const cards = sortEntries(entries.map((e) => toCardModel(e.id, e.data, stats[e.id], buildDate)))
+
+const siteUrl = Astro.site?.origin || 'https://strandsagents.com'
+Astro.locals.structuredData = [integrationsSchema(cards, siteUrl + Astro.url.pathname, siteUrl)]
 
 // The SDK facet renders only when the catalog actually has evals entries;
 // the Verified filter only when at least one entry is actually verified.
@@ -119,7 +123,7 @@ const sidebar = [
     </dialog>
     <p class="cat-empty" data-cat-empty hidden>No integrations match the current filters.</p>
 
-    <p class="cat-disclaimer">Community packages are maintained by their authors — review before production use.</p>
+    <p class="cat-disclaimer">Community packages are maintained by their authors. Review them before production use. Questions? Ask in <a href="https://discord.gg/strands">Discord</a>.</p>
   </div>
 </StarlightPage>
 

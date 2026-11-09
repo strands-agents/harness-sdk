@@ -22,7 +22,6 @@ from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
 
 from ... import _identifier
-from ..._middleware import MiddlewareRegistry
 from ...agent.state import AgentState
 from ...hooks import (
     AgentInitializedEvent,
@@ -35,6 +34,7 @@ from ...hooks import (
 )
 from ...hooks.registry import TEvent
 from ...interrupt import _InterruptState
+from ...middleware._registry import MiddlewareRegistry
 from ...sandbox import Sandbox
 from ...sandbox.not_a_sandbox_local_environment import NotASandboxLocalEnvironment
 from ...storage import Storage
@@ -152,6 +152,7 @@ class BidiAgent(LocalAgent):
         self._storage: Storage | None = storage
         self._sandbox: Sandbox = NotASandboxLocalEnvironment()
         self._cancel_signal = threading.Event()
+        self._cancel_message: str | None = None
 
         # Agent identification
         self.agent_id = _identifier.validate(agent_id or _DEFAULT_AGENT_ID, _identifier.Identifier.AGENT)
@@ -283,12 +284,25 @@ class BidiAgent(LocalAgent):
     def event_loop_metrics(self, value: "EventLoopMetrics") -> None:
         raise NotImplementedError("event_loop_metrics is not supported by bidirectional agents yet")
 
-    def cancel(self) -> None:
+    def cancel(self, *, message: str | None = None, after_current_tools: bool = False) -> None:
         """Request cancellation of the current conversation.
 
-        This method is thread-safe and idempotent. Cancellation takes effect
-        only after a tool group completes.
+        Thread-safe and idempotent. Cancellation takes effect only after a tool
+        group completes, so ``after_current_tools`` is accepted for API parity
+        with ``Agent.cancel()`` but has no additional effect here. The
+        ``message`` argument is stored for future use; BidiAgent does not yet
+        surface it in output history.
+
+        Args:
+            message: Optional terminal message describing why cancellation was
+                requested. When several callers set a message, the last write wins;
+                a no-arg call leaves any stored message intact.
+            after_current_tools: Accepted for signature parity with
+                ``Agent.cancel()``; BidiAgent cancellation is always deferred to
+                the end of the current tool group.
         """
+        if message is not None:
+            self._cancel_message = message
         self._cancel_signal.set()
 
     @property
@@ -461,6 +475,7 @@ class BidiAgent(LocalAgent):
             await self._loop.stop()
         finally:
             self._cancel_signal.clear()
+            self._cancel_message = None
 
     def take_snapshot(
         self,

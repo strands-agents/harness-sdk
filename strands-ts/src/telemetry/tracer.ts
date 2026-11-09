@@ -1326,6 +1326,8 @@ export class Tracer {
       switch (block.type) {
         case 'textBlock':
           return { type: 'text', content: block.text }
+        case 'injectedBlock':
+          return { type: 'text', content: block.injected.text }
         case 'toolUseBlock':
           return { type: 'tool_call', name: block.name, id: block.toolUseId, arguments: block.input }
         case 'toolResultBlock':

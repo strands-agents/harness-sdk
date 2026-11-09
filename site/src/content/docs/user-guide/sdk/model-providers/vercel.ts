@@ -37,7 +37,7 @@ async function basicUsageBedrock() {
 
   const agent = new Agent({
     model: new VercelModel({
-      provider: bedrock('us.anthropic.claude-sonnet-4-20250514-v1:0'),
+      provider: bedrock('global.anthropic.claude-sonnet-4-6'),
     }),
   })
 
@@ -54,7 +54,7 @@ async function basicUsageAnthropic() {
   import { anthropic } from '@ai-sdk/anthropic'
 
   const agent = new Agent({
-    model: new VercelModel({ provider: anthropic('claude-sonnet-4-20250514') }),
+    model: new VercelModel({ provider: anthropic('claude-sonnet-4-6') }),
   })
 
   const result = await agent.invoke('Hello!')

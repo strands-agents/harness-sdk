@@ -334,6 +334,20 @@ def test_cancel_sets_signal(mock_model):
     assert signal.is_set()
 
 
+def test_cancel_stores_message_last_write_wins(mock_model):
+    """cancel(message=...) sets _cancel_message; a later message overwrites, a no-arg call leaves it alone."""
+    agent = BidiAgent(model=mock_model)
+
+    agent.cancel(message="first")
+    assert agent._cancel_message == "first"
+
+    agent.cancel(message="second")
+    assert agent._cancel_message == "second"
+
+    agent.cancel()
+    assert agent._cancel_message == "second"
+
+
 @pytest.mark.asyncio
 async def test_run_cancel_cleans_up_and_allows_reuse(mock_model):
     @tool(context=True)

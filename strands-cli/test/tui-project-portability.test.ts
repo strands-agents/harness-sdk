@@ -9,6 +9,7 @@ import { afterEach, beforeEach, expect, it } from 'vitest'
 
 import { exportSourceProject, writeAgentProject } from '../src/tui/project/export.js'
 import { importAgentProject } from '../src/tui/project/import.js'
+import { npmInvocation } from '../src/tui/npm.js'
 
 const run = promisify(execFile)
 let root: string
@@ -73,7 +74,8 @@ it('builds and runs a packaged local tool after its original source is removed',
   await rm(source, { recursive: true })
   // The CLI installs standalone, so its deps live under strands-cli/node_modules, not a hoisted ../../node_modules.
   await symlink(resolve(import.meta.dirname, '../node_modules'), join(project.root, 'node_modules'), 'junction')
-  await run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'build'], { cwd: project.root })
+  const npm = npmInvocation(['run', 'build'])
+  await run(npm.command, npm.args, { cwd: project.root })
   const { stdout } = await run(
     process.execPath,
     [
@@ -132,7 +134,8 @@ it('emits a truthful generated README and no unused instructions file', async ()
   expect(Buffer.from(entries['agent/agent.ts']!).toString()).toContain("instructions: 'Embedded instructions'")
 })
 
-it('preserves executable helpers through export and import', async () => {
+// Windows has no POSIX executable bit to preserve.
+it.skipIf(process.platform === 'win32')('preserves executable helpers through export and import', async () => {
   const skill = join(root, 'skill')
   await file(join(skill, 'SKILL.md'), '---\nname: executable\ndescription: Execute\n---\nRun helper.sh.')
   await file(join(skill, 'helper.sh'), '#!/bin/sh\nprintf portable\n')

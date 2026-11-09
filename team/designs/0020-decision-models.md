@@ -13,44 +13,49 @@ Agents keep asking a model small closed questions. Which specialist handles this
 ## Proposal
 
 A `DecisionModel` abstraction acts as the base interface for making a "decision" in strands. You can `ask` a `DecisionModel` one or many `Question`'s, and the decision model can respond with a `DecisionResult` that contains the decisions to the questions asked.
+
 ### Interface
 
 ```ts
 export abstract class DecisionModel {
   // Generics allow for better typing on devex (see below)
-  async ask<Q extends Record<string, Question>>(
-    state: DecisionInput,
-    questions: Q,
-  ): Promise<DecisionResult<Q>> {
+  async ask<const Q extends Record<string, Question>>(state: DecisionInput, questions: Q): Promise<DecisionResult<Q>> {
     // Validates questions synchronously, opens a `decision` span,
     // delegates to _ask, records usage, closes the span.
   }
 
-  protected abstract _ask<Q extends Record<string, Question>>(
+  protected abstract _ask<const Q extends Record<string, Question>>(
     state: DecisionInput,
-    questions: Q,
+    questions: Q
   ): Promise<DecisionResult<Q>>
 }
 
 export interface Question {
-  instructions: string
+  question: string
   choices: 'boolean' | readonly string[]
-  uncertainOptions?: {
-    allow: boolean  // default true
-    threshold?: number // [0, 1], default 0.5. Only read by implementations that
-    // return per-answer confidence (e.g. System One). The implementation yields
-    // `Uncertain` when the question's confidence falls below this value; see
-    // the System One section for the exact mapping per answer type.
-  }
+  uncertainty?:
+    | boolean
+    | {
+        minConfidence?: number // [0, 1]. Overrides the provider's
+        // default confidence threshold. Omitted/true permits Uncertain; false
+        // requires the provider to return its selected answer.
+      }
 }
 
-export class Uncertain { constructor(public readonly reason?: string) {} }
-
+export class Uncertain {
+  constructor(public readonly reason?: string) {}
+}
 
 export interface DecisionResult<Q extends Record<string, Question> = Record<string, Question>> {
   answers: { [K in keyof Q]: boolean | string | Uncertain }
-  usage: { inputTokens: number; outputTokens: number; totalTokens: number }
-  metadata: { latencyMs: number }
+  usage?: { inputTokens: number; outputTokens: number; totalTokens: number }
+  metadata: {
+    latencyMs: number
+    providerName?: string
+    modelId?: string
+    probabilities?: { [K in keyof Q]: Readonly<Record<string, number>> }
+    confidence?: { [K in keyof Q]: number }
+  }
 }
 
 export type DecisionInput = string | ContentBlock[] | Message[]
@@ -61,17 +66,17 @@ export type DecisionInput = string | ContentBlock[] | Message[]
 Lets say we start with an `LLMDecisionModel` as an implementation of this interface (more about this discussed below). A customer may use it as follows:
 
 ```ts
-const llmDecisionModel = new LLMDecisionModel(new BedrockModel())
+const llmDecisionModel = new LLMDecisionModel({ model: new BedrockModel() })
 
 const result = await llmDecisionModel.ask('The fruit is an apple', {
   color: {
-    instructions: 'What color is the fruit?',
-    choices: ['red', 'green', 'blue'] as const,
+    question: 'What color is the fruit?',
+    choices: ['red', 'green', 'blue'],
   },
   isFruit: {
-    instructions: 'Is the thing talked about a fruit?',
+    question: 'Is the thing talked about a fruit?',
     choices: 'boolean',
-    uncertainOptions: { allow: false },
+    uncertainty: false,
   },
 })
 
@@ -81,23 +86,28 @@ const result = await llmDecisionModel.ask('The fruit is an apple', {
 
 ### Uncertainty handling
 
-`Uncertain` is explicitly called out as a return type for any type of question. Inspiration for this comes from system one models including confidence in their result, and can be helpful for customers to decide how they want to deal with uncertain results. We allow for uncertain results by including it as one option returned from the model. Each type of implementation will need to account for handling uncertainty:
-- For LLM's, this is included as an additional option when calling the model
-- For System One models, each answer carries a native confidence number (see below). The implementation yields `Uncertain` when that confidence falls below the question's `uncertainOptions.threshold`.
+`Uncertain` is a possible answer for every question unless the caller sets `uncertainty: false`. Each implementation handles uncertainty according to the evidence it has:
+
+- `LLMDecisionModel` includes `uncertain` as an allowed model answer.
+- API-backed decision models compare per-answer confidence with a threshold. An explicit `uncertainty.minConfidence` takes precedence over the provider instance's `defaultMinConfidence`; otherwise each provider uses its API-wide default of `0.5`.
+- Choice uses the API-returned confidence. Noul returns only a yes probability `p`, so its confidence is `|2p - 1|`, on the same scale where an even split is `0` and certainty is `1`.
+
+A provider returns `Uncertain` when uncertainty is enabled and `confidence < minConfidence`; equality passes. Metadata retains every question's probability distribution and confidence even when its public answer is `Uncertain`.
 
 Customers can handle `Uncertainty` in there code as follows:
+
 ```ts
-const llmDecisionModel = new LLMDecisionModel(new BedrockModel())
+const llmDecisionModel = new LLMDecisionModel({ model: new BedrockModel() })
 
 const result = await llmDecisionModel.ask('The fruit is an apple', {
   color: {
-    instructions: 'What color is the fruit?',
-    choices: ['red', 'green', 'blue'] as const,
+    question: 'What color is the fruit?',
+    choices: ['red', 'green', 'blue'],
   },
   isFruit: {
-    instructions: 'Is the thing talked about a fruit?',
+    question: 'Is the thing talked about a fruit?',
     choices: 'boolean',
-    uncertainOptions: { allow: false },
+    uncertainty: false,
   },
 })
 
@@ -114,17 +124,19 @@ This will be an adapter to convert any vended model provider as a `DecisionModel
 
 #### Observability
 
-Every `DecisionResult` carries input, output, and total tokens read from the model's final metadata event. The `decision` span opened by the base class records `gen_ai.operation.name="decision"`, request and response model ids, input and output tokens, the question ids as a span event, and the answers as a span event. Agent-level `accumulatedUsage` wiring lands when [#4005](https://github.com/strands-agents/harness-sdk/pull/4005) merges — the base class picks up the auxiliary-call hook under `source='decision'` without changing the public surface.
+A `DecisionResult` carries token usage when the underlying provider reports it. The `decision` span opened by the base class records `gen_ai.operation.name="decision"`, available token usage, the question ids, and the answers. API-backed implementations also return the provider name, resolved model id, per-question probabilities, confidence, and latency in typed metadata. Agent-level `accumulatedUsage` wiring lands when [#4005](https://github.com/strands-agents/harness-sdk/pull/4005) merges — the base class picks up the auxiliary-call hook under `source='decision'` without changing the public surface.
 
 ### System One Decision Models
 
-Since most system one model providers follow an api that is similar enough to the interface proposed above, the actual implementation details can be hashed out in the pull requests. For a summary of the shared API shape, see [the Jev AI API contract write-up on Hugging Face](https://huggingface.co/blog/sora-2/typesafe-ai-model-and-jev-ai-api-a-production-inte#the-jev-ai-api-contract). We should target the market leaders as decision model providers initially:
+Each decision API gets its own `DecisionModel` provider class so endpoints, credentials, model ids, request limits, error handling, and confidence defaults do not leak into the base abstraction:
 
-- [TypeSafeAI Jev](https://docs.typesafe.ai/introduction)
-- [OpenAI Decisions API](https://decisionapi.net/)
-- [Strands Decider](https://github.com/strands-labs/strands-decider) (vended from its own repo)
+- `TypeSafeDecisionModel` calls TypeSafeAI's hosted [Jev API](https://docs.typesafe.ai/introduction), using `TYPESAFE_API_KEY` and the provider's Jev model ids.
+- `DecisionsAPIDecisionModel` calls [decisionapi.net](https://decisionapi.net/), using `JEV_API_KEY` and that service's model catalog.
+- [Strands Decider](https://github.com/strands-labs/strands-decider) is vended from its own repository and can add its own provider class.
 
-When Bedrock hosts system one models, we should integrate with it as well. Others can be considered on a case-by-case basis.
+Both initial providers map `choices: 'boolean'` to Noul and string choices to Choice. Score remains future work. They share internal wire validation and answer normalization, while each public class owns its API's defaults and limits. Text and structured `ContentBlock` state serialize as JSON; byte-backed media is rejected instead of being misrepresented as base64 text. API keys are server-side credentials; these providers reject browser construction rather than expose them to page users.
+
+When Bedrock hosts decision models, it should receive a separate provider implementation as well. Other APIs can be considered case by case.
 
 ## Integration points for `DecisionModel`
 
@@ -142,9 +154,9 @@ Candidate callers in the SDK, ordered roughly by how directly the primitive fits
 ## Future Work
 
 - **Score questions.** Widen `Question.choices` with a third `{ kind: 'score', levels }` shape and extend `AnswerOf<Q>` to yield `number | Uncertain`, mapping to System One models' score results.
-- **Uncertainty default handling.** Instead of each customer including custom logic to handle default handling, we can include some default option to return if the model is uncertain. Some kind of `uncertainOptions.default` setting.
+- **Uncertainty default handling.** Instead of each customer including custom logic to handle default handling, we can include some default option to return if the model is uncertain. Some kind of `uncertainty.default` setting.
 - **ClassifierStrategy rewrite.** A thin `DecisionStrategy` routing passthrough + `ClassifierStrategy` as a preset on top, dropping ~325–375 lines of scaffolding across the two SDKs. First real caller that validates the primitive against production load.
-- **Python port.** Mirror the TypeScript design, swapping `StructuredOutputTool` + `toolChoice` for `model.structured_output` with a dynamic Pydantic model. Names convert mechanically (`uncertainOptions` ↔ `uncertain_options`, `choices` stays as `choices`).
+- **Python port.** Mirror the TypeScript design, swapping `StructuredOutputTool` + `toolChoice` for `model.structured_output` with a dynamic Pydantic model. Names convert mechanically (`uncertainty` ↔ `uncertainty`, `minConfidence` ↔ `min_confidence`, and `choices` stays as `choices`).
 - **Agent-level usage.** When [#4005](https://github.com/strands-agents/harness-sdk/pull/4005) merges, the abstract base's `ask` wires `DecisionResult.usage` into `accumulatedUsage` under `source='decision'`.
 
 ## Appendix: fully typed interface
@@ -154,49 +166,56 @@ The Interface section above is deliberately simplified for readability. The full
 ```ts
 export abstract class DecisionModel {
   // Generics allow for better typing on devex (see below)
-  async ask<Q extends Record<string, Question>>(
-    state: DecisionInput,
-    questions: Q,
-  ): Promise<DecisionResult<Q>> {
+  async ask<const Q extends Record<string, Question>>(state: DecisionInput, questions: Q): Promise<DecisionResult<Q>> {
     // Validates questions synchronously, opens a `decision` span,
     // delegates to _ask, records usage, closes the span.
   }
 
-  protected abstract _ask<Q extends Record<string, Question>>(
+  protected abstract _ask<const Q extends Record<string, Question>>(
     state: DecisionInput,
-    questions: Q,
+    questions: Q
   ): Promise<DecisionResult<Q>>
 }
 
 export interface Question<C extends 'boolean' | readonly string[] = 'boolean' | readonly string[]> {
-  instructions: string
+  question: string
   choices: C
-  uncertainOptions?: {
-    allow: boolean  // default true
-    threshold?: number // [0, 1], default 0.5. Only read by implementations that
-    // return per-answer confidence (e.g. System One). The implementation yields
-    // `Uncertain` when the question's confidence falls below this value; see
-    // the System One section for the exact mapping per answer type.
-  }
+  uncertainty?:
+    | boolean
+    | {
+        minConfidence?: number // [0, 1]. Overrides the provider's
+        // default confidence threshold. Omitted/true permits Uncertain; false
+        // requires the provider to return its selected answer.
+      }
 }
 
-export class Uncertain { constructor(public readonly reason?: string) {} }
+export class Uncertain {
+  constructor(public readonly reason?: string) {}
+}
 
 export interface DecisionResult<Q extends Record<string, Question> = Record<string, Question>> {
   answers: { [K in keyof Q]: AnswerOf<Q[K]> }
-  usage: { inputTokens: number; outputTokens: number; totalTokens: number }
-  metadata: { latencyMs: number }
+  usage?: { inputTokens: number; outputTokens: number; totalTokens: number }
+  metadata: {
+    latencyMs: number
+    providerName?: string
+    modelId?: string
+    probabilities?: { [K in keyof Q]: Readonly<Record<string, number>> }
+    confidence?: { [K in keyof Q]: number }
+  }
 }
 
 // Statically derive each question's answer type from its choices.
 export type AnswerOf<Q> =
   // If 'boolean', then the possible return types are boolean | Uncertain
-  Q extends Question<'boolean'> ? boolean | Uncertain :
-  // If ['red', 'green'], then the possible return types are 'red' | 'green' | Uncertain
-  Q extends Question<infer S extends readonly string[]> ? S[number] | Uncertain :
-  never
+  Q extends Question<'boolean'>
+    ? boolean | Uncertain
+    : // If ['red', 'green'], then the possible return types are 'red' | 'green' | Uncertain
+      Q extends Question<infer S extends readonly string[]>
+      ? S[number] | Uncertain
+      : never
 
 export type DecisionInput = string | ContentBlock[] | Message[]
 ```
 
-Callers get static narrowing without manual type assertions, provided the `choices` tuple is passed with `as const` so TypeScript keeps the literals.
+Inline question maps keep literal choice types through `ask`'s const type parameter. Use `defineQuestions` when storing a question map before calling `ask`.

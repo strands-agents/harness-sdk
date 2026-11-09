@@ -1,36 +1,50 @@
 ---
-title: "Lesson 10: Multi-Agent Patterns: Agents as Tools"
+title: "Lesson 10: Multi-agent patterns: agents as tools"
 description: "This is where we cross from single-agent patterns into multi-agent orchestration, and we start with the most intuitive version: an agent that can call other agents the same way it calls any other tool."
 redirectFrom:
   - docs/community/learning/lesson10-multi-agent-patterns-agents-as-tools
 ---
 
-<YouTube id="_QcD5KBe3ZQ" title="Lesson 10: Multi-Agent Patterns: Agents as Tools" />
-*[Watch on YouTube](https://www.youtube.com/watch?v=_QcD5KBe3ZQ&list=PLDzwjhH-4yhU&index=10)*
+import CourseNotice from '../../../components/CourseNotice.astro'
 
-:::note[About this lesson]
-The videos in this course are a snapshot in time. Strands is under active development, so the code featured on this page reflects the most up-to-date patterns, but the concepts covered in the video still apply. When in doubt, trust the code.
-:::
+<CourseNotice title="Before you follow along">
+
+This video is a snapshot in time. Some APIs and examples have changed since
+recording. Follow the code on this page, and look for "Changed since recording"
+notices below.
+
+</CourseNotice>
+
+<YouTube id="_QcD5KBe3ZQ" title="Lesson 10: Multi-agent patterns: agents as tools" />
+*[Watch on YouTube](https://www.youtube.com/watch?v=_QcD5KBe3ZQ&list=PLDzwjhH-4yhU&index=10)*
 
 *Code for this lesson: [`samples/10-agents-as-tools`](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/10-agents-as-tools)*
 
-## Three Multi-Agent Patterns
+## Three multi-agent patterns
 
 Strands provides three composable multi-agent patterns. Each solves a different coordination problem, and they can nest inside each other. This lesson covers the first; the next two lessons cover graphs and swarms.
 
 | Pattern | Structure | Use When |
 | --- | --- | --- |
 | **Agents as Tools** | Hub-and-spoke. Orchestrator calls specialists | Clear manager-specialist relationship, isolated context |
-| **Graph** | DAG with explicit edges | You can draw the workflow on a whiteboard |
+| **Graph** | Directed graph with explicit edges | You can draw the workflow on a whiteboard |
 | **Swarm** | Autonomous handoffs, no predefined structure | The team needs to figure it out together |
 
-## Agents as Tools
+## Agents as tools
 
 The simplest multi-agent pattern: one orchestrator agent calls specialist agents as tools. The orchestrator stays in control, decides when to delegate, and synthesizes the results.
 
 Each specialist gets its own isolated context window. That's the key benefit: a specialist can run noisy tools (log readers, web fetchers, verbose APIs) and process thousands of tokens of raw output, then hand back only a short conclusion. The orchestrator's context stays clean.
 
-### Pass the Agent Directly
+### Pass the agent directly
+
+<CourseNotice>
+
+The research tool now comes from `strands.vended_tools.web_fetch`. Run
+`pip install "strands-agents[web-fetch]"` before running the sample. The direct-agent and
+`@tool` composition patterns still work.
+
+</CourseNotice>
 
 The quickest way. Put the agent in another agent's `tools` list and Strands wraps it automatically, using the agent's `name` and `description` as the tool spec:
 
@@ -93,7 +107,7 @@ writer = Agent(
 
 Data flow: the orchestrator sends a string, the specialist runs its own loop, and returns a string. Context resets between calls, so each delegation starts clean.
 
-## Key Concepts
+## Key concepts
 
 - **The docstring is the routing logic.** It tells the orchestrator when to delegate. The model routes based on tool descriptions; you never write an `if` statement.
 - **Agent isolation.** Each sub-agent has its own context window, model, and tools. One agent's context doesn't leak into another's.

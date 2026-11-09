@@ -461,3 +461,24 @@ def test_tool_caller_raises_reference_error_after_agent_collected():
 
     with pytest.raises(ReferenceError, match="Agent has been garbage collected"):
         _ = caller._agent
+
+
+@pytest.mark.asyncio
+async def test_direct_tool_stop_does_not_cancel_next_invocation():
+    """A direct agent.tool.stop(...) call leaves deferred-cancel state behind, but the next
+    invocation clears it at start so the stop does not bleed in."""
+    from strands.vended_tools import stop as stop_tool
+    from tests.fixtures.mocked_model_provider import MockedModelProvider
+
+    model = MockedModelProvider([{"role": "assistant", "content": [{"text": "ok"}]}])
+    agent = Agent(model=model, tools=[stop_tool])
+
+    agent.tool.stop(message="done", record_direct_tool_call=False)
+
+    # The direct call leaves state behind (expected).
+    assert agent._deferred_cancel is True
+    assert agent._cancel_message == "done"
+
+    # The next invocation clears tool-authored state at the start.
+    result = await agent.invoke_async("hi")
+    assert result.stop_reason == "end_turn"

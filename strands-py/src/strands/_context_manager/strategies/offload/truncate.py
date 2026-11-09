@@ -15,12 +15,14 @@ from .base import (
     OffloadConditions,
     OffloadTarget,
     _build_conditions,
+    _insert_marker,
     _repair_alternation,
     _splice_with_pairs,
 )
 
 if TYPE_CHECKING:
     from ....agent.agent import Agent
+    from ....agent.invocation_context import InvocationContext
 
 from ...types import ContextState
 
@@ -82,13 +84,9 @@ class TruncateStrategy(BaseOffloadStrategy):
             _build_conditions(threshold=threshold, utilization=utilization, preserve_recent=preserve_recent),
         )
 
-    def _make_removal_marker(self, count: int) -> str | None:
+    def _make_removal_marker(self, count: int) -> str:
         word = "message" if count == 1 else "messages"
         return f"[... {count} {word} elided ...]"
-
-    async def _apply_per_message(self, context: ContextState) -> bool:
-        """Message-level truncation: remove eligible messages."""
-        return await super()._apply_per_message(context)
 
     async def _replace_block(
         self,
@@ -97,6 +95,7 @@ class TruncateStrategy(BaseOffloadStrategy):
         message: Message,
         agent: Agent,
         stash_refs: list[str],
+        invocation_context: InvocationContext | None = None,
     ) -> ContentBlock | None:
         refs = _format_stash_refs(stash_refs)
         if "toolResult" in block:
@@ -139,9 +138,6 @@ class EmergencyTruncateStrategy(TruncateStrategy):
         """No eager hooks for emergency truncation."""
         self._stash = stash
 
-    def _make_removal_marker(self, count: int) -> str | None:
-        return None
-
     async def apply(self, context: ContextState) -> bool:
         """Fire when overflow is set, or when recomputed utilization >= 1.0."""
         if len(context.messages) <= 3:
@@ -164,11 +160,15 @@ class EmergencyTruncateStrategy(TruncateStrategy):
 
         removable = [msg for index, msg in enumerate(messages) if index > 0]
         remove_count = max(1, int(len(removable) * _EMERGENCY_REMOVAL_RATIO))
+        # Cut just before an assistant message, which holds no tool result to orphan and never merges into message 0.
+        if removable[remove_count]["role"] != "assistant":
+            remove_count += 1
         to_remove = removable[:remove_count]
 
-        removed, _ = _splice_with_pairs(messages, to_remove)
+        removed, lowest_index = _splice_with_pairs(messages, to_remove)
         if removed == 0:
             return False
 
+        _insert_marker(messages, lowest_index, self._make_removal_marker(removed))
         _repair_alternation(messages)
         return True

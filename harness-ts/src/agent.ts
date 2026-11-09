@@ -123,8 +123,8 @@ export interface HarnessAgentOptions extends Omit<
    * mapping edits the defaults (`DEFAULT_BUILTIN_TOOLS`): `'*'` (default `true`) is the baseline,
    * `false` drops a tool, `true` adds one, and a config object enables and configures one
    * (`ToolConfig`; the keys per tool are `BUILTIN_TOOL_CONFIG_KEYS`). `web_search` turns on the
-   * provider's native web search (OpenAI, Google, GPT-5/GPT-6 models on bedrock-mantle); elsewhere it
-   * is off, and naming it there throws. `{ web_search: 'exa' }` instead gives the model a
+   * provider's native web search (OpenAI, Anthropic, Google, GPT-5, GPT-6, and Daybreak models on bedrock-mantle);
+   * elsewhere it is off, and naming it there throws. `{ web_search: 'exa' }` instead gives the model a
    * `web_search` tool backed by Exa's hosted search on any model, a third party that receives the
    * queries (keyless; `EXA_API_KEY` lifts its rate limit). A `subagent` child inherits this agent's
    * configuration, bounded by a delegation-depth guard.
@@ -138,9 +138,9 @@ export interface HarnessAgentOptions extends Omit<
    */
   backgroundTasks?: boolean | BackgroundTasksConfig
   /**
-   * Enables prompt caching to save cost and latency where the provider supports it (Bedrock and
-   * Anthropic direct set cache points and cached tools; OpenAI, Google, and bedrock-mantle cache
-   * automatically server-side). Defaults to on. `false`/`null` turns off what the harness configures, and
+   * Enables prompt caching to save cost and latency where the provider supports it. Bedrock,
+   * Anthropic direct, OpenAI, and bedrock-mantle receive an SDK cache config; Google and litellm
+   * cache automatically server-side. Defaults to on. `false`/`null` turns off what the harness configures, and
    * has no effect where caching is automatic. On a pre-built `Model`/`ModelRouter` the option is
    * not applied; the harness warns once and passes the instance through — configure caching on the
    * instance.
@@ -173,7 +173,7 @@ export interface HarnessAgentOptions extends Omit<
   skills?: boolean | SkillSource | SkillSource[] | AgentSkills | null
   /**
    * File-based long-term memory, on by default. `true` distills durable facts into markdown files
-   * under `./.agent/memory`, searches them before each turn, and folds the top matches into
+   * under `./.agent/memory`, searches them before each user turn, and folds the top matches into
    * context; memory is independent of any session, so it survives across sessions. `{ dir,
    * stores }` moves the directory or swaps the backend (one or more stores under the harness's memory
    * policy: injection on, `search_memory` on, no `add_memory` tool; the `subagent` delegate shares

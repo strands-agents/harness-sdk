@@ -35,6 +35,8 @@ _MODULE_PATHS = (
     "models.google",
     "models.model",
     "models.openai",
+    "models.openai.configs",
+    "models.openai.realtime",
     "types.agent",
     "types.content",
     "types.events",
@@ -99,8 +101,8 @@ def test_root_and_owner_exports_are_same_objects(pyaudio_stub):
     for owner_name in _OWNER_MODULES:
         old_owner = importlib.import_module(f"strands.experimental.bidi.{owner_name}")
         new_owner = importlib.import_module(f"strands.bidi.{owner_name}")
-        assert old_owner.__all__ == new_owner.__all__
-        for public_name in new_owner.__all__:
+        assert set(old_owner.__all__) <= set(new_owner.__all__)
+        for public_name in old_owner.__all__:
             assert getattr(old_owner, public_name) is getattr(new_owner, public_name)
 
 
@@ -129,10 +131,10 @@ def test_bedrock_alias_matches_supported_version_behavior():
 
 
 def test_old_leaf_patch_target_updates_stable_module():
-    new_module = importlib.import_module("strands.bidi.models.openai")
+    new_module = importlib.import_module("strands.bidi.models.openai.realtime")
 
     with unittest.mock.patch(
-        "strands.experimental.bidi.models.openai.time.time",
+        "strands.experimental.bidi.models.openai.realtime.time.time",
         return_value=123.0,
     ):
         assert new_module.time.time() == 123.0

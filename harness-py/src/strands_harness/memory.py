@@ -1,7 +1,7 @@
 """File-based memory resolution: build a ``MemoryManager`` over a local ``FileMemoryStore``.
 
 Memory is on by default. Facts the agent learns are distilled every few turns into markdown files
-under ``memory_dir`` (default ``./.agent/memory``), searched and injected before each turn so a
+under ``memory_dir`` (default ``./.agent/memory``), searched and injected before each user turn so a
 returning agent recalls them without re-asking. Persistence is plain files, independent of any
 session: memory survives across sessions and works with sessions off.
 
@@ -19,7 +19,6 @@ from __future__ import annotations
 from strands.memory import (
     ExtractionConfig,
     MemoryEntry,
-    MemoryInjectionConfig,
     MemoryManager,
     MemoryStore,
     ModelExtractor,
@@ -46,7 +45,7 @@ def resolve_memory(
 ) -> MemoryManager:
     """Build the memory manager: a ``MemoryManager`` wrapping either the consumer's ``stores`` or a
     default ``FileMemoryStore`` writing to ``memory_dir``, with the SDK's tool defaults
-    (``search_memory`` on, no ``add_memory`` write tool) and injection on every turn.
+    (``search_memory`` on, no ``add_memory`` write tool) and injection on each user turn.
 
     The default store's keys are pre-namespaced to ``memory_dir`` itself, so files land at
     ``memory_dir/<slug>.md`` without the store's own ``memory/<name>/`` scoping doubling the path.
@@ -84,9 +83,8 @@ def resolve_memory(
         managed = [store if writable else _to_read_only(store) for store in supplied]
     else:
         managed = [_build_default_store(model, memory_dir, web_fetch_model, writable)]
-    # Inject on every model call, not only on a fresh user ask: the harness runs multi-step tool loops, so an
-    # autonomous step (or a delegate) consults memory at each turn rather than only when the user speaks.
-    return MemoryManager(stores=managed, injection=MemoryInjectionConfig(trigger="everyTurn"))
+    # No injection override: the SDK's ``userTurn`` default is the harness policy.
+    return MemoryManager(stores=managed)
 
 
 def _build_default_store(
@@ -112,7 +110,7 @@ class _ReadOnlyStore:
     """A recall-only view of a store: the same backend, still searchable, but with every write path
     (``add``/``add_messages``) and its extraction config dropped so the delegate's manager can neither
     extract nor write. ``get_tools`` is omitted too, since a store-native tool is an unbounded surface
-    we can't guarantee is read-only; the delegate still recalls through ``search_memory`` and injection.
+    we can't guarantee is read-only; the delegate still recalls through ``search_memory``.
     """
 
     def __init__(self, store: MemoryStore) -> None:

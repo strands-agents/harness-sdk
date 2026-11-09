@@ -9,9 +9,10 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import re
 from typing import TYPE_CHECKING, Any
 
-from ..storage.storage import _NamespacedStorage
+from ..storage.storage import _NAMESPACED, _NamespacedStorage
 from ..types.content import ContentBlock
 
 if TYPE_CHECKING:
@@ -21,6 +22,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 STASH_PREFIX = "context"
+
+_STASH_REFS_SUFFIX = re.compile(r" \[refs?: [^\]]+\]$")
 
 
 class _BytesEncoder(json.JSONEncoder):
@@ -54,13 +57,32 @@ def _format_stash_refs(refs: list[str]) -> str:
     return f" [refs: {', '.join(refs)}]"
 
 
+def _is_offload_placeholder(block: object) -> bool:
+    """Whether a block's text ends with a ``_format_stash_refs`` token, marking it as an offload replacement."""
+    text = block.get("text") if isinstance(block, dict) else None
+    return isinstance(text, str) and _STASH_REFS_SUFFIX.search(text) is not None
+
+
+def _resolve_stash_namespace(
+    storage: Storage, session_id: str, agent_id: str, *, custom_stash_namespace: bool
+) -> Storage:
+    """Use a caller-scoped view as the exact stash root when allowed; otherwise namespace per session and agent."""
+    if custom_stash_namespace and getattr(storage, "_namespaced", None) is _NAMESPACED:
+        return storage
+    return _NamespacedStorage(storage, f"{STASH_PREFIX}/{session_id}/scopes/agent/{agent_id}")
+
+
 class Stash:
     """Namespaced storage wrapper for persisting offloaded content blocks."""
 
-    def __init__(self, storage: Storage, session_id: str, agent_id: str) -> None:
+    def __init__(
+        self, storage: Storage, session_id: str, agent_id: str, *, custom_stash_namespace: bool = False
+    ) -> None:
         self._base_storage = storage
         self._session_id = session_id
-        self._storage = _NamespacedStorage(storage, f"{STASH_PREFIX}/{session_id}/scopes/agent/{agent_id}")
+        self._storage = _resolve_stash_namespace(
+            storage, session_id, agent_id, custom_stash_namespace=custom_stash_namespace
+        )
 
     @property
     def storage_type_name(self) -> str:
@@ -94,6 +116,7 @@ class Stash:
     ) -> None:
         """Eagerly persist all stashable blocks from a message.
 
+        Offload placeholders are never stored: their keys belong to the originals they replaced.
         With ``keep_existing``, entries already stored under a block's key are left untouched.
         """
         for block_index, block in enumerate(message["content"]):
@@ -101,8 +124,12 @@ class Stash:
                 tool_result = block["toolResult"]
                 if skip_tool_use_ids and tool_result["toolUseId"] in skip_tool_use_ids:
                     continue
+                if any(_is_offload_placeholder(item) for item in tool_result["content"]):
+                    continue
                 await self._store_tool_result(block, keep_existing=keep_existing)
             elif "toolUse" in block or "reasoningContent" in block or "cachePoint" in block:
+                continue
+            elif _is_offload_placeholder(block):
                 continue
             else:
                 try:
@@ -167,8 +194,12 @@ class Stash:
 
         Unlike :meth:`clear`, which is scoped to this agent's namespace, this
         scans ``context/<session_id>/`` on the base storage to remove data from
-        every agent that wrote to the session.
+        every agent that wrote to the session. A stash rooted at a caller-scoped
+        view is shared beyond this session, so its data is left to the caller.
         """
+        if self._storage is self._base_storage:
+            logger.debug("session_id=<%s> | skipping stash deletion, stash is caller-scoped", self._session_id)
+            return
         prefix = f"{STASH_PREFIX}/{self._session_id}/"
         keys = await self._base_storage.list(prefix)
         for key in keys:

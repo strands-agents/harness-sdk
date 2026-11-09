@@ -36,8 +36,13 @@ Strands is model-provider neutral. Do not assume that using Strands means using 
 - To add a function tool, read [references/add-tool.md](references/add-tool.md).
 - To connect an MCP server to a Strands agent, read [references/add-mcp-server.md](references/add-mcp-server.md).
 - To migrate from LangGraph, read [references/port-from-langgraph.md](references/port-from-langgraph.md).
+- To add Strands to FastAPI, read [references/fastapi.md](references/fastapi.md).
+- To add Strands to Express, read [references/express.md](references/express.md).
+- To add Strands to Next.js, read [references/nextjs.md](references/nextjs.md).
 
-The plugin also exposes focused skills for these four tasks. Treat them as entry points into the same guidance rather than separate implementations.
+The plugin also exposes focused skills for the first four tasks and a broad
+`build-with-strands` entry point. Treat them as routes into the same guidance rather
+than separate implementations.
 
 ## Constraints
 

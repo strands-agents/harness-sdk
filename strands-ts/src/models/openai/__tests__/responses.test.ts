@@ -2,8 +2,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import OpenAI, { APIUserAbortError } from 'openai'
 import { isNode } from '../../../__fixtures__/environment.js'
 import { OpenAIModel } from '../index.js'
-import { ContextWindowOverflowError, ModelThrottledError } from '../../../errors.js'
-import { collectIterator } from '../../../__fixtures__/model-test-helpers.js'
+import { ContextWindowOverflowError, MaxTokensError, ModelThrottledError } from '../../../errors.js'
+import { collectGenerator, collectIterator } from '../../../__fixtures__/model-test-helpers.js'
 import { Message, TextBlock, ToolUseBlock, ToolResultBlock } from '../../../types/messages.js'
 import { ImageBlock, DocumentBlock } from '../../../types/media.js'
 import { CitationsBlock } from '../../../types/citations.js'
@@ -94,6 +94,14 @@ describe("OpenAIModel (api: 'responses')", () => {
     it('returns true when explicitly enabled', () => {
       const model = new OpenAIModel({ api: 'responses', client: {} as OpenAI, stateful: true })
       expect(model.stateful).toBe(true)
+    })
+
+    it('is declared on info', () => {
+      const stateful = new OpenAIModel({ api: 'responses', client: {} as OpenAI, stateful: true })
+      const stateless = new OpenAIModel({ api: 'responses', client: {} as OpenAI })
+
+      expect(stateful.modelInfo.capabilities?.stateful).toBe(true)
+      expect(stateless.modelInfo.capabilities?.stateful).toBe(false)
     })
 
     it('is construction-only and cannot be changed via updateConfig', () => {
@@ -583,6 +591,20 @@ describe("OpenAIModel (api: 'responses')", () => {
   })
 
   describe('stream event mapping', () => {
+    it('resolves stateful once per stream, not once per event', async () => {
+      const client = createMockClient(async function* () {
+        yield { type: 'response.created', response: { id: 'resp_abc' } }
+        for (let i = 0; i < 50; i++) yield { type: 'response.output_text.delta', delta: 'x' }
+        yield { type: 'response.completed', response: {} }
+      })
+      const model = new OpenAIModel({ api: 'responses', client, stateful: true })
+      const getConfig = vi.spyOn(model, 'getConfig')
+
+      await collectIterator(model.stream([new Message({ role: 'user', content: [new TextBlock('hi')] })]))
+
+      expect(getConfig.mock.calls.length).toBeLessThan(10)
+    })
+
     it('captures responseId on response.created when stateful', async () => {
       const modelState = new StateStore()
       const client = createMockClient(async function* () {
@@ -716,6 +738,73 @@ describe("OpenAIModel (api: 'responses')", () => {
       expect(stop?.stopReason).toBe('maxTokens')
       const metadata = events.find((e: any) => e.type === 'modelMetadataEvent') as any
       expect(metadata?.usage).toEqual({ inputTokens: 10, outputTokens: 5, totalTokens: 15 })
+    })
+
+    it('maps response.incomplete with content_filter to stopReason=contentFiltered', async () => {
+      // #5740
+      const client = createMockClient(async function* () {
+        yield { type: 'response.created', response: { id: 'r' } }
+        yield { type: 'response.output_text.delta', delta: 'partial' }
+        yield { type: 'response.incomplete', response: { incomplete_details: { reason: 'content_filter' } } }
+      })
+      const model = new OpenAIModel({ api: 'responses', client })
+      const events = await collectIterator(model.stream([new Message({ role: 'user', content: [new TextBlock('x')] })]))
+      expect(events).toEqual([
+        { type: 'modelMessageStartEvent', role: 'assistant' },
+        { type: 'modelContentBlockStartEvent' },
+        { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: 'partial' } },
+        { type: 'modelContentBlockStopEvent' },
+        { type: 'modelMessageStopEvent', stopReason: 'contentFiltered' },
+      ])
+    })
+
+    describe('when a function call is in flight at response.incomplete', () => {
+      // #5740
+      const truncatedCall = (reason: string) =>
+        createMockClient(async function* () {
+          yield { type: 'response.created', response: { id: 'r' } }
+          yield {
+            type: 'response.output_item.added',
+            item: { type: 'function_call', id: 'item_1', call_id: 'call_1', name: 'write_file' },
+          }
+          yield {
+            type: 'response.function_call_arguments.delta',
+            item_id: 'item_1',
+            delta: '{"path": "notes.md", "content": "Lorem',
+          }
+          yield { type: 'response.incomplete', response: { incomplete_details: { reason } } }
+        })
+      const toolCallEvents = [
+        { type: 'modelMessageStartEvent', role: 'assistant' },
+        {
+          type: 'modelContentBlockStartEvent',
+          start: { type: 'toolUseStart', name: 'write_file', toolUseId: 'call_1' },
+        },
+        {
+          type: 'modelContentBlockDeltaEvent',
+          delta: { type: 'toolUseInputDelta', input: '{"path": "notes.md", "content": "Lorem' },
+        },
+        { type: 'modelContentBlockStopEvent' },
+      ]
+      const messages = [new Message({ role: 'user', content: [new TextBlock('x')] })]
+
+      it('reports maxTokens instead of toolUse for max_output_tokens', async () => {
+        const model = new OpenAIModel({ api: 'responses', client: truncatedCall('max_output_tokens') })
+        const events = await collectIterator(model.stream(messages))
+        expect(events).toEqual([...toolCallEvents, { type: 'modelMessageStopEvent', stopReason: 'maxTokens' }])
+      })
+
+      it('throws MaxTokensError from streamAggregated for max_output_tokens', async () => {
+        const model = new OpenAIModel({ api: 'responses', client: truncatedCall('max_output_tokens') })
+        await expect(collectGenerator(model.streamAggregated(messages))).rejects.toThrow(MaxTokensError)
+      })
+
+      it('keeps toolUse for content_filter', async () => {
+        // contentFiltered here would leave an orphaned toolUse in history; TS has no repair for that yet.
+        const model = new OpenAIModel({ api: 'responses', client: truncatedCall('content_filter') })
+        const events = await collectIterator(model.stream(messages))
+        expect(events).toEqual([...toolCallEvents, { type: 'modelMessageStopEvent', stopReason: 'toolUse' }])
+      })
     })
 
     it('plumbs prompt-cache reads (input_tokens_details.cached_tokens) into cacheReadInputTokens', async () => {
