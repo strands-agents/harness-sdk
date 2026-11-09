@@ -109,7 +109,8 @@ class HumanInTheLoop(InterventionHandler):
         # read_file runs freely, everything else pauses for approval
         agent = Agent(interventions=[HumanInTheLoop(allowed_tools=["read_file"])])
 
-        # Auto mode - LLM risk classification, only risky calls get escalated
+        # Auto mode - the SDK's current best approval strategy decides which calls need a human
+        # (today: LLM risk classification). May change between releases; pin `classifier` to fix it.
         agent = Agent(interventions=[HumanInTheLoop("auto")])
 
         # Auto mode with options
@@ -146,9 +147,13 @@ class HumanInTheLoop(InterventionHandler):
         """Initialize the handler.
 
         Args:
-            mode: ``"auto"`` lets the LLM risk classifier approve low-risk calls on its own
-                and asks the human only about risky ones. Shorthand for ``classifier=True``;
-                pass ``classifier`` as well to customize it. Omitted: every tool not in
+            mode: ``"auto"`` lets the SDK decide which tool calls need a human, using the
+                approval strategy it currently considers the best available. Today that is the
+                built-in LLM risk classifier (the same as ``classifier=True``): low-risk calls run
+                on their own and risky ones are escalated to the human. What ``"auto"`` resolves
+                to may change between releases as better approaches become available, so pass
+                ``classifier`` explicitly if you need fixed behavior. A ``classifier`` passed
+                alongside ``"auto"`` is used as given. Omitted: every tool not in
                 ``allowed_tools`` requires approval.
             allowed_tools: Tools that can execute WITHOUT human approval. All other
                 tools require approval. Use ``"*"`` to allow all tools. Prefix with
@@ -404,6 +409,8 @@ class HumanInTheLoop(InterventionHandler):
         classifier: bool | LLMClassifierConfig | DecisionModel | HumanInTheLoopClassifier | None,
     ) -> bool | LLMClassifierConfig | DecisionModel | HumanInTheLoopClassifier | None:
         """Fold ``mode`` into the ``classifier`` param.
+
+        This is the one place that defines what ``"auto"`` currently resolves to.
 
         Args:
             mode: The raw mode param from the constructor.

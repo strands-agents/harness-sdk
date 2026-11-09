@@ -141,7 +141,8 @@ export interface HumanInTheLoopConfig {
  *   interventions: [new HumanInTheLoop({ allowedTools: ['readFile'] })],
  * })
  *
- * // Auto mode — LLM risk classification, only risky calls get escalated
+ * // Auto mode — the SDK's current best approval strategy decides which calls need a human
+ * // (today: LLM risk classification). May change between releases; pin `classifier` to fix it.
  * const agent = new Agent({
  *   interventions: [new HumanInTheLoop('auto')],
  * })
@@ -183,9 +184,12 @@ export class HumanInTheLoop extends InterventionHandler {
   private readonly _classifiedToolUseIds: Set<string> = new Set()
 
   /**
-   * @param modeOrConfig - `'auto'` lets the LLM risk classifier approve low-risk calls on its own and asks the
-   *   human only about risky ones (shorthand for `classifier: true`). Or pass the config directly.
-   * @param config - Handler configuration when the first argument is `'auto'`. Pass `classifier` to customize it.
+   * @param modeOrConfig - `'auto'` lets the SDK decide which tool calls need a human, using the approval strategy
+   *   it currently considers the best available. Today that is the built-in LLM risk classifier (the same as
+   *   `classifier: true`): low-risk calls run on their own and risky ones are escalated to the human. What
+   *   `'auto'` resolves to may change between releases as better approaches become available, so pass
+   *   `classifier` explicitly if you need fixed behavior. Or pass the config directly.
+   * @param config - Handler configuration when the first argument is `'auto'`. A `classifier` here is used as given.
    * @throws Error if the mode is unknown, or `'auto'` is combined with `classifier: false`.
    */
   constructor(modeOrConfig?: 'auto' | HumanInTheLoopConfig, config?: HumanInTheLoopConfig) {
@@ -328,7 +332,8 @@ export class HumanInTheLoop extends InterventionHandler {
 }
 
 /**
- * Fold the `'auto'` mode into the `classifier` option.
+ * Fold the `'auto'` mode into the `classifier` option. This is the one place that defines what `'auto'`
+ * currently resolves to.
  *
  * @param mode - The first constructor argument.
  * @param classifier - The `classifier` option from the config.
