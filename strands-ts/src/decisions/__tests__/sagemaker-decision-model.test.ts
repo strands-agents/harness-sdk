@@ -202,20 +202,6 @@ describe('SageMakerDecisionModel', () => {
         /non-JSON response/
       )
     })
-
-    it('enforces the InvokeEndpoint 6 MB body limit before sending', async () => {
-      const decision = new SageMakerDecisionModel({ endpointName: ENDPOINT_NAME })
-
-      const error = await decision
-        .ask('x'.repeat(6 * 1024 * 1024), { q: { question: 'ok?', choices: 'boolean' } })
-        .then(
-          () => undefined,
-          (caught: unknown) => caught
-        )
-
-      expect(error).toBeInstanceOf(ContextWindowOverflowError)
-      expect(mockSend).not.toHaveBeenCalled()
-    })
   })
 
   describe('construction', () => {

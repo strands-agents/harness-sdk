@@ -11,8 +11,6 @@ import type { DecisionCallOptions, DecisionInput, DecisionResult, Question } fro
 
 const SAGEMAKER_PROVIDER_NAME = 'sagemaker'
 const SAGEMAKER_DEFAULT_MIN_CONFIDENCE = 0.5
-// InvokeEndpoint rejects request bodies larger than 6 MB.
-const SAGEMAKER_MAX_BODY_BYTES = 6 * 1024 * 1024
 const THROTTLING_ERROR_NAMES = new Set(['ThrottlingException', 'ModelNotReadyException', 'ServiceUnavailable'])
 const THROTTLING_STATUSES = new Set([429, 503, 529])
 // strands-decider reports a prompt longer than the context window with 422, vLLM with 400.
@@ -94,7 +92,6 @@ export class SageMakerDecisionModel extends DecisionModel {
         options.defaultMinConfidence ?? SAGEMAKER_DEFAULT_MIN_CONFIDENCE,
         'SageMakerDecisionModel'
       ),
-      maxBodyBytes: SAGEMAKER_MAX_BODY_BYTES,
     }
   }
 

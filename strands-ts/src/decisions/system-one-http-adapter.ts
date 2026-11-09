@@ -19,7 +19,8 @@ export interface SystemOneRequestConfig {
   modelId?: string
   defaultMinConfidence: number
   maxQuestions?: number
-  maxBodyBytes: number
+  /** Rejects larger requests before sending; omitted when the server enforces its own limit. */
+  maxBodyBytes?: number
 }
 
 /** @internal */
@@ -27,6 +28,7 @@ export interface SystemOneProviderConfig extends SystemOneRequestConfig {
   endpoint: string
   apiKey: string
   modelId: string
+  maxBodyBytes: number
   fetch: typeof globalThis.fetch
 }
 
@@ -158,7 +160,7 @@ export async function askSystemOneWith<const Q extends Record<string, Question>>
     questions: toWireQuestions(questions),
   })
   const bodyBytes = new TextEncoder().encode(body).byteLength
-  if (bodyBytes > config.maxBodyBytes) {
+  if (config.maxBodyBytes !== undefined && bodyBytes > config.maxBodyBytes) {
     throw new ContextWindowOverflowError(
       `${config.providerName} decision request is ${bodyBytes} bytes; the provider limit is ${config.maxBodyBytes}`
     )
