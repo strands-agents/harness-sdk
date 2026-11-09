@@ -165,6 +165,20 @@ class TestFlattenMessagesToContent:
         ]
         assert tru_result == exp_result
 
+    def test_leaves_out_injected_text(self):
+        messages: Messages = [
+            Message(
+                role="user",
+                content=[
+                    ContentBlock(text="fix the build"),
+                    ContentBlock(injected={"text": "<todos>v1</todos>", "source": "strands:todos:injector"}),
+                ],
+            ),
+        ]
+
+        tru_result = _flatten_messages_to_content(messages)
+        assert tru_result == [ContentBlock(text="\n---\n[user]"), ContentBlock(text="fix the build")]
+
     def test_renders_summary_block_as_its_text(self):
         messages: Messages = [
             Message(

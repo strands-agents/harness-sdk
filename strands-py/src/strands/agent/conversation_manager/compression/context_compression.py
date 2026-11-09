@@ -11,6 +11,7 @@ import logging
 from typing import TYPE_CHECKING, Literal
 
 from ....event_loop.streaming import process_stream
+from ....models._injected import prepare_injected_blocks
 from ....types.content import ContentBlock, Message
 from ....types.exceptions import ContextWindowOverflowException
 
@@ -177,6 +178,7 @@ async def generate_summary(
         {"role": "user", "content": [{"text": "Please summarize this conversation."}]}
     ]
 
+    summarization_messages, _ = prepare_injected_blocks(model, summarization_messages)
     chunks = model.stream(
         summarization_messages,
         tool_specs=None,

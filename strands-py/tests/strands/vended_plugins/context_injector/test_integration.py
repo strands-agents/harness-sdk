@@ -1,7 +1,7 @@
 """End-to-end tests for ContextInjector against a real Agent + event loop.
 
-These verify the ephemerality contract: the injected text reaches the model for one call but
-never enters the agent's durable conversation history.
+These verify the injected-block contract: the injected text is stored as an ``injected`` block in the
+agent's conversation, and a model without temporary messages receives only the latest one, as text.
 """
 
 import json
@@ -58,7 +58,7 @@ def trailing_blocks_seen(model):
     return seen
 
 
-def test_injected_text_reaches_model_but_not_durable_history(model, model_seen):
+def test_injected_text_reaches_model_as_text_and_history_as_an_injected_block(model, model_seen):
     agent = Agent(
         model=model,
         callback_handler=None,
@@ -72,9 +72,12 @@ def test_injected_text_reaches_model_but_not_durable_history(model, model_seen):
     assert "<ctx>EPHEMERAL</ctx>" in _texts(model_seen[0])
     assert "what is the weather?" in _texts(model_seen[0])
 
-    # (b) The durable conversation never contains the injected text.
+    # (b) The conversation keeps it as an injected block, never as text.
     assert "<ctx>EPHEMERAL</ctx>" not in _texts(agent.messages)
-    assert "what is the weather?" in _texts(agent.messages)
+    assert agent.messages[0]["content"] == [
+        {"text": "what is the weather?"},
+        {"injected": {"text": "<ctx>EPHEMERAL</ctx>", "source": "strands:context-injector"}},
+    ]
 
 
 def test_dynamic_trailing_blocks_reaches_the_model(model, trailing_blocks_seen):
@@ -180,7 +183,7 @@ async def test_every_turn_injection_preserves_tool_result_adjacency(model_class,
     for prompt in ["Say hello", "Say hello again"]:
         result = await agent.invoke_async(prompt)
         assert result.message["content"] == [{"text": "DONE"}]
-        assert "EPHEMERAL" not in json.dumps(agent.messages)
+        assert "EPHEMERAL" not in _texts(agent.messages)
 
     tru_roles = [[message["role"] for message in request] for request in requests]
     exp_roles = [
@@ -191,3 +194,4 @@ async def test_every_turn_injection_preserves_tool_result_adjacency(model_class,
     ]
     assert tru_roles == exp_roles
     assert all("EPHEMERAL" in json.dumps(request[-1]["content"]) for request in requests)
+    assert all(json.dumps(request).count("EPHEMERAL") == 1 for request in requests)

@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, cast
 from typing_extensions import TypedDict
 
 from ...event_loop.streaming import process_stream
+from ...models._injected import prepare_injected_blocks
 from ...types.content import ContentBlock, Message, Messages
 from ...types.tools import ToolResult, ToolResultContent
 
@@ -74,6 +75,7 @@ async def _summarize_content(
         )
     ]
 
+    messages, _ = prepare_injected_blocks(model, messages)
     chunks = model.stream(messages, tool_specs=None, system_prompt=system_prompt)
 
     result_message: Message | None = None

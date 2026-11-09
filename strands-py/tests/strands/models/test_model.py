@@ -239,8 +239,10 @@ class TestModelInfo:
     def provider(self):
         return ConfigurableModel()
 
-    def test_is_all_unknown_without_a_model_id_and_unknown_stateful_reads_as_false(self, provider):
-        assert provider.model_info == ModelInfo()
+    def test_knows_only_that_temporary_messages_are_off_without_a_model_id_and_unknown_stateful_reads_as_false(
+        self, provider
+    ):
+        assert provider.model_info == ModelInfo(capabilities=ModelCapabilities(temporary_messages=False))
         assert provider.stateful is False
 
     def test_resolves_facts_from_the_shared_model_info_by_model_id(self, provider):
@@ -249,10 +251,15 @@ class TestModelInfo:
         assert provider.model_info.limits.context_window == 1_000_000
         assert provider.model_info.capabilities.prompt_caching == "cache_points"
 
+    def test_leaves_temporary_messages_off_for_a_model_the_shared_data_says_takes_them(self, provider):
+        provider.update_config(model_id="vertex.claude-opus-5-5")
+
+        assert provider.model_info.capabilities.temporary_messages is False
+
     def test_treats_a_non_string_model_id_as_unknown(self, provider):
         provider.update_config(model_id=1234)
 
-        assert provider.model_info == ModelInfo()
+        assert provider.model_info == ModelInfo(capabilities=ModelCapabilities(temporary_messages=False))
         assert provider.stateful is False
 
     def test_lookup_treats_a_non_string_model_id_as_unknown(self):
@@ -616,6 +623,28 @@ async def test_count_tokens_citations_block(model):
     ]
     result = await model.count_tokens(messages=messages)
     assert result == 11  # ceil(44/4)
+
+
+@pytest.mark.asyncio
+async def test_count_tokens_injected_block(model):
+    messages = [{"role": "user", "content": [{"injected": {"text": "cwd: /repo, date: today", "source": "test"}}]}]
+
+    result = await model.count_tokens(messages=messages)
+
+    assert result == math.ceil(len("cwd: /repo, date: today") / 4)
+
+
+@pytest.mark.asyncio
+async def test_count_tokens_counts_only_the_injected_blocks_of_the_latest_user_message(model):
+    messages = [
+        {"role": "user", "content": [{"injected": {"text": "x" * 400, "source": "test"}}]},
+        {"role": "assistant", "content": [{"text": "ok"}]},
+        {"role": "user", "content": [{"injected": {"text": "cwd: /repo", "source": "test"}}]},
+    ]
+
+    result = await model.count_tokens(messages=messages)
+
+    assert result == math.ceil(len("ok") / 4) + math.ceil(len("cwd: /repo") / 4)
 
 
 @pytest.mark.asyncio

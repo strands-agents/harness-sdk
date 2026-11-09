@@ -18,7 +18,7 @@ from ..types.content import ContentBlock, Messages, SystemContentBlock
 from ..types.streaming import StreamEvent
 from ..types.tools import ToolChoice, ToolSpec
 from ._defaults import DEFAULT_CONTEXT_WINDOW_LIMIT
-from ._model_info import ModelInfo, ModelLimits, lookup_model_info
+from ._model_info import ModelCapabilities, ModelInfo, ModelLimits, lookup_model_info
 
 if TYPE_CHECKING:
     from ..agent.agent import Agent
@@ -59,6 +59,9 @@ def _count_content_block_tokens(
 
     if "summary" in block:
         total += count_text(block["summary"].get("text", ""))
+
+    if "injected" in block:
+        total += count_text(block["injected"]["text"])
 
     if "toolUse" in block:
         tool_use = block["toolUse"]
@@ -115,8 +118,11 @@ def _estimate_tokens_with_heuristic(
     elif system_prompt:
         total += _heuristic_estimate_text(system_prompt)
 
-    for message in messages:
+    latest_user = latest_user_index(messages)
+    for index, message in enumerate(messages):
         for block in message["content"]:
+            if "injected" in block and index != latest_user:
+                continue
             total += _count_content_block_tokens(block, _heuristic_estimate_text, _heuristic_estimate_json)
 
     if tool_specs:
@@ -124,6 +130,14 @@ def _estimate_tokens_with_heuristic(
             total += _heuristic_estimate_json(spec)
 
     return total
+
+
+def latest_user_index(messages: Messages) -> int:
+    """Index of the latest user message, or -1 when there is none."""
+    for index in range(len(messages) - 1, -1, -1):
+        if messages[index]["role"] == "user":
+            return index
+    return -1
 
 
 class BaseModelConfig(TypedDict, total=False):
@@ -238,7 +252,8 @@ class Model(abc.ABC):
     def model_info(self) -> ModelInfo:
         """Everything the SDK knows about the configured model, resolved on each read.
 
-        Layers, later ones winning: the shared model info for the configured model id, the
+        Layers, later ones winning: the shared model info for the configured model id,
+        ``temporary_messages`` off (a provider that can send them turns it back on), the
         ``context_window_limit`` config value, and the ``model_info`` config override. Each read
         returns a new record, so do not compare reads by identity.
 
@@ -271,7 +286,10 @@ class Model(abc.ABC):
 
         return ModelInfo.merge(
             lookup_model_info(model_id),
-            ModelInfo(limits=ModelLimits(context_window=context_window_limit)),
+            ModelInfo(
+                capabilities=ModelCapabilities(temporary_messages=False),
+                limits=ModelLimits(context_window=context_window_limit),
+            ),
             override,
         )
 
@@ -383,8 +401,9 @@ class Model(abc.ABC):
 
         Used for proactive context management (e.g., triggering compression at a threshold).
         Uses tiktoken's cl100k_base encoding when available, otherwise falls back to a
-        heuristic (characters / 4 for text, characters / 2 for JSON). Accuracy varies by
-        model provider. Not intended for billing or precise quota calculations.
+        heuristic (characters / 4 for text, characters / 2 for JSON). It counts only the latest user
+        message's injected blocks, the ones a model reads. Accuracy varies by model provider. Not
+        intended for billing or precise quota calculations.
 
         Subclasses may override this method to provide model-specific token counting
         using native APIs for improved accuracy.

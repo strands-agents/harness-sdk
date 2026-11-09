@@ -28,6 +28,7 @@ from ..experimental.checkpoint import Checkpoint, CheckpointPosition
 from ..hooks import AfterModelCallEvent, AfterToolsEvent, BeforeModelCallEvent, BeforeToolsEvent
 from ..interrupt import InterruptException, PendingToolExecution
 from ..middleware.stages import InvokeModelContext, InvokeModelStage
+from ..models._injected import count_tokens_as_sent
 from ..telemetry.metrics import Trace, _total_prompt_tokens
 from ..telemetry.tracer import Tracer, get_tracer
 from ..tools._validator import validate_and_prepare_tools
@@ -124,11 +125,12 @@ async def _estimate_input_tokens(agent: "Agent") -> int:
         if not new_messages:
             return known_baseline
         # System prompt and tool spec tokens are already included in the baseline
-        return known_baseline + await agent.model.count_tokens(new_messages)
+        return known_baseline + await count_tokens_as_sent(agent.model, new_messages)
 
     # Cold start: resolve tool specs lazily for estimation only
     tool_specs = agent.tool_registry.get_all_tool_specs()
-    return await agent.model.count_tokens(
+    return await count_tokens_as_sent(
+        agent.model,
         messages,
         tool_specs=tool_specs,
         system_prompt=agent.system_prompt,

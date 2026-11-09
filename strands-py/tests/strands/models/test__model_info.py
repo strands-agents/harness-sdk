@@ -135,6 +135,7 @@ def test_lookup_model_info_returns_the_entry_facts_and_nothing_for_unknown_ids()
         forced_tool_choice=False,
         native_structured_output=True,
         server_side_summary=True,
+        temporary_messages=True,
     )
     assert lookup_model_info("amazon.nova-pro-v1:0") == ModelInfo(
         capabilities=ModelCapabilities(forced_tool_choice=True, native_structured_output=False),

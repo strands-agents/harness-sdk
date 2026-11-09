@@ -13,6 +13,7 @@ from pydantic import BaseModel
 
 from ..agent.agent_metadata import AgentMetadata
 from ..agent.invocation_context import InvocationContext
+from ..models._injected import prepare_injected_blocks
 from ..models.model import Model
 from ..tools import InvalidToolUseNameException
 from ..tools.tools import validate_tool_use_name
@@ -582,6 +583,9 @@ async def stream_messages(
                 ContentBlock(text=block["summary"]["text"]) if "summary" in block else block
                 for block in message["content"]
             ]
+    messages, injected_trailing_blocks = prepare_injected_blocks(model, messages)
+    # The cache point stays ahead of injected text, which the next call no longer sends.
+    dynamic_trailing_blocks = max(dynamic_trailing_blocks, injected_trailing_blocks)
     start_time = time.time()
 
     # Omitted when unset, so an ordinary call's arguments are unchanged.

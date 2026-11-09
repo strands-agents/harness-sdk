@@ -35,6 +35,7 @@ from ..types.exceptions import ContextWindowOverflowException, ModelThrottledExc
 from ..types.streaming import CitationsDelta, StreamEvent
 from ..types.tools import ToolChoice, ToolChoiceAuto, ToolChoiceToolDict, ToolSpec
 from ._defaults import resolve_config_metadata
+from ._model_info import ModelCapabilities, ModelInfo, lookup_model_info
 from ._native_output import (
     StructuredOutputMechanism,
     handle_rejected_mechanism,
@@ -58,6 +59,12 @@ if TYPE_CHECKING:
 
 COMPACTION_BETA = "compact-2026-09-04"
 """Beta that enables on-demand compaction, and compaction blocks in later requests."""
+
+TURN_SCOPED_SYSTEM_BETA = "mid-conversation-system-clear-at-2026-08-21"
+"""Beta that lets a mid-conversation system message carry ``clear_at``.
+
+See https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages
+"""
 
 
 def _is_compaction(block: ContentBlock) -> bool:
@@ -270,6 +277,17 @@ class AnthropicModel(Model):
         _warn_on_deprecated_cache_tools(model_config, stacklevel=3)
         self.config.update(model_config)
 
+    @property
+    @override
+    def model_info(self) -> ModelInfo:
+        """Turns temporary messages back on for the models the shared model info lists."""
+        temporary_messages = lookup_model_info(self.config.get("model_id")).capabilities.temporary_messages
+        return ModelInfo.merge(
+            super().model_info,
+            ModelInfo(capabilities=ModelCapabilities(temporary_messages=temporary_messages)),
+            self.get_config().get("model_info"),
+        )
+
     @override
     def get_config(self) -> AnthropicConfig:
         """Get the Anthropic model configuration.
@@ -406,7 +424,7 @@ class AnthropicModel(Model):
             An Anthropic messages array.
         """
         configured_ttl = _messages_cache_ttl(self.config.get("cache_config"))
-        formatted_messages = []
+        formatted_messages: list[tuple[dict[str, Any], Message]] = []
         dropped_unsigned_reasoning = False
         skipped: Counter[str] = Counter()
         drop_assistant_documents = _is_current_api_version(self._api_version())
@@ -416,6 +434,9 @@ class AnthropicModel(Model):
             marked = False
 
             for content in message["content"]:
+                if "injected" in content:
+                    continue
+
                 if "cachePoint" in content:
                     ttl = content["cachePoint"].get("ttl")
                     if not ttl and message_idx == cache_target_idx:
@@ -461,13 +482,13 @@ class AnthropicModel(Model):
                     logger.debug("msg_idx=<%d> | no cacheable content block, skipped cache point", message_idx)
 
             if formatted_contents:
-                formatted_messages.append({"content": formatted_contents, "role": message["role"]})
+                formatted_messages.append(({"content": formatted_contents, "role": message["role"]}, message))
 
         if dropped_unsigned_reasoning:
             logger.warning("Unsigned reasoning content is not supported by Anthropic | skipped content blocks")
 
         _log_skipped_blocks(logger, skipped)
-        return formatted_messages
+        return _request_messages(formatted_messages, self.model_info.capabilities.temporary_messages is True)
 
     @classmethod
     def _attach_cache_control(
@@ -708,6 +729,8 @@ class AnthropicModel(Model):
             _is_compaction(block) for message in messages for block in message["content"]
         ):
             request = self._with_beta(request, COMPACTION_BETA)
+        if any("clear_at" in message for message in request["messages"]):
+            request = self._with_beta(request, TURN_SCOPED_SYSTEM_BETA)
         if self._drop_stale_thinking_model_id == self.config["model_id"]:
             request = self._request_with_drop_block(request) or request
 
@@ -1466,3 +1489,46 @@ class AnthropicModel(Model):
             raise ValueError("No valid tool use or tool use input was found in the Anthropic response.")
 
         yield {"output": output_model(**output_response)}
+
+
+def _request_messages(kept: list[tuple[dict[str, Any], Message]], temporary_messages: bool) -> list[dict[str, Any]]:
+    """Return the formatted messages; with ``temporary_messages``, each user message's injected text follows it.
+
+    Args:
+        kept: The formatted messages left non-empty, each with the message it was formatted from.
+        temporary_messages: Whether to send injected text as turn-scoped system messages.
+
+    Returns:
+        The messages to send.
+    """
+    if not temporary_messages:
+        return [formatted for formatted, _ in kept]
+    request_messages: list[dict[str, Any]] = []
+    for index, (formatted, source) in enumerate(kept):
+        request_messages.append(formatted)
+        system_message = _turn_scoped_system_message(source)
+        next_is_user = index + 1 < len(kept) and kept[index + 1][0]["role"] == "user"
+        # The API rejects one followed directly by a user message. No assistant turn can have read it.
+        if system_message and formatted["role"] == "user" and not next_is_user:
+            request_messages.append(system_message)
+    return request_messages
+
+
+def _turn_scoped_system_message(message: Message) -> dict[str, Any] | None:
+    """The message's injected text as a system message the model reads only until a later user message exists.
+
+    Once cleared, it stays in the request but renders nothing, so the history before every later assistant turn is
+    sent unchanged. Never carries ``cache_control``: a cleared message is not part of any cache key.
+
+    Args:
+        message: A message of the conversation.
+
+    Returns:
+        The system message, or None when the message has no injected text.
+    """
+    content = [
+        {"type": "text", "text": block["injected"]["text"]} for block in message["content"] if "injected" in block
+    ]
+    if not content:
+        return None
+    return {"role": "system", "content": content, "clear_at": "next_user_message"}
