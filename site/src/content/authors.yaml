@@ -292,3 +292,13 @@
   name: Kevin Orellana
   role: "Software Developer"
   bio: Kevin Orellana is a Strands contributor.
+
+- id: carr-onstott
+  name: Carr Onstott
+  role: "Principal Engineer, AWS"
+  bio: Carr Onstott is a Principal Engineer at AWS working on platform services.
+
+- id: mehul-jaiswal
+  name: Mehul Jaiswal
+  role: "Software Engineer, AWS"
+  bio: Mehul Jaiswal is a Software Engineer at AWS working on platform services.
