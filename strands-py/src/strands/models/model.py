@@ -416,9 +416,9 @@ class Model(abc.ABC):
 
         ``messages`` is a request as the caller would send it to :meth:`stream`, along with its ``tool_specs`` and
         system prompt. The base implementation sends that request with ``instructions`` (or a default instruction)
-        closing it, so a caller that replays its own conversation can share its prompt cache. Without a system prompt
-        it uses a default summarizer prompt. The summary is the reply's text, including a reply cut off at the output
-        limit; a reply without text, such as one that calls a tool instead, gives an empty result.
+        closing it, and otherwise as given, so a caller that replays its own conversation can share its prompt cache.
+        The summary is the reply's text, including a reply cut off at the output limit. A reply that ends for another
+        reason, such as a tool call, a cancellation or a guardrail, or that holds no text, gives an empty result.
 
         Every summary is a ``summary`` block. The base implementation leaves its ``provider`` unset. A provider that
         reports ``model_info.capabilities.server_side_summary`` as True overrides this method to summarize

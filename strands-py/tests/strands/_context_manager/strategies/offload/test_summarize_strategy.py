@@ -8,13 +8,14 @@ import pytest
 
 from strands._context_manager.strategies.offload import Offload
 from strands._context_manager.strategies.offload.summarize import (
+    _BLOCK_SUMMARY_INSTRUCTIONS,
     _format_summarized,
     _tool_result_to_content_blocks,
 )
 from strands._context_manager.types import ContextState
 from strands.agent.invocation_context import _create_invocation_context
 from strands.models import Model, SummarizeResult
-from strands.models._summarize import DEFAULT_SUMMARIZE_INSTRUCTIONS, DEFAULT_SUMMARIZE_SYSTEM_PROMPT
+from strands.models._summarize import DEFAULT_SUMMARIZE_INSTRUCTIONS
 from strands.types.content import ContentBlock, Message, Messages
 from strands.types.event_loop import Usage
 from strands.types.tools import ToolResult, ToolUse
@@ -444,10 +445,46 @@ class TestBatchSummaryReplaysTheAgentRequest:
 
         call = mock_agent.model.summarize.await_args
         assert call.args[0] == self._messages()[:4]
-        assert call.kwargs["tool_specs"] == AGENT_TOOLS
-        assert call.kwargs["system_prompt_content"] == AGENT_PROMPT
-        assert call.kwargs["system_prompt"] == "You are a coding agent."
-        assert call.kwargs["cancel_signal"] is mock_agent._cancel_signal
+        assert call.kwargs == {
+            "tool_specs": AGENT_TOOLS,
+            "system_prompt": "You are a coding agent.",
+            "system_prompt_content": AGENT_PROMPT,
+            "instructions": None,
+            "cancel_signal": mock_agent._cancel_signal,
+        }
+
+    @pytest.mark.asyncio
+    async def test_sends_no_system_prompt_for_an_agent_without_one(self, mock_agent):
+        mock_agent.system_prompt_content = None
+        mock_agent.model.stream = unittest.mock.MagicMock(side_effect=_make_stream_events("Summary of content."))
+        messages = self._messages()
+        mock_agent.messages = messages
+        strategy = Offload.summarize("*").when(utilization=0.8, preserve_recent=1)
+
+        assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is True
+
+        call = mock_agent.model.stream.call_args
+        assert call.args[2] is None
+        assert call.kwargs["system_prompt_content"] is None
+
+    @pytest.mark.asyncio
+    async def test_leaves_the_history_unchanged_when_cancelled_mid_summary(self, mock_agent):
+        async def cancelling_stream(*args, **kwargs):
+            yield {"messageStart": {"role": "assistant"}}
+            yield {"contentBlockStart": {"start": {}}}
+            yield {"contentBlockDelta": {"delta": {"text": "partial"}}}
+            mock_agent._cancel_signal.set()
+            yield {"contentBlockStop": {}}
+            yield {"messageStop": {"stopReason": "end_turn"}}
+
+        mock_agent.model.stream = cancelling_stream
+        messages = self._messages()
+        mock_agent.messages = messages
+        strategy = Offload.summarize("*").when(utilization=0.8, preserve_recent=1)
+
+        assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is False
+
+        assert messages == self._messages()
 
     @pytest.mark.asyncio
     async def test_leaves_reasoning_out_for_a_model_other_than_the_agent_model(self, mock_agent):
@@ -778,7 +815,20 @@ class TestClientSideSummariesUseModelSummarize:
 
         messages_sent, _, system_prompt = mock_agent.model.stream.call_args.args
         assert messages_sent[-1]["content"][-1] == ContentBlock(text="Be very brief.")
-        assert system_prompt == DEFAULT_SUMMARIZE_SYSTEM_PROMPT
+        assert system_prompt is None
+
+    @pytest.mark.asyncio
+    async def test_a_block_summary_sends_the_block_instructions_without_a_system_prompt(self, mock_agent):
+        messages = self._tool_result_messages()
+        mock_agent.messages = messages
+        strategy = Offload.summarize("tool_results").when(threshold=100)
+
+        assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.5)) is True
+
+        assert mock_agent.model.summarize.await_args.kwargs == {
+            "instructions": _BLOCK_SUMMARY_INSTRUCTIONS,
+            "cancel_signal": mock_agent._cancel_signal,
+        }
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("server_side_summary", [False, True])

@@ -2,6 +2,7 @@
 
 import json
 import re
+import threading
 import unittest.mock
 
 import pytest
@@ -48,6 +49,7 @@ def mock_agent():
     agent.model.summarize = summarize
     agent.aux_model = agent.model
     agent.messages = []
+    agent._cancel_signal = threading.Event()
     return agent
 
 

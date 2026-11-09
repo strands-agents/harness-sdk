@@ -1,4 +1,5 @@
 import json
+import logging
 import math
 import threading
 import warnings
@@ -11,7 +12,7 @@ from strands.hooks.events import AfterInvocationEvent
 from strands.models import CacheConfig, ModelCapabilities, ModelInfo, ModelLimits, SummarizeResult
 from strands.models import Model as SAModel
 from strands.models._model_info import lookup_model_info
-from strands.models._summarize import DEFAULT_SUMMARIZE_INSTRUCTIONS, DEFAULT_SUMMARIZE_SYSTEM_PROMPT
+from strands.models._summarize import DEFAULT_SUMMARIZE_INSTRUCTIONS
 from strands.models.model import _estimate_tokens_with_heuristic, _ModelPlugin
 
 
@@ -875,13 +876,48 @@ async def test_summarize_base_adds_a_user_turn_after_an_assistant_turn():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("instructions", [None, ""])
-async def test_summarize_base_uses_the_defaults_without_a_system_prompt_or_instructions(instructions):
+async def test_summarize_base_sends_no_system_prompt_and_the_default_instructions(instructions):
     model = RecordingModel()
 
     await model.summarize([{"role": "user", "content": [{"text": "hi"}]}], instructions=instructions)
 
-    assert model.calls[0]["system_prompt"] == DEFAULT_SUMMARIZE_SYSTEM_PROMPT
+    assert model.calls[0]["system_prompt"] is None
+    assert model.calls[0]["system_prompt_content"] is None
     assert model.calls[0]["messages"][-1]["content"][-1] == {"text": DEFAULT_SUMMARIZE_INSTRUCTIONS}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stop_reason", ["tool_use", "guardrail_intervened", "content_filtered"])
+async def test_summarize_base_returns_an_empty_summary_for_an_unfinished_reply(stop_reason, caplog):
+    model = RecordingModel(
+        reply=("canned",), stop_reason=stop_reason, usage={"inputTokens": 10, "outputTokens": 1, "totalTokens": 11}
+    )
+
+    with caplog.at_level(logging.WARNING):
+        result = await model.summarize([{"role": "user", "content": [{"text": "hi"}]}])
+
+    assert result == SummarizeResult(content=[], usage={"inputTokens": 10, "outputTokens": 1, "totalTokens": 11})
+    assert f"stop_reason=<{stop_reason}> | summary reply did not finish" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_summarize_base_returns_an_empty_summary_when_cancelled_mid_stream():
+    cancel_signal = threading.Event()
+
+    class CancellingModel(RecordingModel):
+        async def stream(self, messages, tool_specs=None, system_prompt=None, **kwargs):
+            yield {"messageStart": {"role": "assistant"}}
+            yield {"contentBlockStart": {"start": {}}}
+            yield {"contentBlockDelta": {"delta": {"text": "partial"}}}
+            cancel_signal.set()
+            yield {"contentBlockStop": {}}
+            yield {"messageStop": {"stopReason": "end_turn"}}
+
+    result = await CancellingModel().summarize(
+        [{"role": "user", "content": [{"text": "hi"}]}], cancel_signal=cancel_signal
+    )
+
+    assert result.content == []
 
 
 @pytest.mark.asyncio
