@@ -21,6 +21,7 @@ import {
 import { AudioBlock, ImageBlock, VideoBlock, DocumentBlock, encodeBase64 } from '../media.js'
 import { CitationsBlock } from '../citations.js'
 import { anyTrackingId } from '../../__fixtures__/message-helpers.js'
+import { isOffloaded } from '../../context-manager/placeholder.js'
 
 describe('Message', () => {
   test('creates message with role and content', () => {
@@ -181,6 +182,123 @@ describe('TextBlock', () => {
       type: 'textBlock',
       text: 'hello',
     })
+  })
+})
+
+describe('TextBlock standing in for offloaded content', () => {
+  test('carries what it stands in for and serializes it beside the text', () => {
+    const block = new TextBlock('[Dropped] [ref: tu-1]', {
+      metadata: { offloaded: { method: 'drop', ref: 'tu-1' } },
+    })
+
+    expect(block).toEqual({
+      type: 'textBlock',
+      text: '[Dropped] [ref: tu-1]',
+      metadata: { offloaded: { method: 'drop', ref: 'tu-1' } },
+    })
+    expect(block.toJSON()).toEqual({
+      text: '[Dropped] [ref: tu-1]',
+      metadata: { offloaded: { method: 'drop', ref: 'tu-1' } },
+    })
+    expect(TextBlock.fromJSON(block.toJSON())).toEqual(block)
+  })
+
+  test('a plain text block carries and serializes no offloaded field', () => {
+    const block = new TextBlock('hello')
+
+    expect(block).toEqual({ type: 'textBlock', text: 'hello' })
+    expect(block.toJSON()).toEqual({ text: 'hello' })
+    expect(isOffloaded(block)).toBe(false)
+  })
+
+  test('round-trips through message data at top level and inside a tool result', () => {
+    const message = new Message({
+      role: 'user',
+      content: [
+        new TextBlock('[Dropped] [ref: msg-1_0]', {
+          metadata: { offloaded: { method: 'drop', ref: 'msg-1_0' } },
+        }),
+        new ToolResultBlock({
+          toolUseId: 'tu-1',
+          status: 'success',
+          content: [
+            new TextBlock('row-1 [ref: tu-1]', {
+              metadata: { offloaded: { method: 'truncate', ref: 'tu-1' } },
+            }),
+          ],
+        }),
+      ],
+      trackingId: 'msg-1',
+    })
+
+    const data = JSON.parse(JSON.stringify(message)) as MessageData
+
+    expect(data.content).toEqual([
+      {
+        text: '[Dropped] [ref: msg-1_0]',
+        metadata: { offloaded: { method: 'drop', ref: 'msg-1_0' } },
+      },
+      {
+        toolResult: {
+          toolUseId: 'tu-1',
+          status: 'success',
+          content: [
+            {
+              text: 'row-1 [ref: tu-1]',
+              metadata: { offloaded: { method: 'truncate', ref: 'tu-1' } },
+            },
+          ],
+        },
+      },
+    ])
+    const restored = Message.fromMessageData(data)
+    expect(restored).toEqual(message)
+    expect(isOffloaded(restored.content[0])).toBe(true)
+    expect(isOffloaded((restored.content[1] as ToolResultBlock).content[0])).toBe(true)
+  })
+})
+
+describe('copies with other content', () => {
+  test('Message.with replaces content, keeping role, tracking id, and metadata', () => {
+    const metadata = { custom: { pinned: true } }
+    const message = new Message({ role: 'user', content: [new TextBlock('a')], trackingId: 'm1', metadata })
+
+    const copy = message.with({ content: [new TextBlock('b')] })
+
+    expect(copy).toEqual(new Message({ role: 'user', content: [new TextBlock('b')], trackingId: 'm1', metadata }))
+    expect(message.content).toEqual([new TextBlock('a')])
+  })
+
+  test('Message.with replaces metadata, keeping role, content, and tracking id', () => {
+    const message = new Message({ role: 'user', content: [new TextBlock('a')], trackingId: 'm1' })
+
+    const copy = message.with({ metadata: { custom: { pinned: true } } })
+
+    expect(copy).toEqual(
+      new Message({
+        role: 'user',
+        content: [new TextBlock('a')],
+        trackingId: 'm1',
+        metadata: { custom: { pinned: true } },
+      })
+    )
+    expect(message.metadata).toBeUndefined()
+  })
+
+  test('Message.with keeps a field set to undefined', () => {
+    const metadata = { custom: { pinned: true } }
+    const message = new Message({ role: 'user', content: [new TextBlock('a')], trackingId: 'm1', metadata })
+
+    expect(message.with({ content: undefined, metadata: undefined } as never)).toEqual(message)
+  })
+
+  test('ToolResultBlock.with replaces content, keeping tool use id, status, and error', () => {
+    const error = new Error('boom')
+    const block = new ToolResultBlock({ toolUseId: 't', status: 'error', content: [new TextBlock('a')], error })
+
+    expect(block.with({ content: [new TextBlock('b')] })).toEqual(
+      new ToolResultBlock({ toolUseId: 't', status: 'error', content: [new TextBlock('b')], error })
+    )
   })
 })
 

@@ -154,6 +154,26 @@ export class Message implements JSONSerializable<MessageData> {
   clone(): Message {
     return Message.fromMessageData(deepCopy(this.toJSON()) as unknown as MessageData)
   }
+
+  /**
+   * A shallow copy of this message with the given content or metadata in place of its own. The copy keeps this
+   * message's role and tracking id, and shares its blocks. A field left out, or set to `undefined`, keeps this
+   * message's value.
+   *
+   * @param overrides - The content or metadata of the copy
+   * @returns The copy
+   *
+   * @experimental
+   */
+  with(overrides: { content?: ContentBlock[]; metadata?: MessageMetadata }): Message {
+    const metadata = overrides.metadata ?? this.metadata
+    return new Message({
+      role: this.role,
+      content: overrides.content ?? this.content,
+      trackingId: this.trackingId,
+      ...(metadata !== undefined && { metadata }),
+    })
+  }
 }
 
 /**
@@ -206,6 +226,48 @@ export type ContentBlock =
   | SummaryBlock
 
 /**
+ * Offload method that replaced content with a placeholder.
+ *
+ * @experimental
+ */
+export type OffloadMethod = 'drop' | 'truncate' | 'summarize'
+
+/**
+ * What a text block stands in for when the context manager offloaded the original.
+ *
+ * @experimental
+ */
+export interface OffloadMetadata {
+  /**
+   * Offload method that left the placeholder.
+   */
+  method: OffloadMethod
+
+  /**
+   * Stash reference under which the original is retrievable; absent when it was not stashed.
+   */
+  ref?: string
+
+  /**
+   * Size of the content this placeholder stands for, in tokens, including any placeholder it replaced; absent when
+   * the token count could not measure it.
+   */
+  tokens?: number
+}
+
+/**
+ * Metadata attached to a text block. Not sent to model providers.
+ *
+ * @experimental
+ */
+export interface TextBlockMetadata {
+  /**
+   * Present when the block stands in for content the context manager offloaded.
+   */
+  offloaded?: OffloadMetadata
+}
+
+/**
  * Data for a text block.
  */
 export interface TextBlockData {
@@ -213,6 +275,11 @@ export interface TextBlockData {
    * Plain text content.
    */
   text: string
+
+  /**
+   * Optional metadata about the block. Not sent to model providers.
+   */
+  metadata?: TextBlockMetadata
 }
 
 /**
@@ -229,8 +296,16 @@ export class TextBlock implements TextBlockData, JSONSerializable<TextBlockData>
    */
   readonly text: string
 
-  constructor(data: string) {
-    this.text = data
+  /**
+   * Optional metadata about the block. Not sent to model providers.
+   */
+  readonly metadata?: TextBlockMetadata
+
+  constructor(text: string, options?: { metadata?: TextBlockMetadata }) {
+    this.text = text
+    if (options?.metadata !== undefined) {
+      this.metadata = options.metadata
+    }
   }
 
   /**
@@ -238,7 +313,7 @@ export class TextBlock implements TextBlockData, JSONSerializable<TextBlockData>
    * Called automatically by JSON.stringify().
    */
   toJSON(): TextBlockData {
-    return { text: this.text }
+    return { text: this.text, ...(this.metadata !== undefined && { metadata: this.metadata }) }
   }
 
   /**
@@ -248,7 +323,7 @@ export class TextBlock implements TextBlockData, JSONSerializable<TextBlockData>
    * @returns TextBlock instance
    */
   static fromJSON(data: TextBlockData): TextBlock {
-    return new TextBlock(data.text)
+    return new TextBlock(data.text, { ...(data.metadata !== undefined && { metadata: data.metadata }) })
   }
 }
 
@@ -428,6 +503,24 @@ export class ToolResultBlock implements JSONSerializable<{ toolResult: ToolResul
   }
 
   /**
+   * A shallow copy of this result with the given content in place of its own. The copy keeps this result's tool use
+   * id, status, and error. Content left out, or set to `undefined`, keeps this result's content.
+   *
+   * @param overrides - The content of the copy
+   * @returns The copy
+   *
+   * @experimental
+   */
+  with(overrides: { content?: ToolResultContent[] }): ToolResultBlock {
+    return new ToolResultBlock({
+      toolUseId: this.toolUseId,
+      status: this.status,
+      content: overrides.content ?? this.content,
+      ...(this.error !== undefined && { error: this.error }),
+    })
+  }
+
+  /**
    * Serializes the ToolResultBlock to a JSON-compatible ContentBlockData object.
    * Called automatically by JSON.stringify().
    * Note: The error field is not serialized (deferred for future implementation).
@@ -466,7 +559,7 @@ export class ToolResultBlock implements JSONSerializable<{ toolResult: ToolResul
  * @throws Error if the content data type is unknown
  */
 export function toolResultContentFromData(data: ToolResultContentData): ToolResultContent {
-  if ('text' in data) return new TextBlock(data.text)
+  if ('text' in data) return TextBlock.fromJSON(data)
   if ('json' in data) return new JsonBlock(data)
   if ('image' in data) return ImageBlock.fromJSON(data as { image: ImageBlockData })
   if ('video' in data) return VideoBlock.fromJSON(data as { video: VideoBlockData })
@@ -1150,7 +1243,7 @@ export class InjectedBlock implements JSONSerializable<{ injected: InjectedBlock
  */
 export function contentBlockFromData(data: ContentBlockData): ContentBlock {
   if ('text' in data) {
-    return new TextBlock(data.text)
+    return TextBlock.fromJSON(data)
   } else if ('toolUse' in data) {
     return new ToolUseBlock(data.toolUse)
   } else if ('toolResult' in data) {

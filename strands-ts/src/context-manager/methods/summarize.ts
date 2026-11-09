@@ -23,18 +23,6 @@ import { CitationsBlock } from '../../types/citations.js'
 import type { ContentBlock, ToolResultContent } from '../../types/messages.js'
 import { logger } from '../../logging/logger.js'
 
-export const SUMMARIZED_PREFIX = '[Summarized:'
-
-/**
- * Format a `[Summarized: ...]` marker with an optional summary body.
- *
- * @internal
- */
-export function formatSummarized(description: string, tokens: number, summary?: string): string {
-  const header = `${SUMMARIZED_PREFIX} ${description}, ~${tokens.toLocaleString('en-US')} tokens]`
-  return summary ? `${header}\n\n${summary}` : header
-}
-
 // Subject to change as we benchmark summarization quality.
 const DEFAULT_SYSTEM_PROMPT = [
   'You are a summarization assistant. Produce a concise factual summary that preserves:',
@@ -132,8 +120,12 @@ export function toolResultToContentBlocks(content: ToolResultContent[]): Content
   return content.flatMap(toSummarizerBlocks)
 }
 
-function formatToolResultLabel(block: ToolResultBlock, toolNames: Map<string, string>): string {
-  const name = toolNames.get(block.toolUseId)
+/**
+ * The label the summarizer reads before a tool result's content, such as `[tool result: bash (error)]`.
+ *
+ * @internal
+ */
+export function formatToolResultLabel(block: ToolResultBlock, name: string | undefined): string {
   const status = block.status === 'error' ? ' (error)' : ''
   return name ? `[tool result: ${name}${status}]` : `[tool result${status}]`
 }
@@ -146,7 +138,10 @@ function messageToContentBlocks(message: Message, toolNames: Map<string, string>
   const blocks: ContentBlock[] = []
   for (const block of message.content) {
     if (block instanceof ToolResultBlock) {
-      blocks.push(new TextBlock(formatToolResultLabel(block, toolNames)), ...toolResultToContentBlocks(block.content))
+      blocks.push(
+        new TextBlock(formatToolResultLabel(block, toolNames.get(block.toolUseId))),
+        ...toolResultToContentBlocks(block.content)
+      )
     } else if (block instanceof ToolUseBlock) {
       blocks.push(new TextBlock(`[tool call: ${block.name}] ${JSON.stringify(block.input)}`))
     } else {
