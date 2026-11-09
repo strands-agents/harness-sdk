@@ -313,19 +313,14 @@ class SummarizeStrategy(BaseOffloadStrategy):
         """Return the model's client-side summary of ``messages``.
 
         A model with server-side summaries summarizes only the conversation's opening messages through its own
-        ``summarize()``, so its other summaries use the base implementation.
+        ``summarize()``, so its other summaries use the base implementation, as do those of an override that raises
+        ``NotImplementedError``.
         """
         instructions = self._config.get("system_prompt")
         if model.model_info.capabilities.server_side_summary is True:
             summary = await _summarize_with_stream(model, messages, instructions)
         else:
-            summary = await model.summarize(
-                messages,
-                tool_specs=agent.tool_registry.get_all_tool_specs(),
-                system_prompt=agent.system_prompt,
-                system_prompt_content=agent.system_prompt_content,
-                instructions=instructions,
-            )
+            summary = await self._summarize_with_override(model, agent, messages, instructions)
         if "text" not in summary:
             logger.warning(
                 "model=<%s> | summarize returned no text summary | leaving the content unsummarized",
@@ -333,6 +328,20 @@ class SummarizeStrategy(BaseOffloadStrategy):
             )
             return ""
         return summary["text"]
+
+    async def _summarize_with_override(
+        self, model: Model, agent: Agent, messages: Messages, instructions: str | None
+    ) -> ContentBlock:
+        try:
+            return await model.summarize(
+                messages,
+                tool_specs=agent.tool_registry.get_all_tool_specs(),
+                system_prompt=agent.system_prompt,
+                system_prompt_content=agent.system_prompt_content,
+                instructions=instructions,
+            )
+        except NotImplementedError:
+            return await _summarize_with_stream(model, messages, instructions)
 
     def _resolve_model(self, agent: Agent) -> Model | None:
         return self._config.get("model") or agent.aux_model

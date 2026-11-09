@@ -411,19 +411,23 @@ class Model(abc.ABC):
         instructions: str | None = None,
         **kwargs: Any,
     ) -> ContentBlock:
-        """Summarize the conversation's opening ``messages``.
+        """Summarize ``messages``.
 
         The base implementation summarizes client-side: one tool-less :meth:`stream` call on a single user message
         holding the delimited, flattened transcript of ``messages``, with ``instructions`` (or a default prompt) as
         the system prompt. Reasoning blocks are left out of the transcript. It returns the reply's text as a text
         block, including a reply cut off at the output limit.
 
-        A provider that reports ``model_info.capabilities.server_side_summary`` as True must override this method to
-        summarize server-side and return a ``summary`` block. The summarize strategy then calls the override only
-        with the conversation's opening messages, from message 0, and writes every other summary with the base
-        implementation; when the override raises, the strategy summarizes client-side instead. For a model without
-        the capability, the strategy calls this method for every summary with any messages, so an override must use
-        the base implementation for them, as ``AnthropicModel`` does.
+        ``messages`` is a transcript to summarize, not a request to send as is: it need not alternate roles, may
+        start with an assistant message, and may hold a tool result without the tool use it answers.
+
+        An override may customize client-side summaries by returning a text block. A provider that reports
+        ``model_info.capabilities.server_side_summary`` as True must override this method to summarize server-side
+        and return a ``summary`` block. The summarize strategy calls such an override only with the conversation's
+        opening messages, from message 0, and writes every other summary with the base implementation; when the
+        override raises, the strategy summarizes client-side instead. For a model without the capability, the
+        strategy calls this method for every summary, so a server-side override must use the base implementation
+        then, as ``AnthropicModel`` does.
 
         Args:
             messages: The messages to summarize, left unmodified.

@@ -113,13 +113,19 @@ async def test_custom_provider_with_a_listed_id_stores_its_summary_as_text():
         Message(role="assistant", content=[ContentBlock(text="old3")]),
         Message(role="user", content=[ContentBlock(text="recent")]),
     ]
+    tokens = await model.count_tokens(messages[1:4])
     agent = Agent(model=model, messages=messages, callback_handler=None)
     strategy = Offload.summarize("*").when(utilization=0.8, preserve_recent=1)
 
     assert await strategy.apply(ContextState(messages=agent.messages, agent=agent, utilization=0.9)) is True
     await agent.invoke_async("next")
 
-    assert agent.messages[1]["content"][0]["text"].startswith("[Summarized: 3 messages, ~")
+    marker = f"[Summarized: 3 messages, ~{tokens:,} tokens]\n\na summary"
+    without_tracking_ids = [{k: v for k, v in message.items() if k != "tracking_id"} for message in agent.messages[:3]]
+    assert without_tracking_ids == [
+        Message(role="user", content=[ContentBlock(text="task")]),
+        Message(role="assistant", content=[ContentBlock(text=marker)]),
+        Message(role="user", content=[ContentBlock(text="recent")]),
+    ]
     sent_blocks = [block for request in model.requests for message in request for block in message["content"]]
     assert not any("summary" in block for block in sent_blocks)
-    assert "a summary" in agent.messages[1]["content"][0]["text"]

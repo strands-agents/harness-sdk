@@ -843,12 +843,7 @@ async def test_summarize_base_sends_one_tool_less_request_with_the_transcript(to
     )
 
     assert summary == {"text": "first\nsecond"}
-    assert len(model.calls) == 1
-    call = model.calls[0]
-    assert call["tool_specs"] is None
-    assert call["system_prompt"] == "Summarize briefly."
-    assert [message["role"] for message in call["messages"]] == ["user"]
-    assert [block["text"] for block in call["messages"][0]["content"]] == [
+    transcript = [
         "<content>",
         "\n---\n[user]",
         "task",
@@ -858,6 +853,13 @@ async def test_summarize_base_sends_one_tool_less_request_with_the_transcript(to
         "[tool result: lookup]",
         "42",
         "</content>",
+    ]
+    assert model.calls == [
+        {
+            "messages": [{"role": "user", "content": [{"text": text} for text in transcript]}],
+            "tool_specs": None,
+            "system_prompt": "Summarize briefly.",
+        }
     ]
 
 

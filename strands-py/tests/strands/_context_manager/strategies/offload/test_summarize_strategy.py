@@ -581,6 +581,14 @@ class TestClientSideSummariesUseModelSummarize:
             ),
         ]
 
+    @staticmethod
+    def _summarized_tool_result(summary: str) -> Message:
+        marker = f"[Summarized: tool result, ~5,000 tokens]\n\n{summary}"
+        return Message(
+            role="user",
+            content=[ContentBlock(toolResult=ToolResult(toolUseId="t1", status="success", content=[{"text": marker}]))],
+        )
+
     @pytest.mark.asyncio
     async def test_a_provider_override_writes_client_side_summaries(self, mock_agent):
         mock_agent.model.summarize = unittest.mock.AsyncMock(return_value=ContentBlock(text="provider summary"))
@@ -590,7 +598,7 @@ class TestClientSideSummariesUseModelSummarize:
 
         assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.5)) is True
 
-        assert "provider summary" in messages[1]["content"][0]["toolResult"]["content"][0]["text"]
+        assert messages[1] == self._summarized_tool_result("provider summary")
         request = mock_agent.model.summarize.await_args.args[0]
         assert request == [Message(role="user", content=[self._tool_result_messages()[1]["content"][0]])]
 
@@ -605,7 +613,19 @@ class TestClientSideSummariesUseModelSummarize:
         assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.5)) is True
 
         mock_agent.model.summarize.assert_not_awaited()
-        assert "Summary of content." in messages[1]["content"][0]["toolResult"]["content"][0]["text"]
+        assert messages[1] == self._summarized_tool_result("Summary of content.")
+
+    @pytest.mark.asyncio
+    async def test_an_override_that_raises_not_implemented_falls_back_to_the_base(self, mock_agent):
+        mock_agent.model.summarize = unittest.mock.AsyncMock(side_effect=NotImplementedError("no summary"))
+        messages = self._tool_result_messages()
+        mock_agent.messages = messages
+        strategy = Offload.summarize("tool_results").when(threshold=100)
+
+        assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.5)) is True
+
+        mock_agent.model.summarize.assert_awaited_once()
+        assert messages[1] == self._summarized_tool_result("Summary of content.")
 
     @pytest.mark.asyncio
     async def test_a_failed_per_message_summary_leaves_the_history_unchanged(self, mock_agent, caplog):

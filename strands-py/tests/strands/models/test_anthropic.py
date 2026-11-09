@@ -3422,11 +3422,15 @@ async def test_summarize_raises_without_compaction_block(anthropic_client):
 async def test_summarize_without_the_capability_uses_the_base_implementation(anthropic_client, config):
     model = AnthropicModel(max_tokens=1, **config)
 
+    messages = [{"role": "user", "content": [{"text": "hi"}]}]
+
     with unittest.mock.patch.object(Model, "summarize", return_value={"text": "client-side"}) as base_summarize:
-        summary = await model.summarize([{"role": "user", "content": [{"text": "hi"}]}], instructions="keep ids")
+        summary = await model.summarize(messages, system_prompt="sys", instructions="keep ids")
 
     assert summary == {"text": "client-side"}
-    assert base_summarize.call_args.kwargs["instructions"] == "keep ids"
+    base_summarize.assert_awaited_once_with(
+        messages, tool_specs=None, system_prompt="sys", system_prompt_content=None, instructions="keep ids"
+    )
     anthropic_client.beta.messages.stream.assert_not_called()
 
 
