@@ -619,7 +619,7 @@ describe('restoring saved data with an unknown content block type', () => {
     expect(block).toEqual(new UnknownBlock({ futureBlock: { value: 1 } }))
     expect(warnSpy.mock.calls).toEqual([
       [
-        'block_keys=<futureBlock> | unknown content block type from a newer sdk version | keeping it in history and leaving it out of model requests | upgrade the sdk to use it',
+        'block_keys=<futureBlock> | unrecognized content block type | keeping it in history and leaving it out of model requests | if a newer sdk version saved it, upgrade to use it',
       ],
     ])
   })

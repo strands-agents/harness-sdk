@@ -111,7 +111,11 @@ export class Message implements JSONSerializable<MessageData> {
   }
 
   /**
-   * Creates a Message instance from MessageData.
+   * Creates a Message instance from MessageData. Use {@link Message.fromJSON} for data {@link Message.toJSON} produced.
+   *
+   * @param data - MessageData to convert
+   * @returns Message instance
+   * @throws Error if a content block type, at any depth, is unknown
    */
   public static fromMessageData(data: MessageData): Message {
     return Message._fromData(data, (block) => contentBlockFromData(block))
@@ -1233,7 +1237,7 @@ function keepUnknown(options: { warn?: boolean } = {}): OnUnknown {
   return (data) => {
     if (options.warn !== false) {
       logger.warn(
-        `block_keys=<${Object.keys(data).join(',')}> | unknown content block type from a newer sdk version | keeping it in history and leaving it out of model requests | upgrade the sdk to use it`
+        `block_keys=<${Object.keys(data).join(',')}> | unrecognized content block type | keeping it in history and leaving it out of model requests | if a newer sdk version saved it, upgrade to use it`
       )
     }
     return UnknownBlock.fromJSON(data as Record<string, unknown>)
