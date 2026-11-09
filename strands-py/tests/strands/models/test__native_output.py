@@ -170,20 +170,10 @@ def test_find_unsupported_native_output_feature(schema, exp_feature):
     assert tru_feature == exp_feature
 
 
-def _drop_literal_types(schema: Any) -> Any:
-    # anthropic>=2.7 drops the redundant "type" beside "enum"/"const"; older versions keep it.
-    if isinstance(schema, list):
-        return [_drop_literal_types(item) for item in schema]
-    if not isinstance(schema, dict):
-        return schema
-    has_literal = "enum" in schema or "const" in schema
-    return {k: _drop_literal_types(v) for k, v in schema.items() if not (has_literal and k == "type")}
-
-
 @pytest.mark.parametrize("output_model", [Person, Team, WithNestedDict])
 def test_to_native_output_schema_matches_anthropic_transform_schema(output_model):
-    tru_schema = _drop_literal_types(to_native_output_schema(output_model.model_json_schema()))
-    exp_schema = _drop_literal_types(anthropic.transform_schema(output_model))
+    tru_schema = to_native_output_schema(output_model.model_json_schema())
+    exp_schema = anthropic.transform_schema(output_model)
 
     assert tru_schema == exp_schema
 
