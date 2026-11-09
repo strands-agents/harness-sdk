@@ -85,6 +85,7 @@ type WorkerMessage =
 
 export interface PythonOptions {
   devWorkspace?: string
+  prepared?: boolean
   sourceSelection?: ChatConversation['sourceSelection']
   restoreSession?: { identity: NonNullable<ChatConversation['session']>; preserve: boolean }
   overrides?: Partial<HarnessAgentConfig>
@@ -159,10 +160,13 @@ export class PythonBackend implements ChatBackend {
     signal?: AbortSignal
   ): Promise<PythonBackend> {
     await prepareArchiveDependencies(project.root, project.language)
-    const python = options.devWorkspace
-      ? await preparePythonRuntime(project.root, { ...(signal ? { signal } : {}) })
-      : join(project.root, '.venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python')
+    const python =
+      options.devWorkspace && !options.prepared
+        ? await preparePythonRuntime(project.root, { ...(signal ? { signal } : {}) })
+        : join(project.root, '.venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python')
     const projectEnvironment = existsSync(python)
+    if (options.prepared && !projectEnvironment)
+      throw new Error(`The selected Python environment is missing: ${python}. Prepare the project before validation.`)
     const worker = fileURLToPath(new URL('./worker.py', import.meta.url))
     const cwd = resolve(options.cwd ?? process.cwd())
     config.applyProviderEnvironment()

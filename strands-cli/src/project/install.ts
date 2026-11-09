@@ -6,6 +6,7 @@ import { importAgentProject, type AgentProjectLanguage, type ImportedAgentProjec
 export type ProjectInstallation = {
   destination: string
   signal?: AbortSignal
+  deferDependencies?: boolean
 } & (
   | { source: ImportedAgentProject; name: string; privatePaths: readonly string[] }
   | { profile: HarnessAgentConfig; language: AgentProjectLanguage; skills: readonly string[]; baseDir: string }
@@ -35,7 +36,7 @@ export const installAgentProject = async (options: ProjectInstallation): Promise
   }
   options.signal?.throwIfAborted()
   const project = importAgentProject(options.destination)
-  await prepareWorkspaceDependencies(project.root, project.language)
+  if (!options.deferDependencies) await prepareWorkspaceDependencies(project.root, project.language)
   options.signal?.throwIfAborted()
   return project
 }

@@ -48,7 +48,7 @@ export const HarnessPicker = ({
       label: sanitizeTerminalText(harness.name),
       detail: sanitizeTerminalText(harness.entrypoint),
       group: `LOCAL PROJECTS (${harnesses.length})`,
-      language: harness.language,
+      language: [harness.language, harness.preparationStatus].filter(Boolean).join(' · '),
     })),
     {
       label: 'Create a new harness',

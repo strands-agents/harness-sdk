@@ -7,11 +7,12 @@ import { importAgentProject } from '../project/import.js'
 import { prepareWorkspaceDependencies } from '../project/archive.js'
 import { sanitizeTerminalText } from '../terminal/text.js'
 import { bindExistingAgent, createDevWorkspace } from './create.js'
-import { discoverHarnesses } from './search.js'
+import { discoverHarnesses, type DiscoveredHarness } from './search.js'
 import { readDevWorkspace, type DevWorkspace } from './workspace.js'
 import type { StartupScreen } from '../ui/run.js'
 import type { HarnessChoice } from './picker.js'
 import { baseHarnessSelection, distinctHarnesses } from './selection.js'
+import { planProjectPreparation } from '../project/preparation-plan.js'
 
 export interface PreparedDevRun {
   args: ParsedArgs
@@ -22,7 +23,9 @@ export interface PreparedDevRun {
 const selectWorkspace = async (
   args: ParsedArgs,
   config: CliConfigStore,
-  screen?: StartupScreen
+  screen?: StartupScreen,
+  forceSelection = false,
+  deferDependencies = false
 ): Promise<DevWorkspace | undefined> => {
   const dev = args.dev!
   const cwd = process.cwd()
@@ -32,6 +35,7 @@ const selectWorkspace = async (
       destination: destination ?? join('strands-dev', dev.create === 'cli' ? 'base-cli' : 'new-harness'),
       kind: dev.create,
       snapshot: config.snapshot(),
+      ...(deferDependencies ? { deferDependencies: true } : {}),
       cwd,
       ...(screen ? { signal: screen.signal } : {}),
     })
@@ -39,8 +43,8 @@ const selectWorkspace = async (
   const existing =
     (await readDevWorkspace(destination ?? cwd)) ??
     (!destination ? await readDevWorkspace(join(cwd, 'strands-dev')) : undefined)
-  if (existing) return existing
-  if (destination && !dev.init)
+  if (existing && !forceSelection) return existing
+  if (destination && !dev.init && !forceSelection)
     throw new Error(`No dev workspace at ${destination}. Run strands dev init --workspace <path> --create cli.`)
   if (!screen)
     throw new Error('Run strands dev init in a terminal, or select --workspace, --agent, or --create explicitly.')
@@ -48,7 +52,17 @@ const selectWorkspace = async (
   const discovery = await discoverHarnesses([cwd, ...dev.searchRoots.map((path) => resolve(cwd, expandHome(path)))])
   screen.signal.throwIfAborted()
   const base = await baseHarnessSelection(config.snapshot(), cwd, destination)
-  const harnesses = await distinctHarnesses(discovery.harnesses, base.excludedEntrypoints)
+  const discovered = await distinctHarnesses(discovery.harnesses, base.excludedEntrypoints)
+  const harnesses = await Promise.all(
+    discovered.map(async (harness): Promise<DiscoveredHarness> => {
+      try {
+        const plan = await planProjectPreparation(harness)
+        return { ...harness, preparationStatus: plan.manager === 'manual' ? 'Manual setup' : 'Needs setup' }
+      } catch {
+        return { ...harness, preparationStatus: 'Check setup' }
+      }
+    })
+  )
   const { chooseHarness } = await import('./picker.js')
   const open = async (choice: HarnessChoice, signal: AbortSignal): Promise<DevWorkspace> => {
     signal.throwIfAborted()
@@ -61,6 +75,7 @@ const selectWorkspace = async (
       destination: destination ?? join(cwd, 'strands-dev', name),
       kind,
       snapshot,
+      ...(deferDependencies ? { deferDependencies: true } : {}),
       cwd,
       signal,
     })
@@ -111,14 +126,19 @@ const openExplicitHarness = async (path: string, directory?: string): Promise<De
 
 export const prepareDevRun = async (
   args: ParsedArgs,
-  options: { config?: CliConfigStore; screen?: StartupScreen } = {}
+  options: {
+    config?: CliConfigStore
+    screen?: StartupScreen
+    deferPreparation?: boolean
+    forceSelection?: boolean
+  } = {}
 ): Promise<PreparedDevRun | undefined> => {
   const { screen } = options
   const config = options.config ?? (await CliConfigStore.load(undefined, { persist: false }))
   config.useEnvironmentFiles(args.envFiles)
   screen?.signal.throwIfAborted()
   screen?.show(undefined, 'Preparing local workspace…')
-  const workspace = await selectWorkspace(args, config, screen)
+  const workspace = await selectWorkspace(args, config, screen, options.forceSelection, options.deferPreparation)
   screen?.signal.throwIfAborted()
   if (!workspace) return undefined
   const directory = workspace.directory ?? workspace.root
@@ -142,6 +162,7 @@ export const prepareDevRun = async (
     if (args.dev?.init) process.stderr.write('Workspace ready. Run strands dev --workspace <path> to start it.\n')
   }
   if (
+    !options.deferPreparation &&
     !args.dev?.init &&
     workspace.config.origin.kind !== 'discovered' &&
     (!workspace.directory || containsPath(workspace.directory, workspace.root))

@@ -7,6 +7,7 @@ import { isRecord } from '../values.js'
 
 export interface DevArgs {
   init: boolean
+  prepared?: boolean
   workspace?: string
   searchRoots: string[]
   create?: 'cli' | 'typescript' | 'python'

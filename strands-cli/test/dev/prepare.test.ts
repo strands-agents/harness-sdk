@@ -115,7 +115,7 @@ describe('prepareDevRun', () => {
     vi.spyOn(process.stderr, 'write').mockReturnValue(true)
     const harness = { name: 'Found', entrypoint: join(root, 'agent.ts'), root, language: 'typescript' as const }
     vi.spyOn(search, 'discoverHarnesses').mockResolvedValue({
-      harnesses: [harness],
+      harnesses: [{ ...harness, preparationStatus: 'Needs setup' }],
       warnings: ['Workspace config version must be 1.'],
     })
     vi.spyOn(picker, 'chooseHarness').mockImplementation(async (_options, _screen, open) =>
@@ -130,7 +130,7 @@ describe('prepareDevRun', () => {
         cliName: 'Saved CLI',
         cliPath: 'in-memory',
         cliWorkspace: join(cwd, 'strands-dev/base-cli'),
-        harnesses: [harness],
+        harnesses: [{ ...harness, preparationStatus: 'Needs setup' }],
       },
       screen,
       expect.any(Function)

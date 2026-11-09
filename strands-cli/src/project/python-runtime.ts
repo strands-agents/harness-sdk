@@ -102,7 +102,13 @@ const privateDirectory = async (path: string): Promise<void> => {
 
 export const preparePythonRuntime = async (
   root: string,
-  options: { signal?: AbortSignal; run?: CommandRunner; interpreter?: string } = {}
+  options: {
+    signal?: AbortSignal
+    run?: CommandRunner
+    interpreter?: string
+    runtimeOnly?: boolean
+    validateEnvironment?: boolean
+  } = {}
 ): Promise<string> => {
   const { signal, run = runCommand } = options
   signal?.throwIfAborted()
@@ -117,7 +123,12 @@ export const preparePythonRuntime = async (
     ...(signal ? { signal } : {}),
   })
   try {
-    if ((await exists(python)) && (await probe(run, request(python, ['-c', RUNTIME_PROBE])))) return python
+    if (
+      !options.validateEnvironment &&
+      (await exists(python)) &&
+      (await probe(run, request(python, ['-c', RUNTIME_PROBE])))
+    )
+      return python
     if (await exists(environment)) {
       const details = await lstat(environment)
       if (!details.isDirectory() || details.isSymbolicLink())
@@ -140,7 +151,12 @@ export const preparePythonRuntime = async (
     }
     try {
       signal?.throwIfAborted()
-      if ((await exists(python)) && (await probe(run, request(python, ['-c', RUNTIME_PROBE])))) return python
+      if (
+        !options.validateEnvironment &&
+        (await exists(python)) &&
+        (await probe(run, request(python, ['-c', RUNTIME_PROBE])))
+      )
+        return python
       if (!(await exists(python))) {
         const interpreter =
           options.interpreter ?? process.env.PYTHON ?? (process.platform === 'win32' ? 'python' : 'python3')
@@ -155,15 +171,20 @@ export const preparePythonRuntime = async (
           cause: error,
         })
       }
+      const available = await probe(run, request(python, ['-c', RUNTIME_PROBE]))
+      if (available && !options.runtimeOnly) return python
       if (!(await probe(run, request(python, ['-c', PIP_PROBE]))))
         await run(request(python, ['-I', '-m', 'ensurepip'], INSTALL_TIMEOUT_MS))
+      if (available) return python
       const version = /^(\d+)\.(\d+)\./u.exec(HARNESS_VERSION)
       if (!version) throw new Error(`Cannot determine the Python harness version from ${HARNESS_VERSION}.`)
-      const dependencies = (await exists(join(cwd, 'requirements.txt')))
-        ? ['-r', 'requirements.txt']
-        : (await exists(join(cwd, 'pyproject.toml')))
-          ? ['.']
-          : []
+      const dependencies = options.runtimeOnly
+        ? []
+        : (await exists(join(cwd, 'requirements.txt')))
+          ? ['-r', 'requirements.txt']
+          : (await exists(join(cwd, 'pyproject.toml')))
+            ? ['.']
+            : []
       await run(
         request(
           python,

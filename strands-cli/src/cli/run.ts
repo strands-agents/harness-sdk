@@ -44,7 +44,21 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
         await runInteractive(args, args.request)
       } else {
         const { prepareDevRun } = await import('../dev/prepare.js')
-        const prepared = await prepareDevRun(args)
+        const prepared = await prepareDevRun(args, { deferPreparation: true })
+        if (prepared) {
+          const { planProjectPreparation, describePreparationCommand } = await import('../project/preparation-plan.js')
+          const { executePreparation } = await import('../project/preparation.js')
+          const plan = await planProjectPreparation({
+            root: prepared.workspace.root,
+            entrypoint: prepared.workspace.entrypoint,
+            language: prepared.workspace.config.language,
+          })
+          process.stderr.write(
+            `Project root: ${plan.project.root}\nRuntime: ${plan.runtime}\n${plan.commands.map(describePreparationCommand).join('\n')}\n${plan.guidance ?? ''}\n`
+          )
+          await executePreparation(plan)
+          prepared.args.dev = { ...prepared.args.dev!, prepared: true }
+        }
         if (!prepared || prepared.args.dev?.init) return
         process.chdir(prepared.workspace.root)
         await runSession(prepared.args, prepared.config)
@@ -242,17 +256,49 @@ async function runInteractive(
     config.useEnvironmentFiles(args.envFiles)
     let initialWorkspace = process.cwd()
     if (args.dev) await config.setSettings({ updatePrompts: false, telemetry: false })
+    const launchDirectory = process.cwd()
+    const requestedArgs = args
+    const setupSession = args.dev ? (await import('../dev/project-setup.js')).projectSetupSession() : undefined
+    let selectAgain = false
     const prepare =
       args.dev && !suppliedConfig
         ? async (screen: StartupScreen): Promise<boolean> => {
             const { prepareDevRun } = await import('../dev/prepare.js')
-            const prepared = await prepareDevRun(args, { config, screen })
-            if (!prepared || screen.signal.aborted) return false
-            args = prepared.args
-            if (args.dev?.init) return false
-            initialWorkspace = prepared.workspace.root
-            process.chdir(initialWorkspace)
-            return true
+            for (;;) {
+              process.chdir(launchDirectory)
+              const selectionArgs = selectAgain
+                ? {
+                    ...requestedArgs,
+                    agent: undefined,
+                    dev: { init: requestedArgs.dev!.init, searchRoots: requestedArgs.dev!.searchRoots },
+                  }
+                : requestedArgs
+              const prepared = await prepareDevRun(selectionArgs, {
+                config,
+                screen,
+                deferPreparation: true,
+                forceSelection: selectAgain,
+              })
+              if (!prepared || screen.signal.aborted) return false
+              const result = await setupSession!.prepare(
+                {
+                  root: prepared.workspace.root,
+                  entrypoint: prepared.workspace.entrypoint,
+                  language: prepared.workspace.config.language,
+                },
+                screen
+              )
+              if (result === 'cancel') return false
+              if (result === 'back') {
+                selectAgain = true
+                continue
+              }
+              args = { ...prepared.args, dev: { ...prepared.args.dev!, prepared: true } }
+              if (args.dev?.init) return false
+              initialWorkspace = prepared.workspace.root
+              process.chdir(initialWorkspace)
+              return true
+            }
           }
         : undefined
     let pinged = false
@@ -356,6 +402,15 @@ async function runInteractive(
         intro: config.snapshot().settings.animations,
         setup: !args.dev && (args.setup || (!args.agent && !config.snapshot().agentProject && config.needsSetup())),
         ...(prepare ? { prepare } : {}),
+        ...(setupSession
+          ? {
+              recoverStartup: async (error: unknown, screen: StartupScreen): Promise<'retry' | 'back' | 'exit'> => {
+                const action = await setupSession.recover(error, screen)
+                if (action === 'back') selectAgain = true
+                return action
+              },
+            }
+          : {}),
         config,
         onUpdateRequested: () => {
           updateRequested = true

@@ -970,6 +970,22 @@ def isolate_dev_options(options, root):
     return result
 
 
+def installed_project_module(entrypoint, root):
+    parts = list(entrypoint.relative_to(root).with_suffix("").parts)
+    for index in range(1, len(parts) - 1):
+        name = parts[index]
+        if not name.isidentifier():
+            continue
+        spec = importlib.machinery.PathFinder.find_spec(name)
+        if spec is None:
+            continue
+        expected = root.joinpath(*parts[: index + 1]).resolve()
+        locations = spec.submodule_search_locations or []
+        if any(Path(location).resolve() == expected for location in locations):
+            return ".".join(parts[index:])
+    return None
+
+
 def load_project(entrypoint, root, dev_root=None):
     sys.meta_path.insert(0, ProjectImports(root))
     sys.path[:0] = [str(root), str(entrypoint.parent)]
@@ -980,6 +996,7 @@ def load_project(entrypoint, root, dev_root=None):
     packaged = bool(module_parts) and all(
         (root.joinpath(*module_parts[:index], "__init__.py")).is_file() for index in range(1, len(module_parts))
     )
+    installed_name = installed_project_module(entrypoint, root) if not packaged else None
     captured = []
     original_create_harness = strands_harness.create_harness
 
@@ -993,8 +1010,8 @@ def load_project(entrypoint, root, dev_root=None):
 
     strands_harness.create_harness = capture_create_harness
     try:
-        if packaged:
-            module = importlib.import_module(".".join(module_parts))
+        if packaged or installed_name:
+            module = importlib.import_module(installed_name or ".".join(module_parts))
         else:
             spec = importlib.util.spec_from_file_location(f"harness_project_agent_{uuid4().hex}", entrypoint)
             if spec is None or spec.loader is None:

@@ -148,6 +148,7 @@ export async function pythonInvocationOptions(
   return {
     cwd,
     ...(args.dev?.workspace ? { devWorkspace: args.dev.workspace } : {}),
+    ...(args.dev?.prepared ? { prepared: true } : {}),
     overrides: projectConfigOverrides(args),
     assignments: args.configSet,
     mcpServers: definitions,

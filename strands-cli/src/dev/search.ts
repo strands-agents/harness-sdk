@@ -17,6 +17,7 @@ export interface DiscoveredHarness {
   root: string
   language: 'typescript' | 'python'
   workspace?: DevWorkspace
+  preparationStatus?: 'Needs setup' | 'Manual setup' | 'Check setup'
 }
 
 export interface HarnessDiscovery {

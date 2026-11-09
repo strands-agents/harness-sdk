@@ -15,6 +15,7 @@ export interface CreateDevWorkspaceOptions {
   snapshot: CliConfigSnapshot
   cwd: string
   signal?: AbortSignal
+  deferDependencies?: boolean
 }
 
 const ensureNewDestination = async (path: string): Promise<void> => {
@@ -65,6 +66,7 @@ export const createDevWorkspace = async (options: CreateDevWorkspaceOptions): Pr
       )
       const project = await installAgentProject({
         destination: join(destination, 'agent'),
+        ...(options.deferDependencies ? { deferDependencies: true } : {}),
         profile,
         language,
         skills,

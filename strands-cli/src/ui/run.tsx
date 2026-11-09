@@ -27,6 +27,7 @@ export interface StartupScreen {
 
 interface RunInkChatOptions {
   prepare?: (screen: StartupScreen) => Promise<boolean>
+  recoverStartup?: (error: unknown, screen: StartupScreen) => Promise<'retry' | 'back' | 'exit'>
   firstRequest?: string
   input?: NodeJS.ReadStream
   output?: NodeJS.WriteStream
@@ -366,22 +367,25 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
       watchTerminalTitle(controller)
     }
     if (controller || controllerFactory || options.setup || options.prepare) renderChat()
-    if (options.prepare) {
-      const prepareTask = options.prepare({
-        signal: startupAbort.signal,
-        show: (content, status): void => {
-          if (startupAbort.signal.aborted) return
-          startupContent = content
-          startupStatus = status
-          renderChat()
-        },
-      })
+    const screen: StartupScreen = {
+      signal: startupAbort.signal,
+      show: (content, status): void => {
+        if (startupAbort.signal.aborted) return
+        startupContent = content
+        startupStatus = status
+        renderChat()
+      },
+    }
+    const prepareStartup = async (): Promise<boolean> => {
+      if (!options.prepare) return true
       const prepared = await Promise.race([
-        prepareTask.then((ready) => ({ ready })),
+        options.prepare(screen).then((ready) => ({ ready })),
         startupExitTask.then((exitCode) => ({ exitCode })),
       ])
-      if ('exitCode' in prepared) return prepared.exitCode
-      if (!prepared.ready) return 0
+      return !('exitCode' in prepared) && prepared.ready
+    }
+    if (options.prepare) {
+      if (!(await prepareStartup())) return pendingExitCode ?? 0
       startupContent = undefined
       startupStatus = undefined
       renderChat()
@@ -392,7 +396,21 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
       return setupExit
     }
     if (controllerFactory) {
-      const controllerTask = initializeController(launchOptions)
+      const initializeWithRecovery = async (): Promise<ChatControllerApi | undefined> => {
+        let initialized: ChatControllerApi | undefined
+        while (!initialized) {
+          try {
+            initialized = await initializeController(launchOptions)
+          } catch (error) {
+            if (!options.recoverStartup || startupAbort.signal.aborted) throw error
+            const action = await options.recoverStartup(error, screen)
+            if (action === 'exit') return undefined
+            if (action === 'back' && !(await prepareStartup())) return undefined
+          }
+        }
+        return initialized
+      }
+      const controllerTask = initializeWithRecovery()
       const startupResult = await Promise.race([
         controllerTask.then((initializedController) => ({ controller: initializedController })),
         startupExitTask.then((exitCode) => ({ exitCode })),
@@ -400,14 +418,17 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
       if ('exitCode' in startupResult) {
         void controllerTask.then(
           async (lateController) => {
-            lateController.close(startupResult.exitCode)
-            await lateController.dispose()
+            lateController?.close(startupResult.exitCode)
+            await lateController?.dispose()
           },
           () => {}
         )
         return hardExit(startupResult.exitCode)
       }
       controller = startupResult.controller
+      if (!controller) return pendingExitCode ?? 0
+      startupContent = undefined
+      startupStatus = undefined
       if (pendingExitCode !== undefined) {
         controller.close(pendingExitCode)
         return pendingExitCode

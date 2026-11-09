@@ -7,6 +7,7 @@ import { bindExistingAgent } from '../../src/dev/create.js'
 import { temporaryDirectory } from '../fixtures/tempdir.js'
 import { idleBackend } from '../fixtures/chat-backend.js'
 import { ChatController } from '../../src/ui/chat/controller.js'
+import * as projectSetup from '../../src/dev/project-setup.js'
 import type { runInkChat } from '../../src/ui/run.js'
 
 const ui = vi.hoisted(() => ({ run: vi.fn(), typescript: vi.fn() }))
@@ -58,6 +59,10 @@ describe('dev ingress', () => {
       const configPath = join(await temporaryDirectory(), 'cli.toml')
       const original = 'agentProject = "/old/default.ts"\n[profile]\nname = "Original"\n'
       await writeFile(configPath, original)
+      vi.spyOn(projectSetup, 'projectSetupSession').mockReturnValue({
+        prepare: vi.fn().mockResolvedValue('ready'),
+        recover: vi.fn().mockResolvedValue('exit'),
+      })
       const config = await CliConfigStore.load(configPath, { persist: false })
       const load = vi.spyOn(CliConfigStore, 'load').mockResolvedValue(config)
       vi.spyOn(process.stderr, 'write').mockReturnValue(true)
