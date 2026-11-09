@@ -83,8 +83,8 @@ controls. The CLI detects standard credential sources but never writes API keys 
 ```bash
 strands dev
 strands dev --search-root ../other-projects
-strands dev init --create cli --workspace ./strands-dev/base-cli
-strands dev --workspace ./strands-dev/base-cli
+strands dev init --create cli --workspace ./strands-dev
+strands dev --workspace ./strands-dev
 strands dev --agent ./my-project/agent.py
 strands dev init --create python --workspace ./strands-dev/new-agent
 ```
@@ -97,7 +97,9 @@ Creation errors stay in the picker so you can retry without restarting the CLI.
 Discovery reads the current folder and any explicit search roots. It does not execute source or follow symbolic links.
 It skips dependency folders, build output, private state, and copied harness libraries.
 
-An existing workspace reopens without a new copy. `--agent` selects another entrypoint for one launch without changing the manifest.
+The command creates `strands-dev/` in the launch directory unless `--workspace` selects another location.
+Initialization records the persistent agent in `.config` and installs one independent copy under `tmp/`.
+An existing workspace reopens with its recorded initial copy instead of creating another one. `--agent` selects another entrypoint for one launch without changing the manifest.
 Without a terminal, select an existing workspace, an entrypoint, or a creation option explicitly.
 `strands dev init` prepares the workspace and exits without a model request.
 
@@ -128,6 +130,7 @@ strands-dev/
       agent/
       candidate.json
       reports/
+    initial.json
 ```
 
 For Python, the exported project contains its Python entrypoint and dependency files instead.
@@ -154,7 +157,8 @@ A binding cannot point into its own `tmp/`. Dev never changes the global CLI def
 
 The dev session always runs the bound persistent agent. Editing its configuration changes that agent, not a temporary copy.
 Runtime state stays separate from candidate source. The existing watcher reloads the bound project when its source changes.
-Legacy `.strands/config.json` workspaces remain readable without moving their source or rewriting their files.
+Legacy `.strands/config.json` agents remain in place. Startup creates a `.config` binding and initial copy without moving or rewriting their source.
+For the old `strands-dev/base-cli/` layout, selecting Base CLI creates the control files in `strands-dev/` and binds the existing agent.
 
 ### Temporary candidate infrastructure
 

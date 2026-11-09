@@ -1,12 +1,13 @@
-import { readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { parseArgs } from '../../src/cli/arguments.js'
 import { CliConfigStore } from '../../src/config/store.js'
 import { prepareDevRun } from '../../src/dev/prepare.js'
 import * as search from '../../src/dev/search.js'
 import * as picker from '../../src/dev/picker.js'
 import { initializeDevWorkspace } from '../../src/dev/workspace.js'
+import * as installer from '../../src/project/archive.js'
 import { temporaryDirectory } from '../fixtures/tempdir.js'
 
 const fixture = async (): Promise<string> => {
@@ -28,6 +29,11 @@ const terminal = (enabled: boolean): void => {
   Object.defineProperty(process.stdout, 'isTTY', { configurable: true, value: enabled })
 }
 
+beforeEach(async () => {
+  vi.spyOn(process, 'cwd').mockReturnValue(await temporaryDirectory())
+  vi.spyOn(installer, 'prepareWorkspaceDependencies').mockResolvedValue()
+})
+
 afterEach(() => {
   vi.restoreAllMocks()
   if (originalInputTty) Object.defineProperty(process.stdin, 'isTTY', originalInputTty)
@@ -37,6 +43,61 @@ afterEach(() => {
 })
 
 describe('prepareDevRun', () => {
+  it('shouldInitializeTheLaunchDirectoryAndCopyAnExistingAgentOnce', async () => {
+    const launch = process.cwd()
+    const source = await fixture()
+    const saved = config()
+    const original = await readFile(join(source, 'agent.ts'), 'utf8')
+    vi.spyOn(CliConfigStore, 'load').mockResolvedValue(saved)
+    vi.spyOn(process.stderr, 'write').mockReturnValue(true)
+
+    const first = await prepareDevRun(parseArgs(['dev', 'init', '--agent', join(source, 'agent.ts')]))
+
+    const directory = join(launch, 'strands-dev')
+    const binding = JSON.parse(await readFile(join(directory, '.config'), 'utf8'))
+    expect(binding.agent).toMatchObject({ path: source, entrypoint: 'agent.ts' })
+    expect(first?.workspace.directory).toBe(directory)
+    expect(first?.args.agent).toBe(join(source, 'agent.ts'))
+    const marker = JSON.parse(await readFile(join(directory, 'tmp/initial.json'), 'utf8'))
+    expect(await readFile(join(directory, 'tmp', marker.id, 'agent/agent.ts'), 'utf8')).toBe(original)
+
+    const second = await prepareDevRun(parseArgs(['dev', 'init']))
+
+    expect(second?.args.agent).toBe(first?.args.agent)
+    expect(await readdir(join(directory, 'tmp'))).toHaveLength(2)
+    expect(await readFile(join(source, 'agent.ts'), 'utf8')).toBe(original)
+  })
+
+  it('shouldUpgradeTheLegacyBaseSelectionWithoutChangingItsSource', async () => {
+    const launch = process.cwd()
+    const root = join(launch, 'strands-dev/base-cli')
+    await mkdir(join(root, 'src'), { recursive: true })
+    await writeFile(join(root, 'package.json'), '{"type":"module"}')
+    await writeFile(join(root, 'src/agent.ts'), 'export const agent = {}')
+    await writeFile(join(root, '.strands-entrypoint'), './src/agent.ts\n')
+    await initializeDevWorkspace(root, {
+      version: 1,
+      name: 'Legacy base',
+      language: 'typescript',
+      entrypoint: 'src/agent.ts',
+      origin: { kind: 'cli' },
+    })
+    vi.spyOn(CliConfigStore, 'load').mockResolvedValue(config())
+    vi.spyOn(search, 'discoverHarnesses').mockResolvedValue({ harnesses: [], warnings: [] })
+    vi.spyOn(picker, 'chooseHarness').mockImplementation(async (_options, screen, open) =>
+      open({ kind: 'cli' }, screen.signal)
+    )
+    const screen = { signal: new AbortController().signal, show: vi.fn() }
+
+    const prepared = await prepareDevRun(parseArgs(['dev', 'init']), { screen })
+
+    expect(prepared?.workspace.root).toBe(root)
+    expect(prepared?.workspace.directory).toBe(join(launch, 'strands-dev'))
+    expect(JSON.parse(await readFile(join(launch, 'strands-dev/.config'), 'utf8')).agent.path).toBe(root)
+    expect(await readFile(join(root, 'src/agent.ts'), 'utf8')).toBe('export const agent = {}')
+    expect(await readdir(join(launch, 'strands-dev/tmp'))).toHaveLength(2)
+  })
+
   it('shouldOpenAnExplicitHarnessWithoutScanningWhenAgentIsProvided', async () => {
     const root = await fixture()
     const saved = config()
@@ -129,7 +190,7 @@ describe('prepareDevRun', () => {
       {
         cliName: 'Saved CLI',
         cliPath: 'in-memory',
-        cliWorkspace: join(cwd, 'strands-dev/base-cli'),
+        cliWorkspace: join(cwd, 'strands-dev'),
         harnesses: [harness],
       },
       screen,

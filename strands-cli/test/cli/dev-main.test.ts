@@ -1,8 +1,9 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CliConfigStore } from '../../src/config/store.js'
 import { initializeDevWorkspace } from '../../src/dev/workspace.js'
+import * as installer from '../../src/project/archive.js'
 import { bindExistingAgent } from '../../src/dev/create.js'
 import { temporaryDirectory } from '../fixtures/tempdir.js'
 import { idleBackend } from '../fixtures/chat-backend.js'
@@ -21,6 +22,10 @@ const terminal = (enabled: boolean): void => {
   Object.defineProperty(process.stdin, 'isTTY', { configurable: true, value: enabled })
   Object.defineProperty(process.stdout, 'isTTY', { configurable: true, value: enabled })
 }
+
+beforeEach(() => {
+  vi.spyOn(installer, 'prepareWorkspaceDependencies').mockResolvedValue()
+})
 
 afterEach(() => {
   vi.restoreAllMocks()

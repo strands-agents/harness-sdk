@@ -22,7 +22,7 @@ describe('base harness selection', () => {
     const base = await baseHarnessSelection(snapshot, root)
 
     expect(base.source).toBe(snapshot.path)
-    expect(base.workspace).toBe(join(root, 'strands-dev/base-cli'))
+    expect(base.workspace).toBe(join(root, 'strands-dev'))
     expect(base.excludedEntrypoints).toEqual([])
   })
 

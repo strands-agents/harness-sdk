@@ -22,8 +22,10 @@ export const baseHarnessSelection = async (
   const source = snapshot.agentProject
     ? importAgentProject(resolve(cwd, expandHome(snapshot.agentProject))).entrypoint
     : snapshot.path
-  const workspace = resolve(cwd, destination ?? join('strands-dev', 'base-cli'))
-  const existing = await readDevWorkspace(workspace)
+  const workspace = resolve(cwd, destination ?? 'strands-dev')
+  const existing =
+    (await readDevWorkspace(workspace)) ??
+    (!destination ? await readDevWorkspace(join(workspace, 'base-cli')) : undefined)
   return {
     name: existing?.config.name ?? snapshot.profile.name,
     source,

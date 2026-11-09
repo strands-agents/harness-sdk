@@ -12,6 +12,7 @@ import { readDevWorkspace, type DevWorkspace } from './workspace.js'
 import type { StartupScreen } from '../ui/run.js'
 import type { HarnessChoice } from './picker.js'
 import { baseHarnessSelection, distinctHarnesses } from './selection.js'
+import { ensureInitialCandidate, initializeWorkspaceBinding } from './initialize.js'
 
 export interface PreparedDevRun {
   args: ParsedArgs
@@ -29,13 +30,14 @@ const selectWorkspace = async (
   const destination = dev.workspace ? resolve(cwd, expandHome(dev.workspace)) : undefined
   if (dev.create)
     return createDevWorkspace({
-      destination: destination ?? join('strands-dev', dev.create === 'cli' ? 'base-cli' : 'new-harness'),
+      destination: destination ?? join(cwd, 'strands-dev'),
       kind: dev.create,
       snapshot: config.snapshot(),
       cwd,
       ...(screen ? { signal: screen.signal } : {}),
     })
-  if (args.agent) return openExplicitHarness(resolve(cwd, expandHome(args.agent)), destination)
+  if (args.agent)
+    return openExplicitHarness(resolve(cwd, expandHome(args.agent)), destination ?? join(cwd, 'strands-dev'))
   const existing =
     (await readDevWorkspace(destination ?? cwd)) ??
     (!destination ? await readDevWorkspace(join(cwd, 'strands-dev')) : undefined)
@@ -52,13 +54,17 @@ const selectWorkspace = async (
   const { chooseHarness } = await import('./picker.js')
   const open = async (choice: HarnessChoice, signal: AbortSignal): Promise<DevWorkspace> => {
     signal.throwIfAborted()
-    if (choice.kind === 'discovered') return openExplicitHarness(choice.harness.entrypoint, destination)
+    if (choice.kind === 'discovered')
+      return openExplicitHarness(choice.harness.entrypoint, destination ?? join(cwd, 'strands-dev'))
+    if (choice.kind === 'cli') {
+      const previous = await readDevWorkspace(join(cwd, 'strands-dev', 'base-cli'))
+      if (previous && !destination) return initializeWorkspaceBinding(previous, join(cwd, 'strands-dev'))
+    }
     const kind = choice.kind === 'cli' ? 'cli' : choice.language
-    const name = choice.kind === 'cli' ? 'base-cli' : choice.name
     const snapshot = config.snapshot()
     if (choice.kind === 'create') snapshot.profile = { ...snapshot.profile, name: choice.name }
     return createDevWorkspace({
-      destination: destination ?? join(cwd, 'strands-dev', name),
+      destination: destination ?? join(cwd, 'strands-dev'),
       kind,
       snapshot,
       cwd,
@@ -118,9 +124,25 @@ export const prepareDevRun = async (
   config.useEnvironmentFiles(args.envFiles)
   screen?.signal.throwIfAborted()
   screen?.show(undefined, 'Preparing local workspace…')
-  const workspace = await selectWorkspace(args, config, screen)
+  const selected = await selectWorkspace(args, config, screen)
   screen?.signal.throwIfAborted()
-  if (!workspace) return undefined
+  if (!selected) return undefined
+  const target = args.dev?.workspace
+    ? resolve(process.cwd(), expandHome(args.dev.workspace))
+    : join(process.cwd(), 'strands-dev')
+  const persisted = await readDevWorkspace(selected.directory ?? selected.root)
+  const main = await initializeWorkspaceBinding(persisted?.root === selected.root ? persisted : selected, target)
+  const workspace =
+    selected.entrypoint === main.entrypoint
+      ? main
+      : {
+          ...main,
+          entrypoint: selected.entrypoint,
+          config: { ...main.config, language: selected.config.language, entrypoint: selected.config.entrypoint },
+        }
+  if (screen) screen.show(undefined, 'Installing initial agent copy…')
+  else process.stderr.write('Installing initial agent copy...\n')
+  const initial = await ensureInitialCandidate(main, screen?.signal)
   const directory = workspace.directory ?? workspace.root
   const state = join(directory, '.strands/state')
   const localArgs: ParsedArgs = {
@@ -137,7 +159,7 @@ export const prepareDevRun = async (
   const entrypoint = sanitizeTerminalText(workspace.entrypoint)
   if (!screen) {
     process.stderr.write(
-      `strands dev · ${label}\nWorkspace: ${sanitizeTerminalText(directory)}\nHarness: ${entrypoint} (${workspace.config.origin.kind})\nModel, tools, and instructions come from this workspace.\nState: ${sanitizeTerminalText(state)}\n`
+      `strands dev · ${label}\nWorkspace: ${sanitizeTerminalText(directory)}\nHarness: ${entrypoint} (${workspace.config.origin.kind})\nModel, tools, and instructions come from this workspace.\nInitial copy: ${sanitizeTerminalText(initial)}\nState: ${sanitizeTerminalText(state)}\n`
     )
     if (args.dev?.init) process.stderr.write('Workspace ready. Run strands dev --workspace <path> to start it.\n')
   }
