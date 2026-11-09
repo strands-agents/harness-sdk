@@ -234,4 +234,14 @@ describe('catalog content collection', () => {
       expect(cataloged.has(page.id), `community page ${page.id} has no catalog entry`).toBe(true)
     }
   })
+
+  it('every vended tool docs page has a built-in catalog entry', async () => {
+    const [entries, docs] = await Promise.all([getCollection('catalog'), getCollection('docs')])
+    const cataloged = new Set(entries.filter((e) => e.data.maintainedBy === 'strands').map((e) => e.data.docsPage))
+    const prefix = 'docs/user-guide/sdk/tools/vended-tools/'
+    const missing = docs
+      .map((d) => d.id)
+      .filter((id) => id.startsWith(prefix) && id !== `${prefix}index` && !cataloged.has(id))
+    expect(missing).toEqual([])
+  })
 })
