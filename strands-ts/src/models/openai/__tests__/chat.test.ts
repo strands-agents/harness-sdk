@@ -166,17 +166,20 @@ describe('OpenAIModel', () => {
       expect(provider).toBeDefined()
     })
 
-    it('provided client takes precedence over apiKey and clientConfig', () => {
+    it.each([
+      { name: 'apiKey', options: { apiKey: 'sk-test' } },
+      { name: 'clientConfig', options: { clientConfig: { timeout: 30000 } } },
+    ])('throws when a provided client is combined with $name', ({ options }) => {
+      const mockClient = {} as OpenAI
+      expect(() => new OpenAIModel({ api: 'chat', modelId: 'gpt-5.4', client: mockClient, ...options })).toThrow(
+        "'apiKey' and 'clientConfig' cannot be combined with a pre-built 'client'."
+      )
+    })
+
+    it('accepts a provided client with an empty clientConfig', () => {
       vi.clearAllMocks()
       const mockClient = {} as OpenAI
-      new OpenAIModel({
-        api: 'chat',
-        modelId: 'gpt-5.4',
-        apiKey: 'sk-test',
-        client: mockClient,
-        clientConfig: { timeout: 30000 },
-      })
-      // Should not create a new OpenAI client when client is provided
+      expect(() => new OpenAIModel({ api: 'chat', client: mockClient, clientConfig: {} })).not.toThrow()
       expect(OpenAI).not.toHaveBeenCalled()
     })
 

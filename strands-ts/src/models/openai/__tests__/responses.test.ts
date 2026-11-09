@@ -83,6 +83,16 @@ describe("OpenAIModel (api: 'responses')", () => {
       const client = {} as OpenAI
       expect(() => new OpenAIModel({ api: 'responses', client })).not.toThrow()
     })
+
+    it.each([
+      { name: 'apiKey', options: { apiKey: 'sk-test' } },
+      { name: 'clientConfig', options: { clientConfig: { baseURL: 'https://example.com/v1' } } },
+    ])('throws when a provided client is combined with $name', ({ options }) => {
+      const client = {} as OpenAI
+      expect(() => new OpenAIModel({ api: 'responses', client, ...options })).toThrow(
+        "'apiKey' and 'clientConfig' cannot be combined with a pre-built 'client'."
+      )
+    })
   })
 
   describe('stateful', () => {

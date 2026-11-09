@@ -114,6 +114,10 @@ export class OpenAIModel extends Model<OpenAIModelConfig> {
       throw new Error("'bedrockMantleConfig' cannot be combined with a pre-built 'client'.")
     }
 
+    if (client && (apiKey !== undefined || Object.keys(clientConfig ?? {}).length > 0)) {
+      throw new Error("'apiKey' and 'clientConfig' cannot be combined with a pre-built 'client'.")
+    }
+
     if (client) {
       this._client = client
     } else if (bedrockMantleConfig) {
