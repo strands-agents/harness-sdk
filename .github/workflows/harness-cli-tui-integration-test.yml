@@ -92,9 +92,18 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Install tmux on Linux
+        if: matrix.dist == 'true' && runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y tmux
+
+      - name: Install tmux on macOS
+        if: matrix.dist == 'true' && runner.os == 'macOS'
+        run: command -v tmux >/dev/null || brew install tmux
+
       - name: Run TUI integration scenarios
         env:
           STRANDS_CLI_TEST_DIST: ${{ matrix.dist }}
+          STRANDS_CLI_TEST_TMUX: ${{ matrix.dist == 'true' && runner.os != 'Windows' }}
         run: npm run test:tui-integration
 
       - name: Run deterministic platform E2E scenarios

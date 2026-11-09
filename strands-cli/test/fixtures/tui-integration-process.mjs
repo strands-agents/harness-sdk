@@ -16,6 +16,9 @@ if (process.argv[2] === '--editor') {
   process.stdout.write('EDITOR_READY\n')
   const input = await new Promise((resolve) => process.stdin.once('data', resolve))
   if (input.toString().trim() !== 'editor input') throw new Error('Editor did not receive input')
+  if (process.env.STRANDS_CLI_TEST_EDITOR_RESULT) {
+    await writeFile(process.env.STRANDS_CLI_TEST_EDITOR_RESULT, input.toString().trim())
+  }
   process.stdout.write('\u001b[?1049l')
   process.stdout.write('EDITOR_INPUT_OK\n')
   process.exit(0)

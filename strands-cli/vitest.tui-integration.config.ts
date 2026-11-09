@@ -2,7 +2,7 @@ import { defineConfig } from 'vitest/config'
 
 export default defineConfig({
   test: {
-    include: ['test/terminal.integration.test.ts'],
+    include: ['test/terminal.integration.test.ts', 'test/tmux.integration.test.ts'],
     testTimeout: 30_000,
     fileParallelism: false,
     reporters: ['verbose'],
