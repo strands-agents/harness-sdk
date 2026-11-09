@@ -1,7 +1,7 @@
 import difflib
 from concurrent.futures import ThreadPoolExecutor
 from importlib import import_module
-from typing import Annotated, Any, Dict, List
+from typing import Annotated, Any, Dict, List, Tuple
 from urllib.parse import urlparse
 
 from mcp.types import ToolAnnotations
@@ -15,6 +15,7 @@ except ImportError:
     ToolError = import_module("mcp.server.mcpserver.exceptions").ToolError
 
 from .utils import cache, text_processor
+from .utils.indexer import Doc, IndexSearch, _tokenize
 
 APP_NAME = "strands-agents-mcp-server"
 
@@ -49,7 +50,8 @@ for general programming questions that do not involve Strands.
 How to use them:
 1. If you know the page, call fetch_doc with its URL directly, starting from the pages above.
 2. Otherwise call search_docs with short keywords. Exact names work best: a class such as \
-"BedrockModel", or a release such as "python v1.62.0" or "typescript v1.24.0".
+"BedrockModel", or a release such as "python v1.62.0" or "typescript v1.24.0". When the question is \
+conversational, also pass alternate_queries with the terms the docs likely use, in the same call.
 3. For long pages, fetch_doc(uri) returns a table of contents; read only the sections you need with \
 fetch_doc(uri, section). Short pages come back whole.
 4. Pages often show Python and TypeScript side by side; use only the language the user is working in.
@@ -64,6 +66,10 @@ SUGGESTION_LIMIT = 5
 # Every catalog path shares the /docs/ prefix, so lower cutoffs suggest unrelated pages.
 SUGGESTION_CUTOFF = 0.8
 
+ALTERNATE_QUERY_LIMIT = 4
+FUSION_DEPTH = 20
+RRF_K = 60
+
 
 def _is_valid_doc_url(uri: str) -> bool:
     """Validate that a URI points to strandsagents.com over HTTPS."""
@@ -76,6 +82,28 @@ def _is_valid_doc_url(uri: str) -> bool:
 
 def _section_index(sections: list[dict]) -> list[dict]:
     return [{"id": s["id"], "title": s["title"], "children": s["children"]} for s in sections]
+
+
+def _distinct_queries(phrasings: List[str]) -> List[str]:
+    queries: Dict[Tuple[str, ...], str] = {}
+    for phrasing in phrasings:
+        tokens = tuple(_tokenize(phrasing))
+        if tokens:
+            queries.setdefault(tokens, phrasing)
+    return list(queries.values())
+
+
+def _fused_search(index: IndexSearch, queries: List[str], k: int) -> List[Tuple[float, Doc]]:
+    if len(queries) == 1:
+        return index.search(queries[0], k=k)
+    scores: Dict[str, float] = {}
+    docs: Dict[str, Doc] = {}
+    for query in queries:
+        for rank, (_, doc) in enumerate(index.search(query, k=FUSION_DEPTH)):
+            scores[doc.uri] = scores.get(doc.uri, 0.0) + 1.0 / (RRF_K + rank + 1)
+            docs[doc.uri] = doc
+    ranked = sorted(scores.items(), key=lambda item: item[1], reverse=True)[:k]
+    return [(score, docs[uri]) for uri, score in ranked]
 
 
 def _catalog_path(uri: str) -> str:
@@ -114,21 +142,35 @@ def search_docs(
         ),
     ],
     k: Annotated[int, Field(ge=1, le=20, description="Maximum number of results to return.")] = 5,
+    alternate_queries: Annotated[
+        Tuple[str, ...],
+        Field(
+            max_length=ALTERNATE_QUERY_LIMIT,
+            description=(
+                "Optional other phrasings of the same question in the words the docs likely use: feature names, "
+                'API names, synonyms. For "stop the agent after 5 turns", pass ["turn limit", "max cycles", '
+                '"lifecycle controls"]. Pages matched by several phrasings rank first.'
+            ),
+        ),
+    ] = (),
 ) -> List[Dict[str, Any]]:
     """Search the official Strands Agents docs: user guides, API reference pages, and examples.
 
     Ranking uses page titles, URL paths, and catalog descriptions, plus a page's content once it has been
     fetched, so both title-like keywords and body terms work. The top results are fetched on demand to build
     snippets. Call fetch_doc with a result URL to read the page or one of its sections. If you already have a
-    strandsagents.com URL, call fetch_doc directly instead of searching.
+    strandsagents.com URL, call fetch_doc directly instead of searching. When the question is phrased
+    conversationally, pass alternate_queries with the terms the docs likely use instead of searching again.
 
-    Each result has url, title, snippet, and score. The score is an unbounded BM25 value: higher is better
-    within one result set; it is not a probability and is not comparable across queries. Returns an empty list
-    when nothing matches. If a result page cannot be fetched, its title is used as the snippet.
+    Each result has url, title, snippet, and score. The score is an unbounded BM25 value, or a fused rank score
+    when alternate_queries are given: higher is better within one result set; it is not a probability and is
+    not comparable across queries. Returns an empty list when nothing matches. If a result page cannot be
+    fetched, its title is used as the snippet.
     """
     cache.ensure_ready()
     index = cache.get_index()
-    results = index.search(query, k=k) if index else []
+    queries = _distinct_queries([query, *alternate_queries])
+    results = _fused_search(index, queries, k) if index and queries else []
     url_cache = cache.get_url_cache()
 
     top = results[: min(len(results), cache.SNIPPET_HYDRATE_MAX)]

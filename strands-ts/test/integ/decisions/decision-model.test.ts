@@ -17,7 +17,9 @@ const providers: readonly DecisionModelProvider[] = [
     name: 'LLMDecisionModel(BedrockModel)',
     skip: bedrock.skip,
     create: () =>
-      new LLMDecisionModel({ model: bedrock.createModel({ modelId: BEDROCK_HAIKU_MODEL_ID, maxTokens: 512 }) }),
+      new LLMDecisionModel({
+        model: bedrock.createModel({ modelId: BEDROCK_HAIKU_MODEL_ID, maxTokens: 512, strictTools: true }),
+      }),
   },
 ]
 
