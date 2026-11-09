@@ -44,6 +44,7 @@ export {
   JsonValidationError,
   ConcurrentInvocationError,
   ModelThrottledError,
+  ModelNetworkError,
   ToolValidationError,
   StructuredOutputError,
   ToolNotFoundError,
@@ -77,6 +78,7 @@ export type {
   GuardQualifier,
   GuardImageFormat,
   GuardImageSource,
+  InjectedBlockData,
   ContentBlock,
   ContentBlockData,
   MessageData,
@@ -94,6 +96,7 @@ export {
   ReasoningBlock,
   CachePointBlock,
   GuardContentBlock,
+  InjectedBlock,
   Message,
   JsonBlock,
   contentBlockFromData,
@@ -215,6 +218,7 @@ export {
 export type {
   AnswerOf,
   AskOptions,
+  DecisionCallOptions,
   DecisionInput,
   DecisionResult,
   DecisionsAPIDecisionModelOptions,
@@ -389,7 +393,13 @@ export type { Storage } from './storage/storage.js'
 // Sandbox
 export { Sandbox, type ExecuteOptions } from './sandbox/base.js'
 export { PosixShellSandbox } from './sandbox/posix-shell.js'
-export { SandboxTimeoutError, SandboxAbortError, SandboxPathNotFoundError } from './sandbox/errors.js'
+export {
+  SandboxTimeoutError,
+  SandboxAbortError,
+  SandboxPathNotFoundError,
+  SandboxIsADirectoryError,
+  SandboxPermissionError,
+} from './sandbox/errors.js'
 export type { StreamType, StreamChunk, FileInfo, OutputFile, ExecutionResult } from './sandbox/types.js'
 
 // Middleware system

@@ -2203,15 +2203,19 @@ def test_format_request_unsupported_forced_tool_choice(family, auto_choice, tool
 
 
 @pytest.mark.parametrize(
-    "cache_config, expected_system, expected_tools",
+    "cache_config, expected_system, expected_tools, expected_messages",
     [
-        (CacheConfig(ttl="5m", system_prompt_ttl="1h", tools_ttl="1h"), "1h", "1h"),
-        (CacheConfig(ttl="1h", system_prompt_ttl=False, tools_ttl=False), None, None),
+        (CacheConfig(ttl="5m", system_prompt_ttl="1h", tools_ttl="1h"), "1h", "1h", "5m"),
+        (CacheConfig(ttl="1h", system_prompt_ttl=False, tools_ttl=False), None, None, "1h"),
+        (CacheConfig(ttl="1h", messages_ttl=False, tools_ttl=True), "1h", "1h", None),
+        (CacheConfig(ttl="1h", messages_ttl=True, tools_ttl=True), "1h", "1h", "1h"),
+        (CacheConfig(ttl="1h", messages_ttl="5m", tools_ttl=True), "1h", "1h", "5m"),
     ],
 )
 def test_format_request_cache_section_settings(
-    cache_config: CacheConfig, expected_system: str | None, expected_tools: str | None
+    cache_config: CacheConfig, expected_system: str | None, expected_tools: str | None, expected_messages: str | None
 ) -> None:
+    # Each section's cache settings apply independently on the Invoke transport (#1217).
     model = BedrockInvokeModel(model_id=IMPORTED_ID, model_family="anthropic", cache_config=cache_config)
     request = model._format_invoke_request(
         [{"role": "user", "content": [{"text": "hello"}]}], [string_length.tool_spec], [{"text": "rules"}], None
@@ -2226,10 +2230,17 @@ def test_format_request_cache_section_settings(
         assert request["tools"][0]["cache_control"] == {"type": "ephemeral", "ttl": expected_tools}
     else:
         assert "cache_control" not in request["tools"][0]
-    assert request["messages"][0]["content"][0]["cache_control"] == {"type": "ephemeral", "ttl": cache_config.ttl}
+    exp_content = [{"type": "text", "text": "hello"}]
+    if expected_messages:
+        exp_content[0]["cache_control"] = {"type": "ephemeral", "ttl": expected_messages}
+    assert request["messages"][0]["content"] == exp_content
 
 
-def test_format_request_honors_explicit_cache_points_without_config(model: BedrockInvokeModel) -> None:
+@pytest.mark.parametrize("cache_config", [None, CacheConfig(messages_ttl=False)])
+def test_format_request_honors_explicit_cache_points_without_automatic_placement(
+    model: BedrockInvokeModel, cache_config: CacheConfig | None
+) -> None:
+    model.update_config(cache_config=cache_config)
     messages = [
         {"role": "user", "content": [{"text": "prefix"}, {"cachePoint": {"type": "default"}}, {"text": "tail"}]}
     ]

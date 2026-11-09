@@ -470,7 +470,8 @@ class BedrockInvokeModel(BedrockModel):
         if system := self._format_anthropic_system(system_prompt_content, tools_cache_point):
             request["system"] = system
 
-        if self._cache_strategy == "anthropic":
+        cache_config = self.config.get("cache_config")
+        if self._cache_strategy == "anthropic" and (cache_config is None or cache_config.messages_ttl is not False):
             messages = deepcopy(messages)
             self._inject_cache_point(cast(list[dict[str, Any]], messages), dynamic_trailing_blocks)
         requires_signature = any(name in self.config["model_id"].lower() for name in ("anthropic", "claude"))

@@ -1,0 +1,10 @@
+name: MCP Router
+description: Connect to MCP servers at runtime and call their tools, limited to an allowlist of servers.
+integrationType: tool
+maintainedBy: strands
+languages:
+  python: {}
+  typescript: {}
+github: https://github.com/strands-agents/harness-sdk/tree/main/strands-py/src/strands/vended_tools/mcp_router
+docsPage: docs/user-guide/sdk/tools/vended-tools/mcp-router
+addedDate: 2026-10-08

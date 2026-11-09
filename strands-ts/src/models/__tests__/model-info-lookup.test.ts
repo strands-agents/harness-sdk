@@ -41,6 +41,8 @@ describe('shared model info data', () => {
       promptCaching: 'cachePoints',
       forcedToolChoice: false,
       nativeStructuredOutput: true,
+      serverSideSummary: true,
+      temporaryMessages: true,
     })
     expect(lookupModelInfo('amazon.nova-pro-v1:0')).toEqual({
       capabilities: { forcedToolChoice: true, nativeStructuredOutput: false },
@@ -76,7 +78,7 @@ describe('shared model info data', () => {
       }
       for (const [key, value] of Object.entries(entry.capabilities ?? {})) {
         if (key === 'promptCaching') expect(['unsupported', 'auto', 'cachePoints'], `${id}.${key}`).toContain(value)
-        else if (key === 'forcedToolChoice' || key === 'nativeStructuredOutput')
+        else if (['forcedToolChoice', 'nativeStructuredOutput', 'serverSideSummary', 'temporaryMessages'].includes(key))
           expect(typeof value, `${id}.${key}`).toBe('boolean')
         else throw new Error(`${id}.capabilities.${key} is not a ModelCapabilities field`)
       }

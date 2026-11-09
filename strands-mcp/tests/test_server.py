@@ -1,13 +1,52 @@
 """Tests for MCP server tools."""
 
+import asyncio
 from threading import Event, Lock
 from unittest.mock import patch
 
 import pytest
 
-from strands_mcp_server.server import fetch_doc, search_docs
+from strands_mcp_server.server import ToolError, fetch_doc, mcp, search_docs
 from strands_mcp_server.utils.doc_fetcher import Page
 from strands_mcp_server.utils.indexer import Doc
+
+
+def _listed_tools() -> dict[str, dict]:
+    return {
+        tool.name: tool.model_dump(by_alias=True, mode="json", exclude_none=True)
+        for tool in asyncio.run(mcp.list_tools())
+    }
+
+
+class TestServerMetadata:
+    """Tests for what the server advertises to clients."""
+
+    def test_instructions_name_both_tools(self):
+        assert "search_docs" in mcp.instructions
+        assert "fetch_doc" in mcp.instructions
+
+    @pytest.mark.parametrize("name", ["search_docs", "fetch_doc"])
+    def test_tools_are_titled_and_annotated_read_only(self, name):
+        tool = _listed_tools()[name]
+
+        assert tool["title"]
+        assert tool["annotations"] == {
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        }
+
+    @pytest.mark.parametrize(("name", "params"), [("search_docs", ["query", "k"]), ("fetch_doc", ["uri", "section"])])
+    def test_parameters_are_described_in_schema(self, name, params):
+        properties = _listed_tools()[name]["inputSchema"]["properties"]
+
+        assert all(properties[param].get("description") for param in params)
+
+    def test_search_result_limit_is_bounded(self):
+        k_schema = _listed_tools()["search_docs"]["inputSchema"]["properties"]["k"]
+
+        assert (k_schema["minimum"], k_schema["maximum"]) == (1, 20)
 
 
 @patch("strands_mcp_server.server.cache")
@@ -173,7 +212,16 @@ class TestFetchDocErrors:
         assert "error" in tru_result
         assert tru_result["error"] == "only https://strandsagents.com URLs allowed"
 
-    def test_invalid_section_returns_error(self, mock_cache, api_reference_doc):
+    def test_disallowed_url_points_to_search(self, mock_cache):
+        tru_result = fetch_doc(uri="https://evil.com/hack")
+
+        assert tru_result == {
+            "error": "only https://strandsagents.com URLs allowed",
+            "url": "https://evil.com/hack",
+            "hint": "Use search_docs to find the Strands page for this topic.",
+        }
+
+    def test_invalid_section_lists_valid_sections(self, mock_cache, api_reference_doc):
         mock_cache.ensure_page.return_value = Page(
             url="https://strandsagents.com/test.md",
             title="Test Doc",
@@ -182,11 +230,77 @@ class TestFetchDocErrors:
 
         tru_result = fetch_doc(uri="https://strandsagents.com/test.md", section="99")
 
-        assert "error" in tru_result
+        assert tru_result == {
+            "error": "section '99' not found",
+            "url": "https://strandsagents.com/test.md",
+            "sections": [
+                {
+                    "id": "1",
+                    "title": "AfterModelCallEvent",
+                    "children": [
+                        {"id": "1.1", "title": "should_reverse_callbacks"},
+                        {"id": "1.2", "title": "ModelStopResponse"},
+                    ],
+                },
+                {
+                    "id": "2",
+                    "title": "AfterToolCallEvent",
+                    "children": [{"id": "2.1", "title": "should_reverse_callbacks"}],
+                },
+                {
+                    "id": "3",
+                    "title": "AgentTool",
+                    "children": [{"id": "3.1", "title": "__init__()"}, {"id": "3.2", "title": "stream()"}],
+                },
+            ],
+            "hint": "Use one of the listed section IDs.",
+        }
 
-    def test_fetch_failure_returns_error(self, mock_cache):
+    @pytest.mark.parametrize(
+        "uri",
+        [
+            "https://strandsagents.com/docs/user-guide/agent/index.md",
+            "https://strandsagents.com/docs/user-guide/agent/",
+            "https://strandsagents.com/docs/user-guide/agent",
+        ],
+        ids=["index-md", "trailing-slash", "bare-path"],
+    )
+    def test_uncatalogued_url_fetch_failure_suggests_close_catalog_urls(self, mock_cache, uri):
         mock_cache.ensure_page.return_value = None
+        mock_cache.get_url_titles.return_value = {
+            "https://strandsagents.com/docs/user-guide/agents/index.md": "Agents",
+            "https://strandsagents.com/blog/launch/index.md": "Launch",
+        }
 
-        tru_result = fetch_doc(uri="https://strandsagents.com/missing.md")
+        tru_result = fetch_doc(uri=uri)
 
-        assert tru_result["error"] == "fetch failed"
+        assert tru_result == {
+            "error": "fetch failed",
+            "url": uri,
+            "suggestions": [{"url": "https://strandsagents.com/docs/user-guide/agents/index.md", "title": "Agents"}],
+            "hint": "This URL is not in the docs catalog. Use a suggested URL, or search_docs to find the page.",
+        }
+
+    def test_uncatalogued_url_without_close_match_has_no_suggestions(self, mock_cache):
+        mock_cache.ensure_page.return_value = None
+        mock_cache.get_url_titles.return_value = {
+            "https://strandsagents.com/docs/contribute/index.md": "Contribute",
+            "https://strandsagents.com/docs/labs/index.md": "Labs",
+        }
+
+        tru_result = fetch_doc(uri="https://strandsagents.com/docs/does-not-exist/index.md")
+
+        assert tru_result == {
+            "error": "fetch failed",
+            "url": "https://strandsagents.com/docs/does-not-exist/index.md",
+            "suggestions": [],
+            "hint": "This URL is not in the docs catalog. Use a suggested URL, or search_docs to find the page.",
+        }
+
+    def test_catalog_url_fetch_failure_is_a_tool_error(self, mock_cache):
+        catalog_url = "https://strandsagents.com/docs/user-guide/agents/index.md"
+        mock_cache.ensure_page.return_value = None
+        mock_cache.get_url_titles.return_value = {catalog_url: "Agents"}
+
+        with pytest.raises(ToolError, match="fetch failed"):
+            fetch_doc(uri=catalog_url)

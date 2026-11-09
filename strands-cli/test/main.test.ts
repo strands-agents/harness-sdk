@@ -1,6 +1,17 @@
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { HarnessAgentOptions } from '@strands-agents/harness'
 import type { AgentStreamEvent } from '@strands-agents/sdk'
 import { CliConfigStore } from '../src/tui/config.js'
+import {
+  harnessSystemPrompt,
+  SAVED_INSTRUCTIONS,
+  SAVED_SYSTEM_PROMPT,
+  SystemPromptRecordingModel,
+  writeSessionWithSavedSystemPrompt,
+} from './fixtures/saved-system-prompt.js'
 
 const createHarness = vi.hoisted(() => vi.fn())
 vi.mock('@strands-agents/harness', async (importOriginal) => ({
@@ -13,6 +24,7 @@ const { main } = await import('../src/cli/run.js')
 
 function fakeAgent(): { sent: string[] } & {
   addHook: ReturnType<typeof vi.fn>
+  initialize: ReturnType<typeof vi.fn>
   stream: (message: string) => AsyncGenerator<AgentStreamEvent, unknown>
 } {
   const sent: string[] = []
@@ -21,7 +33,7 @@ function fakeAgent(): { sent: string[] } & {
     yield textEvent
     return { metrics: { accumulatedUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } } }
   }
-  return { sent, stream, addHook: vi.fn() }
+  return { sent, stream, addHook: vi.fn(), initialize: vi.fn(async () => undefined) }
 }
 
 const textEvent = {
@@ -60,6 +72,37 @@ describe('main', () => {
     await main(['-p', 'do it'])
     expect(agent.sent).toEqual(['do it'])
     expect(writes.join('')).toContain('ok')
+  })
+
+  it('builds the system prompt from the profile when --session-id resumes a session that saved its own', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'strands-print-system-prompt-'))
+    await writeSessionWithSavedSystemPrompt(join(workspace, '.agent', 'sessions'), 'saved-session')
+    const model = new SystemPromptRecordingModel()
+    const harness = await vi.importActual<typeof import('@strands-agents/harness')>('@strands-agents/harness')
+    createHarness.mockImplementation((options: HarnessAgentOptions) =>
+      harness.createHarness({
+        ...options,
+        model,
+        builtinTools: [],
+        builtinPlugins: [],
+        contextManager: false,
+        memory: false,
+        skills: false,
+      })
+    )
+    vi.spyOn(process, 'cwd').mockReturnValue(workspace)
+
+    try {
+      await main(['-p', 'continue', '--session-id', 'saved-session'])
+    } finally {
+      await rm(workspace, { recursive: true, force: true })
+    }
+
+    expect(errWrites.join('')).toBe('')
+    expect(model.systemPrompts).toEqual([harnessSystemPrompt()])
+    expect(model.systemPrompts[0]).not.toContain(SAVED_SYSTEM_PROMPT)
+    expect(model.systemPrompts[0]).not.toContain(SAVED_INSTRUCTIONS)
+    expect(model.firstMessageTexts).toEqual(['earlier request'])
   })
 
   it('errors when one-shot has no request', async () => {

@@ -272,6 +272,9 @@ chooses a valid boundary. Without automatic placement, an invalid boundary raise
 Cache placement and time-to-live (TTL) follow `BedrockModel` semantics. Section
 TTLs override the shared `ttl`; `True` inherits it, and `False` disables automatic
 placement for that section. `tools_ttl` defaults to unset, so enable it explicitly.
+Set `messages_ttl=False` to disable automatic message breakpoints while retaining
+system and tool caching. Explicit message `cachePoint` blocks keep their positions
+and TTLs when automatic message placement is disabled.
 Longer TTLs must precede shorter ones in tools, system, then messages order.
 See [prompt caching](./amazon-bedrock-prompt-caching.mdx) for placement and TTL details.
 
