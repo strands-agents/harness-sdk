@@ -1337,6 +1337,37 @@ async def test_stream_response_throttled_exception_non_json_body(gemini_client, 
 
 
 @pytest.mark.asyncio
+async def test_stream_response_throttled_exception_server_error(gemini_client, model, messages):
+    """Regression test for https://github.com/strands-agents/harness-sdk/issues/5916.
+
+    A 503 UNAVAILABLE means the model is overloaded. google-genai raises ServerError for 5xx,
+    which is a sibling of ClientError rather than a subclass, so it must be mapped to
+    ModelThrottledException too, otherwise the default retry strategy never retries it.
+    """
+    gemini_client.aio.models.generate_content_stream.side_effect = genai.errors.ServerError(
+        503, {"error": {"code": 503, "status": "UNAVAILABLE", "message": "The model is overloaded."}}
+    )
+
+    with pytest.raises(ModelThrottledException, match="The model is overloaded."):
+        await anext(model.stream(messages))
+
+
+@pytest.mark.asyncio
+async def test_stream_response_throttled_exception_server_error_non_json_body(gemini_client, model, messages):
+    """Regression test for https://github.com/strands-agents/harness-sdk/issues/5916.
+
+    For a 503 with a non-JSON body, google-genai sets status to the HTTP reason phrase
+    ("Service Unavailable"), so the 503 code alone must be enough to classify it as throttling.
+    """
+    gemini_client.aio.models.generate_content_stream.side_effect = genai.errors.ServerError(
+        503, {"message": "Service Unavailable", "status": "Service Unavailable"}
+    )
+
+    with pytest.raises(ModelThrottledException, match="Service Unavailable"):
+        await anext(model.stream(messages))
+
+
+@pytest.mark.asyncio
 async def test_stream_response_context_overflow_exception(gemini_client, model, messages):
     gemini_client.aio.models.generate_content_stream.side_effect = genai.errors.ClientError(
         400,
