@@ -3,6 +3,7 @@ import { TextBlock, ToolResultBlock } from '../types/messages.js'
 import type { InvocationState, LocalAgent } from '../types/agent.js'
 import { normalizeError } from '../errors.js'
 import type { Interruptible } from '../interrupt.js'
+import type { InvocationContext } from '../agent/invocation-context.js'
 
 export type { ToolSpec } from './types.js'
 
@@ -36,6 +37,9 @@ export interface ToolContext extends Interruptible {
 
   /** Execution-scoped cancellation signal for this tool call. */
   cancelSignal: AbortSignal
+
+  /** The request this tool call belongs to; pass it to {@link InvokeOptions.invocationContext} to run a nested call in the same request. */
+  readonly invocationContext?: InvocationContext
 }
 
 /**

@@ -6,7 +6,7 @@ import { fileURLToPath, URL } from 'node:url'
 import { promisify } from 'node:util'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import TextCache from '#ink-text-cache'
+import TextCache from '../dist/src/tui/terminal/ink.js'
 
 const execute = promisify(execFile)
 const packageRoot = fileURLToPath(new URL('..', import.meta.url))
@@ -92,7 +92,10 @@ async function installedFixture(legacy: boolean): Promise<string> {
     await copyFile(join(packageRoot, path), join(directory, path))
   }
   for (const name of ['widest-line', 'wrap-ansi', 'cli-truncate']) {
-    await symlink(join(packageRoot, '../node_modules', name), join(directory, 'node_modules', name), 'junction')
+    // Resolve each dep rather than assuming a hoisted layout: the CLI installs standalone, so these
+    // transitive deps live under strands-cli/node_modules, not a shared ../node_modules.
+    const packageDirectory = dirname(fileURLToPath(import.meta.resolve(name)))
+    await symlink(packageDirectory, join(directory, 'node_modules', name), 'junction')
   }
   for (const name of ['measure-text.js', 'wrap-text.js']) {
     let source = await readFile(join(inkBuild, name), 'utf8')

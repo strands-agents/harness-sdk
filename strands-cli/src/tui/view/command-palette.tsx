@@ -12,9 +12,8 @@ export function CommandPalette({
   selected,
   pressed,
   hovered,
-  terminalWidth,
-  terminalHeight,
-  bottomPadding,
+  width,
+  capacity,
   onRowElement,
 }: {
   commands: readonly LocalCommandSpec[]
@@ -22,65 +21,57 @@ export function CommandPalette({
   selected: number
   pressed?: number
   hovered?: number
-  terminalWidth: number
-  terminalHeight: number
-  bottomPadding: number
+  width: number
+  capacity: number
   onRowElement?: (index: number, element: DOMElement | null) => void
 }): ReactElement {
   const theme = useTheme()
-  const helpRows = Number(assistance.signature !== undefined)
-  const capacity = Math.max(1, terminalHeight - bottomPadding - 5 - helpRows)
   const start = Math.max(0, Math.min(selected - capacity + 1, commands.length - capacity))
-  const usageWidth = Math.max(0, ...commands.map((command) => stringWidth(command.usage))) + 2
-  const width = Math.max(
+  const usageWidth = Math.max(
     1,
-    Math.min(
-      Math.max(
-        44,
-        assistance.signature ? stringWidth(assistance.signature) + 4 : 0,
-        ...commands.map((command) => usageWidth + stringWidth(command.description) + 4)
-      ),
-      terminalWidth - 4
-    )
+    Math.min(Math.max(0, ...commands.map((command) => stringWidth(command.usage))) + 2, Math.floor((width - 3) / 2))
   )
   return (
-    <Box
-      position="absolute"
-      width="100%"
-      height="100%"
-      flexDirection="column"
-      justifyContent="flex-end"
-      paddingBottom={bottomPadding}
-      paddingLeft={1}
-    >
-      <Box width={width} backgroundColor={theme.panel} flexDirection="column" overflow="hidden">
-        {assistance.signature ? (
-          <Box height={1} paddingX={1}>
+    <Box width={width} backgroundColor={theme.surface} flexDirection="column" flexShrink={0} overflow="hidden">
+      {assistance.message ? (
+        <Box height={1} paddingX={1} flexShrink={0}>
+          <Text dimColor wrap="truncate-end">
+            {assistance.message}
+          </Text>
+        </Box>
+      ) : null}
+      {assistance.signature ? (
+        <Box height={1} paddingX={1} flexShrink={0}>
+          <Text dimColor wrap="truncate-end">
+            {assistance.signature}
+          </Text>
+        </Box>
+      ) : null}
+      {commands.slice(start, start + capacity).map((command, visibleIndex) => {
+        const index = start + visibleIndex
+        const pressedRow = index === pressed
+        return (
+          <Box
+            key={command.replacement ?? command.name}
+            ref={(element) => onRowElement?.(index, element)}
+            height={1}
+            flexShrink={0}
+            paddingX={1}
+            backgroundColor={index === hovered || pressedRow || index === selected ? theme.selection : undefined}
+          >
+            <Box width={usageWidth} marginRight={1} flexShrink={0} overflow="hidden">
+              <PanelItemHeader label={command.usage} active={index === selected} pressed={pressedRow} clickable />
+            </Box>
             <Text dimColor wrap="truncate-end">
-              {assistance.signature}
+              {command.description}
             </Text>
           </Box>
-        ) : null}
-        {commands.slice(start, start + capacity).map((command, visibleIndex) => {
-          const index = start + visibleIndex
-          const pressedRow = index === pressed
-          return (
-            <Box
-              key={command.replacement ?? command.name}
-              ref={(element) => onRowElement?.(index, element)}
-              height={1}
-              paddingX={1}
-              backgroundColor={index === hovered || pressedRow || index === selected ? theme.selection : undefined}
-            >
-              <Box width={usageWidth} marginRight={1} flexShrink={0}>
-                <PanelItemHeader label={command.usage} active={index === selected} pressed={pressedRow} clickable />
-              </Box>
-              <Text dimColor wrap="truncate-end">
-                {command.description}
-              </Text>
-            </Box>
-          )
-        })}
+        )
+      })}
+      <Box height={1} paddingX={1} flexShrink={0}>
+        <Text dimColor wrap="truncate-end">
+          {'─'.repeat(Math.max(0, width - 2))}
+        </Text>
       </Box>
     </Box>
   )

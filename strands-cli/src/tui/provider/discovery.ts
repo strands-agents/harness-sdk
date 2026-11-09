@@ -35,6 +35,8 @@ export interface ProviderModelDiscovery {
   available: boolean
   complete?: boolean
   knownModelIds?: readonly string[]
+  error?: string
+  credentialRejected?: boolean
 }
 
 export interface ProviderModel {
@@ -119,8 +121,19 @@ export async function discoverProviderModels(
     }
     const models = await listProviderModels(provider, environment, ollama)
     return { models: cleanModels(models), available: true }
-  } catch {
-    return { models: [], available: false }
+  } catch (error) {
+    const credentialRejected =
+      ['anthropic', 'openai', 'google'].includes(provider) &&
+      error instanceof ModelCatalogRequestError &&
+      [400, 401, 403].includes(error.status)
+    return {
+      models: [],
+      available: false,
+      error: credentialRejected
+        ? `API key was rejected (HTTP ${error.status})`
+        : sanitizeTerminalText(error instanceof Error ? error.message : String(error)),
+      ...(credentialRejected ? { credentialRejected: true } : {}),
+    }
   }
 }
 
@@ -334,13 +347,19 @@ async function fetchResponse(url: string, headers: Record<string, string>): Prom
 async function fetchJson(url: string, headers: Record<string, string> = {}): Promise<Record<string, unknown>> {
   const response = await fetchResponse(url, headers)
   if (!response.ok) {
-    throw new Error(`Model catalog request failed with status ${response.status}`)
+    throw new ModelCatalogRequestError(response.status)
   }
   const value = (await response.json()) as unknown
   if (!isRecord(value)) {
     throw new Error('Model catalog returned an invalid response')
   }
   return value
+}
+
+class ModelCatalogRequestError extends Error {
+  constructor(readonly status: number) {
+    super(`Model catalog request failed with status ${status}`)
+  }
 }
 
 function requiredEnvironmentValue(

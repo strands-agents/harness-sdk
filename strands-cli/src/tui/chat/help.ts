@@ -3,7 +3,7 @@ import type { ChatBackend, ChatPanelRow } from './types.js'
 
 const CONTROLS = [
   ['Send a message', 'Enter', 'Send your message, or queue it while the harness is working.'],
-  ['Add a line', 'Shift+Enter', 'Shift+Enter or Ctrl+J inserts a newline.'],
+  ['Add a line', 'Ctrl+J', 'Ctrl+J inserts a newline without sending.'],
   [
     'Steer running work',
     'Ctrl+G',
@@ -39,7 +39,7 @@ const CONTROLS = [
 
 export function helpRows(
   backend: ChatBackend,
-  options: { sessions: boolean; skills: boolean; mcp: boolean; setup: boolean; export: boolean }
+  options: { sessions: boolean; skills: boolean; mcp: boolean; setup: boolean; tools: boolean; export: boolean }
 ): ChatPanelRow[] {
   const support: Record<string, boolean> = {
     compact: backend.compact !== undefined,
@@ -49,6 +49,7 @@ export function helpRows(
     mcp: options.mcp,
     permissions: backend.permissionStatus !== undefined,
     setup: options.setup,
+    tools: options.tools,
     export: options.export,
   }
   const managedCommands = new Set(['fork', 'agents', 'rename', 'voice'])

@@ -9,11 +9,11 @@ import {
   type ThemeColors,
 } from '../chat/types.js'
 import { detectColorMode } from './theme-detection.js'
-import { useFadeColor } from './fade-in.js'
+import { useFadeAnsi, useFadeColor } from './fade-in.js'
 
 export { detectColorMode } from './theme-detection.js'
 
-export type Theme = ThemeColors & { mode: ResolvedColorMode }
+export type Theme = ThemeColors & { mode: ResolvedColorMode; canvas: string | undefined }
 type ThemeSettings = Pick<ChatSettings, 'frogTheme' | 'colorMode' | 'customTheme'>
 
 const BASE_COLORS = {
@@ -75,6 +75,8 @@ export function getTheme(settings: ThemeSettings, detectedMode?: ResolvedColorMo
     accent: ACCENTS[base][mode],
     frog: FROG_COLORS[base][mode],
     ...(settings.frogTheme === 'custom' ? settings.customTheme[mode] : {}),
+    // Preset palette backgrounds support controls and previews; the terminal owns the canvas.
+    canvas: settings.frogTheme === 'custom' ? settings.customTheme[mode].background : undefined,
     mode,
   }
 }
@@ -153,13 +155,16 @@ export function Text({
             : (backgroundColor ?? parent?.backgroundColor)
   const fadedForeground = useFadeColor(foreground)
   const fadedBackground = useFadeColor(background)
+  const fadedText = useFadeAnsi(typeof children === 'string' ? children : '')
   return (
     <InkText
       {...props}
       {...(fadedForeground ? { color: fadedForeground } : {})}
       {...(fadedBackground ? { backgroundColor: fadedBackground } : {})}
     >
-      <TextStyleContext value={{ backgroundColor: background }}>{children}</TextStyleContext>
+      <TextStyleContext value={{ backgroundColor: background }}>
+        {typeof children === 'string' ? fadedText : children}
+      </TextStyleContext>
     </InkText>
   )
 }

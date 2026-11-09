@@ -381,6 +381,26 @@ describe('ConversationManager', () => {
     })
   })
 
+  it('opens a rename panel when no name is provided', async () => {
+    const primary = new ChatController(backend('primary', emptyRun))
+    const manager = new ConversationManager(primary, { fork: async () => primary })
+
+    try {
+      await manager.submit('/rename')
+      expect(manager.getSnapshot().panel).toMatchObject({
+        kind: 'rename',
+        title: 'Rename agent',
+        rows: [{ label: 'Current name', description: 'Strands harness' }],
+      })
+
+      await manager.activatePanelRow({ label: 'Rename', description: '', value: 'rename:Lead Reviewer' })
+      await manager.submit('/agents')
+      expect(manager.getSnapshot().panel?.rows[0]?.label).toBe('Lead Reviewer')
+    } finally {
+      await manager.dispose()
+    }
+  })
+
   it('retries failed session lookup and startup before opening a separate workspace conversation', async () => {
     const reference = 'strands-session:remote'
     const target = {

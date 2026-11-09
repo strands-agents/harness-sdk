@@ -56,6 +56,13 @@ export const CATALOG_TYPES = [
     icon: 'M16 7V3h-2v4h-4V3H8v4H6v6a5 5 0 0 0 4 4.9V21h4v-3.1A5 5 0 0 0 18 13V7h-2z',
   },
   {
+    value: 'observability',
+    label: 'Observability',
+    labelPlural: 'Observability',
+    // line chart
+    icon: 'M3.5 18.49l6-6.01 4 4L22 6.92l-1.41-1.41-7.09 7.97-4-4L2 16.99z',
+  },
+  {
     value: 'agent-extension',
     label: 'Agent Extension',
     labelPlural: 'Agent Extensions',

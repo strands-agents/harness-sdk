@@ -1,9 +1,19 @@
-import { createElement, useCallback, useEffect, useRef, useState, useSyncExternalStore, type ReactElement } from 'react'
+import {
+  createElement,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactElement,
+} from 'react'
 import { renderToString, useApp, useInput, useStdout, type DOMElement, type Key } from 'ink'
 
 import type { ChatControllerApi } from '../chat/controller.js'
 import { commandAssistance } from '../chat/commands.js'
 import { sanitizeTerminalText } from '../terminal/sanitize.js'
+import { useTerminalSize } from '../terminal/size.js'
 import {
   completeSuggestion,
   emptyEditor,
@@ -62,9 +72,11 @@ import type { ChatPanelRow } from '../chat/types.js'
 
 export function ChatApp({
   controller,
+  introStartedAt,
   openUrl = openExternalUrl,
 }: {
   controller: ChatControllerApi
+  introStartedAt?: number
   openUrl?: (url: string) => void
 }): ReactElement {
   const snapshot = useSyncExternalStore(controller.subscribe, controller.getSnapshot)
@@ -94,10 +106,7 @@ export function ChatApp({
   }, [snapshot.panel?.kind, closeAppearance])
   const { exit } = useApp()
   const { stdout } = useStdout()
-  const [terminal, setTerminal] = useState({
-    width: stdout.columns || 80,
-    height: stdout.rows || 24,
-  })
+  const { columns: width, rows: height } = useTerminalSize()
   const [editor, setEditorState] = useState<EditorState>(emptyEditor)
   const [suggestionSelection, setSuggestionSelection] = useState(0)
   const [dismissedSuggestions, setDismissedSuggestions] = useState<string>()
@@ -111,6 +120,7 @@ export function ChatApp({
   // A ref, not state: the maximum changes on every streamed line and only clamps scroll input.
   const maxTranscriptScrollRef = useRef(0)
   const [pressedMetadata, setPressedMetadata] = useState<MetadataTarget>()
+  const [hoveredMetadata, setHoveredMetadata] = useState<MetadataTarget>()
   const [pressedPanelFilter, setPressedPanelFilter] = useState<string>()
   const [pressedPanelRow, setPressedPanelRow] = useState<number>()
   const [pressedPanelControl, setPressedPanelControl] = useState<string>()
@@ -121,6 +131,7 @@ export function ChatApp({
   const [hoveredPanelFilter, setHoveredPanelFilter] = useState<string>()
   const [hoveredPanelSlider, setHoveredPanelSlider] = useState(false)
   const [hoveredSuggestion, setHoveredSuggestion] = useState<number>()
+  const [settingsHovered, setSettingsHovered] = useState(false)
   const [pressedQueuedPrompt, setPressedQueuedPrompt] = useState<QueuedPromptTarget>()
   const [editingQueuedPromptId, setEditingQueuedPromptId] = useState<string>()
   const [screenSelection, setScreenSelection] = useState<readonly ScreenSelectionSegment[]>([])
@@ -155,7 +166,6 @@ export function ChatApp({
   const [panelRowElements, registerPanelRowElement] = useElementMap<number>()
   const [panelControlElements, registerPanelControlElement] = useElementMap<string>()
   const [panelFilterElements, registerPanelFilterElement] = useElementMap<string>()
-  const [panelPinElements, registerPanelPinElement] = useElementMap<number>()
   const panelSearchElement = useRef<DOMElement | undefined>(undefined)
   const panelSliderElement = useRef<DOMElement | undefined>(undefined)
   const [suggestionElements, registerSuggestionElement] = useElementMap<number>()
@@ -187,6 +197,8 @@ export function ChatApp({
     setHoveredPanelFilter(undefined)
     setHoveredPanelSlider(false)
     setHoveredSuggestion(undefined)
+    setSettingsHovered(false)
+    setHoveredMetadata(undefined)
   }, [])
   const resetPressed = useCallback((): void => {
     setPressedMetadata(undefined)
@@ -197,17 +209,17 @@ export function ChatApp({
     setPressedSuggestion(undefined)
     setPressedQueuedPrompt(undefined)
   }, [])
+  const actionableCommandToken = controller.actionableCommandToken(editor.input)
   const rawAssistance =
     snapshot.panel || dismissedSuggestions === editor.input || controller.busy
       ? undefined
-      : commandAssistance(editor.input)
+      : commandAssistance(editor.input, actionableCommandToken)
   const assistance =
-    rawAssistance && (rawAssistance.completions.length > 0 || /^\/[^\s]+\s$/.test(editor.input))
+    rawAssistance &&
+    (rawAssistance.message !== undefined || rawAssistance.completions.length > 0 || /^\/[^\s]+\s$/.test(editor.input))
       ? rawAssistance
       : undefined
   const suggestions = assistance?.completions ?? []
-  const startupCovered = snapshot.panel !== undefined || assistance !== undefined
-  const actionableCommandToken = controller.actionableCommandToken(editor.input)
   const panelRows = snapshot.panel
     ? filterPanelRows(
         snapshot.panel.rows,
@@ -220,8 +232,8 @@ export function ChatApp({
     snapshot,
     input: editor.input,
     cursor: editor.cursor,
-    terminalWidth: terminal.width,
-    terminalHeight: terminal.height,
+    terminalWidth: width,
+    terminalHeight: height,
     suggestions,
     ...(panelRows ? { panelRows } : {}),
     panelQuery,
@@ -281,34 +293,26 @@ export function ChatApp({
     setFrog((current) => (current?.id === id ? undefined : current))
   }, [])
 
-  useEffect(() => {
-    const resize = (): void => {
-      const size = { width: stdout.columns || 80, height: stdout.rows || 24 }
-      const { snapshot, panelRows } = viewPropsRef.current
-      if (snapshot.panel && panelRows) {
-        const agents = snapshot.panel.kind === 'agents'
-        const capacity = agents
-          ? agentGridCapacity(size.width, size.height)
-          : panelRowCapacity(snapshot.panel.kind, size.height, size.width, panelRows)
-        const start = agents
-          ? revealAgentGridSelection(
-              panelSelectionRef.current,
-              panelViewportStartRef.current,
-              capacity,
-              panelRows.length,
-              agentGridColumns(size.width)
-            )
-          : revealPanelSelection(panelSelectionRef.current, panelViewportStartRef.current, capacity, panelRows.length)
-        panelViewportStartRef.current = start
-        setPanelViewportStart(start)
-      }
-      setTerminal(size)
+  useLayoutEffect(() => {
+    const { snapshot, panelRows } = viewPropsRef.current
+    if (snapshot.panel && panelRows) {
+      const agents = snapshot.panel.kind === 'agents'
+      const capacity = agents
+        ? agentGridCapacity(width, height)
+        : panelRowCapacity(snapshot.panel.kind, height, width, panelRows)
+      const start = agents
+        ? revealAgentGridSelection(
+            panelSelectionRef.current,
+            panelViewportStartRef.current,
+            capacity,
+            panelRows.length,
+            agentGridColumns(width)
+          )
+        : revealPanelSelection(panelSelectionRef.current, panelViewportStartRef.current, capacity, panelRows.length)
+      panelViewportStartRef.current = start
+      setPanelViewportStart(start)
     }
-    stdout.on('resize', resize)
-    return (): void => {
-      stdout.off('resize', resize)
-    }
-  }, [stdout])
+  }, [width, height])
 
   useEffect(() => {
     if (snapshot.status === 'closed') {
@@ -345,12 +349,6 @@ export function ChatApp({
   }, [snapshot.panel?.id, resetPanelPosition, resetHover])
 
   useEffect(() => {
-    if (startupCovered) {
-      setFrogBrandAnimationId(undefined)
-    }
-  }, [startupCovered])
-
-  useEffect(() => {
     if (!snapshot.activeTurn && snapshot.completedTurns.length === 0) {
       setExpandedToolGroups((current) => (current.size > 0 ? new Set() : current))
     }
@@ -373,13 +371,12 @@ export function ChatApp({
     setTranscriptScroll(0)
   }, [snapshot.activeTurn?.id])
 
-  const menuOpen = snapshot.panel !== undefined || suggestions.length > 0
   useEffect(() => {
-    setTerminalMouseMotion(menuOpen, stdout)
+    setTerminalMouseMotion(true, stdout)
     return (): void => {
       setTerminalMouseMotion(false, stdout)
     }
-  }, [menuOpen, stdout])
+  }, [stdout])
 
   useEffect(
     (): (() => void) => () => {
@@ -400,29 +397,6 @@ export function ChatApp({
       })
     },
     [stdout]
-  )
-
-  const toggleModelPin = useCallback(
-    (modelId: string): void => {
-      void controller.toggleModelPin(modelId).then((changed) => {
-        if (!changed) {
-          return
-        }
-        const state = viewPropsRef.current
-        const rows = filterPanelRows(
-          controller.getSnapshot().panel?.rows ?? [],
-          state.panelQuery,
-          state.panelFilter,
-          true
-        )
-        const selection = Math.max(
-          0,
-          rows.findIndex((row) => row.value === modelId)
-        )
-        selectPanelRow(selection, panelRowCapacity('models', state.terminalHeight), rows.length)
-      })
-    },
-    [controller, selectPanelRow]
   )
 
   const handleMouse = useCallback(
@@ -494,22 +468,27 @@ export function ChatApp({
           ? elementAtMouse(panelControlElements, mouse)
           : undefined
       const panelFilterId = snapshot.panel ? elementAtMouse(panelFilterElements, mouse) : undefined
-      const panelPinIndex = snapshot.panel?.kind === 'models' ? elementAtMouse(panelPinElements, mouse) : undefined
       const suggestionIndex =
         !snapshot.panel && suggestions.length > 0 ? elementAtMouse(suggestionElements, mouse) : undefined
       const queuedPromptTarget = !snapshot.panel ? elementAtMouse(queuedPromptElements, mouse) : undefined
       const toolGroupTarget = !snapshot.panel ? elementAtMouse(toolGroupElements, mouse) : undefined
-      const sliderElement = snapshot.panel?.kind === 'models' ? panelSliderElement.current : undefined
+      const sliderElement =
+        snapshot.panel?.kind === 'models' || snapshot.panel?.kind === 'effort' ? panelSliderElement.current : undefined
       const sliderHit = sliderElement ? elementContainsMouse(sliderElement, mouse) : false
       const searchElement = snapshot.panel?.kind === 'models' ? panelSearchElement.current : undefined
       const searchHit = searchElement ? elementContainsMouse(searchElement, mouse) : false
-      const frogHit = frogElement.current ? elementContainsMouse(frogElement.current, mouse) : false
+      const frogHit =
+        !snapshot.panel && suggestions.length === 0 && frogElement.current
+          ? elementContainsMouse(frogElement.current, mouse)
+          : false
       if (mouse.action === 'move' && !leftMouseDownRef.current) {
         setHoveredPanelRow(panelRowIndex)
         setHoveredPanelControl(panelControlTarget)
         setHoveredPanelFilter(panelFilterId)
         setHoveredPanelSlider(sliderHit)
         setHoveredSuggestion(suggestionIndex)
+        setSettingsHovered(footerAction === 'settings')
+        setHoveredMetadata(metadataTarget)
       }
       if (mouse.action === 'press' && button === 0) {
         resetHover()
@@ -529,7 +508,6 @@ export function ChatApp({
                       ...viewPropsRef.current,
                       input: currentEditor.input,
                       cursor: currentEditor.cursor,
-                      synchronousTranscriptLayout: true,
                     }),
                     { columns: terminalWidth }
                   )
@@ -663,11 +641,6 @@ export function ChatApp({
             value: row.control?.kind === 'toggle' ? row.value : `${row.value}=${target.value}`,
           })
         }
-      } else if (panelPinIndex !== undefined) {
-        const row = panelRows?.[panelPinIndex]
-        if (row?.value) {
-          toggleModelPin(row.value)
-        }
       } else if (panelRowIndex !== undefined) {
         panelSelectionRef.current = panelRowIndex
         setPanelSelection(panelRowIndex)
@@ -729,7 +702,6 @@ export function ChatApp({
       metadataElements,
       panelControlElements,
       panelFilterElements,
-      panelPinElements,
       panelRowElements,
       queuedPromptElements,
       resetHover,
@@ -737,7 +709,6 @@ export function ChatApp({
       resetPressed,
       setEditor,
       suggestionElements,
-      toggleModelPin,
       toolGroupElements,
     ]
   )
@@ -794,19 +765,6 @@ export function ChatApp({
         return
       }
 
-      if (
-        snapshot.setupGuide &&
-        snapshot.panel?.kind === 'question' &&
-        editsSetupAnswer(character, key, currentEditor.input)
-      ) {
-        const result = reduceInputSequence(currentEditor, character, key, 'idle')
-        setEditor(result.state)
-        if (result.action === 'submit') {
-          void controller.submit(result.prompt)
-        }
-        return
-      }
-
       if (snapshot.panel) {
         if (snapshot.panel.kind === 'detail') {
           if (key.escape || key.return || key.backspace || key.delete || character === '\u007f') {
@@ -827,6 +785,27 @@ export function ChatApp({
             setDetailScroll(snapshot.panel.followTail ? maxScroll : 0)
           } else if (key.end) {
             setDetailScroll(snapshot.panel.followTail ? 0 : maxScroll)
+          }
+          return
+        }
+
+        if (snapshot.panel.kind === 'rename') {
+          if (key.escape) {
+            controller.dismissPanel()
+          } else if (key.return) {
+            const name = panelQuery.trim()
+            if (name) {
+              void activateRow({ label: 'Rename', description: name, value: `rename:${name}` })
+            }
+          } else if (key.backspace || key.delete || character === '\u007f') {
+            setPanelQuery(graphemes(panelQuery).slice(0, -1).join(''))
+          } else if (key.ctrl && character === 'u') {
+            setPanelQuery('')
+          } else if (!key.ctrl && !key.meta && !key.super && character) {
+            const clean = sanitizeTerminalText(character).replaceAll('\n', ' ')
+            if (clean) {
+              setPanelQuery((query) => query + clean)
+            }
           }
           return
         }
@@ -864,6 +843,24 @@ export function ChatApp({
           }
           return
         }
+        const slider = snapshot.panel.slider
+        if (slider && (snapshot.panel.kind === 'effort' || modelPanelFocus === 'effort')) {
+          // Arrow keys already apply the effort, so Enter just closes like Escape.
+          if (key.return) {
+            controller.dismissPanel()
+            return
+          }
+          if (key.leftArrow || key.rightArrow) {
+            const option = slider.disabled ? undefined : adjacentSliderOption(slider, key.leftArrow ? -1 : 1)
+            if (option) {
+              void activateRow({ label: slider.label, description: option.label, value: `effort:${option.id}` })
+            }
+            return
+          }
+          if (snapshot.panel.kind === 'effort') {
+            return
+          }
+        }
         if (snapshot.panel.kind === 'models') {
           if (key.tab) {
             setModelPanelFocus(cycleModelPanelFocus(modelPanelFocus, snapshot.panel, key.shift ? -1 : 1, true))
@@ -873,29 +870,6 @@ export function ChatApp({
             const modelId = rows[Math.min(panelSelectionRef.current, rows.length - 1)]?.value
             if (modelId) {
               copyText(modelId)
-            }
-            return
-          }
-          if (character === ' ' && modelPanelFocus === 'models') {
-            const selected = rows[Math.min(panelSelectionRef.current, rows.length - 1)]
-            if (selected?.value) {
-              toggleModelPin(selected.value)
-            }
-            return
-          }
-          if (
-            modelPanelFocus === 'effort' &&
-            snapshot.panel.slider &&
-            !snapshot.panel.slider.disabled &&
-            (key.leftArrow || key.rightArrow)
-          ) {
-            const option = adjacentSliderOption(snapshot.panel.slider, key.leftArrow ? -1 : 1)
-            if (option) {
-              void activateRow({
-                label: snapshot.panel.slider.label,
-                description: option.label,
-                value: `effort:${option.id}`,
-              })
             }
             return
           }
@@ -911,6 +885,17 @@ export function ChatApp({
             }
           }
           if (modelPanelFocus === 'models') {
+            const selected = rows[Math.min(panelSelectionRef.current, rows.length - 1)]
+            if (key.return && selected?.value) {
+              // Choosing a model moves on to its effort; a failed switch leaves its error panel open.
+              void activateRow(selected).then((switched) => {
+                const panel = controller.getSnapshot().panel
+                if (!switched || panel?.kind !== 'models') return
+                if (panel.slider && !panel.slider.disabled) setModelPanelFocus('effort')
+                else controller.dismissPanel()
+              })
+              return
+            }
             if (key.leftArrow && snapshot.panel.filters?.length) {
               setModelPanelFocus('providers')
               return
@@ -1009,7 +994,8 @@ export function ChatApp({
         if (
           (snapshot.panel.kind === 'settings' ||
             snapshot.panel.kind === 'voice' ||
-            snapshot.panel.kind === 'permissions') &&
+            snapshot.panel.kind === 'permissions' ||
+            snapshot.panel.kind === 'tools') &&
           character === ' '
         ) {
           const selected = rows[Math.min(panelSelectionRef.current, rows.length - 1)]
@@ -1040,6 +1026,13 @@ export function ChatApp({
             setPanelViewportStart(nextStart)
             return
           }
+        }
+        if (key.rightArrow && snapshot.panel.kind === 'skills') {
+          const selected = rows[Math.min(panelSelectionRef.current, rows.length - 1)]
+          if (selected?.value) {
+            controller.openSkillDetail(selected.value)
+          }
+          return
         }
         if (key.return) {
           const selected = rows[Math.min(panelSelectionRef.current, rows.length - 1)]
@@ -1107,11 +1100,11 @@ export function ChatApp({
       }
 
       const phase = editingQueuedPromptId ? 'idle' : controller.busy ? 'running' : 'idle'
+      if (phase === 'idle' && viewPropsRef.current.commandAssistance && key.escape) {
+        setDismissedSuggestions(currentEditor.input)
+        return
+      }
       if (phase === 'idle' && suggestions.length > 0) {
-        if (key.escape) {
-          setDismissedSuggestions(currentEditor.input)
-          return
-        }
         const current = Math.min(suggestionSelectionRef.current, suggestions.length - 1)
         const next = moveSelection(current, key, suggestions.length, suggestions.length)
         if (next !== undefined) {
@@ -1195,7 +1188,6 @@ export function ChatApp({
       resetPanelPosition,
       selectPanelRow,
       setEditor,
-      toggleModelPin,
     ]
   )
   useInput(handleInput)
@@ -1203,18 +1195,21 @@ export function ChatApp({
   return (
     <ChatView
       {...viewProps}
+      {...(introStartedAt !== undefined ? { introStartedAt } : {})}
       snapshot={
         previewAppearance ? { ...snapshot, settings: { ...snapshot.settings, ...previewAppearance } } : snapshot
       }
       onActionElement={registerFooterElement}
+      settingsHovered={settingsHovered}
+      {...(hoveredMetadata ? { hoveredMetadata } : {})}
       {...(appearanceOpen
         ? {
             overlay: (
               <CustomThemeEditor
                 settings={snapshot.settings}
                 animate={snapshot.settings.animations}
-                width={terminal.width}
-                height={terminal.height}
+                width={width}
+                height={height}
                 onPreview={setPreviewAppearance}
                 onClose={closeAppearance}
                 onApply={async (appearance) => {
@@ -1233,7 +1228,6 @@ export function ChatApp({
       onPanelRowElement={registerPanelRowElement}
       onPanelControlElement={registerPanelControlElement}
       onPanelFilterElement={registerPanelFilterElement}
-      onPanelPinElement={registerPanelPinElement}
       onPanelSearchElement={registerPanelSearchElement}
       onPanelSliderElement={registerPanelSliderElement}
       onSuggestionElement={registerSuggestionElement}
@@ -1259,16 +1253,6 @@ export function ChatApp({
       onToolGroupElement={registerToolGroupElement}
     />
   )
-}
-
-function editsSetupAnswer(character: string, key: Key, input: string): boolean {
-  if (key.return) {
-    return input.trim().length > 0
-  }
-  if (key.escape || key.tab || key.upArrow || key.downArrow || key.pageUp || key.pageDown) {
-    return false
-  }
-  return Boolean(character || key.backspace || key.delete || key.leftArrow || key.rightArrow || key.home || key.end)
 }
 
 function useElementMap<K>(): [Map<K, DOMElement>, (key: K, element: DOMElement | null) => void] {

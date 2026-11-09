@@ -170,8 +170,9 @@ export interface SubagentConfig {
   maxDepth?: number
 }
 /**
- * `web_search` setting: a boolean, or `'exa'` to fall back to Exa's hosted search on models without
- * native web search (a third party that sees the queries; keyless, `EXA_API_KEY` lifts its rate limit).
+ * `web_search` setting: a boolean, or `'exa'` to serve `web_search` from Exa's hosted search on any
+ * model, replacing the provider's native search where it has one (a third party that sees the
+ * queries; keyless, `EXA_API_KEY` lifts its rate limit).
  */
 export type WebSearchSetting = boolean | 'exa'
 

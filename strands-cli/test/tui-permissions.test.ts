@@ -53,7 +53,7 @@ describe('CedarPermissions', () => {
         broker.respond(request.id, requests.length === 1 ? 'allow-once' : 'deny')
       }
     })
-    for (const action of ['inspect', 'models', 'update', 'reset']) {
+    for (const action of ['inspect', 'models', 'update']) {
       await expect(permissions.beforeToolCall(toolEvent('strands_config', { action }))).resolves.toMatchObject({
         type: 'proceed',
       })
@@ -98,6 +98,26 @@ describe('CedarPermissions', () => {
       lines: expect.arrayContaining([expect.objectContaining({ kind: 'add', text: 'changed' })]),
     })
   })
+
+  it.each(['retrieve_context', 'retrieve_offloaded_content'])(
+    'permits %s without interactive approval',
+    async (toolName) => {
+      const broker = new ToolPermissionBroker()
+      const permissions = new CedarPermissions({ broker, cwd: await temporaryWorkspace() })
+      const requests: string[] = []
+      broker.subscribe((request) => {
+        if (request) {
+          requests.push(request.toolName)
+          broker.respond(request.id, 'deny')
+        }
+      })
+
+      await expect(
+        permissions.beforeToolCall(toolEvent(toolName, { reference: 'tooluse-1_0' }))
+      ).resolves.toMatchObject({ type: 'proceed' })
+      expect(requests).toEqual([])
+    }
+  )
 
   it('does not auto-permit reads that escape through paths or symlinks', async () => {
     const workspace = await temporaryWorkspace()

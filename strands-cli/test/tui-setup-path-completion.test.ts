@@ -63,7 +63,7 @@ describe('setup import path completion', () => {
         frame = chunk.toString()
       }
     })
-    const config = CliConfigStore.memory({}, {}, { animations: false })
+    const config = CliConfigStore.memory({}, { animations: false })
     const instance = render(createElement(SetupWizard, { config, onComplete: () => {} }), {
       stdin: input,
       stdout: output,
@@ -80,9 +80,7 @@ describe('setup import path completion', () => {
 
     try {
       await instance.waitUntilRenderFlush()
-      for (let index = 0; index < 3; index++) {
-        await press('\u001b[B')
-      }
+      await press('\u001b[B')
       await press('\r')
 
       const placeholderFrame = sanitizeTerminalText(frame)

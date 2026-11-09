@@ -2,9 +2,8 @@ import { createRequire } from 'node:module'
 
 import type { ProviderId } from '../config.js'
 
-// The provider SDKs are optional peers of @strands-agents/sdk, imported only when a model for
-// that provider is constructed. strands-cli doesn't hard-depend on them, so a provider is usable
-// only if its package is installed next to the CLI.
+// @strands-agents/sdk imports provider SDKs only when their models are constructed. The CLI ships
+// all of them so every provider offered during setup works after the initial CLI installation.
 export const PROVIDER_PACKAGES: Readonly<Partial<Record<ProviderId, string>>> = {
   anthropic: '@anthropic-ai/sdk',
   openai: 'openai',
@@ -41,8 +40,7 @@ export function rethrowWithProviderHint(error: unknown): never {
   const name = /Cannot find (?:module|package) '([^']+)'/u.exec(message)?.[1]
   if (name && PACKAGE_NAMES.has(name)) {
     throw new Error(
-      `This model's provider needs the ${name} package, which is not installed. ` +
-        `Install it alongside strands-cli (npm install -g ${name}) and retry.`,
+      `This CLI installation is missing the required ${name} package. ` + 'Reinstall @strands-agents/cli and retry.',
       { cause: error }
     )
   }

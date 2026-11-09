@@ -1,0 +1,10 @@
+name: strands-pixeltable
+description: Pixeltable as a Strands MemoryStore with embedding-indexed semantic recall, plus read-only tools for querying and searching Pixeltable tables.
+integrationType: memory-store
+languages:
+  python:
+    package: strands-pixeltable
+github: https://github.com/pixeltable/strands-pixeltable
+docsUrl: https://github.com/pixeltable/strands-pixeltable#readme
+maintainedBy: partner
+addedDate: 2026-10-17

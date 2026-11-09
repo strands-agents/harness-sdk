@@ -139,6 +139,13 @@ def _normalize_builtin_tools(
     return {name: name in names for name in defaults.BUILTIN_TOOL_NAMES}
 
 
+def _check_caching(value: object) -> None:
+    """Raise unless ``value`` is a ``caching`` setting: ``"auto"``, a bool, or ``None``."""
+    if value is None or isinstance(value, bool) or value == "auto":
+        return
+    raise ValueError(f"caching must be 'auto', True, False, or None, got {value!r}; pass False to turn it off.")
+
+
 def _session_config(value: bool | SessionConfig | SessionManager | None) -> SessionConfig | SessionManager | None:
     """Normalize ``session`` to a ``SessionConfig`` (on), a ``SessionManager`` (used verbatim) or ``None`` (off)."""
     if value is None or value is False:

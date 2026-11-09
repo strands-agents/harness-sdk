@@ -5,6 +5,9 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { sanitizeTerminalText } from '../src/tui/terminal/sanitize.js'
 
+// Colored output paints solid cells as backgrounds, leaving only the half-block glyphs as text.
+const STRANDS_WORDMARK = /STRANDS|╔════╝|█▀▀ ▀█▀ █▀█ ▄▀█ █▄ █ █▀▄ █▀▀|▀▀ ▀ ▀ {2}▀ {2}▄▀ {3}▄ {4}▀▄ {2}▀▀/
+
 vi.setConfig({ testTimeout: 20_000 })
 
 const execFileAsync = promisify(execFile)
@@ -13,13 +16,17 @@ interface PtyResult {
   returnCode: number
   termiosRestored: boolean
   transcript: string
+  resizeTranscript: string
+  resizeBurstTranscript: string
+  resizeNoopTranscript: string
 }
 
 async function runPtySmoke(
   intro = false,
   shellMode?: 'command' | 'interrupt',
-  skipIntro = false,
-  frog = false
+  startupTyping = false,
+  frog = false,
+  resize = false
 ): Promise<PtyResult & { output: string }> {
   const driver = fileURLToPath(new URL('./fixtures/tui-pty-driver.py', import.meta.url))
   const loader = fileURLToPath(new URL('./fixtures/strands-cli-routing-source-loader.mjs', import.meta.url))
@@ -35,8 +42,9 @@ async function runPtySmoke(
         ...process.env,
         STRANDS_CLI_TEST_INTRO: intro ? 'true' : 'false',
         ...(shellMode ? { STRANDS_CLI_TEST_SHELL_MODE: shellMode } : {}),
-        ...(skipIntro ? { STRANDS_CLI_TEST_SKIP_INTRO: 'true' } : {}),
+        ...(startupTyping ? { STRANDS_CLI_TEST_STARTUP_TYPING: 'true' } : {}),
         ...(frog ? { STRANDS_CLI_TEST_FROG_MODE: 'true' } : {}),
+        ...(resize ? { STRANDS_CLI_TEST_RESIZE: 'true' } : {}),
       },
     }
   )
@@ -61,6 +69,22 @@ function expectRestoredTerminal(result: PtyResult & { output: string }): void {
 }
 
 describe.skipIf(process.platform === 'win32')('TUI PTY lifecycle', () => {
+  it('resizes the real PTY without blanking and restores the terminal after /exit', async () => {
+    const result = await runPtySmoke(false, undefined, false, false, true)
+    const frames = Buffer.from(result.resizeTranscript, 'base64').toString()
+    const burst = Buffer.from(result.resizeBurstTranscript, 'base64').toString()
+    const noop = Buffer.from(result.resizeNoopTranscript, 'base64').toString()
+
+    expect(result.returnCode).toBe(0)
+    expect(frames.split('\u001b[1;1H')).toHaveLength(7)
+    expect(burst.split('\u001b[1;1H')).toHaveLength(2)
+    expect(noop).toBe('')
+    for (const code of ['2J', '3J', '2K']) {
+      expect(frames + burst).not.toContain(`\u001b[${code}`)
+    }
+    expectRestoredTerminal(result)
+  })
+
   it('accepts typed edits and restores the terminal after /exit', async () => {
     const result = await runPtySmoke()
 
@@ -68,24 +92,27 @@ describe.skipIf(process.platform === 'win32')('TUI PTY lifecycle', () => {
     expectRestoredTerminal(result)
   })
 
-  it('hands the compact frog intro to the TUI and restores the terminal after /exit', async () => {
+  it('bypasses the intro when the full frog does not fit and restores the terminal after /exit', async () => {
     const result = await runPtySmoke(true)
-    const beforePrompt = result.output.slice(0, result.output.indexOf('Message Lifecycle Fixture'))
+    const beforePrompt = result.output.slice(0, result.output.indexOf('Enter to send'))
 
     expect(result.returnCode).toBe(0)
-    expect(sanitizeTerminalText(beforePrompt)).toContain('STRANDS')
-    expect(result.output).toMatch(/[▗▖▄▝▐▞▟▘▚▌▙▀▜▛]/u)
-    expect(result.output).toContain('Message Lifecycle Fixture')
+    expect(sanitizeTerminalText(beforePrompt)).toMatch(STRANDS_WORDMARK)
+    expect(sanitizeTerminalText(beforePrompt)).not.toContain('[ space to skip ]')
+    expect(result.output).toContain('Enter to send')
     expect(beforePrompt.split('\u001b[2J').length - 1).toBe(1)
     expectRestoredTerminal(result)
   })
 
-  it('skips the frog intro with Space and restores the terminal after /exit', async () => {
+  it('accepts spaced text at startup and restores the terminal after /exit', async () => {
     const result = await runPtySmoke(true, undefined, true)
+    const clean = sanitizeTerminalText(result.output)
 
     expect(result.returnCode).toBe(0)
-    expect(sanitizeTerminalText(result.output)).toContain('[ space to skip ]')
-    expect(result.output).toContain('Message Lifecycle Fixture')
+    expect(clean).toMatch(STRANDS_WORDMARK)
+    expect(clean).not.toContain('[ space to skip ]')
+    expect(clean).toContain('Enter to send')
+    expect(clean).toContain('startup draft')
     expectRestoredTerminal(result)
   })
 

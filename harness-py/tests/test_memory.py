@@ -130,9 +130,9 @@ class TestResolveMemory:
         )
         assert _model_id(_extraction_model(manager)) == "us.amazon.nova-lite-v1:0"
 
-    def test_injects_on_every_turn(self, tmp_path):
+    def test_leaves_the_injection_trigger_at_the_sdk_default_fresh_user_asks(self, tmp_path):
         manager = resolve_memory(model=DEFAULT_MODEL, memory_dir=str(tmp_path))
-        assert _injection_trigger(manager) == "everyTurn"
+        assert _injection_trigger(manager) is None
 
     def test_recall_only_store_when_not_writable(self, tmp_path):
         manager = resolve_memory(model=DEFAULT_MODEL, memory_dir=str(tmp_path), writable=False)
@@ -141,7 +141,7 @@ class TestResolveMemory:
         assert store.writable is False
         assert "search_memory" in _tool_names(manager)
         assert _extraction_model(manager) is None
-        assert _injection_trigger(manager) == "everyTurn"
+        assert _injection_trigger(manager) is None
 
     def test_manages_consumer_supplied_stores(self):
         first = _StubStore("first", writable=True)

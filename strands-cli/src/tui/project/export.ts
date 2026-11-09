@@ -10,6 +10,7 @@ import { normalizeHarnessAgentConfig } from '@strands-agents/harness/internal'
 import { ZipFile } from 'yazl'
 
 import { webFetchModelId } from '../builtin-tools.js'
+import { configuredSkillPaths } from '../skills.js'
 import { PROVIDER_PACKAGES } from '../provider/packages.js'
 import { chooseSaveFile } from '../terminal/directory-picker.js'
 import { agentProjectSource } from './source.js'
@@ -19,7 +20,6 @@ import { portableConfig, validateNoConfigSecrets } from './configuration.js'
 import { containsPath, type PackagedSource } from './packaging.js'
 
 const MAX_PROJECT_BYTES = 50 * 1024 * 1024
-const VENDOR_PATH = 'vendor/strands-harness'
 
 interface SkillPackage {
   id: string
@@ -33,18 +33,48 @@ export async function exportAgentProject(
   baseDir = process.cwd(),
   destination?: string
 ): Promise<string | undefined> {
-  const projectName = slug(profile.name)
   const selectedDestination =
     destination ??
     (await chooseSaveFile(
       `Export ${language === 'typescript' ? 'TypeScript' : 'Python'} harness project`,
-      `${projectName}-${language}.zip`
+      exportFileName(profile.name, language)
     ))
   if (!selectedDestination) {
     return undefined
   }
   const path = selectedDestination.toLowerCase().endsWith('.zip') ? selectedDestination : `${selectedDestination}.zip`
   return writeAgentProject(profile, language, skillPaths, path, baseDir, destination === undefined)
+}
+
+export function exportFileName(name: string, language: AgentProjectLanguage): string {
+  return `${slug(name)}-${language}.zip`
+}
+
+/**
+ * Exports the saved setup profile to `destination`, resolved against `cwd`. Agents authored in code keep
+ * their session and memory paths in source, so they export from chat, where those paths are loaded.
+ */
+export async function exportSavedAgent(
+  saved: { profile: HarnessAgentConfig; profileBaseDir?: string | null; agentProject?: string },
+  language: AgentProjectLanguage,
+  destination: string,
+  cwd = process.cwd()
+): Promise<string> {
+  if (saved.agentProject) {
+    throw new Error('This agent is authored in code. Export it from chat with /export.')
+  }
+  const baseDir = saved.profileBaseDir ?? cwd
+  const skills = saved.profile.skills
+  const path = destination.startsWith('~/') ? resolve(homedir(), destination.slice(2)) : resolve(cwd, destination)
+  const zipPath = path.toLowerCase().endsWith('.zip') ? path : `${path}.zip`
+  return writeAgentProject(
+    saved.profile,
+    language,
+    configuredSkillPaths(typeof skills === 'object' ? [...skills] : skills, baseDir),
+    zipPath,
+    baseDir,
+    false
+  )
 }
 
 export async function writeAgentProject(
@@ -72,11 +102,6 @@ export async function writeAgentProject(
     const buffer = Buffer.from(contents)
     addBytes(buffer.length)
     zip.addBuffer(buffer, path, { compress: false, mode: 0o100644 })
-  }
-  if (language === 'typescript') {
-    addTypeScriptPackage(zip, addBytes)
-  } else {
-    addDirectory(zip, pythonPackageRoot(), VENDOR_PATH, addBytes)
   }
   for (const skill of skills) {
     addPath(zip, skill.path, `agent/skills/${skill.id}`, addBytes, privatePaths)
@@ -139,8 +164,8 @@ export async function exportSourceProject(
     '.env.local',
     '.strands-dependencies',
     AGENT_ENTRYPOINT_FILE,
-    relative(root, path),
-    ...privateDirectories.map((path) => relative(root, path)),
+    posixRelative(root, path),
+    ...privateDirectories.map((path) => posixRelative(root, path)),
   ])
   const entrypoint = resolveProjectEntrypoint(
     root,
@@ -259,7 +284,7 @@ function typescriptProject(config: HarnessAgentConfig): Record<string, string> {
           check: 'tsc --noEmit',
         },
         dependencies: {
-          '@strands-agents/harness': `file:${VENDOR_PATH}`,
+          '@strands-agents/harness': `^${harnessVersion()}`,
           ...typescriptProviderDependencies(config),
           ...config.dependencies.typescript,
         },
@@ -315,7 +340,7 @@ function pythonProject(config: HarnessAgentConfig): Record<string, string> {
         }
       : {}),
     'requirements.txt': [
-      `./${VENDOR_PATH}${pythonProviderExtras(config)}`,
+      `strands-harness${pythonProviderExtras(config)}${harnessPythonSpecifier()}`,
       ...(hasCedarPolicy(config) ? ['strands-agents[cedar]'] : []),
       ...config.dependencies.python,
       '',
@@ -416,7 +441,7 @@ function projectReadme(config: HarnessAgentConfig, language: AgentProjectLanguag
     `Edit \`agent/${python ? 'agent.py' : 'agent.ts'}\` to change the agent. The CLI imports the agent defined there.`,
     'Each new launch imports the code again; there is no separate configuration snapshot.',
     'Packaged tools, skills, plugins, subagents, MCP servers, and policies live under `agent/`.',
-    '`vendor/` contains the matching harness library; `.agent/` holds generated sessions and memory.',
+    'The harness library is a normal dependency installed from the registry; `.agent/` holds generated sessions and memory.',
     '',
     'For a local MCP server, list its helper files and data in `files` so export can include them.',
     '`files` paths are relative to the saved configuration directory and are removed from exported SDK options.',
@@ -503,10 +528,15 @@ function addPath(
     throw new Error('Exported packages cannot contain symbolic links.')
   }
   if (details.isDirectory()) {
-    addDirectory(zip, source, destination, addBytes, new Set(privatePaths.map((path) => relative(source, path))))
+    addDirectory(zip, source, destination, addBytes, new Set(privatePaths.map((path) => posixRelative(source, path))))
   } else if (details.isFile()) {
     addFile(zip, source, destination, addBytes)
   }
+}
+
+/** Exclusion sets and ZIP entry names are always `/`-separated, so Windows paths have to be normalized. */
+function posixRelative(from: string, to: string): string {
+  return relative(from, to).split(sep).join('/')
 }
 
 function addDirectory(
@@ -524,14 +554,14 @@ function addDirectory(
     for (const entry of readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
       safeComponent(entry.name)
       const path = join(directory, entry.name)
-      if (IGNORED_DIRECTORIES.has(entry.name) || excluded.has(relative(root, path))) {
+      if (IGNORED_DIRECTORIES.has(entry.name) || excluded.has(posixRelative(root, path))) {
         continue
       }
       const details = lstatSync(path)
       if (details.isSymbolicLink()) {
         throw new Error('Exported packages cannot contain symbolic links.')
       }
-      const target = [destination, relative(root, path).split(sep).join('/')].filter(Boolean).join('/')
+      const target = [destination, posixRelative(root, path)].filter(Boolean).join('/')
       if (details.isDirectory()) {
         zip.addEmptyDirectory(target)
         visit(path)
@@ -541,21 +571,6 @@ function addDirectory(
     }
   }
   visit(root)
-}
-
-function addTypeScriptPackage(zip: ZipFile, addBytes: (size: number) => void): void {
-  const root = typescriptPackageRoot()
-  for (const name of ['package.json', 'README.md', 'LICENSE', 'NOTICE']) {
-    const path = join(root, name)
-    if (regularFile(path)) {
-      addFile(zip, path, `${VENDOR_PATH}/${name}`, addBytes)
-    }
-  }
-  const dist = join(root, 'dist')
-  if (!regularDirectory(dist)) {
-    throw new Error('The installed TypeScript harness package is missing its dist directory.')
-  }
-  addDirectory(zip, dist, `${VENDOR_PATH}/dist`, addBytes)
 }
 
 function addFile(zip: ZipFile, source: string, destination: string, addBytes: (size: number) => void): void {
@@ -630,14 +645,19 @@ function packageRoot(entrypoint: string): string {
   }
 }
 
-function pythonPackageRoot(): string {
-  const packaged = join(packageRoot(fileURLToPath(import.meta.url)), 'dist', 'python')
-  if (regularFile(join(packaged, 'pyproject.toml'))) {
-    return packaged
+// The exported project depends on the harness the CLI itself resolved: `@strands-agents/harness` on
+// npm, `strands-harness` on PyPI. They release in parity from this repo, so the installed npm version
+// drives both specifiers.
+function harnessVersion(): string {
+  const manifest = JSON.parse(readFileSync(join(typescriptPackageRoot(), 'package.json'), 'utf8')) as {
+    version: string
   }
-  throw new Error(
-    'The Strands CLI is missing its bundled Python package. Rebuild or reinstall Strands before exporting.'
-  )
+  return manifest.version
+}
+
+function harnessPythonSpecifier(): string {
+  const [major, minor] = harnessVersion().split('.')
+  return `~=${major}.${minor}.0`
 }
 
 function writeZip(zip: ZipFile, destination: string, overwrite: boolean): Promise<void> {
@@ -669,14 +689,6 @@ function writeZip(zip: ZipFile, destination: string, overwrite: boolean): Promis
     })
     zip.end()
   })
-}
-
-function regularDirectory(path: string): boolean {
-  try {
-    return lstatSync(path).isDirectory()
-  } catch {
-    return false
-  }
 }
 
 function safeComponent(value: string): string {

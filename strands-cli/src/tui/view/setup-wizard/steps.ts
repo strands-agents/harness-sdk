@@ -10,9 +10,12 @@ import { DEFAULT_HARNESS_AGENT_CONFIG, type HarnessAgentConfig } from '@strands-
 import type { AwsConfigurationDiscovery, LiteLlmDiscovery, OllamaDiscovery } from '../../provider/discovery.js'
 import { effortOptions, profileEffort, effortDisplayLabel, effortForModel } from '../../model/selection.js'
 import {
+  BUILTIN_TOOLS,
+  builtinToolChoices,
   enabledProfileTools,
   profileToolEnabled,
   webSearchFallback,
+  withBuiltinToolChoice,
   withProfileTool,
   withoutProfileTool,
   withWebSearchFallback,
@@ -40,27 +43,21 @@ import {
 } from './providers.js'
 import type { AppearanceSettings, EditableField, SetupDraft, SetupFlow, WizardRow } from './types.js'
 
-export const MANUAL_STEPS = ['Model', 'Agent', 'Tools', 'Plugins & features', 'Data', 'Safety', 'Review'] as const
-export const APPEARANCE_STEP = MANUAL_STEPS.length + 1
+export const CUSTOMIZE_STEPS = ['Model', 'Agent', 'Tools', 'Plugins & features', 'Data', 'Safety', 'Review'] as const
+export const APPEARANCE_STEP = CUSTOMIZE_STEPS.length + 1
 export const OPENING_CHOICES = [
   { id: 'quickstart', title: 'Quickstart', description: 'Pick a model and start working with your harness!' },
-  { id: 'agent', title: 'Q&A', description: 'Answer a few questions, get a custom harness. No code required.' },
   {
-    id: 'manual',
-    title: 'Manual',
+    id: 'customize',
+    title: 'Customize',
     description: 'Customize your harness from scratch. Model, prompt, tools, and beyond.',
   },
   { id: 'import', title: 'Import', description: 'Load in your custom harness from a file or zip.' },
+  { id: 'resume', title: 'Resume', description: 'Return to your harness and continue working.' },
 ] as const
 const SETUP_STEP_INSTRUCTIONS = {
-  quickstart: [
-    'Pick a model for your agent',
-    "Choose your agent's tools",
-    'Choose plugins and features',
-    'Choose how Strands looks',
-  ],
-  agent: ['Pick a model for the assistant'],
-  manual: [
+  quickstart: ['Pick a model for your agent'],
+  customize: [
     'Pick a model for your agent',
     'Name and instruct your agent',
     "Choose your agent's tools",
@@ -68,33 +65,29 @@ const SETUP_STEP_INSTRUCTIONS = {
     'Configure context and memory',
     'Set tool permissions',
     'Review your agent',
-    'Choose how Strands looks',
   ],
-  import: ['Choose an agent to import', 'Choose how Strands looks'],
+  import: ['Choose an agent to import'],
 } as const satisfies Record<SetupFlow, readonly string[]>
 
 export function setupStepProgress(
   flow: SetupFlow | undefined,
   step: number
-): { current: number; total: number; instruction: string } | undefined {
-  if (!flow || step === 0 || (flow === 'import' && step === 1)) {
+): { current: number; total: number; instruction: string; label?: string } | undefined {
+  if (!flow || step === 0 || step === APPEARANCE_STEP || (flow === 'import' && step === 1)) {
     return undefined
   }
-  const total = SETUP_STEP_INSTRUCTIONS[flow].length
-  const current = step === APPEARANCE_STEP ? total : step
-  return { current, total, instruction: SETUP_STEP_INSTRUCTIONS[flow][current - 1]! }
+  const instruction = SETUP_STEP_INSTRUCTIONS[flow][step - 1]!
+  if (flow !== 'customize') {
+    return { current: step, total: SETUP_STEP_INSTRUCTIONS[flow].length, instruction }
+  }
+  // Review closes the flow rather than counting as a step.
+  const total = CUSTOMIZE_STEPS.length - 1
+  return step > total ? { current: total, total, instruction, label: 'Review' } : { current: step, total, instruction }
 }
 
-const BUILTIN_TOOLS = [
-  ['shell', 'Run shell commands'],
-  ['read', 'Read workspace files'],
-  ['write', 'Create files'],
-  ['edit', 'Apply targeted file edits'],
-  ['web_fetch', 'Fetch and summarize web pages'],
-  ['web_search', 'Use provider-native web search'],
-  ['programmatic_tool_caller', 'Orchestrate tools with sandboxed Python'],
-  ['subagent', 'Delegate focused work to a fresh subagent'],
-] as const
+// Fits beside the widest capability label in an 80-column terminal.
+export const CAPABILITY_DESCRIPTION_MAX_LENGTH = 44
+
 const noop = (): void => {}
 
 export function appearanceSettings(settings: ChatSettings): AppearanceSettings {
@@ -153,13 +146,16 @@ export function rowsForStep(
   setDraft: (update: (current: SetupDraft) => SetupDraft) => void,
   updateProfile: (update: Partial<HarnessAgentConfig>) => void,
   setEditing: (editing: { field: EditableField; value: string }) => void,
-  liteLlmDiscovery?: LiteLlmDiscovery
+  liteLlmDiscovery?: LiteLlmDiscovery,
+  credentialRejectedProvider?: ProviderId,
+  credentialValidationProvider?: ProviderId,
+  credentialRejectionMessage?: string
 ): WizardRow[] {
   const environment = effectiveProviderEnvironment(providerEnvironment, detectedEnvironment, awsDiscovery)
-  if ((flow === 'quickstart' && step === 2) || (flow === 'manual' && step === 3)) {
+  if (flow === 'customize' && step === 3) {
     return toolSelectionRows(draft, setDraft, updateProfile)
   }
-  if ((flow === 'quickstart' && step === 3) || (flow === 'manual' && step === 4)) {
+  if (flow === 'customize' && step === 4) {
     return pluginSelectionRows(draft, setDraft, updateProfile)
   }
   const edit =
@@ -200,12 +196,18 @@ export function rowsForStep(
     const rows: WizardRow[] = PROVIDER_IDS.map((id) => {
       const enabled = readyProviders.includes(id)
       const assessment = providerAssessment(id, environment, awsDiscovery, ollamaDiscovery, liteLlmDiscovery)
+      const credentialRejected = id === credentialRejectedProvider
+      const credentialValidating = id === credentialValidationProvider
       return {
         id,
         label: PROVIDER_LABELS[id],
-        description: assessment.description,
+        description: credentialRejected
+          ? 'Setup required'
+          : credentialValidating
+            ? 'Validating'
+            : assessment.description,
         active: enabled,
-        status: assessment.status,
+        status: credentialRejected ? 'error' : credentialValidating ? 'warning' : assessment.status,
         activate: noop,
       }
     })
@@ -224,13 +226,20 @@ export function rowsForStep(
             selectedProvider === 'litellm' &&
             field.key === 'LITELLM_API_KEY' &&
             liteLlmDiscovery?.authenticationRequired === true
-          const editable = !credential || !detected || rejectedLiteLlmKey
+          const rejectedCredential =
+            rejectedLiteLlmKey || (selectedProvider === credentialRejectedProvider && credential)
+          const validatingCredential = selectedProvider === credentialValidationProvider && credential
+          const editable = !credential || !detected || rejectedCredential
           return {
             id: `${selectedProvider}:${field.key}`,
             label: field.label,
             description: credential
               ? detected
-                ? `${rejectedLiteLlmKey ? 'Rejected' : 'Detected'} · ${sourceLabel(detected.source)}`
+                ? rejectedCredential && credentialRejectionMessage
+                  ? credentialRejectionMessage
+                  : validatingCredential
+                    ? 'Checking API key...'
+                    : `${rejectedCredential ? 'Rejected' : 'Detected'} · ${sourceLabel(detected.source)}`
                 : credentialSetupDescription()
               : configured
                 ? `${configured}${selectOptions ? '  ▾' : ''}`
@@ -241,7 +250,7 @@ export function rowsForStep(
             field: field.key,
             ...(selectOptions ? { selectOptions } : {}),
             activate: editable
-              ? edit(field.key, configured ?? (rejectedLiteLlmKey ? '' : (detected?.value ?? '')))
+              ? edit(field.key, configured ?? (rejectedCredential ? '' : (detected?.value ?? '')))
               : noop,
           }
         })
@@ -260,6 +269,41 @@ export function rowsForStep(
             active: option.active === true,
             activate: (): void => updateProfile({ effort: profileEffort(option.id) }),
           })),
+          activate: noop,
+        })
+      }
+      if (flow === 'quickstart') {
+        const nativeSearch = providerSupportsWebSearch(draft.profile.model)
+        const enabled = profileToolEnabled(draft.profile.builtinTools, 'web_search')
+        rows.push({
+          id: 'quickstart-web-search',
+          label: 'Web search',
+          // The Exa-on note is a warning rendered by the wizard.
+          description: enabled
+            ? "Provider's built-in search"
+            : nativeSearch
+              ? 'Built-in search available'
+              : 'No built-in search',
+          choices: [
+            {
+              label: 'Off',
+              active: !enabled,
+              activate: (): void =>
+                updateProfile({ builtinTools: withoutProfileTool(draft.profile.builtinTools, 'web_search') }),
+            },
+            {
+              label: nativeSearch ? 'Native' : 'Exa',
+              active: enabled,
+              activate: (): void => {
+                const withoutSearch = withoutProfileTool(draft.profile.builtinTools, 'web_search')
+                updateProfile({
+                  builtinTools: nativeSearch
+                    ? withProfileTool(withoutSearch, 'web_search')
+                    : withWebSearchFallback(withoutSearch),
+                })
+              },
+            },
+          ],
           activate: noop,
         })
       }
@@ -508,7 +552,7 @@ function pluginSelectionRows(
     {
       id: 'skills',
       label: 'Skills',
-      description: 'Discover skills from this workspace and your other tools',
+      description: 'Discover skills across workspace and tools',
       active: skillsEnabled,
       activate: (): void =>
         setDraft((current) => ({
@@ -523,7 +567,7 @@ function pluginSelectionRows(
     {
       id: 'mcp',
       label: 'MCP servers',
-      description: 'Auto-discover MCP servers configured on this machine',
+      description: 'Auto-discover MCP servers on this machine',
       active: draft.settings.mcpDiscovery,
       activate: (): void =>
         setDraft((current) => ({
@@ -533,7 +577,7 @@ function pluginSelectionRows(
     },
     {
       id: 'agent-messaging',
-      label: SETTING_DEFINITIONS.find(({ key }) => key === 'agentMessaging')!.label,
+      label: 'Agent messaging',
       description: 'Discover and message other live agents',
       active: draft.settings.agentMessaging,
       activate: (): void =>
@@ -545,14 +589,14 @@ function pluginSelectionRows(
     {
       id: 'memory',
       label: 'Memory',
-      description: 'Recall and retain information between conversations',
+      description: 'Remember information between conversations',
       active: profileMemoryEnabled(draft.profile),
       activate: () => updateProfile({ memory: !profileMemoryEnabled(draft.profile) }),
     },
     {
       id: 'context',
       label: 'Context management',
-      description: 'Offload large tool outputs and manage long conversations',
+      description: 'Manage long conversations and large outputs',
       active: draft.profile.contextManager !== false,
       activate: () =>
         updateProfile({
@@ -562,7 +606,7 @@ function pluginSelectionRows(
     {
       id: 'background-tasks',
       label: 'Background tasks',
-      description: 'Run and manage long-running tools in the background',
+      description: 'Run long-running tools in the background',
       active: draft.profile.agentConfig.backgroundTasks !== false,
       activate: () =>
         updateProfile({
@@ -603,30 +647,15 @@ function pluginSelectionRows(
 }
 
 function toolRows(draft: SetupDraft, updateProfile: (update: Partial<HarnessAgentConfig>) => void): WizardRow[] {
-  const nativeSearch = providerSupportsWebSearch(draft.profile.model)
-  return BUILTIN_TOOLS.map(([id, description]) => {
-    // Without native search, web_search is the third-party Exa fallback: off unless opted into here.
-    const exa = id === 'web_search' && !nativeSearch
-    const active = exa
-      ? webSearchFallback(draft.profile.builtinTools) === 'exa'
-      : profileToolEnabled(draft.profile.builtinTools, id)
-    return {
-      id,
-      label: id,
-      description: exa ? '⚠ Sends every query to Exa (exa.ai), a third party — opt-in' : description,
-      ...(exa ? { descriptionColor: 'yellow' } : {}),
-      active,
-      activate: (): void => {
-        updateProfile({
-          builtinTools: active
-            ? withoutProfileTool(draft.profile.builtinTools, id)
-            : exa
-              ? withWebSearchFallback(draft.profile.builtinTools)
-              : withProfileTool(draft.profile.builtinTools, id),
-        })
-      },
-    }
-  })
+  return builtinToolChoices(draft.profile).map((choice) => ({
+    id: choice.id,
+    label: choice.id,
+    description: choice.description,
+    active: choice.active,
+    activate: (): void => {
+      updateProfile({ builtinTools: withBuiltinToolChoice(draft.profile, choice, !choice.active) })
+    },
+  }))
 }
 
 function toggle<const T extends string>(values: readonly T[], value: T): T[] {

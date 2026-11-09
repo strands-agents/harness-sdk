@@ -238,7 +238,7 @@ export class MemoryManager implements Plugin {
       return
     }
 
-    const coordinator = new ExtractionCoordinator(this._extractionStores, agent.model, this._tracer)
+    const coordinator = new ExtractionCoordinator(this._extractionStores, agent.auxModel, this._tracer)
     this._coordinator = coordinator
 
     // Buffer every message the agent adds, so extraction has its own copy to save from.
@@ -248,7 +248,7 @@ export class MemoryManager implements Plugin {
 
     for (const { store, config } of this._extractionStores) {
       for (const trigger of config.triggers) {
-        trigger.attach({ agent, fire: () => void coordinator.process(store) })
+        trigger.attach({ agent, fire: (invocationContext) => void coordinator.process(store, invocationContext) })
       }
     }
   }

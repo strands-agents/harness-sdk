@@ -26,6 +26,13 @@ permit (
 
 permit (
   principal,
+  action == Action::"retrieve_context",
+  resource
+);
+
+// Vended by a ContextOffloader (one a project adds, or an older harness release).
+permit (
+  principal,
   action == Action::"retrieve_offloaded_content",
   resource
 );
@@ -157,7 +164,6 @@ interface CedarPermissionsOptions {
   cwd: string
   policies?: string
   configurationPreview?: () => ChatDiffPreview | undefined
-  trustedTools?: readonly string[]
 }
 
 export class CedarPermissions extends InterventionHandler {
@@ -168,14 +174,12 @@ export class CedarPermissions extends InterventionHandler {
   private readonly _config: CliConfigStore
   private readonly _cedar: CedarAuthorization
   private readonly _configurationPreview: CedarPermissionsOptions['configurationPreview']
-  private readonly _trustedTools: ReadonlySet<string>
 
   constructor(options: CedarPermissionsOptions) {
     super()
     this._broker = options.broker
     this._config = options.config ?? CliConfigStore.memory()
     this._configurationPreview = options.configurationPreview
-    this._trustedTools = new Set(options.trustedTools?.map(sanitizeTerminalText))
     const workspace = canonicalPath(options.cwd)
     this._cedar = new CedarAuthorization({
       policies: options.policies ?? DEFAULT_CEDAR_POLICIES,
@@ -188,10 +192,7 @@ export class CedarPermissions extends InterventionHandler {
         path_in_workspace: toolName === 'read' && pathIsWithinWorkspace(toolInput.path, workspace),
         configuration_draft:
           toolName === 'strands_config' &&
-          (toolInput.action === 'inspect' ||
-            toolInput.action === 'models' ||
-            toolInput.action === 'update' ||
-            toolInput.action === 'reset'),
+          (toolInput.action === 'inspect' || toolInput.action === 'models' || toolInput.action === 'update'),
       }),
     })
   }
@@ -199,9 +200,6 @@ export class CedarPermissions extends InterventionHandler {
   override async beforeToolCall(event: BeforeToolCallEvent): Promise<ReturnType<CedarAuthorization['beforeToolCall']>> {
     const toolName = sanitizeTerminalText(event.toolUse.name)
     const configured = this._config.snapshot().permissions
-    if (this._trustedTools.has(toolName)) {
-      return InterventionActions.proceed({ reason: `Tool trusted for this session: ${toolName}` })
-    }
     if (configured.mode === 'bypassPermissions') {
       return InterventionActions.proceed({ reason: 'Permission checks bypassed by user configuration' })
     }

@@ -72,20 +72,22 @@ export function defaultSkillPaths(cwd = process.cwd(), home = homedir()): string
   return [...new Set([...userPaths, ...projectPaths])]
 }
 
-/** The CLI's view of the `skills` option: directory paths only (an `AgentSkills` instance is passed through). */
+/** The CLI's view of the `skills` option: paths and URLs (an `AgentSkills` instance is passed through). */
 export type SkillPathsOption = Exclude<HarnessAgentOptions['skills'], AgentSkills>
 
 function skillsDisabled(value: SkillPathsOption): boolean {
   return value === false || value === null || (Array.isArray(value) && value.length === 0)
 }
 
-/** Absolute paths for the configured `skills` directories; off or the default (`true`) yields none. */
+/** Absolute paths or HTTPS URLs for configured skills; off or the default (`true`) yields none. */
 export function configuredSkillPaths(value: SkillPathsOption, cwd = process.cwd()): string[] {
   if (value === undefined || value === true || skillsDisabled(value)) {
     return []
   }
   const sources = Array.isArray(value) ? value : [value as string | Skill]
-  return sources.flatMap((source) => (typeof source === 'string' ? [resolve(cwd, source)] : []))
+  return sources.flatMap((source) =>
+    typeof source === 'string' ? [source.startsWith('https://') ? source : resolve(cwd, source)] : []
+  )
 }
 
 /**

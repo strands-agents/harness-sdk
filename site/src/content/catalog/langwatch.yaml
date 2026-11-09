@@ -1,0 +1,9 @@
+name: langwatch
+description: LangWatch observability, evaluations and agent simulations for Strands agents, using the langwatch SDK on top of Strands' built-in OpenTelemetry tracing.
+integrationType: observability
+maintainedBy: partner
+languages:
+  python: {}
+github: https://github.com/langwatch/langwatch
+docsUrl: https://langwatch.ai/docs/integration/python/integrations/strand-agents
+addedDate: 2026-10-15

@@ -10,11 +10,10 @@ from strands.agent.conversation_manager.null_conversation_manager import NullCon
 from strands.agent.conversation_manager.sliding_window_conversation_manager import SlidingWindowConversationManager
 from strands.agent.conversation_manager.summarizing_conversation_manager import SummarizingConversationManager
 from strands.agent.state import AgentState
-from strands.experimental.bidi.agent import BidiAgent
-from strands.experimental.bidi.hooks import BidiAgentStopEvent
-from strands.experimental.bidi.models import BidiModel
+from strands.bidi.agent import BidiAgent
 from strands.hooks import AfterInvocationEvent
 from strands.interrupt import _InterruptState
+from strands.session.file_session_manager import FileSessionManager
 from strands.session.repository_session_manager import RepositorySessionManager
 from strands.types.content import ContentBlock
 from strands.types.exceptions import SessionException
@@ -715,45 +714,9 @@ def test_bidi_agent_messages_with_offset_zero(existing_session_manager, mock_bid
     assert len(mock_bidi_agent.messages) == 5
 
 
-def test_bidi_session_shared_methods_round_trip(session_manager, mock_repository):
-    agent = BidiAgent(
-        model=Mock(spec=BidiModel),
-        agent_id="bidi",
-        messages=[{"role": "user", "content": [{"text": "Hello"}], "tracking_id": "initial"}],
-        session_manager=session_manager,
-    )
-    session_manager.append_message(
-        {"role": "assistant", "content": [{"text": "Secret"}], "tracking_id": "response"}, agent
-    )
-    redacted_message = {"role": "assistant", "content": [{"text": "Redacted"}], "tracking_id": "response"}
-    session_manager.redact_latest_message(redacted_message, agent)
-    agent.state.set("saved", "state")
-    session_manager.sync_agent(agent)
-
-    # Bidi history is restored even when the provider manages its own conversation.
-    restored_model = Mock(spec=BidiModel, stateful=True)
-    restored_manager = RepositorySessionManager("test-session", mock_repository)
-    restored = BidiAgent(model=restored_model, agent_id="bidi", session_manager=restored_manager)
-
-    assert restored.state.get() == {"saved": "state"}
-    assert restored.messages == [agent.messages[0], redacted_message]
-
-    next_message = {"role": "user", "content": [{"text": "Next"}]}
-    restored_manager.append_message(next_message, restored)
-    tru_messages = [
-        (message.message_id, message.to_message()) for message in mock_repository.list_messages("test-session", "bidi")
-    ]
-    exp_messages = [(0, agent.messages[0]), (1, redacted_message), (2, next_message)]
-    assert tru_messages == exp_messages
-
-
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("agent_type", "after_event_type"), [(Agent, AfterInvocationEvent), (BidiAgent, BidiAgentStopEvent)]
-)
-async def test_register_hooks_persists_messages_and_state(session_manager, agent_type, after_event_type):
-    model_kwargs = {"model": Mock(spec=BidiModel)} if agent_type is BidiAgent else {}
-    agent = agent_type(agent_id="shared", session_manager=session_manager, **model_kwargs)
+async def test_register_hooks_persists_messages_and_state(session_manager):
+    agent = Agent(agent_id="shared", session_manager=session_manager)
     message = {"role": "user", "content": [{"text": "Hello"}], "tracking_id": "message-1"}
     agent.state.set("saved", "state")
     await agent._append_messages(message)
@@ -769,7 +732,7 @@ async def test_register_hooks_persists_messages_and_state(session_manager, agent
     assert tru_messages == exp_messages
 
     agent.state.set("completed", True)
-    await agent.hooks.invoke_callbacks_async(after_event_type(agent=agent))
+    await agent.hooks.invoke_callbacks_async(AfterInvocationEvent(agent=agent))
 
     tru_state = session_manager.session_repository.read_agent("test-session", "shared").state
     exp_state = {"saved": "state", "completed": True}
@@ -1369,3 +1332,36 @@ def test_fix_broken_tool_use_keeps_paired_tool_result_after_a_text_turn(session_
     fixed_messages = session_manager._fix_broken_tool_use(messages)
 
     assert fixed_messages == expected
+
+
+def test_prune_held_records_drops_removed_messages(session_manager):
+    agent = Agent(agent_id="a", session_manager=session_manager)
+    m1 = {"role": "user", "content": [{"text": "one"}]}
+    m2 = {"role": "assistant", "content": [{"text": "two"}]}
+    session_manager.append_message(m1, agent)
+    session_manager.append_message(m2, agent)
+
+    # Drop m1 → pruned from held records
+    agent.messages = [m2]
+    session_manager._prune_held_records(agent)
+    assert len(session_manager._held_records["a"]) == 1
+
+
+def test_restore_after_redacting_alias_records_returns_redacted_conversation(tmp_path):
+    """A fresh restore over the same storage must see both copies redacted (the cross-process scenario)."""
+    sm = FileSessionManager(session_id="s", storage_dir=str(tmp_path))
+    agent = Agent(agent_id="a", conversation_manager=NullConversationManager(), session_manager=sm)
+    msg = {"role": "user", "content": [{"text": "secret"}]}
+    sm.append_message(msg, agent)  # record 0
+    sm.append_message(msg, agent)  # record 1 — same object
+
+    msg["content"] = [{"text": "[redacted]"}]
+    sm.redact_latest_message(msg, agent)
+
+    # Simulate a new process: fresh manager and agent over the same storage directory.
+    sm2 = FileSessionManager(session_id="s", storage_dir=str(tmp_path))
+    restored = Agent(agent_id="a", conversation_manager=NullConversationManager(), session_manager=sm2)
+
+    assert len(restored.messages) == 2
+    assert restored.messages[0]["content"] == [{"text": "[redacted]"}]
+    assert restored.messages[1]["content"] == [{"text": "[redacted]"}]

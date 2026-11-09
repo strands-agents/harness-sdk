@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import os
-import tempfile
 import uuid
 from collections.abc import Mapping, Sequence
 from typing import Any, Literal
@@ -18,7 +17,6 @@ from strands.session import SessionManager, SnapshotSessionManager
 from strands.storage import LocalFileStorage
 from strands.tools.mcp import MCPClient, MCPServerConfig
 from strands.types.tools import AgentTool
-from strands.vended_plugins.context_offloader import ContextOffloader, FileStorage
 from strands.vended_plugins.skills import AgentSkills, SkillSources
 from strands.vended_tools import make_shell
 
@@ -33,6 +31,7 @@ from strands_harness.models import (
 )
 from strands_harness.options import (
     _builtin_tool_config,
+    _check_caching,
     _memory_config,
     _normalize_builtin_tools,
     _sanitize_session_id,
@@ -62,17 +61,14 @@ from strands_harness.types.agent import (
 
 logger = logging.getLogger(__name__)
 
-# Built-in plugins, each toggled by name via ``builtin_plugins``. Unlike the offloader and skills
-# plugins (wired from their own options), these are opt-out feature plugins that only bundle a tool
-# and a loop-level behavior; the map is the seam to grow the set (e.g. memories) later.
+# Built-in plugins, each toggled by name via ``builtin_plugins``. Unlike the skills plugin (wired from
+# its own option), these are opt-out feature plugins that only bundle a tool and a loop-level
+# behavior; the map is the seam to grow the set (e.g. memories) later.
 _BUILTIN_PLUGINS = {"todos": Todos, "environment": EnvironmentContext}
 
 # The delegation tool always runs in the background: its calls are long-running subtasks whose
 # intermediate work should stay out of the parent's turn.
 _ALWAYS_BACKGROUND_TOOL_NAMES = frozenset({"subagent"})
-
-_AUTO_MAX_RESULT_TOKENS = 1_500
-_AUTO_PREVIEW_TOKENS = 750
 
 # Sentinel for ``caching``: distinguishes "not passed" (the default, which warns on an unsupported
 # provider) from an explicit value like ``caching=None`` (off) or ``caching=True`` (which raises on
@@ -85,8 +81,8 @@ def _builtin_tools(parent_config: dict[str, Any]) -> dict[str, Any]:
     was enabled with (``{}`` for ``True``, see ``_BUILTIN_TOOL_CONFIG_KEYS``); ``web_fetch`` also
     derives its summarizer from the agent's model, ``subagent`` takes the whole parent config so it
     can rebuild a child the way this agent was built. ``subagent``'s own delegation-depth budget
-    lives on ``agent.state``, tracked by the tool itself. ``web_search`` here is the Exa fallback;
-    ``create_harness`` selects it only for a model without native search."""
+    lives on ``agent.state``, tracked by the tool itself. ``web_search`` here is the Exa tool;
+    ``create_harness`` selects it only when the setting is ``"exa"``."""
     enabled = parent_config["builtin_tools"]
     web_fetch_config = _builtin_tool_config(enabled, "web_fetch")
     web_fetch_model = resolve_web_fetch_model(parent_config["model"], web_fetch_config.pop("model", None))
@@ -112,43 +108,36 @@ def _select_builtin_tools(enabled: Mapping[str, Any], tools: dict[str, Any]) -> 
 def _web_search_mode(
     setting: Any, explicit: bool, model: Model | ModelRouter | str | None
 ) -> Literal["native", "exa"] | None:
-    """How ``web_search`` is served for ``model``: ``"native"`` (a model flag), ``"exa"`` (the
-    third-party tool, opted into with ``"exa"``), or ``None`` (off)."""
+    """How ``web_search`` is served for ``model``: ``"exa"`` (the third-party tool, whenever opted
+    into with ``"exa"``), ``"native"`` (a model flag), or ``None`` (off)."""
     if setting is False:
         return None
-    if supports_web_search(model):
-        return "native"
     if setting == "exa":
         logger.warning(
             "web_search is opted into Exa (exa.ai), a third-party service: every search query leaves your "
             "environment and is subject to Exa's privacy policy (https://exa.ai/privacy-policy)."
         )
         return "exa"
+    if supports_web_search(model):
+        return "native"
     target = (
         "A pre-built Model instance"
         if isinstance(model, (Model, ModelRouter))
         else f"Model {model or defaults.DEFAULT_MODEL}"
     )
-    message = (
-        f"{target} has no native web search. Pass builtin_tools={{'web_search': 'exa'}} to search "
-        "through Exa (a third party), or drop 'web_search'."
-    )
     if explicit:
-        raise ValueError(message)
-    logger.warning(message)
-    return None
-
-
-def _durable_offloader(offload_dir: str) -> Any:
-    return ContextOffloader(
-        storage=FileStorage(offload_dir),
-        max_result_tokens=_AUTO_MAX_RESULT_TOKENS,
-        preview_tokens=_AUTO_PREVIEW_TOKENS,
+        raise ValueError(
+            f"{target} has no built-in web search. Pass builtin_tools={{'web_search': 'exa'}} to search "
+            "through Exa (a third party), or remove 'web_search' from builtin_tools. See https://strandsagents.com/docs/user-guide/harness/tools/web-access/#web_search"
+        )
+    # Info, not a warning: the user didn't ask for search, and nothing failed.
+    logger.info(
+        "%s has no built-in web search, so the web_search tool is disabled. To enable it through Exa "
+        "(a third party), pass builtin_tools={'web_search': 'exa'}. See %s",
+        target,
+        "https://strandsagents.com/docs/user-guide/harness/tools/web-access/#web_search",
     )
-
-
-def _has_offloader(plugins: list[Any]) -> bool:
-    return any(isinstance(p, ContextOffloader) for p in plugins)
+    return None
 
 
 def _skills_plugin(skills: bool | SkillSources | AgentSkills | None) -> AgentSkills | None:
@@ -256,7 +245,7 @@ def create_harness(
     mcp_servers: str | dict[str, MCPServerConfig] | None = None,
     builtin_tools: Sequence[BuiltinToolName] | BuiltinToolsConfig | None = None,
     background_tasks: bool | BackgroundTasksConfig | None = None,
-    caching: str | bool | None = _UNSET,
+    caching: Literal["auto"] | bool | None = _UNSET,
     context_manager: ContextManagerOption = defaults.DEFAULT_CONTEXT_MANAGER,
     session: bool | SessionConfig | SessionManager | None = True,
     skills: bool | SkillSources | AgentSkills | None = True,
@@ -275,7 +264,7 @@ def create_harness(
     Args:
         model: A ``Model`` or ``ModelRouter`` instance, a ``"provider/name"`` string (e.g.
             ``"anthropic/claude-fable-5"``), a bare Bedrock model id, or ``None`` for the
-            harness default (Bedrock Opus 4.8).
+            harness default (Bedrock Opus 5).
         effort: Reasoning effort applied to the resolved model, mapped to each provider's request
             fields. ``"auto"`` (the default) uses the provider's recommended level, ``"off"`` turns
             reasoning off, and ``"minimal"``/``"low"``/``"medium"``/``"high"``/``"xhigh"``/``"max"``
@@ -294,8 +283,8 @@ def create_harness(
             left off that axis.
         plugins: Consumer SDK plugins, added alongside the built-in plugins (consumer plugins run
             first). Tools a plugin vends take part in the name-collision check, and the plugins reach
-            ``subagent`` children too. A ``ContextOffloader`` or ``AgentSkills`` passed here replaces
-            the one the harness would add. Plugin *instances* are shared with children, so one that keeps
+            ``subagent`` children too. An ``AgentSkills`` passed here replaces the one the harness
+            would add. Plugin *instances* are shared with children, so one that keeps
             per-agent state must keep it in ``agent.state`` (the SDK convention), not on ``self``.
         mcp_servers: MCP servers to connect, given as the standard ``mcpServers`` config: either a
             path to a JSON file or the mapping itself (a flat ``{name: {...}}`` map, or that map under
@@ -319,11 +308,10 @@ def create_harness(
             {"transport": "direct"}}`` fetches from the harness process instead of running ``curl`` in the
             agent's sandbox (the default, ``"curl"``).
             ``web_search`` turns on the model provider's native web search (OpenAI, Anthropic, Google,
-            GPT-5/GPT-6 models on bedrock-mantle). Elsewhere (Bedrock Converse, other Mantle models,
-            ``Model`` instances) it is off unless ``{"web_search": "exa"}`` opts into a ``web_search``
-            tool backed by Exa's hosted search, a third party that receives the queries (keyless;
-            ``EXA_API_KEY`` lifts its rate limit); naming ``web_search`` without the fallback on such a
-            model raises.
+            GPT-5, GPT-6, and Daybreak models on bedrock-mantle). Elsewhere (Bedrock Converse, other Mantle models,
+            ``Model`` instances) it is off, and naming it there raises. ``{"web_search": "exa"}``
+            instead gives the model a ``web_search`` tool backed by Exa's hosted search on any model,
+            a third party that receives the queries (keyless; ``EXA_API_KEY`` lifts its rate limit).
             ``programmatic_tool_caller`` lets the model orchestrate its other tools by writing Python
             that runs in a Monty sandbox (no filesystem, network, or process access; only the other
             tools are reachable), returning only what the code prints.
@@ -342,22 +330,24 @@ def create_harness(
             compatible tool. The invocation waits for completion and continues with the result.
             Pass ``False`` to disable Background Tasks, or provide a policy to control other tools,
             concurrency, completion, and timeouts.
-        caching: Enables prompt caching to save cost and latency where the provider supports it
-            (Bedrock and Anthropic direct set cache points and cached tools; OpenAI, Gemini, and
-            bedrock-mantle cache automatically server-side). Defaults to on. ``False``/``None`` turns
+        caching: Enables prompt caching to save cost and latency where the provider supports it.
+            Bedrock, Anthropic direct, OpenAI, and bedrock-mantle receive an SDK cache config; Gemini
+            and litellm cache automatically server-side. Defaults to on. ``False``/``None`` turns
             off what the harness configures, and has no effect where caching is automatic. Explicitly
-            enabling caching on a provider without it raises; on a pre-built ``Model`` instance it is
-            ignored with a warning (configure it on the instance).
+            enabling caching (``"auto"`` or ``True``) on a provider without it raises; on a pre-built
+            ``Model`` instance it is ignored with a warning (configure it on the instance). Any other
+            value raises.
         context_manager: The SDK's ``Agent(context_manager=)`` option: ``"auto"`` (the default) or
             ``"agentic"`` for an SDK preset, a ``ContextManagerConfig`` dict or a ``ContextManager``
-            instance for a custom pipeline, or ``False``/``None`` to disable it. When enabled, large
-            tool results are also offloaded to disk (a preview and reference are kept in context) so
-            the agent can run longer before compacting; disabling turns this off too.
+            instance for a custom pipeline, or ``False``/``None`` to disable it. The presets offload
+            large tool results out of context (a preview and reference are kept) so the agent can run
+            longer before compacting; the model reads a result back with ``retrieve_context``.
         session: File-backed conversation persistence, on by default. ``True`` (or ``{}``) snapshots
             the run under a fresh random id in ``./.agent/sessions`` via a ``SnapshotSessionManager``;
             ``{"id": ..., "dir": ...}`` picks the id and/or root directory; a ``SessionManager``
-            instance is used verbatim; ``False``/``None`` disables it (the conversation is in-memory
-            and offloaded artifacts go to a temporary directory that does not outlive the process).
+            instance is used verbatim (pass ``storage`` with it, or offloaded artifacts are embedded in its
+            snapshots); ``False``/``None`` disables it (the conversation and offloaded artifacts stay in
+            memory).
             This does not auto-resume across runs: with no ``id`` a new run starts a new session. To
             continue a previous conversation, read the minted id off the returned agent
             (``agent.session_id``) and pass it back as ``session={"id": ...}`` on the next run. An
@@ -370,7 +360,7 @@ def create_harness(
             used verbatim; ``False``/``None`` disables skills. Filesystem sources are read through the
             agent's sandbox when there is one. An ``AgentSkills`` in ``plugins`` wins.
         memory: File-backed long-term memory, on by default. When enabled, the agent distills durable
-            facts into markdown files, searches them before each turn, and folds the top matches into
+            facts into markdown files, searches them before each user turn, and folds the top matches into
             context; persistence is independent of any session, so memory survives across sessions.
             ``True`` (or ``{}``) uses a file store under ``./.agent/memory``; ``{"dir": ...}`` moves it;
             ``{"stores": [...]}`` swaps in your own store(s) under the harness's memory policy (injection on,
@@ -378,9 +368,9 @@ def create_harness(
             read-only; a ``MemoryManager`` instance is used verbatim and not forwarded to delegates;
             ``False``/``None`` disables it. An explicit ``memory_manager`` in ``agent_kwargs`` takes
             precedence. Extraction runs asynchronously every few turns on a small model, so a short run
-            may end before the first extraction fires; run
-            ``if agent.memory_manager: await agent.memory_manager.flush()`` at your shutdown boundary to
-            persist what's pending.
+            may end before the first extraction fires; scope the agent with ``async with agent:`` to
+            run its shutdown on exit, or call ``agent.shutdown()`` (``await agent.shutdown_async()``
+            from async code) at your shutdown boundary, to persist what's pending.
         builtin_plugins: Names of the built-in feature plugins to enable. Defaults to
             ``["todos", "environment"]``: ``todos`` adds a ``todo_write`` tool that tracks
             multi-step work and re-surfaces the list before each step; ``environment`` injects the
@@ -412,6 +402,8 @@ def create_harness(
         del enabled_tools["web_search"]
 
     caching_explicit = caching is not _UNSET
+    if caching_explicit:
+        _check_caching(caching)
     caching_on = bool(defaults.DEFAULT_CACHING) if not caching_explicit else bool(caching)
     resolved_model = resolve_model(
         model,
@@ -473,31 +465,23 @@ def create_harness(
         agent_kwargs["context_manager"] = context_manager if context_enabled else False
 
     session_manager = agent_kwargs.pop("session_manager", None)
-    session_dir: str | None = None
     if session_manager is None:
         if isinstance(session_option, SessionManager):
             session_manager = session_option
         elif session_option is not None:
             session_id = session_option.get("id")
-            session_dir = session_option.get("dir") or defaults.DEFAULT_SESSION_DIR
             resolved_id = _sanitize_session_id(session_id) if session_id else uuid.uuid4().hex[:8]
-            session_manager = SnapshotSessionManager(
-                resolved_id,
-                storage=LocalFileStorage(session_dir),
-                save_latest_on="message",
-            )
+            session_storage = LocalFileStorage(session_option.get("dir") or defaults.DEFAULT_SESSION_DIR)
+            session_manager = SnapshotSessionManager(resolved_id, storage=session_storage, save_latest_on="message")
+            # The context manager's stash goes to files, not into the snapshot rewritten on every message.
+            # Sharing the session's root is safe because storage namespaces each subsystem (``session/``,
+            # ``context/``).
+            if agent_kwargs.get("storage") is None:
+                agent_kwargs["storage"] = session_storage
 
     # Assemble plugins before the collision check so plugin-vended tools are checked too; consumer
     # plugins stay first so the tail is the harness's own.
     all_plugins: list[Any] = list(consumer_plugins)
-
-    if context_enabled and not _has_offloader(all_plugins):
-        offload_dir = (
-            os.path.join(session_dir, "offloaded")
-            if session_dir is not None
-            else tempfile.mkdtemp(prefix="strands-offload-")
-        )
-        all_plugins.append(_durable_offloader(offload_dir))
 
     if not _has_skills(all_plugins):
         skills_plugin = _skills_plugin(skills)

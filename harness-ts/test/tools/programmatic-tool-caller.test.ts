@@ -19,7 +19,6 @@ import {
   LIMITS,
   MAX_CONCURRENT_TOOL_CALLS,
   Output,
-  SKIP_CONTEXT_OFFLOAD_KEY,
   makeProgrammaticToolCaller,
   programmaticToolCaller,
 } from '../../src/tools/programmatic-tool-caller.js'
@@ -317,14 +316,13 @@ describe('programmatic_tool_caller', () => {
     expect(text(result)).toBe('Error: start\n\nExecution error: timed out after 0.3 seconds.')
   })
 
-  it('opts inner calls out of context offloading without touching the parent state', async () => {
-    const seen: Record<string, unknown>[] = []
+  it('keeps inner calls from changing the parent state', async () => {
     const whoami = tool({
       name: 'whoami',
-      description: 'Records the invocation state the inner call ran with.',
+      description: 'Writes to the invocation state the inner call ran with.',
       inputSchema: z.object({}),
       callback: (_input, toolContext) => {
-        seen.push({ ...toolContext.invocationState })
+        toolContext.invocationState.writtenByInnerCall = true
         return 'ok'
       },
     })
@@ -344,8 +342,6 @@ describe('programmatic_tool_caller', () => {
       next = await generator.next()
     }
     expect(text(next.value)).toBe('ok')
-    // The inner call opts out; the parent's own result must still be eligible for offloading.
-    expect(seen[0]![SKIP_CONTEXT_OFFLOAD_KEY]).toBe(true)
     expect(parentState).toEqual({ principal: 'alice' })
   })
 

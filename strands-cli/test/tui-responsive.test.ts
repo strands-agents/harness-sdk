@@ -7,10 +7,12 @@ import { ChatController, type ChatBackend } from '../src/tui/chat/controller.js'
 import { CliConfigStore } from '../src/tui/config.js'
 import { sanitizeTerminalText } from '../src/tui/terminal/sanitize.js'
 import { ChatApp } from '../src/tui/view/app.js'
-import { DnaVortexIntro } from '../src/tui/view/intro.js'
 import { frogStartupHeight, renderFrogStartupLockup } from '../src/tui/view/frog-intro-renderer.js'
 import { SetupWizard } from '../src/tui/view/setup-wizard/index.js'
 import { ttyInput, ttyOutput } from './fixtures/terminal.js'
+
+// Colored output paints solid cells as backgrounds, leaving only the half-block glyphs as text.
+const STRANDS_WORDMARK = /STRANDS|╔════╝|█▀▀ ▀█▀ █▀█ ▄▀█ █▄ █ █▀▄ █▀▀|▀▀ ▀ ▀ {2}▀ {2}▄▀ {3}▄ {4}▀▄ {2}▀▀/
 
 const instances: Instance[] = []
 const controllers: ChatController[] = []
@@ -78,11 +80,24 @@ async function mount(element: ReactElement, columns: number, rows: number) {
 }
 
 describe('responsive welcome art', () => {
+  it.each([8, 10])('keeps slash suggestions and the footer visible at %s rows', async (rows) => {
+    const view = await mount(createElement(ChatApp, { controller: controller() }), 40, rows)
+    view.input.write('/')
+    await vi.waitFor(() => {
+      view.fits()
+      expect(view.screen()).toContain('/help')
+      expect(view.screen()).toContain('/settings')
+    })
+  })
+
   it.each([
     [120, 35, 12],
-    [80, 34, 19],
-    [80, 19, 4],
-    [40, 11, 4],
+    [80, 34, 6],
+    [73, 34, 6],
+    [64, 34, 2],
+    [120, 20, 8],
+    [80, 19, 6],
+    [40, 11, 2],
     [22, 8, 1],
     [80, 4, 1],
   ])('fits %s columns and %s available rows into %s art rows', (width, available, height) => {
@@ -92,7 +107,7 @@ describe('responsive welcome art', () => {
     expect(lines).toHaveLength(height)
     expect(lines.every((line) => stringWidth(line) === width)).toBe(true)
     if (height < 12) {
-      expect(art).toContain('STRANDS')
+      expect(art).toMatch(STRANDS_WORDMARK)
     }
   })
 
@@ -112,33 +127,16 @@ describe('responsive welcome art', () => {
       await vi.waitFor(() => {
         view.fits()
         expect(view.screen().replace(/\s/g, '')).toContain('keepthisdraft')
-        expect(view.screen()).toContain('/help')
-        if (rows < 30) {
-          expect(view.screen()).toContain('STRANDS')
+        expect(view.screen()).toContain('/settings')
+        if (rows === 10) {
+          expect(view.screen()).not.toMatch(STRANDS_WORDMARK)
+        } else if (rows < 30) {
+          expect(view.screen()).toMatch(STRANDS_WORDMARK)
         } else {
           expect(view.screen()).toContain('╔')
         }
       })
     }
-  })
-
-  it('uses compact art from the first intro frame and handles resize while initialization is pending', async () => {
-    const complete = vi.fn()
-    const view = await mount(createElement(DnaVortexIntro, { ready: false, onComplete: complete }), 40, 16)
-    expect(view.screen()).toContain('STRANDS')
-    for (const [columns, rows] of [
-      [120, 40],
-      [40, 16],
-      [22, 10],
-    ] as const) {
-      await view.resize(columns, rows)
-      await vi.waitFor(() => {
-        view.fits()
-        expect(view.screen()).toContain('space to skip')
-        if (columns < 74) expect(view.screen()).toContain('STRANDS')
-      })
-    }
-    expect(complete).not.toHaveBeenCalled()
   })
 
   it('keeps setup choices visible in a narrow window and after resizing', async () => {
@@ -147,17 +145,34 @@ describe('responsive welcome art', () => {
       40,
       40
     )
-    expect(view.screen()).toContain('STRANDS')
+    expect(view.screen()).toMatch(STRANDS_WORDMARK)
     for (const [columns, rows] of [
       [40, 16],
+      [65, 40],
+      [66, 40],
+      [92, 37],
+      [93, 37],
       [120, 40],
       [40, 24],
     ] as const) {
       await view.resize(columns, rows)
       await vi.waitFor(() => {
         view.fits()
-        for (const choice of ['Quickstart', 'Q&A', 'Manual', 'Import']) {
+        for (const choice of ['Quickstart', 'Customize', 'Import']) {
           expect(view.screen()).toContain(choice)
+        }
+        if (rows >= 37) {
+          const lines = view.screen().split('\n')
+          const titleRows = ['Quickstart', 'Customize', 'Import', 'Resume'].map((title) =>
+            lines.findIndex((line) =>
+              line
+                .trim()
+                .split(/\s{2,}/)
+                .includes(title)
+            )
+          )
+          expect(titleRows.every((row) => row >= 0)).toBe(true)
+          expect(new Set(titleRows).size).toBe(columns >= 66 ? 2 : 4)
         }
         expect(view.screen()).toContain('Shift+Tab')
         expect(view.screen()).toMatch(/[Cc]lick/)

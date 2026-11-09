@@ -6,6 +6,7 @@ from .s3_session_manager import S3SessionManager
 from .session_manager import SessionManager
 from .session_repository import SessionRepository
 from .snapshot_session_manager import (
+    BidiAgentSaveLatestStrategy,
     MultiAgentSaveLatestStrategy,
     SaveLatestStrategy,
     SnapshotSessionManager,
@@ -13,6 +14,7 @@ from .snapshot_session_manager import (
 )
 
 __all__ = [
+    "BidiAgentSaveLatestStrategy",
     "FileSessionManager",
     "MultiAgentSaveLatestStrategy",
     "RepositorySessionManager",

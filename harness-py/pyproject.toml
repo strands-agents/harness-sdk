@@ -26,11 +26,11 @@ classifiers = [
 ]
 # [otel] pulls the OTLP exporter: telemetry is on by default (wired when a collector endpoint is
 # configured), so the exporter must always be importable, not an optional extra.
-# 1.55.1 is the first release with Background Tasks and its public BackgroundTasksConfig export.
+# SDK 1.64.0 places OpenAI Responses cache points on GPT-5.6+, which the harness's caching relies on.
 # pydantic-monty is the sandbox programmatic_tool_caller runs model-authored code in; it is a hard
 # dependency because the tool is on by default. Pinned exactly while Monty is pre-1.0 and its API moves.
 dependencies = [
-    "strands-agents[otel]>=1.56.0,<2.0.0",
+    "strands-agents[otel]>=1.64.0,<2.0.0",
     "pydantic-monty==0.0.23",
     "pydantic>=2.5,<3",
 ]
@@ -44,7 +44,7 @@ litellm = ["strands-agents[litellm]"]
 dev = [
     "pytest>=8.0.0,<9.0.0",
     "pytest-asyncio>=0.24.0,<1.0.0",
-    "ruff>=0.9.0,<1.0.0",
+    "ruff>=0.16.0,<0.17.0",
     "strands-agents[openai,anthropic,gemini,ollama,litellm]",
     "openai>=2.0.0,<3.0.0",
     # The MCP test fixtures use mcp v1's FastMCP API; the SDK allows mcp 2.x, which renamed it.

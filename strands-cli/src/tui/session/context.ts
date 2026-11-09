@@ -25,15 +25,37 @@ export async function persistContext(
   result: AgentResult,
   context: ChatContextUsage | undefined
 ): Promise<void> {
-  if (!context || Object.keys(context).length === 0) {
+  if (!context || result.lastMessage?.trackingId !== runtime.agent.messages?.at(-1)?.trackingId) {
     return
   }
-  const message = runtime.agent.messages?.at(-1)
-  const fingerprint = contextFingerprint(runtime, scope)
-  if (message?.role !== 'assistant' || result.lastMessage?.trackingId !== message.trackingId || !fingerprint) {
+  if (!storeContext(runtime, scope, context)) {
     return
   }
+  try {
+    await runtime.agent.sessionManager?.saveSnapshot({
+      target: runtime.agent,
+      isLatest: true,
+    })
+  } catch {
+    // A meter persistence failure must not turn a completed model response into a failed turn.
+  }
+}
+
+/**
+ * Records the context usage on the latest assistant message so a resumed session restores the meter.
+ * The caller saves the session snapshot.
+ */
+export function storeContext(
+  runtime: AgentModelRuntime,
+  scope: string | undefined,
+  context: ChatContextUsage
+): boolean {
   const messages = runtime.agent.messages
+  const message = messages?.at(-1)
+  const fingerprint = contextFingerprint(runtime, scope)
+  if (Object.keys(context).length === 0 || message?.role !== 'assistant' || !fingerprint) {
+    return false
+  }
   for (let index = messages.length - 2; index >= 0; index--) {
     if (clearStoredContext(messages[index])) {
       break
@@ -49,14 +71,7 @@ export async function persistContext(
       },
     },
   }
-  try {
-    await runtime.agent.sessionManager?.saveSnapshot({
-      target: runtime.agent,
-      isLatest: true,
-    })
-  } catch {
-    // A meter persistence failure must not turn a completed model response into a failed turn.
-  }
+  return true
 }
 
 function contextFingerprint(runtime: AgentModelRuntime, scope: string | undefined): string | undefined {

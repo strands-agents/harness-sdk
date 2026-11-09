@@ -52,7 +52,7 @@ describe('resolveLogConfig', () => {
   })
 
   it('prefers TMPDIR for the default path', () => {
-    expect(resolveLogConfig({ TMPDIR: '/var/tmp' }).filePath).toBe('/var/tmp/strands/cli.log')
+    expect(resolveLogConfig({ TMPDIR: '/var/tmp' }).filePath).toBe(join('/var/tmp', 'strands', 'cli.log'))
   })
 })
 

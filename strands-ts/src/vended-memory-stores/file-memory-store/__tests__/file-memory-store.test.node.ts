@@ -2,9 +2,10 @@ import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest'
 import { FileMemoryStore } from '../store.js'
 import { InMemoryStorage } from '../../../storage/in-memory-storage.js'
 import { ModelExtractor } from '../../../memory/extraction/model-extractor.js'
-import type { Storage } from '../../../storage/storage.js'
+import type { Storage, StorageSearchResult } from '../../../storage/storage.js'
 import type { ExtractionConfig } from '../../../memory/extraction/types.js'
 import type { MessageData } from '../../../types/messages.js'
+import { logger } from '../../../logging/logger.js'
 
 const encoder = new TextEncoder()
 const decoder = new TextDecoder()
@@ -25,6 +26,41 @@ describe('FileMemoryStore', () => {
   })
 
   describe('constructor', () => {
+    it('warns that the search option is deprecated and still delegates to it', async () => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      const search = { search: vi.fn().mockResolvedValue([{ key: 'custom.md', score: 1 }]) }
+      await storage.write('memory/deprecated/custom.md', new TextEncoder().encode('custom result'))
+      const deprecatedStore = new FileMemoryStore({ name: 'deprecated', storage, search })
+
+      expect(warnSpy).toHaveBeenCalledTimes(1)
+      expect(warnSpy.mock.calls[0]![0]).toBe(
+        'store=<deprecated> | search option is deprecated and will be removed in a future version, ' +
+          'set the search strategy on the storage backend instead'
+      )
+      const results = await deprecatedStore.search('anything')
+      expect(search.search).toHaveBeenCalledTimes(1)
+      expect(results.map((entry) => entry.content)).toEqual(['custom result'])
+      warnSpy.mockRestore()
+    })
+
+    it('warns about the deprecated search option once per store name', () => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      const search = { search: vi.fn().mockResolvedValue([]) }
+
+      new FileMemoryStore({ name: 'deprecated-repeat', storage, search })
+      new FileMemoryStore({ name: 'deprecated-repeat', storage, search })
+
+      expect(warnSpy).toHaveBeenCalledTimes(1)
+      warnSpy.mockRestore()
+    })
+
+    it('does not warn when search is not set', () => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      new FileMemoryStore({ name: 'no-search', storage })
+      expect(warnSpy).not.toHaveBeenCalled()
+      warnSpy.mockRestore()
+    })
+
     it('sets name and description from config', () => {
       expect(store.name).toBe('test-store')
       expect(store.description).toBe('A test file memory store')
@@ -261,6 +297,171 @@ describe('FileMemoryStore', () => {
       expect(results).toHaveLength(1)
       expect(results[0]!.content).toBe('valid content about deploy')
     })
+
+    it('delegates to a search strategy configured on the storage backend', async () => {
+      const strategy = {
+        search: vi.fn().mockResolvedValue([{ key: 'user-prefers-dark-mode-for-all-editors.md', score: 0.9 }]),
+      }
+      const strategyStorage = new InMemoryStorage({ searchStrategy: strategy })
+      const strategyStore = new FileMemoryStore({ name: 'strategy-store', storage: strategyStorage })
+      await strategyStore.add('User prefers dark mode for all editors')
+
+      const results = await strategyStore.search('editor theme')
+
+      // The strategy receives the store's scoped storage, which only holds this store's entries.
+      const [scoped] = strategy.search.mock.calls[0]!
+      expect(scoped).toBeInstanceOf(InMemoryStorage)
+      expect(await (scoped as InMemoryStorage).list('')).toEqual(['user-prefers-dark-mode-for-all-editors.md'])
+      expect(strategy.search).toHaveBeenCalledWith(scoped, 'editor theme')
+      expect(results).toEqual([
+        {
+          content: 'User prefers dark mode for all editors',
+          metadata: { path: 'user-prefers-dark-mode-for-all-editors.md', score: 0.9 },
+        },
+      ])
+    })
+
+    it('skips an unreadable entry instead of failing the search', async () => {
+      await store.add('Locked note about dark mode')
+      const originalRead = InMemoryStorage.prototype.read
+      const read = vi.spyOn(InMemoryStorage.prototype, 'read').mockImplementation(async function (
+        this: InMemoryStorage,
+        key: string
+      ) {
+        if (key.startsWith('locked-')) throw new Error(`Failed to read '${key}' from local storage`)
+        return originalRead.call(this, key)
+      })
+
+      const results = await store.search('dark mode')
+
+      expect(results.map((result) => result.content)).toStrictEqual(['User prefers dark mode for all editors'])
+      read.mockRestore()
+    })
+
+    it('skips a result whose read fails when the backend returns keys without data', async () => {
+      const keysOnlyStorage: Storage = {
+        async write(): Promise<void> {},
+        async read(key: string): Promise<Uint8Array | null> {
+          if (key.endsWith('locked.md')) throw new Error(`Failed to read '${key}'`)
+          return encoder.encode('good entry\n')
+        },
+        async delete(): Promise<void> {},
+        async list(): Promise<string[]> {
+          return []
+        },
+        async search(): Promise<StorageSearchResult[]> {
+          return [
+            { key: 'memory/keys-only/locked.md', score: 2 },
+            { key: 'memory/keys-only/good.md', score: 1 },
+          ]
+        },
+      }
+      const keysOnlyStore = new FileMemoryStore({ name: 'keys-only', storage: keysOnlyStorage })
+
+      const results = await keysOnlyStore.search('anything')
+
+      expect(results).toStrictEqual([{ content: 'good entry', metadata: { path: 'good.md', score: 1 } }])
+    })
+
+    it('fills maxSearchResults with the next hit when a higher-ranked read fails', async () => {
+      const keysOnlyStorage: Storage = {
+        async write(): Promise<void> {},
+        async read(key: string): Promise<Uint8Array | null> {
+          if (key.endsWith('locked.md')) throw new Error(`Failed to read '${key}'`)
+          return encoder.encode(`${key} entry`)
+        },
+        async delete(): Promise<void> {},
+        async list(): Promise<string[]> {
+          return []
+        },
+        async search(): Promise<StorageSearchResult[]> {
+          return [
+            { key: 'memory/fill/locked.md', score: 3 },
+            { key: 'memory/fill/a.md', score: 2 },
+            { key: 'memory/fill/b.md', score: 1 },
+            { key: 'memory/fill/c.md', score: 0.5 },
+          ]
+        },
+      }
+      const fillStore = new FileMemoryStore({ name: 'fill', storage: keysOnlyStorage, maxSearchResults: 2 })
+
+      const results = await fillStore.search('anything')
+
+      expect(results.map((result) => result.metadata?.path)).toStrictEqual(['a.md', 'b.md'])
+    })
+
+    it('logs which search path it resolved', async () => {
+      const debug = vi.spyOn(logger, 'debug').mockImplementation(() => {})
+
+      await store.search('dark mode')
+
+      expect(debug).toHaveBeenCalledWith('store=<test-store>, path=<backend> | resolved search')
+      debug.mockRestore()
+    })
+
+    it('reads each entry once with the default keyword search', async () => {
+      const read = vi.spyOn(InMemoryStorage.prototype, 'read')
+
+      const results = await store.search('dark mode')
+
+      expect(results.map((result) => result.content)).toStrictEqual(['User prefers dark mode for all editors'])
+      // One read per stored entry during the scan; hits reuse the bytes the scan returned.
+      expect(read).toHaveBeenCalledTimes(3)
+      read.mockRestore()
+    })
+
+    it("uses data returned by the storage's search without re-reading it", async () => {
+      const read = vi.fn().mockResolvedValue(null)
+      const searchingStorage: Storage = {
+        async write(): Promise<void> {},
+        read,
+        async delete(): Promise<void> {},
+        async list(): Promise<string[]> {
+          return []
+        },
+        async search(): Promise<StorageSearchResult[]> {
+          return [{ key: 'memory/searching-store/hit.md', score: 1, data: encoder.encode('content from search\n') }]
+        },
+      }
+      const searchingStore = new FileMemoryStore({ name: 'searching-store', storage: searchingStorage })
+
+      const results = await searchingStore.search('anything')
+
+      expect(results).toEqual([{ content: 'content from search', metadata: { path: 'hit.md', score: 1 } }])
+      expect(read).not.toHaveBeenCalled()
+    })
+
+    it('applies maxSearchResults to results from the storage backend', async () => {
+      const strategy = {
+        search: vi.fn().mockResolvedValue([
+          { key: 'user-prefers-dark-mode-for-all-editors.md', score: 2 },
+          { key: 'deploy-process-uses-blue-green-strategy.md', score: 1 },
+        ]),
+      }
+      const strategyStorage = new InMemoryStorage({ searchStrategy: strategy })
+      const strategyStore = new FileMemoryStore({ name: 'strategy-store', storage: strategyStorage })
+      await strategyStore.add('User prefers dark mode for all editors')
+      await strategyStore.add('Deploy process uses blue-green strategy')
+
+      const results = await strategyStore.search('anything', { maxSearchResults: 1 })
+
+      expect(results.map((result) => result.metadata?.['path'])).toEqual(['user-prefers-dark-mode-for-all-editors.md'])
+    })
+
+    it('prefers the store-level search strategy over the storage backend', async () => {
+      const storageStrategy = { search: vi.fn().mockResolvedValue([]) }
+      const storeStrategy = { search: vi.fn().mockResolvedValue([]) }
+      const strategyStore = new FileMemoryStore({
+        name: 'strategy-store',
+        storage: new InMemoryStorage({ searchStrategy: storageStrategy }),
+        search: storeStrategy,
+      })
+
+      await strategyStore.search('query')
+
+      expect(storeStrategy.search).toHaveBeenCalledTimes(1)
+      expect(storageStrategy.search).not.toHaveBeenCalled()
+    })
   })
 
   describe('extraction (key-aware extractor)', () => {
@@ -271,6 +472,9 @@ describe('FileMemoryStore', () => {
           done: true,
           value: { message: { content: [{ text: '[]' }] }, stopReason: 'end_turn', metadata: {} },
         }),
+        [Symbol.asyncIterator]() {
+          return this
+        },
       }),
     })
 
@@ -293,6 +497,9 @@ describe('FileMemoryStore', () => {
               metadata: {},
             },
           }),
+          [Symbol.asyncIterator]() {
+            return this
+          },
         }),
       }
 
@@ -324,6 +531,9 @@ describe('FileMemoryStore', () => {
               metadata: {},
             },
           }),
+          [Symbol.asyncIterator]() {
+            return this
+          },
         }),
       }
 
@@ -407,7 +617,9 @@ describe('FileMemoryStore', () => {
 
       const messages: MessageData[] = [{ role: 'user', content: [{ text: 'Hello' }] }]
       await customExtractor.extract(messages, { defaultModel: createMockModel('default') as never })
-      expect(customModel.streamAggregated.mock.calls[0]![1].systemPrompt).toBe('Custom prompt.')
+      const systemPrompt = customModel.streamAggregated.mock.calls[0]![1].systemPrompt as string
+      expect(systemPrompt.startsWith('Custom prompt.\n\n')).toBe(true)
+      expect(systemPrompt).not.toContain('The first line is a markdown heading')
     })
   })
 })

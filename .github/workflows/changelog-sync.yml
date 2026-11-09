@@ -5,16 +5,16 @@ on:
     types: [published]
   schedule:
     # Backstop for missed release events, and the only same-day path for evals
-    # releases (evals cannot dispatch cross-repo with its GITHUB_TOKEN, and the
-    # bot PAT has no write here). skip-existing makes a no-op run nearly free,
-    # so a 2-hourly cadence costs little and caps changelog lag at ~2h.
+    # and box releases (neither can dispatch cross-repo with its GITHUB_TOKEN,
+    # and the bot PAT has no write here). skip-existing makes a no-op run
+    # nearly free, so a 2-hourly cadence caps changelog lag at ~2h.
     - cron: '17 */2 * * *'
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Single release tag to sync'
+        description: 'Release tag to re-render even if its file exists (optional)'
         type: string
-        required: true
+        required: false
 
 permissions:
   contents: read
@@ -33,13 +33,16 @@ jobs:
       (github.event_name != 'release' ||
       startsWith(github.event.release.tag_name, 'python/v') ||
       startsWith(github.event.release.tag_name, 'typescript/v') ||
+      startsWith(github.event.release.tag_name, 'harness-python/v') ||
+      startsWith(github.event.release.tag_name, 'harness-typescript/v') ||
+      startsWith(github.event.release.tag_name, 'harness-cli/v') ||
       startsWith(github.event.release.tag_name, 'v'))
     runs-on: strands-agents_ubuntu-latest_4-core
-    # De-dupes runs of the same event type + tag. Deliberately does NOT
-    # serialize release vs. cron: a cross-event duplicate PR has identical
-    # content and is closed manually. In-flight syncs finish (no cancel).
+    # Every run rebuilds the one rolling PR branch, so runs are serialized. A
+    # queued run that GitHub replaces with a newer one loses nothing: each run
+    # generates everything still missing from main.
     concurrency:
-      group: changelog-sync-${{ github.event_name }}-${{ github.event.release.tag_name || inputs.tag || 'backfill' }}
+      group: changelog-sync
       cancel-in-progress: false
     # The PAT (CHANGELOG_BOT_TOKEN) performs every write -- checkout, the
     # github-script reads, and the branch push + PR creation all use it, not the
@@ -47,6 +50,8 @@ jobs:
     # would be dead, misleading privilege.
     permissions:
       contents: read
+    env:
+      SYNC_BRANCH: changelog/sync
     steps:
       - uses: actions/checkout@v7
         with:
@@ -71,58 +76,45 @@ jobs:
           GH_TOKEN: ${{ secrets.CHANGELOG_BOT_TOKEN }}
         run: gh api repos/strands-agent/harness-sdk/merge-upstream -f branch=main
 
-      # Cheap step first: if branch-name computation is going to fail, fail
-      # before the expensive Generate step.
-      - name: Compute harness branch name
-        id: harness_branch
-        env:
-          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+      # One rolling PR for every source: create-pull-request rebuilds the branch
+      # from main on each run, so each run must regenerate everything still
+      # missing from main. Restoring what the PR branch changed since its base
+      # keeps reviewer edits and re-renders (without reverting newer main
+      # changes), and makes the skip-existing runs below only add new releases.
+      # Non-fatal: without the restore, the run still syncs; it only loses edits.
+      - name: Restore files from the open sync PR
+        continue-on-error: true
         run: |
-          if [ -n "$TAG" ]; then
-            SUFFIX=$(printf '%s' "$TAG" | sed 's/[^A-Za-z0-9._-][^A-Za-z0-9._-]*/-/g')
-          else
-            SUFFIX=backfill
-          fi
-          echo "name=changelog/sync-harness-sdk-$SUFFIX" >> "$GITHUB_OUTPUT"
+          git fetch --no-tags https://github.com/strands-agent/harness-sdk.git "$SYNC_BRANCH" || exit 0
+          git diff --name-only --diff-filter=AM HEAD...FETCH_HEAD -- site/src/content/changelog \
+            | xargs -r git checkout FETCH_HEAD --
 
-      - name: Generate harness changelog files
+      - name: Generate missing harness-sdk changelog files
         working-directory: site
         env:
           GITHUB_TOKEN: ${{ secrets.CHANGELOG_BOT_TOKEN }}
           SOURCE_REPO: strands-agents/harness-sdk
-          MODE: ${{ github.event_name == 'schedule' && 'backfill' || 'single' }}
-          SKIP_EXISTING: ${{ github.event_name == 'schedule' }}
-          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+          MODE: backfill
+          SKIP_EXISTING: 'true'
         run: npm run changelog:sync
 
-      # Dedicated agent account (outside the org): a classic PAT with the
-      # public_repo scope. Authors the PR as a real user, so the PR triggers
-      # the required CI Gate (unlike github.token, whose PRs don't).
-      # Account can't push to upstream directly, so the branch lands on its
-      # fork and the PR is opened cross-repo against target-repo. Note:
-      # `strands-agent` is SINGULAR -- the dedicated bot account, distinct
-      # from the `strands-agents` (plural) org. Not a typo.
-      - name: Open harness changelog PR
-        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
-        with:
-          token: ${{ secrets.CHANGELOG_BOT_TOKEN }}
-          push-to-fork: strands-agent/harness-sdk
-          add-paths: site/src/content/changelog/**
-          branch: ${{ steps.harness_branch.outputs.name }}
-          title: "docs(changelog): sync strands-agents/harness-sdk ${{ github.event.release.tag_name || inputs.tag || 'backfill' }}"
-          commit-message: "docs(changelog): sync strands-agents/harness-sdk ${{ github.event.release.tag_name || inputs.tag || 'backfill' }}"
-          body: |
-            Automated changelog sync.
-            Add a curated `highlights:` block to any release file before merging if desired.
-          delete-branch: true
+      # A manual dispatch for an already-synced tag re-renders that file
+      # (curated highlights are preserved).
+      - name: Re-sync the requested tag
+        if: inputs.tag != ''
+        working-directory: site
+        env:
+          GITHUB_TOKEN: ${{ secrets.CHANGELOG_BOT_TOKEN }}
+          SOURCE_REPO: strands-agents/harness-sdk
+          MODE: single
+          TAG: ${{ inputs.tag }}
+        run: npm run changelog:sync
 
-      # Evals backstop: evals' own release workflow opens the cross-repo PR for
-      # instant sync; this catches missed events. The condition runs the evals
-      # step whether the harness step passed or failed (the two syncs are
-      # independent -- a harness failure must not delay the evals backstop a day)
-      # but NOT when the run was cancelled.
-      - name: Generate missed evals changelog files
-        if: (success() || failure()) && github.event_name == 'schedule'
+      # Evals and box release from their own repos, which cannot dispatch this
+      # workflow, so every run backfills them too. A failure in one source must
+      # not block the others.
+      - name: Generate missing evals changelog files
+        if: success() || failure()
         working-directory: site
         env:
           GITHUB_TOKEN: ${{ secrets.CHANGELOG_BOT_TOKEN }}
@@ -131,15 +123,50 @@ jobs:
           SKIP_EXISTING: 'true'
         run: npm run changelog:sync
 
-      - name: Open evals changelog PR
-        if: (success() || failure()) && github.event_name == 'schedule'
+      - name: Generate missing box changelog files
+        if: success() || failure()
+        working-directory: site
+        env:
+          GITHUB_TOKEN: ${{ secrets.CHANGELOG_BOT_TOKEN }}
+          SOURCE_REPO: strands-agents/box
+          MODE: backfill
+          SKIP_EXISTING: 'true'
+        run: npm run changelog:sync
+
+      - name: List pending releases
+        id: pending
+        if: success() || failure()
+        run: |
+          {
+            echo 'list<<EOF'
+            git status --porcelain --untracked-files=all -- site/src/content/changelog | awk '{print "- `" $2 "`"}'
+            echo EOF
+          } >> "$GITHUB_OUTPUT"
+
+      # Dedicated agent account (outside the org): a classic PAT with the
+      # public_repo scope. Authors the PR as a real user, so the PR triggers
+      # the required CI Gate (unlike github.token, whose PRs don't).
+      # Account can't push to upstream directly, so the branch lands on its
+      # fork and the PR is opened cross-repo against target-repo. Note:
+      # `strands-agent` is SINGULAR -- the dedicated bot account, distinct
+      # from the `strands-agents` (plural) org. Not a typo.
+      - name: Open or update the changelog PR
+        if: success() || failure()
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
         with:
           token: ${{ secrets.CHANGELOG_BOT_TOKEN }}
           push-to-fork: strands-agent/harness-sdk
           add-paths: site/src/content/changelog/**
-          branch: changelog/sync-evals-backfill
-          title: "docs(changelog): sync strands-agents/evals backfill"
-          commit-message: "docs(changelog): sync strands-agents/evals backfill"
-          body: Automated evals changelog backstop.
+          branch: ${{ env.SYNC_BRANCH }}
+          title: "docs(changelog): sync release notes"
+          commit-message: "docs(changelog): sync release notes"
+          body: |
+            Automated changelog sync. Merge this before deploying the docs site:
+            the docs deploy fails while a published release has no changelog file.
+
+            Pending releases:
+            ${{ steps.pending.outputs.list }}
+
+            Add a curated `highlights:` block to any release file before merging if
+            desired. Later syncs keep edits made on this branch.
           delete-branch: true

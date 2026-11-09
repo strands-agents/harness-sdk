@@ -104,14 +104,16 @@ const VersionHeading = detail ? 'h1' : 'h2'
     <div class="cl-version-date">{formatChangelogDate(d.date)}</div>
     <div class="cl-version-links">
       <a href={d.releaseUrl} target="_blank" rel="noopener">GitHub release <span aria-hidden="true">↗</span></a>
-      <a href={d.packageUrl} target="_blank" rel="noopener">
-        {langIcon && (
-          <svg class="cl-icon" width="11" height="11" viewBox="0 0 24 24" aria-hidden="true">
-            {langIcon.map((p) => <path fill="currentColor" d={p} />)}
-          </svg>
-        )}
-        {isPackagePyPI ? 'PyPI' : 'npm'} {d.version} <span aria-hidden="true">↗</span>
-      </a>
+      {d.packageUrl !== d.releaseUrl && (
+        <a href={d.packageUrl} target="_blank" rel="noopener">
+          {langIcon && (
+            <svg class="cl-icon" width="11" height="11" viewBox="0 0 24 24" aria-hidden="true">
+              {langIcon.map((p) => <path fill="currentColor" d={p} />)}
+            </svg>
+          )}
+          {isPackagePyPI ? 'PyPI' : 'npm'} {d.version} <span aria-hidden="true">↗</span>
+        </a>
+      )}
     </div>
   </div>
   <div class="cl-rail-line"><span class="cl-dot" /><span class="cl-line" /></div>

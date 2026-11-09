@@ -13,11 +13,11 @@ describe('provider packages', () => {
     expect(missingProviderPackage('google')).toBeUndefined()
   })
 
-  it('rewrites a missing provider package error into an install hint', () => {
+  it('rewrites a missing provider package error into a CLI reinstall hint', () => {
     const original = new Error("Cannot find package '@anthropic-ai/sdk' imported from /app/node_modules")
     expect(() => rethrowWithProviderHint(original)).toThrow(
       expect.objectContaining({
-        message: expect.stringContaining('npm install -g @anthropic-ai/sdk'),
+        message: expect.stringContaining('Reinstall @strands-agents/cli'),
         cause: original,
       })
     )

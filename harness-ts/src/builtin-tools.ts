@@ -106,8 +106,8 @@ export function webSearchExplicit(value: readonly BuiltinToolName[] | BuiltinToo
 export type WebSearchMode = 'native' | 'exa'
 
 /**
- * How `web_search` is served for `model`: `'native'` (a model flag), `'exa'` (the third-party tool,
- * opted into with `'exa'`), or `undefined` (off).
+ * How `web_search` is served for `model`: `'exa'` (the third-party tool, whenever opted into with
+ * `'exa'`), `'native'` (a model flag), or `undefined` (off).
  */
 export function webSearchMode(
   setting: WebSearchSetting,
@@ -117,24 +117,28 @@ export function webSearchMode(
   if (setting === false) {
     return undefined
   }
-  if (supportsWebSearch(model)) {
-    return 'native'
-  }
   if (setting === 'exa') {
     logger.warn(
       "web_search is opted into Exa (exa.ai), a third-party service: every search query leaves your environment and is subject to Exa's privacy policy (https://exa.ai/privacy-policy)."
     )
     return 'exa'
   }
+  if (supportsWebSearch(model)) {
+    return 'native'
+  }
   const target =
     typeof model === 'string' || model === undefined ? `Model ${model ?? DEFAULT_MODEL}` : 'A pre-built Model instance'
-  const message =
-    `${target} has no native web search. Pass builtinTools: { web_search: 'exa' } ` +
-    "to search through Exa (a third party), or drop 'web_search'."
   if (explicit) {
-    throw new Error(message)
+    throw new Error(
+      `${target} has no built-in web search. Pass builtinTools: { web_search: 'exa' } to search ` +
+        "through Exa (a third party), or remove 'web_search' from builtinTools. See https://strandsagents.com/docs/user-guide/harness/tools/web-access/#web_search"
+    )
   }
-  logger.warn(message)
+  // Info, not a warning: the user didn't ask for search, and nothing failed.
+  logger.info(
+    `${target} has no built-in web search, so the web_search tool is disabled. To enable it through Exa ` +
+      "(a third party), pass builtinTools: { web_search: 'exa' }. See https://strandsagents.com/docs/user-guide/harness/tools/web-access/#web_search"
+  )
   return undefined
 }
 
@@ -142,8 +146,8 @@ export function webSearchMode(
 export type BuildAgent = (options: HarnessAgentOptions) => Promise<Agent>
 
 // `web_fetch` needs the agent's model to pick its default summarizer, and `subagent` the whole
-// parent config to rebuild a child. `web_search` here is the Exa fallback; `createHarness` selects
-// it only for a model without native search.
+// parent config to rebuild a child. `web_search` here is the Exa tool; `createHarness` selects
+// it only when the setting is `'exa'`.
 export async function buildBuiltinTools(
   buildAgent: BuildAgent,
   parentConfig: HarnessAgentOptions,

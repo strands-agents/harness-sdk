@@ -1,11 +1,19 @@
-import { createContext, useContext, type ReactElement } from 'react'
+import { createContext, Fragment, useContext, type ReactElement } from 'react'
 import { Box, type DOMElement } from 'ink'
 import type { ChatPanel, ChatSnapshot } from '../chat/types.js'
+import type { MetadataTarget } from './interaction.js'
+import { contextColor, metadataPlacements } from './presentation.js'
 import { Text, useTheme } from './theme.js'
 
 export const PanelHelpContext = createContext<ChatPanel | undefined>(undefined)
 
-export function PanelHelpFooter({ width }: { width: number }): ReactElement | null {
+export function PanelHelpFooter({
+  width,
+  centered = false,
+}: {
+  width: number
+  centered?: boolean
+}): ReactElement | null {
   const panel = useContext(PanelHelpContext)
   if (!panel) return null
   const permission = panel.kind === 'permission'
@@ -15,19 +23,27 @@ export function PanelHelpFooter({ width }: { width: number }): ReactElement | nu
     ? '↑↓ · Enter choose · Esc deny'
     : detail
       ? '↑↓ scroll · Esc back'
-      : !actionable
-        ? 'Esc close'
-        : panel.kind === 'settings'
-          ? width < 42
-            ? '↑↓ move · ←→ change · Esc back'
-            : '↑↓ · ←→ change · Tab category · Esc back'
-          : panel.kind === 'models'
-            ? 'Tab · Enter choose · Esc back'
-            : panel.filters?.length
-              ? 'Tab category · Enter · Esc back'
-              : '↑↓ · Enter open · Esc back'
+      : panel.kind === 'rename'
+        ? 'Enter save · Ctrl+U clear · Esc cancel'
+        : panel.kind === 'effort'
+          ? '←→ change · Enter done · Esc close'
+          : !actionable
+            ? 'Esc close'
+            : panel.kind === 'settings'
+              ? width < 42
+                ? '↑↓ move · ←→ change · Esc back'
+                : '↑↓ · ←→ change · Tab category · Esc back'
+              : panel.kind === 'models'
+                ? 'Tab · Enter choose · Esc back'
+                : panel.kind === 'tools' || panel.kind === 'permissions'
+                  ? '↑↓ · Enter toggle · Esc save'
+                  : panel.kind === 'skills'
+                    ? '↑↓ · Enter run · → details · Esc back'
+                    : panel.filters?.length
+                      ? 'Tab category · Enter · Esc back'
+                      : '↑↓ · Enter open · Esc back'
   return (
-    <Box width={Math.max(1, width)} height={1} flexShrink={0}>
+    <Box width={Math.max(1, width)} height={1} flexShrink={0} justifyContent={centered ? 'center' : 'flex-start'}>
       <Text dimColor wrap="truncate-end">
         {keys}
       </Text>
@@ -35,64 +51,63 @@ export function PanelHelpFooter({ width }: { width: number }): ReactElement | nu
   )
 }
 
-export function ComposerHelpFooter({
+export function ComposerFooter({
   snapshot,
   width,
+  pressed,
+  hovered,
+  settingsHovered = false,
+  onMetadataElement,
   onActionElement,
 }: {
   snapshot: ChatSnapshot
   width: number
+  pressed?: MetadataTarget
+  hovered?: MetadataTarget
+  settingsHovered?: boolean
+  onMetadataElement?: (target: MetadataTarget, element: DOMElement | null) => void
   onActionElement?: (action: 'settings' | 'setup' | 'help', element: DOMElement | null) => void
 }): ReactElement {
-  const { foreground, selection } = useTheme()
-  const running = snapshot.status === 'running'
-  const compact = width < 25
+  const palette = useTheme()
+  const { accent, foreground } = palette
   return (
-    <Box
-      height={1}
-      marginTop={1}
-      marginX={compact ? -1 : 0}
-      flexShrink={0}
-      paddingX={compact ? 0 : 1}
-      justifyContent="space-between"
-    >
-      <Box flexShrink={1} overflow="hidden">
-        <Text dimColor wrap="truncate-end">
-          <Text color={foreground}>Enter</Text> {running ? 'queue' : 'send'}
-          {running ? (
-            <>
-              {' · '}
-              <Text color={foreground}>Esc</Text> stop
-            </>
+    <Box height={1} marginTop={1} width={width} flexShrink={0} paddingX={1} overflow="hidden">
+      {metadataPlacements(snapshot, width).map((segment) => (
+        <Box
+          key={segment.target}
+          width={segment.width}
+          flexShrink={0}
+          justifyContent={segment.alignment}
+          overflow="hidden"
+        >
+          {segment.target === 'settings' ? (
+            <Box ref={(element) => onActionElement?.('settings', element)}>
+              <Text color={settingsHovered ? accent : foreground}>{segment.text}</Text>
+            </Box>
+          ) : segment.controls ? (
+            segment.controls.map((control, index) => (
+              <Fragment key={control.target}>
+                {index > 0 ? <Text color={foreground}> • </Text> : null}
+                <Box ref={(element) => onMetadataElement?.(control.target, element)}>
+                  <Text
+                    color={
+                      hovered === control.target || pressed === control.target
+                        ? accent
+                        : control.target === 'context'
+                          ? contextColor(snapshot.context, palette)
+                          : foreground
+                    }
+                  >
+                    {control.text}
+                  </Text>
+                </Box>
+              </Fragment>
+            ))
           ) : (
-            <>
-              {width >= 86 ? (
-                <>
-                  {' · '}
-                  <Text color={foreground}>Shift+Enter</Text> newline
-                </>
-              ) : null}
-              {width >= 62 ? (
-                <>
-                  {' '}
-                  · <Text color={foreground}>/</Text> commands
-                </>
-              ) : null}
-            </>
+            <Text dimColor>{segment.text}</Text>
           )}
-        </Text>
-      </Box>
-      <Box flexShrink={0}>
-        {(['settings', 'setup', 'help'] as const).map((action) => (
-          <Box
-            key={action}
-            ref={(element) => onActionElement?.(action, element)}
-            marginLeft={compact && action === 'settings' ? 0 : 1}
-          >
-            <Text backgroundColor={selection}>/{action}</Text>
-          </Box>
-        ))}
-      </Box>
+        </Box>
+      ))}
     </Box>
   )
 }

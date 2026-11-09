@@ -3,6 +3,8 @@ from datetime import timedelta
 from unittest.mock import MagicMock
 
 import pytest
+from mcp.types import CallToolResult as MCPCallToolResult
+from mcp.types import TextContent as MCPTextContent
 from mcp.types import Tool as MCPTool
 from mcp.types import ToolAnnotations
 
@@ -204,3 +206,33 @@ async def test_stream_without_agent_cancel_signal(mcp_agent_tool, mock_mcp_clien
         read_timeout_seconds=None,
         cancel_signal=None,
     )
+
+
+@pytest.mark.asyncio
+async def test_stream_sends_client_meta_on_model_driven_calls(mock_transport, mock_session, alist):
+    """Test a model-driven call inherits the client-level meta, which stream() never passes itself."""
+    mock_content = MCPTextContent(type="text", text="done")
+    received_meta = {}
+
+    async def call_tool(name, arguments, read_timeout_seconds, progress_callback=None, meta=None, **kwargs):
+        received_meta.update(meta or {})
+        return MCPCallToolResult(isError=False, content=[mock_content])
+
+    mock_session.call_tool.side_effect = call_tool
+
+    with MCPClient(mock_transport["transport_callable"], meta={"com.example/request_id": "abc-123"}) as client:
+        agent_tool = MCPAgentTool(make_mcp_tool(), client)
+        tool_use = {"toolUseId": "test-123", "name": "test_tool", "input": {"param": "value"}}
+        invocation_state = {"agent": MagicMock(_cancel_signal=threading.Event())}
+
+        tru_events = await alist(agent_tool.stream(tool_use, invocation_state))
+
+    exp_result = {
+        "toolUseId": "test-123",
+        "status": "success",
+        "content": [{"text": "done"}],
+        "isError": False,
+    }
+    assert tru_events == [ToolResultEvent(exp_result)]
+    # Trace context may be merged on top, so assert our key survives.
+    assert received_meta["com.example/request_id"] == "abc-123"

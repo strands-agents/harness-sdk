@@ -1,6 +1,7 @@
 import pytest
 from strands.models import BedrockModel, CacheConfig, Model, ModelRouter
 
+from strands_harness.defaults import DEFAULT_EFFORT
 from strands_harness.models import (
     _claude_extended_thinking,
     _supports_media,
@@ -90,6 +91,23 @@ def test_anthropic_direct_no_caching_when_off():
     assert "cache_tools" not in model.config
 
 
+@pytest.mark.parametrize(
+    ("spec", "model_id", "search_tool"),
+    [
+        ("openai/gpt-5.6-sol", "gpt-5.6-sol", {"type": "web_search"}),
+        ("bedrock-mantle/openai.gpt-6-luna", "openai.gpt-6-luna", {"type": "web_search", "external_web_access": True}),
+    ],
+)
+@pytest.mark.parametrize("caching", [True, False])
+def test_openai_responses_caching_preserves_reasoning_and_search(spec, model_id, search_tool, caching):
+    model = resolve(spec, effort="high", web_search=True, caching=caching)
+    assert model.config == {
+        "model_id": model_id,
+        **({"cache_config": CacheConfig(strategy="auto")} if caching else {}),
+        "params": {"reasoning": {"effort": "high"}, "tools": [search_tool]},
+    }
+
+
 def test_explicit_caching_on_supported_provider_builds():
     model = resolve("openai/gpt-5.6-sol", caching=True, caching_explicit=True)
     assert model is not None
@@ -158,6 +176,76 @@ def test_explicit_effort_on_model_instance_warns_and_builds(caplog):
     assert any("effort='low' not applied" in r.message for r in caplog.records)
 
 
+def test_default_effort_on_model_instance_does_not_warn(caplog):
+    import logging
+
+    instance = BedrockModel(model_id="anything")
+    with caplog.at_level(logging.WARNING, logger="strands_harness.models"):
+        assert resolve(instance, effort=DEFAULT_EFFORT) is instance
+    assert not any("not applied" in r.message for r in caplog.records)
+
+
+# https://github.com/strands-agents/harness-sdk/issues/4472
+@pytest.mark.parametrize(
+    ("spec", "path"),
+    [
+        ("bedrock/global.anthropic.claude-opus-5", ("additional_request_fields", "output_config", "effort")),
+        ("bedrock/global.anthropic.claude-sonnet-5", ("additional_request_fields", "output_config", "effort")),
+        ("bedrock/us.anthropic.claude-sonnet-4-6", ("additional_request_fields", "output_config", "effort")),
+        ("bedrock/global.anthropic.claude-fable-5-1", ("additional_request_fields", "output_config", "effort")),
+        ("bedrock/openai.gpt-5.6-sol", ("additional_request_fields", "reasoning", "effort")),
+        ("bedrock/us.openai.gpt-5.5", ("additional_request_fields", "reasoning", "effort")),
+        ("bedrock/global.openai.gpt-6-astra", ("additional_request_fields", "reasoning", "effort")),
+        ("bedrock/openai.gpt-oss-120b-1:0", ("additional_request_fields", "reasoning_effort")),
+        ("bedrock/qwen.qwen3-32b-v1:0", ("additional_request_fields", "reasoning_effort")),
+        ("bedrock/us.xai.grok-4", ("additional_request_fields", "reasoning_effort")),
+        (
+            "bedrock/global.amazon.nova-2-lite-v1:0",
+            ("additional_request_fields", "reasoningConfig", "maxReasoningEffort"),
+        ),
+        ("anthropic/claude-opus-5", ("params", "output_config", "effort")),
+        ("openai/gpt-5.6-sol", ("params", "reasoning", "effort")),
+        ("bedrock-mantle/openai.gpt-5.6-sol", ("params", "reasoning", "effort")),
+        ("google/gemini-3.5-flash", ("params", "thinking_config", "thinking_level")),
+    ],
+)
+def test_default_effort_is_high_where_the_model_has_levels(spec, path):
+    config = resolve(spec, effort=DEFAULT_EFFORT).config
+    at = config
+    for key in path:
+        at = at[key]
+    assert at == "high"
+    assert config == resolve(spec, effort="high").config
+
+
+@pytest.mark.parametrize(
+    "spec", ["bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0", "anthropic/claude-haiku-4-5-20251001"]
+)
+def test_default_effort_is_the_high_budget_on_extended_thinking_claude(spec):
+    config = resolve(spec, effort=DEFAULT_EFFORT).config
+    block = config["additional_request_fields"] if spec.startswith("bedrock/") else config["params"]
+    assert block == {"thinking": {"type": "enabled", "budget_tokens": 16_384}}
+    assert config == resolve(spec, effort="high").config
+
+
+@pytest.mark.parametrize(
+    "spec",
+    [
+        "ollama/llama3",
+        "litellm/gpt-4o",
+        "bedrock/amazon.nova-pro-v1:0",
+        "bedrock/us.anthropic.claude-3-haiku-20240307-v1:0",
+        "anthropic/claude-3-haiku-20240307",
+    ],
+)
+def test_default_effort_sends_no_reasoning_field_where_the_model_has_no_levels(spec):
+    config = resolve(spec, effort=DEFAULT_EFFORT).config
+    assert "additional_request_fields" not in config
+    assert "params" not in config
+    with pytest.raises(ValueError, match="not supported"):
+        resolve(spec, effort="high")
+
+
 def test_effort_explicit_level():
     model = resolve("bedrock/global.anthropic.claude-opus-4-8", effort="low")
     assert model.config["additional_request_fields"]["output_config"]["effort"] == "low"
@@ -173,13 +261,52 @@ def test_openai_on_bedrock_maps_effort_to_reasoning_effort():
     assert model.config["additional_request_fields"] == {"reasoning": {"effort": "max"}}
 
 
-@pytest.mark.parametrize("model_id", ["openai.gpt-6-astra", "global.openai.gpt-6-astra", "us.openai.gpt-6-astra"])
-def test_astra_on_bedrock_resolves_effort(model_id):
+@pytest.mark.parametrize(
+    "model_id", ["openai.gpt-6-astra", "global.openai.gpt-6-astra", "us.openai.gpt-6-astra", "us.openai.gpt-6.1-sol"]
+)
+def test_astra_and_6_1_sol_on_bedrock_resolve_effort_without_none(model_id):
+    for effort, level in [("auto", "high"), ("low", "low"), ("max", "max")]:
+        model = resolve(f"bedrock/{model_id}", effort=effort)
+        assert model.config["additional_request_fields"] == {"reasoning": {"effort": level}}
+    assert "additional_request_fields" not in resolve(f"bedrock/{model_id}", effort="off").config
+    with pytest.raises(ValueError, match="not supported"):
+        resolve(f"bedrock/{model_id}", effort="minimal")
+
+
+@pytest.mark.parametrize(
+    "model_id", ["openai.gpt-5.4", "us.openai.gpt-5.4", "openai.gpt-5.5", "us.openai.gpt-5.5", "global.openai.gpt-5.5"]
+)
+def test_gpt_5_4_and_5_5_on_bedrock_resolve_effort_without_max(model_id):
+    # https://github.com/strands-agents/harness-sdk/issues/5191
+    for effort, level in [("auto", "high"), ("low", "low"), ("xhigh", "xhigh"), ("off", "none")]:
+        model = resolve(f"bedrock/{model_id}", effort=effort)
+        assert model.config["additional_request_fields"] == {"reasoning": {"effort": level}}
+    for effort in ("minimal", "max"):
+        with pytest.raises(ValueError, match="not supported"):
+            resolve(f"bedrock/{model_id}", effort=effort)
+
+
+@pytest.mark.parametrize(
+    "model_id",
+    [
+        "openai.gpt-5.6-cyber",
+        "us.openai.gpt-6-sol",
+        "us.openai.gpt-6.1-terra",
+        "openai.gpt-daybreak-blue-5.6-sol",
+        "us.openai.gpt-daybreak-blue-5.6-sol",
+    ],
+)
+def test_gpt_5_6_6_and_daybreak_on_bedrock_resolve_every_effort(model_id):
     for effort, level in [("auto", "high"), ("low", "low"), ("max", "max"), ("off", "none")]:
         model = resolve(f"bedrock/{model_id}", effort=effort)
         assert model.config["additional_request_fields"] == {"reasoning": {"effort": level}}
     with pytest.raises(ValueError, match="not supported"):
         resolve(f"bedrock/{model_id}", effort="minimal")
+
+
+@pytest.mark.parametrize("model_id", ["bedrock/openai.gpt-5.4", "bedrock/us.openai.gpt-5.5"])
+def test_gpt_5_line_on_bedrock_reports_thinking(model_id):
+    assert supports_thinking(model_id) is True
 
 
 def test_gpt_oss_on_bedrock_uses_its_reasoning_field_and_levels():
@@ -189,6 +316,25 @@ def test_gpt_oss_on_bedrock_uses_its_reasoning_field_and_levels():
     assert "additional_request_fields" not in resolve("bedrock/openai.gpt-oss-120b-1:0", effort="off").config
     with pytest.raises(ValueError, match="not supported by Bedrock model openai.gpt-oss-120b-1:0"):
         resolve("bedrock/openai.gpt-oss-120b-1:0", effort="max")
+
+
+def test_nova_2_on_bedrock_uses_reasoning_config():
+    # https://github.com/strands-agents/harness-sdk/issues/4852
+    model = resolve("bedrock/global.amazon.nova-2-lite-v1:0", effort="medium")
+    assert model.config["additional_request_fields"] == {
+        "reasoningConfig": {"type": "enabled", "maxReasoningEffort": "medium"}
+    }
+    assert supports_thinking("bedrock/amazon.nova-2-lite-v1:0") is True
+    # No ``none`` level: off drops the reasoning block instead.
+    assert "additional_request_fields" not in resolve("bedrock/amazon.nova-2-lite-v1:0", effort="off").config
+    with pytest.raises(ValueError, match="not supported by Bedrock model amazon.nova-2-lite-v1:0"):
+        resolve("bedrock/amazon.nova-2-lite-v1:0", effort="max")
+
+
+def test_nova_1_on_bedrock_still_has_no_thinking_levels():
+    assert supports_thinking("bedrock/amazon.nova-pro-v1:0") is False
+    with pytest.raises(ValueError, match="not supported by Bedrock model"):
+        resolve("bedrock/amazon.nova-pro-v1:0", effort="high")
 
 
 def test_qwen_on_bedrock_uses_its_reasoning_field_and_levels():
@@ -224,9 +370,9 @@ def test_unknown_bedrock_family_rejects_explicit_effort():
 
 
 def test_level_rejected_when_provider_does_not_support_it():
-    with pytest.raises(ValueError, match="not supported by this provider"):
+    with pytest.raises(ValueError, match="not supported by model gemini-3.5-flash"):
         resolve("google/gemini-3.5-flash", effort="xhigh")
-    with pytest.raises(ValueError, match="not supported by this provider"):
+    with pytest.raises(ValueError, match="not supported by model gpt-5.6-sol"):
         resolve("openai/gpt-5.6-sol", effort="max")
 
 
@@ -254,6 +400,32 @@ def test_google_auto_maps_to_high_thinking_level():
     model = resolve("google/gemini-3.5-flash")
     assert isinstance(model, Model)
     assert model.config["params"]["thinking_config"]["thinking_level"] == "high"
+
+
+@pytest.mark.parametrize(
+    ("model", "effort", "expected"),
+    [
+        ("google/gemini-4-argon", "minimal", "Supported levels: low, medium, high"),
+        ("google/gemini-3.6-flash", "minimal", "minimal"),
+        ("google/gemini-3.1-flash-lite-image", "minimal", "minimal"),
+        ("google/gemini-3.1-flash-lite-image", "low", "Supported levels: minimal, high"),
+        ("bedrock-mantle/google.gemma-4-31b", "auto", "high"),
+        ("bedrock-mantle/google.gemma-4-31b", "off", "none"),
+        ("bedrock-mantle/google.gemma-4-31b", "low", "Supported levels: high"),
+    ],
+)
+def test_per_model_levels(model, effort, expected):
+    if expected.startswith("Supported levels"):
+        with pytest.raises(ValueError, match=f"not supported by model {model.split('/')[1]}. {expected}"):
+            resolve(model, effort=effort)
+        return
+    params = resolve(model, effort=effort).config["params"]
+    sent = (
+        params["reasoning"]["effort"]
+        if model.startswith("bedrock-mantle/")
+        else params["thinking_config"]["thinking_level"]
+    )
+    assert sent == expected
 
 
 def test_google_uses_model_id_directly():
@@ -324,7 +496,7 @@ def test_bedrock_mantle_caching_does_not_warn(caplog):
 
 
 def test_bedrock_mantle_rejects_an_unsupported_thinking_level():
-    with pytest.raises(ValueError, match="not supported by this provider"):
+    with pytest.raises(ValueError, match="not supported by model openai.gpt-oss-120b"):
         resolve("bedrock-mantle/openai.gpt-oss-120b", effort="max")
 
 
@@ -347,6 +519,11 @@ def test_bedrock_mantle_web_search_on_gpt_6():
     assert model.config["params"]["tools"] == [{"type": "web_search", "external_web_access": True}]
 
 
+def test_bedrock_mantle_web_search_on_daybreak_blue():
+    model = resolve("bedrock-mantle/openai.gpt-daybreak-blue-5.6-sol", effort="off", web_search=True)
+    assert model.config["params"]["tools"] == [{"type": "web_search", "external_web_access": True}]
+
+
 def test_bedrock_mantle_no_web_search_has_no_tools():
     model = resolve("bedrock-mantle/openai.gpt-5.6-luna", web_search=False)
     assert "tools" not in model.config["params"]
@@ -363,6 +540,8 @@ def test_supports_web_search_by_provider():
     assert supports_web_search("google/gemini-3.5-flash") is True
     assert supports_web_search("bedrock-mantle/openai.gpt-5.6-luna") is True
     assert supports_web_search("bedrock-mantle/openai.gpt-6-astra") is True
+    # https://github.com/strands-agents/harness-sdk/issues/5187
+    assert supports_web_search("bedrock-mantle/openai.gpt-6.1-sol") is True
     assert supports_web_search("bedrock-mantle/openai.gpt-oss-120b") is False
     assert supports_web_search("bedrock-mantle/qwen.qwen3-32b-v1:0") is False
     assert supports_web_search("bedrock/global.anthropic.claude-opus-4-8") is False
@@ -449,6 +628,10 @@ ADAPTIVE_CLAUDE = [
     "global.anthropic.claude-opus-4-8",
     "global.anthropic.claude-opus-5",
     "global.anthropic.claude-sonnet-5",
+    "global.anthropic.claude-haiku-5-5",
+    "au.anthropic.claude-haiku-5-5",
+    "anthropic.claude-haiku-5-5",
+    "global.anthropic.claude-haiku-6",
     "global.anthropic.claude-fable-5",
     "global.anthropic.claude-fable-5-1",
     "anthropic.claude-mythos-preview",
@@ -519,7 +702,9 @@ def test_a_dot_separated_version_parses_like_a_dashed_one(model_id, expected):
     assert config.get("additional_request_fields") == expected
 
 
-@pytest.mark.parametrize("model_id", ["claude-opus-latest", "claude-sonnet-latest", "claude-opus-100"])
+@pytest.mark.parametrize(
+    "model_id", ["claude-opus-latest", "claude-sonnet-latest", "claude-haiku-latest", "claude-haiku", "claude-opus-100"]
+)
 def test_an_id_with_no_parsable_version_fails_open_to_adaptive(model_id):
     assert resolve(f"bedrock/global.anthropic.{model_id}").config["additional_request_fields"] == ADAPTIVE
 
@@ -546,16 +731,13 @@ def test_each_level_maps_to_a_budget_the_api_accepts(level, budget):
         ("claude-opus-4.5", 64_000),
         ("claude-opus-4-8", 128_000),
         ("claude-opus-5", 128_000),
+        ("claude-haiku-4-5-20251001-v1:0", 64_000),
+        ("claude-haiku-4.5", 64_000),
+        ("claude-haiku-5-5", 128_000),
     ],
 )
 def test_a_split_family_carries_its_version_max_tokens_ceiling(model_id, max_tokens):
     assert resolve(f"bedrock/global.anthropic.{model_id}").config["max_tokens"] == max_tokens
-
-
-@pytest.mark.parametrize("model_id", ["claude-haiku-latest", "claude-haiku"])
-def test_a_versionless_haiku_falls_open_to_extended_not_adaptive(model_id):
-    config = resolve(f"bedrock/global.anthropic.{model_id}").config
-    assert config["additional_request_fields"] == EXTENDED
 
 
 def test_the_budget_is_clamped_below_a_small_max_tokens():
@@ -563,9 +745,9 @@ def test_the_budget_is_clamped_below_a_small_max_tokens():
     assert _claude_extended_thinking("low", 64_000) == {"thinking": {"type": "enabled", "budget_tokens": 2_048}}
 
 
-def test_a_bare_family_name_clamps_against_the_anthropic_direct_fallback(monkeypatch):
+def test_a_version_led_id_clamps_against_the_anthropic_direct_fallback(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
-    config = resolve("anthropic/claude-haiku", effort="max").config
+    config = resolve("anthropic/claude-4-5-haiku", effort="max").config
     assert config["max_tokens"] == 32_000
     assert config["params"] == {"thinking": {"type": "enabled", "budget_tokens": 31_999}}
 
@@ -626,7 +808,17 @@ def test_bedrock_web_fetch_summarizer_keeps_the_inference_profile_prefix():
     assert _bedrock_web_fetch_model("us.anthropic.claude-opus-4-8") == (
         "global.anthropic.claude-haiku-4-5-20251001-v1:0"
     )
-    assert _bedrock_web_fetch_model("meta.llama3") is None
+    assert _bedrock_web_fetch_model("meta.llama3") == "meta.llama3-2-3b-instruct-v1:0"
+    assert _bedrock_web_fetch_model("google.gemma-3-27b-it") is None
+
+
+def test_bedrock_web_fetch_summarizer_maps_known_families_to_small_regionals():
+    from strands_harness.models import _bedrock_web_fetch_model
+
+    assert _bedrock_web_fetch_model("amazon.nova-2-lite-v1:0") == "amazon.nova-lite-v1:0"
+    assert _bedrock_web_fetch_model("us.amazon.nova-pro-v1:0") == "amazon.nova-lite-v1:0"
+    assert _bedrock_web_fetch_model("us.meta.llama3-2-70b-instruct-v1:0") == "meta.llama3-2-3b-instruct-v1:0"
+    assert _bedrock_web_fetch_model("mistral.mistral-large-2407-v1:0") == "mistral.mistral-small-2402-v1:0"
 
 
 def test_supports_media_reads_a_bedrock_instance_model_id():

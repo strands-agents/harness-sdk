@@ -4,8 +4,11 @@ date: 2026-09-21
 description: "Strands harness is a fully assembled, customizable, state-of-the-art agent you run locally or deploy anywhere."
 authors:
   - arron-bailiss
-  - tim-moreton
   - albert-zhao
+  - tim-moreton
+  - gautam-sirdeshmukh
+  - murat-kaan-meral
+  - ariel-nabavian
 tags:
   - Announcement
   - Strands harness
@@ -21,9 +24,11 @@ We noticed builders often wished their Claude Code or Codex setup could run in t
 
 But the moment you build your own agent, you're on your own. It's tricky wiring up the right primitives just well enough to match that "it just worked" feeling.
 
-Today we're releasing Strands harness: a fully assembled state-of-the-art agent harness you can easily run locally or deploy to your favorite provider. It's built to be a general-purpose agent rather than a coding agent. All you need is one line of Python or TypeScript to get it working with your choice of model. Strands harness beats other agent harnesses on cost efficiency while maintaining equal or better accuracy. It's available under an Apache 2.0 license.
+Today we're releasing [Strands harness](https://github.com/strands-agents/harness-sdk/tree/main): a fully assembled state-of-the-art agent harness you can easily run locally or deploy to your favorite provider. It's built to be a general-purpose agent rather than a coding agent. All you need is one line of Python or TypeScript to get it working with your choice of model. Strands harness beats other agent harnesses on cost efficiency while maintaining equal or better accuracy. It's available under an Apache 2.0 license.
 
 Strands harness **costs 28% less** when using the same Claude or GPT models across six benchmarks. We found Strands harness showed better token-efficiency and nearly equal benchmark scores compared to Claude Code, Codex, and other popular harnesses. That's important because we never want to sacrifice accuracy for lower cost. Deepseek Harness proved to be the most token-efficient overall, however, it typically reported the lowest accuracy scores. Our testing setup was distributed benchmarking on EC2 with Harbor.
+
+> **Explore the results:** The chart below is interactive. Hover over any point to see the model, harness, accuracy score, and cost per task.
 
 <iframe
   src={`${import.meta.env.BASE_URL}embeds/strands-harness-benchmarks.html`}
@@ -33,11 +38,11 @@ Strands harness **costs 28% less** when using the same Claude or GPT models acro
   style="width: 100%; aspect-ratio: 1320 / 1268; height: auto; border: 0; border-radius: 14px;"
 ></iframe>
 
-With Fable 5, Strands harness **cost 77% less** than Claude Code *and* **scored higher** on Terminal Bench 2.1. We're also pleased to see two other open source harnesses perform similarly well on cost/accuracy against Claude Code.
+With Fable 5, Strands harness **cost 77% less** than Claude Code *and* **scored higher** on Terminal-Bench 2.1. We're also pleased to see two other open source harnesses perform similarly well on cost/accuracy against Claude Code.
 
 <iframe
   src={`${import.meta.env.BASE_URL}embeds/strands-harness-terminalbench.html`}
-  title="Strands harness vs Claude Code on Terminal Bench 2.1"
+  title="Strands harness vs Claude Code on Terminal-Bench 2.1"
   loading="lazy"
   scrolling="no"
   style="width: 100%; aspect-ratio: 766 / 555; height: auto; border: 0; border-radius: 14px;"
@@ -185,7 +190,7 @@ Out of the box, `create_harness()` returns an agent that:
 - Delegates open-ended subtasks to a built-in helper agent, and tracks multi-step work with a checklist.
 - Loads skills if they exist.
 
-After installing Strands harness, we include a skills file for your coding agent to quickly understand it. This makes it easy to add an MCP server or create config for deploying on popular providers including AWS, GCP, Azure, Cloudflare, and Modal.
+Strands harness can be deployed on any provider with a linux container, such as Modal, Cloudflare Containers, Azure Container Apps, Google Cloud Run, Amazon ECS, and Amazon Bedrock AgentCore.
 
 We also have the Strands CLI that allows you to prototype your agent in plain English. Wire up your model provider of choice, then add prompts and tools to watch your agent come to life. Afterwards, you can run `/export` in the Strands CLI to get a copy of the code in either TypeScript or Python, a very convenient way to keep iterating on Strands harness with your preferred coding agent.
 
@@ -223,4 +228,6 @@ We're excited for all kinds of agents that'll come to life with Strands harness.
 
 ## Try it out today
 
-You can check out the [Python](https://github.com/strands-agents/harness-sdk/tree/main/harness-py) or [TypeScript](https://github.com/strands-agents/harness-sdk/tree/main/harness-ts) version of Strands harness today. The CLI will be launched later today as a separate package. Stay tuned in our [Discord](https://discord.gg/strands)!
+You can easily install [Strands harness](https://strandsagents.com/docs/user-guide/harness/) with `pip install strands-harness` for Python or `npm install @strands-agents/harness` for TypeScript. For an interactive experience, download the Strands CLI: `npm install -g @strands-agents/cli`.
+
+We believe quickly prototyping with a batteries included harness will create more useful agents. Our team is also in [Discord](https://discord.gg/strands), so come say hi or ask us any question about agents!

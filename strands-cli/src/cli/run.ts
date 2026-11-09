@@ -8,7 +8,7 @@ import { initLogging } from '../logging.js'
 import { runPlainChat, runTurn } from '../console.js'
 import { importAgentProject } from '../tui/project/import.js'
 import { rethrowWithProviderHint } from '../tui/provider/packages.js'
-import { withSession } from '../tui/session/options.js'
+import { initializeAgentDefinition } from '../tui/session/agent-definition.js'
 import { buildTelemetryPing, sendTelemetryPing, telemetryEnabled } from '../tui/telemetry.js'
 import { errorMessage } from '../tui/terminal/sanitize.js'
 import { confirmWorkspaceMcp, resolveMcpConfig } from '../tui/workspace/trust.js'
@@ -27,6 +27,12 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       return
     }
     throw err
+  }
+
+  if (args.update) {
+    const { updateCli } = await import('./update.js')
+    process.exitCode = await updateCli()
+    return
   }
 
   const stdinIsTty = stdin.isTTY === true
@@ -103,7 +109,6 @@ async function runAcp(args: ParsedArgs): Promise<void> {
     const invocation = await invocationAgentForRun(args, config)
     await runAcpServer(await withDiscoveredSkills(invocation.options, settings.skillDiscovery), {
       ...(invocation.buildAgent ? { buildAgent: invocation.buildAgent } : {}),
-      ...(invocation.project ? { sourceAgent: true } : {}),
       mcpPaths: mcp.paths,
       mcpStrictPaths: mcp.strictPaths,
       ...(mcp.expectedDigests ? { mcpDigests: mcp.expectedDigests } : {}),
@@ -139,7 +144,7 @@ async function runConsole(args: ParsedArgs, request: string | undefined, mode: '
       )
       return
     }
-    const invocation = await invocationAgentForRun(args, config, process.cwd(), project, true)
+    const invocation = await invocationAgentForRun(args, config, process.cwd(), project)
     const { settings } = config.snapshot()
     const options = await withDiscoveredSkills(invocation.options, settings.skillDiscovery)
     const mcp = await resolveMcpConfig(args.mcpConfig, {
@@ -155,6 +160,7 @@ async function runConsole(args: ParsedArgs, request: string | undefined, mode: '
       options.tools = [...(options.tools ?? []), ...loadedMcp.clients]
     }
     agent = await (invocation.buildAgent ?? createHarness)(options).catch(rethrowWithProviderHint)
+    await initializeAgentDefinition(agent)
     if (mode === 'print') {
       await runTurn(agent, request!)
     } else {
@@ -174,7 +180,7 @@ async function runConsole(args: ParsedArgs, request: string | undefined, mode: '
 
 async function runInteractive(args: ParsedArgs, request: string | undefined): Promise<void> {
   try {
-    await import('#ink-text-cache')
+    await import('../tui/terminal/ink.js')
     // React's development timing buffer retains rendered props in Node. Load the production UI
     // without changing the environment inherited by tools and user commands.
     const nodeEnvironment = process.env.NODE_ENV
@@ -197,15 +203,11 @@ async function runInteractive(args: ParsedArgs, request: string | undefined): Pr
     const initialWorkspace = process.cwd()
     let pinged = false
     process.exitCode = await runInkChat(
-      async (signal, requestSetup, conversation, launch) => {
+      async (signal, requestSetup, conversation, launch, confirmMcp) => {
         signal.throwIfAborted()
-        if (launch?.assistant) {
-          const { createSetupAssistant } = await import('../tui/agent-setup.js')
-          return createSetupAssistant(launch.assistant, config, requestSetup, initialWorkspace)
-        }
         const initialMcp = await resolveMcpConfig(args.mcpConfig, {
           cwd: initialWorkspace,
-          confirm: confirmWorkspaceMcp,
+          confirm: confirmMcp,
           discovery: config.snapshot().settings.mcpDiscovery,
         })
         signal.throwIfAborted()
@@ -236,7 +238,6 @@ async function runInteractive(args: ParsedArgs, request: string | undefined): Pr
                 ),
               }
             : await invocationAgentForRun(launch?.agentProject ? { ...args, agent: launch.agentProject } : args, config)
-        if (launch?.newConversation) invocation.options = withSession(invocation.options, { id: undefined })
         signal.throwIfAborted()
         const chat = await createInteractiveChat({
           agentOptions: invocation.options,
@@ -264,7 +265,7 @@ async function runInteractive(args: ParsedArgs, request: string | undefined): Pr
       {
         ...(request ? { firstRequest: request } : {}),
         intro: config.snapshot().settings.animations,
-        setup: args.setup || (!args.agent && (config.needsSetup() || config.snapshot().settings.setupOnLaunch)),
+        setup: args.setup || (!args.agent && !config.snapshot().agentProject && config.needsSetup()),
         config,
       }
     )
