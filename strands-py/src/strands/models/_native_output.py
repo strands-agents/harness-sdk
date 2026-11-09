@@ -8,6 +8,7 @@ from the event loop (AnthropicModel) and from a worker thread (BedrockModel); co
 import logging
 import warnings
 from collections.abc import Set
+from types import NoneType
 from typing import Any, Literal
 
 from pydantic import BaseModel
@@ -35,6 +36,9 @@ _SUBSCHEMA_MAPS = ("properties", "$defs", "definitions")
 _SUBSCHEMA_LISTS = ("anyOf", "oneOf", "allOf")
 # A schema node needs one of these to be representable; without them it accepts any value, as Any does.
 _SCHEMA_TYPE_KEYS = ("type", "anyOf", "oneOf", "allOf", "$ref")
+
+# Values native structured output accepts in enum and const.
+_LITERAL_VALUE_TYPES = (str, int, float, bool, NoneType)
 
 # Providers report these cases only as a generic 400, so the message text is the only signal. "Documented" entries are
 # published provider error text; "observed" entries were seen in live responses and may change wording.
@@ -172,7 +176,9 @@ def find_unsupported_native_output_feature(schema: dict[str, Any]) -> str | None
 
     Native output requires ``additionalProperties: false`` on every object, has no tuple support, and needs a type on
     every node, so dict and tuple fields would be emptied or left unconstrained, and untyped fields such as ``Any``
-    cannot be converted. Such models must not use native output.
+    cannot be converted. Such models must not use native output. A node constrained only by ``enum`` or ``const``,
+    such as a ``Literal`` mixing strings and numbers, also counts as untyped: ``AnthropicModel`` converts schemas with
+    ``anthropic.transform_schema``, which rejects such nodes before anthropic 2.7.0.
 
     Args:
         schema: A JSON schema, for example from ``BaseModel.model_json_schema()``.
@@ -201,10 +207,11 @@ def find_unsupported_native_output_feature(schema: dict[str, Any]) -> str | None
 def to_native_output_schema(schema: dict[str, Any]) -> dict[str, Any]:
     """Convert a JSON schema to the subset native structured output accepts.
 
-    Mirrors ``anthropic.transform_schema``, which ``AnthropicModel`` uses directly, for providers without the
-    ``anthropic`` package: objects get ``additionalProperties: false``, and keywords outside the supported subset are
-    moved into the field description, where the model can still follow them. Validate the result against the original
-    model, which still enforces every constraint.
+    Mirrors ``anthropic.transform_schema`` (as of anthropic 2.7.0), which ``AnthropicModel`` uses directly, for
+    providers without the ``anthropic`` package: objects get ``additionalProperties: false``, a node whose ``enum`` or
+    ``const`` holds only primitive values keeps them in place of its ``type``, and keywords outside the supported subset
+    are moved into the field description, where the model can still follow them. Validate the result against the
+    original model, which still enforces every constraint.
 
     Args:
         schema: A JSON schema, for example from ``BaseModel.model_json_schema()``.
@@ -213,7 +220,8 @@ def to_native_output_schema(schema: dict[str, Any]) -> dict[str, Any]:
         The converted schema.
 
     Raises:
-        ValueError: If a schema node has no ``type``, ``anyOf``, ``oneOf``, ``allOf`` or ``$ref``.
+        ValueError: If a schema node has no ``type``, ``anyOf``, ``oneOf``, ``allOf``, ``$ref``, or primitive ``enum``
+            or ``const``.
     """
     remaining = dict(schema)
     converted: dict[str, Any] = {}
@@ -228,9 +236,12 @@ def to_native_output_schema(schema: dict[str, Any]) -> dict[str, Any]:
         return converted
 
     type_ = remaining.pop("type", None)
+    if _convert_literals(remaining, converted):
+        # Literals replace the type, so type-specific keywords such as format fall through to the description.
+        type_ = None
     _convert_composition(remaining, converted, type_)
 
-    for key in ("enum", "description", "title"):
+    for key in ("description", "title"):
         if (value := remaining.pop(key, None)) is not None:
             converted[key] = value
 
@@ -249,6 +260,16 @@ def to_native_output_schema(schema: dict[str, Any]) -> dict[str, Any]:
     return converted
 
 
+def _convert_literals(remaining: dict[str, Any], converted: dict[str, Any]) -> bool:
+    """Move a primitive enum or const into the converted schema, returning whether either was moved."""
+    enum = remaining.get("enum")
+    if isinstance(enum, list) and enum and all(isinstance(value, _LITERAL_VALUE_TYPES) for value in enum):
+        converted["enum"] = remaining.pop("enum")
+    if "const" in remaining and isinstance(remaining["const"], _LITERAL_VALUE_TYPES):
+        converted["const"] = remaining.pop("const")
+    return "enum" in converted or "const" in converted
+
+
 def _convert_composition(remaining: dict[str, Any], converted: dict[str, Any], type_: Any) -> None:
     any_of = remaining.pop("anyOf", None)
     one_of = remaining.pop("oneOf", None)
@@ -260,10 +281,13 @@ def _convert_composition(remaining: dict[str, Any], converted: dict[str, Any], t
         converted["anyOf"] = [to_native_output_schema(variant) for variant in one_of]
     elif isinstance(all_of, list):
         converted["allOf"] = [to_native_output_schema(variant) for variant in all_of]
-    elif type_ is None:
-        raise ValueError("Schema must have a 'type', 'anyOf', 'oneOf', or 'allOf' field.")
-    else:
+    elif type_ is not None:
         converted["type"] = type_
+    elif "enum" not in converted and "const" not in converted:
+        raise ValueError(
+            "Schema must have a 'type', 'anyOf', 'oneOf', or 'allOf' field, "
+            "or a 'const' or non-empty 'enum' of strings, numbers, booleans, or null."
+        )
 
 
 def _convert_object(remaining: dict[str, Any], converted: dict[str, Any]) -> None:
