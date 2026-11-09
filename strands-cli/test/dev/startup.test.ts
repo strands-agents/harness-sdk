@@ -88,7 +88,7 @@ describe('dev startup screen', () => {
       await vi.waitFor(() => expect(frame().join('\n')).toContain('Select a harness'))
       input.write('\r')
       await vi.waitFor(() => expect(frame().join('\n')).toContain('Model dependency could not be copied'))
-      expect(frame().join('\n')).toContain('Strands CLI')
+      expect(frame().join('\n')).toContain('Base CLI')
       input.write('\r')
       expect(await running).toBe(0)
       expect(selected).toEqual(workspace)

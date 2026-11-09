@@ -11,6 +11,7 @@ import { discoverHarnesses } from './search.js'
 import { initializeDevWorkspace, readDevWorkspace, type DevWorkspace } from './workspace.js'
 import type { StartupScreen } from '../ui/run.js'
 import type { HarnessChoice } from './picker.js'
+import { baseHarnessSelection, distinctHarnesses } from './selection.js'
 
 export interface PreparedDevRun {
   args: ParsedArgs
@@ -44,6 +45,8 @@ const selectWorkspace = async (
   screen.show(undefined, 'Discovering local harnesses…')
   const discovery = await discoverHarnesses([cwd, ...dev.searchRoots.map((path) => resolve(cwd, expandHome(path)))])
   screen.signal.throwIfAborted()
+  const base = await baseHarnessSelection(config.snapshot(), cwd, destination)
+  const harnesses = await distinctHarnesses(discovery.harnesses, base.excludedEntrypoints)
   const { chooseHarness } = await import('./picker.js')
   const open = async (choice: HarnessChoice, signal: AbortSignal): Promise<DevWorkspace> => {
     signal.throwIfAborted()
@@ -61,7 +64,7 @@ const selectWorkspace = async (
     })
   }
   return chooseHarness(
-    { cliName: config.snapshot().profile.name, harnesses: discovery.harnesses, warnings: discovery.warnings },
+    { cliName: base.name, cliPath: base.source, cliWorkspace: base.workspace, harnesses, warnings: discovery.warnings },
     screen,
     open
   )

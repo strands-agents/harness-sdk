@@ -6,6 +6,7 @@ import { errorMessage, sanitizeTerminalText } from '../terminal/text.js'
 import type { DiscoveredHarness } from './search.js'
 import type { DevWorkspace } from './workspace.js'
 import { useTerminalSize } from '../ui/terminal-size.js'
+import { userConfigPath } from '../config/store.js'
 
 export type HarnessChoice =
   | { kind: 'cli' }
@@ -14,12 +15,21 @@ export type HarnessChoice =
 
 interface PickerProps {
   cliName: string
+  cliPath?: string
+  cliWorkspace?: string
   harnesses: readonly DiscoveredHarness[]
   warnings?: readonly string[]
   onSelect: (selection: HarnessChoice | undefined) => void | Promise<void>
 }
 
-export const HarnessPicker = ({ cliName, harnesses, warnings = [], onSelect }: PickerProps): ReactElement => {
+export const HarnessPicker = ({
+  cliName,
+  cliPath = userConfigPath(),
+  cliWorkspace,
+  harnesses,
+  warnings = [],
+  onSelect,
+}: PickerProps): ReactElement => {
   const [selection, setSelection] = useState(0)
   const [creating, setCreating] = useState(false)
   const [language, setLanguage] = useState<'typescript' | 'python'>('typescript')
@@ -27,15 +37,27 @@ export const HarnessPicker = ({ cliName, harnesses, warnings = [], onSelect }: P
   const [failure, setFailure] = useState<string>()
   const [busy, setBusy] = useState(false)
   const pending = useRef(false)
-  const { accent, error: errorColor } = useTheme()
+  const { accent, error: errorColor, selection: selectionColor, border } = useTheme()
   const { rows: height } = useTerminalSize()
   const rows = [
-    { label: `Strands CLI · ${sanitizeTerminalText(cliName)}`, detail: 'Create or open an independent local copy' },
+    {
+      label: `Base CLI · ${sanitizeTerminalText(cliName)}`,
+      detail: sanitizeTerminalText(cliPath),
+      group: 'CLI DEFAULT',
+      language: '',
+    },
     ...harnesses.map((harness) => ({
-      label: `${sanitizeTerminalText(harness.name)} · ${harness.language}`,
+      label: sanitizeTerminalText(harness.name),
       detail: sanitizeTerminalText(harness.entrypoint),
+      group: `LOCAL PROJECTS (${harnesses.length})`,
+      language: harness.language,
     })),
-    { label: 'Create a new harness', detail: 'Start from your saved profile' },
+    {
+      label: 'Create a new harness',
+      detail: 'Start a separate project from your saved profile.',
+      group: 'NEW PROJECT',
+      language: '',
+    },
   ]
   const submit = (choice: HarnessChoice | undefined): void => {
     if (pending.current && choice) return
@@ -71,30 +93,77 @@ export const HarnessPicker = ({ cliName, harnesses, warnings = [], onSelect }: P
     if (harness) return submit({ kind: 'discovered', harness })
     setCreating(true)
   })
-  const capacity = Math.max(1, Math.min(6, Math.floor((height - 14) / 2)))
-  const start = Math.max(0, selection - capacity + 1)
+  const capacity = Math.max(1, Math.min(7, height - 26))
+  const start = Math.min(Math.max(0, selection - capacity + 1), Math.max(0, rows.length - capacity))
+  const visible = rows.slice(start, start + capacity)
+  const selected = rows[selection]!
   return (
     <Box flexDirection="column">
-      <Text bold color={accent}>
-        {creating ? 'Create a harness' : 'strands dev · Select a harness'}
-      </Text>
+      <Box marginBottom={1} justifyContent="space-between">
+        <Text bold color={accent}>
+          {creating ? 'Create a harness' : 'Select a harness'}
+        </Text>
+        <Text dimColor>{creating ? 'New project' : `${selection + 1} / ${rows.length}`}</Text>
+      </Box>
       {creating ? (
-        <>
+        <Box flexDirection="column" gap={1}>
           <Text>Name: {name}▏</Text>
           <Text>Language: {language}</Text>
-        </>
+          <Text dimColor>A separate local workspace. Your CLI default stays unchanged.</Text>
+        </Box>
       ) : (
-        rows.slice(start, start + capacity).map((row, index) => (
-          <Box key={start + index} flexDirection="column">
-            <Text bold={start + index === selection} {...(start + index === selection ? { color: accent } : {})}>
-              {start + index === selection ? '›' : ' '} {row.label}
-            </Text>
+        <>
+          {visible.map((row, index) => (
+            <Box key={start + index} flexDirection="column">
+              {index === 0 || visible[index - 1]?.group !== row.group ? (
+                <Box marginTop={index === 0 ? 0 : 1}>
+                  <Text dimColor>{row.group}</Text>
+                </Box>
+              ) : null}
+              <Box
+                paddingX={1}
+                justifyContent="space-between"
+                {...(start + index === selection ? { backgroundColor: selectionColor } : {})}
+              >
+                <Text
+                  bold={start + index === selection}
+                  {...(start + index === selection ? { color: accent } : {})}
+                  wrap="truncate-end"
+                >
+                  {start + index === selection ? '›' : ' '} {row.label}
+                </Text>
+                {row.language ? <Text dimColor> {row.language}</Text> : null}
+              </Box>
+            </Box>
+          ))}
+          <Box
+            flexDirection="column"
+            borderStyle="single"
+            borderColor={border}
+            borderLeft={false}
+            borderRight={false}
+            borderBottom={false}
+            marginTop={1}
+            paddingTop={1}
+          >
             <Text dimColor wrap="truncate-middle">
-              {' '}
-              {row.detail}
+              {selection === rows.length - 1 ? selected.detail : `Source: ${selected.detail}`}
             </Text>
+            {selection === 0 ? (
+              <>
+                {cliWorkspace && height >= 30 ? (
+                  <Text dimColor wrap="truncate-middle">
+                    Workspace: {sanitizeTerminalText(cliWorkspace)}
+                  </Text>
+                ) : null}
+                <Text>Manual import applies these changes globally to plain strands.</Text>
+                <Text dimColor>Until then, development changes stay in this local workspace.</Text>
+              </>
+            ) : selection < rows.length - 1 ? (
+              <Text dimColor>Local project only. Your CLI default stays unchanged.</Text>
+            ) : null}
           </Box>
-        ))
+        </>
       )}
       {failure ? <Text color={errorColor}>{failure}</Text> : null}
       {!failure && warnings[0] ? (
@@ -102,13 +171,15 @@ export const HarnessPicker = ({ cliName, harnesses, warnings = [], onSelect }: P
           {sanitizeTerminalText(warnings[0])}
         </Text>
       ) : null}
-      <Text dimColor>
-        {busy
-          ? 'Preparing workspace… · Esc cancel'
-          : creating
-            ? 'Tab language · Enter create · Esc cancel'
-            : '↑↓ select · Enter open · Esc cancel'}
-      </Text>
+      <Box marginTop={1}>
+        <Text dimColor>
+          {busy
+            ? 'Preparing workspace… · Esc cancel'
+            : creating
+              ? 'Tab language · Enter create · Esc cancel'
+              : '↑↓ select · Enter open · Esc cancel'}
+        </Text>
+      </Box>
     </Box>
   )
 }

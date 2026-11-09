@@ -123,7 +123,13 @@ describe('prepareDevRun', () => {
     const prepared = await prepareDevRun(parseArgs(['dev', '--search-root', '../other']), { screen })
 
     expect(picker.chooseHarness).toHaveBeenCalledWith(
-      { cliName: 'Saved CLI', harnesses: [harness], warnings: [] },
+      {
+        cliName: 'Saved CLI',
+        cliPath: 'in-memory',
+        cliWorkspace: join(cwd, 'strands-dev/base-cli'),
+        harnesses: [harness],
+        warnings: [],
+      },
       screen,
       expect.any(Function)
     )

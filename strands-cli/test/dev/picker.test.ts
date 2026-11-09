@@ -11,19 +11,54 @@ const harness = {
 }
 
 describe('HarnessPicker', () => {
-  it('shouldSelectTheBaseCliWhenTheFirstChoiceIsAccepted', async () => {
+  it('shouldKeepEveryChoiceReachableWhenTheTerminalIsSmall', async () => {
     const input = ttyInput()
-    const output = ttyOutput(100, 25)
+    const output = ttyOutput(60, 20)
     const frame = captureFrame(output)
     const selected = vi.fn()
-    render(createElement(HarnessPicker, { cliName: 'Saved profile', harnesses: [harness], onSelect: selected }), {
-      stdin: input,
-      stdout: output,
-    })
+    render(
+      createElement(HarnessPicker, {
+        cliName: 'Saved profile',
+        cliPath: '/home/test/.strands/cli.toml',
+        harnesses: [harness],
+        onSelect: selected,
+      }),
+      { stdin: input, stdout: output }
+    )
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('Base CLI'))
+    input.write('\u001b[B')
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('Project harness'))
+    expect(frame().join('\n')).toContain('/project/agent.py')
+    input.write('\r')
+    await vi.waitFor(() => expect(selected).toHaveBeenCalledWith({ kind: 'discovered', harness }))
+  })
+
+  it('shouldSelectTheBaseCliWhenTheFirstChoiceIsAccepted', async () => {
+    const input = ttyInput()
+    const output = ttyOutput(100, 36)
+    const frame = captureFrame(output)
+    const selected = vi.fn()
+    render(
+      createElement(HarnessPicker, {
+        cliName: 'Saved profile',
+        cliPath: '/home/test/.strands/cli.toml',
+        harnesses: [harness],
+        onSelect: selected,
+      }),
+      {
+        stdin: input,
+        stdout: output,
+      }
+    )
     await vi.waitFor(() => expect(frame().join('\n')).toContain('Select a harness'))
 
     const text = frame().join('\n')
-    expect(text.indexOf('Strands CLI')).toBeLessThan(text.indexOf('Project harness'))
+    expect(text.indexOf('Base CLI')).toBeLessThan(text.indexOf('Project harness'))
+    expect(text).toContain('Source: /home/test/.strands/cli.toml')
+    expect(text).toContain('Manual import applies these changes globally')
+    expect(text).toContain('development changes stay in this local workspace')
+    expect(text).toContain('CLI DEFAULT')
+    expect(text).toContain('LOCAL PROJECTS (1)')
     input.write('\r')
 
     await vi.waitFor(() => expect(selected).toHaveBeenCalledWith({ kind: 'cli' }))
@@ -31,13 +66,21 @@ describe('HarnessPicker', () => {
 
   it('shouldOfferCreationWhenOnlyTheBaseCliExists', async () => {
     const input = ttyInput()
-    const output = ttyOutput(100, 25)
+    const output = ttyOutput(100, 36)
     const frame = captureFrame(output)
     const selected = vi.fn()
-    render(createElement(HarnessPicker, { cliName: 'Saved profile', harnesses: [], onSelect: selected }), {
-      stdin: input,
-      stdout: output,
-    })
+    render(
+      createElement(HarnessPicker, {
+        cliName: 'Saved profile',
+        cliPath: '/home/test/.strands/cli.toml',
+        harnesses: [],
+        onSelect: selected,
+      }),
+      {
+        stdin: input,
+        stdout: output,
+      }
+    )
     await vi.waitFor(() => expect(frame().join('\n')).toContain('Create a new harness'))
 
     input.write('\u001b[B')

@@ -90,6 +90,9 @@ strands dev init --create python --workspace ./strands-dev/new-agent
 ```
 
 The full TUI opens before discovery. Its picker lists the current CLI harness first, discovered harnesses next, and a new-harness option last.
+The selector separates CLI Default, Local Projects, and New Project choices. Source details appear below the selected choice.
+Base CLI shows its source path and explains that only a later manual import applies changes globally.
+Discovery omits the current CLI source and the base workspace already represented by that choice. Distinct projects with matching names remain separate.
 Creation errors stay in the picker so you can retry without restarting the CLI.
 Discovery reads the current folder and any explicit search roots. It does not execute source or follow symbolic links.
 It skips dependency folders, build output, private state, and copied harness libraries.
