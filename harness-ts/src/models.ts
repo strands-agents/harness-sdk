@@ -557,7 +557,8 @@ export async function supportsMedia(model: Model | ModelRouter | string | undefi
  * Claude rejects an image over 8000 px a side, or over 3,932,160 bytes on Bedrock and 7,864,320 on the
  * Anthropic API (5 and 10 MiB once base64-encoded), and the rejected block fails every later turn. Other
  * Bedrock models accept larger images, so they and unknown `Model` instances get no limits. A
- * `ModelRouter` gets the strictest limit among its candidates.
+ * `BedrockModel` or `AnthropicModel` instance is resolved through its `modelId`, and a `ModelRouter`
+ * gets the strictest limit among its candidates.
  */
 export async function imageLimits(model: Model | ModelRouter | string | undefined): Promise<ImageLimits> {
   if (model instanceof ModelRouter) {
@@ -571,6 +572,12 @@ export async function imageLimits(model: Model | ModelRouter | string | undefine
   }
   if (model instanceof Model) {
     const { BedrockModel } = await import('@strands-agents/sdk/models/bedrock')
+    // The optional `@anthropic-ai/sdk` peer may be absent, and then no AnthropicModel instance exists.
+    const AnthropicModel = await import('@strands-agents/sdk/models/anthropic').then(
+      (mod) => mod.AnthropicModel,
+      () => undefined
+    )
+    if (AnthropicModel && model instanceof AnthropicModel) return imageLimits(`anthropic/${model.getConfig().modelId}`)
     const modelId = model instanceof BedrockModel ? model.getConfig().modelId : undefined
     return typeof modelId === 'string' ? imageLimits(modelId) : {}
   }

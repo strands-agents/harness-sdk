@@ -606,10 +606,12 @@ async def test_read_surfaces_an_oversized_image_as_an_error_tool_result(ctx, tmp
     path.write_bytes(_png_sized(8001, 1))
     tool_use = {"toolUseId": "t1", "name": "read", "input": {"path": str(path)}}
     events = [e async for e in _LIMITED_READ.stream(tool_use, {"agent": ctx.agent})]
-    result = events[-1].tool_result
-    assert result["status"] == "error"
-    assert [next(iter(c)) for c in result["content"]] == ["text"]
-    assert "Write a smaller copy with a shell tool" in result["content"][0]["text"]
+    message = (
+        f"{path} is a 8001x1 px png image of {path.stat().st_size} bytes, larger than this model accepts "
+        "(4096 bytes and 8000 px per side). Write a smaller copy with a shell tool (for example ImageMagick "
+        "`magick`, macOS `sips`, or Python Pillow) and read that."
+    )
+    assert events[-1].tool_result == {"toolUseId": "t1", "status": "error", "content": [{"text": f"Error: {message}"}]}
 
 
 @pytest.mark.parametrize(

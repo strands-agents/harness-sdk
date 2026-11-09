@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Model, ModelRouter } from '@strands-agents/sdk'
+import { AnthropicModel } from '@strands-agents/sdk/models/anthropic'
 import { BedrockModel } from '@strands-agents/sdk/models/bedrock'
 
 import {
@@ -917,15 +918,15 @@ describe('web_fetch summarizer on a repointed endpoint', () => {
 
 describe('imageLimits', () => {
   const bedrockClaude = { maxImageBytes: 3_932_160, maxImageDimension: 8000 }
+  const anthropic = { maxImageBytes: 7_864_320, maxImageDimension: 8000 }
+  const anthropicModel = (): AnthropicModel =>
+    new AnthropicModel({ modelId: 'claude-haiku-4-5', maxTokens: 1024, apiKey: 'test' })
 
   it('applies to Claude only', async () => {
     expect(await imageLimits('bedrock/global.anthropic.claude-opus-5')).toEqual(bedrockClaude)
     expect(await imageLimits('us.anthropic.claude-sonnet-4-6')).toEqual(bedrockClaude)
     expect(await imageLimits(undefined)).toEqual(bedrockClaude)
-    expect(await imageLimits('anthropic/claude-haiku-4-5')).toEqual({
-      maxImageBytes: 7_864_320,
-      maxImageDimension: 8000,
-    })
+    expect(await imageLimits('anthropic/claude-haiku-4-5')).toEqual(anthropic)
     expect(await imageLimits('bedrock/us.amazon.nova-2-lite-v1:0')).toEqual({})
     expect(await imageLimits('openai/gpt-5.6')).toEqual({})
   })
@@ -935,12 +936,29 @@ describe('imageLimits', () => {
     expect(await imageLimits(new BedrockModel({ modelId: 'us.meta.llama4-maverick-17b-instruct-v1:0' }))).toEqual({})
   })
 
+  it('reads an Anthropic instance', async () => {
+    expect(await imageLimits(anthropicModel())).toEqual(anthropic)
+  })
+
+  it('works without the optional Anthropic SDK', async () => {
+    vi.doMock('@strands-agents/sdk/models/anthropic', () => {
+      throw new Error("Cannot find package '@anthropic-ai/sdk'")
+    })
+    try {
+      expect(await imageLimits(new BedrockModel({ modelId: 'global.anthropic.claude-opus-5' }))).toEqual(bedrockClaude)
+    } finally {
+      vi.doUnmock('@strands-agents/sdk/models/anthropic')
+    }
+  })
+
   it('takes the strictest router candidate', async () => {
     const router = new ModelRouter([
+      anthropicModel(),
       new BedrockModel({ modelId: 'us.amazon.nova-2-lite-v1:0' }),
       new BedrockModel({ modelId: 'global.anthropic.claude-opus-5' }),
     ])
     expect(await imageLimits(router)).toEqual(bedrockClaude)
+    expect(await imageLimits(new ModelRouter([anthropicModel()]))).toEqual(anthropic)
     expect(await imageLimits(new ModelRouter([new BedrockModel({ modelId: 'us.amazon.nova-2-lite-v1:0' })]))).toEqual(
       {}
     )

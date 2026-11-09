@@ -649,14 +649,31 @@ describe('read image limits', () => {
   })
 
   it.each([
-    ['bedrock/global.anthropic.claude-sonnet-4-6', 'error'],
-    ['bedrock/us.amazon.nova-2-lite-v1:0', 'success'],
-  ])('applies the image limits of %s', async (model, status) => {
+    [
+      'bedrock/global.anthropic.claude-sonnet-4-6',
+      'error',
+      (path: string, data: Uint8Array) => ({
+        text:
+          `Error: ${path} is a 8001x1 px png image of ${data.length} bytes, larger than this model accepts ` +
+          '(3932160 bytes and 8000 px per side). Write a smaller copy with a shell tool (for example ImageMagick ' +
+          '`magick`, macOS `sips`, or Python Pillow) and read that.',
+      }),
+    ],
+    [
+      'bedrock/us.amazon.nova-2-lite-v1:0',
+      'success',
+      (_path: string, data: Uint8Array) => ({
+        image: { format: 'png', source: { bytes: Buffer.from(data).toString('base64') } },
+      }),
+    ],
+  ])('applies the image limits of %s', async (model, status, content) => {
     const harness = await createHarness({ model, skills: false })
     const path = join(dir, 'wide.png')
-    writeFileSync(path, pngSized(8001, 1))
+    const data = pngSized(8001, 1)
+    writeFileSync(path, data)
     const result = await harness.tool.read!.invoke({ path }, { recordDirectToolCall: false })
-    expect(result.status).toBe(status)
-    if (status === 'error') expect(result.content).toHaveLength(1)
+    expect(result.toJSON()).toEqual({
+      toolResult: { toolUseId: expect.any(String), status, content: [content(path, data)] },
+    })
   })
 })

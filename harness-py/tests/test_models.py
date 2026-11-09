@@ -1,3 +1,5 @@
+import sys
+
 import pytest
 from strands.models import BedrockModel, CacheConfig, Model, ModelRouter
 
@@ -828,13 +830,14 @@ def test_supports_media_requires_every_router_candidate_to_support_it():
 
 
 _BEDROCK_CLAUDE_LIMITS = {"max_image_bytes": 3_932_160, "max_image_dimension": 8000}
+_ANTHROPIC_LIMITS = {"max_image_bytes": 7_864_320, "max_image_dimension": 8000}
 
 
 def test_image_limits_apply_to_claude_only():
     assert _image_limits("bedrock/global.anthropic.claude-opus-5") == _BEDROCK_CLAUDE_LIMITS
     assert _image_limits("us.anthropic.claude-sonnet-4-6") == _BEDROCK_CLAUDE_LIMITS
     assert _image_limits(None) == _BEDROCK_CLAUDE_LIMITS
-    assert _image_limits("anthropic/claude-haiku-4-5") == {"max_image_bytes": 7_864_320, "max_image_dimension": 8000}
+    assert _image_limits("anthropic/claude-haiku-4-5") == _ANTHROPIC_LIMITS
     assert _image_limits("bedrock/us.amazon.nova-2-lite-v1:0") == {}
     assert _image_limits("openai/gpt-5.6") == {}
 
@@ -846,11 +849,30 @@ def test_image_limits_read_a_bedrock_instance_model_id():
     assert _image_limits(BedrockModel(model_id="us.meta.llama4-maverick-17b-instruct-v1:0")) == {}
 
 
+def test_image_limits_read_an_anthropic_instance():
+    from strands.models.anthropic import AnthropicModel
+
+    assert _image_limits(AnthropicModel(model_id="claude-haiku-4-5", max_tokens=1024)) == _ANTHROPIC_LIMITS
+
+
+def test_image_limits_without_the_anthropic_extra(monkeypatch):
+    monkeypatch.setitem(sys.modules, "strands.models.anthropic", None)
+    assert _image_limits(BedrockModel(model_id="global.anthropic.claude-opus-5")) == _BEDROCK_CLAUDE_LIMITS
+
+
 def test_image_limits_take_the_strictest_router_candidate():
     from strands.models import BedrockModel, ModelRouter
+    from strands.models.anthropic import AnthropicModel
 
     router = ModelRouter(
-        [BedrockModel(model_id="us.amazon.nova-2-lite-v1:0"), BedrockModel(model_id="global.anthropic.claude-opus-5")]
+        [
+            AnthropicModel(model_id="claude-haiku-4-5", max_tokens=1024),
+            BedrockModel(model_id="us.amazon.nova-2-lite-v1:0"),
+            BedrockModel(model_id="global.anthropic.claude-opus-5"),
+        ]
     )
     assert _image_limits(router) == _BEDROCK_CLAUDE_LIMITS
+    assert (
+        _image_limits(ModelRouter([AnthropicModel(model_id="claude-haiku-4-5", max_tokens=1024)])) == _ANTHROPIC_LIMITS
+    )
     assert _image_limits(ModelRouter([BedrockModel(model_id="us.amazon.nova-2-lite-v1:0")])) == {}

@@ -457,9 +457,15 @@ def _image_limits(model: Model | ModelRouter | str | None) -> dict[str, int]:
     Claude rejects an image over 8000 px a side, or over 3,932,160 bytes on Bedrock and 7,864,320 on the
     Anthropic API (5 and 10 MiB once base64-encoded), and the rejected block fails every later turn. Other
     Bedrock models accept larger images, so they and unknown ``Model`` instances get no limits. A
+    ``BedrockModel`` or ``AnthropicModel`` instance is resolved through its ``model_id``, and a
     ``ModelRouter`` gets the strictest limit among its candidates.
     """
     from strands.models import BedrockModel
+
+    try:
+        from strands.models.anthropic import AnthropicModel
+    except ImportError:  # the optional anthropic extra isn't installed
+        AnthropicModel = None
 
     if isinstance(model, ModelRouter):
         candidates = [_image_limits(candidate.model) for candidate in model.candidates]
@@ -468,6 +474,8 @@ def _image_limits(model: Model | ModelRouter | str | None) -> dict[str, int]:
     if isinstance(model, BedrockModel):
         model_id = (model.get_config() or {}).get("model_id")
         return _image_limits(model_id) if isinstance(model_id, str) else {}
+    if AnthropicModel is not None and isinstance(model, AnthropicModel):
+        return _image_limits(f"anthropic/{(model.get_config() or {}).get('model_id', '')}")
     if isinstance(model, Model):
         return {}
     provider_name, name = _split_provider(model or defaults.DEFAULT_MODEL)
