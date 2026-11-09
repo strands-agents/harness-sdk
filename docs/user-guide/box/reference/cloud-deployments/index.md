@@ -2,7 +2,7 @@ Use these profiles to prepare Box for AgentCore Runtime managed code, customer c
 
 ## Install and configure Box
 
-Linux release packages target ARM64 (`aarch64-unknown-linux-gnu`), with executables built against Amazon Linux 2023. If a [release](https://github.com/strands-agents/box/releases) includes Linux, follow its Linux download and checksum instructions. Otherwise, [build from source](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/README.md#build-from-source) on ARM64 Amazon Linux 2023. Use an ARM64 runtime, container, or MicroVM. Check that `uname -m` reports `aarch64`.
+Linux release packages target ARM64 (`aarch64-unknown-linux-gnu`), with executables built against Amazon Linux 2023. If a [release](https://github.com/strands-agents/box/releases) includes Linux, follow its Linux download and checksum instructions. Otherwise, [build from source](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/README.md#build-from-source) on ARM64 Amazon Linux 2023. Use an ARM64 runtime, container, or MicroVM. Check that `uname -m` reports `aarch64`.
 
 Keep the main executable and both helpers from the same build in one directory. Release packages call the main executable `box`; source builds call it `strands-box`. The helpers are `strands-box-contain-trampoline` and `strands-box-sock-alias`. Both helpers must be regular executable files. Box refuses helper symlinks and files without executable permissions.
 

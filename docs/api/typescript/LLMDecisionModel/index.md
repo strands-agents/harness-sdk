@@ -1,4 +1,4 @@
-Defined in: [src/decisions/llm-decision-model.ts:76](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/llm-decision-model.ts#L76)
+Defined in: [src/decisions/llm-decision-model.ts:78](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/llm-decision-model.ts#L78)
 
 Adapter that turns any [Model](/docs/api/typescript/Model/index.md) into a [DecisionModel](/docs/api/typescript/DecisionModel/index.md).
 
@@ -7,7 +7,7 @@ Adapter that turns any [Model](/docs/api/typescript/Model/index.md) into a [Deci
 ## Example
 
 ```typescript
-const decision = new LLMDecisionModel({ model: new BedrockModel() })
+const decision = new LLMDecisionModel({ model: new BedrockModel({ strictTools: true }) })
 const result = await decision.ask('The fruit is an apple', {
   color: {
     question: 'What color is the fruit?',
@@ -37,7 +37,7 @@ const result = await decision.ask('The fruit is an apple', {
 new LLMDecisionModel(options?): LLMDecisionModel;
 ```
 
-Defined in: [src/decisions/llm-decision-model.ts:86](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/llm-decision-model.ts#L86)
+Defined in: [src/decisions/llm-decision-model.ts:88](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/llm-decision-model.ts#L88)
 
 Create an LLM-backed decision model.
 
@@ -119,7 +119,7 @@ protected _ask<Q>(
 ): Promise<DecisionResult<Q>>;
 ```
 
-Defined in: [src/decisions/llm-decision-model.ts:94](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/llm-decision-model.ts#L94)
+Defined in: [src/decisions/llm-decision-model.ts:96](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/llm-decision-model.ts#L96)
 
 Implementation-specific decision logic. Must return a complete [DecisionResult](/docs/api/typescript/DecisionResult/index.md), including `metadata.latencyMs` sourced from the underlying model provider. Implementations should forward `options.cancelSignal` to any cancellable work they start. The request’s `invocationContext` is not passed: `ask` records the reported usage itself.
 

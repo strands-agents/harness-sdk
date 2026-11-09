@@ -1,6 +1,6 @@
 [Codex CLI](https://github.com/openai/codex) runs in a box like any other program. In this example the project stays out of Codex’s own reach, so its shell tool is its only way to a project file, and each command it runs goes to [Strands Shell](../../reference/shell/index.md#invocation), the box’s own shell, where the policy decides the command and every file it reads, writes, or deletes. By the end of this page you have Codex working on the project from getting started, and you have watched the policy permit three tasks and refuse two, with the refusal text Codex quoted back.
 
-Audience: an operator who has run [getting started](../../quickstart/index.md) and [write a policy](../write-a-policy/index.md) on a Mac with Apple silicon. The files are in [`examples/codex-cli`](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/examples/codex-cli/) in the repository, and this page walks through them. This example uses Codex 0.160.1.
+Audience: an operator who has run [getting started](../../quickstart/index.md) and [write a policy](../write-a-policy/index.md) on a Mac with Apple silicon. The files are in [`examples/codex-cli`](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/examples/codex-cli/) in the repository, and this page walks through them. This example uses Codex 0.160.1.
 
 > **Status.** The action vocabulary and the context fields can change before 1.0.0. Pin the Box build you install (`./box-core/box --version`), and read [troubleshooting load failures](../../reference/policy/index.md#troubleshooting-load-failures) after an upgrade.
 
@@ -59,7 +59,7 @@ cp codex/config.toml codex/AGENTS.md codex/home/
 
 ## Step 2. Read Codex’s configuration
 
-Codex reads `config.toml` from `CODEX_HOME`. The complete file is [`config.toml`](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/examples/codex-cli/config.toml) in the example directory. Its first two lines select the model, `openai.gpt-5.6-terra`, and the provider below. These are the lines this page explains:
+Codex reads `config.toml` from `CODEX_HOME`. The complete file is [`config.toml`](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/examples/codex-cli/config.toml) in the example directory. Its first two lines select the model, `openai.gpt-5.6-terra`, and the provider below. These are the lines this page explains:
 
 ```toml
 # The box contains Codex. Codex's own sandbox stays off, so each command it runs goes to the box's
@@ -91,7 +91,7 @@ one with shell commands such as `printf '...' >> file` or `sed -i ''`. When a co
 
 ## Step 3. Read the box
 
-The complete file is [`box.toml`](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/examples/codex-cli/box.toml) in the example directory. Its `name`, `box_dir`, `policy`, and `[egress.model]` table follow the box from getting started, with `bedrock-mantle.us-west-2.api.aws` as the model host. These are the two tables this page explains, with your home directory where `<HOME>` stands after the `sed` in step 1:
+The complete file is [`box.toml`](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/examples/codex-cli/box.toml) in the example directory. Its `name`, `box_dir`, `policy`, and `[egress.model]` table follow the box from getting started, with `bedrock-mantle.us-west-2.api.aws` as the model host. These are the two tables this page explains, with your home directory where `<HOME>` stands after the `sed` in step 1:
 
 ```toml
 [agent]
@@ -131,7 +131,7 @@ list = ["~/box-tutorial/my-project"]
 
 ## Step 4. Read the policy
 
-The complete file is [`policy.dw`](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/examples/codex-cli/policy.dw) in the example directory. It keeps the rules from getting started, with `bedrock-mantle.us-west-2.api.aws` as the model host, adds `project_write` for writes in the project, and adds four `forbid` rules. The tasks below exercise two of them, and each carries an `@id` and a `@description` that the denial text quotes:
+The complete file is [`policy.dw`](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/examples/codex-cli/policy.dw) in the example directory. It keeps the rules from getting started, with `bedrock-mantle.us-west-2.api.aws` as the model host, adds `project_write` for writes in the project, and adds four `forbid` rules. The tasks below exercise two of them, and each carries an `@id` and a `@description` that the denial text quotes:
 
 ```text
 // One file inside the project stays unread, whatever the permit above says. The agent can see that
@@ -325,7 +325,7 @@ The review is done.
 
 ## Step 6. Read the decision log
 
-The box writes its decisions to `codex/state/private/telemetry/records.jsonl`. The same file holds Codex’s own spans, log records, and metrics, because `command` in `box.toml` switched its three exporters on and the box relays what it exports. [Telemetry in the example](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/examples/codex-cli/README.md#telemetry) names those switches, and [Telemetry](../record-telemetry/index.md) states what each record carries.
+The box writes its decisions to `codex/state/private/telemetry/records.jsonl`. The same file holds Codex’s own spans, log records, and metrics, because `command` in `box.toml` switched its three exporters on and the box relays what it exports. [Telemetry in the example](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/examples/codex-cli/README.md#telemetry) names those switches, and [Telemetry](../record-telemetry/index.md) states what each record carries.
 
 This command prints the verdict, action, resource, and rule of each decision, as in [write a policy](../write-a-policy/index.md#step-4-read-the-decision-log):
 
@@ -410,4 +410,4 @@ Codex CLI working on a project it can only reach through the box’s shell, a `b
 -   [Write a policy and read what it decided](../write-a-policy/index.md): each part of a rule, and the record of each decision.
 -   [Strands Shell](../../reference/shell/index.md): what Codex’s `zsh -lc` runs, where, and the fields a rule reads.
 -   [Security](../../security/index.md#the-two-tiers): what `box.toml` governs, what `policy.dw` governs, and why the project stays out of Codex’s `read` list.
--   [The example directory](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/examples/codex-cli/): the files this page walks through.
+-   [The example directory](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/examples/codex-cli/): the files this page walks through.

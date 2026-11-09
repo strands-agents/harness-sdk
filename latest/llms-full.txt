@@ -7885,9 +7885,9 @@ For a request the policy refuses, see [troubleshooting](../write-mcp-policy/inde
 ## See also
 
 -   [Write policy for an MCP server](../write-mcp-policy/index.md): the rules that let the agent start, list, and call a server, and how to connect the harness.
--   [MCP servers in the design guide](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/docs/design/mcp.md): how the box starts a server and decides each call.
--   [Local MCP servers in the design guide](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/docs/design/containment.md#local-mcp-servers): what a stdio server’s sandbox reaches.
--   [macOS network restrictions](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/docs/design/macos-enforcement.md#network-connections-and-local-services): how the sandbox limits a server’s connections.
+-   [MCP servers in the design guide](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/docs/design/mcp.md): how the box starts a server and decides each call.
+-   [Local MCP servers in the design guide](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/docs/design/containment.md#local-mcp-servers): what a stdio server’s sandbox reaches.
+-   [macOS network restrictions](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/docs/design/macos-enforcement.md#network-connections-and-local-services): how the sandbox limits a server’s connections.
 
 Source: https://strandsagents.com/docs/user-guide/box/guides/add-an-mcp-server/index.md
 
@@ -7901,11 +7901,11 @@ Eligibility checks and dispatch requests share `/orders/{order_id}/replacement`.
 
 ## Before you start
 
-Prepare the package on Linux ARM64 with Python 3.12, pip, Git, and Rust through rustup. ARM64 is the 64-bit Arm processor architecture. The Box checkout selects its Rust toolchain. Install its [native build dependencies](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/README.md#build-from-source). On Amazon Linux 2023, the build requires GCC, G++, Make, CMake, OpenSSL development files, pkg-config, and Perl. Python 3.12 also needs the pip and virtual-environment packages.
+Prepare the package on Linux ARM64 with Python 3.12, pip, Git, and Rust through rustup. ARM64 is the 64-bit Arm processor architecture. The Box checkout selects its Rust toolchain. Install its [native build dependencies](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/README.md#build-from-source). On Amazon Linux 2023, the build requires GCC, G++, Make, CMake, OpenSSL development files, pkg-config, and Perl. Python 3.12 also needs the pip and virtual-environment packages.
 
 Use a development AWS account and an existing Amazon S3 bucket in `us-west-2` owned by that account. Authenticate a profile with permissions to deploy CloudFormation, create the execution role, upload the package, and invoke Runtime. The execution role receives model permissions from the generated template. Model and cloud-resource usage can incur charges.
 
-The [sample README](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/examples/cloud-deployments/agentcore-runtime/README.md#tested-scope) records the tested source revision, framework versions, and platform limits. The deployment uses managed Runtime V2 with Python 3.12 and a non-root operator. The model profile and endpoint are fixed to the tested commercial AWS configuration.
+The [sample README](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/examples/cloud-deployments/agentcore-runtime/README.md#tested-scope) records the tested source revision, framework versions, and platform limits. The deployment uses managed Runtime V2 with Python 3.12 and a non-root operator. The model profile and endpoint are fixed to the tested commercial AWS configuration.
 
 ## Prepare the package
 
@@ -8035,7 +8035,7 @@ Use an EKS cluster with Linux ARM64 workers and pod user namespaces. ARM64 is th
 
 Install Docker with an ARM64 builder, Python 3, and `kubectl`. Authenticate to a container registry that you can push to and your workers can pull from. Configure `kubectl` for your cluster. The [EKS connection guide](https://docs.aws.amazon.com/eks/latest/userguide/create-kubeconfig.html) explains that step. Cluster and registry usage can incur charges.
 
-The [sample README](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/examples/cloud-deployments/eks/README.md#tested-configuration) lists the Box revision, platform versions, and results for each example. The coding and deployment examples passed on EKS, including checks through the full ten-minute cooldown. Test the deployment example on your cluster. The recorded versions are tested configurations, not minimum requirements.
+The [sample README](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/examples/cloud-deployments/eks/README.md#tested-configuration) lists the Box revision, platform versions, and results for each example. The coding and deployment examples passed on EKS, including checks through the full ten-minute cooldown. Test the deployment example on your cluster. The recorded versions are tested configurations, not minimum requirements.
 
 ## Build the image
 
@@ -8116,7 +8116,7 @@ python3 run.py --mode claude --exercise deployment-cooldown \
 
 The runner selects `deployment-cooldown` by default for Claude and records the selected example in `receipt.json`. A successful result contains `passed: true`. The test checks for three failed deployments, at least two blocked retries, and a successful status check after the failures. The mock service returns HTTP 503 (service unavailable) for its first three deployment requests and HTTP 201 (created) afterward. Box enforces the cooldown.
 
-The agent finishes after those checks. It does not wait for the cooldown to end. Run the [test without a model](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/examples/cloud-deployments/eks/claude/README.md#check-cooldown-expiry-without-a-model) to check that deployment becomes available again. That test waits through the full ten-minute cooldown and checks that Box permits the next deployment request. The supplied client makes sequential calls within one box. Requests already in flight and activity in other boxes remain outside this limit. Model responses can vary. Check `receipt.json` for the test result, even if the agent reports success.
+The agent finishes after those checks. It does not wait for the cooldown to end. Run the [test without a model](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/examples/cloud-deployments/eks/claude/README.md#check-cooldown-expiry-without-a-model) to check that deployment becomes available again. That test waits through the full ten-minute cooldown and checks that Box permits the next deployment request. The supplied client makes sequential calls within one box. Requests already in flight and activity in other boxes remain outside this limit. Model responses can vary. Check `receipt.json` for the test result, even if the agent reports success.
 
 To run the coding and file-permission example, select `boundaries`:
 
@@ -8170,7 +8170,7 @@ The controller reads a short-lived token from the VM’s service account. The ag
 | Retry after the ten-minute cooldown | Allows the request in the separate policy check. |
 | Call Gemini | Allows streaming requests for the configured project, location, and model. |
 
-Dogwood is Box’s policy language. The [policy](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/examples/cloud-deployments/eks/claude/deployment_policy.py) counts completed failure responses in this Box’s history. The tools contain no retry guard. The mock service accepts the first request that reaches it after those three failures.
+Dogwood is Box’s policy language. The [policy](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/examples/cloud-deployments/eks/claude/deployment_policy.py) counts completed failure responses in this Box’s history. The tools contain no retry guard. The mock service accepts the first request that reaches it after those three failures.
 
 ## Before you start
 
@@ -8185,7 +8185,7 @@ Install Python 3.10 or later, Git, and the [Google Cloud CLI](https://cloud.goog
 
 The VM service account receives only `aiplatform.endpoints.predict`.
 
-The [sample README](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/examples/cloud-deployments/gcp/README.md#tested-configuration) records the tested image, source revision, and runtime versions.
+The [sample README](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/examples/cloud-deployments/gcp/README.md#tested-configuration) records the tested image, source revision, and runtime versions.
 
 The default deployment creates a billable `t2a-standard-4` VM and a 40 GB disk in `us-central1-a`. It creates a separate network with no incoming firewall rules. The VM uses an ephemeral external IP for outgoing downloads and model calls. No SSH access or downloaded service-account key is needed.
 
@@ -8262,7 +8262,7 @@ Box uses native filesystem grants for Python libraries, example code, and the wr
 
 Each run has separate Box history. The cooldown is not a shared quota across VMs or concurrent agents. The model check stops before cooldown expiry. The separate policy check verifies expiry. The controller does not refresh its token during a run and requires sufficient token lifetime before it starts. It retains up to 4 MiB of standard output and 1 MiB of standard error for each Box run. This example does not establish support for Google Kubernetes Engine, Cloud Run, x86-64 Linux, or other VM images.
 
-The [source revision](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/examples/cloud-deployments/gcp/deploy.py), [dependency lock](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/examples/cloud-deployments/gcp/dependency-lock.txt), and [startup script](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/examples/cloud-deployments/gcp/setup-vm.sh) define the build. Model availability can change. Select another supported Gemini model with `--model` when needed. The default image is `debian-12-bookworm-arm64-v20261102` from `debian-cloud`. Use `--image` to select another Debian image and rerun the checks.
+The [source revision](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/examples/cloud-deployments/gcp/deploy.py), [dependency lock](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/examples/cloud-deployments/gcp/dependency-lock.txt), and [startup script](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/examples/cloud-deployments/gcp/setup-vm.sh) define the build. Model availability can change. Select another supported Gemini model with `--model` when needed. The default image is `debian-12-bookworm-arm64-v20261102` from `debian-cloud`. Use `--image` to select another Debian image and rerun the checks.
 
 Source: https://strandsagents.com/docs/user-guide/box/guides/deploy-to-google-cloud/index.md
 
@@ -8272,7 +8272,7 @@ Source: https://strandsagents.com/docs/user-guide/box/guides/deploy-to-google-cl
 
 An `[egress.<name>]` table in `box.toml` binds a credential to a set of destinations. The box’s egress gateway adds the credential to each request to those destinations. Policy decides whether each request goes out.
 
-Audience: an operator with a working box from [getting started](../../quickstart/index.md) who gives the agent a credential for a service. For how the gateway decides and forwards each request, read [how Box controls outbound traffic](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/docs/design/egress.md).
+Audience: an operator with a working box from [getting started](../../quickstart/index.md) who gives the agent a credential for a service. For how the gateway decides and forwards each request, read [how Box controls outbound traffic](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/docs/design/egress.md).
 
 A tool or local MCP server with `network.contain_egress = false` can connect directly, outside gateway policy. On Linux, this includes IPv4 access to reachable private networks, loopback services, and instance metadata endpoints. See [server network settings](../add-an-mcp-server/index.md#network).
 
@@ -8292,7 +8292,7 @@ secret.ref   = "aws://my-profile"
 
 `box run` reads `GITHUB_TOKEN` from its own environment. The agent gets a placeholder in `GITHUB_TOKEN`, and sends it as it would send the token. The gateway replaces the placeholder with the real token on each request to `api.github.com`.
 
-> **Every process in the box can use every route.** The agent, each tool, and each stdio MCP server in the box get the same placeholders, and the gateway adds the real credential to a request from any of them. The gateway can’t tell which process sent a request, so no setting limits a route to one process. To keep a credential away from a tool or a server, run it in a separate box. [The box is the credential boundary](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/docs/design/decisions.md#the-box-is-the-credential-boundary) explains why.
+> **Every process in the box can use every route.** The agent, each tool, and each stdio MCP server in the box get the same placeholders, and the gateway adds the real credential to a request from any of them. The gateway can’t tell which process sent a request, so no setting limits a route to one process. To keep a credential away from a tool or a server, run it in a separate box. [The box is the credential boundary](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/docs/design/decisions.md#the-box-is-the-credential-boundary) explains why.
 
 To let the requests out, permit them in `policy.dw`:
 
@@ -8389,7 +8389,7 @@ Responses arrive progressively, including on credentialed routes. Credential red
 
 ## See also
 
--   [How Box controls outbound traffic](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/docs/design/egress.md): routing, the connect and request decisions, and how the gateway adds a credential.
+-   [How Box controls outbound traffic](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/docs/design/egress.md): routing, the connect and request decisions, and how the gateway adds a credential.
 -   [The `[mcp.<name>]` table](../add-an-mcp-server/index.md): a credential for an http MCP server.
 
 Source: https://strandsagents.com/docs/user-guide/box/guides/network-and-credentials/index.md
@@ -8624,7 +8624,7 @@ A target that fails while the box runs loses the record. Box reports no such los
 ## See also
 
 -   [Getting started](../../quickstart/index.md): install Box, then run Claude Code or Codex in a box.
--   [How telemetry works](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/docs/design/telemetry.md): which process records, what a workload cannot forge, and where a record can be lost.
+-   [How telemetry works](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/docs/design/telemetry.md): which process records, what a workload cannot forge, and where a record can be lost.
 
 Source: https://strandsagents.com/docs/user-guide/box/guides/record-telemetry/index.md
 
@@ -8634,7 +8634,7 @@ Source: https://strandsagents.com/docs/user-guide/box/guides/record-telemetry/in
 
 [Claude Code](https://docs.anthropic.com/en/docs/claude-code) runs in a box like any other program. In this example its own file tools reach none of the project’s files, so every read, write, and delete goes through its Bash tool, where the box’s shell asks the policy about every command and every file. By the end of this page you have Claude Code working on the project from getting started, and you have watched the policy permit three tasks and refuse two, with the refusal text the agent read.
 
-Audience: an operator who has run [getting started](../../quickstart/index.md) and [write a policy](../write-a-policy/index.md) on a Mac. The files are in [`examples/claude-code`](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/examples/claude-code/) in the repository, and this page walks through them.
+Audience: an operator who has run [getting started](../../quickstart/index.md) and [write a policy](../write-a-policy/index.md) on a Mac. The files are in [`examples/claude-code`](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/examples/claude-code/) in the repository, and this page walks through them.
 
 > **Status.** The action vocabulary and the context fields can change before 1.0.0. Pin the Box build you install (`./box-core/box --version`), and read [troubleshooting load failures](../../reference/policy/index.md#troubleshooting-load-failures) after an upgrade.
 
@@ -8953,7 +8953,7 @@ Claude Code tried its Write tool, and the operating system refused it. It then r
 
 ## Step 5. Read the decision log
 
-The box writes its decisions to `claude-code/state/private/telemetry/records.jsonl`. The same file holds Claude Code’s own spans, log records, and metrics, because `box.toml` switched its exporters on and the box relays what it exports. [Telemetry in the example](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/examples/claude-code/README.md#telemetry) names those switches, and [Telemetry](../record-telemetry/index.md) states what each record carries.
+The box writes its decisions to `claude-code/state/private/telemetry/records.jsonl`. The same file holds Claude Code’s own spans, log records, and metrics, because `box.toml` switched its exporters on and the box relays what it exports. [Telemetry in the example](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/examples/claude-code/README.md#telemetry) names those switches, and [Telemetry](../record-telemetry/index.md) states what each record carries.
 
 This command prints the verdict, action, resource, and rule of each decision, as in [write a policy](../write-a-policy/index.md#step-4-read-the-decision-log):
 
@@ -9020,7 +9020,7 @@ Claude Code in a box that gives its process its own installation, its own two st
 -   [Strands Shell](../../reference/shell/index.md): what the Bash tool’s commands run, where, and the fields a rule reads.
 -   [Security](../../security/index.md#the-two-tiers): what `box.toml` governs, what `policy.dw` governs, and why the project stays out of the agent’s `read` list.
 -   [Run a Strands Agents SDK agent in a box](../run-strands-harness/index.md): the same project and the same rules, with an agent you write yourself.
--   [The example directory](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/examples/claude-code/): the files this page walks through.
+-   [The example directory](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/examples/claude-code/): the files this page walks through.
 
 Source: https://strandsagents.com/docs/user-guide/box/guides/run-claude-code/index.md
 
@@ -9030,7 +9030,7 @@ Source: https://strandsagents.com/docs/user-guide/box/guides/run-claude-code/ind
 
 [Codex CLI](https://github.com/openai/codex) runs in a box like any other program. In this example the project stays out of Codex’s own reach, so its shell tool is its only way to a project file, and each command it runs goes to [Strands Shell](../../reference/shell/index.md#invocation), the box’s own shell, where the policy decides the command and every file it reads, writes, or deletes. By the end of this page you have Codex working on the project from getting started, and you have watched the policy permit three tasks and refuse two, with the refusal text Codex quoted back.
 
-Audience: an operator who has run [getting started](../../quickstart/index.md) and [write a policy](../write-a-policy/index.md) on a Mac with Apple silicon. The files are in [`examples/codex-cli`](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/examples/codex-cli/) in the repository, and this page walks through them. This example uses Codex 0.160.1.
+Audience: an operator who has run [getting started](../../quickstart/index.md) and [write a policy](../write-a-policy/index.md) on a Mac with Apple silicon. The files are in [`examples/codex-cli`](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/examples/codex-cli/) in the repository, and this page walks through them. This example uses Codex 0.160.1.
 
 > **Status.** The action vocabulary and the context fields can change before 1.0.0. Pin the Box build you install (`./box-core/box --version`), and read [troubleshooting load failures](../../reference/policy/index.md#troubleshooting-load-failures) after an upgrade.
 
@@ -9089,7 +9089,7 @@ cp codex/config.toml codex/AGENTS.md codex/home/
 
 ## Step 2. Read Codex’s configuration
 
-Codex reads `config.toml` from `CODEX_HOME`. The complete file is [`config.toml`](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/examples/codex-cli/config.toml) in the example directory. Its first two lines select the model, `openai.gpt-5.6-terra`, and the provider below. These are the lines this page explains:
+Codex reads `config.toml` from `CODEX_HOME`. The complete file is [`config.toml`](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/examples/codex-cli/config.toml) in the example directory. Its first two lines select the model, `openai.gpt-5.6-terra`, and the provider below. These are the lines this page explains:
 
 ```toml
 # The box contains Codex. Codex's own sandbox stays off, so each command it runs goes to the box's
@@ -9121,7 +9121,7 @@ one with shell commands such as `printf '...' >> file` or `sed -i ''`. When a co
 
 ## Step 3. Read the box
 
-The complete file is [`box.toml`](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/examples/codex-cli/box.toml) in the example directory. Its `name`, `box_dir`, `policy`, and `[egress.model]` table follow the box from getting started, with `bedrock-mantle.us-west-2.api.aws` as the model host. These are the two tables this page explains, with your home directory where `<HOME>` stands after the `sed` in step 1:
+The complete file is [`box.toml`](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/examples/codex-cli/box.toml) in the example directory. Its `name`, `box_dir`, `policy`, and `[egress.model]` table follow the box from getting started, with `bedrock-mantle.us-west-2.api.aws` as the model host. These are the two tables this page explains, with your home directory where `<HOME>` stands after the `sed` in step 1:
 
 ```toml
 [agent]
@@ -9161,7 +9161,7 @@ list = ["~/box-tutorial/my-project"]
 
 ## Step 4. Read the policy
 
-The complete file is [`policy.dw`](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/examples/codex-cli/policy.dw) in the example directory. It keeps the rules from getting started, with `bedrock-mantle.us-west-2.api.aws` as the model host, adds `project_write` for writes in the project, and adds four `forbid` rules. The tasks below exercise two of them, and each carries an `@id` and a `@description` that the denial text quotes:
+The complete file is [`policy.dw`](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/examples/codex-cli/policy.dw) in the example directory. It keeps the rules from getting started, with `bedrock-mantle.us-west-2.api.aws` as the model host, adds `project_write` for writes in the project, and adds four `forbid` rules. The tasks below exercise two of them, and each carries an `@id` and a `@description` that the denial text quotes:
 
 ```text
 // One file inside the project stays unread, whatever the permit above says. The agent can see that
@@ -9355,7 +9355,7 @@ The review is done.
 
 ## Step 6. Read the decision log
 
-The box writes its decisions to `codex/state/private/telemetry/records.jsonl`. The same file holds Codex’s own spans, log records, and metrics, because `command` in `box.toml` switched its three exporters on and the box relays what it exports. [Telemetry in the example](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/examples/codex-cli/README.md#telemetry) names those switches, and [Telemetry](../record-telemetry/index.md) states what each record carries.
+The box writes its decisions to `codex/state/private/telemetry/records.jsonl`. The same file holds Codex’s own spans, log records, and metrics, because `command` in `box.toml` switched its three exporters on and the box relays what it exports. [Telemetry in the example](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/examples/codex-cli/README.md#telemetry) names those switches, and [Telemetry](../record-telemetry/index.md) states what each record carries.
 
 This command prints the verdict, action, resource, and rule of each decision, as in [write a policy](../write-a-policy/index.md#step-4-read-the-decision-log):
 
@@ -9440,7 +9440,7 @@ Codex CLI working on a project it can only reach through the box’s shell, a `b
 -   [Write a policy and read what it decided](../write-a-policy/index.md): each part of a rule, and the record of each decision.
 -   [Strands Shell](../../reference/shell/index.md): what Codex’s `zsh -lc` runs, where, and the fields a rule reads.
 -   [Security](../../security/index.md#the-two-tiers): what `box.toml` governs, what `policy.dw` governs, and why the project stays out of Codex’s `read` list.
--   [The example directory](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/examples/codex-cli/): the files this page walks through.
+-   [The example directory](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/examples/codex-cli/): the files this page walks through.
 
 Source: https://strandsagents.com/docs/user-guide/box/guides/run-codex-cli/index.md
 
@@ -9450,7 +9450,7 @@ Source: https://strandsagents.com/docs/user-guide/box/guides/run-codex-cli/index
 
 [pi](https://pi.dev) runs in a box like any other program. In this example the project stays out of pi’s own reach, so its `bash` tool is its only way to a project file, and that tool runs [Strands Shell](../../reference/shell/index.md#invocation), the box’s own shell, where the policy decides the command and every file it reads, writes, or deletes. By the end of this page you have pi working on the project from getting started, and you have watched the policy permit three tasks and refuse two, with the refusal text pi quoted back.
 
-Audience: an operator who has run [getting started](../../quickstart/index.md) and [write a policy](../write-a-policy/index.md) on a Mac with Apple silicon. The files are in [`examples/pi`](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/examples/pi/) in the repository, and this page walks through them.
+Audience: an operator who has run [getting started](../../quickstart/index.md) and [write a policy](../write-a-policy/index.md) on a Mac with Apple silicon. The files are in [`examples/pi`](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/examples/pi/) in the repository, and this page walks through them.
 
 > **Status.** The action vocabulary and the context fields can change before 1.0.0. Pin the Box build you install (`./box-core/box --version`), and read [troubleshooting load failures](../../reference/policy/index.md#troubleshooting-load-failures) after an upgrade.
 
@@ -9524,7 +9524,7 @@ pi reads `settings.json` from its agent directory. This is the whole file, with 
 
 ## Step 3. Read the box
 
-The complete file is [`box.toml`](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/examples/pi/box.toml) in the example directory. Its `name`, `box_dir`, `policy`, and `[egress.model]` table follow the box from getting started. These are the three tables this page explains, with your home directory and pi version where `<HOME>` and `<VERSION>` stand after the `sed` in step 1:
+The complete file is [`box.toml`](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/examples/pi/box.toml) in the example directory. Its `name`, `box_dir`, `policy`, and `[egress.model]` table follow the box from getting started. These are the three tables this page explains, with your home directory and pi version where `<HOME>` and `<VERSION>` stand after the `sed` in step 1:
 
 ```toml
 [agent]
@@ -9565,7 +9565,7 @@ list = ["~/box-tutorial/my-project"]
 
 ## Step 4. Read the policy
 
-The complete file is [`policy.dw`](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/examples/pi/policy.dw) in the example directory. It keeps the rules from getting started, adds `project_write` for writes in the project, and adds four `forbid` rules. The tasks below exercise two of them, and each carries an `@id` and a `@description` that the denial text quotes:
+The complete file is [`policy.dw`](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/examples/pi/policy.dw) in the example directory. It keeps the rules from getting started, adds `project_write` for writes in the project, and adds four `forbid` rules. The tasks below exercise two of them, and each carries an `@id` and a `@description` that the denial text quotes:
 
 ```text
 // One file inside the project stays unread, whatever the permit above says. The agent can see that
@@ -9832,7 +9832,7 @@ With the setting, pi’s `bash` tool starts the `bash` in the box’s `bin` dire
 
 **The process title, in `box-preload.mjs`.** pi sets its process title when it starts. In a box that call ends the Node process at once, so the box prints its startup lines and then stops, with nothing from pi and exit status `139`. The preload file makes the title setter do nothing, which is a workaround for a Box limitation.
 
-**File timestamps, in `box-preload.mjs`.** Without the [`file-attributes`](../../reference/configuration/index.md#file-attributes) switch, Box does not let the agent change file timestamps inside a write grant ([file timestamps may not be preserved](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/docs/design/macos-enforcement.md#file-timestamps-may-not-be-preserved)). pi’s credential store probes the timestamp precision of its lock file through that call, and stops when the call fails:
+**File timestamps, in `box-preload.mjs`.** Without the [`file-attributes`](../../reference/configuration/index.md#file-attributes) switch, Box does not let the agent change file timestamps inside a write grant ([file timestamps may not be preserved](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/docs/design/macos-enforcement.md#file-timestamps-may-not-be-preserved)). pi’s credential store probes the timestamp precision of its lock file through that call, and stops when the call fails:
 
 ```text
 Credential store read failed for amazon-bedrock: EPERM: operation not permitted, utime '/Users/you/box-tutorial/pi/agent/auth.json.lock'
@@ -9861,7 +9861,7 @@ pi working on a project it can only reach through the box’s shell, a `box.toml
 -   [Write a policy and read what it decided](../write-a-policy/index.md): each part of a rule, and the record of each decision.
 -   [Strands Shell](../../reference/shell/index.md): what pi’s `bash` tool runs, where, and the fields a rule reads.
 -   [Security](../../security/index.md#the-two-tiers): what `box.toml` governs, what `policy.dw` governs, and why the project stays out of pi’s `read` list.
--   [The example directory](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/examples/pi/): the files this page walks through.
+-   [The example directory](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/examples/pi/): the files this page walks through.
 
 Source: https://strandsagents.com/docs/user-guide/box/guides/run-pi/index.md
 
@@ -9871,7 +9871,7 @@ Source: https://strandsagents.com/docs/user-guide/box/guides/run-pi/index.md
 
 An agent you write with the [Strands Agents SDK](https://github.com/strands-agents/sdk-python) runs in a box like any other program. In this example each of its three tools runs a command through the box’s shell, so the policy decides every command and every file a command touches. By the end of this page you have the agent working on the project from getting started, and you have watched the policy permit two tasks and refuse two, with the refusal text the agent read.
 
-Audience: an operator who has run [getting started](../../quickstart/index.md) and [write a policy](../write-a-policy/index.md) on a Mac. The files are in [`examples/strands-box/strands-sdk-agent`](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/examples/strands-box/strands-sdk-agent/) in the repository, and this page walks through them.
+Audience: an operator who has run [getting started](../../quickstart/index.md) and [write a policy](../write-a-policy/index.md) on a Mac. The files are in [`examples/strands-box/strands-sdk-agent`](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/examples/strands-box/strands-sdk-agent/) in the repository, and this page walks through them.
 
 > **Status.** The action vocabulary and the context fields can change before 1.0.0. Pin the Box build you install (`./box-core/box --version`), and read [troubleshooting load failures](../../reference/policy/index.md#troubleshooting-load-failures) after an upgrade.
 
@@ -10221,7 +10221,7 @@ A Strands Agents SDK agent that sends every tool call through the box’s shell,
 -   [Write a policy and read what it decided](../write-a-policy/index.md): each part of a rule, and the record of each decision.
 -   [Strands Shell](../../reference/shell/index.md): what the agent’s `zsh -c` runs, where, and the fields a rule reads.
 -   [Security](../../security/index.md#the-two-tiers): what `box.toml` governs, what `policy.dw` governs, and why the project stays out of the agent’s `read` list.
--   [The example directory](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/examples/strands-box/strands-sdk-agent/): the files this page walks through.
+-   [The example directory](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/examples/strands-box/strands-sdk-agent/): the files this page walks through.
 
 Source: https://strandsagents.com/docs/user-guide/box/guides/run-strands-harness/index.md
 
@@ -10428,7 +10428,7 @@ For errors from the box itself, see [If something goes wrong](../../quickstart/i
 
 -   [Telemetry](../record-telemetry/index.md): send records to a file of your own, and what each record carries.
 -   [The `[telemetry.<label>]` table](../../reference/configuration/index.md#telemetrylabel): every key, and the exporter variables a box owns.
--   [How telemetry works](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/docs/design/telemetry.md): which process records, what a workload cannot forge, and where a record can be lost.
+-   [How telemetry works](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/docs/design/telemetry.md): which process records, what a workload cannot forge, and where a record can be lost.
 
 Source: https://strandsagents.com/docs/user-guide/box/guides/strands-cli-telemetry/index.md
 
@@ -11125,8 +11125,8 @@ Read the startup warning as the signal that a rule went inert, then check it aga
 ## See also
 
 -   [The `[mcp.<name>]` table](../add-an-mcp-server/index.md): the keys for a `stdio` and an `http` server.
--   [MCP servers in the design guide](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/docs/design/mcp.md): how the box starts a server and decides each call.
--   [Policy in the design guide](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/docs/design/policy.md): how the engine decides, and what refuses to load.
+-   [MCP servers in the design guide](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/docs/design/mcp.md): how the box starts a server and decides each call.
+-   [Policy in the design guide](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/docs/design/policy.md): how the engine decides, and what refuses to load.
 
 Source: https://strandsagents.com/docs/user-guide/box/guides/write-mcp-policy/index.md
 
@@ -11323,8 +11323,8 @@ permit  shell:spawn  /Library/Developer/CommandLineTools/usr/bin/git add todo.tx
 ## See also
 
 -   [Strands Shell reference](../../reference/shell/index.md): every field, action, and exit status.
--   [How Box runs shell commands and programs](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/docs/design/shell.md): the order of the checks.
--   [Policy in the design guide](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/docs/design/policy.md): how the engine decides, and what refuses to load.
+-   [How Box runs shell commands and programs](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/docs/design/shell.md): the order of the checks.
+-   [Policy in the design guide](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/docs/design/policy.md): how the engine decides, and what refuses to load.
 
 Source: https://strandsagents.com/docs/user-guide/box/guides/write-shell-policy/index.md
 
@@ -11334,7 +11334,7 @@ Source: https://strandsagents.com/docs/user-guide/box/guides/write-shell-policy/
 
 Box runs an agent on Linux or macOS under a policy. The agent can reach only the files, programs, and network destinations you allow. You describe a box in two files: `box.toml` says what to run and what it can reach, and `policy.dw` decides each request it makes.
 
-In this guide you’ll put the [Strands CLI](https://github.com/strands-agents/harness-sdk/tree/main/strands-cli) in a box on macOS. You’ll give it one tool, a shell, so your policy decides every command it runs and every file its shell reads or writes, and you’ll watch the box refuse a write, then change the policy to allow it. The finished files are in [`examples/strands-cli`](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/examples/strands-cli/).
+In this guide you’ll put the [Strands CLI](https://github.com/strands-agents/harness-sdk/tree/main/strands-cli) in a box on macOS. You’ll give it one tool, a shell, so your policy decides every command it runs and every file its shell reads or writes, and you’ll watch the box refuse a write, then change the policy to allow it. The finished files are in [`examples/strands-cli`](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/examples/strands-cli/).
 
 ## Set up with your coding agent
 
@@ -11345,7 +11345,7 @@ Show the prompt
 ```text
 Help me put the Strands CLI in a Strands Box on this Mac. Fetch this guide and follow it step by
 step, and prefer it over what you remember about Box:
-https://raw.githubusercontent.com/strands-agents/box/fbe415cbdfec284bf608a46f125ff8e437a99bda/docs/user/getting-started.md
+https://raw.githubusercontent.com/strands-agents/box/f4180a035d2d164596135864604629529636bf1c/docs/user/getting-started.md
 
 Rules:
 - First, check the guide's "Before you start" list. Tell me what's missing, and stop if something
@@ -11360,7 +11360,7 @@ Rules:
   its decision log command to find the cause.
 - When the box works, offer to help me change what it allows in my-box/policy.dw. The
   policy-authoring skill at
-  https://raw.githubusercontent.com/strands-agents/box/fbe415cbdfec284bf608a46f125ff8e437a99bda/.agents/skills/authoring-box-policy/SKILL.md
+  https://raw.githubusercontent.com/strands-agents/box/f4180a035d2d164596135864604629529636bf1c/.agents/skills/authoring-box-policy/SKILL.md
   teaches the Dogwood policy language and the box's action vocabulary; fetch it and follow it.
 ```
 
@@ -11400,7 +11400,7 @@ The signed macOS package contains `Box.app`, with a `box` launcher and helper li
 
 After installation, continue with the [Amazon EKS coding example](../guides/deploy-to-eks/index.md) or the [AgentCore Runtime shipment example](../guides/deploy-to-agentcore-runtime/index.md). Steps 2–8 below follow the macOS Strands CLI example.
 
-Check [Linux setup requirements](../reference/cloud-deployments/index.md#shared-requirements) for the permissions Box needs at startup. Use the [platform comparison](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/docs/design/platform-differences.md) when adapting a macOS configuration.
+Check [Linux setup requirements](../reference/cloud-deployments/index.md#shared-requirements) for the permissions Box needs at startup. Use the [platform comparison](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/docs/design/platform-differences.md) when adapting a macOS configuration.
 
 Build from source (optional)
 
@@ -11497,7 +11497,7 @@ Save this file as `my-box/box.toml`:
 
 ```toml
 # To author or change the policy next to this file, point your coding agent at the skill:
-#   https://raw.githubusercontent.com/strands-agents/box/fbe415cbdfec284bf608a46f125ff8e437a99bda/.agents/skills/authoring-box-policy/SKILL.md
+#   https://raw.githubusercontent.com/strands-agents/box/f4180a035d2d164596135864604629529636bf1c/.agents/skills/authoring-box-policy/SKILL.md
 
 # The box's name, and where it keeps its own state. The agent can't reach box_dir.
 name = "strands"
@@ -11706,7 +11706,7 @@ rm -rf ~/box-tutorial
 -   [Collect the Strands CLI’s traces and metrics](../guides/strands-cli-telemetry/index.md): put the agent’s own spans and metrics in the same records file as the box’s decisions.
 -   [The `[mcp.<name>]` table](../guides/add-an-mcp-server/index.md): add an MCP server to the box you wrote.
 -   [Policy](../reference/policy/index.md): what a policy is, the actions, the common rules, and what to do when a policy fails to load.
--   [The design guide](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/docs/design/): how Box works, why it’s safe, and the decisions behind it.
+-   [The design guide](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/docs/design/): how Box works, why it’s safe, and the decisions behind it.
 
 Source: https://strandsagents.com/docs/user-guide/box/quickstart/index.md
 
@@ -11718,7 +11718,7 @@ Use these profiles to prepare Box for AgentCore Runtime managed code, customer c
 
 ## Install and configure Box
 
-Linux release packages target ARM64 (`aarch64-unknown-linux-gnu`), with executables built against Amazon Linux 2023. If a [release](https://github.com/strands-agents/box/releases) includes Linux, follow its Linux download and checksum instructions. Otherwise, [build from source](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/README.md#build-from-source) on ARM64 Amazon Linux 2023. Use an ARM64 runtime, container, or MicroVM. Check that `uname -m` reports `aarch64`.
+Linux release packages target ARM64 (`aarch64-unknown-linux-gnu`), with executables built against Amazon Linux 2023. If a [release](https://github.com/strands-agents/box/releases) includes Linux, follow its Linux download and checksum instructions. Otherwise, [build from source](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/README.md#build-from-source) on ARM64 Amazon Linux 2023. Use an ARM64 runtime, container, or MicroVM. Check that `uname -m` reports `aarch64`.
 
 Keep the main executable and both helpers from the same build in one directory. Release packages call the main executable `box`; source builds call it `strands-box`. The helpers are `strands-box-contain-trampoline` and `strands-box-sock-alias`. Both helpers must be regular executable files. Box refuses helper symlinks and files without executable permissions.
 
@@ -11819,7 +11819,7 @@ Source: https://strandsagents.com/docs/user-guide/box/reference/cloud-deployment
 
 `box.toml` is the complete run configuration for one box. Pass its path through `strands-box run --config FILE`; the tutorial’s download names the binary `box`. Box reads the selected file and its policy on every start.
 
-Audience: an operator who runs an agent or another command under a box, and who declares the paths, hosts, credentials, MCP servers, and telemetry targets it can use. The example on this page is the box that [getting started](../../quickstart/index.md) builds: the Strands CLI on a Mac. Each section below annotates it. To write the policy the file points at, read [policy](../policy/index.md), and point a coding agent at [the policy-authoring skill](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/.agents/skills/authoring-box-policy/SKILL.md).
+Audience: an operator who runs an agent or another command under a box, and who declares the paths, hosts, credentials, MCP servers, and telemetry targets it can use. The example on this page is the box that [getting started](../../quickstart/index.md) builds: the Strands CLI on a Mac. Each section below annotates it. To write the policy the file points at, read [policy](../policy/index.md), and point a coding agent at [the policy-authoring skill](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/.agents/skills/authoring-box-policy/SKILL.md).
 
 ## Example
 
@@ -11827,7 +11827,7 @@ Getting started builds this macOS example one file at a time, and the block is t
 
 ```toml
 # To author or change the policy next to this file, point your coding agent at the skill:
-#   https://raw.githubusercontent.com/strands-agents/box/fbe415cbdfec284bf608a46f125ff8e437a99bda/.agents/skills/authoring-box-policy/SKILL.md
+#   https://raw.githubusercontent.com/strands-agents/box/f4180a035d2d164596135864604629529636bf1c/.agents/skills/authoring-box-policy/SKILL.md
 
 # The box's name, and where it keeps its own state. The agent can't reach box_dir.
 name = "strands"
@@ -11967,7 +11967,7 @@ Both tables hold one process, in one shape:
 | `native-filesystem-policy` | boolean | Optional override of the global experimental setting for this process and its descendants. See [workload selection](../../security/native-filesystem-policy/index.md#select-workloads). |
 | `[tool.<name>.grammar]` | table | Experimental, and `[tool.<name>]` only. The tool grammar for the program this tool runs. See [`[tool.<name>.grammar]`](#toolnamegrammar). |
 
-The box adds the runtime minimum to every process; see [the runtime minimum](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/docs/design/containment.md#the-runtime-minimum).
+The box adds the runtime minimum to every process; see [the runtime minimum](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/docs/design/containment.md#the-runtime-minimum).
 
 The program is a full path or a bare name. A bare name uses `env.PATH` when set. Otherwise, Box uses the operator’s `PATH`, or `/usr/bin:/bin` if it is absent. A relative path with more than one component is refused: `` `command` element 0 "<program>" is a relative path; write an absolute path, or a bare name that `env.PATH` resolves ``. Scripts on Linux require [interpreter grants](#script-commands-on-linux). The example’s `command` runs Homebrew’s `node`, which loads the preload file and then the CLI’s script; the arguments after the script are the CLI’s own.
 
@@ -11988,7 +11988,7 @@ A name Box sets is refused with `` `env` name "<name>" is set by the box itself,
 
 `TERM` and `COLORTERM` reach the process only when `env` names them, so a program that picks colors from them renders plain otherwise. The example names `TERM`; an operator who wants a program’s colors writes their own terminal’s values for both.
 
-The agent reaches every `[egress.<name>]` route, every `[tool.<name>]`, and every `[mcp.<name>]` the file declares. A tool or MCP server reaches every egress route and starts no tool or MCP server of its own. All of them share one egress gateway, so the box is the credential boundary: a process that must not hold a credential goes in another box. Each tool and each `stdio` MCP server runs in its own separate sandbox (see [the sandboxes for tools and local MCP servers](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/docs/design/containment.md#the-agents-box-and-leaf-boxes)).
+The agent reaches every `[egress.<name>]` route, every `[tool.<name>]`, and every `[mcp.<name>]` the file declares. A tool or MCP server reaches every egress route and starts no tool or MCP server of its own. All of them share one egress gateway, so the box is the credential boundary: a process that must not hold a credential goes in another box. Each tool and each `stdio` MCP server runs in its own separate sandbox (see [the sandboxes for tools and local MCP servers](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/docs/design/containment.md#the-agents-box-and-leaf-boxes)).
 
 ### Script commands on Linux
 
@@ -12039,7 +12039,7 @@ Box checks the original grants before preserving any additional path spelling ne
 
 ## `[agent.filesystem]` and `[tool.<name>.filesystem]`
 
-Each list, and what one entry in it grants. `[agent.filesystem]` takes all eight; `[tool.<name>.filesystem]` takes six, and a `metadata` or `exec` list there is refused by name at load. [A tool’s sandbox](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/docs/design/containment.md#a-tools-leaf-box) states what a tool reaches in their place.
+Each list, and what one entry in it grants. `[agent.filesystem]` takes all eight; `[tool.<name>.filesystem]` takes six, and a `metadata` or `exec` list there is refused by name at load. [A tool’s sandbox](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/docs/design/containment.md#a-tools-leaf-box) states what a tool reaches in their place.
 
 Every process’s writable grants must exclude the installed Box programs, their hard-link names, mounted aliases, and enclosing directories. [Installation integrity](#installation-integrity) describes the checks and refusals.
 
@@ -12080,7 +12080,7 @@ An agent’s read grant on a recognized Linux loader directory also permits shar
 
 Startup output states `read-only`, `write-only`, or `read-write` for each content-access grant. For partial overlaps, the parent entry also identifies the overlapping grants that allow both. Denials and protected paths still restrict access. Duplicate or nested grants of the same operation still cause startup refusal.
 
-The example uses four lists. `read` covers the CLI’s install tree and `strands-home`, `read_file` names the preload file and Homebrew’s OpenSSL settings, `write` covers `strands-home`, and `list` names the project. `strands-home` is in both `read` and `write` to request read-write access explicitly. On macOS, the project is in `list` alone, so the CLI sees its names while policy decides each file its shell opens. Linux refuses this example’s `list` entry. See the [platform comparison](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/docs/design/platform-differences.md).
+The example uses four lists. `read` covers the CLI’s install tree and `strands-home`, `read_file` names the preload file and Homebrew’s OpenSSL settings, `write` covers `strands-home`, and `list` names the project. `strands-home` is in both `read` and `write` to request read-write access explicitly. On macOS, the project is in `list` alone, so the CLI sees its names while policy decides each file its shell opens. Linux refuses this example’s `list` entry. See the [platform comparison](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/docs/design/platform-differences.md).
 
 Each entry is absolute, or is `~` or starts with `~/`. An entry carries no pattern, no control character, and no `..` component. A directory entry that encloses this box’s `box.toml` and `policy.dw` grants everything below it except the directory that holds those two files.
 
@@ -12173,7 +12173,11 @@ Box accepts a command with more than one hard link when ownership and access che
 
 On macOS and Linux, a command with multiple hard links can remain writable by the operator. A startup scan must find none of its names in the declared writable directories of the agent, tools, or local MCP servers. The scan includes subdirectories excluded by `deny`. Each tree has a 30-second inspection budget and a depth limit of 128 directory levels. Box refuses an incomplete scan. It checks elapsed time between filesystem calls and before accepting a completed scan. This budget cannot interrupt a blocked filesystem call, and separate trees receive separate budgets. The command and its paths must still pass the writable-grant checks.
 
-During the run, Strands Shell and Monty refuse changes to these programs and their enclosing paths, even when policy permits the operation. For commands admitted through scanning, directory changes require a complete scan that finds none of their hard-link names. The same inspection limits apply. Reads still require the applicable policy permission. Build output covered by the agent’s own grants remains writable when no tool table names it. On Linux, native programs can create hard links within one writable mount. Links across separate writable grants fail, even when their directories share a filesystem.
+On Linux, Box can skip this scan for a configured program when it counts every hard-link name in the program’s own directory and verifies the mount layout for the directory being checked. The program and both directories must share one ext4, XFS, or tmpfs mount that exposes the filesystem’s root (`/`). No other mount may share its device or mount point, or sit at or below the program’s directory or the checked path. Box reads the mount table before and after counting and requires both results to match.
+
+Box repeats this check for each writable directory and each directory changed through Strands Shell or Monty. Files and missing paths use the existing identity checks without this optional mount inspection. Each optional inspection has a separate 30-second budget, checked between filesystem calls; it cannot interrupt a blocked call. Directory targets use the recursive scan and its limits on macOS. Linux also uses that scan if any condition is unmet, an inspection error occurs, or the budget expires.
+
+During the run, Strands Shell and Monty refuse changes to these programs and their enclosing paths, even when policy permits the operation. For operator-writable programs with multiple hard links, directory changes require a complete scan that finds none of their names, unless the Linux checks allow Box to skip it. The same inspection limits apply. Reads still require the applicable policy permission. Build output covered by the agent’s own grants remains writable when no tool table names it. On Linux, native programs can create hard links within one writable mount. Links across separate writable grants fail, even when their directories share a filesystem.
 
 To update a configured tool, end the current run. Update the program from the surrounding OS. Start a new run to resolve and validate the updated program.
 
@@ -12244,7 +12248,7 @@ An `aws://` route signs inside the box, so it takes no `header`, `prefix`, `plac
 
 ## `[mcp.<name>]`
 
-Each table declares one MCP server. `type` selects the transport. A `stdio` server is a local program that the box starts in its own separate sandbox. It starts only when a `shell:spawn` permit covers its `command`; [MCP policy](../../guides/write-mcp-policy/index.md) lists the fields that decision carries. When no permit covers it, the open fails with `MCP server "<name>" may not start: <decision>` and the server does not run. An `http` server is a remote server the workload reaches through the egress gateway. Each request is an `mcp:call` decision, and a rule reads the table’s name as `context.input.server`. The current reference for this table is [`mcp.md`](../../guides/add-an-mcp-server/index.md). The box adds the runtime minimum to the server’s process; see [the runtime minimum](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/docs/design/containment.md#the-runtime-minimum).
+Each table declares one MCP server. `type` selects the transport. A `stdio` server is a local program that the box starts in its own separate sandbox. It starts only when a `shell:spawn` permit covers its `command`; [MCP policy](../../guides/write-mcp-policy/index.md) lists the fields that decision carries. When no permit covers it, the open fails with `MCP server "<name>" may not start: <decision>` and the server does not run. An `http` server is a remote server the workload reaches through the egress gateway. Each request is an `mcp:call` decision, and a rule reads the table’s name as `context.input.server`. The current reference for this table is [`mcp.md`](../../guides/add-an-mcp-server/index.md). The box adds the runtime minimum to the server’s process; see [the runtime minimum](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/docs/design/containment.md#the-runtime-minimum).
 
 The example box declares no MCP server. To give the Strands CLI one, declare it here, and name the same full command under `mcpServers` in the file the CLI reads through its `--mcp-config` option: the same program and the same arguments, in the same order. The box places an alias with the program’s name on the agent’s `PATH`, so when the CLI starts `mcp-server-fetch`, the box runs this table’s `command` in a separate sandbox:
 
@@ -12263,7 +12267,7 @@ read = ["~/.local/share/uv/tools/mcp-server-fetch", "~/.local/share/uv/python"]
 | `command` | string array | For `stdio`: what to start. The first entry is the program and names the alias in the box’s `bin/`; the rest are its arguments, fixed here. The harness runs the full command to reach the server. Two tables can share a program when their full commands differ. |
 | `workspace` | string | For `stdio`: the server’s initial working directory. It grants nothing. |
 | `env` | table | For `stdio`: the literal environment the server receives. `HOME` and `PATH` default to the operator’s own, as for `[agent]`. |
-| `filesystem` | table | For `stdio`: the six lists the server’s own syscalls reach, the same six a `[tool.<name>.filesystem]` takes; a `metadata` or `exec` list is refused by name. An absent table grants nothing, so the server’s sandbox has the runtime minimum and the reach that [a local MCP server’s sandbox](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/docs/design/containment.md#local-mcp-servers) states. |
+| `filesystem` | table | For `stdio`: the six lists the server’s own syscalls reach, the same six a `[tool.<name>.filesystem]` takes; a `metadata` or `exec` list is refused by name. An absent table grants nothing, so the server’s sandbox has the runtime minimum and the reach that [a local MCP server’s sandbox](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/docs/design/containment.md#local-mcp-servers) states. |
 | `argument_wildcards` | bool | For `stdio`: `false` by default. `true` lets this server’s whole-argument `*` entries match and forward caller-supplied values. See [argument wildcards](../../guides/add-an-mcp-server/index.md#argument-wildcards). |
 | `network.contain_egress` | bool | For `stdio`: `true` by default. `false` gives this one server direct network access, with no gateway, no policy decision per request, and no credential injection. |
 | `native-filesystem-policy` | boolean | For `stdio`: override the global experimental filesystem policy setting. Remote `http` entries refuse this field. See [workload selection](../../security/native-filesystem-policy/index.md#select-workloads). |
@@ -12330,7 +12334,7 @@ A value never carries the policy engine’s own spelling: read `fs:read`, not `B
 | Correlation | `strands.box.request.id` (egress only), `jsonrpc.request.id` (an MCP request), and `strands.box.trace.parent_span_id`, `.parent_sampled`, `.state` on the log record |
 | What it was about | `server.address` and `server.port` on a `net:*` decision, `http.request.method` on a request, `file.path` on `fs:*` |
 
-The shipped example under [`examples/strands-box/strands-sdk-agent/`](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/examples/strands-box/strands-sdk-agent/README.md) writes a `@description` on its rules. It runs a Strands Agents SDK agent written in Python, which is a different workload from the Strands CLI on this page.
+The shipped example under [`examples/strands-box/strands-sdk-agent/`](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/examples/strands-box/strands-sdk-agent/README.md) writes a `@description` on its rules. It runs a Strands Agents SDK agent written in Python, which is a different workload from the Strands CLI on this page.
 
 The record omits `url.full` and `process.command_line`.
 
@@ -13039,7 +13043,7 @@ The text varies: the record `is committed` or `is not committed`, and the histor
 -   [Write a policy and read what it decided](../../guides/write-a-policy/index.md): a first policy, a denial, and the decision log.
 -   [The action vocabulary](../policy-actions/index.md): every action, its fields, and which part of the box raises it.
 -   [Security](../../security/index.md): what `box.toml` governs, what `policy.dw` governs, and what a policy cannot do today.
--   [Policy in the design guide](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/docs/design/policy.md): how one engine per box decides, and why.
+-   [Policy in the design guide](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/docs/design/policy.md): how one engine per box decides, and why.
 
 Source: https://strandsagents.com/docs/user-guide/box/reference/policy/index.md
 
@@ -13283,7 +13287,7 @@ Source: https://strandsagents.com/docs/user-guide/box/reference/policy-actions/i
 
 A box runs the agent’s Python scripts in [Monty](https://github.com/pydantic/monty), an interpreter for a subset of Python. Policy decides each file operation a script makes, and the egress gateway decides each request a script sends with `fetch()`.
 
-Audience: an operator with a working box from [getting started](../../quickstart/index.md) whose agent runs Python. For how Box runs a script and why a script cannot act on its own, read [how Box runs Python scripts](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/docs/design/monty.md).
+Audience: an operator with a working box from [getting started](../../quickstart/index.md) whose agent runs Python. For how Box runs a script and why a script cannot act on its own, read [how Box runs Python scripts](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/docs/design/monty.md).
 
 ## Example
 
@@ -13490,7 +13494,7 @@ The decision log records each decision with the rule’s `@id` ([getting started
 
 ## See also
 
--   [How Box runs Python scripts](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/docs/design/monty.md): the routes, the steps for each file operation, and the residual risk.
+-   [How Box runs Python scripts](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/docs/design/monty.md): the routes, the steps for each file operation, and the residual risk.
 -   [The `[egress.<name>]` table](../../guides/network-and-credentials/index.md): the rules for a host, and a credential that the gateway adds to a request.
 
 Source: https://strandsagents.com/docs/user-guide/box/reference/python/index.md
@@ -13690,7 +13694,7 @@ A bare program name in a command resolves on the `PATH` of the host OS’s shell
 
 ## `curl`
 
-`curl` sends each request through the egress gateway, which decides `net:connect` and `http:request` ([how Box controls outbound traffic](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/docs/design/egress.md)). A request the gateway refuses makes `curl` exit non-zero.
+`curl` sends each request through the egress gateway, which decides `net:connect` and `http:request` ([how Box controls outbound traffic](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/docs/design/egress.md)). A request the gateway refuses makes `curl` exit non-zero.
 
 ## Exit statuses
 
@@ -13714,8 +13718,8 @@ A bare program name in a command resolves on the `PATH` of the host OS’s shell
 ## See also
 
 -   [Write policy for shell commands](../../guides/write-shell-policy/index.md): rules for commands, programs, and paths.
--   [How Box runs shell commands and programs](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/docs/design/shell.md): how the Shell decides each command, and the order of the checks.
--   [A tool’s sandbox](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/docs/design/containment.md#a-tools-leaf-box): what a tool such as `git` can reach.
+-   [How Box runs shell commands and programs](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/docs/design/shell.md): how the Shell decides each command, and the order of the checks.
+-   [A tool’s sandbox](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/docs/design/containment.md#a-tools-leaf-box): what a tool such as `git` can reach.
 -   [The `[egress.<name>]` table](../../guides/network-and-credentials/index.md): credentials for the requests `curl` sends.
 
 Source: https://strandsagents.com/docs/user-guide/box/reference/shell/index.md
@@ -13726,9 +13730,9 @@ Source: https://strandsagents.com/docs/user-guide/box/reference/shell/index.md
 
 A box has two enforcement tiers: operating system enforcement, and policy enforcement. `box.toml` sets which paths the workload’s own processes can open. The operating system enforces that, and it is fixed before the first process starts. `policy.dw` decides each request the workload sends through the box’s trusted process (its shell, its Python, its egress gateway, and its MCP broker), and the policy engine enforces that. This page says which tier governs what, what Box always enforces, and what a policy cannot do today.
 
-Audience: an operator deciding what to put in `box.toml` and what to put in `policy.dw`. [Policy](../reference/policy/index.md) introduces the rules, and the [design guide](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/docs/design/policy.md) holds the reasoning.
+Audience: an operator deciding what to put in `box.toml` and what to put in `policy.dw`. [Policy](../reference/policy/index.md) introduces the rules, and the [design guide](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/docs/design/policy.md) holds the reasoning.
 
-For ownership of enforcement, configuration, and the surrounding environment, read the [shared responsibility model](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/docs/design/security.md). This page covers the operator’s configuration choices and policy limitations.
+For ownership of enforcement, configuration, and the surrounding environment, read the [shared responsibility model](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/docs/design/security.md). This page covers the operator’s configuration choices and policy limitations.
 
 ## The two tiers
 
@@ -13738,7 +13742,7 @@ For ownership of enforcement, configuration, and the surrounding environment, re
 -   A tool’s own files. A program under `[tool.<name>]` runs in its own sandbox and reaches the paths named in its own `filesystem` lists. Policy sees none of its file operations or child processes.
 -   A program of the surrounding OS that a `shell:spawn` permit admits. Policy decides once: whether the program runs. Its file operations are not decided.
 
-You own what `box.toml` grants. Review each path in `[agent.filesystem]` and each `[tool.<name>]` table, because direct reach raises no decision. When adapting grants between macOS and Linux, see the [platform comparison](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/docs/design/platform-differences.md).
+You own what `box.toml` grants. Review each path in `[agent.filesystem]` and each `[tool.<name>]` table, because direct reach raises no decision. When adapting grants between macOS and Linux, see the [platform comparison](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/docs/design/platform-differences.md).
 
 **`policy.dw` governs each request through the box’s trusted process, and the policy engine enforces it:** each command line and file operation in Strands Shell (the box’s shell), each file operation in Monty (the box’s Python), each connection and HTTP request through the egress gateway, and each MCP request. [When the box asks policy](../reference/policy/index.md#when-the-box-asks-policy) lists them, and [policy limitations](#policy-limitations) says what a broad permit reaches. An [`[egress.<name>]`](../guides/network-and-credentials/index.md) credential is attached to a request only after policy permits it. The table binds the credential, and the policy’s permits open the destination.
 
@@ -13786,20 +13790,20 @@ when {
 };
 ```
 
-[Cloud instance metadata](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/docs/design/egress.md#cloud-instance-metadata) in the design guide states that these two rules are the only check on the metadata endpoints.
+[Cloud instance metadata](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/docs/design/egress.md#cloud-instance-metadata) in the design guide states that these two rules are the only check on the metadata endpoints.
 
 ## Policy limitations
 
 Each item is something a policy cannot do today, with what to do about it. Where a design page records why, the item links it.
 
--   **A broad read permit reaches your secrets.** Strands Shell and Monty can name any path under your home, including `~/.aws` and `~/.ssh`. A `permit` on `fs:read` with no path condition grants all of them. Write every filesystem rule with a path condition. See [where policy sits](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/docs/design/policy.md#where-policy-sits).
--   **Box does not check that the rules of a policy agree with one another.** Two permits that admit the same requests load without a word. Write every cap as a `forbid`. [A cap written as a permit](../reference/policy/index.md#a-cap-written-as-a-permit) describes what the load does catch. See [what refuses to load](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/docs/design/policy.md#what-refuses-to-load).
--   **A rule that requires an earlier event sees refused attempts too.** A `::request` event is recorded for every attempt, permitted or refused. Key the condition on `::response`, which is recorded only for an operation that ran. See [what a history rule sees](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/docs/design/policy.md#what-a-history-rule-sees).
--   **A budget keyed on `::response` can be overspent by requests in flight.** A `::response` is recorded when the operation ends, so several requests in flight pass the same count. A budget keyed on `::request` is exact, and a refused attempt spends from it. See [what a history rule sees](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/docs/design/policy.md#what-a-history-rule-sees).
--   **A rule that calls a temporal macro, such as `count_within`, loses its count when any text before the call changes**, even a comment. A rule that writes its `when temporal` clause inline keeps its count until that clause changes. Every rule in this guide is written inline. See [residual risk](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/docs/design/policy.md#residual-risk).
--   **Monty judges a path as the script spelled it.** When a path the script names goes through a symlink, policy decides on the link’s spelling, and the decision log records that spelling. The operation is then refused, because Monty acts on the canonical path only. Name the target directly. See [how Box decides a file operation](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/docs/design/monty.md#how-box-decides-a-file-operation).
+-   **A broad read permit reaches your secrets.** Strands Shell and Monty can name any path under your home, including `~/.aws` and `~/.ssh`. A `permit` on `fs:read` with no path condition grants all of them. Write every filesystem rule with a path condition. See [where policy sits](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/docs/design/policy.md#where-policy-sits).
+-   **Box does not check that the rules of a policy agree with one another.** Two permits that admit the same requests load without a word. Write every cap as a `forbid`. [A cap written as a permit](../reference/policy/index.md#a-cap-written-as-a-permit) describes what the load does catch. See [what refuses to load](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/docs/design/policy.md#what-refuses-to-load).
+-   **A rule that requires an earlier event sees refused attempts too.** A `::request` event is recorded for every attempt, permitted or refused. Key the condition on `::response`, which is recorded only for an operation that ran. See [what a history rule sees](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/docs/design/policy.md#what-a-history-rule-sees).
+-   **A budget keyed on `::response` can be overspent by requests in flight.** A `::response` is recorded when the operation ends, so several requests in flight pass the same count. A budget keyed on `::request` is exact, and a refused attempt spends from it. See [what a history rule sees](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/docs/design/policy.md#what-a-history-rule-sees).
+-   **A rule that calls a temporal macro, such as `count_within`, loses its count when any text before the call changes**, even a comment. A rule that writes its `when temporal` clause inline keeps its count until that clause changes. Every rule in this guide is written inline. See [residual risk](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/docs/design/policy.md#residual-risk).
+-   **Monty judges a path as the script spelled it.** When a path the script names goes through a symlink, policy decides on the link’s spelling, and the decision log records that spelling. The operation is then refused, because Monty acts on the canonical path only. Name the target directly. See [how Box decides a file operation](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/docs/design/monty.md#how-box-decides-a-file-operation).
 -   **The decision log records the rule and the path, and not the operation.** A `cat` and an `ls` of one file produce the same entry.
--   **A long temporal window slows every decision on that action.** Each decision recounts the events in the window, so a `24h` window on a busy action costs more than a `1m` one. Pick the shortest window the rule needs. See [residual risk](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/docs/design/policy.md#residual-risk).
+-   **A long temporal window slows every decision on that action.** Each decision recounts the events in the window, so a `24h` window on a busy action costs more than a `1m` one. Pick the shortest window the rule needs. See [residual risk](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/docs/design/policy.md#residual-risk).
 
 ## File attributes on macOS
 
@@ -13821,7 +13825,7 @@ Turn the switch on only for a box whose write folders you review afterwards, and
 -   [Policy](../reference/policy/index.md): what a policy is, the actions, common rules, and load failures.
 -   [Write a policy and read what it decided](../guides/write-a-policy/index.md): a first policy, a denial, and the decision log.
 -   [The action vocabulary](../reference/policy-actions/index.md): every action, its fields, and which part of the box raises it.
--   [Policy in the design guide](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/docs/design/policy.md): how each tier is enforced, and why.
+-   [Policy in the design guide](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/docs/design/policy.md): how each tier is enforced, and why.
 
 Source: https://strandsagents.com/docs/user-guide/box/security/index.md
 

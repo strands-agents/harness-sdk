@@ -681,4 +681,4 @@ The text varies: the record `is committed` or `is not committed`, and the histor
 -   [Write a policy and read what it decided](../../guides/write-a-policy/index.md): a first policy, a denial, and the decision log.
 -   [The action vocabulary](../policy-actions/index.md): every action, its fields, and which part of the box raises it.
 -   [Security](../../security/index.md): what `box.toml` governs, what `policy.dw` governs, and what a policy cannot do today.
--   [Policy in the design guide](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/docs/design/policy.md): how one engine per box decides, and why.
+-   [Policy in the design guide](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/docs/design/policy.md): how one engine per box decides, and why.

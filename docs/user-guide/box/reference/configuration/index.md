@@ -1,6 +1,6 @@
 `box.toml` is the complete run configuration for one box. Pass its path through `strands-box run --config FILE`; the tutorial’s download names the binary `box`. Box reads the selected file and its policy on every start.
 
-Audience: an operator who runs an agent or another command under a box, and who declares the paths, hosts, credentials, MCP servers, and telemetry targets it can use. The example on this page is the box that [getting started](../../quickstart/index.md) builds: the Strands CLI on a Mac. Each section below annotates it. To write the policy the file points at, read [policy](../policy/index.md), and point a coding agent at [the policy-authoring skill](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/.agents/skills/authoring-box-policy/SKILL.md).
+Audience: an operator who runs an agent or another command under a box, and who declares the paths, hosts, credentials, MCP servers, and telemetry targets it can use. The example on this page is the box that [getting started](../../quickstart/index.md) builds: the Strands CLI on a Mac. Each section below annotates it. To write the policy the file points at, read [policy](../policy/index.md), and point a coding agent at [the policy-authoring skill](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/.agents/skills/authoring-box-policy/SKILL.md).
 
 ## Example
 
@@ -8,7 +8,7 @@ Getting started builds this macOS example one file at a time, and the block is t
 
 ```toml
 # To author or change the policy next to this file, point your coding agent at the skill:
-#   https://raw.githubusercontent.com/strands-agents/box/fbe415cbdfec284bf608a46f125ff8e437a99bda/.agents/skills/authoring-box-policy/SKILL.md
+#   https://raw.githubusercontent.com/strands-agents/box/f4180a035d2d164596135864604629529636bf1c/.agents/skills/authoring-box-policy/SKILL.md
 
 # The box's name, and where it keeps its own state. The agent can't reach box_dir.
 name = "strands"
@@ -148,7 +148,7 @@ Both tables hold one process, in one shape:
 | `native-filesystem-policy` | boolean | Optional override of the global experimental setting for this process and its descendants. See [workload selection](../../security/native-filesystem-policy/index.md#select-workloads). |
 | `[tool.<name>.grammar]` | table | Experimental, and `[tool.<name>]` only. The tool grammar for the program this tool runs. See [`[tool.<name>.grammar]`](#toolnamegrammar). |
 
-The box adds the runtime minimum to every process; see [the runtime minimum](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/docs/design/containment.md#the-runtime-minimum).
+The box adds the runtime minimum to every process; see [the runtime minimum](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/docs/design/containment.md#the-runtime-minimum).
 
 The program is a full path or a bare name. A bare name uses `env.PATH` when set. Otherwise, Box uses the operator’s `PATH`, or `/usr/bin:/bin` if it is absent. A relative path with more than one component is refused: `` `command` element 0 "<program>" is a relative path; write an absolute path, or a bare name that `env.PATH` resolves ``. Scripts on Linux require [interpreter grants](#script-commands-on-linux). The example’s `command` runs Homebrew’s `node`, which loads the preload file and then the CLI’s script; the arguments after the script are the CLI’s own.
 
@@ -169,7 +169,7 @@ A name Box sets is refused with `` `env` name "<name>" is set by the box itself,
 
 `TERM` and `COLORTERM` reach the process only when `env` names them, so a program that picks colors from them renders plain otherwise. The example names `TERM`; an operator who wants a program’s colors writes their own terminal’s values for both.
 
-The agent reaches every `[egress.<name>]` route, every `[tool.<name>]`, and every `[mcp.<name>]` the file declares. A tool or MCP server reaches every egress route and starts no tool or MCP server of its own. All of them share one egress gateway, so the box is the credential boundary: a process that must not hold a credential goes in another box. Each tool and each `stdio` MCP server runs in its own separate sandbox (see [the sandboxes for tools and local MCP servers](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/docs/design/containment.md#the-agents-box-and-leaf-boxes)).
+The agent reaches every `[egress.<name>]` route, every `[tool.<name>]`, and every `[mcp.<name>]` the file declares. A tool or MCP server reaches every egress route and starts no tool or MCP server of its own. All of them share one egress gateway, so the box is the credential boundary: a process that must not hold a credential goes in another box. Each tool and each `stdio` MCP server runs in its own separate sandbox (see [the sandboxes for tools and local MCP servers](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/docs/design/containment.md#the-agents-box-and-leaf-boxes)).
 
 ### Script commands on Linux
 
@@ -220,7 +220,7 @@ Box checks the original grants before preserving any additional path spelling ne
 
 ## `[agent.filesystem]` and `[tool.<name>.filesystem]`
 
-Each list, and what one entry in it grants. `[agent.filesystem]` takes all eight; `[tool.<name>.filesystem]` takes six, and a `metadata` or `exec` list there is refused by name at load. [A tool’s sandbox](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/docs/design/containment.md#a-tools-leaf-box) states what a tool reaches in their place.
+Each list, and what one entry in it grants. `[agent.filesystem]` takes all eight; `[tool.<name>.filesystem]` takes six, and a `metadata` or `exec` list there is refused by name at load. [A tool’s sandbox](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/docs/design/containment.md#a-tools-leaf-box) states what a tool reaches in their place.
 
 Every process’s writable grants must exclude the installed Box programs, their hard-link names, mounted aliases, and enclosing directories. [Installation integrity](#installation-integrity) describes the checks and refusals.
 
@@ -261,7 +261,7 @@ An agent’s read grant on a recognized Linux loader directory also permits shar
 
 Startup output states `read-only`, `write-only`, or `read-write` for each content-access grant. For partial overlaps, the parent entry also identifies the overlapping grants that allow both. Denials and protected paths still restrict access. Duplicate or nested grants of the same operation still cause startup refusal.
 
-The example uses four lists. `read` covers the CLI’s install tree and `strands-home`, `read_file` names the preload file and Homebrew’s OpenSSL settings, `write` covers `strands-home`, and `list` names the project. `strands-home` is in both `read` and `write` to request read-write access explicitly. On macOS, the project is in `list` alone, so the CLI sees its names while policy decides each file its shell opens. Linux refuses this example’s `list` entry. See the [platform comparison](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/docs/design/platform-differences.md).
+The example uses four lists. `read` covers the CLI’s install tree and `strands-home`, `read_file` names the preload file and Homebrew’s OpenSSL settings, `write` covers `strands-home`, and `list` names the project. `strands-home` is in both `read` and `write` to request read-write access explicitly. On macOS, the project is in `list` alone, so the CLI sees its names while policy decides each file its shell opens. Linux refuses this example’s `list` entry. See the [platform comparison](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/docs/design/platform-differences.md).
 
 Each entry is absolute, or is `~` or starts with `~/`. An entry carries no pattern, no control character, and no `..` component. A directory entry that encloses this box’s `box.toml` and `policy.dw` grants everything below it except the directory that holds those two files.
 
@@ -354,7 +354,11 @@ Box accepts a command with more than one hard link when ownership and access che
 
 On macOS and Linux, a command with multiple hard links can remain writable by the operator. A startup scan must find none of its names in the declared writable directories of the agent, tools, or local MCP servers. The scan includes subdirectories excluded by `deny`. Each tree has a 30-second inspection budget and a depth limit of 128 directory levels. Box refuses an incomplete scan. It checks elapsed time between filesystem calls and before accepting a completed scan. This budget cannot interrupt a blocked filesystem call, and separate trees receive separate budgets. The command and its paths must still pass the writable-grant checks.
 
-During the run, Strands Shell and Monty refuse changes to these programs and their enclosing paths, even when policy permits the operation. For commands admitted through scanning, directory changes require a complete scan that finds none of their hard-link names. The same inspection limits apply. Reads still require the applicable policy permission. Build output covered by the agent’s own grants remains writable when no tool table names it. On Linux, native programs can create hard links within one writable mount. Links across separate writable grants fail, even when their directories share a filesystem.
+On Linux, Box can skip this scan for a configured program when it counts every hard-link name in the program’s own directory and verifies the mount layout for the directory being checked. The program and both directories must share one ext4, XFS, or tmpfs mount that exposes the filesystem’s root (`/`). No other mount may share its device or mount point, or sit at or below the program’s directory or the checked path. Box reads the mount table before and after counting and requires both results to match.
+
+Box repeats this check for each writable directory and each directory changed through Strands Shell or Monty. Files and missing paths use the existing identity checks without this optional mount inspection. Each optional inspection has a separate 30-second budget, checked between filesystem calls; it cannot interrupt a blocked call. Directory targets use the recursive scan and its limits on macOS. Linux also uses that scan if any condition is unmet, an inspection error occurs, or the budget expires.
+
+During the run, Strands Shell and Monty refuse changes to these programs and their enclosing paths, even when policy permits the operation. For operator-writable programs with multiple hard links, directory changes require a complete scan that finds none of their names, unless the Linux checks allow Box to skip it. The same inspection limits apply. Reads still require the applicable policy permission. Build output covered by the agent’s own grants remains writable when no tool table names it. On Linux, native programs can create hard links within one writable mount. Links across separate writable grants fail, even when their directories share a filesystem.
 
 To update a configured tool, end the current run. Update the program from the surrounding OS. Start a new run to resolve and validate the updated program.
 
@@ -425,7 +429,7 @@ An `aws://` route signs inside the box, so it takes no `header`, `prefix`, `plac
 
 ## `[mcp.<name>]`
 
-Each table declares one MCP server. `type` selects the transport. A `stdio` server is a local program that the box starts in its own separate sandbox. It starts only when a `shell:spawn` permit covers its `command`; [MCP policy](../../guides/write-mcp-policy/index.md) lists the fields that decision carries. When no permit covers it, the open fails with `MCP server "<name>" may not start: <decision>` and the server does not run. An `http` server is a remote server the workload reaches through the egress gateway. Each request is an `mcp:call` decision, and a rule reads the table’s name as `context.input.server`. The current reference for this table is [`mcp.md`](../../guides/add-an-mcp-server/index.md). The box adds the runtime minimum to the server’s process; see [the runtime minimum](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/docs/design/containment.md#the-runtime-minimum).
+Each table declares one MCP server. `type` selects the transport. A `stdio` server is a local program that the box starts in its own separate sandbox. It starts only when a `shell:spawn` permit covers its `command`; [MCP policy](../../guides/write-mcp-policy/index.md) lists the fields that decision carries. When no permit covers it, the open fails with `MCP server "<name>" may not start: <decision>` and the server does not run. An `http` server is a remote server the workload reaches through the egress gateway. Each request is an `mcp:call` decision, and a rule reads the table’s name as `context.input.server`. The current reference for this table is [`mcp.md`](../../guides/add-an-mcp-server/index.md). The box adds the runtime minimum to the server’s process; see [the runtime minimum](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/docs/design/containment.md#the-runtime-minimum).
 
 The example box declares no MCP server. To give the Strands CLI one, declare it here, and name the same full command under `mcpServers` in the file the CLI reads through its `--mcp-config` option: the same program and the same arguments, in the same order. The box places an alias with the program’s name on the agent’s `PATH`, so when the CLI starts `mcp-server-fetch`, the box runs this table’s `command` in a separate sandbox:
 
@@ -444,7 +448,7 @@ read = ["~/.local/share/uv/tools/mcp-server-fetch", "~/.local/share/uv/python"]
 | `command` | string array | For `stdio`: what to start. The first entry is the program and names the alias in the box’s `bin/`; the rest are its arguments, fixed here. The harness runs the full command to reach the server. Two tables can share a program when their full commands differ. |
 | `workspace` | string | For `stdio`: the server’s initial working directory. It grants nothing. |
 | `env` | table | For `stdio`: the literal environment the server receives. `HOME` and `PATH` default to the operator’s own, as for `[agent]`. |
-| `filesystem` | table | For `stdio`: the six lists the server’s own syscalls reach, the same six a `[tool.<name>.filesystem]` takes; a `metadata` or `exec` list is refused by name. An absent table grants nothing, so the server’s sandbox has the runtime minimum and the reach that [a local MCP server’s sandbox](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/docs/design/containment.md#local-mcp-servers) states. |
+| `filesystem` | table | For `stdio`: the six lists the server’s own syscalls reach, the same six a `[tool.<name>.filesystem]` takes; a `metadata` or `exec` list is refused by name. An absent table grants nothing, so the server’s sandbox has the runtime minimum and the reach that [a local MCP server’s sandbox](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/docs/design/containment.md#local-mcp-servers) states. |
 | `argument_wildcards` | bool | For `stdio`: `false` by default. `true` lets this server’s whole-argument `*` entries match and forward caller-supplied values. See [argument wildcards](../../guides/add-an-mcp-server/index.md#argument-wildcards). |
 | `network.contain_egress` | bool | For `stdio`: `true` by default. `false` gives this one server direct network access, with no gateway, no policy decision per request, and no credential injection. |
 | `native-filesystem-policy` | boolean | For `stdio`: override the global experimental filesystem policy setting. Remote `http` entries refuse this field. See [workload selection](../../security/native-filesystem-policy/index.md#select-workloads). |
@@ -511,7 +515,7 @@ A value never carries the policy engine’s own spelling: read `fs:read`, not `B
 | Correlation | `strands.box.request.id` (egress only), `jsonrpc.request.id` (an MCP request), and `strands.box.trace.parent_span_id`, `.parent_sampled`, `.state` on the log record |
 | What it was about | `server.address` and `server.port` on a `net:*` decision, `http.request.method` on a request, `file.path` on `fs:*` |
 
-The shipped example under [`examples/strands-box/strands-sdk-agent/`](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/examples/strands-box/strands-sdk-agent/README.md) writes a `@description` on its rules. It runs a Strands Agents SDK agent written in Python, which is a different workload from the Strands CLI on this page.
+The shipped example under [`examples/strands-box/strands-sdk-agent/`](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/examples/strands-box/strands-sdk-agent/README.md) writes a `@description` on its rules. It runs a Strands Agents SDK agent written in Python, which is a different workload from the Strands CLI on this page.
 
 The record omits `url.full` and `process.command_line`.
 

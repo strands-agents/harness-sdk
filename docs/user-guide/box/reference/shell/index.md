@@ -189,7 +189,7 @@ A bare program name in a command resolves on the `PATH` of the host OS’s shell
 
 ## `curl`
 
-`curl` sends each request through the egress gateway, which decides `net:connect` and `http:request` ([how Box controls outbound traffic](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/docs/design/egress.md)). A request the gateway refuses makes `curl` exit non-zero.
+`curl` sends each request through the egress gateway, which decides `net:connect` and `http:request` ([how Box controls outbound traffic](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/docs/design/egress.md)). A request the gateway refuses makes `curl` exit non-zero.
 
 ## Exit statuses
 
@@ -213,6 +213,6 @@ A bare program name in a command resolves on the `PATH` of the host OS’s shell
 ## See also
 
 -   [Write policy for shell commands](../../guides/write-shell-policy/index.md): rules for commands, programs, and paths.
--   [How Box runs shell commands and programs](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/docs/design/shell.md): how the Shell decides each command, and the order of the checks.
--   [A tool’s sandbox](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/docs/design/containment.md#a-tools-leaf-box): what a tool such as `git` can reach.
+-   [How Box runs shell commands and programs](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/docs/design/shell.md): how the Shell decides each command, and the order of the checks.
+-   [A tool’s sandbox](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/docs/design/containment.md#a-tools-leaf-box): what a tool such as `git` can reach.
 -   [The `[egress.<name>]` table](../../guides/network-and-credentials/index.md): credentials for the requests `curl` sends.
