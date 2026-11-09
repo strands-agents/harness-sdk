@@ -106,6 +106,12 @@ Selecting an existing agent records its project path without copying or regenera
 Base CLI uses the saved source project when one exists. Otherwise, dev installs a persistent project from the saved profile.
 Local model modules and static imports are packaged without changing the saved profile. Credentials remain external.
 
+Dev checks the selected Python project's `.venv` before starting its worker. A working environment is reused without installation.
+If `strands_harness` is missing, dev creates or repairs the project environment and installs the declared dependencies with the matching harness release series.
+Python 3.10 or newer is required. `PYTHON` can select the interpreter used to create a new environment.
+Installation never targets global Python. Destination overrides and pip configuration files are ignored during this repair; environment-based index and certificate settings remain available.
+A linked environment can be reused if it works, but dev will not install into it.
+
 ### Workspace binding
 
 `.config` is a JSON file. It identifies the persistent project and its entrypoint. `tmp/` is a sibling directory, not part of `.config`.

@@ -43,6 +43,7 @@ import { terminateProcessTree } from '../terminal/process-tree.js'
 import { sanitizeTerminalText } from '../terminal/text.js'
 import { prepareArchiveDependencies } from './archive.js'
 import type { ImportedAgentProject } from './import.js'
+import { preparePythonRuntime } from './python-runtime.js'
 
 function decodeBytes(_key: string, value: unknown): unknown {
   if (value && typeof value === 'object' && '$bytes' in value && typeof value.$bytes === 'string') {
@@ -158,7 +159,9 @@ export class PythonBackend implements ChatBackend {
     signal?: AbortSignal
   ): Promise<PythonBackend> {
     await prepareArchiveDependencies(project.root, project.language)
-    const python = join(project.root, '.venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python')
+    const python = options.devWorkspace
+      ? await preparePythonRuntime(project.root, { ...(signal ? { signal } : {}) })
+      : join(project.root, '.venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python')
     const projectEnvironment = existsSync(python)
     const worker = fileURLToPath(new URL('./worker.py', import.meta.url))
     const cwd = resolve(options.cwd ?? process.cwd())
