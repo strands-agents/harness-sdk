@@ -467,6 +467,7 @@ describe('BedrockModel', () => {
       collectIterator(provider.stream(messages, { systemPrompt: 'Be helpful' }))
 
       expect(provider.modelInfo.capabilities?.promptCaching).toBeUndefined()
+      expect(provider.modelInfo.capabilities?.serverSideSummary).toBe(false)
       expect(vi.mocked(ConverseStreamCommand).mock.lastCall?.[0].system).toEqual([
         { text: 'Be helpful' },
         { cachePoint: { type: 'default' } },
@@ -483,6 +484,7 @@ describe('BedrockModel', () => {
       collectIterator(provider.stream(messages, { systemPrompt: 'Be helpful' }))
 
       expect(provider.modelInfo.capabilities?.promptCaching).toBeUndefined()
+      expect(provider.modelInfo.capabilities?.serverSideSummary).toBe(false)
       expect(vi.mocked(ConverseStreamCommand).mock.lastCall?.[0].system).toEqual([{ text: 'Be helpful' }])
     })
 

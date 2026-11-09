@@ -10,6 +10,7 @@ import {
   JsonBlock,
   Message,
   ReasoningBlock,
+  SummaryBlock,
   TextBlock,
   ToolResultBlock,
   ToolUseBlock,
@@ -85,6 +86,20 @@ describe('flattenMessagesToContent', () => {
       new TextBlock('[video omitted]'),
       new TextBlock('\n---\n[assistant]'),
       new TextBlock('cited answer'),
+    ])
+  })
+
+  it('renders a summary block as its text', () => {
+    const messages = [
+      new Message({
+        role: 'assistant',
+        content: [new SummaryBlock({ provider: 'anthropic', signature: 'sig', text: 'earlier facts' })],
+      }),
+    ]
+
+    expect(flattenMessagesToContent(messages)).toEqual([
+      new TextBlock('\n---\n[assistant]'),
+      new TextBlock('earlier facts'),
     ])
   })
 
