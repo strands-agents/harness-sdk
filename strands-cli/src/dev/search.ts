@@ -91,7 +91,8 @@ async function scanDirectory(root: string, state: DiscoveryState): Promise<void>
         language: workspace.config.language,
         workspace,
       })
-      if (workspace.config.harness) state.vendored.add(resolve(root, workspace.config.harness.path))
+      if (workspace.config.harness) state.vendored.add(resolve(workspace.root, workspace.config.harness.path))
+      if (workspace.directory) state.vendored.add(join(workspace.directory, 'tmp'))
     }
   } catch (error) {
     warn(state, join(root, '.strands', 'config.json'), error)

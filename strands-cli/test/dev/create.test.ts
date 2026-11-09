@@ -2,42 +2,56 @@ import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { CliConfigStore } from '../../src/config/store.js'
-import { createDevWorkspace } from '../../src/dev/create.js'
-import * as harnessSource from '../../src/dev/harness-source.js'
+import { createDevWorkspace, bindExistingAgent } from '../../src/dev/create.js'
 import { readDevWorkspace } from '../../src/dev/workspace.js'
+import * as installer from '../../src/project/archive.js'
 import { temporaryDirectory } from '../fixtures/tempdir.js'
 
 const snapshot = () =>
   CliConfigStore.memory(
     {},
     {},
-    { profile: { name: 'Test harness', instructions: 'Say hello.', session: true, memory: true, skills: false } }
+    { profile: { name: 'Test harness', instructions: 'Say hello.', session: false, memory: false, skills: false } }
   ).snapshot()
-
-const fakeLibrary = (): void => {
-  vi.spyOn(harnessSource, 'copyHarnessSource').mockImplementation(async (path) => {
-    await mkdir(join(path, 'src'), { recursive: true })
-    await writeFile(
-      join(path, 'package.json'),
-      JSON.stringify({ name: '@strands-agents/harness', version: '0.3.4', exports: { '.': './dist/src/index.js' } })
-    )
-    await writeFile(join(path, 'src/index.ts'), 'export const marker = 42\n')
-    return { path, version: '0.3.4', digest: 'fixture' }
-  })
-}
 
 afterEach(() => vi.restoreAllMocks())
 
 describe('createDevWorkspace', () => {
-  it('shouldCopySavedLocalModelWithoutAnExplicitFilesListWhenCreatingAWorkspace', async () => {
+  it.each(['cli', 'typescript', 'python'] as const)(
+    'shouldInstallTheExportedPersistentAgentWhenCreating%s',
+    async (kind) => {
+      const cwd = await temporaryDirectory()
+      const install = vi.spyOn(installer, 'prepareWorkspaceDependencies').mockResolvedValue()
+
+      const workspace = await createDevWorkspace({ cwd, destination: 'workspace', kind, snapshot: snapshot() })
+
+      expect(workspace.directory).toBe(join(cwd, 'workspace'))
+      expect(workspace.root).toBe(join(cwd, 'workspace/agent'))
+      expect(workspace.entrypoint).toBe(join(workspace.root, kind === 'python' ? 'agent/agent.py' : 'agent/agent.ts'))
+      expect(install).toHaveBeenCalledExactlyOnceWith(workspace.root, kind === 'python' ? 'python' : 'typescript')
+      const binding = JSON.parse(await readFile(join(workspace.directory!, '.config'), 'utf8'))
+      expect(binding.agent).toEqual({
+        path: 'agent',
+        entrypoint: kind === 'python' ? 'agent/agent.py' : 'agent/agent.ts',
+        language: kind === 'python' ? 'python' : 'typescript',
+      })
+      expect(await readdir(join(workspace.directory!, 'tmp'))).toEqual([])
+      expect(await readDevWorkspace(workspace.directory!)).toEqual(workspace)
+      expect(await readFile(workspace.entrypoint, 'utf8')).toContain('Say hello.')
+      await expect(readFile(join(workspace.directory!, '.strands/config.json'))).rejects.toMatchObject({
+        code: 'ENOENT',
+      })
+    }
+  )
+
+  it('shouldCopyLocalModelSourcesWithoutMutatingTheSavedProfile', async () => {
     const cwd = await temporaryDirectory()
-    const modelRoot = join(cwd, '.strands', 'models')
-    await mkdir(modelRoot, { recursive: true })
-    const modelPath = join(modelRoot, 'gpt-6_1-sol-ultrafast.mjs')
-    const modelSource = "import { modelId } from './model-id.mjs'\nexport const model = { modelId }\n"
-    await writeFile(modelPath, modelSource)
-    await writeFile(join(modelRoot, 'model-id.mjs'), "export const modelId = 'test-model'\n")
-    await writeFile(join(modelRoot, '.env'), 'API_KEY=not-for-export\n')
+    vi.spyOn(installer, 'prepareWorkspaceDependencies').mockResolvedValue()
+    await mkdir(join(cwd, 'models'))
+    const modelPath = join(cwd, 'models/custom.mjs')
+    await writeFile(modelPath, "import { value } from './helper.mjs'\nexport const model = {value}\n")
+    await writeFile(join(cwd, 'models/helper.mjs'), 'export const value = 1\n')
+    await writeFile(join(cwd, 'models/.env'), 'PRIVATE=not-exported\n')
     const saved = snapshot()
     saved.profile.modelModule = { kind: 'model', module: modelPath, export: 'model' }
     const original = globalThis.structuredClone(saved)
@@ -45,132 +59,82 @@ describe('createDevWorkspace', () => {
     const workspace = await createDevWorkspace({ cwd, destination: 'workspace', kind: 'typescript', snapshot: saved })
 
     expect(saved).toEqual(original)
-    expect(await readFile(join(workspace.root, 'agent/extensions/model/gpt-6_1-sol-ultrafast.mjs'), 'utf8')).toBe(
-      modelSource
-    )
-    expect(await readFile(join(workspace.root, 'agent/extensions/model/model-id.mjs'), 'utf8')).toContain('test-model')
+    expect(await readFile(join(workspace.root, 'agent/extensions/model/helper.mjs'), 'utf8')).toContain('value')
     await expect(readFile(join(workspace.root, 'agent/extensions/model/.env'))).rejects.toMatchObject({
       code: 'ENOENT',
     })
-    expect(await readFile(workspace.entrypoint, 'utf8')).not.toContain(modelRoot)
   })
 
-  it('shouldCopyTheBaseHarnessWhenCliIsSelected', async () => {
+  it('shouldBindAnExistingDefaultWithoutCopyingItsProject', async () => {
     const cwd = await temporaryDirectory()
-    fakeLibrary()
+    await mkdir(join(cwd, 'existing'))
+    await writeFile(join(cwd, 'existing/package.json'), '{"type":"module"}')
+    const agent = join(cwd, 'existing/agent.ts')
+    await writeFile(agent, 'original source')
+    const saved = snapshot()
+    saved.agentProject = agent
+    const install = vi.spyOn(installer, 'prepareWorkspaceDependencies').mockResolvedValue()
 
-    const workspace = await createDevWorkspace({ cwd, destination: 'workspace', kind: 'cli', snapshot: snapshot() })
+    const workspace = await createDevWorkspace({ cwd, destination: 'workspace', kind: 'cli', snapshot: saved })
 
-    expect(workspace.config).toMatchObject({
-      version: 1,
-      name: 'Test harness',
-      language: 'typescript',
-      entrypoint: 'src/agent.ts',
-      origin: { kind: 'cli', version: '0.3.4' },
-      harness: { path: 'harness', version: '0.3.4' },
-    })
-    const source = await readFile(workspace.entrypoint, 'utf8')
-    expect(source).toContain('Say hello.')
-    expect(source).toContain('.strands/state/sessions')
-    expect(source).toContain('.strands/state/memory')
-    const manifest = JSON.parse(await readFile(join(workspace.root, 'package.json'), 'utf8'))
-    expect(manifest.dependencies['@strands-agents/harness']).toBe('file:./harness')
-    expect(JSON.parse(await readFile(join(workspace.root, 'harness/package.json'), 'utf8')).exports).toEqual({
-      '.': './src/index.ts',
-      './internal': './src/internal.ts',
-    })
-    expect(await readDevWorkspace(workspace.root)).toEqual(workspace)
-    await expect(readFile(join(workspace.root, 'node_modules/package.json'))).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(workspace.entrypoint).toBe(agent)
+    expect(await readFile(agent, 'utf8')).toBe('original source')
+    expect(install).not.toHaveBeenCalled()
+    expect(await readdir(workspace.directory!)).toEqual(expect.arrayContaining(['.config', 'tmp']))
+    await expect(readFile(join(workspace.directory!, 'agent/package.json'))).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
-  it.each(['typescript', 'python'] as const)('shouldCreateAnEntrypointWhenLanguageIs%s', async (kind) => {
+  it('shouldPreserveExistingWorkspacesWhenCreationIsRepeated', async () => {
     const cwd = await temporaryDirectory()
-    const original = snapshot()
-    original.profile.session = false
-    original.profile.memory = false
-
-    const workspace = await createDevWorkspace({ cwd, destination: kind, kind, snapshot: original })
-
-    expect(workspace.config.language).toBe(kind)
-    expect(workspace.config.harness).toBeUndefined()
-    const source = await readFile(workspace.entrypoint, 'utf8')
-    expect(source).toContain(kind === 'python' ? 'session=False' : 'session: false')
-    expect(source).toContain(kind === 'python' ? 'memory=False' : 'memory: false')
-    expect(await readdir(join(workspace.root, '.strands'))).toEqual(
-      expect.arrayContaining(['cases', 'config.json', 'state'])
-    )
-  })
-
-  it('shouldPreserveAnExistingWorkspaceWhenCreationRunsAgain', async () => {
-    const cwd = await temporaryDirectory()
-    fakeLibrary()
-    const options = { cwd, destination: 'workspace', kind: 'cli' as const, snapshot: snapshot() }
+    const install = vi.spyOn(installer, 'prepareWorkspaceDependencies').mockResolvedValue()
+    const options = { cwd, destination: 'workspace', kind: 'typescript' as const, snapshot: snapshot() }
     const first = await createDevWorkspace(options)
     await writeFile(first.entrypoint, 'edited')
 
-    const next = await createDevWorkspace(options)
-
-    expect(next).toEqual(first)
-    expect(await readFile(next.entrypoint, 'utf8')).toBe('edited')
-    expect(harnessSource.copyHarnessSource).toHaveBeenCalledTimes(1)
+    expect(await createDevWorkspace(options)).toEqual(first)
+    expect(await readFile(first.entrypoint, 'utf8')).toBe('edited')
+    expect(install).toHaveBeenCalledOnce()
   })
 
-  it('shouldLeaveNoWorkspaceWhenCreationIsCancelledBeforePublication', async () => {
+  it('shouldRemoveOnlyTheNewWorkspaceWhenInstallationFails', async () => {
     const cwd = await temporaryDirectory()
-    const cancellation = new AbortController()
-    vi.spyOn(harnessSource, 'copyHarnessSource').mockImplementation(async (path) => {
-      await mkdir(path)
-      cancellation.abort(new Error('Creation cancelled'))
-      return { path, version: '0.3.4', digest: 'fixture' }
+    await writeFile(join(cwd, 'keep.txt'), 'keep')
+    vi.spyOn(installer, 'prepareWorkspaceDependencies').mockRejectedValue(new Error('install failed'))
+
+    await expect(
+      createDevWorkspace({ cwd, destination: 'workspace', kind: 'typescript', snapshot: snapshot() })
+    ).rejects.toThrow('install failed')
+    expect(await readdir(cwd)).toEqual(['keep.txt'])
+  })
+
+  it('shouldLeaveNoWorkspaceWhenInstallationIsCancelled', async () => {
+    const cwd = await temporaryDirectory()
+    const abort = new AbortController()
+    vi.spyOn(installer, 'prepareWorkspaceDependencies').mockImplementation(async () => {
+      abort.abort(new Error('cancelled'))
     })
 
     await expect(
       createDevWorkspace({
         cwd,
         destination: 'workspace',
-        kind: 'cli',
+        kind: 'typescript',
         snapshot: snapshot(),
-        signal: cancellation.signal,
+        signal: abort.signal,
       })
-    ).rejects.toThrow('Creation cancelled')
-
+    ).rejects.toThrow('cancelled')
     expect(await readdir(cwd)).toEqual([])
   })
 
-  it('shouldRemoveOnlyStagedFilesWhenSourceCopyFails', async () => {
+  it('shouldBindWithoutEditingAnExistingAgentWhenSelected', async () => {
     const cwd = await temporaryDirectory()
-    vi.spyOn(harnessSource, 'copyHarnessSource').mockRejectedValue(new Error('matching source unavailable'))
-    await writeFile(join(cwd, 'keep.txt'), 'keep')
+    await writeFile(join(cwd, 'package.json'), '{"type":"module"}')
+    await writeFile(join(cwd, 'agent.ts'), 'source')
 
-    await expect(
-      createDevWorkspace({ cwd, destination: 'workspace', kind: 'cli', snapshot: snapshot() })
-    ).rejects.toThrow('matching source unavailable')
+    const bound = await bindExistingAgent(join(cwd, 'strands-dev'), join(cwd, 'agent.ts'))
 
-    expect(await readdir(cwd)).toEqual(['keep.txt'])
-  })
-
-  it('shouldRejectAnOccupiedDestinationWhenItHasNoWorkspace', async () => {
-    const cwd = await temporaryDirectory()
-    await mkdir(join(cwd, 'workspace'))
-    await writeFile(join(cwd, 'workspace/keep.txt'), 'keep')
-
-    await expect(
-      createDevWorkspace({ cwd, destination: 'workspace', kind: 'typescript', snapshot: snapshot() })
-    ).rejects.toThrow('already exists')
-
-    expect(await readFile(join(cwd, 'workspace/keep.txt'), 'utf8')).toBe('keep')
-  })
-
-  it('shouldKeepPackagedModulePathsWhenTheEntrypointMovesToSrc', async () => {
-    const cwd = await temporaryDirectory()
-    await writeFile(join(cwd, 'tools.ts'), 'export const greet = {}\n')
-    const saved = snapshot()
-    saved.profile.tools = [{ kind: 'tool', module: './tools.ts', export: 'greet', files: ['./tools.ts'] }]
-
-    const workspace = await createDevWorkspace({ cwd, destination: 'workspace', kind: 'typescript', snapshot: saved })
-
-    const source = await readFile(workspace.entrypoint, 'utf8')
-    expect(source).toContain('./agent/tools/tools.js')
-    expect(await readFile(join(workspace.root, 'agent/tools/tools.ts'), 'utf8')).toContain('greet')
+    expect(bound.root).toBe(cwd)
+    expect(bound.entrypoint).toBe(join(cwd, 'agent.ts'))
+    expect(await readFile(bound.entrypoint, 'utf8')).toBe('source')
   })
 })

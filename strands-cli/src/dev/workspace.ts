@@ -6,6 +6,7 @@ import { join, resolve } from 'node:path'
 import { containsPath, expandHome } from '../paths.js'
 import { assertPortablePathComponent } from '../project/packaging.js'
 import { isRecord } from '../values.js'
+import { readWorkspaceBinding, type BoundWorkspace } from './binding.js'
 
 export type DevOrigin = { kind: 'cli' | 'discovered' | 'created'; source?: string; version?: string }
 
@@ -19,6 +20,7 @@ export interface DevWorkspaceConfig {
 }
 
 export interface DevWorkspace {
+  directory?: string
   root: string
   entrypoint: string
   config: DevWorkspaceConfig
@@ -30,7 +32,23 @@ const PRIVATE_DIRECTORIES = ['cases', 'state', 'reports']
 const IGNORED_PATHS = ['/.strands/state/', '/.strands/reports/']
 const READ_FLAGS = constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK
 
+export const boundDevWorkspace = (workspace: BoundWorkspace): DevWorkspace => ({
+  directory: workspace.directory,
+  root: workspace.agentRoot,
+  entrypoint: workspace.entrypoint,
+  config: {
+    version: 1,
+    name: workspace.binding.name,
+    language: workspace.binding.agent.language,
+    entrypoint: workspace.binding.agent.entrypoint,
+    origin: workspace.binding.origin,
+    ...(workspace.binding.harness ? { harness: workspace.binding.harness } : {}),
+  },
+})
+
 export async function readDevWorkspace(root: string): Promise<DevWorkspace | undefined> {
+  const binding = await readWorkspaceBinding(root)
+  if (binding) return boundDevWorkspace(binding)
   const directory = await workspaceRoot(root, true)
   if (!directory) return undefined
   await validateMetadata(directory)

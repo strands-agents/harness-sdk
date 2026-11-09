@@ -1,4 +1,5 @@
 import { resolve } from 'node:path'
+import { containsPath } from '../../paths.js'
 import { type HarnessAgentConfig } from '@strands-agents/harness'
 
 import { configurationFromStore, createBuiltinToolsRuntime, type RequestSetup } from '../../agent/configuration.js'
@@ -84,7 +85,7 @@ export async function createTypescriptChat(
           ...(devWorkspace
             ? {
                 devWorkspace: {
-                  root: devWorkspace.root,
+                  root: devWorkspace.directory ?? devWorkspace.root,
                   entrypoint: project.entrypoint,
                   origin: devWorkspace.config.origin.kind,
                 },
@@ -236,9 +237,13 @@ export async function createTypescriptChat(
           ? null
           : entries.flatMap(({ controller }) => {
               const backend = controller.backend as TypescriptBackend
-              return [backend.sessionDirectory, ...(backend.privatePaths ?? [])].map((path) =>
-                resolve(backend.cwd, path)
-              )
+              return [
+                backend.sessionDirectory,
+                ...(backend.privatePaths ?? []),
+                ...(devWorkspace?.directory && containsPath(project.root, devWorkspace.directory)
+                  ? [devWorkspace.directory]
+                  : []),
+              ].map((path) => resolve(backend.cwd, path))
             }),
         reloadProject: (conversationId): void => requestSetup({ agentProject: project.entrypoint, conversationId }),
       }
@@ -275,7 +280,7 @@ export async function createPythonChat(
         ...(devWorkspace
           ? {
               devWorkspace: {
-                root: devWorkspace.root,
+                root: devWorkspace.directory ?? devWorkspace.root,
                 entrypoint: project.entrypoint,
                 origin: devWorkspace.config.origin.kind,
               },
@@ -371,7 +376,15 @@ export async function createPythonChat(
           }),
         voice: new PythonVoiceSession({ cwd: options.cwd ?? process.cwd() }),
         project,
-        projectPrivatePaths: privatePaths,
+        projectPrivatePaths:
+          privatePaths === null
+            ? null
+            : [
+                ...privatePaths,
+                ...(devWorkspace?.directory && containsPath(project.root, devWorkspace.directory)
+                  ? [devWorkspace.directory]
+                  : []),
+              ],
         reloadProject: (conversationId): void => requestSetup({ agentProject: project.entrypoint, conversationId }),
       }
     )

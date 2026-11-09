@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { CliConfigStore } from '../../src/config/store.js'
 import { initializeDevWorkspace } from '../../src/dev/workspace.js'
+import { bindExistingAgent } from '../../src/dev/create.js'
 import { temporaryDirectory } from '../fixtures/tempdir.js'
 import { idleBackend } from '../fixtures/chat-backend.js'
 import { ChatController } from '../../src/ui/chat/controller.js'
@@ -48,54 +49,59 @@ const workspaceFixture = async (): Promise<string> => {
 }
 
 describe('dev ingress', () => {
-  it('shouldRouteTheDevSessionToItsWorkspaceWithoutPersistingTheSelection', async () => {
-    const root = await workspaceFixture()
-    const configPath = join(await temporaryDirectory(), 'cli.toml')
-    const original = 'agentProject = "/old/default.ts"\n[profile]\nname = "Original"\n'
-    await writeFile(configPath, original)
-    const config = await CliConfigStore.load(configPath, { persist: false })
-    const load = vi.spyOn(CliConfigStore, 'load').mockResolvedValue(config)
-    vi.spyOn(process.stderr, 'write').mockReturnValue(true)
-    terminal(true)
-    const cwd = process.cwd()
-    const controller = new ChatController(idleBackend())
-    ui.typescript.mockResolvedValue(controller)
-    ui.run.mockImplementation(
-      async (factory: Parameters<typeof runInkChat>[0], options: Parameters<typeof runInkChat>[1]) => {
-        expect(typeof factory).toBe('function')
-        if (typeof factory !== 'function') throw new Error('expected a controller factory')
-        expect(process.cwd()).toBe(cwd)
-        expect(options?.prepare).toBeDefined()
-        const ready = await options?.prepare?.({ signal: new AbortController().signal, show: vi.fn() })
-        expect(ready).toBe(true)
-        expect(process.cwd()).toBe(root)
-        await factory(
-          new AbortController().signal,
-          () => undefined,
-          undefined,
-          undefined,
-          async () => false
-        )
-        await options?.config?.setSettings({ animations: false })
-        return 0
-      }
-    )
-    try {
-      await main(['dev', '--workspace', root])
+  it.each(['legacy', 'binding'] as const)(
+    'shouldRouteTheDevSessionToItsPersistentAgentWith%sMetadata',
+    async (format) => {
+      const root = await workspaceFixture()
+      const workspacePath = format === 'binding' ? join(await temporaryDirectory(), 'strands-dev') : root
+      if (format === 'binding') await bindExistingAgent(workspacePath, join(root, 'src/agent.ts'))
+      const configPath = join(await temporaryDirectory(), 'cli.toml')
+      const original = 'agentProject = "/old/default.ts"\n[profile]\nname = "Original"\n'
+      await writeFile(configPath, original)
+      const config = await CliConfigStore.load(configPath, { persist: false })
+      const load = vi.spyOn(CliConfigStore, 'load').mockResolvedValue(config)
+      vi.spyOn(process.stderr, 'write').mockReturnValue(true)
+      terminal(true)
+      const cwd = process.cwd()
+      const controller = new ChatController(idleBackend())
+      ui.typescript.mockResolvedValue(controller)
+      ui.run.mockImplementation(
+        async (factory: Parameters<typeof runInkChat>[0], options: Parameters<typeof runInkChat>[1]) => {
+          expect(typeof factory).toBe('function')
+          if (typeof factory !== 'function') throw new Error('expected a controller factory')
+          expect(process.cwd()).toBe(cwd)
+          expect(options?.prepare).toBeDefined()
+          const ready = await options?.prepare?.({ signal: new AbortController().signal, show: vi.fn() })
+          expect(ready).toBe(true)
+          expect(process.cwd()).toBe(root)
+          await factory(
+            new AbortController().signal,
+            () => undefined,
+            undefined,
+            undefined,
+            async () => false
+          )
+          await options?.config?.setSettings({ animations: false })
+          return 0
+        }
+      )
+      try {
+        await main(['dev', '--workspace', workspacePath])
 
-      expect(ui.typescript.mock.calls[0]?.[0]).toBe(join(root, 'src/agent.ts'))
-      expect(ui.typescript.mock.calls[0]?.[2].args).toMatchObject({
-        agent: join(root, 'src/agent.ts'),
-        dev: { workspace: root },
-      })
-      expect(load).toHaveBeenCalledOnce()
-      expect(await readFile(configPath, 'utf8')).toBe(original)
-      expect(process.cwd()).toBe(cwd)
-      expect(process.exitCode).toBe(0)
-    } finally {
-      await controller.dispose()
+        expect(ui.typescript.mock.calls[0]?.[0]).toBe(join(root, 'src/agent.ts'))
+        expect(ui.typescript.mock.calls[0]?.[2].args).toMatchObject({
+          agent: join(root, 'src/agent.ts'),
+          dev: { workspace: workspacePath },
+        })
+        expect(load).toHaveBeenCalledOnce()
+        expect(await readFile(configPath, 'utf8')).toBe(original)
+        expect(process.cwd()).toBe(cwd)
+        expect(process.exitCode).toBe(0)
+      } finally {
+        await controller.dispose()
+      }
     }
-  })
+  )
 
   it('shouldStopAfterInitializationWhenDevInitIsRequested', async () => {
     const root = await workspaceFixture()

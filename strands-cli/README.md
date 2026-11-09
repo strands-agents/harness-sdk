@@ -101,62 +101,64 @@ An existing workspace reopens without a new copy. `--agent` selects another entr
 Without a terminal, select an existing workspace, an entrypoint, or a creation option explicitly.
 `strands dev init` prepares the workspace and exits without a model request.
 
-Selecting the base CLI copies its profile into a project entrypoint and copies the harness implementation into `harness/`.
-The workspace uses that local implementation. It does not link back to the installed harness.
-For a saved source agent, dev copies its project instead of regenerating its settings.
-Dev includes undeclared local model and tool modules with their static relative imports. It leaves unrelated files and the saved profile unchanged.
-Imported npm packages use declared versions or versions resolved from the local module and CLI installation.
-Dynamic imports and extra runtime assets still require an explicit `files` list.
+New agents use the same project exporter and dependency installer as exported agents. Their persistent project lives in `agent/` inside the dev workspace.
+Selecting an existing agent records its project path without copying or regenerating its source.
+Base CLI uses the saved source project when one exists. Otherwise, dev installs a persistent project from the saved profile.
+Local model modules and static imports are packaged without changing the saved profile. Credentials remain external.
 
-The copy contains source, build files, dependencies metadata, and license files. It excludes credentials, existing sessions, memory, and `node_modules`.
-When an installed release lacks TypeScript source, dev downloads its matching `harness-typescript/v<version>` tag from GitHub.
-A failed source download stops setup. Dev never substitutes the latest source or the installed implementation.
-The first launch installs dependencies for generated projects. Discovered projects keep their existing dependency setup.
+### Workspace binding
 
-The dev session reads the workspace entrypoint for model, tool, and instruction settings. Provider credentials remain external.
-`--env-file` still requires an explicit trusted file. Dev does not save profile, permission, or default-agent changes to the global CLI config.
-Sessions and memory use `.strands/state/`. Unsupported custom state managers produce an error instead of sharing existing history.
-The launch message identifies the harness and source. The status bar shows the dev harness and actual file-watch status.
+`.config` is a JSON file. It identifies the persistent project and its entrypoint. `tmp/` is a sibling directory, not part of `.config`.
 
-### Workspace format, version 1
+```text
+strands-dev/
+  .config
+  agent/
+    package.json
+    agent/agent.ts
+  tmp/
+    <candidate-id>/
+      baseline/
+      agent/
+      candidate.json
+      reports/
+```
 
-Each workspace contains one selected harness. Paths in `.strands/config.json` are relative to the workspace and use forward slashes.
-
-| Path                             | Purpose                                                                                  |
-| -------------------------------- | ---------------------------------------------------------------------------------------- |
-| `src/agent.ts` or `src/agent.py` | Generated entrypoint and harness settings. Existing projects keep their entrypoint path. |
-| `harness/`                       | Independent harness library for a TypeScript base-CLI copy.                              |
-| `agent/`                         | Exported skills, tools, and other local resources, when present.                         |
-| `.strands/config.json`           | Workspace identity, entrypoint, language, and source origin.                             |
-| `.strands/cases/`                | Reserved for experiment cases.                                                           |
-| `.strands/state/`                | Private sessions, memory, and dependency setup state. Excluded from Git.                 |
-| `.strands/reports/`              | Reserved for reports. Excluded from Git.                                                 |
+For Python, the exported project contains its Python entrypoint and dependency files instead.
+The top-level `agent/` exists only when dev creates a new persistent project. Existing projects can live outside the workspace.
 
 ```json
 {
   "version": 1,
   "name": "My harness",
-  "language": "typescript",
-  "entrypoint": "src/agent.ts",
-  "origin": {
-    "kind": "cli",
-    "source": "/home/user/.strands/cli.toml",
-    "version": "0.3.4"
+  "agent": {
+    "path": "agent",
+    "entrypoint": "agent/agent.ts",
+    "language": "typescript"
   },
-  "harness": {
-    "path": "harness",
-    "version": "0.3.4"
+  "origin": {
+    "kind": "created"
   }
 }
 ```
 
-`origin.kind` is `cli`, `discovered`, or `created`. Its `source` and `version` fields are optional.
-The optional `harness` object selects a local TypeScript harness library and records its version.
-The manifest describes the workspace. Agent settings remain in source, not in a second configuration snapshot.
-Unknown format versions, invalid paths, and symbolic links in selected workspace paths cause an error.
+`agent.path` resolves relative to `.config`, or can be absolute. `agent.entrypoint` resolves inside that project.
+`origin.kind` is `cli`, `discovered`, or `created`. Optional source metadata records where the binding came from.
+A binding cannot point into its own `tmp/`. Dev never changes the global CLI default during creation or startup.
 
-This command does not add experiments, tests, optimization, or automatic import into the normal CLI.
-A future manual import can select the workspace as the default agent. Dev startup never makes that change.
+The dev session always runs the bound persistent agent. Editing its configuration changes that agent, not a temporary copy.
+Runtime state stays separate from candidate source. The existing watcher reloads the bound project when its source changes.
+Legacy `.strands/config.json` workspaces remain readable without moving their source or rewriting their files.
+
+### Temporary candidate infrastructure
+
+Candidate creation exports the current bound source into a baseline, then installs an independent agent project from that baseline.
+Each candidate has its own dependency environment and reports directory. Credentials, prior sessions, and memory are excluded from the copied project.
+`candidate.json` records the original agent and baseline fingerprint. The stale-baseline check rejects candidates when the main source changes.
+Creating or editing candidates never switches the dev chat away from the bound agent.
+
+These helpers prepare later optimization work. There is no optimizer command, automatic application, or global import in this change.
+Diff generation and acceptance remain deferred. A future manual import can select the persistent agent as the default for plain `strands`.
 The checkout command `strands-dev` is separate: use `strands-dev dev` to run this workflow from a source checkout.
 
 ## Using it
