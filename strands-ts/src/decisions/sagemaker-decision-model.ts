@@ -11,10 +11,6 @@ import type { DecisionCallOptions, DecisionInput, DecisionResult, Question } fro
 
 const SAGEMAKER_PROVIDER_NAME = 'sagemaker'
 const SAGEMAKER_DEFAULT_MIN_CONFIDENCE = 0.5
-const THROTTLING_ERROR_NAMES = new Set(['ThrottlingException', 'ModelNotReadyException', 'ServiceUnavailable'])
-const THROTTLING_STATUSES = new Set([429, 503, 529])
-// strands-decider reports a prompt longer than the context window with 422, vLLM with 400.
-const CONTEXT_OVERFLOW_STATUSES = new Set([400, 422])
 
 /** Options for constructing a {@link SageMakerDecisionModel}. */
 export interface SageMakerDecisionModelOptions {
@@ -181,10 +177,17 @@ function translateSageMakerError(error: unknown): Error {
     $metadata?: { httpStatusCode?: unknown }
   }
   const status = Number(OriginalStatusCode ?? $metadata?.httpStatusCode)
-  if ((typeof name === 'string' && THROTTLING_ERROR_NAMES.has(name)) || THROTTLING_STATUSES.has(status)) {
+
+  // Retryable SageMaker errors (InvokeEndpoint API reference and AWS common errors).
+  if (name === 'ThrottlingException' || name === 'ModelNotReadyException' || name === 'ServiceUnavailable') {
     return new ModelThrottledError(message, { cause: error })
   }
-  if (status === 413 || (CONTEXT_OVERFLOW_STATUSES.has(status) && isContextOverflowMessage(OriginalMessage))) {
+  // Throttling by the container or a proxy, matching translateHttpError.
+  if (status === 429 || status === 503 || status === 529) return new ModelThrottledError(message, { cause: error })
+  if (status === 413) return new ContextWindowOverflowError(message)
+  // Validation errors share these statuses, so only the message tells a context overflow apart:
+  // strands-decider sends 422, vLLM sends 400.
+  if ((status === 400 || status === 422) && isContextOverflowMessage(OriginalMessage)) {
     return new ContextWindowOverflowError(message)
   }
   return new ModelError(message, { cause: error })
