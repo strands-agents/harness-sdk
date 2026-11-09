@@ -40,6 +40,12 @@ function createStdioAsk(includeTrust: boolean): (prompt: string) => Promise<JSON
 }
 
 /**
+ * Options accepted alongside `'auto'`: how the human is reached (`ask`) and the calls that skip the
+ * decision entirely (`allowedTools`). Options that decide the strategy are not accepted.
+ */
+export type HumanInTheLoopAutoConfig = Pick<HumanInTheLoopConfig, 'allowedTools' | 'ask'>
+
+/**
  * Configuration for the {@link HumanInTheLoop} intervention handler.
  */
 export interface HumanInTheLoopConfig {
@@ -142,10 +148,15 @@ export interface HumanInTheLoopConfig {
  * })
  *
  * // Auto mode — the SDK's current best approval strategy decides which calls need a human
- * // (today: LLM risk classification). Takes no other options and may change between releases;
- * // configure the handler explicitly (e.g. `classifier`) for fixed behavior.
+ * // (today: LLM risk classification). May change between releases; configure the handler
+ * // explicitly (e.g. `classifier`) for fixed behavior.
  * const agent = new Agent({
  *   interventions: [new HumanInTheLoop('auto')],
+ * })
+ *
+ * // Auto mode, prompting in the terminal and letting readFile skip the decision entirely
+ * const agent = new Agent({
+ *   interventions: [new HumanInTheLoop('auto', { ask: 'stdio', allowedTools: ['readFile'] })],
  * })
  *
  * // Risk classification via a DecisionModel
@@ -183,24 +194,26 @@ export class HumanInTheLoop extends InterventionHandler {
    * Auto mode: let the SDK decide which tool calls need a human, using the approval strategy it currently
    * considers the best available. Today that is the built-in LLM risk classifier (the same as
    * `classifier: true`): low-risk calls run on their own and risky ones are escalated to the human. What
-   * `'auto'` resolves to may change between releases as better approaches become available. It takes no
-   * other options: to customize or pin the behavior, pass a config instead.
+   * `'auto'` resolves to may change between releases as better approaches become available. To pin the
+   * strategy, pass a full config instead.
    *
    * @param mode - `'auto'`.
-   * @throws Error if the mode is unknown, or `'auto'` is combined with any other argument.
+   * @param options - Only `ask` and `allowedTools`; options that decide the strategy are rejected.
+   * @throws Error if the mode is unknown, or `'auto'` is combined with a strategy option.
    */
-  constructor(mode: 'auto')
+  constructor(mode: 'auto', options?: HumanInTheLoopAutoConfig)
   /**
    * @param config - Handler configuration. Omitted: every tool not in `allowedTools` requires approval.
    */
   constructor(config?: HumanInTheLoopConfig)
-  constructor(modeOrConfig?: 'auto' | HumanInTheLoopConfig, ...extraArgs: unknown[]) {
+  constructor(modeOrConfig?: 'auto' | HumanInTheLoopConfig, autoOptions?: HumanInTheLoopAutoConfig) {
     super()
-    const config = typeof modeOrConfig === 'object' ? modeOrConfig : undefined
+    if (typeof modeOrConfig === 'object' && autoOptions !== undefined) {
+      throw new Error('pass a single HumanInTheLoopConfig; a second argument is only accepted after "auto"')
+    }
+    const config = typeof modeOrConfig === 'string' ? resolveMode(modeOrConfig, autoOptions) : modeOrConfig
     this._allowedTools = new Set(config?.allowedTools ?? [])
-    const classifier =
-      typeof modeOrConfig === 'string' ? resolveMode(modeOrConfig, extraArgs.length > 0) : config?.classifier
-    this._classifier = this._resolveClassifier(classifier)
+    this._classifier = this._resolveClassifier(config?.classifier)
     if (this._classifier && this._allowedTools.has('*')) {
       logger.warn('classifier has no effect when allowedTools contains "*" — all tools are already allowed')
     }
@@ -335,19 +348,25 @@ export class HumanInTheLoop extends InterventionHandler {
   }
 }
 
+const AUTO_OPTION_KEYS = new Set<string>(['allowedTools', 'ask'])
+
 /**
- * Resolve a mode to the classifier option it stands for. This is the one place that defines what `'auto'`
- * currently resolves to.
+ * Resolve a mode and its options to the full config it stands for. This is the one place that defines
+ * what `'auto'` currently resolves to.
  *
  * @param mode - The mode passed to the constructor.
- * @param hasOtherArgs - Whether any other constructor argument was passed.
- * @returns The classifier option the mode resolves to.
- * @throws Error if the mode is unknown, or `'auto'` is combined with any other argument.
+ * @param options - The options passed alongside the mode.
+ * @returns The handler config the mode resolves to.
+ * @throws Error if the mode is unknown, or `'auto'` is combined with a strategy option.
  */
-function resolveMode(mode: string, hasOtherArgs: boolean): HumanInTheLoopConfig['classifier'] {
+function resolveMode(mode: string, options: HumanInTheLoopAutoConfig | undefined): HumanInTheLoopConfig {
   if (mode !== 'auto') throw new Error(`mode must be 'auto' or omitted, got ${JSON.stringify(mode)}`)
-  if (hasOtherArgs) {
-    throw new Error("'auto' takes no other options; pass a HumanInTheLoopConfig (e.g. { classifier }) instead")
+  const strategyKeys = Object.keys(options ?? {}).filter((key) => !AUTO_OPTION_KEYS.has(key))
+  if (strategyKeys.length > 0) {
+    throw new Error(
+      `'auto' only accepts ask and allowedTools, got ${strategyKeys.join(', ')}; pass a HumanInTheLoopConfig ` +
+        '(e.g. { classifier }) to choose the strategy yourself'
+    )
   }
-  return true
+  return { ...options, classifier: true }
 }

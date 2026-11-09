@@ -1066,9 +1066,49 @@ describe('HumanInTheLoop', () => {
       expect(auxStreamSpy).toHaveBeenCalledTimes(1)
     })
 
-    it("'auto' takes no other options", () => {
-      // @ts-expect-error -- 'auto' is a standalone mode; options require a config instead
-      expect(() => new HumanInTheLoop('auto', { allowedTools: ['readFile'] })).toThrow("'auto' takes no other options")
+    it("'auto' lets allowedTools skip the classifier", async () => {
+      const result = await invokeAuto(new HumanInTheLoop('auto', { allowedTools: ['readFile'] }))
+
+      expect(result).toEqual({ stopReason: 'endTurn', toolExecuted: true })
+    })
+
+    it("'auto' escalates through ask", async () => {
+      const auxModel = new MockMessageModel().addTurn({
+        type: 'toolUseBlock',
+        name: 'strands_structured_output',
+        toolUseId: 'inner-1',
+        input: { requiresApproval: true, reason: 'risky' },
+      })
+      const prompts: string[] = []
+
+      const result = await invokeAuto(
+        new HumanInTheLoop('auto', {
+          ask: async (prompt) => {
+            prompts.push(prompt)
+            return 'n'
+          },
+        }),
+        auxModel
+      )
+
+      expect(result).toEqual({ stopReason: 'endTurn', toolExecuted: false })
+      expect(prompts).toEqual([expect.stringContaining('readFile')])
+    })
+
+    it("'auto' rejects strategy options", () => {
+      // @ts-expect-error -- 'auto' owns the strategy; choosing a classifier requires a full config
+      expect(() => new HumanInTheLoop('auto', { classifier: true })).toThrow(
+        "'auto' only accepts ask and allowedTools, got classifier"
+      )
+      // @ts-expect-error -- trust is a strategy option too
+      expect(() => new HumanInTheLoop('auto', { enableTrust: true })).toThrow('got enableTrust')
+    })
+
+    it('rejects a second argument after a config', () => {
+      // @ts-expect-error -- a second argument is only accepted after 'auto'
+      expect(() => new HumanInTheLoop({ allowedTools: ['readFile'] }, { ask: 'stdio' })).toThrow(
+        'pass a single HumanInTheLoopConfig'
+      )
     })
 
     it('an unknown mode throws', () => {
