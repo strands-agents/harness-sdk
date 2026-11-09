@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import OpenAI, { APIUserAbortError } from 'openai'
 import { isNode } from '../../../__fixtures__/environment.js'
 import { OpenAIModel } from '../index.js'
-import { ContextWindowOverflowError, MaxTokensError, ModelThrottledError } from '../../../errors.js'
+import { ContextWindowOverflowError, MaxTokensError, ModelNetworkError, ModelThrottledError } from '../../../errors.js'
 import { collectGenerator, collectIterator } from '../../../__fixtures__/model-test-helpers.js'
 import { Message, TextBlock, ToolUseBlock, ToolResultBlock } from '../../../types/messages.js'
 import { ImageBlock, DocumentBlock } from '../../../types/media.js'
@@ -1086,8 +1086,9 @@ describe("OpenAIModel (api: 'responses')", () => {
       await expect(
         collectIterator(model.stream([new Message({ role: 'user', content: [new TextBlock('x')] })]))
       ).rejects.toMatchObject({
+        name: 'ModelNetworkError',
         message: 'The model failed while processing the request.',
-        code: 'server_error',
+        cause: { code: 'server_error' },
       })
     })
 
@@ -1137,6 +1138,18 @@ describe("OpenAIModel (api: 'responses')", () => {
       await expect(
         collectIterator(model.stream([new Message({ role: 'user', content: [new TextBlock('x')] })]))
       ).rejects.toBeInstanceOf(ModelThrottledError)
+    })
+
+    it.each(['error', 'response.failed'])('wraps a server_error %p event as ModelNetworkError', async (type) => {
+      const error = { code: 'server_error', message: 'The server had an error while processing your request.' }
+      const client = createMockClient(async function* () {
+        yield type === 'error' ? { type, ...error } : { type, response: { error } }
+      })
+      const model = new OpenAIModel({ api: 'responses', client })
+
+      await expect(
+        collectIterator(model.stream([new Message({ role: 'user', content: [new TextBlock('x')] })]))
+      ).rejects.toBeInstanceOf(ModelNetworkError)
     })
 
     it('wraps 429 as ModelThrottledError', async () => {
