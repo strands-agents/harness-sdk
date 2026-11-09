@@ -86,6 +86,8 @@ export function makeMcpRouter(options: MakeMcpRouterOptions): InvokableTool<McpR
 
   // Per-agent connections with WeakMap so agents can be garbage collected.
   const connectionsMap = new WeakMap<object, Map<string, McpClient>>()
+  // Tool names each client's filtered listing returned. Filters are fixed per client, so a cached name stays callable.
+  const listedNames = new WeakMap<McpClient, Set<string>>()
 
   // Cleans up open connections when an agent is garbage collected without calling disconnect.
   const registry = new FinalizationRegistry<Map<string, McpClient>>((connections) => {
@@ -129,14 +131,14 @@ export function makeMcpRouter(options: MakeMcpRouterOptions): InvokableTool<McpR
       }
 
       if (command === 'list_tools') {
-        return (await handleListTools(client)) as unknown as JSONValue
+        return (await listAndCache(client, listedNames)) as unknown as JSONValue
       }
 
       if (command === 'call_tool') {
         if (!toolName) {
           throw new McpRouterToolError("`tool_name` is required for command='call_tool'")
         }
-        await ensureToolListed(client, connectionId, toolName)
+        await ensureToolListed(client, listedNames, connectionId, toolName)
         return await handleCallTool(client, toolName, args, context)
       }
 
@@ -240,10 +242,22 @@ async function handleListTools(client: McpClient): Promise<ToolSpec[]> {
   return tools.map((t) => ({ ...t.toolSpec, name: t.name }))
 }
 
-async function ensureToolListed(client: McpClient, connectionId: string, toolName: string): Promise<void> {
+async function listAndCache(client: McpClient, listedNames: WeakMap<McpClient, Set<string>>): Promise<ToolSpec[]> {
+  const specs = await handleListTools(client)
+  listedNames.set(client, new Set(specs.map((spec) => spec.name)))
+  return specs
+}
+
+async function ensureToolListed(
+  client: McpClient,
+  listedNames: WeakMap<McpClient, Set<string>>,
+  connectionId: string,
+  toolName: string
+): Promise<void> {
   // McpClient applies toolFilters only when listing, so a call is checked against the filtered listing.
-  const listed = await handleListTools(client)
-  if (!listed.some((spec) => spec.name === toolName)) {
+  if (listedNames.get(client)?.has(toolName)) return
+  await listAndCache(client, listedNames)
+  if (!listedNames.get(client)?.has(toolName)) {
     throw new McpRouterToolError(
       `Tool ${JSON.stringify(toolName)} is not available on connection ${JSON.stringify(connectionId)}. ` +
         'Call list_tools to see the tools you can call.'
