@@ -2,7 +2,7 @@ import { createElement, useRef, useState, type ReactElement } from 'react'
 import { Box, useInput } from 'ink'
 import { Text, useTheme } from '../ui/theme.js'
 import type { StartupScreen } from '../ui/run.js'
-import { errorMessage, sanitizeTerminalText } from '../terminal/text.js'
+import { errorMessage, sanitizeTerminalText, wrapLines } from '../terminal/text.js'
 import type { DiscoveredHarness } from './search.js'
 import type { DevWorkspace } from './workspace.js'
 import { useTerminalSize } from '../ui/terminal-size.js'
@@ -38,7 +38,7 @@ export const HarnessPicker = ({
   const [busy, setBusy] = useState(false)
   const pending = useRef(false)
   const { accent, error: errorColor, selection: selectionColor, border } = useTheme()
-  const { rows: height } = useTerminalSize()
+  const { rows: height, columns } = useTerminalSize()
   const rows = [
     {
       label: `Base CLI · ${sanitizeTerminalText(cliName)}`,
@@ -97,6 +97,14 @@ export const HarnessPicker = ({
   const start = Math.min(Math.max(0, selection - capacity + 1), Math.max(0, rows.length - capacity))
   const visible = rows.slice(start, start + capacity)
   const selected = rows[selection]!
+  const detailWidth = Math.max(1, columns - 12)
+  const globalNotice = 'Manual import applies these changes globally to plain strands.'
+  const localNotice = 'Until then, development changes stay in this local workspace.'
+  const detailHeight =
+    3 +
+    Number(Boolean(cliWorkspace && height >= 30)) +
+    wrapLines(globalNotice, detailWidth).length +
+    wrapLines(localNotice, detailWidth).length
   return (
     <Box flexDirection="column">
       <Box marginBottom={1} justifyContent="space-between">
@@ -145,6 +153,8 @@ export const HarnessPicker = ({
             borderBottom={false}
             marginTop={1}
             paddingTop={1}
+            height={detailHeight}
+            flexShrink={0}
           >
             <Text dimColor wrap="truncate-middle">
               {selection === rows.length - 1 ? selected.detail : `Source: ${selected.detail}`}
@@ -156,8 +166,8 @@ export const HarnessPicker = ({
                     Workspace: {sanitizeTerminalText(cliWorkspace)}
                   </Text>
                 ) : null}
-                <Text>Manual import applies these changes globally to plain strands.</Text>
-                <Text dimColor>Until then, development changes stay in this local workspace.</Text>
+                <Text>{globalNotice}</Text>
+                <Text dimColor>{localNotice}</Text>
               </>
             ) : selection < rows.length - 1 ? (
               <Text dimColor>Local project only. Your CLI default stays unchanged.</Text>
