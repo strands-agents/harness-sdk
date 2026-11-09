@@ -40,7 +40,10 @@ export interface MakeMcpRouterOptions {
   name?: string
   /** Tool description exposed to the model. */
   description?: string
-  /** Allowlisted MCP servers keyed by a developer-chosen name. Must not be empty. */
+  /**
+   * Allowlisted MCP servers keyed by a developer-chosen name. A server's `toolFilters` decide which
+   * tools `list_tools` returns and `call_tool` accepts. Must not be empty.
+   */
   servers: Record<string, McpServerConfig>
   /** Maximum simultaneous open connections per agent. @defaultValue 10 */
   maxConnections?: number
@@ -55,6 +58,8 @@ export interface MakeMcpRouterOptions {
  * @param options - Configuration options.
  * @returns A tool that manages MCP connections.
  * @throws Error if `servers` is empty or `maxConnections` is not positive.
+ * The returned tool throws {@link McpRouterToolError} when `call_tool` names a tool that the
+ * connection's `list_tools` does not return.
  *
  * @example
  * ```typescript
@@ -81,6 +86,8 @@ export function makeMcpRouter(options: MakeMcpRouterOptions): InvokableTool<McpR
 
   // Per-agent connections with WeakMap so agents can be garbage collected.
   const connectionsMap = new WeakMap<object, Map<string, McpClient>>()
+  // Tool names each client's filtered listing returned. Filters are fixed per client, so a cached name stays callable.
+  const listedNames = new WeakMap<McpClient, Set<string>>()
 
   // Cleans up open connections when an agent is garbage collected without calling disconnect.
   const registry = new FinalizationRegistry<Map<string, McpClient>>((connections) => {
@@ -124,13 +131,14 @@ export function makeMcpRouter(options: MakeMcpRouterOptions): InvokableTool<McpR
       }
 
       if (command === 'list_tools') {
-        return (await handleListTools(client)) as unknown as JSONValue
+        return (await listAndCache(client, listedNames)) as unknown as JSONValue
       }
 
       if (command === 'call_tool') {
         if (!toolName) {
           throw new McpRouterToolError("`tool_name` is required for command='call_tool'")
         }
+        await ensureToolListed(client, listedNames, connectionId, toolName)
         return await handleCallTool(client, toolName, args, context)
       }
 
@@ -232,6 +240,29 @@ async function handleListTools(client: McpClient): Promise<ToolSpec[]> {
   const tools = await client.listTools({ prefix: '' })
   // Get tool.name (server-side name without prefix) so call_tool works verbatim.
   return tools.map((t) => ({ ...t.toolSpec, name: t.name }))
+}
+
+async function listAndCache(client: McpClient, listedNames: WeakMap<McpClient, Set<string>>): Promise<ToolSpec[]> {
+  const specs = await handleListTools(client)
+  listedNames.set(client, new Set(specs.map((spec) => spec.name)))
+  return specs
+}
+
+async function ensureToolListed(
+  client: McpClient,
+  listedNames: WeakMap<McpClient, Set<string>>,
+  connectionId: string,
+  toolName: string
+): Promise<void> {
+  // McpClient applies toolFilters only when listing, so a call is checked against the filtered listing.
+  if (listedNames.get(client)?.has(toolName)) return
+  await listAndCache(client, listedNames)
+  if (!listedNames.get(client)?.has(toolName)) {
+    throw new McpRouterToolError(
+      `Tool ${JSON.stringify(toolName)} is not available on connection ${JSON.stringify(connectionId)}. ` +
+        'Call list_tools to see the tools you can call.'
+    )
+  }
 }
 
 async function handleCallTool(

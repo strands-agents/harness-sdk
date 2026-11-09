@@ -35,19 +35,13 @@ def _top_3() -> dict[str, list[str]]:
 
 
 @pytest.fixture(scope="module")
-def rankings():
+def rankings(fresh_index):
     """Top 3 per regression query on a fresh index, then again after search_docs hydrated pages."""
-    with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(cache, "_INDEX", None)
-        mp.setattr(cache, "_URL_CACHE", {})
-        mp.setattr(cache, "_URL_TITLES", {})
-        mp.setattr(cache, "_LINKS_LOADED", False)
-        cache.ensure_ready()
-        fresh = _top_3()
-        for query in HYDRATING_QUERIES:
-            server.search_docs(query)
-        hydrated_urls = {url for url, page in cache.get_url_cache().items() if page is not None}
-        yield {"fresh": fresh, "hydrated": _top_3(), "hydrated_urls": hydrated_urls}
+    fresh = _top_3()
+    for query in HYDRATING_QUERIES:
+        server.search_docs(query)
+    hydrated_urls = {url for url, page in cache.get_url_cache().items() if page is not None}
+    return {"fresh": fresh, "hydrated": _top_3(), "hydrated_urls": hydrated_urls}
 
 
 def test_queries_hydrated_pages(rankings):
