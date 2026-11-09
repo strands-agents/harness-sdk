@@ -49,6 +49,7 @@ import { StrandsChatBackend } from '../src/tui/strands-backend.js'
 import { LiveSteering } from '../src/tui/steering.js'
 import { defineHarnessAgentConfig } from '@strands-agents/harness'
 import * as providerDiscovery from '../src/tui/provider/discovery.js'
+import { writeSessionWithSavedSystemPrompt } from './fixtures/saved-system-prompt.js'
 
 let testSessionCatalogPath = ''
 
@@ -247,6 +248,25 @@ describe('interactive runtime lifecycle', () => {
       })
     )
     expect(flush).toHaveBeenCalledOnce()
+  })
+
+  it('builds the agent from the profile when the resumed session saved its own agent definition', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'strands-runtime-definition-'))
+    await writeSessionWithSavedSystemPrompt(join(workspace, '.agent', 'sessions'), 'saved-session')
+    mocks.createHarness.mockResolvedValueOnce(fakeAgent('old'))
+    const controller = await createInteractiveChat({
+      cwd: workspace,
+      agentOptions: { session: { id: 'saved-session' } },
+    })
+    try {
+      expect(mocks.createHarness).toHaveBeenCalledWith(
+        expect.objectContaining({ session: expect.objectContaining({ id: 'saved-session' }) })
+      )
+      expect(mocks.createHarness.mock.calls[0]?.[0]).not.toHaveProperty('instructions')
+    } finally {
+      await controller.dispose()
+      await rm(workspace, { recursive: true, force: true })
+    }
   })
 
   it('keeps the run ephemeral when the session is disabled', async () => {

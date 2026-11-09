@@ -11,7 +11,7 @@ import re
 import warnings
 from collections import Counter
 from collections.abc import AsyncGenerator, Mapping
-from typing import Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 from urllib.parse import urlparse
 
 import anthropic
@@ -49,6 +49,12 @@ from ._validation import (
     validate_config_keys,
 )
 from .model import BaseModelConfig, CacheConfig, CacheToolsConfig, Model, _messages_cache_ttl
+
+if TYPE_CHECKING:
+    # AsyncAnthropicBedrockMantle needs anthropic>=0.91, so these are imported for typing only.
+    from anthropic import AsyncAnthropicBedrock, AsyncAnthropicBedrockMantle, AsyncAnthropicVertex
+
+    _AsyncClient = anthropic.AsyncAnthropic | AsyncAnthropicBedrock | AsyncAnthropicBedrockMantle | AsyncAnthropicVertex
 
 COMPACTION_BETA = "compact-2026-09-04"
 """Beta that enables on-demand compaction, and compaction blocks in later requests."""
@@ -194,7 +200,8 @@ class AnthropicModel(Model):
             params: Additional model parameters (e.g., metadata, stop_sequences).
                 For a complete list of supported parameters, see https://docs.anthropic.com/en/api/messages.
                 Sampling parameters (temperature, top_k, top_p) are rejected from API version 2026-10-21 on;
-                pin 2023-06-01 with client_args={"default_headers": {"anthropic-version": "2023-06-01"}}.
+                pin 2023-06-01 with client_args={"default_headers": {"anthropic-version": "2023-06-01"}}
+                (or the same default_headers on a client passed as client=).
             anthropic_tools: Anthropic-specific server-side tools that are not function tools
                 (e.g., web_search, web_fetch, code_execution). Appended alongside the agent's function tools.
                 Use the standard tools interface for function calling tools.
@@ -213,14 +220,29 @@ class AnthropicModel(Model):
         anthropic_tools: list[dict[str, Any]]
         use_native_token_count: bool
 
-    def __init__(self, *, client_args: dict[str, Any] | None = None, **model_config: Unpack[AnthropicConfig]):
+    def __init__(
+        self,
+        *,
+        client: "_AsyncClient | None" = None,
+        client_args: dict[str, Any] | None = None,
+        **model_config: Unpack[AnthropicConfig],
+    ):
         """Initialize provider instance.
 
         Args:
+            client: A pre-configured Anthropic-compatible async client, e.g. ``anthropic.AsyncAnthropicBedrock()``,
+                ``anthropic.AsyncAnthropicBedrockMantle()`` (anthropic>=0.91) or ``anthropic.AsyncAnthropicVertex()``.
+                The model does not close it.
             client_args: Arguments for the underlying Anthropic client (e.g., api_key).
                 For a complete list of supported arguments, see https://docs.anthropic.com/en/api/client-sdks.
             **model_config: Configuration options for the Anthropic model.
+
+        Raises:
+            ValueError: If both ``client`` and ``client_args`` are provided.
         """
+        if client is not None and client_args:
+            raise ValueError("Only one of 'client' or 'client_args' should be provided, not both.")
+
         validate_config_keys(model_config, self.AnthropicConfig)
         _warn_on_deprecated_cache_tools(model_config, stacklevel=3)
         self.config = AnthropicModel.AnthropicConfig(**model_config)
@@ -230,8 +252,7 @@ class AnthropicModel(Model):
 
         logger.debug("config=<%s> | initializing", self.config)
 
-        client_args = client_args or {}
-        self.client = anthropic.AsyncAnthropic(**client_args)
+        self.client: _AsyncClient = client if client is not None else anthropic.AsyncAnthropic(**(client_args or {}))
         self._drop_stale_thinking_model_id: str | None = None
 
     @override
@@ -736,6 +757,7 @@ class AnthropicModel(Model):
                 f"params=<{sorted(sent_sampling_params)}>, anthropic_version=<{api_version}> | sampling parameters "
                 f"are not accepted by this API version; remove them, or pin the API version with "
                 f'client_args={{"default_headers": {{"anthropic-version": "{_LEGACY_API_VERSION}"}}}} '
+                "(or set the same default_headers on your client=) "
                 "(Claude 4.6 and earlier honor them; Claude 4.7 and later accept only the defaults)"
             )
         return params
@@ -1336,7 +1358,8 @@ class AnthropicModel(Model):
         request["extra_body"] = {**(request.get("extra_body") or {}), "compaction": compaction}
         request = self._with_beta(request, COMPACTION_BETA)
 
-        async with self.client.beta.messages.stream(**request) as stream:
+        # The Bedrock/Vertex beta resources alias the first-party stream method, which mypy rejects as a self type.
+        async with self.client.beta.messages.stream(**request) as stream:  # type: ignore[misc]
             response = cast(dict[str, Any], (await stream.get_final_message()).to_dict())
 
         block = next((block for block in response.get("content") or [] if block.get("type") == "compaction"), None)
