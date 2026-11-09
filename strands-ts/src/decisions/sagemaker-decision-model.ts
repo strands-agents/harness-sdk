@@ -15,6 +15,8 @@ const SAGEMAKER_DEFAULT_MIN_CONFIDENCE = 0.5
 const SAGEMAKER_MAX_BODY_BYTES = 6 * 1024 * 1024
 const THROTTLING_ERROR_NAMES = new Set(['ThrottlingException', 'ModelNotReadyException', 'ServiceUnavailable'])
 const THROTTLING_STATUSES = new Set([429, 503, 529])
+// strands-decider reports a prompt longer than the context window with 422, vLLM with 400.
+const CONTEXT_OVERFLOW_STATUSES = new Set([400, 422])
 
 /** Options for constructing a {@link SageMakerDecisionModel}. */
 export interface SageMakerDecisionModelOptions {
@@ -159,17 +161,17 @@ function translateSageMakerError(error: unknown): Error {
   if ((typeof name === 'string' && THROTTLING_ERROR_NAMES.has(name)) || THROTTLING_STATUSES.has(status)) {
     return new ModelThrottledError(message, { cause: error })
   }
-  if (status === 413 || (status === 422 && isContextOverflowMessage(OriginalMessage))) {
+  if (status === 413 || (CONTEXT_OVERFLOW_STATUSES.has(status) && isContextOverflowMessage(OriginalMessage))) {
     return new ContextWindowOverflowError(message)
   }
   return new ModelError(message, { cause: error })
 }
 
 /**
- * Whether a container's 422 body reports a prompt longer than the model's context window.
- * strands-decider sends `{"detail": "... exceeds the context window ..."}`; vLLM sends
- * `{"message": "... maximum context length ..."}`. Validation errors also use 422, but their
- * `detail` is a list that echoes the request, so only a string `detail` or `message` is matched.
+ * Whether a container's 400 or 422 body reports a prompt longer than the model's context window.
+ * strands-decider sends 422 `{"detail": "... exceeds the context window ..."}`; vLLM sends 400
+ * `{"message": "... maximum context length ..."}`. Validation errors also use these statuses, but
+ * their `detail` is a list that echoes the request, so only a string `detail` or `message` is matched.
  */
 function isContextOverflowMessage(originalMessage: unknown): boolean {
   if (typeof originalMessage !== 'string') return false
