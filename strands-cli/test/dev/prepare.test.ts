@@ -114,7 +114,10 @@ describe('prepareDevRun', () => {
     terminal(true)
     vi.spyOn(process.stderr, 'write').mockReturnValue(true)
     const harness = { name: 'Found', entrypoint: join(root, 'agent.ts'), root, language: 'typescript' as const }
-    vi.spyOn(search, 'discoverHarnesses').mockResolvedValue({ harnesses: [harness], warnings: [] })
+    vi.spyOn(search, 'discoverHarnesses').mockResolvedValue({
+      harnesses: [harness],
+      warnings: ['Workspace config version must be 1.'],
+    })
     vi.spyOn(picker, 'chooseHarness').mockImplementation(async (_options, _screen, open) =>
       open({ kind: 'discovered', harness }, _screen.signal)
     )
@@ -128,12 +131,14 @@ describe('prepareDevRun', () => {
         cliPath: 'in-memory',
         cliWorkspace: join(cwd, 'strands-dev/base-cli'),
         harnesses: [harness],
-        warnings: [],
       },
       screen,
       expect.any(Function)
     )
     expect(prepared?.workspace.root).toBe(root)
+    expect(JSON.stringify(vi.mocked(picker.chooseHarness).mock.calls ?? [])).not.toContain(
+      'Workspace config version must be 1.'
+    )
     expect(search.discoverHarnesses).toHaveBeenCalledWith([cwd, join(cwd, '../other')])
   })
 

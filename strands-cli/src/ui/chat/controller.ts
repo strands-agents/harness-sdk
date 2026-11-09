@@ -270,7 +270,7 @@ export class ChatController implements ChatControllerApi {
       this._notices.push({
         id: 'dev-workspace',
         status: 'success',
-        text: `strands dev · ${backend.name}\nWorkspace: ${root}\nHarness: ${entrypoint} (${origin})\nModel, tools, and instructions come from this workspace, not the saved CLI profile.`,
+        text: `strands dev · ${backend.name}\nWorkspace: ${root}\nHarness: ${entrypoint} (${origin})\nModel, tools, and instructions come from this workspace.`,
       })
     }
     this._snapshot = this._createSnapshot()

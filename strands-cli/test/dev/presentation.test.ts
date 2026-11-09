@@ -22,6 +22,7 @@ describe('dev session identity', () => {
         ])
       )
       expect(controller.getSnapshot().notices[0]?.text).toContain('/workspace/agent.ts')
+      expect(controller.getSnapshot().notices[0]?.text).not.toContain('not the saved CLI profile')
     } finally {
       await controller.dispose()
     }

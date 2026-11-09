@@ -18,7 +18,6 @@ interface PickerProps {
   cliPath?: string
   cliWorkspace?: string
   harnesses: readonly DiscoveredHarness[]
-  warnings?: readonly string[]
   onSelect: (selection: HarnessChoice | undefined) => void | Promise<void>
 }
 
@@ -27,7 +26,6 @@ export const HarnessPicker = ({
   cliPath = userConfigPath(),
   cliWorkspace,
   harnesses,
-  warnings = [],
   onSelect,
 }: PickerProps): ReactElement => {
   const [selection, setSelection] = useState(0)
@@ -175,12 +173,7 @@ export const HarnessPicker = ({
           </Box>
         </>
       )}
-      {failure ? <Text color={errorColor}>{failure}</Text> : null}
-      {!failure && warnings[0] ? (
-        <Text dimColor wrap="truncate-end">
-          {sanitizeTerminalText(warnings[0])}
-        </Text>
-      ) : null}
+      {failure ? <Text color={errorColor}>Cannot open workspace: {failure}</Text> : null}
       <Box marginTop={1}>
         <Text dimColor>
           {busy

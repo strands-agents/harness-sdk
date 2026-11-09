@@ -64,7 +64,7 @@ const selectWorkspace = async (
     })
   }
   return chooseHarness(
-    { cliName: base.name, cliPath: base.source, cliWorkspace: base.workspace, harnesses, warnings: discovery.warnings },
+    { cliName: base.name, cliPath: base.source, cliWorkspace: base.workspace, harnesses },
     screen,
     open
   )
@@ -131,7 +131,7 @@ export const prepareDevRun = async (
   const entrypoint = sanitizeTerminalText(workspace.entrypoint)
   if (!screen) {
     process.stderr.write(
-      `strands dev · ${label}\nWorkspace: ${sanitizeTerminalText(workspace.root)}\nHarness: ${entrypoint} (${workspace.config.origin.kind})\nModel, tools, and instructions come from this workspace, not the saved CLI profile.\nState: ${sanitizeTerminalText(state)}\n`
+      `strands dev · ${label}\nWorkspace: ${sanitizeTerminalText(workspace.root)}\nHarness: ${entrypoint} (${workspace.config.origin.kind})\nModel, tools, and instructions come from this workspace.\nState: ${sanitizeTerminalText(state)}\n`
     )
     if (args.dev?.init) process.stderr.write('Workspace ready. Run strands dev --workspace <path> to start it.\n')
   }
