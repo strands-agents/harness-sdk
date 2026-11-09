@@ -30,7 +30,7 @@ from ...injection._message_injection import RenderContent, _resolve_trigger
 from ...injection.types import InjectionContext, InjectionTriggerPredicate
 from ...middleware.stages import InvokeModelStage
 from ...plugins import Plugin
-from ...types.content import ContentBlock, Message
+from ...types.content import ContentBlock, Message, Messages
 
 if TYPE_CHECKING:
     from ...agent.agent import Agent
@@ -62,8 +62,9 @@ class ContextInjector(Plugin):
             messages it arrives as a system message, which the model ranks above the user, so never
             put content from outside the conversation (tool output, retrieved documents) in it.
             Called at most once per user message: a retry or a resume sends the text it returned
-            the first time. A forced structured output call adds its own user message, which the
-            trigger sees like any other. A callback that raises fails open
+            the first time. A forced structured output call appends its own user message (unlike TS,
+            which retries the same message), so the trigger fires again for it and a second block is
+            written. A callback that raises fails open
             (injection is skipped, the model call proceeds).
         name: Plugin name, for logging and duplicate detection. Defaults to
             ``"strands:context-injector"``. The name is stored with every block the injector writes
@@ -124,14 +125,7 @@ class ContextInjector(Plugin):
         latest = history[-1] if history else None
         if latest is None or latest["role"] != "user" or any(self._wrote(block) for block in latest["content"]):
             return context
-        # Another middleware may have replaced this call's messages.
-        tracking_id = latest.get("tracking_id")
-        if tracking_id is None:
-            # A message a hook appended this cycle has no id yet; only the call's last message can be it.
-            last = len(context.messages) - 1
-            index = last if last >= 0 and context.messages[last].get("tracking_id") is None else -1
-        else:
-            index = next((i for i, m in enumerate(context.messages) if m.get("tracking_id") == tracking_id), -1)
+        index = _call_message_index(context.messages, latest.get("tracking_id"))
         if index < 0:
             return context
         injection_context = InjectionContext(
@@ -162,6 +156,15 @@ class ContextInjector(Plugin):
 
     def _wrote(self, block: ContentBlock) -> bool:
         return "injected" in block and block["injected"]["source"] == self.name
+
+
+def _call_message_index(call_messages: Messages, tracking_id: str | None) -> int:
+    """Index of the stored latest message in this call's messages, which another middleware may have replaced, or -1."""
+    if tracking_id is None:
+        # A message a hook appended this cycle has no id yet; only the call's last message can be it.
+        last = len(call_messages) - 1
+        return last if last >= 0 and call_messages[last].get("tracking_id") is None else -1
+    return next((index for index, message in enumerate(call_messages) if message.get("tracking_id") == tracking_id), -1)
 
 
 def _with_block(message: Message, block: ContentBlock, position: int) -> Message:

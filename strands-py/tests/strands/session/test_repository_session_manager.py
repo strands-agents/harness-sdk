@@ -1,7 +1,7 @@
 """Tests for AgentSessionManager."""
 
 import copy
-from unittest.mock import Mock
+from unittest.mock import Mock, call
 
 import pytest
 
@@ -1365,3 +1365,54 @@ def test_restore_after_redacting_alias_records_returns_redacted_conversation(tmp
     assert len(restored.messages) == 2
     assert restored.messages[0]["content"] == [{"text": "[redacted]"}]
     assert restored.messages[1]["content"] == [{"text": "[redacted]"}]
+
+
+def _injected_session_setup(session_manager):
+    agent = Agent(agent_id="a", conversation_manager=NullConversationManager(), session_manager=session_manager)
+    stored = {"role": "user", "content": [{"text": "hi"}], "tracking_id": "t1"}
+    agent.messages = [stored]
+    session_manager.append_message(stored, agent)
+    session_manager.session_repository.update_message = Mock(wraps=session_manager.session_repository.update_message)
+    return agent, stored
+
+
+def test_append_message_saves_injected_block_once(session_manager):
+    agent, stored = _injected_session_setup(session_manager)
+    with_block = {**stored, "content": [*stored["content"], {"injected": {"text": "ctx", "source": "s"}}]}
+    agent.messages = [with_block]
+    record = session_manager._held_records["a"][0]
+
+    session_manager.append_message({"role": "assistant", "content": [{"text": "one"}]}, agent)
+    session_manager.append_message({"role": "user", "content": [{"text": "two"}]}, agent)
+
+    update_message = session_manager.session_repository.update_message
+    assert update_message.call_args_list == [call("test-session", "a", record)]
+    assert record.message is with_block
+    assert session_manager.session_repository.read_message("test-session", "a", 0).message == with_block
+
+
+@pytest.mark.parametrize(
+    "replace",
+    [
+        pytest.param(lambda stored: stored, id="unchanged"),
+        pytest.param(lambda stored: {**stored, "content": [{"text": "edited"}]}, id="no-new-injected-block"),
+    ],
+)
+def test_append_message_skips_records_without_new_injected_block(session_manager, replace):
+    agent, stored = _injected_session_setup(session_manager)
+    agent.messages = [replace(stored)]
+
+    session_manager.append_message({"role": "assistant", "content": [{"text": "one"}]}, agent)
+
+    session_manager.session_repository.update_message.assert_not_called()
+
+
+def test_sync_agent_skips_redacted_record(session_manager):
+    agent, stored = _injected_session_setup(session_manager)
+    session_manager.redact_latest_message({"role": "user", "content": [{"text": "[redacted]"}]}, agent)
+    session_manager.session_repository.update_message.reset_mock()
+    agent.messages = [{**stored, "content": [*stored["content"], {"injected": {"text": "ctx", "source": "s"}}]}]
+
+    session_manager.sync_agent(agent)
+
+    session_manager.session_repository.update_message.assert_not_called()

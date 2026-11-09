@@ -282,6 +282,9 @@ class AnthropicModel(Model):
     def model_info(self) -> ModelInfo:
         """Everything the SDK knows about the configured model, with ``temporary_messages`` on for supported Claude.
 
+        ``temporary_messages`` follows the model id, not the client, so it is also on through the Bedrock and Vertex
+        clients. If those reject the turn-scoped system messages, set
+        ``model_info=ModelInfo(capabilities=ModelCapabilities(temporary_messages=False))``.
         See :attr:`strands.models.Model.model_info`.
         """
         temporary_messages = lookup_model_info(self.config.get("model_id")).capabilities.temporary_messages

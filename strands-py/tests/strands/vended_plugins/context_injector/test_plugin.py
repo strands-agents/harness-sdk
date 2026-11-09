@@ -162,12 +162,11 @@ def test_writes_on_every_tool_result_turn_with_every_turn_and_sends_only_the_lat
 
     assert agent.messages[0]["content"] == [{"text": "plan the work"}, injected("<todos>v1</todos>")]
     # The tool result stays first in its message; the new list follows it.
-    assert [next(iter(block)) for block in agent.messages[2]["content"]] == ["toolResult", "injected"]
-    assert agent.messages[2]["content"][1] == injected("<todos>v2</todos>")
+    tool_result = {"toolResult": {"toolUseId": "tool-1", "status": "success", "content": [{"text": "saved"}]}}
+    assert agent.messages[2]["content"] == [tool_result, injected("<todos>v2</todos>")]
     assert len(requests) == 2
     assert requests[1][0]["content"] == [{"text": "plan the work"}]
-    assert [next(iter(block)) for block in requests[1][2]["content"]] == ["toolResult", "text"]
-    assert requests[1][2]["content"][1] == {"text": "\n\n<todos>v2</todos>"}
+    assert requests[1][2]["content"] == [tool_result, {"text": "\n\n<todos>v2</todos>"}]
 
 
 def test_keeps_every_request_a_prefix_of_the_next_for_a_model_that_takes_temporary_messages():
@@ -312,8 +311,8 @@ def test_writes_into_the_result_a_background_task_delivers_before_the_model_call
 
     agent("Continue.")
 
-    assert [next(iter(block)) for block in requests[1][-1]["content"]] == ["toolResult", "text"]
-    assert requests[1][-1]["content"][1] == {"text": "\n\nreminder"}
+    tool_result = {"toolResult": {"toolUseId": "task-1", "status": "success", "content": [{"text": "done"}]}}
+    assert requests[1][-1]["content"] == [tool_result, {"text": "\n\nreminder"}]
 
 
 def test_keeps_text_other_middleware_adds_for_one_call_after_the_injected_block():

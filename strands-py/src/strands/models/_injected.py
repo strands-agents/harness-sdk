@@ -64,7 +64,7 @@ def _render_injected_blocks(messages: Messages) -> tuple[Messages, int]:
             continue
         content = message["content"]
         if index == latest_user:
-            first_injected = next(i for i, block in enumerate(content) if "injected" in block)
+            first_injected = next(position for position, block in enumerate(content) if "injected" in block)
             dynamic_trailing_blocks = len(content) - first_injected
             rendered.append({**message, "content": _with_injected_text(content)})
         else:
