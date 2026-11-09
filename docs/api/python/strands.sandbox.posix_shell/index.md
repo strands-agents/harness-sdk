@@ -10,7 +10,7 @@ Mirrors `strands-ts/src/sandbox/posix-shell.ts`.
 def validate_env_keys(env: dict[str, str]) -> None
 ```
 
-Defined in: [src/strands/sandbox/posix\_shell.py:27](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/posix_shell.py#L27)
+Defined in: [src/strands/sandbox/posix\_shell.py:28](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/posix_shell.py#L28)
 
 Validate environment variable names against :data:`ENV_KEY_PATTERN`.
 
@@ -28,7 +28,7 @@ Validate environment variable names against :data:`ENV_KEY_PATTERN`.
 def build_shell_env_prefix(env: dict[str, str] | None = None) -> str
 ```
 
-Defined in: [src/strands/sandbox/posix\_shell.py:41](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/posix_shell.py#L41)
+Defined in: [src/strands/sandbox/posix\_shell.py:42](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/posix_shell.py#L42)
 
 Build a shell `export KEY=VALUE && ...` prefix, or `""` when empty.
 
@@ -54,7 +54,7 @@ The shell `export ... &&` prefix, or an empty string when `env` is `None` or emp
 class PosixShellSandbox(Sandbox, ABC)
 ```
 
-Defined in: [src/strands/sandbox/posix\_shell.py:77](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/posix_shell.py#L77)
+Defined in: [src/strands/sandbox/posix\_shell.py:78](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/posix_shell.py#L78)
 
 Abstract sandbox that provides shell-based defaults for file and code operations.
 
@@ -83,7 +83,7 @@ async def execute_code_streaming(
         **kwargs: Any) -> AsyncGenerator[StreamChunk | ExecutionResult, None]
 ```
 
-Defined in: [src/strands/sandbox/posix\_shell.py:105](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/posix_shell.py#L105)
+Defined in: [src/strands/sandbox/posix\_shell.py:106](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/posix_shell.py#L106)
 
 Execute code by piping it to a language interpreter over the shell.
 
@@ -112,7 +112,7 @@ The code is base64-encoded and decoded inside a quoted heredoc on the target, th
 async def read_file(path: str, **kwargs: Any) -> bytes
 ```
 
-Defined in: [src/strands/sandbox/posix\_shell.py:146](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/posix_shell.py#L146)
+Defined in: [src/strands/sandbox/posix\_shell.py:147](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/posix_shell.py#L147)
 
 Read a file as raw bytes via base64 over the shell.
 
@@ -127,8 +127,10 @@ The file contents as raw bytes.
 
 **Raises**:
 
--   `FileNotFoundError` - If the file does not exist or cannot be read.
--   `OSError` - If the command succeeds but its output is not valid base64 (e.g. a shell profile or locale warning prepended text to stdout).
+-   `SandboxPathNotFoundError` - If the file does not exist.
+-   `IsADirectoryError` - If `path` is a directory.
+-   `PermissionError` - If the file or its parent directory is not accessible.
+-   `OSError` - If the file cannot be read for another reason, or the command succeeds but its output is not valid base64 (e.g. a shell profile or locale warning prepended text to stdout).
 
 #### write\_file
 
@@ -136,7 +138,7 @@ The file contents as raw bytes.
 async def write_file(path: str, content: bytes, **kwargs: Any) -> None
 ```
 
-Defined in: [src/strands/sandbox/posix\_shell.py:171](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/posix_shell.py#L171)
+Defined in: [src/strands/sandbox/posix\_shell.py:188](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/posix_shell.py#L188)
 
 Write raw bytes to a file via base64 over the shell.
 
@@ -158,7 +160,7 @@ Parent directories are created via `mkdir -p`. The base64-encoded content is dec
 async def remove_file(path: str, **kwargs: Any) -> None
 ```
 
-Defined in: [src/strands/sandbox/posix\_shell.py:194](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/posix_shell.py#L194)
+Defined in: [src/strands/sandbox/posix\_shell.py:211](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/posix_shell.py#L211)
 
 Remove a file via `rm` over the shell.
 
@@ -177,7 +179,7 @@ Remove a file via `rm` over the shell.
 async def list_files(path: str, **kwargs: Any) -> list[FileInfo]
 ```
 
-Defined in: [src/strands/sandbox/posix\_shell.py:208](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/posix_shell.py#L208)
+Defined in: [src/strands/sandbox/posix\_shell.py:225](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/posix_shell.py#L225)
 
 List directory contents via `ls -1ap` parsing.
 

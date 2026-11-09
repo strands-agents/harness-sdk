@@ -40,9 +40,9 @@ class SandboxPathNotFoundError(FileNotFoundError)
 
 Defined in: [src/strands/sandbox/errors.py:28](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/errors.py#L28)
 
-Raised by :meth:`~strands.sandbox.base.Sandbox.list_files` when the path does not exist.
+Raised by `list_files` and `read_file` when the path does not exist.
 
-Distinguishes genuine absence (a missing path, or a file where a directory was expected) from permission or transport failures, which raise plain :class:`OSError`/:class:`FileNotFoundError`.
+Distinguishes genuine absence (a missing path, or a file where a directory was expected) from permission or transport failures, which raise :class:`PermissionError` or plain :class:`OSError`.
 
 #### \_\_init\_\_
 

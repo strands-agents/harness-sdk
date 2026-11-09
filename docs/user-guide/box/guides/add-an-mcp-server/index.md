@@ -33,7 +33,7 @@ The table’s name, `fetch` or `github`, is the server name. Policy reads it as 
 | `filesystem` | table | empty | The paths the server’s own system calls reach. See [Filesystem](#filesystem). |
 | `network.contain_egress` | bool | `true` | How the server reaches the network. See [Network](#network). |
 
-The box starts the server when the agent’s harness runs the server’s full `command`, and only when policy permits `shell:spawn` for it. By default, the box runs the `command` and arguments from `box.toml`.
+The box starts the server when the agent’s harness runs the server’s full `command`, and only when policy permits `shell:spawn` for it. When an experimental tool grammar binds the server’s program, the grammar’s action decides the start in place of `shell:spawn`, as for a [spawn in the Shell](../../reference/shell/index.md#shellspawn). By default, the box runs the `command` and arguments from `box.toml`.
 
 Without argument wildcards, the harness’s command must be the same words, in the same order, as `command`. The harness runs the alias with its arguments, and the box starts the server whose `command` matches. A harness entry that sets only the program reaches only a server whose `command` is the program alone. For a server whose `command` has arguments, set the same arguments in the harness. [Connect the harness](../write-mcp-policy/index.md#step-2-connect-the-harness) shows the settings.
 
@@ -78,7 +78,7 @@ argument_wildcards = true
 
 If the harness runs `example-server --token runtime-value`, Box matches the entry and starts `example-server --token runtime-value` after policy permits it. The same server filesystem and network settings still apply. Box supplies the configured executable and fixed arguments; the caller supplies the arguments in `*` positions. The matched entry selects the MCP server’s configuration, and Box continues to mediate its MCP traffic.
 
-Any process in the workload can invoke the MCP alias and supply values for the `*` positions. The operator chooses those positions in `box.toml`; the workload cannot add wildcards. A `shell:spawn` permit that checks only the program matches every value in those positions. The server runs with its own configured permissions, which can exceed the workload’s. For example, `["npx", "-y", "*"]` lets the caller choose the package that runs with those permissions. Put `*` only in positions whose values you intend the caller to choose.
+Any process in the workload can invoke the MCP alias and supply values for the `*` positions. The operator chooses those positions in `box.toml`; the workload cannot add wildcards. A `shell:spawn` permit that checks only the program matches every value in those positions. The server runs with its own configured permissions, which can exceed the workload’s. For example, `["npx", "-y", "*"]` lets the caller choose the package that runs with those permissions. Put `*` only in positions whose values you intend the caller to choose. When an experimental tool grammar binds the server’s program file under another name, such as a mise shim, the start is a `shell:spawn` decision, and no grammar reads the values in the `*` positions.
 
 Only an argument equal to `*` is a wildcard. It accepts one argument, including an empty string. The executable, argument count, order, and every other argument must match. `--token=*` is literal text. To accept a changing argument such as `--token=value`, replace that entire argument with `*`.
 
@@ -189,6 +189,6 @@ For a request the policy refuses, see [troubleshooting](../write-mcp-policy/inde
 ## See also
 
 -   [Write policy for an MCP server](../write-mcp-policy/index.md): the rules that let the agent start, list, and call a server, and how to connect the harness.
--   [MCP servers in the design guide](https://github.com/strands-agents/box/blob/e39544d49188b82933264b83159c7ccc278ced5a/docs/design/mcp.md): how the box starts a server and decides each call.
--   [Local MCP servers in the design guide](https://github.com/strands-agents/box/blob/e39544d49188b82933264b83159c7ccc278ced5a/docs/design/containment.md#local-mcp-servers): what a stdio server’s sandbox reaches.
--   [macOS network restrictions](https://github.com/strands-agents/box/blob/e39544d49188b82933264b83159c7ccc278ced5a/docs/design/macos-enforcement.md#network-connections-and-local-services): how the sandbox limits a server’s connections.
+-   [MCP servers in the design guide](https://github.com/strands-agents/box/blob/04fa0ac1e23aea9a7e077298c6de763875b76a36/docs/design/mcp.md): how the box starts a server and decides each call.
+-   [Local MCP servers in the design guide](https://github.com/strands-agents/box/blob/04fa0ac1e23aea9a7e077298c6de763875b76a36/docs/design/containment.md#local-mcp-servers): what a stdio server’s sandbox reaches.
+-   [macOS network restrictions](https://github.com/strands-agents/box/blob/04fa0ac1e23aea9a7e077298c6de763875b76a36/docs/design/macos-enforcement.md#network-connections-and-local-services): how the sandbox limits a server’s connections.

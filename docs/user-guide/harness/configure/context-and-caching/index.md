@@ -60,7 +60,8 @@ Prompt caching reuses the parts of a request that do not change between turns (t
 How caching reaches the provider depends on the provider:
 
 -   On Amazon Bedrock and Anthropic direct, Strands harness configures cache points and cached tool definitions.
--   On OpenAI, Google, and bedrock-mantle, caching happens automatically server-side, so there is nothing for Strands harness to configure.
+-   On OpenAI and bedrock-mantle, Strands harness sends a per-session cache key (when a session is active) and, on GPT-5.6+ models listed in the SDK model info, places cache points ahead of the per-turn memory, todo, and environment context, so the conversation prefix stays cached across turns.
+-   On Google, caching happens automatically server-side, so there is nothing for Strands harness to configure.
 
 Pass `caching` off to disable what Strands harness configures:
 

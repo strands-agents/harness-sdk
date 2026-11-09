@@ -1,4 +1,4 @@
-Defined in: [src/context-manager/strategies/offload/base.ts:52](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/context-manager/strategies/offload/base.ts#L52)
+Defined in: [src/context-manager/strategies/offload/base.ts:54](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/context-manager/strategies/offload/base.ts#L54)
 
 **`Experimental`**
 
@@ -20,7 +20,7 @@ When multiple strategies target the same content, they don’t conflict — stra
 threshold?: number;
 ```
 
-Defined in: [src/context-manager/strategies/offload/base.ts:54](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/context-manager/strategies/offload/base.ts#L54)
+Defined in: [src/context-manager/strategies/offload/base.ts:56](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/context-manager/strategies/offload/base.ts#L56)
 
 **`Experimental`**
 
@@ -34,7 +34,7 @@ Token threshold above which individual blocks are offloaded.
 utilization?: number;
 ```
 
-Defined in: [src/context-manager/strategies/offload/base.ts:57](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/context-manager/strategies/offload/base.ts#L57)
+Defined in: [src/context-manager/strategies/offload/base.ts:59](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/context-manager/strategies/offload/base.ts#L59)
 
 **`Experimental`**
 
@@ -48,7 +48,7 @@ Context utilization ratio (0-1+) above which the strategy fires.
 preserveRecent?: number;
 ```
 
-Defined in: [src/context-manager/strategies/offload/base.ts:64](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/context-manager/strategies/offload/base.ts#L64)
+Defined in: [src/context-manager/strategies/offload/base.ts:66](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/context-manager/strategies/offload/base.ts#L66)
 
 **`Experimental`**
 

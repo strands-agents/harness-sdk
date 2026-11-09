@@ -1,4 +1,4 @@
-Defined in: [src/types/messages.ts:575](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L575)
+Defined in: [src/types/messages.ts:579](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L579)
 
 Data for a cache point block.
 
@@ -10,7 +10,7 @@ Data for a cache point block.
 cacheType: "default";
 ```
 
-Defined in: [src/types/messages.ts:579](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L579)
+Defined in: [src/types/messages.ts:583](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L583)
 
 The cache type. Currently only ‘default’ is supported.
 
@@ -22,7 +22,7 @@ The cache type. Currently only ‘default’ is supported.
 ttl?: string;
 ```
 
-Defined in: [src/types/messages.ts:588](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L588)
+Defined in: [src/types/messages.ts:592](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L592)
 
 Optional TTL for the cache entry. When omitted, the provider’s default TTL is used.
 

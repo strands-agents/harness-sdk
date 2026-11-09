@@ -6,7 +6,7 @@ Use an EKS cluster with Linux ARM64 workers and pod user namespaces. ARM64 is th
 
 Install Docker with an ARM64 builder, Python 3, and `kubectl`. Authenticate to a container registry that you can push to and your workers can pull from. Configure `kubectl` for your cluster. The [EKS connection guide](https://docs.aws.amazon.com/eks/latest/userguide/create-kubeconfig.html) explains that step. Cluster and registry usage can incur charges.
 
-The [sample README](https://github.com/strands-agents/box/blob/e39544d49188b82933264b83159c7ccc278ced5a/examples/cloud-deployments/eks/README.md#tested-configuration) lists the Box revision, platform versions, and results for each example. The coding and deployment examples passed on EKS, including checks through the full ten-minute cooldown. Test the deployment example on your cluster. The recorded versions are tested configurations, not minimum requirements.
+The [sample README](https://github.com/strands-agents/box/blob/04fa0ac1e23aea9a7e077298c6de763875b76a36/examples/cloud-deployments/eks/README.md#tested-configuration) lists the Box revision, platform versions, and results for each example. The coding and deployment examples passed on EKS, including checks through the full ten-minute cooldown. Test the deployment example on your cluster. The recorded versions are tested configurations, not minimum requirements.
 
 ## Build the image
 
@@ -87,7 +87,7 @@ python3 run.py --mode claude --exercise deployment-cooldown \
 
 The runner selects `deployment-cooldown` by default for Claude and records the selected example in `receipt.json`. A successful result contains `passed: true`. The test checks for three failed deployments, at least two blocked retries, and a successful status check after the failures. The mock service returns HTTP 503 (service unavailable) for its first three deployment requests and HTTP 201 (created) afterward. Box enforces the cooldown.
 
-The agent finishes after those checks. It does not wait for the cooldown to end. Run the [test without a model](https://github.com/strands-agents/box/blob/e39544d49188b82933264b83159c7ccc278ced5a/examples/cloud-deployments/eks/claude/README.md#check-cooldown-expiry-without-a-model) to check that deployment becomes available again. That test waits through the full ten-minute cooldown and checks that Box permits the next deployment request. The supplied client makes sequential calls within one box. Requests already in flight and activity in other boxes remain outside this limit. Model responses can vary. Check `receipt.json` for the test result, even if the agent reports success.
+The agent finishes after those checks. It does not wait for the cooldown to end. Run the [test without a model](https://github.com/strands-agents/box/blob/04fa0ac1e23aea9a7e077298c6de763875b76a36/examples/cloud-deployments/eks/claude/README.md#check-cooldown-expiry-without-a-model) to check that deployment becomes available again. That test waits through the full ten-minute cooldown and checks that Box permits the next deployment request. The supplied client makes sequential calls within one box. Requests already in flight and activity in other boxes remain outside this limit. Model responses can vary. Check `receipt.json` for the test result, even if the agent reports success.
 
 To run the coding and file-permission example, select `boundaries`:
 

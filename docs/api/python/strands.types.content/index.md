@@ -78,13 +78,29 @@ A cache point configuration for optimizing conversation history.
 -   `type` - The type of cache point, typically “default”.
 -   `ttl` - Optional cache TTL duration (e.g. “5m”, “1h”). Supported by providers that accept Anthropic-compatible cache\_control fields.
 
+## SummaryBlock
+
+```python
+class SummaryBlock(TypedDict)
+```
+
+Defined in: [src/strands/types/content.py:80](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/types/content.py#L80)
+
+A summary of earlier conversation history that takes the summarized messages’ place.
+
+**Attributes**:
+
+-   `provider` - Name of the provider that wrote the summary server-side, for example “anthropic”.
+-   `signature` - Signature the provider returned with the summary, sent back unchanged.
+-   `text` - The summary text.
+
 ## ContentBlock
 
 ```python
 class ContentBlock(TypedDict)
 ```
 
-Defined in: [src/strands/types/content.py:80](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/types/content.py#L80)
+Defined in: [src/strands/types/content.py:94](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/types/content.py#L94)
 
 A block of content for a message that you pass to, or receive from, a model.
 
@@ -96,6 +112,7 @@ A block of content for a message that you pass to, or receive from, a model.
 -   `guardContent` - Contains the content to assess with the guardrail.
 -   `image` - Image to include in the message.
 -   `reasoningContent` - Contains content regarding the reasoning that is carried out by the model.
+-   `summary` - A summary of earlier conversation history.
 -   `text` - Text to include in the message.
 -   `toolResult` - The result for a tool request that a model makes.
 -   `toolUse` - Information about a tool use request from a model.
@@ -109,7 +126,7 @@ A block of content for a message that you pass to, or receive from, a model.
 class TextBlock()
 ```
 
-Defined in: [src/strands/types/content.py:115](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/types/content.py#L115)
+Defined in: [src/strands/types/content.py:131](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/types/content.py#L131)
 
 Text content for a message.
 
@@ -123,7 +140,7 @@ Text content for a message.
 def to_dict() -> _TextBlockData
 ```
 
-Defined in: [src/strands/types/content.py:124](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/types/content.py#L124)
+Defined in: [src/strands/types/content.py:140](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/types/content.py#L140)
 
 Return the dictionary form of this block.
 
@@ -133,7 +150,7 @@ Return the dictionary form of this block.
 class SystemContentBlock(TypedDict)
 ```
 
-Defined in: [src/strands/types/content.py:129](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/types/content.py#L129)
+Defined in: [src/strands/types/content.py:145](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/types/content.py#L145)
 
 Contains configurations for instructions to provide the model for how to handle input.
 
@@ -154,7 +171,7 @@ def split_system_prompt(
 ) -> tuple[str | None, list[SystemContentBlock] | None]
 ```
 
-Defined in: [src/strands/types/content.py:145](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/types/content.py#L145)
+Defined in: [src/strands/types/content.py:161](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/types/content.py#L161)
 
 Split a unified system prompt into the two-field form needed by Model.stream().
 
@@ -175,7 +192,7 @@ The string representation is maintained for backwards compatibility with model p
 class DeltaContent(TypedDict)
 ```
 
-Defined in: [src/strands/types/content.py:169](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/types/content.py#L169)
+Defined in: [src/strands/types/content.py:185](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/types/content.py#L185)
 
 A block of content in a streaming response.
 
@@ -190,7 +207,7 @@ A block of content in a streaming response.
 class ContentBlockStartToolUse(TypedDict)
 ```
 
-Defined in: [src/strands/types/content.py:181](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/types/content.py#L181)
+Defined in: [src/strands/types/content.py:197](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/types/content.py#L197)
 
 The start of a tool use block.
 
@@ -206,7 +223,7 @@ The start of a tool use block.
 class ContentBlockStart(TypedDict)
 ```
 
-Defined in: [src/strands/types/content.py:195](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/types/content.py#L195)
+Defined in: [src/strands/types/content.py:211](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/types/content.py#L211)
 
 Content block start information.
 
@@ -220,7 +237,7 @@ Content block start information.
 class ContentBlockDelta(TypedDict)
 ```
 
-Defined in: [src/strands/types/content.py:205](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/types/content.py#L205)
+Defined in: [src/strands/types/content.py:221](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/types/content.py#L221)
 
 The content block delta event.
 
@@ -235,7 +252,7 @@ The content block delta event.
 class ContentBlockStop(TypedDict)
 ```
 
-Defined in: [src/strands/types/content.py:217](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/types/content.py#L217)
+Defined in: [src/strands/types/content.py:233](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/types/content.py#L233)
 
 A content block stop event.
 
@@ -256,7 +273,7 @@ Role of a message sender.
 class MessageMetadata(TypedDict)
 ```
 
-Defined in: [src/strands/types/content.py:235](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/types/content.py#L235)
+Defined in: [src/strands/types/content.py:251](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/types/content.py#L251)
 
 Optional metadata attached to a message.
 
@@ -274,7 +291,7 @@ Not sent to model providers — explicitly stripped before model calls. Persiste
 class Message(TypedDict)
 ```
 
-Defined in: [src/strands/types/content.py:252](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/types/content.py#L252)
+Defined in: [src/strands/types/content.py:268](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/types/content.py#L268)
 
 A message in a conversation with the agent.
 
@@ -295,7 +312,7 @@ A list of messages representing a conversation.
 def get_message_metadata(message: Message) -> MessageMetadata
 ```
 
-Defined in: [src/strands/types/content.py:300](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/types/content.py#L300)
+Defined in: [src/strands/types/content.py:316](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/types/content.py#L316)
 
 Get metadata for a message, returning empty dict if not present.
 

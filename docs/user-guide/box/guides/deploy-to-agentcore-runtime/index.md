@@ -4,11 +4,11 @@ Eligibility checks and dispatch requests share `/orders/{order_id}/replacement`.
 
 ## Before you start
 
-Prepare the package on Linux ARM64 with Python 3.12, pip, Git, and Rust through rustup. ARM64 is the 64-bit Arm processor architecture. The Box checkout selects its Rust toolchain. Install its [native build dependencies](https://github.com/strands-agents/box/blob/e39544d49188b82933264b83159c7ccc278ced5a/README.md#build-from-source). On Amazon Linux 2023, the build requires GCC, G++, Make, CMake, OpenSSL development files, pkg-config, and Perl. Python 3.12 also needs the pip and virtual-environment packages.
+Prepare the package on Linux ARM64 with Python 3.12, pip, Git, and Rust through rustup. ARM64 is the 64-bit Arm processor architecture. The Box checkout selects its Rust toolchain. Install its [native build dependencies](https://github.com/strands-agents/box/blob/04fa0ac1e23aea9a7e077298c6de763875b76a36/README.md#build-from-source). On Amazon Linux 2023, the build requires GCC, G++, Make, CMake, OpenSSL development files, pkg-config, and Perl. Python 3.12 also needs the pip and virtual-environment packages.
 
 Use a development AWS account and an existing Amazon S3 bucket in `us-west-2` owned by that account. Authenticate a profile with permissions to deploy CloudFormation, create the execution role, upload the package, and invoke Runtime. The execution role receives model permissions from the generated template. Model and cloud-resource usage can incur charges.
 
-The [sample README](https://github.com/strands-agents/box/blob/e39544d49188b82933264b83159c7ccc278ced5a/examples/cloud-deployments/agentcore-runtime/README.md#tested-scope) records the tested source revision, framework versions, and platform limits. The deployment uses managed Runtime V2 with Python 3.12 and a non-root operator. The model profile and endpoint are fixed to the tested commercial AWS configuration.
+The [sample README](https://github.com/strands-agents/box/blob/04fa0ac1e23aea9a7e077298c6de763875b76a36/examples/cloud-deployments/agentcore-runtime/README.md#tested-scope) records the tested source revision, framework versions, and platform limits. The deployment uses managed Runtime V2 with Python 3.12 and a non-root operator. The model profile and endpoint are fixed to the tested commercial AWS configuration.
 
 ## Prepare the package
 

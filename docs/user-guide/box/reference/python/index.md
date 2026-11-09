@@ -1,6 +1,6 @@
 A box runs the agent’s Python scripts in [Monty](https://github.com/pydantic/monty), an interpreter for a subset of Python. Policy decides each file operation a script makes, and the egress gateway decides each request a script sends with `fetch()`.
 
-Audience: an operator with a working box from [getting started](../../quickstart/index.md) whose agent runs Python. For how Box runs a script and why a script cannot act on its own, read [how Box runs Python scripts](https://github.com/strands-agents/box/blob/e39544d49188b82933264b83159c7ccc278ced5a/docs/design/monty.md).
+Audience: an operator with a working box from [getting started](../../quickstart/index.md) whose agent runs Python. For how Box runs a script and why a script cannot act on its own, read [how Box runs Python scripts](https://github.com/strands-agents/box/blob/04fa0ac1e23aea9a7e077298c6de763875b76a36/docs/design/monty.md).
 
 ## Example
 
@@ -84,7 +84,9 @@ These raise an error whatever the policy says:
 | A path outside the operator’s home and the workspace | `PermissionError: <path>: outside this box's home and every declared bind` | A path under the operator’s home or the workspace |
 | A path that is a symbolic link, or has one in it | `PermissionError: <path>: resolves to a different path, so it is not the identity policy judged` | The path of the file the link points to |
 | The box directory, or the `box.toml` and `policy.dw` this run loaded | `PermissionError: <path>: resolves into trusted Box state, which no policy may open`, or `resolves to an authority source that this run loaded` | A path outside the box directory |
-| A write, deletion, or rename that changes a configured tool program or an enclosing path | `PermissionError` containing `is a configured tool command or its ancestor` | [Update the program between runs](../configuration/index.md#configured-command-integrity) |
+| A write, deletion, or rename that reaches a configured tool command or its ancestor | `PermissionError` containing `is a configured tool command or its ancestor, which this run does not allow to change` | A path outside the command and its enclosing directories |
+| A directory mutation that reaches a hard-link alias for a configured command | `PermissionError` containing `contains a hard link to a configured tool command, so this mutation is not allowed` | A directory without the command’s hard-link names |
+| A directory mutation whose hard-link scan cannot finish | `PermissionError` containing `cannot finish checking for configured tool command hard links`, followed by the scan failure | [Correct the reported cause or narrow the directory](../configuration/index.md#configured-command-integrity) |
 | A write, deletion, or rename that changes an installed Box program or an enclosing path | `PermissionError` containing `cannot change a trusted Box executable or its path` | [Update the installation between runs](../configuration/index.md#installation-integrity) |
 
 A rename can also fail if another operation creates its destination while Box checks policy. Box raises `PermissionError: <destination>: filesystem identity changed during effect admission` and leaves both files in place. Retry the rename to let policy check deletion of the existing destination.
@@ -205,5 +207,5 @@ The decision log records each decision with the rule’s `@id` ([getting started
 
 ## See also
 
--   [How Box runs Python scripts](https://github.com/strands-agents/box/blob/e39544d49188b82933264b83159c7ccc278ced5a/docs/design/monty.md): the routes, the steps for each file operation, and the residual risk.
+-   [How Box runs Python scripts](https://github.com/strands-agents/box/blob/04fa0ac1e23aea9a7e077298c6de763875b76a36/docs/design/monty.md): the routes, the steps for each file operation, and the residual risk.
 -   [The `[egress.<name>]` table](../../guides/network-and-credentials/index.md): the rules for a host, and a credential that the gateway adds to a request.

@@ -15,7 +15,7 @@ The controller reads a short-lived token from the VM’s service account. The ag
 | Retry after the ten-minute cooldown | Allows the request in the separate policy check. |
 | Call Gemini | Allows streaming requests for the configured project, location, and model. |
 
-Dogwood is Box’s policy language. The [policy](https://github.com/strands-agents/box/blob/e39544d49188b82933264b83159c7ccc278ced5a/examples/cloud-deployments/eks/claude/deployment_policy.py) counts completed failure responses in this Box’s history. The tools contain no retry guard. The mock service accepts the first request that reaches it after those three failures.
+Dogwood is Box’s policy language. The [policy](https://github.com/strands-agents/box/blob/04fa0ac1e23aea9a7e077298c6de763875b76a36/examples/cloud-deployments/eks/claude/deployment_policy.py) counts completed failure responses in this Box’s history. The tools contain no retry guard. The mock service accepts the first request that reaches it after those three failures.
 
 ## Before you start
 
@@ -30,7 +30,7 @@ Install Python 3.10 or later, Git, and the [Google Cloud CLI](https://cloud.goog
 
 The VM service account receives only `aiplatform.endpoints.predict`.
 
-The [sample README](https://github.com/strands-agents/box/blob/e39544d49188b82933264b83159c7ccc278ced5a/examples/cloud-deployments/gcp/README.md#tested-configuration) records the tested image, source revision, and runtime versions.
+The [sample README](https://github.com/strands-agents/box/blob/04fa0ac1e23aea9a7e077298c6de763875b76a36/examples/cloud-deployments/gcp/README.md#tested-configuration) records the tested image, source revision, and runtime versions.
 
 The default deployment creates a billable `t2a-standard-4` VM and a 40 GB disk in `us-central1-a`. It creates a separate network with no incoming firewall rules. The VM uses an ephemeral external IP for outgoing downloads and model calls. No SSH access or downloaded service-account key is needed.
 
@@ -107,4 +107,4 @@ Box uses native filesystem grants for Python libraries, example code, and the wr
 
 Each run has separate Box history. The cooldown is not a shared quota across VMs or concurrent agents. The model check stops before cooldown expiry. The separate policy check verifies expiry. The controller does not refresh its token during a run and requires sufficient token lifetime before it starts. It retains up to 4 MiB of standard output and 1 MiB of standard error for each Box run. This example does not establish support for Google Kubernetes Engine, Cloud Run, x86-64 Linux, or other VM images.
 
-The [source revision](https://github.com/strands-agents/box/blob/e39544d49188b82933264b83159c7ccc278ced5a/examples/cloud-deployments/gcp/deploy.py), [dependency lock](https://github.com/strands-agents/box/blob/e39544d49188b82933264b83159c7ccc278ced5a/examples/cloud-deployments/gcp/dependency-lock.txt), and [startup script](https://github.com/strands-agents/box/blob/e39544d49188b82933264b83159c7ccc278ced5a/examples/cloud-deployments/gcp/setup-vm.sh) define the build. Model availability can change. Select another supported Gemini model with `--model` when needed. The default image is `debian-12-bookworm-arm64-v20261102` from `debian-cloud`. Use `--image` to select another Debian image and rerun the checks.
+The [source revision](https://github.com/strands-agents/box/blob/04fa0ac1e23aea9a7e077298c6de763875b76a36/examples/cloud-deployments/gcp/deploy.py), [dependency lock](https://github.com/strands-agents/box/blob/04fa0ac1e23aea9a7e077298c6de763875b76a36/examples/cloud-deployments/gcp/dependency-lock.txt), and [startup script](https://github.com/strands-agents/box/blob/04fa0ac1e23aea9a7e077298c6de763875b76a36/examples/cloud-deployments/gcp/setup-vm.sh) define the build. Model availability can change. Select another supported Gemini model with `--model` when needed. The default image is `debian-12-bookworm-arm64-v20261102` from `debian-cloud`. Use `--image` to select another Debian image and rerun the checks.

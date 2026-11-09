@@ -1,4 +1,4 @@
-Defined in: [src/models/model-info.ts:37](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model-info.ts#L37)
+Defined in: [src/models/model-info.ts:50](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model-info.ts#L50)
 
 Size limits of the model.
 
@@ -10,7 +10,7 @@ Size limits of the model.
 readonly contextWindow?: number;
 ```
 
-Defined in: [src/models/model-info.ts:39](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model-info.ts#L39)
+Defined in: [src/models/model-info.ts:52](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model-info.ts#L52)
 
 Context window size in tokens.
 
@@ -22,6 +22,6 @@ Context window size in tokens.
 readonly maxOutputTokens?: number;
 ```
 
-Defined in: [src/models/model-info.ts:41](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model-info.ts#L41)
+Defined in: [src/models/model-info.ts:54](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model-info.ts#L54)
 
 Largest `maxTokens` the model accepts. Providers that need a default `maxTokens` use it.

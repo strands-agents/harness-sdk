@@ -122,7 +122,10 @@ The file contents as raw bytes.
 
 **Raises**:
 
--   `FileNotFoundError` - If the file does not exist or cannot be read.
+-   `FileNotFoundError` - If the file does not exist.
+-   `IsADirectoryError` - If `path` is a directory.
+-   `PermissionError` - If the file is not accessible.
+-   `OSError` - If the file cannot be read for another reason.
 
 #### write\_file
 
@@ -131,7 +134,7 @@ The file contents as raw bytes.
 async def write_file(path: str, content: bytes, **kwargs: Any) -> None
 ```
 
-Defined in: [src/strands/sandbox/base.py:154](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/base.py#L154)
+Defined in: [src/strands/sandbox/base.py:157](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/base.py#L157)
 
 Write raw bytes to a file in the sandbox filesystem.
 
@@ -154,7 +157,7 @@ Implementations should create parent directories if they do not exist. Use :meth
 async def remove_file(path: str, **kwargs: Any) -> None
 ```
 
-Defined in: [src/strands/sandbox/base.py:171](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/base.py#L171)
+Defined in: [src/strands/sandbox/base.py:174](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/base.py#L174)
 
 Remove a file from the sandbox filesystem.
 
@@ -174,7 +177,7 @@ Remove a file from the sandbox filesystem.
 async def list_files(path: str, **kwargs: Any) -> list[FileInfo]
 ```
 
-Defined in: [src/strands/sandbox/base.py:184](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/base.py#L184)
+Defined in: [src/strands/sandbox/base.py:187](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/base.py#L187)
 
 List files in a sandbox directory.
 
@@ -199,7 +202,7 @@ A list of :class:`FileInfo` entries for the directory contents.
 def get_tools() -> list[AgentTool]
 ```
 
-Defined in: [src/strands/sandbox/base.py:205](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/base.py#L205)
+Defined in: [src/strands/sandbox/base.py:208](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/base.py#L208)
 
 Tools this sandbox vends to an agent.
 
@@ -220,7 +223,7 @@ async def execute(command: str,
                   **kwargs: Any) -> ExecutionResult
 ```
 
-Defined in: [src/strands/sandbox/base.py:219](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/base.py#L219)
+Defined in: [src/strands/sandbox/base.py:222](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/base.py#L222)
 
 Execute a shell command and return the result.
 
@@ -254,7 +257,7 @@ async def execute_code(code: str,
                        **kwargs: Any) -> ExecutionResult
 ```
 
-Defined in: [src/strands/sandbox/base.py:254](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/base.py#L254)
+Defined in: [src/strands/sandbox/base.py:257](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/base.py#L257)
 
 Execute source code and return the result.
 
@@ -283,7 +286,7 @@ The execution result with exit code and output.
 async def read_text(path: str, encoding: str = "utf-8", **kwargs: Any) -> str
 ```
 
-Defined in: [src/strands/sandbox/base.py:293](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/base.py#L293)
+Defined in: [src/strands/sandbox/base.py:296](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/base.py#L296)
 
 Read a text file from the sandbox filesystem.
 
@@ -308,7 +311,7 @@ async def write_text(path: str,
                      **kwargs: Any) -> None
 ```
 
-Defined in: [src/strands/sandbox/base.py:310](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/base.py#L310)
+Defined in: [src/strands/sandbox/base.py:313](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/base.py#L313)
 
 Write a text file to the sandbox filesystem.
 

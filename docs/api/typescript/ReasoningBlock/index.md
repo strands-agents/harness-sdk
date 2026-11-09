@@ -1,4 +1,4 @@
-Defined in: [src/types/messages.ts:496](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L496)
+Defined in: [src/types/messages.ts:500](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L500)
 
 Reasoning content block within a message.
 
@@ -15,7 +15,7 @@ Reasoning content block within a message.
 new ReasoningBlock(data): ReasoningBlock;
 ```
 
-Defined in: [src/types/messages.ts:519](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L519)
+Defined in: [src/types/messages.ts:523](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L523)
 
 #### Parameters
 
@@ -35,7 +35,7 @@ Defined in: [src/types/messages.ts:519](https://github.com/strands-agents/harnes
 readonly type: "reasoningBlock";
 ```
 
-Defined in: [src/types/messages.ts:502](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L502)
+Defined in: [src/types/messages.ts:506](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L506)
 
 Discriminator for reasoning content.
 
@@ -47,7 +47,7 @@ Discriminator for reasoning content.
 readonly text?: string;
 ```
 
-Defined in: [src/types/messages.ts:507](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L507)
+Defined in: [src/types/messages.ts:511](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L511)
 
 The text content of the reasoning process.
 
@@ -63,7 +63,7 @@ The text content of the reasoning process.
 readonly signature?: string;
 ```
 
-Defined in: [src/types/messages.ts:512](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L512)
+Defined in: [src/types/messages.ts:516](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L516)
 
 A cryptographic signature for verification purposes.
 
@@ -79,7 +79,7 @@ A cryptographic signature for verification purposes.
 readonly redactedContent?: Uint8Array;
 ```
 
-Defined in: [src/types/messages.ts:517](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L517)
+Defined in: [src/types/messages.ts:521](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L521)
 
 The redacted content of the reasoning process.
 
@@ -101,7 +101,7 @@ toJSON(): {
 };
 ```
 
-Defined in: [src/types/messages.ts:536](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L536)
+Defined in: [src/types/messages.ts:540](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L540)
 
 Serializes the ReasoningBlock to a JSON-compatible ContentBlockData object. Called automatically by JSON.stringify(). Uint8Array redactedContent is encoded as base64 string.
 
@@ -119,10 +119,10 @@ Serializes the ReasoningBlock to a JSON-compatible ContentBlockData object. Call
 
 | Name | Type | Description | Defined in |
 | --- | --- | --- | --- |
-| `reasoning` | { `text?`: `string`; `signature?`: `string`; `redactedContent?`: `string`; } | \- | [src/types/messages.ts:536](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L536) |
-| `reasoning.text?` | `string` | The text content of the reasoning process. | [src/types/messages.ts:480](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L480) |
-| `reasoning.signature?` | `string` | A cryptographic signature for verification purposes. | [src/types/messages.ts:485](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L485) |
-| `reasoning.redactedContent?` | `string` | The redacted content of the reasoning process. | [src/types/messages.ts:490](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L490) |
+| `reasoning` | { `text?`: `string`; `signature?`: `string`; `redactedContent?`: `string`; } | \- | [src/types/messages.ts:540](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L540) |
+| `reasoning.text?` | `string` | The text content of the reasoning process. | [src/types/messages.ts:484](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L484) |
+| `reasoning.signature?` | `string` | A cryptographic signature for verification purposes. | [src/types/messages.ts:489](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L489) |
+| `reasoning.redactedContent?` | `string` | The redacted content of the reasoning process. | [src/types/messages.ts:494](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L494) |
 
 #### Implementation of
 
@@ -136,7 +136,7 @@ Serializes the ReasoningBlock to a JSON-compatible ContentBlockData object. Call
 static fromJSON(data): ReasoningBlock;
 ```
 
-Defined in: [src/types/messages.ts:553](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L553)
+Defined in: [src/types/messages.ts:557](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L557)
 
 Creates a ReasoningBlock instance from its wrapped data format. Base64-encoded redactedContent is decoded back to Uint8Array.
 

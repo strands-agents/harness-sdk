@@ -1,4 +1,4 @@
-Defined in: [src/decisions/llm-decision-model.ts:75](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/llm-decision-model.ts#L75)
+Defined in: [src/decisions/llm-decision-model.ts:76](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/llm-decision-model.ts#L76)
 
 Adapter that turns any [Model](/docs/api/typescript/Model/index.md) into a [DecisionModel](/docs/api/typescript/DecisionModel/index.md).
 
@@ -37,7 +37,7 @@ const result = await decision.ask('The fruit is an apple', {
 new LLMDecisionModel(options?): LLMDecisionModel;
 ```
 
-Defined in: [src/decisions/llm-decision-model.ts:85](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/llm-decision-model.ts#L85)
+Defined in: [src/decisions/llm-decision-model.ts:86](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/llm-decision-model.ts#L86)
 
 Create an LLM-backed decision model.
 
@@ -119,7 +119,7 @@ protected _ask<Q>(
 ): Promise<DecisionResult<Q>>;
 ```
 
-Defined in: [src/decisions/llm-decision-model.ts:93](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/llm-decision-model.ts#L93)
+Defined in: [src/decisions/llm-decision-model.ts:94](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/llm-decision-model.ts#L94)
 
 Implementation-specific decision logic. Must return a complete [DecisionResult](/docs/api/typescript/DecisionResult/index.md), including `metadata.latencyMs` sourced from the underlying model provider. Implementations should forward `options.cancelSignal` to any cancellable work they start. The request’s `invocationContext` is not passed: `ask` records the reported usage itself.
 

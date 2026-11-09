@@ -652,7 +652,7 @@ def as_tool(*,
             delegate: bool = False) -> AgentTool
 ```
 
-Defined in: [src/strands/agent/agent.py:1213](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/agent.py#L1213)
+Defined in: [src/strands/agent/agent.py:1221](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/agent.py#L1221)
 
 Convert this agent into a tool for use by another agent.
 
@@ -686,7 +686,7 @@ orchestrator("What is my balance?")
 def cleanup() -> None
 ```
 
-Defined in: [src/strands/agent/agent.py:1262](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/agent.py#L1262)
+Defined in: [src/strands/agent/agent.py:1270](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/agent.py#L1270)
 
 Clean up resources used by the agent.
 
@@ -703,7 +703,7 @@ def add_hook(callback: HookCallback[TEvent],
              order: float = HookOrder.DEFAULT) -> None
 ```
 
-Defined in: [src/strands/agent/agent.py:1274](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/agent.py#L1274)
+Defined in: [src/strands/agent/agent.py:1282](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/agent.py#L1282)
 
 Register a callback function for a specific event type.
 
@@ -760,7 +760,7 @@ Docs: [https://strandsagents.com/docs/user-guide/concepts/agents/hooks/](https:/
 def add_middleware(stage_or_phase: Any, handler: Any) -> None
 ```
 
-Defined in: [src/strands/agent/agent.py:1358](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/agent.py#L1358)
+Defined in: [src/strands/agent/agent.py:1366](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/agent.py#L1366)
 
 Register a middleware handler for a stage or one of its phases.
 
@@ -798,7 +798,7 @@ Docs: [https://strandsagents.com/docs/user-guide/sdk/agents/middleware/](https:/
 def __del__() -> None
 ```
 
-Defined in: [src/strands/agent/agent.py:1398](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/agent.py#L1398)
+Defined in: [src/strands/agent/agent.py:1406](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/agent.py#L1406)
 
 Clean up resources when agent is garbage collected.
 
@@ -817,7 +817,7 @@ async def stream_async(prompt: AgentInput = None,
                        **kwargs: Any) -> AsyncIterator[Any]
 ```
 
-Defined in: [src/strands/agent/agent.py:1438](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/agent.py#L1438)
+Defined in: [src/strands/agent/agent.py:1446](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/agent.py#L1446)
 
 Process a natural language prompt and yield events as an async iterator.
 
@@ -878,7 +878,7 @@ def take_snapshot(*,
                   app_data: dict[str, Any] | None = None) -> Snapshot
 ```
 
-Defined in: [src/strands/agent/agent.py:2233](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/agent.py#L2233)
+Defined in: [src/strands/agent/agent.py:2241](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/agent.py#L2241)
 
 Capture current agent state as an in-memory snapshot.
 
@@ -903,7 +903,7 @@ A Snapshot containing the captured agent state.
 def load_snapshot(snapshot: Snapshot) -> None
 ```
 
-Defined in: [src/strands/agent/agent.py:2281](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/agent.py#L2281)
+Defined in: [src/strands/agent/agent.py:2289](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/agent.py#L2289)
 
 Restore agent state from a previously captured snapshot.
 

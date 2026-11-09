@@ -1,4 +1,4 @@
-Defined in: [src/context-manager/strategies/offload/base.ts:71](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/context-manager/strategies/offload/base.ts#L71)
+Defined in: [src/context-manager/strategies/offload/base.ts:73](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/context-manager/strategies/offload/base.ts#L73)
 
 Intermediate builder result that allows chaining `.when()` conditions. Also implements `ContextStrategy` directly so it can be used without `.when()`.
 
@@ -30,7 +30,7 @@ Stable identifier for logging and observability.
 when(conditions): ContextStrategy;
 ```
 
-Defined in: [src/context-manager/strategies/offload/base.ts:73](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/context-manager/strategies/offload/base.ts#L73)
+Defined in: [src/context-manager/strategies/offload/base.ts:75](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/context-manager/strategies/offload/base.ts#L75)
 
 Add conditions that determine when this strategy fires.
 

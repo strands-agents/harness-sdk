@@ -725,7 +725,7 @@ Many models on Amazon Bedrock can reason through a problem before they answer. Y
 | Anthropic Claude | `thinking: {"type": "adaptive"}`, with depth set by `output_config.effort`. Claude Opus 4.5, Claude Sonnet 4.5, Claude Haiku 4.5, and older models take `thinking: {"type": "enabled", "budget_tokens": N}` instead | [Adaptive thinking](https://docs.aws.amazon.com/bedrock/latest/userguide/claude-messages-adaptive-thinking.html), [extended thinking](https://docs.aws.amazon.com/bedrock/latest/userguide/claude-messages-extended-thinking.html) |
 | OpenAI GPT | OpenAI Chat Completions fields, such as `reasoning_effort: "high"` (or `"low"` or `"medium"`) on gpt-oss models | [OpenAI models](https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-openai.html) |
 
-GPT models served only through the OpenAI-compatible endpoint, such as GPT-5.6, use the [OpenAI Responses provider](/docs/user-guide/sdk/model-providers/openai-responses/index.md) instead of `BedrockModel`. Set OpenAI’s `reasoning` parameter in its `params`; see [OpenAI-Compatible Endpoints (Mantle)](#openai-compatible-endpoints-mantle). For other models, look up the fields on the model’s page in [inference request parameters](https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters.html).
+GPT models served only through the OpenAI-compatible endpoint, such as GPT-5.6, use the [OpenAI Responses provider](/docs/user-guide/sdk/model-providers/openai-responses/index.md) instead of `BedrockModel`. Set OpenAI’s `reasoning` parameter in its `params`; see [OpenAI models through the OpenAI-compatible APIs](#openai-models-through-the-openai-compatible-apis). For other models, look up the fields on the model’s page in [inference request parameters](https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters.html).
 
 This example sets reasoning depth on Claude Opus 5.5:
 
@@ -896,15 +896,189 @@ const model = new BedrockModel({
 ```
 (( /tab "TypeScript" ))
 
-### OpenAI-Compatible Endpoints (Mantle)
+### Other Bedrock APIs
 
-Mantle is not a separate service or model catalog: it is Amazon Bedrock’s second endpoint family, [`bedrock-mantle`](https://docs.aws.amazon.com/bedrock/latest/userguide/bedrock-mantle.html), which serves Bedrock-hosted models through OpenAI-compatible APIs. The two families serve different, overlapping model sets: many models are only on the standard `bedrock-runtime` endpoint that `BedrockModel` uses, some model lines are only on `bedrock-mantle`, and some are on both. AWS lists which endpoint serves each model in [endpoint availability by model](https://docs.aws.amazon.com/bedrock/latest/userguide/models-endpoint-availability.html).
+To use a model that Amazon Bedrock only serves on `bedrock-mantle`, or a vendor feature that the Converse API doesn’t expose (such as an Anthropic beta), call the model through its vendor’s API instead of `BedrockModel`. For everything else, stay on `BedrockModel`: its Converse API gives every model on `bedrock-runtime` the same request shape.
 
-Pick your provider by where the model is served. When it is on `bedrock-runtime`, use `BedrockModel` as described on the rest of this page (AWS recommends that endpoint when a model is on both). When it is served through Mantle, connect with the SDK’s [OpenAI Responses provider](/docs/user-guide/sdk/model-providers/openai-responses/index.md) instead, in one of the two ways below. In Python, that provider can also target `bedrock-runtime`; see [Choosing the Endpoint](#choosing-the-endpoint).
+[`bedrock-mantle`](https://docs.aws.amazon.com/bedrock/latest/userguide/bedrock-mantle.html) isn’t a separate service or model catalog. It is Bedrock’s second endpoint family, and it serves Bedrock-hosted models through vendor APIs. The two families serve different, overlapping model sets: AWS lists which endpoint serves each model in [endpoint availability by model](https://docs.aws.amazon.com/bedrock/latest/userguide/models-endpoint-availability.html).
 
-#### Connecting with AWS Credentials
+To use a vendor API, build the vendor SDK’s client for Bedrock and pass it to the matching model provider as `client`. The vendor SDK signs requests with your AWS credentials, and the model provider runs the agent loop on top of it. We chose this over Bedrock-specific wrappers because the vendor SDKs already ship Bedrock clients and keep them current.
 
-Pass `bedrock_mantle_config``bedrockMantleConfig` and the provider derives the endpoint from your region, routes the model to the correct Mantle base path, and mints short-lived bearer tokens from your AWS credentials (via the standard credential chain), refreshing them so long-running agents survive token expiry:
+| API | Endpoint | Model provider | Client |
+| --- | --- | --- | --- |
+| Anthropic Messages (InvokeModel) | `bedrock-runtime` | `AnthropicModel``AnthropicModel` | `anthropic.AsyncAnthropicBedrock``AnthropicBedrock` |
+| Anthropic Messages | `bedrock-mantle` | `AnthropicModel``AnthropicModel` | `anthropic.AsyncAnthropicBedrockMantle``AnthropicBedrockMantle` |
+| OpenAI Responses | both | `OpenAIResponsesModel``OpenAIModel` | `openai.AsyncOpenAI``OpenAI` |
+| OpenAI Chat Completions | both | `OpenAIModel``OpenAIModel with api: 'chat'` | `openai.AsyncOpenAI``OpenAI` |
+
+The model provider doesn’t close a client you pass in. In Python, don’t share one client across asyncio event loops.
+
+#### Claude through the Anthropic Messages API
+
+Pass Anthropic’s Bedrock client to `AnthropicModel`. It uses your AWS credentials from the standard credential chain.
+
+(( tab "Python" ))
+```python
+import anthropic
+from strands import Agent
+from strands.models.anthropic import AnthropicModel
+
+model = AnthropicModel(
+    model_id="global.anthropic.claude-sonnet-4-6",
+    max_tokens=4096,
+    client=anthropic.AsyncAnthropicBedrock(aws_region="us-west-2"),
+)
+
+agent = Agent(model=model)
+response = agent("What is 2+2?")
+print(response)
+```
+
+Requires `pip install 'strands-agents[anthropic]'`.
+(( /tab "Python" ))
+
+(( tab "TypeScript" ))
+```typescript
+import { AnthropicBedrock } from '@anthropic-ai/bedrock-sdk'
+import { Agent } from '@strands-agents/sdk'
+import { AnthropicModel } from '@strands-agents/sdk/models/anthropic'
+
+const model = new AnthropicModel({
+  modelId: 'global.anthropic.claude-sonnet-4-6',
+  maxTokens: 4096,
+  client: new AnthropicBedrock({ awsRegion: 'us-west-2' }),
+})
+
+const agent = new Agent({ model })
+const response = await agent.invoke('What is 2+2?')
+console.log(response)
+```
+
+Requires `npm install @anthropic-ai/sdk @anthropic-ai/bedrock-sdk`.
+(( /tab "TypeScript" ))
+
+Two differences from the Anthropic API apply on `bedrock-runtime`:
+
+-   **Sampling parameters.** With Python `anthropic` 2.x or TypeScript `@anthropic-ai/sdk` 1.x, Bedrock rejects `temperature` with `Extra inputs are not permitted` unless the request body pins the Bedrock API version. In Python, add `"extra_body": {"anthropic_version": "bedrock-2023-05-31"}` to `params`. In TypeScript, add `anthropic_version: 'bedrock-2023-05-31'` to `params`.
+-   **Throttling.** In Python, a throttling error that arrives in the middle of an InvokeModel stream isn’t raised as `ModelThrottledException`, so the agent doesn’t retry it. Use `BedrockModel` if you rely on Strands retrying throttled requests.
+
+To reach Claude on `bedrock-mantle` instead of InvokeModel on `bedrock-runtime`, swap in the `bedrock-mantle` client:
+
+(( tab "Python" ))
+```python
+import anthropic
+from strands import Agent
+from strands.models.anthropic import AnthropicModel
+
+model = AnthropicModel(
+    model_id="anthropic.claude-haiku-4-5",
+    max_tokens=4096,
+    client=anthropic.AsyncAnthropicBedrockMantle(aws_region="us-west-2"),
+)
+
+agent = Agent(model=model)
+response = agent("What is 2+2?")
+print(response)
+```
+
+`AsyncAnthropicBedrockMantle` requires `anthropic` 0.91 or later.
+(( /tab "Python" ))
+
+(( tab "TypeScript" ))
+```typescript
+import { AnthropicBedrockMantle } from '@anthropic-ai/bedrock-sdk/mantle-client'
+import { Agent } from '@strands-agents/sdk'
+import { AnthropicModel } from '@strands-agents/sdk/models/anthropic'
+
+const model = new AnthropicModel({
+  modelId: 'anthropic.claude-haiku-4-5',
+  maxTokens: 4096,
+  client: new AnthropicBedrockMantle({ awsRegion: 'us-west-2' }),
+})
+
+const agent = new Agent({ model })
+const response = await agent.invoke('What is 2+2?')
+console.log(response)
+```
+
+Requires `npm install @anthropic-ai/sdk @anthropic-ai/bedrock-sdk`.
+(( /tab "TypeScript" ))
+
+#### OpenAI models through the OpenAI-compatible APIs
+
+Point an OpenAI client at your region’s Bedrock endpoint and give it a function that mints a bearer token from your AWS credentials. The client calls that function on every request, so long-running agents survive token expiry.
+
+(( tab "Python" ))
+```python
+import asyncio
+
+from aws_bedrock_token_generator import provide_token
+from openai import AsyncOpenAI
+from strands import Agent
+from strands.models.openai_responses import OpenAIResponsesModel
+
+region = "us-east-1"
+
+
+async def bedrock_token() -> str:
+    return await asyncio.to_thread(provide_token, region=region)
+
+
+client = AsyncOpenAI(
+    base_url=f"https://bedrock-mantle.{region}.api.aws/v1",
+    api_key=bedrock_token,
+)
+
+model = OpenAIResponsesModel(model_id="openai.gpt-oss-120b", client=client)
+
+agent = Agent(model=model)
+response = agent("What is 2+2?")
+print(response)
+```
+
+Requires `pip install 'strands-agents[openai]'` with `openai` 1.106 or later, the first release that accepts a function as `api_key`. For Chat Completions, pass the same client to `OpenAIModel` from `strands.models.openai`.
+(( /tab "Python" ))
+
+(( tab "TypeScript" ))
+```typescript
+import { getTokenProvider } from '@aws/bedrock-token-generator'
+import OpenAI from 'openai'
+import { Agent } from '@strands-agents/sdk'
+import { OpenAIModel } from '@strands-agents/sdk/models/openai'
+
+const region = 'us-east-1'
+const client = new OpenAI({
+  baseURL: `https://bedrock-mantle.${region}.api.aws/v1`,
+  // Mints a fresh bearer token from your AWS credentials on every request.
+  apiKey: getTokenProvider({ region }),
+})
+
+// Responses API; pass `api: 'chat'` for Chat Completions.
+const model = new OpenAIModel({ modelId: 'openai.gpt-oss-120b', client })
+
+const agent = new Agent({ model })
+const response = await agent.invoke('What is 2+2?')
+console.log(response)
+```
+
+Requires `npm install openai @aws/bedrock-token-generator`.
+(( /tab "TypeScript" ))
+
+To authenticate with a [Bedrock API key](https://docs.aws.amazon.com/bedrock/latest/userguide/api-key-management.html) instead, pass the key string as the API key.
+
+The base URL depends on the endpoint and, on `bedrock-mantle`, on the model:
+
+| Endpoint | Base URL |
+| --- | --- |
+| `bedrock-runtime` | `https://bedrock-runtime.{region}.amazonaws.com/openai/v1` |
+| `bedrock-mantle`, most models | `https://bedrock-mantle.{region}.api.aws/v1` |
+| `bedrock-mantle`, newer lines such as `openai.gpt-5.*` and `xai.grok-4.*` | `https://bedrock-mantle.{region}.api.aws/openai/v1` |
+
+A wrong base path fails with HTTP 400. Only `bedrock-runtime` accepts [cross-Region inference](https://docs.aws.amazon.com/bedrock/latest/userguide/cross-region-inference.html) profile IDs such as `global.openai.gpt-5.6-luna`. AWS compares the two endpoints in [endpoints supported by Amazon Bedrock](https://docs.aws.amazon.com/bedrock/latest/userguide/endpoints.html).
+
+#### Letting Strands build the OpenAI client
+
+To skip building the client yourself, pass `bedrock_mantle_config``bedrockMantleConfig`. The provider derives the endpoint from your region, picks the `bedrock-mantle` base path for the model, and mints bearer tokens from your AWS credentials:
 
 (( tab "Python" ))
 ```python
@@ -940,73 +1114,7 @@ console.log(response)
 Requires the optional dependency: `npm install @aws/bedrock-token-generator`
 (( /tab "TypeScript" ))
 
-Omit the region to resolve it from your AWS environment. The config also accepts AWS credentials to forward to the token generator (`credentials_provider``credentials`, a botocore CredentialProviderstatic identity or provider function) and a token-lifetime override (`expiry``expiresInSeconds`). In Python, `boto_session` can also supply the region from a configured profile.
-
-#### Choosing the Endpoint
-
-The config targets `bedrock-mantle` by default. In Python, set `endpoint` to `bedrock-runtime`, which is where the OpenAI GPT models are served through [cross-Region inference](https://docs.aws.amazon.com/bedrock/latest/userguide/cross-region-inference.html) profile ids such as `global.openai.gpt-5.6-luna`:
-
-(( tab "Python" ))
-```python
-from strands import Agent
-from strands.models.openai_responses import OpenAIResponsesModel
-
-model = OpenAIResponsesModel(
-    model_id="global.openai.gpt-5.6-luna",
-    bedrock_mantle_config={"endpoint": "bedrock-runtime", "region": "us-east-1"},
-)
-
-agent = Agent(model=model)
-response = agent("What is 2+2?")
-print(response)
-```
-(( /tab "Python" ))
-
-AWS compares what the two endpoints support in [endpoints supported by Amazon Bedrock](https://docs.aws.amazon.com/bedrock/latest/userguide/endpoints.html).
-
-#### Connecting with a Bedrock API Key
-
-Authenticate with a [Bedrock API key](https://docs.aws.amazon.com/bedrock/latest/userguide/api-key-management.html) and point the client at your region’s Mantle endpoint yourself. Note that some model lines are served from `/openai/v1` rather than `/v1`; the config-based approach above picks the right path for you.
-
-(( tab "Python" ))
-```python
-from strands import Agent
-from strands.models.openai_responses import OpenAIResponsesModel
-
-region = "us-east-1"
-model = OpenAIResponsesModel(
-    model_id="openai.gpt-oss-120b",
-    client_args={
-        "api_key": "<BEDROCK_API_KEY>",
-        "base_url": f"https://bedrock-mantle.{region}.api.aws/v1",
-    },
-)
-
-agent = Agent(model=model)
-response = agent("What is 2+2?")
-print(response)
-```
-(( /tab "Python" ))
-
-(( tab "TypeScript" ))
-```typescript
-import { Agent } from '@strands-agents/sdk'
-import { OpenAIModel } from '@strands-agents/sdk/models/openai'
-
-const region = 'us-east-1'
-const model = new OpenAIModel({
-  modelId: 'openai.gpt-oss-120b',
-  apiKey: '<BEDROCK_API_KEY>',
-  clientConfig: {
-    baseURL: `https://bedrock-mantle.${region}.api.aws/v1`,
-  },
-})
-
-const agent = new Agent({ model })
-const response = await agent.invoke('What is 2+2?')
-console.log(response)
-```
-(( /tab "TypeScript" ))
+Omit the region to resolve it from your AWS environment. The config also accepts AWS credentials to forward to the token generator (`credentials_provider``credentials`, a botocore CredentialProviderstatic identity or provider function) and a token-lifetime override (`expiry``expiresInSeconds`). In Python, `boto_session` can also supply the region from a configured profile, and `"endpoint": "bedrock-runtime"` targets `bedrock-runtime` instead of `bedrock-mantle`.
 
 ## Troubleshooting
 

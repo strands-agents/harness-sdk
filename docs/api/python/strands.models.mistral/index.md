@@ -8,7 +8,7 @@ Mistral AI model provider.
 class MistralModel(Model)
 ```
 
-Defined in: [src/strands/models/mistral.py:63](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/mistral.py#L63)
+Defined in: [src/strands/models/mistral.py:64](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/mistral.py#L64)
 
 Mistral API model provider implementation.
 
@@ -25,7 +25,7 @@ The implementation handles Mistral-specific features such as:
 class MistralConfig(BaseModelConfig)
 ```
 
-Defined in: [src/strands/models/mistral.py:79](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/mistral.py#L79)
+Defined in: [src/strands/models/mistral.py:80](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/mistral.py#L80)
 
 Configuration parameters for Mistral models.
 
@@ -47,7 +47,7 @@ def __init__(api_key: str | None = None,
              **model_config: Unpack[MistralConfig]) -> None
 ```
 
-Defined in: [src/strands/models/mistral.py:101](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/mistral.py#L101)
+Defined in: [src/strands/models/mistral.py:102](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/mistral.py#L102)
 
 Initialize provider instance.
 
@@ -64,13 +64,27 @@ Initialize provider instance.
 def update_config(**model_config: Unpack[MistralConfig]) -> None
 ```
 
-Defined in: [src/strands/models/mistral.py:146](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/mistral.py#L146)
+Defined in: [src/strands/models/mistral.py:147](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/mistral.py#L147)
 
 Update the Mistral Model configuration with the provided arguments.
 
 **Arguments**:
 
 -   `**model_config` - Configuration overrides.
+
+#### model\_info
+
+```python
+@property
+@override
+def model_info() -> ModelInfo
+```
+
+Defined in: [src/strands/models/mistral.py:158](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/mistral.py#L158)
+
+Reports server-side summary as off, which a `model_info` override still wins over.
+
+The Mistral API has no server-side summary, including for Claude models served through it.
 
 #### get\_config
 
@@ -79,7 +93,7 @@ Update the Mistral Model configuration with the provided arguments.
 def get_config() -> MistralConfig
 ```
 
-Defined in: [src/strands/models/mistral.py:156](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/mistral.py#L156)
+Defined in: [src/strands/models/mistral.py:166](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/mistral.py#L166)
 
 Get the Mistral model configuration.
 
@@ -97,7 +111,7 @@ def format_request(
         agent_metadata: AgentMetadata | None = None) -> dict[str, Any]
 ```
 
-Defined in: [src/strands/models/mistral.py:308](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/mistral.py#L308)
+Defined in: [src/strands/models/mistral.py:318](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/mistral.py#L318)
 
 Format a Mistral chat streaming request.
 
@@ -122,7 +136,7 @@ A Mistral chat streaming request.
 def format_chunk(event: dict[str, Any]) -> StreamEvent
 ```
 
-Defined in: [src/strands/models/mistral.py:362](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/mistral.py#L362)
+Defined in: [src/strands/models/mistral.py:372](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/mistral.py#L372)
 
 Format the Mistral response events into standardized message chunks.
 
@@ -151,7 +165,7 @@ async def stream(messages: Messages,
                  **kwargs: Any) -> AsyncGenerator[StreamEvent, None]
 ```
 
-Defined in: [src/strands/models/mistral.py:521](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/mistral.py#L521)
+Defined in: [src/strands/models/mistral.py:531](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/mistral.py#L531)
 
 Stream conversation with the Mistral model.
 
@@ -184,7 +198,7 @@ async def structured_output(
         **kwargs: Any) -> AsyncGenerator[dict[str, T | Any], None]
 ```
 
-Defined in: [src/strands/models/mistral.py:629](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/mistral.py#L629)
+Defined in: [src/strands/models/mistral.py:639](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/mistral.py#L639)
 
 Get structured output from the model.
 

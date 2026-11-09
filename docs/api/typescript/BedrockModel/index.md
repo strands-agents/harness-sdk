@@ -117,7 +117,7 @@ Reports OpenAI models as implicitly cached, which a `modelInfo` override still w
 get modelId(): string;
 ```
 
-Defined in: [src/models/model.ts:365](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L365)
+Defined in: [src/models/model.ts:387](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L387)
 
 The model ID from the current configuration, if configured.
 
@@ -139,7 +139,7 @@ The model ID from the current configuration, if configured.
 get stateful(): boolean;
 ```
 
-Defined in: [src/models/model.ts:381](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L381)
+Defined in: [src/models/model.ts:403](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L403)
 
 Whether this model manages conversation state server-side.
 
@@ -311,13 +311,48 @@ for await (const event of provider.stream(messages, options)) {
 
 ---
 
+### summarize()
+
+```ts
+summarize(_messages, _options?): Promise<SummaryBlock>;
+```
+
+Defined in: [src/models/model.ts:472](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L472)
+
+Summarizes the conversation’s opening `messages` server-side.
+
+The summarize strategy calls this instead of its client-side summary when `modelInfo.capabilities.serverSideSummary` is `true`, with the messages from message 0 through the last one it summarizes. Providers with server-side summaries override it. When this throws, the strategy summarizes client-side instead.
+
+#### Parameters
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `_messages` | [`Message`](/docs/api/typescript/Message/index.md)\[\] | The opening messages to summarize, from message 0, left unmodified |
+| `_options?` | [`SummarizeOptions`](/docs/api/typescript/SummarizeOptions/index.md) | The live system prompt and tools, and summarization instructions |
+
+#### Returns
+
+`Promise`<[`SummaryBlock`](/docs/api/typescript/SummaryBlock/index.md)\>
+
+A summary block that takes the summarized messages’ place
+
+#### Throws
+
+NotImplementedError - When the model has no server-side summary
+
+#### Inherited from
+
+[`Model`](/docs/api/typescript/Model/index.md).[`summarize`](/docs/api/typescript/Model/index.md#summarize)
+
+---
+
 ### estimateUtilization()
 
 ```ts
 estimateUtilization(inputTokens): number;
 ```
 
-Defined in: [src/models/model.ts:442](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L442)
+Defined in: [src/models/model.ts:485](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L485)
 
 Estimate the fraction of the model’s context window consumed by the given input token count.
 
@@ -349,7 +384,7 @@ streamAggregated(messages, options?): AsyncGenerator<
 | ModelStreamEvent, StreamAggregatedResult, undefined>;
 ```
 
-Defined in: [src/models/model.ts:509](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L509)
+Defined in: [src/models/model.ts:552](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L552)
 
 Streams a conversation with aggregated content blocks and messages. Returns an async generator that yields streaming events and content blocks, and returns the final message with stop reason and optional metadata.
 

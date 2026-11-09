@@ -143,6 +143,7 @@ Configure the interrupt state if resuming from an interrupt event.
 **Raises**:
 
 -   `TypeError` - If in interrupt state but user did not provide responses.
+-   `ValueError` - If a response is None. None marks an interrupt unanswered, so accepting it would re-raise the same interrupt instead of resuming.
 
 #### set\_pending\_tool\_results
 
@@ -151,7 +152,7 @@ def set_pending_tool_results(
         completed_tool_results: list["ToolResult"]) -> None
 ```
 
-Defined in: [src/strands/interrupt.py:160](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/interrupt.py#L160)
+Defined in: [src/strands/interrupt.py:165](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/interrupt.py#L165)
 
 Update completed results for a pending tool execution.
 
@@ -161,7 +162,7 @@ Update completed results for a pending tool execution.
 def to_dict() -> dict[str, Any]
 ```
 
-Defined in: [src/strands/interrupt.py:181](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/interrupt.py#L181)
+Defined in: [src/strands/interrupt.py:186](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/interrupt.py#L186)
 
 Serialize to dict for session management.
 
@@ -174,7 +175,7 @@ Exclude deactivated invocation-scoped responses — persisting them would give a
 def from_dict(cls, data: dict[str, Any]) -> "_InterruptState"
 ```
 
-Defined in: [src/strands/interrupt.py:205](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/interrupt.py#L205)
+Defined in: [src/strands/interrupt.py:210](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/interrupt.py#L210)
 
 Initialize interrupt state from serialized interrupt state.
 

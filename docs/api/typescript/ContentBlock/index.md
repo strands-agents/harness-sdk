@@ -10,7 +10,9 @@ type ContentBlock =
   | ImageBlock
   | VideoBlock
   | DocumentBlock
-  | CitationsBlock;
+  | CitationsBlock
+  | InjectedBlock
+  | SummaryBlock;
 ```
 
-Defined in: [src/types/messages.ts:191](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L191)
+Defined in: [src/types/messages.ts:193](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L193)

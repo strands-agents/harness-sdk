@@ -6,7 +6,7 @@ Abstract base class for Agent model providers.
 class BaseModelConfig(TypedDict)
 ```
 
-Defined in: [src/strands/models/model.py:126](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/model.py#L126)
+Defined in: [src/strands/models/model.py:129](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/model.py#L129)
 
 Base configuration shared by all model providers.
 
@@ -22,7 +22,7 @@ Base configuration shared by all model providers.
 class CacheConfig()
 ```
 
-Defined in: [src/strands/models/model.py:148](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/model.py#L148)
+Defined in: [src/strands/models/model.py:151](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/model.py#L151)
 
 Configuration for prompt caching.
 
@@ -46,7 +46,7 @@ Providers consume only the fields they support.
 class CacheToolsConfig()
 ```
 
-Defined in: [src/strands/models/model.py:199](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/model.py#L199)
+Defined in: [src/strands/models/model.py:202](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/model.py#L202)
 
 Configuration for the toolConfig cache point.
 
@@ -61,7 +61,7 @@ Configuration for the toolConfig cache point.
 class Model(abc.ABC)
 ```
 
-Defined in: [src/strands/models/model.py:211](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/model.py#L211)
+Defined in: [src/strands/models/model.py:214](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/model.py#L214)
 
 Abstract base class for Agent model providers.
 
@@ -74,7 +74,7 @@ This class defines the interface for all model implementations in the Strands Ag
 def stateful() -> bool
 ```
 
-Defined in: [src/strands/models/model.py:223](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/model.py#L223)
+Defined in: [src/strands/models/model.py:226](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/model.py#L226)
 
 Whether the model manages conversation state server-side.
 
@@ -91,7 +91,7 @@ False when unknown.
 def model_info() -> ModelInfo
 ```
 
-Defined in: [src/strands/models/model.py:235](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/model.py#L235)
+Defined in: [src/strands/models/model.py:238](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/model.py#L238)
 
 Everything the SDK knows about the configured model, resolved on each read.
 
@@ -116,7 +116,7 @@ What the SDK knows about the model; empty when it knows nothing.
 def context_window_limit() -> int | None
 ```
 
-Defined in: [src/strands/models/model.py:276](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/model.py#L276)
+Defined in: [src/strands/models/model.py:279](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/model.py#L279)
 
 Maximum context window size in tokens, or None if not known.
 
@@ -127,7 +127,7 @@ Maximum context window size in tokens, or None if not known.
 def update_config(**model_config: Any) -> None
 ```
 
-Defined in: [src/strands/models/model.py:282](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/model.py#L282)
+Defined in: [src/strands/models/model.py:285](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/model.py#L285)
 
 Update the model configuration with the provided arguments.
 
@@ -142,7 +142,7 @@ Update the model configuration with the provided arguments.
 def get_config() -> Any
 ```
 
-Defined in: [src/strands/models/model.py:292](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/model.py#L292)
+Defined in: [src/strands/models/model.py:295](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/model.py#L295)
 
 Return the model configuration.
 
@@ -161,7 +161,7 @@ def structured_output(
         **kwargs: Any) -> AsyncGenerator[dict[str, T | Any], None]
 ```
 
-Defined in: [src/strands/models/model.py:302](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/model.py#L302)
+Defined in: [src/strands/models/model.py:305](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/model.py#L305)
 
 Get structured output from the model.
 
@@ -197,7 +197,7 @@ def stream(messages: Messages,
            **kwargs: Any) -> AsyncIterable[StreamEvent]
 ```
 
-Defined in: [src/strands/models/model.py:323](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/model.py#L323)
+Defined in: [src/strands/models/model.py:326](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/model.py#L326)
 
 Stream conversation with the model.
 
@@ -238,7 +238,7 @@ async def count_tokens(
         system_prompt_content: list[SystemContentBlock] | None = None) -> int
 ```
 
-Defined in: [src/strands/models/model.py:372](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/model.py#L372)
+Defined in: [src/strands/models/model.py:375](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/model.py#L375)
 
 Estimate token count for the given input before sending to the model.
 
@@ -257,13 +257,49 @@ Subclasses may override this method to provide model-specific token counting usi
 
 Estimated total input tokens.
 
+#### summarize
+
+```python
+async def summarize(messages: Messages,
+                    *,
+                    tool_specs: list[ToolSpec] | None = None,
+                    system_prompt: str | None = None,
+                    system_prompt_content: list[SystemContentBlock]
+                    | None = None,
+                    instructions: str | None = None,
+                    **kwargs: Any) -> ContentBlock
+```
+
+Defined in: [src/strands/models/model.py:403](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/model.py#L403)
+
+Summarize the conversation’s opening `messages` server-side.
+
+The summarize strategy calls this instead of its client-side summary when `model_info.capabilities.server_side_summary` is True, with the messages from message 0 through the last one it summarizes. Providers with server-side summaries override it. When this raises, the strategy summarizes client-side instead.
+
+**Arguments**:
+
+-   `messages` - The opening messages to summarize, from message 0, left unmodified.
+-   `tool_specs` - The live conversation’s tool specifications.
+-   `system_prompt` - The live conversation’s plain string system prompt.
+-   `system_prompt_content` - The live conversation’s structured system prompt.
+-   `instructions` - Summarization instructions replacing the provider’s own prompt.
+-   `**kwargs` - Additional keyword arguments for future extensibility.
+
+**Returns**:
+
+A `summary` block that takes the summarized messages’ place.
+
+**Raises**:
+
+-   `NotImplementedError` - If the model has no server-side summary.
+
 #### estimate\_utilization
 
 ```python
 def estimate_utilization(input_tokens: int) -> float
 ```
 
-Defined in: [src/strands/models/model.py:400](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/model.py#L400)
+Defined in: [src/strands/models/model.py:436](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/model.py#L436)
 
 Estimate the fraction of the model’s context window consumed by the given input token count.
 
@@ -283,7 +319,7 @@ Token usage ratio (0–1+; above 1.0 means overflow).
 class _ModelPlugin(Plugin)
 ```
 
-Defined in: [src/strands/models/model.py:426](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/model.py#L426)
+Defined in: [src/strands/models/model.py:462](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/model.py#L462)
 
 Plugin that manages model-related lifecycle hooks.
 
@@ -294,7 +330,7 @@ Plugin that manages model-related lifecycle hooks.
 def name() -> str
 ```
 
-Defined in: [src/strands/models/model.py:430](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/model.py#L430)
+Defined in: [src/strands/models/model.py:466](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/model.py#L466)
 
 A stable string identifier for this plugin.
 
@@ -304,7 +340,7 @@ A stable string identifier for this plugin.
 def init_agent(agent: "Agent") -> None
 ```
 
-Defined in: [src/strands/models/model.py:448](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/model.py#L448)
+Defined in: [src/strands/models/model.py:484](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/model.py#L484)
 
 Register model lifecycle hooks with the agent.
 

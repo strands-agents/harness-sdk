@@ -124,7 +124,7 @@ Each effective decision produces one log record and one span that share a trace 
 
 A record whose cause is `internal_fault` also carries the key `error.type`, with the value `strands.box.policy.evaluation_error`.
 
-The action value carries the vocabulary term alone, so a reader sees `fs:read` rather than `Box::Action::"fs:read"`. Every other value is reported as the enforcement point holds it.
+The action value carries the vocabulary term alone, so a reader sees `fs:read` rather than `Box::Action::"fs:read"`. Every other value is reported as the enforcement point holds it. A spawn that a tool grammar decides reports the grammar action, so `Tool::git::Action::"push"` reads as the action `push` in the category `Tool::git`.
 
 Two keys are excluded: `url.full` and `process.command_line`.
 
@@ -224,4 +224,4 @@ A target that fails while the box runs loses the record. Box reports no such los
 ## See also
 
 -   [Getting started](../../quickstart/index.md): install Box, then run Claude Code or Codex in a box.
--   [How telemetry works](https://github.com/strands-agents/box/blob/e39544d49188b82933264b83159c7ccc278ced5a/docs/design/telemetry.md): which process records, what a workload cannot forge, and where a record can be lost.
+-   [How telemetry works](https://github.com/strands-agents/box/blob/04fa0ac1e23aea9a7e077298c6de763875b76a36/docs/design/telemetry.md): which process records, what a workload cannot forge, and where a record can be lost.

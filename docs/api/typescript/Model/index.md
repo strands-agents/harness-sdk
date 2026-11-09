@@ -1,4 +1,4 @@
-Defined in: [src/models/model.ts:346](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L346)
+Defined in: [src/models/model.ts:368](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L368)
 
 Base abstract class for model providers. Defines the contract that all model provider implementations must follow.
 
@@ -36,7 +36,7 @@ new Model<T>(): Model<T>;
 get modelId(): string;
 ```
 
-Defined in: [src/models/model.ts:365](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L365)
+Defined in: [src/models/model.ts:387](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L387)
 
 The model ID from the current configuration, if configured.
 
@@ -54,7 +54,7 @@ The model ID from the current configuration, if configured.
 get stateful(): boolean;
 ```
 
-Defined in: [src/models/model.ts:381](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L381)
+Defined in: [src/models/model.ts:403](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L403)
 
 Whether this model manages conversation state server-side.
 
@@ -78,9 +78,9 @@ Reads `modelInfo.capabilities.stateful`, so a provider that keeps state server-s
 get modelInfo(): ModelInfo;
 ```
 
-Defined in: [src/models/model.ts:396](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L396)
+Defined in: [src/models/model.ts:418](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L418)
 
-Everything the SDK knows about the configured model, resolved on each read. Layers, later ones winning: the shared model info for `modelId`, the `contextWindowLimit` config value, and the `modelInfo` config override. Each read returns a new record, so do not compare reads by reference.
+Everything the SDK knows about the configured model, resolved on each read. Layers, later ones winning: the shared model info for `modelId`, `temporaryMessages` and `serverSideSummary` off (a provider that supports them turns them back on), the `contextWindowLimit` config value, and the `modelInfo` config override. Each read returns a new record, so do not compare reads by reference.
 
 A provider that knows better than the shared model info overrides this getter: put its facts over `super.modelInfo`, then the user’s `getConfig().modelInfo` over those so the override still wins: `{ ...info, capabilities: { ...info.capabilities, promptCaching: 'auto', ...config.modelInfo?.capabilities } }`. Do not read [stateful](#stateful) inside the override; it reads this getter.
 
@@ -96,7 +96,7 @@ A provider that knows better than the shared model info overrides this getter: p
 abstract updateConfig(modelConfig): void;
 ```
 
-Defined in: [src/models/model.ts:353](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L353)
+Defined in: [src/models/model.ts:375](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L375)
 
 Updates the model configuration. Merges the provided configuration with existing settings.
 
@@ -118,7 +118,7 @@ Updates the model configuration. Merges the provided configuration with existing
 abstract getConfig(): T;
 ```
 
-Defined in: [src/models/model.ts:360](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L360)
+Defined in: [src/models/model.ts:382](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L382)
 
 Retrieves the current model configuration.
 
@@ -136,7 +136,7 @@ The current configuration object
 abstract stream(messages, options?): AsyncIterable<ModelStreamEvent>;
 ```
 
-Defined in: [src/models/model.ts:413](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L413)
+Defined in: [src/models/model.ts:438](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L438)
 
 Streams a conversation with the model. Returns an async iterable that yields streaming events as they occur.
 
@@ -161,11 +161,11 @@ Async iterable of streaming events
 countTokens(messages, options?): Promise<number>;
 ```
 
-Defined in: [src/models/model.ts:429](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L429)
+Defined in: [src/models/model.ts:455](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L455)
 
 Count tokens for the given input before sending to the model.
 
-Used for proactive context management (e.g., triggering compression at a threshold). The base implementation uses a character-based heuristic (chars/4 for text, chars/2 for JSON).
+Used for proactive context management (e.g., triggering compression at a threshold). The base implementation uses a character-based heuristic (chars/4 for text, chars/2 for JSON). It counts only the latest user message’s injected blocks, the ones a model reads.
 
 Subclasses should override this method to use native token counting APIs (e.g., Bedrock CountTokens, Anthropic countTokens, Gemini countTokens) for improved accuracy, falling back to `super.countTokens()` on API failure.
 
@@ -184,13 +184,44 @@ Total input token count
 
 ---
 
+### summarize()
+
+```ts
+summarize(_messages, _options?): Promise<SummaryBlock>;
+```
+
+Defined in: [src/models/model.ts:472](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L472)
+
+Summarizes the conversation’s opening `messages` server-side.
+
+The summarize strategy calls this instead of its client-side summary when `modelInfo.capabilities.serverSideSummary` is `true`, with the messages from message 0 through the last one it summarizes. Providers with server-side summaries override it. When this throws, the strategy summarizes client-side instead.
+
+#### Parameters
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `_messages` | [`Message`](/docs/api/typescript/Message/index.md)\[\] | The opening messages to summarize, from message 0, left unmodified |
+| `_options?` | [`SummarizeOptions`](/docs/api/typescript/SummarizeOptions/index.md) | The live system prompt and tools, and summarization instructions |
+
+#### Returns
+
+`Promise`<[`SummaryBlock`](/docs/api/typescript/SummaryBlock/index.md)\>
+
+A summary block that takes the summarized messages’ place
+
+#### Throws
+
+NotImplementedError - When the model has no server-side summary
+
+---
+
 ### estimateUtilization()
 
 ```ts
 estimateUtilization(inputTokens): number;
 ```
 
-Defined in: [src/models/model.ts:442](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L442)
+Defined in: [src/models/model.ts:485](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L485)
 
 Estimate the fraction of the model’s context window consumed by the given input token count.
 
@@ -218,7 +249,7 @@ streamAggregated(messages, options?): AsyncGenerator<
 | ModelStreamEvent, StreamAggregatedResult, undefined>;
 ```
 
-Defined in: [src/models/model.ts:509](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L509)
+Defined in: [src/models/model.ts:552](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L552)
 
 Streams a conversation with aggregated content blocks and messages. Returns an async generator that yields streaming events and content blocks, and returns the final message with stop reason and optional metadata.
 

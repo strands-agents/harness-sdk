@@ -250,6 +250,7 @@
   - [Run Box on Amazon EKS](https://strandsagents.com/docs/user-guide/box/guides/deploy-to-eks/index.md): Deploy Box as an Amazon EKS Job, verify policy enforcement, and optionally run Claude Code with Pod Identity.
   - [Run a Box shipment agent on AgentCore Runtime](https://strandsagents.com/docs/user-guide/box/guides/deploy-to-agentcore-runtime/index.md): Package, deploy, invoke, and verify a Box-contained shipment agent on Amazon Bedrock AgentCore Runtime.
   - [Run Strands Box on Google Cloud](https://strandsagents.com/docs/user-guide/box/guides/deploy-to-google-cloud/index.md): Deploy a Strands agent with Gemini to a Google Compute Engine VM and verify Box's deployment retry cooldown.
+  - [Tool grammars](https://strandsagents.com/docs/user-guide/box/guides/tool-grammars/index.md): Experimental. Describe a program such as git as actions and effects, and write one rule for every spelling of a command.
 - Security
   - [Security: what Box governs, and what you own](https://strandsagents.com/docs/user-guide/box/security/index.md): Understand Box enforcement tiers, trust boundaries, operator duties, and policy limitations.
   - [Experimental native filesystem policy](https://strandsagents.com/docs/user-guide/box/security/native-filesystem-policy/index.md): Enable and configure the experimental macOS native filesystem policy.
@@ -354,6 +355,14 @@
 
 - Labs
   - [labs](https://strandsagents.com/docs/labs/index.md): Explore Strands Labs, the experimental arm of Strands Agents: open source projects covering robotics, world models, agentic benchmarks, harness optimization, audio processing, and decision models.
+  - Strands Decider
+    - Using Decider
+      - [Inference](https://strandsagents.com/docs/labs/strands-decider/inference/index.md): Install Strands Decider, ask typed questions, serve the HTTP API, and choose an inference device.
+      - [Images](https://strandsagents.com/docs/labs/strands-decider/images/index.md): Use image inputs and understand supported models, limits, implementation, and measurements.
+    - Concepts
+      - [Architecture](https://strandsagents.com/docs/labs/strands-decider/architecture/index.md): Understand the pointer-head architecture, question types, training objective, and design decisions.
+    - Reference
+      - [Model names](https://strandsagents.com/docs/labs/strands-decider/model-names/index.md): Understand released model identifiers, version fields, and release tag conventions.
 - Learning
   - [Lesson 1: How agents really work](https://strandsagents.com/docs/learning/how-agents-really-work/index.md): A ground-up look at the agent loop: how a model, a set of tools, and a running context combine to let an agent reason, act, and observe until a task is done.
   - [Lesson 2: Switching model providers](https://strandsagents.com/docs/learning/switching-model-providers/index.md): This covers model providers: how Strands abstracts the underlying LLM so your agent logic stays the same regardless of which model you're calling.
@@ -682,6 +691,8 @@
 - [ImageSource](https://strandsagents.com/docs/api/typescript/ImageSource/index.md)
 - [ImageSourceData](https://strandsagents.com/docs/api/typescript/ImageSourceData/index.md)
 - [InitializedEvent](https://strandsagents.com/docs/api/typescript/InitializedEvent/index.md)
+- [InjectedBlock](https://strandsagents.com/docs/api/typescript/InjectedBlock/index.md)
+- [InjectedBlockData](https://strandsagents.com/docs/api/typescript/InjectedBlockData/index.md)
 - [InjectionConfig](https://strandsagents.com/docs/api/typescript/InjectionConfig/index.md)
 - [InjectionContext](https://strandsagents.com/docs/api/typescript/InjectionContext/index.md)
 - [InjectionTrigger](https://strandsagents.com/docs/api/typescript/InjectionTrigger/index.md)
@@ -816,6 +827,7 @@
 - [ModelStreamUpdateEvent](https://strandsagents.com/docs/api/typescript/ModelStreamUpdateEvent/index.md)
 - [ModelThrottledError](https://strandsagents.com/docs/api/typescript/ModelThrottledError/index.md)
 - [MultiAgentSaveLatestStrategy](https://strandsagents.com/docs/api/typescript/MultiAgentSaveLatestStrategy/index.md)
+- [NotImplementedError](https://strandsagents.com/docs/api/typescript/NotImplementedError/index.md)
 - [NullConversationManager](https://strandsagents.com/docs/api/typescript/NullConversationManager/index.md)
 - [Offload](https://strandsagents.com/docs/api/typescript/Offload/index.md)
 - [OffloadConditions](https://strandsagents.com/docs/api/typescript/OffloadConditions/index.md)
@@ -846,7 +858,9 @@
 - [S3LocationData](https://strandsagents.com/docs/api/typescript/S3LocationData/index.md)
 - [Sandbox](https://strandsagents.com/docs/api/typescript/Sandbox/index.md)
 - [SandboxAbortError](https://strandsagents.com/docs/api/typescript/SandboxAbortError/index.md)
+- [SandboxIsADirectoryError](https://strandsagents.com/docs/api/typescript/SandboxIsADirectoryError/index.md)
 - [SandboxPathNotFoundError](https://strandsagents.com/docs/api/typescript/SandboxPathNotFoundError/index.md)
+- [SandboxPermissionError](https://strandsagents.com/docs/api/typescript/SandboxPermissionError/index.md)
 - [SandboxTimeoutError](https://strandsagents.com/docs/api/typescript/SandboxTimeoutError/index.md)
 - [SaveLatestStrategy](https://strandsagents.com/docs/api/typescript/SaveLatestStrategy/index.md)
 - [Scope](https://strandsagents.com/docs/api/typescript/Scope/index.md)
@@ -879,8 +893,11 @@
 - [StreamType](https://strandsagents.com/docs/api/typescript/StreamType/index.md)
 - [StructuredOutputError](https://strandsagents.com/docs/api/typescript/StructuredOutputError/index.md)
 - [SummarizeConfig](https://strandsagents.com/docs/api/typescript/SummarizeConfig/index.md)
+- [SummarizeOptions](https://strandsagents.com/docs/api/typescript/SummarizeOptions/index.md)
 - [SummarizingConversationManager](https://strandsagents.com/docs/api/typescript/SummarizingConversationManager/index.md)
 - [SummarizingConversationManagerConfig](https://strandsagents.com/docs/api/typescript/SummarizingConversationManagerConfig/index.md)
+- [SummaryBlock](https://strandsagents.com/docs/api/typescript/SummaryBlock/index.md)
+- [SummaryBlockData](https://strandsagents.com/docs/api/typescript/SummaryBlockData/index.md)
 - [Swarm](https://strandsagents.com/docs/api/typescript/Swarm/index.md)
 - [SystemContentBlock](https://strandsagents.com/docs/api/typescript/SystemContentBlock/index.md)
 - [SystemPrompt](https://strandsagents.com/docs/api/typescript/SystemPrompt/index.md)

@@ -1,4 +1,4 @@
-Defined in: [src/types/messages.ts:281](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L281)
+Defined in: [src/types/messages.ts:285](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L285)
 
 Tool use content block.
 
@@ -15,7 +15,7 @@ Tool use content block.
 new ToolUseBlock(data): ToolUseBlock;
 ```
 
-Defined in: [src/types/messages.ts:309](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L309)
+Defined in: [src/types/messages.ts:313](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L313)
 
 #### Parameters
 
@@ -35,7 +35,7 @@ Defined in: [src/types/messages.ts:309](https://github.com/strands-agents/harnes
 readonly type: "toolUseBlock";
 ```
 
-Defined in: [src/types/messages.ts:285](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L285)
+Defined in: [src/types/messages.ts:289](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L289)
 
 Discriminator for tool use content.
 
@@ -47,7 +47,7 @@ Discriminator for tool use content.
 readonly name: string;
 ```
 
-Defined in: [src/types/messages.ts:290](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L290)
+Defined in: [src/types/messages.ts:294](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L294)
 
 The name of the tool to execute.
 
@@ -63,7 +63,7 @@ The name of the tool to execute.
 readonly toolUseId: string;
 ```
 
-Defined in: [src/types/messages.ts:295](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L295)
+Defined in: [src/types/messages.ts:299](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L299)
 
 Unique identifier for this tool use instance.
 
@@ -79,7 +79,7 @@ Unique identifier for this tool use instance.
 readonly input: JSONValue;
 ```
 
-Defined in: [src/types/messages.ts:301](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L301)
+Defined in: [src/types/messages.ts:305](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L305)
 
 The input parameters for the tool. This can be any JSON-serializable value.
 
@@ -95,7 +95,7 @@ The input parameters for the tool. This can be any JSON-serializable value.
 readonly reasoningSignature?: string;
 ```
 
-Defined in: [src/types/messages.ts:307](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L307)
+Defined in: [src/types/messages.ts:311](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L311)
 
 Reasoning signature from thinking models (e.g., Gemini). Must be preserved and sent back to the model for multi-turn tool use.
 
@@ -113,7 +113,7 @@ toJSON(): {
 };
 ```
 
-Defined in: [src/types/messages.ts:322](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L322)
+Defined in: [src/types/messages.ts:326](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L326)
 
 Serializes the ToolUseBlock to a JSON-compatible ContentBlockData object. Called automatically by JSON.stringify().
 
@@ -127,7 +127,7 @@ Serializes the ToolUseBlock to a JSON-compatible ContentBlockData object. Called
 
 | Name | Type | Defined in |
 | --- | --- | --- |
-| `toolUse` | [`ToolUseBlockData`](/docs/api/typescript/ToolUseBlockData/index.md) | [src/types/messages.ts:322](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L322) |
+| `toolUse` | [`ToolUseBlockData`](/docs/api/typescript/ToolUseBlockData/index.md) | [src/types/messages.ts:326](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L326) |
 
 #### Implementation of
 
@@ -141,7 +141,7 @@ Serializes the ToolUseBlock to a JSON-compatible ContentBlockData object. Called
 static fromJSON(data): ToolUseBlock;
 ```
 
-Defined in: [src/types/messages.ts:339](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L339)
+Defined in: [src/types/messages.ts:343](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L343)
 
 Creates a ToolUseBlock instance from its wrapped data format.
 

@@ -54,7 +54,7 @@ console.log(response)
 In TypeScript, both the Responses API and Chat Completions API are available through a single `OpenAIModel` class. The Responses API is selected by default. Pass `api: 'chat'` to use [Chat Completions](/docs/user-guide/sdk/model-providers/openai/index.md) instead.
 (( /tab "TypeScript" ))
 
-To connect to Amazon Bedrock’s OpenAI-compatible Mantle endpoints, see [OpenAI-compatible endpoints (Mantle)](/docs/user-guide/sdk/model-providers/amazon-bedrock/index.md#openai-compatible-endpoints-mantle) on the Amazon Bedrock page.
+To run OpenAI models on Amazon Bedrock, see [OpenAI models through the OpenAI-compatible APIs](/docs/user-guide/sdk/model-providers/amazon-bedrock/index.md#openai-models-through-the-openai-compatible-apis) on the Amazon Bedrock page.
 
 ## Configuration
 
@@ -62,6 +62,8 @@ To connect to Amazon Bedrock’s OpenAI-compatible Mantle endpoints, see [OpenAI
 
 (( tab "Python" ))
 The `client_args` configure the underlying OpenAI client. For a complete list of available arguments, refer to the [OpenAI Python SDK](https://github.com/openai/openai-python).
+
+To reuse a client you built yourself, such as an `openai.AsyncOpenAI` pointed at Amazon Bedrock, pass it as `client` instead of `client_args`. The model doesn’t close it.
 (( /tab "Python" ))
 
 (( tab "TypeScript" ))

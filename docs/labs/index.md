@@ -16,7 +16,7 @@ Labs projects are published to package repositories and work alongside the SDK t
 
 [PyWebRTC Audio](https://github.com/strands-labs/pywebrtc-audio)Python bindings for WebRTC audio processing: echo cancellation, noise suppression, gain control, and voice activity detection, with a working Strands BidiAgent integration.
 
-[Strands Decider](https://github.com/strands-labs/strands-decider)A small, fast decision model, or system one model, for agentic workflows. Pick between options or rate on a scale faster than an LLM, with a calibrated confidence on every decision.
+[Strands Decider](strands-decider/index.md)A small, fast decision model, or system one model, for agentic workflows. Pick between options or rate on a scale faster than an LLM, with a calibrated confidence on every decision.
 
 ## Contributing
 

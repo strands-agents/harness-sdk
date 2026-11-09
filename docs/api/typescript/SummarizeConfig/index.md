@@ -1,4 +1,4 @@
-Defined in: [src/context-manager/methods/summarize.ts:55](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/context-manager/methods/summarize.ts#L55)
+Defined in: [src/context-manager/methods/summarize.ts:56](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/context-manager/methods/summarize.ts#L56)
 
 **`Experimental`**
 
@@ -12,7 +12,7 @@ Configuration for the summarize method.
 model?: Model;
 ```
 
-Defined in: [src/context-manager/methods/summarize.ts:57](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/context-manager/methods/summarize.ts#L57)
+Defined in: [src/context-manager/methods/summarize.ts:58](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/context-manager/methods/summarize.ts#L58)
 
 **`Experimental`**
 
@@ -26,7 +26,7 @@ Model used for summarization. Resolution order: `this model > agent.auxModel > a
 systemPrompt?: string;
 ```
 
-Defined in: [src/context-manager/methods/summarize.ts:60](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/context-manager/methods/summarize.ts#L60)
+Defined in: [src/context-manager/methods/summarize.ts:61](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/context-manager/methods/summarize.ts#L61)
 
 **`Experimental`**
 

@@ -58,6 +58,8 @@ The agent reads the same text, so write each `@description` for the agent. The t
 -   `[policy-pending]: The complete policy bundle is not installed.`: an MCP tool’s schema is still being discovered. The call can be retried.
 -   `because the request could not be evaluated.`: the engine hit an internal fault, and it denied the request.
 
+A denial of an experimental [tool grammar](../configuration/index.md#toolnamegrammar) action reads the same way, on the path of the program. The decision log names the grammar action.
+
 Each caller shows the text in its own form:
 
 -   **A shell command** prints it on stderr. A command the policy refused exits `126`. When policy refuses a file operation inside a command it permitted, the command fails with its own status (`1` for `cat`).
@@ -65,9 +67,10 @@ Each caller shows the text in its own form:
 -   **An HTTP request** receives a `403` response whose body is the text. The request never leaves the box.
 -   **An MCP call** receives a JSON-RPC error with code `-32001` and the text, followed by the method in parentheses.
 
-Two refusals look like a denial, and no `permit` lifts them:
+Three refusals look like a denial, and no `permit` lifts them:
 
 -   **A path inside the box directory, or the `box.toml` or `policy.dw` this run loaded, is refused whatever the policy says.** The decision log records the cause as `enforcement`, and [step 4 of the tutorial](../../guides/write-a-policy/index.md#step-4-read-the-decision-log) shows how to read it. [What Box always enforces](../../security/index.md#what-box-always-enforces) states the rule.
+-   **A program that a tool grammar binds, run by its bound name after its file was replaced or removed, or run by the agent under a name that only a stdio `[mcp.<name>]` declares, is refused whatever the policy says.** The tail is `[tool-grammar]`, then the reason, then `No policy can permit it.` [`shell:spawn`](../shell/index.md#shellspawn) states the cases.
 -   **A file tool of the harness itself fails with “operation not permitted” on macOS, or “no such file or directory” on Linux, and the decision log holds no record.** The path is outside every `[agent.filesystem]` list. Add it to a list in `box.toml` if the agent is meant to reach it.
 
 ## The actions
@@ -678,4 +681,4 @@ The text varies: the record `is committed` or `is not committed`, and the histor
 -   [Write a policy and read what it decided](../../guides/write-a-policy/index.md): a first policy, a denial, and the decision log.
 -   [The action vocabulary](../policy-actions/index.md): every action, its fields, and which part of the box raises it.
 -   [Security](../../security/index.md): what `box.toml` governs, what `policy.dw` governs, and what a policy cannot do today.
--   [Policy in the design guide](https://github.com/strands-agents/box/blob/e39544d49188b82933264b83159c7ccc278ced5a/docs/design/policy.md): how one engine per box decides, and why.
+-   [Policy in the design guide](https://github.com/strands-agents/box/blob/04fa0ac1e23aea9a7e077298c6de763875b76a36/docs/design/policy.md): how one engine per box decides, and why.

@@ -92,7 +92,17 @@ A per-tool rule names a tool as `<server>::Action::"<tool>"`, and reads that too
 ./box-core/box policy generate-schema --config my-box/box.toml --output-dir /tmp/schema
 ```
 
-`/tmp/schema/actions.cedarschema` holds one `namespace` per server, one `action` per tool, and the arguments of each tool. A JSON `integer` or `number` is a `Long`, and an `enum` is its base type.
+`/tmp/schema/actions.cedarschema` holds one `namespace` per server, one `action` per tool, and the arguments of each tool. A JSON `integer` or `number` is a `Long`, and an `enum` is its base type. A `type` list of one type and `null` is that type.
+
+An argument that can have more than one type, from `anyOf`, `oneOf`, or a `type` list, is a record with one optional field for each type: `typeChoice0`, `typeChoice1`, and so on, in the server’s order. Box puts the value in every field whose type matches, and refuses a call whose value matches none. Test the field with `has` before you compare it:
+
+```text
+forbid (principal, action == deepwiki::Action::"ask_wiki_question", resource)
+when {
+  context.input.repoName has typeChoice0 &&
+  context.input.repoName.typeChoice0 == "my-org/private-repo"
+};
+```
 
 ## Step 4. Narrow the server
 
@@ -184,7 +194,7 @@ The messages use `hier-part` for the part after `file:` or `https:` and before a
 
 ### When a rule cannot load
 
-When a per-tool rule cannot load, Box starts without that rule. If Box identifies the calls the rule covers, it refuses them with `[default-deny]`. Otherwise, those calls can still pass under the server’s `mcp:call` permit. Check [which rules Box can refuse for](#which-rules-box-can-refuse-for) before relying on the policy.
+When a per-tool rule cannot load at startup, Box starts without that rule. A later tool list can load it if the list completes the policy. Until then, Box refuses the calls it identifies as subject to the rule with `[default-deny]`. Otherwise, those calls can still pass under the server’s `mcp:call` permit. Check [which rules Box can refuse for](#which-rules-box-can-refuse-for) before relying on the policy.
 
 The startup warning is `a per-tool rule never loaded for ["<server>"]`. Check these causes:
 
@@ -193,8 +203,9 @@ The startup warning is `a per-tool rule never loaded for ["<server>"]`. Check th
 | A rule refuses `tools/list`, so Box cannot discover the server’s tools. | Permit `tools/list` for that server. |
 | The server’s catalog does not offer the named tool. | Correct the tool name, or update the rule if the server removed the tool. |
 | The rule reads an argument with a different name or compares it against the wrong type. | Match the argument name and type in the server’s catalog. |
+| The server’s first tool list timed out or Box could not read it. | Keep the per-tool rule. For an http server, request the list again. For a stdio server with no accepted catalog, restart the box. |
 
-Removing the per-tool rule also clears the warning, but removes its restriction.
+Remove a per-tool rule only when you intend to remove its restriction. Keep a valid rule after a temporary discovery failure. The warning describes startup. Box prints no message when the rule starts enforcing.
 
 The warning names every server the rule was waiting for, so when a rule reads one server’s tool from history it names that server too, even when that server is answering correctly.
 
@@ -220,5 +231,5 @@ Read the startup warning as the signal that a rule went inert, then check it aga
 ## See also
 
 -   [The `[mcp.<name>]` table](../add-an-mcp-server/index.md): the keys for a `stdio` and an `http` server.
--   [MCP servers in the design guide](https://github.com/strands-agents/box/blob/e39544d49188b82933264b83159c7ccc278ced5a/docs/design/mcp.md): how the box starts a server and decides each call.
--   [Policy in the design guide](https://github.com/strands-agents/box/blob/e39544d49188b82933264b83159c7ccc278ced5a/docs/design/policy.md): how the engine decides, and what refuses to load.
+-   [MCP servers in the design guide](https://github.com/strands-agents/box/blob/04fa0ac1e23aea9a7e077298c6de763875b76a36/docs/design/mcp.md): how the box starts a server and decides each call.
+-   [Policy in the design guide](https://github.com/strands-agents/box/blob/04fa0ac1e23aea9a7e077298c6de763875b76a36/docs/design/policy.md): how the engine decides, and what refuses to load.
