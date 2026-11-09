@@ -27,6 +27,10 @@ copies in the transcript. Each item has a `content` (the task, imperative), an
 or `completed`. The agent is guided to keep one item in progress at a time and clear the
 list when the work is done.
 
+`todos` is opt-in. Because it re-injects the list on every turn, it costs tokens and breaks
+the cached prefix on providers without explicit cache points, so enable it where the task
+tracking earns that.
+
 ## environment
 
 The `environment` plugin injects a small block of working-environment context before each
