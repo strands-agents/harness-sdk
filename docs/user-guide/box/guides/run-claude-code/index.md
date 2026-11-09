@@ -1,6 +1,6 @@
 [Claude Code](https://docs.anthropic.com/en/docs/claude-code) runs in a box like any other program. In this example its own file tools reach none of the project’s files, so every read, write, and delete goes through its Bash tool, where the box’s shell asks the policy about every command and every file. By the end of this page you have Claude Code working on the project from getting started, and you have watched the policy permit three tasks and refuse two, with the refusal text the agent read.
 
-Audience: an operator who has run [getting started](../../quickstart/index.md) and [write a policy](../write-a-policy/index.md) on a Mac. The files are in [`examples/claude-code`](https://github.com/strands-agents/box/blob/04fa0ac1e23aea9a7e077298c6de763875b76a36/examples/claude-code/) in the repository, and this page walks through them.
+Audience: an operator who has run [getting started](../../quickstart/index.md) and [write a policy](../write-a-policy/index.md) on a Mac. The files are in [`examples/claude-code`](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/examples/claude-code/) in the repository, and this page walks through them.
 
 > **Status.** The action vocabulary and the context fields can change before 1.0.0. Pin the Box build you install (`./box-core/box --version`), and read [troubleshooting load failures](../../reference/policy/index.md#troubleshooting-load-failures) after an upgrade.
 
@@ -319,7 +319,7 @@ Claude Code tried its Write tool, and the operating system refused it. It then r
 
 ## Step 5. Read the decision log
 
-The box writes its decisions to `claude-code/state/private/telemetry/records.jsonl`. The same file holds Claude Code’s own spans, log records, and metrics, because `box.toml` switched its exporters on and the box relays what it exports. [Telemetry in the example](https://github.com/strands-agents/box/blob/04fa0ac1e23aea9a7e077298c6de763875b76a36/examples/claude-code/README.md#telemetry) names those switches, and [Telemetry](../record-telemetry/index.md) states what each record carries.
+The box writes its decisions to `claude-code/state/private/telemetry/records.jsonl`. The same file holds Claude Code’s own spans, log records, and metrics, because `box.toml` switched its exporters on and the box relays what it exports. [Telemetry in the example](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/examples/claude-code/README.md#telemetry) names those switches, and [Telemetry](../record-telemetry/index.md) states what each record carries.
 
 This command prints the verdict, action, resource, and rule of each decision, as in [write a policy](../write-a-policy/index.md#step-4-read-the-decision-log):
 
@@ -386,4 +386,4 @@ Claude Code in a box that gives its process its own installation, its own two st
 -   [Strands Shell](../../reference/shell/index.md): what the Bash tool’s commands run, where, and the fields a rule reads.
 -   [Security](../../security/index.md#the-two-tiers): what `box.toml` governs, what `policy.dw` governs, and why the project stays out of the agent’s `read` list.
 -   [Run a Strands Agents SDK agent in a box](../run-strands-harness/index.md): the same project and the same rules, with an agent you write yourself.
--   [The example directory](https://github.com/strands-agents/box/blob/04fa0ac1e23aea9a7e077298c6de763875b76a36/examples/claude-code/): the files this page walks through.
+-   [The example directory](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/examples/claude-code/): the files this page walks through.

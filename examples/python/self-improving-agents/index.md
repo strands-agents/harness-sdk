@@ -1,6 +1,6 @@
 Go from a 20-line Strands agent to a fully autonomous, self-improving agent deployed on Amazon Bedrock AgentCore Runtime. Across six progressive steps, the agent learns to **create its own tools**, **rewrite its own system prompt**, **remember across sessions**, **work autonomously in the background**, and finally **deploy itself to production**.
 
-![From 20 lines of Python to a deployed autonomous agent](https://raw.githubusercontent.com/strands-agents/samples/07afeeefe416b9c1885e03f82057dee2264a485e/python/01-learn/18-self-improving-agents/images/hero.svg)
+![From 20 lines of Python to a deployed autonomous agent](https://raw.githubusercontent.com/strands-agents/samples/c59f0c1e6ac0dd7e87729c8082e195074eec124b/python/01-learn/18-self-improving-agents/images/hero.svg)
 
 > Adapted from the AWS New York Summit 2026 builders session **AIM308 — “Using Strands to build fully autonomous, self-improving AI agents.”** Origin: re:Invent 2025 AIM426.
 
@@ -21,18 +21,18 @@ Go from a 20-line Strands agent to a fully autonomous, self-improving agent depl
 
 Every step reuses this one loop. Once you grok **Agent · Model · Tools**, everything else is a variation.
 
-![Strands agent loop — the model decides whether to call a tool; the observation feeds back until a final answer](https://raw.githubusercontent.com/strands-agents/samples/07afeeefe416b9c1885e03f82057dee2264a485e/python/01-learn/18-self-improving-agents/images/agent-loop.svg)
+![Strands agent loop — the model decides whether to call a tool; the observation feeds back until a final answer](https://raw.githubusercontent.com/strands-agents/samples/c59f0c1e6ac0dd7e87729c8082e195074eec124b/python/01-learn/18-self-improving-agents/images/agent-loop.svg)
 
 ## The 6-step journey
 
 | # | Step | Capability you add | New code | Runtime | Visual |
 | --- | --- | --- | --- | --- | --- |
-| 0 | [`step-00-hello`](https://github.com/strands-agents/samples/tree/07afeeefe416b9c1885e03f82057dee2264a485e/python/01-learn/18-self-improving-agents/code/step-00-hello/) | Baseline agent (one model, one tool) | 20 lines | Local | [▶](https://github.com/strands-agents/samples/blob/07afeeefe416b9c1885e03f82057dee2264a485e/python/01-learn/18-self-improving-agents/images/module-1-hello.svg) |
-| 1 | [`step-01-tools`](https://github.com/strands-agents/samples/tree/07afeeefe416b9c1885e03f82057dee2264a485e/python/01-learn/18-self-improving-agents/code/step-01-tools/) | **Self-extending** — hot-reload `./tools/*.py` | +10 | Local | [▶](https://github.com/strands-agents/samples/blob/07afeeefe416b9c1885e03f82057dee2264a485e/python/01-learn/18-self-improving-agents/images/module-2-hot-reload.svg) |
-| 2 | [`step-02-system-prompt`](https://github.com/strands-agents/samples/tree/07afeeefe416b9c1885e03f82057dee2264a485e/python/01-learn/18-self-improving-agents/code/step-02-system-prompt/) | **Self-modifying** — rewrites its own prompt | +40 | Local | [▶](https://github.com/strands-agents/samples/blob/07afeeefe416b9c1885e03f82057dee2264a485e/python/01-learn/18-self-improving-agents/images/module-3-self-modify.svg) |
-| 3 | [`step-03-memory`](https://github.com/strands-agents/samples/tree/07afeeefe416b9c1885e03f82057dee2264a485e/python/01-learn/18-self-improving-agents/code/step-03-memory/) | **Self-learning** — AgentCore Memory | +30 | Local | [▶](https://github.com/strands-agents/samples/blob/07afeeefe416b9c1885e03f82057dee2264a485e/python/01-learn/18-self-improving-agents/images/module-4-memory.svg) |
-| 4 | [`step-04-ambient`](https://github.com/strands-agents/samples/tree/07afeeefe416b9c1885e03f82057dee2264a485e/python/01-learn/18-self-improving-agents/code/step-04-ambient/) | **Autonomous** — ambient + scheduler | +50 | Local | [▶](https://github.com/strands-agents/samples/blob/07afeeefe416b9c1885e03f82057dee2264a485e/python/01-learn/18-self-improving-agents/images/module-5-ambient.svg) |
-| 5 | [`step-05-deploy`](https://github.com/strands-agents/samples/tree/07afeeefe416b9c1885e03f82057dee2264a485e/python/01-learn/18-self-improving-agents/code/step-05-deploy/) | **Deployed** — AgentCore Runtime ARN | +15 | **Cloud** ☁ | [▶](https://github.com/strands-agents/samples/blob/07afeeefe416b9c1885e03f82057dee2264a485e/python/01-learn/18-self-improving-agents/images/module-6-deploy.svg) |
+| 0 | [`step-00-hello`](https://github.com/strands-agents/samples/tree/c59f0c1e6ac0dd7e87729c8082e195074eec124b/python/01-learn/18-self-improving-agents/code/step-00-hello/) | Baseline agent (one model, one tool) | 20 lines | Local | [▶](https://github.com/strands-agents/samples/blob/c59f0c1e6ac0dd7e87729c8082e195074eec124b/python/01-learn/18-self-improving-agents/images/module-1-hello.svg) |
+| 1 | [`step-01-tools`](https://github.com/strands-agents/samples/tree/c59f0c1e6ac0dd7e87729c8082e195074eec124b/python/01-learn/18-self-improving-agents/code/step-01-tools/) | **Self-extending** — hot-reload `./tools/*.py` | +10 | Local | [▶](https://github.com/strands-agents/samples/blob/c59f0c1e6ac0dd7e87729c8082e195074eec124b/python/01-learn/18-self-improving-agents/images/module-2-hot-reload.svg) |
+| 2 | [`step-02-system-prompt`](https://github.com/strands-agents/samples/tree/c59f0c1e6ac0dd7e87729c8082e195074eec124b/python/01-learn/18-self-improving-agents/code/step-02-system-prompt/) | **Self-modifying** — rewrites its own prompt | +40 | Local | [▶](https://github.com/strands-agents/samples/blob/c59f0c1e6ac0dd7e87729c8082e195074eec124b/python/01-learn/18-self-improving-agents/images/module-3-self-modify.svg) |
+| 3 | [`step-03-memory`](https://github.com/strands-agents/samples/tree/c59f0c1e6ac0dd7e87729c8082e195074eec124b/python/01-learn/18-self-improving-agents/code/step-03-memory/) | **Self-learning** — AgentCore Memory | +30 | Local | [▶](https://github.com/strands-agents/samples/blob/c59f0c1e6ac0dd7e87729c8082e195074eec124b/python/01-learn/18-self-improving-agents/images/module-4-memory.svg) |
+| 4 | [`step-04-ambient`](https://github.com/strands-agents/samples/tree/c59f0c1e6ac0dd7e87729c8082e195074eec124b/python/01-learn/18-self-improving-agents/code/step-04-ambient/) | **Autonomous** — ambient + scheduler | +50 | Local | [▶](https://github.com/strands-agents/samples/blob/c59f0c1e6ac0dd7e87729c8082e195074eec124b/python/01-learn/18-self-improving-agents/images/module-5-ambient.svg) |
+| 5 | [`step-05-deploy`](https://github.com/strands-agents/samples/tree/c59f0c1e6ac0dd7e87729c8082e195074eec124b/python/01-learn/18-self-improving-agents/code/step-05-deploy/) | **Deployed** — AgentCore Runtime ARN | +15 | **Cloud** ☁ | [▶](https://github.com/strands-agents/samples/blob/c59f0c1e6ac0dd7e87729c8082e195074eec124b/python/01-learn/18-self-improving-agents/images/module-6-deploy.svg) |
 
 ## What you’ll learn
 
@@ -95,29 +95,29 @@ python invoke.py "what do you remember about me?"
 
 ## Notebook walkthroughs
 
-Prefer interactive? Each step has a click-through Jupyter notebook in [`notebooks/`](https://github.com/strands-agents/samples/tree/07afeeefe416b9c1885e03f82057dee2264a485e/python/01-learn/18-self-improving-agents/notebooks/):
+Prefer interactive? Each step has a click-through Jupyter notebook in [`notebooks/`](https://github.com/strands-agents/samples/tree/c59f0c1e6ac0dd7e87729c8082e195074eec124b/python/01-learn/18-self-improving-agents/notebooks/):
 
 | Notebook | Step |
 | --- | --- |
-| [`00_hello_agent.ipynb`](https://github.com/strands-agents/samples/blob/07afeeefe416b9c1885e03f82057dee2264a485e/python/01-learn/18-self-improving-agents/notebooks/00_hello_agent.ipynb) | Hello agent |
-| [`01_self_extending.ipynb`](https://github.com/strands-agents/samples/blob/07afeeefe416b9c1885e03f82057dee2264a485e/python/01-learn/18-self-improving-agents/notebooks/01_self_extending.ipynb) | Self-extending tools |
-| [`02_self_modifying.ipynb`](https://github.com/strands-agents/samples/blob/07afeeefe416b9c1885e03f82057dee2264a485e/python/01-learn/18-self-improving-agents/notebooks/02_self_modifying.ipynb) | Self-modifying prompt |
-| [`03_memory.ipynb`](https://github.com/strands-agents/samples/blob/07afeeefe416b9c1885e03f82057dee2264a485e/python/01-learn/18-self-improving-agents/notebooks/03_memory.ipynb) | AgentCore Memory |
-| [`04_autonomous.ipynb`](https://github.com/strands-agents/samples/blob/07afeeefe416b9c1885e03f82057dee2264a485e/python/01-learn/18-self-improving-agents/notebooks/04_autonomous.ipynb) | Ambient autonomy |
-| [`05_deploy.ipynb`](https://github.com/strands-agents/samples/blob/07afeeefe416b9c1885e03f82057dee2264a485e/python/01-learn/18-self-improving-agents/notebooks/05_deploy.ipynb) | Deploy to AgentCore |
+| [`00_hello_agent.ipynb`](https://github.com/strands-agents/samples/blob/c59f0c1e6ac0dd7e87729c8082e195074eec124b/python/01-learn/18-self-improving-agents/notebooks/00_hello_agent.ipynb) | Hello agent |
+| [`01_self_extending.ipynb`](https://github.com/strands-agents/samples/blob/c59f0c1e6ac0dd7e87729c8082e195074eec124b/python/01-learn/18-self-improving-agents/notebooks/01_self_extending.ipynb) | Self-extending tools |
+| [`02_self_modifying.ipynb`](https://github.com/strands-agents/samples/blob/c59f0c1e6ac0dd7e87729c8082e195074eec124b/python/01-learn/18-self-improving-agents/notebooks/02_self_modifying.ipynb) | Self-modifying prompt |
+| [`03_memory.ipynb`](https://github.com/strands-agents/samples/blob/c59f0c1e6ac0dd7e87729c8082e195074eec124b/python/01-learn/18-self-improving-agents/notebooks/03_memory.ipynb) | AgentCore Memory |
+| [`04_autonomous.ipynb`](https://github.com/strands-agents/samples/blob/c59f0c1e6ac0dd7e87729c8082e195074eec124b/python/01-learn/18-self-improving-agents/notebooks/04_autonomous.ipynb) | Ambient autonomy |
+| [`05_deploy.ipynb`](https://github.com/strands-agents/samples/blob/c59f0c1e6ac0dd7e87729c8082e195074eec124b/python/01-learn/18-self-improving-agents/notebooks/05_deploy.ipynb) | Deploy to AgentCore |
 
 ## See it run
 
-Each step was recorded live against the real Strands runtime + Claude. The animated SVG recordings and replayable [asciinema](https://asciinema.org/) `.cast` files live in [`casts/`](https://github.com/strands-agents/samples/tree/07afeeefe416b9c1885e03f82057dee2264a485e/python/01-learn/18-self-improving-agents/casts/) (replay locally with `asciinema play casts/01-self-extending.cast`).
+Each step was recorded live against the real Strands runtime + Claude. The animated SVG recordings and replayable [asciinema](https://asciinema.org/) `.cast` files live in [`casts/`](https://github.com/strands-agents/samples/tree/c59f0c1e6ac0dd7e87729c8082e195074eec124b/python/01-learn/18-self-improving-agents/casts/) (replay locally with `asciinema play casts/01-self-extending.cast`).
 
 | Cast | Step | What it shows |
 | --- | --- | --- |
-| [`00-hello`](https://github.com/strands-agents/samples/blob/07afeeefe416b9c1885e03f82057dee2264a485e/python/01-learn/18-self-improving-agents/casts/00-hello.svg) | 0 | 20-line agent; one autonomous `shell` tool call |
-| [`01-self-extending`](https://github.com/strands-agents/samples/blob/07afeeefe416b9c1885e03f82057dee2264a485e/python/01-learn/18-self-improving-agents/casts/01-self-extending.svg) | 1 | Agent writes `tools/password_generator.py` mid-run, then uses it |
-| [`02-self-modifying`](https://github.com/strands-agents/samples/blob/07afeeefe416b9c1885e03f82057dee2264a485e/python/01-learn/18-self-improving-agents/casts/02-self-modifying.svg) | 2 | Agent rewrites its own prompt → haiku mode; `.prompt` persists |
-| [`03-memory`](https://github.com/strands-agents/samples/blob/07afeeefe416b9c1885e03f82057dee2264a485e/python/01-learn/18-self-improving-agents/casts/03-memory.svg) | 3 | AgentCore Memory recall across sessions |
-| [`04-ambient`](https://github.com/strands-agents/samples/blob/07afeeefe416b9c1885e03f82057dee2264a485e/python/01-learn/18-self-improving-agents/casts/04-ambient.svg) | 4 | Background ambient thread + finding injection |
-| [`05-deploy`](https://github.com/strands-agents/samples/blob/07afeeefe416b9c1885e03f82057dee2264a485e/python/01-learn/18-self-improving-agents/casts/05-deploy.svg) | 5 | `agentcore create → add agent → deploy → invoke` |
+| [`00-hello`](https://github.com/strands-agents/samples/blob/c59f0c1e6ac0dd7e87729c8082e195074eec124b/python/01-learn/18-self-improving-agents/casts/00-hello.svg) | 0 | 20-line agent; one autonomous `shell` tool call |
+| [`01-self-extending`](https://github.com/strands-agents/samples/blob/c59f0c1e6ac0dd7e87729c8082e195074eec124b/python/01-learn/18-self-improving-agents/casts/01-self-extending.svg) | 1 | Agent writes `tools/password_generator.py` mid-run, then uses it |
+| [`02-self-modifying`](https://github.com/strands-agents/samples/blob/c59f0c1e6ac0dd7e87729c8082e195074eec124b/python/01-learn/18-self-improving-agents/casts/02-self-modifying.svg) | 2 | Agent rewrites its own prompt → haiku mode; `.prompt` persists |
+| [`03-memory`](https://github.com/strands-agents/samples/blob/c59f0c1e6ac0dd7e87729c8082e195074eec124b/python/01-learn/18-self-improving-agents/casts/03-memory.svg) | 3 | AgentCore Memory recall across sessions |
+| [`04-ambient`](https://github.com/strands-agents/samples/blob/c59f0c1e6ac0dd7e87729c8082e195074eec124b/python/01-learn/18-self-improving-agents/casts/04-ambient.svg) | 4 | Background ambient thread + finding injection |
+| [`05-deploy`](https://github.com/strands-agents/samples/blob/c59f0c1e6ac0dd7e87729c8082e195074eec124b/python/01-learn/18-self-improving-agents/casts/05-deploy.svg) | 5 | `agentcore create → add agent → deploy → invoke` |
 
 ## Project structure
 
@@ -150,4 +150,4 @@ This sample is provided for educational and demonstration purposes only. It is n
 
 ## Upstream source
 
-- [View this sample at the imported commit](https://github.com/strands-agents/samples/tree/07afeeefe416b9c1885e03f82057dee2264a485e/python/01-learn/18-self-improving-agents)
+- [View this sample at the imported commit](https://github.com/strands-agents/samples/tree/c59f0c1e6ac0dd7e87729c8082e195074eec124b/python/01-learn/18-self-improving-agents)

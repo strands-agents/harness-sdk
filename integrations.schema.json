@@ -1,0 +1,130 @@
+{
+  "$id": "https://strandsagents.com/integrations.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "format": "uri"
+    },
+    "schemaVersion": {
+      "type": "number",
+      "const": 1
+    },
+    "integrations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Stable entry id"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "integrationType": {
+            "type": "string",
+            "enum": [
+              "model-provider",
+              "tool",
+              "session-manager",
+              "memory-store",
+              "storage",
+              "integration",
+              "plugin",
+              "observability",
+              "agent-extension",
+              "intervention"
+            ]
+          },
+          "sdk": {
+            "type": "string",
+            "enum": [
+              "agents",
+              "evals"
+            ]
+          },
+          "maintainedBy": {
+            "type": "string",
+            "enum": [
+              "strands",
+              "aws",
+              "partner",
+              "community"
+            ]
+          },
+          "languages": {
+            "type": "object",
+            "properties": {
+              "python": {
+                "type": "object",
+                "properties": {
+                  "package": {
+                    "description": "Package name as published on the registry",
+                    "type": "string"
+                  },
+                  "registryUrl": {
+                    "description": "PyPI or npm page for the package",
+                    "type": "string",
+                    "format": "uri"
+                  }
+                }
+              },
+              "typescript": {
+                "type": "object",
+                "properties": {
+                  "package": {
+                    "description": "Package name as published on the registry",
+                    "type": "string"
+                  },
+                  "registryUrl": {
+                    "description": "PyPI or npm page for the package",
+                    "type": "string",
+                    "format": "uri"
+                  }
+                }
+              }
+            },
+            "description": "Supported languages; a language without a package is covered by a guide only"
+          },
+          "github": {
+            "type": "string",
+            "format": "uri"
+          },
+          "docsUrl": {
+            "description": "On-site integration page when one exists, otherwise external docs",
+            "type": "string",
+            "format": "uri"
+          },
+          "addedDate": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "description",
+          "integrationType",
+          "sdk",
+          "maintainedBy",
+          "languages",
+          "github",
+          "addedDate"
+        ]
+      }
+    }
+  },
+  "required": [
+    "$schema",
+    "schemaVersion",
+    "integrations"
+  ],
+  "title": "Strands Agents integrations catalog",
+  "description": "schemaVersion changes only on breaking changes; new fields, enum values, and language keys can appear at any time, so ignore unknown ones."
+}

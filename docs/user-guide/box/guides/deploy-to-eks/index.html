@@ -1160,7 +1160,7 @@ The workload runs as user 991, drops capabilities, and disables privilege escala
 Authenticate to a container registry that you can push to and your workers can pull from.
 Configure <code dir="auto">kubectl</code> for your cluster. The <a href="https://docs.aws.amazon.com/eks/latest/userguide/create-kubeconfig.html">EKS connection guide</a> explains that step.
 Cluster and registry usage can incur charges.</p>
-<p>The <a href="https://github.com/strands-agents/box/blob/04fa0ac1e23aea9a7e077298c6de763875b76a36/examples/cloud-deployments/eks/README.md#tested-configuration">sample README</a> lists the Box revision, platform versions, and results for each example.
+<p>The <a href="https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/examples/cloud-deployments/eks/README.md#tested-configuration">sample README</a> lists the Box revision, platform versions, and results for each example.
 The coding and deployment examples passed on EKS, including checks through the full ten-minute cooldown.
 Test the deployment example on your cluster. The recorded versions are tested configurations, not minimum requirements.</p>
 <div class="sl-heading-wrapper level-h2"><h2 id="build-the-image">Build the image</h2><a class="sl-anchor-link" href="#build-the-image"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Build the image”</span></a></div>
@@ -1243,7 +1243,7 @@ The test checks for three failed deployments, at least two blocked retries, and 
 The mock service returns HTTP 503 (service unavailable) for its first three deployment requests and HTTP 201 (created) afterward.
 Box enforces the cooldown.</p>
 <p>The agent finishes after those checks. It does not wait for the cooldown to end.
-Run the <a href="https://github.com/strands-agents/box/blob/04fa0ac1e23aea9a7e077298c6de763875b76a36/examples/cloud-deployments/eks/claude/README.md#check-cooldown-expiry-without-a-model">test without a model</a> to check that deployment becomes available again.
+Run the <a href="https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/examples/cloud-deployments/eks/claude/README.md#check-cooldown-expiry-without-a-model">test without a model</a> to check that deployment becomes available again.
 That test waits through the full ten-minute cooldown and checks that Box permits the next deployment request.
 The supplied client makes sequential calls within one box. Requests already in flight and activity in other boxes remain outside this limit.
 Model responses can vary. Check <code dir="auto">receipt.json</code> for the test result, even if the agent reports success.</p>

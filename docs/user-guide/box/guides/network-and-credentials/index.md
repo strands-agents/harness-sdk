@@ -1,6 +1,6 @@
 An `[egress.<name>]` table in `box.toml` binds a credential to a set of destinations. The box’s egress gateway adds the credential to each request to those destinations. Policy decides whether each request goes out.
 
-Audience: an operator with a working box from [getting started](../../quickstart/index.md) who gives the agent a credential for a service. For how the gateway decides and forwards each request, read [how Box controls outbound traffic](https://github.com/strands-agents/box/blob/04fa0ac1e23aea9a7e077298c6de763875b76a36/docs/design/egress.md).
+Audience: an operator with a working box from [getting started](../../quickstart/index.md) who gives the agent a credential for a service. For how the gateway decides and forwards each request, read [how Box controls outbound traffic](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/docs/design/egress.md).
 
 A tool or local MCP server with `network.contain_egress = false` can connect directly, outside gateway policy. On Linux, this includes IPv4 access to reachable private networks, loopback services, and instance metadata endpoints. See [server network settings](../add-an-mcp-server/index.md#network).
 
@@ -20,7 +20,7 @@ secret.ref   = "aws://my-profile"
 
 `box run` reads `GITHUB_TOKEN` from its own environment. The agent gets a placeholder in `GITHUB_TOKEN`, and sends it as it would send the token. The gateway replaces the placeholder with the real token on each request to `api.github.com`.
 
-> **Every process in the box can use every route.** The agent, each tool, and each stdio MCP server in the box get the same placeholders, and the gateway adds the real credential to a request from any of them. The gateway can’t tell which process sent a request, so no setting limits a route to one process. To keep a credential away from a tool or a server, run it in a separate box. [The box is the credential boundary](https://github.com/strands-agents/box/blob/04fa0ac1e23aea9a7e077298c6de763875b76a36/docs/design/decisions.md#the-box-is-the-credential-boundary) explains why.
+> **Every process in the box can use every route.** The agent, each tool, and each stdio MCP server in the box get the same placeholders, and the gateway adds the real credential to a request from any of them. The gateway can’t tell which process sent a request, so no setting limits a route to one process. To keep a credential away from a tool or a server, run it in a separate box. [The box is the credential boundary](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/docs/design/decisions.md#the-box-is-the-credential-boundary) explains why.
 
 To let the requests out, permit them in `policy.dw`:
 
@@ -117,5 +117,5 @@ Responses arrive progressively, including on credentialed routes. Credential red
 
 ## See also
 
--   [How Box controls outbound traffic](https://github.com/strands-agents/box/blob/04fa0ac1e23aea9a7e077298c6de763875b76a36/docs/design/egress.md): routing, the connect and request decisions, and how the gateway adds a credential.
+-   [How Box controls outbound traffic](https://github.com/strands-agents/box/blob/fbe415cbdfec284bf608a46f125ff8e437a99bda/docs/design/egress.md): routing, the connect and request decisions, and how the gateway adds a credential.
 -   [The `[mcp.<name>]` table](../add-an-mcp-server/index.md): a credential for an http MCP server.

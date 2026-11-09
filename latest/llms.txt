@@ -1013,6 +1013,7 @@
 
 ## Blog
 
+- [Amazon saves millions by replacing Sonnet 4.6 with Strands Decider](https://strandsagents.com/blog/amazon-saves-millions-replacing-sonnet-with-strands-decider/index.md): Two Amazon engineers swapped Claude Sonnet 4.6 for a decision model in one of the world's biggest internal ticketing systems.
 - [Strands Box brings its open source sandbox to Linux](https://strandsagents.com/blog/strands-box-linux-sandbox/index.md): Strands Box now supports Linux, bringing file and network controls, credential protection, and Dogwood policies to agents on Kubernetes, Amazon Bedrock AgentCore Runtime, and Linux hosts across cloud providers or your own infrastructure.
 - [Strands adds more built-in tools for Python and TypeScript](https://strandsagents.com/blog/more-built-in-tools-python-typescript/index.md): Built-in file, web, and multi-agent tools for your Strands agents, available in both Python and TypeScript.
 - [Red team your harness before your customers do, with Strands Evals](https://strandsagents.com/blog/red-team-your-agent-strands-evals/index.md): Red teaming in Strands Evals 1.7.0 runs adversarial conversations against your agent or harness. Attack a refund agent with GOAT, then check its tool calls, not just the score.

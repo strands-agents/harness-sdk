@@ -17,7 +17,7 @@ A `create-next-app`\-shaped chat sample where the **Vercel AI SDK owns the clien
 
 ### Architecture
 
-![Architecture — AI SDK on the client, Strands on the server](https://raw.githubusercontent.com/strands-agents/samples/07afeeefe416b9c1885e03f82057dee2264a485e/typescript/02-deploy/02-nextjs-vercel-adapter/images/architecture.png)
+![Architecture — AI SDK on the client, Strands on the server](https://raw.githubusercontent.com/strands-agents/samples/c59f0c1e6ac0dd7e87729c8082e195074eec124b/typescript/02-deploy/02-nextjs-vercel-adapter/images/architecture.png)
 
 The route handler translates Strands stream events into the AI SDK UI message stream protocol (`text-delta`, `tool-input-available`, `tool-output-available`), so `useChat` renders tokens and tool activity as they arrive.
 
@@ -68,7 +68,7 @@ Open [http://localhost:3000](http://localhost:3000). Try:
 
 ## Configuration
 
-All configuration is via environment variables — see [`.env.example`](https://github.com/strands-agents/samples/blob/07afeeefe416b9c1885e03f82057dee2264a485e/typescript/02-deploy/02-nextjs-vercel-adapter/.env.example).
+All configuration is via environment variables — see [`.env.example`](https://github.com/strands-agents/samples/blob/c59f0c1e6ac0dd7e87729c8082e195074eec124b/typescript/02-deploy/02-nextjs-vercel-adapter/.env.example).
 
 ### Model provider (the AI SDK owns the provider; Strands wraps it)
 
@@ -94,7 +94,7 @@ To switch to OpenAI, set `MODEL_PROVIDER=openai` and `OPENAI_API_KEY` — no cod
 
 ## Deploy to Vercel
 
-![Vercel serverless architecture](https://raw.githubusercontent.com/strands-agents/samples/07afeeefe416b9c1885e03f82057dee2264a485e/typescript/02-deploy/02-nextjs-vercel-adapter/images/1-vercel-serverless.svg)
+![Vercel serverless architecture](https://raw.githubusercontent.com/strands-agents/samples/c59f0c1e6ac0dd7e87729c8082e195074eec124b/typescript/02-deploy/02-nextjs-vercel-adapter/images/1-vercel-serverless.svg)
 
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fstrands-agents%2Fsamples%2Ftree%2Fmain%2Ftypescript%2F02-deploy%2F02-nextjs-vercel-adapter&project-name=strands-nextjs-vercel-adapter&repository-name=strands-nextjs-vercel-adapter&env=MODEL_PROVIDER,AWS_REGION,AWS_ACCESS_KEY_ID,AWS_SECRET_ACCESS_KEY&envDescription=Model%20provider%20and%20credentials.%20See%20.env.example.&envLink=https%3A%2F%2Fgithub.com%2Fstrands-agents%2Fsamples%2Fblob%2Fmain%2Ftypescript%2F02-deploy%2F02-nextjs-vercel-adapter%2F.env.example)
 
@@ -104,7 +104,7 @@ The `/api/chat` route runs on the Node.js runtime. Set your provider env vars in
 
 The same Strands agent (`lib/agent.ts`) is also served over the AgentCore HTTP contract: `GET /ping` and `POST /invocations` (SSE streaming) on `0.0.0.0:8080`, ARM64.
 
-![Amazon Bedrock AgentCore container architecture](https://raw.githubusercontent.com/strands-agents/samples/07afeeefe416b9c1885e03f82057dee2264a485e/typescript/02-deploy/02-nextjs-vercel-adapter/images/2-agentcore-container.svg)
+![Amazon Bedrock AgentCore container architecture](https://raw.githubusercontent.com/strands-agents/samples/c59f0c1e6ac0dd7e87729c8082e195074eec124b/typescript/02-deploy/02-nextjs-vercel-adapter/images/2-agentcore-container.svg)
 
 ```bash
 # Run the AgentCore runtime locally
@@ -124,7 +124,7 @@ Push the image to Amazon ECR and create an AgentCore Runtime pointing at it. Use
 
 A production `Dockerfile` (standalone Next.js output) is included for running the full web app anywhere:
 
-![Docker on any Node host architecture](https://raw.githubusercontent.com/strands-agents/samples/07afeeefe416b9c1885e03f82057dee2264a485e/typescript/02-deploy/02-nextjs-vercel-adapter/images/3-docker-node-host.svg)
+![Docker on any Node host architecture](https://raw.githubusercontent.com/strands-agents/samples/c59f0c1e6ac0dd7e87729c8082e195074eec124b/typescript/02-deploy/02-nextjs-vercel-adapter/images/3-docker-node-host.svg)
 
 ```bash
 docker build -t strands-nextjs .
@@ -165,4 +165,4 @@ For production deployments, consider:
 
 ## Upstream source
 
-- [View this sample at the imported commit](https://github.com/strands-agents/samples/tree/07afeeefe416b9c1885e03f82057dee2264a485e/typescript/02-deploy/02-nextjs-vercel-adapter)
+- [View this sample at the imported commit](https://github.com/strands-agents/samples/tree/c59f0c1e6ac0dd7e87729c8082e195074eec124b/typescript/02-deploy/02-nextjs-vercel-adapter)

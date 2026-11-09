@@ -1,0 +1,2480 @@
+{
+  "$schema": "https://strandsagents.com/integrations.schema.json",
+  "schemaVersion": 1,
+  "integrations": [
+    {
+      "id": "a2a-client",
+      "name": "A2A Client",
+      "description": "Discover remote A2A agents and send them messages, limited to an endpoint allowlist with optional per-endpoint authentication.",
+      "integrationType": "tool",
+      "sdk": "agents",
+      "maintainedBy": "strands",
+      "languages": {
+        "python": {},
+        "typescript": {}
+      },
+      "github": "https://github.com/strands-agents/harness-sdk/tree/main/strands-py/src/strands/vended_tools/a2a_client",
+      "docsUrl": "https://strandsagents.com/docs/user-guide/sdk/tools/vended-tools/a2a-client/",
+      "addedDate": "2026-10-08"
+    },
+    {
+      "id": "ag-ui",
+      "name": "ag-ui",
+      "description": "Connect agents to rich clients like CopilotKit through the AG-UI protocol, with streaming chat and tool-based generative UI",
+      "integrationType": "integration",
+      "sdk": "agents",
+      "maintainedBy": "partner",
+      "languages": {
+        "python": {
+          "package": "ag-ui-strands",
+          "registryUrl": "https://pypi.org/project/ag-ui-strands/"
+        }
+      },
+      "github": "https://github.com/ag-ui-protocol/ag-ui",
+      "docsUrl": "https://strandsagents.com/docs/integrations/integrations/ag-ui/",
+      "addedDate": "2025-12-03"
+    },
+    {
+      "id": "agent-control",
+      "name": "agent-control",
+      "description": "Runtime control plane that evaluates every agent input and output against configurable policies to block prompt injection, PII leakage, and rogue tool calls.",
+      "integrationType": "plugin",
+      "sdk": "agents",
+      "maintainedBy": "partner",
+      "languages": {
+        "python": {
+          "package": "agent-control-sdk[strands-agents]",
+          "registryUrl": "https://pypi.org/project/agent-control-sdk/"
+        }
+      },
+      "github": "https://github.com/agentcontrol/agent-control",
+      "docsUrl": "https://strandsagents.com/docs/integrations/plugins/agent-control/",
+      "addedDate": "2026-03-11"
+    },
+    {
+      "id": "agent-skills",
+      "name": "Agent Skills",
+      "description": "Give agents on-demand access to specialized instructions with progressive disclosure that keeps the system prompt lean.",
+      "integrationType": "plugin",
+      "sdk": "agents",
+      "maintainedBy": "strands",
+      "languages": {
+        "python": {},
+        "typescript": {}
+      },
+      "github": "https://github.com/strands-agents/harness-sdk/tree/main/strands-py/src/strands/vended_plugins/skills",
+      "docsUrl": "https://strandsagents.com/docs/user-guide/sdk/plugins/skills/",
+      "addedDate": "2026-03-10"
+    },
+    {
+      "id": "agent402",
+      "name": "agent402",
+      "description": "Strands Agents adapter for Agent402 — turns 500+ pay-per-call web tools into Strands tool() instances with built-in x402 micropayment handling.",
+      "integrationType": "integration",
+      "sdk": "agents",
+      "maintainedBy": "community",
+      "languages": {
+        "typescript": {
+          "package": "agent402-strands",
+          "registryUrl": "https://www.npmjs.com/package/agent402-strands"
+        }
+      },
+      "github": "https://github.com/MikeyPetrillo/Agent402",
+      "addedDate": "2026-06-16"
+    },
+    {
+      "id": "agentcore-memory",
+      "name": "agentcore-memory",
+      "description": "Amazon Bedrock AgentCore Memory session manager providing short-term conversation persistence and long-term memory strategies for Strands Agents.",
+      "integrationType": "session-manager",
+      "sdk": "agents",
+      "maintainedBy": "aws",
+      "languages": {
+        "python": {
+          "package": "bedrock-agentcore[strands-agents]",
+          "registryUrl": "https://pypi.org/project/bedrock-agentcore/"
+        }
+      },
+      "github": "https://github.com/aws/bedrock-agentcore-sdk-python",
+      "docsUrl": "https://strandsagents.com/docs/integrations/session-managers/agentcore-memory/",
+      "addedDate": "2025-10-16"
+    },
+    {
+      "id": "agentcore-memory-store",
+      "name": "AgentCore Memory Store",
+      "description": "Amazon Bedrock AgentCore Memory as a Strands MemoryStore, with long-term recall and server-side memory extraction from conversation turns.",
+      "integrationType": "memory-store",
+      "sdk": "agents",
+      "maintainedBy": "aws",
+      "languages": {
+        "python": {
+          "package": "bedrock-agentcore[strands-agents]",
+          "registryUrl": "https://pypi.org/project/bedrock-agentcore/"
+        },
+        "typescript": {
+          "package": "bedrock-agentcore",
+          "registryUrl": "https://www.npmjs.com/package/bedrock-agentcore"
+        }
+      },
+      "github": "https://github.com/aws/bedrock-agentcore-sdk-typescript",
+      "docsUrl": "https://strandsagents.com/docs/integrations/memory-stores/agentcore-memory-store/",
+      "addedDate": "2026-07-20"
+    },
+    {
+      "id": "agentcore-payments",
+      "name": "agentcore-payments",
+      "description": "Amazon Bedrock AgentCore plugin that intercepts HTTP 402 responses and processes x402 micropayments to access paid APIs and MCP servers.",
+      "integrationType": "plugin",
+      "sdk": "agents",
+      "maintainedBy": "aws",
+      "languages": {
+        "python": {
+          "package": "bedrock-agentcore[strands-agents]",
+          "registryUrl": "https://pypi.org/project/bedrock-agentcore/"
+        }
+      },
+      "github": "https://github.com/aws/bedrock-agentcore-sdk-python",
+      "docsUrl": "https://strandsagents.com/docs/integrations/plugins/agentcore-payments/",
+      "addedDate": "2026-05-07"
+    },
+    {
+      "id": "agentcore-push",
+      "name": "agentcore-push",
+      "description": "CLI tool for deploying a single-file Strands Agent to Amazon Bedrock AgentCore Runtime with minimal configuration.",
+      "integrationType": "tool",
+      "sdk": "agents",
+      "maintainedBy": "community",
+      "languages": {
+        "python": {
+          "package": "agentcore-push",
+          "registryUrl": "https://pypi.org/project/agentcore-push/"
+        }
+      },
+      "github": "https://github.com/minorun365/agentcore-push",
+      "addedDate": "2026-05-14"
+    },
+    {
+      "id": "agentcore-rl-toolkit",
+      "name": "agentcore-rl-toolkit",
+      "description": "AWS SDK for reinforcement learning training loops on Amazon Bedrock AgentCore, with built-in Strands Agents support via a decorator swap.",
+      "integrationType": "integration",
+      "sdk": "agents",
+      "maintainedBy": "aws",
+      "languages": {
+        "python": {
+          "package": "agentcore-rl-toolkit",
+          "registryUrl": "https://pypi.org/project/agentcore-rl-toolkit/"
+        }
+      },
+      "github": "https://github.com/awslabs/agentcore-rl-toolkit",
+      "addedDate": "2026-01-08"
+    },
+    {
+      "id": "agentcore-tool-search",
+      "name": "agentcore-tool-search",
+      "description": "Amazon Bedrock AgentCore Gateway plugin that loads only the tools relevant to each invocation via semantic search over hundreds of registered tools.",
+      "integrationType": "plugin",
+      "sdk": "agents",
+      "maintainedBy": "aws",
+      "languages": {
+        "python": {
+          "package": "bedrock-agentcore[strands-agents]",
+          "registryUrl": "https://pypi.org/project/bedrock-agentcore/"
+        }
+      },
+      "github": "https://github.com/aws/bedrock-agentcore-sdk-python",
+      "docsUrl": "https://strandsagents.com/docs/integrations/plugins/agentcore-tool-search/",
+      "addedDate": "2026-06-05"
+    },
+    {
+      "id": "aidress-mcp",
+      "name": "aidress-mcp",
+      "description": "MCP server for the Aidress agent trust registry — check an unfamiliar agent's trust score, capabilities, and transaction history before delegating work to it.",
+      "integrationType": "tool",
+      "sdk": "agents",
+      "maintainedBy": "community",
+      "languages": {
+        "python": {}
+      },
+      "github": "https://github.com/Aidress-ai/Aidress",
+      "docsUrl": "https://aidress.ai/docs/strands",
+      "addedDate": "2026-08-12"
+    },
+    {
+      "id": "amazon-bedrock",
+      "name": "Amazon Bedrock",
+      "description": "Run Strands agents on Amazon Bedrock models, with guardrails, prompt caching, and multi-modal input.",
+      "integrationType": "model-provider",
+      "sdk": "agents",
+      "maintainedBy": "strands",
+      "languages": {
+        "python": {},
+        "typescript": {}
+      },
+      "github": "https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/bedrock.py",
+      "docsUrl": "https://strandsagents.com/docs/user-guide/sdk/model-providers/amazon-bedrock/",
+      "addedDate": "2025-05-16"
+    },
+    {
+      "id": "amazon-sagemaker",
+      "name": "Amazon SageMaker",
+      "description": "Run Strands agents on models deployed to Amazon SageMaker inference endpoints, including JumpStart and fine-tuned models.",
+      "integrationType": "model-provider",
+      "sdk": "agents",
+      "maintainedBy": "strands",
+      "languages": {
+        "python": {}
+      },
+      "github": "https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/sagemaker.py",
+      "docsUrl": "https://strandsagents.com/docs/user-guide/sdk/model-providers/sagemaker/",
+      "addedDate": "2025-07-28"
+    },
+    {
+      "id": "anthropic",
+      "name": "Anthropic",
+      "description": "Run Strands agents on Claude models through the Anthropic API, with structured output and prompt caching.",
+      "integrationType": "model-provider",
+      "sdk": "agents",
+      "maintainedBy": "strands",
+      "languages": {
+        "python": {},
+        "typescript": {}
+      },
+      "github": "https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/anthropic.py",
+      "docsUrl": "https://strandsagents.com/docs/user-guide/sdk/model-providers/anthropic/",
+      "addedDate": "2025-05-16"
+    },
+    {
+      "id": "asqav",
+      "name": "Asqav",
+      "description": "Signs each agent model call as a hash-chained Asqav receipt (input and output hashes, model name, latency) that can be verified without an Asqav account; observe-only and fail-open.",
+      "integrationType": "observability",
+      "sdk": "agents",
+      "maintainedBy": "community",
+      "languages": {
+        "python": {
+          "package": "asqav",
+          "registryUrl": "https://pypi.org/project/asqav/"
+        }
+      },
+      "github": "https://github.com/jagmarques/asqav-sdk",
+      "docsUrl": "https://github.com/jagmarques/asqav-sdk/blob/main/python/examples/strands_integration.py",
+      "addedDate": "2026-10-24"
+    },
+    {
+      "id": "attenu-guard",
+      "name": "attenu-guard",
+      "description": "Per-agent permissions on every tool call and handoff: a sub-agent gets a subset of its parent's, and every decision lands in an audit log verified offline.",
+      "integrationType": "intervention",
+      "sdk": "agents",
+      "maintainedBy": "community",
+      "languages": {
+        "python": {
+          "package": "attenu-guard",
+          "registryUrl": "https://pypi.org/project/attenu-guard/"
+        }
+      },
+      "github": "https://github.com/attenu-io/attenu-guard",
+      "docsUrl": "https://github.com/attenu-io/attenu-guard/tree/main/examples/integrations/strands",
+      "addedDate": "2026-08-26"
+    },
+    {
+      "id": "band",
+      "name": "band",
+      "description": "Chat rooms on Band where your Strands agent collaborates with humans and other agents with routing, durable room history, and peer discovery.",
+      "integrationType": "integration",
+      "sdk": "agents",
+      "maintainedBy": "partner",
+      "languages": {
+        "python": {
+          "package": "band-sdk[strands]",
+          "registryUrl": "https://pypi.org/project/band-sdk/"
+        }
+      },
+      "github": "https://github.com/band-ai/band-sdk-python",
+      "docsUrl": "https://github.com/band-ai/band-sdk-python/blob/main/examples/strands/README.md",
+      "addedDate": "2026-08-16"
+    },
+    {
+      "id": "bash",
+      "name": "Bash",
+      "description": "Execute shell commands, with persistent bash sessions in TypeScript and sandboxed stateless shells in Python.",
+      "integrationType": "tool",
+      "sdk": "agents",
+      "maintainedBy": "strands",
+      "languages": {
+        "python": {},
+        "typescript": {}
+      },
+      "github": "https://github.com/strands-agents/harness-sdk/tree/main/strands-py/src/strands/vended_tools/shell",
+      "docsUrl": "https://strandsagents.com/docs/user-guide/sdk/tools/vended-tools/shell/",
+      "addedDate": "2026-06-16"
+    },
+    {
+      "id": "bedrock-knowledge-base",
+      "name": "Bedrock Knowledge Base",
+      "description": "Back agent memory with Amazon Bedrock Knowledge Bases: semantic search over a managed vector store with document ingestion.",
+      "integrationType": "memory-store",
+      "sdk": "agents",
+      "maintainedBy": "strands",
+      "languages": {
+        "python": {},
+        "typescript": {}
+      },
+      "github": "https://github.com/strands-agents/harness-sdk/tree/main/strands-py/src/strands/vended_memory_stores/bedrock_knowledge_base",
+      "docsUrl": "https://strandsagents.com/docs/user-guide/sdk/memory/bedrock-knowledge-base/",
+      "addedDate": "2026-06-09"
+    },
+    {
+      "id": "botsrated",
+      "name": "botsrated",
+      "description": "Hosted MCP server and pre-payment check for x402 sellers — compare a seller's payTo and price with BotsRated's signed probe receipts and paid test-buys before your agent pays it.",
+      "integrationType": "tool",
+      "sdk": "agents",
+      "maintainedBy": "community",
+      "languages": {
+        "python": {}
+      },
+      "github": "https://github.com/botsrated/botsrated",
+      "docsUrl": "https://github.com/botsrated/botsrated/blob/main/integrations/strands/README.md",
+      "addedDate": "2026-10-23"
+    },
+    {
+      "id": "braintrust",
+      "name": "braintrust",
+      "description": "Braintrust tracing for Strands agents in Python and TypeScript — logs agent, model, and tool spans for monitoring, debugging, and evals.",
+      "integrationType": "observability",
+      "sdk": "agents",
+      "maintainedBy": "partner",
+      "languages": {
+        "python": {
+          "package": "braintrust",
+          "registryUrl": "https://pypi.org/project/braintrust/"
+        },
+        "typescript": {
+          "package": "braintrust",
+          "registryUrl": "https://www.npmjs.com/package/braintrust"
+        }
+      },
+      "github": "https://github.com/braintrustdata/braintrust-sdk-python",
+      "docsUrl": "https://www.braintrust.dev/docs/integrations/sdk-integrations/strands-agent",
+      "addedDate": "2026-10-01"
+    },
+    {
+      "id": "cedar-authorization",
+      "name": "Cedar Authorization",
+      "description": "Control which tools an agent can invoke with Cedar policies: identity-aware access control, role-based permissions, and rate limits.",
+      "integrationType": "intervention",
+      "sdk": "agents",
+      "maintainedBy": "strands",
+      "languages": {
+        "python": {},
+        "typescript": {}
+      },
+      "github": "https://github.com/strands-agents/harness-sdk/tree/main/strands-py/src/strands/vended_interventions/cedar",
+      "docsUrl": "https://strandsagents.com/docs/user-guide/sdk/agents/interventions/cedar-authorization/",
+      "addedDate": "2026-06-15"
+    },
+    {
+      "id": "clawskills-strands",
+      "name": "clawskills-strands",
+      "description": "Converts OpenClaw skill markdown files into directly executable Strands Agents tools, eliminating the read-then-exec pattern.",
+      "integrationType": "integration",
+      "sdk": "agents",
+      "maintainedBy": "community",
+      "languages": {
+        "typescript": {
+          "package": "clawskills-strands",
+          "registryUrl": "https://www.npmjs.com/package/clawskills-strands"
+        }
+      },
+      "github": "https://github.com/Vivek0712/clawskills-strands",
+      "addedDate": "2026-02-06"
+    },
+    {
+      "id": "clova-studio",
+      "name": "clova-studio",
+      "description": "Naver Cloud Platform's Korean-optimized LLM service, integrated with Strands Agents via the strands-clova community package supporting the HCX-005 model.",
+      "integrationType": "model-provider",
+      "sdk": "agents",
+      "maintainedBy": "community",
+      "languages": {
+        "python": {
+          "package": "strands-clova",
+          "registryUrl": "https://pypi.org/project/strands-clova/"
+        }
+      },
+      "github": "https://github.com/aidendef/strands-clova",
+      "docsUrl": "https://strandsagents.com/docs/integrations/model-providers/clova-studio/",
+      "addedDate": "2025-09-30"
+    },
+    {
+      "id": "cohere",
+      "name": "cohere",
+      "description": "Cohere language models accessed through the Strands Agents OpenAI-compatibility layer, requiring only the strands-agents[openai] extra.",
+      "integrationType": "model-provider",
+      "sdk": "agents",
+      "maintainedBy": "strands",
+      "languages": {
+        "python": {}
+      },
+      "github": "https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/openai.py",
+      "docsUrl": "https://strandsagents.com/docs/integrations/model-providers/cohere/",
+      "addedDate": "2025-07-09"
+    },
+    {
+      "id": "coinbase-agentkit",
+      "name": "coinbase-agentkit-strands-agents",
+      "description": "Coinbase AgentKit extension for Strands Agents that provides onchain action tools for interacting with blockchain networks and wallets.",
+      "integrationType": "tool",
+      "sdk": "agents",
+      "maintainedBy": "partner",
+      "languages": {
+        "python": {
+          "package": "coinbase-agentkit-strands-agents",
+          "registryUrl": "https://pypi.org/project/coinbase-agentkit-strands-agents/"
+        }
+      },
+      "github": "https://github.com/coinbase/agentkit",
+      "docsUrl": "https://github.com/coinbase/agentkit/tree/main/python/framework-extensions/strands-agents",
+      "addedDate": "2025-08-01"
+    },
+    {
+      "id": "confident-trace",
+      "name": "confident-trace",
+      "description": "Confident AI's OpenTelemetry-native tracing for Strands agents — captures agent, model, and tool spans for observability and online evals.",
+      "integrationType": "observability",
+      "sdk": "agents",
+      "maintainedBy": "partner",
+      "languages": {
+        "python": {
+          "package": "confident-trace",
+          "registryUrl": "https://pypi.org/project/confident-trace/"
+        }
+      },
+      "github": "https://github.com/confident-ai/confident-trace",
+      "docsUrl": "https://www.confident-ai.com/docs/integrations/third-party/strands",
+      "addedDate": "2026-10-01"
+    },
+    {
+      "id": "context-injector",
+      "name": "Context Injector",
+      "description": "Fold real-time text into the model input before each call: a clock, environment facts, or a lookup, without storing it in history.",
+      "integrationType": "plugin",
+      "sdk": "agents",
+      "maintainedBy": "strands",
+      "languages": {
+        "python": {},
+        "typescript": {}
+      },
+      "github": "https://github.com/strands-agents/harness-sdk/tree/main/strands-py/src/strands/vended_plugins/context_injector",
+      "docsUrl": "https://strandsagents.com/docs/user-guide/sdk/plugins/context-injector/",
+      "addedDate": "2026-06-12"
+    },
+    {
+      "id": "context-offloader",
+      "name": "Context Offloader",
+      "description": "Keep large tool results from consuming the context window by storing them externally and leaving retrievable references.",
+      "integrationType": "plugin",
+      "sdk": "agents",
+      "maintainedBy": "strands",
+      "languages": {
+        "python": {},
+        "typescript": {}
+      },
+      "github": "https://github.com/strands-agents/harness-sdk/tree/main/strands-py/src/strands/vended_plugins/context_offloader",
+      "docsUrl": "https://strandsagents.com/docs/user-guide/sdk/plugins/context-offloader/",
+      "addedDate": "2026-04-24"
+    },
+    {
+      "id": "crusoe",
+      "name": "crusoe",
+      "description": "Crusoe Managed Inference models on renewable-powered GPUs, accessed through the Strands Agents OpenAI-compatibility layer.",
+      "integrationType": "model-provider",
+      "sdk": "agents",
+      "maintainedBy": "strands",
+      "languages": {
+        "python": {},
+        "typescript": {}
+      },
+      "github": "https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/openai.py",
+      "docsUrl": "https://strandsagents.com/docs/integrations/model-providers/crusoe/",
+      "addedDate": "2026-07-30"
+    },
+    {
+      "id": "datadog-ai-guard",
+      "name": "datadog-ai-guard",
+      "description": "Datadog AI Guard plugin that inspects and blocks prompt injection, jailbreaking, data exfiltration, and destructive tool calls in real time.",
+      "integrationType": "plugin",
+      "sdk": "agents",
+      "maintainedBy": "partner",
+      "languages": {
+        "python": {
+          "package": "ddtrace",
+          "registryUrl": "https://pypi.org/project/ddtrace/"
+        }
+      },
+      "github": "https://github.com/DataDog/dd-trace-py",
+      "docsUrl": "https://strandsagents.com/docs/integrations/plugins/datadog-ai-guard/",
+      "addedDate": "2026-03-11"
+    },
+    {
+      "id": "edit",
+      "name": "Edit",
+      "description": "Make in-place changes to a text file by replacing an exact, unique string.",
+      "integrationType": "tool",
+      "sdk": "agents",
+      "maintainedBy": "strands",
+      "languages": {
+        "python": {},
+        "typescript": {}
+      },
+      "github": "https://github.com/strands-agents/harness-sdk/tree/main/strands-py/src/strands/vended_tools/edit",
+      "docsUrl": "https://strandsagents.com/docs/user-guide/sdk/tools/vended-tools/edit/",
+      "addedDate": "2026-10-30"
+    },
+    {
+      "id": "empiriolabs",
+      "name": "EmpirioLabs AI",
+      "description": "Run Strands agents on EmpirioLabs AI hosted models through the OpenAI provider, and add its image, video, and speech tools over MCP.",
+      "integrationType": "model-provider",
+      "sdk": "agents",
+      "maintainedBy": "partner",
+      "languages": {
+        "python": {},
+        "typescript": {}
+      },
+      "github": "https://github.com/EmpirioLabs-AI/mcp",
+      "docsUrl": "https://docs.empiriolabs.ai/integrations#strands-agents",
+      "addedDate": "2026-10-24"
+    },
+    {
+      "id": "file-editor",
+      "name": "File Editor",
+      "description": "View, create, and edit files in the workspace from agent tool calls.",
+      "integrationType": "tool",
+      "sdk": "agents",
+      "maintainedBy": "strands",
+      "languages": {
+        "python": {},
+        "typescript": {}
+      },
+      "github": "https://github.com/strands-agents/harness-sdk/tree/main/strands-py/src/strands/vended_tools/file_editor",
+      "docsUrl": "https://strandsagents.com/docs/user-guide/sdk/tools/vended-tools/file-editor/",
+      "addedDate": "2026-06-16"
+    },
+    {
+      "id": "file-session-manager",
+      "name": "File Session Manager",
+      "description": "Persist agent conversations, tool state, and context to the local filesystem across sessions.",
+      "integrationType": "session-manager",
+      "sdk": "agents",
+      "maintainedBy": "strands",
+      "languages": {
+        "python": {},
+        "typescript": {}
+      },
+      "github": "https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/session/file_session_manager.py",
+      "docsUrl": "https://strandsagents.com/docs/user-guide/sdk/agents/session-management/",
+      "addedDate": "2025-07-13"
+    },
+    {
+      "id": "fireworksai",
+      "name": "fireworksai",
+      "description": "Fireworks AI open-source model inference accessed through the Strands Agents OpenAI-compatibility layer, requiring only the strands-agents[openai] extra.",
+      "integrationType": "model-provider",
+      "sdk": "agents",
+      "maintainedBy": "strands",
+      "languages": {
+        "python": {},
+        "typescript": {}
+      },
+      "github": "https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/openai.py",
+      "docsUrl": "https://strandsagents.com/docs/integrations/model-providers/fireworksai/",
+      "addedDate": "2025-10-06"
+    },
+    {
+      "id": "goal-loop",
+      "name": "GoalLoop",
+      "description": "Validate agent responses against a goal and loop with feedback until it is satisfied.",
+      "integrationType": "plugin",
+      "sdk": "agents",
+      "maintainedBy": "strands",
+      "languages": {
+        "python": {},
+        "typescript": {}
+      },
+      "github": "https://github.com/strands-agents/harness-sdk/tree/main/strands-py/src/strands/vended_plugins/goal",
+      "docsUrl": "https://strandsagents.com/docs/user-guide/sdk/plugins/goal-loop/",
+      "addedDate": "2026-06-01"
+    },
+    {
+      "id": "google-gemini",
+      "name": "Google Gemini",
+      "description": "Run Strands agents on Google Gemini models, with built-in tools, structured output, and image and video input.",
+      "integrationType": "model-provider",
+      "sdk": "agents",
+      "maintainedBy": "strands",
+      "languages": {
+        "python": {},
+        "typescript": {}
+      },
+      "github": "https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/gemini.py",
+      "docsUrl": "https://strandsagents.com/docs/user-guide/sdk/model-providers/google/",
+      "addedDate": "2025-09-19"
+    },
+    {
+      "id": "grantex",
+      "name": "grantex",
+      "description": "Strands tools that verify Grantex grant tokens and enforce scoped, revocable permissions before tool execution.",
+      "integrationType": "integration",
+      "sdk": "agents",
+      "maintainedBy": "community",
+      "languages": {
+        "typescript": {
+          "package": "@grantex/strands",
+          "registryUrl": "https://www.npmjs.com/package/@grantex/strands"
+        }
+      },
+      "github": "https://github.com/mishrasanjeev/grantex",
+      "addedDate": "2026-06-20"
+    },
+    {
+      "id": "graph",
+      "name": "Graph",
+      "description": "Design and run a team of sub-agents as a directed acyclic graph, with each node receiving its upstream outputs.",
+      "integrationType": "tool",
+      "sdk": "agents",
+      "maintainedBy": "strands",
+      "languages": {
+        "python": {},
+        "typescript": {}
+      },
+      "github": "https://github.com/strands-agents/harness-sdk/tree/main/strands-py/src/strands/vended_tools/graph",
+      "docsUrl": "https://strandsagents.com/docs/user-guide/sdk/tools/vended-tools/graph/",
+      "addedDate": "2026-10-30"
+    },
+    {
+      "id": "handoff-to-user",
+      "name": "Handoff to User",
+      "description": "Pause the agent loop to ask the user for confirmation or input, then resume with the reply.",
+      "integrationType": "tool",
+      "sdk": "agents",
+      "maintainedBy": "strands",
+      "languages": {
+        "python": {},
+        "typescript": {}
+      },
+      "github": "https://github.com/strands-agents/harness-sdk/tree/main/strands-py/src/strands/vended_tools/handoff_to_user",
+      "docsUrl": "https://strandsagents.com/docs/user-guide/sdk/tools/vended-tools/handoff-to-user/",
+      "addedDate": "2026-09-22"
+    },
+    {
+      "id": "headroom",
+      "name": "headroom-ai",
+      "description": "Framework-agnostic context compression library that cuts LLM token usage 60–95% on JSON and 15–20% on code, with Strands support built in.",
+      "integrationType": "plugin",
+      "sdk": "agents",
+      "maintainedBy": "partner",
+      "languages": {
+        "python": {
+          "package": "headroom-ai[strands]",
+          "registryUrl": "https://pypi.org/project/headroom-ai/"
+        }
+      },
+      "github": "https://github.com/chopratejas/headroom",
+      "docsUrl": "https://headroom-docs.vercel.app/docs/strands",
+      "addedDate": "2026-02-02"
+    },
+    {
+      "id": "hiddenlayer-strands",
+      "name": "hiddenlayer-strands",
+      "description": "HiddenLayer AI security integration for Strands Agents that detects and blocks threats such as prompt injection and model abuse in real time.",
+      "integrationType": "intervention",
+      "sdk": "agents",
+      "maintainedBy": "partner",
+      "languages": {
+        "python": {
+          "package": "hiddenlayer-strands",
+          "registryUrl": "https://pypi.org/project/hiddenlayer-strands/"
+        }
+      },
+      "github": "https://github.com/hiddenlayerai/hiddenlayer-strands",
+      "addedDate": "2025-12-01"
+    },
+    {
+      "id": "hindsight-strands",
+      "name": "hindsight-strands",
+      "description": "Persistent long-term memory and semantic search tools for Strands agents, powered by Vectorize's Hindsight memory service.",
+      "integrationType": "memory-store",
+      "sdk": "agents",
+      "maintainedBy": "partner",
+      "languages": {
+        "python": {
+          "package": "hindsight-strands",
+          "registryUrl": "https://pypi.org/project/hindsight-strands/"
+        }
+      },
+      "github": "https://github.com/vectorize-io/hindsight",
+      "docsUrl": "https://github.com/vectorize-io/hindsight/tree/main/hindsight-integrations/strands",
+      "addedDate": "2026-03-24"
+    },
+    {
+      "id": "http-request",
+      "name": "HTTP Request",
+      "description": "Make HTTP requests to external APIs, with configurable clients for authentication, timeouts, and proxies.",
+      "integrationType": "tool",
+      "sdk": "agents",
+      "maintainedBy": "strands",
+      "languages": {
+        "python": {},
+        "typescript": {}
+      },
+      "github": "https://github.com/strands-agents/harness-sdk/tree/main/strands-py/src/strands/vended_tools/http_request",
+      "docsUrl": "https://strandsagents.com/docs/user-guide/sdk/tools/vended-tools/http-request/",
+      "addedDate": "2026-07-24"
+    },
+    {
+      "id": "human-in-the-loop",
+      "name": "Human in the Loop",
+      "description": "Gate agent tool execution behind human approval, with modes for CLI, web, and custom UIs.",
+      "integrationType": "intervention",
+      "sdk": "agents",
+      "maintainedBy": "strands",
+      "languages": {
+        "python": {},
+        "typescript": {}
+      },
+      "github": "https://github.com/strands-agents/harness-sdk/tree/main/strands-py/src/strands/vended_interventions/hitl",
+      "docsUrl": "https://strandsagents.com/docs/user-guide/sdk/agents/interventions/human-in-the-loop/",
+      "addedDate": "2026-05-22"
+    },
+    {
+      "id": "langfuse",
+      "name": "langfuse",
+      "description": "Langfuse LLM observability for Strands agents — traces, metrics, and evaluations via the SDK's built-in OpenTelemetry export (strands-agents[otel]).",
+      "integrationType": "observability",
+      "sdk": "agents",
+      "maintainedBy": "partner",
+      "languages": {
+        "python": {}
+      },
+      "github": "https://github.com/langfuse/langfuse",
+      "docsUrl": "https://langfuse.com/integrations/frameworks/strands-agents",
+      "addedDate": "2025-05-16"
+    },
+    {
+      "id": "langsmith",
+      "name": "langsmith",
+      "description": "LangSmith tracing for Strands agents — exports the SDK's OpenTelemetry spans in a LangSmith-compatible format for debugging and monitoring.",
+      "integrationType": "observability",
+      "sdk": "agents",
+      "maintainedBy": "partner",
+      "languages": {
+        "python": {
+          "package": "langsmith[strands-agents]",
+          "registryUrl": "https://pypi.org/project/langsmith/"
+        }
+      },
+      "github": "https://github.com/langchain-ai/langsmith-sdk",
+      "docsUrl": "https://docs.langchain.com/langsmith/trace-with-strands-agents",
+      "addedDate": "2026-10-01"
+    },
+    {
+      "id": "langwatch",
+      "name": "langwatch",
+      "description": "LangWatch observability, evaluations and agent simulations for Strands agents, using the langwatch SDK on top of Strands' built-in OpenTelemetry tracing.",
+      "integrationType": "observability",
+      "sdk": "agents",
+      "maintainedBy": "partner",
+      "languages": {
+        "python": {}
+      },
+      "github": "https://github.com/langwatch/langwatch",
+      "docsUrl": "https://langwatch.ai/docs/integration/python/integrations/strand-agents",
+      "addedDate": "2026-10-15"
+    },
+    {
+      "id": "lelu",
+      "name": "Lelu",
+      "description": "Authorization engine for AI agents that checks every tool call against policy and returns allow, deny, human review, or redirection to a safer tool.",
+      "integrationType": "intervention",
+      "sdk": "agents",
+      "maintainedBy": "community",
+      "languages": {
+        "python": {
+          "package": "lelu-agent-auth-sdk",
+          "registryUrl": "https://pypi.org/project/lelu-agent-auth-sdk/"
+        },
+        "typescript": {
+          "package": "lelu-agent-auth",
+          "registryUrl": "https://www.npmjs.com/package/lelu-agent-auth"
+        }
+      },
+      "github": "https://github.com/Lelu-ai/lelu",
+      "docsUrl": "https://lelu-ai.com/docs/integrations/strands",
+      "addedDate": "2026-09-05"
+    },
+    {
+      "id": "litellm",
+      "name": "LiteLLM",
+      "description": "Run Strands agents on models from OpenAI, Anthropic, Amazon, and more through LiteLLM's unified API.",
+      "integrationType": "model-provider",
+      "sdk": "agents",
+      "maintainedBy": "strands",
+      "languages": {
+        "python": {}
+      },
+      "github": "https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/litellm.py",
+      "docsUrl": "https://strandsagents.com/docs/user-guide/sdk/model-providers/litellm/",
+      "addedDate": "2025-05-16"
+    },
+    {
+      "id": "llama-api",
+      "name": "Llama API",
+      "description": "Run Strands agents on Meta-hosted Llama models without managing your own inference infrastructure.",
+      "integrationType": "model-provider",
+      "sdk": "agents",
+      "maintainedBy": "strands",
+      "languages": {
+        "python": {}
+      },
+      "github": "https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/llamaapi.py",
+      "docsUrl": "https://strandsagents.com/docs/user-guide/sdk/model-providers/llamaapi/",
+      "addedDate": "2025-05-16"
+    },
+    {
+      "id": "llama-cpp",
+      "name": "llama.cpp",
+      "description": "Run Strands agents on local quantized models served by llama.cpp, with grammar constraints and advanced sampling.",
+      "integrationType": "model-provider",
+      "sdk": "agents",
+      "maintainedBy": "strands",
+      "languages": {
+        "python": {}
+      },
+      "github": "https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/llamacpp.py",
+      "docsUrl": "https://strandsagents.com/docs/user-guide/sdk/model-providers/llamacpp/",
+      "addedDate": "2025-09-10"
+    },
+    {
+      "id": "llm-tracekit-strands",
+      "name": "llm-tracekit-strands",
+      "description": "OpenTelemetry instrumentation for Strands Agents that captures spans, traces, and metrics compatible with Coralogix and other OTel backends.",
+      "integrationType": "observability",
+      "sdk": "agents",
+      "maintainedBy": "partner",
+      "languages": {
+        "python": {
+          "package": "llm-tracekit-strands",
+          "registryUrl": "https://pypi.org/project/llm-tracekit-strands/"
+        }
+      },
+      "github": "https://github.com/coralogix/llm-tracekit",
+      "docsUrl": "https://www.coralogix.com/docs/integrations/ai-observability/strands/",
+      "addedDate": "2026-03-19"
+    },
+    {
+      "id": "loopgrid-strands",
+      "name": "loopgrid-strands",
+      "description": "Signed, independently verifiable decision evidence for Strands Agents using LoopGrid.",
+      "integrationType": "plugin",
+      "sdk": "agents",
+      "maintainedBy": "community",
+      "languages": {
+        "python": {
+          "package": "loopgrid-strands",
+          "registryUrl": "https://pypi.org/project/loopgrid-strands/"
+        }
+      },
+      "github": "https://github.com/loopgridio/loopgrid-strands",
+      "docsUrl": "https://loopgrid.io/integrations/strands/",
+      "addedDate": "2026-09-27"
+    },
+    {
+      "id": "magic-hour",
+      "name": "Magic Hour",
+      "description": "Generate and retrieve AI images with Magic Hour’s hosted MCP server using Strands Agents’ native Python client.",
+      "integrationType": "tool",
+      "sdk": "agents",
+      "maintainedBy": "community",
+      "languages": {
+        "python": {}
+      },
+      "github": "https://github.com/magichourhq/magic-hour-mcp",
+      "docsUrl": "https://docs.magichour.ai/integration/strands-agents",
+      "addedDate": "2026-10-23"
+    },
+    {
+      "id": "mcp-router",
+      "name": "MCP Router",
+      "description": "Connect to MCP servers at runtime and call their tools, limited to an allowlist of servers.",
+      "integrationType": "tool",
+      "sdk": "agents",
+      "maintainedBy": "strands",
+      "languages": {
+        "python": {},
+        "typescript": {}
+      },
+      "github": "https://github.com/strands-agents/harness-sdk/tree/main/strands-py/src/strands/vended_tools/mcp_router",
+      "docsUrl": "https://strandsagents.com/docs/user-guide/sdk/tools/vended-tools/mcp-router/",
+      "addedDate": "2026-10-08"
+    },
+    {
+      "id": "mem0-strands",
+      "name": "mem0-strands",
+      "description": "Persistent long-term memory for Strands agents, enabled by Mem0: a native MemoryStore with automatic recall and server-side extraction.",
+      "integrationType": "memory-store",
+      "sdk": "agents",
+      "maintainedBy": "partner",
+      "languages": {
+        "python": {
+          "package": "mem0-strands",
+          "registryUrl": "https://pypi.org/project/mem0-strands/"
+        }
+      },
+      "github": "https://github.com/mem0ai/mem0/tree/main/integrations/mem0-strands",
+      "docsUrl": "https://docs.mem0.ai/integrations/strands",
+      "addedDate": "2026-08-27"
+    },
+    {
+      "id": "membase-strands",
+      "name": "membase-strands",
+      "description": "Membase as a Strands MemoryStore: recalls a person's memory into each turn citing the source Memory, with tools to search, save and read the profile.",
+      "integrationType": "memory-store",
+      "sdk": "agents",
+      "maintainedBy": "partner",
+      "languages": {
+        "python": {
+          "package": "membase-strands",
+          "registryUrl": "https://pypi.org/project/membase-strands/"
+        }
+      },
+      "github": "https://github.com/unibaseio/membase/tree/main/integrations/strands",
+      "docsUrl": "https://github.com/unibaseio/membase/tree/main/integrations/strands#readme",
+      "addedDate": "2026-10-25"
+    },
+    {
+      "id": "mistral",
+      "name": "Mistral AI",
+      "description": "Run Strands agents on Mistral AI models, with tool calling and streaming.",
+      "integrationType": "model-provider",
+      "sdk": "agents",
+      "maintainedBy": "strands",
+      "languages": {
+        "python": {}
+      },
+      "github": "https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/mistral.py",
+      "docsUrl": "https://strandsagents.com/docs/user-guide/sdk/model-providers/mistral/",
+      "addedDate": "2025-06-27"
+    },
+    {
+      "id": "mlx",
+      "name": "mlx",
+      "description": "Apple's MLX framework as a local model provider for Strands Agents, enabling offline inference, LoRA fine-tuning, and vision models on Apple Silicon Macs.",
+      "integrationType": "model-provider",
+      "sdk": "agents",
+      "maintainedBy": "community",
+      "languages": {
+        "python": {
+          "package": "strands-mlx",
+          "registryUrl": "https://pypi.org/project/strands-mlx/"
+        }
+      },
+      "github": "https://github.com/cagataycali/strands-mlx",
+      "docsUrl": "https://strandsagents.com/docs/integrations/model-providers/mlx/",
+      "addedDate": "2026-01-12"
+    },
+    {
+      "id": "mnemoverse",
+      "name": "mnemoverse",
+      "description": "Hosted long-term memory for Strands agents over MCP, so memories persist across sessions and tools; rating a recalled memory as helpful or misleading re-ranks what comes back next.",
+      "integrationType": "tool",
+      "sdk": "agents",
+      "maintainedBy": "community",
+      "languages": {
+        "python": {}
+      },
+      "github": "https://github.com/mnemoverse/mcp-memory-server",
+      "docsUrl": "https://mnemoverse.com/docs/api/strands",
+      "addedDate": "2026-10-25"
+    },
+    {
+      "id": "nebius-token-factory",
+      "name": "nebius-token-factory",
+      "description": "Nebius Token Factory fast open-source model inference, accessed through the Strands Agents OpenAI-compatibility layer.",
+      "integrationType": "model-provider",
+      "sdk": "agents",
+      "maintainedBy": "strands",
+      "languages": {
+        "python": {},
+        "typescript": {}
+      },
+      "github": "https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/openai.py",
+      "docsUrl": "https://strandsagents.com/docs/integrations/model-providers/nebius-token-factory/",
+      "addedDate": "2026-01-02"
+    },
+    {
+      "id": "neo4j-agent-memory",
+      "name": "neo4j-agent-memory",
+      "description": "Neo4j graph memory for Strands agents — session persistence, entity and relationship extraction, and reasoning traces, on hosted NAMS or self-hosted Neo4j.",
+      "integrationType": "session-manager",
+      "sdk": "agents",
+      "maintainedBy": "partner",
+      "languages": {
+        "python": {
+          "package": "neo4j-agent-memory[strands]",
+          "registryUrl": "https://pypi.org/project/neo4j-agent-memory/"
+        },
+        "typescript": {
+          "package": "@neo4j-labs/agent-memory",
+          "registryUrl": "https://www.npmjs.com/package/@neo4j-labs/agent-memory"
+        }
+      },
+      "github": "https://github.com/neo4j-labs/agent-memory",
+      "docsUrl": "https://neo4j.com/labs/agent-memory/how-to/integrations/aws-strands/#_session_manager_push_based",
+      "addedDate": "2026-08-11"
+    },
+    {
+      "id": "neo4j-agent-memory-store",
+      "name": "neo4j-agent-memory-store",
+      "description": "Neo4j context graph as a Strands MemoryStore, recalling entities extracted from past conversations into the agent loop through MemoryManager.",
+      "integrationType": "memory-store",
+      "sdk": "agents",
+      "maintainedBy": "partner",
+      "languages": {
+        "python": {
+          "package": "neo4j-agent-memory[strands]",
+          "registryUrl": "https://pypi.org/project/neo4j-agent-memory/"
+        },
+        "typescript": {
+          "package": "@neo4j-labs/agent-memory",
+          "registryUrl": "https://www.npmjs.com/package/@neo4j-labs/agent-memory"
+        }
+      },
+      "github": "https://github.com/neo4j-labs/agent-memory",
+      "docsUrl": "https://neo4j.com/labs/agent-memory/how-to/integrations/aws-strands/#_memory_store",
+      "addedDate": "2026-09-25"
+    },
+    {
+      "id": "notebook",
+      "name": "Notebook",
+      "description": "Manage persistent text notebooks that carry plans, notes, and scratch space across agent turns.",
+      "integrationType": "tool",
+      "sdk": "agents",
+      "maintainedBy": "strands",
+      "languages": {
+        "python": {},
+        "typescript": {}
+      },
+      "github": "https://github.com/strands-agents/harness-sdk/tree/main/strands-py/src/strands/vended_tools/notebook",
+      "docsUrl": "https://strandsagents.com/docs/user-guide/sdk/tools/vended-tools/notebook/",
+      "addedDate": "2026-09-09"
+    },
+    {
+      "id": "nvidia-nat-strands",
+      "name": "nvidia-nat-strands",
+      "description": "NVIDIA NeMo Agent Toolkit integration adding enterprise-grade instrumentation, observability, and optimization to Strands Agents.",
+      "integrationType": "integration",
+      "sdk": "agents",
+      "maintainedBy": "partner",
+      "languages": {
+        "python": {
+          "package": "nvidia-nat-strands",
+          "registryUrl": "https://pypi.org/project/nvidia-nat-strands/"
+        }
+      },
+      "github": "https://github.com/NVIDIA/NeMo-Agent-Toolkit",
+      "docsUrl": "https://docs.nvidia.com/nemo/agent-toolkit/latest/components/integrations/frameworks.html",
+      "addedDate": "2025-11-19"
+    },
+    {
+      "id": "nvidia-nim",
+      "name": "nvidia-nim",
+      "description": "NVIDIA NIM inference microservices as a Strands Agents model provider with full tool support and streaming.",
+      "integrationType": "model-provider",
+      "sdk": "agents",
+      "maintainedBy": "community",
+      "languages": {
+        "python": {
+          "package": "strands-nvidia-nim",
+          "registryUrl": "https://pypi.org/project/strands-nvidia-nim/"
+        }
+      },
+      "github": "https://github.com/thiago4go/strands-nvidia-nim",
+      "docsUrl": "https://strandsagents.com/docs/integrations/model-providers/nvidia-nim/",
+      "addedDate": "2026-01-12"
+    },
+    {
+      "id": "ollama",
+      "name": "Ollama",
+      "description": "Run Strands agents on local models with Ollama: text generation, image understanding, tool calling, and streaming.",
+      "integrationType": "model-provider",
+      "sdk": "agents",
+      "maintainedBy": "strands",
+      "languages": {
+        "python": {}
+      },
+      "github": "https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/ollama.py",
+      "docsUrl": "https://strandsagents.com/docs/user-guide/sdk/model-providers/ollama/",
+      "addedDate": "2025-05-16"
+    },
+    {
+      "id": "openai",
+      "name": "OpenAI",
+      "description": "Run Strands agents on OpenAI models or any OpenAI-compatible API, with vision and structured output.",
+      "integrationType": "model-provider",
+      "sdk": "agents",
+      "maintainedBy": "strands",
+      "languages": {
+        "python": {},
+        "typescript": {}
+      },
+      "github": "https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/openai.py",
+      "docsUrl": "https://strandsagents.com/docs/user-guide/sdk/model-providers/openai/",
+      "addedDate": "2025-05-22"
+    },
+    {
+      "id": "openai-responses",
+      "name": "OpenAI Responses",
+      "description": "Run Strands agents on the OpenAI Responses API, with built-in tools like web search and server-side conversation state.",
+      "integrationType": "model-provider",
+      "sdk": "agents",
+      "maintainedBy": "strands",
+      "languages": {
+        "python": {},
+        "typescript": {}
+      },
+      "github": "https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/openai_responses.py",
+      "docsUrl": "https://strandsagents.com/docs/user-guide/sdk/model-providers/openai-responses/",
+      "addedDate": "2026-03-04"
+    },
+    {
+      "id": "opencode",
+      "name": "opencode",
+      "description": "OpenCode Zen and Go endpoints as a Strands Agents model provider (OpenAI-compatible Chat Completions), with streaming and tool calling.",
+      "integrationType": "model-provider",
+      "sdk": "agents",
+      "maintainedBy": "community",
+      "languages": {
+        "typescript": {
+          "package": "@guru.prasath/model-opencode",
+          "registryUrl": "https://www.npmjs.com/package/@guru.prasath/model-opencode"
+        }
+      },
+      "github": "https://github.com/aprasadh/model-opencode",
+      "docsUrl": "https://github.com/aprasadh/model-opencode#readme",
+      "addedDate": "2026-10-05"
+    },
+    {
+      "id": "openinference-instrumentation-strands-agents",
+      "name": "openinference-instrumentation-strands-agents",
+      "description": "Arize AI OpenInference span processor for Strands Agents — transforms native OTel spans to OpenInference format for Arize AX and Phoenix observability.",
+      "integrationType": "observability",
+      "sdk": "agents",
+      "maintainedBy": "partner",
+      "languages": {
+        "python": {
+          "package": "openinference-instrumentation-strands-agents",
+          "registryUrl": "https://pypi.org/project/openinference-instrumentation-strands-agents/"
+        }
+      },
+      "github": "https://github.com/Arize-ai/openinference/tree/main/python/instrumentation/openinference-instrumentation-strands-agents",
+      "docsUrl": "https://arize.com/docs/ax/integrations/python-agent-frameworks/aws",
+      "addedDate": "2026-01-26"
+    },
+    {
+      "id": "openrouter",
+      "name": "OpenRouter",
+      "description": "OpenRouter's catalog of hundreds of models behind one API key, accessed through the Strands Agents OpenAI-compatibility layer.",
+      "integrationType": "model-provider",
+      "sdk": "agents",
+      "maintainedBy": "strands",
+      "languages": {
+        "python": {},
+        "typescript": {}
+      },
+      "github": "https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/openai.py",
+      "docsUrl": "https://strandsagents.com/docs/integrations/model-providers/openrouter/",
+      "addedDate": "2026-08-14"
+    },
+    {
+      "id": "orcarouter",
+      "name": "OrcaRouter",
+      "description": "OrcaRouter's adaptive routing across many models behind one API key, accessed through the Strands Agents OpenAI-compatibility layer.",
+      "integrationType": "model-provider",
+      "sdk": "agents",
+      "maintainedBy": "community",
+      "languages": {
+        "python": {},
+        "typescript": {}
+      },
+      "github": "https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/openai.py",
+      "docsUrl": "https://strandsagents.com/docs/integrations/model-providers/orcarouter/",
+      "addedDate": "2026-08-29"
+    },
+    {
+      "id": "ovhcloud-ai-endpoints",
+      "name": "ovhcloud-ai-endpoints",
+      "description": "OVHcloud AI Endpoints, a European OpenAI-compatible inference service for Strands Agents with GDPR-compliant data sovereignty.",
+      "integrationType": "model-provider",
+      "sdk": "agents",
+      "maintainedBy": "strands",
+      "languages": {
+        "python": {},
+        "typescript": {}
+      },
+      "github": "https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/openai.py",
+      "docsUrl": "https://strandsagents.com/docs/integrations/model-providers/ovhcloud-ai-endpoints/",
+      "addedDate": "2026-03-20"
+    },
+    {
+      "id": "portkey",
+      "name": "portkey",
+      "description": "Routes Strands model calls through Portkey's AI gateway via the OpenAI-compatible endpoint, adding guardrails, fallbacks, and observability.",
+      "integrationType": "model-provider",
+      "sdk": "agents",
+      "maintainedBy": "partner",
+      "languages": {
+        "python": {}
+      },
+      "github": "https://github.com/Portkey-AI/gateway",
+      "docsUrl": "https://portkey.ai/docs/integrations/agents/strands",
+      "addedDate": "2025-05-27"
+    },
+    {
+      "id": "pushary",
+      "name": "pushary",
+      "description": "Customer approvals for Strands tool calls using native interrupts and snapshots, with phone decisions delivered and recorded by Pushary.",
+      "integrationType": "integration",
+      "sdk": "agents",
+      "maintainedBy": "partner",
+      "languages": {
+        "python": {}
+      },
+      "github": "https://github.com/Pushary/pushary-python",
+      "docsUrl": "https://github.com/Pushary/pushary-python/blob/main/examples/strands/README.md",
+      "addedDate": "2026-09-15"
+    },
+    {
+      "id": "python-repl",
+      "name": "Python REPL",
+      "description": "Run model-generated Python in the agent's sandbox, with files persisting across calls.",
+      "integrationType": "tool",
+      "sdk": "agents",
+      "maintainedBy": "strands",
+      "languages": {
+        "python": {},
+        "typescript": {}
+      },
+      "github": "https://github.com/strands-agents/harness-sdk/tree/main/strands-py/src/strands/vended_tools/python_repl",
+      "docsUrl": "https://strandsagents.com/docs/user-guide/sdk/tools/vended-tools/python-repl/",
+      "addedDate": "2026-10-14"
+    },
+    {
+      "id": "read",
+      "name": "Read",
+      "description": "Read a file as numbered text lines with paging, or as an image or document.",
+      "integrationType": "tool",
+      "sdk": "agents",
+      "maintainedBy": "strands",
+      "languages": {
+        "python": {},
+        "typescript": {}
+      },
+      "github": "https://github.com/strands-agents/harness-sdk/tree/main/strands-py/src/strands/vended_tools/read",
+      "docsUrl": "https://strandsagents.com/docs/user-guide/sdk/tools/vended-tools/read/",
+      "addedDate": "2026-10-30"
+    },
+    {
+      "id": "respan",
+      "name": "respan",
+      "description": "OpenTelemetry instrumentation plugin that normalizes Strands Agents TS spans into the Respan observability platform.",
+      "integrationType": "observability",
+      "sdk": "agents",
+      "maintainedBy": "partner",
+      "languages": {
+        "typescript": {
+          "package": "@respan/instrumentation-strands-agents",
+          "registryUrl": "https://www.npmjs.com/package/@respan/instrumentation-strands-agents"
+        }
+      },
+      "github": "https://github.com/respanai/respan",
+      "addedDate": "2026-06-30"
+    },
+    {
+      "id": "s3-session-manager",
+      "name": "S3 Session Manager",
+      "description": "Persist agent conversations, tool state, and context to Amazon S3 across sessions.",
+      "integrationType": "session-manager",
+      "sdk": "agents",
+      "maintainedBy": "strands",
+      "languages": {
+        "python": {},
+        "typescript": {}
+      },
+      "github": "https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/session/s3_session_manager.py",
+      "docsUrl": "https://strandsagents.com/docs/user-guide/sdk/agents/session-management/",
+      "addedDate": "2025-07-13"
+    },
+    {
+      "id": "s3-vectors-memory",
+      "name": "s3-vectors-memory",
+      "description": "Long-term semantic memory for Strands Agents via Amazon S3 Vectors, storing conversation summaries as vectors and recalling them on later runs.",
+      "integrationType": "plugin",
+      "sdk": "agents",
+      "maintainedBy": "aws",
+      "languages": {
+        "python": {
+          "package": "strands-s3-vectors-memory",
+          "registryUrl": "https://pypi.org/project/strands-s3-vectors-memory/"
+        }
+      },
+      "github": "https://github.com/aws-samples/data-for-saas-patterns/tree/main/samples/multi-tenant-strands-s3-vectors-memory",
+      "docsUrl": "https://strandsagents.com/docs/integrations/plugins/s3-vectors-memory/",
+      "addedDate": "2026-04-09"
+    },
+    {
+      "id": "serply-mcp",
+      "name": "serply-mcp",
+      "description": "Hosted MCP server giving Strands agents live Google Search, Scholar, News, Maps, Jobs, Bing, Amazon and Reddit search plus page scraping, with one API key header.",
+      "integrationType": "tool",
+      "sdk": "agents",
+      "maintainedBy": "community",
+      "languages": {
+        "python": {}
+      },
+      "github": "https://github.com/serply-inc/mcp",
+      "docsUrl": "https://serply.io/docs/guides/strands",
+      "addedDate": "2026-09-17"
+    },
+    {
+      "id": "sglang",
+      "name": "sglang",
+      "description": "SGLang high-performance inference server as a Strands Agents model provider, with Token-In/Token-Out support for on-policy RL rollouts.",
+      "integrationType": "model-provider",
+      "sdk": "agents",
+      "maintainedBy": "community",
+      "languages": {
+        "python": {
+          "package": "strands-sglang",
+          "registryUrl": "https://pypi.org/project/strands-sglang/"
+        }
+      },
+      "github": "https://github.com/horizon-rl/strands-sglang",
+      "docsUrl": "https://strandsagents.com/docs/integrations/model-providers/sglang/",
+      "addedDate": "2026-01-09"
+    },
+    {
+      "id": "sigil-sdk-strands",
+      "name": "sigil-sdk-strands",
+      "description": "Grafana Cloud AI Observability (Sigil) hooks for Strands Agents — sends agent, model, and tool lifecycle events to Grafana Sigil via SigilStrandsHookProvider.",
+      "integrationType": "observability",
+      "sdk": "agents",
+      "maintainedBy": "partner",
+      "languages": {
+        "python": {
+          "package": "sigil-sdk-strands",
+          "registryUrl": "https://pypi.org/project/sigil-sdk-strands/"
+        }
+      },
+      "github": "https://github.com/grafana/agento11y",
+      "addedDate": "2026-04-29"
+    },
+    {
+      "id": "sleep",
+      "name": "Sleep",
+      "description": "Pause agent execution for a bounded, cancellable duration.",
+      "integrationType": "tool",
+      "sdk": "agents",
+      "maintainedBy": "strands",
+      "languages": {
+        "python": {},
+        "typescript": {}
+      },
+      "github": "https://github.com/strands-agents/harness-sdk/tree/main/strands-py/src/strands/vended_tools/sleep",
+      "docsUrl": "https://strandsagents.com/docs/user-guide/sdk/tools/vended-tools/sleep/",
+      "addedDate": "2026-07-24"
+    },
+    {
+      "id": "steering",
+      "name": "Steering",
+      "description": "Guide agents with just-in-time contextual feedback at key moments instead of front-loaded monolithic prompts.",
+      "integrationType": "intervention",
+      "sdk": "agents",
+      "maintainedBy": "strands",
+      "languages": {
+        "python": {},
+        "typescript": {}
+      },
+      "github": "https://github.com/strands-agents/harness-sdk/tree/main/strands-py/src/strands/vended_plugins/steering",
+      "docsUrl": "https://strandsagents.com/docs/user-guide/sdk/agents/interventions/steering/",
+      "addedDate": "2025-12-03"
+    },
+    {
+      "id": "stop",
+      "name": "Stop",
+      "description": "Let the model end the agent loop deliberately with an optional final message.",
+      "integrationType": "tool",
+      "sdk": "agents",
+      "maintainedBy": "strands",
+      "languages": {
+        "python": {},
+        "typescript": {}
+      },
+      "github": "https://github.com/strands-agents/harness-sdk/tree/main/strands-py/src/strands/vended_tools/stop",
+      "docsUrl": "https://strandsagents.com/docs/user-guide/sdk/tools/vended-tools/stop/",
+      "addedDate": "2026-07-24"
+    },
+    {
+      "id": "strands-acp",
+      "name": "strands-acp",
+      "description": "Bridges any Strands agent to the Agent Client Protocol, enabling interoperability with ACP-compatible orchestration systems.",
+      "integrationType": "integration",
+      "sdk": "agents",
+      "maintainedBy": "community",
+      "languages": {
+        "typescript": {
+          "package": "@ryancormack/strands-acp",
+          "registryUrl": "https://www.npmjs.com/package/@ryancormack/strands-acp"
+        }
+      },
+      "github": "https://github.com/ryancormack/strands-acp",
+      "addedDate": "2026-05-21"
+    },
+    {
+      "id": "strands-adb",
+      "name": "strands-adb",
+      "description": "Android device control tools for Strands Agents via ADB, enabling agents to interact with Android emulators and physical devices.",
+      "integrationType": "tool",
+      "sdk": "agents",
+      "maintainedBy": "community",
+      "languages": {
+        "python": {
+          "package": "strands-adb",
+          "registryUrl": "https://pypi.org/project/strands-adb/"
+        }
+      },
+      "github": "https://github.com/cagataycali/strands-adb",
+      "addedDate": "2026-04-27"
+    },
+    {
+      "id": "strands-agentcore-tools",
+      "name": "strands-agentcore-tools",
+      "description": "Strands tools for AWS Bedrock AgentCore lifecycle management — wraps AgentCore APIs as callable tools for Strands agents.",
+      "integrationType": "tool",
+      "sdk": "agents",
+      "maintainedBy": "community",
+      "languages": {
+        "python": {
+          "package": "strands-agentcore-tools",
+          "registryUrl": "https://pypi.org/project/strands-agentcore-tools/"
+        }
+      },
+      "github": "https://github.com/cagataycali/strands-agentcore-tools",
+      "addedDate": "2025-10-25"
+    },
+    {
+      "id": "strands-agt",
+      "name": "strands-agt",
+      "description": "Microsoft Agent Governance Toolkit integration that deterministically enforces YAML-defined allow/deny/steer policies on tool calls.",
+      "integrationType": "intervention",
+      "sdk": "agents",
+      "maintainedBy": "community",
+      "languages": {
+        "python": {
+          "package": "strands-agt",
+          "registryUrl": "https://pypi.org/project/strands-agt/"
+        }
+      },
+      "github": "https://github.com/lizradway/strands-agt",
+      "docsUrl": "https://strandsagents.com/docs/integrations/interventions/strands-agt/",
+      "addedDate": "2026-07-15"
+    },
+    {
+      "id": "strands-apify",
+      "name": "strands-apify",
+      "description": "Apify platform integration giving Strands Agents access to thousands of pre-built Actors for web scraping, search, and e-commerce crawling.",
+      "integrationType": "tool",
+      "sdk": "agents",
+      "maintainedBy": "partner",
+      "languages": {
+        "python": {
+          "package": "strands-apify",
+          "registryUrl": "https://pypi.org/project/strands-apify/"
+        }
+      },
+      "github": "https://github.com/apify/strands-apify",
+      "docsUrl": "https://strandsagents.com/docs/integrations/tools/strands-apify/",
+      "addedDate": "2026-07-09"
+    },
+    {
+      "id": "strands-arise",
+      "name": "strands-arise",
+      "description": "Self-evolving tool synthesis for Strands Agents that enables agents to define, test, and register their own tools at runtime.",
+      "integrationType": "agent-extension",
+      "sdk": "agents",
+      "maintainedBy": "community",
+      "languages": {
+        "python": {
+          "package": "strands-arise",
+          "registryUrl": "https://pypi.org/project/strands-arise/"
+        }
+      },
+      "github": "https://github.com/abekek/strands-arise",
+      "docsUrl": "https://arise-ai.dev",
+      "addedDate": "2026-03-29"
+    },
+    {
+      "id": "strands-bitchat",
+      "name": "strands-bitchat",
+      "description": "Decentralized P2P encrypted chat tool for Strands Agents using Bluetooth LE mesh networking and the Noise protocol for agent-to-agent communication.",
+      "integrationType": "tool",
+      "sdk": "agents",
+      "maintainedBy": "community",
+      "languages": {
+        "python": {
+          "package": "strands-bitchat",
+          "registryUrl": "https://pypi.org/project/strands-bitchat/"
+        }
+      },
+      "github": "https://github.com/cagataycali/strands-bitchat",
+      "addedDate": "2025-08-18"
+    },
+    {
+      "id": "strands-ccxt",
+      "name": "strands-ccxt",
+      "description": "Cryptocurrency exchange integration for Strands Agents via CCXT, enabling unified access to trading, market data, and account management across exchanges.",
+      "integrationType": "tool",
+      "sdk": "agents",
+      "maintainedBy": "community",
+      "languages": {
+        "python": {
+          "package": "strands-ccxt",
+          "registryUrl": "https://pypi.org/project/strands-ccxt/"
+        }
+      },
+      "github": "https://github.com/mertozbas/strands-ccxt",
+      "addedDate": "2026-01-18"
+    },
+    {
+      "id": "strands-cloudflare",
+      "name": "strands-cloudflare",
+      "description": "Cloudflare tools for Strands Agents covering Zones, DNS, Workers, KV, R2, D1, Pages, AI Gateway, and Tunnels management.",
+      "integrationType": "tool",
+      "sdk": "agents",
+      "maintainedBy": "community",
+      "languages": {
+        "python": {
+          "package": "strands-cloudflare",
+          "registryUrl": "https://pypi.org/project/strands-cloudflare/"
+        }
+      },
+      "github": "https://github.com/mertozbas/strands-cloudflare",
+      "addedDate": "2026-01-20"
+    },
+    {
+      "id": "strands-code-agent",
+      "name": "strands-code-agent",
+      "description": "A coding agent that replaces tool-calling with code generation in a persistent Python REPL",
+      "integrationType": "agent-extension",
+      "sdk": "agents",
+      "maintainedBy": "aws",
+      "languages": {
+        "python": {
+          "package": "strands-code-agent",
+          "registryUrl": "https://pypi.org/project/strands-code-agent/"
+        }
+      },
+      "github": "https://github.com/aws-samples/sample-strands-code-agent",
+      "docsUrl": "https://strandsagents.com/docs/integrations/agent-extensions/strands-code-agent/",
+      "addedDate": "2026-05-15"
+    },
+    {
+      "id": "strands-compose-agentcore",
+      "name": "strands-compose-agentcore",
+      "description": "Amazon Bedrock AgentCore deployment adapter for strands-compose that packages and deploys declarative Strands agent workflows to AgentCore Runtime.",
+      "integrationType": "integration",
+      "sdk": "agents",
+      "maintainedBy": "community",
+      "languages": {
+        "python": {
+          "package": "strands-compose-agentcore",
+          "registryUrl": "https://pypi.org/project/strands-compose-agentcore/"
+        }
+      },
+      "github": "https://github.com/strands-compose/bedrock-agentcore",
+      "addedDate": "2026-04-12"
+    },
+    {
+      "id": "strands-cosmos",
+      "name": "strands-cosmos",
+      "description": "NVIDIA Cosmos multimodal model provider for Strands Agents, jointly understanding and generating text, images, video, audio, and action.",
+      "integrationType": "model-provider",
+      "sdk": "agents",
+      "maintainedBy": "community",
+      "languages": {
+        "python": {
+          "package": "strands-cosmos",
+          "registryUrl": "https://pypi.org/project/strands-cosmos/"
+        }
+      },
+      "github": "https://github.com/cagataycali/strands-cosmos",
+      "addedDate": "2026-03-09"
+    },
+    {
+      "id": "strands-dakera",
+      "name": "strands-dakera",
+      "description": "Persistent, decay-weighted MemoryStore backed by a self-hosted Dakera server, plus a full-CRUD memory tool sharing the same backend.",
+      "integrationType": "memory-store",
+      "sdk": "agents",
+      "maintainedBy": "partner",
+      "languages": {
+        "python": {
+          "package": "strands-dakera",
+          "registryUrl": "https://pypi.org/project/strands-dakera/"
+        }
+      },
+      "github": "https://github.com/dakera-ai/strands-dakera",
+      "docsUrl": "https://strandsagents.com/docs/integrations/memory-stores/strands-dakera/",
+      "addedDate": "2026-07-22"
+    },
+    {
+      "id": "strands-deepgram",
+      "name": "strands-deepgram",
+      "description": "Deepgram speech tools for Strands Agents providing speech-to-text transcription, text-to-speech synthesis, and audio intelligence.",
+      "integrationType": "tool",
+      "sdk": "agents",
+      "maintainedBy": "community",
+      "languages": {
+        "python": {
+          "package": "strands-deepgram",
+          "registryUrl": "https://pypi.org/project/strands-deepgram/"
+        }
+      },
+      "github": "https://github.com/eraykeskinmac/strands-deepgram",
+      "docsUrl": "https://strandsagents.com/docs/integrations/tools/strands-deepgram/",
+      "addedDate": "2025-12-05"
+    },
+    {
+      "id": "strands-deepkeep",
+      "name": "strands-deepkeep",
+      "description": "DeepKeep AI Firewall guardrails for Strands Agents using lifecycle hooks around model input and output.",
+      "integrationType": "plugin",
+      "sdk": "agents",
+      "maintainedBy": "partner",
+      "languages": {
+        "python": {
+          "package": "strands-deepkeep",
+          "registryUrl": "https://pypi.org/project/strands-deepkeep/"
+        }
+      },
+      "github": "https://github.com/Deepkeepai/strands-deepkeep",
+      "docsUrl": "https://github.com/Deepkeepai/strands-deepkeep#readme",
+      "addedDate": "2026-08-26"
+    },
+    {
+      "id": "strands-dynamodb-storage",
+      "name": "strands-dynamodb-storage",
+      "description": "Amazon DynamoDB Storage backend for Strands agents, covering sessions, agent memory, and semantic search over DynamoDB vector indexes, with optional S3 offload for large values.",
+      "integrationType": "storage",
+      "sdk": "agents",
+      "maintainedBy": "aws",
+      "languages": {
+        "python": {
+          "package": "strands-dynamodb-storage",
+          "registryUrl": "https://pypi.org/project/strands-dynamodb-storage/"
+        },
+        "typescript": {
+          "package": "strands-dynamodb-storage",
+          "registryUrl": "https://www.npmjs.com/package/strands-dynamodb-storage"
+        }
+      },
+      "github": "https://github.com/aws/strands-dynamodb-storage",
+      "addedDate": "2026-08-14"
+    },
+    {
+      "id": "strands-erc8004",
+      "name": "strands-erc8004",
+      "description": "ERC-8004 Trustless Agents Protocol tools for Strands Agents enabling on-chain agent identity, reputation, and validation on any EVM chain.",
+      "integrationType": "tool",
+      "sdk": "agents",
+      "maintainedBy": "community",
+      "languages": {
+        "python": {
+          "package": "strands-erc8004",
+          "registryUrl": "https://pypi.org/project/strands-erc8004/"
+        }
+      },
+      "github": "https://github.com/cagataycali/strands-erc8004",
+      "addedDate": "2026-02-10"
+    },
+    {
+      "id": "strands-fun-tools",
+      "name": "strands-fun-tools",
+      "description": "Creative and utility tools for Strands Agents covering Bluetooth control, chess engines, OCR, and face recognition.",
+      "integrationType": "tool",
+      "sdk": "agents",
+      "maintainedBy": "community",
+      "languages": {
+        "python": {
+          "package": "strands-fun-tools",
+          "registryUrl": "https://pypi.org/project/strands-fun-tools/"
+        }
+      },
+      "github": "https://github.com/cagataycali/strands-fun-tools",
+      "addedDate": "2025-10-26"
+    },
+    {
+      "id": "strands-github-storage",
+      "name": "strands-github-storage",
+      "description": "GitHub-repository Storage backend for Strands — persists keys as versioned, diffable files in a repo you can browse in the GitHub UI.",
+      "integrationType": "storage",
+      "sdk": "agents",
+      "maintainedBy": "community",
+      "languages": {
+        "python": {
+          "package": "strands-github-storage",
+          "registryUrl": "https://pypi.org/project/strands-github-storage/"
+        },
+        "typescript": {
+          "package": "strands-github-storage",
+          "registryUrl": "https://www.npmjs.com/package/strands-github-storage"
+        }
+      },
+      "github": "https://github.com/maisieyanz/strands-github-storage",
+      "docsUrl": "https://strandsagents.com/docs/integrations/storage/github/",
+      "addedDate": "2026-08-10"
+    },
+    {
+      "id": "strands-google",
+      "name": "strands-google",
+      "description": "Tools for Strands Agents to access 200+ Google APIs including Gmail, Drive, Calendar, YouTube, Sheets, and Docs through a unified interface.",
+      "integrationType": "tool",
+      "sdk": "agents",
+      "maintainedBy": "community",
+      "languages": {
+        "python": {
+          "package": "strands-google",
+          "registryUrl": "https://pypi.org/project/strands-google/"
+        }
+      },
+      "github": "https://github.com/cagataycali/strands-google",
+      "docsUrl": "https://strandsagents.com/docs/integrations/tools/strands-google/",
+      "addedDate": "2026-03-26"
+    },
+    {
+      "id": "strands-hackerone",
+      "name": "strands-hackerone",
+      "description": "HackerOne API tool for Strands Agents to automate bug bounty research, program monitoring, and vulnerability report management.",
+      "integrationType": "tool",
+      "sdk": "agents",
+      "maintainedBy": "community",
+      "languages": {
+        "python": {
+          "package": "strands-hackerone",
+          "registryUrl": "https://pypi.org/project/strands-hackerone/"
+        }
+      },
+      "github": "https://github.com/cagataycali/strands-hackerone",
+      "addedDate": "2026-01-07"
+    },
+    {
+      "id": "strands-hubspot",
+      "name": "strands-hubspot",
+      "description": "Read-only HubSpot CRM tools for Strands Agents to search and retrieve contacts, deals, and company data without any risk of modifying CRM records.",
+      "integrationType": "tool",
+      "sdk": "agents",
+      "maintainedBy": "community",
+      "languages": {
+        "python": {
+          "package": "strands-hubspot",
+          "registryUrl": "https://pypi.org/project/strands-hubspot/"
+        }
+      },
+      "github": "https://github.com/eraykeskinmac/strands-hubspot",
+      "docsUrl": "https://strandsagents.com/docs/integrations/tools/strands-hubspot/",
+      "addedDate": "2025-12-05"
+    },
+    {
+      "id": "strands-mcp-server",
+      "name": "strands-mcp-server",
+      "description": "Transforms any Strands Agent into an MCP server exposing its tools over HTTP or stdio transports with a built-in CLI.",
+      "integrationType": "integration",
+      "sdk": "agents",
+      "maintainedBy": "community",
+      "languages": {
+        "python": {
+          "package": "strands-mcp-server",
+          "registryUrl": "https://pypi.org/project/strands-mcp-server/"
+        }
+      },
+      "github": "https://github.com/cagataycali/strands-mcp-server",
+      "addedDate": "2025-11-11"
+    },
+    {
+      "id": "strands-neuraltrust",
+      "name": "strands-neuraltrust",
+      "description": "TrustGuard intervention that evaluates agent input, model responses, tool arguments, and tool results, with blocking and validated transformation.",
+      "integrationType": "intervention",
+      "sdk": "agents",
+      "maintainedBy": "partner",
+      "languages": {
+        "python": {
+          "package": "strands-neuraltrust",
+          "registryUrl": "https://pypi.org/project/strands-neuraltrust/"
+        }
+      },
+      "github": "https://github.com/NeuralTrust/strands-neuraltrust",
+      "docsUrl": "https://docs.neuraltrust.ai/integrations/strands",
+      "addedDate": "2026-09-14"
+    },
+    {
+      "id": "strands-osmo",
+      "name": "strands-osmo",
+      "description": "NVIDIA OSMO workflow orchestration tools for Strands Agents to submit, monitor, and debug multi-stage GPU compute pipelines.",
+      "integrationType": "tool",
+      "sdk": "agents",
+      "maintainedBy": "community",
+      "languages": {
+        "python": {
+          "package": "strands-osmo",
+          "registryUrl": "https://pypi.org/project/strands-osmo/"
+        }
+      },
+      "github": "https://github.com/cagataycali/strands-osmo",
+      "docsUrl": "https://cagataycali.github.io/strands-osmo/",
+      "addedDate": "2026-05-14"
+    },
+    {
+      "id": "strands-pack",
+      "name": "strands-pack",
+      "description": "Collection of 54 ready-to-use Strands tools spanning AI media generation, Google Workspace, AWS services, social media, and smart home.",
+      "integrationType": "tool",
+      "sdk": "agents",
+      "maintainedBy": "community",
+      "languages": {
+        "python": {
+          "package": "strands-pack",
+          "registryUrl": "https://pypi.org/project/strands-pack/"
+        }
+      },
+      "github": "https://github.com/labeveryday/strands-pack",
+      "addedDate": "2026-02-23"
+    },
+    {
+      "id": "strands-perplexity",
+      "name": "strands-perplexity",
+      "description": "Perplexity Search API tool for Strands Agents enabling real-time web search with citations, regional filtering, and multi-query support.",
+      "integrationType": "tool",
+      "sdk": "agents",
+      "maintainedBy": "community",
+      "languages": {
+        "python": {
+          "package": "strands-perplexity",
+          "registryUrl": "https://pypi.org/project/strands-perplexity/"
+        }
+      },
+      "github": "https://github.com/mkmeral/strands-perplexity",
+      "docsUrl": "https://strandsagents.com/docs/integrations/tools/strands-perplexity/",
+      "addedDate": "2026-03-26"
+    },
+    {
+      "id": "strands-pixeltable",
+      "name": "strands-pixeltable",
+      "description": "Pixeltable as a Strands MemoryStore with embedding-indexed semantic recall, plus read-only tools for querying and searching Pixeltable tables.",
+      "integrationType": "memory-store",
+      "sdk": "agents",
+      "maintainedBy": "partner",
+      "languages": {
+        "python": {
+          "package": "strands-pixeltable",
+          "registryUrl": "https://pypi.org/project/strands-pixeltable/"
+        }
+      },
+      "github": "https://github.com/pixeltable/strands-pixeltable",
+      "docsUrl": "https://github.com/pixeltable/strands-pixeltable#readme",
+      "addedDate": "2026-10-17"
+    },
+    {
+      "id": "strands-postgresql-session-manager",
+      "name": "strands-postgresql-session-manager",
+      "description": "PostgreSQL-backed session manager for Strands Agents with full ACID guarantees for persistent conversation history.",
+      "integrationType": "session-manager",
+      "sdk": "agents",
+      "maintainedBy": "community",
+      "languages": {
+        "python": {
+          "package": "strands-postgresql-session-manager",
+          "registryUrl": "https://pypi.org/project/strands-postgresql-session-manager/"
+        }
+      },
+      "github": "https://github.com/macuartin/strands-postgresql-session-manager",
+      "addedDate": "2025-12-02"
+    },
+    {
+      "id": "strands-redis-session-manager",
+      "name": "strands-redis-session-manager",
+      "description": "Redis-backed session manager persisting agent sessions with configurable key namespaces and optional rolling expiration for distributed apps.",
+      "integrationType": "session-manager",
+      "sdk": "agents",
+      "maintainedBy": "community",
+      "languages": {
+        "python": {
+          "package": "strands-redis-session-manager",
+          "registryUrl": "https://pypi.org/project/strands-redis-session-manager/"
+        }
+      },
+      "github": "https://github.com/lekhnath/strands-redis-session-manager",
+      "addedDate": "2025-11-16"
+    },
+    {
+      "id": "strands-rendercv",
+      "name": "strands-rendercv",
+      "description": "Strands Agents tool for generating formatted CVs and resumes from structured data using the RenderCV engine.",
+      "integrationType": "tool",
+      "sdk": "agents",
+      "maintainedBy": "community",
+      "languages": {
+        "python": {
+          "package": "strands-rendercv",
+          "registryUrl": "https://pypi.org/project/strands-rendercv/"
+        }
+      },
+      "github": "https://github.com/cagataycali/strands-rendercv",
+      "addedDate": "2026-01-07"
+    },
+    {
+      "id": "strands-robots",
+      "name": "strands-robots",
+      "description": "AI-powered robot control, simulation, and training tools for Strands Agents integrating with MuJoCo, Isaac Sim, Newton, and robotics learning frameworks.",
+      "integrationType": "tool",
+      "sdk": "agents",
+      "maintainedBy": "community",
+      "languages": {
+        "python": {
+          "package": "strands-robots",
+          "registryUrl": "https://pypi.org/project/strands-robots/"
+        }
+      },
+      "github": "https://github.com/cagataycali/strands-robots",
+      "addedDate": "2026-02-24"
+    },
+    {
+      "id": "strands-sapiens",
+      "name": "strands-sapiens",
+      "description": "Strands tool wrappers for Meta Sapiens2 adding human-centric vision — segmentation, normal estimation, and depth prediction.",
+      "integrationType": "tool",
+      "sdk": "agents",
+      "maintainedBy": "community",
+      "languages": {
+        "python": {
+          "package": "strands-sapiens",
+          "registryUrl": "https://pypi.org/project/strands-sapiens/"
+        }
+      },
+      "github": "https://github.com/cagataycali/strands-sapiens",
+      "docsUrl": "https://cagataycali.github.io/strands-sapiens/",
+      "addedDate": "2026-05-04"
+    },
+    {
+      "id": "strands-spraay",
+      "name": "strands-spraay",
+      "description": "Spraay Protocol batch payment tool for Strands Agents to send ETH or ERC-20 tokens to up to 200 recipients in a single Base transaction with ~80% gas savings.",
+      "integrationType": "tool",
+      "sdk": "agents",
+      "maintainedBy": "community",
+      "languages": {
+        "python": {
+          "package": "strands-agents-spraay",
+          "registryUrl": "https://pypi.org/project/strands-agents-spraay/"
+        }
+      },
+      "github": "https://github.com/plagtech/strands-agents-spraay",
+      "docsUrl": "https://strandsagents.com/docs/integrations/tools/strands-spraay/",
+      "addedDate": "2026-05-14"
+    },
+    {
+      "id": "strands-sprites",
+      "name": "Sprites",
+      "description": "Run Strands shell commands and file tools in persistent Sprites Linux environments, with asynchronous output streaming and remote execution deadlines.",
+      "integrationType": "integration",
+      "sdk": "agents",
+      "maintainedBy": "partner",
+      "languages": {
+        "python": {
+          "package": "strands-sprites",
+          "registryUrl": "https://pypi.org/project/strands-sprites/"
+        }
+      },
+      "github": "https://github.com/superfly/strands-sprites",
+      "docsUrl": "https://github.com/superfly/strands-sprites#readme",
+      "addedDate": "2026-10-09"
+    },
+    {
+      "id": "strands-sql",
+      "name": "strands-sql",
+      "description": "General-purpose SQL tool for Strands Agents — PostgreSQL, MySQL, and SQLite via SQLAlchemy.",
+      "integrationType": "tool",
+      "sdk": "agents",
+      "maintainedBy": "community",
+      "languages": {
+        "python": {
+          "package": "strands-sql",
+          "registryUrl": "https://pypi.org/project/strands-sql/"
+        }
+      },
+      "github": "https://github.com/NithiN-1808/strands-sql",
+      "docsUrl": "https://strandsagents.com/docs/integrations/tools/strands-sql/",
+      "addedDate": "2026-04-11"
+    },
+    {
+      "id": "strands-stigmer",
+      "name": "strands-stigmer",
+      "description": "The execution graph of AWS for Strands agents, providing verified method contracts with IAM permissions, call chains, and least-privilege policies.",
+      "integrationType": "tool",
+      "sdk": "agents",
+      "maintainedBy": "community",
+      "languages": {
+        "python": {
+          "package": "strands-stigmer",
+          "registryUrl": "https://pypi.org/project/strands-stigmer/"
+        }
+      },
+      "github": "https://github.com/LNSHRIVAS/stigmer",
+      "docsUrl": "https://stigmer.network/strands-stigmer/",
+      "addedDate": "2026-08-05"
+    },
+    {
+      "id": "strands-swarms",
+      "name": "strands-swarms",
+      "description": "Task-based swarm orchestration for Strands Agents that coordinates multiple agents working on decomposed subtasks in parallel.",
+      "integrationType": "agent-extension",
+      "sdk": "agents",
+      "maintainedBy": "community",
+      "languages": {
+        "python": {
+          "package": "strands-swarms",
+          "registryUrl": "https://pypi.org/project/strands-swarms/"
+        }
+      },
+      "github": "https://github.com/JackXu0/strands-swarms",
+      "addedDate": "2026-01-29"
+    },
+    {
+      "id": "strands-tealtiger",
+      "name": "strands-tealtiger",
+      "description": "Deterministic governance intervention — tool allowlists, PII/secret detection, prompt injection defense, cost budgets, and kill switch. No LLM, no server, <2ms.",
+      "integrationType": "intervention",
+      "sdk": "agents",
+      "maintainedBy": "community",
+      "languages": {
+        "python": {
+          "package": "strands-tealtiger",
+          "registryUrl": "https://pypi.org/project/strands-tealtiger/"
+        }
+      },
+      "github": "https://github.com/agentguard-ai/tealtiger",
+      "docsUrl": "https://docs.tealtiger.ai/integrations/strands",
+      "addedDate": "2026-08-19"
+    },
+    {
+      "id": "strands-teams",
+      "name": "strands-teams",
+      "description": "Microsoft Teams notification tool for Strands Agents that sends rich Adaptive Card messages and formatted status updates to Teams channels and chats.",
+      "integrationType": "tool",
+      "sdk": "agents",
+      "maintainedBy": "community",
+      "languages": {
+        "python": {
+          "package": "strands-teams",
+          "registryUrl": "https://pypi.org/project/strands-teams/"
+        }
+      },
+      "github": "https://github.com/eraykeskinmac/strands-teams",
+      "docsUrl": "https://strandsagents.com/docs/integrations/tools/strands-teams/",
+      "addedDate": "2025-12-05"
+    },
+    {
+      "id": "strands-telegram",
+      "name": "strands-telegram",
+      "description": "Telegram Bot API integration for Strands Agents covering 60+ methods for messages, media, group management, and inline queries.",
+      "integrationType": "tool",
+      "sdk": "agents",
+      "maintainedBy": "community",
+      "languages": {
+        "python": {
+          "package": "strands-telegram",
+          "registryUrl": "https://pypi.org/project/strands-telegram/"
+        }
+      },
+      "github": "https://github.com/eraykeskinmac/strands-telegram",
+      "docsUrl": "https://strandsagents.com/docs/integrations/tools/strands-telegram/",
+      "addedDate": "2025-12-05"
+    },
+    {
+      "id": "strands-telegram-listener",
+      "name": "strands-telegram-listener",
+      "description": "Real-time Telegram message listener for Strands Agents that monitors incoming messages and events, enabling agents to react and reply automatically.",
+      "integrationType": "tool",
+      "sdk": "agents",
+      "maintainedBy": "community",
+      "languages": {
+        "python": {
+          "package": "strands-telegram-listener",
+          "registryUrl": "https://pypi.org/project/strands-telegram-listener/"
+        }
+      },
+      "github": "https://github.com/eraykeskinmac/strands-telegram-listener",
+      "docsUrl": "https://strandsagents.com/docs/integrations/tools/strands-telegram-listener/",
+      "addedDate": "2025-12-05"
+    },
+    {
+      "id": "strands-token-telemetry",
+      "name": "strands-token-telemetry",
+      "description": "Emits Strands agent token usage as CloudWatch EMF metrics for cost visibility and capacity planning.",
+      "integrationType": "observability",
+      "sdk": "agents",
+      "maintainedBy": "partner",
+      "languages": {
+        "python": {
+          "package": "strands-token-telemetry",
+          "registryUrl": "https://pypi.org/project/strands-token-telemetry/"
+        }
+      },
+      "github": "https://github.com/flockcover/strands-token-telemetry",
+      "addedDate": "2026-02-20"
+    },
+    {
+      "id": "strands-transformers",
+      "name": "strands-transformers",
+      "description": "HuggingFace Transformers integration for Strands Agents providing universal local inference across all tasks and modalities without hardcoding.",
+      "integrationType": "model-provider",
+      "sdk": "agents",
+      "maintainedBy": "community",
+      "languages": {
+        "python": {
+          "package": "strands-transformers",
+          "registryUrl": "https://pypi.org/project/strands-transformers/"
+        }
+      },
+      "github": "https://github.com/cagataycali/strands-transformers",
+      "addedDate": "2026-06-14"
+    },
+    {
+      "id": "strands-valkey-session-manager",
+      "name": "strands-valkey-session-manager",
+      "description": "Valkey/Redis-backed session manager persisting conversation history with low latency on ElastiCache and Upstash.",
+      "integrationType": "session-manager",
+      "sdk": "agents",
+      "maintainedBy": "community",
+      "languages": {
+        "python": {
+          "package": "strands-valkey-session-manager",
+          "registryUrl": "https://pypi.org/project/strands-valkey-session-manager/"
+        }
+      },
+      "github": "https://github.com/jeromevdl/strands-valkey-session-manager",
+      "docsUrl": "https://strandsagents.com/docs/integrations/session-managers/strands-valkey-session-manager/",
+      "addedDate": "2025-11-17"
+    },
+    {
+      "id": "strands-web-llm",
+      "name": "strands-web-llm",
+      "description": "WebLLM model provider for Strands Agents with browser WebGPU inference and a bridge for Node.js Harness.",
+      "integrationType": "model-provider",
+      "sdk": "agents",
+      "maintainedBy": "community",
+      "languages": {
+        "typescript": {
+          "package": "strands-web-llm",
+          "registryUrl": "https://www.npmjs.com/package/strands-web-llm"
+        }
+      },
+      "github": "https://github.com/ykoh42/web-llm-adapters",
+      "docsUrl": "https://github.com/ykoh42/web-llm-adapters/tree/main/packages/strands-web-llm",
+      "addedDate": "2026-10-19"
+    },
+    {
+      "id": "strands-xa11y",
+      "name": "strands-xa11y",
+      "description": "Give agents computer use on macOS, Windows, and Linux. Control native desktop apps through the OS accessibility tree.",
+      "integrationType": "tool",
+      "sdk": "agents",
+      "maintainedBy": "community",
+      "languages": {
+        "python": {
+          "package": "strands-xa11y",
+          "registryUrl": "https://pypi.org/project/strands-xa11y/"
+        }
+      },
+      "github": "https://github.com/xa11y/xa11y",
+      "docsUrl": "https://xa11y.dev/guides/strands/",
+      "addedDate": "2026-08-22"
+    },
+    {
+      "id": "strands-you",
+      "name": "strands-you",
+      "description": "One-line You.com web search, cited research, finance, and docs tools for Strands agents via preconfigured MCP servers and bundled skills.",
+      "integrationType": "plugin",
+      "sdk": "agents",
+      "maintainedBy": "partner",
+      "languages": {
+        "python": {
+          "package": "strands-you",
+          "registryUrl": "https://pypi.org/project/strands-you/"
+        },
+        "typescript": {
+          "package": "@youdotcom-oss/strands-agents",
+          "registryUrl": "https://www.npmjs.com/package/@youdotcom-oss/strands-agents"
+        }
+      },
+      "github": "https://github.com/youdotcom-oss/agent-skills",
+      "docsUrl": "https://github.com/youdotcom-oss/agent-skills/blob/main/packages/strands-agents/README.md",
+      "addedDate": "2026-10-10"
+    },
+    {
+      "id": "subagent",
+      "name": "Subagent",
+      "description": "Delegate a self-contained task to a child agent that runs in its own context and returns a final report.",
+      "integrationType": "tool",
+      "sdk": "agents",
+      "maintainedBy": "strands",
+      "languages": {
+        "python": {},
+        "typescript": {}
+      },
+      "github": "https://github.com/strands-agents/harness-sdk/tree/main/strands-py/src/strands/vended_tools/subagent",
+      "docsUrl": "https://strandsagents.com/docs/user-guide/sdk/tools/vended-tools/subagent/",
+      "addedDate": "2026-10-14"
+    },
+    {
+      "id": "supabase-strands",
+      "name": "supabase-strands",
+      "description": "Supabase-backed session manager for Strands Agents that persists conversation history in a PostgreSQL database hosted on Supabase.",
+      "integrationType": "session-manager",
+      "sdk": "agents",
+      "maintainedBy": "community",
+      "languages": {
+        "python": {
+          "package": "supabase-strands",
+          "registryUrl": "https://pypi.org/project/supabase-strands/"
+        }
+      },
+      "github": "https://github.com/siddharthkrish/strands-supabase-session-manager",
+      "addedDate": "2026-02-25"
+    },
+    {
+      "id": "swarm",
+      "name": "Swarm",
+      "description": "Spin up a team of specialized sub-agents that collaborate through handoffs, with configurable policies and limits.",
+      "integrationType": "tool",
+      "sdk": "agents",
+      "maintainedBy": "strands",
+      "languages": {
+        "python": {},
+        "typescript": {}
+      },
+      "github": "https://github.com/strands-agents/harness-sdk/tree/main/strands-py/src/strands/vended_tools/swarm",
+      "docsUrl": "https://strandsagents.com/docs/user-guide/sdk/tools/vended-tools/swarm/",
+      "addedDate": "2026-10-21"
+    },
+    {
+      "id": "temporal",
+      "name": "temporal",
+      "description": "Durable execution for Strands agents via Temporal workflows, so every model call and tool invocation survives crashes and restarts.",
+      "integrationType": "integration",
+      "sdk": "agents",
+      "maintainedBy": "partner",
+      "languages": {
+        "python": {
+          "package": "temporalio[strands-agents]",
+          "registryUrl": "https://pypi.org/project/temporalio/"
+        }
+      },
+      "github": "https://github.com/temporalio/sdk-python",
+      "docsUrl": "https://docs.temporal.io/develop/python/integrations/strands-agents",
+      "addedDate": "2026-06-01"
+    },
+    {
+      "id": "traceai",
+      "name": "traceai",
+      "description": "OpenTelemetry instrumentation for the Strands Agents TypeScript SDK, part of the Future AGI traceAI observability framework.",
+      "integrationType": "observability",
+      "sdk": "agents",
+      "maintainedBy": "partner",
+      "languages": {
+        "typescript": {
+          "package": "@traceai/strands",
+          "registryUrl": "https://www.npmjs.com/package/@traceai/strands"
+        }
+      },
+      "github": "https://github.com/future-agi/traceAI",
+      "addedDate": "2026-03-10"
+    },
+    {
+      "id": "utcp",
+      "name": "utcp",
+      "description": "Universal Tool Calling Protocol adapter enabling tool discovery and invocation across HTTP, WebSocket, and other transports without wrapper servers.",
+      "integrationType": "tool",
+      "sdk": "agents",
+      "maintainedBy": "partner",
+      "languages": {
+        "python": {
+          "package": "strands-utcp",
+          "registryUrl": "https://pypi.org/project/strands-utcp/"
+        }
+      },
+      "github": "https://github.com/universal-tool-calling-protocol/python-utcp",
+      "docsUrl": "https://strandsagents.com/docs/integrations/tools/utcp/",
+      "addedDate": "2025-10-08"
+    },
+    {
+      "id": "valyu-agentcore",
+      "name": "valyu-agentcore",
+      "description": "Valyu search tools for AWS Bedrock AgentCore providing web, financial, academic, biomedical, patent, and regulatory data search.",
+      "integrationType": "tool",
+      "sdk": "agents",
+      "maintainedBy": "partner",
+      "languages": {
+        "python": {
+          "package": "valyu-agentcore",
+          "registryUrl": "https://pypi.org/project/valyu-agentcore/"
+        }
+      },
+      "github": "https://github.com/valyu-network/valyu-agentcore",
+      "docsUrl": "https://docs.valyu.ai/integrations/aws-agentcore",
+      "addedDate": "2025-12-04"
+    },
+    {
+      "id": "vercel-ai",
+      "name": "Vercel AI SDK",
+      "description": "Run Strands agents on any Vercel AI SDK provider through the VercelModel adapter, using @ai-sdk packages.",
+      "integrationType": "model-provider",
+      "sdk": "agents",
+      "maintainedBy": "strands",
+      "languages": {
+        "typescript": {}
+      },
+      "github": "https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/vercel.ts",
+      "docsUrl": "https://strandsagents.com/docs/user-guide/sdk/model-providers/vercel/",
+      "addedDate": "2026-03-27"
+    },
+    {
+      "id": "vllm",
+      "name": "vllm",
+      "description": "vLLM open-source inference server as a Strands Agents model provider with Token-In/Token-Out capture for RL training.",
+      "integrationType": "model-provider",
+      "sdk": "agents",
+      "maintainedBy": "community",
+      "languages": {
+        "python": {
+          "package": "strands-vllm",
+          "registryUrl": "https://pypi.org/project/strands-vllm/"
+        }
+      },
+      "github": "https://github.com/agents-community/strands-vllm",
+      "docsUrl": "https://strandsagents.com/docs/integrations/model-providers/vllm/",
+      "addedDate": "2026-01-23"
+    },
+    {
+      "id": "web-fetch",
+      "name": "Web Fetch",
+      "description": "Fetch a URL and return its content as markdown, or have an analyst agent answer a prompt about the page.",
+      "integrationType": "tool",
+      "sdk": "agents",
+      "maintainedBy": "strands",
+      "languages": {
+        "python": {},
+        "typescript": {}
+      },
+      "github": "https://github.com/strands-agents/harness-sdk/tree/main/strands-py/src/strands/vended_tools/web_fetch",
+      "docsUrl": "https://strandsagents.com/docs/user-guide/sdk/tools/vended-tools/web-fetch/",
+      "addedDate": "2026-09-15"
+    },
+    {
+      "id": "welt",
+      "name": "welt",
+      "description": "Slack front end for Strands agents on Amazon Bedrock AgentCore — streaming replies, file exchange, and human-in-the-loop approvals in threads.",
+      "integrationType": "integration",
+      "sdk": "agents",
+      "maintainedBy": "community",
+      "languages": {
+        "python": {
+          "package": "welt-io-strands",
+          "registryUrl": "https://pypi.org/project/welt-io-strands/"
+        },
+        "typescript": {
+          "package": "@welt-io/strands",
+          "registryUrl": "https://www.npmjs.com/package/@welt-io/strands"
+        }
+      },
+      "github": "https://github.com/iwamot/welt",
+      "docsUrl": "https://strandsagents.com/docs/integrations/integrations/welt/",
+      "addedDate": "2026-08-04"
+    },
+    {
+      "id": "write",
+      "name": "Write",
+      "description": "Create a new text file or overwrite an existing one with the provided content.",
+      "integrationType": "tool",
+      "sdk": "agents",
+      "maintainedBy": "strands",
+      "languages": {
+        "python": {},
+        "typescript": {}
+      },
+      "github": "https://github.com/strands-agents/harness-sdk/tree/main/strands-py/src/strands/vended_tools/write",
+      "docsUrl": "https://strandsagents.com/docs/user-guide/sdk/tools/vended-tools/write/",
+      "addedDate": "2026-10-30"
+    },
+    {
+      "id": "writer",
+      "name": "Writer",
+      "description": "Run Strands agents on Writer Palmyra models, with tool calling, structured output, and enterprise tasks.",
+      "integrationType": "model-provider",
+      "sdk": "agents",
+      "maintainedBy": "strands",
+      "languages": {
+        "python": {}
+      },
+      "github": "https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/writer.py",
+      "docsUrl": "https://strandsagents.com/docs/user-guide/sdk/model-providers/writer/",
+      "addedDate": "2025-07-09"
+    },
+    {
+      "id": "xai",
+      "name": "xai",
+      "description": "xAI's Grok models for Strands Agents, with server-side tools for real-time X access, web search, and code execution.",
+      "integrationType": "model-provider",
+      "sdk": "agents",
+      "maintainedBy": "community",
+      "languages": {
+        "python": {
+          "package": "strands-xai",
+          "registryUrl": "https://pypi.org/project/strands-xai/"
+        }
+      },
+      "github": "https://github.com/Cerrix/strands-xai",
+      "docsUrl": "https://strandsagents.com/docs/integrations/model-providers/xai/",
+      "addedDate": "2026-02-03"
+    },
+    {
+      "id": "zep-strands",
+      "name": "zep-strands",
+      "description": "Long-term memory for Strands agents backed by Zep's temporal knowledge graph, with context injection, server-side extraction, and graph search.",
+      "integrationType": "memory-store",
+      "sdk": "agents",
+      "maintainedBy": "community",
+      "languages": {
+        "python": {
+          "package": "zep-strands",
+          "registryUrl": "https://pypi.org/project/zep-strands/"
+        }
+      },
+      "github": "https://github.com/getzep/zep",
+      "docsUrl": "https://help.getzep.com/strands-memory/",
+      "addedDate": "2026-08-10"
+    }
+  ]
+}
