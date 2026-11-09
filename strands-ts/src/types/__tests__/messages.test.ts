@@ -618,7 +618,9 @@ describe('restoring saved data with an unknown content block type', () => {
 
     expect(block).toEqual(new UnknownBlock({ futureBlock: { value: 1 } }))
     expect(warnSpy.mock.calls).toEqual([
-      ['block_keys=<futureBlock> | unknown content block type | keeping it unchanged | model providers skip it'],
+      [
+        'block_keys=<futureBlock> | unknown content block type from a newer sdk version | keeping it in history and leaving it out of model requests | upgrade the sdk to use it',
+      ],
     ])
   })
 
@@ -644,11 +646,17 @@ describe('restoring saved data with an unknown content block type', () => {
     expect(block.toJSON()).toStrictEqual(saved)
   })
 
-  it('ToolResultBlock.fromJSON still throws on unknown content in caller input', () => {
+  it('contentBlockFromData still throws on unknown content inside a tool result', () => {
     const data = { toolResult: { toolUseId: 'tool-1', status: 'success', content: [{ toolReference: {} }] } }
 
-    expect(() => ToolResultBlock.fromJSON(data as never)).toThrow('Unknown ToolResultContentData type')
     expect(() => contentBlockFromData(data as never)).toThrow('Unknown ToolResultContentData type')
+  })
+
+  it('ToolResultBlock.fromJSON keeps unknown content', () => {
+    using _warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    const data = { toolResult: { toolUseId: 'tool-1', status: 'success', content: [{ toolReference: {} }] } }
+
+    expect(ToolResultBlock.fromJSON(data as never).content).toEqual([new UnknownBlock({ toolReference: {} })])
   })
 
   it('contentBlockFromSavedData converts known types as usual, without a warning', () => {
@@ -658,10 +666,10 @@ describe('restoring saved data with an unknown content block type', () => {
     expect(warnSpy).not.toHaveBeenCalled()
   })
 
-  it('Message._fromSavedData restores the message and serializes it back unchanged', () => {
+  it('Message.fromJSON restores the message and serializes it back unchanged', () => {
     using _warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
 
-    const message = Message._fromSavedData(savedData)
+    const message = Message.fromJSON(savedData)
 
     expect(message.content).toEqual([
       new TextBlock('Hello'),
@@ -673,7 +681,7 @@ describe('restoring saved data with an unknown content block type', () => {
 
   it('Message.clone keeps the UnknownBlock without warning again', () => {
     using warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
-    const message = Message._fromSavedData(savedData)
+    const message = Message.fromJSON(savedData)
     warnSpy.mockClear()
 
     const copy = message.clone()

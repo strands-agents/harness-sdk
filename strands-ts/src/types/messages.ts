@@ -117,18 +117,6 @@ export class Message implements JSONSerializable<MessageData> {
     return Message._fromData(data, (block) => contentBlockFromData(block))
   }
 
-  /**
-   * Creates a Message from data the SDK saved earlier, such as a snapshot. Unlike {@link Message.fromMessageData},
-   * it keeps a content block of a type this version does not recognize as an {@link UnknownBlock}.
-   *
-   * @param data - Saved MessageData
-   * @returns Message instance
-   * @internal
-   */
-  static _fromSavedData(data: MessageData): Message {
-    return Message._fromData(data, (block) => contentBlockFromSavedData(block))
-  }
-
   private static _fromData(data: MessageData, toContentBlock: (block: ContentBlockData) => ContentBlock): Message {
     return new Message({
       role: data.role,
@@ -153,14 +141,15 @@ export class Message implements JSONSerializable<MessageData> {
   }
 
   /**
-   * Creates a Message instance from MessageData.
-   * Alias for fromMessageData for API consistency.
+   * Creates a Message from data {@link Message.toJSON} produced, such as a saved session. Unlike
+   * {@link Message.fromMessageData}, it keeps a content block of a type this version does not recognize, also inside
+   * a tool result, as an {@link UnknownBlock}, so data a newer SDK version saved still loads.
    *
    * @param data - MessageData to deserialize
    * @returns Message instance
    */
   static fromJSON(data: MessageData): Message {
-    return Message.fromMessageData(data)
+    return Message._fromData(data, (block) => contentBlockFromSavedData(block))
   }
 
   /**
@@ -461,24 +450,13 @@ export class ToolResultBlock implements JSONSerializable<{ toolResult: ToolResul
   }
 
   /**
-   * Creates a ToolResultBlock instance from its wrapped data format.
+   * Creates a ToolResultBlock instance from its wrapped data format. Content of a type this version does not
+   * recognize becomes an {@link UnknownBlock}, so data a newer SDK version saved still loads.
    *
    * @param data - Wrapped ToolResultBlockData to deserialize
    * @returns ToolResultBlock instance
    */
   static fromJSON(data: { toolResult: ToolResultBlockData }): ToolResultBlock {
-    return toolResultBlockFromData(data, rejectUnknown)
-  }
-
-  /**
-   * Creates a ToolResultBlock from data the SDK saved earlier. Unlike {@link ToolResultBlock.fromJSON}, it keeps
-   * content of a type this version does not recognize as an {@link UnknownBlock}.
-   *
-   * @param data - Saved ToolResultBlockData
-   * @returns ToolResultBlock instance
-   * @internal
-   */
-  static _fromSavedData(data: { toolResult: ToolResultBlockData }): ToolResultBlock {
     return toolResultBlockFromData(data, keepUnknown())
   }
 }
@@ -1255,7 +1233,7 @@ function keepUnknown(options: { warn?: boolean } = {}): OnUnknown {
   return (data) => {
     if (options.warn !== false) {
       logger.warn(
-        `block_keys=<${Object.keys(data).join(',')}> | unknown content block type | keeping it unchanged | model providers skip it`
+        `block_keys=<${Object.keys(data).join(',')}> | unknown content block type from a newer sdk version | keeping it in history and leaving it out of model requests | upgrade the sdk to use it`
       )
     }
     return UnknownBlock.fromJSON(data as Record<string, unknown>)
