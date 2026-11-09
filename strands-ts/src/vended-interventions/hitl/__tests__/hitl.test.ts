@@ -1066,22 +1066,9 @@ describe('HumanInTheLoop', () => {
       expect(auxStreamSpy).toHaveBeenCalledTimes(1)
     })
 
-    it("'auto' keeps the other options", async () => {
-      const result = await invokeAuto(new HumanInTheLoop('auto', { allowedTools: ['readFile'] }))
-
-      expect(result).toEqual({ stopReason: 'endTurn', toolExecuted: true })
-    })
-
-    it("'auto' uses a custom classifier when one is passed", async () => {
-      const result = await invokeAuto(
-        new HumanInTheLoop('auto', { classifier: () => ({ requiresHumanInTheLoop: true, reason: 'risky' }) })
-      )
-
-      expect(result).toEqual({ stopReason: 'interrupt', toolExecuted: false })
-    })
-
-    it("'auto' with classifier: false throws", () => {
-      expect(() => new HumanInTheLoop('auto', { classifier: false })).toThrow('requires a classifier')
+    it("'auto' takes no other options", () => {
+      // @ts-expect-error -- 'auto' is a standalone mode; options require a config instead
+      expect(() => new HumanInTheLoop('auto', { allowedTools: ['readFile'] })).toThrow("'auto' takes no other options")
     })
 
     it('an unknown mode throws', () => {

@@ -9,7 +9,7 @@ import json
 import logging
 import threading
 from collections.abc import Awaitable
-from typing import Any, Literal, Protocol, runtime_checkable
+from typing import Any, Literal, Protocol, overload, runtime_checkable
 
 from ...decisions import DecisionModel
 from ...hooks.events import BeforeToolCallEvent
@@ -110,11 +110,9 @@ class HumanInTheLoop(InterventionHandler):
         agent = Agent(interventions=[HumanInTheLoop(allowed_tools=["read_file"])])
 
         # Auto mode - the SDK's current best approval strategy decides which calls need a human
-        # (today: LLM risk classification). May change between releases; pin `classifier` to fix it.
+        # (today: LLM risk classification). Takes no other options and may change between
+        # releases; configure the handler explicitly (e.g. `classifier=`) for fixed behavior.
         agent = Agent(interventions=[HumanInTheLoop("auto")])
-
-        # Auto mode with options
-        agent = Agent(interventions=[HumanInTheLoop("auto", allowed_tools=["read_file", "list_dir"])])
 
         # Risk classification via a DecisionModel, on the model you pass it
         agent = Agent(model=model, interventions=[HumanInTheLoop(classifier=LLMDecisionModel(model=model))])
@@ -131,6 +129,22 @@ class HumanInTheLoop(InterventionHandler):
     """
 
     name = "strands:human-in-the-loop"
+
+    @overload
+    def __init__(self, mode: Literal["auto"], /) -> None: ...
+
+    @overload
+    def __init__(
+        self,
+        /,
+        *,
+        allowed_tools: list[str] | None = None,
+        classifier: bool | LLMClassifierConfig | DecisionModel | HumanInTheLoopClassifier | None = None,
+        enable_trust: bool = False,
+        evaluate_trust: EvaluateCallback | None = None,
+        evaluate: EvaluateCallback | None = None,
+        ask: AskCallback | Literal["stdio"] | None = None,
+    ) -> None: ...
 
     def __init__(
         self,
@@ -151,10 +165,10 @@ class HumanInTheLoop(InterventionHandler):
                 approval strategy it currently considers the best available. Today that is the
                 built-in LLM risk classifier (the same as ``classifier=True``): low-risk calls run
                 on their own and risky ones are escalated to the human. What ``"auto"`` resolves
-                to may change between releases as better approaches become available, so pass
-                ``classifier`` explicitly if you need fixed behavior. A ``classifier`` passed
-                alongside ``"auto"`` is used as given. Omitted: every tool not in
-                ``allowed_tools`` requires approval.
+                to may change between releases as better approaches become available. It takes
+                no other options: to customize or pin the behavior, omit ``mode`` and configure
+                the handler explicitly (``classifier``, ``allowed_tools``, ...). Omitted: every
+                tool not in ``allowed_tools`` requires approval.
             allowed_tools: Tools that can execute WITHOUT human approval. All other
                 tools require approval. Use ``"*"`` to allow all tools. Prefix with
                 ``!`` to exclude specific tools from ``"*"`` (they still require
@@ -200,7 +214,7 @@ class HumanInTheLoop(InterventionHandler):
 
         Raises:
             ValueError: If ``allowed_tools`` is a single string rather than a list.
-            ValueError: If ``mode`` is unknown, or ``"auto"`` is combined with ``classifier=False``.
+            ValueError: If ``mode`` is unknown, or ``"auto"`` is combined with any other option.
             TypeError: If ``classifier`` is not a bool, ``LLMClassifierConfig``, ``DecisionModel``, or callable.
 
         Note:
@@ -211,7 +225,12 @@ class HumanInTheLoop(InterventionHandler):
         if isinstance(allowed_tools, str):
             raise ValueError("allowed_tools must be a list of tool names, not a single string")
         self._allowed_tools = set(allowed_tools or [])
-        self._classifier = self._resolve_classifier(self._resolve_mode(mode, classifier))
+        if mode is not None:
+            has_options = enable_trust or any(
+                option is not None for option in (allowed_tools, classifier, evaluate_trust, evaluate, ask)
+            )
+            classifier = self._resolve_mode(mode, has_options)
+        self._classifier = self._resolve_classifier(classifier)
         if self._classifier and "*" in self._allowed_tools:
             logger.warning("classifier has no effect when allowed_tools contains '*' — all tools are already allowed")
         self._classified_tool_use_ids: set[str] = set()
@@ -404,31 +423,29 @@ class HumanInTheLoop(InterventionHandler):
         return False
 
     @staticmethod
-    def _resolve_mode(
-        mode: Literal["auto"] | None,
-        classifier: bool | LLMClassifierConfig | DecisionModel | HumanInTheLoopClassifier | None,
-    ) -> bool | LLMClassifierConfig | DecisionModel | HumanInTheLoopClassifier | None:
-        """Fold ``mode`` into the ``classifier`` param.
+    def _resolve_mode(mode: str, has_options: bool) -> Literal[True]:
+        """Resolve ``mode`` to the classifier it stands for.
 
         This is the one place that defines what ``"auto"`` currently resolves to.
 
         Args:
             mode: The raw mode param from the constructor.
-            classifier: The raw classifier param from the constructor.
+            has_options: Whether any other constructor option was passed.
 
         Returns:
-            The classifier param to resolve.
+            The classifier param ``mode`` resolves to.
 
         Raises:
-            ValueError: If ``mode`` is unknown, or ``"auto"`` is combined with ``classifier=False``.
+            ValueError: If ``mode`` is unknown, or ``"auto"`` is combined with any other option.
         """
-        if mode is None:
-            return classifier
         if mode != "auto":
             raise ValueError(f'mode must be "auto" or omitted, got {mode!r}')
-        if classifier is False:
-            raise ValueError('mode="auto" requires a classifier; remove classifier=False')
-        return True if classifier is None else classifier
+        if has_options:
+            raise ValueError(
+                '"auto" takes no other options; omit it and configure HumanInTheLoop explicitly '
+                "(e.g. classifier=..., allowed_tools=...) instead"
+            )
+        return True
 
     @staticmethod
     def _resolve_classifier(

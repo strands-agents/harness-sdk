@@ -1541,56 +1541,51 @@ class TestAutoMode:
 
         create.assert_called_once_with()
 
-    def test_auto_passes_classifier_config_through(self):
-        from strands.vended_interventions.hitl import LLMClassifierConfig
+    def test_auto_classifies_with_the_agent_model(self):
+        executed = []
 
-        config = LLMClassifierConfig(system_prompt="custom")
-        with patch("strands.vended_interventions.hitl.hitl._create_llm_risk_classifier") as create:
-            HumanInTheLoop("auto", classifier=config)
+        @tool(name="read_file")
+        def read_file(path: str) -> str:
+            executed.append(True)
+            return "content"
 
-        create.assert_called_once_with(config)
+        model = MockedModelProvider(
+            [
+                tool_use_message("read_file", tool_input={"path": "/tmp/x"}),
+                tool_use_message(
+                    "_RiskDecision", tool_use_id="risk-1", tool_input={"requires_approval": False, "reason": "read"}
+                ),
+                text_message("Done"),
+            ]
+        )
+        agent = Agent(model=model, tools=[read_file], interventions=[HumanInTheLoop("auto")])
 
-    def test_auto_with_decision_model_uses_it(self):
-        decision_model = StubDecisionModel(False)
-
-        result, executed = run_with_decision_model_auto(decision_model)
+        result = agent("Read the file")
 
         assert result.stop_reason == "end_turn"
         assert executed == [True]
-        assert len(decision_model.calls) == 1
 
-    def test_auto_keeps_other_options(self):
-        result, executed = run_with_decision_model_auto(StubDecisionModel(True), allowed_tools=["delete_file"])
-
-        assert result.stop_reason == "end_turn"
-        assert executed == [True]
-
-    def test_auto_with_classifier_false_raises(self):
-        with pytest.raises(ValueError, match="requires a classifier"):
-            HumanInTheLoop("auto", classifier=False)
+    @pytest.mark.parametrize(
+        "option",
+        [
+            {"allowed_tools": ["read_file"]},
+            {"allowed_tools": []},
+            {"classifier": True},
+            {"classifier": False},
+            {"enable_trust": True},
+            {"evaluate": lambda response: True},
+            {"evaluate_trust": lambda response: True},
+            {"ask": "stdio"},
+        ],
+    )
+    def test_auto_rejects_other_options(self, option):
+        with pytest.raises(ValueError, match='"auto" takes no other options'):
+            HumanInTheLoop("auto", **option)  # type: ignore[call-overload]
 
     def test_unknown_mode_raises(self):
         with pytest.raises(ValueError, match='mode must be "auto"'):
-            HumanInTheLoop("yolo")  # type: ignore[arg-type]
+            HumanInTheLoop("yolo")  # type: ignore[call-overload]
 
     def test_mode_is_positional_only(self):
         with pytest.raises(TypeError):
-            HumanInTheLoop(mode="auto")  # type: ignore[call-arg]
-
-
-def run_with_decision_model_auto(decision_model: DecisionModel, **hitl_kwargs: Any) -> tuple[Any, list[bool]]:
-    executed: list[bool] = []
-
-    @tool(name="delete_file")
-    def delete_file(path: str) -> str:
-        executed.append(True)
-        return "deleted"
-
-    agent = Agent(
-        model=MockedModelProvider(
-            [tool_use_message("delete_file", tool_input={"path": "/data"}), text_message("Done")]
-        ),
-        tools=[delete_file],
-        interventions=[HumanInTheLoop("auto", classifier=decision_model, **hitl_kwargs)],
-    )
-    return agent("Delete the file"), executed
+            HumanInTheLoop(mode="auto")  # type: ignore[call-overload]
