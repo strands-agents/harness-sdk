@@ -166,7 +166,10 @@ class GeminiModel(Model):
             return genai.Client(**self.client_args)
 
     def _format_request_content_part(
-        self, content: ContentBlock, tool_use_id_to_name: dict[str, str]
+        self,
+        content: ContentBlock,
+        tool_use_id_to_name: dict[str, str],
+        skipped: Counter[str] | None = None,
     ) -> genai.types.Part:
         """Format content block into a Gemini part instance.
 
@@ -178,6 +181,7 @@ class GeminiModel(Model):
                 Store the mapping from toolUseId to name for later use in toolResult formatting. This mapping is built
                 as we format the request, ensuring that when we encounter toolResult blocks (which come after toolUse
                 blocks in the message history), we can look up the function name.
+            skipped: Counter for content blocks that are not supported by Gemini.
 
         Returns:
             Gemini part.
@@ -223,23 +227,48 @@ class GeminiModel(Model):
             tool_use_id = content["toolResult"]["toolUseId"]
             function_name = tool_use_id_to_name.get(tool_use_id, tool_use_id)
 
-            return genai.types.Part(
-                function_response=genai.types.FunctionResponse(
-                    id=tool_use_id,
-                    name=function_name,
-                    response={
-                        "output": [
-                            tool_result_content
-                            if "json" in tool_result_content
-                            else self._format_request_content_part(
-                                cast(ContentBlock, tool_result_content),
-                                tool_use_id_to_name,
-                            ).to_json_dict()
-                            for tool_result_content in content["toolResult"]["content"]
-                        ],
-                    },
-                ),
+            output = []
+            parts = []
+
+            for tool_result_content in content["toolResult"]["content"]:
+                if _has_location_source(tool_result_content):
+                    if skipped is not None:
+                        skipped["Location sources are not supported by Gemini | skipping content block"] += 1
+                    continue
+
+                if "text" in tool_result_content:
+                    output.append({"text": tool_result_content["text"]})
+                elif "json" in tool_result_content:
+                    output.append(tool_result_content)
+                elif "image" in tool_result_content:
+                    image = tool_result_content["image"]
+                    parts.append(
+                        genai.types.FunctionResponsePart(
+                            inline_data=genai.types.FunctionResponseBlob(
+                                data=image["source"]["bytes"],
+                                mime_type=mimetypes.types_map.get(f".{image['format']}", "application/octet-stream"),
+                            ),
+                        )
+                    )
+                elif "document" in tool_result_content:
+                    document = tool_result_content["document"]
+                    parts.append(
+                        genai.types.FunctionResponsePart(
+                            inline_data=genai.types.FunctionResponseBlob(
+                                data=document["source"]["bytes"],
+                                mime_type=mimetypes.types_map.get(f".{document['format']}", "application/octet-stream"),
+                            ),
+                        )
+                    )
+
+            function_response = genai.types.FunctionResponse(
+                id=tool_use_id,
+                name=function_name,
+                response={"output": output},
+                parts=parts or None,
             )
+
+            return genai.types.Part(function_response=function_response)
 
         if "toolUse" in content:
             tool_use_id = content["toolUse"]["toolUseId"]
@@ -285,7 +314,7 @@ class GeminiModel(Model):
                 if "cachePoint" in content:
                     skipped["cachePoint content block is not supported by Gemini | skipping"] += 1
                     continue
-                parts.append(self._format_request_content_part(content, tool_use_id_to_name))
+                parts.append(self._format_request_content_part(content, tool_use_id_to_name, skipped))
 
             contents.append(
                 genai.types.Content(

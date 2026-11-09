@@ -397,7 +397,8 @@ async def test_stream_request_with_tool_use_no_reasoning_signature(gemini_client
 
 
 @pytest.mark.asyncio
-async def test_stream_request_with_tool_results(gemini_client, model, model_id):
+async def test_stream_request_with_tool_results(gemini_client, model, model_id, caplog):
+    caplog.set_level(logging.WARNING, logger="strands.models.gemini")
     messages = [
         {
             "role": "user",
@@ -413,6 +414,24 @@ async def test_stream_request_with_tool_results(gemini_client, model, model_id):
                                 "image": {
                                     "format": "jpg",
                                     "source": {"bytes": b"base64encodedimage"},
+                                },
+                            },
+                            {
+                                "image": {
+                                    "format": "png",
+                                    "source": {
+                                        "location": {
+                                            "type": "s3",
+                                            "uri": "s3://my-bucket/image.png",
+                                        },
+                                    },
+                                },
+                            },
+                            {
+                                "document": {
+                                    "format": "pdf",
+                                    "name": "report.pdf",
+                                    "source": {"bytes": b"pdfdata"},
                                 },
                             },
                         ],
@@ -436,14 +455,22 @@ async def test_stream_request_with_tool_results(gemini_client, model, model_id):
                                 "output": [
                                     {"text": "see image"},
                                     {"json": ["see image"]},
-                                    {
-                                        "inline_data": {
-                                            "data": "YmFzZTY0ZW5jb2RlZGltYWdl",
-                                            "mime_type": "image/jpeg",
-                                        },
-                                    },
                                 ],
                             },
+                            "parts": [
+                                {
+                                    "inline_data": {
+                                        "data": "YmFzZTY0ZW5jb2RlZGltYWdl",
+                                        "mime_type": "image/jpeg",
+                                    },
+                                },
+                                {
+                                    "inline_data": {
+                                        "data": "cGRmZGF0YQ==",
+                                        "mime_type": "application/pdf",
+                                    }
+                                },
+                            ],
                         },
                     },
                 ],
@@ -453,6 +480,7 @@ async def test_stream_request_with_tool_results(gemini_client, model, model_id):
         "model": model_id,
     }
     gemini_client.aio.models.generate_content_stream.assert_called_with(**exp_request)
+    assert "Location sources are not supported by Gemini" in caplog.text
 
 
 @pytest.mark.asyncio
