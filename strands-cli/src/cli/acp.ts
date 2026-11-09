@@ -263,7 +263,7 @@ export class AcpService {
     let stopped = false
     let timer: NodeJS.Timeout
     const publish = (): Promise<void> => {
-      const tasks = readBackgroundTasks(session.agent)
+      const tasks = readBackgroundTasks(session.agent).reverse()
       const sent = pending.then(async () => {
         for (const task of tasks) {
           if (stopped) return

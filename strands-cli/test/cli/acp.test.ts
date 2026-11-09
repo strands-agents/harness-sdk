@@ -956,46 +956,68 @@ describe('ACP background tasks', () => {
     }
   })
 
-  it('retries failed task notifications, serializes slow writes, and stops publishing on disposal', async () => {
+  // https://github.com/strands-agents/harness-sdk/pull/5194#discussion_r4507367391
+  it('retries task notifications, serializes oldest-first updates, and stops publishing on disposal', async () => {
     vi.useFakeTimers()
     const agent = new Agent({ model: new SystemPromptRecordingModel(), printer: false })
     const service = new AcpService({}, { buildAgent: async () => agent })
     const slowWrite = deferred()
     const attempts: string[] = []
     const delivered: string[] = []
+    const completedCalls: string[] = []
     const client = {
       notify: async (_method: string, params: acp.SessionNotification) => {
         const task = params.update._meta?.['strands/backgroundTask'] as { status: string } | undefined
-        if (!task) return
+        if (!task || params.update.sessionUpdate !== 'tool_call_update') return
         attempts.push(task.status)
         if (attempts.length === 1) throw new Error('Client write failed')
-        if (task.status === 'completed') await slowWrite.promise
+        if (task.status === 'completed') {
+          completedCalls.push(params.update.toolCallId)
+          await slowWrite.promise
+        }
         delivered.push(task.status)
       },
     } as unknown as acp.AgentContext
     let prompt: Promise<acp.PromptResponse> | undefined
     try {
       const { sessionId } = await service.newSession({ cwd: process.cwd(), mcpServers: [], _meta: optIn }, client)
-      const task = { taskId: 'task', toolUseId: 'call', toolName: 'probe', status: 'working' }
+      const task = {
+        taskId: 'task',
+        toolUseId: 'call',
+        toolName: 'probe',
+        status: 'working',
+        lastUpdatedAt: '2026-01-01T00:00:00Z',
+      }
       agent.appState.set('strands.backgroundTasks', [task])
       await vi.advanceTimersByTimeAsync(400)
       expect(attempts).toEqual(['working', 'working'])
       expect(delivered).toEqual(['working'])
 
-      agent.appState.set('strands.backgroundTasks', [{ ...task, status: 'completed' }])
+      agent.appState.set('strands.backgroundTasks', [
+        { ...task, status: 'completed' },
+        {
+          ...task,
+          taskId: 'newer',
+          toolUseId: 'newer-call',
+          status: 'completed',
+          lastUpdatedAt: '2026-01-01T00:00:01Z',
+        },
+      ])
       await vi.advanceTimersByTimeAsync(200)
       prompt = service.prompt({ sessionId, prompt: [] }, client)
       await vi.advanceTimersByTimeAsync(2_000)
       expect(attempts).toEqual(['working', 'working', 'completed'])
       expect(delivered).toEqual(['working'])
+      expect(completedCalls).toEqual(['call'])
 
       slowWrite.resolve()
       await prompt
-      expect(delivered).toEqual(['working', 'completed'])
+      expect(delivered).toEqual(['working', 'completed', 'completed'])
+      expect(completedCalls).toEqual(['call', 'newer-call'])
       await service.dispose()
       agent.appState.set('strands.backgroundTasks', [{ ...task, taskId: 'later' }])
       await vi.advanceTimersByTimeAsync(1_000)
-      expect(delivered).toEqual(['working', 'completed'])
+      expect(delivered).toEqual(['working', 'completed', 'completed'])
     } finally {
       slowWrite.resolve()
       await prompt?.catch(() => undefined)
