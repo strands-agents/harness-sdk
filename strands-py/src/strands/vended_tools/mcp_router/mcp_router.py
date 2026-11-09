@@ -77,6 +77,8 @@ def make_mcp_router(
 
     # Per-agent connections with WeakKeyDictionary so agents can be garbage collected.
     connections_map: weakref.WeakKeyDictionary[Any, dict[str, MCPClient]] = weakref.WeakKeyDictionary()
+    # Tool names each client's filtered listing returned. Filters are fixed per client, so a cached name stays callable.
+    listed_names: weakref.WeakKeyDictionary[MCPClient, set[str]] = weakref.WeakKeyDictionary()
 
     @tool(name=name, description=description, context="tool_context")
     async def mcp_router_tool(
@@ -125,12 +127,12 @@ def make_mcp_router(
             raise MCPRouterToolError(f"No active connection for id {connection_id!r}")
 
         if command == "list_tools":
-            return await asyncio.to_thread(_handle_list_tools, client)
+            return await _list_and_cache(client, listed_names)
 
         if command == "call_tool":
             if not tool_name:
                 raise MCPRouterToolError("`tool_name` is required for command='call_tool'")
-            await _ensure_tool_listed(client, connection_id, tool_name)
+            await _ensure_tool_listed(client, listed_names, connection_id, tool_name)
             return await client.call_tool_async(
                 tool_use_id=str(uuid4()),
                 name=tool_name,
@@ -238,10 +240,25 @@ def _handle_list_tools(client: MCPClient) -> list[ToolSpec]:
     return [{**t.tool_spec, "name": t.mcp_tool.name} for t in all_tools]
 
 
-async def _ensure_tool_listed(client: MCPClient, connection_id: str, tool_name: str) -> None:
+async def _list_and_cache(
+    client: MCPClient, listed_names: weakref.WeakKeyDictionary[MCPClient, set[str]]
+) -> list[ToolSpec]:
+    specs = await asyncio.to_thread(_handle_list_tools, client)
+    listed_names[client] = {spec["name"] for spec in specs}
+    return specs
+
+
+async def _ensure_tool_listed(
+    client: MCPClient,
+    listed_names: weakref.WeakKeyDictionary[MCPClient, set[str]],
+    connection_id: str,
+    tool_name: str,
+) -> None:
     # MCPClient applies tool_filters only when listing, so a call is checked against the filtered listing.
-    listed = await asyncio.to_thread(_handle_list_tools, client)
-    if not any(spec["name"] == tool_name for spec in listed):
+    if tool_name in listed_names.get(client, set()):
+        return
+    await _list_and_cache(client, listed_names)
+    if tool_name not in listed_names[client]:
         raise MCPRouterToolError(
             f"Tool {tool_name!r} is not available on connection {connection_id!r}. "
             f"Call list_tools to see the tools you can call."
