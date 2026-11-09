@@ -149,14 +149,22 @@ def _without_reasoning(messages: Messages) -> Messages:
     return [message for message in stripped if message["content"]]
 
 
+def _first_summary(result: SummarizeResult) -> ContentBlock | None:
+    """Return ``result``'s first block when it is a summary, which is the one summary a caller places."""
+    block = next(iter(result.content), None)
+    return block if block is not None and "summary" in block else None
+
+
 def _summary_text(result: SummarizeResult) -> str:
-    """Return the text of ``result``'s summary blocks, one per line."""
-    return "\n".join(block["summary"]["text"] for block in result.content if "summary" in block).strip()
+    """Return the text of ``result``'s summary, or "" without one."""
+    summary = _first_summary(result)
+    return summary["summary"]["text"].strip() if summary else ""
 
 
 def _server_side_summary(result: SummarizeResult) -> ContentBlock | None:
-    """Return ``result``'s first summary block that its provider wrote, or None."""
-    return next((block for block in result.content if "summary" in block and block["summary"].get("provider")), None)
+    """Return ``result``'s summary when its provider wrote it, or None."""
+    summary = _first_summary(result)
+    return summary if summary and summary["summary"].get("provider") else None
 
 
 async def _place_text_summary(messages: list[Message], end: int, summary: str, model: Model) -> None:
@@ -208,7 +216,7 @@ class SummarizeStrategy(BaseOffloadStrategy):
     async def _apply_per_message(self, context: ContextState) -> bool:
         """Summarize oldest eligible messages into a single summary message."""
         model = self._resolve_model(context.agent)
-        if not model:
+        if not model or context.agent._cancel_signal.is_set():
             return False
 
         messages = context.messages
@@ -343,8 +351,9 @@ class SummarizeStrategy(BaseOffloadStrategy):
         stash_refs: list[str],
         invocation_context: InvocationContext | None = None,
     ) -> ContentBlock | None:
+        # A cancelled agent leaves the remaining blocks as they are rather than sending a request for each.
         model = self._resolve_model(agent)
-        if not model:
+        if not model or agent._cancel_signal.is_set():
             return None
 
         refs = _format_stash_refs(stash_refs)

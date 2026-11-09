@@ -229,6 +229,65 @@ class TestSummarizeStrategyPerBlock:
         assert "error=<rejected>" in caplog.text
 
     @pytest.mark.asyncio
+    async def test_stops_sending_requests_after_a_cancel(self, mock_agent):
+        calls = []
+
+        async def cancelling_stream(*args, **kwargs):
+            calls.append(args)
+            yield {"messageStart": {"role": "assistant"}}
+            mock_agent._cancel_signal.set()
+            yield {"contentBlockStart": {"start": {}}}
+            yield {"contentBlockDelta": {"delta": {"text": "partial"}}}
+            yield {"contentBlockStop": {}}
+            yield {"messageStop": {"stopReason": "end_turn"}}
+
+        mock_agent.model.stream = cancelling_stream
+        strategy = Offload.summarize("tool_results").when(threshold=100)
+
+        def tool_result_message(tool_use_id: str) -> Message:
+            tool_result = ToolResult(toolUseId=tool_use_id, status="success", content=[{"text": "x" * 10000}])
+            return Message(role="user", content=[ContentBlock(toolResult=tool_result)])
+
+        messages: Messages = [tool_result_message(f"call_{index}") for index in range(5)]
+        mock_agent.messages = messages
+        context = ContextState(messages=messages, agent=mock_agent, utilization=0.5)
+
+        assert await strategy.apply(context) is False
+        assert len(calls) == 1
+        assert messages == [tool_result_message(f"call_{index}") for index in range(5)]
+
+    @pytest.mark.asyncio
+    async def test_skips_a_batch_summary_once_cancelled(self, mock_agent):
+        mock_agent._cancel_signal.set()
+        mock_agent.model.stream = unittest.mock.Mock()
+        messages = TestServerSideSummary._messages()
+        mock_agent.messages = messages
+        strategy = Offload.summarize("*").when(utilization=0.8, preserve_recent=1)
+
+        assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is False
+
+        mock_agent.model.stream.assert_not_called()
+        assert messages == TestServerSideSummary._messages()
+
+    @pytest.mark.asyncio
+    async def test_places_only_the_first_summary_block(self, mock_agent):
+        mock_agent.model.summarize = unittest.mock.AsyncMock(
+            return_value=SummarizeResult(
+                content=[
+                    ContentBlock(summary={"provider": None, "text": "first"}),
+                    ContentBlock(summary={"provider": None, "text": "second"}),
+                ]
+            )
+        )
+        messages = TestClientSideSummariesUseModelSummarize._tool_result_messages()
+        mock_agent.messages = messages
+        strategy = Offload.summarize("tool_results").when(threshold=100)
+
+        assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.5)) is True
+
+        assert messages[1] == TestClientSideSummariesUseModelSummarize._summarized_tool_result("first")
+
+    @pytest.mark.asyncio
     async def test_offloads_video_block_without_summarizing(self, mock_agent):
         mock_agent.model.stream = unittest.mock.Mock()
         strategy = Offload.summarize("*").when(threshold=100)
