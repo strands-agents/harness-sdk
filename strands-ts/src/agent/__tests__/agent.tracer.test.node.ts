@@ -1068,10 +1068,13 @@ describe('Agent tracer integration', () => {
   })
   describe('model span context', () => {
     const contextManager = new AsyncLocalStorageContextManager()
+    let realTracer: Tracer
     const chatSpan = trace.wrapSpanContext({ traceId: '1'.repeat(32), spanId: '2'.repeat(16), traceFlags: 1 })
 
-    beforeAll(() => {
+    beforeAll(async () => {
       context.setGlobalContextManager(contextManager.enable())
+      const actual = await vi.importActual<typeof import('../../telemetry/tracer.js')>('../../telemetry/tracer.js')
+      realTracer = new actual.Tracer()
     })
 
     afterAll(() => {
@@ -1095,7 +1098,7 @@ describe('Agent tracer integration', () => {
       const tracer = getLatestTracer()
       tracer.startModelInvokeSpan.mockReturnValue(chatSpan)
       tracer.withSpanContext.mockImplementation((span: Span | null, fn: () => unknown) =>
-        span ? context.with(trace.setSpan(context.active(), span), fn) : fn()
+        realTracer.withSpanContext(span, fn)
       )
       return agent
     }
