@@ -14,7 +14,7 @@ import pytest
 
 import strands
 from strands.models import ModelCapabilities, ModelInfo, ModelLimits
-from strands.models._injected import count_tokens_as_sent
+from strands.models._request_messages import count_tokens_as_sent
 from strands.models.anthropic import AnthropicModel
 from strands.models.model import CacheConfig, CacheToolsConfig
 from strands.tools import convert_pydantic_to_tool_spec

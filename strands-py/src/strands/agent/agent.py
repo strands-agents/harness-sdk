@@ -81,7 +81,7 @@ from ..middleware.types import (
     MiddlewareStage,
     MiddlewareWrapPhase,
 )
-from ..models._injected import prepare_injected_blocks
+from ..models._request_messages import prepare_request_messages
 from ..models.bedrock import BedrockModel
 from ..models.model import Model, _ModelPlugin
 from ..models.routing import ModelRouter
@@ -1204,7 +1204,7 @@ class Agent(AgentBase, LocalAgent):
                         f"gen_ai.{message['role']}.message",
                         attributes={"role": message["role"], "content": serialize(message["content"])},
                     )
-                temp_messages, _ = prepare_injected_blocks(self.model, temp_messages)
+                temp_messages, _ = prepare_request_messages(self.model, temp_messages)
                 events = self.model.structured_output(output_model, temp_messages, system_prompt=self.system_prompt)
                 async for event in events:
                     if isinstance(event, TypedEvent):

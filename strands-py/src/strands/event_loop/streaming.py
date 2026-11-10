@@ -13,7 +13,7 @@ from pydantic import BaseModel
 
 from ..agent.agent_metadata import AgentMetadata
 from ..agent.invocation_context import InvocationContext
-from ..models._injected import prepare_injected_blocks
+from ..models._request_messages import prepare_request_messages
 from ..models.model import Model
 from ..tools import InvalidToolUseNameException
 from ..tools.tools import validate_tool_use_name
@@ -575,15 +575,7 @@ async def stream_messages(
     # Whitelist only role and content before sending to the model provider.
     # This ensures metadata (and any future non-model fields) never leak to providers.
     messages = [Message(role=msg["role"], content=msg["content"]) for msg in messages]
-    has_summary = any("summary" in block for message in messages for block in message["content"])
-    if has_summary and model.model_info.capabilities.server_side_summary is not True:
-        # Only a provider with server-side summaries reads a summary block; others get its text.
-        for message in messages:
-            message["content"] = [
-                ContentBlock(text=block["summary"]["text"]) if "summary" in block else block
-                for block in message["content"]
-            ]
-    messages, injected_trailing_blocks = prepare_injected_blocks(model, messages)
+    messages, injected_trailing_blocks = prepare_request_messages(model, messages)
     # The cache point stays ahead of injected text, which the next call no longer sends.
     dynamic_trailing_blocks = max(dynamic_trailing_blocks, injected_trailing_blocks)
     start_time = time.time()

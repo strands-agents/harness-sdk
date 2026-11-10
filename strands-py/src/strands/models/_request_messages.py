@@ -1,8 +1,12 @@
-"""Sends a model call's injected blocks in the form the model accepts.
+"""Sends a model call's messages in the form the model accepts.
 
-An ``injected`` block reaches a model whose ``model_info.capabilities.temporary_messages`` is True as it is stored,
-and that provider sends it so the model reads it only until the next user message. Every other model, custom ones
-included, gets the latest user message's injected blocks as text and none of the earlier ones.
+The one place a model call's stored history is turned into what the provider receives, as ``ModelProxy`` does in
+TypeScript: every direct ``Model.stream``, ``structured_output`` and ``count_tokens`` call goes through it.
+
+A ``summary`` block reaches a model whose ``model_info.capabilities.server_side_summary`` is True as it is stored;
+every other model gets its text. An ``injected`` block reaches a model whose ``temporary_messages`` is True as it is
+stored, and that provider sends it so the model reads it only until the next user message. Every other model, custom
+ones included, gets the latest user message's injected blocks as text and none of the earlier ones.
 """
 
 from typing import Any
@@ -11,26 +15,31 @@ from ..types.content import ContentBlock, Message, Messages
 from .model import Model, _latest_user_index
 
 
-def prepare_injected_blocks(model: Model, messages: Messages) -> tuple[Messages, int]:
+def prepare_request_messages(model: Model, messages: Messages) -> tuple[Messages, int]:
     """Return the messages the model accepts, and how many trailing blocks the cache point must stay ahead of.
 
     Args:
         model: The model the messages are sent to.
-        messages: The messages of a model call.
+        messages: The messages of a model call. They are never changed.
 
     Returns:
         The messages to send, and the trailing blocks of the latest user message, from its first injected block on,
         that the next call drops.
     """
-    if not any(_has_injected_block(message) for message in messages):
+    has_summary = any(_has_block(message, "summary") for message in messages)
+    has_injected = any(_has_block(message, "injected") for message in messages)
+    if not has_summary and not has_injected:
         return messages, 0
-    if model.model_info.capabilities.temporary_messages is True:
+    capabilities = model.model_info.capabilities
+    if has_summary and capabilities.server_side_summary is not True:
+        messages = [_with_summary_text(message) if _has_block(message, "summary") else message for message in messages]
+    if not has_injected or capabilities.temporary_messages is True:
         return messages, 0
     return _render_injected_blocks(messages)
 
 
 async def count_tokens_as_sent(model: Model, messages: Messages, **kwargs: Any) -> int:
-    """Count the messages with the model's ``count_tokens``, in the form :func:`prepare_injected_blocks` sends them.
+    """Count the messages with the model's ``count_tokens``, in the form :func:`prepare_request_messages` sends them.
 
     Args:
         model: The model that counts the messages.
@@ -40,7 +49,7 @@ async def count_tokens_as_sent(model: Model, messages: Messages, **kwargs: Any) 
     Returns:
         The model's count.
     """
-    return await model.count_tokens(prepare_injected_blocks(model, messages)[0], **kwargs)
+    return await model.count_tokens(prepare_request_messages(model, messages)[0], **kwargs)
 
 
 def _render_injected_blocks(messages: Messages) -> tuple[Messages, int]:
@@ -59,7 +68,7 @@ def _render_injected_blocks(messages: Messages) -> tuple[Messages, int]:
     dynamic_trailing_blocks = 0
     rendered: Messages = []
     for index, message in enumerate(messages):
-        if not _has_injected_block(message):
+        if not _has_block(message, "injected"):
             rendered.append(message)
             continue
         content = message["content"]
@@ -87,5 +96,12 @@ def _with_injected_text(content: list[ContentBlock]) -> list[ContentBlock]:
     return blocks
 
 
-def _has_injected_block(message: Message) -> bool:
-    return any("injected" in block for block in message["content"])
+def _with_summary_text(message: Message) -> Message:
+    content = [
+        ContentBlock(text=block["summary"]["text"]) if "summary" in block else block for block in message["content"]
+    ]
+    return {**message, "content": content}
+
+
+def _has_block(message: Message, key: str) -> bool:
+    return any(key in block for block in message["content"])

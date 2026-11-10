@@ -10,7 +10,7 @@ from typing import Any, Literal, cast
 
 from pydantic import BaseModel, Field, ValidationError, create_model
 
-from ..models._injected import prepare_injected_blocks
+from ..models._request_messages import prepare_request_messages
 from ..models.bedrock import BedrockModel
 from ..models.model import Model
 from ..types.content import ContentBlock, Message, Messages
@@ -77,7 +77,7 @@ class LLMDecisionModel(DecisionModel):
 
     async def _ask(self, state: DecisionInput, questions: dict[str, Question], **kwargs: Any) -> DecisionResult:
         answer_model = _build_answer_model(questions)
-        messages, _ = prepare_injected_blocks(self._model, _build_messages(state))
+        messages, _ = prepare_request_messages(self._model, _build_messages(state))
         system_prompt = _build_system_prompt(self._system_prompt)
 
         started_at = time.perf_counter()

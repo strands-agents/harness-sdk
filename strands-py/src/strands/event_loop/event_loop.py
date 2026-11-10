@@ -28,7 +28,7 @@ from ..experimental.checkpoint import Checkpoint, CheckpointPosition
 from ..hooks import AfterModelCallEvent, AfterToolsEvent, BeforeModelCallEvent, BeforeToolsEvent
 from ..interrupt import InterruptException, PendingToolExecution
 from ..middleware.stages import InvokeModelContext, InvokeModelStage
-from ..models._injected import count_tokens_as_sent
+from ..models._request_messages import count_tokens_as_sent
 from ..telemetry.metrics import Trace, _total_prompt_tokens
 from ..telemetry.tracer import Tracer, get_tracer
 from ..tools._validator import validate_and_prepare_tools

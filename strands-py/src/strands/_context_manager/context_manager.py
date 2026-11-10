@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Literal
 
 from ..agent.invocation_context import _create_auxiliary_invocation_context
 from ..hooks.events import AfterModelCallEvent, BeforeModelCallEvent, MessageAddedEvent
-from ..models._injected import count_tokens_as_sent
+from ..models._request_messages import count_tokens_as_sent
 from ..plugins.plugin import Plugin
 from ..storage.in_memory_storage import InMemoryStorage
 from ..storage.storage import _EPHEMERAL

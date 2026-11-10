@@ -6,7 +6,7 @@ import logging
 import math
 from typing import TYPE_CHECKING
 
-from ....models._injected import count_tokens_as_sent
+from ....models._request_messages import count_tokens_as_sent
 from ....types.content import ContentBlock, Message
 from ...methods.truncate import TruncateConfig, _truncate_text_block, _truncate_tool_result
 from ...stash import Stash, _format_stash_refs
