@@ -921,6 +921,31 @@ async def test_summarize_base_sends_the_agent_metadata():
 
 
 @pytest.mark.asyncio
+async def test_summarize_base_sends_only_the_latest_injected_text():
+    model = RecordingModel()
+    history = [
+        {"role": "user", "content": [{"text": "task"}, {"injected": {"text": "<todos>v1</todos>", "source": "todos"}}]},
+        {"role": "assistant", "content": [{"text": "working"}]},
+        {"role": "user", "content": [{"text": "next"}, {"injected": {"text": "<todos>v2</todos>", "source": "todos"}}]},
+    ]
+
+    await model.summarize(history, instructions="Summarize briefly.")
+
+    assert model.calls[0]["messages"] == [
+        {"role": "user", "content": [{"text": "task"}]},
+        {"role": "assistant", "content": [{"text": "working"}]},
+        {
+            "role": "user",
+            "content": [
+                {"text": "next"},
+                {"text": "\n\n<todos>v2</todos>"},
+                {"text": f"{_SUMMARIZE_GUARD}\n\nSummarize briefly."},
+            ],
+        },
+    ]
+
+
+@pytest.mark.asyncio
 async def test_summarize_base_adds_a_user_turn_after_an_assistant_turn():
     model = RecordingModel()
 
