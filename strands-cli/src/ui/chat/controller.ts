@@ -163,6 +163,7 @@ export class ChatController implements ChatControllerApi {
   private readonly _streamPresentation: StreamPresentationOptions | undefined
   private readonly _setSettings: ((settings: Partial<ChatSettings>) => Promise<void>) | undefined
   private readonly _requestSetup: ChatControllerOptions['requestSetup']
+  private readonly _workspaceAction: ChatControllerOptions['workspaceAction']
   private readonly _awsProfile: ChatControllerOptions['awsProfile']
   private readonly _builtinTools: ChatControllerOptions['builtinTools']
   private _builtinToolSelection = new Set<string>()
@@ -230,6 +231,7 @@ export class ChatController implements ChatControllerApi {
     this._streamPresentation = options.streamPresentation
     this._setSettings = options.setSettings
     this._requestSetup = options.requestSetup
+    this._workspaceAction = options.workspaceAction
     this._awsProfile = options.awsProfile
     this._builtinTools = options.builtinTools
     this._exportAgentProject = options.exportAgentProject
@@ -1100,6 +1102,17 @@ export class ChatController implements ChatControllerApi {
       case 'mcp':
         return row.value.startsWith('mcp:toggle:') ? this._toggleMcpServer(row.value) : false
       case 'settings':
+        if (row.value.startsWith('workspace:')) {
+          const action = row.value.slice('workspace:'.length)
+          if (!this._workspaceAction || !this._runtime.devWorkspace || !['edit', 'import', 'create'].includes(action))
+            return false
+          if (this.busy || this._hasUnresolvedBackgroundTasks()) {
+            this._openError('Workspace busy', '', 'Finish or cancel running work before changing this workspace.')
+            return false
+          }
+          this._workspaceAction(action as 'edit' | 'import' | 'create')
+          return true
+        }
         if (row.value === SETTINGS_SETUP_ACTION) {
           if (!this._requestSetup) {
             return false
@@ -2495,16 +2508,40 @@ export class ChatController implements ChatControllerApi {
   }
 
   private _openSettingsCategory(value: string, replace = false): boolean {
-    const category = SETTINGS_CATEGORIES.find(({ id }) => value === `settings:${id}`)
+    const category =
+      value === 'settings:Workspace' && this._workspaceAction && this._runtime.devWorkspace
+        ? { id: 'Workspace' as const, label: 'Strands dev workspace' }
+        : SETTINGS_CATEGORIES.find(({ id }) => value === `settings:${id}`)
     if (!category) {
       return false
     }
-    const rows = settingsRows(this._settings, category.id, this._requestSetup !== undefined)
+    const rows =
+      category.id === 'Workspace'
+        ? [
+            { label: 'Workspace folder', description: this._runtime.devWorkspace!.root },
+            { label: 'Current agent', description: this._runtime.devWorkspace!.entrypoint },
+            {
+              label: 'Edit workspace configuration',
+              description: 'Open .config; changes apply on next launch',
+              value: 'workspace:edit',
+            },
+            {
+              label: 'Import a different agent',
+              description: 'DELETE and replace this workspace after confirmation',
+              value: 'workspace:import',
+            },
+            {
+              label: 'Create a new agent',
+              description: 'DELETE and replace this workspace after confirmation',
+              value: 'workspace:create',
+            },
+          ]
+        : settingsRows(this._settings, category.id, this._requestSetup !== undefined)
     const panel = {
       kind: 'settings',
       title: category.label,
       rows,
-      filters: settingsCategoryFilters(),
+      filters: settingsCategoryFilters(Boolean(this._workspaceAction && this._runtime.devWorkspace)),
       settingsCategory: category.id,
     } satisfies NewChatPanel
     if (replace) {

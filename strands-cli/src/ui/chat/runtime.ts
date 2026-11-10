@@ -110,6 +110,12 @@ export async function createTypescriptChat(
           await backend.syncConfiguration()
         },
         requestSetup,
+        ...(devWorkspace
+          ? {
+              workspaceAction: (action: 'edit' | 'import' | 'create'): void =>
+                requestSetup({ workspaceAction: action }),
+            }
+          : {}),
         awsProfile: awsProfileSelection(config, requestSetup, peerEndpointId, project.entrypoint),
         project,
         exportAgentProject: (language, destination, output): Promise<string | undefined> =>
@@ -303,6 +309,9 @@ export async function createPythonChat(
       skillNames: backend.skills.map((skill) => skill.name),
       setSettings: (settings) => config.setSettings(settings),
       requestSetup,
+      ...(devWorkspace
+        ? { workspaceAction: (action: 'edit' | 'import' | 'create'): void => requestSetup({ workspaceAction: action }) }
+        : {}),
       awsProfile: awsProfileSelection(config, requestSetup, undefined, project.entrypoint),
       project,
       exportAgentProject: (language, destination, output): Promise<string | undefined> => {

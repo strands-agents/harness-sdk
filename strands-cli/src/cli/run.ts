@@ -13,7 +13,7 @@ import { runPlainChat, runTurn } from './console.js'
 import { invocationAgentForRun, pythonInvocationOptions, withDiscoveredSkills } from './invocation.js'
 import { buildTelemetryPing, sendTelemetryPing, telemetryEnabled } from './telemetry.js'
 import type { CliConfigStore } from '../config/store.js'
-import type { StartupScreen } from '../ui/run.js'
+import type { StartupScreen, WorkspaceChange } from '../ui/run.js'
 import { devFailure } from '../dev/errors.js'
 
 export { runPlainChat, runTurn, TurnRenderer } from './console.js'
@@ -431,6 +431,28 @@ async function runInteractive(
             }
           : {}),
         config,
+        ...(args.dev
+          ? {
+              onWorkspaceAction: async (
+                action: 'edit' | 'import' | 'create',
+                screen: StartupScreen
+              ): Promise<WorkspaceChange | undefined> => {
+                const { prepareWorkspaceChange } = await import('../dev/manage.js')
+                return prepareWorkspaceChange({
+                  args,
+                  config,
+                  action,
+                  screen,
+                  select: async (nextArgs, directory) => {
+                    args = nextArgs
+                    initialWorkspace = directory
+                    await config.useAgentProject(nextArgs.agent!)
+                    process.chdir(directory)
+                  },
+                })
+              },
+            }
+          : {}),
         onUpdateRequested: () => {
           updateRequested = true
         },

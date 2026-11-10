@@ -192,6 +192,20 @@ Reload waits for active work to finish. A failed replacement keeps the previous 
 Legacy `.strands/config.json` agents remain in place. Startup creates a `.config` binding and initial copy without moving or rewriting their source.
 For the old `strands-dev/base-cli/` layout, selecting Base CLI creates the control files in `strands-dev/` and binds the existing agent.
 
+### Workspace Settings
+
+In a dev session, `/settings` includes **Strands dev workspace**. This section shows the workspace folder and active agent path.
+
+- **Edit workspace configuration** opens `.config` in your configured editor. Binding changes apply on the next launch.
+- **Import a different agent** replaces the workspace and binds the selected external project.
+- **Create a new agent** replaces the workspace with a new TypeScript or Python project.
+
+Import and creation require a separate confirmation. The confirmation identifies the folder and requires you to type `DELETE`.
+Replacement deletes the old workspace contents, including temporary agents, reports, state, and any agent stored inside that folder.
+Agent projects outside the workspace remain untouched. A new chat starts after a successful replacement.
+The CLI keeps a backup until the replacement agent starts. If setup fails, it restores the previous workspace and session.
+These actions do not change the default agent for plain `strands`.
+
 ### Temporary candidate infrastructure
 
 Candidate creation exports the current bound source into a baseline, then installs an independent agent project from that baseline.

@@ -247,6 +247,7 @@ export interface ChatControllerOptions {
   initialConfigurationBaseline?: ChatConfigurationBaseline
   setSettings?: (settings: Partial<ChatSettings>) => Promise<void>
   requestSetup?: () => void
+  workspaceAction?: (action: 'edit' | 'import' | 'create') => void
   awsProfile?: {
     get(): Omit<NonNullable<ChatModelPanel['awsProfile']>, 'open'>
     select(profile: string): void

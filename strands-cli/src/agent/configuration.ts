@@ -34,6 +34,7 @@ export type SetupChange = {
   | { configuration: SetupConfiguration; profile?: HarnessAgentConfig; agentProject?: string }
   | { configuration?: never; profile: HarnessAgentConfig; agentProject?: never }
   | { configuration?: never; profile?: never; agentProject: string }
+  | { configuration?: never; profile?: never; agentProject?: never; workspaceAction: 'edit' | 'import' | 'create' }
 )
 
 export type RequestSetup = (change?: SetupChange) => void

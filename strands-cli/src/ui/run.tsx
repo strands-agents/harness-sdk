@@ -3,7 +3,7 @@ import { render, useInput, type Instance } from 'ink'
 
 import { ChatRoot, type ChatLaunch, type SetupBridge, type McpTrustRequest } from './app.js'
 import type { ChatControllerApi } from './chat/controller.js'
-import type { ChatConversations } from '../agent/types.js'
+import type { ChatConversations, ChatConfigurationProject } from '../agent/types.js'
 import type { CliConfigStore } from '../config/store.js'
 import { configurationFromStore, type RequestSetup } from '../agent/configuration.js'
 import { hardExitProcessTree } from '../terminal/process-tree.js'
@@ -24,10 +24,21 @@ import { devFailure } from '../dev/errors.js'
 export interface StartupScreen {
   signal: AbortSignal
   show(content: ReactElement | undefined, status?: string): void
+  openProject?(project: ChatConfigurationProject): Promise<void>
+}
+
+export interface WorkspaceChange {
+  apply(): Promise<void>
+  rollback(): Promise<void>
+  finish(): Promise<void>
 }
 
 interface RunInkChatOptions {
   exitAfterInitialization?: boolean
+  onWorkspaceAction?: (
+    action: 'edit' | 'import' | 'create',
+    screen: StartupScreen
+  ) => Promise<WorkspaceChange | undefined>
   prepare?: (screen: StartupScreen) => Promise<boolean>
   recoverStartup?: (error: unknown, screen: StartupScreen) => Promise<'retry' | 'back' | 'exit'>
   firstRequest?: string
@@ -154,7 +165,96 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
         resolveSetup = resolve
       })
     : Promise.resolve<0 | 130>(0)
+  const changeWorkspace = async (action: 'edit' | 'import' | 'create'): Promise<void> => {
+    const previous = controller
+    if (!previous || !options.onWorkspaceAction) return
+    let disposed = false
+    let change: WorkspaceChange | undefined
+    let conversations: ChatConversations | undefined
+    let pendingController: ChatControllerApi | undefined
+    const resumeVoice = previous.pauseVoiceInput?.()
+    controller = undefined
+    stopWatchingTitle()
+    renderChat()
+    try {
+      change = await options.onWorkspaceAction(action, {
+        signal: startupAbort.signal,
+        show: (content, status): void => {
+          startupContent = content
+          startupStatus = status
+          renderChat()
+        },
+        openProject: async (project): Promise<void> => {
+          leaveTerminalMode()
+          restoreTerminalModes(output)
+          const wasRaw = input.isRaw
+          try {
+            if (input.isTTY) input.setRawMode(false)
+            await openAgentProject(project)
+          } finally {
+            if (input.isTTY && wasRaw) input.setRawMode(true)
+            if (!cleanedUp && alternateScreen) leaveTerminalMode = enterAlternateScreen(output)
+          }
+        },
+      })
+      if (!change || startupAbort.signal.aborted) {
+        if (change) await change.rollback()
+        controller = previous
+        return
+      }
+      conversations = await previous.captureConversations?.()
+      await previous.dispose()
+      disposed = true
+      controller = undefined
+      await change.apply()
+      const replacement = await initializeController()
+      pendingController = replacement
+      startupAbort.signal.throwIfAborted()
+      controller = replacement
+      try {
+        await change.finish()
+      } catch (error) {
+        replacement.showError?.('Workspace backup retained', error instanceof Error ? error.message : String(error))
+      }
+      startTasks.push(replacement.start())
+      pendingController = undefined
+    } catch (error) {
+      if (pendingController) await pendingController.dispose()
+      let message = error instanceof Error ? error.message : String(error)
+      if (change && disposed) {
+        try {
+          await change.rollback()
+          if (!startupAbort.signal.aborted) {
+            controller = await initializeController(undefined, conversations)
+            startTasks.push(controller.start())
+          }
+        } catch (restoreError) {
+          message += `\nRestore failed: ${restoreError instanceof Error ? restoreError.message : String(restoreError)}`
+        }
+      } else {
+        controller = previous
+      }
+      controller?.showError?.('Workspace unchanged', message)
+      if (!controller && !startupAbort.signal.aborted) {
+        inkOutputs.stderr.write(`error: ${message}\n`)
+        closeForExit(1)
+      }
+    } finally {
+      startupContent = undefined
+      startupStatus = undefined
+      replacementTask = undefined
+      if (!disposed) resumeVoice?.()
+      if (controller && !cleanedUp) {
+        watchTerminalTitle(controller)
+        renderChat()
+      }
+    }
+  }
   const completeSetup = (exitCode: 0 | 130, changed: boolean, launch?: ChatLaunch): void => {
+    if (launch && 'workspaceAction' in launch) {
+      if (options.onWorkspaceAction && !replacementTask) replacementTask = changeWorkspace(launch.workspaceAction)
+      return
+    }
     if (changed && !controller) launchOptions = launch
     resolveSetup(exitCode)
     if (exitCode === 0 && changed && controller && controllerFactory && instance && !replacementTask) {
