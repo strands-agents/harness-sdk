@@ -88,6 +88,14 @@ export function mergeModelInfo(...parts: (ModelInfo | undefined)[]): ModelInfo {
   return Object.freeze(merged)
 }
 
+/**
+ * Turns `serverSideSummary` off for providers that serve a model the shared info lists it for but have no
+ * server-side summary of their own.
+ *
+ * @internal
+ */
+export const SERVER_SIDE_SUMMARY_OFF: ModelInfo = Object.freeze({ capabilities: { serverSideSummary: false } })
+
 interface ModelInfoData {
   readonly defaults: { readonly limits: { readonly contextWindow: number } }
   readonly models: Readonly<Record<string, ModelInfo>>
