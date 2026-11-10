@@ -48,6 +48,8 @@ Two strategies whose defaults scored highest across [ContextBench](https://arxiv
 - **Truncate tool results** (threshold: 1,500 tokens, preview: 750 tokens): intercepts large tool results at execution time, stores them in the stash, and keeps a truncated preview in context. Registers a retrieval tool so the agent can fetch full content on demand.
 - **Summarize on pressure** (utilization: 85%): when the context window reaches 85% capacity, summarizes the oldest messages to free space, preserving the 4 most recent messages verbatim.
 
+On Claude models that preserve thinking, the truncation keeps thinking blocks valid, and so does the summary when both the agent's model and <Syntax py="agent.aux_model" ts="agent.auxModel" /> support server-side summary. See [Models that preserve thinking](./custom-strategies#models-that-preserve-thinking).
+
 ## Agentic context management
 
 :::caution[Experimental]

@@ -75,3 +75,18 @@ async function stash() {
   })
   // --8<-- [end:stash_disabled]
 }
+
+async function preservedThinking() {
+  // --8<-- [start:preserved_thinking]
+  const agent = new Agent({
+    contextManager: {
+      strategies: [
+        // Per-block and eager: summarizes each large tool result before the model reasons over it
+        Offload.summarize('toolResults').when({ threshold: 2000 }),
+        // Message-level: runs server-side when the agent's model and the summarizer both support it
+        Offload.summarize('*').when({ utilization: 0.85, preserveRecent: 4 }),
+      ],
+    },
+  })
+  // --8<-- [end:preserved_thinking]
+}
