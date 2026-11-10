@@ -38,11 +38,17 @@ interface PickerRow {
 
 const FOLDER_LABEL = 'Workspace folder: '
 
+type FormField = 'name' | 'language'
+
+const otherLanguage = (current: 'typescript' | 'python'): 'typescript' | 'python' =>
+  current === 'typescript' ? 'python' : 'typescript'
+
 export const HarnessPicker = ({ cli, harnesses, warning, workspace, onSelect }: PickerProps): ReactElement => {
   const [selection, setSelection] = useState(0)
   const [creating, setCreating] = useState(false)
   const [placing, setPlacing] = useState<HarnessChoice>()
   const [language, setLanguage] = useState<'typescript' | 'python'>('typescript')
+  const [field, setField] = useState<FormField>('name')
   const [name, setName] = useState('new-harness')
   const [folder, setFolder] = useState(() => ({ value: workspace ?? '', cursor: graphemes(workspace ?? '').length }))
   const [failure, setFailure] = useState<string>()
@@ -115,9 +121,14 @@ export const HarnessPicker = ({ cli, harnesses, warning, workspace, onSelect }: 
       return { value: state.input, cursor: state.cursor }
     })
   }
-  const editName = (input: string, key: Key): void => {
-    if (key.tab) return setLanguage((current) => (current === 'typescript' ? 'python' : 'typescript'))
+  const editForm = (input: string, key: Key): void => {
+    if (key.tab) return setLanguage(otherLanguage)
     if (key.return && name && name !== '.' && name !== '..') return choose({ kind: 'create', name, language })
+    if (key.upArrow || key.downArrow) return setField(key.downArrow ? 'language' : 'name')
+    if (field === 'language') {
+      if (key.leftArrow || key.rightArrow) setLanguage(otherLanguage)
+      return
+    }
     if (key.backspace || key.delete) return setName((current) => current.slice(0, -1))
     if (!key.ctrl && !key.meta && /^[a-zA-Z0-9._-]+$/.test(input))
       setName((current) => `${current}${input}`.slice(0, 64))
@@ -128,6 +139,7 @@ export const HarnessPicker = ({ cli, harnesses, warning, workspace, onSelect }: 
     if (!key.return) return
     const choice = rows[selection]?.choice
     if (choice) return choose(choice)
+    setField('name')
     setCreating(true)
   }
   useInput((input, key) => {
@@ -135,7 +147,7 @@ export const HarnessPicker = ({ cli, harnesses, warning, workspace, onSelect }: 
     if (key.escape) return placing && !pending.current ? leaveFolder() : submit(undefined)
     if (pending.current) return
     if (placing) return editFolder(input, key)
-    if (creating) return editName(input, key)
+    if (creating) return editForm(input, key)
     browse(key)
   })
   const detailWidth = Math.max(1, columns - 12)
@@ -159,7 +171,11 @@ export const HarnessPicker = ({ cli, harnesses, warning, workspace, onSelect }: 
       context: `${selection + 1} / ${rows.length}`,
       hint: `↑↓ select · Enter ${next}`,
     },
-    name: { heading: 'Create a harness', context: 'New project', hint: `Tab language · Enter ${next}` },
+    name: {
+      heading: 'Create a harness',
+      context: 'New project',
+      hint: `↑↓ field · ←→ or Tab language · Enter ${next}`,
+    },
     folder: {
       heading: 'Choose a workspace folder',
       context: placing?.kind === 'create' ? `New project · ${placing.name}` : selected.label,
@@ -199,8 +215,13 @@ export const HarnessPicker = ({ cli, harnesses, warning, workspace, onSelect }: 
         </Box>
       ) : creating ? (
         <Box flexDirection="column" gap={1}>
-          <Text>Name: {name}▏</Text>
-          <Text>Language: {language}</Text>
+          <Text {...(field === 'name' ? { color: accent, bold: true } : {})}>
+            {field === 'name' ? '›' : ' '} Name: {name}
+            {field === 'name' ? '▏' : ''}
+          </Text>
+          <Text {...(field === 'language' ? { color: accent, bold: true } : {})}>
+            {field === 'language' ? '›' : ' '} Language: {language}
+          </Text>
           <Text dimColor>A new local project. Your CLI default stays unchanged.</Text>
         </Box>
       ) : (

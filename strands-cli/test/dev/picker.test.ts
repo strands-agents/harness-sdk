@@ -319,4 +319,47 @@ describe('HarnessPicker', () => {
     await vi.waitFor(() => expect(selected).toHaveBeenLastCalledWith({ kind: 'cli' }, '/work/strands-dev-2'))
     expect(selected).toHaveBeenCalledTimes(2)
   })
+
+  const createForm = async () => {
+    const input = ttyInput()
+    const output = ttyOutput(100, 36)
+    const frame = captureFrame(output)
+    const selected = vi.fn()
+    render(createElement(HarnessPicker, { harnesses: [], onSelect: selected }), { stdin: input, stdout: output })
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('› Create a new harness'))
+    input.write('\r')
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('› Name: new-harness'))
+    return { input, text: () => frame().join('\n'), selected }
+  }
+
+  it('shouldMoveToTheLanguageFieldAndChangeItWhenArrowsArePressed', async () => {
+    const { input, text, selected } = await createForm()
+
+    input.write('\u001b[B')
+    await vi.waitFor(() => expect(text()).toContain('› Language: typescript'))
+    input.write('\u001b[C')
+    await vi.waitFor(() => expect(text()).toContain('› Language: python'))
+    input.write('\r')
+
+    await vi.waitFor(() =>
+      expect(selected).toHaveBeenCalledWith({ kind: 'create', name: 'new-harness', language: 'python' })
+    )
+  })
+
+  it('shouldEditTheNameOnlyWhenTheNameFieldIsSelected', async () => {
+    const { input, text, selected } = await createForm()
+    input.write('\u001b[B')
+    await vi.waitFor(() => expect(text()).toContain('› Language: typescript'))
+
+    input.write('x')
+    input.write('\u001b[A')
+    await vi.waitFor(() => expect(text()).toContain('› Name: new-harness'))
+    input.write('y')
+    await vi.waitFor(() => expect(text()).toContain('Name: new-harnessy'))
+    input.write('\r')
+
+    await vi.waitFor(() =>
+      expect(selected).toHaveBeenCalledWith({ kind: 'create', name: 'new-harnessy', language: 'typescript' })
+    )
+  })
 })
