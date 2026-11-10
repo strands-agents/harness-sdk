@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 
+import { getCollection } from 'astro:content'
 import { parse } from 'node-html-parser'
 import { describe, expect, it } from 'vitest'
 
@@ -63,6 +64,98 @@ describe('homepage machine-readable metadata', () => {
     expect(main?.text.trim().length).toBeGreaterThan(500)
     expect(headings[0]?.tagName).toBe('H1')
     expect(main?.querySelectorAll('h1')).toHaveLength(1)
+  })
+
+  it('highlights one product under each toolkit pillar', () => {
+    const toolkit = homepage.querySelector('.toolkit')
+    const pillars = toolkit?.querySelectorAll('.toolkit__section') ?? []
+
+    expect(toolkit?.querySelector('.toolkit__cards-title')?.tagName).toBe('H2')
+    expect(
+      pillars.map((pillar) => ({
+        title: {
+          tagName: pillar.querySelector('.toolkit__section-title')?.tagName,
+          text: pillar.querySelector('.toolkit__section-title')?.text.trim(),
+        },
+        products: pillar.querySelectorAll('.toolkit__card').map((card) => {
+          const heading = card.querySelector('.toolkit__card-slug')
+          const docsLink = card.querySelector('.toolkit__card-read')
+          return {
+            tagName: heading?.tagName,
+            text: heading?.text.trim(),
+            docs: {
+              text: docsLink?.text.trim(),
+              href: docsLink?.getAttribute('href'),
+              ariaLabel: docsLink?.getAttribute('aria-label'),
+            },
+          }
+        }),
+      }))
+    ).toEqual([
+      {
+        title: { tagName: 'H3', text: 'Build' },
+        products: [
+          {
+            tagName: 'H4',
+            text: '/harness',
+            docs: {
+              text: 'Read docs',
+              href: configuredPathWithBase('/docs/user-guide/harness/'),
+              ariaLabel: 'Read Strands harness docs',
+            },
+          },
+        ],
+      },
+      {
+        title: { tagName: 'H3', text: 'Control' },
+        products: [
+          {
+            tagName: 'H4',
+            text: '/box',
+            docs: {
+              text: 'Read docs',
+              href: configuredPathWithBase('/docs/user-guide/box/'),
+              ariaLabel: 'Read Strands Box docs',
+            },
+          },
+        ],
+      },
+      {
+        title: { tagName: 'H3', text: 'Validate' },
+        products: [
+          {
+            tagName: 'H4',
+            text: '/evals',
+            docs: {
+              text: 'Read docs',
+              href: configuredPathWithBase('/docs/user-guide/evals-sdk/'),
+              ariaLabel: 'Read Strands Evals docs',
+            },
+          },
+        ],
+      },
+    ])
+  })
+
+  it('promotes distinct recent blog posts', async () => {
+    const posts = await getCollection('blog', ({ data }) => !data.draft)
+    posts.sort((a, b) => b.data.date.getTime() - a.data.date.getTime())
+
+    const latestPost = posts[0]
+    if (!latestPost) throw new Error('expected at least one published blog post')
+    const communityPost = posts[1] ?? latestPost
+
+    const announcement = homepage.querySelector('.announcement')
+    const bannerLink = announcement?.querySelector('.announcement__link')
+    const communityLink = homepage.querySelector('.community__blog-link')
+
+    expect(bannerLink?.getAttribute('href')).toBe(configuredPathWithBase(`/blog/${latestPost.id}/`))
+    expect(bannerLink?.querySelector('.announcement__title')?.text.trim()).toBe(latestPost.data.title)
+    expect(announcement?.getAttribute('data-expires')).toBeUndefined()
+    expect(announcement?.querySelector('.announcement__fallback')).toBeNull()
+    expect(communityLink?.getAttribute('href')).toBe(configuredPathWithBase(`/blog/${communityPost.id}/`))
+    expect(communityLink?.text.trim()).toBe(communityPost.data.title)
+    if (posts.length > 1) expect(communityLink?.getAttribute('href')).not.toBe(bannerLink?.getAttribute('href'))
   })
 
   it('publishes a concise Markdown homepage with official resources', () => {

@@ -28,6 +28,25 @@ _THROTTLING_EVENTS = ("throttlingException", "serviceUnavailableException")
 _INVOKE_MODEL_API_VERSION = "bedrock-2023-05-31"
 
 
+def _bedrock_client(
+    endpoint: str, client_args: dict[str, Any]
+) -> "anthropic.AsyncAnthropicBedrock | anthropic.AsyncAnthropicBedrockMantle":
+    """Build the Anthropic SDK's own Bedrock client for the endpoint."""
+    if endpoint == "bedrock-mantle":
+        if not hasattr(anthropic, "AsyncAnthropicBedrockMantle"):
+            raise ImportError(
+                f"anthropic=<{anthropic.__version__}> | the bedrock-mantle endpoint requires anthropic>=0.91.0, "
+                "install it with: pip install -U 'anthropic>=0.91.0'"
+            )
+        return anthropic.AsyncAnthropicBedrockMantle(**client_args)
+    if "api_key" in client_args and "api_key" not in inspect.signature(anthropic.AsyncAnthropicBedrock).parameters:
+        raise ImportError(
+            f"anthropic=<{anthropic.__version__}> | api_key on bedrock-runtime requires anthropic>=0.88.0, "
+            "install it with: pip install -U 'anthropic>=0.88.0'"
+        )
+    return anthropic.AsyncAnthropicBedrock(**client_args)
+
+
 class BedrockMessagesModel(AnthropicModel):
     """Claude on Amazon Bedrock through the Anthropic Messages API.
 
@@ -74,25 +93,8 @@ class BedrockMessagesModel(AnthropicModel):
         self._endpoint = endpoint
         region = _resolve_bedrock_region(region_name)
         args = {**(client_args or {}), "aws_region": region, **({"api_key": api_key} if api_key else {})}
-        super().__init__(client_args=args, **model_config)
+        super().__init__(client=_bedrock_client(endpoint, args), **model_config)
         logger.debug("endpoint=<%s>, region=<%s> | bedrock messages client created", endpoint, region)
-
-    @override
-    def _create_client(self, client_args: dict[str, Any]) -> anthropic.AsyncAnthropic:
-        # The Bedrock clients speak the same Messages API as AsyncAnthropic, which AnthropicModel is typed against.
-        if self._endpoint == "bedrock-mantle":
-            if not hasattr(anthropic, "AsyncAnthropicBedrockMantle"):
-                raise ImportError(
-                    f"anthropic=<{anthropic.__version__}> | the bedrock-mantle endpoint requires anthropic>=0.91.0, "
-                    "install it with: pip install -U 'anthropic>=0.91.0'"
-                )
-            return anthropic.AsyncAnthropicBedrockMantle(**client_args)  # type: ignore[return-value]
-        if "api_key" in client_args and "api_key" not in inspect.signature(anthropic.AsyncAnthropicBedrock).parameters:
-            raise ImportError(
-                f"anthropic=<{anthropic.__version__}> | api_key on bedrock-runtime requires anthropic>=0.88.0, "
-                "install it with: pip install -U 'anthropic>=0.88.0'"
-            )
-        return anthropic.AsyncAnthropicBedrock(**client_args)  # type: ignore[return-value]
 
     @override
     def format_request(

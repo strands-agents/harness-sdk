@@ -61,7 +61,8 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "forcedToolChoice": true,
-        "nativeStructuredOutput": false
+        "nativeStructuredOutput": false,
+        "temporaryMessages": true
       }
     },
     "claude-opus-5": {
@@ -72,7 +73,8 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "forcedToolChoice": true,
-        "nativeStructuredOutput": true
+        "nativeStructuredOutput": true,
+        "temporaryMessages": true
       }
     },
     "claude-opus-5-5": {
@@ -83,7 +85,9 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "forcedToolChoice": false,
-        "nativeStructuredOutput": true
+        "nativeStructuredOutput": true,
+        "serverSideSummary": true,
+        "temporaryMessages": true
       }
     },
     "claude-fable-5": {
@@ -92,7 +96,8 @@
         "maxOutputTokens": 128000
       },
       "capabilities": {
-        "promptCaching": "cachePoints"
+        "promptCaching": "cachePoints",
+        "temporaryMessages": true
       }
     },
     "claude-fable-5-1": {
@@ -102,7 +107,22 @@
       },
       "capabilities": {
         "promptCaching": "cachePoints",
-        "forcedToolChoice": false
+        "forcedToolChoice": false,
+        "serverSideSummary": true,
+        "temporaryMessages": true
+      }
+    },
+    "claude-fable-5-2": {
+      "limits": {
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000
+      },
+      "capabilities": {
+        "promptCaching": "cachePoints",
+        "forcedToolChoice": false,
+        "nativeStructuredOutput": true,
+        "serverSideSummary": true,
+        "temporaryMessages": true
       }
     },
     "claude-sonnet-5": {
@@ -124,7 +144,9 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "forcedToolChoice": false,
-        "nativeStructuredOutput": true
+        "nativeStructuredOutput": true,
+        "serverSideSummary": true,
+        "temporaryMessages": true
       }
     },
     "claude-haiku-5-5": {
@@ -135,7 +157,9 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "forcedToolChoice": true,
-        "nativeStructuredOutput": true
+        "nativeStructuredOutput": true,
+        "serverSideSummary": true,
+        "temporaryMessages": true
       }
     },
     "claude-opus-4-5": {
@@ -243,6 +267,19 @@
       },
       "capabilities": {
         "promptCaching": "cachePoints"
+      }
+    },
+    "claude-mythos-5-2": {
+      "limits": {
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000
+      },
+      "capabilities": {
+        "promptCaching": "cachePoints",
+        "forcedToolChoice": false,
+        "nativeStructuredOutput": true,
+        "serverSideSummary": true,
+        "temporaryMessages": true
       }
     },
     "claude-mythos-preview": {

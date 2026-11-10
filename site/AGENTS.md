@@ -66,7 +66,9 @@ When authoring or reviewing documentation pages, follow the voice guide and the 
 ├── SITE-ARCHITECTURE.md          # Detailed Astro/Starlight customizations
 ├── .build/
 │   ├── api-docs/                 # Generated Python and TypeScript API reference
-│   ├── external-docs/strands-box/ # Generated imported Box docs (not committed)
+│   ├── external-docs/
+│   │   ├── strands-box/          # Generated imported Box docs (not committed)
+│   │   └── strands-decider/      # Generated imported Decider docs (not committed)
 │   └── samples/pages/            # Generated sample guides (not committed)
 ├── src/                          # Astro source files
 │   ├── components/               # Custom Astro components
@@ -79,6 +81,7 @@ When authoring or reviewing documentation pages, follow the voice guide and the 
 │   ├── content/                  # Content collections
 │   │   ├── announcements/        # Homepage announcement banner entries (one YAML each, auto-expire after 14 days)
 │   │   ├── catalog/              # Community catalog entries (one YAML per integration, zod-validated)
+│   │   ├── changelog/            # Release notes by product, including shell/
 │   │   ├── courses/              # Course metadata (one YAML per course, zod-validated)
 │   │   ├── events/               # Community event entries (one YAML per event, zod-validated)
 │   │   └── docs/                 # Documentation content (Markdown/MDX)
@@ -92,6 +95,7 @@ When authoring or reviewing documentation pages, follow the voice guide and the 
 │   │       ├── examples/
 │   │       ├── integrations/
 │   │       ├── labs/
+│   │       │   └── strands-decider # Symlink to .build/external-docs/strands-decider/content
 │   │       ├── learning/         # Course lesson pages
 │   │       └── user-guide/
 │   │           └── box           # Symlink to .build/external-docs/strands-box/content

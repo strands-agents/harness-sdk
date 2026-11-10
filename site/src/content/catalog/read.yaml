@@ -1,0 +1,10 @@
+name: Read
+description: Read a file as numbered text lines with paging, or as an image or document.
+integrationType: tool
+maintainedBy: strands
+languages:
+  python: {}
+  typescript: {}
+github: https://github.com/strands-agents/harness-sdk/tree/main/strands-py/src/strands/vended_tools/read
+docsPage: docs/user-guide/sdk/tools/vended-tools/read
+addedDate: 2026-10-30

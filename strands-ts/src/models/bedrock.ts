@@ -13,6 +13,7 @@ import {
   type CachePointBlock as BedrockCachePointBlock,
   type CacheTTL as BedrockSdkCacheTTL,
   type ContentBlock as BedrockContentBlock,
+  type ToolResultContentBlock,
   type ContentBlockDeltaEvent as BedrockContentBlockDeltaEvent,
   type ContentBlockStartEvent as BedrockContentBlockStartEvent,
   ConverseCommand,
@@ -1506,36 +1507,44 @@ export class BedrockModel extends Model<BedrockModelConfig> {
         }
 
       case 'toolResultBlock': {
-        const content = block.content.map((content) => {
+        const content = block.content.flatMap((content): ToolResultContentBlock[] => {
           switch (content.type) {
+            case 'unknownBlock':
+              return []
             case 'textBlock':
-              return { text: content.text }
+              return [{ text: content.text }]
             case 'jsonBlock':
-              return { json: content.json }
+              return [{ json: content.json }]
             case 'imageBlock':
-              return {
-                image: {
-                  format: content.format as ImageFormat,
-                  source: this._formatMediaSource(content.source),
+              return [
+                {
+                  image: {
+                    format: content.format as ImageFormat,
+                    source: this._formatMediaSource(content.source),
+                  },
                 },
-              }
+              ]
             case 'videoBlock':
-              return {
-                video: {
-                  format: content.format === '3gp' ? 'three_gp' : (content.format as VideoFormat),
-                  source: this._formatMediaSource(content.source),
+              return [
+                {
+                  video: {
+                    format: content.format === '3gp' ? 'three_gp' : (content.format as VideoFormat),
+                    source: this._formatMediaSource(content.source),
+                  },
                 },
-              }
+              ]
             case 'documentBlock':
-              return {
-                document: {
-                  name: content.name,
-                  format: content.format as DocumentFormat,
-                  source: this._formatDocumentSource(content.source),
-                  ...(content.citations && { citations: content.citations }),
-                  ...(content.context && { context: content.context }),
+              return [
+                {
+                  document: {
+                    name: content.name,
+                    format: content.format as DocumentFormat,
+                    source: this._formatDocumentSource(content.source),
+                    ...(content.citations && { citations: content.citations }),
+                    ...(content.context && { context: content.context }),
+                  },
                 },
-              }
+              ]
           }
         })
 
@@ -1644,6 +1653,16 @@ export class BedrockModel extends Model<BedrockModelConfig> {
           throw new Error('guardContent must have either text or image')
         }
       }
+
+      case 'injectedBlock':
+        // ModelProxy turns the ones Bedrock should see into text, so only a direct call or a modelInfo override that
+        // turns temporaryMessages on gets here.
+        warnOnce(logger, 'block_type=<injectedBlock> | bedrock does not send injected blocks | skipping it')
+        return undefined
+      case 'summaryBlock':
+        throw new Error(`content_type=<${block.type}> | unsupported type`)
+      case 'unknownBlock':
+        return undefined
     }
   }
 

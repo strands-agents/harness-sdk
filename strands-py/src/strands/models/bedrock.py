@@ -39,7 +39,7 @@ from ..types.exceptions import (
 from ..types.streaming import CitationsDelta, StreamEvent
 from ..types.tools import ToolChoice, ToolChoiceAuto, ToolSpec
 from ._defaults import resolve_config_metadata, resolve_max_tokens
-from ._model_info import ModelCapabilities, ModelInfo
+from ._model_info import SERVER_SIDE_SUMMARY_OFF, ModelCapabilities, ModelInfo
 from ._native_output import (
     StructuredOutputMechanism,
     handle_rejected_mechanism,
@@ -440,16 +440,17 @@ class BedrockModel(Model):
     @property
     @override
     def model_info(self) -> ModelInfo:
-        """Reports OpenAI models as implicitly cached, which a ``model_info`` override still wins over.
+        """Reports server-side summary as off and OpenAI models as implicitly cached.
 
-        The shared model info lists cache points for their OpenAI-compatible APIs, but Converse caches
-        them implicitly and rejects cache points.
+        A ``model_info`` override still wins over both. Converse has no server-side summary. The shared model
+        info lists cache points for OpenAI models' OpenAI-compatible APIs, but Converse caches them implicitly
+        and rejects cache points.
         """
-        if "openai." not in str(self.config.get("model_id", "")).lower():
-            return super().model_info
+        openai_caching = ModelInfo(capabilities=ModelCapabilities(prompt_caching="auto"))
         return ModelInfo.merge(
             super().model_info,
-            ModelInfo(capabilities=ModelCapabilities(prompt_caching="auto")),
+            SERVER_SIDE_SUMMARY_OFF,
+            openai_caching if "openai." in str(self.config.get("model_id", "")).lower() else None,
             self.config.get("model_info"),
         )
 
