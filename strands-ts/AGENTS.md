@@ -214,7 +214,7 @@ export class XModel extends Model<XModelConfig> {
 
 When writing tests, you **MUST** follow [docs/TESTING.md](./docs/TESTING.md). It is the authoritative reference for test file location and naming (co-location, environment suffixes), the nested `describe` pattern, batching strategy, whole-object assertions, fixtures, coverage requirements, and multi-environment testing.
 
-Name unit tests `*.test.ts` so they run in both Node.js and the browser. Use `*.test.node.ts` only when the test needs something Node-only (the filesystem, `process.env`, a code path that refuses to run in a browser), and say why in a comment; don't copy the suffix from a neighboring file.
+New test files **MUST** be named `*.test.ts` so they run in both Node.js and the browser. Create a `*.test.node.ts` file only when the test cannot run in a browser: it needs the filesystem, `process.env`, or a code path that refuses to run in a browser. Don't pick the suffix by copying a neighboring file; check whether the test actually needs Node.
 
 ## Quick Rules
 
