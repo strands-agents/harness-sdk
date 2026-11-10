@@ -378,135 +378,134 @@ class OpenAIResponsesModel(Model):
 
         async with self._get_client() as client:
             try:
-                response = await client.responses.create(**request)
+                async with await client.responses.create(**request) as response:
+                    logger.debug("streaming response from OpenAI Responses API model")
 
-                logger.debug("streaming response from OpenAI Responses API model")
+                    yield self._format_chunk({"chunk_type": "message_start"})
 
-                yield self._format_chunk({"chunk_type": "message_start"})
+                    tool_calls: dict[str, _ToolCallInfo] = {}
+                    final_usage = None
+                    data_type: str | None = None
+                    stop_reason: str | None = None
 
-                tool_calls: dict[str, _ToolCallInfo] = {}
-                final_usage = None
-                data_type: str | None = None
-                stop_reason: str | None = None
+                    async for event in response:
+                        if hasattr(event, "type"):
+                            if event.type == "response.created":
+                                # Capture response id for server-side conversation chaining
+                                if hasattr(event, "response"):
+                                    response_id = getattr(event.response, "id", None)
+                                    if model_state is not None and response_id:
+                                        model_state["response_id"] = response_id
 
-                async for event in response:
-                    if hasattr(event, "type"):
-                        if event.type == "response.created":
-                            # Capture response id for server-side conversation chaining
-                            if hasattr(event, "response"):
-                                response_id = getattr(event.response, "id", None)
-                                if model_state is not None and response_id:
-                                    model_state["response_id"] = response_id
-
-                        elif event.type in (
-                            "response.reasoning_text.delta",
-                            "response.reasoning_summary_text.delta",
-                        ):
-                            # Reasoning content streaming:
-                            # - reasoning_text: full chain-of-thought (gpt-oss models)
-                            # - reasoning_summary_text: condensed summary (o-series models)
-                            chunks, data_type = self._stream_switch_content("reasoning_content", data_type)
-                            for chunk in chunks:
-                                yield chunk
-                            if hasattr(event, "delta") and isinstance(event.delta, str):
-                                yield self._format_chunk(
-                                    {
-                                        "chunk_type": "content_delta",
-                                        "data_type": "reasoning_content",
-                                        "data": event.delta,
-                                    }
-                                )
-
-                        elif event.type == "response.output_text.delta":
-                            # Text content streaming
-                            chunks, data_type = self._stream_switch_content("text", data_type)
-                            for chunk in chunks:
-                                yield chunk
-                            if hasattr(event, "delta") and isinstance(event.delta, str):
-                                yield self._format_chunk(
-                                    {"chunk_type": "content_delta", "data_type": "text", "data": event.delta}
-                                )
-
-                        elif event.type == "response.output_text.annotation.added":
-                            if hasattr(event, "annotation"):
-                                if event.annotation.get("type") == "url_citation":
+                            elif event.type in (
+                                "response.reasoning_text.delta",
+                                "response.reasoning_summary_text.delta",
+                            ):
+                                # Reasoning content streaming:
+                                # - reasoning_text: full chain-of-thought (gpt-oss models)
+                                # - reasoning_summary_text: condensed summary (o-series models)
+                                chunks, data_type = self._stream_switch_content("reasoning_content", data_type)
+                                for chunk in chunks:
+                                    yield chunk
+                                if hasattr(event, "delta") and isinstance(event.delta, str):
                                     yield self._format_chunk(
                                         {
                                             "chunk_type": "content_delta",
-                                            "data_type": "citation",
-                                            "data": event.annotation,
+                                            "data_type": "reasoning_content",
+                                            "data": event.delta,
                                         }
                                     )
-                                else:
-                                    logger.warning(
-                                        "annotation_type=<%s> | unsupported annotation type",
-                                        event.annotation.get("type"),
+
+                            elif event.type == "response.output_text.delta":
+                                # Text content streaming
+                                chunks, data_type = self._stream_switch_content("text", data_type)
+                                for chunk in chunks:
+                                    yield chunk
+                                if hasattr(event, "delta") and isinstance(event.delta, str):
+                                    yield self._format_chunk(
+                                        {"chunk_type": "content_delta", "data_type": "text", "data": event.delta}
                                     )
 
-                        elif event.type == "response.output_item.added":
-                            # Tool call started
-                            if (
-                                hasattr(event, "item")
-                                and hasattr(event.item, "type")
-                                and event.item.type == "function_call"
-                            ):
-                                call_id = getattr(event.item, "call_id", "unknown")
-                                tool_calls[call_id] = {
-                                    "name": getattr(event.item, "name", ""),
-                                    "arguments": "",
-                                    "call_id": call_id,
-                                    "item_id": getattr(event.item, "id", ""),
-                                }
+                            elif event.type == "response.output_text.annotation.added":
+                                if hasattr(event, "annotation"):
+                                    if event.annotation.get("type") == "url_citation":
+                                        yield self._format_chunk(
+                                            {
+                                                "chunk_type": "content_delta",
+                                                "data_type": "citation",
+                                                "data": event.annotation,
+                                            }
+                                        )
+                                    else:
+                                        logger.warning(
+                                            "annotation_type=<%s> | unsupported annotation type",
+                                            event.annotation.get("type"),
+                                        )
 
-                        elif event.type == "response.function_call_arguments.delta":
-                            # Tool arguments streaming - accumulate deltas by item_id
-                            if hasattr(event, "delta") and hasattr(event, "item_id"):
-                                for _call_id, call_info in tool_calls.items():
-                                    if call_info["item_id"] == event.item_id:
-                                        call_info["arguments"] += event.delta
-                                        break
+                            elif event.type == "response.output_item.added":
+                                # Tool call started
+                                if (
+                                    hasattr(event, "item")
+                                    and hasattr(event.item, "type")
+                                    and event.item.type == "function_call"
+                                ):
+                                    call_id = getattr(event.item, "call_id", "unknown")
+                                    tool_calls[call_id] = {
+                                        "name": getattr(event.item, "name", ""),
+                                        "arguments": "",
+                                        "call_id": call_id,
+                                        "item_id": getattr(event.item, "id", ""),
+                                    }
 
-                        elif event.type == "response.function_call_arguments.done":
-                            # Tool arguments complete - use final arguments as source of truth
-                            if hasattr(event, "arguments") and hasattr(event, "item_id"):
-                                for _call_id, call_info in tool_calls.items():
-                                    if call_info["item_id"] == event.item_id:
-                                        call_info["arguments"] = event.arguments
-                                        break
+                            elif event.type == "response.function_call_arguments.delta":
+                                # Tool arguments streaming - accumulate deltas by item_id
+                                if hasattr(event, "delta") and hasattr(event, "item_id"):
+                                    for _call_id, call_info in tool_calls.items():
+                                        if call_info["item_id"] == event.item_id:
+                                            call_info["arguments"] += event.delta
+                                            break
 
-                        elif event.type == "response.failed":
-                            error = getattr(event.response, "error", None)
-                            raise _OpenAIResponsesStreamError(
-                                getattr(error, "message", None), getattr(error, "code", None)
-                            )
+                            elif event.type == "response.function_call_arguments.done":
+                                # Tool arguments complete - use final arguments as source of truth
+                                if hasattr(event, "arguments") and hasattr(event, "item_id"):
+                                    for _call_id, call_info in tool_calls.items():
+                                        if call_info["item_id"] == event.item_id:
+                                            call_info["arguments"] = event.arguments
+                                            break
 
-                        elif event.type == "error":
-                            raise _OpenAIResponsesStreamError(
-                                getattr(event, "message", None), getattr(event, "code", None)
-                            )
-
-                        elif event.type == "response.incomplete":
-                            # Response stopped early (e.g., max tokens reached)
-                            if hasattr(event, "response"):
-                                if hasattr(event.response, "usage"):
-                                    final_usage = event.response.usage
-                                # Check if stopped due to max_output_tokens or a content filter
-                                incomplete_reason = (
-                                    getattr(event.response.incomplete_details, "reason", None)
-                                    if getattr(event.response, "incomplete_details", None)
-                                    else None
+                            elif event.type == "response.failed":
+                                error = getattr(event.response, "error", None)
+                                raise _OpenAIResponsesStreamError(
+                                    getattr(error, "message", None), getattr(error, "code", None)
                                 )
-                                if incomplete_reason == "max_output_tokens":
-                                    stop_reason = "length"
-                                elif incomplete_reason == "content_filter":
-                                    stop_reason = "content_filter"
-                            break
 
-                        elif event.type == "response.completed":
-                            # Response complete
-                            if hasattr(event, "response") and hasattr(event.response, "usage"):
-                                final_usage = event.response.usage
-                            break
+                            elif event.type == "error":
+                                raise _OpenAIResponsesStreamError(
+                                    getattr(event, "message", None), getattr(event, "code", None)
+                                )
+
+                            elif event.type == "response.incomplete":
+                                # Response stopped early (e.g., max tokens reached)
+                                if hasattr(event, "response"):
+                                    if hasattr(event.response, "usage"):
+                                        final_usage = event.response.usage
+                                    # Check if stopped due to max_output_tokens or a content filter
+                                    incomplete_reason = (
+                                        getattr(event.response.incomplete_details, "reason", None)
+                                        if getattr(event.response, "incomplete_details", None)
+                                        else None
+                                    )
+                                    if incomplete_reason == "max_output_tokens":
+                                        stop_reason = "length"
+                                    elif incomplete_reason == "content_filter":
+                                        stop_reason = "content_filter"
+                                break
+
+                            elif event.type == "response.completed":
+                                # Response complete
+                                if hasattr(event, "response") and hasattr(event.response, "usage"):
+                                    final_usage = event.response.usage
+                                break
             except (openai.APIError, _OpenAIResponsesStreamError) as error:
                 error_kind = classify_openai_error(error)
                 if error_kind == "throttling":

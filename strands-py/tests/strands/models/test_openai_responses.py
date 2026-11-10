@@ -1,3 +1,4 @@
+import contextlib
 import copy
 import logging
 import os
@@ -16,6 +17,57 @@ from strands.agent import AgentMetadata
 from strands.models import CacheConfig, ModelCapabilities, ModelInfo
 from strands.models.openai_responses import _MAX_MEDIA_SIZE_BYTES, OpenAIResponsesModel
 from strands.types.exceptions import ContextWindowOverflowException, ModelThrottledException
+
+
+class AsyncStreamContextManager:
+    def __init__(self, items):
+        self._items = items
+        self._iter = None
+        self.closed = False
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        self.closed = True
+
+    def __aiter__(self):
+        self._iter = iter(self._items)
+        return self
+
+    async def __anext__(self):
+        try:
+            return next(self._iter)
+        except StopIteration:
+            raise StopAsyncIteration from None
+
+
+class AsyncGeneratorContextManager:
+    def __init__(self, async_gen):
+        self._async_gen = async_gen
+        self.closed = False
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        self.closed = True
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        return await self._async_gen.__anext__()
+
+
+@pytest.fixture
+def stream_response():
+    """Fixture that wraps items in an async context manager / async iterator."""
+
+    def _wrapper(items):
+        return AsyncStreamContextManager(items)
+
+    return _wrapper
 
 
 @pytest.fixture
@@ -609,7 +661,7 @@ def test_agent_metadata_without_session_yields_no_cache_key(openai_client, model
 
 
 @pytest.mark.asyncio
-async def test_stream_derives_prompt_cache_key_from_agent_session(openai_client, model_id, agenerator, alist):
+async def test_stream_derives_prompt_cache_key_from_agent_session(openai_client, model_id, stream_response, alist):
     """stream threads agent_metadata so the outbound request carries the derived routing key."""
     model = OpenAIResponsesModel(model_id=model_id, cache_config=CacheConfig())
     mock_complete_event = unittest.mock.Mock(
@@ -618,7 +670,7 @@ async def test_stream_derives_prompt_cache_key_from_agent_session(openai_client,
             usage=unittest.mock.Mock(input_tokens=1, output_tokens=1, total_tokens=2, input_tokens_details=None)
         ),
     )
-    openai_client.responses.create = unittest.mock.AsyncMock(return_value=agenerator([mock_complete_event]))
+    openai_client.responses.create = unittest.mock.AsyncMock(return_value=stream_response([mock_complete_event]))
 
     messages = [{"role": "user", "content": [{"text": "test"}]}]
     await alist(model.stream(messages, agent_metadata=AgentMetadata(session_id="s1")))
@@ -852,7 +904,7 @@ def test_format_chunk_metadata_without_token_details(model):
 
 
 @pytest.mark.asyncio
-async def test_stream(openai_client, model_id, model, agenerator, alist):
+async def test_stream(openai_client, model_id, model, stream_response, alist):
     # Mock response events
     mock_text_event = unittest.mock.Mock(type="response.output_text.delta", delta="Hello")
     mock_complete_event = unittest.mock.Mock(
@@ -863,7 +915,7 @@ async def test_stream(openai_client, model_id, model, agenerator, alist):
     )
 
     openai_client.responses.create = unittest.mock.AsyncMock(
-        return_value=agenerator([mock_text_event, mock_complete_event])
+        return_value=stream_response([mock_text_event, mock_complete_event])
     )
 
     messages = [{"role": "user", "content": [{"text": "test"}]}]
@@ -896,7 +948,7 @@ async def test_stream(openai_client, model_id, model, agenerator, alist):
 
 
 @pytest.mark.asyncio
-async def test_stream_cache_tokens_propagated(openai_client, model, agenerator, alist):
+async def test_stream_cache_tokens_propagated(openai_client, model, stream_response, alist):
     """Cache read tokens from input_tokens_details are surfaced in the metadata event."""
     mock_text_event = unittest.mock.Mock(type="response.output_text.delta", delta="Hi")
     mock_complete_event = unittest.mock.Mock(
@@ -912,7 +964,7 @@ async def test_stream_cache_tokens_propagated(openai_client, model, agenerator, 
     )
 
     openai_client.responses.create = unittest.mock.AsyncMock(
-        return_value=agenerator([mock_text_event, mock_complete_event])
+        return_value=stream_response([mock_text_event, mock_complete_event])
     )
 
     messages = [{"role": "user", "content": [{"text": "test"}]}]
@@ -928,7 +980,7 @@ async def test_stream_cache_tokens_propagated(openai_client, model, agenerator, 
 
 
 @pytest.mark.asyncio
-async def test_stream_no_cache_tokens_when_absent(openai_client, model, agenerator, alist):
+async def test_stream_no_cache_tokens_when_absent(openai_client, model, stream_response, alist):
     """cacheReadInputTokens is omitted from metadata when input_tokens_details is absent."""
     mock_text_event = unittest.mock.Mock(type="response.output_text.delta", delta="Hi")
     mock_complete_event = unittest.mock.Mock(
@@ -944,7 +996,7 @@ async def test_stream_no_cache_tokens_when_absent(openai_client, model, agenerat
     )
 
     openai_client.responses.create = unittest.mock.AsyncMock(
-        return_value=agenerator([mock_text_event, mock_complete_event])
+        return_value=stream_response([mock_text_event, mock_complete_event])
     )
 
     messages = [{"role": "user", "content": [{"text": "test"}]}]
@@ -957,7 +1009,7 @@ async def test_stream_no_cache_tokens_when_absent(openai_client, model, agenerat
 
 
 @pytest.mark.asyncio
-async def test_stream_with_tool_calls(openai_client, model, agenerator, alist):
+async def test_stream_with_tool_calls(openai_client, model, stream_response, alist):
     # Mock tool call events
     mock_tool_event = unittest.mock.Mock(
         type="response.output_item.added",
@@ -974,7 +1026,7 @@ async def test_stream_with_tool_calls(openai_client, model, agenerator, alist):
     )
 
     openai_client.responses.create = unittest.mock.AsyncMock(
-        return_value=agenerator([mock_tool_event, mock_args_event, mock_complete_event])
+        return_value=stream_response([mock_tool_event, mock_args_event, mock_complete_event])
     )
 
     messages = [{"role": "user", "content": [{"text": "calculate 2+2"}]}]
@@ -987,7 +1039,7 @@ async def test_stream_with_tool_calls(openai_client, model, agenerator, alist):
 
 
 @pytest.mark.asyncio
-async def test_stream_with_tool_calls_done_event(openai_client, model, agenerator, alist):
+async def test_stream_with_tool_calls_done_event(openai_client, model, stream_response, alist):
     """Test that response.function_call_arguments.done overwrites accumulated deltas."""
     mock_tool_event = unittest.mock.Mock(
         type="response.output_item.added",
@@ -1009,7 +1061,7 @@ async def test_stream_with_tool_calls_done_event(openai_client, model, agenerato
     )
 
     openai_client.responses.create = unittest.mock.AsyncMock(
-        return_value=agenerator([mock_tool_event, mock_args_delta, mock_args_done, mock_complete_event])
+        return_value=stream_response([mock_tool_event, mock_args_delta, mock_args_done, mock_complete_event])
     )
 
     messages = [{"role": "user", "content": [{"text": "calculate 2+2"}]}]
@@ -1022,7 +1074,7 @@ async def test_stream_with_tool_calls_done_event(openai_client, model, agenerato
 
 
 @pytest.mark.asyncio
-async def test_stream_response_incomplete(openai_client, model, agenerator, alist):
+async def test_stream_response_incomplete(openai_client, model, stream_response, alist):
     """Test that response.incomplete sets stop_reason to length when max_output_tokens is reached."""
     mock_text_event = unittest.mock.Mock(type="response.output_text.delta", delta="Truncated resp")
     mock_incomplete_event = unittest.mock.Mock(
@@ -1034,7 +1086,7 @@ async def test_stream_response_incomplete(openai_client, model, agenerator, alis
     )
 
     openai_client.responses.create = unittest.mock.AsyncMock(
-        return_value=agenerator([mock_text_event, mock_incomplete_event])
+        return_value=stream_response([mock_text_event, mock_incomplete_event])
     )
 
     messages = [{"role": "user", "content": [{"text": "write a long essay"}]}]
@@ -1049,7 +1101,7 @@ async def test_stream_response_incomplete(openai_client, model, agenerator, alis
 
 
 @pytest.mark.asyncio
-async def test_stream_response_incomplete_with_truncated_tool_call(openai_client, model, agenerator, alist):
+async def test_stream_response_incomplete_with_truncated_tool_call(openai_client, model, stream_response, alist):
     """Test that max_tokens takes precedence over tool_use when a function call is cut off."""
     mock_item_added_event = unittest.mock.Mock(
         type="response.output_item.added",
@@ -1067,7 +1119,7 @@ async def test_stream_response_incomplete_with_truncated_tool_call(openai_client
     )
 
     openai_client.responses.create = unittest.mock.AsyncMock(
-        return_value=agenerator([mock_item_added_event, mock_args_event, mock_incomplete_event])
+        return_value=stream_response([mock_item_added_event, mock_args_event, mock_incomplete_event])
     )
 
     messages = [{"role": "user", "content": [{"text": "save my notes"}]}]
@@ -1078,7 +1130,7 @@ async def test_stream_response_incomplete_with_truncated_tool_call(openai_client
 
 
 @pytest.mark.asyncio
-async def test_stream_response_incomplete_content_filter(openai_client, model, agenerator, alist):
+async def test_stream_response_incomplete_content_filter(openai_client, model, stream_response, alist):
     """Test that response.incomplete with reason content_filter surfaces as content_filtered."""
     mock_text_event = unittest.mock.Mock(type="response.output_text.delta", delta="Partial resp")
     mock_incomplete_event = unittest.mock.Mock(
@@ -1090,7 +1142,7 @@ async def test_stream_response_incomplete_content_filter(openai_client, model, a
     )
 
     openai_client.responses.create = unittest.mock.AsyncMock(
-        return_value=agenerator([mock_text_event, mock_incomplete_event])
+        return_value=stream_response([mock_text_event, mock_incomplete_event])
     )
 
     messages = [{"role": "user", "content": [{"text": "hello"}]}]
@@ -1101,7 +1153,7 @@ async def test_stream_response_incomplete_content_filter(openai_client, model, a
 
 
 @pytest.mark.asyncio
-async def test_stream_response_incomplete_content_filter_with_tool_call(openai_client, model, agenerator, alist):
+async def test_stream_response_incomplete_content_filter_with_tool_call(openai_client, model, stream_response, alist):
     """Test that a function call cut off by the content filter is not reported as tool_use."""
     mock_item_added_event = unittest.mock.Mock(
         type="response.output_item.added",
@@ -1119,7 +1171,7 @@ async def test_stream_response_incomplete_content_filter_with_tool_call(openai_c
     )
 
     openai_client.responses.create = unittest.mock.AsyncMock(
-        return_value=agenerator([mock_item_added_event, mock_args_event, mock_incomplete_event])
+        return_value=stream_response([mock_item_added_event, mock_args_event, mock_incomplete_event])
     )
 
     messages = [{"role": "user", "content": [{"text": "save my notes"}]}]
@@ -1137,7 +1189,7 @@ async def test_stream_response_incomplete_content_filter_with_tool_call(openai_c
         "response.reasoning_summary_text.delta",
     ],
 )
-async def test_stream_reasoning_content(openai_client, model, agenerator, alist, event_type):
+async def test_stream_reasoning_content(openai_client, model, stream_response, alist, event_type):
     """Test that reasoning content is streamed correctly for both full and summary reasoning events."""
     mock_reasoning_event = unittest.mock.Mock(type=event_type, delta="Let me think...")
     mock_text_event = unittest.mock.Mock(type="response.output_text.delta", delta="The answer is 42")
@@ -1149,7 +1201,7 @@ async def test_stream_reasoning_content(openai_client, model, agenerator, alist,
     )
 
     openai_client.responses.create = unittest.mock.AsyncMock(
-        return_value=agenerator([mock_reasoning_event, mock_text_event, mock_complete_event])
+        return_value=stream_response([mock_reasoning_event, mock_text_event, mock_complete_event])
     )
 
     messages = [{"role": "user", "content": [{"text": "think step by step"}]}]
@@ -1175,7 +1227,7 @@ async def test_stream_reasoning_content(openai_client, model, agenerator, alist,
 
 
 @pytest.mark.asyncio
-async def test_stream_citation_annotations(openai_client, model, agenerator, alist):
+async def test_stream_citation_annotations(openai_client, model, stream_response, alist):
     """Test that web search citation annotations are streamed as CitationsDelta events."""
     mock_text_event1 = unittest.mock.Mock(type="response.output_text.delta", delta="The answer is here. ")
     mock_text_event2 = unittest.mock.Mock(type="response.output_text.delta", delta="(example.com)")
@@ -1195,7 +1247,7 @@ async def test_stream_citation_annotations(openai_client, model, agenerator, ali
     )
 
     openai_client.responses.create = unittest.mock.AsyncMock(
-        return_value=agenerator([mock_text_event1, mock_text_event2, mock_annotation_event, mock_complete_event])
+        return_value=stream_response([mock_text_event1, mock_text_event2, mock_annotation_event, mock_complete_event])
     )
 
     messages = [{"role": "user", "content": [{"text": "search something"}]}]
@@ -1218,7 +1270,7 @@ async def test_stream_citation_annotations(openai_client, model, agenerator, ali
 
 
 @pytest.mark.asyncio
-async def test_stream_unsupported_annotation_type(openai_client, model, agenerator, alist, caplog):
+async def test_stream_unsupported_annotation_type(openai_client, model, stream_response, alist, caplog):
     """Test that unsupported annotation types log a warning and are not emitted."""
     mock_text_event = unittest.mock.Mock(type="response.output_text.delta", delta="Some text")
     mock_annotation_event = unittest.mock.Mock(
@@ -1233,7 +1285,7 @@ async def test_stream_unsupported_annotation_type(openai_client, model, agenerat
     )
 
     openai_client.responses.create = unittest.mock.AsyncMock(
-        return_value=agenerator([mock_text_event, mock_annotation_event, mock_complete_event])
+        return_value=stream_response([mock_text_event, mock_annotation_event, mock_complete_event])
     )
 
     messages = [{"role": "user", "content": [{"text": "search files"}]}]
@@ -1289,12 +1341,12 @@ async def test_structured_output_forwards_request_params(openai_client, model_id
 
 
 @pytest.mark.asyncio
-async def test_stream_response_failed_raises_provider_error(openai_client, model, messages, agenerator):
+async def test_stream_response_failed_raises_provider_error(openai_client, model, messages, stream_response):
     error = ResponseError(message="The model failed while processing the request.", code="server_error")
     failed_event = ResponseFailedEvent.model_construct(
         type="response.failed", sequence_number=1, response=Response.model_construct(error=error)
     )
-    openai_client.responses.create = unittest.mock.AsyncMock(return_value=agenerator([failed_event]))
+    openai_client.responses.create = unittest.mock.AsyncMock(return_value=stream_response([failed_event]))
 
     with pytest.raises(RuntimeError, match="The model failed while processing the request") as exc_info:
         async for _ in model.stream(messages):
@@ -1304,13 +1356,13 @@ async def test_stream_response_failed_raises_provider_error(openai_client, model
 
 
 @pytest.mark.asyncio
-async def test_stream_response_failed_context_overflow(openai_client, model, messages, agenerator):
+async def test_stream_response_failed_context_overflow(openai_client, model, messages, stream_response):
     message = "prompt tokens (320666) exceed customer model maximum (278528) for model-id"
     error = ResponseError(message=message, code="invalid_prompt")
     failed_event = ResponseFailedEvent.model_construct(
         type="response.failed", sequence_number=1, response=Response.model_construct(error=error)
     )
-    openai_client.responses.create = unittest.mock.AsyncMock(return_value=agenerator([failed_event]))
+    openai_client.responses.create = unittest.mock.AsyncMock(return_value=stream_response([failed_event]))
 
     with pytest.raises(ContextWindowOverflowException, match="exceed customer model maximum") as exc_info:
         async for _ in model.stream(messages):
@@ -1320,12 +1372,12 @@ async def test_stream_response_failed_context_overflow(openai_client, model, mes
 
 
 @pytest.mark.asyncio
-async def test_stream_response_failed_existing_context_pattern(openai_client, model, messages, agenerator):
+async def test_stream_response_failed_existing_context_pattern(openai_client, model, messages, stream_response):
     error = ResponseError(message="This model's maximum context length is 4096 tokens.", code="invalid_prompt")
     failed_event = ResponseFailedEvent.model_construct(
         type="response.failed", sequence_number=1, response=Response.model_construct(error=error)
     )
-    openai_client.responses.create = unittest.mock.AsyncMock(return_value=agenerator([failed_event]))
+    openai_client.responses.create = unittest.mock.AsyncMock(return_value=stream_response([failed_event]))
 
     with pytest.raises(ContextWindowOverflowException, match="maximum context length"):
         async for _ in model.stream(messages):
@@ -1333,11 +1385,11 @@ async def test_stream_response_failed_existing_context_pattern(openai_client, mo
 
 
 @pytest.mark.asyncio
-async def test_stream_response_failed_without_error_details(openai_client, model, messages, agenerator):
+async def test_stream_response_failed_without_error_details(openai_client, model, messages, stream_response):
     failed_event = ResponseFailedEvent.model_construct(
         type="response.failed", sequence_number=1, response=Response.model_construct(error=None)
     )
-    openai_client.responses.create = unittest.mock.AsyncMock(return_value=agenerator([failed_event]))
+    openai_client.responses.create = unittest.mock.AsyncMock(return_value=stream_response([failed_event]))
 
     with pytest.raises(RuntimeError, match="OpenAI Responses API response failed"):
         async for _ in model.stream(messages):
@@ -1346,11 +1398,11 @@ async def test_stream_response_failed_without_error_details(openai_client, model
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("code", ["rate_limit_exceeded", None])
-async def test_stream_error_event_as_throttle(openai_client, model, messages, agenerator, code):
+async def test_stream_error_event_as_throttle(openai_client, model, messages, stream_response, code):
     error_event = ResponseErrorEvent(
         type="error", sequence_number=1, code=code, message="Rate limit exceeded while streaming."
     )
-    openai_client.responses.create = unittest.mock.AsyncMock(return_value=agenerator([error_event]))
+    openai_client.responses.create = unittest.mock.AsyncMock(return_value=stream_response([error_event]))
 
     with pytest.raises(ModelThrottledException, match="Rate limit exceeded while streaming") as exc_info:
         async for _ in model.stream(messages):
@@ -1360,14 +1412,14 @@ async def test_stream_error_event_as_throttle(openai_client, model, messages, ag
 
 
 @pytest.mark.asyncio
-async def test_stream_throttle_precedes_context_overflow(openai_client, model, messages, agenerator):
+async def test_stream_throttle_precedes_context_overflow(openai_client, model, messages, stream_response):
     error_event = ResponseErrorEvent(
         type="error",
         sequence_number=1,
         code="rate_limit_exceeded",
         message="prompt tokens exceed customer model maximum",
     )
-    openai_client.responses.create = unittest.mock.AsyncMock(return_value=agenerator([error_event]))
+    openai_client.responses.create = unittest.mock.AsyncMock(return_value=stream_response([error_event]))
 
     with pytest.raises(ModelThrottledException, match="exceed customer model maximum"):
         async for _ in model.stream(messages):
@@ -1467,7 +1519,7 @@ async def test_stream_bad_request_non_context_overflow(openai_client, model, mes
 
 
 @pytest.mark.asyncio
-async def test_stream_error_during_iteration(openai_client, model, messages, agenerator):
+async def test_stream_error_during_iteration(openai_client, model, messages, stream_response):
     """Test that errors during streaming iteration are properly handled."""
     mock_text_event = unittest.mock.Mock(type="response.output_text.delta", delta="Hello")
 
@@ -1479,7 +1531,9 @@ async def test_stream_error_during_iteration(openai_client, model, messages, age
             body={"error": {"code": "rate_limit_exceeded"}},
         )
 
-    openai_client.responses.create = unittest.mock.AsyncMock(return_value=error_generator())
+    openai_client.responses.create = unittest.mock.AsyncMock(
+        return_value=AsyncGeneratorContextManager(error_generator())
+    )
 
     with pytest.raises(ModelThrottledException) as exc_info:
         async for _ in model.stream(messages):
@@ -1503,13 +1557,54 @@ async def test_stream_context_overflow_during_iteration(openai_client, model, me
         error.code = "context_length_exceeded"
         raise error
 
-    openai_client.responses.create = unittest.mock.AsyncMock(return_value=error_generator())
+    openai_client.responses.create = unittest.mock.AsyncMock(
+        return_value=AsyncGeneratorContextManager(error_generator())
+    )
 
     with pytest.raises(ContextWindowOverflowException) as exc_info:
         async for _ in model.stream(messages):
             pass
 
     assert "Context length exceeded" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_stream_closes_response_on_early_exit(openai_client, model, messages):
+    """The stream response is closed when the consumer breaks early."""
+    mock_text_event1 = unittest.mock.Mock(type="response.output_text.delta", delta="First")
+    mock_text_event2 = unittest.mock.Mock(type="response.output_text.delta", delta="Second")
+    mock_response = AsyncStreamContextManager([mock_text_event1, mock_text_event2])
+    openai_client.responses.create = unittest.mock.AsyncMock(return_value=mock_response)
+
+    async with contextlib.aclosing(model.stream(messages)) as stream:
+        async for event in stream:
+            if "contentBlockDelta" in event and "text" in event.get("contentBlockDelta", {}).get("delta", {}):
+                break
+
+    assert mock_response.closed
+
+
+@pytest.mark.asyncio
+async def test_stream_closes_response_on_exception(openai_client, model, messages):
+    """The stream response is closed when an exception occurs mid-stream."""
+    mock_text_event = unittest.mock.Mock(type="response.output_text.delta", delta="Hello")
+
+    async def error_after_first():
+        yield mock_text_event
+        raise openai.RateLimitError(
+            message="Rate limit hit",
+            response=unittest.mock.MagicMock(),
+            body={"error": {"code": "rate_limit_exceeded"}},
+        )
+
+    mock_response = AsyncGeneratorContextManager(error_after_first())
+    openai_client.responses.create = unittest.mock.AsyncMock(return_value=mock_response)
+
+    with pytest.raises(ModelThrottledException):
+        async for _ in model.stream(messages):
+            pass
+
+    assert mock_response.closed
 
 
 @pytest.mark.asyncio
@@ -1844,7 +1939,9 @@ def test_stateful_model_info_override_wins_over_the_config_option(model_id, stat
 
 
 @pytest.mark.asyncio
-async def test_stream_resolves_stateful_once_per_stream_not_once_per_event(openai_client, model_id, agenerator, alist):
+async def test_stream_resolves_stateful_once_per_stream_not_once_per_event(
+    openai_client, model_id, stream_response, alist
+):
     """Resolving the record walks the config, so the stream must not re-read it per event."""
     model = OpenAIResponsesModel(model_id=model_id, stateful=True)
     mock_events = [
@@ -1852,7 +1949,7 @@ async def test_stream_resolves_stateful_once_per_stream_not_once_per_event(opena
         *[unittest.mock.Mock(type="response.output_text.delta", delta="x") for _ in range(50)],
         unittest.mock.Mock(type="response.completed", response=unittest.mock.Mock(usage=None)),
     ]
-    openai_client.responses.create = unittest.mock.AsyncMock(return_value=agenerator(mock_events))
+    openai_client.responses.create = unittest.mock.AsyncMock(return_value=stream_response(mock_events))
 
     with unittest.mock.patch.object(
         OpenAIResponsesModel, "get_config", side_effect=model.config.copy
@@ -1865,7 +1962,7 @@ async def test_stream_resolves_stateful_once_per_stream_not_once_per_event(opena
 
 
 @pytest.mark.asyncio
-async def test_stream_stateful(openai_client, model_id, agenerator, alist):
+async def test_stream_stateful(openai_client, model_id, stream_response, alist):
     """When stateful is enabled, model writes response_id to model_state from response.created."""
     model = OpenAIResponsesModel(model_id=model_id, stateful=True)
     mock_events = [
@@ -1883,7 +1980,7 @@ async def test_stream_stateful(openai_client, model_id, agenerator, alist):
         ),
     ]
 
-    openai_client.responses.create = unittest.mock.AsyncMock(return_value=agenerator(mock_events))
+    openai_client.responses.create = unittest.mock.AsyncMock(return_value=stream_response(mock_events))
 
     model_state = {"response_id": "resp_previous"}
     events = await alist(
@@ -2872,7 +2969,7 @@ async def test_message_cache_works_with_older_client_create_signature(
         async def events():
             yield SimpleNamespace(type="response.output_text.delta", delta="OK")
 
-        return events()
+        return AsyncGeneratorContextManager(events())
 
     openai_client.responses.create.side_effect = create
     model = OpenAIResponsesModel(model_id="gpt-5.6", cache_config=CacheConfig(), params=params)
@@ -2968,10 +3065,10 @@ async def test_injected_client_serves_native_count_tokens():
 
 
 @pytest.mark.asyncio
-async def test_injected_client_is_reused_and_not_closed(model_id, test_output_model_cls, agenerator, alist):
+async def test_injected_client_is_reused_and_not_closed(model_id, test_output_model_cls, stream_response, alist):
     client = unittest.mock.AsyncMock()
     client.responses.create = unittest.mock.AsyncMock(
-        side_effect=lambda **_: agenerator([unittest.mock.Mock(type="response.output_text.delta", delta="Hi")])
+        side_effect=lambda **_: stream_response([unittest.mock.Mock(type="response.output_text.delta", delta="Hi")])
     )
     client.responses.parse = unittest.mock.AsyncMock(
         return_value=unittest.mock.Mock(output_parsed=test_output_model_cls(name="John", age=30))
