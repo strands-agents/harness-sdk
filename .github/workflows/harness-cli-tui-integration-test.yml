@@ -1,0 +1,111 @@
+name: 'Harness CLI: TUI Integration Test'
+
+on:
+  workflow_call:
+    inputs:
+      release-sha:
+        description: Optional full release commit SHA from origin/main history
+        required: false
+        type: string
+        default: ''
+  workflow_dispatch:
+
+jobs:
+  tui-integration:
+    name: ${{ matrix.os-name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os-name: Source / Linux
+            runner: strands-agents_ubuntu-latest_4-core
+            dist: 'false'
+            platform: false
+          - os-name: Compiled / Linux
+            runner: strands-agents_ubuntu-latest_4-core
+            dist: 'true'
+            platform: true
+          - os-name: Compiled / macOS
+            runner: macos-latest
+            dist: 'true'
+            platform: true
+          - os-name: Compiled / Windows
+            runner: strands-agents_windows-latest_4-core
+            dist: 'true'
+            platform: true
+    defaults:
+      run:
+        working-directory: strands-cli
+    steps:
+      - name: Checkout pull request
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Checkout event revision
+        if: github.event_name != 'pull_request'
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Select trusted release commit
+        if: inputs.release-sha != ''
+        shell: bash
+        working-directory: .
+        env:
+          RELEASE_SHA: ${{ inputs.release-sha }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] ||
+             ! git merge-base --is-ancestor "$RELEASE_SHA" refs/remotes/origin/main; then
+            echo "::error::release-sha must be a full commit SHA from origin/main history."
+            exit 1
+          fi
+          git checkout --detach "$RELEASE_SHA"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Setup Python
+        uses: actions/setup-python@v7.0.0
+        with:
+          python-version: '3.12'
+
+      - name: Select test Python
+        run: python -c "import os, sys; env=open(os.environ['GITHUB_ENV'], 'a'); print(f'PYTHON={sys.executable}', file=env)"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Install tmux on Linux
+        if: matrix.dist == 'true' && runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y tmux
+
+      - name: Install tmux on macOS
+        if: matrix.dist == 'true' && runner.os == 'macOS'
+        run: command -v tmux >/dev/null || brew install tmux
+
+      - name: Run TUI integration scenarios
+        env:
+          STRANDS_CLI_TEST_DIST: ${{ matrix.dist }}
+          STRANDS_CLI_TEST_TMUX: ${{ matrix.dist == 'true' && runner.os != 'Windows' }}
+        run: npm run test:tui-integration
+
+      - name: Run deterministic platform E2E scenarios
+        if: matrix.platform
+        run: npm run test:platform-integration
