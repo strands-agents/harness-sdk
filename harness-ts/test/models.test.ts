@@ -817,6 +817,19 @@ describe('supportsMedia', () => {
     expect(await supportsMedia('bedrock/openai.gpt-5.6-sol')).toBe(false)
   })
 
+  // https://github.com/strands-agents/harness-sdk/issues/5556
+  it('disables tool-result media for Grok on Bedrock Converse', async () => {
+    expect(await supportsMedia('xai.grok-4.7')).toBe(false)
+    expect(await supportsMedia('bedrock/global.xai.grok-4.7')).toBe(false)
+    expect(await supportsMedia('bedrock/us.xai.grok-4.6')).toBe(false)
+    expect(await supportsMedia('bedrock-mantle/xai.grok-4.3')).toBe(true)
+
+    const grok = new BedrockModel({ modelId: 'us.xai.grok-4.7' })
+    const claude = new BedrockModel({ modelId: 'global.anthropic.claude-opus-4-8' })
+    expect(await supportsMedia(grok)).toBe(false)
+    expect(await supportsMedia(new ModelRouter([claude, grok]))).toBe(false)
+  })
+
   it('is true elsewhere', async () => {
     expect(await supportsMedia('bedrock/global.anthropic.claude-opus-4-8')).toBe(true)
     expect(await supportsMedia('anthropic/claude-haiku-4-5-20251001')).toBe(true)
