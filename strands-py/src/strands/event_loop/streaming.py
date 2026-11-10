@@ -572,7 +572,6 @@ async def stream_messages(
     """
     from ..models._model_proxy import ModelProxy
 
-    logger.debug("model=<%s> | streaming messages", model)
     async for event in ModelProxy(model).stream(
         messages,
         tool_specs,

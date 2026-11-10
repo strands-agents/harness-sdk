@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 from ...agent.invocation_context import InvocationContext
 from ...types.content import Message, Messages, SystemPrompt
 from ...types.event_loop import Usage
+from .._model_proxy import ModelProxy
 from ..model import Model
 from .router import RoutingCandidate
 from .strategy import RoutingContext
@@ -90,7 +91,7 @@ async def _invoke_classifier(
 
     A call that returns normally adds its reported usage to ``invocation_context``.
     """
-    events = model.structured_output(
+    events = ModelProxy(model).structured_output(
         _ClassifierSelection,
         [{"role": "user", "content": [{"text": request}]}],
         system_prompt=system_prompt,

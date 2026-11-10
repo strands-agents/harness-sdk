@@ -9,6 +9,7 @@ stored, and that provider sends it so the model reads it only until the next use
 ones included, gets the latest user message's injected blocks as text and none of the earlier ones.
 """
 
+import logging
 import threading
 import time
 from collections.abc import AsyncGenerator
@@ -25,6 +26,8 @@ if TYPE_CHECKING:
     from ..agent.invocation_context import InvocationContext
     from ..types._events import TypedEvent
     from .model import Model
+
+logger = logging.getLogger(__name__)
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -76,6 +79,7 @@ class ModelProxy:
         Yields:
             The stream events, ending with the reason for stopping, the final message and the usage metrics.
         """
+        logger.debug("model=<%s> | streaming messages", self._model)
         messages = _normalize_messages(messages)
         # Only role and content reach the provider, so metadata and any future non-model fields never leak.
         messages = [Message(role=message["role"], content=message["content"]) for message in messages]
@@ -109,13 +113,13 @@ class ModelProxy:
     def structured_output(
         self, output_model: type[T], messages: Messages, system_prompt: str | None = None, **kwargs: Any
     ) -> AsyncGenerator[dict[str, T | Any], None]:
-        """Delegate to the model's ``structured_output`` with the messages :meth:`stream` would send."""
+        """Delegate to the model's ``structured_output``, with summary and injected blocks prepared."""
         return self._model.structured_output(
             output_model, self._prepare(messages)[0], system_prompt=system_prompt, **kwargs
         )
 
     async def count_tokens(self, messages: Messages, **kwargs: Any) -> int:
-        """Delegate to the model's ``count_tokens`` with the messages :meth:`stream` would send.
+        """Delegate to the model's ``count_tokens`` with summary and injected blocks prepared as :meth:`stream` does.
 
         Args:
             messages: The messages to count.
