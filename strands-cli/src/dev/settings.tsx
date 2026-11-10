@@ -1,125 +1,72 @@
-import { createElement, useRef, useState, type ReactElement } from 'react'
+import { createElement, useState, type ReactElement } from 'react'
 import { Box, useInput } from 'ink'
 import { Text } from '../ui/theme.js'
-import { errorMessage, sanitizeTerminalText } from '../terminal/text.js'
-import { expandHome } from '../paths.js'
+import { sanitizeTerminalText } from '../terminal/text.js'
 import type { StartupScreen } from '../ui/run.js'
-import type { WorkspaceReplacementRequest } from './replace.js'
 
-export type WorkspaceSettingsAction = 'edit' | 'import' | 'create'
+const APPROVAL = 'DELETE'
 
-interface WorkspaceFormProps {
+interface ConfirmationProps {
   directory: string
-  action: Exclude<WorkspaceSettingsAction, 'edit'>
-  onSubmit(request: WorkspaceReplacementRequest): Promise<void>
+  replacement: string
+  onConfirm(): void
   onCancel(): void
 }
 
-export const WorkspaceReplacementForm = ({
+const isPrintable = (input: string): boolean =>
+  ![...input].some((character) => (character.codePointAt(0) ?? 0) < 32 || character === '\u007f')
+
+export const WorkspaceReplacementConfirmation = ({
   directory,
-  action,
-  onSubmit,
+  replacement,
+  onConfirm,
   onCancel,
-}: WorkspaceFormProps): ReactElement => {
-  const [value, setValue] = useState(action === 'create' ? 'new-agent' : '')
-  const [language, setLanguage] = useState<'typescript' | 'python'>('typescript')
-  const [confirm, setConfirm] = useState(false)
+}: ConfirmationProps): ReactElement => {
   const [approval, setApproval] = useState('')
   const [error, setError] = useState<string>()
-  const pending = useRef(false)
   useInput((input, key) => {
-    if (pending.current) return
     if (key.escape || (key.ctrl && input === 'c')) return onCancel()
-    if (key.tab && action === 'create' && !confirm)
-      return setLanguage((current) => (current === 'typescript' ? 'python' : 'typescript'))
     if (key.return) {
-      if (!confirm) {
-        if (!value.trim())
-          return setError(action === 'create' ? 'Enter an agent name.' : 'Enter an agent project or source path.')
-        setError(undefined)
-        setConfirm(true)
-        return
-      }
-      if (approval !== 'DELETE') return setError('Type DELETE exactly to confirm, or press Esc to cancel.')
-      pending.current = true
-      const request: WorkspaceReplacementRequest =
-        action === 'import'
-          ? { kind: 'import', path: expandHome(value.trim()) }
-          : { kind: 'create', language, name: value.trim() }
-      void onSubmit(request).catch((cause: unknown) => {
-        setError(sanitizeTerminalText(errorMessage(cause)))
-        pending.current = false
-      })
-      return
+      if (approval === APPROVAL) return onConfirm()
+      return setError('Type DELETE exactly to confirm, or press Esc to select a different agent.')
     }
-    if (key.backspace || key.delete) {
-      if (confirm) setApproval((current) => current.slice(0, -1))
-      else setValue((current) => current.slice(0, -1))
-    } else if (
-      !key.ctrl &&
-      !key.meta &&
-      ![...input].some((character) => (character.codePointAt(0) ?? 0) < 32 || character === '\u007f')
-    ) {
-      if (confirm) setApproval((current) => `${current}${input}`.slice(0, 32))
-      else setValue((current) => `${current}${input}`.slice(0, 4096))
-    }
+    if (key.backspace || key.delete) return setApproval((current) => current.slice(0, -1))
+    if (!key.ctrl && !key.meta && isPrintable(input)) setApproval((current) => `${current}${input}`.slice(0, 32))
   })
   return (
     <Box flexDirection="column" gap={1}>
-      <Text bold>
-        {confirm
-          ? 'DELETE workspace and replace?'
-          : action === 'import'
-            ? 'Import a different agent'
-            : 'Create a new agent'}
+      <Text bold>DELETE workspace and replace?</Text>
+      <Text color="red">This is a DELETE operation.</Text>
+      <Text>Workspace folder: {sanitizeTerminalText(directory)}</Text>
+      <Text>
+        All files in this folder will be replaced, including tmp agents, reports, state, and agents stored inside it.
       </Text>
-      {confirm ? (
-        <>
-          <Text color="red">This is a DELETE operation.</Text>
-          <Text>Workspace folder: {sanitizeTerminalText(directory)}</Text>
-          <Text>
-            All files in this folder will be replaced, including tmp agents, reports, state, and agents stored inside
-            it.
-          </Text>
-          <Text>Agent projects outside this folder will not be deleted. A new chat starts after replacement.</Text>
-          <Text>
-            Replacement: {sanitizeTerminalText(value)}
-            {action === 'create' ? ` (${language})` : ''}
-          </Text>
-          <Text>Type DELETE to confirm: {approval}▏</Text>
-        </>
-      ) : (
-        <>
-          <Text>
-            {action === 'import' ? 'Agent project or source path' : 'Agent name'}: {sanitizeTerminalText(value)}▏
-          </Text>
-          {action === 'create' ? <Text>Language: {language} · Tab to change</Text> : null}
-          <Text dimColor>The next screen requires explicit confirmation before anything is deleted.</Text>
-        </>
-      )}
+      <Text>Agent projects outside this folder will not be deleted. A new chat starts after replacement.</Text>
+      <Text>Replacement: {sanitizeTerminalText(replacement)}</Text>
+      <Text>Type DELETE to confirm: {approval}▏</Text>
       {error ? <Text color="red">{error}</Text> : null}
-      <Text dimColor>Enter continue · Esc cancel</Text>
+      <Text dimColor>Enter confirm · Esc back</Text>
     </Box>
   )
 }
 
-export const chooseWorkspaceReplacement = async (
+export const confirmWorkspaceReplacement = async (
   directory: string,
-  action: Exclude<WorkspaceSettingsAction, 'edit'>,
+  replacement: string,
   screen: StartupScreen
-): Promise<WorkspaceReplacementRequest | undefined> => {
+): Promise<boolean> => {
   screen.signal.throwIfAborted()
-  let complete: (request: WorkspaceReplacementRequest | undefined) => void = () => undefined
-  const result = new Promise<WorkspaceReplacementRequest | undefined>((resolve) => {
+  let complete: (confirmed: boolean) => void = () => undefined
+  const result = new Promise<boolean>((resolve) => {
     complete = resolve
   })
-  const cancel = (): void => complete(undefined)
+  const cancel = (): void => complete(false)
   screen.signal.addEventListener('abort', cancel, { once: true })
   screen.show(
-    createElement(WorkspaceReplacementForm, {
+    createElement(WorkspaceReplacementConfirmation, {
       directory,
-      action,
-      onSubmit: async (request) => complete(request),
+      replacement,
+      onConfirm: () => complete(true),
       onCancel: cancel,
     }),
     'Strands dev workspace'

@@ -80,7 +80,7 @@ describe('dev startup screen', () => {
         config: CliConfigStore.memory({}, { animations: false }),
         renderApp: render as RenderApp,
         prepare: async (screen) => {
-          selected = await chooseHarness({ cliName: 'Saved CLI', harnesses: [] }, screen, open)
+          selected = await chooseHarness({ cli: { name: 'Saved CLI' }, harnesses: [] }, screen, open)
           return false
         },
       }
@@ -119,7 +119,7 @@ describe('dev startup screen', () => {
       renderApp: render as RenderApp,
       prepare: async (screen) => {
         signal = screen.signal
-        await chooseHarness({ cliName: 'Saved CLI', harnesses: [] }, screen, vi.fn())
+        await chooseHarness({ cli: { name: 'Saved CLI' }, harnesses: [] }, screen, vi.fn())
         return false
       },
     })

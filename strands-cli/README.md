@@ -97,7 +97,15 @@ Creation errors stay in the picker so you can retry without restarting the CLI.
 Discovery reads the current folder and any explicit search roots. It does not execute source or follow symbolic links.
 It skips dependency folders, build output, private state, and copied harness libraries.
 
-The command creates `strands-dev/` in the launch directory unless `--workspace` selects another location.
+When the launch directory has no workspace, the picker asks for the workspace folder after you select a harness.
+The folder field starts with `strands-dev/` in the launch directory, or the `--workspace` path. You can edit the path before you continue.
+A relative path starts from the launch directory. Esc in the folder step goes back to the harness list.
+After you go back from a failed setup, the field starts with the next unused name, for example `strands-dev-2/`.
+
+The folder must be new or empty, or it must be the existing workspace of the selected agent. Dev does not use a folder that contains other files.
+To reopen a workspace in a different folder, run `strands dev` from that folder or pass `--workspace <path>`.
+`--agent` and `--create` do not show the picker. They use `strands-dev/` in the launch directory unless `--workspace` selects a different location.
+
 Initialization records the persistent agent in `.config` and installs one independent copy under `tmp/`.
 An existing workspace reopens with its recorded initial copy instead of creating another one. `--agent` selects another entrypoint for one launch without changing the manifest.
 Without a terminal, select an existing workspace, an entrypoint, or a creation option explicitly.
@@ -197,12 +205,17 @@ For the old `strands-dev/base-cli/` layout, selecting Base CLI creates the contr
 In a dev session, `/settings` includes **Strands dev workspace**. This section shows the workspace folder and active agent path.
 
 - **Edit workspace configuration** opens `.config` in your configured editor. Binding changes apply on the next launch.
-- **Import a different agent** replaces the workspace and binds the selected external project.
-- **Create a new agent** replaces the workspace with a new TypeScript or Python project.
+- **Import a different agent** opens the startup agent selector. The selector scans the same folders and hides the current agent.
 
-Import and creation require a separate confirmation. The confirmation identifies the folder and requires you to type `DELETE`.
+In the selector, you can select the Base CLI, a local project, or **Create a new harness** for a new TypeScript or Python project.
+When the current agent is a Base CLI copy, the selector does not show the Base CLI.
+The selector also does not show projects that contain the workspace folder or are inside it.
+A warning in the selector tells you that a selection deletes your current agent in strands dev.
+
+After you select an agent, a separate confirmation shows the folder. Type `DELETE` to confirm, or press Esc to select a different agent.
 Replacement deletes the old workspace contents, including temporary agents, reports, state, and any agent stored inside that folder.
 Agent projects outside the workspace remain untouched. A new chat starts after a successful replacement.
+
 The CLI keeps a backup until the replacement agent starts. If setup fails, it restores the previous workspace and session.
 These actions do not change the default agent for plain `strands`.
 

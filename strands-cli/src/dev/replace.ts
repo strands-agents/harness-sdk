@@ -11,7 +11,9 @@ import { ensureInitialCandidate } from './initialize.js'
 import type { DevWorkspace } from './workspace.js'
 
 export type WorkspaceReplacementRequest =
-  { kind: 'import'; path: string } | { kind: 'create'; language: 'typescript' | 'python'; name: string }
+  | { kind: 'import'; path: string }
+  | { kind: 'cli' }
+  | { kind: 'create'; language: 'typescript' | 'python'; name: string }
 
 export interface WorkspaceReplacement {
   apply(): Promise<DevWorkspace>
@@ -101,13 +103,13 @@ export const createWorkspaceReplacement = async (options: {
           owned = await lstat(directory)
           replacement = await bindExistingAgent(directory, imported.entrypoint)
         } else {
-          const create = request as Extract<WorkspaceReplacementRequest, { kind: 'create' }>
+          const created = request as Exclude<WorkspaceReplacementRequest, { kind: 'import' }>
           const { agentProject: _agentProject, ...saved } = options.snapshot
-          const snapshot = { ...saved, profile: { ...saved.profile, name: create.name } }
           replacement = await createDevWorkspace({
             destination: directory,
-            kind: create.language,
-            snapshot,
+            ...(created.kind === 'cli'
+              ? { kind: 'cli' as const, snapshot: options.snapshot }
+              : { kind: created.language, snapshot: { ...saved, profile: { ...saved.profile, name: created.name } } }),
             cwd: dirname(directory),
             ...(signal ? { signal } : {}),
             ...(options.prepare ? { deferDependencies: true } : {}),

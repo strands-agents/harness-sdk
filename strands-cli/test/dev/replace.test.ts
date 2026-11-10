@@ -2,6 +2,7 @@ import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { CliConfigStore } from '../../src/config/store.js'
+import { containsPath } from '../../src/paths.js'
 import { bindExistingAgent } from '../../src/dev/create.js'
 import { createWorkspaceReplacement } from '../../src/dev/replace.js'
 import { readDevWorkspace } from '../../src/dev/workspace.js'
@@ -133,6 +134,36 @@ describe('workspace replacement', () => {
 
     expect(replacement.config.name).toBe('Replacement')
     expect(replacement.entrypoint).toBe(join(workspace.directory!, 'agent/agent/agent.ts'))
+    await transaction.finish()
+  })
+
+  it('shouldInstallABaseCliCopyWhenTheBaseCliIsSelected', async () => {
+    const { workspace, snapshot } = await fixture()
+    vi.spyOn(initial, 'ensureInitialCandidate').mockResolvedValue('copy')
+    vi.spyOn(archive, 'prepareWorkspaceDependencies').mockResolvedValue()
+    const transaction = await createWorkspaceReplacement({ workspace, snapshot, request: { kind: 'cli' } })
+
+    const replacement = await transaction.apply()
+
+    expect(replacement.config.origin.kind).toBe('cli')
+    expect(replacement.config.name).toBe(snapshot.profile.name)
+    expect(containsPath(workspace.directory!, replacement.root)).toBe(true)
+    await transaction.finish()
+  })
+
+  it('shouldBindTheCliDefaultProjectWhenTheBaseCliUsesAnAgentProject', async () => {
+    const { incoming, workspace, snapshot } = await fixture()
+    vi.spyOn(initial, 'ensureInitialCandidate').mockResolvedValue('copy')
+    const transaction = await createWorkspaceReplacement({
+      workspace,
+      snapshot: { ...snapshot, agentProject: join(incoming, 'agent.ts') },
+      request: { kind: 'cli' },
+    })
+
+    const replacement = await transaction.apply()
+
+    expect(replacement.entrypoint).toBe(join(incoming, 'agent.ts'))
+    expect(replacement.config.origin.kind).toBe('cli')
     await transaction.finish()
   })
 

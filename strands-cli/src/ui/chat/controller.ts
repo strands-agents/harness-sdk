@@ -1104,13 +1104,13 @@ export class ChatController implements ChatControllerApi {
       case 'settings':
         if (row.value.startsWith('workspace:')) {
           const action = row.value.slice('workspace:'.length)
-          if (!this._workspaceAction || !this._runtime.devWorkspace || !['edit', 'import', 'create'].includes(action))
+          if (!this._workspaceAction || !this._runtime.devWorkspace || (action !== 'edit' && action !== 'import'))
             return false
           if (this.busy || this._hasUnresolvedBackgroundTasks()) {
             this._openError('Workspace busy', '', 'Finish or cancel running work before changing this workspace.')
             return false
           }
-          this._workspaceAction(action as 'edit' | 'import' | 'create')
+          this._workspaceAction(action)
           return true
         }
         if (row.value === SETTINGS_SETUP_ACTION) {
@@ -2527,13 +2527,8 @@ export class ChatController implements ChatControllerApi {
             },
             {
               label: 'Import a different agent',
-              description: 'DELETE and replace this workspace after confirmation',
+              description: 'Select or create an agent. Type DELETE to replace this workspace.',
               value: 'workspace:import',
-            },
-            {
-              label: 'Create a new agent',
-              description: 'DELETE and replace this workspace after confirmation',
-              value: 'workspace:create',
             },
           ]
         : settingsRows(this._settings, category.id, this._requestSetup !== undefined)

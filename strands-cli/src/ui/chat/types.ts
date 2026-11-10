@@ -20,6 +20,7 @@ import type {
 } from '../../agent/types.js'
 
 import type { BackgroundAgentActivity } from '../../agent/background.js'
+import type { WorkspaceAction } from '../../agent/configuration.js'
 import type { LoadedMcp } from '../../agent/mcp.js'
 import type { PeerMessage } from '../../agent/messaging.js'
 import type { ChatSkillsRuntime } from '../../agent/skills.js'
@@ -247,7 +248,7 @@ export interface ChatControllerOptions {
   initialConfigurationBaseline?: ChatConfigurationBaseline
   setSettings?: (settings: Partial<ChatSettings>) => Promise<void>
   requestSetup?: () => void
-  workspaceAction?: (action: 'edit' | 'import' | 'create') => void
+  workspaceAction?: (action: WorkspaceAction) => void
   awsProfile?: {
     get(): Omit<NonNullable<ChatModelPanel['awsProfile']>, 'open'>
     select(profile: string): void
