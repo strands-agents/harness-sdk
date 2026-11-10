@@ -1,0 +1,110 @@
+---
+title: Decisions in an agent
+description: "Ask a decision model from an agent's tool or hook, count its tokens toward the agent's request, and decide which tool calls need approval."
+tags: [decision-models, tool-authoring]
+sourceLinks:
+  - path: strands-py/src/strands/decisions/decision_model.py
+  - path: strands-py/src/strands/agent/invocation_context.py
+  - path: strands-ts/src/decisions/decision-model.ts
+  - path: strands-ts/src/agent/invocation-context.ts
+---
+
+You call a decision model from your own code: a tool, a hook, or the application around
+the agent. It runs outside the agent loop, so it isn't a tool the agent picks, and it
+doesn't add messages to the conversation.
+
+## Ask from a tool
+
+A tool can hand part of its work to a decision model. This tool routes a customer
+message to a team. It passes the tool call's invocation context to `ask`, so the
+decision's tokens count toward the agent's request:
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands import Agent, LLMDecisionModel, ToolContext, tool
+
+decisions = LLMDecisionModel()
+
+
+@tool(context=True)
+async def route_message(message: str, tool_context: ToolContext) -> str:
+    """Send a customer message to the team that handles it."""
+    result = await decisions.ask(
+        message,
+        {
+            "team": {
+                "question": "Which team should handle this message?",
+                "choices": ["billing", "shipping", "technical"],
+                "uncertainty": False,
+            },
+        },
+        invocation_context=tool_context.invocation_context,
+    )
+    return f"Routed to {result.answers['team']}"
+
+
+agent = Agent(tools=[route_message])
+result = agent("Route this message: my package never arrived.")
+print(result.invocation_context.usage)
+
+# Typical output:
+# {'turns_taken': 2, 'inputTokens': 2162, 'outputTokens': 149, 'totalTokens': 2311}
+```
+
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/decision-models/agents_imports.ts:tool_imports"
+
+--8<-- "user-guide/sdk/decision-models/agents.ts:tool"
+```
+
+</Tab>
+</Tabs>
+
+Hook events carry the same invocation context, so a hook passes it to `ask` the same
+way.
+
+## Token usage
+
+With the invocation context, the decision's tokens add to the request's usage, which the
+agent result reports. The agent's own model metrics stay separate and cover only the
+agent's model calls. The request's limits don't stop the decision, and a decision
+isn't counted as a turn, but its tokens count toward the request's token limits for
+later turns.
+
+Without the invocation context, the decision still reports its tokens in its own result,
+but the request doesn't include them.
+
+## Approve tool calls
+
+`HumanInTheLoop` can ask a decision model whether each tool call needs a person's
+approval. An `Uncertain` answer requires approval:
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands import Agent, LLMDecisionModel
+from strands.vended_interventions.hitl import HumanInTheLoop
+
+agent = Agent(interventions=[HumanInTheLoop(classifier=LLMDecisionModel())])
+```
+
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/decision-models/agents_imports.ts:approval_imports"
+
+--8<-- "user-guide/sdk/decision-models/agents.ts:approval"
+```
+
+</Tab>
+</Tabs>
+
+[Human in the loop](../agents/interventions/human-in-the-loop.mdx#risk-classifier)
+covers the risk criteria and the other classifier options.

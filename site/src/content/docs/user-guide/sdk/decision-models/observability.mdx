@@ -1,0 +1,35 @@
+---
+title: Decision model observability
+description: "Trace decision model calls with OpenTelemetry: the decision span, its attributes and events, and how it nests under the agent's spans."
+tags: [decision-models, observability]
+sidebar:
+  label: Observability
+sourceLinks:
+  - path: strands-py/src/strands/decisions/decision_model.py
+  - path: strands-ts/src/decisions/decision-model.ts
+---
+
+Every `ask` call that passes validation records an OpenTelemetry span, whichever
+decision model answers it.
+With [tracing](../observability-evaluation/traces.mdx) set up, you see each decision
+next to the agent's model and tool calls. When a tool asks a decision model, the
+decision span nests under that tool call's span. The span reports the tokens of that one
+decision; [Decisions in an agent](agents.mdx#token-usage) covers adding them to the
+agent's request.
+
+## Decision span
+
+The span is named `decision` and records:
+
+| Name | Kind | Value |
+| --- | --- | --- |
+| `gen_ai.operation.name` | Attribute | `decision` |
+| `gen_ai.decision.latency_ms` | Attribute | Time the decision model spent on the call, in milliseconds. |
+| `gen_ai.usage.input_tokens` | Attribute | Input tokens, when the decision model reports usage. |
+| `gen_ai.usage.output_tokens` | Attribute | Output tokens, when the decision model reports usage. |
+| `gen_ai.decision.questions` | Event | The question ids. |
+| `gen_ai.decision.answers` | Event | The answers as JSON, keyed by question id. An `Uncertain` answer appears as `{"uncertain": true}`, with its reason when there is one. |
+
+When the decision model raises, the span ends with an error status and records the
+exception. Invalid questions raise before the span starts. The question text and the
+input aren't recorded.

@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 232" width="720" height="232">
+  <!-- Type: pipeline. Story: your code asks a decision model, which checks the questions and calls its backend, and a result with the answers comes back. -->
+  <defs>
+    <marker id="arrow" viewBox="0 0 8 6" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+      <path class="dg-head" d="M0,0 L8,3 L0,6 Z"/>
+    </marker>
+  </defs>
+
+  <!-- Edges -->
+  <path class="dg-edge" d="M160,72 H238" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M416,72 H474" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M328,112 V176 Q328,184 320,184 H226" marker-end="url(#arrow)"/>
+
+  <!-- Edge labels -->
+  <rect class="dg-mask" x="182" y="52" width="36" height="12" rx="2"/>
+  <text class="dg-label" x="200" y="61" text-anchor="middle">ASK</text>
+  <text class="dg-note" x="340" y="152">Traced as a decision span</text>
+
+  <!-- Nodes -->
+  <rect class="dg-node is-input" x="16" y="40" width="144" height="64" rx="6"/>
+  <text class="dg-name" x="88" y="69" text-anchor="middle">Your code</text>
+  <text class="dg-sub" x="88" y="87" text-anchor="middle">input + questions</text>
+
+  <rect class="dg-node is-focal" x="240" y="32" width="176" height="80" rx="6"/>
+  <text class="dg-name is-focal-text" x="328" y="69" text-anchor="middle">Decision model</text>
+  <text class="dg-sub" x="328" y="87" text-anchor="middle">checks the questions</text>
+
+  <rect class="dg-node" x="476" y="40" width="228" height="64" rx="6"/>
+  <text class="dg-name" x="590" y="69" text-anchor="middle">Backend</text>
+  <text class="dg-sub" x="590" y="87" text-anchor="middle">a model provider, or your own</text>
+
+  <rect class="dg-node" x="16" y="152" width="208" height="64" rx="6"/>
+  <text class="dg-name" x="120" y="181" text-anchor="middle">Result</text>
+  <text class="dg-sub" x="120" y="199" text-anchor="middle">answers, metadata, usage</text>
+</svg>

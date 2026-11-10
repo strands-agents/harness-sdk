@@ -1,0 +1,124 @@
+---
+title: Questions and answers
+description: "Define the questions you ask a decision model, control when it can answer uncertain, pass text or a conversation as input, and read the result."
+tags: [decision-models]
+sourceLinks:
+  - path: strands-py/src/strands/decisions/types.py
+  - path: strands-py/src/strands/decisions/decision_model.py
+  - path: strands-ts/src/decisions/types.ts
+  - path: strands-ts/src/decisions/decision-model.ts
+---
+
+You describe what you want to know as a map of questions, and every decision model returns
+the same result shape, so the code that asks and the code that reads the answers stays
+the same when you change decision models.
+
+## Questions
+
+You pass questions to `ask` as a map from an id to a question. The id is yours: the
+result uses the same ids, so you read each answer by the id you gave it. One call can
+ask several questions about the same input.
+
+| Field | Description |
+| --- | --- |
+| `question` | The question, in plain language. Must not be empty. |
+| `choices` | `"boolean"` for a yes/no answer, or a list of labels for a multiple-choice answer. |
+| `uncertainty` | Whether the answer can be `Uncertain`. See [Uncertainty](#uncertainty). |
+
+A yes/no question returns <Syntax py="True" ts="true" /> or
+<Syntax py="False" ts="false" />. A multiple-choice question returns one of its labels,
+exactly as you wrote it.
+
+## Uncertainty
+
+By default, every answer can be `Uncertain`: the decision model returns it instead of a
+choice when it can't commit. Set `uncertainty` on a question to change that:
+
+| Setting | Effect |
+| --- | --- |
+| Omitted, or <Syntax py="True" ts="true" /> | The answer can be `Uncertain`. |
+| <Syntax py="False" ts="false" /> | The decision model must pick one of the choices. |
+| A minimum confidence | The answer can be `Uncertain`, with a custom confidence threshold in `[0.0, 1.0]`. |
+
+The minimum confidence,
+<Syntax py='{"min_confidence": 0.8}' ts="{ minConfidence: 0.8 }" />, applies only to
+decision models that report a confidence for each answer. The
+[LLM decision model](models/llm.mdx) doesn't, so it ignores the threshold.
+
+`Uncertain` carries an optional reason. Check for it before you use an answer, with
+<Syntax py="isinstance(answer, Uncertain)" ts="answer instanceof Uncertain" />.
+
+## Input
+
+The input is what the questions are about. It can be a string, a list of content blocks
+for a single message, or a full conversation as a list of messages. A conversation lets
+the decision model answer about the whole exchange, not only the latest message:
+
+<Tabs>
+<Tab label="Python">
+
+```python
+import asyncio
+
+from strands import LLMDecisionModel
+
+conversation = [
+    {"role": "user", "content": [{"text": "Where is my order 1182?"}]},
+    {"role": "assistant", "content": [{"text": "It shipped yesterday."}]},
+    {"role": "user", "content": [{"text": "I've asked three times. Cancel it."}]},
+]
+
+
+async def main():
+    decisions = LLMDecisionModel()
+    result = await decisions.ask(
+        conversation,
+        {
+            "sentiment": {
+                "question": "How does the customer feel?",
+                "choices": ["positive", "neutral", "negative"],
+            },
+        },
+    )
+    print(result.answers["sentiment"])
+
+
+asyncio.run(main())
+
+# Typical output:
+# negative
+```
+
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/decision-models/questions_imports.ts:conversation_imports"
+
+--8<-- "user-guide/sdk/decision-models/questions.ts:conversation"
+```
+
+</Tab>
+</Tabs>
+
+## Results
+
+`ask` returns a result with the answers, metadata about the call, and token usage:
+
+| Field | Description |
+| --- | --- |
+| `answers` | One answer per question, keyed by question id. |
+| <Syntax py="metadata.latency_ms" ts="metadata.latencyMs" /> | Time the decision model spent on the call, in milliseconds. |
+| <Syntax py="metadata.provider_name" ts="metadata.providerName" />, <Syntax py="metadata.model_id" ts="metadata.modelId" /> | The provider and model that answered, when the decision model reports them. |
+| `metadata.probabilities`, `metadata.confidence` | The probability of each choice and the confidence of each answer, keyed by question id, when the decision model reports them. |
+| `usage` | Input, output, and total tokens, when the decision model reports them. |
+
+## Validation
+
+`ask` checks the questions before it calls any model and raises an error when:
+
+- There are no questions.
+- A question's text is empty or only whitespace.
+- A multiple-choice question has no labels, an empty label, or the same label twice.
+- A label is `"uncertain"`, which is reserved for the `Uncertain` answer.
+- A minimum confidence is outside `[0.0, 1.0]`.
