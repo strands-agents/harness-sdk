@@ -1,0 +1,9 @@
+name: strands-web-llm
+description: WebLLM model provider for Strands Agents with browser WebGPU inference and a bridge for Node.js Harness.
+integrationType: model-provider
+languages:
+  typescript:
+    package: strands-web-llm
+github: https://github.com/ykoh42/web-llm-adapters
+docsUrl: https://github.com/ykoh42/web-llm-adapters/tree/main/packages/strands-web-llm
+addedDate: 2026-10-19

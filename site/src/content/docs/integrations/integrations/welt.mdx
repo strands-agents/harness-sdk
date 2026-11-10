@@ -38,7 +38,7 @@ JSON is the reason an adapter exists at all. Inbound, file bytes travel base64-e
 | `renderable_events` | outbound | Reduces the event stream to what Welt renders, files included |
 | `interrupt_reason` | outbound | Builds the reason shape Welt renders as buttons and text fields |
 
-Both Strands SDKs have an adapter: [`welt-io-strands`](https://github.com/iwamot/welt-io-strands) for Python, [`@welt-io/strands`](https://github.com/iwamot/welt-io-strands-ts) for TypeScript. The four functions are the same on both sides, in each language's naming.
+Both Strands Harness SDKs have an adapter: [`welt-io-strands`](https://github.com/iwamot/welt-io-strands) for Python, [`@welt-io/strands`](https://github.com/iwamot/welt-io-strands-ts) for TypeScript. The four functions are the same on both sides, in each language's naming.
 
 ## Installation
 
@@ -97,7 +97,7 @@ def deploy(tool_context: ToolContext, target: str) -> str:
 
 Welt renders that reason as the message followed by two buttons and a free-text field; whichever answer comes first settles the question. A plain dict works here too — `ToolContext.interrupt` takes its `reason` as `Any` — but nothing would check it, and Welt answers a reason it cannot match with its default Approve / Deny buttons, silently. Building the reason through `interrupt_reason` is what turns a misspelled key into an error you see.
 
-Strands' ready-made [`HumanInTheLoop`](../../user-guide/concepts/agents/interventions/human-in-the-loop.md) intervention also works over Welt as-is.
+Strands' ready-made [`HumanInTheLoop`](../../user-guide/sdk/agents/interventions/human-in-the-loop.md) intervention also works over Welt as-is.
 
 ### Resuming once someone answers
 
@@ -116,13 +116,13 @@ if "interrupt_responses" in payload:
 
 So the entrypoint stashes the agent whenever the stream ends with an `interrupt` event. One module-level slot is enough: AgentCore Runtime gives each session its own microVM, so the process never serves two conversations. Nothing is persisted either — the slot dies with the microVM, and raising on a recycled one is the honest answer, which Welt renders as a resume-failure notice in the thread.
 
-One more thing the interrupt round trip asks of your tools: the interrupted tool [re-executes](../../user-guide/concepts/interrupts.md) from the start on resume, so work done *before* the interrupt runs twice. Where that matters — drafting the text a human is approving, say — memoize it on the tool use id, which is the same on both passes.
+One more thing the interrupt round trip asks of your tools: the interrupted tool [re-executes](../../user-guide/sdk/interrupts.md) from the start on resume, so work done *before* the interrupt runs twice. Where that matters — drafting the text a human is approving, say — memoize it on the tool use id, which is the same on both passes.
 
 ## Configuration
 
 The adapters have nothing to configure. Everything lives on the Welt side — Slack tokens, the agent ARN, and the feature toggles, including file input, which stays off until `FILE_INPUT_MODALITIES` names the modalities your model accepts. [Welt's README](https://github.com/iwamot/welt#readme) covers them. For local development, Welt runs against the AgentCore SDK's local server without deploying anything.
 
-Adapter and front end ship as a pair: while both are 0.x, an adapter 0.Y release supports Welt v0.Y, and from 1.0 on any release sharing a major version. Support is best effort, and other combinations come with no guarantee. The Strands SDK versions each adapter is built against are stated in its README.
+Adapter and front end ship as a pair: while both are 0.x, an adapter 0.Y release supports Welt v0.Y, and from 1.0 on any release sharing a major version. Support is best effort, and other combinations come with no guarantee. The Strands Harness SDK versions each adapter is built against are stated in its README.
 
 ## References
 

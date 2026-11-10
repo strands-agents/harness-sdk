@@ -382,13 +382,17 @@ export class ContextOffloader implements Plugin {
   ): Promise<{ ref: string; contentType: string; description: string }> {
     if (block instanceof TextBlock && block.text) {
       const ref = await storeContent(storage, key, new TextEncoder().encode(block.text), 'text/plain')
-      return { ref, contentType: 'text/plain', description: `text, ${block.text.length.toLocaleString()} chars` }
+      return { ref, contentType: 'text/plain', description: `text, ${block.text.length.toLocaleString('en-US')} chars` }
     }
     if (block instanceof JsonBlock) {
       const jsonStr = JSON.stringify(block.json, null, 2)
       const jsonBytes = new TextEncoder().encode(jsonStr)
       const ref = await storeContent(storage, key, jsonBytes, 'application/json')
-      return { ref, contentType: 'application/json', description: `json, ${jsonBytes.length.toLocaleString()} bytes` }
+      return {
+        ref,
+        contentType: 'application/json',
+        description: `json, ${jsonBytes.length.toLocaleString('en-US')} bytes`,
+      }
     }
     if (block instanceof ImageBlock || block instanceof VideoBlock || block instanceof DocumentBlock) {
       const bytes = getBytes(block)
@@ -401,7 +405,7 @@ export class ContextOffloader implements Plugin {
       const label = block instanceof DocumentBlock ? block.name : contentType
       if (bytes) {
         const ref = await storeContent(storage, key, bytes, contentType)
-        return { ref, contentType, description: `${label}, ${bytes.length.toLocaleString()} bytes` }
+        return { ref, contentType, description: `${label}, ${bytes.length.toLocaleString('en-US')} bytes` }
       }
       return { ref: '', contentType, description: `${label}, 0 bytes` }
     }
@@ -435,7 +439,7 @@ export class ContextOffloader implements Plugin {
     }
 
     return (
-      `[Offloaded: ${content.length} blocks, ~${tokenCount.toLocaleString()} tokens]\n` +
+      `[Offloaded: ${content.length} blocks, ~${tokenCount.toLocaleString('en-US')} tokens]\n` +
       `${guidance}\n\n` +
       `${preview}\n\n` +
       `[Stored references:]\n${refLines}`

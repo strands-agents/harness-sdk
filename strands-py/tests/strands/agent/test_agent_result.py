@@ -1,3 +1,4 @@
+import json
 import unittest.mock
 from typing import cast
 
@@ -113,6 +114,29 @@ def test_to_dict(mock_metrics, simple_message: Message):
         "stop_reason": "end_turn",
         "checkpoint": None,
     }
+
+
+def test_to_dict_json_serializable_with_redacted_content_bytes(mock_metrics):
+    """Regression for #4167: bytes in message content must not break json.dumps."""
+    redacted = b"\x00\x01redacted-reasoning"
+    message = cast(
+        Message,
+        {
+            "role": "assistant",
+            "content": [
+                {"text": "Answer after tool use"},
+                {"reasoningContent": {"redactedContent": redacted}},
+            ],
+        },
+    )
+    result = AgentResult(stop_reason="end_turn", message=message, metrics=mock_metrics, state={})
+
+    data = result.to_dict()
+    serialized = json.dumps(data)
+    restored = AgentResult.from_dict(json.loads(serialized))
+
+    assert restored.message["content"][0]["text"] == "Answer after tool use"
+    assert restored.message["content"][1]["reasoningContent"]["redactedContent"] == redacted
 
 
 def test_from_dict():

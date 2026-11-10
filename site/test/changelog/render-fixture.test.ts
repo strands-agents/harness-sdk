@@ -9,8 +9,8 @@ const here = dirname(fileURLToPath(import.meta.url))
 const contentDir = resolve(here, '../../src/content/changelog')
 
 describe('render-markdown byte-identical to committed fixtures', () => {
-  it('reproduces harness/python-v1.41.0.md exactly', () => {
-    const committed = readFileSync(resolve(contentDir, 'harness/python-v1.41.0.md'), 'utf8')
+  it('reproduces sdk/python-v1.41.0.md exactly', () => {
+    const committed = readFileSync(resolve(contentDir, 'sdk/python-v1.41.0.md'), 'utf8')
     // The file shape that produced it (read the committed file to fill these in
     // verbatim during implementation -- sdk/language/version/tag/date/urls and
     // the entries array, each entry with type/breaking/scope/areas/title/pr/
@@ -19,7 +19,7 @@ describe('render-markdown byte-identical to committed fixtures', () => {
     // NOTE: releaseUrl is NOT percent-encoded (the API's html_url form), and
     // commit SHAs are quoted strings in the committed file.
     const file: ReleaseFile = {
-      sdk: 'harness',
+      sdk: 'sdk',
       language: 'python',
       version: '1.41.0',
       tag: 'python/v1.41.0',

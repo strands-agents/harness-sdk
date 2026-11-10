@@ -46,7 +46,7 @@ export interface DocInfo {
  *
  * Example:
  * - strands.agent.agent -> Agent > Agent
- * - strands.experimental.bidi.types.events -> Experimental > Bidi > Types > Events
+ * - strands.bidi.types -> Bidi > Types
  */
 export function buildPythonApiSidebar(docs: DocInfo[], currentSlug: string): SidebarEntry[] {
   const pythonApiDocs = docs.filter(
@@ -223,13 +223,13 @@ export function buildTypeScriptApiSidebar(docs: DocInfo[], currentSlug: string):
 }
 
 /**
- * Course sidebar: "← All courses" back-link then a group of lesson links.
- * Compute pagination from group.entries only — the back-link must NOT appear in prev/next.
+ * Course sidebar: a group of lesson links. The course start page is reached
+ * from the /learn switcher box (see Sidebar.astro), so there is no back-link.
  */
 export function buildCourseSidebar(
   docs: DocInfo[],
   currentSlug: string,
-  course: { title: string; lessonIds: string[] },
+  course: { title: string; lessonIds: string[] }
 ): SidebarEntry[] {
   const docById = new Map(docs.map((d) => [d.id, d]))
 
@@ -247,17 +247,8 @@ export function buildCourseSidebar(
       }
     })
 
-  const backLink: SidebarLink = {
-    type: 'link',
-    label: '← All courses',
-    href: pathWithBase('/community/'),
-    isCurrent: false,
-    badge: undefined,
-    attrs: {},
-  }
-
   if (lessonLinks.length === 0) {
-    return [backLink]
+    return []
   }
 
   const group: SidebarGroup = {
@@ -268,7 +259,7 @@ export function buildCourseSidebar(
     badge: undefined,
   }
 
-  return [backLink, group]
+  return [group]
 }
 
 /**

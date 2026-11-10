@@ -13,6 +13,7 @@
     "../../"
   ],
   "dependencies": {
+    "@modelcontextprotocol/client": "^2.0.0",
     "@strands-agents/sdk": "*"
   },
   "devDependencies": {

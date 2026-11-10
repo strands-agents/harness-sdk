@@ -92,7 +92,8 @@ async def test_session_backed_agent_routes_and_reuses_prompt_cache_key(
     system_prompt = f"Session {uuid.uuid4()}. {DURABLE_SYSTEM_PREFIX}"
     agent = Agent(model=model, system_prompt=system_prompt, session_manager=session_manager)
 
-    await agent.invoke_async("What is 2+2? Answer with just the number.")
+    first_result = await agent.invoke_async("What is 2+2? Answer with just the number.")
+    assert first_result.metrics.latest_agent_invocation.usage["cacheReadInputTokens"] == 0
     result = await agent.invoke_async("What is 3+3? Answer with just the number.")
 
     assert len(captured) >= 2 and all(key == DERIVED_KEY for key in captured)

@@ -11,12 +11,12 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, TypeGuard
 
-from .._middleware.stages import InvokeModelContext, InvokeModelStage
 from ..agent import _continuation
 from ..agent._agent_as_tool import _AgentAsTool
 from ..agent.agent import _CANCEL_POLL_INTERVAL
 from ..hooks import AfterInvocationEvent, AgentInitializedEvent, BeforeModelCallEvent, HookOrder
 from ..interrupt import Interrupt, InterruptException
+from ..middleware.stages import InvokeModelContext, InvokeModelStage
 from ..models._validation import validate_config_keys
 from ..plugins import Plugin
 from ..tools.decorator import tool
@@ -31,13 +31,13 @@ from .in_process._manager import InProcessTaskManager, _MiddlewareInterrupt
 
 if TYPE_CHECKING:
     from ..agent import Agent
+    from ..agent.invocation_context import InvocationContext
 
 logger = logging.getLogger(__name__)
 
 _BACKGROUND_TASKS_STATE_KEY = "strands.background_tasks"
 _BACKGROUND_PROPERTY = "_background_execution"
 _MANAGE_TOOL_NAME = "strands_manage_background_task"
-_RESULT_TOOL_NAME = "strands_background_task_result"
 _COMPOSITE_SCHEMA_KEYS = {"$ref", "allOf", "anyOf", "oneOf", "not", "if", "then", "else"}
 _FOREGROUND_TOOL_NAMES = {
     _MANAGE_TOOL_NAME,
@@ -117,7 +117,7 @@ class _BackgroundTasks(Plugin):
             manager_options["timeout"] = self._config["timeout"]
         self._manager = InProcessTaskManager(agent, execute_tool, on_task_updated=self._store_task, **manager_options)
 
-        agent._middleware_registry.add_middleware(InvokeModelStage.Input, self._transform_tool_specs)
+        agent.add_middleware(InvokeModelStage.Input, self._transform_tool_specs)
         agent.add_hook(self._before_model_call, BeforeModelCallEvent)
         agent.add_hook(self._after_invocation, AfterInvocationEvent)
         agent.add_hook(lambda event: self.load_state(), AgentInitializedEvent, order=HookOrder.SDK_LAST)
@@ -125,8 +125,8 @@ class _BackgroundTasks(Plugin):
     @tool(
         name=_MANAGE_TOOL_NAME,
         description=(
-            "List, inspect, or cancel background tasks. Completed results are delivered automatically; "
-            "do not poll with this tool."
+            "List, get, or cancel background tasks. Results are delivered automatically as synthetic 'get' calls. "
+            "Do not poll for results."
         ),
     )
     async def _manage_background_task(
@@ -143,7 +143,7 @@ class _BackgroundTasks(Plugin):
                 {"task_id": task["task_id"], "tool_name": task["tool_name"], "status": task["status"]}
                 for task in self._task_snapshots()
             ]
-            return _json_tool_result({"tasks": listing})
+            return {"status": "success", "content": [{"json": {"tasks": listing}}]}
         if not task_id:
             raise TypeError(f"Task ID is required for mode '{mode}'")
         with self._tasks_lock:
@@ -151,9 +151,12 @@ class _BackgroundTasks(Plugin):
         if task is None:
             raise BackgroundTaskNotFoundError(task_id)
         if mode == "get":
-            return _json_tool_result(task)
+            return {"status": "success", "content": _task_result_content(task)}
         cancelled = task if is_task_status_terminal(task["status"]) else await self._manager.cancel(task_id)
-        return _json_tool_result({"task_id": cancelled["task_id"], "status": cancelled["status"]})
+        return {
+            "status": "success",
+            "content": [{"json": {"task_id": cancelled["task_id"], "status": cancelled["status"]}}],
+        }
 
     def route_tool_call(
         self,
@@ -196,12 +199,19 @@ class _BackgroundTasks(Plugin):
         invocation_state: dict[str, Any],
         pass_id: str,
         tool_instance: AgentTool,
+        invocation_context: InvocationContext | None = None,
     ) -> ToolResult:
-        """Admit one background tool call and return its dispatch acknowledgement."""
+        """Admit one background tool call and return its dispatch acknowledgement.
+
+        The task keeps ``invocation_context``, the request that submitted it, even if it starts
+        after that request returned.
+        """
         if self._agent.cancel_signal.is_set():
             return _tool_error(tool_use, "Tool execution cancelled")
         try:
-            task = await self._manager.submit(tool_use, invocation_state, pass_id, tool_instance)
+            task = await self._manager.submit(
+                tool_use, invocation_state, pass_id, tool_instance, invocation_context=invocation_context
+            )
         except Exception as error:
             logger.warning("error=<%s> | background task admission failed", error)
             return _tool_error(tool_use, "Background task admission failed")
@@ -372,21 +382,15 @@ class _BackgroundTasks(Plugin):
         task_ids = [task["task_id"] for task in terminal_tasks]
         messages: Messages = []
         for task in terminal_tasks:
-            result = task.get("result")
-            content: list[ToolResultContent] = (
-                result["content"]
-                if result is not None
-                else [{"text": task.get("error", {}).get("message", "Background task cancelled")}]
-            )
             messages.append(
                 {
                     "role": "assistant",
                     "content": [
                         {
                             "toolUse": {
-                                "name": _RESULT_TOOL_NAME,
+                                "name": _MANAGE_TOOL_NAME,
                                 "toolUseId": task["task_id"],
-                                "input": {"tool_name": task["tool_name"]},
+                                "input": {"mode": "get", "task_id": task["task_id"]},
                             }
                         }
                     ],
@@ -399,8 +403,9 @@ class _BackgroundTasks(Plugin):
                         {
                             "toolResult": {
                                 "toolUseId": task["task_id"],
-                                "status": "success" if task["status"] == "completed" else "error",
-                                "content": content,
+                                # The get succeeds even if the task failed; task status and errors are in the metadata.
+                                "status": "success",
+                                "content": _task_result_content(task),
                             }
                         }
                     ],
@@ -518,6 +523,6 @@ def _tool_error(tool_use: ToolUse, message: str) -> ToolResult:
     return {"toolUseId": tool_use["toolUseId"], "status": "error", "content": [{"text": message}]}
 
 
-def _json_tool_result(value: Any) -> dict[str, Any]:
-    # The decorator fills in toolUseId for a result that already carries status and content.
-    return {"status": "success", "content": [{"json": value}]}
+def _task_result_content(task: BackgroundTask) -> list[ToolResultContent]:
+    metadata = {key: value for key, value in task.items() if key != "result"}
+    return [{"json": metadata}, *task.get("result", {"content": []})["content"]]

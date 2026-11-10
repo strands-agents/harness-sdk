@@ -20,6 +20,7 @@ import {
   ConverseStreamCommand,
   CountTokensCommand,
   type ConverseStreamCommandInput,
+  type OutputConfig,
   type ConverseStreamMetadataEvent as BedrockConverseStreamMetadataEvent,
   type ConverseStreamOutput,
   type InferenceConfiguration,
@@ -30,6 +31,7 @@ import {
   type ReasoningContentBlockDelta,
   type Tool,
   type ToolConfiguration,
+  type TokenUsage as BedrockTokenUsage,
   type ToolUseBlockDelta,
   type AudioSource as BedrockAudioSource,
   type ImageSource as BedrockImageSource,
@@ -57,41 +59,70 @@ import {
   type StreamOptions,
   resolveCacheSection,
   resolveConfigMetadata,
+  resolveMaxTokens,
 } from '../models/model.js'
-import type { ContentBlock, Message, StopReason, ToolUseBlock } from '../types/messages.js'
+import { mergeModelInfo, type ModelInfo } from './model-info.js'
+import { THINKING_BINDING_BETA, isThinkingBindingError, thinkingWithDropBlock } from './thinking-binding.js'
+import type { ContentBlock, Message, ReasoningBlock, StopReason, ToolUseBlock } from '../types/messages.js'
 import type { AudioSource, ImageSource, VideoSource, DocumentSource } from '../types/media.js'
 import type { CitationsDelta, ModelStreamEvent, ReasoningContentDelta, Usage } from '../models/streaming.js'
 import type { Citation, CitationLocation, CitationsBlockData } from '../types/citations.js'
-import type { JSONValue } from '../types/json.js'
+import type { JSONSchema, JSONValue } from '../types/json.js'
 import { ContextWindowOverflowError, ModelThrottledError, ProviderTokenCountError, normalizeError } from '../errors.js'
 import { ensureDefined } from '../types/validation.js'
 import { logger } from '../logging/logger.js'
 import { warnOnce } from '../logging/warn-once.js'
 import { NOOP_TOOL_SPEC } from '../tools/noop-tool.js'
-import { MODEL_DEFAULTS, defaultModelWarningMessage } from './defaults.js'
+import { ensureStrictJsonSchema, findUnsupportedStrictKeywords } from './strict-schema.js'
+import {
+  handleRejectedMechanism,
+  structuredOutputMechanisms,
+  toNativeOutputSchema,
+  type StructuredOutputMechanism,
+} from './native-output.js'
+import { zodSchemaToJsonSchema } from '../tools/zod-utils.js'
+import { STRUCTURED_OUTPUT_TOOL_NAME } from '../tools/structured-output-tool.js'
+import type { z } from 'zod'
+import { MODEL_DEFAULTS, defaultMaxTokensWarningMessage, defaultModelWarningMessage } from './defaults.js'
 
 const DEFAULT_BEDROCK_REGION_SUPPORTS_FIP = false
 
 /**
  * Default request timeout in milliseconds. The AWS SDK defaults to 0 (disabled), which lets
  * a stuck connection hang indefinitely — we pick 120s to bound that. Callers can override
- * via `clientConfig.requestHandler.requestTimeout`.
+ * via `BedrockModelOptions.requestTimeout`.
  */
 const DEFAULT_REQUEST_TIMEOUT_MS = 120_000
 
 /**
- * Models that require the status field in tool results.
- * According to AWS Bedrock API documentation, the status field is only supported by Anthropic Claude models.
+ * Models Bedrock documents as supporting the status field in tool results. Deliberately an allow-list:
+ * undocumented models may accept it (Llama 4) or reject it with a ValidationException (Writer).
  * @see https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ToolResultBlock.html
  */
-const MODELS_INCLUDE_STATUS = ['anthropic.claude']
+const MODELS_INCLUDE_STATUS = ['amazon.nova', 'anthropic.claude']
 
 /**
- * Models that support the Anthropic-style prompt caching strategy.
- * Used to auto-detect when `cacheConfig.strategy` is `'auto'`.
- * @see https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html
+ * Models that reject any reasoning text block replayed in history
+ * ("User messages cannot contain reasoning content").
  */
-const MODELS_SUPPORTING_ANTHROPIC_CACHING = ['anthropic', 'claude']
+const MODELS_REJECT_REASONING_TEXT = [
+  'amazon.nova-lite',
+  'amazon.nova-pro',
+  'google.gemma',
+  'meta.llama',
+  'mistral.devstral',
+  'mistral.ministral',
+  'mistral.mistral-large',
+  'nvidia.nemotron-nano-9b',
+  'nvidia.nemotron-super',
+  'openai.gpt-5',
+  'openai.gpt-6',
+  'openai.gpt-daybreak',
+  'qwen.qwen3-235b',
+  'qwen.qwen3-coder',
+  'writer.palmyra',
+  'xai.grok',
+]
 
 /**
  * Error messages that indicate context window overflow.
@@ -102,6 +133,8 @@ const BEDROCK_CONTEXT_WINDOW_OVERFLOW_MESSAGES = [
   'input length and `max_tokens` exceed context limit',
   'too many total text bytes',
   'prompt is too long',
+  "This model's maximum context length is",
+  'Input Tokens Exceeded',
 ]
 
 /**
@@ -236,6 +269,8 @@ export interface BedrockModelConfig extends BaseModelConfig {
   /**
    * Maximum number of tokens to generate in the response.
    *
+   * @defaultValue the model's `maxOutputTokens` from the model info when known; otherwise `maxTokens` is not
+   * sent and Bedrock's per-model default applies.
    * @see https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_InferenceConfiguration.html
    */
   maxTokens?: number
@@ -316,6 +351,24 @@ export interface BedrockModelConfig extends BaseModelConfig {
    * @defaultValue false
    */
   useNativeTokenCount?: boolean
+
+  /**
+   * Constrain the model to emit tool names and inputs that conform to each tool's schema.
+   *
+   * When `true`, every tool is sent with `strict: true` and a copy of its `inputSchema` with
+   * `additionalProperties: false` added to each object type, so a free-form `{ type: 'object' }`
+   * parameter becomes one the model can only fill with `{}`. Bedrock rejects schemas that use
+   * features outside its strict subset (recursive or external `$ref`, `minimum`/`maximum`/
+   * `multipleOf`, `minLength`/`maxLength`, `additionalProperties` other than `false`) with a 400
+   * at request time, and compiles each new schema on first use, which can take minutes.
+   * Incompatible with citations for Anthropic models.
+   *
+   * @see https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html
+   * @see https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ToolSpecification.html
+   *
+   * @defaultValue false
+   */
+  strictTools?: boolean
 }
 
 /**
@@ -331,6 +384,17 @@ export interface BedrockModelOptions extends BedrockModelConfig {
    * Configuration for the Bedrock Runtime client.
    */
   clientConfig?: BedrockRuntimeClientConfig
+
+  /**
+   * Milliseconds of stream inactivity before a Bedrock request is aborted.
+   *
+   * Applies to the default request handler and takes precedence over
+   * `clientConfig.requestHandler.requestTimeout`. Ignored when `clientConfig.requestHandler`
+   * is a constructed handler instance, whose own timeouts apply.
+   *
+   * @defaultValue 120000
+   */
+  requestTimeout?: number
 
   /**
    * Amazon Bedrock API key for bearer token authentication.
@@ -373,6 +437,7 @@ export interface BedrockModelOptions extends BedrockModelConfig {
 export class BedrockModel extends Model<BedrockModelConfig> {
   private _config: BedrockModelConfig
   private _client: BedrockRuntimeClient
+  private _dropStaleThinkingModelId: string | undefined
 
   /**
    * Clears the cache of model IDs for which CountTokens is skipped.
@@ -417,7 +482,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
   constructor(options?: BedrockModelOptions) {
     super()
 
-    const { region, clientConfig, apiKey, ...modelConfig } = options ?? {}
+    const { region, clientConfig, apiKey, requestTimeout, ...modelConfig } = options ?? {}
 
     // Initialize model config with default model ID if not provided
     this._config = {
@@ -429,12 +494,22 @@ export class BedrockModel extends Model<BedrockModelConfig> {
       warnOnce(logger, defaultModelWarningMessage(MODEL_DEFAULTS.bedrock.modelId))
     }
 
+    // Warn only when the value comes from the shared model info, not when the user pinned it through `modelInfo`.
+    const maxTokens = this.getConfig().maxTokens
+    if (
+      modelConfig.maxTokens === undefined &&
+      modelConfig.modelInfo?.limits?.maxOutputTokens === undefined &&
+      maxTokens !== undefined
+    ) {
+      warnOnce(logger, defaultMaxTokensWarningMessage(maxTokens))
+    }
+
     // Build user agent string (extend if provided, otherwise use SDK identifier)
     const customUserAgent = clientConfig?.customUserAgent
       ? `${clientConfig.customUserAgent} strands-agents-ts-sdk`
       : 'strands-agents-ts-sdk'
 
-    const requestHandler = withDefaultRequestTimeout(clientConfig?.requestHandler)
+    const requestHandler = withDefaultRequestTimeout(clientConfig?.requestHandler, requestTimeout)
     this._client = new BedrockRuntimeClient({
       ...(clientConfig ?? {}),
       requestHandler,
@@ -452,15 +527,30 @@ export class BedrockModel extends Model<BedrockModelConfig> {
   }
 
   /**
+   * Reports OpenAI models as implicitly cached, which a `modelInfo` override still wins over. The
+   * shared model info lists cache points for their OpenAI-compatible APIs, but Converse caches them
+   * implicitly and rejects cache points.
+   */
+  override get modelInfo(): ModelInfo {
+    if (!this.modelId?.toLowerCase().includes('openai.')) return super.modelInfo
+    return mergeModelInfo(super.modelInfo, { capabilities: { promptCaching: 'auto' } }, this._config.modelInfo)
+  }
+
+  /**
    * Returns the cache strategy for this model based on its model ID.
    * Returns the appropriate cache strategy name, or null if automatic caching is not supported.
    *
    * @returns Cache strategy name or null
    */
   private _getCacheStrategy(): 'anthropic' | null {
-    return MODELS_SUPPORTING_ANTHROPIC_CACHING.some((pattern) => this._config.modelId?.includes(pattern))
-      ? 'anthropic'
-      : null
+    const promptCaching = this.modelInfo.capabilities?.promptCaching
+    if (promptCaching === undefined) {
+      // Unlisted ids (a Claude release newer than the data, a prompt-router or custom-model ARN)
+      // keep the historical name test so caching does not turn off until the data catches up.
+      const modelId = (this._config.modelId ?? MODEL_DEFAULTS.bedrock.modelId).toLowerCase()
+      return modelId.includes('claude') || modelId.includes('anthropic') ? 'anthropic' : null
+    }
+    return promptCaching === 'cachePoints' ? 'anthropic' : null
   }
 
   /**
@@ -482,7 +572,8 @@ export class BedrockModel extends Model<BedrockModelConfig> {
     if (strategy === 'auto') {
       const detectedStrategy = this._getCacheStrategy()
       if (!detectedStrategy) {
-        logger.warn(
+        warnOnce(
+          logger,
           `model_id=<${this._config.modelId}> | cache_config is enabled but this model does not support automatic caching`
         )
         return false
@@ -575,7 +666,10 @@ export class BedrockModel extends Model<BedrockModelConfig> {
    * ```
    */
   getConfig(): BedrockModelConfig {
-    return resolveConfigMetadata(this._config, this._config.modelId ?? MODEL_DEFAULTS.bedrock.modelId)
+    const modelId = this._config.modelId ?? MODEL_DEFAULTS.bedrock.modelId
+    const config = resolveConfigMetadata(this._config, modelId)
+    const maxTokens = resolveMaxTokens(this._config, modelId)
+    return maxTokens === undefined || config.maxTokens !== undefined ? config : { ...config, maxTokens }
   }
 
   /**
@@ -671,14 +765,14 @@ export class BedrockModel extends Model<BedrockModelConfig> {
    */
   async *stream(messages: Message[], options?: StreamOptions): AsyncIterable<ModelStreamEvent> {
     try {
-      // Format the request for Bedrock
-      const request = this._formatRequest(messages, options)
       if (this._config.stream !== false) {
         // Create and send the command
-        const command = new ConverseStreamCommand(request)
-        const response = options?.cancelSignal
-          ? await this._client.send(command, { abortSignal: options.cancelSignal })
-          : await this._client.send(command)
+        const response = await this._sendRequest(messages, options, (input) => {
+          const command = new ConverseStreamCommand(input)
+          return options?.cancelSignal
+            ? this._client.send(command, { abortSignal: options.cancelSignal })
+            : this._client.send(command)
+        })
         // Stream the response
         if (response.stream) {
           let lastStopReason: string | undefined
@@ -720,10 +814,12 @@ export class BedrockModel extends Model<BedrockModelConfig> {
           }
         }
       } else {
-        const command = new ConverseCommand(request)
-        const response = options?.cancelSignal
-          ? await this._client.send(command, { abortSignal: options.cancelSignal })
-          : await this._client.send(command)
+        const response = await this._sendRequest(messages, options, (input) => {
+          const command = new ConverseCommand(input)
+          return options?.cancelSignal
+            ? this._client.send(command, { abortSignal: options.cancelSignal })
+            : this._client.send(command)
+        })
         for (const event of this._mapBedrockEventToSDKEvent(response)) {
           yield event
         }
@@ -738,6 +834,100 @@ export class BedrockModel extends Model<BedrockModelConfig> {
 
       // Re-throw other errors as-is
       throw error
+    }
+  }
+
+  /**
+   * Formats and sends the request, with the strongest structured output mechanism the model accepts when the call
+   * must produce a schema.
+   *
+   * Mechanisms the model rejects are remembered for the process, so later requests start at the one that works.
+   * Rejections happen during request validation, before the model generates anything. AnthropicModel follows the
+   * same order but resends through stream(), since its rejection arrives inside the stream.
+   *
+   * @param messages - Conversation messages
+   * @param options - Stream options
+   * @param send - Sends a request to the Converse or ConverseStream API
+   * @returns The API response
+   */
+  private async _sendRequest<T>(
+    messages: Message[],
+    options: StreamOptions | undefined,
+    send: (input: ConverseStreamCommandInput) => Promise<T>
+  ): Promise<T> {
+    const schema = options?.structuredOutputSchema
+    const modelId = this._config.modelId
+    if (!schema || !modelId) {
+      return this._send(this._formatRequest(messages, options), send)
+    }
+
+    const mechanisms = structuredOutputMechanisms('bedrock', modelId, options.toolChoice, schema, this.modelInfo)
+    for (const mechanism of mechanisms.slice(0, -1)) {
+      try {
+        return await this._send(this._structuredOutputRequest(messages, options, mechanism, schema), send)
+      } catch (error) {
+        if (!recordRejectedMechanism(error, mechanism, modelId, schema)) throw error
+      }
+    }
+    const fallback = mechanisms[mechanisms.length - 1] ?? 'auto'
+    return this._send(this._structuredOutputRequest(messages, options, fallback, schema), send)
+  }
+
+  /**
+   * Formats the request for a structured output mechanism.
+   *
+   * Converse has no tool choice that rules out tool calls, so on native and auto the model may still call another
+   * tool; the agent loop runs it and the retry continues with the same mechanism.
+   *
+   * @param messages - Conversation messages
+   * @param options - Stream options, whose tool choice forces the structured output tool
+   * @param mechanism - The mechanism to enforce structured output with
+   * @param schema - The schema the response must produce
+   * @returns Formatted Bedrock request
+   */
+  private _structuredOutputRequest(
+    messages: Message[],
+    options: StreamOptions,
+    mechanism: StructuredOutputMechanism,
+    schema: z.ZodSchema
+  ): ConverseStreamCommandInput {
+    if (mechanism === 'forced') {
+      return this._formatRequest(messages, options)
+    }
+    // Formatted with auto tool choice, which also keeps the thinking config forcing strips.
+    const request = this._formatRequest(messages, { ...options, toolChoice: { auto: {} } })
+    if (mechanism === 'native') {
+      request.outputConfig = { ...request.outputConfig, ...nativeOutputConfig(schema) }
+    }
+    return request
+  }
+
+  /**
+   * Sends the request, retrying once with drop_block when an edit before replayed thinking made it stale.
+   *
+   * The retry turns drop_block on for every later request to this model, since the stale blocks stay in history.
+   *
+   * @param request - Formatted Bedrock request
+   * @param send - Sends a request to the Converse or ConverseStream API
+   * @returns The API response
+   */
+  private async _send<T>(
+    request: ConverseStreamCommandInput,
+    send: (input: ConverseStreamCommandInput) => Promise<T>
+  ): Promise<T> {
+    try {
+      return await send(request)
+    } catch (error) {
+      const isBindingError =
+        error instanceof Error && error.name === 'ValidationException' && isThinkingBindingError(error)
+      const retryFields = isBindingError ? fieldsWithDropBlock(request.additionalModelRequestFields) : undefined
+      if (!retryFields) throw error
+
+      logger.warn(
+        `model_id=<${request.modelId}> | history edit invalidated replayed thinking blocks, retrying with drop_block`
+      )
+      this._dropStaleThinkingModelId = request.modelId
+      return send({ ...request, additionalModelRequestFields: retryFields })
     }
   }
 
@@ -782,13 +972,18 @@ export class BedrockModel extends Model<BedrockModelConfig> {
     }
 
     if (toolSpecs.length > 0) {
+      const strictTools = this._config.strictTools === true
       const tools: Tool[] = toolSpecs.map(
         (spec) =>
           ({
             toolSpec: {
               name: spec.name,
               description: spec.description,
-              inputSchema: { json: spec.inputSchema },
+              inputSchema: {
+                json:
+                  strictTools && spec.inputSchema ? toStrictInputSchema(spec.name, spec.inputSchema) : spec.inputSchema,
+              },
+              ...(strictTools ? { strict: true } : {}),
             },
           }) as Tool
       )
@@ -822,7 +1017,8 @@ export class BedrockModel extends Model<BedrockModelConfig> {
 
     // Add inference configuration
     const inferenceConfig: InferenceConfiguration = {}
-    if (this._config.maxTokens !== undefined) inferenceConfig.maxTokens = this._config.maxTokens
+    const maxTokens = this.getConfig().maxTokens
+    if (maxTokens !== undefined) inferenceConfig.maxTokens = maxTokens
     if (this._config.temperature !== undefined) inferenceConfig.temperature = this._config.temperature
     if (this._config.topP !== undefined) inferenceConfig.topP = this._config.topP
     if (this._config.stopSequences !== undefined) inferenceConfig.stopSequences = this._config.stopSequences
@@ -879,7 +1075,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
 
     const toolChoice = options?.toolChoice
     if (!toolChoice || 'auto' in toolChoice) {
-      return fields
+      return this._dropStaleThinkingModelId === this._config.modelId ? (fieldsWithDropBlock(fields) ?? fields) : fields
     }
 
     const { thinking: _, ...rest } = fields
@@ -899,9 +1095,16 @@ export class BedrockModel extends Model<BedrockModelConfig> {
       ? this._findLastUserTextMessageIndex(messages)
       : undefined
 
+    let droppedReasoningContent = false
+
     const formattedMessages = messages.reduce<BedrockMessage[]>((acc, message, idx) => {
       const shouldApplyGuardBlocks = idx === lastUserTextIdx
       const content = message.content
+        .filter((block: ContentBlock) => {
+          if (block.type !== 'reasoningBlock' || !this._rejectsReasoningBlock(block)) return true
+          droppedReasoningContent = true
+          return false
+        })
         .map((block: ContentBlock) => {
           const formattedBlock = this._formatContentBlock(block)
           return shouldApplyGuardBlocks ? this._applyGuardBlocks(formattedBlock) : formattedBlock
@@ -915,6 +1118,12 @@ export class BedrockModel extends Model<BedrockModelConfig> {
       return acc
     }, [])
 
+    if (droppedReasoningContent) {
+      logger.debug(
+        `model_id=<${this._config.modelId ?? MODEL_DEFAULTS.bedrock.modelId}> | dropped reasoningContent blocks the model does not accept`
+      )
+    }
+
     const cacheConfig = this._config.cacheConfig
     const messagesCache = this._shouldEnableCaching()
       ? resolveCacheSection(cacheConfig?.messagesTTL, cacheConfig?.ttl)
@@ -924,6 +1133,30 @@ export class BedrockModel extends Model<BedrockModelConfig> {
     }
 
     return formattedMessages
+  }
+
+  /**
+   * Whether the configured model would reject this reasoning block if it were replayed.
+   *
+   * Only blocks that are certain to fail are dropped. `signature` is Anthropic-only: Anthropic models reject
+   * reasoning text without one and every other model rejects reasoning text with one. Models in
+   * `MODELS_REJECT_REASONING_TEXT` reject reasoning text outright and DeepSeek rejects any reasoning block.
+   * `redactedContent` is otherwise opaque and kept, as is every block when the model ID is an ARN or bare
+   * inference profile ID that names no vendor.
+   *
+   * @param block - Reasoning block replayed from message history
+   * @returns True if the block must be dropped from the request
+   */
+  private _rejectsReasoningBlock(block: ReasoningBlock): boolean {
+    const modelId = (this._config.modelId ?? MODEL_DEFAULTS.bedrock.modelId).toLowerCase()
+    if (modelId.includes('deepseek')) return true
+    if (block.text === undefined && block.signature === undefined) return false
+
+    const signed = Boolean(block.signature)
+    if (modelId.includes('anthropic') || modelId.includes('claude')) return !signed
+    if (modelId.startsWith('arn:') || !modelId.includes('.')) return false
+    if (MODELS_REJECT_REASONING_TEXT.some((model) => modelId.includes(model))) return true
+    return signed
   }
 
   /**
@@ -1411,6 +1644,14 @@ export class BedrockModel extends Model<BedrockModelConfig> {
           throw new Error('guardContent must have either text or image')
         }
       }
+
+      case 'injectedBlock':
+        // ModelProxy turns the ones Bedrock should see into text, so only a direct call or a modelInfo override that
+        // turns temporaryMessages on gets here.
+        warnOnce(logger, 'block_type=<injectedBlock> | bedrock does not send injected blocks | skipping it')
+        return undefined
+      case 'summaryBlock':
+        throw new Error(`content_type=<${block.type}> | unsupported type`)
     }
   }
 
@@ -1505,6 +1746,25 @@ export class BedrockModel extends Model<BedrockModelConfig> {
       default:
         throw new Error('Invalid document source')
     }
+  }
+
+  /**
+   * Maps a Bedrock `TokenUsage` to the SDK's `Usage`. Shared by the streaming and non-streaming
+   * paths so the cache counters they surface cannot drift apart.
+   */
+  private _mapBedrockUsage(usage: BedrockTokenUsage): Usage {
+    const mapped: Usage = {
+      inputTokens: ensureDefined(usage.inputTokens, 'usage.inputTokens'),
+      outputTokens: ensureDefined(usage.outputTokens, 'usage.outputTokens'),
+      totalTokens: ensureDefined(usage.totalTokens, 'usage.totalTokens'),
+    }
+    if (usage.cacheReadInputTokens !== undefined) {
+      mapped.cacheReadInputTokens = usage.cacheReadInputTokens
+    }
+    if (usage.cacheWriteInputTokens !== undefined) {
+      mapped.cacheWriteInputTokens = usage.cacheWriteInputTokens
+    }
+    return mapped
   }
 
   private _mapBedrockEventToSDKEvent(event: ConverseCommandOutput): ModelStreamEvent[] {
@@ -1602,11 +1862,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
     const usage = ensureDefined(event.usage, 'output.usage')
     const metadataEvent: ModelStreamEvent = {
       type: 'modelMetadataEvent',
-      usage: {
-        inputTokens: ensureDefined(usage.inputTokens, 'usage.inputTokens'),
-        outputTokens: ensureDefined(usage.outputTokens, 'usage.outputTokens'),
-        totalTokens: ensureDefined(usage.totalTokens, 'usage.totalTokens'),
-      },
+      usage: this._mapBedrockUsage(usage),
     }
 
     if (event.metrics) {
@@ -1785,22 +2041,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
         }
 
         if (data.usage) {
-          const usage = data.usage
-
-          const usageInfo: Usage = {
-            inputTokens: ensureDefined(usage.inputTokens, 'usage.inputTokens'),
-            outputTokens: ensureDefined(usage.outputTokens, 'usage.outputTokens'),
-            totalTokens: ensureDefined(usage.totalTokens, 'usage.totalTokens'),
-          }
-
-          if (usage.cacheReadInputTokens !== undefined) {
-            usageInfo.cacheReadInputTokens = usage.cacheReadInputTokens
-          }
-          if (usage.cacheWriteInputTokens !== undefined) {
-            usageInfo.cacheWriteInputTokens = usage.cacheWriteInputTokens
-          }
-
-          event.usage = usageInfo
+          event.usage = this._mapBedrockUsage(data.usage)
         }
 
         if (data.metrics) {
@@ -1942,7 +2183,9 @@ export class BedrockModel extends Model<BedrockModelConfig> {
     return {
       location: this._mapCitationLocationToBedrock(citation.location),
       sourceContent: citation.sourceContent.map((sc) => ({ text: sc.text })),
-      source: citation.source,
+      // An empty source marks one Bedrock never returned (e.g. document citations), and Bedrock
+      // rejects `source` on those locations while requiring it on search-result locations.
+      ...(citation.source && { source: citation.source }),
       title: citation.title,
     }
   }
@@ -2043,27 +2286,100 @@ export class BedrockModel extends Model<BedrockModelConfig> {
   }
 }
 
+/** Builds the Converse outputConfig that constrains the response to the schema. */
+function nativeOutputConfig(schema: z.ZodSchema): OutputConfig {
+  const nativeSchema = toNativeOutputSchema(zodSchemaToJsonSchema(schema))
+  return {
+    textFormat: {
+      type: 'json_schema',
+      structure: { jsonSchema: { schema: JSON.stringify(nativeSchema), name: STRUCTURED_OUTPUT_TOOL_NAME } },
+    },
+  }
+}
+
+/**
+ * Records a structured output rejection, so the request should be resent with the next mechanism.
+ *
+ * @returns True if the rejection was recorded; false if the error is unrelated and should surface unchanged
+ */
+function recordRejectedMechanism(
+  error: unknown,
+  mechanism: StructuredOutputMechanism,
+  modelId: string,
+  schema: z.ZodSchema
+): boolean {
+  if (!(error instanceof Error) || error.name !== 'ValidationException') return false
+  return handleRejectedMechanism('bedrock', modelId, mechanism, schema, error.message)
+}
+
+/**
+ * Return additional request fields that drop stale thinking blocks, or undefined if they cannot change.
+ *
+ * @param fields - The additional model request fields
+ * @returns The fields with drop_block and its beta, or undefined
+ */
+function fieldsWithDropBlock(fields: JSONValue | undefined): Record<string, JSONValue> | undefined {
+  if (typeof fields !== 'object' || fields === null || Array.isArray(fields)) return undefined
+  const thinking = thinkingWithDropBlock(fields.thinking)
+  if (!thinking) return undefined
+  const betas = Array.isArray(fields.anthropic_beta) ? fields.anthropic_beta : []
+  const anthropicBeta = betas.includes(THINKING_BINDING_BETA) ? betas : [...betas, THINKING_BINDING_BETA]
+  return { ...fields, anthropic_beta: anthropicBeta, thinking }
+}
+
+/**
+ * Return the strict-mode copy of a tool's input schema, warning once per tool when it still uses
+ * keywords Bedrock's strict mode rejects.
+ */
+function toStrictInputSchema(toolName: string, inputSchema: JSONSchema): JSONSchema {
+  const strictSchema = ensureStrictJsonSchema(inputSchema)
+  const unsupported = findUnsupportedStrictKeywords(strictSchema)
+  if (unsupported.length > 0) {
+    warnOnce(
+      logger,
+      `tool=<${toolName}>, keywords=<${unsupported.join(',')}> | tool schema uses keywords bedrock strict mode rejects, request may fail`
+    )
+  }
+  return strictSchema
+}
+
 /**
  * Merges a default request timeout into the caller's requestHandler options.
  *
  * The SDK's `requestHandler` slot accepts either a constructed handler instance
  * or an options bag that the SDK uses to build its default handler. We only
- * inject a default in the options-bag case: a handler instance has its timeouts
- * baked in at construction time, so we pass it through untouched.
+ * inject a timeout in the options-bag case: a handler instance has its timeouts
+ * baked in at construction time, so we pass it through untouched and warn if a
+ * `requestTimeout` was given that the instance cannot honour.
  *
- * The handler-vs-options discriminator mirrors the SDK's own check — see
- * `NodeHttp2Handler.create` in `@smithy/node-http-handler`.
+ * Precedence: the `requestTimeout` option, then `requestHandler.requestTimeout`, then the default.
  */
 function withDefaultRequestTimeout(
-  handler: BedrockRuntimeClientConfig['requestHandler']
+  handler: BedrockRuntimeClientConfig['requestHandler'],
+  requestTimeout?: number
 ): NonNullable<BedrockRuntimeClientConfig['requestHandler']> {
-  if (handler && typeof (handler as { handle?: unknown }).handle === 'function') {
-    return handler
+  if (!isRequestHandlerInstance(handler)) {
+    const options = (handler ?? {}) as { requestTimeout?: number; [key: string]: unknown }
+    // Use `??` rather than spread order so an explicit `requestTimeout: undefined` still gets
+    // the default (spread would otherwise overwrite the default with `undefined`, disabling it).
+    return { ...options, requestTimeout: requestTimeout ?? options.requestTimeout ?? DEFAULT_REQUEST_TIMEOUT_MS }
   }
-  const options = (handler ?? {}) as { requestTimeout?: number; [key: string]: unknown }
-  // Use `??` rather than spread order so an explicit `requestTimeout: undefined` still gets
-  // the default (spread would otherwise overwrite the default with `undefined`, disabling it).
-  return { ...options, requestTimeout: options.requestTimeout ?? DEFAULT_REQUEST_TIMEOUT_MS }
+  if (requestTimeout !== undefined) {
+    logger.warn(
+      `request_timeout=<${requestTimeout}> | requestTimeout is ignored when clientConfig.requestHandler is a handler instance`
+    )
+  }
+  return handler
+}
+
+/**
+ * Whether the `requestHandler` slot holds a constructed handler instance rather than an options bag.
+ * Mirrors the SDK's own discriminator — see `NodeHttp2Handler.create` in `@smithy/node-http-handler`.
+ */
+function isRequestHandlerInstance(
+  handler: BedrockRuntimeClientConfig['requestHandler']
+): handler is NonNullable<BedrockRuntimeClientConfig['requestHandler']> {
+  return typeof (handler as { handle?: unknown } | undefined)?.handle === 'function'
 }
 
 /**

@@ -5,6 +5,7 @@ Each call runs in a fresh shell; state does not persist across calls. These
 spawn ``sh`` and require POSIX, so they are skipped on Windows.
 """
 
+import json
 import sys
 from types import SimpleNamespace
 
@@ -62,6 +63,15 @@ class TestMakeShell:
             await sandbox_shell(command="sleep 10", tool_context=_tool_context(), timeout=0.1)
 
     @pytest.mark.asyncio
+    async def test_timeout_error_carries_partial_output_with_success_field_names(self, sandbox_shell):
+        with pytest.raises(SandboxTimeoutError) as exc_info:
+            await sandbox_shell(
+                command="echo partial; echo warn >&2; sleep 5", tool_context=_tool_context(), timeout=0.3
+            )
+        partial = {"output": "partial\n", "error": "warn\n", "exit_code": 124}
+        assert str(exc_info.value) == f"Execution timed out after 0.3 seconds\n{json.dumps(partial)}"
+
+    @pytest.mark.asyncio
     async def test_wraps_sandbox_error_as_shell_execution_error(self):
         class _BoomSandbox(NotASandboxLocalEnvironment):
             async def execute(self, *args, **kwargs):
@@ -112,14 +122,53 @@ class TestToolMetadata:
         assert "timeout" in props
         assert "tool_context" not in props
 
+    @pytest.mark.parametrize(("tool", "exp_default"), [(shell, 120), (make_shell(default_timeout=300), 300)])
+    def test_timeout_schema(self, tool, exp_default):
+        tru_timeout = tool.tool_spec["inputSchema"]["json"]["properties"]["timeout"]
+        exp_timeout = {
+            "type": "integer",
+            "default": exp_default,
+            "description": "Optional per-execution timeout in seconds.",
+        }
+        assert tru_timeout == exp_timeout
+
+    @pytest.mark.parametrize("default_timeout", [0, -1, float("inf"), float("nan")])
+    def test_default_timeout_must_be_positive_and_finite(self, default_timeout):
+        with pytest.raises(ValueError, match="default_timeout must be a positive finite number"):
+            make_shell(default_timeout=default_timeout)
+
+
+class TestDefaultTimeout:
+    """``default_timeout`` is what reaches the sandbox when the model omits ``timeout``."""
+
+    class _RecordingSandbox(NotASandboxLocalEnvironment):
+        def __init__(self):
+            super().__init__()
+            self.timeouts: list[int] = []
+
+        async def execute(self, command, *, timeout=None, **kwargs):
+            self.timeouts.append(timeout)
+            return await super().execute(command, timeout=timeout, **kwargs)
+
+    @pytest.mark.asyncio
+    async def test_custom_default_reaches_sandbox(self):
+        sandbox = self._RecordingSandbox()
+        await make_shell(sandbox=sandbox, default_timeout=300)(command="true", tool_context=_tool_context())
+        assert sandbox.timeouts == [300]
+
+    @pytest.mark.asyncio
+    async def test_explicit_timeout_wins_over_default(self):
+        sandbox = self._RecordingSandbox()
+        await make_shell(sandbox=sandbox, default_timeout=300)(command="true", tool_context=_tool_context(), timeout=7)
+        assert sandbox.timeouts == [7]
+
 
 class TestDeprecatedBashAliases:
     """The ``bash`` aliases are retained until v2.0.0, warn, and keep the pre-rename name.
 
     Keeping ``tool_name == "bash"`` is what makes the alias backwards compatible:
     consumers key registries, hooks, and defaults lists on the runtime name, so an
-    alias that returned a tool named ``shell`` would still break them (see
-    awsarron/stan#6).
+    alias that returned a tool named ``shell`` would still break them.
     """
 
     def test_bash_alias_warns_and_keeps_its_name(self):

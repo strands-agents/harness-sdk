@@ -1,0 +1,165 @@
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  class="chart"
+  width="800"
+  height="520"
+  viewBox="0 0 800 520"
+  role="img"
+  aria-labelledby="title description"
+>
+  <title id="title">Gemma 4 Decider JevBench v1 accuracy and H100 latency</title>
+  <desc id="description">
+    Scatter plot comparing accuracy reported in the Strands Decider release results on JevBench's 231-task v1 public
+    set and median latency per question on one NVIDIA H100 80 GB. E2B reaches 77.9 percent accuracy at 102 milliseconds.
+    E4B reaches 81 percent at 139 milliseconds. 12B reaches 86.6 percent at 136 milliseconds. 26B-A4B reaches 89.6
+    percent at 245 milliseconds.
+  </desc>
+  <style>
+    .chart {
+      --surface: #fcfcfb;
+      --ink: #0b0b0b;
+      --ink-secondary: #52514e;
+      --muted: #77756f;
+      --grid: #e1e0d9;
+      --axis: #b8b6ad;
+      --series: #2a78d6;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      .chart {
+        --surface: #1a1a19;
+        --ink: #ffffff;
+        --ink-secondary: #c3c2b7;
+        --muted: #9a9891;
+        --grid: #2c2c2a;
+        --axis: #4a4a46;
+        --series: #3987e5;
+      }
+    }
+
+    .chart text {
+      font-family:
+        system-ui,
+        -apple-system,
+        'Segoe UI',
+        sans-serif;
+      fill: var(--ink-secondary);
+    }
+
+    .chart .title {
+      fill: var(--ink);
+      font-size: 22px;
+      font-weight: 650;
+    }
+
+    .chart .subtitle {
+      font-size: 14px;
+    }
+
+    .chart .axis-label {
+      fill: var(--muted);
+      font-size: 13px;
+    }
+
+    .chart .tick {
+      fill: var(--muted);
+      font-size: 12px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .chart .grid {
+      stroke: var(--grid);
+      stroke-width: 1;
+    }
+
+    .chart .axis {
+      stroke: var(--axis);
+      stroke-width: 1.25;
+    }
+
+    .chart .point {
+      fill: var(--series);
+      stroke: var(--surface);
+      stroke-width: 3;
+    }
+
+    .chart .model-label,
+    .chart .metric-label {
+      paint-order: stroke;
+      stroke: var(--surface);
+      stroke-linejoin: round;
+    }
+
+    .chart .model-label {
+      fill: var(--ink);
+      stroke-width: 6px;
+      font-size: 15px;
+      font-weight: 650;
+    }
+
+    .chart .metric-label {
+      fill: var(--ink-secondary);
+      stroke-width: 5px;
+      font-size: 12px;
+      font-variant-numeric: tabular-nums;
+    }
+  </style>
+
+  <rect width="800" height="520" fill="var(--surface)" />
+
+  <text class="title" x="32" y="40">Gemma 4 Decider: accuracy and H100 latency</text>
+  <text class="subtitle" x="32" y="66">
+    JevBench v1 public set: 231 tasks, 4,096-token window; median latency on one H100 80 GB
+  </text>
+
+  <text class="axis-label" x="88" y="104">JevBench accuracy</text>
+  <text class="axis-label" x="744" y="104" text-anchor="end">higher accuracy, lower latency ↖</text>
+
+  <line class="grid" x1="88" x2="744" y1="430" y2="430" />
+  <line class="grid" x1="88" x2="744" y1="352.5" y2="352.5" />
+  <line class="grid" x1="88" x2="744" y1="275" y2="275" />
+  <line class="grid" x1="88" x2="744" y1="197.5" y2="197.5" />
+  <line class="grid" x1="88" x2="744" y1="120" y2="120" />
+
+  <text class="tick" x="76" y="434" text-anchor="end">76%</text>
+  <text class="tick" x="76" y="356.5" text-anchor="end">80%</text>
+  <text class="tick" x="76" y="279" text-anchor="end">84%</text>
+  <text class="tick" x="76" y="201.5" text-anchor="end">88%</text>
+  <text class="tick" x="76" y="124" text-anchor="end">92%</text>
+
+  <line class="axis" x1="88" x2="744" y1="430" y2="430" />
+  <text class="tick" x="88" y="452" text-anchor="middle">80</text>
+  <text class="tick" x="233.8" y="452" text-anchor="middle">120</text>
+  <text class="tick" x="379.6" y="452" text-anchor="middle">160</text>
+  <text class="tick" x="525.3" y="452" text-anchor="middle">200</text>
+  <text class="tick" x="671.1" y="452" text-anchor="middle">240</text>
+  <text class="axis-label" x="744" y="480" text-anchor="end">H100 median latency per question (ms) →</text>
+
+  <g>
+    <title>E2B: 77.9% accuracy, 102 ms H100 median</title>
+    <circle class="point" cx="168.2" cy="393.2" r="9" />
+    <text class="model-label" x="188" y="382">E2B</text>
+    <text class="metric-label" x="188" y="401">77.9% · 102 ms</text>
+  </g>
+
+  <g>
+    <title>E4B: 81.0% accuracy, 139 ms H100 median</title>
+    <circle class="point" cx="303" cy="333.1" r="9" />
+    <text class="model-label" x="323" y="322">E4B</text>
+    <text class="metric-label" x="323" y="341">81.0% · 139 ms</text>
+  </g>
+
+  <g>
+    <title>12B: 86.6% accuracy, 136 ms H100 median</title>
+    <circle class="point" cx="292.1" cy="224.6" r="9" />
+    <text class="model-label" x="312" y="213">12B</text>
+    <text class="metric-label" x="312" y="232">86.6% · 136 ms</text>
+  </g>
+
+  <g>
+    <title>26B-A4B: 89.6% accuracy, 245 ms H100 median</title>
+    <circle class="point" cx="689.3" cy="166.5" r="9" />
+    <text class="model-label" x="669" y="151" text-anchor="end">26B-A4B</text>
+    <text class="metric-label" x="669" y="170" text-anchor="end">89.6% · 245 ms</text>
+  </g>
+</svg>

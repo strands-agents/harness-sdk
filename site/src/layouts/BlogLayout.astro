@@ -15,8 +15,9 @@ interface Props {
   title: string
   description?: string
   ogImage?: string
+  ogImageAlt?: string
   canonicalUrl?: string
-  /** Thin archive pages (tag/author) set this to keep near-duplicate content out of the index */
+  /** Thin archive pages (tag/author) set this to keep near-duplicate content out of the search engine and site search indexes */
   noindex?: boolean
   /**
    * Additional head tags (e.g. per-post JSON-LD, article OG metas). These must
@@ -30,6 +31,7 @@ const {
   title,
   description,
   ogImage,
+  ogImageAlt,
   canonicalUrl: canonicalOverride,
   noindex = false,
   extraHead = [],
@@ -57,13 +59,30 @@ if (description) {
 if (ogImage) {
   head.push({ tag: 'meta' as const, attrs: { property: 'og:image', content: ogImage } })
   head.push({ tag: 'meta' as const, attrs: { name: 'twitter:image', content: ogImage } })
+  if (ogImageAlt) head.push({ tag: 'meta' as const, attrs: { property: 'og:image:alt', content: ogImageAlt } })
 }
 head.push(...extraHead)
 ---
 
 <StarlightPage
-  frontmatter={{ title, description, template: 'splash', pagefind: false, head, hero: { actions: [] } }}
+  frontmatter={{ title, description, template: 'splash', pagefind: !noindex, head, hero: { actions: [] } }}
   hasSidebar={false}
 >
-  <slot />
+  {/* Splash pages omit the `id="_top"` that Starlight puts on doc-page h1s,
+      leaving the "Skip to content" link (href="#_top") with no target. Anchor
+      it here so the skip link works on blog/changelog pages. */}
+  <div id="_top" class="blog-layout-root">
+    <slot />
+  </div>
 </StarlightPage>
+
+<style is:global>
+  /* Starlight's splash `.sl-container` has max-width but margin-inline: 0, so
+     blog content hugged the left with dead space on the right. Center it (and
+     its content panel) so the blog reads as a centered column like the rest of
+     the site. Scoped to pages that render .blog-layout-root (blog only). */
+  .content-panel:has(.blog-layout-root) .sl-container,
+  .content-panel:has(.blog-layout-root) {
+    margin-inline: auto;
+  }
+</style>

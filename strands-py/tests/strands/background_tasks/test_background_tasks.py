@@ -10,9 +10,9 @@ from unittest.mock import ANY, AsyncMock
 import pytest
 
 from strands import Agent, ToolContext, tool
-from strands._middleware.stages import ExecuteToolStage, InvokeModelStage
-from strands.hooks import AfterToolCallEvent, AgentInitializedEvent, BeforeToolCallEvent
+from strands.hooks import AfterToolCallEvent, AgentInitializedEvent, BeforeModelCallEvent, BeforeToolCallEvent
 from strands.interrupt import Interrupt
+from strands.middleware.stages import ExecuteToolStage, InvokeModelStage
 from strands.tools.tools import PythonAgentTool
 from strands.types._events import ToolResultEvent
 from strands.types.content import Messages
@@ -21,7 +21,6 @@ from tests.fixtures.mocked_model_provider import MockedModelProvider
 
 _BACKGROUND_TASKS_STATE_KEY = "strands.background_tasks"
 _MANAGE_TOOL_NAME = "strands_manage_background_task"
-_RESULT_TOOL_NAME = "strands_background_task_result"
 
 
 def _assistant_text(text: str) -> dict[str, Any]:
@@ -40,7 +39,7 @@ def _deliveries(messages: Messages) -> list[ToolUse]:
         block["toolUse"]
         for message in messages
         for block in message["content"]
-        if "toolUse" in block and block["toolUse"]["name"] == _RESULT_TOOL_NAME
+        if "toolUse" in block and block["toolUse"]["name"] == _MANAGE_TOOL_NAME
     ]
 
 
@@ -112,7 +111,7 @@ def _capture_tool_specs(agent: Agent) -> list[list[ToolSpec]]:
         async for event in next_fn(context):
             yield event
 
-    agent._middleware_registry.add_middleware(InvokeModelStage, capture)
+    agent.add_middleware(InvokeModelStage, capture)
     return captured
 
 
@@ -277,12 +276,14 @@ async def test_fails_task_when_middleware_substitutes_foreground_only_tool() -> 
         async for event in next_fn(context):
             yield event
 
-    agent._middleware_registry.add_middleware(ExecuteToolStage, substitute)
+    agent.add_middleware(ExecuteToolStage, substitute)
 
     await agent.invoke_async("Run work.")
 
     tru_result = _delivered_result(agent)
-    exp_result = {"toolUseId": ANY, "status": "error", "content": [{"text": "Tool cannot run in the background"}]}
+    exp_result = {"toolUseId": ANY, "status": "success", "content": [{"json": ANY}]}
+    assert tru_result["content"][0]["json"]["status"] == "failed"
+    assert tru_result["content"][0]["json"]["error"]["message"] == "Tool cannot run in the background"
     assert tru_result == exp_result
 
 
@@ -296,14 +297,15 @@ async def test_fails_task_when_middleware_drops_tool_result() -> None:
         return
         yield
 
-    agent._middleware_registry.add_middleware(ExecuteToolStage, swallow)
+    agent.add_middleware(ExecuteToolStage, swallow)
 
     await agent.invoke_async("Run work.")
 
     tru_result = _delivered_result(agent)
-    exp_result = {"toolUseId": ANY, "status": "error", "content": [{"text": ANY}]}
+    exp_result = {"toolUseId": ANY, "status": "success", "content": [{"json": ANY}]}
+    assert tru_result["content"][0]["json"]["status"] == "failed"
     assert tru_result == exp_result
-    assert "did not yield a ToolResultEvent" in tru_result["content"][0]["text"]
+    assert "did not yield a ToolResultEvent" in tru_result["content"][0]["json"]["error"]["message"]
 
 
 @pytest.mark.asyncio
@@ -360,7 +362,7 @@ async def test_surfaces_and_resumes_interrupts_raised_by_background_tools() -> N
     exp_responses = ["yes"]
     assert tru_responses == exp_responses
     tru_result = _delivered_result(agent)
-    exp_result = {"toolUseId": ANY, "status": "success", "content": [{"text": "approved"}]}
+    exp_result = {"toolUseId": ANY, "status": "success", "content": [{"json": ANY}, {"text": "approved"}]}
     assert tru_result == exp_result
 
 
@@ -396,7 +398,7 @@ async def test_dispatches_selected_calls_through_tool_pipeline_and_delivers_resu
             yield event
 
     agent.add_hook(retry_once, AfterToolCallEvent)
-    agent._middleware_registry.add_middleware(ExecuteToolStage, count_execution)
+    agent.add_middleware(ExecuteToolStage, count_execution)
 
     result = await agent.invoke_async("Run work.")
 
@@ -416,11 +418,29 @@ async def test_dispatches_selected_calls_through_tool_pipeline_and_delivers_resu
     assert tru_requested_input == exp_requested_input
 
     tru_deliveries = _deliveries(agent.messages)
-    exp_deliveries = [{"name": _RESULT_TOOL_NAME, "toolUseId": ANY, "input": {"tool_name": "work"}}]
+    exp_deliveries = [{"name": _MANAGE_TOOL_NAME, "toolUseId": ANY, "input": {"mode": "get", "task_id": ANY}}]
     assert tru_deliveries == exp_deliveries
+    assert tru_deliveries[0]["name"] in {spec["name"] for spec in tool_specs[0]}
+    assert tru_deliveries[0]["input"]["task_id"] == tru_deliveries[0]["toolUseId"]
 
     tru_result = _delivered_result(agent)
-    exp_result = {"toolUseId": ANY, "status": "success", "content": [{"text": "done:background"}]}
+    exp_result = {
+        "toolUseId": ANY,
+        "status": "success",
+        "content": [
+            {
+                "json": {
+                    "task_id": tru_deliveries[0]["toolUseId"],
+                    "tool_use_id": "work-use",
+                    "tool_name": "work",
+                    "status": "completed",
+                    "created_at": ANY,
+                    "last_updated_at": ANY,
+                }
+            },
+            {"text": "done:background"},
+        ],
+    }
     assert tru_result == exp_result
     assert _persisted_tasks(agent) is None
 
@@ -500,7 +520,7 @@ async def test_applies_always_and_never_policies_per_tool() -> None:
     assert tru_inputs == exp_inputs
 
     tru_deliveries = _deliveries(agent.messages)
-    exp_deliveries = [{"name": _RESULT_TOOL_NAME, "toolUseId": ANY, "input": {"tool_name": "background"}}]
+    exp_deliveries = [{"name": _MANAGE_TOOL_NAME, "toolUseId": ANY, "input": {"mode": "get", "task_id": ANY}}]
     assert tru_deliveries == exp_deliveries
 
     tru_incompatible_result = _tool_result(agent, "incompatible-use")
@@ -516,15 +536,92 @@ async def test_applies_always_and_never_policies_per_tool() -> None:
         assert "_background_execution" not in _schema_properties(tool_spec)
 
 
+# Regression: https://github.com/strands-agents/harness-sdk/issues/5210
 @pytest.mark.asyncio
-async def test_delivers_work_that_finishes_between_invocations() -> None:
-    released = asyncio.Event()
+async def test_cancelled_execution_settles_default_invocation() -> None:
+    @tool(name="work")
+    async def work() -> str:
+        """Await a cancelled asynchronous operation."""
+        operation = asyncio.create_task(asyncio.sleep(60))
+        operation.cancel()
+        return await operation
+
+    agent = _background_agent(work, responses=[_assistant_text("Task admitted."), _assistant_text("Result received.")])
+
+    result = await asyncio.wait_for(agent.invoke_async("Run work."), timeout=1)
+
+    tru_stop_reason = result.stop_reason
+    exp_stop_reason = "end_turn"
+    assert tru_stop_reason == exp_stop_reason
+    tru_result = _delivered_result(agent)
+    exp_result = {
+        "toolUseId": ANY,
+        "status": "success",
+        "content": [
+            {
+                "json": {
+                    "task_id": ANY,
+                    "tool_use_id": "work-use",
+                    "tool_name": "work",
+                    "status": "cancelled",
+                    "created_at": ANY,
+                    "last_updated_at": ANY,
+                }
+            }
+        ],
+    }
+    assert tru_result == exp_result
+    assert _persisted_tasks(agent) is None
+
+
+def test_origin_loop_shutdown_settles_background_execution() -> None:
+    started = asyncio.Event()
+    cancelled = threading.Event()
 
     @tool(name="work")
     async def work() -> str:
+        """Wait until the originating event loop shuts down."""
+        started.set()
+        try:
+            await asyncio.Event().wait()
+            raise AssertionError("unreachable")
+        finally:
+            cancelled.set()
+
+    agent = _background_agent(
+        work,
+        responses=[_assistant_text("Task admitted."), _assistant_text("Result received.")],
+        wait_for_completion=False,
+    )
+
+    async def first_invocation() -> None:
+        await agent.invoke_async("Run work.")
+        await asyncio.wait_for(started.wait(), timeout=1)
+
+    asyncio.run(first_invocation())
+    assert cancelled.is_set()
+
+    async def next_invocation() -> None:
+        await asyncio.wait_for(_wait_for_task_status(agent, "cancelled"), timeout=1)
+        await agent.invoke_async("Continue.")
+
+    asyncio.run(next_invocation())
+    tru_status = _delivered_result(agent)["content"][0]["json"]["status"]
+    exp_status = "cancelled"
+    assert tru_status == exp_status
+    assert _persisted_tasks(agent) is None
+
+
+@pytest.mark.asyncio
+async def test_delivers_work_that_finishes_between_invocations() -> None:
+    released = asyncio.Event()
+    content = [{"text": "done"}, {"image": {"format": "png", "source": {"location": {"uri": "s3://bucket/image.png"}}}}]
+
+    @tool(name="work")
+    async def work() -> dict[str, Any]:
         """Perform deferred work."""
         await released.wait()
-        return "done"
+        return {"status": "success", "content": content}
 
     agent = Agent(
         model=MockedModelProvider(
@@ -557,10 +654,13 @@ async def test_delivers_work_that_finishes_between_invocations() -> None:
             "status": "completed",
             "created_at": ANY,
             "last_updated_at": ANY,
-            "result": {"content": [{"text": "done"}]},
+            "result": {"content": content},
         }
     ]
     assert tru_tasks == exp_tasks
+    task_id = tru_tasks[0]["task_id"]
+    inspected = await _invoke_management_tool(agent, {"mode": "get", "task_id": task_id})
+    assert inspected["content"][1:] == content
 
     snapshot = agent.take_snapshot(preset="session")
     restored = Agent(
@@ -574,6 +674,7 @@ async def test_delivers_work_that_finishes_between_invocations() -> None:
     tru_delivery_count = len(_deliveries(restored.messages))
     exp_delivery_count = 1
     assert tru_delivery_count == exp_delivery_count
+    assert _delivered_result(restored) == {**inspected, "toolUseId": task_id}
     assert _persisted_tasks(restored) is None
 
 
@@ -679,7 +780,9 @@ async def test_load_state_fails_restored_non_terminal_work() -> None:
     await agent.invoke_async("Continue.")
 
     tru_deliveries = _deliveries(agent.messages)
-    exp_deliveries = [{"name": _RESULT_TOOL_NAME, "toolUseId": "working", "input": {"tool_name": "working-work"}}]
+    exp_deliveries = [
+        {"name": _MANAGE_TOOL_NAME, "toolUseId": "working", "input": {"mode": "get", "task_id": "working"}}
+    ]
     assert tru_deliveries == exp_deliveries
 
 
@@ -737,7 +840,7 @@ async def test_surfaces_and_resumes_interrupts_from_background_tools() -> None:
         async for event in next_fn(context):
             yield event
 
-    agent._middleware_registry.add_middleware(ExecuteToolStage, interrupt_approval)
+    agent.add_middleware(ExecuteToolStage, interrupt_approval)
 
     interrupted = await agent.invoke_async("Run approval.")
     tru_stop_reason = interrupted.stop_reason
@@ -818,3 +921,87 @@ def test_direct_tool_calls_run_in_the_foreground() -> None:
     exp_result = {"toolUseId": ANY, "status": "success", "content": [{"text": "done"}]}
     assert tru_result == exp_result
     assert _persisted_tasks(agent) is None
+
+
+@pytest.mark.asyncio
+async def test_runs_queued_work_under_the_request_that_submitted_it_even_after_it_returned() -> None:
+    released = asyncio.Event()
+
+    @tool(name="blocker")
+    async def blocker() -> str:
+        """Hold the only execution slot."""
+        await released.wait()
+        return "unblocked"
+
+    probe_contexts: list[Any] = []
+
+    @tool(name="probe", context=True)
+    def probe(tool_context: ToolContext) -> str:
+        """Record the request it runs under."""
+        probe_contexts.append(tool_context.invocation_context)
+        return "probed"
+
+    model = MockedModelProvider(
+        [
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "toolUse": {
+                            "toolUseId": "blocker-use",
+                            "name": "blocker",
+                            "input": {"_background_execution": True},
+                        }
+                    },
+                    {"toolUse": {"toolUseId": "probe-use", "name": "probe", "input": {"_background_execution": True}}},
+                ],
+            },
+            _assistant_text("Tasks admitted."),
+        ]
+    )
+    agent = Agent(
+        model=model,
+        tools=[blocker, probe],
+        background_tasks={"wait_for_completion": False, "max_concurrency": 1},
+        callback_handler=None,
+    )
+    submitting_contexts: list[Any] = []
+    agent.hooks.add_callback(BeforeModelCallEvent, lambda event: submitting_contexts.append(event.invocation_context))
+
+    await agent.invoke_async("Run both.")
+    assert probe_contexts == []
+
+    released.set()
+    for _ in range(100):
+        if probe_contexts:
+            break
+        await asyncio.sleep(0.01)
+
+    assert submitting_contexts[0] is not None
+    assert probe_contexts == [submitting_contexts[0]]
+
+
+@pytest.mark.asyncio
+async def test_hands_after_tool_call_hooks_the_request_that_submitted_the_task() -> None:
+    @tool(name="work")
+    def work(value: str) -> str:
+        """Perform work."""
+        return f"done:{value}"
+
+    model = MockedModelProvider(
+        [
+            _assistant_tool_use("work", "work-use", {"value": "background", "_background_execution": True}),
+            _assistant_text("Task admitted."),
+            _assistant_text("Result received."),
+        ]
+    )
+    agent = Agent(model=model, tools=[work], background_tasks={"agentic": [work]}, callback_handler=None)
+    submitting_contexts: list[Any] = []
+    after_tool_contexts: list[Any] = []
+    agent.hooks.add_callback(BeforeModelCallEvent, lambda event: submitting_contexts.append(event.invocation_context))
+    agent.hooks.add_callback(AfterToolCallEvent, lambda event: after_tool_contexts.append(event.invocation_context))
+
+    await agent.invoke_async("Run work.")
+
+    assert submitting_contexts[0] is not None
+    assert after_tool_contexts == [submitting_contexts[0]]

@@ -6,9 +6,11 @@
 
 import type { Plugin } from '../plugins/plugin.js'
 import type { Tool } from '../tools/tool.js'
+import { createAuxiliaryInvocationContext, type InvocationContext } from '../agent/invocation-context.js'
 import type { LocalAgent } from '../types/agent.js'
 import { AfterModelCallEvent, BeforeModelCallEvent, MessageAddedEvent } from '../hooks/events.js'
 import { ContextWindowOverflowError } from '../errors.js'
+import { ModelProxy } from '../models/model-proxy.js'
 import { InMemoryStorage } from '../storage/in-memory-storage.js'
 import { EPHEMERAL } from '../storage/storage.js'
 import type { Storage } from '../storage/storage.js'
@@ -36,9 +38,11 @@ export type ContextManagerPreset = (typeof CONTEXT_MANAGER_PRESETS)[number]
  * - `"auto"`: Managed context with proactive compression + offloading.
  * - `"agentic"`: Model-driven context management via injected tools.
  * - {@link ContextManagerConfig}: Custom strategy pipeline and stash configuration.
+ * - {@link ContextManager}: A pre-built instance, used as-is. An instance binds to one agent;
+ *   construct one per `Agent`.
  * - `false`: Explicitly disable all context management (no compression, no offloading).
  */
-export type ContextManagerStrategy = ContextManagerPreset | ContextManagerConfig | false
+export type ContextManagerStrategy = ContextManagerPreset | ContextManagerConfig | ContextManager | false
 
 /**
  * Manages context reduction for an agent's conversation.
@@ -48,8 +52,8 @@ export type ContextManagerStrategy = ContextManagerPreset | ContextManagerConfig
  * utilization and only fires if the window is still overflowing after user strategies.
  *
  * Configured through the Agent's `contextManager` parameter — pass a preset
- * string (`'auto'`, `'agentic'`) or a `ContextManagerConfig`; the Agent
- * constructs and registers the manager. When present, it owns overflow
+ * string (`'auto'`, `'agentic'`), a `ContextManagerConfig`, or a `ContextManager`
+ * instance; the Agent registers the manager. When present, it owns overflow
  * recovery and proactive compression — no separate ConversationManager is needed.
  *
  * @experimental
@@ -84,11 +88,12 @@ export class ContextManager implements Plugin {
   /**
    * Resolves a `ContextManagerStrategy` value into a `ContextManager` instance.
    *
-   * @param strategy - A preset string, config object, false, or undefined
-   * @returns A ContextManager for preset strings and configs; undefined for false/undefined
+   * @param strategy - A preset string, config object, ContextManager instance, false, or undefined
+   * @returns The instance as-is; a new ContextManager for preset strings and configs; undefined for false/undefined
    */
   static from(strategy: ContextManagerStrategy | undefined): ContextManager | undefined {
     if (strategy === false || strategy === undefined) return undefined
+    if (strategy instanceof ContextManager) return strategy
     if (strategy === 'auto') {
       return new ContextManager()
     }
@@ -123,7 +128,11 @@ export class ContextManager implements Plugin {
     if (this._stashStorage !== false) {
       const storage = this._stashStorage ?? agent.storage ?? new InMemoryStorage()
       this._stashIsDurable = !(EPHEMERAL in storage)
-      this._stash = new Stash(storage, agent.sessionId, agent.id)
+      // Only explicit stash storage may be a shared root; agent.storage is shared with other subsystems.
+      // Plain (non-namespaced) explicit storage still gets the per-agent prefix. Mirrors strands-py.
+      this._stash = new Stash(storage, agent.sessionId, agent.id, {
+        customStashNamespace: this._stashStorage !== undefined,
+      })
     }
 
     if (this._stash) {
@@ -146,7 +155,7 @@ export class ContextManager implements Plugin {
     }
 
     agent.addHook(BeforeModelCallEvent, async (event) => {
-      await this._runStrategies(event.agent, event.projectedInputTokens)
+      await this._runStrategies(event.agent, event.projectedInputTokens, undefined, event.invocationContext)
     })
 
     // Assumes sequential invocations on this agent (no concurrent calls)
@@ -163,7 +172,7 @@ export class ContextManager implements Plugin {
         return
       }
 
-      const acted = await this._runStrategies(event.agent, undefined, true)
+      const acted = await this._runStrategies(event.agent, undefined, true, event.invocationContext)
       if (!acted) {
         logger.warn(`agentId=<${event.agent.id}> | no strategy made progress, skipping retry`)
         return
@@ -196,10 +205,12 @@ export class ContextManager implements Plugin {
   private async _runStrategies(
     agent: LocalAgent,
     precomputedInputTokens?: number,
-    overflow?: boolean
+    overflow?: boolean,
+    invocationContext?: InvocationContext
   ): Promise<boolean> {
     const messages = agent.messages
-    const inputTokens = precomputedInputTokens ?? (await agent.model.countTokens(messages))
+    const inputTokens = precomputedInputTokens ?? (await new ModelProxy(agent.model).countTokens(messages))
+    const auxiliaryInvocationContext = createAuxiliaryInvocationContext(invocationContext)
 
     const strategyContext: ContextState = {
       messages,
@@ -207,6 +218,7 @@ export class ContextManager implements Plugin {
       utilization: agent.model.estimateUtilization(inputTokens),
       ...(overflow ? { overflow: true } : {}),
       ...(this._stash ? { stash: this._stash } : {}),
+      ...(auxiliaryInvocationContext && { invocationContext: auxiliaryInvocationContext }),
     }
 
     let anyActed = false
@@ -216,7 +228,9 @@ export class ContextManager implements Plugin {
         const acted = await strategy.apply(strategyContext)
         if (acted) {
           anyActed = true
-          strategyContext.utilization = agent.model.estimateUtilization(await agent.model.countTokens(messages))
+          strategyContext.utilization = agent.model.estimateUtilization(
+            await new ModelProxy(agent.model).countTokens(messages)
+          )
           logger.debug(`strategy=<${strategy.name}>, agentId=<${agent.id}> | strategy applied`)
         }
       } catch (error) {

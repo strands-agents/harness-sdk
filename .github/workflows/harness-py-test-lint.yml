@@ -1,0 +1,94 @@
+name: "Harness Python: Test and Lint"
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        required: true
+        type: string
+      local-strands-py:
+        description: 'Run unit tests against the checked-out strands-py instead of the published strands-agents.'
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  unit-test:
+    name: Unit Tests - Python ${{ matrix.python-version }}${{ matrix.os == 'strands-agents_windows-latest_4-core' && ' (Windows)' || '' }}
+    permissions:
+      contents: read
+    strategy:
+      matrix:
+        # harness-py requires-python is >=3.10; cover each supported minor on Linux, plus the newest on Windows.
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+        os: [strands-agents_ubuntu-latest_4-core]
+        include:
+          - { python-version: "3.13", os: strands-agents_windows-latest_4-core }
+      fail-fast: false
+    runs-on: ${{ matrix.os }}
+    # Suite runs in ~3 min; 25 min caps a hung step instead of the 6-hour default.
+    timeout-minutes: 25
+    env:
+      LOG_LEVEL: DEBUG
+    defaults:
+      run:
+        working-directory: harness-py
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v7.1.0
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install package with dev extras
+        run: pip install --no-cache-dir -e '.[dev]'
+
+      - name: Install local strands-py
+        if: inputs.local-strands-py
+        shell: bash
+        env:
+          # A shallow clone has no python/v* tag to derive from, so pin a version inside harness-py's
+          # strands-agents range. hatch-vcs ignores the per-dist `_FOR_<NAME>` form of this variable.
+          SETUPTOOLS_SCM_PRETEND_VERSION: '1.999.0'
+        run: |
+          pip install --no-cache-dir -e '.[dev]' -e '../strands-py[otel]'
+          python -c "import pathlib, strands; p = pathlib.Path(strands.__file__).resolve(); assert pathlib.Path('../strands-py').resolve() in p.parents, p; print('strands from', p)"
+
+      - name: Run unit tests
+        run: pytest
+
+  lint:
+    name: Lint
+    runs-on: strands-agents_ubuntu-latest_4-core
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: harness-py
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v7.1.0
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install package with dev extras
+        run: pip install --no-cache-dir -e '.[dev]'
+
+      - name: Check formatting
+        run: ruff format --check .
+
+      - name: Run lint
+        run: ruff check .

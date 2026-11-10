@@ -330,7 +330,6 @@ export async function startTaskHTTPServer(): Promise<TaskHttpServerInfo> {
           await transport.close()
         })
 
-        // @ts-expect-error - MCP SDK doesn't support exactOptionalPropertyTypes
         await mcpServer.connect(transport)
         await transport.handleRequest(req, res, parsedBody)
       } catch (error) {

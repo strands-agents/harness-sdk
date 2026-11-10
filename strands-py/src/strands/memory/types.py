@@ -251,6 +251,15 @@ class MemoryStoreConfig(TypedDict, total=False):
     extraction: ExtractionConfig | bool
 
 
+def _default_not_implemented(store: object, method: str) -> Any:
+    """Raise for a write sink invoked on a store that does not implement it.
+
+    The manager never routes to an unimplemented sink (``_has_method`` filters
+    them out); this guards direct calls on the inherited default.
+    """
+    raise NotImplementedError(f"{type(store).__name__} does not implement {method}.")
+
+
 class MemoryStore(Protocol):
     """Runtime contract for a memory store backend.
 
@@ -277,6 +286,11 @@ class MemoryStore(Protocol):
         ...
 
     # --- Optional methods: detect presence via ``_has_method`` / ``_has_write_sink``.
+    # Each carries a concrete default body so that explicit subclasses are
+    # instantiable under static type checkers; ``_has_method`` treats an
+    # inherited default as "not implemented", so runtime detection is unchanged.
+    # The write sinks raise through ``_default_not_implemented`` because a bare
+    # ``raise NotImplementedError`` body is itself treated as a stub by mypy.
 
     async def add(self, content: str, metadata: Metadata | None = None) -> Any:
         """Add a single piece of content to the store.
@@ -285,7 +299,7 @@ class MemoryStore(Protocol):
         extraction should tolerate duplicate writes. The resolved value is
         store-specific and not consumed by the manager.
         """
-        ...
+        return _default_not_implemented(self, "add")
 
     async def add_messages(self, messages: list[Message], context: AddMessagesContext | None = None) -> Any:
         """Ingest a batch of conversation messages, preserving role structure.
@@ -294,7 +308,7 @@ class MemoryStore(Protocol):
         hands the filtered batch straight here. The resolved value is
         store-specific.
         """
-        ...
+        return _default_not_implemented(self, "add_messages")
 
     async def initialize(self) -> None:
         """Perform async setup that must succeed before the agent runs.
@@ -302,11 +316,11 @@ class MemoryStore(Protocol):
         Called by the ``MemoryManager`` during ``init_agent``. Stores that require remote resources
         (e.g. resolving a knowledge base type) implement this; the default is a no-op.
         """
-        ...
+        return None
 
     def get_tools(self) -> list[AgentTool]:
         """Return store-specific tools to register alongside the manager's tools."""
-        ...
+        return []
 
 
 def _has_method(store: object, name: str) -> bool:

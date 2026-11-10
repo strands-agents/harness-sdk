@@ -5,6 +5,7 @@ import {
   ReasoningBlock,
   type Role,
   type StopReason,
+  type SummaryBlock,
   type SystemPrompt,
   TextBlock,
   ToolUseBlock,
@@ -14,6 +15,7 @@ import type { Citation, CitationGeneratedContent } from '../types/citations.js'
 import type { StateStore } from '../state-store.js'
 import type { ToolChoice, ToolSpec } from '../tools/types.js'
 import type { AgentMetadata } from '../agent/agent-metadata.js'
+import type { z } from 'zod'
 import {
   ModelContentBlockDeltaEvent,
   ModelContentBlockStartEvent,
@@ -24,26 +26,46 @@ import {
   ModelRedactionEvent,
   type ModelStreamEvent,
 } from './streaming.js'
-import { MaxTokensError, ModelError, normalizeError } from '../errors.js'
+import { MaxTokensError, ModelError, NotImplementedError, normalizeError } from '../errors.js'
 import type { Redaction } from '../hooks/events.js'
 import { logger } from '../logging/logger.js'
-import { DEFAULT_CONTEXT_WINDOW_LIMIT, getContextWindowLimit } from './defaults.js'
+import { DEFAULT_CONTEXT_WINDOW_LIMIT } from './defaults.js'
+import { lookupModelInfo, mergeModelInfo, type ModelInfo } from './model-info.js'
 import { warnOnce } from '../logging/warn-once.js'
 
 /**
- * Resolves model metadata fields on a config object from built-in lookup tables
- * when not explicitly set. Explicit values pass through unchanged.
+ * Fills `contextWindowLimit` on a config object when not explicitly set. Explicit values pass
+ * through unchanged.
+ *
+ * Kept so `getConfig().contextWindowLimit` keeps its documented value. The filled value is resolved
+ * through every layer below the user's (shared model info, then the `modelInfo` override), so
+ * `Model.modelInfo` can take it at face value.
  *
  * @internal
  * @param config - The stored model config
  * @param modelId - The model ID to look up
- * @returns A new config with resolved metadata, or the original config if nothing to resolve
+ * @returns A new config with the limit filled in, or the original config if nothing to fill
  */
 export function resolveConfigMetadata<T extends BaseModelConfig>(config: T, modelId: string): T {
   if (config.contextWindowLimit !== undefined) return config
-  const limit = getContextWindowLimit(modelId)
-  if (limit === undefined) return config
-  return { ...config, contextWindowLimit: limit }
+  const contextWindow = mergeModelInfo(lookupModelInfo(modelId), config.modelInfo).limits?.contextWindow
+  if (contextWindow === undefined) return config
+  return { ...config, contextWindowLimit: contextWindow }
+}
+
+/**
+ * The `maxTokens` to send: the configured value, else the model's output ceiling from the shared model
+ * info with the `modelInfo` override applied, else `undefined`. Reads the layers directly rather than
+ * `Model.modelInfo` so `getConfig()` can call it.
+ *
+ * @internal
+ * @param config - The stored model config
+ * @param modelId - The model ID to look up
+ * @returns The resolved `maxTokens`, or `undefined` when neither the user nor the model info says
+ */
+export function resolveMaxTokens(config: BaseModelConfig, modelId: string): number | undefined {
+  if (config.maxTokens !== undefined) return config.maxTokens
+  return mergeModelInfo(lookupModelInfo(modelId), config.modelInfo).limits?.maxOutputTokens
 }
 
 class CitationAccumulator {
@@ -206,14 +228,20 @@ export interface BaseModelConfig {
   /**
    * Maximum context window size in tokens for the model.
    *
-   * This value represents the total token capacity shared between input and output.
-   * When not provided, it is automatically resolved from a built-in lookup table
-   * based on the configured model ID. An explicit value always takes precedence.
-   *
-   * When `modelId` is changed via `updateConfig()`, this value is automatically
-   * re-resolved if it was initially auto-populated. Explicitly set values are preserved.
+   * The same fact as `modelInfo.limits.contextWindow`; setting it here is shorthand for setting it
+   * through `modelInfo`, and it wins over the shared model info. When both are set, `modelInfo` wins.
+   * When not provided, vended providers still populate it from the shared model info for
+   * callers that read `getConfig()`; `modelInfo` is the resolved view to read.
    */
   contextWindowLimit?: number
+
+  /**
+   * Overrides for what the SDK knows about the model. Fields set here win over the shared model
+   * info and the provider; `capabilities.stateful` changes how the agent loop sends history, so set
+   * it only for a provider that keeps state server-side. `updateConfig({ modelInfo })` replaces the
+   * previous override entirely, it does not merge into it.
+   */
+  modelInfo?: ModelInfo
 }
 
 /**
@@ -255,6 +283,13 @@ export interface StreamOptions {
 
   /** Metadata of the invoking agent, supplied per request. */
   agentMetadata?: AgentMetadata
+
+  /**
+   * Schema this call must produce, set by the agent on its structured output retry so the provider can choose how to
+   * enforce it. The response must then be either a call to the tool named in `toolChoice` or a final text response
+   * whose text is exactly one JSON object that validates against this schema.
+   */
+  structuredOutputSchema?: z.ZodSchema
 }
 
 /**
@@ -271,6 +306,27 @@ export interface CountTokensOptions {
    * Array of tool specifications to include in the count.
    */
   toolSpecs?: ToolSpec[]
+}
+
+/**
+ * Options for a server-side summary.
+ */
+export interface SummarizeOptions {
+  /**
+   * The live conversation's system prompt, not the summarizer's.
+   */
+  systemPrompt?: SystemPrompt
+
+  /**
+   * The live conversation's tool specifications.
+   */
+  toolSpecs?: ToolSpec[]
+
+  /**
+   * Summarization instructions replacing the provider's own prompt. The summarize strategy passes its
+   * `systemPrompt` config here.
+   */
+  instructions?: string
 }
 
 /**
@@ -339,13 +395,36 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
    * sends only the latest message instead of the full history. After each invocation,
    * the agent's local message history is cleared automatically.
    *
-   * Model providers that support server-side state management should override this
-   * to return `true`.
+   * Reads `modelInfo.capabilities.stateful`, so a provider that keeps state server-side sets it there
+   * (see {@link modelInfo}) and a `modelInfo` config override can change it.
    *
-   * @returns `false` by default
+   * @returns `false` when unknown
    */
   get stateful(): boolean {
-    return false
+    return this.modelInfo.capabilities?.stateful ?? false
+  }
+
+  /**
+   * Everything the SDK knows about the configured model, resolved on each read. Layers, later
+   * ones winning: the shared model info for `modelId`, `temporaryMessages` and `serverSideSummary` off (a
+   * provider that supports them turns them back on), the `contextWindowLimit` config value, and the
+   * `modelInfo` config override. Each read returns a new record, so do not compare reads by reference.
+   *
+   * A provider that knows better than the shared model info overrides this getter: put its facts over
+   * `super.modelInfo`, then the user's `getConfig().modelInfo` over those so the override still wins:
+   * `{ ...info, capabilities: { ...info.capabilities, promptCaching: 'auto', ...config.modelInfo?.capabilities } }`.
+   * Do not read {@link stateful} inside the override; it reads this getter.
+   */
+  get modelInfo(): ModelInfo {
+    const config = this.getConfig()
+    return mergeModelInfo(
+      lookupModelInfo(this.modelId ?? ''),
+      {
+        capabilities: { temporaryMessages: false, serverSideSummary: false },
+        limits: { contextWindow: config.contextWindowLimit },
+      },
+      config.modelInfo
+    )
   }
 
   /**
@@ -362,7 +441,8 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
    * Count tokens for the given input before sending to the model.
    *
    * Used for proactive context management (e.g., triggering compression at a threshold).
-   * The base implementation uses a character-based heuristic (chars/4 for text, chars/2 for JSON).
+   * The base implementation uses a character-based heuristic (chars/4 for text, chars/2 for JSON). It counts only the
+   * latest user message's injected blocks, the ones a model reads.
    *
    * Subclasses should override this method to use native token counting APIs
    * (e.g., Bedrock CountTokens, Anthropic countTokens, Gemini countTokens)
@@ -377,6 +457,23 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
   }
 
   /**
+   * Summarizes the conversation's opening `messages` server-side.
+   *
+   * The summarize strategy calls this instead of its client-side summary when
+   * `modelInfo.capabilities.serverSideSummary` is `true`, with the messages from message 0 through the last
+   * one it summarizes. Providers with server-side summaries override it. When this throws, the strategy
+   * summarizes client-side instead.
+   *
+   * @param _messages - The opening messages to summarize, from message 0, left unmodified
+   * @param _options - The live system prompt and tools, and summarization instructions
+   * @returns A summary block that takes the summarized messages' place
+   * @throws NotImplementedError - When the model has no server-side summary
+   */
+  async summarize(_messages: Message[], _options?: SummarizeOptions): Promise<SummaryBlock> {
+    throw new NotImplementedError(`model=<${this.constructor.name}> | model has no server-side summary`)
+  }
+
+  /**
    * Estimate the fraction of the model's context window consumed by the given input token count.
    *
    * Resolves the model's context window limit (falling back to {@link DEFAULT_CONTEXT_WINDOW_LIMIT}
@@ -386,7 +483,7 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
    * @returns Token usage ratio (0–1+; above 1.0 means overflow)
    */
   estimateUtilization(inputTokens: number): number {
-    let contextWindowLimit = this.getConfig().contextWindowLimit
+    let contextWindowLimit = this.modelInfo.limits?.contextWindow
     if (!contextWindowLimit) {
       contextWindowLimit = DEFAULT_CONTEXT_WINDOW_LIMIT
       warnOnce(
@@ -458,7 +555,8 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
   ): AsyncGenerator<ModelStreamEvent | ContentBlock, StreamAggregatedResult, undefined> {
     try {
       // State maintained in closure
-      let messageRole: Role | null = null
+      // Providers can end an empty turn with only a stop event, so a message is assumed to be the assistant's.
+      let messageRole: Role = 'assistant'
       const contentBlocks: ContentBlock[] = []
       let accumulatedText = ''
       let accumulatedToolInput = ''
@@ -542,11 +640,19 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
               } else if (accumulatedCitations.hasData()) {
                 block = new CitationsBlock({
                   citations: accumulatedCitations.citations,
-                  content: accumulatedCitations.content,
+                  // Citations deltas that ground already-streamed text carry no content of their own.
+                  content:
+                    accumulatedCitations.content.length > 0
+                      ? accumulatedCitations.content
+                      : accumulatedText
+                        ? [{ text: accumulatedText }]
+                        : [],
                 })
+                accumulatedText = ''
                 accumulatedCitations.reset()
               } else {
                 block = new TextBlock(accumulatedText)
+                accumulatedText = ''
               }
               contentBlocks.push(block)
               yield block
@@ -561,16 +667,11 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
 
           case 'modelMessageStopEvent':
             // Store message and stop reason
-            if (messageRole) {
-              const filtered = contentBlocks.filter(
-                (block) => !(block instanceof TextBlock && block.text.trim() === '')
-              )
-              stoppedMessage = new Message({
-                role: messageRole,
-                content: filtered,
-              })
-              finalStopReason = event.stopReason!
-            }
+            stoppedMessage = new Message({
+              role: messageRole,
+              content: contentBlocks.filter((block) => !(block instanceof TextBlock && block.text.trim() === '')),
+            })
+            finalStopReason = event.stopReason!
             break
 
           case 'modelMetadataEvent':
@@ -692,6 +793,12 @@ function estimateContentBlockTokens(block: ContentBlock): number {
         if ('text' in item) total += heuristicText(item.text)
       }
       break
+    case 'injectedBlock':
+      total += heuristicText(block.injected.text)
+      break
+    case 'summaryBlock':
+      total += heuristicText(block.text)
+      break
     default:
       break
   }
@@ -717,11 +824,7 @@ function estimateTokensHeuristic(messages: Message[], options?: CountTokensOptio
     }
   }
 
-  for (const message of messages) {
-    for (const block of message.content) {
-      total += estimateContentBlockTokens(block)
-    }
-  }
+  total += estimateMessageTokens(messages)
 
   if (options?.toolSpecs) {
     for (const spec of options.toolSpecs) {
@@ -730,6 +833,28 @@ function estimateTokensHeuristic(messages: Message[], options?: CountTokensOptio
   }
 
   return total
+}
+
+/** Counts the messages, with only the latest user message's injected blocks, the ones a model reads. */
+function estimateMessageTokens(messages: Message[]): number {
+  const latestUser = latestUserIndex(messages)
+  return messages
+    .flatMap((message, index) =>
+      index === latestUser ? message.content : message.content.filter((block) => block.type !== 'injectedBlock')
+    )
+    .reduce((total, block) => total + estimateContentBlockTokens(block), 0)
+}
+
+/**
+ * Index of the latest user message, or -1 when there is none.
+ *
+ * @internal
+ */
+export function latestUserIndex(messages: Message[]): number {
+  for (let index = messages.length - 1; index >= 0; index--) {
+    if (messages[index]!.role === 'user') return index
+  }
+  return -1
 }
 
 function heuristicText(text: string): number {
