@@ -61,7 +61,7 @@ describe('homepage machine-readable metadata', () => {
     expect(main?.querySelectorAll('h1')).toHaveLength(1)
   })
 
-  it('groups products under the Build, Control, and Validate pillars', () => {
+  it('highlights one product under each toolkit pillar', () => {
     const toolkit = homepage.querySelector('.toolkit')
     const pillars = toolkit?.querySelectorAll('.toolkit__section') ?? []
 
@@ -74,27 +74,60 @@ describe('homepage machine-readable metadata', () => {
         },
         products: pillar.querySelectorAll('.toolkit__card').map((card) => {
           const heading = card.querySelector('.toolkit__card-slug')
-          return { tagName: heading?.tagName, text: heading?.text.trim() }
+          const docsLink = card.querySelector('.toolkit__card-read')
+          return {
+            tagName: heading?.tagName,
+            text: heading?.text.trim(),
+            docs: {
+              text: docsLink?.text.trim(),
+              href: docsLink?.getAttribute('href'),
+              ariaLabel: docsLink?.getAttribute('aria-label'),
+            },
+          }
         }),
       }))
     ).toEqual([
       {
         title: { tagName: 'H3', text: 'Build' },
         products: [
-          { tagName: 'H4', text: '/harness' },
-          { tagName: 'H4', text: '/harness-sdk' },
+          {
+            tagName: 'H4',
+            text: '/harness',
+            docs: {
+              text: 'Read docs',
+              href: configuredPathWithBase('/docs/user-guide/harness/'),
+              ariaLabel: 'Read Strands harness docs',
+            },
+          },
         ],
       },
       {
         title: { tagName: 'H3', text: 'Control' },
         products: [
-          { tagName: 'H4', text: '/box' },
-          { tagName: 'H4', text: '/shell' },
+          {
+            tagName: 'H4',
+            text: '/box',
+            docs: {
+              text: 'Read docs',
+              href: configuredPathWithBase('/docs/user-guide/box/'),
+              ariaLabel: 'Read Strands Box docs',
+            },
+          },
         ],
       },
       {
         title: { tagName: 'H3', text: 'Validate' },
-        products: [{ tagName: 'H4', text: '/evals' }],
+        products: [
+          {
+            tagName: 'H4',
+            text: '/evals',
+            docs: {
+              text: 'Read docs',
+              href: configuredPathWithBase('/docs/user-guide/evals-sdk/'),
+              ariaLabel: 'Read Strands Evals docs',
+            },
+          },
+        ],
       },
     ])
   })
