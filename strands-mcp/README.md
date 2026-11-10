@@ -69,7 +69,7 @@ This MCP server provides curated documentation access to your GenAI tools via ll
 
 - `STRANDS_MCP_PREFETCH_ALL`: when set to a truthy value (`1`, `true`, `yes`), the server prefetches and indexes all pages in the background after the first documentation tool call initializes the index. Defaults to off. Prefetch is best-effort and eventually consistent: results may be title-only until background hydration completes.
 
-The server can initialize and list its tools without access to the documentation site. If the site is unreachable, documentation tool calls report an error; a later call retries loading the index, without restarting the server.
+The server can initialize and list its tools without access to the documentation site. If the site is unreachable, documentation tool calls report the index source, failure cause, and retry guidance; a later call retries loading the index without restarting the server. A failed index load leaves no partial catalog behind.
 
 ## Prerequisites
 

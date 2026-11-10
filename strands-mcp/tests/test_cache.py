@@ -4,6 +4,7 @@ import os
 from concurrent.futures import ThreadPoolExecutor, wait
 from threading import Event
 from unittest.mock import MagicMock, patch
+from urllib.error import URLError
 
 import pytest
 
@@ -42,7 +43,7 @@ class TestEnsureReady:
             return [("Test guide", url, "")]
 
         with (
-            patch.object(cache.doc_fetcher, "parse_llms_txt", side_effect=parse_links),
+            patch.object(cache.doc_fetcher, "parse_llms_txt", side_effect=parse_links) as parse,
             patch.dict(os.environ, {cache.PREFETCH_ENV_VAR: "0"}),
             ThreadPoolExecutor(max_workers=2) as executor,
         ):
@@ -50,13 +51,57 @@ class TestEnsureReady:
             try:
                 assert first_fetch.wait(5)
                 second = executor.submit(cache.ensure_ready)
-                wait([second], timeout=1)
+                wait([second], timeout=0.1)
             finally:
                 release_fetch.set()
             first.result(timeout=5)
             second.result(timeout=5)
 
         assert [doc.uri for doc in cache.get_index().docs] == [url]
+        parse.assert_called_once()
+
+    @pytest.mark.parametrize("partial_second_source", [False, True])
+    def test_failed_source_does_not_publish_or_duplicate_on_retry(self, partial_second_source):
+        sources = ["https://strandsagents.com/first.txt", "https://strandsagents.com/second.txt"]
+        pages = [
+            ("First", "https://strandsagents.com/first.md", ""),
+            ("Second", "https://strandsagents.com/second.md", ""),
+        ]
+        second_attempts = 0
+
+        def parse_links(source):
+            nonlocal second_attempts
+            if source == sources[0]:
+                yield pages[0]
+                return
+            second_attempts += 1
+            if second_attempts == 1:
+                if partial_second_source:
+                    yield pages[1]
+                raise URLError("documentation is offline")
+            yield pages[1]
+
+        with (
+            patch.object(cache.doc_config, "llm_texts_url", sources),
+            patch.object(cache.doc_fetcher, "parse_llms_txt", side_effect=parse_links) as parse,
+            patch.object(cache, "_start_background_prefetch") as prefetch,
+        ):
+            with pytest.raises(URLError, match="documentation is offline"):
+                cache.ensure_ready()
+            assert cache.get_index() is None
+            assert cache.get_url_titles() == {}
+            assert cache.get_url_cache() == {}
+            assert not cache._LINKS_LOADED
+            prefetch.assert_not_called()
+
+            cache.ensure_ready()
+
+        assert [doc.uri for doc in cache.get_index().docs] == [page[1] for page in pages]
+        assert cache.get_url_titles() == {url: title for title, url, _ in pages}
+        assert cache.get_url_cache() == {url: None for _, url, _ in pages}
+        assert cache._LINKS_LOADED
+        assert parse.call_count == 4
+        prefetch.assert_called_once()
 
 
 class TestEnsurePageIndexUpdate:

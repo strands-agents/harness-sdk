@@ -17,7 +17,8 @@ _PREFETCH_STARTED = False
 
 # Guard the check-then-act on module-level state so the background prefetch daemon
 # and foreground hydration don't race: _CACHE_LOCK makes the "index then cache" step
-# in ensure_page atomic; _PREFETCH_LOCK makes the prefetch start-once idempotent.
+# in ensure_page atomic; _PREFETCH_LOCK makes the prefetch start-once idempotent;
+# _INIT_LOCK serializes first-use index loading.
 _CACHE_LOCK = threading.Lock()
 _PREFETCH_LOCK = threading.Lock()
 _INIT_LOCK = threading.Lock()
@@ -102,22 +103,27 @@ def load_links_only() -> None:
         - May start background prefetch thread if enabled
     """
     global _INDEX, _LINKS_LOADED, _URL_TITLES, _URL_CACHE
-    if _INDEX is None:
-        _INDEX = indexer.IndexSearch()
+    index = indexer.IndexSearch()
+    url_titles: dict[str, str] = {}
+    url_cache: dict[str, doc_fetcher.Page | None] = {}
 
     for src in doc_config.llm_texts_url:
         for title, url, description in doc_fetcher.parse_llms_txt(src):
             # Record curated display title and placeholder cache
-            _URL_TITLES[url] = title
-            _URL_CACHE.setdefault(url, None)
+            url_titles[url] = title
+            url_cache.setdefault(url, None)
 
             # For curated titles from llms.txt, we already have the title
             display_title = text_processor.normalize(title)
             index_title = text_processor.index_title_variants(display_title, url, description)
 
             # Index now with clean display title + hidden index variants; empty content for now
-            _INDEX.add(indexer.Doc(uri=url, display_title=display_title, content="", index_title=index_title))
+            index.add(indexer.Doc(uri=url, display_title=display_title, content="", index_title=index_title))
 
+    # Publish only after every source parsed successfully.
+    _INDEX = index
+    _URL_TITLES = url_titles
+    _URL_CACHE = url_cache
     _LINKS_LOADED = True
 
     # Start background prefetch if enabled

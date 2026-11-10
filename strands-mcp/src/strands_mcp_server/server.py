@@ -14,6 +14,7 @@ except ImportError:
     FastMCP = import_module("mcp.server.mcpserver").MCPServer
     ToolError = import_module("mcp.server.mcpserver.exceptions").ToolError
 
+from .config import doc_config
 from .utils import cache, text_processor
 from .utils.indexer import Doc, IndexSearch, _tokenize
 
@@ -111,6 +112,16 @@ def _catalog_path(uri: str) -> str:
     return path if path.endswith(".md") else f"{path}/index.md"
 
 
+def _ensure_docs_ready() -> None:
+    try:
+        cache.ensure_ready()
+    except Exception as exc:
+        sources = ", ".join(doc_config.llm_texts_url)
+        raise ToolError(
+            f"could not load the docs index from {sources}: {exc}; retry once the site is reachable"
+        ) from exc
+
+
 def _fetch_failure(uri: str) -> Dict[str, Any]:
     url_titles = cache.get_url_titles()
     if uri in url_titles:
@@ -167,7 +178,7 @@ def search_docs(
     not comparable across queries. Returns an empty list when nothing matches. If a result page cannot be
     fetched, its title is used as the snippet.
     """
-    cache.ensure_ready()
+    _ensure_docs_ready()
     index = cache.get_index()
     queries = _distinct_queries([query, *alternate_queries])
     results = _fused_search(index, queries, k) if index and queries else []
@@ -230,7 +241,7 @@ def fetch_doc(
     cannot be fetched is reported as a tool error; retry it or use another result. Fetched pages are cached
     for the life of the server process.
     """
-    cache.ensure_ready()
+    _ensure_docs_ready()
 
     if not uri:
         url_titles = cache.get_url_titles()

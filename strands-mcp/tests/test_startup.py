@@ -50,7 +50,11 @@ main()
                     for name, arguments in [("search_docs", {"query": "test"}), ("fetch_doc", {})]:
                         result = await session.call_tool(name, arguments)
                         assert result.model_dump(by_alias=True)["isError"]
-                        assert result.content[0].text
+                        expected_error = (
+                            "could not load the docs index from https://strandsagents.com/llms.txt: "
+                            "<urlopen error documentation is offline>; retry once the site is reachable"
+                        )
+                        assert result.content[0].text.removeprefix(f"Error executing tool {name}: ") == expected_error
 
                     recovered.touch()
                     result = await session.call_tool("search_docs", {"query": "test"})
