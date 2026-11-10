@@ -1,5 +1,6 @@
 """The OpenAI-compatible APIs on Amazon Bedrock: ``BedrockModel.ChatCompletions`` and ``BedrockModel.Responses``."""
 
+import importlib.util
 import os
 from typing import Any
 
@@ -26,6 +27,7 @@ def _bedrock_options(
 
     Raises:
         ValueError: If the endpoint is unknown, the model is an imported model, or a parent or owned option is set.
+        ImportError: If there is no API key and ``aws-bedrock-token-generator`` is not installed.
     """
     if endpoint not in _ENDPOINTS:
         raise ValueError(f"endpoint=<{endpoint}> | unknown Bedrock endpoint, use one of {sorted(_ENDPOINTS)}")
@@ -33,7 +35,13 @@ def _bedrock_options(
         raise ValueError(f"client_args=<{sorted(conflicting)}> | set by {owner}, remove them")
     _check_bedrock_options(owner, model_config, _PARENT_OPTIONS)
     config = BedrockMantleConfig(endpoint=endpoint, region=_resolve_bedrock_region(region_name))  # type: ignore[typeddict-item]
-    return config, api_key or os.environ.get("AWS_BEARER_TOKEN_BEDROCK") or None
+    api_key = api_key or os.environ.get("AWS_BEARER_TOKEN_BEDROCK") or None
+    if not api_key and importlib.util.find_spec("aws_bedrock_token_generator") is None:
+        raise ImportError(
+            f"{owner} signs requests with AWS credentials through the aws-bedrock-token-generator package, which is "
+            "not installed: pip install aws-bedrock-token-generator, or pass a Bedrock api_key"
+        )
+    return config, api_key
 
 
 def _with_api_key(
@@ -48,6 +56,8 @@ class BedrockChatCompletionsModel(OpenAIModel):
 
     Use it as ``BedrockModel.ChatCompletions``. Without an API key, each request gets a fresh bearer token minted from
     the default AWS credential chain. Model settings are those of :class:`~strands.models.openai.OpenAIModel`.
+
+    Requires the ``openai`` package, plus ``aws-bedrock-token-generator`` unless you use an API key.
     """
 
     def __init__(
@@ -75,6 +85,7 @@ class BedrockChatCompletionsModel(OpenAIModel):
 
         Raises:
             ValueError: If the endpoint is unknown, the model is an imported model, or a parent or owned option is set.
+            ImportError: If there is no API key and ``aws-bedrock-token-generator`` is not installed.
         """
         config, self._api_key = _bedrock_options(
             "BedrockModel.ChatCompletions", dict(model_config), endpoint, region_name, api_key, client_args
@@ -99,6 +110,8 @@ class BedrockResponsesModel(OpenAIResponsesModel):
     Use it as ``BedrockModel.Responses``. Without an API key, each request gets a fresh bearer token minted from the
     default AWS credential chain. Model settings are those of
     :class:`~strands.models.openai_responses.OpenAIResponsesModel`.
+
+    Requires the ``openai>=2.0.0`` package, plus ``aws-bedrock-token-generator`` unless you use an API key.
     """
 
     def __init__(
@@ -125,6 +138,7 @@ class BedrockResponsesModel(OpenAIResponsesModel):
 
         Raises:
             ValueError: If the endpoint is unknown, the model is an imported model, or a parent or owned option is set.
+            ImportError: If there is no API key and ``aws-bedrock-token-generator`` is not installed.
         """
         config, self._api_key = _bedrock_options(
             "BedrockModel.Responses", dict(model_config), endpoint, region_name, api_key, client_args

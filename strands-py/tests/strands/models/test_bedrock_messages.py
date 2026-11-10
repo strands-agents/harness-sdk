@@ -154,16 +154,46 @@ def test_converse_and_the_default_agent_work_without_the_vendor_sdks():
     subprocess.run([sys.executable, "-c", code], check=True, env={**os.environ, "AWS_REGION": "us-west-2"})
 
 
-def test_missing_extra_is_reported_as_an_absent_attribute():
+@pytest.mark.parametrize(
+    ("blocked", "name", "message"),
+    [
+        (
+            "anthropic",
+            "Messages",
+            "BedrockModel.Messages uses the anthropic SDK, which is not installed: pip install anthropic",
+        ),
+        (
+            "openai",
+            "ChatCompletions",
+            "BedrockModel.ChatCompletions uses the openai SDK, which is not installed: pip install openai",
+        ),
+        (
+            "openai",
+            "Responses",
+            "BedrockModel.Responses uses the openai SDK, which is not installed: pip install openai",
+        ),
+    ],
+)
+def test_missing_sdk_is_reported_as_an_absent_attribute(blocked, name, message):
     code = (
-        "import sys; sys.modules['anthropic'] = None\n"
+        f"import sys; sys.modules[{blocked!r}] = None\n"
         "from strands.models import BedrockModel\n"
-        "assert not hasattr(BedrockModel, 'Messages')\n"
-        'try:\n    BedrockModel.Messages\nexcept AttributeError as e:\n    assert "strands-agents[bedrock]" in str(e)'
-        '\n    assert "strands-agents[anthropic]" in str(e)'
+        f"assert not hasattr(BedrockModel, {name!r})\n"
+        f"try:\n    BedrockModel.{name}\nexcept AttributeError as e:\n    assert str(e) == {message!r}, str(e)"
     )
 
     subprocess.run([sys.executable, "-c", code], check=True)
+
+
+def test_an_unusable_sdk_is_reported_as_an_absent_attribute(monkeypatch):
+    def fail(*args, **kwargs):
+        raise ImportError("OpenAIResponsesModel requires openai>=2.0.0 (found 1.99.0)")
+
+    monkeypatch.setattr(importlib, "import_module", fail)
+
+    assert not hasattr(BedrockModel, "Responses")
+    with pytest.raises(AttributeError, match=r"^BedrockModel\.Responses is unavailable: .*openai>=2\.0\.0"):
+        BedrockModel.Responses  # noqa: B018
 
 
 def test_runtime_streams_through_invoke_model_signed_by_the_sdk(captured_requests):

@@ -34,6 +34,8 @@ class BedrockMessagesModel(AnthropicModel):
     Use it as ``BedrockModel.Messages`` for Anthropic features that the Converse API does not offer. Requests go
     through the Anthropic SDK's own Bedrock clients, which handle authentication. Model settings are those of
     :class:`~strands.models.anthropic.AnthropicModel`.
+
+    Requires the ``anthropic`` package (0.91.0 or later for bedrock-mantle).
     """
 
     def __init__(

@@ -1,3 +1,5 @@
+import importlib.util
+
 import httpx
 import openai
 import pytest
@@ -120,3 +122,17 @@ def test_api_key_requests_reach_the_endpoint(captured_requests):
 def test_invalid_configuration_raises(model_class, kwargs, message):
     with pytest.raises(ValueError, match=message):
         model_class(**kwargs)
+
+
+@pytest.mark.parametrize("model_class", [BedrockChatCompletionsModel, BedrockResponsesModel])
+def test_signing_without_the_token_generator_raises_at_init(model_class, monkeypatch):
+    real_find_spec = importlib.util.find_spec
+    monkeypatch.setattr(
+        importlib.util,
+        "find_spec",
+        lambda name, *args: None if name == "aws_bedrock_token_generator" else real_find_spec(name, *args),
+    )
+
+    with pytest.raises(ImportError, match=r"pip install aws-bedrock-token-generator, or pass a Bedrock api_key"):
+        model_class(model_id="m")
+    assert model_class(model_id="m", api_key="k").client_args == {}

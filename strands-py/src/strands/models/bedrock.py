@@ -237,25 +237,26 @@ def _fields_with_drop_block(fields: dict[str, Any]) -> dict[str, Any] | None:
 class _LazyModelClass:
     """Resolves a nested ``BedrockModel`` class on first access, so its optional SDK is only imported when used."""
 
-    def __init__(self, module: str, name: str, extra: str) -> None:
+    def __init__(self, module: str, name: str, package: str) -> None:
         self._module = module
         self._name = name
-        self._extra = extra
+        self._package = package
 
     def __set_name__(self, owner: type, attribute: str) -> None:
         self._attribute = f"{owner.__name__}.{attribute}"
 
     def __get__(self, instance: object, owner: type) -> Any:
+        # AttributeError, not ImportError, so hasattr, help(), and inspect treat the class as absent.
         try:
             module = importlib.import_module(self._module, __package__)
         except ModuleNotFoundError as error:
-            if error.name != self._extra:
+            if error.name != self._package:
                 raise
-            # AttributeError, not ImportError, so hasattr, help(), and inspect treat the class as absent.
             raise AttributeError(
-                f"{self._attribute} requires the '{self._extra}' SDK: pip install 'strands-agents[bedrock]' "
-                f"(or 'strands-agents[{self._extra}]')"
+                f"{self._attribute} uses the {self._package} SDK, which is not installed: pip install {self._package}"
             ) from error
+        except ImportError as error:
+            raise AttributeError(f"{self._attribute} is unavailable: {error}") from error
         return getattr(module, self._name)
 
 
