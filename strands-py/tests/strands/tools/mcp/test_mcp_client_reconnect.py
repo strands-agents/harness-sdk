@@ -39,6 +39,14 @@ def _drop_session(client: MCPClient, error: Exception | None = None) -> None:
     assert not client._is_session_active()
 
 
+def _success(tool_use_id: str = "tu-1", text: str = "ok") -> dict:
+    return {"status": "success", "toolUseId": tool_use_id, "content": [{"text": text}], "isError": False}
+
+
+def _failure(message: str, tool_use_id: str = "tu-1") -> dict:
+    return {"status": "error", "toolUseId": tool_use_id, "content": [{"text": f"Tool execution failed: {message}"}]}
+
+
 def _call(client: MCPClient, tool_use_id: str = "tu-1"):
     return client.call_tool_sync(tool_use_id=tool_use_id, name="echo", arguments={"to_echo": "hi"})
 
@@ -83,7 +91,7 @@ def test_call_tool_sync_reconnects_when_session_dropped_between_calls(mock_trans
 
     result = _call(client)
 
-    assert result["status"] == "success"
+    assert result == _success()
     assert client._is_session_active()
     assert mock_transport["transport_callable"].call_count == 2
     mock_session.call_tool.assert_called_once()
@@ -99,15 +107,14 @@ async def test_call_tool_async_retries_once_after_mid_call_drop(mock_transport, 
     async def drop_then_succeed(*args, **kwargs):
         if mock_session.call_tool.call_count == 1:
             client._close_future.set_exception(RuntimeError("connection dropped"))
-            raise RuntimeError("connection dropped")
+            raise make_mcp_error(-32000, "Connection closed")
         return _ok_result("retried")
 
     mock_session.call_tool.side_effect = drop_then_succeed
 
     result = await client.call_tool_async(tool_use_id="tu-1", name="echo", arguments={"to_echo": "hi"})
 
-    assert result["status"] == "success"
-    assert result["content"] == [{"text": "retried"}]
+    assert result == _success(text="retried")
     assert mock_session.call_tool.call_count == 2
     assert mock_transport["transport_callable"].call_count == 2
     client.stop(None, None, None)
@@ -120,7 +127,7 @@ def test_session_terminated_error_triggers_reconnect(mock_transport, mock_sessio
     with MCPClient(mock_transport["transport_callable"], auto_reconnect=True) as client:
         result = _call(client)
 
-    assert result["status"] == "success"
+    assert result == _success(text="retried")
     assert mock_session.call_tool.call_count == 2
     assert mock_transport["transport_callable"].call_count == 2
 
@@ -131,8 +138,7 @@ def test_retries_at_most_once(mock_transport, mock_session):
     with MCPClient(mock_transport["transport_callable"], auto_reconnect=True) as client:
         result = _call(client)
 
-    assert result["status"] == "error"
-    assert "Session terminated" in result["content"][0]["text"]
+    assert result == _failure("Session terminated")
     assert mock_session.call_tool.call_count == 2
     assert mock_transport["transport_callable"].call_count == 2
 
@@ -144,8 +150,7 @@ def test_tool_errors_are_not_retried(mock_transport, mock_session):
     with MCPClient(mock_transport["transport_callable"], auto_reconnect=True) as client:
         result = _call(client)
 
-    assert result["status"] == "error"
-    assert "tool blew up" in result["content"][0]["text"]
+    assert result == _failure("tool blew up")
     mock_session.call_tool.assert_called_once()
     assert mock_transport["transport_callable"].call_count == 1
 
@@ -175,7 +180,7 @@ async def test_failed_reconnect_returns_error_result_and_next_call_tries_again(
     transport_cm.__aenter__.side_effect = None
     result = _call(client, "tu-up")
 
-    assert result["status"] == "success"
+    assert result == _success("tu-up")
     assert client._is_session_active()
     assert mock_transport["transport_callable"].call_count == 1 + mcp_client._RECONNECT_MAX_ATTEMPTS + 1
 
@@ -200,7 +205,7 @@ def test_reconnect_backs_off_while_server_is_still_restarting(mock_transport, mo
 
     result = _call(client)
 
-    assert result["status"] == "success"
+    assert result == _success()
     assert backoff_sleeps == [0.5, 1.0]
     assert mock_transport["transport_callable"].call_count == 4
     mock_session.call_tool.assert_called_once()
@@ -239,7 +244,7 @@ def test_reconnect_does_not_retry_after_startup_timeout(mock_transport, mock_ses
     result = _call(client)
 
     assert result["status"] == "error"
-    assert "did not start in 0.1 seconds" in result["content"][0]["text"]
+    assert "background thread did not start in" in result["content"][0]["text"]
     assert backoff_sleeps == []
     assert mock_transport["transport_callable"].call_count == 2
 
@@ -299,7 +304,7 @@ def test_concurrent_calls_share_one_reconnect(mock_transport, mock_session):
     with ThreadPoolExecutor(max_workers=8) as pool:
         results = list(pool.map(lambda index: _call(client, f"tu-{index}"), range(8)))
 
-    assert all(result["status"] == "success" for result in results)
+    assert results == [_success(f"tu-{index}") for index in range(8)]
     assert mock_transport["transport_callable"].call_count == 2
     assert mock_session.call_tool.call_count == 8
     client.stop(None, None, None)
@@ -337,10 +342,10 @@ def test_stop_during_reconnect_leaves_client_stopped(mock_transport, mock_sessio
     reconnect_started = threading.Event()
     original_start = client._start
 
-    def slow_start():
+    def slow_start(**kwargs):
         reconnect_started.set()
         time.sleep(0.3)
-        return original_start()
+        return original_start(**kwargs)
 
     with pytest.MonkeyPatch.context() as monkeypatch:
         monkeypatch.setattr(client, "_start", slow_start)
@@ -386,7 +391,7 @@ def test_stop_on_dead_thread_does_not_schedule_close(mock_transport, mock_sessio
 def test_concurrent_session_terminated_failures_share_one_reconnect(mock_transport, mock_session):
     """Calls that all fail on the same live-but-terminated session replace it once, then retry on the new one."""
     first_session_id = None
-    barrier = threading.Barrier(4)
+    barrier = threading.Barrier(4, timeout=5)
 
     async def terminated_on_first_session(*args, **kwargs):
         if client._session_id == first_session_id:
@@ -402,7 +407,7 @@ def test_concurrent_session_terminated_failures_share_one_reconnect(mock_transpo
     with ThreadPoolExecutor(max_workers=4) as pool:
         results = list(pool.map(lambda index: _call(client, f"tu-{index}"), range(4)))
 
-    assert all(result["status"] == "success" for result in results)
+    assert results == [_success(f"tu-{index}") for index in range(4)]
     assert mock_transport["transport_callable"].call_count == 2
     assert mock_session.call_tool.call_count == 8
     client.stop(None, None, None)
@@ -418,3 +423,150 @@ def test_tool_error_mentioning_session_is_not_treated_as_lost_session(mock_trans
     assert result["status"] == "error"
     mock_session.call_tool.assert_called_once()
     assert mock_transport["transport_callable"].call_count == 1
+
+
+def test_in_flight_call_survives_another_callers_reconnect(mock_transport, mock_session):
+    """A call still running when another caller rebuilds the session fails over to the new one instead of hanging."""
+    in_flight = threading.Event()
+
+    async def call_tool(name, arguments=None, *args, **kwargs):
+        if mock_session.call_tool.call_count == 1:
+            in_flight.set()
+            await asyncio.sleep(3600)
+        if mock_session.call_tool.call_count == 2:
+            raise make_mcp_error(-32600, "Session terminated")
+        return _ok_result()
+
+    mock_session.call_tool.side_effect = call_tool
+    client = MCPClient(mock_transport["transport_callable"], auto_reconnect=True)
+    client.start()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        slow = pool.submit(_call, client, "tu-slow")
+        assert in_flight.wait(5)
+        reconnecting = pool.submit(_call, client, "tu-reconnect")
+        results = [reconnecting.result(timeout=10), slow.result(timeout=10)]
+
+    assert results == [_success("tu-reconnect"), _success("tu-slow")]
+    assert mock_transport["transport_callable"].call_count == 2
+    client.stop(None, None, None)
+
+
+def test_call_scheduled_on_a_stopped_loop_fails_instead_of_hanging(mock_transport, mock_session):
+    client = MCPClient(mock_transport["transport_callable"], auto_reconnect=True)
+    client.start()
+    _drop_session(client)
+
+    future = client._invoke_on_background_thread(asyncio.sleep(0))
+
+    with pytest.raises(RuntimeError, match="Connection to the MCP server was closed"):
+        future.result(timeout=1)
+    client.stop(None, None, None)
+
+
+@pytest.mark.parametrize(
+    ("error", "lost"),
+    [
+        (make_mcp_error(-32000, "Connection closed"), True),
+        (make_mcp_error(-32600, "Session terminated"), True),
+        (MCPClientInitializationError("the client session was not initialized"), True),
+        (make_mcp_error(-32001, "Request timed out"), False),
+        (make_mcp_error(-32000, "tool failed"), False),
+        (RuntimeError("tool raised"), False),
+    ],
+)
+def test_session_lost_is_decided_by_the_error_not_the_client_state(mock_transport, mock_session, error, lost):
+    """While the session is down (e.g. another caller is reconnecting), only connection errors are retried."""
+    client = MCPClient(mock_transport["transport_callable"], auto_reconnect=True)
+    client.start()
+    _drop_session(client)
+
+    assert client._is_session_lost_error(error) is lost
+    client.stop(None, None, None)
+
+
+def test_retry_attempts_share_the_startup_timeout_budget(mock_transport, mock_session, backoff_sleeps):
+    """A later attempt only gets what is left of startup_timeout, not a fresh one."""
+    client = MCPClient(mock_transport["transport_callable"], auto_reconnect=True, startup_timeout=2)
+    client.start()
+    _drop_session(client)
+
+    connects = 0
+
+    async def refuse_slowly_once(*args, **kwargs):
+        nonlocal connects
+        connects += 1
+        if connects == 1:
+            await asyncio.sleep(0.3)
+            raise ConnectionError("still restarting")
+        return mock_transport["read_stream"], mock_transport["write_stream"]
+
+    mock_transport["transport_cm"].__aenter__.side_effect = refuse_slowly_once
+    timeouts: list[float] = []
+    original_start = client._start
+
+    def recording_start(**kwargs):
+        timeouts.append(kwargs["timeout"])
+        return original_start(**kwargs)
+
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr(client, "_start", recording_start)
+        client._reconnect(None)
+
+    assert len(timeouts) == 2
+    assert timeouts[1] <= 2 - 0.3
+    client.stop(None, None, None)
+
+
+def _reconnect_in_background(client: MCPClient, mock_transport) -> threading.Thread:
+    """Drop the session and start a tool call whose reconnect blocks in connect for about a second."""
+    _drop_session(client)
+    connecting = threading.Event()
+    streams = (mock_transport["read_stream"], mock_transport["write_stream"])
+
+    async def slow_connect(*args, **kwargs):
+        connecting.set()
+        await asyncio.sleep(1.0)
+        return streams
+
+    mock_transport["transport_cm"].__aenter__.side_effect = slow_connect
+    call = threading.Thread(target=_call, args=(client,))
+    call.start()
+    assert connecting.wait(5)
+    return call
+
+
+def _provider_client(mock_transport, mock_session, **kwargs) -> MCPClient:
+    mock_session.list_tools.return_value = ListToolsResult(
+        tools=[MCPTool(name="echo", description="echo", inputSchema={"type": "object"})]
+    )
+    mock_session.call_tool.return_value = _ok_result()
+    client = MCPClient(mock_transport["transport_callable"], auto_reconnect=True, **kwargs)
+    client.add_consumer("agent-1")
+    return client
+
+
+@pytest.mark.asyncio
+async def test_load_tools_during_reconnect_keeps_the_tools(mock_transport, mock_session):
+    client = _provider_client(mock_transport, mock_session, continue_on_error=True)
+    tools = await client.load_tools()
+    call = _reconnect_in_background(client, mock_transport)
+
+    assert await client.load_tools() is tools
+    call.join(5)
+    assert not client.connection_failed
+    assert await client.load_tools() is tools
+    client.remove_consumer("agent-1")
+
+
+@pytest.mark.asyncio
+async def test_removing_the_last_consumer_during_reconnect_tears_the_client_down(mock_transport, mock_session):
+    client = _provider_client(mock_transport, mock_session)
+    await client.load_tools()
+    call = _reconnect_in_background(client, mock_transport)
+
+    client.remove_consumer("agent-1")
+    call.join(5)
+
+    assert client._consumers == set()
+    assert client._background_thread is None
