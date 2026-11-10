@@ -1,18 +1,20 @@
-import { readFile } from 'node:fs/promises'
-import { resolve } from 'node:path'
 import {
   DEFAULT_HARNESS_AGENT_CONFIG,
   harnessAgentOptionsFromConfig,
   type HarnessAgentConfig,
   type HarnessAgentOptions,
 } from '@strands-agents/harness'
+import { SessionManager } from '@strands-agents/sdk'
 import { AgentSkills } from '@strands-agents/sdk/vended-plugins/skills'
+import { readFile } from 'node:fs/promises'
+import { resolve } from 'node:path'
 
+import type { ResolvedMcpConfig } from '../config/trust.js'
+import { requireBedrockRegion } from '../model/aws-config.js'
+import { importAgentProject, type ImportedAgentProject } from '../project/import.js'
+import type { AgentFactory } from '../project/typescript.js'
+import { isRecord } from '../values.js'
 import { agentConfig, projectConfigOverrides, type ParsedArgs } from './arguments.js'
-import { importAgentProject, type ImportedAgentProject } from '../tui/project/import.js'
-import type { AgentFactory } from '../tui/project/typescript.js'
-import { requireBedrockRegion } from '../tui/provider/aws-config.js'
-import type { ResolvedMcpConfig } from '../tui/workspace/trust.js'
 
 interface InvocationAgent {
   profile?: HarnessAgentConfig
@@ -40,7 +42,7 @@ export async function invocationAgentForRun(
     if (project.language !== 'typescript') {
       throw new Error('Python agents must run with the Python runtime.')
     }
-    const { loadTypescriptProject } = await import('../tui/project/typescript.js')
+    const { loadTypescriptProject } = await import('../project/typescript.js')
     const authored = await loadTypescriptProject(project, () => config.applyProviderEnvironment())
     const options = {
       ...authored.options,
@@ -62,7 +64,10 @@ export async function invocationAgentForRun(
     ...(await harnessAgentOptionsFromConfig(profile, baseDir)),
     printer: false,
   }
-  return { profile, options }
+  return {
+    profile,
+    options,
+  }
 }
 
 async function projectOverrides(
@@ -70,36 +75,12 @@ async function projectOverrides(
   root: string,
   authored: HarnessAgentOptions
 ): Promise<HarnessAgentOptions> {
-  const fields = new Set(Object.keys(projectConfigOverrides(args)))
-  const base = { ...DEFAULT_HARNESS_AGENT_CONFIG }
-  for (const assignment of args.configSet) {
-    const path = assignment.slice(0, assignment.indexOf('=')).split('.')
-    const field = path[0]!
-    const option = field === 'agentConfig' ? path[1] : field
-    if (
-      path.length > (field === 'agentConfig' ? 2 : 1) &&
-      option &&
-      option in authored &&
-      field !== 'agentConfigModules'
-    ) {
-      let value = authored[option as keyof HarnessAgentOptions]
-      if (field === 'mcpServers' && typeof value === 'string') {
-        const document = JSON.parse(await readFile(resolve(root, value), 'utf8'))
-        value = document.mcpServers ?? document
-      }
-      if (value && typeof value === 'object' && !Array.isArray(value)) {
-        if (field === 'agentConfig') {
-          base.agentConfig = { ...base.agentConfig, [option]: globalThis.structuredClone(value) }
-        } else {
-          Object.assign(base, { [field]: globalThis.structuredClone(value) })
-        }
-      }
-    }
-  }
-  const config = agentConfig(args, base)
+  const portableArgs = { ...args, session: undefined, memory: undefined, sessionId: undefined }
+  const fields = new Set(Object.keys(projectConfigOverrides(portableArgs)))
+  const config = agentConfig(portableArgs, DEFAULT_HARNESS_AGENT_CONFIG)
   const options = await harnessAgentOptionsFromConfig(config, root)
   for (const key of ['builtinTools', 'builtinPlugins', 'caching', 'description', 'instructions'] as const) {
-    if (fields.has(key)) Object.assign(options, { [key]: config[key] })
+    if (fields.has(key) && options[key] === undefined) Object.assign(options, { [key]: config[key] })
   }
   const aliases: Record<string, string> = {
     subagents: 'tools',
@@ -117,7 +98,65 @@ async function projectOverrides(
   if (fields.has('agentConfigModules')) {
     for (const key of Object.keys(config.agentConfigModules)) keys.add(key)
   }
-  return Object.fromEntries([...keys].map((key) => [key, options[key as keyof HarnessAgentOptions]]))
+  const overrides: HarnessAgentOptions = Object.fromEntries(
+    [...keys].map((key) => [key, options[key as keyof HarnessAgentOptions]])
+  )
+  const paths = args.configSet.map((assignment) => assignment.slice(0, assignment.indexOf('=')))
+  for (const key of keys) {
+    if (
+      Object.hasOwn(config.agentConfigModules, key) ||
+      Object.entries(aliases).some(([field, option]) => fields.has(field) && option === key)
+    )
+      continue
+    const path = Object.hasOwn(config.agentConfig, key) ? `agentConfig.${key}` : key
+    if (
+      !paths.some((assigned) => assigned.startsWith(`${path}.`)) ||
+      portableArgs[key as keyof ParsedArgs] !== undefined
+    )
+      continue
+    let value = authored[key as keyof HarnessAgentOptions]
+    if (key === 'mcpServers' && typeof value === 'string') {
+      const document = JSON.parse(await readFile(resolve(root, value), 'utf8'))
+      value = document.mcpServers ?? document
+    }
+    Object.assign(overrides, {
+      [key]: mergeAssignedOption(value, overrides[key as keyof HarnessAgentOptions], paths, path),
+    })
+  }
+  for (const key of ['session', 'memory'] as const) {
+    if (args[key] === 'off') {
+      overrides[key] = false
+    } else if (args[key] === 'on') {
+      Object.assign(overrides, { [key]: (key in overrides ? overrides[key] : authored[key]) || true })
+    } else if (args[key] !== undefined) {
+      throw new Error(`--${key} must be 'on' or 'off'.`)
+    }
+  }
+  const session = 'session' in overrides ? overrides.session : authored.session
+  if (args.sessionId !== undefined && session !== false && session !== null && !(session instanceof SessionManager)) {
+    overrides.session = { ...(typeof session === 'object' ? session : {}), id: args.sessionId }
+  }
+  return overrides
+}
+
+function mergeAssignedOption(authored: unknown, converted: unknown, paths: string[], path: string): unknown {
+  if (
+    paths.some((assigned) => path === assigned || path.startsWith(`${assigned}.`)) ||
+    !isRecord(converted) ||
+    Object.getPrototypeOf(converted) !== Object.prototype
+  )
+    return converted
+  if (path === 'builtinTools' && Array.isArray(authored)) {
+    authored = Object.fromEntries([['*', false], ...authored.map((name) => [name, true])])
+  }
+  const merged = isRecord(authored) && Object.getPrototypeOf(authored) === Object.prototype ? { ...authored } : {}
+  for (const [key, value] of Object.entries(converted)) {
+    const child = `${path}.${key}`
+    if (paths.some((assigned) => assigned === child || assigned.startsWith(`${child}.`))) {
+      merged[key] = mergeAssignedOption(merged[key], value, paths, child)
+    }
+  }
+  return merged
 }
 
 export async function pythonInvocationOptions(
@@ -125,10 +164,10 @@ export async function pythonInvocationOptions(
   cwd: string,
   settings: { skillDiscovery: boolean },
   mcp: ResolvedMcpConfig
-): Promise<import('../tui/project/python.js').PythonOptions> {
+): Promise<import('../project/python.js').PythonOptions> {
   const [{ readMcpDefinitions }, { resolveSkillPaths }] = await Promise.all([
-    import('../tui/mcp.js'),
-    import('../tui/skills.js'),
+    import('../agent/mcp.js'),
+    import('../agent/skills.js'),
   ])
   const { definitions } = await readMcpDefinitions({
     cwd,
@@ -138,8 +177,9 @@ export async function pythonInvocationOptions(
   })
   return {
     cwd,
-    overrides: projectConfigOverrides(args),
+    overrides: projectConfigOverrides({ ...args, session: undefined, memory: undefined, sessionId: undefined }),
     assignments: args.configSet,
+    configFlags: { session: args.session, memory: args.memory, sessionId: args.sessionId },
     mcpServers: definitions,
     skillPaths: resolveSkillPaths(undefined, cwd, settings.skillDiscovery),
   }
@@ -149,9 +189,10 @@ export async function withDiscoveredSkills(
   options: HarnessAgentOptions,
   discovery: boolean
 ): Promise<HarnessAgentOptions> {
-  const cwd = process.cwd()
-  const { resolveSkillPaths } = await import('../tui/skills.js')
-  const skills = options.skills instanceof AgentSkills ? undefined : options.skills
-  const skillPaths = resolveSkillPaths(skills, cwd, discovery)
-  return { ...options, skills: skillPaths.length > 0 ? skillPaths : false }
+  if (options.skills instanceof AgentSkills || options.plugins?.some((plugin) => plugin instanceof AgentSkills)) {
+    return options
+  }
+  const { resolveSkillSources } = await import('../agent/skills.js')
+  const sources = resolveSkillSources(options.skills, process.cwd(), discovery)
+  return { ...options, skills: sources.length > 0 ? sources : false }
 }
