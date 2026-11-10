@@ -40,7 +40,20 @@ describe('strands CLI e2e', () => {
   it(
     'delegates a spoken Bedrock request and speaks the live harness result',
     { timeout: 240_000, retry: 0 },
-    async () => {
+    async ({ skip }) => {
+      try {
+        await run('uv', ['--version'])
+      } catch (error) {
+        if (
+          process.env.GITHUB_EVENT_NAME === 'pull_request_target' &&
+          error instanceof Error &&
+          'code' in error &&
+          error.code === 'ENOENT'
+        ) {
+          skip('uv is not installed; live voice integration was not run.')
+        }
+        throw error
+      }
       const cwd = mkdtempSync(join(tmpdir(), 'strands-cli-voice-integ-'))
       const observationsPath = join(cwd, 'voice-events.jsonl')
       const wordPath = join(cwd, 'word.txt')
