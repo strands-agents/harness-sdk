@@ -17,7 +17,7 @@ vi.mock('@aws-sdk/client-sagemaker-runtime', () => ({
   InvokeEndpointCommand: mockInvokeEndpointCommand,
 }))
 
-import { SageMakerDecisionModel } from '../sagemaker-decision-model.js'
+import { SageMakerDecisionModel } from '../sagemaker.js'
 
 const ENDPOINT_NAME = 'strands-decider-2b-qwen3-5-v1-2610'
 
@@ -241,7 +241,7 @@ describe('SageMakerDecisionModel', () => {
       vi.doMock('@aws-sdk/client-sagemaker-runtime', () => {
         throw new Error("Cannot find package '@aws-sdk/client-sagemaker-runtime'")
       })
-      const { SageMakerDecisionModel: Uninstalled } = await import('../sagemaker-decision-model.js')
+      const { SageMakerDecisionModel: Uninstalled } = await import('../sagemaker.js')
 
       const error = await askError(new Uninstalled({ endpointName: ENDPOINT_NAME }))
 

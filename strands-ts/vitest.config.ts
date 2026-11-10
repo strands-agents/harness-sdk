@@ -86,11 +86,6 @@ export default defineConfig({
           alias: {
             '$/sdk': path.resolve(__dirname, './src'),
             '$/vended': path.resolve(__dirname, './src/vended-tools'),
-            // Must precede '@strands-agents/sdk': this subpath maps to a file, not a directory under src.
-            '@strands-agents/sdk/decisions/sagemaker': path.resolve(
-              __dirname,
-              './src/decisions/sagemaker-decision-model.ts'
-            ),
             // Resolve the package specifier to source so `vitest related` can
             // trace src changes to integ tests that import via '@strands-agents/sdk'
             // (which otherwise resolves through package exports to dist/).
@@ -116,11 +111,6 @@ export default defineConfig({
           alias: {
             '$/sdk': path.resolve(__dirname, './src'),
             '$/vended': path.resolve(__dirname, './src/vended-tools'),
-            // Must precede '@strands-agents/sdk': this subpath maps to a file, not a directory under src.
-            '@strands-agents/sdk/decisions/sagemaker': path.resolve(
-              __dirname,
-              './src/decisions/sagemaker-decision-model.ts'
-            ),
             // Same package-specifier alias as integ-node above (see comment there).
             '@strands-agents/sdk': path.resolve(__dirname, './src'),
           },
