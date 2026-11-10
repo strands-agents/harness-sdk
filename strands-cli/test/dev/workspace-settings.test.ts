@@ -15,6 +15,7 @@ import { ChatController } from '../../src/ui/chat/controller.js'
 import { idleBackend } from '../fixtures/chat-backend.js'
 import { temporaryDirectory } from '../fixtures/tempdir.js'
 import { captureFrame, render, ttyInput, ttyOutput } from '../fixtures/terminal.js'
+import * as terminal from '../../src/terminal/terminal.js'
 
 const info = { root: '/workspace/strands-dev', entrypoint: '/agents/main/agent.ts', origin: 'discovered' }
 
@@ -141,6 +142,34 @@ describe('workspace Settings', () => {
     input.write('\r')
     await vi.waitFor(() => expect(confirm).toHaveBeenCalledOnce())
     expect(cancel).not.toHaveBeenCalled()
+  })
+
+  it('shouldCopyTheConfirmationErrorWithoutTypingIntoTheApprovalWhenControlYIsPressed', async () => {
+    const copy = vi.spyOn(terminal, 'copyTerminalText').mockResolvedValue(true)
+    const input = ttyInput()
+    const output = ttyOutput(120, 35)
+    const frame = captureFrame(output)
+    render(
+      createElement(WorkspaceReplacementConfirmation, {
+        directory: info.root,
+        replacement: 'Other agent · /agents/other/agent.ts',
+        onConfirm: vi.fn(),
+        onCancel: vi.fn(),
+      }),
+      { stdin: input, stdout: output }
+    )
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('This is a DELETE operation.'))
+    input.write('DEL')
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('confirm: DEL▏'))
+    input.write('\r')
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('Ctrl+Y copy error'))
+
+    input.write('\u0019')
+
+    await vi.waitFor(() => expect(copy).toHaveBeenCalledOnce())
+    expect(copy.mock.calls[0]![0]).toBe('Type DELETE exactly to confirm, or press Esc to select a different agent.')
+    expect(frame().join('\n')).toContain('confirm: DEL▏')
+    copy.mockRestore()
   })
 
   it('shouldGoBackWithoutConfirmingWhenEscapeIsPressed', async () => {

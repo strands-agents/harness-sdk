@@ -60,8 +60,11 @@ function panelHelpKeys(panel: ChatPanel, width: number, scrollable: boolean): st
         ? '↑↓←→ · Enter choose · Esc deny'
         : '↑↓←→ · Enter choose · PgUp/PgDn scroll · Esc deny once'
   }
-  if (panel.kind === 'error' && scrollable) {
-    return width < 53 ? '↑↓ scroll · Esc close' : '↑↓ / PgUp / PgDn scroll · Esc close'
+  if (panel.kind === 'error') {
+    if (!scrollable) return 'Ctrl+Y copy error · Esc close'
+    return width < 60
+      ? '↑↓ scroll · Ctrl+Y copy · Esc close'
+      : '↑↓ / PgUp / PgDn scroll · Ctrl+Y copy error · Esc close'
   }
   if (panel.kind === 'detail' || panel.kind === 'help-detail') {
     return width < 53 ? '↑↓ scroll · Esc back' : '↑↓ / PgUp / PgDn scroll · Esc back'

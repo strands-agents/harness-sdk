@@ -625,6 +625,9 @@ Tool names and descriptions come from the active backend; unreported tools or or
 marked as unknown rather than inferred from defaults. Command support follows the connection's
 capabilities, including Python and ACP backends.
 
+Press Ctrl+Y to copy the full text of an error message. This works in the chat error panel
+and on the startup, setup, and update screens.
+
 An available Agent Skill can also be invoked directly with `/skill-name [prompt]` or
 `$skill-name [prompt]`. The CLI activates it through the SDK's `skills` tool, then runs the trailing
 prompt with that skill's instructions active.

@@ -1,7 +1,8 @@
 import { createElement } from 'react'
 import { Box } from 'ink'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { HarnessPicker } from '../../src/dev/picker.js'
+import * as terminal from '../../src/terminal/terminal.js'
 import { captureFrame, render, ttyInput, ttyOutput } from '../fixtures/terminal.js'
 
 const harness = {
@@ -10,6 +11,8 @@ const harness = {
   root: '/project',
   language: 'python' as const,
 }
+
+afterEach(() => vi.restoreAllMocks())
 
 describe('HarnessPicker', () => {
   it.each([120, 60])('shouldKeepRowsFixedWhenDescriptionsChangeAtWidth%s', async (columns) => {
@@ -361,5 +364,33 @@ describe('HarnessPicker', () => {
     await vi.waitFor(() =>
       expect(selected).toHaveBeenCalledWith({ kind: 'create', name: 'new-harnessy', language: 'typescript' })
     )
+  })
+
+  it('shouldCopyTheFullOpenFailureWhenControlYIsPressed', async () => {
+    const copy = vi.spyOn(terminal, 'copyTerminalText').mockResolvedValue(true)
+    const input = ttyInput()
+    const output = ttyOutput(100, 36)
+    const frame = captureFrame(output)
+    const reason = `Reason: ${'missing dependency '.repeat(12)}`
+    render(
+      createElement(HarnessPicker, {
+        cli: { name: 'Saved profile', path: '/home/test/.strands/cli.toml' },
+        harnesses: [harness],
+        onSelect: vi.fn().mockRejectedValue(new Error(reason)),
+      }),
+      { stdin: input, stdout: output }
+    )
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('Select a harness'))
+    expect(frame().join('\n')).not.toContain('Ctrl+Y copy error')
+
+    input.write('\r')
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('Ctrl+Y copy error'))
+    input.write('\u0019')
+
+    await vi.waitFor(() => expect(copy).toHaveBeenCalledOnce())
+    const copied = copy.mock.calls[0]![0]
+    expect(copied).toContain('Workspace could not open.')
+    expect(copied).toContain(reason.trim())
+    await vi.waitFor(() => expect(frame().join('\n')).toContain(`${copied.length} chars copied to clipboard`))
   })
 })

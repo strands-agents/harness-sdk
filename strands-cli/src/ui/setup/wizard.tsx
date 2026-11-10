@@ -78,6 +78,7 @@ import { SetupSettingsPanel, type SetupSettingsChoiceTarget } from './form.js'
 import { EffortSlider } from '../panels/models.js'
 import { ProviderList, PanelSection } from '../panels/shared.js'
 import { availableCliUpdate } from '../../cli/update.js'
+import { useCopyableError } from '../clipboard.js'
 
 type SetupAction = 'back' | 'next' | 'escape' | 'settings' | `browse:${number}`
 type ProviderSetupSection = 'providers' | 'models' | 'options' | 'actions'
@@ -218,6 +219,7 @@ function SetupWizardContent({
   const [editing, setEditing] = useState<{ field: EditableField; value: string; cursor?: number }>()
   const [pathCompletionIndex, setPathCompletionIndex] = useState(-1)
   const [error, setError] = useState<string>()
+  const errorCopyHint = useCopyableError(error)
   const [availableUpdate, setAvailableUpdate] = useState<string>()
   const [saving, setSaving] = useState(false)
   const [choosingDirectory, setChoosingDirectory] = useState(false)
@@ -347,7 +349,7 @@ function SetupWizardContent({
     gridWidth: openingGridWidth,
   } = openingGridLayout(lockupWidth)
   // The opening error sits one row below the grid and wraps to the grid's width.
-  const openingErrorHeight = error ? wrapLines(error, Math.max(1, openingGridWidth)).length + 1 : 0
+  const openingErrorHeight = error ? wrapLines(error, Math.max(1, openingGridWidth)).length + 2 : 0
   // The Esc hint takes one row below the grid plus its gap.
   const openingContentHeight = height - brandHeight - navigationHeight - openingErrorHeight - 2
   const openingTopGap =
@@ -2731,7 +2733,7 @@ function SetupWizardContent({
             showSelection={focusedAction === undefined}
             topGap={openingTopGap}
             animate={appearance.animations}
-            {...(error ? { error } : {})}
+            {...(error && errorCopyHint ? { error: { text: error, copyHint: errorCopyHint } } : {})}
             {...(availableUpdate ? { availableUpdate } : {})}
             escapeHint={escapeHint}
             escapeFocused={focusedAction === 'escape'}
@@ -3435,6 +3437,9 @@ function SetupWizardContent({
                   <Text color="red" wrap="truncate-end">
                     {error}
                   </Text>
+                  <Box flexShrink={0}>
+                    <Text dimColor> · {errorCopyHint}</Text>
+                  </Box>
                 </Box>
               ) : null}
             </Box>

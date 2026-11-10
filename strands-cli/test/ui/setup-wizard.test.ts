@@ -13,6 +13,7 @@ import { DEFAULT_CHAT_SETTINGS } from '../../src/ui/chat/types.js'
 import { enabledProfileTools } from '../../src/agent/tools.js'
 import { sanitizeTerminalText } from '../../src/terminal/text.js'
 import * as directoryPicker from '../../src/terminal/directory-picker.js'
+import * as terminal from '../../src/terminal/terminal.js'
 import { SetupWizard } from '../../src/ui/setup/wizard.js'
 import { ChatRoot } from '../../src/ui/app.js'
 import { getTheme } from '../../src/ui/theme.js'
@@ -1515,6 +1516,56 @@ describe('setup presentation', () => {
     } finally {
       instance.unmount()
       await instance.waitUntilExit()
+    }
+  })
+
+  it('shouldCopyAStepErrorWhenControlYIsPressed', async () => {
+    const copy = vi.spyOn(terminal, 'copyTerminalText').mockResolvedValue(true)
+    const input = ttyInput()
+    const output = ttyOutput(80, 24)
+    let frame = ''
+    output.on('data', (chunk: Buffer) => {
+      if (chunk.toString().includes('\n')) {
+        frame = sanitizeTerminalText(chunk.toString())
+      }
+    })
+    const instance = render(
+      createElement(SetupWizard, {
+        config: CliConfigStore.memory({}, { animations: false }),
+        onComplete: () => {},
+      }),
+      {
+        stdin: input,
+        stdout: output,
+        stderr: output,
+        interactive: true,
+        debug: true,
+        incrementalRendering: false,
+        patchConsole: false,
+        exitOnCtrlC: false,
+      }
+    )
+    const press = async (key: string): Promise<void> => {
+      input.push(key)
+      await instance.waitUntilRenderFlush()
+    }
+    try {
+      await instance.waitUntilRenderFlush()
+      await press('\u001b[B')
+      await press('\u001b[C')
+      await press('\r')
+      await press('\r')
+      await press('\r')
+      expect(frame).toContain('This field cannot be empty. · Ctrl+Y copy error')
+
+      await press('\u0019')
+
+      await vi.waitFor(() => expect(copy).toHaveBeenCalledExactlyOnceWith('This field cannot be empty.', output))
+      expect(frame.split('\n').every((line) => stringWidth(line) <= 80)).toBe(true)
+    } finally {
+      instance.unmount()
+      await instance.waitUntilExit()
+      copy.mockRestore()
     }
   })
 

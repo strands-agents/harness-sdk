@@ -38,6 +38,7 @@ import { Box, Text, ThemeProvider, useTheme } from '../theme.js'
 import { ComposerFooter, PanelHelpContext, type FooterAction } from '../footer.js'
 import { isMaxEffort } from '../panels/models.js'
 import { attachmentPreviewRows } from '../media.js'
+import { clipboardNoticeText, type ClipboardNotice } from '../clipboard.js'
 import {
   CONFIGURATION_OPEN_CONTROL,
   ConfigurationDock,
@@ -188,7 +189,7 @@ function ChatViewContent({
   onFrogComplete?: (id: number) => void
   selection?: readonly ScreenSelectionSegment[]
   voice?: ChatVoiceStore
-  clipboardNotice?: { status: 'success'; characterCount: number } | { status: 'error' }
+  clipboardNotice?: ClipboardNotice
   attachments?: readonly ChatAttachmentSummary[]
   party?: boolean
 }): ReactElement {
@@ -344,14 +345,7 @@ function ChatViewContent({
             {...(hoveredPanelRow !== undefined ? { hoveredRow: hoveredPanelRow } : {})}
             {...(onPanelElement ? { onPanelElement } : {})}
             {...(onPanelRowElement ? { onRowElement: onPanelRowElement } : {})}
-            {...(clipboardNotice
-              ? {
-                  clipboardNotice:
-                    clipboardNotice.status === 'success'
-                      ? `${clipboardNotice.characterCount} ${clipboardNotice.characterCount === 1 ? 'char' : 'chars'} copied to clipboard`
-                      : 'Clipboard copy failed',
-                }
-              : {})}
+            {...(clipboardNotice ? { clipboardNotice: clipboardNoticeText(clipboardNotice) } : {})}
           />
         </PanelHelpContext>
         {selection?.map((segment) => (
@@ -683,11 +677,7 @@ function ChatViewContent({
           paddingRight={1}
           justifyContent="flex-end"
         >
-          <Text dimColor>
-            {clipboardNotice.status === 'success'
-              ? `${clipboardNotice.characterCount} ${clipboardNotice.characterCount === 1 ? 'char' : 'chars'} copied to clipboard`
-              : 'Clipboard copy failed'}
-          </Text>
+          <Text dimColor>{clipboardNoticeText(clipboardNotice)}</Text>
         </Box>
       ) : null}
     </Box>

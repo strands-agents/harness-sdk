@@ -32,6 +32,11 @@ const CONTROLS = [
   ],
   ['Copy text', 'Click and drag', 'Click and drag across visible text, then release to copy.'],
   [
+    'Copy an error',
+    'Ctrl+Y',
+    'Ctrl+Y copies the full text of the error on screen, including errors in startup and setup screens.',
+  ],
+  [
     'Scroll conversation',
     'Wheel / PgUp / PgDn',
     'Use the mouse wheel or Page Up/Down. Ctrl+↑/↓ scrolls, and Ctrl+Home/End jumps to the ends.',

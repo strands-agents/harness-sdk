@@ -10,6 +10,7 @@ import { idleBackend } from '../fixtures/chat-backend.js'
 import { captureFrame, render, ttyInput, ttyOutput } from '../fixtures/terminal.js'
 import { temporaryDirectory } from '../fixtures/tempdir.js'
 import * as preparation from '../../src/project/preparation.js'
+import * as terminal from '../../src/terminal/terminal.js'
 
 afterEach(() => vi.restoreAllMocks())
 
@@ -62,6 +63,53 @@ describe('project setup guidance', () => {
     expect(frame().join('\n')).toContain('Log: /tmp/setup.log')
     input.write('v')
     await vi.waitFor(() => expect(action).toHaveBeenCalledWith('validate'))
+  })
+
+  it('shouldCopyTheFullSetupReportWhenControlYIsPressed', async () => {
+    const copy = vi.spyOn(terminal, 'copyTerminalText').mockResolvedValue(true)
+    const input = ttyInput()
+    const output = ttyOutput(100, 40)
+    const frame = captureFrame(output)
+    const details = `error TS2307: ${'Cannot find module ./missing-dependency. '.repeat(10)}\nsecond log line`
+    const command = `npm run build -- ${'--flag '.repeat(30)}`
+    render(
+      createElement(ProjectSetupPanel, {
+        plan: {
+          project: { root: '/project', entrypoint: '/project/agent.ts', language: 'typescript' },
+          runtime: 'Node 22',
+          manager: 'npm',
+          fingerprint: 'x',
+          commands: [],
+        },
+        failure: {
+          stage: 'build',
+          summary: 'Project build failed',
+          action: 'Fix the project, then Retry.',
+          command,
+          logPath: '/tmp/setup.log',
+          details,
+        },
+        onAction: vi.fn(),
+      }),
+      { stdin: input, stdout: output }
+    )
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('Ctrl+Y copy error'))
+
+    input.write('\u0019')
+
+    await vi.waitFor(() => expect(copy).toHaveBeenCalledOnce())
+    expect(copy.mock.calls[0]![0]).toBe(
+      [
+        'Project build failed',
+        'Root: /project',
+        'Entrypoint: /project/agent.ts',
+        'Runtime: Node 22',
+        details,
+        'Fix the project, then Retry.',
+        `Failed command: ${command}`,
+        'Log: /tmp/setup.log',
+      ].join('\n')
+    )
   })
 
   it('shouldKeepImportFailuresInTheTuiAndAllowValidationRetry', async () => {

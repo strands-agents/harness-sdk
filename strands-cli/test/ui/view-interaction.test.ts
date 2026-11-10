@@ -1,6 +1,6 @@
 import { createElement } from 'react'
 
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   clampAgentGridViewport,
@@ -25,6 +25,9 @@ import { ChatApp } from '../../src/ui/chat/screen.js'
 import { ChatController } from '../../src/ui/chat/controller.js'
 import { idleBackend } from '../fixtures/chat-backend.js'
 import { render, captureFrame, ttyInput, ttyOutput } from '../fixtures/terminal.js'
+import * as terminal from '../../src/terminal/terminal.js'
+
+afterEach(() => vi.restoreAllMocks())
 
 describe('voice input', () => {
   it('uses a single empty-editor Space tap for mute without consuming typed spaces', () => {
@@ -92,6 +95,41 @@ describe('MCP panel input', () => {
       await instance.waitUntilRenderFlush()
       input.write('\r')
       await vi.waitFor(() => expect(setEnabled).toHaveBeenLastCalledWith('Research/docs', false))
+    } finally {
+      instance.unmount()
+      await controller.dispose()
+    }
+  })
+})
+
+describe('error panel input', () => {
+  it('shouldCopyTheWholeErrorWhenControlYIsPressedInAScrollingErrorPanel', async () => {
+    const copy = vi.spyOn(terminal, 'copyTerminalText').mockResolvedValue(true)
+    const input = ttyInput()
+    const output = ttyOutput(100, 24)
+    const frame = captureFrame(output)
+    const controller = new ChatController(idleBackend(), { settings: { animations: false } })
+    const message = Array.from({ length: 30 }, (_, index) => `Trace ${index}: agent.ts failed`).join('\n')
+    const instance = render(createElement(ChatApp, { controller }), {
+      stdin: input,
+      stdout: output,
+      stderr: ttyOutput(100, 24),
+      exitOnCtrlC: false,
+      patchConsole: false,
+      interactive: true,
+    })
+    try {
+      await vi.waitFor(() => expect(frame().join('\n')).toContain('/settings'))
+      controller.showError('Agent reload failed', message)
+      await vi.waitFor(() => expect(frame().join('\n')).toContain('Ctrl+Y copy error · Esc close'))
+      expect(frame().join('\n')).not.toContain('Trace 29')
+
+      input.write('\u0019')
+
+      await vi.waitFor(() => expect(copy).toHaveBeenCalledOnce())
+      expect(copy.mock.calls[0]![0]).toBe(`Agent reload failed\n${message}`)
+      expect(controller.getSnapshot().panel?.kind).toBe('error')
+      await vi.waitFor(() => expect(frame().join('\n')).toContain('chars copied to clipboard'))
     } finally {
       instance.unmount()
       await controller.dispose()

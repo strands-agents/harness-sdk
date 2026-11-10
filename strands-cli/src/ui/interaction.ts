@@ -13,18 +13,25 @@ import { resolveModelTarget } from '../model/selection.js'
 import { COMPOSER_PANEL_HEIGHT, MIN_PROMPT_HEIGHT } from '../terminal/composer.js'
 import { type MouseInput } from '../terminal/mouse-input.js'
 
-export function errorPanelLayout(
-  panel: ChatPanel,
-  width: number,
-  maxHeight = 10
-): { lines: string[]; height: number; contentHeight: number; maxScroll: number } {
-  const message = [panel.body, ...panel.rows.map((row) => row.description || row.label)]
+function errorPanelMessage(panel: ChatPanel): string {
+  return [panel.body, ...panel.rows.map((row) => row.description || row.label)]
     .filter(Boolean)
     .join('\n')
     .replaceAll('\t', '    ')
     .replaceAll('\r', '')
     .replace(/\n[ ]*(?:\n[ ]*)+/g, '\n')
-  const lines = wrapLines(message, Math.max(1, width - 4))
+}
+
+export function errorPanelText(panel: ChatPanel): string {
+  return sanitizeTerminalText([panel.title, errorPanelMessage(panel)].filter(Boolean).join('\n'))
+}
+
+export function errorPanelLayout(
+  panel: ChatPanel,
+  width: number,
+  maxHeight = 10
+): { lines: string[]; height: number; contentHeight: number; maxScroll: number } {
+  const lines = wrapLines(errorPanelMessage(panel), Math.max(1, width - 4))
   const height = Math.min(Math.max(1, maxHeight), lines.length + 3)
   const contentHeight = Math.max(1, height - 3)
   return { lines, height, contentHeight, maxScroll: Math.max(0, lines.length - contentHeight) }

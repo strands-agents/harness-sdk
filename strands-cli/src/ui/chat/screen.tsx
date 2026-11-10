@@ -47,7 +47,8 @@ import {
   type MouseMoveState,
   type ScreenSelectionSegment,
 } from '../../terminal/mouse-input.js'
-import { copyTerminalText, setTerminalMouseMotion } from '../../terminal/terminal.js'
+import { setTerminalMouseMotion } from '../../terminal/terminal.js'
+import { isCopyShortcut, useClipboard } from '../clipboard.js'
 import { openExternalUrl } from '../../terminal/open-url.js'
 import { openAgentProject } from '../../terminal/open-editor.js'
 import { canUseNativePicker, chooseFiles } from '../../terminal/directory-picker.js'
@@ -61,6 +62,7 @@ import {
 import { panelModelId, type FooterAction } from '../footer.js'
 import {
   errorPanelLayout,
+  errorPanelText,
   activateMetadataTarget,
   adjacentSliderOption,
   awsProfileItems,
@@ -185,9 +187,7 @@ export function ChatApp({
   const [pressedQueuedPrompt, setPressedQueuedPrompt] = useState<QueuedPromptTarget>()
   const [editingQueuedPromptId, setEditingQueuedPromptId] = useState<string>()
   const [screenSelection, setScreenSelection] = useState<readonly ScreenSelectionSegment[]>([])
-  const [clipboardNotice, setClipboardNotice] = useState<
-    { status: 'success'; characterCount: number } | { status: 'error' }
-  >()
+  const { copyText, clipboardNotice } = useClipboard()
   const [frog, setFrog] = useState<{ id: number; variant: FrogVariant }>()
   const [frogBrandAnimationId, setFrogBrandAnimationId] = useState<number>()
   const [party, setParty] = useState(false)
@@ -205,7 +205,6 @@ export function ChatApp({
   const nextFrogBrandAnimationId = useRef(0)
   const previousFrogVariant = useRef<FrogVariant | undefined>(undefined)
   const leftMouseDownRef = useRef(false)
-  const copyNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const selectionDragRef = useRef<{ anchor: Pick<MouseInput, 'column' | 'row'>; lines: readonly string[] } | undefined>(
     undefined
   )
@@ -764,27 +763,6 @@ export function ChatApp({
     }
   }, [stdout])
 
-  useEffect(
-    (): (() => void) => () => {
-      clearTimeout(copyNoticeTimerRef.current)
-    },
-    []
-  )
-
-  const copyText = useCallback(
-    (text: string): void => {
-      const characterCount = graphemes(text).length
-      void copyTerminalText(text, stdout).then((copied) => {
-        clearTimeout(copyNoticeTimerRef.current)
-        setClipboardNotice(copied ? { status: 'success', characterCount } : { status: 'error' })
-        copyNoticeTimerRef.current = setTimeout(() => {
-          setClipboardNotice(undefined)
-        }, 2_000)
-      })
-    },
-    [stdout]
-  )
-
   const handleMouse = useCallback(
     (mouse: MouseInput): void => {
       if (!shouldProcessMouseInput(mouse, mouseMoveStateRef.current)) {
@@ -1294,6 +1272,10 @@ export function ChatApp({
             controller.dismissPanel()
             return
           }
+          if (snapshot.panel.kind === 'error' && isCopyShortcut(character, key)) {
+            copyText(errorPanelText(snapshot.panel))
+            return
+          }
           const errorLayout =
             snapshot.panel.kind === 'error'
               ? errorPanelLayout(snapshot.panel, Math.max(1, terminalWidth - 2), composerHeight)
@@ -1447,7 +1429,7 @@ export function ChatApp({
           return
         }
         const copyableModelId = panelModelId(snapshot.panel, rows[hoveredPanelRow ?? panelSelectionRef.current])
-        if (copyableModelId && key.ctrl && !key.meta && !key.super && character.toLowerCase() === 'y') {
+        if (copyableModelId && isCopyShortcut(character, key)) {
           copyText(copyableModelId)
           return
         }

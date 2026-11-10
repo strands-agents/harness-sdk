@@ -4,6 +4,7 @@ import { Box, useInput } from 'ink'
 import { Text, useTheme } from '../ui/theme.js'
 import type { StartupScreen } from '../ui/run.js'
 import { useTerminalSize } from '../ui/terminal-size.js'
+import { useCopyableError } from '../ui/clipboard.js'
 import { planProjectPreparation, type ProjectPreparationPlan } from '../project/preparation-plan.js'
 import {
   executePreparation,
@@ -25,10 +26,25 @@ interface ProjectSetupPanelProps {
   onAction(action: SetupAction): void
 }
 
+const failureReport = (plan: ProjectPreparationPlan | undefined, failure: PreparationFailure): string =>
+  [
+    failure.summary,
+    ...(plan
+      ? [`Root: ${plan.project.root}`, `Entrypoint: ${plan.project.entrypoint}`, `Runtime: ${plan.runtime}`]
+      : []),
+    failure.details,
+    failure.action,
+    ...(failure.command ? [`Failed command: ${redactPreparationOutput(failure.command)}`] : []),
+    ...(failure.logPath ? [`Log: ${failure.logPath}`] : []),
+  ]
+    .filter((line) => line.trim())
+    .join('\n')
+
 export const ProjectSetupPanel = ({ plan, failure, onAction }: ProjectSetupPanelProps): ReactElement => {
   const { error } = useTheme()
   const { rows } = useTerminalSize()
   const [details, setDetails] = useState(false)
+  const copyHint = useCopyableError(failureReport(plan, failure))
   useInput((input, key) => {
     if (key.ctrl && input === 'c') return onAction('cancel')
     if (key.escape || input.toLowerCase() === 'b') return onAction('back')
@@ -59,6 +75,7 @@ export const ProjectSetupPanel = ({ plan, failure, onAction }: ProjectSetupPanel
         <Text wrap="truncate-middle">Failed command: {redactPreparationOutput(failure.command)}</Text>
       ) : null}
       {failure.logPath ? <Text wrap="truncate-middle">Log: {failure.logPath}</Text> : null}
+      <Text dimColor>{copyHint}</Text>
       {details ? (
         <Box height={Math.max(2, Math.min(8, rows - 20))} overflow="hidden">
           <Text>{failure.details}</Text>

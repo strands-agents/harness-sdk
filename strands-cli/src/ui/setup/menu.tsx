@@ -69,7 +69,7 @@ export function OpeningMenu({
   showSelection: boolean
   topGap: number
   animate: boolean
-  error?: string
+  error?: { text: string; copyHint: string }
   availableUpdate?: string
   escapeHint: string
   escapeFocused?: boolean
@@ -158,8 +158,11 @@ export function OpeningMenu({
           </Box>
         ) : null}
         {error ? (
-          <Box width={gridWidth} marginLeft={left} marginTop={1}>
-            <Text color="red">{error}</Text>
+          <Box width={gridWidth} marginLeft={left} marginTop={1} flexDirection="column">
+            <Text color="red">{error.text}</Text>
+            <Text dimColor wrap="truncate-end">
+              {error.copyHint}
+            </Text>
           </Box>
         ) : null}
       </Box>

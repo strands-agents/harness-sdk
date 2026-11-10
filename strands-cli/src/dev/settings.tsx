@@ -3,6 +3,7 @@ import { Box, useInput } from 'ink'
 import { Text } from '../ui/theme.js'
 import { sanitizeTerminalText } from '../terminal/text.js'
 import type { StartupScreen } from '../ui/run.js'
+import { useCopyableError } from '../ui/clipboard.js'
 
 const APPROVAL = 'DELETE'
 
@@ -24,6 +25,7 @@ export const WorkspaceReplacementConfirmation = ({
 }: ConfirmationProps): ReactElement => {
   const [approval, setApproval] = useState('')
   const [error, setError] = useState<string>()
+  const errorCopyHint = useCopyableError(error)
   useInput((input, key) => {
     if (key.escape || (key.ctrl && input === 'c')) return onCancel()
     if (key.return) {
@@ -44,7 +46,12 @@ export const WorkspaceReplacementConfirmation = ({
       <Text>Agent projects outside this folder will not be deleted. A new chat starts after replacement.</Text>
       <Text>Replacement: {sanitizeTerminalText(replacement)}</Text>
       <Text>Type DELETE to confirm: {approval}▏</Text>
-      {error ? <Text color="red">{error}</Text> : null}
+      {error ? (
+        <Box flexDirection="column">
+          <Text color="red">{error}</Text>
+          <Text dimColor>{errorCopyHint}</Text>
+        </Box>
+      ) : null}
       <Text dimColor>Enter confirm · Esc back</Text>
     </Box>
   )

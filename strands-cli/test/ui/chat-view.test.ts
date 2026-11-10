@@ -2950,7 +2950,7 @@ describe('ChatView', () => {
       expect(top).toBeGreaterThan(24 / 2)
       expect(bottom - top + 1).toBeLessThanOrEqual(4)
       expect(stringWidth(rows[top]!.trim())).toBe(width - 2)
-      expect(rows[bottom + 1]?.trim()).toBe('Esc close')
+      expect(rows[bottom + 1]?.trim()).toBe('Ctrl+Y copy error · Esc close')
       expect(bottom).toBe(rows.findIndex((line) => line.includes('/settings')) - 3)
       expect(rows.filter((line) => line.includes('Esc close'))).toHaveLength(1)
       expect(rows).toHaveLength(24)

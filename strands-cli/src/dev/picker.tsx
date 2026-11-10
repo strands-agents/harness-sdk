@@ -7,6 +7,7 @@ import { graphemes, sanitizeTerminalText, wrapLines } from '../terminal/text.js'
 import { EditableText } from '../ui/text-input.js'
 import type { DiscoveredHarness } from './search.js'
 import { useTerminalSize } from '../ui/terminal-size.js'
+import { useCopyableError } from '../ui/clipboard.js'
 import { userConfigPath } from '../config/store.js'
 import { devFailure } from './errors.js'
 
@@ -52,6 +53,7 @@ export const HarnessPicker = ({ cli, harnesses, warning, workspace, onSelect }: 
   const [name, setName] = useState('new-harness')
   const [folder, setFolder] = useState(() => ({ value: workspace ?? '', cursor: graphemes(workspace ?? '').length }))
   const [failure, setFailure] = useState<string>()
+  const failureCopyHint = useCopyableError(failure)
   const [busy, setBusy] = useState(false)
   const pending = useRef(false)
   const asksFolder = workspace !== undefined
@@ -280,7 +282,12 @@ export const HarnessPicker = ({ cli, harnesses, warning, workspace, onSelect }: 
           </Box>
         </>
       )}
-      {failure ? <Text color={errorColor}>{failure}</Text> : null}
+      {failure ? (
+        <>
+          <Text color={errorColor}>{failure}</Text>
+          <Text dimColor>{failureCopyHint}</Text>
+        </>
+      ) : null}
       <Box marginTop={1}>
         <Text dimColor>{hint}</Text>
       </Box>
