@@ -19,6 +19,7 @@ import {
 import { observeTerminalColorMode } from '../terminal/theme-detection.js'
 import { sessionResumeCommand } from '../session/sessions.js'
 import { sanitizeTerminalText } from '../terminal/text.js'
+import { devFailure } from '../dev/errors.js'
 
 export interface StartupScreen {
   signal: AbortSignal
@@ -180,9 +181,15 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
           } catch (recordingError) {
             message += `\nCould not save the setup failure: ${recordingError instanceof Error ? recordingError.message : String(recordingError)}`
           }
-          inkOutputs.stderr.write(`error: Failed to apply setup: ${sanitizeTerminalText(message)}\n`)
+          const workspace = previousController.getSnapshot().runtime.devWorkspace
+          if (workspace) {
+            const failure = devFailure(error, { operation: 'reload', path: workspace.entrypoint })
+            previousController.showError?.('Agent reload failed', failure.message)
+          } else {
+            inkOutputs.stderr.write(`error: Failed to apply setup: ${sanitizeTerminalText(message)}\n`)
+            previousController.showError?.('Setup failed', message)
+          }
           controller = previousController
-          previousController.showError?.('Setup failed', message)
           if (pendingExitCode !== undefined) {
             await previousController.dispose()
           }

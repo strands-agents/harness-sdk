@@ -14,6 +14,7 @@ import { invocationAgentForRun, pythonInvocationOptions, withDiscoveredSkills } 
 import { buildTelemetryPing, sendTelemetryPing, telemetryEnabled } from './telemetry.js'
 import type { CliConfigStore } from '../config/store.js'
 import type { StartupScreen } from '../ui/run.js'
+import { devFailure } from '../dev/errors.js'
 
 export { runPlainChat, runTurn, TurnRenderer } from './console.js'
 
@@ -68,7 +69,9 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
         await runSession(prepared.args, prepared.config)
       }
     } catch (error) {
-      process.stderr.write(`error: ${errorMessage(error)}\n`)
+      process.stderr.write(
+        `error: ${devFailure(error, { operation: 'open', path: args.agent ?? args.dev?.workspace }).message}\n`
+      )
       process.exitCode = 1
     } finally {
       process.chdir(previousDirectory)
@@ -222,7 +225,9 @@ async function runConsole(
       await runPlainChat(agent, request)
     }
   } catch (err) {
-    process.stderr.write(`error: ${errorMessage(err)}\n`)
+    process.stderr.write(
+      `error: ${args.dev ? devFailure(err, { operation: 'load', path: args.agent ?? args.dev.workspace }).message : errorMessage(err)}\n`
+    )
     process.exitCode = 1
   } finally {
     // Cleanup failure must not fail a completed turn or skip MCP teardown.
@@ -438,7 +443,9 @@ async function runInteractive(
       process.exitCode = exitCode
     }
   } catch (err) {
-    process.stderr.write(`error: ${errorMessage(err)}\n`)
+    process.stderr.write(
+      `error: ${args.dev ? devFailure(err, { operation: 'load', path: args.agent ?? args.dev.workspace }).message : errorMessage(err)}\n`
+    )
     process.exitCode = 1
   }
 }

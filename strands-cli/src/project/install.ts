@@ -1,5 +1,6 @@
 import type { HarnessAgentConfig } from '@strands-agents/harness'
 import { prepareWorkspaceDependencies } from './archive.js'
+import { devFailure } from '../dev/errors.js'
 import { exportSourceProject, writeAgentProject } from './export.js'
 import { importAgentProject, type AgentProjectLanguage, type ImportedAgentProject } from './import.js'
 
@@ -38,7 +39,13 @@ export const installAgentProject = async (options: ProjectInstallation): Promise
   options.signal?.throwIfAborted()
   const project = importAgentProject(options.destination)
   if (options.prepare) await options.prepare(project)
-  else if (!options.deferDependencies) await prepareWorkspaceDependencies(project.root, project.language)
+  else if (!options.deferDependencies) {
+    try {
+      await prepareWorkspaceDependencies(project.root, project.language)
+    } catch (error) {
+      throw devFailure(error, { operation: 'install', path: project.root })
+    }
+  }
   options.signal?.throwIfAborted()
   return project
 }
