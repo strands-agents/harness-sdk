@@ -608,13 +608,109 @@ print(response)
 
 ## Sending traces to CloudWatch
 
-Strands exports to CloudWatch through the OTLP exporter, either via an OpenTelemetry Collector or directly to CloudWatch Transaction Search. See the [CloudWatch trace export example](../../examples/cloudwatch_traces.md) for a walkthrough of both routes.
+CloudWatch accepts OTLP spans at the X-Ray traces endpoint,
+`https://xray.<region>.amazonaws.com/v1/traces`. The endpoint requires
+[Transaction Search](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/CloudWatch-Transaction-Search.html),
+so [enable it](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/Enable-TransactionSearch.html)
+in your account before you send traces.
 
-Reference documentation:
+The endpoint authenticates requests with AWS Signature Version 4 (SigV4) or with an X-Ray
+API key. The OTLP exporter that Strands configures sends static headers and does not sign
+requests with SigV4, so sign them in a collector, or export directly from the agent with an
+API key or the ADOT SDK.
 
-1. [AWS Distro for OpenTelemetry Collector](https://aws-otel.github.io/docs/getting-started/x-ray#configuring-the-aws-x-ray-exporter)
-2. [AWS CloudWatch OpenTelemetry User Guide](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/CloudWatch-OpenTelemetry-Sections.html)
-  - Please ensure Transaction Search is enabled in CloudWatch.
+### Through an OpenTelemetry Collector
+
+Run the [AWS Distro for OpenTelemetry (ADOT) Collector](https://aws-otel.github.io/docs/getting-started/collector)
+or the upstream contrib Collector next to your agent. The following configuration receives
+OTLP over HTTP and signs requests to the traces endpoint with the `sigv4auth` extension:
+
+```yaml
+extensions:
+  sigv4auth:
+    region: "us-east-1"
+    service: "xray"
+
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: localhost:4318
+
+processors:
+  batch:
+
+exporters:
+  otlphttp:
+    compression: gzip
+    traces_endpoint: https://xray.us-east-1.amazonaws.com/v1/traces
+    auth:
+      authenticator: sigv4auth
+
+service:
+  extensions: [sigv4auth]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlphttp]
+```
+
+The collector signs with the AWS credentials available to it, such as an EC2 instance
+role. Those credentials need `xray:PutTraceSegments`. If the agent runs on a different
+host, change the receiver endpoint to an address the agent can reach. See
+[OpenTelemetry Collector](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/CloudWatch-OTLPSimplesetup.html)
+in the CloudWatch User Guide for credential setup on EC2, EKS, and on-premises hosts.
+
+Point Strands at the collector and enable the OTLP exporter:
+
+```bash
+export OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4318"
+```
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands import Agent
+from strands.telemetry import StrandsTelemetry
+
+StrandsTelemetry().setup_otlp_exporter()
+
+agent = Agent(system_prompt="You are a helpful AI assistant")
+agent("What can you help me with?")
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/observability-evaluation/traces_imports.ts:cloudwatch_otlp_imports"
+
+--8<-- "user-guide/sdk/observability-evaluation/traces.ts:cloudwatch_otlp"
+```
+</Tab>
+</Tabs>
+
+### Directly from the agent
+
+An [X-Ray API key](https://docs.aws.amazon.com/xray/latest/devguide/xray-opentelemetry-bearer-token.html)
+is a bearer token that the OTLP exporter can send as a static header. Use the same agent
+code as above and set the traces endpoint and `Authorization` header:
+
+```bash
+export OTEL_EXPORTER_OTLP_TRACES_ENDPOINT="https://xray.us-east-1.amazonaws.com/v1/traces"
+export OTEL_EXPORTER_OTLP_TRACES_HEADERS="Authorization=Bearer%20${XRAY_API_KEY}"
+```
+
+The space after `Bearer` is written as `%20` because OpenTelemetry percent-decodes header
+values. API keys are long-term credentials and are available only in some Regions, so
+prefer SigV4 when your agent runs on AWS.
+
+To sign with SigV4 without a collector, run your agent with the ADOT SDK as described in
+[Exporting collector-less telemetry using ADOT SDK](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/CloudWatch-OTLP-UsingADOT.html).
+The ADOT SDK registers the global tracer provider, so skip
+<Syntax py="StrandsTelemetry()" ts="setupTracer()" /> and let Strands use that provider,
+as in Option 1 of [Code Configuration](#code-configuration).
 
 ## Third-party observability backends
 
