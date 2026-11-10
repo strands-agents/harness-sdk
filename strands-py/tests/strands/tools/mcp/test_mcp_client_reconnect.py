@@ -570,3 +570,35 @@ async def test_removing_the_last_consumer_during_reconnect_tears_the_client_down
 
     assert client._consumers == set()
     assert client._background_thread is None
+
+
+def test_call_on_a_closed_loop_is_treated_as_a_lost_session(mock_transport, mock_session):
+    """A caller that raced a stop() past the session check gets a retryable error, not 'Event loop is closed'."""
+    client = MCPClient(mock_transport["transport_callable"], auto_reconnect=True)
+    client.start()
+    _drop_session(client)
+    client._background_thread_event_loop.close()
+    coro = asyncio.sleep(0)
+
+    with pytest.raises(RuntimeError, match="Connection to the MCP server was closed") as raised:
+        client._invoke_on_background_thread(coro)
+
+    assert client._is_session_lost_error(raised.value)
+    assert coro.cr_frame is None  # closed, so no "never awaited" warning
+    client._background_thread_event_loop = None
+    client.stop(None, None, None)
+
+
+def test_stop_from_the_background_thread_fails_instead_of_deadlocking(mock_transport, mock_session):
+    """e.g. a GC finalizer on the MCP thread while another thread holds the lock in a reconnect."""
+    client = MCPClient(mock_transport["transport_callable"], auto_reconnect=True)
+    client.start()
+
+    async def stop_from_loop() -> None:
+        client.stop(None, None, None)
+
+    with client._reconnect_lock:
+        future = asyncio.run_coroutine_threadsafe(stop_from_loop(), client._background_thread_event_loop)
+        with pytest.raises(RuntimeError, match="its own background thread"):
+            future.result(timeout=5)
+    client.stop(None, None, None)

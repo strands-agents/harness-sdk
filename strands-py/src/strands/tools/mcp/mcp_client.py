@@ -725,6 +725,10 @@ class MCPClient(ToolProvider):
             exc_val: Exception value if an exception was raised in the context
             exc_tb: Exception traceback if an exception was raised in the context
         """
+        # Waiting on the lock here would deadlock against a reconnect joining this very thread
+        # (e.g. a GC finalizer running on it); fail like the join itself would.
+        if self._background_thread is not None and threading.current_thread() is self._background_thread:
+            raise RuntimeError("cannot stop the MCP client from its own background thread")
         with self._reconnect_lock:
             self._stop(exc_type, exc_val, exc_tb)
 
@@ -2139,7 +2143,13 @@ class MCPClient(ToolProvider):
                     await asyncio.gather(cancel_event, return_exceptions=True)
 
         loop = self._background_thread_event_loop
-        invoke_future = asyncio.run_coroutine_threadsafe(coro=run_async(), loop=loop)
+        call = run_async()
+        try:
+            invoke_future = asyncio.run_coroutine_threadsafe(coro=call, loop=loop)
+        except RuntimeError as e:  # a concurrent stop() or reconnect closed the loop
+            call.close()
+            coro.close()
+            raise _MCPConnectionClosedError("Connection to the MCP server was closed") from e
         self._inflight_calls.add(invoke_future)
         invoke_future.add_done_callback(self._inflight_calls.discard)
         # The loop may have stopped after its in-flight calls were failed; this one would never run.
