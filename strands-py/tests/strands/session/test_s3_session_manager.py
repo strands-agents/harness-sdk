@@ -107,6 +107,34 @@ def test_empty_prefix_session_roundtrip(mocked_aws, s3_bucket, sample_session, s
     assert result.agent_id == sample_agent.agent_id
 
 
+def test_init_s3_session_manager_with_put_object_kwargs(s3_bucket):
+    """Test initializing S3SessionManager with put_object_kwargs."""
+    put_object_kwargs = {"ServerSideEncryption": "aws:kms"}
+    session_manager = S3SessionManager(session_id="test", bucket=s3_bucket, put_object_kwargs=put_object_kwargs)
+    assert session_manager._put_object_kwargs == put_object_kwargs
+
+
+def test_init_s3_session_manager_without_put_object_kwargs(s3_bucket):
+    """Test initializing S3SessionManager without put_object_kwargs defaults to empty dict."""
+    session_manager = S3SessionManager(session_id="test", bucket=s3_bucket)
+    assert session_manager._put_object_kwargs == {}
+
+
+@pytest.mark.parametrize(
+    "put_object_kwargs",
+    [
+        {"Bucket": "other-bucket"},
+        {"Key": "some-key"},
+        {"Body": "data"},
+        {"ContentType": "text/plain"},
+    ],
+)
+def test_init_s3_session_manager_with_reserved_params_in_put_object_kwargs(s3_bucket, put_object_kwargs):
+    """Test that reserved parameters in put_object_kwargs raise ValueError."""
+    with pytest.raises(ValueError, match="put_object_kwargs cannot contain reserved parameters"):
+        S3SessionManager(session_id="test", bucket=s3_bucket, put_object_kwargs=put_object_kwargs)
+
+
 def test_create_session(s3_manager, sample_session):
     """Test creating a session in S3."""
     result = s3_manager.create_session(sample_session)
@@ -120,6 +148,18 @@ def test_create_session(s3_manager, sample_session):
 
     assert data["session_id"] == sample_session.session_id
     assert data["session_type"] == sample_session.session_type
+
+
+def test_create_session_with_put_object_kwargs(s3_bucket, sample_session):
+    """Test creating a session with put_object_kwargs applies encryption."""
+    put_object_kwargs = {"ServerSideEncryption": "AES256"}
+    manager_with_encryption = S3SessionManager(session_id="test", bucket=s3_bucket, put_object_kwargs=put_object_kwargs)
+    manager_with_encryption.create_session(sample_session)
+
+    # Verify S3 object has encryption
+    key = f"{manager_with_encryption._get_session_path(sample_session.session_id)}session.json"
+    response = manager_with_encryption.client.head_object(Bucket=manager_with_encryption.bucket, Key=key)
+    assert response["ServerSideEncryption"] == "AES256"
 
 
 def test_create_session_already_exists(s3_manager, sample_session):
