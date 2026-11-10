@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { copyFile, mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { delimiter, dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -94,13 +94,6 @@ for (const [language, testName] of [
           timeout: 420_000,
           env: {
             ...pythonPath,
-            ...(language === 'python'
-              ? {
-                  PYTHONPATH: [fixture('live-python-diagnostics'), process.env.PYTHONPATH]
-                    .filter(Boolean)
-                    .join(delimiter),
-                }
-              : {}),
             HOME: home,
             USERPROFILE: home,
             // Keep provider authentication available while isolating CLI configuration and discovery.
@@ -179,9 +172,6 @@ for (const [language, testName] of [
       }
     } catch (error) {
       await writeFile(join(root, 'failure.log'), String(error))
-      for (const name of (await readdir(root)).filter((name) => name.endsWith('.python-trace.log'))) {
-        process.stderr.write(`${name}:\n${await readFile(join(root, name), 'utf8')}`)
-      }
       throw new Error(`Self-building lifecycle failed; diagnostics retained in ${root}`, { cause: error })
     }
     await rm(root, { recursive: true, force: true })

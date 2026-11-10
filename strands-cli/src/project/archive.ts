@@ -19,7 +19,6 @@ import { setTimeout as delay } from 'node:timers/promises'
 
 import { Unzip, UnzipInflate, unzipSync } from 'fflate'
 
-import { canonicalPath } from '../agent/permission-rules.js'
 import { userDirectory } from '../config/store.js'
 import { containsPath } from '../paths.js'
 import { npmInvocation } from '../terminal/npm.js'
@@ -383,8 +382,6 @@ async function installDependencies(root: string, language: AgentProjectLanguage,
     detached: process.platform === 'win32',
     windowsHide: true,
   }
-  const pipCache = process.env.PIP_CACHE_DIR
-  const disablePipCache = Boolean(pipCache && (!isAbsolute(pipCache) || containsPath(root, canonicalPath(pipCache))))
   try {
     if (nodeDependencies) {
       const npm = npmInvocation([npmCommand, '--no-audit', '--no-fund'])
@@ -405,7 +402,7 @@ async function installDependencies(root: string, language: AgentProjectLanguage,
         python,
         ['-m', 'pip', 'install', ...(contents[0] ? ['-r', 'requirements.txt'] : ['.'])],
         // Build-isolation subprocesses must also keep downloads out of exported source.
-        { ...options, env: { ...process.env, ...(disablePipCache ? { PIP_NO_CACHE_DIR: '1' } : {}) } },
+        { ...options, env: { ...process.env, PIP_NO_CACHE_DIR: '1' } },
         lockPath
       )
     }
@@ -419,7 +416,7 @@ async function installDependencies(root: string, language: AgentProjectLanguage,
       ...(nodeDependencies ? [`npm ${npmCommand}`] : []),
       ...(pythonDependencies
         ? [
-            `python3 -m venv .venv, then ${python} -m pip install ${contents[0] ? '-r requirements.txt' : '.'}${disablePipCache ? ' with PIP_NO_CACHE_DIR=1 in the environment' : ''}`,
+            `python3 -m venv .venv, then ${python} -m pip install ${contents[0] ? '-r requirements.txt' : '.'} with PIP_NO_CACHE_DIR=1 in the environment`,
           ]
         : []),
     ].join(', then ')
