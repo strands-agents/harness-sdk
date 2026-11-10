@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { ContextWindowOverflowError, ModelError, ModelThrottledError } from '../../errors.js'
+import { ContextWindowOverflowError, ModelError, ModelThrottledError, StructuredOutputError } from '../../errors.js'
 import { ImageBlock } from '../../types/media.js'
 import { Message, TextBlock } from '../../types/messages.js'
 import { DecisionModel } from '../decision-model.js'
@@ -67,6 +67,17 @@ function fakeFetch(
       headers: { 'Content-Type': 'application/json' },
     })
   }) as typeof globalThis.fetch
+}
+
+function fakeTextFetch(text: string): typeof globalThis.fetch {
+  return vi.fn(async (): Promise<Response> => new Response(text, { status: 200 })) as typeof globalThis.fetch
+}
+
+async function rejection(promise: Promise<unknown>): Promise<unknown> {
+  return promise.then(
+    () => undefined,
+    (error: unknown) => error
+  )
 }
 
 afterEach(() => {
@@ -322,18 +333,98 @@ describe.each(PROVIDERS)('$name', ({ create, endpoint, defaultModelId, providerN
       expect(result.usage).toBeUndefined()
     })
 
-    it('rejects an invalid response model id', async () => {
+    it('rejects a non-JSON success response with StructuredOutputError and the parse failure as cause', async () => {
+      const decision = create({ apiKey: 'test-key', fetch: fakeTextFetch('not json') })
+
+      const error = await rejection(decision.ask('state', { q: { question: 'ok?', choices: 'boolean' } }))
+
+      expect(error).toBeInstanceOf(StructuredOutputError)
+      expect((error as Error).message).toMatch(/returned a non-JSON response/)
+      expect((error as Error).cause).toBeInstanceOf(SyntaxError)
+    })
+
+    it('rejects an empty success response with StructuredOutputError', async () => {
+      const decision = create({ apiKey: 'test-key', fetch: fakeTextFetch('') })
+
+      const error = await rejection(decision.ask('state', { q: { question: 'ok?', choices: 'boolean' } }))
+
+      expect(error).toBeInstanceOf(StructuredOutputError)
+      expect((error as Error).message).toMatch(/decision provider response must be an object/)
+    })
+
+    it.each([
+      ['response-not-object', [], 'boolean', /decision provider response must be an object/],
+      [
+        'answers-not-object',
+        { model: 'resolved-model', answers: [] },
+        'boolean',
+        /decision provider answers must be an object/,
+      ],
+      ['answer-omitted', responseBody({}), 'boolean', /omitted answer for question/],
+      ['wrong-boolean-answer-type', responseBody({ q: { type: 'choice' } }), 'boolean', /must have type 'noul'/],
+      [
+        'invalid-noul-probability',
+        responseBody({ q: { type: 'noul', noul: 2 } }),
+        'boolean',
+        /must be in \[0\.0, 1\.0\]/,
+      ],
+      [
+        'negative-noul-probability',
+        responseBody({ q: { type: 'noul', noul: -0.1 } }),
+        'boolean',
+        /must be a non-negative finite number/,
+      ],
+      ['wrong-choice-answer-type', responseBody({ q: { type: 'noul' } }), ['a', 'b'], /must have type 'choice'/],
+      [
+        'probabilities-not-object',
+        responseBody({ q: { type: 'choice', choice: 'a', probabilities: [], confidence: 0.5 } }),
+        ['a', 'b'],
+        /probabilities for question id=<q> must be an object/,
+      ],
+      [
+        'unknown-choice',
+        responseBody({ q: { type: 'choice', choice: 'other', probabilities: { a: 0.5, b: 0.5 }, confidence: 0.5 } }),
+        ['a', 'b'],
+        /selected an unknown choice/,
+      ],
+      [
+        'probability-keys-mismatch',
+        responseBody({ q: { type: 'choice', choice: 'a', probabilities: { a: 1 }, confidence: 1 } }),
+        ['a', 'b'],
+        /must contain exactly the requested choices/,
+      ],
+      [
+        'invalid-choice-confidence',
+        responseBody({ q: { type: 'choice', choice: 'a', probabilities: { a: 1, b: 0 }, confidence: 2 } }),
+        ['a', 'b'],
+        /must be in \[0\.0, 1\.0\]/,
+      ],
+      ['usage-not-object', responseBody({ q: { type: 'noul', noul: 1 } }, []), 'boolean', /usage must be an object/],
+    ] as [string, unknown, 'boolean' | string[], RegExp][])(
+      'rejects a malformed provider response with StructuredOutputError: %s',
+      async (_name, payload, choices, message) => {
+        const decision = create({ apiKey: 'test-key', fetch: fakeFetch(payload) })
+
+        const error = await rejection(decision.ask('state', { q: { question: 'pick?', choices } }))
+
+        expect(error).toBeInstanceOf(StructuredOutputError)
+        expect((error as Error).message).toMatch(message)
+      }
+    )
+
+    it('rejects an invalid response model id with StructuredOutputError', async () => {
       const decision = create({
         apiKey: 'test-key',
         fetch: fakeFetch({ model: '', answers: { q: { type: 'noul', noul: 1 } } }),
       })
 
-      await expect(decision.ask('state', { q: { question: 'ok?', choices: 'boolean' } })).rejects.toThrow(
-        /model must be a non-empty string/
-      )
+      const error = await rejection(decision.ask('state', { q: { question: 'ok?', choices: 'boolean' } }))
+
+      expect(error).toBeInstanceOf(StructuredOutputError)
+      expect((error as Error).message).toMatch(/model must be a non-empty string/)
     })
 
-    it('rejects a Choice answer whose selection is not the most probable', async () => {
+    it('rejects a Choice answer whose selection is not the most probable with StructuredOutputError', async () => {
       const decision = create({
         apiKey: 'test-key',
         fetch: fakeFetch(
@@ -341,12 +432,13 @@ describe.each(PROVIDERS)('$name', ({ create, endpoint, defaultModelId, providerN
         ),
       })
 
-      await expect(decision.ask('state', { q: { question: 'pick?', choices: ['a', 'b'] } })).rejects.toThrow(
-        /must have the highest probability/
-      )
+      const error = await rejection(decision.ask('state', { q: { question: 'pick?', choices: ['a', 'b'] } }))
+
+      expect(error).toBeInstanceOf(StructuredOutputError)
+      expect((error as Error).message).toMatch(/must have the highest probability/)
     })
 
-    it('rejects malformed probability distributions', async () => {
+    it('rejects malformed probability distributions with StructuredOutputError', async () => {
       const decision = create({
         apiKey: 'test-key',
         fetch: fakeFetch(
@@ -356,9 +448,21 @@ describe.each(PROVIDERS)('$name', ({ create, endpoint, defaultModelId, providerN
         ),
       })
 
-      await expect(decision.ask('state', { q: { question: 'pick?', choices: ['a', 'b'] } })).rejects.toThrow(
-        /must sum to 1/
-      )
+      const error = await rejection(decision.ask('state', { q: { question: 'pick?', choices: ['a', 'b'] } }))
+
+      expect(error).toBeInstanceOf(StructuredOutputError)
+      expect((error as Error).message).toMatch(/must sum to 1/)
+    })
+
+    it('rejects an overflowing float probability with StructuredOutputError', async () => {
+      const decision = create({
+        apiKey: 'test-key',
+        fetch: fakeTextFetch('{"model":"resolved-model","answers":{"q":{"type":"noul","noul":1e999}}}'),
+      })
+
+      const error = await rejection(decision.ask('state', { q: { question: 'ok?', choices: 'boolean' } }))
+
+      expect(error).toBeInstanceOf(StructuredOutputError)
     })
 
     it('rejects more than 255 Choice options before sending', async () => {

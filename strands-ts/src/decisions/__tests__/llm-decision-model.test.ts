@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { TestModelProvider } from '../../__fixtures__/model-test-helpers.js'
+import { StructuredOutputError } from '../../errors.js'
 import { BedrockModel } from '../../models/bedrock.js'
 import { Model } from '../../models/model.js'
 import { STRUCTURED_OUTPUT_TOOL_NAME } from '../../tools/structured-output-tool.js'
@@ -257,13 +258,13 @@ describe('LLMDecisionModel', () => {
       expect(model.options[0]?.systemPrompt).toContain('MANDATORY RULES')
     })
 
-    it('throws when the model returns a non-tool-use stop', async () => {
+    it('throws StructuredOutputError when the model returns a non-tool-use stop', async () => {
       const model = textModel('I refuse')
       const decision = new LLMDecisionModel({ model })
+      const pending = decision.ask('x', { q: { question: 'bool?', choices: 'boolean' } })
 
-      await expect(decision.ask('x', { q: { question: 'bool?', choices: 'boolean' } })).rejects.toThrow(
-        /no structured answers/
-      )
+      await expect(pending).rejects.toBeInstanceOf(StructuredOutputError)
+      await expect(pending).rejects.toThrow(/no structured answers/)
     })
 
     it('rejects an empty question map before calling the model', async () => {
@@ -344,13 +345,13 @@ describe('LLMDecisionModel', () => {
       expect(result.metadata.latencyMs).toBeGreaterThanOrEqual(0)
     })
 
-    it('throws when the model returns an unknown option', async () => {
+    it('throws StructuredOutputError when the model returns an unknown option', async () => {
       const model = toolUseModel({ color: 'purple' })
       const decision = new LLMDecisionModel({ model })
+      const pending = decision.ask('x', { color: { question: 'c?', choices: ['red', 'green'] } })
 
-      await expect(decision.ask('x', { color: { question: 'c?', choices: ['red', 'green'] } })).rejects.toThrow(
-        /invalid answer set/
-      )
+      await expect(pending).rejects.toBeInstanceOf(StructuredOutputError)
+      await expect(pending).rejects.toThrow(/invalid answer set/)
     })
   })
 

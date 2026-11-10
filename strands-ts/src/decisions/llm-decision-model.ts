@@ -7,7 +7,7 @@
 
 import { z } from 'zod'
 
-import { normalizeError } from '../errors.js'
+import { normalizeError, StructuredOutputError } from '../errors.js'
 import { BedrockModel } from '../models/bedrock.js'
 import { Model } from '../models/model.js'
 import { ModelProxy } from '../models/model-proxy.js'
@@ -123,16 +123,19 @@ export class LLMDecisionModel extends DecisionModel {
       )
     }
     if (toolUse === undefined) {
-      throw new Error('decision model returned no structured answers')
+      throw new StructuredOutputError('decision model returned no structured answers')
     }
 
     let parsed: Record<string, { answer: string; reason?: string }>
     try {
       parsed = schema.parse(toolUse.input) as Record<string, { answer: string; reason?: string }>
     } catch (error) {
-      throw new Error(`decision model returned an invalid answer set: ${normalizeError(error).message}`, {
-        cause: error,
-      })
+      throw new StructuredOutputError(
+        `decision model returned an invalid answer set: ${normalizeError(error).message}`,
+        {
+          cause: error,
+        }
+      )
     }
 
     const answers = convertAnswers(parsed, questions)
@@ -185,7 +188,8 @@ function convertAnswers<const Q extends Record<string, Question>>(
   for (const id of Object.keys(questions) as (keyof Q)[]) {
     const question = questions[id]!
     const entry = raw[id as string]
-    if (entry === undefined) throw new Error(`decision model omitted answer for question id=<${String(id)}>`)
+    if (entry === undefined)
+      throw new StructuredOutputError(`decision model omitted answer for question id=<${String(id)}>`)
     answers[id] = convertSingleAnswer(question, entry) as AnswerOf<Q[typeof id]>
   }
   return answers

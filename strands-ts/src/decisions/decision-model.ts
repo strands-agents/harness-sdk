@@ -31,6 +31,8 @@ export abstract class DecisionModel {
    * @throws Error if `questions` is empty or contains an invalid `question`,
    *   `choices`, or `uncertainty`.
    * @throws TypeError if `options.invocationContext` was not created by the SDK.
+   * @throws StructuredOutputError if the model declines to produce a valid answer set, omits
+   *   an answer, or returns a value outside a question's allowed choices.
    */
   async ask<const Q extends Record<string, Question>>(
     state: DecisionInput,
