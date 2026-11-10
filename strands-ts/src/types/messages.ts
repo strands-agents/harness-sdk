@@ -304,16 +304,6 @@ export interface OffloadedBlockData extends TextBlockData {
 }
 
 /**
- * The serialized form of an {@link OffloadedBlock}: the placeholder text, with what it stands in for beside it.
- *
- * One key holds the provenance so a text block's own data keeps the rest of the namespace, and so the presence of
- * that key alone decides whether stored data is a placeholder.
- */
-interface SerializedOffloadedBlock extends TextBlockData {
-  offloaded: Omit<OffloadedBlockData, 'text'>
-}
-
-/**
  * The text a context-manager strategy left in place of content it offloaded, recording what that content was.
  *
  * A text block to every reader of `agent.messages` and to every model provider — `type` stays `'textBlock'`, since
@@ -348,8 +338,11 @@ export class OffloadedBlock extends TextBlock implements OffloadedBlockData {
   /**
    * Serializes the OffloadedBlock to a JSON-compatible object, with its provenance under `offloaded`.
    * Called automatically by JSON.stringify().
+   *
+   * One key holds the provenance so a text block's own data keeps the rest of the namespace, and so the presence of
+   * that key alone decides whether stored data is a placeholder.
    */
-  override toJSON(): SerializedOffloadedBlock {
+  override toJSON(): TextBlockData & { offloaded: Omit<OffloadedBlockData, 'text'> } {
     return {
       text: this.text,
       offloaded: {
@@ -366,13 +359,13 @@ export class OffloadedBlock extends TextBlock implements OffloadedBlockData {
    * @param data - Serialized placeholder to deserialize
    * @returns OffloadedBlock instance
    */
-  static override fromJSON(data: SerializedOffloadedBlock): OffloadedBlock {
+  static override fromJSON(data: TextBlockData & { offloaded: Omit<OffloadedBlockData, 'text'> }): OffloadedBlock {
     return new OffloadedBlock({ text: data.text, ...data.offloaded })
   }
 }
 
 /** Whether stored text-block data records an offload, so it deserializes back to an {@link OffloadedBlock}. */
-function isSerializedOffloadedBlock(data: TextBlockData): data is SerializedOffloadedBlock {
+function recordsOffload(data: TextBlockData): data is TextBlockData & { offloaded: Omit<OffloadedBlockData, 'text'> } {
   return 'offloaded' in data
 }
 
@@ -608,7 +601,7 @@ export class ToolResultBlock implements JSONSerializable<{ toolResult: ToolResul
  * @throws Error if the content data type is unknown
  */
 export function toolResultContentFromData(data: ToolResultContentData): ToolResultContent {
-  if ('text' in data) return isSerializedOffloadedBlock(data) ? OffloadedBlock.fromJSON(data) : TextBlock.fromJSON(data)
+  if ('text' in data) return recordsOffload(data) ? OffloadedBlock.fromJSON(data) : TextBlock.fromJSON(data)
   if ('json' in data) return new JsonBlock(data)
   if ('image' in data) return ImageBlock.fromJSON(data as { image: ImageBlockData })
   if ('video' in data) return VideoBlock.fromJSON(data as { video: VideoBlockData })
@@ -1292,7 +1285,7 @@ export class InjectedBlock implements JSONSerializable<{ injected: InjectedBlock
  */
 export function contentBlockFromData(data: ContentBlockData): ContentBlock {
   if ('text' in data) {
-    return isSerializedOffloadedBlock(data) ? OffloadedBlock.fromJSON(data) : TextBlock.fromJSON(data)
+    return recordsOffload(data) ? OffloadedBlock.fromJSON(data) : TextBlock.fromJSON(data)
   } else if ('toolUse' in data) {
     return new ToolUseBlock(data.toolUse)
   } else if ('toolResult' in data) {
