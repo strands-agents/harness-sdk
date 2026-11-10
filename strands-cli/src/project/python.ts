@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { delimiter, dirname, join, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
-import type { Readable } from 'node:stream'
+import type { Readable, Writable } from 'node:stream'
 import { fileURLToPath, URL } from 'node:url'
 
 import type { SetupChange } from '../agent/configuration.js'
@@ -104,6 +104,7 @@ export class PythonBackend implements ChatBackend {
   private _state!: PythonState
   private readonly _messages: WorkerMessage[] = []
   private readonly _permissions = new ToolPermissionBroker()
+  private readonly _commands: Writable
   private _wake: (() => void) | undefined
   private _failure: Error | undefined
   private _running = false
@@ -118,6 +119,7 @@ export class PythonBackend implements ChatBackend {
     private readonly _config: CliConfigStore,
     readonly cwd: string
   ) {
+    this._commands = _child.stdio[4] as Writable
     for (const output of [_child.stdout, _child.stderr]) {
       output?.on('data', (chunk: Buffer) => {
         this._diagnostics = (this._diagnostics + chunk.toString()).slice(-8_192)
@@ -148,7 +150,7 @@ export class PythonBackend implements ChatBackend {
       )
       input.close()
     })
-    _child.stdin?.on('error', (error) => this._fail(error))
+    this._commands.on('error', (error) => this._fail(error))
   }
 
   static async open(
@@ -171,7 +173,8 @@ export class PythonBackend implements ChatBackend {
           ...(projectEnvironment ? { PATH: [dirname(python), process.env.PATH].filter(Boolean).join(delimiter) } : {}),
           ...(process.env.AWS_REGION ? { AWS_DEFAULT_REGION: process.env.AWS_REGION } : {}),
         },
-        stdio: ['pipe', 'pipe', 'pipe', 'pipe'],
+        // Shell subprocesses must not inherit the worker's command input.
+        stdio: ['ignore', 'pipe', 'pipe', 'pipe', 'pipe'],
       }),
       project,
       config,
@@ -436,7 +439,7 @@ export class PythonBackend implements ChatBackend {
     this._disposed = true
     clearTimeout(this._cancelTimeout)
     this._permissions.dispose()
-    this._child.stdin?.end(`${JSON.stringify({ type: 'close' })}\n`)
+    this._commands.end(`${JSON.stringify({ type: 'close' })}\n`)
     let timeout: NodeJS.Timeout | undefined
     await Promise.race([
       new Promise<void>((resolve) => {
@@ -510,7 +513,7 @@ export class PythonBackend implements ChatBackend {
 
   private _send(message: object): void {
     if (this._failure) throw this._failure
-    this._child.stdin!.write(
+    this._commands.write(
       `${JSON.stringify(message, (_key, value: unknown) =>
         value instanceof Uint8Array ? { $bytes: Buffer.from(value).toString('base64') } : value
       )}\n`
