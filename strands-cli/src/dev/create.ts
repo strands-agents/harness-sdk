@@ -19,7 +19,6 @@ export interface CreateDevWorkspaceOptions {
 }
 
 export interface CreateDevProjectOptions {
-  parent: string
   language: 'typescript' | 'python'
   snapshot: CliConfigSnapshot
   cwd: string
@@ -51,6 +50,21 @@ const isMissing = async (path: string): Promise<boolean> => {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return true
     throw error
   }
+}
+
+export const existingDevProject = async (
+  cwd: string,
+  language: 'typescript' | 'python',
+  name: string
+): Promise<DevWorkspace | undefined> => {
+  for (let number = 1; number <= MAX_FOLDER_NUMBER; number++) {
+    const root = join(cwd, number === 1 ? PROJECT_FOLDER : `${PROJECT_FOLDER}-${number}`)
+    if (await isMissing(root)) return undefined
+    const workspace = await readDevWorkspace(join(root, WORKSPACE_FOLDER)).catch(() => undefined)
+    const { origin, language: bound, name: label } = workspace?.config ?? {}
+    if (workspace?.root === root && origin?.kind === 'created' && bound === language && label === name) return workspace
+  }
+  return undefined
 }
 
 export const newProjectFolder = async (parent: string): Promise<string> => {
@@ -151,7 +165,7 @@ export const createDevWorkspace = async (options: CreateDevWorkspaceOptions): Pr
 export const createDevProject = async (options: CreateDevProjectOptions): Promise<DevWorkspace> => {
   options.signal?.throwIfAborted()
   const input = await profileProject(options.snapshot, options.cwd, options.language)
-  const root = await newProjectFolder(resolve(options.cwd, options.parent))
+  const root = await newProjectFolder(resolve(options.cwd))
   const project = await installAgentProject({ destination: root, deferDependencies: true, ...input })
   try {
     options.signal?.throwIfAborted()

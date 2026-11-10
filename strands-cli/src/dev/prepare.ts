@@ -6,11 +6,19 @@ import { containsPath, expandHome } from '../paths.js'
 import { importAgentProject } from '../project/import.js'
 import { prepareWorkspaceDependencies } from '../project/archive.js'
 import { sanitizeTerminalText } from '../terminal/text.js'
-import { bindExistingAgent, createDevProject, createDevWorkspace, newProjectFolder, numberedFolder } from './create.js'
+import {
+  bindExistingAgent,
+  createDevProject,
+  createDevWorkspace,
+  existingDevProject,
+  newProjectFolder,
+  numberedFolder,
+} from './create.js'
 import { DevFailure } from './errors.js'
 import {
   findDevWorkspace,
   readDevWorkspace,
+  rootWorkspaceFolder,
   workspaceFolder,
   WORKSPACE_FOLDER,
   type DevWorkspace,
@@ -18,7 +26,7 @@ import {
 import type { StartupScreen } from '../ui/run.js'
 import type { HarnessChoice } from './picker.js'
 import type { DiscoveredHarness } from './search.js'
-import { baseHarnessSelection, discoverLocalHarnesses } from './selection.js'
+import { baseHarnessSelection, discoverLocalHarnesses, harnessFolder } from './selection.js'
 import { ensureInitialCandidate, initializeWorkspaceBinding } from './initialize.js'
 
 export interface PreparedDevRun {
@@ -46,7 +54,10 @@ const createRequested = async ({
 }: CreationRequest): Promise<DevWorkspace> => {
   const snapshot = config.snapshot()
   const options = { snapshot, cwd, ...(signal ? { signal } : {}), ...(deferDependencies ? { deferDependencies } : {}) }
-  if (kind !== 'cli' && !destination) return createDevProject({ ...options, parent: cwd, language: kind })
+  if (kind !== 'cli' && !destination)
+    return (
+      (await existingDevProject(cwd, kind, snapshot.profile.name)) ?? createDevProject({ ...options, language: kind })
+    )
   return createDevWorkspace({
     ...options,
     kind,
@@ -227,7 +238,6 @@ const createInLaunchFolder = async (
   const snapshot = config.snapshot()
   snapshot.profile = { ...snapshot.profile, name: choice.name }
   return createDevProject({
-    parent: cwd,
     language: choice.language,
     snapshot,
     cwd,
@@ -247,7 +257,8 @@ const openExplicitHarness = async (path: string, folder?: string): Promise<DevWo
   if (details.isSymbolicLink()) throw new Error('Select a real harness path, not a symbolic link.')
   const project = importAgentProject(path)
   const directory =
-    folder ?? (await availableFolder(join(project.root, WORKSPACE_FOLDER), ({ root }) => root === project.root))
+    folder ??
+    (await availableFolder(join(harnessFolder(path, project), WORKSPACE_FOLDER), ({ root }) => root === project.root))
   const existing = await readDevWorkspace(directory)
   if (!existing) return bindExistingAgent(directory, project.entrypoint)
   if (project.root !== existing.root) throw new Error('The explicit agent must belong to the bound project.')
@@ -281,7 +292,7 @@ export const prepareDevRun = async (
   if (!selected) return undefined
   const target = args.dev?.workspace
     ? await workspaceFolder(resolve(process.cwd(), expandHome(args.dev.workspace)))
-    : join(selected.root, WORKSPACE_FOLDER)
+    : rootWorkspaceFolder(selected.root)
   const persisted = await readDevWorkspace(selected.directory ?? selected.root)
   const main = await initializeWorkspaceBinding(persisted?.root === selected.root ? persisted : selected, target)
   const workspace =

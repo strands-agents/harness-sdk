@@ -1,4 +1,5 @@
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
+import { strToU8, zipSync } from 'fflate'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -362,6 +363,131 @@ describe('default workspace placement', () => {
     expect(containsPath(project, first!.workspace.entrypoint)).toBe(true)
     expect(second?.workspace.root).toBe(join(launch, 'strands-workspace-2'))
     expect((await readdir(launch)).sort()).toEqual(['strands-workspace', 'strands-workspace-2'])
+  })
+
+  it('shouldSuggestTheFolderOfTheProjectRootWhenDiscoveryFindsAPythonHarness', async () => {
+    const launch = process.cwd()
+    const harness = 'from strands_harness import create_harness\n\nagent = create_harness(name="Desk")\n'
+    await mkdir(join(launch, 'arielnab'))
+    await writeFile(join(launch, 'arielnab/agent.py'), harness)
+    await mkdir(join(launch, 'repo/src'), { recursive: true })
+    await writeFile(join(launch, 'repo/pyproject.toml'), '[project]\nname = "repo"\n')
+    await writeFile(join(launch, 'repo/src/agent.py'), harness)
+    vi.spyOn(CliConfigStore, 'load').mockResolvedValue(config())
+    vi.spyOn(picker, 'chooseHarness').mockResolvedValue(undefined)
+    const screen = { signal: new AbortController().signal, show: vi.fn() }
+
+    await prepareDevRun(parseArgs(['dev']), { screen, deferPreparation: true })
+
+    const options = vi.mocked(picker.chooseHarness).mock.calls[0]![0]
+    const folders = Object.fromEntries(
+      options.harnesses.map((harness) => [harness.entrypoint, options.folderFor?.({ kind: 'discovered', harness })])
+    )
+    expect(folders).toEqual({
+      [join(launch, 'arielnab/agent.py')]: join(launch, 'arielnab/strands-dev'),
+      [join(launch, 'repo/src/agent.py')]: join(launch, 'repo/strands-dev'),
+    })
+  })
+
+  it('shouldSuggestFreshFoldersForFoundHarnessesWhenTheUserReturnsToSelection', async () => {
+    const root = await fixture()
+    const workspace = await bindExistingAgent(join(root, 'strands-dev'), join(root, 'agent.ts'))
+    vi.spyOn(CliConfigStore, 'load').mockResolvedValue(config())
+    vi.spyOn(search, 'discoverHarnesses').mockResolvedValue({
+      harnesses: [{ ...found(root), workspace }],
+      warnings: [],
+    })
+    vi.spyOn(picker, 'chooseHarness').mockResolvedValue(undefined)
+    const screen = { signal: new AbortController().signal, show: vi.fn() }
+
+    await prepareDevRun(parseArgs(['dev']), { screen, deferPreparation: true, forceSelection: true })
+
+    const options = vi.mocked(picker.chooseHarness).mock.calls[0]![0]
+    expect(options.folderFor?.({ kind: 'discovered', harness: found(root) })).toBe(join(root, 'strands-dev-2'))
+  })
+
+  it('shouldSkipAFolderOfAnotherAgentWhenAgentIsGivenWithoutAWorkspace', async () => {
+    const root = await fixture()
+    await bindExistingAgent(join(root, 'strands-dev'), join(await fixture(), 'agent.ts'))
+    vi.spyOn(CliConfigStore, 'load').mockResolvedValue(config())
+    vi.spyOn(process.stderr, 'write').mockReturnValue(true)
+
+    const prepared = await prepareDevRun(parseArgs(['dev', 'init', '--agent', join(root, 'agent.ts')]), {
+      deferPreparation: true,
+    })
+
+    expect(prepared?.workspace.directory).toBe(join(root, 'strands-dev-2'))
+    expect(prepared?.workspace.root).toBe(root)
+  })
+
+  it('shouldPutTheWorkspaceNextToTheArchiveWhenAgentIsAZip', async () => {
+    const folder = await temporaryDirectory()
+    const archive = join(folder, 'agent.zip')
+    await writeFile(
+      archive,
+      zipSync({
+        'package.json': strToU8('{"type":"module"}'),
+        'agent.ts': strToU8("import { createHarness } from '@strands-agents/harness'\nexport const agent = {}\n"),
+      })
+    )
+    vi.spyOn(CliConfigStore, 'load').mockResolvedValue(config())
+    vi.spyOn(process.stderr, 'write').mockReturnValue(true)
+
+    const prepared = await prepareDevRun(parseArgs(['dev', 'init', '--agent', archive]), { deferPreparation: true })
+
+    expect(prepared?.workspace.directory).toBe(join(folder, 'strands-dev'))
+  })
+
+  it.each<[string, (launch: string) => Promise<string | undefined>, (launch: string, project?: string) => string]>([
+    ['only a saved profile', async () => undefined, (launch) => join(launch, 'strands-dev')],
+    ['a saved project', async () => fixture(), (_launch, project) => join(project!, 'strands-dev')],
+  ])('shouldUseTheBaseCliFolderWhenCreatingTheCliHarnessWith%s', async (_case, arrange, expected) => {
+    const launch = process.cwd()
+    const project = await arrange(launch)
+    const saved = config()
+    if (project) await saved.useAgentProject(join(project, 'agent.ts'))
+    vi.spyOn(CliConfigStore, 'load').mockResolvedValue(saved)
+    vi.spyOn(process.stderr, 'write').mockReturnValue(true)
+
+    const prepared = await prepareDevRun(parseArgs(['dev', 'init', '--create', 'cli']), { deferPreparation: true })
+
+    expect(prepared?.workspace.directory).toBe(expected(launch, project))
+  })
+
+  it('shouldReopenTheCreatedProjectWhenTheSameHarnessIsCreatedAgain', async () => {
+    const launch = process.cwd()
+    vi.spyOn(CliConfigStore, 'load').mockResolvedValue(config())
+    vi.spyOn(process.stderr, 'write').mockReturnValue(true)
+    const create = (): ReturnType<typeof prepareDevRun> =>
+      prepareDevRun(parseArgs(['dev', 'init', '--create', 'python']), { deferPreparation: true })
+
+    const first = await create()
+    const second = await create()
+
+    expect(second?.workspace.root).toBe(first?.workspace.root)
+    expect(await readdir(launch)).toEqual(['strands-workspace'])
+  })
+
+  it('shouldBindALegacyStrandsDevRootInPlaceWhenItIsReopened', async () => {
+    const launch = process.cwd()
+    const root = join(launch, 'strands-dev')
+    await mkdir(root)
+    await writeFile(join(root, 'package.json'), '{"type":"module"}')
+    await writeFile(join(root, 'agent.ts'), 'export const agent = {}')
+    await initializeDevWorkspace(root, {
+      version: 1,
+      name: 'Legacy',
+      language: 'typescript',
+      entrypoint: 'agent.ts',
+      origin: { kind: 'discovered' },
+    })
+    vi.spyOn(CliConfigStore, 'load').mockResolvedValue(config())
+    vi.spyOn(process.stderr, 'write').mockReturnValue(true)
+
+    const prepared = await prepareDevRun(parseArgs(['dev', 'init']), { deferPreparation: true })
+
+    expect(prepared?.workspace.directory).toBe(root)
+    await expect(readdir(join(root, 'strands-dev'))).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   it.each(['typescript', 'python'])(

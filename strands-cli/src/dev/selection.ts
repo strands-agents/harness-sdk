@@ -1,5 +1,5 @@
 import { realpath } from 'node:fs/promises'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 
 import type { CliConfigSnapshot } from '../config/store.js'
 import { expandHome } from '../paths.js'
@@ -18,6 +18,9 @@ export interface BaseHarnessSelection {
 export const baseHarnessProject = (snapshot: CliConfigSnapshot, cwd: string): ImportedAgentProject | undefined =>
   snapshot.agentProject ? importAgentProject(resolve(cwd, expandHome(snapshot.agentProject))) : undefined
 
+export const harnessFolder = (source: string, project: ImportedAgentProject): string =>
+  /\.zip$/iu.test(source) ? dirname(resolve(expandHome(source))) : project.root
+
 export const baseHarnessSelection = async (
   snapshot: CliConfigSnapshot,
   cwd: string,
@@ -27,7 +30,10 @@ export const baseHarnessSelection = async (
   const source = project?.entrypoint ?? snapshot.path
   const launchWorkspace = resolve(cwd, destination ?? WORKSPACE_FOLDER)
   const legacy = destination ? undefined : await readDevWorkspace(join(launchWorkspace, 'base-cli'))
-  const workspace = destination || legacy || !project ? launchWorkspace : join(project.root, WORKSPACE_FOLDER)
+  const workspace =
+    destination || legacy || !project
+      ? launchWorkspace
+      : join(harnessFolder(resolve(cwd, expandHome(snapshot.agentProject!)), project), WORKSPACE_FOLDER)
   const existing = (await readDevWorkspace(workspace)) ?? legacy
   return {
     name: existing?.config.name ?? snapshot.profile.name,

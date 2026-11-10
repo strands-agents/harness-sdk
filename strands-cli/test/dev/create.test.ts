@@ -189,7 +189,7 @@ describe('createDevProject', () => {
       const cwd = await temporaryDirectory()
       const install = vi.spyOn(installer, 'prepareWorkspaceDependencies').mockResolvedValue()
 
-      const workspace = await createDevProject({ cwd, parent: cwd, language, snapshot: snapshot() })
+      const workspace = await createDevProject({ cwd, language, snapshot: snapshot() })
 
       const root = join(cwd, 'strands-workspace')
       const entrypoint = language === 'python' ? 'agent/agent.py' : 'agent/agent.ts'
@@ -215,7 +215,6 @@ describe('createDevProject', () => {
 
     const workspace = await createDevProject({
       cwd,
-      parent: cwd,
       language: 'typescript',
       snapshot: snapshot(),
       deferDependencies: true,
@@ -228,13 +227,15 @@ describe('createDevProject', () => {
 
   it('shouldRemoveOnlyTheNewProjectWhenInstallationFails', async () => {
     const cwd = await temporaryDirectory()
-    await writeFile(join(cwd, 'keep.txt'), 'keep')
+    await mkdir(join(cwd, 'strands-workspace'))
+    await writeFile(join(cwd, 'strands-workspace/keep.txt'), 'keep')
     vi.spyOn(installer, 'prepareWorkspaceDependencies').mockRejectedValue(new Error('install failed'))
 
-    await expect(createDevProject({ cwd, parent: cwd, language: 'typescript', snapshot: snapshot() })).rejects.toThrow(
+    await expect(createDevProject({ cwd, language: 'typescript', snapshot: snapshot() })).rejects.toThrow(
       'install failed'
     )
-    expect(await readdir(cwd)).toEqual(['keep.txt'])
+    expect(await readdir(cwd)).toEqual(['strands-workspace'])
+    expect(await readFile(join(cwd, 'strands-workspace/keep.txt'), 'utf8')).toBe('keep')
   })
 
   it('shouldLeaveNoProjectWhenCreationIsCancelled', async () => {
@@ -245,7 +246,7 @@ describe('createDevProject', () => {
     })
 
     await expect(
-      createDevProject({ cwd, parent: cwd, language: 'python', snapshot: snapshot(), signal: abort.signal })
+      createDevProject({ cwd, language: 'python', snapshot: snapshot(), signal: abort.signal })
     ).rejects.toThrow('cancelled')
     expect(await readdir(cwd)).toEqual([])
   })
