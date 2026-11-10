@@ -1,10 +1,10 @@
 import type { APIRoute } from 'astro'
 
-import { FAQ_INTRO, FAQ_TITLE, faqAnswerMarkdown, faqCategories, faqItems } from '../../config/faq'
+import { FAQ_INTRO, FAQ_TITLE, faqAnswerMarkdown, faqCategories, faqItems, faqMarkdownHref } from '../../config/faq'
 import { siteLink } from '../../util/links'
 
 function markdownLink(href: string): string {
-  return siteLink(`${href.replace(/\/$/, '')}/index.md`)
+  return siteLink(faqMarkdownHref(href))
 }
 
 export function buildFaqMarkdown(): string {

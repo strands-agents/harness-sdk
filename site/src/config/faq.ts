@@ -186,12 +186,14 @@ export const faqItems: FaqItem[] = [
     category: 'build',
     question: 'Should I use automatic or agentic context management?',
     answer: [
+      paragraph('Both modes use the experimental Context Manager strategy API, which may change in future versions.'),
       paragraph(
         link('Automatic mode', '/docs/user-guide/sdk/context-management/built-in-modes/'),
         ' uses SDK-defined thresholds and actions to offload, truncate, or summarize context. A summary can be model-written; the SDK still decides when the strategy runs.'
       ),
       paragraph(
-        'Agentic mode gives the model context-usage information and tools so it can decide when and what to compress or protect. That flexibility requires additional model work. The context manager strategy API, including agentic mode, is experimental.'
+        link('Agentic mode', '/docs/user-guide/sdk/context-management/built-in-modes/#agentic-context-management'),
+        ' gives the model context-usage information and tools so it can decide when and what to compress or protect. That flexibility requires additional model work.'
       ),
     ],
   },
@@ -201,11 +203,28 @@ export const faqItems: FaqItem[] = [
     question: 'What happens when structured output fails validation?',
     answer: [
       paragraph(
-        link('Structured output', '/docs/user-guide/sdk/agents/structured-output-behavior/'),
+        link('Structured output', '/docs/user-guide/sdk/agents/structured-output-behavior/#forced-tool-call'),
         ' presents your schema to the model as a tool. Strands validates the tool input and returns any errors to the model so it can correct the result.'
       ),
       paragraph(
-        'To set a firm bound, configure a failed structured-output attempt limit. If the model reaches it, the invocation ends with a specific limit stop reason.'
+        'If the model still does not return valid structured output after the forced retry, the call raises ',
+        code('StructuredOutputException'),
+        ' in Python or ',
+        code('StructuredOutputError'),
+        ' in TypeScript.'
+      ),
+      paragraph(
+        'To keep retrying and cap the total number of failures, set ',
+        code("limits['structured_output_attempts']"),
+        ' in Python or ',
+        code('limits.structuredOutputAttempts'),
+        ' in TypeScript on the call. When the ',
+        link('attempt limit', '/docs/user-guide/sdk/agents/structured-output-behavior/#limit-attempts'),
+        ' is reached, the result has the stop reason ',
+        code('limit_structured_output_attempts'),
+        ' in Python or ',
+        code('limitStructuredOutputAttempts'),
+        ' in TypeScript, with no structured output.'
       ),
     ],
   },
@@ -236,7 +255,13 @@ export const faqItems: FaqItem[] = [
         ' to pause selected tool calls until a person approves or rejects them. Its optional model-based risk classifier can reduce unnecessary prompts. The classifier is still a model judgment, so it does not replace authorization.'
       ),
       paragraph(
-        'If every call to a tool must prompt, use an explicit tool rule. If a permission must never be overridable, enforce deterministic authorization such as a Cedar policy before the approval step.'
+        'If every call to a tool must prompt, negate its name with ',
+        code('allowed_tools=["!delete_files"]'),
+        ' in Python or ',
+        code("allowedTools: ['!delete_files']"),
+        ' in TypeScript. A negated tool always prompts and cannot be trusted. For permissions that approval must never override, add ',
+        link('Cedar Authorization', '/docs/user-guide/sdk/agents/interventions/cedar-authorization/'),
+        ' before Human in the Loop.'
       ),
     ],
   },
@@ -328,6 +353,13 @@ export function faqAnswerText(blocks: FaqBlock[]): string {
         : block.items.map((item) => faqInlineText(item)).join(' ')
     )
     .join('\n\n')
+}
+
+export function faqMarkdownHref(href: string): string {
+  const hashIndex = href.indexOf('#')
+  const path = hashIndex === -1 ? href : href.slice(0, hashIndex)
+  const hash = hashIndex === -1 ? '' : href.slice(hashIndex)
+  return `${path.replace(/\/$/, '')}/index.md${hash}`
 }
 
 export function faqInlineMarkdown(content: FaqInline[], resolveLink: (href: string) => string): string {

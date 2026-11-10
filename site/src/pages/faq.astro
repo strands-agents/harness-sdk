@@ -72,20 +72,17 @@ Astro.locals.structuredData = [
     </nav>
 
     {
-      groupedFaqs.map((category, categoryIndex) => (
+      groupedFaqs.map((category) => (
         <section class="faq-group" aria-labelledby={category.id}>
           <h2 id={category.id}>{category.label}</h2>
           <div class="faq-group__items">
-            {category.items.map((item, itemIndex) => (
-              <details class="faq-item" open={categoryIndex === 0 && itemIndex === 0}>
-                <summary>
-                  <h3 id={item.id}>{item.question}</h3>
-                  <span class="faq-item__toggle" aria-hidden="true" />
-                </summary>
+            {category.items.map((item) => (
+              <section class="faq-item" aria-labelledby={item.id}>
+                <h3 id={item.id}>{item.question}</h3>
                 <div class="faq-item__answer">
                   <FaqAnswer blocks={item.answer} />
                 </div>
-              </details>
+              </section>
             ))}
           </div>
         </section>
@@ -133,8 +130,7 @@ Astro.locals.structuredData = [
     color: var(--sl-color-text-accent);
   }
 
-  .faq-page__jump a:focus-visible,
-  .faq-item summary:focus-visible {
+  .faq-page__jump a:focus-visible {
     outline: 2px solid var(--sl-color-text-accent);
     outline-offset: 3px;
   }
@@ -145,6 +141,7 @@ Astro.locals.structuredData = [
 
   .faq-group > h2 {
     margin: 0 0 1rem;
+    scroll-margin-top: calc(var(--sl-nav-height) + 1.5rem);
     font-family: var(--sl-font-mono);
     font-size: var(--sl-text-h2);
     font-weight: 600;
@@ -156,76 +153,23 @@ Astro.locals.structuredData = [
   }
 
   .faq-item {
-    border-inline-start: 0;
     border-bottom: 1px solid var(--sl-color-hairline);
-    padding-inline-start: 0;
-  }
-
-  .faq-item summary {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) 1.5rem;
-    gap: 1.5rem;
-    align-items: center;
-    min-height: 4.75rem;
-    margin: 0;
-    padding: 1.1rem 0;
-    cursor: pointer;
-    list-style: none;
-    color: var(--sl-color-white);
-  }
-
-  .faq-item summary::before {
-    display: none;
-    content: none;
-  }
-
-  .faq-item summary::-webkit-details-marker {
-    display: none;
-  }
-
-  .faq-item summary:hover {
-    color: var(--sl-color-text-accent);
+    padding: 1.25rem 0 1.5rem;
   }
 
   .faq-item h3 {
     margin: 0;
+    scroll-margin-top: calc(var(--sl-nav-height) + 1.5rem);
     font-family: var(--sl-font);
     font-size: clamp(1.05rem, 2vw, 1.2rem);
     font-weight: 600;
     line-height: 1.4;
-    color: inherit;
-  }
-
-  .faq-item__toggle {
-    position: relative;
-    width: 1.1rem;
-    height: 1.1rem;
-  }
-
-  .faq-item__toggle::before,
-  .faq-item__toggle::after {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    width: 1rem;
-    height: 2px;
-    background: currentColor;
-    content: '';
-    transform: translate(-50%, -50%);
-  }
-
-  .faq-item__toggle::after {
-    transform: translate(-50%, -50%) rotate(90deg);
-    transition: transform 0.15s ease;
-  }
-
-  .faq-item[open] .faq-item__toggle::after {
-    transform: translate(-50%, -50%) rotate(0);
+    color: var(--sl-color-white);
   }
 
   .faq-item__answer {
     max-width: 50rem;
-    padding: 0 3rem 1.5rem 0;
+    margin-top: 0.75rem;
     color: var(--sl-color-gray-2);
   }
 
@@ -264,20 +208,6 @@ Astro.locals.structuredData = [
 
     .faq-group {
       margin-top: 3rem;
-    }
-
-    .faq-item summary {
-      gap: 1rem;
-    }
-
-    .faq-item__answer {
-      padding-right: 2rem;
-    }
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .faq-item__toggle::after {
-      transition: none;
     }
   }
 </style>

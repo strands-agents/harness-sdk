@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { parse } from 'node-html-parser'
 import { describe, expect, it } from 'vitest'
 
-import { faqItems, featuredFaqItems } from '../src/config/faq'
+import { faqCategories, faqItems, featuredFaqItems } from '../src/config/faq'
 
 function configuredPathWithBase(value: string): string {
   const base = (process.env.ASTRO_BASE_PATH ?? '/').replace(/\/$/, '')
@@ -18,7 +18,17 @@ describe('standalone FAQ page', () => {
   it('renders every curated question outside the docs sidebar', () => {
     expect(page.querySelectorAll('.faq-item')).toHaveLength(faqItems.length)
     expect(page.querySelectorAll('.faq-group')).toHaveLength(3)
+    expect(page.querySelectorAll('details.faq-item')).toHaveLength(0)
     expect(page.querySelector('.sidebar')).toBeNull()
+  })
+
+  it('provides visible targets for every table-of-contents link', () => {
+    for (const category of faqCategories) {
+      expect(page.querySelector(`#${category.id}`)).not.toBeNull()
+    }
+    for (const item of faqItems) {
+      expect(page.querySelector(`#${item.id}`)).not.toBeNull()
+    }
   })
 
   it('uses base-aware links to the supporting guides', () => {
