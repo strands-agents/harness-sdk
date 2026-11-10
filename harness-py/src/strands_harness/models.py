@@ -491,7 +491,7 @@ def resolve_model(
     raise. For a ``provider/name`` string, ``effort`` is validated against the provider (and Bedrock
     model family); ``caching`` on a provider without it raises when explicit (``caching_explicit``)
     and otherwise warns and builds without it. ``web_search`` turns on the model's native search and
-    is only passed for models that have one (``supports_web_search``).
+    is only passed for models that have one (``_web_search_kind`` is ``"native"``).
     """
     _check_effort(effort)
     if isinstance(model, (Model, ModelRouter)):

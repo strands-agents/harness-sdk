@@ -1,11 +1,12 @@
 """web_search: search the web and return the top results as numbered sources.
 
-The opt-in Exa tool (``builtin_tools={"web_search": "exa"}``), built whenever the setting selects it;
-a plain ``True`` on OpenAI, Anthropic, Gemini and Mantle GPT models is a model flag instead and this
-tool is not built (see ``agent.py``). It is backed by Exa's hosted MCP server, a third party that receives the
-queries; the keyless free tier covers getting started and ``EXA_API_KEY`` lifts the rate limit in
-place. The tool/backend split keeps the model-facing contract fixed while the search provider behind
-it can change.
+On Bedrock models the tool is backed by Amazon Bedrock AgentCore's ``InvokeWebSearch`` API, in the
+model's region and authorized by IAM. The opt-in Exa tool (``builtin_tools={"web_search": "exa"}``)
+serves it on any model from Exa's hosted MCP server, a third party that receives the queries; the
+keyless free tier covers getting started and ``EXA_API_KEY`` lifts the rate limit in place. On
+OpenAI, Anthropic, Gemini and Mantle GPT models a plain ``True`` is a model flag instead and no tool
+is built (see ``agent.py``). The tool/backend split keeps the model-facing contract fixed while the
+search provider behind it can change.
 """
 
 from __future__ import annotations
@@ -103,14 +104,18 @@ def _exa_backend(api_key: str | None = None) -> SearchBackend:
 
 def _agentcore_backend(region: str) -> SearchBackend:
     """Search backend over Amazon Bedrock AgentCore's ``InvokeWebSearch`` API in ``region``, authorized by IAM."""
-    client = boto3.Session().client("bedrock-agentcore", region_name=region)
+    clients: list[Any] = []  # built on first search, so constructing a harness stays cheap
 
     def call(query: str, max_results: int) -> list[SearchResult]:
+        if not clients:
+            clients.append(boto3.Session().client("bedrock-agentcore", region_name=region))
         try:
-            response = client.invoke_web_search(
+            response = clients[0].invoke_web_search(
                 webSearchId=_AGENTCORE_WEB_SEARCH_ID, searchQuery=query, maxResults=max_results
             )
         except ClientError as exc:
+            if exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode") == 404:
+                raise WebSearchError(f"AgentCore web search is not available in {region} ({exc})") from exc
             if exc.response.get("Error", {}).get("Code") != "AccessDeniedException":
                 raise
             resource = f"arn:aws:bedrock-agentcore:{region}:aws:tool/{_AGENTCORE_WEB_SEARCH_ID}"
@@ -119,9 +124,9 @@ def _agentcore_backend(region: str) -> SearchBackend:
             {
                 "title": result.get("title") or result.get("url", ""),
                 "url": result.get("url", ""),
-                "snippet": " ".join(result["text"].split())[:_SNIPPET_CHARS],
+                "snippet": " ".join(result.get("text", "").split())[:_SNIPPET_CHARS],
             }
-            for result in response["results"]
+            for result in response.get("results", [])
         ]
 
     async def search(query: str, max_results: int) -> list[SearchResult]:

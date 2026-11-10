@@ -444,7 +444,7 @@ function requireOrWarn(explicit: boolean, error: string, warning: string): void 
  * A passed-in `Model`/`ModelRouter` instance is used verbatim; `effort` and `caching` do not apply
  * to it. The harness warns once when one of them was requested explicitly and stays silent when they are
  * only on by default. `webSearch` turns on the model's native search and is only passed for models
- * that have one (`supportsWebSearch`).
+ * that have one (`webSearchKind` is `'native'`).
  *
  * @param model - A `Model` instance, a `"provider/name"` string, a bare Bedrock model id, or
  *   `undefined` to use `defaultModel`.

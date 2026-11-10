@@ -272,3 +272,9 @@ async def test_agentcore_web_search_passes_other_errors_through(agentcore):
     agentcore.add_client_error("invoke_web_search", "ThrottlingException", "slow down")
     out = await web_search_module.make_agentcore_web_search("us-west-2")._tool_func(query="q")
     assert out.startswith("web_search failed: ") and "slow down" in out and "InvokeWebSearch on" not in out
+
+
+async def test_agentcore_web_search_names_an_unsupported_region(agentcore):
+    agentcore.add_client_error("invoke_web_search", "404", "Invalid api path", http_status_code=404)
+    out = await web_search_module.make_agentcore_web_search("eu-central-1")._tool_func(query="q")
+    assert out.startswith("web_search failed: AgentCore web search is not available in eu-central-1")

@@ -270,6 +270,14 @@ describe('makeAgentCoreWebSearch', () => {
     )
   })
 
+  it('names an unsupported region when the service has no such path there', async () => {
+    vi.stubEnv('AWS_REGION', 'eu-central-1')
+    mockSend(Object.assign(new SyntaxError('Unexpected token'), { $response: { statusCode: 404 } }))
+    expect(await invoke(makeAgentCoreWebSearch(), { query: 'q' })).toBe(
+      'web_search failed: AgentCore web search is not available in eu-central-1 (Unexpected token)'
+    )
+  })
+
   it('passes other service errors through', async () => {
     vi.stubEnv('AWS_REGION', 'us-east-1')
     mockSend(new ThrottlingException({ message: 'slow down', $metadata: {} }))

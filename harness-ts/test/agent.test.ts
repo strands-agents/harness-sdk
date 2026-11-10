@@ -1031,6 +1031,14 @@ describe('subagent delegate (built child)', () => {
     expect((child.model.getConfig().params as { tools: unknown }).tools).toEqual([{ type: 'web_search' }])
   })
 
+  it('gives a narrowed delegate of a default bedrock parent AgentCore web search', async () => {
+    const spec = new AgentSpec('x')
+    spec.tools = ['read']
+    const child = await buildChild({}, spec)
+    expect(toolNames(child)).toContain('web_search')
+    expect(child.tools.find((t) => t.name === 'web_search')).not.toBe(exaWebSearch)
+  })
+
   it('carries the Exa fallback onto a narrowed delegate', async () => {
     const spec = new AgentSpec('x')
     spec.tools = ['read']

@@ -139,6 +139,10 @@ export function agentCoreBackend(): SearchBackend {
         new InvokeWebSearchCommand({ webSearchId: AGENTCORE_WEB_SEARCH_ID, searchQuery: query, maxResults })
       )
     } catch (err) {
+      if ((err as { $response?: { statusCode?: number } }).$response?.statusCode === 404) {
+        const reason = err instanceof Error ? err.message : String(err)
+        throw new WebSearchError(`AgentCore web search is not available in ${region} (${reason})`)
+      }
       if (!(err instanceof Error) || err.name !== 'AccessDeniedException') {
         throw err
       }
