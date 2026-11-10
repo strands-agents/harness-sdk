@@ -360,6 +360,14 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
   const startupExitTask = new Promise<number>((resolve) => {
     resolveStartupExit = resolve
   })
+  const discardInputBeforeFirstFrame = (chunk: Buffer | string): void => {
+    if (chunk.toString().includes('\u0003')) closeForExit(130)
+  }
+  const stopDiscardingInput = (): void => {
+    if (!terminalTheme.input.listeners('data').includes(discardInputBeforeFirstFrame)) return
+    terminalTheme.input.off('data', discardInputBeforeFirstFrame)
+    terminalTheme.input.pause()
+  }
   const closeForExit = (exitCode: number): void => {
     pendingExitCode ??= exitCode
     if (!startupAbort.signal.aborted) {
@@ -441,6 +449,7 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
     process.off('exit', onProcessExit)
     process.off('uncaughtExceptionMonitor', onProcessExit)
     clearTimeout(startupStatusReveal)
+    stopDiscardingInput()
     for (const restore of [
       (): void => instance?.unmount(),
       (): void => instance?.cleanup(),
@@ -480,9 +489,11 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
       watchTerminalTitle(controller)
     }
     if (!options.prepare && (controller || controllerFactory || options.setup)) renderChat()
+    if (options.prepare) terminalTheme.input.on('data', discardInputBeforeFirstFrame)
     const showStartup = (): void => {
       clearTimeout(startupStatusReveal)
       startupStatusReveal = undefined
+      if (!instance) stopDiscardingInput()
       renderChat()
     }
     const screen: StartupScreen = {

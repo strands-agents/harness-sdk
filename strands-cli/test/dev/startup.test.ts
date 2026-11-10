@@ -1,5 +1,5 @@
-import { createElement } from 'react'
-import { Text } from 'ink'
+import { createElement, type ReactElement } from 'react'
+import { Text, useInput } from 'ink'
 import { describe, expect, it, vi } from 'vitest'
 import { runInkChat } from '../../src/ui/run.js'
 import { sanitizeTerminalText } from '../../src/terminal/text.js'
@@ -40,7 +40,7 @@ describe('dev startup screen', () => {
       renderApp,
       ...(prepare ? { prepare } : {}),
     })
-    return { frames, renderApp, factory, running }
+    return { input, frames, renderApp, factory, running }
   }
 
   it('shouldOpenTheScreenWithTheFirstStartupCardAndKeepOneRenderer', async () => {
@@ -50,7 +50,7 @@ describe('dev startup screen', () => {
     })
     const { frames, renderApp, factory, running } = startupRun(async (screen) => {
       await new Promise((resolve) => setTimeout(resolve, 50))
-      screen.show(createElement(Text, {}, 'Harness selection inside the TUI'), 'Select a harness')
+      screen.show(createElement(Text, {}, 'Harness selection inside the TUI'))
       await ready
       return false
     })
@@ -91,6 +91,86 @@ describe('dev startup screen', () => {
       release()
       expect(await running).toBe(0)
     }
+  })
+
+  it('shouldSkipTheStatusWhenTheFirstCardArrivesWithinTheStatusDelay', async () => {
+    let release: () => void = () => undefined
+    const ready = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const { frames, running } = startupRun(async (screen) => {
+      screen.show(undefined, 'Discovering local harnesses…')
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      screen.show(createElement(Text, {}, 'Harness selection inside the TUI'))
+      await ready
+      return false
+    })
+    try {
+      await vi.waitFor(() => expect(frames.join('\n')).toContain('Harness selection inside the TUI'))
+      await new Promise((resolve) => setTimeout(resolve, 400))
+
+      expect(frames[0]).toContain('Harness selection inside the TUI')
+      expect(frames.join('\n')).not.toContain('Discovering local harnesses…')
+    } finally {
+      release()
+      expect(await running).toBe(0)
+    }
+  })
+
+  it('shouldNotOpenTheScreenWhenStartupEndsBeforeTheStatusDelay', async () => {
+    const { frames, renderApp, running } = startupRun(async (screen) => {
+      screen.show(undefined, 'Discovering local harnesses…')
+      return false
+    })
+
+    expect(await running).toBe(0)
+    await new Promise((resolve) => setTimeout(resolve, 400))
+    expect(renderApp).not.toHaveBeenCalled()
+    expect(frames).toEqual([])
+  })
+
+  it('shouldDiscardKeysPressedBeforeTheFirstCardAppears', async () => {
+    const received: string[] = []
+    const KeyProbe = (): ReactElement => {
+      useInput((value, key) => {
+        received.push(key.return ? 'return' : value)
+      })
+      return createElement(Text, {}, 'Key probe card')
+    }
+    let release: () => void = () => undefined
+    const ready = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const { input, frames, running } = startupRun(async (screen) => {
+      input.write('\r')
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      screen.show(createElement(KeyProbe))
+      await ready
+      return false
+    })
+    try {
+      await vi.waitFor(() => expect(frames.join('\n')).toContain('Key probe card'))
+      await new Promise((resolve) => setTimeout(resolve, 200))
+      expect(received).toEqual([])
+
+      input.write('x')
+
+      await vi.waitFor(() => expect(received).toEqual(['x']))
+    } finally {
+      release()
+      expect(await running).toBe(0)
+    }
+  })
+
+  it('shouldExitWhenControlCIsPressedBeforeTheFirstCardAppears', async () => {
+    const { input, renderApp, running } = startupRun(async (screen) => {
+      input.write('\u0003')
+      await new Promise<void>((resolve) => screen.signal.addEventListener('abort', () => resolve(), { once: true }))
+      return false
+    })
+
+    expect(await running).toBe(130)
+    expect(renderApp).not.toHaveBeenCalled()
   })
 
   it('shouldKeepThePickerOpenWhenCreationFailsThenAllowRetry', async () => {
