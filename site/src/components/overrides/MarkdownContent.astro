@@ -32,9 +32,7 @@ const coversAllLanguages = ALL_SDK_LANGUAGES.every((l) => langArray.includes(l))
     )
   }
   {community && <CommunityContributionAside />}
-  {/* Language support aside is omitted for community pages — the CommunityContributionAside already
-      contextualizes the page, and language support is listed in the community catalog table instead. */}
-  {languages && !community && !coversAllLanguages && <LanguageSupportAside languages={languages} />}
+  {languages && !coversAllLanguages && <LanguageSupportAside languages={languages} />}
   <slot />
   <PageTags />
 </div>

@@ -2367,7 +2367,7 @@ async def test_stream_output_guardrails(bedrock_client, alist, messages):
 
 @pytest.mark.asyncio
 async def test_stream_output_guardrails_redacts_output(bedrock_client, alist, messages):
-    """Test stream method with streaming=False."""
+    """Test that output redaction is emitted for a blocked guardrail with streaming=False."""
     bedrock_client.converse.return_value = {
         "output": {"message": {"role": "assistant", "content": [{"text": "test"}]}},
         "trace": {
@@ -2384,7 +2384,7 @@ async def test_stream_output_guardrails_redacts_output(bedrock_client, alist, me
         "stopReason": "end_turn",
     }
 
-    model = BedrockModel(model_id="test-model", streaming=False)
+    model = BedrockModel(model_id="test-model", streaming=False, guardrail_redact_output=True)
     response = model.stream(messages)
 
     tru_events = await alist(response)
@@ -2411,6 +2411,7 @@ async def test_stream_output_guardrails_redacts_output(bedrock_client, alist, me
             }
         },
         {"redactContent": {"redactUserContentMessage": "[User input redacted.]"}},
+        {"redactContent": {"redactAssistantContentMessage": "[Assistant output redacted.]"}},
     ]
     assert tru_events == exp_events
 

@@ -28,7 +28,8 @@ export class ModelProxy {
 
   /**
    * Delegates to the wrapped model's `streamAggregated` with the messages the model accepts,
-   * passing every event through unchanged, then adds the call's usage to the request.
+   * passing every event through unchanged, then adds the call's usage to the request. A model without
+   * `serverSideSummary` gets each summary block's text instead of the block.
    *
    * @param messages - The conversation history to send to the model
    * @param options - Optional streaming configuration
@@ -63,10 +64,26 @@ export class ModelProxy {
   }
 
   private _prepare(messages: Message[]): RenderedMessages {
+    messages = this._withSummaryText(messages)
     if (!messages.some(hasInjectedBlock) || this._model.modelInfo.capabilities?.temporaryMessages === true) {
       return { messages, dynamicTrailingBlocks: 0 }
     }
     return renderInjectedBlocks(messages)
+  }
+
+  /** Replaces summary blocks with their text, since only a provider with server-side summaries reads them. */
+  private _withSummaryText(messages: Message[]): Message[] {
+    const hasSummary = messages.some((message) => message.content.some((block) => block.type === 'summaryBlock'))
+    if (!hasSummary || this._model.modelInfo.capabilities?.serverSideSummary === true) return messages
+    return messages.map(
+      (message) =>
+        new Message({
+          role: message.role,
+          content: message.content.map((block) => (block.type === 'summaryBlock' ? new TextBlock(block.text) : block)),
+          trackingId: message.trackingId,
+          ...(message.metadata !== undefined && { metadata: message.metadata }),
+        })
+    )
   }
 
   /** Adds a completed call's reported usage to the request. */

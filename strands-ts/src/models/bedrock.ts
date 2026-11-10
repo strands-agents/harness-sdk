@@ -1650,6 +1650,8 @@ export class BedrockModel extends Model<BedrockModelConfig> {
         // turns temporaryMessages on gets here.
         warnOnce(logger, 'block_type=<injectedBlock> | bedrock does not send injected blocks | skipping it')
         return undefined
+      case 'summaryBlock':
+        throw new Error(`content_type=<${block.type}> | unsupported type`)
     }
   }
 
