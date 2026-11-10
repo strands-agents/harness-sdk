@@ -8,6 +8,7 @@ import { EditableText } from '../ui/text-input.js'
 import type { DiscoveredHarness } from './search.js'
 import { useTerminalSize } from '../ui/terminal-size.js'
 import { useCopyableError } from '../ui/clipboard.js'
+import { useStartupContentRows } from '../ui/startup.js'
 import { userConfigPath } from '../config/store.js'
 import { devFailure } from './errors.js'
 
@@ -38,6 +39,23 @@ interface PickerRow {
 }
 
 const FOLDER_LABEL = 'Workspace folder: '
+const MAX_VISIBLE_ROWS = 7
+const SOURCE_DETAIL_HEIGHT = 3
+
+const windowHeight = (rows: readonly PickerRow[], count: number): number =>
+  Math.max(
+    ...Array.from(
+      { length: rows.length - count + 1 },
+      (_, start) => count + 2 * new Set(rows.slice(start, start + count).map(({ group }) => group)).size - 1
+    )
+  )
+
+const visibleCapacity = (rows: readonly PickerRow[], listRows: number): number => {
+  const most = Math.min(MAX_VISIBLE_ROWS, rows.length)
+  return (
+    Array.from({ length: most }, (_, index) => most - index).find((count) => windowHeight(rows, count) <= listRows) ?? 1
+  )
+}
 
 type FormField = 'name' | 'language'
 
@@ -58,7 +76,8 @@ export const HarnessPicker = ({ cli, harnesses, warning, workspace, onSelect }: 
   const pending = useRef(false)
   const asksFolder = workspace !== undefined
   const { accent, error: errorColor, warning: warningColor, selection: selectionColor, border } = useTheme()
-  const { rows: height, columns } = useTerminalSize()
+  const { columns } = useTerminalSize()
+  const availableRows = useStartupContentRows()
   const rows: PickerRow[] = [
     ...(cli
       ? [
@@ -155,16 +174,12 @@ export const HarnessPicker = ({ cli, harnesses, warning, workspace, onSelect }: 
   const detailWidth = Math.max(1, columns - 12)
   const lineCount = (text: string): number => wrapLines(text, detailWidth).length
   const notice = warning ? sanitizeTerminalText(warning) : undefined
-  const capacity = Math.max(1, Math.min(7, height - 26 - (notice ? lineCount(notice) + 1 : 0)))
-  const start = Math.min(Math.max(0, selection - capacity + 1), Math.max(0, rows.length - capacity))
-  const visible = rows.slice(start, start + capacity)
   const selected = rows[selection]!
   const globalNotice = 'Manual import applies these changes globally to plain strands.'
   const localNotice = 'Until then, development changes stay in this local workspace.'
   const projectNotice = 'Local project only. Your CLI default stays unchanged.'
-  const showsFolder = asksFolder && height >= 30
-  const detailHeight =
-    3 + (cli ? Number(showsFolder) + lineCount(globalNotice) + lineCount(localNotice) : lineCount(projectNotice))
+  const detailNoteRows = (showsFolder: boolean): number =>
+    cli ? Number(showsFolder) + lineCount(globalNotice) + lineCount(localNotice) : lineCount(projectNotice)
   const step = placing ? 'folder' : creating ? 'name' : 'list'
   const next = asksFolder ? 'continue' : { list: 'open', name: 'create', folder: 'open' }[step]
   const screens = {
@@ -188,6 +203,26 @@ export const HarnessPicker = ({ cli, harnesses, warning, workspace, onSelect }: 
   const hint = busy
     ? 'Preparing workspace… · Esc cancel'
     : [screens[step].hint, failureCopyHint, `Esc ${step === 'folder' ? 'back' : 'cancel'}`].filter(Boolean).join(' · ')
+  const listRows =
+    availableRows -
+    2 -
+    (notice ? lineCount(notice) + 1 : 0) -
+    (failure ? lineCount(failure) : 0) -
+    1 -
+    lineCount(hint) -
+    1 -
+    SOURCE_DETAIL_HEIGHT
+  const capacity = visibleCapacity(rows, listRows)
+  const listHeight = windowHeight(rows, capacity)
+  const start = Math.min(Math.max(0, selection - capacity + 1), Math.max(0, rows.length - capacity))
+  const visible = rows.slice(start, start + capacity)
+  const detailNotes =
+    capacity === Math.min(MAX_VISIBLE_ROWS, rows.length)
+      ? (asksFolder ? [true, false] : [false])
+          .map((showsFolder) => ({ showsFolder, rows: detailNoteRows(showsFolder) }))
+          .find(({ rows: needed }) => needed <= listRows - listHeight)
+      : undefined
+  const detailHeight = SOURCE_DETAIL_HEIGHT + (detailNotes?.rows ?? 0)
   return (
     <Box flexDirection="column">
       <Box marginBottom={1} justifyContent="space-between">
@@ -230,29 +265,31 @@ export const HarnessPicker = ({ cli, harnesses, warning, workspace, onSelect }: 
         </Box>
       ) : (
         <>
-          {visible.map((row, index) => (
-            <Box key={start + index} flexDirection="column">
-              {index === 0 || visible[index - 1]?.group !== row.group ? (
-                <Box marginTop={index === 0 ? 0 : 1}>
-                  <Text dimColor>{row.group}</Text>
-                </Box>
-              ) : null}
-              <Box
-                paddingX={1}
-                justifyContent="space-between"
-                {...(start + index === selection ? { backgroundColor: selectionColor } : {})}
-              >
-                <Text
-                  bold={start + index === selection}
-                  {...(start + index === selection ? { color: accent } : {})}
-                  wrap="truncate-end"
+          <Box flexDirection="column" height={listHeight} flexShrink={0}>
+            {visible.map((row, index) => (
+              <Box key={start + index} flexDirection="column">
+                {index === 0 || visible[index - 1]?.group !== row.group ? (
+                  <Box marginTop={index === 0 ? 0 : 1}>
+                    <Text dimColor>{row.group}</Text>
+                  </Box>
+                ) : null}
+                <Box
+                  paddingX={1}
+                  justifyContent="space-between"
+                  {...(start + index === selection ? { backgroundColor: selectionColor } : {})}
                 >
-                  {start + index === selection ? '›' : ' '} {row.label}
-                </Text>
-                {row.language ? <Text dimColor> {row.language}</Text> : null}
+                  <Text
+                    bold={start + index === selection}
+                    {...(start + index === selection ? { color: accent } : {})}
+                    wrap="truncate-end"
+                  >
+                    {start + index === selection ? '›' : ' '} {row.label}
+                  </Text>
+                  {row.language ? <Text dimColor> {row.language}</Text> : null}
+                </Box>
               </Box>
-            </Box>
-          ))}
+            ))}
+          </Box>
           <Box
             flexDirection="column"
             borderStyle="single"
@@ -268,9 +305,9 @@ export const HarnessPicker = ({ cli, harnesses, warning, workspace, onSelect }: 
             <Text dimColor wrap="truncate-middle">
               {selected.choice ? `Source: ${selected.detail}` : selected.detail}
             </Text>
-            {selected.choice?.kind === 'cli' ? (
+            {detailNotes && selected.choice?.kind === 'cli' ? (
               <>
-                {showsFolder ? (
+                {detailNotes.showsFolder ? (
                   <Text dimColor wrap="truncate-middle">
                     Workspace: {sanitizeTerminalText(folder.value)}
                   </Text>
@@ -278,7 +315,7 @@ export const HarnessPicker = ({ cli, harnesses, warning, workspace, onSelect }: 
                 <Text>{globalNotice}</Text>
                 <Text dimColor>{localNotice}</Text>
               </>
-            ) : selected.choice ? (
+            ) : detailNotes && selected.choice ? (
               <Text dimColor>{projectNotice}</Text>
             ) : null}
           </Box>

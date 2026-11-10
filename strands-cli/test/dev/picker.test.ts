@@ -3,6 +3,7 @@ import { Box } from 'ink'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { HarnessPicker } from '../../src/dev/picker.js'
 import * as terminal from '../../src/terminal/terminal.js'
+import { StartupContentRows } from '../../src/ui/startup.js'
 import { captureFrame, render, ttyInput, ttyOutput } from '../fixtures/terminal.js'
 
 const harness = {
@@ -52,7 +53,7 @@ describe('HarnessPicker', () => {
 
   it('shouldKeepEveryChoiceReachableWhenTheTerminalIsSmall', async () => {
     const input = ttyInput()
-    const output = ttyOutput(60, 20)
+    const output = ttyOutput(60, 10)
     const frame = captureFrame(output)
     const selected = vi.fn()
     render(
@@ -392,5 +393,42 @@ describe('HarnessPicker', () => {
     expect(copied).toContain('Workspace could not open.')
     expect(copied).toContain(reason.trim())
     await vi.waitFor(() => expect(frame().join('\n')).toContain(`${copied.length} chars copied to clipboard`))
+  })
+
+  const renderWithRows = (rows: number, warning?: string): (() => string[]) => {
+    const output = ttyOutput(120, 50)
+    const frame = captureFrame(output)
+    render(
+      createElement(
+        StartupContentRows,
+        { value: rows },
+        createElement(HarnessPicker, {
+          cli: { name: 'Saved profile', path: '/home/test/.strands/cli.toml' },
+          harnesses: [harness, { ...harness, name: 'Other harness' }],
+          ...(warning ? { warning } : {}),
+          onSelect: vi.fn(),
+        })
+      ),
+      { stdin: ttyInput(), stdout: output }
+    )
+    return frame
+  }
+
+  it.each([12, 16, 24])('shouldFitTheRowsTheStartupScreenGivesItWhenThereAre%sRows', async (rows) => {
+    const frame = renderWithRows(rows, 'Selecting a new agent deletes your current agent in strands dev.')
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('Esc cancel'))
+
+    expect(frame().length).toBeLessThanOrEqual(rows)
+    expect(frame().join('\n')).toContain('Source: /home/test/.strands/cli.toml')
+  })
+
+  it.each([
+    [14, false],
+    [40, true],
+  ])('shouldShowTheDetailNotesOnlyWhenEveryChoiceFitsAt%sRows', async (rows, notesVisible) => {
+    const frame = renderWithRows(rows)
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('Esc cancel'))
+
+    expect(frame().join('\n').includes('Manual import applies')).toBe(notesVisible)
   })
 })

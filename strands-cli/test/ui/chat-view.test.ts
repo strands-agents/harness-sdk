@@ -1,12 +1,13 @@
 import chalk from 'chalk'
 import { createElement, type ReactElement } from 'react'
-import { renderToString } from 'ink'
+import { Box, Text, renderToString } from 'ink'
 import stringWidth from 'string-width'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { snapshot } from '../fixtures/chat-snapshot.js'
 import { render, ttyOutput } from '../fixtures/terminal.js'
 
 import { ChatView } from '../../src/ui/chat/view.js'
+import { useStartupContentRows } from '../../src/ui/startup.js'
 import { TurnView } from '../../src/ui/chat/transcript-turn.js'
 import { Markdown } from '../../src/ui/markdown.js'
 import {
@@ -3022,6 +3023,67 @@ describe('ChatView', () => {
       expect(error).not.toContain('Viewing')
       expect(error).not.toContain('Esc to dismiss')
     }
+  })
+
+  const startupFrame = (terminalHeight: number): string[] =>
+    sanitizeTerminalText(
+      renderView(
+        {
+          snapshot: snapshot(),
+          terminalWidth: 120,
+          terminalHeight,
+          startupContent: createElement(Box, { height: 20 }, createElement(Text, {}, 'Startup choice')),
+        },
+        { columns: 120 }
+      )
+    ).split('\n')
+  const brandRows = 18
+
+  it.each([
+    [50, 4],
+    [70, 14],
+  ])('shouldSpaceStartupContentEvenlyBelowTheBrandWhenTheTerminalHas%sRows', (terminalHeight, gap) => {
+    const frame = startupFrame(terminalHeight)
+    const top = frame.findIndex((line) => line.includes('╭'))
+    const bottom = frame.findIndex((line) => line.includes('╰'))
+
+    expect(top - brandRows).toBe(gap)
+    expect(frame.length - 1 - bottom).toBe(gap)
+    expect(frame.join('\n')).not.toContain('/settings')
+  })
+
+  const StartupRowsProbe = (): ReactElement =>
+    createElement(Box, { height: useStartupContentRows() }, createElement(Text, {}, 'Startup rows'))
+
+  it.each([
+    [34, 10],
+    [40, 19],
+    [60, 19],
+  ])('shouldKeepStartupContentBelowTheBrandWhenItFillsItsRowsAt%sRows', (terminalHeight, top) => {
+    const frame = sanitizeTerminalText(
+      renderView(
+        {
+          snapshot: snapshot(),
+          terminalWidth: 120,
+          terminalHeight,
+          startupContent: createElement(StartupRowsProbe),
+        },
+        { columns: 120 }
+      )
+    ).split('\n')
+    const bottom = frame.findIndex((line) => line.includes('╰'))
+
+    expect(frame.findIndex((line) => line.includes('╭'))).toBe(top)
+    expect(frame.length - 1 - bottom).toBe(1)
+  })
+
+  it('shouldKeepStartupContentOneRowAboveTheBottomWhenTheBrandAnimationLeavesNoRoom', () => {
+    const frame = startupFrame(30)
+    const bottom = frame.findIndex((line) => line.includes('╰'))
+
+    expect(frame).toHaveLength(30)
+    expect(frame.length - 1 - bottom).toBe(1)
+    expect(frame.join('\n')).toContain('Startup choice')
   })
 })
 

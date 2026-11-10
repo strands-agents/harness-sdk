@@ -7,6 +7,8 @@ import { CliConfigStore } from '../../src/config/store.js'
 import { chooseHarness } from '../../src/dev/picker.js'
 import type { DevWorkspace } from '../../src/dev/workspace.js'
 
+const STRANDS_WORDMARK = /STRANDS|▄▟[ █]{3}▙▄|█▀▀ ▀█▀ █▀█ ▄▀█ █▄ █ █▀▄ █▀▀|▀▀ ▀ ▀ {2}▀ {2}▄▀ {3}▄ {4}▀▄ {2}▀▀/
+
 type RenderApp = NonNullable<NonNullable<Parameters<typeof runInkChat>[1]>['renderApp']>
 
 const workspace: DevWorkspace = {
@@ -50,7 +52,8 @@ describe('dev startup screen', () => {
       await vi.waitFor(() => expect(frames().join('\n')).toContain('Harness selection inside the TUI'))
       expect(events.indexOf('screen')).toBeLessThan(events.indexOf('prepare'))
       expect(renderApp).toHaveBeenCalledOnce()
-      expect(frames().join('\n')).toContain('/settings')
+      expect(frames().join('\n')).toMatch(STRANDS_WORDMARK)
+      expect(frames().join('\n')).not.toContain('/settings')
       expect(factory).not.toHaveBeenCalled()
     } finally {
       release()
