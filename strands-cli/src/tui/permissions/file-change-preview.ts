@@ -40,7 +40,11 @@ export async function buildFileChangePreview(event: BeforeToolCallEvent): Promis
     if (before === undefined || !oldText || before.split(oldText).length !== 2) {
       return undefined
     }
-    return createDiffPreview(path, before, before.replace(oldText, newText))
+    return createDiffPreview(
+      path,
+      before,
+      before.replace(oldText, () => newText)
+    )
   }
 
   return undefined
