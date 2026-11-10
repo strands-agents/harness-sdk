@@ -415,12 +415,13 @@ class Model(abc.ABC):
         """Summarize ``messages``.
 
         ``messages`` is a request as the caller would send it to :meth:`stream`, along with its ``tool_specs`` and
-        system prompt. The base implementation sends that request with ``instructions`` (or a default instruction)
-        closing it, and otherwise as given, so a caller that replays its own conversation can share its prompt cache.
+        system prompt. The base implementation sends that request closed by an instruction not to act on it or call
+        tools, followed by ``instructions`` (or default ones), and otherwise as given, so a caller that replays its
+        own conversation can share its prompt cache.
         The summary is the reply's text, including a reply cut off at the output limit. A reply that ends for another
         reason, such as a tool call, a cancellation or a guardrail, or that holds no text, gives an empty result.
 
-        Every summary is a ``summary`` block. The base implementation leaves its ``provider`` unset. A provider that
+        Every summary is a ``summary`` block. The base implementation sets its ``provider`` to ``None``. A provider that
         reports ``model_info.capabilities.server_side_summary`` as True overrides this method to summarize
         server-side and sets ``provider`` to its own name, using the base implementation when the capability is off
         or the server-side summary fails, as ``AnthropicModel`` does. A summary with a ``provider`` can stand in for
@@ -432,7 +433,8 @@ class Model(abc.ABC):
             tool_specs: The request's tool specifications.
             system_prompt: The request's plain string system prompt. Ignored if system_prompt_content is provided.
             system_prompt_content: The request's structured system prompt. Takes priority over system_prompt.
-            instructions: Summarization instructions replacing the default ones, which ``None`` or ``""`` keeps.
+            instructions: Summarization instructions replacing the default ones, which ``None`` or ``""`` keeps. The
+                base implementation's instruction not to act on the request or call tools is always sent.
             cancel_signal: Event that aborts the call.
             **kwargs: Additional keyword arguments for future extensibility.
 

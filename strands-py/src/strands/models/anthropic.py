@@ -1361,8 +1361,9 @@ class AnthropicModel(Model):
         live conversation stays valid. The returned compaction block is stored as a ``summary`` block holding its
         text and signature; later requests from a model with ``server_side_summary`` rebuild the compaction block
         from it and start from it, and requests without it send the summary text. Uses the base
-        :meth:`Model.summarize` when ``model_info.capabilities.server_side_summary`` is not True, when the API
-        rejects the compaction request, or when the response holds no compaction block.
+        :meth:`Model.summarize` when ``model_info.capabilities.server_side_summary`` is not True, when the compaction
+        request fails with an API error (a rejection, an overload, a timeout or a connection error), or when the
+        response holds no compaction block.
 
         Args:
             messages: The request to summarize, left unmodified.
@@ -1389,9 +1390,9 @@ class AnthropicModel(Model):
 
         try:
             result = await self._compact(messages, tool_specs, system_prompt, system_prompt_content, instructions)
-        except anthropic.BadRequestError as error:
+        except anthropic.APIError as error:
             logger.warning(
-                "model_id=<%s>, error=<%s> | compaction request rejected | summarizing client-side",
+                "model_id=<%s>, error=<%s> | compaction request failed | summarizing client-side",
                 self.config["model_id"],
                 error,
             )

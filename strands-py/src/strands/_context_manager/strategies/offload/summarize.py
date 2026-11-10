@@ -79,6 +79,19 @@ def _end_of(messages: list[Message], safe: list[Message]) -> int:
     return max(index for index, message in enumerate(messages) if id(message) in safe_ids) + 1
 
 
+def _batch_request(messages: list[Message], safe: list[Message]) -> Messages:
+    """Return the conversation a batch summary sends, which holds only message 0 and the messages it replaces.
+
+    When ``safe`` is every message after message 0 up to its last one, that is the history prefix as the agent sent
+    it. ``safe`` keeps the history's order, so comparing it with the messages after message 0 finds that case.
+    """
+    if all(kept is replaced for kept, replaced in zip(messages[1:], safe, strict=False)):
+        return messages[: len(safe) + 1]
+    request = [messages[0], *safe]
+    _repair_alternation(request)
+    return request
+
+
 def _pinned_before(messages: list[Message], end: int) -> list[Message]:
     return [message for index, message in enumerate(messages[1:end], start=1) if is_pinned(messages, index)]
 
@@ -291,14 +304,16 @@ class SummarizeStrategy(BaseOffloadStrategy):
         return True
 
     async def _summarize_batch(self, context: ContextState, model: Model, safe: list[Message]) -> str:
-        """Return a client-side summary of the history up to the last of ``safe``, or "" when it failed.
+        """Return a client-side summary of ``safe``, or "" when it failed.
 
-        The history prefix is replayed as the agent sent it. Reasoning is left out for a model other than the agent's,
-        since its signatures are bound to the model that wrote it.
+        When ``safe`` is the whole history after message 0 up to its last message, that prefix is replayed as the
+        agent sent it, so the summary can share the agent's prompt cache. Otherwise message 0 and ``safe`` are sent
+        alone, so messages that stay in the history are not summarized too. Reasoning is left out for a model other
+        than the agent's, since its signatures are bound to the model that wrote it.
         """
-        messages = context.messages
-        end = _end_of(messages, safe)
-        request = messages[:end] if model is context.agent.model else _without_reasoning(messages[:end])
+        request = _batch_request(context.messages, safe)
+        if model is not context.agent.model:
+            request = _without_reasoning(request)
         try:
             return await self._summarize_text(model, context.agent, request, context.invocation_context, replay=True)
         except Exception as error:

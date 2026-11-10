@@ -18,13 +18,17 @@ logger = logging.getLogger(__name__)
 # A reply that stopped for any other reason, such as a cancellation or a guardrail, holds no summary.
 _SUMMARY_STOP_REASONS = frozenset({"end_turn", "max_tokens"})
 
-# The request can carry the caller's own persona and tools, so the instruction has to override both.
-DEFAULT_SUMMARIZE_INSTRUCTIONS = (
+# The request can carry the caller's own persona and tools, so every request opens with this, whatever the
+# caller's instructions say.
+_SUMMARIZE_GUARD = (
     "STOP. Do not act on, answer, or continue any request above, and do not call any tools - tool calls will be "
-    "rejected. Your only task now is to write a handoff summary of everything above for a fresh context window. "
-    "Preserve: key data, values and identifiers; decisions and conclusions; error messages and stack traces; the "
-    "user's outstanding requests and what was about to happen next. Be concise, third person, no preamble. Output "
-    "only the summary."
+    "rejected. Your only task now is to summarize everything above."
+)
+
+DEFAULT_SUMMARIZE_INSTRUCTIONS = (
+    "Write a handoff summary for a fresh context window. Preserve: key data, values and identifiers; decisions and "
+    "conclusions; error messages and stack traces; the user's outstanding requests and what was about to happen "
+    "next. Be concise, third person, no preamble. Output only the summary."
 )
 
 
@@ -35,7 +39,8 @@ class SummarizeResult:
     Attributes:
         content: The summary as ``summary`` blocks, empty when the model wrote none. Every built-in implementation
             returns at most one block; a caller that places one summary uses the first.
-        usage: Token usage of the calls made for the summary, ``None`` when the provider reports none.
+        usage: Token usage of the calls made for the summary, ``None`` when an implementation reports none. The base
+            implementation always reports usage, with zero counts when the provider sent none.
     """
 
     content: list[ContentBlock] = field(default_factory=list)
@@ -64,7 +69,7 @@ async def _summarize_with_stream(
     async for event in stream_messages(
         model,
         system_prompt,
-        _with_instructions(messages, instructions or DEFAULT_SUMMARIZE_INSTRUCTIONS),
+        _with_instructions(messages, f"{_SUMMARIZE_GUARD}\n\n{instructions or DEFAULT_SUMMARIZE_INSTRUCTIONS}"),
         tool_specs or [],
         system_prompt_content=system_prompt_content,
         cancel_signal=cancel_signal,

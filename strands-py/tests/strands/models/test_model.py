@@ -12,7 +12,7 @@ from strands.hooks.events import AfterInvocationEvent
 from strands.models import CacheConfig, ModelCapabilities, ModelInfo, ModelLimits, SummarizeResult
 from strands.models import Model as SAModel
 from strands.models._model_info import lookup_model_info
-from strands.models._summarize import DEFAULT_SUMMARIZE_INSTRUCTIONS
+from strands.models._summarize import _SUMMARIZE_GUARD, DEFAULT_SUMMARIZE_INSTRUCTIONS
 from strands.models.model import _estimate_tokens_with_heuristic, _ModelPlugin
 
 
@@ -855,7 +855,7 @@ async def test_summarize_base_replays_the_request_with_the_instructions_closing_
     [call] = model.calls
     assert call["messages"] == [
         *HISTORY[:2],
-        {"role": "user", "content": [*HISTORY[2]["content"], {"text": "Summarize briefly."}]},
+        {"role": "user", "content": [*HISTORY[2]["content"], {"text": f"{_SUMMARIZE_GUARD}\n\nSummarize briefly."}]},
     ]
     assert call["tool_specs"] == tool_specs
     assert call["system_prompt"] == "live prompt"
@@ -871,7 +871,10 @@ async def test_summarize_base_adds_a_user_turn_after_an_assistant_turn():
 
     await model.summarize(HISTORY[:2], instructions="Summarize briefly.")
 
-    assert model.calls[0]["messages"] == [*HISTORY[:2], {"role": "user", "content": [{"text": "Summarize briefly."}]}]
+    assert model.calls[0]["messages"] == [
+        *HISTORY[:2],
+        {"role": "user", "content": [{"text": f"{_SUMMARIZE_GUARD}\n\nSummarize briefly."}]},
+    ]
 
 
 @pytest.mark.asyncio
@@ -883,7 +886,9 @@ async def test_summarize_base_sends_no_system_prompt_and_the_default_instruction
 
     assert model.calls[0]["system_prompt"] is None
     assert model.calls[0]["system_prompt_content"] is None
-    assert model.calls[0]["messages"][-1]["content"][-1] == {"text": DEFAULT_SUMMARIZE_INSTRUCTIONS}
+    assert model.calls[0]["messages"][-1]["content"][-1] == {
+        "text": f"{_SUMMARIZE_GUARD}\n\n{DEFAULT_SUMMARIZE_INSTRUCTIONS}"
+    }
 
 
 @pytest.mark.asyncio

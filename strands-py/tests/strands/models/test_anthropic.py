@@ -3416,14 +3416,26 @@ async def test_summarize_uses_the_base_implementation_without_a_compaction_block
 
 
 @pytest.mark.asyncio
-async def test_summarize_uses_the_base_implementation_when_compaction_is_rejected(anthropic_client, caplog):
+@pytest.mark.parametrize(
+    "error",
+    [
+        pytest.param(
+            anthropic.BadRequestError(
+                "does not support the compaction strategy", response=unittest.mock.Mock(status_code=400), body=None
+            ),
+            id="rejected",
+        ),
+        pytest.param(
+            anthropic.InternalServerError("overloaded", response=unittest.mock.Mock(status_code=529), body=None),
+            id="overloaded",
+        ),
+        pytest.param(anthropic.APITimeoutError(request=unittest.mock.Mock()), id="timeout"),
+        pytest.param(anthropic.APIConnectionError(request=unittest.mock.Mock()), id="connection"),
+    ],
+)
+async def test_summarize_uses_the_base_implementation_when_compaction_fails(anthropic_client, caplog, error):
     model = _compaction_model(anthropic_client)
-    rejection = anthropic.BadRequestError(
-        "does not support the compaction strategy",
-        response=unittest.mock.Mock(status_code=400),
-        body=None,
-    )
-    anthropic_client.beta.messages.stream.side_effect = rejection
+    anthropic_client.beta.messages.stream.side_effect = error
 
     with (
         unittest.mock.patch.object(Model, "summarize", return_value=_BASE_RESULT),
@@ -3432,11 +3444,11 @@ async def test_summarize_uses_the_base_implementation_when_compaction_is_rejecte
         result = await model.summarize([{"role": "user", "content": [{"text": "hi"}]}])
 
     assert result == _BASE_RESULT
-    assert "compaction request rejected | summarizing client-side" in caplog.text
+    assert "compaction request failed | summarizing client-side" in caplog.text
 
 
 @pytest.mark.asyncio
-async def test_summarize_raises_errors_other_than_a_rejection(anthropic_client):
+async def test_summarize_raises_errors_other_than_an_api_error(anthropic_client):
     model = _compaction_model(anthropic_client)
     anthropic_client.beta.messages.stream.side_effect = RuntimeError("overloaded")
 

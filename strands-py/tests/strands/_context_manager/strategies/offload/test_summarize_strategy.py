@@ -15,14 +15,14 @@ from strands._context_manager.strategies.offload.summarize import (
 from strands._context_manager.types import ContextState
 from strands.agent.invocation_context import _create_invocation_context
 from strands.models import Model, SummarizeResult
-from strands.models._summarize import DEFAULT_SUMMARIZE_INSTRUCTIONS
+from strands.models._summarize import _SUMMARIZE_GUARD, DEFAULT_SUMMARIZE_INSTRUCTIONS
 from strands.types.content import ContentBlock, Message, Messages
 from strands.types.event_loop import Usage
 from strands.types.tools import ToolResult, ToolUse
 
 AGENT_PROMPT = [{"text": "You are a coding agent."}]
 AGENT_TOOLS = [{"name": "shell", "description": "Run a command", "inputSchema": {"json": {}}}]
-INSTRUCTIONS = ContentBlock(text=DEFAULT_SUMMARIZE_INSTRUCTIONS)
+INSTRUCTIONS = ContentBlock(text=f"{_SUMMARIZE_GUARD}\n\n{DEFAULT_SUMMARIZE_INSTRUCTIONS}")
 
 
 def _make_stream_events(text: str):
@@ -511,6 +511,56 @@ class TestBatchSummaryReplaysTheAgentRequest:
             "instructions": None,
             "cancel_signal": mock_agent._cancel_signal,
         }
+
+    @pytest.mark.asyncio
+    async def test_sends_only_the_replaced_messages_when_a_pin_is_kept(self, mock_agent):
+        pinned = {"custom": {"pinned": True}}
+        messages: Messages = [
+            Message(role="user", content=[ContentBlock(text="task")]),
+            Message(role="assistant", content=[ContentBlock(text="old1")]),
+            Message(role="user", content=[ContentBlock(text="pin")], metadata=pinned),
+            Message(role="assistant", content=[ContentBlock(text="old3")]),
+            Message(role="user", content=[ContentBlock(text="recent")]),
+        ]
+        mock_agent.messages = messages
+        strategy = Offload.summarize("*").when(utilization=0.8, preserve_recent=1)
+
+        assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is True
+
+        assert mock_agent.model.summarize.await_args.args[0] == [
+            Message(role="user", content=[ContentBlock(text="task")]),
+            Message(role="assistant", content=[ContentBlock(text="old1"), ContentBlock(text="old3")]),
+        ]
+        assert [block["text"] for message in messages for block in message["content"]] == [
+            "task",
+            "[Summarized: 2 messages, ~5,000 tokens]\n\nSummary of content.",
+            "pin",
+            "recent",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_sends_only_the_replaced_messages_when_a_threshold_skips_some(self, mock_agent):
+        async def count_tokens(messages, *args, **kwargs):
+            return 5000 if any("big" in block.get("text", "") for m in messages for block in m["content"]) else 10
+
+        mock_agent.model.count_tokens = unittest.mock.AsyncMock(side_effect=count_tokens)
+        messages: Messages = [
+            Message(role="user", content=[ContentBlock(text="task")]),
+            Message(role="assistant", content=[ContentBlock(text="big1")]),
+            Message(role="user", content=[ContentBlock(text="question")]),
+            Message(role="assistant", content=[ContentBlock(text="big2")]),
+            Message(role="user", content=[ContentBlock(text="recent")]),
+        ]
+        mock_agent.messages = messages
+        strategy = Offload.summarize("*").when(utilization=0.8, threshold=100)
+
+        assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is True
+
+        assert mock_agent.model.summarize.await_args.args[0] == [
+            Message(role="user", content=[ContentBlock(text="task")]),
+            Message(role="assistant", content=[ContentBlock(text="big1"), ContentBlock(text="big2")]),
+        ]
+        assert "question" in [block.get("text") for message in messages for block in message["content"]]
 
     @pytest.mark.asyncio
     async def test_sends_no_system_prompt_for_an_agent_without_one(self, mock_agent):
