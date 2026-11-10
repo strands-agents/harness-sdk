@@ -1,4 +1,5 @@
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { promises as fs } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -320,6 +321,29 @@ describe('session catalog', () => {
       await expect(readdir(firstWorkspace)).rejects.toMatchObject({ code: 'ENOENT' })
       await expect(readFile(legacyPath, 'utf8')).resolves.toBe('{ invalid json')
     } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('retries a locked catalog replacement and preserves the last document if the lock persists', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'strands-session-catalog-lock-'))
+    const root = join(directory, 'catalog')
+    const sessions = join(directory, 'sessions')
+    const catalog = await SessionRootCatalog.load(root)
+    const locked = Object.assign(new Error('File is locked'), { code: 'EPERM' })
+    const rename = vi.spyOn(fs, 'rename')
+    try {
+      rename.mockRejectedValueOnce(locked)
+      await catalog.register(sessions, directory)
+      expect(rename).toHaveBeenCalledTimes(2)
+      const [reference] = await readdir(root)
+      const previous = await readFile(join(root, reference!), 'utf8')
+      rename.mockRejectedValue(locked)
+      await expect(catalog.register(sessions, directory)).rejects.toBe(locked)
+      expect(await readdir(root)).toEqual([reference])
+      expect(await readFile(join(root, reference!), 'utf8')).toBe(previous)
+    } finally {
+      rename.mockRestore()
       await rm(directory, { recursive: true, force: true })
     }
   })

@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
+import { setTimeout } from 'node:timers/promises'
 import { userDirectory } from '../config/store.js'
 import { strandsUserPath } from '../paths.js'
 import { isRecord } from '../values.js'
@@ -145,7 +146,17 @@ async function writeWorkspaceDocument(path: string, document: WorkspaceDocument)
   const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`
   try {
     await fs.writeFile(temporary, `${JSON.stringify(document, null, 2)}\n`, { mode: 0o600 })
-    await fs.rename(temporary, path)
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await fs.rename(temporary, path)
+        break
+      } catch (error) {
+        if (attempt >= 5 || !['EPERM', 'EACCES', 'EBUSY'].includes((error as NodeJS.ErrnoException).code ?? '')) {
+          throw error
+        }
+        await setTimeout(20 * 2 ** attempt)
+      }
+    }
   } finally {
     await fs.rm(temporary, { force: true })
   }
