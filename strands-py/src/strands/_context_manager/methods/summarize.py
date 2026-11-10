@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import TYPE_CHECKING, cast
 
 from typing_extensions import TypedDict
@@ -29,6 +30,14 @@ def _format_summarized(description: str, tokens: int, summary: str | None = None
     if summary:
         return f"{header}\n\n{summary}"
     return header
+
+
+_MESSAGE_SUMMARY_HEADER = re.compile(r"\[Summarized: \d+ messages, ~")
+
+
+def _has_message_summary(message: Message) -> bool:
+    """Whether the message carries a message-level summary, which stands in for removed history."""
+    return any("text" in block and _MESSAGE_SUMMARY_HEADER.match(block["text"]) for block in message["content"])
 
 
 # Subject to change based on benchmarking.

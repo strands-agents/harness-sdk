@@ -4,6 +4,7 @@ import unittest.mock
 
 import pytest
 
+from strands._context_manager.methods.summarize import _format_summarized
 from strands._context_manager.strategies.offload import Offload
 from strands._context_manager.strategies.offload.base import (
     _build_tool_name_map,
@@ -38,6 +39,18 @@ def mock_agent():
 
 def _text(role, text):
     return Message(role=role, content=[ContentBlock(text=text)])
+
+
+def _tool_ids(message):
+    """Project a message onto its tool use ids and texts for whole-list assertions."""
+    return [
+        block["toolUse"]["toolUseId"]
+        if "toolUse" in block
+        else block["toolResult"]["toolUseId"]
+        if "toolResult" in block
+        else block["text"]
+        for block in message["content"]
+    ]
 
 
 def _make_tool_pair(tool_name="my_tool", tool_use_id="tu-1"):
@@ -685,6 +698,71 @@ class TestEmergencyTruncateStrategy:
         ]
         context = ContextState(messages=messages, agent=mock_agent, utilization=1.1)
         assert await strategy.apply(context) is False
+
+    @pytest.mark.asyncio
+    async def test_keeps_message_summary(self, mock_agent):
+        summary = _format_summarized("12 messages", 40000, "facts")
+        messages: Messages = [
+            _text("user", "pin"),
+            _text("assistant", summary),
+            _text("user", "u2"),
+            _text("assistant", "a3"),
+            _text("user", "u4"),
+            _text("assistant", "a5"),
+            _text("user", "u6"),
+        ]
+        context = ContextState(messages=messages, agent=mock_agent, utilization=1.1, overflow=True)
+        assert await EmergencyTruncateStrategy().apply(context) is True
+        assert [(m["role"], [b["text"] for b in m["content"]]) for m in messages] == [
+            ("user", ["pin"]),
+            ("assistant", [summary, "[... 1 message elided ...]", "a3"]),
+            ("user", ["u4"]),
+            ("assistant", ["a5"]),
+            ("user", ["u6"]),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_keeps_tool_pair_of_summary_carrier(self, mock_agent):
+        tool_use, tool_result = _make_tool_pair(tool_use_id="tu-1")
+        carrier = Message(
+            role="assistant",
+            content=[*tool_use["content"], ContentBlock(text=_format_summarized("12 messages", 40000, "facts"))],
+        )
+        messages: Messages = [_text("user", "pin"), carrier, tool_result]
+        for index in range(4):
+            messages.extend(_make_tool_pair(tool_use_id=f"tu-{index + 2}"))
+        context = ContextState(messages=messages, agent=mock_agent, utilization=1.1, overflow=True)
+        assert await EmergencyTruncateStrategy().apply(context) is True
+        assert messages[1] is carrier
+        assert messages[2] is tool_result
+        assert [_tool_ids(message) for message in messages] == [
+            ["pin"],
+            ["tu-1", "[Summarized: 12 messages, ~40,000 tokens]\n\nfacts"],
+            ["tu-1"],
+            ["tu-3", "[... 2 messages elided ...]"],
+            ["tu-3"],
+            ["tu-4"],
+            ["tu-4"],
+            ["tu-5"],
+            ["tu-5"],
+        ]
+
+    @pytest.mark.asyncio
+    async def test_drops_summary_when_nothing_else_can_be_removed(self, mock_agent):
+        """Only the final tool pair is unprotected, and the last message is never removed."""
+        tool_use, tool_result = _make_tool_pair(tool_use_id="tu-1")
+        carrier = Message(
+            role="assistant",
+            content=[*tool_use["content"], ContentBlock(text=_format_summarized("12 messages", 40000, "facts"))],
+        )
+        messages: Messages = [_text("user", "pin"), carrier, tool_result, *_make_tool_pair(tool_use_id="tu-2")]
+        context = ContextState(messages=messages, agent=mock_agent, utilization=1.1, overflow=True)
+        assert await EmergencyTruncateStrategy().apply(context) is True
+        assert [_tool_ids(message) for message in messages] == [
+            ["pin"],
+            ["tu-2", "[... 2 messages elided ...]"],
+            ["tu-2"],
+        ]
 
 
 class TestEagerHookRegistration:
