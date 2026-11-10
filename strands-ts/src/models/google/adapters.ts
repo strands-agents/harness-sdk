@@ -311,10 +311,11 @@ function formatToolResultBlock(block: ToolResultBlock, toolUseIdToName: Map<stri
       }
       case 'documentBlock': {
         const mimeType = toMimeType(c.format) ?? `application/${c.format}`
+        const name = c.name || `document.${c.format}`
         if (c.source.type === 'documentSourceBytes') {
-          addMedia(encodeBase64(c.source.bytes), mimeType, c.name || `document.${c.format}`)
+          addMedia(encodeBase64(c.source.bytes), mimeType, name)
         } else if (c.source.type === 'documentSourceText') {
-          addMedia(encodeBase64(new TextEncoder().encode(c.source.text)), mimeType, c.name || `document.${c.format}`)
+          addMedia(encodeBase64(new TextEncoder().encode(c.source.text)), mimeType, name)
         } else {
           logger.warn('source_type=<%s> | only bytes/text sources supported in gemini tool results', c.source.type)
         }
