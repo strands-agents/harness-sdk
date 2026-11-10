@@ -1,0 +1,8 @@
+name: "agent402"
+description: "Strands Agents adapter for Agent402 — turns 500+ pay-per-call web tools into Strands tool() instances with built-in x402 micropayment handling."
+integrationType: integration
+languages:
+  typescript:
+    package: "agent402-strands"
+github: https://github.com/MikeyPetrillo/Agent402
+addedDate: 2026-06-16

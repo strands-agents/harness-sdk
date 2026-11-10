@@ -1,5 +1,5 @@
 /**
- * Fetches the live sitemap and merges any new URLs into test/known-routes.json.
+ * Fetches the live sitemap and merges any new URLs into src/config/legacy-routes.json.
  * Existing entries are never removed — the file is append-only so old routes
  * continue to be tested even after pages move or are deleted from the sitemap.
  *
@@ -10,7 +10,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 const SITEMAP_URL = 'https://strandsagents.com/1.x/sitemap.xml'
-const KNOWN_ROUTES_PATH = path.resolve('test/known-routes.json')
+const KNOWN_ROUTES_PATH = path.resolve('src/config/legacy-routes.json')
 const API_REFERENCE_URL = /\/documentation\/docs\/api-reference\//
 
 const res = await fetch(SITEMAP_URL)

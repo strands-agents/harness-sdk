@@ -228,10 +228,57 @@ describe('S3Storage', () => {
       expect(command.input.Key).toBe('some/raw/key')
     })
 
+    it('round-trips a stored reference under a configured prefix', async () => {
+      mockSend.mockResolvedValueOnce({}).mockResolvedValueOnce({
+        Body: { transformToByteArray: () => Promise.resolve(new TextEncoder().encode('hello')) },
+        ContentType: 'text/plain',
+      })
+
+      const storage = new S3Storage('b', { prefix: 'artifacts', s3Client: mockS3Client as never })
+      const ref = await storage.store('key1', new TextEncoder().encode('hello'))
+      const result = await storage.retrieve(ref)
+
+      expect(new TextDecoder().decode(result.content)).toBe('hello')
+    })
+
     it('throws on bucket mismatch', async () => {
       const storage = new S3Storage('my-bucket', { s3Client: mockS3Client as never })
 
       await expect(storage.retrieve('s3://wrong-bucket/key')).rejects.toThrow('bucket mismatch')
+    })
+
+    it('rejects a raw key outside the configured prefix', async () => {
+      const storage = new S3Storage('b', { prefix: 'artifacts', s3Client: mockS3Client as never })
+
+      await expect(storage.retrieve('private/secret.txt')).rejects.toThrow('Reference not found')
+      expect(mockSend).not.toHaveBeenCalled()
+    })
+
+    it('rejects a same-bucket s3:// URI outside the configured prefix', async () => {
+      const storage = new S3Storage('b', { prefix: 'artifacts', s3Client: mockS3Client as never })
+
+      await expect(storage.retrieve('s3://b/private/secret.txt')).rejects.toThrow('Reference not found')
+      expect(mockSend).not.toHaveBeenCalled()
+    })
+
+    it('rejects a sibling-prefix key that shares a string prefix but not a path segment', async () => {
+      const storage = new S3Storage('b', { prefix: 'artifacts', s3Client: mockS3Client as never })
+
+      await expect(storage.retrieve('artifactsX/secret.txt')).rejects.toThrow('Reference not found')
+      expect(mockSend).not.toHaveBeenCalled()
+    })
+
+    it('preserves a leading-slash prefix so legacy references remain retrievable', async () => {
+      mockSend.mockResolvedValue({
+        Body: { transformToByteArray: () => Promise.resolve(new TextEncoder().encode('hello')) },
+        ContentType: 'text/plain',
+      })
+      const storage = new S3Storage('b', { prefix: '/artifacts', s3Client: mockS3Client as never })
+      const result = await storage.retrieve('s3://b//artifacts/foo')
+
+      expect(new TextDecoder().decode(result.content)).toBe('hello')
+      const command = mockSend.mock.calls[0]![0]
+      expect(command.input.Key).toBe('/artifacts/foo')
     })
 
     it('throws on NoSuchKey error', async () => {

@@ -7,16 +7,18 @@ imported from here or from its subpackage, e.g.
 
 from typing import Any
 
+from .file_memory_store import FileMemoryStore
+from .test_memory_store import TestMemoryStore
+
 __all__ = [
     "BedrockKnowledgeBaseStore",
+    "FileMemoryStore",
+    "TestMemoryStore",
 ]
 
 
 def __getattr__(name: str) -> Any:
-    """Lazy load store implementations only when accessed.
-
-    This defers the import of optional dependencies until actually needed.
-    """
+    """Lazy load store implementations that pull optional dependencies."""
     if name == "BedrockKnowledgeBaseStore":
         from .bedrock_knowledge_base import BedrockKnowledgeBaseStore
 

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import { Agent } from '../../agent/agent.js'
+import { AgentPrinter } from '../../agent/printer.js'
 import { BeforeInvocationEvent } from '../../hooks/events.js'
 import type { MultiAgentInput } from '../multiagent.js'
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
@@ -231,6 +232,40 @@ describe('AgentNode', () => {
 
       await collectGenerator(preserveContextNode.stream([new TextBlock('second')], preserveContextState))
       expect(preserveContextAgent.appState.get<{ count: number }>('count')).toBe(2)
+    })
+
+    it('leaves the original printer in place when bufferOutput is not set', async () => {
+      const writes: string[] = []
+      const printer = new AgentPrinter((text) => writes.push(text))
+      ;(agent as unknown as { _printer: AgentPrinter })._printer = printer
+
+      // Capture the active printer at every stream event — confirms it never gets
+      // swapped for a buffering printer mid-stream on the sequential path.
+      const seenPrinters: unknown[] = []
+      const gen = node.stream([new TextBlock('prompt')], state)
+      for await (const _event of gen) {
+        seenPrinters.push((agent as unknown as { _printer: AgentPrinter })._printer)
+      }
+
+      expect(seenPrinters.every((p) => p === printer)).toBe(true)
+      expect(writes.join('')).toContain('reply')
+    })
+
+    it('buffers printer output when bufferOutput is true and flushes on completion', async () => {
+      const writes: string[] = []
+      const printer = new AgentPrinter((text) => writes.push(text))
+      ;(agent as unknown as { _printer: AgentPrinter })._printer = printer
+
+      // While streaming, a buffering printer is installed in place of the original.
+      const printerDuringStream: unknown[] = []
+      const gen = node.stream([new TextBlock('prompt')], state, { bufferOutput: true })
+      for await (const _event of gen) {
+        printerDuringStream.push((agent as unknown as { _printer: AgentPrinter })._printer)
+      }
+
+      expect(printerDuringStream.some((p) => p !== printer)).toBe(true)
+      expect((agent as unknown as { _printer: AgentPrinter })._printer).toBe(printer)
+      expect(writes.join('')).toContain('reply')
     })
 
     it('passes structuredOutputSchema from options to the agent', async () => {

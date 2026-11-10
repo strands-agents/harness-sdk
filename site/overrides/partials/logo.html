@@ -1,8 +1,0 @@
-<!-- Logo -->
-{% if config.theme.logo %}
-  <img src="{{ config.theme.logo | url }}" alt="logo" class="logo-light" />
-  <img src="{{ config.theme.logo_dark | url }}" alt="logo" class="logo-dark" />
-{% else %}
-  {% set icon = config.theme.icon.logo or "material/library" %}
-  {% include ".icons/" ~ icon ~ ".svg" %}
-{% endif %}

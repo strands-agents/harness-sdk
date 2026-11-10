@@ -1,0 +1,131 @@
+# End-to-end wheel install smoke test for strands-agents-mcp-server.
+#
+# Reproduces a real user's install: build the wheel, install it in a venv
+# OUTSIDE the monorepo tree, then import the public surface and verify the
+# CLI entry point resolves.
+name: "MCP: Test Package Build"
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        required: true
+        type: string
+      version:
+        description: 'If set, pin the wheel to this version via SETUPTOOLS_SCM_PRETEND_VERSION. Required at release time (the release tag does not exist yet, so hatch-vcs would otherwise derive a dev version). PR-time callers leave this empty.'
+        required: false
+        type: string
+        default: ''
+
+jobs:
+  test-package-build:
+    name: Wheel install
+    permissions:
+      contents: read
+    runs-on: strands-agents_ubuntu-latest_4-core
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v7.1.0
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+
+      - name: Install build tooling
+        run: pip install --no-cache-dir build
+
+      - name: Build wheel + sdist
+        working-directory: strands-mcp
+        env:
+          PINNED_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [ -n "$PINNED_VERSION" ]; then
+            echo "Building with SETUPTOOLS_SCM_PRETEND_VERSION=$PINNED_VERSION"
+            export SETUPTOOLS_SCM_PRETEND_VERSION="$PINNED_VERSION"
+          else
+            echo "No version pinned; hatch-vcs will derive from git tags."
+          fi
+          python -m build
+
+      - name: Install wheel in a clean venv outside the repo and import
+        env:
+          PINNED_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          WORK=$(mktemp -d)
+          trap 'rm -rf "$WORK"' EXIT
+          echo "Workspace: $WORK"
+
+          WHEEL=$(find "$GITHUB_WORKSPACE/strands-mcp/dist" -maxdepth 1 -name '*.whl' -print -quit)
+          if [ -z "$WHEEL" ]; then
+            echo "::error::no wheel produced under strands-mcp/dist"
+            exit 1
+          fi
+          echo "Wheel: $WHEEL"
+
+          python -m venv "$WORK/venv"
+          "$WORK/venv/bin/pip" install --upgrade pip
+          "$WORK/venv/bin/pip" install "$WHEEL"
+
+          # Import from a directory outside the source tree, so the only
+          # resolvable `strands_mcp_server` is the one from the wheel.
+          cd "$WORK"
+          if [ -n "$PINNED_VERSION" ]; then
+            PINNED_VERSION="$PINNED_VERSION" "$WORK/venv/bin/python" - <<'PYEOF'
+          import os
+          from importlib.metadata import version
+          import strands_mcp_server  # ensure the wheel imports from a clean venv
+          expected = os.environ["PINNED_VERSION"]
+          actual = version("strands-agents-mcp-server")
+          assert actual == expected, f"strands-agents-mcp-server version is {actual!r}, expected {expected!r}"
+          print(f"version OK: {actual}")
+          PYEOF
+          else
+            "$WORK/venv/bin/python" -c "import strands_mcp_server; from importlib.metadata import version; print('strands-agents-mcp-server version:', version('strands-agents-mcp-server'))"
+          fi
+
+          # Verify the CLI entry point resolves.
+          "$WORK/venv/bin/python" -c "from strands_mcp_server.server import main; print('CLI entry point OK')"
+
+      - name: Install sdist in a clean venv outside the repo and import
+        # pip builds its own wheel from the sdist in isolation, so this
+        # exercises the source-install path (`pip install <sdist>` or a
+        # `--no-binary` fallback) independently of the prebuilt wheel above.
+        # It is the most direct guard for the wheel-from-sdist packaging bug:
+        # a mispackaged sdist installs cleanly but fails at import.
+        run: |
+          set -euo pipefail
+          WORK=$(mktemp -d)
+          trap 'rm -rf "$WORK"' EXIT
+          echo "Workspace: $WORK"
+
+          SDIST=$(find "$GITHUB_WORKSPACE/strands-mcp/dist" -maxdepth 1 -name '*.tar.gz' -print -quit)
+          if [ -z "$SDIST" ]; then
+            echo "::error::no sdist produced under strands-mcp/dist"
+            exit 1
+          fi
+          echo "Sdist: $SDIST"
+
+          python -m venv "$WORK/venv"
+          "$WORK/venv/bin/pip" install --upgrade pip
+          "$WORK/venv/bin/pip" install "$SDIST"
+
+          cd "$WORK"
+          "$WORK/venv/bin/python" -c "import strands_mcp_server; print('sdist import OK')"
+          "$WORK/venv/bin/python" -c "from strands_mcp_server.server import main; print('sdist CLI entry point OK')"
+
+      - name: Upload wheel + sdist for downstream inspect/publish
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: mcp-pypi-build-output
+          path: strands-mcp/dist/*
+          if-no-files-found: error
+          retention-days: 7

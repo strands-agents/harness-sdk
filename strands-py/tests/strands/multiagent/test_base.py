@@ -240,3 +240,228 @@ def test_serialize_node_result_for_persist(agent_result):
     assert "result" in serialized_exception
     assert serialized_exception["result"]["type"] == "exception"
     assert serialized_exception["result"]["message"] == "Test error"
+
+
+def test_node_result_str_with_agent_result():
+    """Test NodeResult.__str__ delegates to AgentResult.__str__."""
+    agent_result = AgentResult(
+        message={"role": "assistant", "content": [{"text": "Hello world"}]},
+        stop_reason="end_turn",
+        state={},
+        metrics={},
+    )
+    node_result = NodeResult(result=agent_result)
+    assert str(node_result) == str(agent_result)
+    assert "Hello world" in str(node_result)
+
+
+def test_node_result_str_with_exception():
+    """Test NodeResult.__str__ with an Exception result."""
+    node_result = NodeResult(result=Exception("something broke"), status=Status.FAILED)
+    assert str(node_result) == "something broke"
+
+
+def test_multi_agent_result_str_single_node(agent_result):
+    """Test MultiAgentResult.__str__ with a single node."""
+    result = MultiAgentResult(
+        status=Status.COMPLETED,
+        results={"writer": NodeResult(result=agent_result)},
+    )
+    output = str(result)
+    assert "writer: Test response" in output
+
+
+def test_multi_agent_result_str_with_interrupts():
+    """Test MultiAgentResult.__str__ prioritizes interrupts over node results."""
+    from strands.interrupt import Interrupt
+
+    ar = AgentResult(
+        message={"role": "assistant", "content": [{"text": "should not appear"}]},
+        stop_reason="end_turn",
+        state={},
+        metrics={},
+    )
+    result = MultiAgentResult(
+        status=Status.INTERRUPTED,
+        results={"node": NodeResult(result=ar)},
+        interrupts=[Interrupt(id="int-1", name="approval", reason="needs review")],
+    )
+    output = str(result)
+    assert "should not appear" not in output
+    assert "approval" in output
+
+
+def test_multi_agent_result_str_empty():
+    """Test MultiAgentResult.__str__ with no results."""
+    result = MultiAgentResult(status=Status.COMPLETED, results={})
+    assert str(result) == ""
+
+
+def test_multi_agent_result_str_skips_empty_node_strings():
+    """Test MultiAgentResult.__str__ skips nodes whose string representation is empty."""
+    # Create an AgentResult with empty content to produce empty string
+    empty_ar = AgentResult(
+        message={"role": "assistant", "content": []},
+        stop_reason="end_turn",
+        state={},
+        metrics={},
+    )
+    non_empty_ar = AgentResult(
+        message={"role": "assistant", "content": [{"text": "Has content"}]},
+        stop_reason="end_turn",
+        state={},
+        metrics={},
+    )
+    result = MultiAgentResult(
+        status=Status.COMPLETED,
+        results={
+            "empty_node": NodeResult(result=empty_ar),
+            "content_node": NodeResult(result=non_empty_ar),
+        },
+    )
+    output = str(result)
+    # The empty node should be skipped
+    assert "empty_node" not in output
+    # The non-empty node should appear
+    assert "content_node: Has content" in output
+
+
+def test_multi_agent_result_str_multiple_nodes():
+    """Test MultiAgentResult.__str__ with multiple nodes."""
+    ar1 = AgentResult(
+        message={"role": "assistant", "content": [{"text": "Response 1"}]},
+        stop_reason="end_turn",
+        state={},
+        metrics={},
+    )
+    ar2 = AgentResult(
+        message={"role": "assistant", "content": [{"text": "Response 2"}]},
+        stop_reason="end_turn",
+        state={},
+        metrics={},
+    )
+    result = MultiAgentResult(
+        status=Status.COMPLETED,
+        results={"node1": NodeResult(result=ar1), "node2": NodeResult(result=ar2)},
+    )
+    output = str(result)
+    assert "node1: Response 1" in output
+    assert "node2: Response 2" in output
+    assert "\n" in output
+
+
+def test_node_result_str_with_nested_multiagent():
+    """Test NodeResult.__str__ with nested MultiAgentResult."""
+    inner_ar = AgentResult(
+        message={"role": "assistant", "content": [{"text": "Nested response"}]},
+        stop_reason="end_turn",
+        state={},
+        metrics={},
+    )
+    inner_mar = MultiAgentResult(
+        status=Status.COMPLETED,
+        results={"inner_node": NodeResult(result=inner_ar)},
+    )
+    outer_node = NodeResult(result=inner_mar)
+    assert "inner_node: Nested response" in str(outer_node)
+
+
+def test_multi_agent_result_str_preserves_payload_whitespace():
+    """Regression test: MultiAgentResult.__str__ preserves user-owned whitespace.
+
+    Verifies that only the framework-owned trailing newline (appended by
+    AgentResult.__str__) is removed, while all user-owned whitespace is preserved:
+    - Leading indentation (e.g., code blocks)
+    - Internal markdown hard-break (two trailing spaces before newline)
+    - Trailing newlines in the payload
+    - Whitespace-only content is preserved if non-empty after removesuffix
+
+    This test guards against regressing to .strip() which removes all whitespace.
+    """
+    # Content with: leading indentation, internal markdown hard-break (2 trailing spaces),
+    # and explicit trailing newlines in the payload
+    code_with_whitespace = "    def foo():\n        pass  \n\n"  # 4-space indent, 2-space hard-break
+
+    ar_whitespace = AgentResult(
+        message={"role": "assistant", "content": [{"text": code_with_whitespace}]},
+        stop_reason="end_turn",
+        state={},
+        metrics={},
+    )
+
+    # Whitespace-only node (spaces only - should appear since it's non-empty after removesuffix)
+    ar_spaces_only = AgentResult(
+        message={"role": "assistant", "content": [{"text": "   "}]},  # 3 spaces
+        stop_reason="end_turn",
+        state={},
+        metrics={},
+    )
+
+    # Nested MultiAgentResult with whitespace content
+    inner_ar = AgentResult(
+        message={"role": "assistant", "content": [{"text": "  nested indent\n"}]},
+        stop_reason="end_turn",
+        state={},
+        metrics={},
+    )
+    inner_mar = MultiAgentResult(
+        status=Status.COMPLETED,
+        results={"inner": NodeResult(result=inner_ar)},
+    )
+
+    result = MultiAgentResult(
+        status=Status.COMPLETED,
+        results={
+            "code_node": NodeResult(result=ar_whitespace),
+            "spaces_node": NodeResult(result=ar_spaces_only),
+            "nested_node": NodeResult(result=inner_mar),
+        },
+    )
+
+    output = str(result)
+
+    # Verify leading indentation preserved (would be stripped by .strip())
+    assert "code_node:     def foo():" in output, "Leading indentation must be preserved"
+
+    # Verify internal markdown hard-break (2 trailing spaces) preserved
+    assert "pass  \n" in output, "Markdown hard-break (2 trailing spaces) must be preserved"
+
+    # Verify trailing newlines in payload preserved (framework removes only 1)
+    # The original text has "\n\n" at end, AgentResult adds one more "\n"
+    # So AgentResult.__str__ produces "    def foo():\n        pass  \n\n\n"
+    # After removesuffix("\n"), we get "    def foo():\n        pass  \n\n"
+    assert output.count("pass  \n\n") == 1, "Payload trailing newlines must be preserved"
+
+    # Verify whitespace-only node appears (3 spaces + newline from AgentResult -> 3 spaces after removesuffix)
+    assert "spaces_node:    " in output, "Whitespace-only content must be preserved"
+
+    # Verify nested result preserves whitespace
+    assert "inner:   nested indent" in output, "Nested result must preserve leading spaces"
+
+
+def test_multi_agent_result_str_whitespace_exact_output():
+    """Exact-output test for whitespace handling in MultiAgentResult.__str__.
+
+    This test asserts the exact output string to catch any subtle changes
+    to whitespace handling. The framework separator (\n from AgentResult)
+    should be removed, but all payload whitespace must be verbatim.
+    """
+    # Single text item with carefully controlled whitespace
+    text = "  line1  \nline2\n"  # 2-space prefix, 2-space suffix on line1, trailing newline
+
+    ar = AgentResult(
+        message={"role": "assistant", "content": [{"text": text}]},
+        stop_reason="end_turn",
+        state={},
+        metrics={},
+    )
+
+    result = MultiAgentResult(
+        status=Status.COMPLETED,
+        results={"node": NodeResult(result=ar)},
+    )
+
+    # AgentResult.__str__ produces "  line1  \nline2\n\n" (appends \n)
+    # After removesuffix("\n"), we get "  line1  \nline2\n"
+    expected = "node:   line1  \nline2\n"
+    assert str(result) == expected, f"Expected exact output:\n{expected!r}\nGot:\n{str(result)!r}"

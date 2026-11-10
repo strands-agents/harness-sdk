@@ -6,7 +6,7 @@
  */
 
 import path from 'node:path'
-import { loadNavigationConfig, type GitHubSection } from '../sidebar'
+import { loadNavigationConfig, type GitHubSection, type Product } from '../sidebar'
 
 export interface NavLink {
   /** Display label for the link */
@@ -17,7 +17,7 @@ export interface NavLink {
    * Base path(s) used to determine active state and sidebar filtering (optional).
    * If not provided, href is used. Can be a single string or an array of strings
    * when a nav item encompasses multiple top-level sidebar sections.
-   * Example: basePath: ["/docs/community/", "/docs/labs/", "/docs/contribute/"]
+   * Example: basePath: ["/docs/integrations/", "/docs/labs/", "/docs/contribute/"]
    */
   basePath?: string | string[]
   /** Set to true for external links (opens in new tab) */
@@ -66,6 +66,7 @@ const configPath = path.resolve('./src/config/navigation.yml')
 const config = loadNavigationConfig(configPath)
 const rawNavLinks: NavLink[] = config.navbar || []
 const rawGithubSections: GitHubSection[] = config.github?.sections || []
+const rawProducts: Product[] = config.products || []
 
 /**
  * Navigation links with base path applied.
@@ -77,3 +78,13 @@ export const navLinks: NavLink[] = transformNavLinks(rawNavLinks)
  * GitHub sections for the header dropdown.
  */
 export const githubSections: GitHubSection[] = rawGithubSections
+
+/**
+ * Products for the "Docs" dropdown, with base path applied to all hrefs. This
+ * is the single source of truth for the product-oriented navigation.
+ */
+export const products: Product[] = rawProducts.map((p) => ({
+  ...p,
+  href: withBase(p.href),
+  ...(p.pages ? { pages: p.pages.map((pg) => ({ ...pg, href: withBase(pg.href) })) } : {}),
+}))

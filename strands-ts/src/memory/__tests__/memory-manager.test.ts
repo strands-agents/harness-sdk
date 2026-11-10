@@ -11,6 +11,7 @@ import type { MessageData } from '../../types/messages.js'
 import { InvokeModelStage } from '../../middleware/index.js'
 import type { InvokeModelContext } from '../../middleware/index.js'
 import { createMockAgent } from '../../__fixtures__/agent-helpers.js'
+import { anyTrackingId } from '../../__fixtures__/message-helpers.js'
 
 function createMockStore(
   name: string,
@@ -649,13 +650,14 @@ describe('MemoryManager', () => {
       const result = await handler({ messages, agent } as unknown as InvokeModelContext)
 
       expect(result.messages.map((m) => m.toJSON())).toStrictEqual([
-        { role: 'assistant', content: [{ text: 'prior' }] },
+        { role: 'assistant', content: [{ text: 'prior' }], trackingId: anyTrackingId },
         {
           role: 'user',
           content: [
-            { text: '<memory>\n<entry source="s">dark mode preferred</entry>\n</memory>' },
             { text: 'what is my plan' },
+            { text: '\n\n<memory>\n<entry source="s">dark mode preferred</entry>\n</memory>' },
           ],
+          trackingId: anyTrackingId,
         },
       ])
       expect(store.search).toHaveBeenCalledWith('what is my plan', { maxSearchResults: 5 })

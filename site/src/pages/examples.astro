@@ -1,0 +1,131 @@
+---
+import { CardGrid } from '@astrojs/starlight/components'
+import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro'
+import { getCollection } from 'astro:content'
+import SampleCatalogCard from '../components/samples/SampleCatalogCard.astro'
+import { DEFAULT_LANGUAGE_LABEL, LANGUAGE_STORAGE_KEY } from '../util/language-preference'
+import { pathWithBase } from '../util/links'
+import {
+  buildSampleGuideSidebar,
+  groupSampleGuideCategories,
+  sampleGuidePath,
+  sortSampleGuides,
+} from '../util/sample-guides'
+
+const guides = sortSampleGuides(await getCollection('sampleGuides'))
+const catalogMode = guides[0]?.data.catalogMode
+const isLegacyCatalog = catalogMode === 'legacy'
+const defaultGuide = isLegacyCatalog
+  ? (guides.find((entry) => entry.data.language === DEFAULT_LANGUAGE_LABEL.toLowerCase()) ?? guides[0])
+  : undefined
+const pythonGuide = isLegacyCatalog ? guides.find((entry) => entry.data.language === 'python') : undefined
+const defaultTarget = defaultGuide ? pathWithBase(sampleGuidePath(defaultGuide)) : undefined
+const pythonTarget = pythonGuide ? pathWithBase(sampleGuidePath(pythonGuide)) : defaultTarget
+const catalogSections = isLegacyCatalog ? [] : groupSampleGuideCategories(guides)
+const sidebar = isLegacyCatalog ? [] : buildSampleGuideSidebar(guides)
+const headings = catalogSections.map((section) => ({
+  depth: 2,
+  slug: `sample-category-${section.key}`,
+  text: section.label,
+}))
+---
+
+<StarlightPage
+  frontmatter={{
+    title: 'Examples',
+    description: isLegacyCatalog
+      ? 'Runnable Strands agent samples.'
+      : 'Complete Strands applications and guided workflows.',
+    editUrl: false,
+    pagefind: !isLegacyCatalog,
+    tableOfContents: catalogSections.length > 0,
+  }}
+  {headings}
+  hasSidebar={!isLegacyCatalog && sidebar.length > 0}
+  {sidebar}
+>
+  {
+    isLegacyCatalog && defaultTarget ? (
+      <>
+        <div
+          data-sample-guide-redirect
+          data-storage-key={LANGUAGE_STORAGE_KEY}
+          data-default-language={DEFAULT_LANGUAGE_LABEL}
+          data-default-target={defaultTarget}
+          data-python-target={pythonTarget}
+        >
+          <p>Opening examples for your preferred language.</p>
+          <p>
+            <a href={defaultTarget}>Continue to examples</a>
+          </p>
+        </div>
+        <script is:inline>
+          ;(function () {
+            var redirect = document.querySelector('[data-sample-guide-redirect]')
+            if (!redirect) return
+
+            var language = redirect.getAttribute('data-default-language')
+            var storageKey = redirect.getAttribute('data-storage-key')
+            try {
+              if (storageKey) language = localStorage.getItem(storageKey) || language
+            } catch {}
+
+            var target =
+              language === 'Python'
+                ? redirect.getAttribute('data-python-target')
+                : redirect.getAttribute('data-default-target')
+            if (target) window.location.replace(target)
+          })()
+        </script>
+      </>
+    ) : guides.length > 0 ? (
+      <>
+        <p class="sample-catalog__intro">
+          Explore complete examples, organized by what you want to learn or build.
+        </p>
+
+        {catalogSections.map((section) => (
+          <section
+            class="sample-catalog__section"
+            aria-labelledby={`sample-category-${section.key}`}
+            data-sample-category={section.key}
+          >
+            <h2 id={`sample-category-${section.key}`}>{section.label}</h2>
+            {section.description && <p>{section.description}</p>}
+            <CardGrid>
+              {section.families.map((family) => <SampleCatalogCard {family} />)}
+            </CardGrid>
+          </section>
+        ))}
+      </>
+    ) : (
+      <>
+        <p>Sample guides are not available in this local build.</p>
+        <p>
+          Set <code>SAMPLES_SOURCE_DIR</code> to a checkout of the samples repository, then restart the site.
+        </p>
+      </>
+    )
+  }
+</StarlightPage>
+
+<style>
+  .sample-catalog__intro {
+    max-width: 50rem;
+    font-size: var(--sl-text-lg);
+    color: var(--sl-color-gray-2);
+  }
+
+  .sample-catalog__section {
+    margin-top: 2.5rem;
+  }
+
+  .sample-catalog__section > p {
+    margin-top: 0.5rem;
+    color: var(--sl-color-gray-3);
+  }
+
+  .sample-catalog__section :global(.card-grid) {
+    margin-top: 1rem;
+  }
+</style>

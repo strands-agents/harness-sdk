@@ -1,4 +1,6 @@
-import type { InvocationState, InvokeArgs } from '../types/agent.js'
+import type { InvocationState, InvokeArgs, InvokeLimits } from '../types/agent.js'
+import type { InvocationContext } from '../agent/invocation-context.js'
+import type { CheckpointResumeContent } from '../experimental/checkpoint.js'
 import type { Message, MessageData } from '../types/messages.js'
 import type { HookableEvent } from '../hooks/events.js'
 import type { HookCallback, HookableEventConstructor, HookCleanup } from '../hooks/types.js'
@@ -18,7 +20,7 @@ import type { MultiAgentResult, MultiAgentState, NodeState } from './state.js'
  * route responses to the interrupted nodes rather than flowing through dependency
  * resolution.
  */
-export type MultiAgentInput = Exclude<InvokeArgs, Message[] | MessageData[]>
+export type MultiAgentInput = Exclude<InvokeArgs, Message[] | MessageData[] | CheckpointResumeContent>
 
 /**
  * The non-resume subset of {@link MultiAgentInput}. Internal orchestrator helpers that
@@ -55,6 +57,22 @@ export interface MultiAgentInvokeOptions {
    * an exceptional exit, not a normal terminal state.
    */
   cancelSignal?: AbortSignal
+
+  /** Runs this orchestration as a nested call in an existing request, shared by every node; see {@link InvokeOptions.invocationContext}. */
+  invocationContext?: InvocationContext
+
+  /**
+   * Limits for the request this orchestration starts, shared by every node. Each
+   * agent node checks them before each turn, so `turns` counts turns across all
+   * nodes (node executions are bounded by `maxSteps`). A node whose agent reaches
+   * a limit fails, so the result is `FAILED`, and no node that depends on it runs.
+   * Set alongside `invocationContext`, they only add stricter limits to the
+   * request's. Resuming an interrupted run starts a new request even though the
+   * orchestrator keeps its state; pass the interrupted result's `invocationContext`
+   * to continue its limits and usage. See {@link InvokeOptions.limits} for what
+   * they cover.
+   */
+  limits?: InvokeLimits
 }
 
 /**

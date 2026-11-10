@@ -5,7 +5,6 @@ import logging
 import os
 import sys
 import warnings
-from importlib.machinery import ModuleSpec
 from pathlib import Path
 from posixpath import expanduser
 from types import ModuleType
@@ -20,13 +19,68 @@ logger = logging.getLogger(__name__)
 _TOOL_MODULE_PREFIX = "_strands_tool_"
 
 
+def _load_tool_module(tool_name: str, tool_path: str) -> ModuleType:
+    """Load a tool's Python module from a file path with sys.modules and sys.path discipline.
+
+    The module's ``__name__`` is set to the bare ``tool_name`` (preserving the historical
+    convention, e.g. a tool named ``json`` keeps ``__name__ == "json"``), while the
+    ``sys.modules`` key is namespaced with ``_TOOL_MODULE_PREFIX`` so a tool file does not
+    clobber an identically named entry in ``sys.modules`` (e.g. the stdlib ``json`` module).
+
+    The tool's parent directory is placed on ``sys.path`` only while the module executes so a
+    tool can import sibling modules from the same directory at the top level. On execution
+    failure the namespaced ``sys.modules`` key is removed so a partially initialized module is
+    not left behind.
+
+    Note: sibling modules imported during tool load are NOT namespaced; they land in
+    ``sys.modules`` under their own bare names and persist after the load. This is a known
+    limitation, so the no-clobber guarantee applies only to the tool module itself.
+
+    Args:
+        tool_name: Bare tool name, used for the module ``__name__`` and the namespaced key.
+        tool_path: Filesystem path to the tool's ``.py`` file.
+
+    Returns:
+        The loaded module.
+
+    Raises:
+        ImportError: If a spec or loader cannot be created for the path.
+        Exception: Any exception raised while executing the module is propagated.
+    """
+    abs_path = str(Path(tool_path).resolve())
+
+    spec = importlib.util.spec_from_file_location(tool_name, abs_path)
+    if spec is None:
+        raise ImportError(f"Could not create spec for {tool_name}")
+    if spec.loader is None:
+        raise ImportError(f"No loader available for {tool_name}")
+
+    module = importlib.util.module_from_spec(spec)
+
+    module_key = f"{_TOOL_MODULE_PREFIX}{tool_name}"
+    sys.modules[module_key] = module
+
+    tool_dir = str(Path(abs_path).parent)
+    sys.path.insert(0, tool_dir)
+    try:
+        spec.loader.exec_module(module)
+    except Exception:
+        sys.modules.pop(module_key, None)
+        raise
+    finally:
+        if tool_dir in sys.path:
+            sys.path.remove(tool_dir)
+
+    return module
+
+
 def load_tool_from_string(tool_string: str) -> list[AgentTool]:
     """Load tools follows strands supported input string formats.
 
     This function can load a tool based on a string in the following ways:
     1. Local file path to a module based tool: `./path/to/module/tool.py`
     2. Module import path
-      2.1. Path to a module based tool: `strands_tools.file_read`
+      2.1. Path to a module based tool: `my_package.my_tool`
       2.2. Path to a module with multiple AgentTool instances (@tool decorated): `tests.fixtures.say_tool`
       2.3. Path to a module and a specific function: `tests.fixtures.say_tool:say`
     """
@@ -38,7 +92,7 @@ def load_tool_from_string(tool_string: str) -> list[AgentTool]:
 
     # Case 2: Module import path
     # Ex: test.fixtures.say_tool:say (Load specific @tool decorated function)
-    # Ex: strands_tools.file_read (Load all @tool decorated functions, or module tool)
+    # Ex: strands.vended_tools.file_editor (Load all @tool decorated functions, or module tool)
     return load_tools_from_module_path(tool_string)
 
 
@@ -57,19 +111,8 @@ def load_tools_from_file_path(tool_path: str) -> list[AgentTool]:
     # ./path/to/my_cool_tool.py -> my_cool_tool
     module_name = os.path.basename(tool_path).split(".")[0]
 
-    # This function imports a module based on its path, and gives it the provided name
-
-    spec: ModuleSpec = cast(ModuleSpec, importlib.util.spec_from_file_location(module_name, abs_path))
-    if not spec:
-        raise ImportError(f"Could not create spec for {module_name}")
-    if not spec.loader:
-        raise ImportError(f"No loader available for {module_name}")
-
-    module = importlib.util.module_from_spec(spec)
-    # Load, or re-load, the module
-    sys.modules[f"{_TOOL_MODULE_PREFIX}{module_name}"] = module
-    # Execute the module to run any top level code
-    spec.loader.exec_module(module)
+    # Load the module under a namespaced sys.modules key with scoped sys.path access.
+    module = _load_tool_module(module_name, abs_path)
 
     return load_tools_from_module(module, module_name)
 
@@ -108,7 +151,7 @@ def load_tools_from_module_path(module_tool_path: str) -> list[AgentTool]:
 def load_tools_from_module(module: ModuleType, module_name: str) -> list[AgentTool]:
     """Load tools from a module.
 
-    First checks if the passed in module has instances of DecoratedToolFunction classes as atributes to the module.
+    First checks if the passed in module has instances of DecoratedToolFunction classes as attributes to the module.
     If so, then it returns them as a list of tools. If not, then it attempts to load the module as a module based tool.
     """
     logger.debug("tool_name=<%s>, module=<%s> | loading tools from module", module_name, module_name)
@@ -194,16 +237,8 @@ class ToolLoader:
             abs_path = str(Path(tool_path).resolve())
             logger.debug("tool_path=<%s> | loading python tool from path", abs_path)
 
-            # Load the module by spec
-            spec = importlib.util.spec_from_file_location(tool_name, abs_path)
-            if not spec:
-                raise ImportError(f"Could not create spec for {tool_name}")
-            if not spec.loader:
-                raise ImportError(f"No loader available for {tool_name}")
-
-            module = importlib.util.module_from_spec(spec)
-            sys.modules[f"{_TOOL_MODULE_PREFIX}{tool_name}"] = module
-            spec.loader.exec_module(module)
+            # Load the module under a namespaced sys.modules key with scoped sys.path access.
+            module = _load_tool_module(tool_name, abs_path)
 
             # Collect function-based tools decorated with @tool
             function_tools: list[AgentTool] = []

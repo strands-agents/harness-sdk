@@ -62,6 +62,20 @@ Middleware is intended to supersede hooks. The Input/Output phases already cover
 
 We may revisit this later.
 
+## Per-call model
+
+`InvokeModelContext.model` is the model the terminal invokes, initialized from `agent.model`. Middleware can replace it for one call without mutating agent state; the selected model also determines the model ID recorded on the trace span:
+
+```typescript
+const modified = { ...context, model: otherModel }
+```
+
+## Metadata transport (future)
+
+No metadata fields exist today, but the wrappers are designed to carry them. This section documents the intent so implementations stay consistent when metadata is added.
+
+Middleware handlers could use metadata on the context and result wrappers to communicate across phases — for example, an Input handler annotating a request so that an Output handler can act on it. The context object carries Input-phase metadata; the result wrapper (`InvokeModelResult`, `MiddlewareResult`) carries Output-phase metadata.
+
 ## `AgentStreamStage` is internal
 
 `AgentStreamStage` is not exported from the public API. The context for this stage passes `args` and `options` by reference, but the correct contract (copy vs. reference, readonly enforcement) hasn't been finalized. Rather than ship an inconsistent surface, we're keeping it internal until we decide whether `args` should be deep-copied (consistent with `InvokeModelStage.messages`) or remain a reference (simpler, but surprising given the other stages' guarantees).
@@ -173,6 +187,19 @@ Each requirement below is verified by tests and should hold across language impl
 - `AfterModelCallEvent` fires after middleware completes
 - Both hooks fire even when middleware short-circuits
 
+### Result transformation
+
+- Output middleware can transform the result (stopReason, message, usage, metrics)
+- The transformed result is authoritative — it is what `AgentResult` returns to the caller
+- The transformed result is what gets appended to `agent.messages`
+- A middleware that changes `stopReason` from `tool_use` to `end_turn` prevents tool dispatch
+
+### Model state isolation
+
+- `modelState` is not exposed on the middleware context
+- The agent snapshots model state before the chain and writes back provider changes after
+- Middleware cannot read or write model state, even via the `agent` escape hatch (writes are overwritten)
+
 ### Phase ordering at agent level
 
 - Input → Wrap → Output execution order holds regardless of registration order at the agent level
@@ -246,3 +273,6 @@ Each requirement below is verified by tests and should hold across language impl
 - Interrupt ID uses the `agentStream` namespace
 - The interrupt source is `'middleware'`
 - InterruptEvent is yielded on the stream
+- After resuming to a non-tool completion, the interrupt state is cleared so the next fresh invocation is accepted
+- Resuming does not clobber a pending tool interrupt: if a tool interrupt is outstanding and its resume is cancelled before the tool runs, that interrupt survives and stays resumable
+- The stop reports every still-unanswered interrupt, not only the one just raised (so a partially-answered set is fully visible to the caller)

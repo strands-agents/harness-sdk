@@ -1,0 +1,9 @@
+name: "traceai"
+description: "OpenTelemetry instrumentation for the Strands Agents TypeScript SDK, part of the Future AGI traceAI observability framework."
+integrationType: observability
+maintainedBy: partner
+languages:
+  typescript:
+    package: "@traceai/strands"
+github: https://github.com/future-agi/traceAI
+addedDate: 2026-03-10

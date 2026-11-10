@@ -1,0 +1,9 @@
+name: sglang
+description: SGLang high-performance inference server as a Strands Agents model provider, with Token-In/Token-Out support for on-policy RL rollouts.
+integrationType: model-provider
+languages:
+  python:
+    package: strands-sglang
+github: https://github.com/horizon-rl/strands-sglang
+docsPage: docs/integrations/model-providers/sglang
+addedDate: 2026-01-09

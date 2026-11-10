@@ -6,6 +6,8 @@ import { TextBlock, JsonBlock, ToolResultBlock } from '../../../types/messages.j
 import { ImageBlock, VideoBlock, DocumentBlock } from '../../../types/media.js'
 import { createMockAgent, invokeTrackedHook } from '../../../__fixtures__/agent-helpers.js'
 import { MockMessageModel } from '../../../__fixtures__/mock-message-model.js'
+import { AgentMetrics } from '../../../telemetry/meter.js'
+import { withDefaultLocale } from '../../../__fixtures__/locale-helpers.js'
 
 const mockModel = new MockMessageModel()
 
@@ -144,6 +146,21 @@ describe('ContextOffloader', () => {
       expect(preview).toContain('Tool result was offloaded')
       expect(preview).toContain('[Stored references:]')
       expect(preview).not.toContain(largeText)
+    })
+
+    // https://github.com/strands-agents/harness-sdk/issues/4681
+    it('formats offload sizes the same regardless of the host locale', async () => {
+      const storage = new InMemoryStorage()
+      const plugin = new ContextOffloader({ storage, maxResultTokens: 100, previewTokens: 10 })
+      const agent = createMockAgent()
+      plugin.initAgent(agent)
+
+      const event = makeEvent([new TextBlock('a'.repeat(200_000))])
+      await withDefaultLocale('en-IN', () => invokeTrackedHook(agent, event))
+
+      const preview = (event.result.content[0] as TextBlock).text
+      expect(preview).toContain('text, 200,000 chars')
+      expect(preview).toMatch(/~\d{1,3}(,\d{3})* tokens\]/)
     })
 
     it('offloads large JSON results', async () => {
@@ -614,8 +631,10 @@ describe('ContextOffloader', () => {
   describe('eviction via BeforeModelCallEvent', () => {
     it('calls _evict on storage with incrementing cycle count', () => {
       const storage = new InMemoryStorage(5)
+      let cycleCount = 0
       const plugin = new ContextOffloader({ storage, maxResultTokens: 10, previewTokens: 5 })
       const agent = createMockAgent()
+      Object.defineProperty(agent, 'metrics', { get: () => new AgentMetrics({ cycleCount: ++cycleCount }) })
       plugin.initAgent(agent)
 
       const hook = agent.trackedHooks.find((h) => h.eventType === BeforeModelCallEvent)!
@@ -630,8 +649,10 @@ describe('ContextOffloader', () => {
 
     it('evicts stale entries on BeforeModelCallEvent', async () => {
       const storage = new InMemoryStorage(2)
+      let cycleCount = 0
       const plugin = new ContextOffloader({ storage, maxResultTokens: 10, previewTokens: 5 })
       const agent = createMockAgent()
+      Object.defineProperty(agent, 'metrics', { get: () => new AgentMetrics({ cycleCount: ++cycleCount }) })
       plugin.initAgent(agent)
 
       const ref = await storage.store('key1', new TextEncoder().encode('test'))
@@ -657,6 +678,269 @@ describe('ContextOffloader', () => {
       const event = new BeforeModelCallEvent({ agent, model: mockModel, invocationState: {} })
 
       expect(() => hook.callback(event)).not.toThrow()
+    })
+  })
+
+  describe('unified Storage eviction', () => {
+    it('evicts entries stored more than evictAfterCycles ago', async () => {
+      const { InMemoryStorage: UnifiedInMemoryStorage } = await import('../../../storage/in-memory-storage.js')
+      const unifiedStorage = new UnifiedInMemoryStorage()
+
+      let cycleCount = 0
+      const plugin = new ContextOffloader({
+        storage: unifiedStorage,
+        maxResultTokens: 10,
+        previewTokens: 5,
+        evictAfterCycles: 3,
+      })
+      const agent = createMockAgent({ extra: { model: mockModel } as never })
+      Object.defineProperty(agent, 'metrics', { get: () => new AgentMetrics({ cycleCount }) })
+      plugin.initAgent(agent)
+
+      // Store content at cycle 0
+      const event = makeEvent([new TextBlock('x'.repeat(1000))])
+      Object.defineProperty(event, 'agent', { value: agent })
+      await invokeTrackedHook(agent, event)
+
+      // Verify stored
+      const keys = await unifiedStorage.list('')
+      expect(keys.length).toBe(1)
+
+      // Advance to cycle 3 — threshold = 3 - 3 = 0, stored at 0, 0 < 0 is false → not evicted
+      cycleCount = 3
+      const hook = agent.trackedHooks.find((h) => h.eventType === BeforeModelCallEvent)!
+      const modelEvent = new BeforeModelCallEvent({ agent, model: mockModel, invocationState: {} })
+      await hook.callback(modelEvent)
+
+      const keysAfter3 = await unifiedStorage.list('')
+      expect(keysAfter3.length).toBe(1)
+
+      // Advance to cycle 4 — threshold = 4 - 3 = 1, stored at 0, 0 < 1 → evicted
+      cycleCount = 4
+      await hook.callback(modelEvent)
+
+      const keysAfter4 = await unifiedStorage.list('')
+      expect(keysAfter4.length).toBe(0)
+    })
+
+    it('does not evict when evictAfterCycles is null', async () => {
+      const { InMemoryStorage: UnifiedInMemoryStorage } = await import('../../../storage/in-memory-storage.js')
+      const unifiedStorage = new UnifiedInMemoryStorage()
+
+      let cycleCount = 0
+      const plugin = new ContextOffloader({
+        storage: unifiedStorage,
+        maxResultTokens: 10,
+        previewTokens: 5,
+        evictAfterCycles: null,
+      })
+      const agent = createMockAgent({ extra: { model: mockModel } as never })
+      Object.defineProperty(agent, 'metrics', { get: () => new AgentMetrics({ cycleCount }) })
+      plugin.initAgent(agent)
+
+      // Store content at cycle 0
+      const event = makeEvent([new TextBlock('x'.repeat(1000))])
+      Object.defineProperty(event, 'agent', { value: agent })
+      await invokeTrackedHook(agent, event)
+
+      // Advance far beyond any reasonable eviction window
+      cycleCount = 100
+      const hook = agent.trackedHooks.find((h) => h.eventType === BeforeModelCallEvent)!
+      const modelEvent = new BeforeModelCallEvent({ agent, model: mockModel, invocationState: {} })
+      await hook.callback(modelEvent)
+
+      const keys = await unifiedStorage.list('')
+      expect(keys.length).toBe(1)
+    })
+  })
+
+  describe('unified Storage content-type round-trip', () => {
+    it('stores content and content-type in a single framed key', async () => {
+      const { InMemoryStorage: UnifiedInMemoryStorage } = await import('../../../storage/in-memory-storage.js')
+      const unifiedStorage = new UnifiedInMemoryStorage()
+
+      const plugin = new ContextOffloader({
+        storage: unifiedStorage,
+        maxResultTokens: 10,
+        previewTokens: 5,
+        includeRetrievalTool: true,
+      })
+      const agent = createMockAgent()
+      plugin.initAgent(agent)
+
+      const event = makeEvent([new TextBlock('hello world '.repeat(100))])
+      await invokeTrackedHook(agent, event)
+
+      const preview = (event.result.content[0] as TextBlock).text
+      const refMatch = preview.match(/tool-123_0/)
+      expect(refMatch).not.toBeNull()
+
+      // Only one key per block — no sidecar .contenttype key
+      const keys = await unifiedStorage.list('')
+      expect(keys).toEqual(['offloader/tool-123_0'])
+
+      const tools = plugin.getTools()
+      const retrievalTool = tools[0]!
+      const result = await (retrievalTool as unknown as { invoke(input: unknown): Promise<unknown> }).invoke({
+        reference: 'tool-123_0',
+      })
+      expect(result).toBe('hello world '.repeat(100))
+    })
+  })
+
+  describe('auto-namespacing', () => {
+    it('auto-scopes a raw unified Storage under offloader/', async () => {
+      const { InMemoryStorage: UnifiedInMemoryStorage } = await import('../../../storage/in-memory-storage.js')
+      const unifiedStorage = new UnifiedInMemoryStorage()
+
+      const plugin = new ContextOffloader({
+        storage: unifiedStorage,
+        maxResultTokens: 10,
+        previewTokens: 5,
+      })
+      const agent = createMockAgent()
+      plugin.initAgent(agent)
+
+      const event = makeEvent([new TextBlock('x'.repeat(1000))])
+      await invokeTrackedHook(agent, event)
+
+      const keys = await unifiedStorage.list('')
+      expect(keys).toEqual(['offloader/tool-123_0'])
+    })
+
+    it('does not double-namespace an already-namespaced Storage', async () => {
+      const { InMemoryStorage: UnifiedInMemoryStorage } = await import('../../../storage/in-memory-storage.js')
+      const { namespace } = await import('../../../storage/storage.js')
+      const unifiedStorage = new UnifiedInMemoryStorage()
+      const customScoped = namespace(unifiedStorage, 'custom')
+
+      const plugin = new ContextOffloader({
+        storage: customScoped,
+        maxResultTokens: 10,
+        previewTokens: 5,
+      })
+      const agent = createMockAgent()
+      plugin.initAgent(agent)
+
+      const event = makeEvent([new TextBlock('x'.repeat(1000))])
+      await invokeTrackedHook(agent, event)
+
+      const keys = await unifiedStorage.list('')
+      expect(keys).toEqual(['custom/tool-123_0'])
+    })
+
+    it('does not namespace legacy OffloaderStorage', async () => {
+      const storage = new InMemoryStorage()
+      const plugin = new ContextOffloader({
+        storage,
+        maxResultTokens: 10,
+        previewTokens: 5,
+      })
+      const agent = createMockAgent()
+      plugin.initAgent(agent)
+
+      const event = makeEvent([new TextBlock('x'.repeat(1000))])
+      await invokeTrackedHook(agent, event)
+
+      const preview = (event.result.content[0] as TextBlock).text
+      expect(preview).not.toContain('offloader/')
+    })
+  })
+
+  describe('LocalFileStorage sandbox routing', () => {
+    it('auto-routes LocalFileStorage through sandbox and namespaces under offloader/', async () => {
+      const { LocalFileStorage } = await import('../../../storage/local-file-storage.js')
+      const written: Array<{ path: string; data: Uint8Array }> = []
+      const mockSandbox = {
+        writeFile: vi.fn(async (path: string, data: Uint8Array) => {
+          written.push({ path, data })
+        }),
+        readFile: vi.fn(async (path: string) => {
+          const entry = written.find((entry) => entry.path === path)
+          if (!entry) throw Object.assign(new Error('not found'), { code: 'ENOENT' })
+          return entry.data
+        }),
+        removeFile: vi.fn(),
+        listFiles: vi.fn(async () => []),
+        executeStreaming: vi.fn(),
+        executeCodeStreaming: vi.fn(),
+        getTools: vi.fn(() => []),
+      }
+
+      const storage = new LocalFileStorage('./artifacts')
+      const plugin = new ContextOffloader({
+        storage,
+        maxResultTokens: 10,
+        previewTokens: 5,
+      })
+      const agent = createMockAgent({ extra: { model: mockModel, sandbox: mockSandbox } as never })
+      plugin.initAgent(agent)
+
+      const result = new ToolResultBlock({
+        toolUseId: 'tool-123',
+        status: 'success',
+        content: [new TextBlock('large content '.repeat(100))],
+      })
+      const event = new AfterToolCallEvent({
+        agent,
+        toolUse: { name: 'some_tool', toolUseId: 'tool-123', input: {} },
+        tool: undefined,
+        result,
+        invocationState: {},
+      })
+      await invokeTrackedHook(agent, event)
+
+      expect(mockSandbox.writeFile).toHaveBeenCalled()
+      const writtenPath = mockSandbox.writeFile.mock.calls[0]![0] as string
+      expect(writtenPath).toContain('offloader/')
+    })
+
+    it('routes pre-namespaced LocalFileStorage through sandbox with user prefix', async () => {
+      const { LocalFileStorage } = await import('../../../storage/local-file-storage.js')
+      const written: Array<{ path: string; data: Uint8Array }> = []
+      const mockSandbox = {
+        writeFile: vi.fn(async (path: string, data: Uint8Array) => {
+          written.push({ path, data })
+        }),
+        readFile: vi.fn(async (path: string) => {
+          const entry = written.find((entry) => entry.path === path)
+          if (!entry) throw Object.assign(new Error('not found'), { code: 'ENOENT' })
+          return entry.data
+        }),
+        removeFile: vi.fn(),
+        listFiles: vi.fn(async () => []),
+        executeStreaming: vi.fn(),
+        executeCodeStreaming: vi.fn(),
+        getTools: vi.fn(() => []),
+      }
+
+      const storage = new LocalFileStorage('./artifacts').namespace('custom')
+      const plugin = new ContextOffloader({
+        storage,
+        maxResultTokens: 10,
+        previewTokens: 5,
+      })
+      const agent = createMockAgent({ extra: { model: mockModel, sandbox: mockSandbox } as never })
+      plugin.initAgent(agent)
+
+      const result = new ToolResultBlock({
+        toolUseId: 'tool-123',
+        status: 'success',
+        content: [new TextBlock('large content '.repeat(100))],
+      })
+      const event = new AfterToolCallEvent({
+        agent,
+        toolUse: { name: 'some_tool', toolUseId: 'tool-123', input: {} },
+        tool: undefined,
+        result,
+        invocationState: {},
+      })
+      await invokeTrackedHook(agent, event)
+
+      expect(mockSandbox.writeFile).toHaveBeenCalled()
+      const writtenPath = mockSandbox.writeFile.mock.calls[0]![0] as string
+      expect(writtenPath).toContain('custom/')
+      expect(writtenPath).not.toContain('offloader/')
     })
   })
 })

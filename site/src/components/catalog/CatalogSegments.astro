@@ -1,0 +1,26 @@
+---
+/**
+ * SDK segmented control shared by the filter bar and the search dialog's
+ * facets. Static markup with data-cat-* hooks; the page script binds every
+ * instance document-wide, so all copies stay in sync. The Language segment
+ * (All / Python / TypeScript) lives alongside this in CatalogFacets.
+ */
+interface Props {
+  showSdkFacet: boolean
+}
+
+const { showSdkFacet } = Astro.props
+---
+
+{
+  showSdkFacet && (
+    <div class="cat-seg" role="radiogroup" aria-label="SDK">
+      <button class="cat-seg-btn" type="button" role="radio" aria-checked="true" data-cat-sdk="agents">
+        Agents
+      </button>
+      <button class="cat-seg-btn" type="button" role="radio" aria-checked="false" data-cat-sdk="evals">
+        Evals
+      </button>
+    </div>
+  )
+}

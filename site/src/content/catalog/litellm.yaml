@@ -1,0 +1,9 @@
+name: LiteLLM
+description: Run Strands agents on models from OpenAI, Anthropic, Amazon, and more through LiteLLM's unified API.
+integrationType: model-provider
+maintainedBy: strands
+languages:
+  python: {}
+github: https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/litellm.py
+docsPage: docs/user-guide/sdk/model-providers/litellm
+addedDate: 2025-05-16

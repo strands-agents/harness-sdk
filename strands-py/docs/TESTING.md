@@ -79,4 +79,4 @@ assert tru_message == exp_message
 
 ## Comments in Tests
 
-The evergreen-comment rule applies here too: a regression test should **link the issue and describe the behavior it now guarantees**, not narrate what the code used to do. Prefer `# guards against unbounded retry on a None tool name (#642)` over `# we used to hang on None here`.
+The evergreen-comment rule applies here too. **Only a regression test for a discovered bug carries an issue reference**. It links the issue it guards against and describes the behavior it now guarantees, never narrating what the code used to do. Prefer `# guards against unbounded retry on a None tool name (#642)` over `# we used to hang on None here`. A test written as part of feature development gets no issue reference.

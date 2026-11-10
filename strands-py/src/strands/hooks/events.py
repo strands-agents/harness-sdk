@@ -13,18 +13,18 @@ if TYPE_CHECKING:
     from ..agent.agent_result import AgentResult
 
 from ..types.agent import AgentInput
-from ..types.content import Message, Messages
+from ..types.content import ContentBlock, Message, Messages
 from ..types.interrupt import _Interruptible
 from ..types.streaming import StopReason
 from ..types.tools import AgentTool, ToolResult, ToolUse
-from .registry import BaseHookEvent, HookEvent
+from .registry import BaseHookEvent, HookEvent, _LocalAgentT
 
 if TYPE_CHECKING:
     from ..multiagent.base import MultiAgentBase
 
 
 @dataclass
-class AgentInitializedEvent(HookEvent):
+class AgentInitializedEvent(HookEvent[_LocalAgentT]):
     """Event triggered when an agent has finished initialization.
 
     This event is fired after the agent has been fully constructed and all
@@ -115,7 +115,7 @@ class AfterInvocationEvent(HookEvent):
 
 
 @dataclass
-class MessageAddedEvent(HookEvent):
+class MessageAddedEvent(HookEvent[_LocalAgentT]):
     """Event triggered when a message is added to the agent's conversation.
 
     This event is fired whenever the agent adds a new message to its internal
@@ -134,7 +134,91 @@ class MessageAddedEvent(HookEvent):
 
 
 @dataclass
-class BeforeToolCallEvent(HookEvent, _Interruptible):
+class MessageUpdatedEvent(HookEvent[_LocalAgentT]):
+    """Event triggered after the framework replaces a message.
+
+    Attributes:
+        tracking_id: Stable identifier of the replaced message.
+        message: Replacement message.
+    """
+
+    tracking_id: str
+    message: Message
+
+
+@dataclass
+class BeforeToolsEvent(HookEvent, _Interruptible):
+    """Event triggered before executing tools.
+
+    This event is fired when the model returns tool use blocks that need to be executed.
+    Hook callbacks can set ``cancel`` to prevent all tools from executing. Fires once per
+    cycle, so may fire more than once per assistant message when a per-tool interrupt
+    splits the batch.
+
+    Attributes:
+        message: The assistant message containing tool use requests.
+        invocation_state: State and configuration passed through the agent invocation.
+        cancel: When set, cancels all tool calls. If a string, used as the tool result
+            error message. If True, a default message is used.
+    """
+
+    message: Message
+    invocation_state: dict[str, Any]
+    cancel: bool | str = False
+
+    def _can_write(self, name: str) -> bool:
+        return name == "cancel"
+
+    @override
+    def _interrupt_id(self, name: str) -> str:
+        """Unique id for the interrupt.
+
+        Args:
+            name: User defined name for the interrupt.
+
+        Returns:
+            Interrupt id.
+        """
+        return f"v1:before_tools:{uuid.uuid5(uuid.NAMESPACE_OID, name)}"
+
+
+@dataclass
+class AfterToolsEvent(HookEvent):
+    """Event triggered after all tools complete execution.
+
+    This event is fired after tool results are collected and ready to be added to conversation.
+    Paired with a preceding ``BeforeToolsEvent`` when the batch proceeds past the
+    pre-execution phase (cancel, interrupt, and error paths included). Fires once per
+    cycle, so may fire more than once per assistant message when a per-tool interrupt
+    splits the batch.
+
+    Note: This event uses reverse callback ordering, meaning callbacks registered
+    later will be invoked first during cleanup.
+
+    Attributes:
+        message: The user-role message containing the tool results.
+        invocation_state: State and configuration passed through the agent invocation.
+        end_turn: When set, the agent loop halts after this tool batch without calling the
+            model again. A string becomes the final assistant text. A list of content blocks
+            becomes the final assistant message content. If True, a default message
+            is used. In any case, the stop_reason is "end_turn".
+    """
+
+    message: Message
+    invocation_state: dict[str, Any]
+    end_turn: bool | str | list[ContentBlock] = False
+
+    def _can_write(self, name: str) -> bool:
+        return name == "end_turn"
+
+    @property
+    def should_reverse_callbacks(self) -> bool:
+        """True to invoke callbacks in reverse order."""
+        return True
+
+
+@dataclass
+class BeforeToolCallEvent(HookEvent[_LocalAgentT], _Interruptible):
     """Event triggered before a tool is invoked.
 
     This event is fired just before the agent executes a tool, allowing hook
@@ -174,7 +258,7 @@ class BeforeToolCallEvent(HookEvent, _Interruptible):
 
 
 @dataclass
-class AfterToolCallEvent(HookEvent):
+class AfterToolCallEvent(HookEvent[_LocalAgentT]):
     """Event triggered after a tool invocation completes.
 
     This event is fired after the agent has finished executing a tool,
@@ -203,6 +287,10 @@ class AfterToolCallEvent(HookEvent):
         result: The result of the tool invocation. Either a ToolResult on success
             or an Exception if the tool execution failed.
         cancel_message: The cancellation message if the user cancelled the tool call.
+        duration: Elapsed time in seconds spent executing the tool. Starts after
+            BeforeToolCallEvent returns and stops before AfterToolCallEvent is constructed.
+            None when the tool call was cancelled by a BeforeToolCallEvent hook
+            before execution.
         retry: Whether to retry the tool invocation. Can be set by hook callbacks
             to trigger a retry. When True, the current result is discarded and the
             tool is called again. Defaults to False.
@@ -214,6 +302,7 @@ class AfterToolCallEvent(HookEvent):
     result: ToolResult
     exception: Exception | None = None
     cancel_message: str | None = None
+    duration: float | None = None
     retry: bool = False
 
     def _can_write(self, name: str) -> bool:
@@ -269,7 +358,7 @@ class AfterModelCallEvent(HookEvent):
     Note: This event is not fired for invocations to structured_output.
 
     Model Retrying:
-        When ``retry_model`` is set to True by a hook callback, the agent will discard
+        When ``retry`` is set to True by a hook callback, the agent will discard
         the current model response and invoke the model again. This has important
         implications for streaming consumers:
 

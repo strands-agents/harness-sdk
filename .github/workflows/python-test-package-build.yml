@@ -1,0 +1,112 @@
+# End-to-end wheel install smoke test.
+#
+# Mirror of typescript-test-package-pack.yml. The Python-side equivalent of
+# the TS hoisting bug would be: a wheel that imports a module from src/ but
+# misconfigures `[tool.hatch.build.targets.wheel].packages`, so `hatch test`
+# (which runs against editable source) passes while `pip install dist/*.whl`
+# from a fresh venv crashes at import time.
+#
+# This workflow reproduces a real user's install: build the wheel with
+# `python -m build`, install it in a venv OUTSIDE the monorepo tree (no
+# editable install, no fallback to source), then import the public surface.
+name: "Python: Test Package Build"
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        required: true
+        type: string
+      version:
+        description: 'If set, pin the wheel to this version via SETUPTOOLS_SCM_PRETEND_VERSION. Required at release time (the release tag does not exist yet, so setuptools-scm would otherwise derive a dev version). PR-time callers leave this empty.'
+        required: false
+        type: string
+        default: ''
+
+jobs:
+  test-package-build:
+    name: Wheel install
+    permissions:
+      contents: read
+    runs-on: strands-agents_ubuntu-latest_4-core
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v7.1.0
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+
+      - name: Install build tooling
+        run: pip install --no-cache-dir build
+
+      - name: Build wheel + sdist
+        working-directory: strands-py
+        env:
+          PINNED_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [ -n "$PINNED_VERSION" ]; then
+            echo "Building with SETUPTOOLS_SCM_PRETEND_VERSION=$PINNED_VERSION"
+            export SETUPTOOLS_SCM_PRETEND_VERSION="$PINNED_VERSION"
+          else
+            echo "No version pinned; setuptools-scm will derive from git tags."
+          fi
+          python -m build
+
+      - name: Install wheel in a clean venv outside the repo and import
+        # The venv MUST live outside the monorepo — otherwise pip can fall
+        # back to the in-tree source if the wheel is incomplete, masking the
+        # bug we are trying to catch.
+        env:
+          PINNED_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          WORK=$(mktemp -d)
+          trap 'rm -rf "$WORK"' EXIT
+          echo "Workspace: $WORK"
+
+          WHEEL=$(find "$GITHUB_WORKSPACE/strands-py/dist" -maxdepth 1 -name '*.whl' -print -quit)
+          if [ -z "$WHEEL" ]; then
+            echo "::error::no wheel produced under strands-py/dist"
+            exit 1
+          fi
+          echo "Wheel: $WHEEL"
+
+          python -m venv "$WORK/venv"
+          "$WORK/venv/bin/pip" install --upgrade pip
+          "$WORK/venv/bin/pip" install "$WHEEL"
+
+          # Import from a directory outside the source tree, so the only
+          # resolvable `strands` is the one from the wheel. When a version
+          # is pinned, also assert the installed package reports it.
+          cd "$WORK"
+          if [ -n "$PINNED_VERSION" ]; then
+            PINNED_VERSION="$PINNED_VERSION" "$WORK/venv/bin/python" - <<'PYEOF'
+          import os
+          from importlib.metadata import version
+          import strands  # ensure the wheel imports from a clean venv
+          expected = os.environ["PINNED_VERSION"]
+          actual = version("strands-agents")
+          assert actual == expected, f"strands-agents version is {actual!r}, expected {expected!r}"
+          print(f"version OK: {actual}")
+          PYEOF
+          else
+            "$WORK/venv/bin/python" -c "import strands; from importlib.metadata import version; print('strands version:', version('strands-agents'))"
+          fi
+
+      # Upload for release-python.yml's inspect/publish path to consume.
+      # PR-triggered runs also upload (short retention) — harmless.
+      - name: Upload wheel + sdist for downstream inspect/publish
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: pypi-build-output
+          path: strands-py/dist/*
+          if-no-files-found: error
+          retention-days: 7

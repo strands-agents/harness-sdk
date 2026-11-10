@@ -3,12 +3,15 @@ import logging
 import re
 import unittest.mock
 
+import ollama
 import pydantic
 import pytest
 
 import strands
+from strands.models.model import CacheConfig
 from strands.models.ollama import OllamaModel
 from strands.types.content import Messages
+from strands.types.exceptions import ContextWindowOverflowException
 
 
 @pytest.fixture
@@ -741,3 +744,142 @@ def test_format_request_uses_tool_name_not_tool_use_id(model, model_id):
     # The function name in the request must come from "name", not "toolUseId"
     assert tool_call["function"]["name"] == "calculator"
     assert tool_call["function"]["name"] != "unique-id-abc-123"
+
+
+@pytest.mark.asyncio
+async def test_stream_context_overflow_error_on_request(ollama_client, model, alist):
+    error = ollama.ResponseError("request exceeds the available context size (2048 tokens), try increasing it")
+    ollama_client.chat = unittest.mock.AsyncMock(side_effect=error)
+
+    messages = [{"role": "user", "content": [{"text": "test"}]}]
+    with pytest.raises(ContextWindowOverflowException) as exc_info:
+        await alist(model.stream(messages))
+
+    assert "exceeds the available context size" in str(exc_info.value)
+    assert exc_info.value.__cause__ == error
+
+
+@pytest.mark.asyncio
+async def test_stream_context_overflow_error_during_iteration(ollama_client, model, alist):
+    error = ollama.ResponseError("the prompt is longer than the context length currently available to the model")
+
+    async def overflowing_stream():
+        raise error
+        yield  # pragma: no cover - generator never yields
+
+    ollama_client.chat = unittest.mock.AsyncMock(return_value=overflowing_stream())
+
+    messages = [{"role": "user", "content": [{"text": "test"}]}]
+    with pytest.raises(ContextWindowOverflowException) as exc_info:
+        await alist(model.stream(messages))
+
+    assert "the prompt is longer than the context length" in str(exc_info.value)
+    assert exc_info.value.__cause__ == error
+
+
+@pytest.mark.asyncio
+async def test_stream_non_overflow_response_error_propagates(ollama_client, model, alist):
+    error = ollama.ResponseError("model 'm1' not found")
+    ollama_client.chat = unittest.mock.AsyncMock(side_effect=error)
+
+    messages = [{"role": "user", "content": [{"text": "test"}]}]
+    with pytest.raises(ollama.ResponseError, match="not found"):
+        await alist(model.stream(messages))
+
+
+@pytest.mark.asyncio
+async def test_structured_output_context_overflow_error(ollama_client, model, test_output_model_cls, alist):
+    error = ollama.ResponseError("request exceeds the available context size (2048 tokens), try increasing it")
+    ollama_client.chat = unittest.mock.AsyncMock(side_effect=error)
+
+    messages = [{"role": "user", "content": [{"text": "test"}]}]
+    with pytest.raises(ContextWindowOverflowException) as exc_info:
+        await alist(model.structured_output(test_output_model_cls, messages))
+
+    assert "exceeds the available context size" in str(exc_info.value)
+    assert exc_info.value.__cause__ == error
+
+
+@pytest.mark.asyncio
+async def test_structured_output_non_overflow_response_error_propagates(
+    ollama_client, model, test_output_model_cls, alist
+):
+    error = ollama.ResponseError("model 'm1' not found")
+    ollama_client.chat = unittest.mock.AsyncMock(side_effect=error)
+
+    messages = [{"role": "user", "content": [{"text": "test"}]}]
+    with pytest.raises(ollama.ResponseError, match="not found"):
+        await alist(model.structured_output(test_output_model_cls, messages))
+
+
+def test_cache_config_round_trips(host, model_id, captured_warnings):
+    """cache_config is a valid config field and survives get_config/update_config unchanged."""
+    cache_config = CacheConfig()
+    model = OllamaModel(host, model_id=model_id, cache_config=cache_config)
+
+    assert model.get_config()["cache_config"] is cache_config
+
+    updated = CacheConfig()
+    model.update_config(cache_config=updated)
+    assert model.get_config()["cache_config"] is updated
+
+    assert not any("Invalid configuration parameters" in str(warning.message) for warning in captured_warnings)
+
+
+def test_cache_config_default_is_silent_and_not_routed(host, model_id, messages, captured_warnings):
+    """A CacheConfig whose fields are all default warns about nothing and never reaches the request."""
+    model = OllamaModel(host, model_id=model_id, cache_config=CacheConfig(strategy="auto"))
+
+    request = model.format_request(messages)
+
+    assert "cache_config" not in request
+    assert not any("have no effect" in str(warning.message) for warning in captured_warnings)
+
+
+@pytest.mark.parametrize(
+    ("cache_config", "field"),
+    [
+        (CacheConfig(strategy="anthropic"), "strategy"),
+        (CacheConfig(ttl="1h"), "ttl"),
+        (CacheConfig(system_prompt_ttl="1h"), "system_prompt_ttl"),
+        (CacheConfig(cache_key="tenant-42"), "cache_key"),
+        (CacheConfig(tools_ttl=True), "tools_ttl"),
+    ],
+)
+def test_cache_config_unsupported_field_warns_and_is_not_routed(host, model_id, messages, cache_config, field):
+    """Ollama honors no cache field: a non-default field warns (naming the provider) and never reaches the request."""
+    model = OllamaModel(host, model_id=model_id, cache_config=cache_config)
+
+    with pytest.warns(UserWarning, match=rf"fields \['{field}'\] have no effect on Ollama"):
+        request = model.format_request(messages)
+
+    assert "cache_config" not in request
+
+
+@pytest.mark.parametrize("keep_alive", [0, 0.0, -1, "0", "5m"])
+def test_format_request_preserves_explicit_keep_alive(keep_alive):
+    model = OllamaModel("http://localhost:11434", model_id="test", keep_alive=keep_alive)
+    request = model.format_request([{"role": "user", "content": [{"text": "hello"}]}])
+    assert request["keep_alive"] == keep_alive
+
+
+@pytest.mark.parametrize("config", [{}, {"keep_alive": None}])
+def test_format_request_omits_unset_keep_alive(config):
+    model = OllamaModel("http://localhost:11434", model_id="test", **config)
+    request = model.format_request([{"role": "user", "content": [{"text": "hello"}]}])
+    assert "keep_alive" not in request
+
+
+def test_format_request_logs_skipped_blocks_once_per_request(model, caplog):
+    caplog.set_level(logging.WARNING, logger="strands.models.ollama")
+    s3_image = {"image": {"format": "png", "source": {"location": {"type": "s3", "uri": "s3://bucket/key.png"}}}}
+    messages = []
+    for turn in range(3):
+        messages.append({"role": "user", "content": [{"text": "look"}, s3_image]})
+        messages.append({"role": "assistant", "content": [{"text": f"answer {turn}"}]})
+
+    model.format_request(messages)
+
+    messages_logged = [record.getMessage() for record in caplog.records]
+    assert len(messages_logged) == 1
+    assert "count=<3> | Location sources are not supported by Ollama" in messages_logged[0]

@@ -1,7 +1,21 @@
 import { describe, it, expect } from 'vitest'
 import { getCollection } from 'astro:content'
+import { lstatSync, readFileSync, readlinkSync } from 'node:fs'
 import path from 'node:path'
+import fg from 'fast-glob'
+import yaml from 'js-yaml'
+import { parseExternalDocsConfig } from '../scripts/external-docs/schema'
 import { loadSidebarFromConfig, type StarlightSidebarItem } from '../src/sidebar'
+import { pathToDocsSlug } from '../src/util/links'
+
+const externalDocsConfig = parseExternalDocsConfig(JSON.parse(readFileSync('external-docs.config.json', 'utf-8')))
+
+// Same first-fence frontmatter read as redirect.static.ts; only `slug` matters here.
+function frontmatterSlug(filePath: string): unknown {
+  const match = readFileSync(filePath, 'utf-8').match(/^---\r?\n([\s\S]*?)\r?\n---/)
+  const parsed = match ? yaml.load(match[1] ?? '') : undefined
+  return typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, unknown>).slug : undefined
+}
 
 describe('Content Collections', () => {
   it('should list all doc contents', async () => {
@@ -20,6 +34,53 @@ describe('Content Collections', () => {
 
     expect(docs.length).toBeGreaterThan(0)
   })
+
+  it('loads every hand-authored content file on disk', async () => {
+    // The collection uses explicit glob patterns and exclusions; a file they
+    // miss never renders and nothing reports it. Generated docs are owned by
+    // their generators and mounted through symlinks.
+    const docs = await getCollection('docs')
+    const ids = new Set(docs.map((doc) => doc.id))
+    const files = fg.sync(['404.mdx', 'docs/{user-guide,integrations,contribute,examples,labs}/**/*.{md,mdx}'], {
+      cwd: 'src/content',
+      followSymbolicLinks: false,
+    })
+    const dropped = files.filter((file) => {
+      // examples index pages are excluded by design (see content.config.ts)
+      if (file.startsWith('docs/examples/') && /^index\.mdx?$/.test(path.basename(file))) return false
+      return !ids.has(pathToDocsSlug(file, frontmatterSlug(path.join('src/content', file))))
+    })
+    expect(dropped).toEqual([])
+  })
+
+  it.each(externalDocsConfig.products)(
+    'keeps $id page content owned by the upstream repository',
+    ({ id, routePrefix }) => {
+      const contentPath = path.join('src/content', routePrefix)
+      const resolvedTarget = path.resolve(path.dirname(contentPath), readlinkSync(contentPath))
+      const expectedTarget = path.resolve('.build/external-docs', id, 'content')
+
+      expect(lstatSync(contentPath).isSymbolicLink()).toBe(true)
+      expect(resolvedTarget).toBe(expectedTarget)
+    }
+  )
+
+  it.each(externalDocsConfig.products)(
+    'loads every generated $id navigation item as upstream-owned content',
+    async ({ id }) => {
+      const navigation = JSON.parse(readFileSync(`.build/external-docs/${id}/navigation.json`, 'utf-8')) as {
+        groups: Array<{ items: Array<{ slug: string }> }>
+      }
+      const expectedSlugs = navigation.groups.flatMap((group) => group.items.map((item) => item.slug)).sort()
+      const docs = await getCollection('docs')
+      const productSlugs = docs
+        .filter((doc) => doc.data.externalDocs?.productId === id)
+        .map((doc) => doc.id)
+        .sort()
+
+      expect(productSlugs).toEqual(expectedSlugs)
+    }
+  )
 
   it('should have valid slugs for all sidebar items', async () => {
     const configPath = path.resolve('./src/config/navigation.yml')
@@ -66,11 +127,15 @@ describe('Content Collections', () => {
   it('has unique titles across user-guide pages', async () => {
     // Related-pages output and JSON-LD `headline` use `title` verbatim. Two
     // user-guide pages with the same title produce ambiguous links that look
-    // like duplicates (e.g. a "Hooks" that could mean the agents or bidi one).
+    // like duplicates. Intentional shared titles are allowlisted below.
+    // Preview external docs intentionally mirror current pages and are excluded
+    // from related pages and JSON-LD discovery surfaces.
     // Set `sidebar.label` if you want the sidebar to stay terse while the page
     // title remains unambiguous out-of-context.
     const docs = await getCollection('docs')
-    const userGuide = docs.filter((d) => d.id.startsWith('docs/user-guide/'))
+    const userGuide = docs.filter(
+      (doc) => doc.id.startsWith('docs/user-guide/') && doc.data.externalDocs?.status !== 'preview'
+    )
 
     const titleMap = new Map<string, string[]>()
     for (const doc of userGuide) {
@@ -79,7 +144,7 @@ describe('Content Collections', () => {
       titleMap.set(doc.data.title, slugs)
     }
 
-    const allowedDuplicates = new Set(['Steering'])
+    const allowedDuplicates = new Set(['Hooks', 'Interrupts', 'Steering'])
     const collisions = [...titleMap.entries()].filter(
       ([title, slugs]) => slugs.length > 1 && !allowedDuplicates.has(title)
     )

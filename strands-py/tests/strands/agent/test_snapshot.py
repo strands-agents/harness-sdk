@@ -2,7 +2,7 @@
 
 import json
 import re
-from typing import Any
+from typing import Any, get_args
 from unittest.mock import MagicMock
 
 import pytest
@@ -13,6 +13,7 @@ from strands.types._snapshot import (
     SNAPSHOT_PRESETS,
     SNAPSHOT_SCHEMA_VERSION,
     VALID_SCOPES,
+    Scope,
     Snapshot,
     resolve_snapshot_fields,
 )
@@ -172,6 +173,17 @@ def test_agent_state_round_trip(messages, state_dict):
     assert fresh_agent._interrupt_state.to_dict() == agent._interrupt_state.to_dict()
 
 
+def test_durable_tracking_id_survives_snapshot_round_trip():
+    messages = [{"role": "user", "content": [{"text": "hi"}], "tracking_id": "durable-1"}]
+    agent = _make_agent(messages=messages)
+    snapshot = agent.take_snapshot(preset="session")
+
+    fresh_agent = _make_agent()
+    fresh_agent.load_snapshot(snapshot)
+
+    assert fresh_agent.messages[0]["tracking_id"] == "durable-1"
+
+
 @pytest.mark.parametrize("omitted_field", list(ALL_SNAPSHOT_FIELDS))
 def test_missing_fields_leave_agent_unchanged(omitted_field):
     agent = _make_agent(
@@ -289,7 +301,7 @@ def test_take_snapshot_app_data_is_independent_copy():
 
 def test_valid_scopes_constant_matches_scope_type():
     """VALID_SCOPES contains exactly the values from the Scope Literal type."""
-    assert set(VALID_SCOPES) == {"agent"}
+    assert set(VALID_SCOPES) == set(get_args(Scope))
 
 
 def test_snapshot_validate_accepts_valid_scopes():
@@ -337,6 +349,14 @@ def test_load_snapshot_rejects_invalid_scope():
     snap = _make_snapshot(scope="unknown")
     with pytest.raises(SnapshotException, match="Invalid snapshot scope"):
         agent.load_snapshot(snap)
+
+
+def test_load_snapshot_rejects_multi_agent_scope():
+    agent = _make_agent()
+    snapshot = _make_snapshot(scope="multiAgent", data={"state": {"node": "n-1"}})
+
+    with pytest.raises(SnapshotException, match="Expected snapshot scope 'agent'"):
+        agent.load_snapshot(snapshot)
 
 
 def test_take_snapshot_always_produces_agent_scope():

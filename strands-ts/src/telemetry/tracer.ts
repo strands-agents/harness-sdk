@@ -57,6 +57,7 @@ import type { ContentBlock, Message, SystemPrompt } from '../types/messages.js'
 import type { JSONSerializable } from '../types/json.js'
 import { jsonReplacer } from './json.js'
 import { getServiceName } from './utils.js'
+import { totalPromptTokens } from '../models/streaming.js'
 
 /**
  * JSON-serializable representation of LocalTrace.
@@ -213,6 +214,21 @@ export class Tracer {
    */
   private readonly _isLangfuse: boolean
 
+  /**
+   * Whether to record message content as span attributes instead of span events.
+   *
+   * True when the backend cannot read span events (Langfuse) or the opt-in is set via
+   * `OTEL_SEMCONV_STABILITY_OPT_IN=gen_ai_span_attributes_only`. Per OpenTelemetry the span-event
+   * recording API is deprecated, and non-timestamped span details such as the canonical
+   * `gen_ai.*.messages` attributes should be recorded as span attributes instead. This flag is
+   * passed by the aggregated content paths (latest-convention `gen_ai.*` messages and the
+   * `memory.query`/`memory.content` events); it never reaches the legacy per-message events
+   * (which reuse a `content` key and would collide as attributes).
+   *
+   * @see https://opentelemetry.io/blog/2026/deprecating-span-events/
+   */
+  private readonly _spanAttributesOnly: boolean
+
   /** In-memory execution trace state, collected independently of OTEL. */
   private readonly _traceState: AgentTraceState = { traces: [] }
 
@@ -233,6 +249,7 @@ export class Tracer {
     this._includeToolDefinitions = optInValues.has('gen_ai_tool_definitions')
 
     this._isLangfuse = Tracer._detectLangfuse()
+    this._spanAttributesOnly = this._isLangfuse || optInValues.has('gen_ai_span_attributes_only')
 
     // Get tracer from global API to ensure ground truth
     this._tracer = trace.getTracer(getServiceName())
@@ -354,7 +371,7 @@ export class Tracer {
 
       const span = this._startSpan({
         name: 'chat',
-        attributes,
+        attributes: { ...attributes, ...this._traceAttributes },
         spanKind: SpanKind.INTERNAL,
         ...(this._loopSpan && { parentSpan: this._loopSpan }),
       })
@@ -428,23 +445,32 @@ export class Tracer {
 
       const span = this._startSpan({
         name: `execute_tool ${tool.name}`,
-        attributes,
+        attributes: { ...attributes, ...this._traceAttributes },
         spanKind: SpanKind.INTERNAL,
         ...(this._loopSpan && { parentSpan: this._loopSpan }),
       })
 
       if (this._useLatestConventions) {
-        this._addEvent(span, 'gen_ai.client.inference.operation.details', {
-          'gen_ai.input.messages': JSON.stringify(
-            [
-              {
-                role: 'tool',
-                parts: [{ type: 'tool_call', name: tool.name, id: tool.toolUseId, arguments: tool.input }],
-              },
-            ],
-            jsonReplacer
-          ),
-        })
+        // The execute_tool span convention records tool inputs in the dedicated
+        // gen_ai.tool.call.arguments span attribute (Opt-In), which spec-compliant
+        // consumers read on tool spans.
+        span.setAttribute('gen_ai.tool.call.arguments', JSON.stringify(tool.input, jsonReplacer))
+        this._addEvent(
+          span,
+          'gen_ai.client.inference.operation.details',
+          {
+            'gen_ai.input.messages': JSON.stringify(
+              [
+                {
+                  role: 'tool',
+                  parts: [{ type: 'tool_call', name: tool.name, id: tool.toolUseId, arguments: tool.input }],
+                },
+              ],
+              jsonReplacer
+            ),
+          },
+          this._spanAttributesOnly
+        )
       } else {
         this._addEvent(span, 'gen_ai.tool.message', {
           role: 'tool',
@@ -485,17 +511,29 @@ export class Tracer {
         attributes['gen_ai.tool.status'] = statusStr
 
         if (this._useLatestConventions) {
-          this._addEvent(span, 'gen_ai.client.inference.operation.details', {
-            'gen_ai.output.messages': JSON.stringify(
-              [
-                {
-                  role: 'tool',
-                  parts: [{ type: 'tool_call_response', id: toolResult.toolUseId, response: toolResult.content }],
-                },
-              ],
-              jsonReplacer
-            ),
-          })
+          // The execute_tool span convention records tool outputs in the dedicated
+          // gen_ai.tool.call.result span attribute (Opt-In), which spec-compliant
+          // consumers read on tool spans. The spec scopes the attribute to successful
+          // executions; failures are captured in the span status instead.
+          if (statusStr !== 'error') {
+            attributes['gen_ai.tool.call.result'] = JSON.stringify(toolResult.content, jsonReplacer)
+          }
+          this._addEvent(
+            span,
+            'gen_ai.client.inference.operation.details',
+            {
+              'gen_ai.output.messages': JSON.stringify(
+                [
+                  {
+                    role: 'tool',
+                    parts: [{ type: 'tool_call_response', id: toolResult.toolUseId, response: toolResult.content }],
+                  },
+                ],
+                jsonReplacer
+              ),
+            },
+            this._spanAttributesOnly
+          )
         } else {
           this._addEvent(span, 'gen_ai.choice', {
             message: JSON.stringify(toolResult.content, jsonReplacer),
@@ -631,7 +669,7 @@ export class Tracer {
       if (options.maxSearchResults !== undefined) attributes['memory.max_search_results'] = options.maxSearchResults
 
       const span = this._startSpan({ name: 'memory.search', attributes, spanKind: SpanKind.INTERNAL })
-      this._addEvent(span, 'memory.query', { content: options.query }, this._isLangfuse)
+      this._addEvent(span, 'memory.query', { content: options.query }, this._spanAttributesOnly)
       return span
     } catch (error) {
       logger.warn(`error=<${error}> | failed to start memory search span`)
@@ -670,7 +708,7 @@ export class Tracer {
               jsonReplacer
             ),
           },
-          this._isLangfuse
+          this._spanAttributesOnly
         )
       }
       this._endSpan(span, attributes, options.error)
@@ -700,7 +738,7 @@ export class Tracer {
         spanKind: SpanKind.INTERNAL,
         ...(options.forceRoot && { forceRoot: true }),
       })
-      this._addEvent(span, 'memory.content', { content: options.content }, this._isLangfuse)
+      this._addEvent(span, 'memory.content', { content: options.content }, this._spanAttributesOnly)
       return span
     } catch (error) {
       logger.warn(`error=<${error}> | failed to start memory add span`)
@@ -879,7 +917,7 @@ export class Tracer {
       const attributes: Record<string, AttributeValue> = { 'agent_loop.cycle_id': cycleId }
       const span = this._startSpan({
         name: 'execute_agent_loop_cycle',
-        attributes,
+        attributes: { ...attributes, ...this._traceAttributes },
         ...(this._agentSpan && { parentSpan: this._agentSpan }),
       })
       this._addEventMessages(span, messages)
@@ -985,6 +1023,10 @@ export class Tracer {
 
   /**
    * Add an event to a span.
+   *
+   * Per OpenTelemetry the span-event recording API is deprecated. When `toSpanAttributes` is set,
+   * the attributes are recorded directly on the span and the event is skipped, so the content is
+   * recorded once rather than duplicated across both; otherwise the event is emitted.
    */
   private _addEvent(
     span: Span,
@@ -1001,10 +1043,11 @@ export class Tracer {
       for (const [key, value] of Object.entries(eventAttributes)) {
         if (value !== undefined && value !== null) otelAttributes[key] = value
       }
-      // Some backends (e.g. Langfuse) don't surface span events, so optionally promote the
-      // attributes onto the span where they remain visible.
+      // Some backends (e.g. Langfuse) don't surface span events, so record the attributes on the
+      // span instead of as an event.
       if (toSpanAttributes) {
         span.setAttributes(otelAttributes)
+        return
       }
       span.addEvent(eventName, otelAttributes)
     } catch (err) {
@@ -1047,9 +1090,14 @@ export class Tracer {
           role: m.role,
           parts: Tracer._mapContentBlocksToOtelParts(m.content),
         }))
-        this._addEvent(span, 'gen_ai.client.inference.operation.details', {
-          'gen_ai.input.messages': JSON.stringify(inputMessages, jsonReplacer),
-        })
+        this._addEvent(
+          span,
+          'gen_ai.client.inference.operation.details',
+          {
+            'gen_ai.input.messages': JSON.stringify(inputMessages, jsonReplacer),
+          },
+          this._spanAttributesOnly
+        )
       } else {
         for (const message of messages) {
           this._addEvent(span, this._getEventNameForMessage(message), {
@@ -1085,17 +1133,25 @@ export class Tracer {
    * attribute names for compatibility with different OTEL backends.
    */
   private _setUsageAttributes(attributes: Record<string, AttributeValue>, usage: Usage): void {
-    attributes['gen_ai.usage.prompt_tokens'] = usage.inputTokens
-    attributes['gen_ai.usage.input_tokens'] = usage.inputTokens
+    const promptTokens = totalPromptTokens(usage)
+    attributes['gen_ai.usage.prompt_tokens'] = promptTokens
+    attributes['gen_ai.usage.input_tokens'] = promptTokens
     attributes['gen_ai.usage.completion_tokens'] = usage.outputTokens
     attributes['gen_ai.usage.output_tokens'] = usage.outputTokens
     attributes['gen_ai.usage.total_tokens'] = usage.totalTokens
 
     if ((usage.cacheReadInputTokens ?? 0) > 0) {
-      attributes['gen_ai.usage.cache_read_input_tokens'] = usage.cacheReadInputTokens!
+      attributes['gen_ai.usage.cache_read.input_tokens'] = usage.cacheReadInputTokens!
+      // Deprecated pre-semconv name, dual-emitted unless opted into the latest conventions
+      if (!this._useLatestConventions) {
+        attributes['gen_ai.usage.cache_read_input_tokens'] = usage.cacheReadInputTokens!
+      }
     }
     if ((usage.cacheWriteInputTokens ?? 0) > 0) {
-      attributes['gen_ai.usage.cache_write_input_tokens'] = usage.cacheWriteInputTokens!
+      attributes['gen_ai.usage.cache_creation.input_tokens'] = usage.cacheWriteInputTokens!
+      if (!this._useLatestConventions) {
+        attributes['gen_ai.usage.cache_write_input_tokens'] = usage.cacheWriteInputTokens!
+      }
     }
   }
 
@@ -1124,12 +1180,17 @@ export class Tracer {
       const messageText = textParts.join('\n')
 
       if (this._useLatestConventions) {
-        this._addEvent(span, 'gen_ai.client.inference.operation.details', {
-          'gen_ai.output.messages': JSON.stringify(
-            [{ role: 'assistant', parts: [{ type: 'text', content: messageText }], finish_reason: finishReason }],
-            jsonReplacer
-          ),
-        })
+        this._addEvent(
+          span,
+          'gen_ai.client.inference.operation.details',
+          {
+            'gen_ai.output.messages': JSON.stringify(
+              [{ role: 'assistant', parts: [{ type: 'text', content: messageText }], finish_reason: finishReason }],
+              jsonReplacer
+            ),
+          },
+          this._spanAttributesOnly
+        )
       } else {
         this._addEvent(span, 'gen_ai.choice', { message: messageText, finish_reason: finishReason })
       }
@@ -1146,18 +1207,23 @@ export class Tracer {
       const finishReason = stopReason || 'unknown'
 
       if (this._useLatestConventions) {
-        this._addEvent(span, 'gen_ai.client.inference.operation.details', {
-          'gen_ai.output.messages': JSON.stringify(
-            [
-              {
-                role: message.role,
-                parts: Tracer._mapContentBlocksToOtelParts(message.content),
-                finish_reason: finishReason,
-              },
-            ],
-            jsonReplacer
-          ),
-        })
+        this._addEvent(
+          span,
+          'gen_ai.client.inference.operation.details',
+          {
+            'gen_ai.output.messages': JSON.stringify(
+              [
+                {
+                  role: message.role,
+                  parts: Tracer._mapContentBlocksToOtelParts(message.content),
+                  finish_reason: finishReason,
+                },
+              ],
+              jsonReplacer
+            ),
+          },
+          this._spanAttributesOnly
+        )
       } else {
         this._addEvent(span, 'gen_ai.choice', {
           finish_reason: finishReason,
@@ -1212,9 +1278,14 @@ export class Tracer {
 
     if (this._useLatestConventions) {
       const parts = Tracer._mapSystemPromptToOtelParts(systemPrompt)
-      this._addEvent(span, 'gen_ai.client.inference.operation.details', {
-        'gen_ai.system_instructions': JSON.stringify(parts, jsonReplacer),
-      })
+      this._addEvent(
+        span,
+        'gen_ai.client.inference.operation.details',
+        {
+          'gen_ai.system_instructions': JSON.stringify(parts, jsonReplacer),
+        },
+        this._spanAttributesOnly
+      )
     } else {
       // Normalize string prompts to an array of text blocks for consistent format
       const blocks = typeof systemPrompt === 'string' ? [{ text: systemPrompt }] : systemPrompt
@@ -1254,6 +1325,10 @@ export class Tracer {
     return contentBlocks.map((block) => {
       switch (block.type) {
         case 'textBlock':
+          return { type: 'text', content: block.text }
+        case 'injectedBlock':
+          return { type: 'text', content: block.injected.text }
+        case 'summaryBlock':
           return { type: 'text', content: block.text }
         case 'toolUseBlock':
           return { type: 'tool_call', name: block.name, id: block.toolUseId, arguments: block.input }

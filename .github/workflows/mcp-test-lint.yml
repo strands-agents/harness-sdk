@@ -1,0 +1,43 @@
+name: "MCP: Test and Lint"
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        required: true
+        type: string
+
+jobs:
+  test-lint:
+    name: Test and Lint
+    runs-on: strands-agents_ubuntu-latest_4-core
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: strands-mcp
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v7.1.0
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          pip install --no-cache-dir hatch
+
+      - name: Run lint
+        id: lint
+        run: hatch run lint
+        continue-on-error: false
+
+      - name: Run tests
+        id: test
+        run: hatch run test

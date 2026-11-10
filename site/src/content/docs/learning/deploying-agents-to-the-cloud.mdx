@@ -1,0 +1,143 @@
+---
+title: "Lesson 14: Deploying agents to the cloud"
+description: "We'll deploy an agent to AWS using Amazon Bedrock AgentCore. AgentCore is a collection of components for building, deploying and operating agents in production. The main components we will focus on in this video is AgentCore Runtime and AgentCore Memory."
+redirectFrom:
+  - docs/community/learning/lesson14-deploying-agents-to-the-cloud
+---
+
+import CourseNotice from '../../../components/CourseNotice.astro'
+
+<CourseNotice title="Before you follow along">
+
+This video is a snapshot in time. Some APIs and examples have changed since
+recording. Follow the code on this page, and look for "Changed since recording"
+notices below.
+
+</CourseNotice>
+
+<YouTube id="S_ZRZFDJ6wE" title="Lesson 14: Deploying agents to the cloud" />
+*[Watch on YouTube](https://www.youtube.com/watch?v=S_ZRZFDJ6wE&list=PLDzwjhH-4yhU&index=14)*
+
+*Code for this lesson: [`samples/14-deploy`](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/14-deploy)*
+
+## From local to production
+
+Everything so far has run on a local machine. A Strands agent is just Python, so you can containerize it and run it anywhere. This lesson deploys it to AWS using Amazon Bedrock AgentCore: Runtime for isolated execution, Memory for persistent and long-term recall, and Observability for tracing.
+
+![AgentCore Overview](../assets/learning/agentcore-overview.png)
+
+## Making your agent deployable
+
+Run this excerpt from `samples/14-deploy`. The linked `main.py` contains the complete
+entrypoint, request parsing, and runtime session handling.
+
+Wrap the agent in a `BedrockAgentCoreApp` and give it an entrypoint. The agent itself doesn't change; the customer service agent below is the same one built across the previous lessons, with an AgentCore Memory session manager swapped in for persistence:
+
+```python
+import os
+from pathlib import Path
+from strands import Agent, AgentSkills
+from customer_service_tools import lookup_customer, get_order_history, process_refund
+from steering_handlers import RefundWorkflowHandler, ToneGuardrailHandler
+from bedrock_agentcore.runtime import BedrockAgentCoreApp
+from bedrock_agentcore.memory.integrations.strands.config import (
+    AgentCoreMemoryConfig, RetrievalConfig
+)
+from bedrock_agentcore.memory.integrations.strands.session_manager import (
+    AgentCoreMemorySessionManager
+)
+
+app = BedrockAgentCoreApp()
+SYSTEM_PROMPT = "Help customers with their orders using the available tools."
+SKILLS_DIR = str(Path(__file__).parent / "skills")
+
+MEMORY_ID = os.environ.get("BEDROCK_AGENTCORE_MEMORY_ID", "")
+
+def create_agent(actor_id: str, session_id: str):
+    # AgentCore Memory for persistence + long-term recall
+    session_manager = None
+    if MEMORY_ID:
+        config = AgentCoreMemoryConfig(
+            memory_id=MEMORY_ID,
+            session_id=session_id,
+            actor_id=actor_id,
+            retrieval_config={
+                "/users/{actorId}/facts": RetrievalConfig(),
+                "/users/{actorId}/preferences": RetrievalConfig(),
+            },
+        )
+        session_manager = AgentCoreMemorySessionManager(
+            agentcore_memory_config=config,
+            region_name="us-east-1",
+        )
+
+    return Agent(
+        tools=[lookup_customer, get_order_history, process_refund],
+        plugins=[
+            AgentSkills(skills=[SKILLS_DIR]),
+            RefundWorkflowHandler(),
+            ToneGuardrailHandler(),
+        ],
+        system_prompt=SYSTEM_PROMPT,
+        context_manager="auto",
+        session_manager=session_manager,
+    )
+```
+
+📂 [main.py](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/14-deploy/main.py) · [lambda-deployment/](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/14-deploy/lambda-deployment) (alternative: AWS Lambda)
+
+The complete runtime sample binds its cached agent to one actor and session and
+rejects attempts to reuse that process for a different pair. Treat the payload's
+`actor_id` as a demo identifier; a production application must derive it from
+authenticated identity. Durable recall requires the configured memory resource.
+
+The `retrieval_config` namespaces tell AgentCore Memory which long-term memory strategies to pull from on each turn, so the agent recalls facts and preferences about a returning user without replaying old conversations.
+
+## Deployment commands
+
+```bash
+# From samples/14-deploy, install the CLI and create a Python Strands project.
+npm install -g @aws/agentcore
+agentcore create --name CourseAgent --project-name CourseDemo \
+  --framework Strands --model-provider Bedrock --language Python --memory none
+
+# Replace the generated starter with this lesson's agent and dependencies.
+cp main.py customer_service_tools.py steering_handlers.py pyproject.toml \
+  CourseDemo/app/CourseAgent/
+cp -R skills/. CourseDemo/app/CourseAgent/skills/
+cd CourseDemo
+
+agentcore add memory --name CustomerServiceMemory --strategies SEMANTIC,USER_PREFERENCE
+agentcore deploy
+
+# Reuse this ID for this actor's conversation; generate a new ID for another user.
+SESSION_ID="$(python3 -c 'import uuid; print(uuid.uuid4())')"
+agentcore invoke --session-id "$SESSION_ID" \
+  '{"prompt": "I need help returning my order", "actor_id": "customer-demo"}'
+```
+
+## What AgentCore provides
+
+| Component | What It Does |
+| --- | --- |
+| **Runtime** | Isolated microVMs, maintains state across requests |
+| **Memory** | Conversation persistence + semantic long-term recall |
+| **Observability** | Automatic traces, logs, execution telemetry |
+| **Gateway** | Expose APIs as MCP-compatible tools |
+| **Identity** | IAM or OAuth authentication gate |
+
+AgentCore has more capabilities beyond these. See the [AgentCore developer guide](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/what-is-bedrock-agentcore.html) for the full picture.
+
+## What you still need
+
+The deployed agent is only part of a production architecture. You still need API gateways, rate limiting, retries, security controls, monitoring, and error handling around it. The surrounding architecture matters as much as the agent.
+
+## Resources
+
+- 📖 [Strands Deployment Guide](/docs/user-guide/sdk/deploy/)
+- 📖 [Amazon Bedrock AgentCore Developer Guide](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/what-is-bedrock-agentcore.html)
+- 📖 [AgentCore Runtime](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime.html)
+- 📖 [AgentCore Memory](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/memory.html)
+- 📖 [AgentCore Observability](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/observability.html)
+- 📖 [AgentCore CLI Reference](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/cli-reference.html)
+- 📖 [Blog: What Is an Agent Harness?](https://dev.to/aws/what-is-an-agent-harness-a-hands-on-guide-with-agentcore-harness-1h33)

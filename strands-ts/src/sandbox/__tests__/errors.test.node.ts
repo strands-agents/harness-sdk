@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest'
-import { SandboxTimeoutError, SandboxAbortError } from '../errors.js'
+import {
+  SandboxTimeoutError,
+  SandboxAbortError,
+  SandboxPathNotFoundError,
+  SandboxIsADirectoryError,
+  SandboxPermissionError,
+} from '../errors.js'
 
 describe('sandbox errors', () => {
   describe('SandboxTimeoutError', () => {
@@ -17,6 +23,18 @@ describe('sandbox errors', () => {
       const error = new SandboxTimeoutError(30)
       expect(error).toBeInstanceOf(Error)
     })
+
+    it('carries the partial output captured before the kill', () => {
+      const error = new SandboxTimeoutError(30, 'so far', 'warn')
+      expect(error.stdout).toBe('so far')
+      expect(error.stderr).toBe('warn')
+    })
+
+    it('defaults to empty output when no partial output is given', () => {
+      const error = new SandboxTimeoutError(30)
+      expect(error.stdout).toBe('')
+      expect(error.stderr).toBe('')
+    })
   })
 
   describe('SandboxAbortError', () => {
@@ -33,6 +51,33 @@ describe('sandbox errors', () => {
     it('is an instance of Error', () => {
       const error = new SandboxAbortError()
       expect(error).toBeInstanceOf(Error)
+    })
+  })
+
+  describe.each([
+    {
+      ErrorClass: SandboxPathNotFoundError,
+      name: 'SandboxPathNotFoundError',
+      message: 'Path not found: a.txt',
+      code: 'ENOENT',
+    },
+    {
+      ErrorClass: SandboxIsADirectoryError,
+      name: 'SandboxIsADirectoryError',
+      message: 'Is a directory: a.txt',
+      code: 'EISDIR',
+    },
+    {
+      ErrorClass: SandboxPermissionError,
+      name: 'SandboxPermissionError',
+      message: 'Permission denied: a.txt',
+      code: 'EACCES',
+    },
+  ])('$name', ({ ErrorClass, name, message, code }) => {
+    it('carries the path in its message and a Node fs-style code', () => {
+      const error = new ErrorClass('a.txt')
+      expect(error).toBeInstanceOf(Error)
+      expect(error).toMatchObject({ name, message, code })
     })
   })
 })

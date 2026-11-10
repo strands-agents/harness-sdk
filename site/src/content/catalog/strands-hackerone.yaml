@@ -1,0 +1,8 @@
+name: strands-hackerone
+description: HackerOne API tool for Strands Agents to automate bug bounty research, program monitoring, and vulnerability report management.
+integrationType: tool
+languages:
+  python:
+    package: strands-hackerone
+github: https://github.com/cagataycali/strands-hackerone
+addedDate: 2026-01-07

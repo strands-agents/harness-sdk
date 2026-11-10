@@ -1,6 +1,5 @@
-import { defaultSandbox } from '../sandbox/default.js'
-import { NotASandboxLocalEnvironment } from '../sandbox/not-a-sandbox-local-environment.js'
+// Unit tests do not import index.node.ts, so register the sandbox default here.
+// Registering the MCP loader here would prevent tests from mocking its dependencies.
+import { registerNodeSandboxDefault } from '../sandbox/register-node-defaults.js'
 
-// In production, index.node.ts registers this on import. Tests don't go through that entry
-// point, so this setup file does it instead.
-defaultSandbox.set(new NotASandboxLocalEnvironment())
+registerNodeSandboxDefault()

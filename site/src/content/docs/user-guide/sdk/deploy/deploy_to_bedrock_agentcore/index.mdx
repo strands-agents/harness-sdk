@@ -1,0 +1,50 @@
+---
+title: Deploying Strands Agents to Amazon Bedrock AgentCore Runtime
+description: 'Deploy Strands agents to Amazon Bedrock AgentCore Runtime: a serverless, session-isolated platform that scales agents without managing servers.'
+sidebar:
+  label: "Overview"
+tags: [deployment, aws, bedrock, agentcore]
+---
+
+import { LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+Amazon Bedrock AgentCore Runtime is a serverless runtime for deploying and scaling agents built on any framework, including Strands Agents, LangChain, LangGraph, and CrewAI. It carries any protocol (MCP, A2A) and any model from any provider (Amazon Bedrock, OpenAI, Gemini), and runs multi-modal, real-time, and long-running agents alike.
+
+Each user session gets its own dedicated microVM, so state and privileged operations stay isolated between users. Sessions persist, the runtime scales to thousands of concurrent sessions in seconds, and you pay only for actual usage rather than provisioned infrastructure. Through AgentCore Identity, it integrates with identity providers such as Amazon Cognito, Microsoft Entra ID, and Okta, and OAuth providers such as Google and GitHub, so you authenticate with OAuth tokens, API keys, or IAM roles without building custom security infrastructure.
+
+## Prerequisites
+
+Before you start, you need:
+
+- An AWS account with appropriate [permissions](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-permissions.html)
+- Python 3.10+ or Node.js 22+
+- Optional: A container engine (Docker, Finch, or Podman) - only required for local testing and advanced deployment scenarios
+
+---
+
+
+## Choose Your Language
+
+Pick the language your agent is written in to continue:
+
+<CardGrid>
+<LinkCard
+  title="Python Deployment"
+  description="Deploy your Python Strands agent to AgentCore Runtime!"
+  href="python/"
+/>
+<LinkCard
+  title="TypeScript Deployment"
+  description="Deploy your TypeScript Strands agent to AgentCore Runtime!"
+  href="typescript/"
+/>
+</CardGrid>
+
+
+## Additional Resources
+
+- [Amazon Bedrock AgentCore Runtime Documentation](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/what-is-bedrock-agentcore.html)
+- [Strands Documentation](https://strandsagents.com/latest/)
+- [AWS IAM Documentation](https://docs.aws.amazon.com/IAM/latest/UserGuide/introduction.html)
+- [Docker Documentation](https://docs.docker.com/)
+- [Amazon Bedrock AgentCore Observability](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/observability.html)

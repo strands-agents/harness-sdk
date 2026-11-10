@@ -1,0 +1,9 @@
+name: clova-studio
+description: Naver Cloud Platform's Korean-optimized LLM service, integrated with Strands Agents via the strands-clova community package supporting the HCX-005 model.
+integrationType: model-provider
+languages:
+  python:
+    package: strands-clova
+github: https://github.com/aidendef/strands-clova
+docsPage: docs/integrations/model-providers/clova-studio
+addedDate: 2025-09-30

@@ -296,6 +296,9 @@ describe('InterventionRegistry', () => {
       const guidanceMessage = event.agent.messages[event.agent.messages.length - 1]!
       expect(guidanceMessage.role).toBe('user')
       expect(guidanceMessage.content[0]).toMatchObject({ type: 'textBlock', text: '[model-guide] be more specific' })
+      // The injected message carries a durable tracking id even though it bypasses the append chokepoint.
+      expect(typeof guidanceMessage.trackingId).toBe('string')
+      expect(guidanceMessage.trackingId).toBeTruthy()
     })
   })
 
@@ -541,6 +544,27 @@ describe('InterventionRegistry', () => {
 
         const event = makeBeforeToolCallEvent()
         await expect(hookRegistry.invokeCallbacks(event)).rejects.toThrow('Interrupt raised')
+      }
+    )
+
+    // Guards #4371: a handler calling event.interrupt() directly pauses the agent under any onError.
+    it.each(['proceed', 'deny'] as const)(
+      'a handler-raised InterruptError propagates regardless of onError=%s',
+      async (onError) => {
+        class DirectInterruptHandler extends InterventionHandler {
+          readonly name = 'direct-interrupt'
+          override readonly onError = onError
+          override beforeToolCall(event: BeforeToolCallEvent): InterventionAction {
+            event.interrupt({ name: 'approval', reason: 'approve?' })
+            return { type: 'proceed' }
+          }
+        }
+
+        new InterventionRegistry([new DirectInterruptHandler()], hookRegistry)
+
+        const event = makeBeforeToolCallEvent()
+        await expect(hookRegistry.invokeCallbacks(event)).rejects.toThrow('Interrupt raised')
+        expect(event.cancel).toBe(false)
       }
     )
   })
@@ -798,6 +822,9 @@ describe('InterventionRegistry', () => {
       const injected = event.agent.messages[event.agent.messages.length - 1]!
       expect(injected.role).toBe('user')
       expect(injected.content[0]).toMatchObject({ type: 'textBlock', text: '[model-guide] check your sources' })
+      // The injected message carries a durable tracking id even though it bypasses the append chokepoint.
+      expect(typeof injected.trackingId).toBe('string')
+      expect(injected.trackingId).toBeTruthy()
     })
 
     it('transform apply() error is handled via onError policy', async () => {

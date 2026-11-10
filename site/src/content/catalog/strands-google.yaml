@@ -1,0 +1,9 @@
+name: strands-google
+description: Tools for Strands Agents to access 200+ Google APIs including Gmail, Drive, Calendar, YouTube, Sheets, and Docs through a unified interface.
+integrationType: tool
+languages:
+  python:
+    package: strands-google
+github: https://github.com/cagataycali/strands-google
+docsPage: docs/integrations/tools/strands-google
+addedDate: 2026-03-26

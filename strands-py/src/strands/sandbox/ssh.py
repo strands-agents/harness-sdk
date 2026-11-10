@@ -5,14 +5,15 @@ Mirrors ``strands-ts/src/sandbox/ssh.ts``.
 
 import re
 import shlex
+import warnings
 from collections.abc import AsyncGenerator
 from typing import Any
 
 from ..types.tools import AgentTool
-from ..vended_tools.bash import make_bash
-from ..vended_tools.bash.types import SANDBOX_BASH_DESCRIPTION
 from ..vended_tools.file_editor import make_file_editor
 from ..vended_tools.file_editor.file_editor import DEFAULT_FILE_EDITOR_DESCRIPTION
+from ..vended_tools.shell import make_shell
+from ..vended_tools.shell.types import SANDBOX_SHELL_DESCRIPTION
 from .posix_shell import PosixShellSandbox, build_shell_env_prefix
 from .stream_process import _stream_process
 from .types import ExecutionResult, StreamChunk
@@ -185,17 +186,24 @@ class SshSandbox(PosixShellSandbox):
         Returns:
             The tools bound to this sandbox, with descriptions naming the remote host.
         """
-        return [
-            make_file_editor(
+        # Suppress the ``make_file_editor`` deprecation warning for this internal
+        # construction: the sandbox retains file_editor until it migrates to the
+        # new read/write/edit vended tools. A user-facing ``make_file_editor``
+        # call still warns.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            file_editor_tool = make_file_editor(
                 sandbox=self,
                 name="sandbox_file_editor",
                 description=f'{DEFAULT_FILE_EDITOR_DESCRIPTION} Files are on host "{self.host}".',
-            ),
-            make_bash(
+            )
+        return [
+            file_editor_tool,
+            make_shell(
                 sandbox=self,
-                name="sandbox_bash",
+                name="sandbox_shell",
                 description=(
-                    f'{SANDBOX_BASH_DESCRIPTION} Runs on host "{self.host}". Working directory: {self.working_dir}.'
+                    f'{SANDBOX_SHELL_DESCRIPTION} Runs on host "{self.host}". Working directory: {self.working_dir}.'
                 ),
             ),
         ]

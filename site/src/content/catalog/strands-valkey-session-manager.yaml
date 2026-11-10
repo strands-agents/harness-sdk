@@ -1,0 +1,9 @@
+name: strands-valkey-session-manager
+description: Valkey/Redis-backed session manager persisting conversation history with low latency on ElastiCache and Upstash.
+integrationType: session-manager
+languages:
+  python:
+    package: strands-valkey-session-manager
+github: https://github.com/jeromevdl/strands-valkey-session-manager
+docsPage: docs/integrations/session-managers/strands-valkey-session-manager
+addedDate: 2025-11-17

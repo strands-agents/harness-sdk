@@ -1,0 +1,9 @@
+name: strands-deepgram
+description: Deepgram speech tools for Strands Agents providing speech-to-text transcription, text-to-speech synthesis, and audio intelligence.
+integrationType: tool
+languages:
+  python:
+    package: strands-deepgram
+github: https://github.com/eraykeskinmac/strands-deepgram
+docsPage: docs/integrations/tools/strands-deepgram
+addedDate: 2025-12-05

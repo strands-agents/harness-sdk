@@ -1,0 +1,13 @@
+name: AgentCore Memory Store
+description: Amazon Bedrock AgentCore Memory as a Strands MemoryStore, with long-term recall and server-side memory extraction from conversation turns.
+integrationType: memory-store
+maintainedBy: aws
+languages:
+  python:
+    package: bedrock-agentcore[strands-agents]
+  typescript:
+    package: bedrock-agentcore
+github: https://github.com/aws/bedrock-agentcore-sdk-typescript
+docsPage: docs/integrations/memory-stores/agentcore-memory-store
+featured: true
+addedDate: 2026-07-20

@@ -23,7 +23,7 @@ function isZodType(value: unknown): value is z.ZodType {
  * @param config - Tool configuration with Zod schema
  * @returns An InvokableTool with typed input and output
  */
-export function tool<TInput extends z.ZodType, TReturn extends JSONValue = JSONValue>(
+export function tool<TInput extends z.ZodType, TReturn = JSONValue>(
   config: ZodToolConfig<TInput, TReturn>
 ): InvokableTool<z.infer<TInput>, TReturn>
 

@@ -1,0 +1,8 @@
+name: strands-ccxt
+description: Cryptocurrency exchange integration for Strands Agents via CCXT, enabling unified access to trading, market data, and account management across exchanges.
+integrationType: tool
+languages:
+  python:
+    package: strands-ccxt
+github: https://github.com/mertozbas/strands-ccxt
+addedDate: 2026-01-18

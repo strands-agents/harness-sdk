@@ -2,7 +2,7 @@
  * Utilities for querying and filtering integration content from the docs collection.
  *
  * This module provides typed helper functions for working with integration pages
- * (model providers, tools, session managers, etc.) that have `integrationType` frontmatter.
+ * (model providers, tools, session managers, memory stores, etc.) that have `integrationType` frontmatter.
  */
 
 import type { CollectionEntry } from 'astro:content'
@@ -14,9 +14,13 @@ export type IntegrationType =
   | 'model-provider'
   | 'tool'
   | 'session-manager'
+  | 'memory-store'
+  | 'storage'
   | 'integration'
   | 'plugin'
+  | 'observability'
   | 'agent-extension'
+  | 'intervention'
 
 /**
  * Represents language support for an integration.

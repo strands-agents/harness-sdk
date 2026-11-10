@@ -1,0 +1,9 @@
+name: strands-sapiens
+description: Strands tool wrappers for Meta Sapiens2 adding human-centric vision — segmentation, normal estimation, and depth prediction.
+integrationType: tool
+languages:
+  python:
+    package: strands-sapiens
+github: https://github.com/cagataycali/strands-sapiens
+docsUrl: https://cagataycali.github.io/strands-sapiens/
+addedDate: 2026-05-04

@@ -1,11 +1,33 @@
 """Tests for media type definitions."""
 
+import pytest
+
 from strands.types.media import (
+    AudioBlock,
     DocumentSource,
+    ImageBlock,
     ImageSource,
     S3Location,
     VideoSource,
 )
+
+
+@pytest.mark.parametrize(
+    ("block", "exp_content"),
+    [
+        (
+            AudioBlock(format="pcm", source={"bytes": b"\x00\xff"}),
+            {"audio": {"format": "pcm", "source": {"bytes": b"\x00\xff"}}},
+        ),
+        (
+            ImageBlock(format="jpeg", source={"bytes": b"\xff\xd8"}),
+            {"image": {"format": "jpeg", "source": {"bytes": b"\xff\xd8"}}},
+        ),
+    ],
+)
+def test_block_to_dict(block, exp_content):
+    tru_content = block.to_dict()
+    assert tru_content == exp_content
 
 
 class TestS3Location:

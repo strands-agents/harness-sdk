@@ -14,6 +14,7 @@ import { Message, TextBlock, ToolUseBlock, ToolResultBlock } from '../../types/m
 import { TestModelProvider } from '../../__fixtures__/model-test-helpers.js'
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
 import { createMockTool } from '../../__fixtures__/tool-helpers.js'
+import { anyTrackingId } from '../../__fixtures__/message-helpers.js'
 
 // Fixed timestamp for testing
 const MOCK_TIMESTAMP = '2026-01-15T12:00:00.000Z'
@@ -104,7 +105,7 @@ describe('Snapshot API', () => {
         schemaVersion: SNAPSHOT_SCHEMA_VERSION,
         createdAt: MOCK_TIMESTAMP,
         data: {
-          messages: [{ role: 'user', content: [{ text: 'Hello' }] }],
+          messages: [{ role: 'user', content: [{ text: 'Hello' }], trackingId: anyTrackingId }],
           state: { key: 'value' },
           systemPrompt: 'Test prompt',
           modelState: {},
@@ -180,7 +181,13 @@ describe('Snapshot API', () => {
       loadSnapshot(agent, snapshot)
 
       expect(agent.messages).toHaveLength(1)
-      expect(agent.messages[0]).toEqual(new Message({ role: 'user', content: [new TextBlock('Restored message')] }))
+      expect(agent.messages[0]).toEqual(
+        new Message({
+          role: 'user',
+          content: [new TextBlock('Restored message')],
+          trackingId: anyTrackingId,
+        })
+      )
     })
 
     it('restores state from snapshot', () => {
@@ -465,8 +472,8 @@ describe('Agent.takeSnapshot / Agent.loadSnapshot (public API)', () => {
       createdAt: MOCK_TIMESTAMP,
       data: {
         messages: [
-          { role: 'user', content: [{ text: 'Hello' }] },
-          { role: 'assistant', content: [{ text: 'Hi!' }] },
+          { role: 'user', content: [{ text: 'Hello' }], trackingId: anyTrackingId },
+          { role: 'assistant', content: [{ text: 'Hi!' }], trackingId: anyTrackingId },
         ],
         state: { counter: 42 },
         systemPrompt: 'Be helpful',

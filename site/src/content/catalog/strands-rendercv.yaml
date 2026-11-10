@@ -1,0 +1,8 @@
+name: strands-rendercv
+description: Strands Agents tool for generating formatted CVs and resumes from structured data using the RenderCV engine.
+integrationType: tool
+languages:
+  python:
+    package: strands-rendercv
+github: https://github.com/cagataycali/strands-rendercv
+addedDate: 2026-01-07

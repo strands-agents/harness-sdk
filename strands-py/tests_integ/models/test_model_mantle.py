@@ -49,6 +49,30 @@ def test_agent_invoke(model):
     assert "4" in str(result) or "four" in str(result).lower()
 
 
+def test_responses_context_overflow_recovers(model):
+    """Agent context management recovers from a live Mantle Responses overflow."""
+    messages = [
+        {"role": "user", "content": [{"text": "test " * 150_000}]},
+        {"role": "assistant", "content": [{"text": "That was a long prompt."}]},
+        {"role": "user", "content": [{"text": "What is 2+2?"}]},
+    ]
+    events = []
+    agent = Agent(
+        model=model,
+        messages=messages,
+        system_prompt="Reply with only the number.",
+        callback_handler=lambda **event: events.append(event),
+    )
+
+    result = agent()
+
+    assert "4" in str(result)
+    assert len(agent.messages) == 2
+    chunks = [event["event"] for event in events if "event" in event]
+    assert sum("messageStart" in chunk for chunk in chunks) == 2
+    assert sum("messageStop" in chunk for chunk in chunks) == 1
+
+
 def test_responses_server_side_conversation(stateful_model):
     agent = Agent(model=stateful_model, system_prompt="Reply in one short sentence.", callback_handler=None)
 

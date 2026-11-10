@@ -49,18 +49,11 @@ class Checkpoint:
     Attributes:
         position: Which boundary fired (``after_model`` or ``after_tools``).
         cycle_index: ReAct loop cycle (0-based).
-        snapshot: Reserved for forward extensibility (e.g. a future hook that lets
-            callers attach agent state to the checkpoint). The SDK does not
-            populate or read it today; it round-trips through serialization.
-        app_data: Reserved for forward extensibility — caller metadata that
-            round-trips through serialization. The SDK does not populate or read it.
         schema_version: Rejects incompatible checkpoints on resume.
     """
 
     position: CheckpointPosition
     cycle_index: int = 0
-    snapshot: dict[str, Any] = field(default_factory=dict)
-    app_data: dict[str, Any] = field(default_factory=dict)
     schema_version: str = field(init=False, default=CHECKPOINT_SCHEMA_VERSION)
 
     def to_dict(self) -> dict[str, Any]:

@@ -4,6 +4,7 @@ import { AgentResult } from '../../types/agent.js'
 import { Message, TextBlock } from '../../types/messages.js'
 import { AgentMetrics } from '../../telemetry/meter.js'
 import type { A2AEventData } from '../events.js'
+import { anyTrackingId } from '../../__fixtures__/message-helpers.js'
 
 describe('A2AStreamUpdateEvent', () => {
   it('creates instance with correct properties', () => {
@@ -65,7 +66,11 @@ describe('A2AResultEvent', () => {
         result: {
           type: 'agentResult',
           stopReason: 'endTurn',
-          lastMessage: { role: 'assistant', content: [{ text: 'Done' }] },
+          lastMessage: {
+            role: 'assistant',
+            content: [{ text: 'Done' }],
+            trackingId: anyTrackingId,
+          },
         },
       })
     })

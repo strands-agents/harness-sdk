@@ -5,7 +5,10 @@ import weakref
 import pytest
 
 from strands import Agent, tool
+from strands.bidi.agent import BidiAgent
+from strands.bidi.models import BidiModel
 from strands.tools.tool_provider import ToolProvider
+from strands.types.exceptions import ConcurrencyException
 
 
 @pytest.fixture
@@ -31,6 +34,11 @@ def test_tool():
 @pytest.fixture
 def agent(model, test_tool):
     return Agent(model=model, tools=[test_tool])
+
+
+@pytest.fixture
+def bidi_agent(test_tool):
+    return BidiAgent(model=unittest.mock.AsyncMock(spec=BidiModel), tools=[test_tool])
 
 
 def test_agent_tool(randint, agent):
@@ -88,6 +96,7 @@ def test_agent_tool_user_message_override(agent):
             },
         ],
         "role": "user",
+        "tracking_id": unittest.mock.ANY,
     }
 
     assert tru_message == exp_message
@@ -113,6 +122,24 @@ def test_agent_tool_do_not_record_tool_with_method_override(agent):
     exp_messages = []
 
     assert tru_messages == exp_messages
+
+
+def test_bidi_agent_tool_recording_raises_while_running(bidi_agent):
+    bidi_agent._started = True
+
+    with pytest.raises(ConcurrencyException, match="cannot be recorded while the bidirectional agent is running"):
+        bidi_agent.tool.test_tool(random_string="abcdEfghI123")
+
+    assert bidi_agent.messages == []
+
+
+def test_bidi_agent_tool_without_recording_succeeds_while_running(bidi_agent):
+    bidi_agent._started = True
+
+    result = bidi_agent.tool.test_tool(random_string="abcdEfghI123", record_direct_tool_call=False)
+
+    assert result["content"] == [{"text": "abcdEfghI123"}]
+    assert bidi_agent.messages == []
 
 
 def test_agent_tool_tool_does_not_exist(agent):
@@ -434,3 +461,24 @@ def test_tool_caller_raises_reference_error_after_agent_collected():
 
     with pytest.raises(ReferenceError, match="Agent has been garbage collected"):
         _ = caller._agent
+
+
+@pytest.mark.asyncio
+async def test_direct_tool_stop_does_not_cancel_next_invocation():
+    """A direct agent.tool.stop(...) call leaves deferred-cancel state behind, but the next
+    invocation clears it at start so the stop does not bleed in."""
+    from strands.vended_tools import stop as stop_tool
+    from tests.fixtures.mocked_model_provider import MockedModelProvider
+
+    model = MockedModelProvider([{"role": "assistant", "content": [{"text": "ok"}]}])
+    agent = Agent(model=model, tools=[stop_tool])
+
+    agent.tool.stop(message="done", record_direct_tool_call=False)
+
+    # The direct call leaves state behind (expected).
+    assert agent._deferred_cancel is True
+    assert agent._cancel_message == "done"
+
+    # The next invocation clears tool-authored state at the start.
+    result = await agent.invoke_async("hi")
+    assert result.stop_reason == "end_turn"

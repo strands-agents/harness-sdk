@@ -276,7 +276,7 @@ describe('FunctionTool', () => {
           content: [
             expect.objectContaining({
               type: 'textBlock',
-              text: '<null>',
+              text: 'null',
             }),
           ],
         })
@@ -302,7 +302,7 @@ describe('FunctionTool', () => {
           content: [
             expect.objectContaining({
               type: 'textBlock',
-              text: '<undefined>',
+              text: 'null',
             }),
           ],
         })

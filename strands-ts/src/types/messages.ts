@@ -1,7 +1,7 @@
 import type { JSONValue, Serialized, MaybeSerializedInput, JSONSerializable } from './json.js'
 import { deepCopy, omitUndefined } from './json.js'
-import type { ImageBlockData, VideoBlockData, DocumentBlockData } from './media.js'
-import { ImageBlock, VideoBlock, DocumentBlock, encodeBase64, decodeBase64 } from './media.js'
+import type { AudioBlockData, ImageBlockData, VideoBlockData, DocumentBlockData } from './media.js'
+import { AudioBlock, ImageBlock, VideoBlock, DocumentBlock, encodeBase64, decodeBase64 } from './media.js'
 import type { CitationsBlockData } from './citations.js'
 import { CitationsBlock } from './citations.js'
 import type { Usage, Metrics } from '../models/streaming.js'
@@ -44,9 +44,23 @@ export interface MessageData {
   content: ContentBlockData[]
 
   /**
+   * Durable, stable UUID for the message. Optional here because serialized/legacy data may omit it;
+   * the Message constructor backfills a fresh UUID when absent, so a live Message always has one.
+   */
+  trackingId?: string
+
+  /**
    * Optional metadata, not sent to model providers.
    */
   metadata?: MessageMetadata
+}
+
+/**
+ * Generate a durable tracking identifier for a message.
+ * @internal
+ */
+export function generateTrackingId(): string {
+  return globalThis.crypto.randomUUID()
 }
 
 /**
@@ -70,13 +84,26 @@ export class Message implements JSONSerializable<MessageData> {
   readonly content: ContentBlock[]
 
   /**
+   * Durable, stable UUID for the message, assigned at construction. Every Message has one — a
+   * caller-supplied id is preserved, otherwise a fresh UUID is minted (so callers do not normally
+   * set it; a caller supplying its own should use a UUID v4, e.g. `crypto.randomUUID()`). Survives
+   * session save/restore, and is stripped before model calls. Preserved when a message is copied or
+   * restored, so ids are unique within a conversation, but the same message carries the same id
+   * across sessions (copying another agent's messages does not re-key them).
+   */
+  readonly trackingId: string
+
+  /**
    * Optional metadata, not sent to model providers.
    */
   metadata?: MessageMetadata
 
-  constructor(data: { role: Role; content: ContentBlock[]; metadata?: MessageMetadata }) {
+  constructor(data: { role: Role; content: ContentBlock[]; trackingId?: string; metadata?: MessageMetadata }) {
     this.role = data.role
     this.content = data.content
+    // Mint a durable id when the caller did not supply a usable one, so every Message has one from
+    // the moment it exists — including messages added ad-hoc to agent.messages.
+    this.trackingId = data.trackingId || generateTrackingId()
     if (data.metadata !== undefined) {
       this.metadata = data.metadata
     }
@@ -91,6 +118,8 @@ export class Message implements JSONSerializable<MessageData> {
     return new Message({
       role: data.role,
       content: contentBlocks,
+      // A missing trackingId (e.g. legacy serialized data) is backfilled by the constructor.
+      ...(data.trackingId !== undefined && { trackingId: data.trackingId }),
       ...(data.metadata !== undefined && { metadata: data.metadata }),
     })
   }
@@ -103,6 +132,7 @@ export class Message implements JSONSerializable<MessageData> {
     return {
       role: this.role,
       content: this.content.map((block) => block.toJSON() as ContentBlockData),
+      ...(this.trackingId !== undefined && { trackingId: this.trackingId }),
       ...(this.metadata !== undefined && { metadata: this.metadata }),
     }
   }
@@ -134,7 +164,7 @@ export type Role = 'user' | 'assistant'
 
 /**
  * A block of content within a message.
- * Content blocks can contain text, tool usage requests, tool results, reasoning content, cache points, guard content, or media (image, video, document).
+ * Content blocks can contain text, tool usage requests, tool results, reasoning content, cache points, guard content, citations, text the app injects, or media (audio, image, video, document).
  *
  * This is a discriminated union where the object key determines the content format.
  *
@@ -152,10 +182,13 @@ export type ContentBlockData =
   | { reasoning: ReasoningBlockData }
   | { cachePoint: CachePointBlockData }
   | { guardContent: GuardContentBlockData }
+  | { audio: AudioBlockData }
   | { image: ImageBlockData }
   | { video: VideoBlockData }
   | { document: DocumentBlockData }
   | { citations: CitationsBlockData }
+  | { injected: InjectedBlockData }
+  | { summary: SummaryBlockData }
 
 export type ContentBlock =
   | TextBlock
@@ -164,10 +197,13 @@ export type ContentBlock =
   | ReasoningBlock
   | CachePointBlock
   | GuardContentBlock
+  | AudioBlock
   | ImageBlock
   | VideoBlock
   | DocumentBlock
   | CitationsBlock
+  | InjectedBlock
+  | SummaryBlock
 
 /**
  * Data for a text block.
@@ -609,6 +645,83 @@ export class CachePointBlock implements CachePointBlockData, JSONSerializable<{ 
 }
 
 /**
+ * Data for a summary block.
+ */
+export interface SummaryBlockData {
+  /**
+   * Name of the provider that wrote the summary server-side, for example `'anthropic'`.
+   */
+  provider?: string
+
+  /**
+   * Signature the provider returned with the summary, sent back unchanged.
+   */
+  signature?: string
+
+  /**
+   * The summary text.
+   */
+  text: string
+}
+
+/**
+ * A summary of earlier conversation history that takes the summarized messages' place.
+ *
+ * Through an agent, a model without `serverSideSummary`, or one that did not write it (`provider`), gets the text.
+ */
+export class SummaryBlock implements SummaryBlockData, JSONSerializable<{ summary: SummaryBlockData }> {
+  /**
+   * Discriminator for summary content.
+   */
+  readonly type = 'summaryBlock' as const
+
+  /**
+   * Name of the provider that wrote the summary server-side, for example `'anthropic'`.
+   */
+  readonly provider?: string
+
+  /**
+   * Signature the provider returned with the summary, sent back unchanged.
+   */
+  readonly signature?: string
+
+  /**
+   * The summary text.
+   */
+  readonly text: string
+
+  constructor(data: SummaryBlockData) {
+    if (data.provider != null) this.provider = data.provider
+    if (data.signature != null) this.signature = data.signature
+    this.text = data.text
+  }
+
+  /**
+   * Serializes the SummaryBlock to a JSON-compatible ContentBlockData object.
+   * Called automatically by JSON.stringify().
+   */
+  toJSON(): { summary: SummaryBlockData } {
+    return {
+      summary: {
+        ...(this.provider !== undefined && { provider: this.provider }),
+        ...(this.signature !== undefined && { signature: this.signature }),
+        text: this.text,
+      },
+    }
+  }
+
+  /**
+   * Creates a SummaryBlock instance from its wrapped data format.
+   *
+   * @param data - Wrapped SummaryBlockData to deserialize
+   * @returns SummaryBlock instance
+   */
+  static fromJSON(data: { summary: SummaryBlockData }): SummaryBlock {
+    return new SummaryBlock(data.summary)
+  }
+}
+
+/**
  * Data for a JSON block.
  */
 export interface JsonBlockData {
@@ -663,9 +776,11 @@ export class JsonBlock implements JsonBlockData, JSONSerializable<JsonBlockData>
  * - `contentFiltered` - Content was filtered by safety mechanisms
  * - `endTurn` - Natural end of the model's turn
  * - `guardrailIntervened` - A guardrail policy stopped generation
+ * - `checkpoint` - Agent paused at a cycle boundary for durable execution (experimental; see experimental checkpoint module)
  * - `interrupt` - Agent execution was interrupted for human input
  * - `maxTokens` - The model provider's per-call token cap was reached
  * - `limitOutputTokens` - Agent loop stopped because `InvokeOptions.limits.outputTokens` was reached
+ * - `limitStructuredOutputAttempts` - Agent loop stopped because `InvokeOptions.limits.structuredOutputAttempts` was reached
  * - `limitTotalTokens` - Agent loop stopped because `InvokeOptions.limits.totalTokens` was reached
  * - `limitTurns` - Agent loop stopped because `InvokeOptions.limits.turns` was reached
  * - `pauseTurn` - Model paused a long-running turn; the response should be sent back to continue
@@ -676,12 +791,14 @@ export class JsonBlock implements JsonBlockData, JSONSerializable<JsonBlockData>
  */
 export type StopReason =
   | 'cancelled'
+  | 'checkpoint'
   | 'contentFiltered'
   | 'endTurn'
   | 'guardrailIntervened'
   | 'interrupt'
   | 'maxTokens'
   | 'limitOutputTokens'
+  | 'limitStructuredOutputAttempts'
   | 'limitTotalTokens'
   | 'limitTurns'
   | 'pauseTurn'
@@ -690,6 +807,30 @@ export type StopReason =
   | 'toolUse'
   | 'modelContextWindowExceeded'
   | (string & {}) // Allow any string while preserving autocomplete for known values
+
+/**
+ * Stop reasons for a call that stopped because a limit ({@link InvokeOptions.limits}) was reached.
+ *
+ * @internal
+ */
+export const LIMIT_STOP_REASONS = new Set<StopReason>([
+  'limitTurns',
+  'limitTotalTokens',
+  'limitOutputTokens',
+  'limitStructuredOutputAttempts',
+])
+
+/**
+ * Explains that a nested call stopped because a limit (its own or the request's) was reached, so its answer is incomplete.
+ *
+ * @param agentName - Name of the agent that stopped
+ * @param stopReason - The limit stop reason it returned
+ * @returns The message to surface in place of the agent's answer
+ * @internal
+ */
+export function limitStopMessage(agentName: string, stopReason: StopReason): string {
+  return `Agent '${agentName}' stopped early (${stopReason}): a limit on this call was reached, so its answer is incomplete`
+}
 
 /**
  * System prompt for guiding model behavior.
@@ -774,9 +915,7 @@ export function cloneSystemPrompt(prompt: SystemPrompt): SystemPrompt {
  * This is a discriminated union where the object key determines the block format.
  */
 export type SystemContentBlockData =
-  | TextBlockData
-  | { cachePoint: CachePointBlockData }
-  | { guardContent: GuardContentBlockData }
+  TextBlockData | { cachePoint: CachePointBlockData } | { guardContent: GuardContentBlockData }
 
 export type SystemContentBlock = TextBlock | CachePointBlock | GuardContentBlock
 
@@ -932,8 +1071,78 @@ export class GuardContentBlock
 }
 
 /**
+ * Data for an injected block.
+ */
+export interface InjectedBlockData {
+  /**
+   * Text the app adds to the user turn.
+   */
+  text: string
+
+  /**
+   * Name of the component that added the text, such as a `ContextInjector`'s name.
+   */
+  source: string
+}
+
+/**
+ * Text the app adds to a user turn, such as a reminder, kept apart from the user's own words so readers of
+ * `agent.messages` can skip it. `ContextInjector` writes its text as injected blocks. It belongs in a user message,
+ * after the existing content; in any other message it is left out.
+ *
+ * When the model takes temporary messages (`modelInfo.capabilities.temporaryMessages`), the provider sends it as
+ * a system message the model reads only until the next user message, which the model ranks above the user. Every
+ * other model receives only the latest user message's injected text, as plain text. Keep content from outside the
+ * conversation, such as tool output or retrieved documents, out of it.
+ *
+ * The text is kept under `injected`, the same shape as the saved data, so an InjectedBlock is never read as a
+ * {@link TextBlock}.
+ *
+ * @example
+ * ```typescript
+ * const message = new Message({
+ *   role: 'user',
+ *   content: [new TextBlock('Refactor the tokenizer.'), new InjectedBlock({ text: 'cwd: /repo', source: 'env' })],
+ * })
+ * ```
+ */
+export class InjectedBlock implements JSONSerializable<{ injected: InjectedBlockData }> {
+  /**
+   * Discriminator for injected content.
+   */
+  readonly type = 'injectedBlock' as const
+
+  /**
+   * The injected data: the text the app adds to the user turn and the component that added it.
+   */
+  readonly injected: InjectedBlockData
+
+  constructor(data: InjectedBlockData) {
+    this.injected = { text: data.text, source: data.source }
+  }
+
+  /**
+   * Serializes the InjectedBlock to a JSON-compatible ContentBlockData object.
+   * Called automatically by JSON.stringify().
+   */
+  toJSON(): { injected: InjectedBlockData } {
+    return { injected: { text: this.injected.text, source: this.injected.source } }
+  }
+
+  /**
+   * Creates an InjectedBlock instance from its wrapped data format.
+   *
+   * @param data - Wrapped InjectedBlockData to deserialize
+   * @returns InjectedBlock instance
+   */
+  static fromJSON(data: { injected: InjectedBlockData }): InjectedBlock {
+    return new InjectedBlock(data.injected)
+  }
+}
+
+/**
  * Converts ContentBlockData to a ContentBlock instance.
- * Handles all content block types including text, tool use/result, reasoning, cache points, guard content, and media blocks.
+ * Handles all content block types including text, tool use/result, reasoning, cache points, guard content, injected, and media blocks.
  *
  * @param data - The content block data to convert
  * @returns A ContentBlock instance of the appropriate type
@@ -952,6 +1161,8 @@ export function contentBlockFromData(data: ContentBlockData): ContentBlock {
     return CachePointBlock.fromJSON(data)
   } else if ('guardContent' in data) {
     return GuardContentBlock.fromJSON(data)
+  } else if ('audio' in data) {
+    return AudioBlock.fromJSON(data)
   } else if ('image' in data) {
     return ImageBlock.fromJSON(data)
   } else if ('video' in data) {
@@ -960,6 +1171,10 @@ export function contentBlockFromData(data: ContentBlockData): ContentBlock {
     return DocumentBlock.fromJSON(data)
   } else if ('citations' in data) {
     return CitationsBlock.fromJSON(data)
+  } else if ('injected' in data) {
+    return InjectedBlock.fromJSON(data)
+  } else if ('summary' in data) {
+    return SummaryBlock.fromJSON(data)
   } else {
     throw new Error('Unknown ContentBlockData type')
   }
