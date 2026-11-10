@@ -122,7 +122,10 @@ export class OffloadTargetMatcher {
     return this.target === '*'
   }
 
-  /** Whether a block in `message` is one this target covers. */
+  /**
+   * Whether a block in `message` is one this target covers. A placeholder matches like the text block it is, so
+   * callers that must not re-offload one filter it out first.
+   */
   matchesBlock(block: ContentBlock, message: Message, toolNameMap: Map<string, string>): boolean {
     if (this.matchesAll) return true
     if (block instanceof TextBlock) return this._matchesText(message)

@@ -106,6 +106,8 @@ const CONDITION_RULES = {
   },
 } satisfies Record<ConditionName, object>
 
+const CONDITION_NAMES = Object.keys(CONDITION_RULES)
+
 /**
  * Parses one offload condition value: a `'N%'` string is a share, and a whole number is a count.
  *
@@ -159,7 +161,7 @@ export class ResolvedConditions {
   constructor(conditions: OffloadConditions | undefined) {
     for (const name of Object.keys(conditions ?? {})) {
       if (!Object.hasOwn(CONDITION_RULES, name)) {
-        throw new Error(`unknown condition "${name}": expected contextUtilization, blockThreshold, or preserveRecent`)
+        throw new Error(`unknown condition "${name}": expected ${CONDITION_NAMES.join(', ')}`)
       }
     }
     this.contextUtilization = parseCondition('contextUtilization', conditions?.contextUtilization)

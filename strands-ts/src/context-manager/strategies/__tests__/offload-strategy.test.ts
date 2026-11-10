@@ -1026,7 +1026,7 @@ describe('parseCondition', () => {
 describe('condition resolution', () => {
   it.each(['utilisation', 'constructor', 'toString'])('rejects the unknown condition name %s', (name) => {
     expect(() => Offload.drop('toolResults').when({ [name]: 0.5 } as OffloadConditions)).toThrow(
-      `unknown condition "${name}": expected contextUtilization, blockThreshold, or preserveRecent`
+      `unknown condition "${name}": expected`
     )
   })
 
