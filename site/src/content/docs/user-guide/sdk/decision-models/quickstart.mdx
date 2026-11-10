@@ -1,7 +1,9 @@
 ---
-title: Quickstart
+title: Decision models quickstart
 description: "Ask a decision model a yes/no question and a multiple-choice question, read the typed answers, and handle an answer the model is not sure about."
-tags: [decision-models]
+tags: [decision-models, quickstart]
+sidebar:
+  label: Quickstart
 sourceLinks:
   - path: strands-py/src/strands/decisions/llm_decision_model.py
   - path: strands-py/src/strands/decisions/types.py
@@ -14,8 +16,8 @@ whether the message is urgent and which team should handle it, then read the ans
 your code.
 
 The examples use `LLMDecisionModel`, which runs the questions on a model provider. With
-no model configured, it uses Amazon Bedrock, so you need the SDK installed and Bedrock
-credentials set up. The [Python](../quickstart/python.md) and
+no model configured, it uses Amazon Bedrock, so you need the SDK installed and AWS
+credentials with Amazon Bedrock access. The [Python](../quickstart/python.md) and
 [TypeScript](../quickstart/typescript.md) quickstarts cover both.
 
 ## Ask a question

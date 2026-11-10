@@ -31,5 +31,5 @@ The span is named `decision` and records:
 | `gen_ai.decision.answers` | Event | The answers as JSON, keyed by question id. An `Uncertain` answer appears as `{"uncertain": true}`, with its reason when there is one. |
 
 When the decision model raises, the span ends with an error status and records the
-exception. Invalid questions raise before the span starts. The question text and the
-input aren't recorded.
+exception. Invalid questions, or an invocation context the SDK didn't create, raise
+before the span starts. The question text and the input aren't recorded.

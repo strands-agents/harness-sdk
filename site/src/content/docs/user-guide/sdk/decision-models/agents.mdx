@@ -1,7 +1,7 @@
 ---
 title: Decisions in an agent
 description: "Ask a decision model from an agent's tool or hook, count its tokens toward the agent's request, and decide which tool calls need approval."
-tags: [decision-models, tool-authoring]
+tags: [decision-models]
 sourceLinks:
   - path: strands-py/src/strands/decisions/decision_model.py
   - path: strands-py/src/strands/agent/invocation_context.py
@@ -16,8 +16,9 @@ doesn't add messages to the conversation.
 ## Ask from a tool
 
 A tool can hand part of its work to a decision model. This tool routes a customer
-message to a team. It passes the tool call's invocation context to `ask`, so the
-decision's tokens count toward the agent's request:
+message to a team. Each tool call carries an invocation context, a handle to the agent
+request it belongs to. The tool passes it to `ask`, so the decision's tokens count toward
+that request:
 
 <Tabs>
 <Tab label="Python">
@@ -65,16 +66,17 @@ print(result.invocation_context.usage)
 </Tab>
 </Tabs>
 
-Hook events carry the same invocation context, so a hook passes it to `ask` the same
-way.
+Hook events that belong to a request carry the same invocation context, so a hook passes
+it to `ask` the same way.
 
 ## Token usage
 
 With the invocation context, the decision's tokens add to the request's usage, which the
 agent result reports. The agent's own model metrics stay separate and cover only the
-agent's model calls. The request's limits don't stop the decision, and a decision
-isn't counted as a turn, but its tokens count toward the request's token limits for
-later turns.
+agent's model calls. A decision always runs to completion, even when the request has
+reached one of its [invocation limits](../agents/agent-loop.mdx#invocation-limits), and
+it doesn't count as a turn. Its tokens do count toward the request's token limits, so
+later turns can stop sooner.
 
 Without the invocation context, the decision still reports its tokens in its own result,
 but the request doesn't include them.

@@ -10,7 +10,7 @@ sourceLinks:
 ---
 
 You describe what you want to know as a map of questions, and every decision model returns
-the same result shape, so the code that asks and the code that reads the answers stays
+the same result shape, so the code that asks and the code that reads the answers stay
 the same when you change decision models.
 
 ## Questions
@@ -38,7 +38,7 @@ choice when it can't commit. Set `uncertainty` on a question to change that:
 | --- | --- |
 | Omitted, or <Syntax py="True" ts="true" /> | The answer can be `Uncertain`. |
 | <Syntax py="False" ts="false" /> | The decision model must pick one of the choices. |
-| A minimum confidence | The answer can be `Uncertain`, with a custom confidence threshold in `[0.0, 1.0]`. |
+| A minimum confidence | The answer can be `Uncertain`, and an answer whose confidence is below the threshold (in `[0.0, 1.0]`) comes back as `Uncertain`. |
 
 The minimum confidence,
 <Syntax py='{"min_confidence": 0.8}' ts="{ minConfidence: 0.8 }" />, applies only to

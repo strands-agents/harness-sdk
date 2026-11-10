@@ -20,7 +20,11 @@ async function toolExample() {
             uncertainty: false,
           },
         },
-        { invocationContext: context?.invocationContext }
+        {
+          ...(context?.invocationContext && {
+            invocationContext: context.invocationContext,
+          }),
+        }
       )
       return `Routed to ${result.answers.team}`
     },

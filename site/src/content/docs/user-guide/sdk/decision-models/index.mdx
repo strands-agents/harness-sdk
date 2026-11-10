@@ -31,17 +31,20 @@ and it returns the answers along with details about the call:
 
 <Diagram
   name="decision-models-how-it-works"
-  alt="How a decision model call flows. Your code calls ask with the input and the questions. The decision model checks the questions and sends them to its backend, which is a model provider or your own. A result comes back to your code with one answer per question, each a choice or Uncertain, plus metadata and token usage. Each call is traced as a decision span."
+  alt="How a decision model call flows. Your code calls ask with the input and the questions. The decision model validates the questions and sends them to its backend, which is a model provider or your own. A result comes back to your code with one answer per question, each a choice or Uncertain, plus metadata and token usage. Each call is traced as a decision span."
 />
 
 - **The input** is what the questions are about: a string, a message's content, or a
   whole conversation.
 - **The questions** each have an id you choose and their choices: yes or no, or a list
   of labels.
-- **The decision model** sends the questions to its backend. The LLM decision model uses
-  a model provider; a custom decision model can use anything.
+- **The decision model** validates the questions and sends them to its backend. The
+  [LLM decision model](models/llm.mdx) uses a model provider; a custom decision model
+  can use anything.
 - **The result** holds one answer per question, keyed by your ids, plus the call's
   latency and token usage.
+
+## Decision models and structured output
 
 [Structured output](../agents/structured-output.mdx) also returns typed data, but you
 design the schema and the agent produces it at the end of its loop. A decision model is
