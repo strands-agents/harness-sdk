@@ -431,8 +431,9 @@ export async function createHarness(options: HarnessAgentOptions = {}): Promise<
 
   const builtinToolsByName = await buildBuiltinTools(createHarness, parentConfig, resolvedBuiltins)
   if (webSearch === 'agentcore' && !webSearchExplicit(builtinTools)) {
-    // Before AgentCore, Bedrock had no built-in web_search, so a caller's own one wins over the default.
-    const theirs = [...consumer, ...pluginTools(consumerPluginsOption ?? [])]
+    // A caller's own web_search replaces the default; naming web_search in builtinTools still collides.
+    // MCP tool names are only known once the agent connects, so those need `web_search: false`.
+    const theirs = ([...consumer, ...pluginTools(consumerPluginsOption ?? [])] as unknown[]).flat(Infinity)
     if (theirs.some((t) => t instanceof Tool && t.name.replaceAll('-', '_') === 'web_search')) {
       logger.info('A web_search tool was passed, so the built-in AgentCore web_search is not added.')
       webSearch = undefined

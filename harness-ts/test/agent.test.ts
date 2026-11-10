@@ -425,6 +425,8 @@ describe('createHarness', () => {
     })
     const agent = await createHarness({ tools: [mine] })
     expect(agent.tools.find((t) => t.name === 'web_search')).toBe(mine)
+    const nested = await createHarness({ tools: [[mine]] })
+    expect(nested.tools.find((t) => t.name === 'web_search')).toBe(mine)
     expect(info).toHaveBeenCalledWith(expect.stringContaining('A web_search tool was passed'))
     await expect(createHarness({ builtinTools: ['read', 'web_search'], tools: [mine] })).rejects.toThrow(
       'registered more than once'

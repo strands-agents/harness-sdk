@@ -481,6 +481,7 @@ def test_root_exports_match_the_spec_table():
         "BUILTIN_PLUGIN_NAMES",
         "supports_thinking",
         "supports_web_search",
+        "web_search_kind",
         "resolve_interventions",
         "resolve_memory",
         "InterventionsOption",
@@ -521,7 +522,7 @@ def test_web_search_on_bedrock_is_the_agentcore_tool_in_the_model_region(monkeyp
     regions = []
     real = agent_module.make_agentcore_web_search
     monkeypatch.setattr(
-        agent_module, "make_agentcore_web_search", lambda region: regions.append(region) or real(region)
+        agent_module, "make_agentcore_web_search", lambda **kw: regions.append(kw["region"]) or real(**kw)
     )
     agent = create_harness()
     assert "web_search" in agent.tool_names
@@ -534,7 +535,7 @@ def test_web_search_on_a_bedrock_model_instance_is_the_agentcore_tool_in_its_reg
     regions = []
     real = agent_module.make_agentcore_web_search
     monkeypatch.setattr(
-        agent_module, "make_agentcore_web_search", lambda region: regions.append(region) or real(region)
+        agent_module, "make_agentcore_web_search", lambda **kw: regions.append(kw["region"]) or real(**kw)
     )
     agent = create_harness(model=BedrockModel(model_id="x", region_name="eu-west-1"))
     assert "web_search" in agent.tool_names
@@ -555,6 +556,28 @@ def test_web_search_default_on_bedrock_yields_to_a_passed_web_search_tool(caplog
     assert any("A web_search tool was passed" in r.getMessage() for r in caplog.records)
     with pytest.raises(ValueError, match="'web_search'"):
         create_harness(builtin_tools=["read", "web_search"], tools=[my_search])
+
+
+def test_web_search_default_on_bedrock_yields_to_an_mcp_web_search_tool():
+    from mcp.types import Tool as McpTool
+    from strands.tools import ToolProvider
+    from strands.tools.mcp.mcp_agent_tool import MCPAgentTool
+
+    mcp_tool = MCPAgentTool(McpTool(name="web_search", inputSchema={"type": "object"}), mcp_client=None)
+
+    class FakeMcp(ToolProvider):
+        # Like MCPClient: the tool's name is only known once the Agent loads the provider.
+        async def load_tools(self, **kwargs):
+            return [mcp_tool]
+
+        def add_consumer(self, *args, **kwargs):
+            pass
+
+        def remove_consumer(self, *args, **kwargs):
+            pass
+
+    agent = create_harness(tools=[FakeMcp()])
+    assert agent.tool_registry.registry["web_search"] is mcp_tool
 
 
 def test_web_search_default_without_a_backend_logs_info_not_warning_and_builds(caplog):

@@ -330,8 +330,11 @@ model provider has its own search (OpenAI, Google, Anthropic, and GPT-5, GPT-6, 
 per query to your AWS account. The caller needs the `bedrock-agentcore:InvokeWebSearch` IAM
 permission on `arn:aws:bedrock-agentcore:<region>:aws:tool/web-search.v1`, and the API is offered
 in a subset of regions; without them the first search returns an error telling the model to answer
-without search, and later ones fail without a request. A `web_search` tool you pass yourself
-replaces this default, and `makeAgentCoreWebSearch({ region })` in `tools` picks another region. Elsewhere (other Mantle models,
+without search, and later ones fail without a request. Searches use the default AWS credential
+chain, not a `BedrockModel` instance's own `clientConfig`. A `web_search` tool you pass yourself
+replaces this default, so `makeAgentCoreWebSearch({ region, clientConfig })` in `tools` picks
+another region or credentials. An MCP server that exposes `web_search` needs
+`builtinTools: { web_search: false }`, since its tool names are only known once it connects. Elsewhere (other Mantle models,
 another `Model` instance) `web_search` is off by default. To search there, opt into Exa with
 `{ web_search: 'exa' }`. The model then gets a `web_search` tool backed by Exa's hosted search. It
 works keyless, but adding a `EXA_API_KEY` in the environment lifts the rate limit. You can

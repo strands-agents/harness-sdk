@@ -15,7 +15,7 @@ from strands_harness.interventions import (
     resolve_interventions,
 )
 from strands_harness.memory import resolve_memory
-from strands_harness.models import supports_thinking, supports_web_search
+from strands_harness.models import supports_thinking, supports_web_search, web_search_kind
 from strands_harness.prompt import HARNESS_CONTRACT, build_system_prompt
 from strands_harness.types.agent import (
     BuiltinPluginName,
@@ -65,4 +65,5 @@ __all__ = [
     "resolve_memory",
     "supports_thinking",
     "supports_web_search",
+    "web_search_kind",
 ]

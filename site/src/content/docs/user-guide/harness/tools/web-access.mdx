@@ -89,14 +89,15 @@ On Amazon Bedrock, which has no built-in search, the agent instead gets a `web_s
 backed by
 [Amazon Bedrock AgentCore web search](https://docs.aws.amazon.com/bedrock-agentcore/latest/APIReference/API_InvokeWebSearch.html).
 This applies to a `BedrockModel` you build yourself too. It calls the `InvokeWebSearch` API in the
-model's region with your AWS credentials, so each query is authorized by IAM and billed to your
-AWS account. The caller needs the `bedrock-agentcore:InvokeWebSearch` IAM permission on
+model's region with the default AWS credential chain (not the model's own session or client
+config), so each query is authorized by IAM and billed to that AWS account. The caller needs the `bedrock-agentcore:InvokeWebSearch` IAM permission on
 `arn:aws:bedrock-agentcore:<region>:aws:tool/web-search.v1`, and the API is available in a subset
 of regions. Without the permission, or in an unsupported region, the first search returns an
 error telling the model to answer without search, and later searches fail without a request. A
-`web_search` tool you pass in `tools` replaces this default; to search in another region, pass
-`make_agentcore_web_search(region=...)` (Python) or `makeAgentCoreWebSearch({ region })`
-(TypeScript).
+`web_search` tool you pass in `tools` replaces this default; to search in another region or with
+other credentials, pass `make_agentcore_web_search(region=..., boto_session=...)` (Python) or
+`makeAgentCoreWebSearch({ region, clientConfig })` (TypeScript). In TypeScript, an MCP server that
+exposes `web_search` needs `web_search` turned off, since its tools are only listed once it connects.
 
 For models that don't provide web search, the harness logs a message and builds the agent
 without it. If you asked for it explicitly in `builtin_tools`, you get an error instead, so

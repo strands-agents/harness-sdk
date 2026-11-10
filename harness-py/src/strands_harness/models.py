@@ -328,7 +328,7 @@ class Provider(NamedTuple):
     non-clobbering seam for it (OpenAI Responses ``params.tools`` for OpenAI and bedrock-mantle,
     Gemini ``gemini_tools``, Anthropic-direct ``anthropic_tools``); ``_has_web_search`` narrows
     bedrock-mantle to its GPT-5, GPT-6, and Daybreak models. Bedrock Converse has no mechanism, so
-    the harness serves AgentCore web search there as a tool instead (``_web_search_kind``).
+    the harness serves AgentCore web search there as a tool instead (``web_search_kind``).
 
     ``caching`` marks providers where prompt caching is in effect when requested, whether or not
     the harness configures anything: Bedrock, Anthropic direct, OpenAI, and bedrock-mantle (the harness
@@ -415,7 +415,7 @@ def _has_web_search(provider_name: str, name: str) -> bool:
     return provider_name != "bedrock-mantle" or name.startswith(_BEDROCK_GPT_PREFIXES)
 
 
-def _web_search_kind(model: Model | ModelRouter | str | None) -> Literal["native", "agentcore"] | None:
+def web_search_kind(model: Model | ModelRouter | str | None) -> Literal["native", "agentcore"] | None:
     """How ``web_search`` is served for ``model`` without the Exa opt-in: the provider's native
     search, AgentCore web search on Bedrock (a harness tool, as Converse has no native search), or
     ``None``. A ``BedrockModel`` instance gets AgentCore too; any other ``Model`` or ``ModelRouter``
@@ -437,7 +437,7 @@ def supports_web_search(model: Model | ModelRouter | str | None) -> bool:
     where AgentCore web search serves it. Any other ``Model`` or ``ModelRouter`` instance has an
     unknown provider, so this is ``False``. ``None`` resolves to the default model.
     """
-    return _web_search_kind(model) is not None
+    return web_search_kind(model) is not None
 
 
 def supports_thinking(model: Model | str | None) -> bool:
@@ -494,7 +494,7 @@ def resolve_model(
     raise. For a ``provider/name`` string, ``effort`` is validated against the provider (and Bedrock
     model family); ``caching`` on a provider without it raises when explicit (``caching_explicit``)
     and otherwise warns and builds without it. ``web_search`` turns on the model's native search and
-    is only passed for models that have one (``_web_search_kind`` is ``"native"``).
+    is only passed for models that have one (``web_search_kind`` is ``"native"``).
     """
     _check_effort(effort)
     if isinstance(model, (Model, ModelRouter)):

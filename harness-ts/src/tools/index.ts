@@ -15,6 +15,7 @@ export type { MakeProgrammaticToolCallerOptions } from './programmatic-tool-call
 export { makeWebFetch } from './web-fetch.js'
 export type { MakeWebFetchOptions } from './web-fetch.js'
 export { exaWebSearch, makeAgentCoreWebSearch, makeExaWebSearch } from './web-search.js'
+export type { MakeAgentCoreWebSearchOptions } from './web-search.js'
 export { AgentSpec, Choice, Fixed, Inherit, makeSubagent, Open, Option, Preset } from './subagent.js'
 export type {
   AgentBuilder,

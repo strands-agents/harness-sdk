@@ -14,6 +14,7 @@ import {
   searchTool,
   WebSearchError,
 } from '../../src/tools/web-search.js'
+import { configureLogging } from '../../src/logging.js'
 
 vi.mock('@strands-agents/sdk', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@strands-agents/sdk')>()),
@@ -300,6 +301,29 @@ describe('makeAgentCoreWebSearch', () => {
     expect(await invoke(tool, { query: 'q' })).toBe(expected)
     expect(await invoke(tool, { query: 'q' })).toBe(expected)
     expect(calls).toHaveLength(1)
+  })
+
+  it('says when there are no AWS credentials, warns once, and stops calling', async () => {
+    vi.stubEnv('AWS_REGION', 'us-east-1')
+    const warn = vi.fn()
+    configureLogging({ debug: () => {}, info: () => {}, warn, error: () => {} })
+    const calls = mockSend(Object.assign(new Error('Could not load credentials'), { name: 'CredentialsProviderError' }))
+    const tool = makeAgentCoreWebSearch()
+    const expected =
+      'web_search failed: Could not load credentials (AgentCore web search is signed with AWS credentials; ' +
+      'a Bedrock API key does not cover it). web_search is unavailable here; answer without it.'
+    expect(await invoke(tool, { query: 'q' })).toBe(expected)
+    expect(await invoke(tool, { query: 'q' })).toBe(expected)
+    expect(calls).toHaveLength(1)
+    expect(warn).toHaveBeenCalledTimes(1)
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('AgentCore web search is unavailable'))
+  })
+
+  it('passes clientConfig to the AgentCore client', async () => {
+    const calls = mockSend({ results: [] })
+    const credentials = { accessKeyId: 'AKIDEXAMPLE', secretAccessKey: 'secret' }
+    await invoke(makeAgentCoreWebSearch({ region: 'us-east-1', clientConfig: { credentials } }), { query: 'q' })
+    expect(await calls[0]!.client.config.credentials()).toMatchObject(credentials)
   })
 
   it('passes other service errors through, including a modeled 404, and keeps calling', async () => {

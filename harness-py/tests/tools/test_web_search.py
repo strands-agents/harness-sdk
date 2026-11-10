@@ -253,7 +253,7 @@ async def test_agentcore_web_search_calls_invoke_web_search_and_formats(agentcor
         },
         {"webSearchId": "web-search.v1", "searchQuery": "strands agents", "maxResults": 10},
     )
-    tool = web_search_module.make_agentcore_web_search("us-west-2")
+    tool = web_search_module.make_agentcore_web_search(region="us-west-2")
     out = await tool._tool_func(query="strands agents", max_results=50)
     assert agentcore.regions == ["us-west-2"]
     lines = out.splitlines()
@@ -266,7 +266,7 @@ async def test_agentcore_web_search_calls_invoke_web_search_and_formats(agentcor
 async def test_agentcore_web_search_builds_one_client_across_searches(agentcore):
     for _ in range(2):
         agentcore.add_response("invoke_web_search", {"results": []})
-    tool = web_search_module.make_agentcore_web_search("us-west-2")
+    tool = web_search_module.make_agentcore_web_search(region="us-west-2")
     assert [await tool._tool_func(query="q"), await tool._tool_func(query="q")] == ["No results.", "No results."]
     assert agentcore.regions == ["us-west-2"]
 
@@ -280,7 +280,7 @@ async def test_agentcore_web_search_region_defaults_like_bedrock_model(agentcore
 
 async def test_agentcore_web_search_access_denied_names_the_permission_and_stops_calling(agentcore):
     agentcore.add_client_error("invoke_web_search", "AccessDeniedException", "the request is not authorized")
-    tool = web_search_module.make_agentcore_web_search("us-west-2")
+    tool = web_search_module.make_agentcore_web_search(region="us-west-2")
     expected = (
         "web_search failed: An error occurred (AccessDeniedException) when calling the InvokeWebSearch operation: "
         "the request is not authorized (the caller needs bedrock-agentcore:InvokeWebSearch on "
@@ -294,7 +294,7 @@ async def test_agentcore_web_search_access_denied_names_the_permission_and_stops
 
 async def test_agentcore_web_search_names_an_unsupported_region_and_stops_calling(agentcore):
     agentcore.add_client_error("invoke_web_search", "404", "Invalid api path", http_status_code=404)
-    tool = web_search_module.make_agentcore_web_search("eu-central-1")
+    tool = web_search_module.make_agentcore_web_search(region="eu-central-1")
     expected = (
         "web_search failed: AgentCore web search is not available in eu-central-1 (An error occurred (404) when "
         "calling the InvokeWebSearch operation: Invalid api path). web_search is unavailable here; answer without it."
@@ -303,12 +303,44 @@ async def test_agentcore_web_search_names_an_unsupported_region_and_stops_callin
     assert await tool._tool_func(query="q") == expected
 
 
+async def test_agentcore_web_search_without_credentials_says_so_and_stops_calling(agentcore, caplog):
+    import logging
+
+    from botocore.exceptions import NoCredentialsError
+
+    calls = []
+
+    def no_credentials(**kwargs):
+        calls.append(kwargs)
+        raise NoCredentialsError()
+
+    agentcore.client.invoke_web_search = no_credentials
+    tool = web_search_module.make_agentcore_web_search(region="us-west-2")
+    expected = (
+        "web_search failed: Unable to locate credentials (AgentCore web search is signed with AWS credentials; "
+        "a Bedrock API key does not cover it). web_search is unavailable here; answer without it."
+    )
+    with caplog.at_level(logging.WARNING, logger="strands_harness.tools.web_search"):
+        assert await tool._tool_func(query="q") == expected
+        assert await tool._tool_func(query="q") == expected
+    assert len(calls) == 1
+    assert len([r for r in caplog.records if "AgentCore web search is unavailable" in r.getMessage()]) == 1
+
+
+async def test_agentcore_web_search_uses_a_passed_boto_session(agentcore):
+    agentcore.add_response("invoke_web_search", {"results": []})
+    session = web_search_module.boto3.Session()
+    session.region_name = "ap-south-1"
+    await web_search_module.make_agentcore_web_search(boto_session=session)._tool_func(query="q")
+    assert agentcore.regions == ["ap-south-1"]
+
+
 async def test_agentcore_web_search_passes_other_errors_through_and_retries(agentcore):
     agentcore.add_client_error("invoke_web_search", "ThrottlingException", "slow down", http_status_code=429)
     agentcore.add_client_error(
         "invoke_web_search", "ResourceNotFoundException", "no such web search", http_status_code=404
     )
-    tool = web_search_module.make_agentcore_web_search("us-west-2")
+    tool = web_search_module.make_agentcore_web_search(region="us-west-2")
     assert await tool._tool_func(query="q") == (
         "web_search failed: An error occurred (ThrottlingException) when calling the InvokeWebSearch operation: "
         "slow down"

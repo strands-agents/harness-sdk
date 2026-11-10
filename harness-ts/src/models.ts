@@ -577,7 +577,11 @@ export function supportsThinking(model: Model | ModelRouter | string | undefined
 /**
  * How `web_search` is served for `model` without the Exa opt-in: the provider's native search,
  * AgentCore web search on Bedrock (a harness tool, as Converse has no native search), or
- * `undefined`. A `Model` or `ModelRouter` instance has an unknown provider, so it gets `undefined`.
+ * `undefined`. A `BedrockModel` instance gets AgentCore too; any other `Model` or `ModelRouter` has
+ * an unknown provider, so it gets `undefined`.
+ *
+ * @param model - A `Model` instance, a `"provider/name"` string, a bare Bedrock id, or undefined.
+ * @returns `'native'`, `'agentcore'`, or `undefined` when the model has no built-in web search.
  */
 export function webSearchKind(model: Model | ModelRouter | string | undefined): 'native' | 'agentcore' | undefined {
   if (model instanceof BedrockModel) {

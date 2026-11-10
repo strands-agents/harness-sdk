@@ -9,6 +9,7 @@ import {
   supportsMedia,
   supportsThinking,
   supportsWebSearch,
+  webSearchKind,
 } from '../src/models.js'
 import type { Effort } from '../src/types/agent.js'
 import { DEFAULT_EFFORT, DEFAULT_MODEL } from '../src/defaults.js'
@@ -790,6 +791,13 @@ describe('supportsWebSearch', () => {
 
   it('uses the default model provider for undefined', () => {
     expect(supportsWebSearch(undefined)).toBe(supportsWebSearch(DEFAULT_MODEL))
+  })
+
+  it('webSearchKind names the backend', () => {
+    expect(webSearchKind('openai/gpt-5.6-sol')).toBe('native')
+    expect(webSearchKind('bedrock/global.anthropic.claude-opus-4-8')).toBe('agentcore')
+    expect(webSearchKind(new BedrockModel({ modelId: 'x' }))).toBe('agentcore')
+    expect(webSearchKind('ollama/llama3')).toBeUndefined()
   })
 
   it('is true for a BedrockModel instance and false for another Model', async () => {
