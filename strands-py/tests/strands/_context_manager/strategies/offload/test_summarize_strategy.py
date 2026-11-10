@@ -62,6 +62,22 @@ def _base_summarize(model):
     return unittest.mock.AsyncMock(side_effect=summarize)
 
 
+def _replay_kwargs(agent, instructions: str | None = None) -> dict:
+    """Return the keyword arguments a batch summary passes to ``summarize()`` for ``agent``."""
+    return {
+        "tool_specs": AGENT_TOOLS,
+        "system_prompt": "You are a coding agent.",
+        "system_prompt_content": AGENT_PROMPT,
+        "instructions": instructions,
+        "cancel_signal": agent._cancel_signal,
+        "agent_metadata": agent._metadata,
+    }
+
+
+def _marker(count: int, summary: str) -> ContentBlock:
+    return ContentBlock(text=f"[Summarized: {count} messages, ~5,000 tokens]\n\n{summary}")
+
+
 def _summary(text: str, provider: str | None = None) -> SummarizeResult:
     return SummarizeResult(content=[ContentBlock(summary={"provider": provider, "text": text})])
 
@@ -510,6 +526,7 @@ class TestBatchSummaryReplaysTheAgentRequest:
             "system_prompt_content": AGENT_PROMPT,
             "instructions": None,
             "cancel_signal": mock_agent._cancel_signal,
+            "agent_metadata": mock_agent._metadata,
         }
 
     @pytest.mark.asyncio
@@ -527,15 +544,17 @@ class TestBatchSummaryReplaysTheAgentRequest:
 
         assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is True
 
-        assert mock_agent.model.summarize.await_args.args[0] == [
+        assert mock_agent.model.summarize.await_args == unittest.mock.call(
+            [
+                Message(role="user", content=[ContentBlock(text="task")]),
+                Message(role="assistant", content=[ContentBlock(text="old1"), ContentBlock(text="old3")]),
+            ],
+            **_replay_kwargs(mock_agent),
+        )
+        assert messages == [
             Message(role="user", content=[ContentBlock(text="task")]),
-            Message(role="assistant", content=[ContentBlock(text="old1"), ContentBlock(text="old3")]),
-        ]
-        assert [block["text"] for message in messages for block in message["content"]] == [
-            "task",
-            "[Summarized: 2 messages, ~5,000 tokens]\n\nSummary of content.",
-            "pin",
-            "recent",
+            Message(role="assistant", content=[_marker(2, "Summary of content.")]),
+            Message(role="user", content=[ContentBlock(text="pin"), ContentBlock(text="recent")], metadata=pinned),
         ]
 
     @pytest.mark.asyncio
@@ -556,11 +575,64 @@ class TestBatchSummaryReplaysTheAgentRequest:
 
         assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is True
 
-        assert mock_agent.model.summarize.await_args.args[0] == [
+        assert mock_agent.model.summarize.await_args == unittest.mock.call(
+            [
+                Message(role="user", content=[ContentBlock(text="task")]),
+                Message(role="assistant", content=[ContentBlock(text="big1"), ContentBlock(text="big2")]),
+            ],
+            **_replay_kwargs(mock_agent),
+        )
+        assert messages == [
             Message(role="user", content=[ContentBlock(text="task")]),
-            Message(role="assistant", content=[ContentBlock(text="big1"), ContentBlock(text="big2")]),
+            Message(role="assistant", content=[_marker(2, "Summary of content.")]),
+            Message(role="user", content=[ContentBlock(text="question"), ContentBlock(text="recent")]),
         ]
-        assert "question" in [block.get("text") for message in messages for block in message["content"]]
+
+    @pytest.mark.asyncio
+    async def test_replays_the_prefix_as_sent_when_it_holds_adjacent_same_role_messages(self, mock_agent):
+        messages: Messages = [
+            Message(role="user", content=[ContentBlock(text="task")]),
+            Message(role="user", content=[ContentBlock(text="more task")]),
+            Message(role="assistant", content=[ContentBlock(text="old1")]),
+            Message(role="user", content=[ContentBlock(text="recent")]),
+        ]
+        mock_agent.messages = messages
+        strategy = Offload.summarize("*").when(utilization=0.8, preserve_recent=1)
+
+        assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is True
+
+        assert mock_agent.model.summarize.await_args == unittest.mock.call(
+            [
+                Message(role="user", content=[ContentBlock(text="task")]),
+                Message(role="user", content=[ContentBlock(text="more task")]),
+                Message(role="assistant", content=[ContentBlock(text="old1")]),
+            ],
+            **_replay_kwargs(mock_agent),
+        )
+
+    @pytest.mark.asyncio
+    async def test_leaves_reasoning_out_when_a_gap_merges_assistant_turns(self, mock_agent):
+        reasoning = ContentBlock(reasoningContent={"reasoningText": {"text": "think", "signature": "sig"}})
+        pinned = {"custom": {"pinned": True}}
+        messages: Messages = [
+            Message(role="user", content=[ContentBlock(text="task")]),
+            Message(role="assistant", content=[reasoning, ContentBlock(text="old1")]),
+            Message(role="user", content=[ContentBlock(text="pin")], metadata=pinned),
+            Message(role="assistant", content=[reasoning, ContentBlock(text="old3")]),
+            Message(role="user", content=[ContentBlock(text="recent")]),
+        ]
+        mock_agent.messages = messages
+        strategy = Offload.summarize("*").when(utilization=0.8, preserve_recent=1)
+
+        assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is True
+
+        assert mock_agent.model.summarize.await_args == unittest.mock.call(
+            [
+                Message(role="user", content=[ContentBlock(text="task")]),
+                Message(role="assistant", content=[ContentBlock(text="old1"), ContentBlock(text="old3")]),
+            ],
+            **_replay_kwargs(mock_agent),
+        )
 
     @pytest.mark.asyncio
     async def test_sends_no_system_prompt_for_an_agent_without_one(self, mock_agent):
@@ -696,13 +768,18 @@ class TestServerSideSummary:
         with caplog.at_level(logging.WARNING):
             assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is True
 
-        mock_agent.model.summarize.assert_awaited_once()
+        mock_agent.model.summarize.assert_awaited_once_with(
+            [
+                Message(role="user", content=[ContentBlock(text="task")]),
+                Message(role="assistant", content=[ContentBlock(text="old1"), ContentBlock(text="old3")]),
+            ],
+            **_replay_kwargs(mock_agent),
+        )
         assert "pinned=<1> | server-side summary does not support pinned messages" in caplog.text
-        assert [block["text"] for message in messages for block in message["content"]] == [
-            "task",
-            "[Summarized: 2 messages, ~5,000 tokens]\n\ncompacted",
-            "pin",
-            "recent",
+        assert messages == [
+            Message(role="user", content=[ContentBlock(text="task")]),
+            Message(role="assistant", content=[_marker(2, "compacted")]),
+            Message(role="user", content=[ContentBlock(text="pin"), ContentBlock(text="recent")], metadata=pinned),
         ]
 
     @pytest.mark.asyncio
@@ -724,8 +801,11 @@ class TestServerSideSummary:
 
         assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is True
 
-        assert not any("summary" in block for message in messages for block in message["content"])
-        assert any("[Summarized:" in block.get("text", "") for message in messages for block in message["content"])
+        assert messages == [
+            Message(role="user", content=[ContentBlock(text="task")]),
+            Message(role="assistant", content=[_marker(3, "Summary of content.")]),
+            Message(role="user", content=[ContentBlock(text="recent")]),
+        ]
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -764,6 +844,11 @@ class TestServerSideSummary:
         with caplog.at_level(logging.WARNING):
             assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is True
 
+        assert messages == [
+            Message(role="user", content=[ContentBlock(text="task")]),
+            Message(role="assistant", content=[_marker(3, "written client-side")]),
+            Message(role="user", content=[ContentBlock(text="recent")]),
+        ]
         assert "thinking blocks kept after it will be dropped" in caplog.text
 
     @pytest.mark.asyncio
@@ -783,8 +868,20 @@ class TestServerSideSummary:
 
         assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is True
 
-        sent = mock_agent.model.summarize.await_args.args[0]
-        assert earlier in [block for message in sent for block in message["content"]]
+        mock_agent.model.summarize.assert_awaited_once_with(
+            [
+                Message(role="user", content=[ContentBlock(text="task")]),
+                Message(role="assistant", content=[earlier]),
+                Message(role="user", content=[ContentBlock(text="old1")]),
+                Message(role="assistant", content=[ContentBlock(text="old2")]),
+            ],
+            **_replay_kwargs(mock_agent),
+        )
+        assert messages == [
+            Message(role="user", content=[ContentBlock(text="task")]),
+            Message(role="assistant", content=[ContentBlock(summary={"provider": "anthropic", "text": "compacted"})]),
+            Message(role="user", content=[ContentBlock(text="recent")]),
+        ]
 
 
 class TestClientSideSummariesUseModelSummarize:
@@ -908,7 +1005,9 @@ class TestClientSideSummariesUseModelSummarize:
 
         assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is True
 
-        assert mock_agent.model.summarize.await_args.kwargs["instructions"] == "Be very brief."
+        mock_agent.model.summarize.assert_awaited_once_with(
+            TestServerSideSummary._messages()[:4], **_replay_kwargs(mock_agent, "Be very brief.")
+        )
 
     @pytest.mark.asyncio
     async def test_a_block_summary_sends_the_block_instructions_without_a_system_prompt(self, mock_agent):
@@ -921,6 +1020,7 @@ class TestClientSideSummariesUseModelSummarize:
         assert mock_agent.model.summarize.await_args.kwargs == {
             "instructions": _BLOCK_SUMMARY_INSTRUCTIONS,
             "cancel_signal": mock_agent._cancel_signal,
+            "agent_metadata": mock_agent._metadata,
         }
 
     @pytest.mark.asyncio
@@ -935,8 +1035,7 @@ class TestClientSideSummariesUseModelSummarize:
         context = ContextState(messages=messages, agent=mock_agent, utilization=0.5, invocation_context=request)
         assert await strategy.apply(context) is True
 
-        assert request.usage["inputTokens"] == 10
-        assert request.usage["outputTokens"] == 5
+        assert request.usage == {"turns_taken": 0, "inputTokens": 10, "outputTokens": 5, "totalTokens": 15}
 
     @pytest.mark.asyncio
     async def test_a_per_message_summary_adds_its_usage_to_the_request(self, mock_agent):
@@ -948,7 +1047,7 @@ class TestClientSideSummariesUseModelSummarize:
         context = ContextState(messages=messages, agent=mock_agent, utilization=0.9, invocation_context=request)
         assert await strategy.apply(context) is True
 
-        assert request.usage["totalTokens"] == 15
+        assert request.usage == {"turns_taken": 0, "inputTokens": 10, "outputTokens": 5, "totalTokens": 15}
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("content", [[ContentBlock(summary={"provider": "anthropic", "text": "compacted"})], []])
@@ -964,7 +1063,7 @@ class TestClientSideSummariesUseModelSummarize:
         context = ContextState(messages=messages, agent=mock_agent, utilization=0.9, invocation_context=request)
         assert await strategy.apply(context) is bool(content)
 
-        assert request.usage["inputTokens"] == 100
+        assert request.usage == {"turns_taken": 0, "inputTokens": 100, "outputTokens": 20, "totalTokens": 120}
 
     @pytest.mark.asyncio
     async def test_warns_when_summarize_returns_no_text(self, mock_agent, caplog):

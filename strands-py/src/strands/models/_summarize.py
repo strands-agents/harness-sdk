@@ -11,6 +11,7 @@ from ..types.event_loop import Usage
 from ..types.tools import ToolSpec
 
 if TYPE_CHECKING:
+    from ..agent.agent_metadata import AgentMetadata
     from .model import Model
 
 logger = logging.getLogger(__name__)
@@ -56,6 +57,7 @@ async def _summarize_with_stream(
     system_prompt_content: list[SystemContentBlock] | None = None,
     instructions: str | None = None,
     cancel_signal: threading.Event | None = None,
+    agent_metadata: "AgentMetadata | None" = None,
 ) -> SummarizeResult:
     """Summarize ``messages`` by sending them as a request that ends with one summarize instruction.
 
@@ -73,6 +75,7 @@ async def _summarize_with_stream(
         tool_specs or [],
         system_prompt_content=system_prompt_content,
         cancel_signal=cancel_signal,
+        agent_metadata=agent_metadata,
     ):
         if "stop" in event:
             stop_reason, reply, usage, _ = event["stop"]

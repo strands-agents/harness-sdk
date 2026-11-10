@@ -56,6 +56,8 @@ if TYPE_CHECKING:
     # AsyncAnthropicBedrockMantle needs anthropic>=0.91, so these are imported for typing only.
     from anthropic import AsyncAnthropicBedrock, AsyncAnthropicBedrockMantle, AsyncAnthropicVertex
 
+    from ..agent.agent_metadata import AgentMetadata
+
     _AsyncClient = anthropic.AsyncAnthropic | AsyncAnthropicBedrock | AsyncAnthropicBedrockMantle | AsyncAnthropicVertex
 
 COMPACTION_BETA = "compact-2026-09-04"
@@ -1353,6 +1355,7 @@ class AnthropicModel(Model):
         system_prompt_content: list[SystemContentBlock] | None = None,
         instructions: str | None = None,
         cancel_signal: threading.Event | None = None,
+        agent_metadata: "AgentMetadata | None" = None,
         **kwargs: Any,
     ) -> SummarizeResult:
         """Summarize ``messages`` with Anthropic on-demand compaction.
@@ -1372,6 +1375,7 @@ class AnthropicModel(Model):
             system_prompt_content: The request's structured system prompt.
             instructions: Summarization instructions replacing the API's own prompt.
             cancel_signal: Event that aborts the base implementation's call.
+            agent_metadata: Stable identity of the invoking agent, passed to the base implementation.
             **kwargs: Additional keyword arguments for future extensibility.
 
         Returns:
@@ -1383,6 +1387,7 @@ class AnthropicModel(Model):
             "system_prompt_content": system_prompt_content,
             "instructions": instructions,
             "cancel_signal": cancel_signal,
+            "agent_metadata": agent_metadata,
             **kwargs,
         }
         if self.model_info.capabilities.server_side_summary is not True:

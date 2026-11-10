@@ -13,6 +13,7 @@ import pydantic
 import pytest
 
 import strands
+from strands.agent.agent_metadata import AgentMetadata
 from strands.models import Model, ModelCapabilities, ModelInfo, ModelLimits, SummarizeResult
 from strands.models.anthropic import AnthropicModel
 from strands.models.model import CacheConfig, CacheToolsConfig
@@ -3341,14 +3342,16 @@ async def test_summarize_returns_the_compaction_usage(anthropic_client):
 
     result = await model.summarize([{"role": "user", "content": [{"text": "hi"}]}])
 
-    assert result.content == [{"summary": {"provider": "anthropic", "signature": None, "text": "the summary"}}]
-    assert result.usage == {
-        "inputTokens": 100,
-        "outputTokens": 20,
-        "totalTokens": 155,
-        "cacheReadInputTokens": 30,
-        "cacheWriteInputTokens": 5,
-    }
+    assert result == SummarizeResult(
+        content=[{"summary": {"provider": "anthropic", "signature": None, "text": "the summary"}}],
+        usage={
+            "inputTokens": 100,
+            "outputTokens": 20,
+            "totalTokens": 155,
+            "cacheReadInputTokens": 30,
+            "cacheWriteInputTokens": 5,
+        },
+    )
 
 
 @pytest.mark.asyncio
@@ -3366,14 +3369,19 @@ async def test_summarize_counts_the_compaction_iterations_usage(anthropic_client
 
     result = await model.summarize([{"role": "user", "content": [{"text": "hi"}]}])
 
-    assert result.usage == {
-        "inputTokens": 100,
-        "outputTokens": 20,
-        "totalTokens": 155,
-        "cacheReadInputTokens": 30,
-        "cacheWriteInputTokens": 5,
-    }
+    assert result == SummarizeResult(
+        content=[{"summary": {"provider": "anthropic", "signature": None, "text": "the summary"}}],
+        usage={
+            "inputTokens": 100,
+            "outputTokens": 20,
+            "totalTokens": 155,
+            "cacheReadInputTokens": 30,
+            "cacheWriteInputTokens": 5,
+        },
+    )
 
+
+_AGENT_METADATA = AgentMetadata(session_id="session")
 
 _BASE_RESULT = SummarizeResult(
     content=[{"summary": {"provider": None, "text": "client-side"}}],
@@ -3395,7 +3403,7 @@ async def test_summarize_uses_the_base_implementation_without_a_compaction_block
     messages = [{"role": "user", "content": [{"text": "hi"}]}]
 
     with unittest.mock.patch.object(Model, "summarize", return_value=_BASE_RESULT) as base_summarize:
-        result = await model.summarize(messages, instructions="keep ids")
+        result = await model.summarize(messages, instructions="keep ids", agent_metadata=_AGENT_METADATA)
 
     base_summarize.assert_awaited_once_with(
         messages,
@@ -3404,15 +3412,18 @@ async def test_summarize_uses_the_base_implementation_without_a_compaction_block
         system_prompt_content=None,
         instructions="keep ids",
         cancel_signal=None,
+        agent_metadata=_AGENT_METADATA,
     )
-    assert result.content == _BASE_RESULT.content
-    assert result.usage == {
-        "inputTokens": 110,
-        "outputTokens": 25,
-        "totalTokens": 170,
-        "cacheReadInputTokens": 30,
-        "cacheWriteInputTokens": 5,
-    }
+    assert result == SummarizeResult(
+        content=_BASE_RESULT.content,
+        usage={
+            "inputTokens": 110,
+            "outputTokens": 25,
+            "totalTokens": 170,
+            "cacheReadInputTokens": 30,
+            "cacheWriteInputTokens": 5,
+        },
+    )
 
 
 @pytest.mark.asyncio
@@ -3483,7 +3494,9 @@ async def test_summarize_without_the_capability_uses_the_base_implementation(ant
     base_result = SummarizeResult(content=[{"summary": {"provider": None, "text": "client-side"}}])
 
     with unittest.mock.patch.object(Model, "summarize", return_value=base_result) as base_summarize:
-        result = await model.summarize(messages, system_prompt="sys", instructions="keep ids")
+        result = await model.summarize(
+            messages, system_prompt="sys", instructions="keep ids", agent_metadata=_AGENT_METADATA
+        )
 
     assert result is base_result
     base_summarize.assert_awaited_once_with(
@@ -3493,6 +3506,7 @@ async def test_summarize_without_the_capability_uses_the_base_implementation(ant
         system_prompt_content=None,
         instructions="keep ids",
         cancel_signal=None,
+        agent_metadata=_AGENT_METADATA,
     )
     anthropic_client.beta.messages.stream.assert_not_called()
 

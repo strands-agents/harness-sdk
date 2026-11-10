@@ -87,7 +87,8 @@ def _batch_request(messages: list[Message], safe: list[Message]) -> Messages:
     """
     if all(kept is replaced for kept, replaced in zip(messages[1:], safe, strict=False)):
         return messages[: len(safe) + 1]
-    request = [messages[0], *safe]
+    # Merging turns that were apart would put signed reasoning in a shape its model never wrote.
+    request = _without_reasoning([messages[0], *safe])
     _repair_alternation(request)
     return request
 
@@ -455,6 +456,7 @@ class SummarizeStrategy(BaseOffloadStrategy):
         kwargs: dict[str, Any] = {
             "instructions": instructions if replay else instructions or _BLOCK_SUMMARY_INSTRUCTIONS,
             "cancel_signal": agent._cancel_signal,
+            "agent_metadata": agent._metadata,
         }
         if replay:
             system_prompt, system_prompt_content = split_system_prompt(agent.system_prompt_content)

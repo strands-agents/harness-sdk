@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 import pytest
 from pydantic import BaseModel
 
+from strands.agent.agent_metadata import AgentMetadata
 from strands.hooks.events import AfterInvocationEvent
 from strands.models import CacheConfig, ModelCapabilities, ModelInfo, ModelLimits, SummarizeResult
 from strands.models import Model as SAModel
@@ -866,6 +867,31 @@ async def test_summarize_base_replays_the_request_with_the_instructions_closing_
 
 
 @pytest.mark.asyncio
+async def test_summarize_base_sends_the_agent_metadata():
+    model = RecordingModel()
+    agent_metadata = AgentMetadata(session_id="session")
+
+    await model.summarize(HISTORY[:2], agent_metadata=agent_metadata)
+
+    assert model.calls == [
+        {
+            "messages": [
+                *HISTORY[:2],
+                {"role": "user", "content": [{"text": f"{_SUMMARIZE_GUARD}\n\n{DEFAULT_SUMMARIZE_INSTRUCTIONS}"}]},
+            ],
+            "tool_specs": None,
+            "system_prompt": None,
+            "tool_choice": None,
+            "system_prompt_content": None,
+            "invocation_state": None,
+            "model_state": None,
+            "cancel_signal": None,
+            "agent_metadata": agent_metadata,
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_summarize_base_adds_a_user_turn_after_an_assistant_turn():
     model = RecordingModel()
 
@@ -932,7 +958,10 @@ async def test_summarize_base_keeps_a_reply_that_stopped_at_a_limit(stop_reason)
 
     result = await model.summarize([{"role": "user", "content": [{"text": "hi"}]}])
 
-    assert result.content == [{"summary": {"provider": None, "text": "partial"}}]
+    assert result == SummarizeResult(
+        content=[{"summary": {"provider": None, "text": "partial"}}],
+        usage={"inputTokens": 0, "outputTokens": 0, "totalTokens": 0},
+    )
 
 
 @pytest.mark.asyncio

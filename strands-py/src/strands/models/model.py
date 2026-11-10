@@ -410,6 +410,7 @@ class Model(abc.ABC):
         system_prompt_content: list[SystemContentBlock] | None = None,
         instructions: str | None = None,
         cancel_signal: threading.Event | None = None,
+        agent_metadata: "AgentMetadata | None" = None,
         **kwargs: Any,
     ) -> SummarizeResult:
         """Summarize ``messages``.
@@ -436,6 +437,8 @@ class Model(abc.ABC):
             instructions: Summarization instructions replacing the default ones, which ``None`` or ``""`` keeps. The
                 base implementation's instruction not to act on the request or call tools is always sent.
             cancel_signal: Event that aborts the call.
+            agent_metadata: Stable identity of the invoking agent, as passed to :meth:`stream`. A provider may consult
+                it to derive a prompt-cache routing key, so a replay can share the agent's cache.
             **kwargs: Additional keyword arguments for future extensibility.
 
         Returns:
@@ -449,6 +452,7 @@ class Model(abc.ABC):
             system_prompt_content=system_prompt_content,
             instructions=instructions,
             cancel_signal=cancel_signal,
+            agent_metadata=agent_metadata,
         )
 
     def estimate_utilization(self, input_tokens: int) -> float:
