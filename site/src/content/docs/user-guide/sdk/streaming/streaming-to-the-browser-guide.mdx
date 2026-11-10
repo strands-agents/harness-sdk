@@ -111,8 +111,11 @@ The final status says how the run ended:
 - `incomplete`: an [invocation limit](../agents/agent-loop.md#invocation-limits), an
   interrupt, or a checkpoint stopped the run early.
 - `blocked`: a guardrail blocked the response, or the model refused.
-- `cancelled` or `error`: the run was cancelled, or it failed. A model that reaches its
-  output token limit makes the SDK throw, so that run ends with `error`.
+- `cancelled`: the run was cancelled. A run that the
+  [stop tool](../tools/vended-tools/stop.md) ends is `cancelled` too, and its text is the
+  tool's final message.
+- `error`: the run failed. A model that reaches its output token limit makes the SDK
+  throw, so that run ends with `error`.
 
 `stopReason` carries the exact Strands stop reason, such as `limitTurns` or
 `guardrailIntervened`.
@@ -175,8 +178,10 @@ retried call repeats it.
 
 The final event reads the text and the cited text of the last message, which is the
 answer the agent keeps in `agent.messages`. Text the model streamed before calling a
-tool, such as "Let me check the weather", is not part of it. A cancelled run gets
-`text: ''`, because the SDK fills its last message with a placeholder.
+tool, such as "Let me check the weather", is not part of it. A cancelled run keeps its
+last message too: the message passed to `agent.cancel({ message })`, such as the stop
+tool's final message. When a cancel signal stops the run, as the grace period and the
+cancel route below do, the SDK sets that message to `Cancelled by user`.
 
 :::caution
 Text events reach the browser as the model generates them, before an output guardrail
@@ -261,6 +266,11 @@ Create `app/api/runs/events/route.ts` to stream a run. The run ID travels as `?i
 Both handlers run on the Node.js runtime, because the SDK does not target the Edge
 runtime. The registry lives on `globalThis`, so both route handlers share it, including
 across reloads in `next dev`.
+
+These handlers assume one long-lived Node.js process, such as `next start` on a server or
+in a container: `startRun()` keeps the agent running after the POST response, and both
+handlers read the same registry. For serverless deployments, see
+[Preparing for production](#preparing-for-production).
 </Tab>
 </Tabs>
 
@@ -407,8 +417,9 @@ reconnect, take the run ID from the browser's network panel and use the `curl` c
 from the SSE section.
 
 To run the example in Next.js, adapt it in an App Router project with
-`@strands-agents/sdk` installed. Put `public-events.ts` and `agent-runs.ts` in `lib/`, and
-use the two route handlers from
+`@strands-agents/sdk` installed, served by one long-lived Node.js process such as
+`next start`. Put `public-events.ts` and `agent-runs.ts` in `lib/`, and use the two route
+handlers from
 [Streaming a run with server-sent events](#streaming-a-run-with-server-sent-events) in
 place of `server.ts`. Render the page from a client component that runs the logic of
 `streamAnswer()`, with its URLs changed to `/api/runs` and `/api/runs/events?id=${id}`.
@@ -474,7 +485,13 @@ process and skip authentication, so cover these points:
 - **Share runs across instances.** The registry lives in one process's memory. Behind a
   load balancer, use sticky sessions or move the buffer to a shared store such as Redis
   Streams. There, `XADD` with `MAXLEN` bounds the buffer and `XREAD` resumes from an ID.
-  Serverless platforms that don't keep a process between requests need the shared store.
+- **Keep runs alive on serverless platforms.** `startRun()` keeps the agent running after
+  the POST response, so it needs a process that outlives the request. A serverless
+  function can be frozen or shut down once it responds, and a shared store doesn't change
+  that. For runs that fit within the function's maximum duration, hand the run's promise
+  to Next.js [`after()`][next-after] or to your platform's `waitUntil()`. For longer runs,
+  queue the prompt and run the agent in a worker. Either way, publish the events to a
+  shared store, because the events request can reach another instance.
 - **Keep streams unbuffered.** Exclude `text/event-stream` from compression middleware,
   and check that every proxy in the path passes the stream through.
 - **Serve over HTTP/2.** Over HTTP/1.1, a browser allows six connections per domain across
@@ -493,3 +510,4 @@ Continue with these pages:
 - [Deploy to production](../deploy/index.md): deployment options for the server.
 
 [mdn-sse]: https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events
+[next-after]: https://nextjs.org/docs/app/api-reference/functions/after

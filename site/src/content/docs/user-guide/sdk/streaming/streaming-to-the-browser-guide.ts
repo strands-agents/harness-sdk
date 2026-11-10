@@ -86,10 +86,8 @@ const BLOCKED_REASONS = new Set(['guardrailIntervened', 'contentFiltered', 'refu
 /** The one authoritative final event, built from the agent result. */
 export function toFinalEvent(result: AgentResult): PublicEvent {
   const { stopReason, lastMessage } = result
-  if (stopReason === 'cancelled') {
-    return { v: 1, type: 'final', status: 'cancelled', stopReason, text: '' }
-  }
   // Read text and cited text only: toString() and toJSON() also include reasoning.
+  // A cancelled run keeps its text, such as the message of agent.cancel({ message }).
   const text = lastMessage.content
     .flatMap((block) => {
       if (block.type === 'textBlock') return [block.text]
@@ -97,7 +95,8 @@ export function toFinalEvent(result: AgentResult): PublicEvent {
       return []
     })
     .join('')
-  return { v: 1, type: 'final', status: finalStatus(stopReason), stopReason, text }
+  const status = stopReason === 'cancelled' ? 'cancelled' : finalStatus(stopReason)
+  return { v: 1, type: 'final', status, stopReason, text }
 }
 
 /** Limits, interrupts, and checkpoints stop a run before its answer is done. */
