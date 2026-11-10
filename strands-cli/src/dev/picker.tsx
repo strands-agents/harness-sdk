@@ -2,11 +2,12 @@ import { createElement, useRef, useState, type ReactElement } from 'react'
 import { Box, useInput } from 'ink'
 import { Text, useTheme } from '../ui/theme.js'
 import type { StartupScreen } from '../ui/run.js'
-import { errorMessage, sanitizeTerminalText, wrapLines } from '../terminal/text.js'
+import { sanitizeTerminalText, wrapLines } from '../terminal/text.js'
 import type { DiscoveredHarness } from './search.js'
 import type { DevWorkspace } from './workspace.js'
 import { useTerminalSize } from '../ui/terminal-size.js'
 import { userConfigPath } from '../config/store.js'
+import { devFailure } from './errors.js'
 
 export type HarnessChoice =
   | { kind: 'cli' }
@@ -65,7 +66,7 @@ export const HarnessPicker = ({
     void Promise.resolve()
       .then(() => onSelect(choice))
       .catch((error: unknown) => {
-        setFailure(sanitizeTerminalText(errorMessage(error)))
+        setFailure(devFailure(error, { operation: 'open' }).message)
       })
       .finally(() => {
         pending.current = false
@@ -173,7 +174,7 @@ export const HarnessPicker = ({
           </Box>
         </>
       )}
-      {failure ? <Text color={errorColor}>Cannot open workspace: {failure}</Text> : null}
+      {failure ? <Text color={errorColor}>{failure}</Text> : null}
       <Box marginTop={1}>
         <Text dimColor>
           {busy
@@ -211,7 +212,15 @@ export const chooseHarness = async (
       ...options,
       onSelect: async (choice): Promise<void> => {
         if (!choice) return cancel()
-        const workspace = await open(choice, signal)
+        let workspace: DevWorkspace
+        try {
+          workspace = await open(choice, signal)
+        } catch (error) {
+          throw devFailure(error, {
+            operation: 'open',
+            path: choice.kind === 'discovered' ? choice.harness.entrypoint : (options.cliWorkspace ?? options.cliPath),
+          })
+        }
         if (!settled && !signal.aborted) {
           settled = true
           complete(workspace)

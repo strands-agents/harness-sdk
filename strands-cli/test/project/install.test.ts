@@ -10,6 +10,26 @@ import { temporaryDirectory } from '../fixtures/tempdir.js'
 afterEach(() => vi.restoreAllMocks())
 
 describe('shared agent project installation', () => {
+  it('shouldReportTheProjectPathAndNextStepWhenDependencyInstallationFails', async () => {
+    const root = await temporaryDirectory()
+    const destination = join(root, 'agent')
+    const underlying = new Error('npm error 404 Missing test dependency')
+    vi.spyOn(archive, 'prepareWorkspaceDependencies').mockRejectedValue(underlying)
+
+    const task = installAgentProject({
+      destination,
+      profile: defineHarnessAgentConfig({ skills: false }),
+      language: 'typescript',
+      skills: [],
+      baseDir: root,
+    })
+
+    await expect(task).rejects.toThrow('Agent dependency setup failed.')
+    await expect(task).rejects.toThrow(`Path: ${destination}`)
+    await expect(task).rejects.toThrow('Next: Check the dependency files')
+    await expect(task).rejects.toMatchObject({ cause: underlying })
+  })
+
   it('shouldUseTheProfileExporterBeforeInstallingDependenciesWhenCreatingAnAgent', async () => {
     const root = await temporaryDirectory()
     const destination = join(root, 'agent')
