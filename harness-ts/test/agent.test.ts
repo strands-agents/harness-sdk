@@ -25,6 +25,7 @@ import {
 import { ContextManager } from '@strands-agents/sdk/experimental'
 import { InMemoryStorage } from '@strands-agents/sdk/storage'
 import { BedrockModel } from '@strands-agents/sdk/models/bedrock'
+import { BedrockAgentCoreClient } from '@aws-sdk/client-bedrock-agentcore'
 import { DockerSandbox } from '@strands-agents/sdk/sandbox/docker'
 import { makeFileEditor } from '@strands-agents/sdk/vended-tools/file-editor'
 import { makeShell } from '@strands-agents/sdk/vended-tools/shell'
@@ -172,6 +173,7 @@ afterEach(() => {
     rmSync(dir, { recursive: true, force: true })
   }
   resetWarnOnce()
+  vi.restoreAllMocks()
 })
 
 describe('createHarness', () => {
@@ -396,6 +398,39 @@ describe('createHarness', () => {
     expect(toolNames(named)).toContain('web_search')
   })
 
+  it('serves web_search on a BedrockModel instance from AgentCore in its region', async () => {
+    const regions: string[] = []
+    vi.spyOn(BedrockAgentCoreClient.prototype, 'send').mockImplementation(async function (
+      this: BedrockAgentCoreClient
+    ) {
+      regions.push(await this.config.region())
+      return { results: [] }
+    } as never)
+    const agent = await createHarness({ model: new BedrockModel({ modelId: 'x', region: 'eu-west-1' }) })
+    const search = agent.tools.find((t) => t.name === 'web_search') as unknown as {
+      invoke: (input: unknown, context: unknown) => Promise<string>
+    }
+    expect(await search.invoke({ query: 'q' }, {})).toBe('No results.')
+    expect(regions).toEqual(['eu-west-1'])
+  })
+
+  it('yields the default bedrock web_search to a passed one, but not a named one', async () => {
+    const info = vi.fn()
+    configureLogging({ debug: () => {}, info, warn: () => {}, error: () => {} })
+    const mine = tool({
+      name: 'web_search',
+      description: 'Search.',
+      inputSchema: z.object({ query: z.string() }),
+      callback: ({ query }) => query,
+    })
+    const agent = await createHarness({ tools: [mine] })
+    expect(agent.tools.find((t) => t.name === 'web_search')).toBe(mine)
+    expect(info).toHaveBeenCalledWith(expect.stringContaining('A web_search tool was passed'))
+    await expect(createHarness({ builtinTools: ['read', 'web_search'], tools: [mine] })).rejects.toThrow(
+      'registered more than once'
+    )
+  })
+
   it('serves an explicit Exa selection on bedrock instead of AgentCore', async () => {
     const agent = await createHarness({ builtinTools: { web_search: 'exa' } })
     expect(agent.tools.find((t) => t.name === 'web_search')).toBe(exaWebSearch)
@@ -415,9 +450,9 @@ describe('createHarness', () => {
     await expect(createHarness({ model: 'ollama/llama3', builtinTools: ['read', 'web_search'] })).rejects.toThrow(
       'has no built-in web search'
     )
-    await expect(
-      createHarness({ model: new BedrockModel({ modelId: 'x' }), builtinTools: { web_search: true } })
-    ).rejects.toThrow('has no built-in web search')
+    await expect(createHarness({ model: new RetrievingModel(), builtinTools: { web_search: true } })).rejects.toThrow(
+      'has no built-in web search'
+    )
   })
 
   it('builds the Exa tool for the fallback and warns about the third party', async () => {

@@ -1,3 +1,5 @@
+from unittest.mock import MagicMock
+
 import pytest
 from strands.models import BedrockModel, CacheConfig, Model, ModelRouter
 
@@ -559,8 +561,9 @@ def test_supports_web_search_none_uses_default_provider(monkeypatch):
     assert supports_web_search(None) is True
 
 
-def test_supports_web_search_model_instance_is_false():
-    assert supports_web_search(BedrockModel(model_id="anything")) is False
+def test_supports_web_search_on_model_instances():
+    assert supports_web_search(BedrockModel(model_id="anything")) is True
+    assert supports_web_search(MagicMock(spec=Model)) is False
 
 
 def test_openai_web_search_adds_tool_alongside_reasoning():

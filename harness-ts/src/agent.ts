@@ -48,7 +48,8 @@ import {
 } from './defaults.js'
 import { type InterventionsOption, resolveInterventions } from './interventions.js'
 import { resolveMemory } from './memory.js'
-import { resolveModel } from './models.js'
+import { logger } from './logging.js'
+import { bedrockRegion, resolveModel } from './models.js'
 import { buildSystemPrompt } from './prompt.js'
 import { makeAgentCoreWebSearch } from './tools/web-search.js'
 import { setupTelemetry } from './telemetry.js'
@@ -371,7 +372,7 @@ export async function createHarness(options: HarnessAgentOptions = {}): Promise<
 
   // A `subagent` child inherits this record, so it only ever sees the normalized shape.
   const resolvedBuiltins: ResolvedBuiltinTools = resolveBuiltinTools(builtinTools)
-  const webSearch = webSearchMode(resolvedBuiltins.web_search, webSearchExplicit(builtinTools), model)
+  let webSearch = webSearchMode(resolvedBuiltins.web_search, webSearchExplicit(builtinTools), model)
   const webFetch = builtinToolConfig(resolvedBuiltins, 'web_fetch')
 
   // Not passing `caching` uses the default (on) and warns on unsupported providers; passing any
@@ -429,8 +430,17 @@ export async function createHarness(options: HarnessAgentOptions = {}): Promise<
   }
 
   const builtinToolsByName = await buildBuiltinTools(createHarness, parentConfig, resolvedBuiltins)
+  if (webSearch === 'agentcore' && !webSearchExplicit(builtinTools)) {
+    // Before AgentCore, Bedrock had no built-in web_search, so a caller's own one wins over the default.
+    const theirs = [...consumer, ...pluginTools(consumerPluginsOption ?? [])]
+    if (theirs.some((t) => t instanceof Tool && t.name.replaceAll('-', '_') === 'web_search')) {
+      logger.info('A web_search tool was passed, so the built-in AgentCore web_search is not added.')
+      webSearch = undefined
+    }
+  }
   if (webSearch === 'agentcore') {
-    builtinToolsByName.web_search = makeAgentCoreWebSearch()
+    const region = await bedrockRegion(resolvedModel)
+    builtinToolsByName.web_search = makeAgentCoreWebSearch(region !== undefined ? { region } : {})
   }
   const builtin = selectBuiltinTools(
     enabledBuiltinTools({ ...resolvedBuiltins, web_search: webSearch === 'exa' || webSearch === 'agentcore' }),

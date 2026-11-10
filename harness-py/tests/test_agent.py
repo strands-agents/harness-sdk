@@ -504,7 +504,7 @@ def test_root_exports_match_the_spec_table():
     for name in expected:
         assert getattr(strands_harness, name) is not None
     assert strands_harness.supports_web_search("openai/gpt-5.6-sol") is True
-    assert strands_harness.supports_web_search(BedrockModel(model_id="x")) is False
+    assert strands_harness.supports_web_search(BedrockModel(model_id="x")) is True
 
 
 def test_web_search_is_not_a_tool():
@@ -530,6 +530,33 @@ def test_web_search_on_bedrock_is_the_agentcore_tool_in_the_model_region(monkeyp
     assert "web_search" in explicit.tool_names
 
 
+def test_web_search_on_a_bedrock_model_instance_is_the_agentcore_tool_in_its_region(monkeypatch):
+    regions = []
+    real = agent_module.make_agentcore_web_search
+    monkeypatch.setattr(
+        agent_module, "make_agentcore_web_search", lambda region: regions.append(region) or real(region)
+    )
+    agent = create_harness(model=BedrockModel(model_id="x", region_name="eu-west-1"))
+    assert "web_search" in agent.tool_names
+    assert regions == ["eu-west-1"]
+
+
+def test_web_search_default_on_bedrock_yields_to_a_passed_web_search_tool(caplog):
+    import logging
+
+    @tool(name="web_search")
+    def my_search(query: str) -> str:
+        """Search."""
+        return query
+
+    with caplog.at_level(logging.INFO, logger="strands_harness.agent"):
+        agent = create_harness(tools=[my_search])
+    assert agent.tool_registry.registry["web_search"] is my_search
+    assert any("A web_search tool was passed" in r.getMessage() for r in caplog.records)
+    with pytest.raises(ValueError, match="'web_search'"):
+        create_harness(builtin_tools=["read", "web_search"], tools=[my_search])
+
+
 def test_web_search_default_without_a_backend_logs_info_not_warning_and_builds(caplog):
     import logging
 
@@ -545,7 +572,7 @@ def test_web_search_explicit_on_unsupported_provider_raises():
     with pytest.raises(ValueError, match="has no built-in web search"):
         create_harness(model="ollama/llama3", builtin_tools=["read", "web_search"])
     with pytest.raises(ValueError, match="has no built-in web search"):
-        create_harness(model=BedrockModel(model_id="x"), builtin_tools={"web_search": True})
+        create_harness(model=_RetrievingModel(), builtin_tools={"web_search": True})
 
 
 def test_web_search_exa_fallback_builds_the_tool_and_warns_about_the_third_party(caplog):

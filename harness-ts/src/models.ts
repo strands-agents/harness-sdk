@@ -18,7 +18,7 @@
  * needs none. This makes resolution async.
  */
 
-import { Model, ModelRouter, type JSONValue } from '@strands-agents/sdk'
+import { BedrockModel, Model, ModelRouter, type JSONValue } from '@strands-agents/sdk'
 import { DEFAULT_MODEL } from './defaults.js'
 import { warnOnce } from './logging.js'
 import type { Effort } from './types/agent.js'
@@ -580,6 +580,9 @@ export function supportsThinking(model: Model | ModelRouter | string | undefined
  * `undefined`. A `Model` or `ModelRouter` instance has an unknown provider, so it gets `undefined`.
  */
 export function webSearchKind(model: Model | ModelRouter | string | undefined): 'native' | 'agentcore' | undefined {
+  if (model instanceof BedrockModel) {
+    return 'agentcore'
+  }
   if (model instanceof Model || model instanceof ModelRouter) {
     return undefined
   }
@@ -591,11 +594,25 @@ export function webSearchKind(model: Model | ModelRouter | string | undefined): 
 }
 
 /**
+ * The region a `BedrockModel` sends requests to, or `undefined` for any other model. Read from its
+ * SDK client, since `BedrockModel` has no public accessor for it.
+ *
+ * @internal
+ */
+export async function bedrockRegion(model: Model | ModelRouter): Promise<string | undefined> {
+  if (!(model instanceof BedrockModel)) {
+    return undefined
+  }
+  const client = (model as unknown as { _client?: { config?: { region?: () => Promise<string> } } })._client
+  return client?.config?.region?.().catch(() => undefined)
+}
+
+/**
  * Whether `web_search` works for `model` without the Exa opt-in.
  *
- * True where the provider has native web search, and on Bedrock, where AgentCore web search serves
- * it. A `Model` instance has an unknown provider, so this is `false`; the caller configures search
- * on the instance directly. `undefined` resolves to the default model.
+ * True where the provider has native web search, and on Bedrock (a `BedrockModel` instance too),
+ * where AgentCore web search serves it. Any other `Model` or `ModelRouter` instance has an unknown
+ * provider, so this is `false`. `undefined` resolves to the default model.
  *
  * @param model - A `Model` instance, a `"provider/name"` string, a bare Bedrock id, or undefined.
  * @returns Whether `web_search` is available for the resolved model.

@@ -7,11 +7,10 @@ on a model without native search. Keyless; ``EXA_API_KEY`` is picked up when pre
 
 from __future__ import annotations
 
-import os
-
 import pytest
 
 from strands_harness.tools.web_search import WebSearchError
+from strands_harness.tools.web_search import _agentcore_backend as agentcore_backend
 from strands_harness.tools.web_search import _exa_backend as exa_backend
 
 
@@ -27,9 +26,13 @@ async def test_exa_backend_returns_parsed_results():
 
 
 async def test_agentcore_backend_returns_parsed_results():
-    """``web_search`` on Bedrock: a live ``InvokeWebSearch`` call (needs ``bedrock-agentcore:InvokeWebSearch``)."""
-    from strands_harness.tools.web_search import _agentcore_backend as agentcore_backend
-
-    results = await agentcore_backend(os.environ.get("AWS_REGION", "us-east-1"))("Strands Agents SDK documentation", 3)
+    """``web_search`` on Bedrock: a live ``InvokeWebSearch`` call in the region ``BedrockModel`` resolves."""
+    try:
+        results = await agentcore_backend()("Strands Agents SDK documentation", 3)
+    except WebSearchError as exc:
+        # Skipped only until the integ role is granted bedrock-agentcore:InvokeWebSearch.
+        if "the caller needs bedrock-agentcore:InvokeWebSearch" in str(exc):
+            pytest.skip(str(exc))
+        raise
     assert 0 < len(results) <= 3, "InvokeWebSearch returned no results; check webSearchId and the response shape"
     assert all(r["url"].startswith("http") and r["snippet"] for r in results)

@@ -462,6 +462,12 @@ def create_harness(
     }
 
     builtin_tools_by_name = _builtin_tools(parent_config)
+    if web_search == "agentcore" and not web_search_explicit:
+        # Before AgentCore, Bedrock had no built-in web_search, so a caller's own one wins over the default.
+        theirs = [*consumer, *_plugin_tools(consumer_plugins)]
+        if any(isinstance(t, AgentTool) and t.tool_name.replace("-", "_") == "web_search" for t in theirs):
+            logger.info("A web_search tool was passed, so the built-in AgentCore web_search is not added.")
+            web_search = None
     if web_search == "agentcore":
         region = cast(BedrockModel, resolved_model).client.meta.region_name
         builtin_tools_by_name["web_search"] = make_agentcore_web_search(region)

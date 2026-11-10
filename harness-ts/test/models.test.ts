@@ -3,6 +3,7 @@ import { Model, ModelRouter } from '@strands-agents/sdk'
 import { BedrockModel } from '@strands-agents/sdk/models/bedrock'
 
 import {
+  bedrockRegion,
   resolveModel,
   resolveWebFetchModel,
   supportsMedia,
@@ -791,13 +792,23 @@ describe('supportsWebSearch', () => {
     expect(supportsWebSearch(undefined)).toBe(supportsWebSearch(DEFAULT_MODEL))
   })
 
-  it('is false for a Model instance', () => {
-    expect(supportsWebSearch(new BedrockModel({ modelId: 'anything' }))).toBe(false)
+  it('is true for a BedrockModel instance and false for another Model', async () => {
+    const { OpenAIModel } = await import('@strands-agents/sdk/models/openai')
+    expect(supportsWebSearch(new BedrockModel({ modelId: 'anything' }))).toBe(true)
+    expect(supportsWebSearch(new OpenAIModel({ modelId: 'gpt-5.6-sol', apiKey: 'x' }))).toBe(false)
   })
 
   it('is false for a ModelRouter', () => {
     const router = new ModelRouter([new BedrockModel({ modelId: 'fast' })])
     expect(supportsWebSearch(router)).toBe(false)
+  })
+})
+
+describe('bedrockRegion', () => {
+  it("reads a BedrockModel's region and is undefined for other models", async () => {
+    const { OpenAIModel } = await import('@strands-agents/sdk/models/openai')
+    expect(await bedrockRegion(new BedrockModel({ modelId: 'x', region: 'eu-west-1' }))).toBe('eu-west-1')
+    expect(await bedrockRegion(new OpenAIModel({ modelId: 'gpt-5.6-sol', apiKey: 'x' }))).toBeUndefined()
   })
 })
 

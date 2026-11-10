@@ -48,6 +48,7 @@ export {
   exaWebSearch,
   Fixed,
   Inherit,
+  makeAgentCoreWebSearch,
   makeExaWebSearch,
   makeProgrammaticToolCaller,
   makeSubagent,

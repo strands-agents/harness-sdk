@@ -21,7 +21,7 @@ import re
 from collections.abc import Callable
 from typing import Any, Literal, NamedTuple
 
-from strands.models import Model, ModelRouter
+from strands.models import BedrockModel, Model, ModelRouter
 
 from strands_harness import defaults
 from strands_harness.types.agent import Effort
@@ -418,7 +418,10 @@ def _has_web_search(provider_name: str, name: str) -> bool:
 def _web_search_kind(model: Model | ModelRouter | str | None) -> Literal["native", "agentcore"] | None:
     """How ``web_search`` is served for ``model`` without the Exa opt-in: the provider's native
     search, AgentCore web search on Bedrock (a harness tool, as Converse has no native search), or
-    ``None``. A ``Model`` or ``ModelRouter`` instance has an unknown provider, so it gets ``None``."""
+    ``None``. A ``BedrockModel`` instance gets AgentCore too; any other ``Model`` or ``ModelRouter``
+    has an unknown provider, so it gets ``None``."""
+    if isinstance(model, BedrockModel):
+        return "agentcore"
     if isinstance(model, (Model, ModelRouter)):
         return None
     provider_name, name = _split_provider(model or defaults.DEFAULT_MODEL)
@@ -430,9 +433,9 @@ def _web_search_kind(model: Model | ModelRouter | str | None) -> Literal["native
 def supports_web_search(model: Model | ModelRouter | str | None) -> bool:
     """Whether ``web_search`` works for ``model`` without the Exa opt-in.
 
-    True where the provider has native web search, and on Bedrock, where AgentCore web search serves
-    it. A ``Model`` or ``ModelRouter`` instance has an unknown provider, so this is ``False``; the
-    caller configures search on the instance directly. ``None`` resolves to the default model.
+    True where the provider has native web search, and on Bedrock (a ``BedrockModel`` instance too),
+    where AgentCore web search serves it. Any other ``Model`` or ``ModelRouter`` instance has an
+    unknown provider, so this is ``False``. ``None`` resolves to the default model.
     """
     return _web_search_kind(model) is not None
 

@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { AccessDeniedException, BedrockAgentCoreClient, ThrottlingException } from '@aws-sdk/client-bedrock-agentcore'
+import {
+  AccessDeniedException,
+  BedrockAgentCoreClient,
+  ResourceNotFoundException,
+  ThrottlingException,
+} from '@aws-sdk/client-bedrock-agentcore'
 import { McpClient, type Tool, type ToolContext } from '@strands-agents/sdk'
 import {
   exaBackend,
@@ -221,14 +226,15 @@ describe('searchTool', () => {
 })
 
 describe('makeAgentCoreWebSearch', () => {
-  /** Stub `BedrockAgentCoreClient.send`; records each command's input and the client's resolved region. */
-  function mockSend(outcome: unknown) {
-    const calls: { input: unknown; region: string }[] = []
+  /** Stub `BedrockAgentCoreClient.send` with one outcome per call; records each command's input, client and region. */
+  function mockSend(...outcomes: unknown[]) {
+    const calls: { input: unknown; region: string; client: BedrockAgentCoreClient }[] = []
     vi.spyOn(BedrockAgentCoreClient.prototype, 'send').mockImplementation(async function (
       this: BedrockAgentCoreClient,
       command: { input: unknown }
     ) {
-      calls.push({ input: command.input, region: await this.config.region() })
+      calls.push({ input: command.input, region: await this.config.region(), client: this })
+      const outcome = outcomes[calls.length - 1]
       if (outcome instanceof Error) {
         throw outcome
       }
@@ -247,7 +253,7 @@ describe('makeAgentCoreWebSearch', () => {
     })
     const out = await invoke(makeAgentCoreWebSearch(), { query: 'strands agents', max_results: 50 })
 
-    expect(calls).toEqual([
+    expect(calls.map(({ input, region }) => ({ input, region }))).toEqual([
       { input: { webSearchId: 'web-search.v1', searchQuery: 'strands agents', maxResults: 10 }, region: 'us-east-2' },
     ])
     const lines = out.split('\n')
@@ -257,30 +263,53 @@ describe('makeAgentCoreWebSearch', () => {
     expect(lines.slice(3)).toEqual(['2. https://untitled.example — https://untitled.example', '   no title'])
   })
 
-  it('names the IAM permission on AccessDenied, in the default region when none is configured', async () => {
+  it('uses an explicit region and one client across searches', async () => {
+    vi.stubEnv('AWS_REGION', 'us-east-1')
+    const calls = mockSend({ results: [] }, { results: [] })
+    const tool = makeAgentCoreWebSearch({ region: 'eu-west-1' })
+    expect([await invoke(tool, { query: 'q' }), await invoke(tool, { query: 'q' })]).toEqual([
+      'No results.',
+      'No results.',
+    ])
+    expect(calls.map((c) => c.region)).toEqual(['eu-west-1', 'eu-west-1'])
+    expect(calls[1]!.client).toBe(calls[0]!.client)
+  })
+
+  it('names the IAM permission on AccessDenied, in the default region, and stops calling', async () => {
     vi.stubEnv('AWS_REGION', '')
     vi.stubEnv('AWS_DEFAULT_REGION', '')
     vi.stubEnv('AWS_CONFIG_FILE', '/nonexistent/aws-config')
     vi.stubEnv('AWS_PROFILE', 'strands-harness-test-no-such-profile')
-    mockSend(new AccessDeniedException({ message: 'the request is not authorized', $metadata: {} }))
-    const out = await invoke(makeAgentCoreWebSearch(), { query: 'q' })
-    expect(out).toBe(
+    const calls = mockSend(new AccessDeniedException({ message: 'the request is not authorized', $metadata: {} }))
+    const tool = makeAgentCoreWebSearch()
+    const expected =
       'web_search failed: the request is not authorized (the caller needs bedrock-agentcore:InvokeWebSearch on ' +
-        'arn:aws:bedrock-agentcore:us-west-2:aws:tool/web-search.v1)'
-    )
+      'arn:aws:bedrock-agentcore:us-west-2:aws:tool/web-search.v1). web_search is unavailable here; answer without it.'
+    expect(await invoke(tool, { query: 'q' })).toBe(expected)
+    expect(await invoke(tool, { query: 'q' })).toBe(expected)
+    expect(calls).toHaveLength(1)
   })
 
-  it('names an unsupported region when the service has no such path there', async () => {
+  it('names an unsupported region when the service has no such path there, and stops calling', async () => {
     vi.stubEnv('AWS_REGION', 'eu-central-1')
-    mockSend(Object.assign(new SyntaxError('Unexpected token'), { $response: { statusCode: 404 } }))
-    expect(await invoke(makeAgentCoreWebSearch(), { query: 'q' })).toBe(
-      'web_search failed: AgentCore web search is not available in eu-central-1 (Unexpected token)'
-    )
+    const calls = mockSend(Object.assign(new SyntaxError('Unexpected token'), { $response: { statusCode: 404 } }))
+    const tool = makeAgentCoreWebSearch()
+    const expected =
+      'web_search failed: AgentCore web search is not available in eu-central-1 (Unexpected token). ' +
+      'web_search is unavailable here; answer without it.'
+    expect(await invoke(tool, { query: 'q' })).toBe(expected)
+    expect(await invoke(tool, { query: 'q' })).toBe(expected)
+    expect(calls).toHaveLength(1)
   })
 
-  it('passes other service errors through', async () => {
+  it('passes other service errors through, including a modeled 404, and keeps calling', async () => {
     vi.stubEnv('AWS_REGION', 'us-east-1')
-    mockSend(new ThrottlingException({ message: 'slow down', $metadata: {} }))
-    expect(await invoke(makeAgentCoreWebSearch(), { query: 'q' })).toBe('web_search failed: slow down')
+    const notFound = Object.assign(new ResourceNotFoundException({ message: 'no such web search', $metadata: {} }), {
+      $response: { statusCode: 404 },
+    })
+    mockSend(new ThrottlingException({ message: 'slow down', $metadata: {} }), notFound)
+    const tool = makeAgentCoreWebSearch()
+    expect(await invoke(tool, { query: 'q' })).toBe('web_search failed: slow down')
+    expect(await invoke(tool, { query: 'q' })).toBe('web_search failed: no such web search')
   })
 })

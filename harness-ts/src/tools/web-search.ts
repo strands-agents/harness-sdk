@@ -22,6 +22,7 @@ const EXA_TOOL = 'web_search_exa'
 const TIMEOUT_MS = 30_000
 const MAX_RESULTS = 10
 const SNIPPET_CHARS = 500
+const UNAVAILABLE = ' web_search is unavailable here; answer without it.'
 
 export interface SearchResult {
   title: string
@@ -115,39 +116,56 @@ export function exaBackend(apiKey?: string): SearchBackend {
 }
 
 /**
- * One client per backend, in the region the harness's `BedrockModel` uses: `AWS_REGION` /
+ * One client per backend, in `region` or else the one `BedrockModel` defaults to: `AWS_REGION` /
  * `AWS_DEFAULT_REGION`, then the shared config profile, then BedrockModel's default.
  */
-async function agentCoreClient(): Promise<{ client: BedrockAgentCoreClient; region: string }> {
+async function agentCoreClient(region?: string): Promise<{ client: BedrockAgentCoreClient; region: string }> {
   const { BedrockAgentCoreClient } = await import('@aws-sdk/client-bedrock-agentcore')
-  const region =
+  const resolved =
+    region ||
     process.env.AWS_REGION ||
     process.env.AWS_DEFAULT_REGION ||
     (await new BedrockAgentCoreClient({}).config.region().catch(() => BEDROCK_DEFAULT_REGION))
-  return { client: new BedrockAgentCoreClient({ region }), region }
+  return { client: new BedrockAgentCoreClient({ region: resolved }), region: resolved }
 }
 
-/** Search backend over Amazon Bedrock AgentCore's `InvokeWebSearch` API, authorized by IAM. */
-export function agentCoreBackend(): SearchBackend {
+/**
+ * Search backend over Amazon Bedrock AgentCore's `InvokeWebSearch` API, authorized by IAM. A missing
+ * permission or an unsupported region is permanent, so it is remembered and later calls fail
+ * without a request.
+ */
+export function agentCoreBackend(region?: string): SearchBackend {
   let connection: ReturnType<typeof agentCoreClient> | undefined
+  let unavailable: string | undefined
   return async (query, maxResults) => {
+    if (unavailable !== undefined) {
+      throw new WebSearchError(unavailable)
+    }
     const { InvokeWebSearchCommand } = await import('@aws-sdk/client-bedrock-agentcore')
-    const { client, region } = await (connection ??= agentCoreClient())
+    const { client, region: resolved } = await (connection ??= agentCoreClient(region))
     let response
     try {
       response = await client.send(
         new InvokeWebSearchCommand({ webSearchId: AGENTCORE_WEB_SEARCH_ID, searchQuery: query, maxResults })
       )
     } catch (err) {
-      if ((err as { $response?: { statusCode?: number } }).$response?.statusCode === 404) {
-        const reason = err instanceof Error ? err.message : String(err)
-        throw new WebSearchError(`AgentCore web search is not available in ${region} (${reason})`)
-      }
-      if (!(err instanceof Error) || err.name !== 'AccessDeniedException') {
+      const name = err instanceof Error ? err.name : undefined
+      const reason = err instanceof Error ? err.message : String(err)
+      // A modeled ResourceNotFoundException (e.g. an unknown webSearchId) is a 404 too; only the
+      // unmodeled routing 404 means the region lacks the API.
+      if (
+        (err as { $response?: { statusCode?: number } }).$response?.statusCode === 404 &&
+        name !== 'ResourceNotFoundException'
+      ) {
+        unavailable = `AgentCore web search is not available in ${resolved} (${reason}).`
+      } else if (name === 'AccessDeniedException') {
+        const resource = `arn:aws:bedrock-agentcore:${resolved}:aws:tool/${AGENTCORE_WEB_SEARCH_ID}`
+        unavailable = `${reason} (the caller needs bedrock-agentcore:InvokeWebSearch on ${resource}).`
+      } else {
         throw err
       }
-      const resource = `arn:aws:bedrock-agentcore:${region}:aws:tool/${AGENTCORE_WEB_SEARCH_ID}`
-      throw new WebSearchError(`${err.message} (the caller needs bedrock-agentcore:InvokeWebSearch on ${resource})`)
+      unavailable += UNAVAILABLE
+      throw new WebSearchError(unavailable)
     }
     return (response.results ?? []).map((result) => ({
       title: result.title || (result.url ?? ''),
@@ -157,9 +175,12 @@ export function agentCoreBackend(): SearchBackend {
   }
 }
 
-/** Build a `web_search` tool over Amazon Bedrock AgentCore web search. */
-export function makeAgentCoreWebSearch(): Tool {
-  return searchTool(agentCoreBackend())
+/**
+ * Build a `web_search` tool over Amazon Bedrock AgentCore web search in `region`, which defaults
+ * the way `BedrockModel` resolves its own. The caller needs `bedrock-agentcore:InvokeWebSearch`.
+ */
+export function makeAgentCoreWebSearch(options: { region?: string } = {}): Tool {
+  return searchTool(agentCoreBackend(options.region))
 }
 
 /** Build a `web_search` tool over Exa's hosted search (`EXA_API_KEY` lifts the keyless rate limit). */

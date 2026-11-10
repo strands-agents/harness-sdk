@@ -229,6 +229,8 @@ def agentcore(monkeypatch):
     regions = []
 
     class Session:
+        region_name = None
+
         def client(self, service, region_name):
             assert service == "bedrock-agentcore"
             regions.append(region_name)
@@ -261,20 +263,58 @@ async def test_agentcore_web_search_calls_invoke_web_search_and_formats(agentcor
     agentcore.assert_no_pending_responses()
 
 
-async def test_agentcore_web_search_access_denied_names_the_permission(agentcore):
+async def test_agentcore_web_search_builds_one_client_across_searches(agentcore):
+    for _ in range(2):
+        agentcore.add_response("invoke_web_search", {"results": []})
+    tool = web_search_module.make_agentcore_web_search("us-west-2")
+    assert [await tool._tool_func(query="q"), await tool._tool_func(query="q")] == ["No results.", "No results."]
+    assert agentcore.regions == ["us-west-2"]
+
+
+async def test_agentcore_web_search_region_defaults_like_bedrock_model(agentcore, monkeypatch):
+    monkeypatch.delenv("AWS_REGION", raising=False)
+    agentcore.add_response("invoke_web_search", {"results": []})
+    await web_search_module.make_agentcore_web_search()._tool_func(query="q")
+    assert agentcore.regions == ["us-west-2"]
+
+
+async def test_agentcore_web_search_access_denied_names_the_permission_and_stops_calling(agentcore):
     agentcore.add_client_error("invoke_web_search", "AccessDeniedException", "the request is not authorized")
-    out = await web_search_module.make_agentcore_web_search("us-west-2")._tool_func(query="q")
-    assert out.startswith("web_search failed: ")
-    assert "bedrock-agentcore:InvokeWebSearch on arn:aws:bedrock-agentcore:us-west-2:aws:tool/web-search.v1" in out
+    tool = web_search_module.make_agentcore_web_search("us-west-2")
+    expected = (
+        "web_search failed: An error occurred (AccessDeniedException) when calling the InvokeWebSearch operation: "
+        "the request is not authorized (the caller needs bedrock-agentcore:InvokeWebSearch on "
+        "arn:aws:bedrock-agentcore:us-west-2:aws:tool/web-search.v1). "
+        "web_search is unavailable here; answer without it."
+    )
+    assert await tool._tool_func(query="q") == expected
+    # No second response is queued: the Stubber would raise if the backend called the API again.
+    assert await tool._tool_func(query="q") == expected
 
 
-async def test_agentcore_web_search_passes_other_errors_through(agentcore):
-    agentcore.add_client_error("invoke_web_search", "ThrottlingException", "slow down")
-    out = await web_search_module.make_agentcore_web_search("us-west-2")._tool_func(query="q")
-    assert out.startswith("web_search failed: ") and "slow down" in out and "InvokeWebSearch on" not in out
-
-
-async def test_agentcore_web_search_names_an_unsupported_region(agentcore):
+async def test_agentcore_web_search_names_an_unsupported_region_and_stops_calling(agentcore):
     agentcore.add_client_error("invoke_web_search", "404", "Invalid api path", http_status_code=404)
-    out = await web_search_module.make_agentcore_web_search("eu-central-1")._tool_func(query="q")
-    assert out.startswith("web_search failed: AgentCore web search is not available in eu-central-1")
+    tool = web_search_module.make_agentcore_web_search("eu-central-1")
+    expected = (
+        "web_search failed: AgentCore web search is not available in eu-central-1 (An error occurred (404) when "
+        "calling the InvokeWebSearch operation: Invalid api path). web_search is unavailable here; answer without it."
+    )
+    assert await tool._tool_func(query="q") == expected
+    assert await tool._tool_func(query="q") == expected
+
+
+async def test_agentcore_web_search_passes_other_errors_through_and_retries(agentcore):
+    agentcore.add_client_error("invoke_web_search", "ThrottlingException", "slow down", http_status_code=429)
+    agentcore.add_client_error(
+        "invoke_web_search", "ResourceNotFoundException", "no such web search", http_status_code=404
+    )
+    tool = web_search_module.make_agentcore_web_search("us-west-2")
+    assert await tool._tool_func(query="q") == (
+        "web_search failed: An error occurred (ThrottlingException) when calling the InvokeWebSearch operation: "
+        "slow down"
+    )
+    assert await tool._tool_func(query="q") == (
+        "web_search failed: An error occurred (ResourceNotFoundException) when calling the InvokeWebSearch "
+        "operation: no such web search"
+    )
+    agentcore.assert_no_pending_responses()

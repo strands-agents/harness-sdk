@@ -21,6 +21,7 @@ from typing import Any, TypedDict
 
 import boto3
 from botocore.exceptions import ClientError
+from strands.models.bedrock import DEFAULT_BEDROCK_REGION
 from strands.tools.decorator import tool
 from strands.tools.mcp import MCPClient
 
@@ -30,6 +31,7 @@ _EXA_TOOL = "web_search_exa"
 _TIMEOUT = timedelta(seconds=30)
 _MAX_RESULTS = 10
 _SNIPPET_CHARS = 500
+_UNAVAILABLE = " web_search is unavailable here; answer without it."
 
 
 class SearchResult(TypedDict):
@@ -102,24 +104,39 @@ def _exa_backend(api_key: str | None = None) -> SearchBackend:
     return search
 
 
-def _agentcore_backend(region: str) -> SearchBackend:
-    """Search backend over Amazon Bedrock AgentCore's ``InvokeWebSearch`` API in ``region``, authorized by IAM."""
-    clients: list[Any] = []  # built on first search, so constructing a harness stays cheap
+def _agentcore_backend(region: str | None = None) -> SearchBackend:
+    """Search backend over Amazon Bedrock AgentCore's ``InvokeWebSearch`` API, authorized by IAM.
+
+    ``region`` defaults the way ``BedrockModel`` resolves its own. A missing permission or an
+    unsupported region is permanent, so it is remembered and later calls fail without a request.
+    """
+    state: dict[str, Any] = {}  # the client is built on first search, so constructing a harness stays cheap
 
     def call(query: str, max_results: int) -> list[SearchResult]:
-        if not clients:
-            clients.append(boto3.Session().client("bedrock-agentcore", region_name=region))
+        if "unavailable" in state:
+            raise WebSearchError(state["unavailable"])
+        if "client" not in state:
+            session = boto3.Session()
+            state["region"] = region or session.region_name or os.environ.get("AWS_REGION") or DEFAULT_BEDROCK_REGION
+            state["client"] = session.client("bedrock-agentcore", region_name=state["region"])
         try:
-            response = clients[0].invoke_web_search(
+            response = state["client"].invoke_web_search(
                 webSearchId=_AGENTCORE_WEB_SEARCH_ID, searchQuery=query, maxResults=max_results
             )
         except ClientError as exc:
-            if exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode") == 404:
-                raise WebSearchError(f"AgentCore web search is not available in {region} ({exc})") from exc
-            if exc.response.get("Error", {}).get("Code") != "AccessDeniedException":
+            code = exc.response.get("Error", {}).get("Code")
+            status = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+            # A modeled ResourceNotFoundException (e.g. an unknown webSearchId) is a 404 too; only the
+            # unmodeled routing 404 means the region lacks the API.
+            if status == 404 and code != "ResourceNotFoundException":
+                state["unavailable"] = f"AgentCore web search is not available in {state['region']} ({exc})."
+            elif code == "AccessDeniedException":
+                resource = f"arn:aws:bedrock-agentcore:{state['region']}:aws:tool/{_AGENTCORE_WEB_SEARCH_ID}"
+                state["unavailable"] = f"{exc} (the caller needs bedrock-agentcore:InvokeWebSearch on {resource})."
+            else:
                 raise
-            resource = f"arn:aws:bedrock-agentcore:{region}:aws:tool/{_AGENTCORE_WEB_SEARCH_ID}"
-            raise WebSearchError(f"{exc} (the caller needs bedrock-agentcore:InvokeWebSearch on {resource})") from exc
+            state["unavailable"] += _UNAVAILABLE
+            raise WebSearchError(state["unavailable"]) from exc
         return [
             {
                 "title": result.get("title") or result.get("url", ""),
@@ -135,8 +152,12 @@ def _agentcore_backend(region: str) -> SearchBackend:
     return search
 
 
-def make_agentcore_web_search(region: str) -> Any:
-    """Build a ``web_search`` tool over Amazon Bedrock AgentCore web search in ``region``."""
+def make_agentcore_web_search(region: str | None = None) -> Any:
+    """Build a ``web_search`` tool over Amazon Bedrock AgentCore web search in ``region``.
+
+    ``region`` defaults the way ``BedrockModel`` resolves its own (the boto3 session, then
+    ``AWS_REGION``, then ``us-west-2``). The caller needs ``bedrock-agentcore:InvokeWebSearch``.
+    """
     return _search_tool(_agentcore_backend(region))
 
 
