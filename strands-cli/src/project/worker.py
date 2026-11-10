@@ -37,6 +37,7 @@ from strands_harness import define_harness_agent_config, harness_agent_kwargs_fr
 from strands_harness.defaults import DEFAULT_MODEL
 
 channel = os.fdopen(3, "w", buffering=1)
+commands = os.fdopen(4, encoding="utf-8")
 pending_permissions = {}
 COMPACT_PRESERVE_RECENT_MESSAGES = 2
 MAX_SAFE_INTEGER = 9_007_199_254_740_991
@@ -1072,7 +1073,7 @@ def load_project(entrypoint, root, dev_root=None):
 
 
 async def main():
-    command = json.loads(await asyncio.to_thread(sys.stdin.readline))
+    command = json.loads(await asyncio.to_thread(commands.readline))
     dev_root = Path(command["devWorkspace"]).resolve() if command.get("devWorkspace") else None
     module = load_project(Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve(), dev_root)
     runtime = Runtime(module, command)
@@ -1080,7 +1081,7 @@ async def main():
     send({"type": "ready", "state": runtime.state()})
     running = None
     try:
-        while line := await asyncio.to_thread(sys.stdin.readline):
+        while line := await asyncio.to_thread(commands.readline):
             command = json.loads(line, object_hook=decode)
             kind = command["type"]
             if kind == "permission":

@@ -209,16 +209,18 @@ describe('cross-platform exported agent E2E', () => {
     expectMcpStopped(finalOutput)
   })
 
+  // https://github.com/strands-agents/harness-sdk/pull/6028
   it('uses an exported Python agent across repeated import boundaries', { timeout: 480_000 }, async () => {
     const secondArchive = join(root, 'lifecycle-python-second.zip')
+    const pipConfig = join(root, 'pip.ini')
+    await writeFile(pipConfig, '[global]\ncache-dir = pip/cache\n')
     const result = await runTuiCommand({
       scenario: 'lifecycle-project',
       command: [process.execPath, bin, '--agent', pythonArchive],
       cwd: root,
       exportPath: secondArchive,
       exportLanguage: 'python',
-      // Windows pip can resolve its default cache relative to the imported project.
-      env: { ...cliEnvironment(), PIP_CACHE_DIR: 'pip/cache' },
+      env: { ...cliEnvironment(), PIP_CONFIG_FILE: pipConfig, PIP_CACHE_DIR: undefined, PIP_NO_CACHE_DIR: undefined },
       timeout: 240_000,
     })
     const output = result.screens.join('\n')
