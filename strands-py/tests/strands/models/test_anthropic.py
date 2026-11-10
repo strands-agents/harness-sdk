@@ -13,7 +13,8 @@ import pydantic
 import pytest
 
 import strands
-from strands.models import ModelCapabilities, ModelInfo, ModelLimits
+from strands.agent.agent_metadata import AgentMetadata
+from strands.models import Model, ModelCapabilities, ModelInfo, ModelLimits, SummarizeResult
 from strands.models._request_messages import count_tokens_as_sent
 from strands.models.anthropic import AnthropicModel
 from strands.models.model import CacheConfig, CacheToolsConfig
@@ -923,98 +924,21 @@ def test_format_chunk_content_block_start_other(model):
     assert tru_chunk == exp_chunk
 
 
-def test_format_chunk_content_block_delta_signature_delta(model):
-    event = {
-        "delta": {
-            "type": "signature_delta",
-            "signature": "s1",
-        },
-        "index": 0,
-        "type": "content_block_delta",
-    }
+@pytest.mark.parametrize(
+    ("delta", "exp_delta"),
+    [
+        ({"type": "signature_delta", "signature": "s1"}, {"reasoningContent": {"signature": "s1"}}),
+        ({"type": "thinking_delta", "thinking": "t1"}, {"reasoningContent": {"text": "t1"}}),
+        ({"type": "input_json_delta", "partial_json": "{"}, {"toolUse": {"input": "{"}}),
+        ({"type": "text_delta", "text": "hello"}, {"text": "hello"}),
+    ],
+    ids=["signature_delta", "thinking_delta", "input_json_delta", "text_delta"],
+)
+def test_format_chunk_content_block_delta(delta, exp_delta, model):
+    event = {"delta": delta, "index": 0, "type": "content_block_delta"}
 
     tru_chunk = model.format_chunk(event)
-    exp_chunk = {
-        "contentBlockDelta": {
-            "contentBlockIndex": 0,
-            "delta": {
-                "reasoningContent": {
-                    "signature": "s1",
-                },
-            },
-        },
-    }
-
-    assert tru_chunk == exp_chunk
-
-
-def test_format_chunk_content_block_delta_thinking_delta(model):
-    event = {
-        "delta": {
-            "type": "thinking_delta",
-            "thinking": "t1",
-        },
-        "index": 0,
-        "type": "content_block_delta",
-    }
-
-    tru_chunk = model.format_chunk(event)
-    exp_chunk = {
-        "contentBlockDelta": {
-            "contentBlockIndex": 0,
-            "delta": {
-                "reasoningContent": {
-                    "text": "t1",
-                },
-            },
-        },
-    }
-
-    assert tru_chunk == exp_chunk
-
-
-def test_format_chunk_content_block_delta_input_json_delta_delta(model):
-    event = {
-        "delta": {
-            "type": "input_json_delta",
-            "partial_json": "{",
-        },
-        "index": 0,
-        "type": "content_block_delta",
-    }
-
-    tru_chunk = model.format_chunk(event)
-    exp_chunk = {
-        "contentBlockDelta": {
-            "contentBlockIndex": 0,
-            "delta": {
-                "toolUse": {
-                    "input": "{",
-                },
-            },
-        },
-    }
-
-    assert tru_chunk == exp_chunk
-
-
-def test_format_chunk_content_block_delta_text_delta(model):
-    event = {
-        "delta": {
-            "type": "text_delta",
-            "text": "hello",
-        },
-        "index": 0,
-        "type": "content_block_delta",
-    }
-
-    tru_chunk = model.format_chunk(event)
-    exp_chunk = {
-        "contentBlockDelta": {
-            "contentBlockIndex": 0,
-            "delta": {"text": "hello"},
-        },
-    }
+    exp_chunk = {"contentBlockDelta": {"contentBlockIndex": 0, "delta": exp_delta}}
 
     assert tru_chunk == exp_chunk
 
@@ -3386,7 +3310,7 @@ async def test_summarize_sends_compaction_request_and_stores_block(anthropic_cli
     )
     messages = [{"role": "user", "content": [{"text": "hi"}]}, {"role": "assistant", "content": [{"text": "yo"}]}]
 
-    block = await model.summarize(messages, system_prompt="sys", instructions="keep ids")
+    result = await model.summarize(messages, system_prompt="sys", instructions="keep ids")
 
     request = anthropic_client.beta.messages.stream.call_args.kwargs
     assert request["extra_body"]["compaction"] == {"type": "summarize", "instructions": "keep ids"}
@@ -3394,16 +3318,198 @@ async def test_summarize_sends_compaction_request_and_stores_block(anthropic_cli
     assert "stop_sequences" not in request
     assert request["system"] == "sys"
     assert len(request["messages"]) == 2
-    assert block == _stored_compaction("the summary", "s1")
+    assert result == SummarizeResult(content=[_stored_compaction("the summary", "s1")])
+
+
+_COMPACTION_USAGE = {
+    "input_tokens": 100,
+    "output_tokens": 20,
+    "cache_read_input_tokens": 30,
+    "cache_creation_input_tokens": 5,
+}
 
 
 @pytest.mark.asyncio
-async def test_summarize_raises_without_compaction_block(anthropic_client):
+async def test_summarize_returns_the_compaction_usage(anthropic_client):
     model = _compaction_model(anthropic_client)
-    _mock_compaction_response(anthropic_client, {"stop_reason": "end_turn", "content": [{"type": "text", "text": "x"}]})
+    _mock_compaction_response(
+        anthropic_client,
+        {
+            "stop_reason": "compaction",
+            "content": [{"type": "compaction", "content": "the summary"}],
+            "usage": _COMPACTION_USAGE,
+        },
+    )
 
-    with pytest.raises(RuntimeError, match="compaction returned no summary"):
+    result = await model.summarize([{"role": "user", "content": [{"text": "hi"}]}])
+
+    assert result == SummarizeResult(
+        content=[{"summary": {"provider": "anthropic", "signature": None, "text": "the summary"}}],
+        usage={
+            "inputTokens": 100,
+            "outputTokens": 20,
+            "totalTokens": 155,
+            "cacheReadInputTokens": 30,
+            "cacheWriteInputTokens": 5,
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_summarize_counts_the_compaction_iterations_usage(anthropic_client):
+    model = _compaction_model(anthropic_client)
+    zero = {"input_tokens": 0, "output_tokens": 0, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}
+    _mock_compaction_response(
+        anthropic_client,
+        {
+            "stop_reason": "compaction",
+            "content": [{"type": "compaction", "content": "the summary"}],
+            "usage": {**zero, "iterations": [{**_COMPACTION_USAGE, "type": "compaction"}]},
+        },
+    )
+
+    result = await model.summarize([{"role": "user", "content": [{"text": "hi"}]}])
+
+    assert result == SummarizeResult(
+        content=[{"summary": {"provider": "anthropic", "signature": None, "text": "the summary"}}],
+        usage={
+            "inputTokens": 100,
+            "outputTokens": 20,
+            "totalTokens": 155,
+            "cacheReadInputTokens": 30,
+            "cacheWriteInputTokens": 5,
+        },
+    )
+
+
+_AGENT_METADATA = AgentMetadata(session_id="session")
+
+_BASE_RESULT = SummarizeResult(
+    content=[{"summary": {"provider": None, "text": "client-side"}}],
+    usage={"inputTokens": 10, "outputTokens": 5, "totalTokens": 15},
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "response",
+    [
+        pytest.param({"stop_reason": "end_turn", "content": []}, id="no_summary"),
+        pytest.param({"stop_reason": "end_turn", "content": [{"type": "text", "text": "x"}]}, id="text_only"),
+    ],
+)
+async def test_summarize_uses_the_base_implementation_without_a_compaction_block(anthropic_client, response):
+    model = _compaction_model(anthropic_client)
+    _mock_compaction_response(anthropic_client, {**response, "usage": _COMPACTION_USAGE})
+    messages = [{"role": "user", "content": [{"text": "hi"}]}]
+
+    with unittest.mock.patch.object(Model, "summarize", return_value=_BASE_RESULT) as base_summarize:
+        result = await model.summarize(messages, instructions="keep ids", agent_metadata=_AGENT_METADATA)
+
+    base_summarize.assert_awaited_once_with(
+        messages,
+        tool_specs=None,
+        system_prompt=None,
+        system_prompt_content=None,
+        instructions="keep ids",
+        cancel_signal=None,
+        agent_metadata=_AGENT_METADATA,
+    )
+    assert result == SummarizeResult(
+        content=_BASE_RESULT.content,
+        usage={
+            "inputTokens": 110,
+            "outputTokens": 25,
+            "totalTokens": 170,
+            "cacheReadInputTokens": 30,
+            "cacheWriteInputTokens": 5,
+        },
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error",
+    [
+        pytest.param(
+            anthropic.BadRequestError(
+                "does not support the compaction strategy", response=unittest.mock.Mock(status_code=400), body=None
+            ),
+            id="rejected",
+        ),
+        pytest.param(
+            anthropic.InternalServerError("overloaded", response=unittest.mock.Mock(status_code=529), body=None),
+            id="overloaded",
+        ),
+        pytest.param(anthropic.APITimeoutError(request=unittest.mock.Mock()), id="timeout"),
+        pytest.param(anthropic.APIConnectionError(request=unittest.mock.Mock()), id="connection"),
+    ],
+)
+async def test_summarize_uses_the_base_implementation_when_compaction_fails(anthropic_client, caplog, error):
+    model = _compaction_model(anthropic_client)
+    anthropic_client.beta.messages.stream.side_effect = error
+
+    with (
+        unittest.mock.patch.object(Model, "summarize", return_value=_BASE_RESULT),
+        caplog.at_level(logging.WARNING),
+    ):
+        result = await model.summarize([{"role": "user", "content": [{"text": "hi"}]}])
+
+    assert result == _BASE_RESULT
+    assert "compaction request failed | summarizing client-side" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_summarize_raises_errors_other_than_an_api_error(anthropic_client):
+    model = _compaction_model(anthropic_client)
+    anthropic_client.beta.messages.stream.side_effect = RuntimeError("overloaded")
+
+    with (
+        unittest.mock.patch.object(Model, "summarize") as base_summarize,
+        pytest.raises(RuntimeError, match="overloaded"),
+    ):
         await model.summarize([{"role": "user", "content": [{"text": "hi"}]}])
+
+    base_summarize.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "config",
+    [
+        pytest.param({"model_id": "claude-sonnet-4-5"}, id="unlisted"),
+        pytest.param(
+            {
+                "model_id": "claude-sonnet-5-5",
+                "model_info": ModelInfo(capabilities=ModelCapabilities(server_side_summary=False)),
+            },
+            id="turned_off",
+        ),
+    ],
+)
+async def test_summarize_without_the_capability_uses_the_base_implementation(anthropic_client, config):
+    model = AnthropicModel(max_tokens=1, **config)
+
+    messages = [{"role": "user", "content": [{"text": "hi"}]}]
+
+    base_result = SummarizeResult(content=[{"summary": {"provider": None, "text": "client-side"}}])
+
+    with unittest.mock.patch.object(Model, "summarize", return_value=base_result) as base_summarize:
+        result = await model.summarize(
+            messages, system_prompt="sys", instructions="keep ids", agent_metadata=_AGENT_METADATA
+        )
+
+    assert result is base_result
+    base_summarize.assert_awaited_once_with(
+        messages,
+        tool_specs=None,
+        system_prompt="sys",
+        system_prompt_content=None,
+        instructions="keep ids",
+        cancel_signal=None,
+        agent_metadata=_AGENT_METADATA,
+    )
+    anthropic_client.beta.messages.stream.assert_not_called()
 
 
 def test_format_request_sends_from_last_compaction_block(anthropic_client):

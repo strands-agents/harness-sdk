@@ -7,14 +7,13 @@ import threading
 import time
 import warnings
 from collections.abc import AsyncGenerator, AsyncIterable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
 
 from ..agent.agent_metadata import AgentMetadata
 from ..agent.invocation_context import InvocationContext
 from ..models._request_messages import prepare_request_messages
-from ..models.model import Model
 from ..tools import InvalidToolUseNameException
 from ..tools.tools import validate_tool_use_name
 from ..types._events import (
@@ -45,6 +44,9 @@ from ..types.streaming import (
     Usage,
 )
 from ..types.tools import ToolSpec, ToolUse
+
+if TYPE_CHECKING:
+    from ..models.model import Model
 
 logger = logging.getLogger(__name__)
 
@@ -528,7 +530,7 @@ def _record_usage(invocation_context: InvocationContext | None, usage: Usage) ->
 
 
 async def stream_messages(
-    model: Model,
+    model: "Model",
     system_prompt: str | None,
     messages: Messages,
     tool_specs: list[ToolSpec],

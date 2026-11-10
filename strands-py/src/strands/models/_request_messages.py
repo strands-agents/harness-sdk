@@ -9,13 +9,15 @@ stored, and that provider sends it so the model reads it only until the next use
 ones included, gets the latest user message's injected blocks as text and none of the earlier ones.
 """
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..types.content import ContentBlock, Message, Messages
-from .model import Model, _latest_user_index
+
+if TYPE_CHECKING:
+    from .model import Model
 
 
-def prepare_request_messages(model: Model, messages: Messages) -> tuple[Messages, int]:
+def prepare_request_messages(model: "Model", messages: Messages) -> tuple[Messages, int]:
     """Return the messages the model accepts, and how many trailing blocks the cache point must stay ahead of.
 
     Args:
@@ -38,7 +40,7 @@ def prepare_request_messages(model: Model, messages: Messages) -> tuple[Messages
     return _render_injected_blocks(messages)
 
 
-async def count_tokens_as_sent(model: Model, messages: Messages, **kwargs: Any) -> int:
+async def count_tokens_as_sent(model: "Model", messages: Messages, **kwargs: Any) -> int:
     """Count the messages with the model's ``count_tokens``, in the form :func:`prepare_request_messages` sends them.
 
     Args:
@@ -94,6 +96,14 @@ def _with_injected_text(content: list[ContentBlock]) -> list[ContentBlock]:
         text = block["injected"]["text"]
         blocks.append(ContentBlock(text=f"\n\n{text}" if index > 0 and not text.startswith("\n") else text))
     return blocks
+
+
+def _latest_user_index(messages: Messages) -> int:
+    """Index of the latest user message, or -1 when there is none."""
+    for index in range(len(messages) - 1, -1, -1):
+        if messages[index]["role"] == "user":
+            return index
+    return -1
 
 
 def _with_summary_text(message: Message) -> Message:
