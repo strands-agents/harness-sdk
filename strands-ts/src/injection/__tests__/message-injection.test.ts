@@ -248,6 +248,52 @@ describe('createInjectionMiddleware', () => {
     ])
   })
 
+  it('keeps the injected text on the message in later calls of the turn', async () => {
+    const handler = createInjectionMiddleware({ renderContent: async () => 'INJECTED' })
+    const ask = user('ask')
+    await handler(ctx([ask]))
+    const result = await handler(ctx([ask, assistant('calls a tool'), toolResult()]))
+
+    expect(result.messages[0]!.toJSON().content).toStrictEqual([{ text: 'ask' }, { text: '\n\nINJECTED' }])
+    expect(result.dynamicTrailingBlocks ?? 0).toBe(0)
+  })
+
+  it('keeps the first text a message received, so it renders once per message', async () => {
+    const renderContent = vi.fn().mockResolvedValueOnce('FIRST').mockResolvedValue('LATER')
+    const handler = createInjectionMiddleware({ renderContent })
+    const ask = user('ask')
+    await handler(ctx([ask]))
+    const retried = await handler(ctx([ask]))
+
+    expect(retried.messages[0]!.toJSON().content).toStrictEqual([{ text: 'ask' }, { text: '\n\nFIRST' }])
+    expect(retried.dynamicTrailingBlocks).toBe(1)
+    expect(renderContent).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps earlier turns injected text when a new turn gets its own', async () => {
+    const handler = createInjectionMiddleware({ renderContent: async ({ messages }) => `turn ${messages.length}` })
+    const first = user('first')
+    const second = user('second')
+    await handler(ctx([first]))
+    const result = await handler(ctx([first, assistant('answer'), second]))
+
+    expect(result.messages.map((m) => m.toJSON().content)).toStrictEqual([
+      [{ text: 'first' }, { text: '\n\nturn 1' }],
+      [{ text: 'answer' }],
+      [{ text: 'second' }, { text: '\n\nturn 3' }],
+    ])
+    expect(result.dynamicTrailingBlocks).toBe(1)
+  })
+
+  it('does not fold the text twice when the message already ends with it', async () => {
+    const handler = createInjectionMiddleware({ renderContent: async () => 'INJECTED' })
+    const ask = user('ask')
+    const first = await handler(ctx([ask]))
+    const result = await handler(ctx([first.messages[0]!, assistant('a'), toolResult()]))
+
+    expect(result.messages[0]!.toJSON().content).toStrictEqual([{ text: 'ask' }, { text: '\n\nINJECTED' }])
+  })
+
   it('returns the context unchanged when renderContent yields empty text', async () => {
     const handler = createInjectionMiddleware({ renderContent: async () => '   ' })
     const input = ctx([assistant('prior'), user('ask')])

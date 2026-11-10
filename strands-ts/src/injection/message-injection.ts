@@ -7,8 +7,12 @@ import type { InjectionMiddlewareOptions, InjectionTrigger, InjectionContext } f
 
 /**
  * Builds an `InvokeModelStage` `Input` handler that folds {@link InjectionMiddlewareOptions.renderContent}'s
- * text into the latest user message, ephemerally — the model sees the augmented input for this one call
- * while the agent's durable history is never touched.
+ * text into the latest user message. The agent's durable history is never touched.
+ *
+ * Once a message has received text, every later call sends that message with the same text, so the
+ * conversation the model sees only grows. Models that sign their reasoning over the earlier messages
+ * (Claude's preserved thinking) reject a request where an earlier message lost its injected text. The
+ * first text a message received is kept, so a retried call does not render or fold it twice.
  *
  * Runs as an input-phase transformer (`(ctx) => ctx`): it gates on the resolved trigger, asks
  * `renderContent` for the text, and returns a context with the folded messages. Anything that skips —
@@ -24,7 +28,15 @@ export function createInjectionMiddleware(
   opts: InjectionMiddlewareOptions
 ): (context: InvokeModelContext) => Promise<InvokeModelContext> {
   const trigger = resolveTrigger(opts.trigger)
+  // The text this handler folded into each message, by the message's tracking id.
+  const folds = new Map<string, string>()
   return async (context) => {
+    const refolded = refold(context.messages, folds)
+    const kept = refolded.messages === context.messages ? context : { ...context, messages: refolded.messages }
+    const withKept = (base: InvokeModelContext): InvokeModelContext =>
+      refolded.trailing === 0
+        ? base
+        : { ...base, dynamicTrailingBlocks: (base.dynamicTrailingBlocks ?? 0) + refolded.trailing }
     const agent = context.agent
     const injectionContext: InjectionContext = {
       messages: context.messages.map((message) => message.toJSON()),
@@ -32,7 +44,11 @@ export function createInjectionMiddleware(
       agent,
     }
     if (!trigger(injectionContext)) {
-      return context
+      return withKept(kept)
+    }
+    const target = lastUserMessage(context.messages)
+    if (target && folds.has(target.trackingId)) {
+      return withKept(kept)
     }
 
     let text: string | undefined
@@ -40,16 +56,70 @@ export function createInjectionMiddleware(
       text = await opts.renderContent(injectionContext)
     } catch (error) {
       logger.warn(`reason=<${normalizeError(error).message}> | injection renderContent threw; skipping injection`)
-      return context
+      return withKept(kept)
     }
     if (!text?.trim()) {
-      return context
+      return withKept(kept)
     }
 
-    const { messages: folded, appended } = foldIntoLastUserMessage([...context.messages], text)
+    const { messages: folded, appended } = foldIntoLastUserMessage([...refolded.messages], text)
+    const block = target && lastUserMessage(folded)?.content.at(-1)
+    if (target && block instanceof TextBlock) {
+      folds.set(target.trackingId, block.text)
+    }
     // Accumulate: several producers may append on one call, and the cache point precedes all of it.
     return { ...context, messages: folded, dynamicTrailingBlocks: (context.dynamicTrailingBlocks ?? 0) + appended }
   }
+}
+
+/**
+ * Folds each recorded text back into the message that first received it, returning a NEW array when
+ * anything was folded and the input array otherwise. A message that already ends with its text is left
+ * as it is.
+ *
+ * @param messages - The conversation for this call
+ * @param folds - The recorded text, by the tracking id of the message that received it
+ * @returns The conversation, and how many folded blocks are on its last message
+ */
+function refold(
+  messages: readonly Message[],
+  folds: Map<string, string>
+): { messages: readonly Message[]; trailing: number } {
+  if (folds.size === 0) {
+    return { messages, trailing: 0 }
+  }
+  let result: Message[] | undefined
+  let trailing = 0
+  messages.forEach((message, index) => {
+    const text = folds.get(message.trackingId)
+    if (text === undefined) {
+      return
+    }
+    const last = message.content.at(-1)
+    if (last instanceof TextBlock && last.text === text) {
+      return
+    }
+    result ??= [...messages]
+    result[index] = new Message({
+      role: message.role,
+      content: [...message.content, new TextBlock(text)],
+      trackingId: message.trackingId,
+      ...(message.metadata !== undefined && { metadata: message.metadata }),
+    })
+    if (index === messages.length - 1) {
+      trailing += 1
+    }
+  })
+  return { messages: result ?? messages, trailing }
+}
+
+function lastUserMessage(messages: readonly Message[]): Message | undefined {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i]!.role === 'user') {
+      return messages[i]
+    }
+  }
+  return undefined
 }
 
 /**
