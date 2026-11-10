@@ -323,13 +323,18 @@ await createHarness({ builtinTools: { web_fetch: { model: 'anthropic/claude-haik
 
 `web_search` is the other one: it lets the agent look things up on the web mid-answer. Where the
 model provider has its own search (OpenAI, Google, Anthropic, and GPT-5, GPT-6, and Daybreak models on
-`bedrock-mantle` via Bedrock Web Search) the harness turns that on by default. In case of no
-native search (Amazon Bedrock Converse, other Mantle models, a `Model` instance) `web_search` is
-off by default. To enable web search for these providers, you can opt into Exa with
+`bedrock-mantle` via Bedrock Web Search) the harness turns that on by default. On Amazon Bedrock
+(Converse), which has no native search, the model gets a `web_search` tool backed by
+[Amazon Bedrock AgentCore web search](https://docs.aws.amazon.com/bedrock-agentcore/latest/APIReference/API_InvokeWebSearch.html)
+(`InvokeWebSearch`), called in the model's region and billed per query to your AWS account. The
+caller needs the `bedrock-agentcore:InvokeWebSearch` IAM permission on
+`arn:aws:bedrock-agentcore:<region>:aws:tool/web-search.v1`, and the API is offered in a subset of
+regions; without them each search returns an error the model sees. Elsewhere (other Mantle models,
+a `Model` instance) `web_search` is off by default. To search there, opt into Exa with
 `{ web_search: 'exa' }`. The model then gets a `web_search` tool backed by Exa's hosted search. It
 works keyless, but adding a `EXA_API_KEY` in the environment lifts the rate limit. You can
-override a provider's native web search by adding `'exa'` explicitly to any model. If you are
-using Bedrock Web Search, you'll need the `bedrock-websearch` IAM action (in
+override a model's default search by adding `'exa'` explicitly to any model. If you are
+using Bedrock Web Search on Mantle, you'll need the `bedrock-websearch` IAM action (in
 `AmazonBedrockFullAccess`) to avoid failing search.
 
 > [!WARNING]
@@ -339,7 +344,8 @@ using Bedrock Web Search, you'll need the `bedrock-websearch` IAM action (in
 
 ```typescript
 await createHarness({ model: 'openai/gpt-5.6-sol' }) // native search on, it's in the defaults
-await createHarness({ builtinTools: { web_search: 'exa' } }) // Bedrock: search through Exa (third party)
+await createHarness() // Bedrock: AgentCore web search, also a default
+await createHarness({ builtinTools: { web_search: 'exa' } }) // any model: search through Exa (third party)
 ```
 
 ## Caching reused context

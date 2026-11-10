@@ -38,6 +38,7 @@ import { HARNESS_CONTRACT } from '../src/prompt.js'
 import { configureLogging, resetWarnOnce } from '../src/logging.js'
 import { makeProgrammaticToolCaller } from '../src/tools/programmatic-tool-caller.js'
 import { buildDefaultSubagent } from '../src/builtin-tools.js'
+import { exaWebSearch } from '../src/tools/web-search.js'
 import { AgentSpec, makeSubagent } from '../src/tools/subagent.js'
 import type { HarnessAgentOptions } from '../src/agent.js'
 import { storeOf } from './memory-internals.js'
@@ -384,19 +385,39 @@ describe('createHarness', () => {
     expect(params.tools).toEqual([{ type: 'web_search' }])
   })
 
-  it('logs info, not a warning, and builds when default web_search hits the default bedrock model', async () => {
+  it('serves web_search on bedrock from the AgentCore tool, by default and when named', async () => {
+    const agent = await createHarness()
+    expect(toolNames(agent)).toContain('web_search')
+    expect(agent.tools.find((t) => t.name === 'web_search')).not.toBe(exaWebSearch)
+    const named = await createHarness({
+      model: 'bedrock/us.amazon.nova-2-lite-v1:0',
+      builtinTools: ['read', 'web_search'],
+    })
+    expect(toolNames(named)).toContain('web_search')
+  })
+
+  it('serves an explicit Exa selection on bedrock instead of AgentCore', async () => {
+    const agent = await createHarness({ builtinTools: { web_search: 'exa' } })
+    expect(agent.tools.find((t) => t.name === 'web_search')).toBe(exaWebSearch)
+  })
+
+  it('logs info, not a warning, and builds when default web_search hits a model without search', async () => {
     const warn = vi.fn()
     const info = vi.fn()
     configureLogging({ debug: () => {}, info, warn, error: () => {} })
-    const agent = await createHarness()
+    const agent = await createHarness({ model: 'ollama/llama3' })
     expect(toolNames(agent)).not.toContain('web_search')
     expect(info).toHaveBeenCalledWith(expect.stringMatching(/has no built-in web search.*web-access\/#web_search/))
     expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('has no built-in web search'))
   })
 
   it('throws when web_search is explicitly selected on an unsupported provider', async () => {
-    await expect(createHarness({ builtinTools: ['read', 'web_search'] })).rejects.toThrow('has no built-in web search')
-    await expect(createHarness({ builtinTools: { web_search: true } })).rejects.toThrow('has no built-in web search')
+    await expect(createHarness({ model: 'ollama/llama3', builtinTools: ['read', 'web_search'] })).rejects.toThrow(
+      'has no built-in web search'
+    )
+    await expect(
+      createHarness({ model: new BedrockModel({ modelId: 'x' }), builtinTools: { web_search: true } })
+    ).rejects.toThrow('has no built-in web search')
   })
 
   it('builds the Exa tool for the fallback and warns about the third party', async () => {

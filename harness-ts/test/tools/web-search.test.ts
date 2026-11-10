@@ -1,6 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { AccessDeniedException, BedrockAgentCoreClient, ThrottlingException } from '@aws-sdk/client-bedrock-agentcore'
 import { McpClient, type Tool, type ToolContext } from '@strands-agents/sdk'
-import { exaBackend, exaWebSearch, makeExaWebSearch, searchTool, WebSearchError } from '../../src/tools/web-search.js'
+import {
+  exaBackend,
+  exaWebSearch,
+  makeAgentCoreWebSearch,
+  makeExaWebSearch,
+  searchTool,
+  WebSearchError,
+} from '../../src/tools/web-search.js'
 
 vi.mock('@strands-agents/sdk', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@strands-agents/sdk')>()),
@@ -53,6 +61,7 @@ function mockMcpClient(result: unknown, tools: { name: string }[] = [{ name: 'we
 
 afterEach(() => {
   vi.unstubAllEnvs()
+  vi.restoreAllMocks()
 })
 
 describe('exaBackend', () => {
@@ -208,5 +217,62 @@ describe('searchTool', () => {
     expect(await invoke(searchTool(multilineTitle), { query: 'q' })).toBe(
       'Sources:\n1. T 2. spoofed — https://evil — https://a\n   a b'
     )
+  })
+})
+
+describe('makeAgentCoreWebSearch', () => {
+  /** Stub `BedrockAgentCoreClient.send`; records each command's input and the client's resolved region. */
+  function mockSend(outcome: unknown) {
+    const calls: { input: unknown; region: string }[] = []
+    vi.spyOn(BedrockAgentCoreClient.prototype, 'send').mockImplementation(async function (
+      this: BedrockAgentCoreClient,
+      command: { input: unknown }
+    ) {
+      calls.push({ input: command.input, region: await this.config.region() })
+      if (outcome instanceof Error) {
+        throw outcome
+      }
+      return outcome
+    } as never)
+    return calls
+  }
+
+  it('calls InvokeWebSearch in the Bedrock region and formats the results', async () => {
+    vi.stubEnv('AWS_REGION', 'us-east-2')
+    const calls = mockSend({
+      results: [
+        { title: 'Strands', url: 'https://strandsagents.com', text: 'Build   agents\nfast. ' + 'x'.repeat(600) },
+        { url: 'https://untitled.example', text: 'no title' },
+      ],
+    })
+    const out = await invoke(makeAgentCoreWebSearch(), { query: 'strands agents', max_results: 50 })
+
+    expect(calls).toEqual([
+      { input: { webSearchId: 'web-search.v1', searchQuery: 'strands agents', maxResults: 10 }, region: 'us-east-2' },
+    ])
+    const lines = out.split('\n')
+    expect(lines.slice(0, 2)).toEqual(['Sources:', '1. Strands — https://strandsagents.com'])
+    expect(lines[2]!.startsWith('   Build agents fast. xxx')).toBe(true)
+    expect(lines[2]!.length).toBe(3 + 500)
+    expect(lines.slice(3)).toEqual(['2. https://untitled.example — https://untitled.example', '   no title'])
+  })
+
+  it('names the IAM permission on AccessDenied, in the default region when none is configured', async () => {
+    vi.stubEnv('AWS_REGION', '')
+    vi.stubEnv('AWS_DEFAULT_REGION', '')
+    vi.stubEnv('AWS_CONFIG_FILE', '/nonexistent/aws-config')
+    vi.stubEnv('AWS_PROFILE', 'strands-harness-test-no-such-profile')
+    mockSend(new AccessDeniedException({ message: 'the request is not authorized', $metadata: {} }))
+    const out = await invoke(makeAgentCoreWebSearch(), { query: 'q' })
+    expect(out).toBe(
+      'web_search failed: the request is not authorized (the caller needs bedrock-agentcore:InvokeWebSearch on ' +
+        'arn:aws:bedrock-agentcore:us-west-2:aws:tool/web-search.v1)'
+    )
+  })
+
+  it('passes other service errors through', async () => {
+    vi.stubEnv('AWS_REGION', 'us-east-1')
+    mockSend(new ThrottlingException({ message: 'slow down', $metadata: {} }))
+    expect(await invoke(makeAgentCoreWebSearch(), { query: 'q' })).toBe('web_search failed: slow down')
   })
 })

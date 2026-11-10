@@ -10,7 +10,7 @@ import {
   supportsWebSearch,
 } from '../src/models.js'
 import type { Effort } from '../src/types/agent.js'
-import { DEFAULT_EFFORT } from '../src/defaults.js'
+import { DEFAULT_EFFORT, DEFAULT_MODEL } from '../src/defaults.js'
 import { configureLogging, resetWarnOnce } from '../src/logging.js'
 
 const DEFAULT = 'bedrock/global.anthropic.claude-opus-4-8'
@@ -780,13 +780,15 @@ describe('supportsWebSearch', () => {
     expect(supportsWebSearch('bedrock-mantle/qwen.qwen3-32b-v1:0')).toBe(false)
   })
 
-  it('is false for bedrock but true for anthropic direct', () => {
-    expect(supportsWebSearch('bedrock/global.anthropic.claude-opus-4-8')).toBe(false)
+  it('is true for bedrock (AgentCore web search) and anthropic direct, false for ollama', () => {
+    expect(supportsWebSearch('bedrock/global.anthropic.claude-opus-4-8')).toBe(true)
+    expect(supportsWebSearch('global.anthropic.claude-opus-4-8')).toBe(true)
     expect(supportsWebSearch('anthropic/claude-opus-4-8')).toBe(true)
+    expect(supportsWebSearch('ollama/llama3')).toBe(false)
   })
 
   it('uses the default model provider for undefined', () => {
-    expect(supportsWebSearch(undefined)).toBe(false)
+    expect(supportsWebSearch(undefined)).toBe(supportsWebSearch(DEFAULT_MODEL))
   })
 
   it('is false for a Model instance', () => {

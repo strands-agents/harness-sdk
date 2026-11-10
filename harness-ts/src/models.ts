@@ -362,7 +362,8 @@ interface Provider {
   // Native web search is enabled through model config on the providers whose SDK exposes a
   // non-clobbering seam for it (OpenAI Responses `params.tools` for OpenAI and bedrock-mantle, Gemini
   // `builtInTools`, Anthropic-direct `anthropicTools`); `hasWebSearch` narrows bedrock-mantle to its
-  // GPT-5, GPT-6, and Daybreak models. Bedrock Converse has no mechanism.
+  // GPT-5, GPT-6, and Daybreak models. Bedrock Converse has no mechanism, so the harness serves
+  // AgentCore web search there as a tool instead (`webSearchKind`).
   webSearch: boolean
   // Whether prompt caching is in effect when requested, whether or not the harness configures anything:
   // Bedrock, Anthropic direct, OpenAI, and bedrock-mantle (the harness passes an SDK cache config)
@@ -574,20 +575,33 @@ export function supportsThinking(model: Model | ModelRouter | string | undefined
 }
 
 /**
- * Whether native web search can be enabled for `model`.
+ * How `web_search` is served for `model` without the Exa opt-in: the provider's native search,
+ * AgentCore web search on Bedrock (a harness tool, as Converse has no native search), or
+ * `undefined`. A `Model` or `ModelRouter` instance has an unknown provider, so it gets `undefined`.
+ */
+export function webSearchKind(model: Model | ModelRouter | string | undefined): 'native' | 'agentcore' | undefined {
+  if (model instanceof Model || model instanceof ModelRouter) {
+    return undefined
+  }
+  const [providerName, name] = splitProvider(model ?? DEFAULT_MODEL)
+  if (providerName === 'bedrock') {
+    return 'agentcore'
+  }
+  return hasWebSearch(providerName, name) ? 'native' : undefined
+}
+
+/**
+ * Whether `web_search` works for `model` without the Exa opt-in.
  *
- * A `Model` instance has an unknown provider, so this is `false`; the caller configures search
+ * True where the provider has native web search, and on Bedrock, where AgentCore web search serves
+ * it. A `Model` instance has an unknown provider, so this is `false`; the caller configures search
  * on the instance directly. `undefined` resolves to the default model.
  *
  * @param model - A `Model` instance, a `"provider/name"` string, a bare Bedrock id, or undefined.
- * @returns Whether the resolved model supports native web search.
+ * @returns Whether `web_search` is available for the resolved model.
  */
 export function supportsWebSearch(model: Model | ModelRouter | string | undefined): boolean {
-  if (model instanceof Model || model instanceof ModelRouter) {
-    return false
-  }
-  const [providerName, name] = splitProvider(model ?? DEFAULT_MODEL)
-  return hasWebSearch(providerName, name)
+  return webSearchKind(model) !== undefined
 }
 
 function hasWebSearch(providerName: string, name: string): boolean {

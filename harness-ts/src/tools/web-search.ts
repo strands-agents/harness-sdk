@@ -1,17 +1,22 @@
 /**
  * web_search: search the web and return the top results as numbered sources.
  *
- * The opt-in Exa tool (`builtinTools: { web_search: 'exa' }`), built whenever the setting selects it;
- * a plain `true` on OpenAI, Gemini and Mantle GPT models is a model flag instead and this tool is
- * not built (see `agent.ts`). It is backed by Exa's hosted MCP server, a third party that receives the
- * queries; the keyless free tier covers getting started and `EXA_API_KEY` lifts the rate limit in
- * place. The tool/backend split keeps the model-facing contract fixed while the search provider
- * behind it can change.
+ * On Bedrock models the tool is backed by Amazon Bedrock AgentCore's `InvokeWebSearch` API, in the
+ * model's region and authorized by IAM. The opt-in Exa tool (`builtinTools: { web_search: 'exa' }`)
+ * serves it on any model from Exa's hosted MCP server, a third party that receives the queries; the
+ * keyless free tier covers getting started and `EXA_API_KEY` lifts the rate limit in place. On
+ * OpenAI, Anthropic, Gemini and Mantle GPT models a plain `true` is a model flag instead and no tool
+ * is built (see `agent.ts`). The tool/backend split keeps the model-facing contract fixed while the
+ * search provider behind it can change.
  */
 
+import type { BedrockAgentCoreClient } from '@aws-sdk/client-bedrock-agentcore'
 import { McpClient, tool, type Tool } from '@strands-agents/sdk'
 import { z } from 'zod'
 
+const AGENTCORE_WEB_SEARCH_ID = 'web-search.v1'
+// BedrockModel's fallback when neither the environment nor the profile names a region.
+const BEDROCK_DEFAULT_REGION = 'us-west-2'
 const EXA_MCP_URL = 'https://mcp.exa.ai/mcp'
 const EXA_TOOL = 'web_search_exa'
 const TIMEOUT_MS = 30_000
@@ -107,6 +112,50 @@ export function exaBackend(apiKey?: string): SearchBackend {
       throw new WebSearchError(`${reason} (Exa's keyless tier is rate limited; set EXA_API_KEY to lift it.)`)
     }
   }
+}
+
+/**
+ * One client per backend, in the region the harness's `BedrockModel` uses: `AWS_REGION` /
+ * `AWS_DEFAULT_REGION`, then the shared config profile, then BedrockModel's default.
+ */
+async function agentCoreClient(): Promise<{ client: BedrockAgentCoreClient; region: string }> {
+  const { BedrockAgentCoreClient } = await import('@aws-sdk/client-bedrock-agentcore')
+  const region =
+    process.env.AWS_REGION ||
+    process.env.AWS_DEFAULT_REGION ||
+    (await new BedrockAgentCoreClient({}).config.region().catch(() => BEDROCK_DEFAULT_REGION))
+  return { client: new BedrockAgentCoreClient({ region }), region }
+}
+
+/** Search backend over Amazon Bedrock AgentCore's `InvokeWebSearch` API, authorized by IAM. */
+export function agentCoreBackend(): SearchBackend {
+  let connection: ReturnType<typeof agentCoreClient> | undefined
+  return async (query, maxResults) => {
+    const { InvokeWebSearchCommand } = await import('@aws-sdk/client-bedrock-agentcore')
+    const { client, region } = await (connection ??= agentCoreClient())
+    let response
+    try {
+      response = await client.send(
+        new InvokeWebSearchCommand({ webSearchId: AGENTCORE_WEB_SEARCH_ID, searchQuery: query, maxResults })
+      )
+    } catch (err) {
+      if (!(err instanceof Error) || err.name !== 'AccessDeniedException') {
+        throw err
+      }
+      const resource = `arn:aws:bedrock-agentcore:${region}:aws:tool/${AGENTCORE_WEB_SEARCH_ID}`
+      throw new WebSearchError(`${err.message} (the caller needs bedrock-agentcore:InvokeWebSearch on ${resource})`)
+    }
+    return (response.results ?? []).map((result) => ({
+      title: result.title || (result.url ?? ''),
+      url: result.url ?? '',
+      snippet: (result.text ?? '').replace(/\s+/g, ' ').trim().slice(0, SNIPPET_CHARS),
+    }))
+  }
+}
+
+/** Build a `web_search` tool over Amazon Bedrock AgentCore web search. */
+export function makeAgentCoreWebSearch(): Tool {
+  return searchTool(agentCoreBackend())
 }
 
 /** Build a `web_search` tool over Exa's hosted search (`EXA_API_KEY` lifts the keyless rate limit). */
