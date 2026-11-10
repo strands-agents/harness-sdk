@@ -19,8 +19,9 @@ type Check = (data: Buffer) => string | undefined
 const TRUNCATED = 'it is truncated'
 const NO_IMAGE_DATA = 'it has no image data'
 const JPEG_PROGRESSIVE: readonly number[] = [0xc2, 0xc6, 0xca, 0xce]
-// An object header (`12 0 obj`), with whitespace as PDF defines it.
-const PDF_OBJECT = /\d+[\0\t\n\f\r ]+\d+[\0\t\n\f\r ]+obj\b/
+// An object header (`12 0 obj`), with whitespace as PDF defines it. The lookbehind starts a match only at the
+// first digit of a run, which keeps a long run of digits linear instead of quadratic.
+const PDF_OBJECT = /(?<![0-9])[0-9]+[\0\t\n\f\r ]+[0-9]+[\0\t\n\f\r ]+obj\b/
 const ZIP_LOCAL = Buffer.from('PK\x03\x04', 'latin1')
 const ZIP_CENTRAL = Buffer.from('PK\x01\x02', 'latin1')
 const ZIP_END = Buffer.from('PK\x05\x06', 'latin1')
@@ -56,7 +57,10 @@ export function mediaProblem(format: string, data: Uint8Array): string | undefin
   try {
     return CHECKS[format]!(Buffer.from(data.buffer, data.byteOffset, data.byteLength))
   } catch (error) {
-    logger.warn(`mediaFormat=<${format}> | media validation failed, sending the file unchecked`, error)
+    logger.warn(
+      `mediaFormat=<${format}>, size=<${data.byteLength}> | media validation failed, sending the file unchecked`,
+      error
+    )
     return undefined
   }
 }

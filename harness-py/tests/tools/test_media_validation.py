@@ -137,6 +137,12 @@ def test_a_broken_or_mislabeled_file_fails_with_why(media_format, data, problem)
     assert media_problem(media_format, data) == problem
 
 
+def test_a_long_run_of_digits_after_the_trailer_is_judged_in_linear_time():
+    # Quadratic backtracking here took minutes and blocked the event loop.
+    data = b"%PDF-1.4\nstartxref\n" + b"1" * 1_000_000 + b" obj"
+    assert media_problem("pdf", data) is None
+
+
 def test_a_zip_entry_outside_the_archive_is_corrupt():
     central = DOCX.rindex(b"PK\x01\x02")
     past_the_end = DOCX[: central + 42] + struct.pack("<I", len(DOCX)) + DOCX[central + 46 :]
@@ -171,4 +177,4 @@ def test_a_check_that_raises_passes_the_file_and_warns(monkeypatch, caplog):
     monkeypatch.setitem(_media_validation._CHECKS, "png", broken)
     with caplog.at_level(logging.WARNING):
         assert media_problem("png", PNG) is None
-    assert re.search(r"media_format=<png> \| media validation failed", caplog.text)
+    assert re.search(rf"media_format=<png>, size=<{len(PNG)}> \| media validation failed", caplog.text)

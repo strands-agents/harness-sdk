@@ -22,8 +22,9 @@ _NO_IMAGE_DATA = "it has no image data"
 # A marker that ends a JPEG scan's entropy-coded data: 0xFF not followed by a stuffed zero, a restart, or fill.
 _JPEG_MARKER = re.compile(rb"\xff[^\x00\xd0-\xd7\xff]")
 _JPEG_PROGRESSIVE = (0xC2, 0xC6, 0xCA, 0xCE)
-# An object header (``12 0 obj``), with whitespace as PDF defines it.
-_PDF_OBJECT = re.compile(rb"\d+[\0\t\n\f\r ]+\d+[\0\t\n\f\r ]+obj\b")
+# An object header (``12 0 obj``), with whitespace as PDF defines it. The lookbehind starts a match only at the
+# first digit of a run, which keeps a long run of digits linear instead of quadratic.
+_PDF_OBJECT = re.compile(rb"(?<![0-9])[0-9]+[\0\t\n\f\r ]+[0-9]+[\0\t\n\f\r ]+obj\b")
 _OLE_SIGNATURE = bytes.fromhex("d0cf11e0a1b11ae1")
 # OLE2 FAT values at or above this mark a free sector or the end of a chain rather than a next sector.
 _OLE_SPECIAL = 0xFFFFFFFA
@@ -46,7 +47,10 @@ def media_problem(media_format: str, data: bytes) -> str | None:
         return _CHECKS[media_format](data)
     except Exception:
         logger.warning(
-            "media_format=<%s> | media validation failed, sending the file unchecked", media_format, exc_info=True
+            "media_format=<%s>, size=<%d> | media validation failed, sending the file unchecked",
+            media_format,
+            len(data),
+            exc_info=True,
         )
         return None
 

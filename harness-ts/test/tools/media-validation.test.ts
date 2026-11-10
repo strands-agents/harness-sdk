@@ -123,6 +123,12 @@ describe('mediaProblem', () => {
     expect(mediaProblem(format, data)).toBe(problem)
   })
 
+  it('judges a long run of digits after the trailer in linear time', () => {
+    // Quadratic backtracking here took minutes and blocked the event loop.
+    const data = cat('%PDF-1.4\nstartxref\n', Buffer.alloc(1_000_000, 0x31), ' obj')
+    expect(mediaProblem('pdf', data)).toBeUndefined()
+  })
+
   it('fails a zip whose entry lies outside the archive', () => {
     const central = DOCX.lastIndexOf('PK\x01\x02')
     const pastTheEnd = Buffer.from(DOCX)
@@ -162,7 +168,7 @@ describe('mediaProblem', () => {
       }
       expect(mediaProblem('png', PNG)).toBeUndefined()
       expect(warn).toHaveBeenCalledWith(
-        'mediaFormat=<png> | media validation failed, sending the file unchecked',
+        `mediaFormat=<png>, size=<${PNG.length}> | media validation failed, sending the file unchecked`,
         expect.any(RangeError)
       )
     })
