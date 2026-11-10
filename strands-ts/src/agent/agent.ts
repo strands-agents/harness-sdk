@@ -26,6 +26,7 @@ import {
 import { deepCopy } from '../types/json.js'
 import type { JSONValue } from '../types/json.js'
 import { McpClient } from '../mcp/index.js'
+import type { McpTool } from '../tools/mcp-tool.js'
 import { isValidToolName, type Tool } from '../tools/tool.js'
 import type { ToolChoice, ToolSpec } from '../tools/types.js'
 import { cloneSystemPrompt, systemPromptFromData } from '../types/messages.js'
@@ -880,11 +881,11 @@ export class Agent implements LocalAgent, InvokableAgent {
     // Initialize MCP clients and register their tools
     await Promise.all(
       this._mcpClients.map(async (client) => {
-        const tools = await client.listTools()
-        this._toolRegistry.add(tools)
-        client.onToolsChanged = (oldTools, newTools): void => {
-          oldTools.forEach((name) => this._toolRegistry.remove(name))
-          this._toolRegistry.addOrReplace(newTools)
+        let registered = await client.listTools()
+        this._toolRegistry.add(registered)
+        // The client's own list of old names includes a refresh this agent rejected, so track what was registered.
+        client.onToolsChanged = (_oldTools, newTools): void => {
+          registered = this._replaceMcpTools(client, registered, newTools)
         }
       })
     )
@@ -915,6 +916,33 @@ export class Agent implements LocalAgent, InvokableAgent {
     await this._hooksRegistry.invokeCallbacks(new InitializedEvent({ agent: this }))
 
     this._initialized = true
+  }
+
+  /**
+   * Swaps an MCP client's registered tools for its refreshed list. A refreshed tool that is invalid, or that takes the
+   * name of a tool from another source such as `retrieve_context`, rejects the whole refresh: the client keeps its
+   * current tools and the other source keeps its own.
+   *
+   * @param client - The MCP client whose tools changed
+   * @param current - The tools the client has registered
+   * @param refreshed - The client's refreshed tools
+   * @returns The tools the client has registered afterwards
+   */
+  private _replaceMcpTools(client: McpClient, current: McpTool[], refreshed: McpTool[]): McpTool[] {
+    current.forEach((tool) => this._toolRegistry.remove(tool.name))
+    try {
+      this._toolRegistry.add(refreshed)
+      return refreshed
+    } catch (error) {
+      for (const tool of refreshed) {
+        if (this._toolRegistry.get(tool.name) === tool) this._toolRegistry.remove(tool.name)
+      }
+      this._toolRegistry.add(current)
+      logger.warn(
+        `client=<${client.clientName}>, error=<${error}> | rejected the mcp tools refresh | keeping the current mcp tools`
+      )
+      return current
+    }
   }
 
   /**
