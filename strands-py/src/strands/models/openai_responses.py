@@ -18,6 +18,7 @@ metadata:
 Docs: https://platform.openai.com/docs/api-reference/responses
 """
 
+import asyncio
 import base64
 import json
 import logging
@@ -53,7 +54,6 @@ except Exception as e:
         f"OpenAIResponsesModel requires openai>={_MIN_OPENAI_VERSION}. Install with: pip install -U openai"
     ) from e
 
-import httpx  # noqa: E402
 import openai  # noqa: E402 - must import after version check
 
 from ..agent.agent_metadata import AgentMetadata  # noqa: E402
@@ -83,6 +83,8 @@ _CONTEXT_WINDOW_OVERFLOW_MSG = "OpenAI Responses API threw context window overfl
 _RATE_LIMIT_MSG = "OpenAI Responses API threw rate limit error"
 # Input content types that accept prompt_cache_breakpoint (gpt-5.6+).
 _CACHEABLE_INPUT_TYPES = frozenset({"input_text", "input_image", "input_file"})
+# How long to keep reading a completed response so its pooled connection can be reused.
+_DRAIN_TIMEOUT_SECONDS = 0.5
 
 
 class _OpenAIResponsesStreamError(RuntimeError):
@@ -98,6 +100,12 @@ async def _close_response_stream(response: Any) -> None:
     close = getattr(response, "close", None)
     if close is not None:
         await close()
+
+
+async def _read_to_end(response: AsyncIterable[Any]) -> None:
+    """Read and discard the rest of a streamed response."""
+    async for _event in response:
+        pass
 
 
 def _encode_media_to_data_url(data: bytes, format_ext: str, media_type: str = "image") -> str:
@@ -246,16 +254,23 @@ class OpenAIResponsesModel(Model):
         """Read the rest of a completed streamed response so its connection can return to the client's pool.
 
         Only a pooled connection needs the rest of the body read; a per-request client is closed right after.
-        Best effort: the response is already complete, so a failed read only costs the connection.
+        Best effort: the response is already complete, so a read that fails or outlasts the time limit closes the
+        response and only costs the connection. The limit bounds a server that keeps the stream open after the
+        terminal event.
         """
         if self._custom_client is None:
             return
 
         try:
-            async for _event in response:
-                pass
-        except (openai.APIError, httpx.HTTPError, httpx.StreamError, ValueError) as error:
-            logger.debug("error=<%s> | failed to read the rest of the response stream after the terminal event", error)
+            await asyncio.wait_for(_read_to_end(response), timeout=_DRAIN_TIMEOUT_SECONDS)
+        # The transport's error types differ between openai majors (httpx on 2.x, httpx2 on 3.x).
+        except Exception as error:
+            logger.debug(
+                "error_type=<%s>, error=<%s> | failed to read the rest of the response stream after the terminal event",
+                type(error).__name__,
+                error,
+            )
+            await _close_response_stream(response)
 
     @asynccontextmanager
     async def _get_client(self) -> AsyncIterator[Any]:

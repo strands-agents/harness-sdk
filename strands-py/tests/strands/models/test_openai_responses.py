@@ -1,3 +1,4 @@
+import asyncio
 import copy
 import logging
 import os
@@ -2997,8 +2998,19 @@ def injected_client():
     return unittest.mock.AsyncMock()
 
 
+_STALL = object()
+
+
+class _ForeignTransportStreamError(RuntimeError):
+    """Stands in for a transport error type this module does not import, such as ``httpx2.StreamError``."""
+
+
 class _ClosableStream:
-    """Response stream stand-in that records how far it was read and whether it was closed."""
+    """Response stream stand-in that records how far it was read and whether it was closed.
+
+    An exception in ``events`` is raised when reached; ``_STALL`` waits forever, like a server that keeps
+    the stream open.
+    """
 
     def __init__(self, events):
         self.remaining = list(events)
@@ -3011,6 +3023,8 @@ class _ClosableStream:
         if not self.remaining:
             raise StopAsyncIteration
         event = self.remaining.pop(0)
+        if event is _STALL:
+            await asyncio.Event().wait()
         if isinstance(event, Exception):
             raise event
         return event
@@ -3044,8 +3058,19 @@ async def test_stream_reads_past_terminal_event_only_with_injected_client(
 @pytest.mark.parametrize(
     "read_error",
     [
-        httpx.RemoteProtocolError("peer closed connection without sending complete message body"),
-        openai.APIError("An error occurred during streaming", request=httpx.Request("POST", "https://x"), body=None),
+        pytest.param(
+            httpx.RemoteProtocolError("peer closed connection without sending complete message body"),
+            id="transport_error",
+        ),
+        pytest.param(httpx.StreamClosed(), id="stream_error"),
+        pytest.param(_ForeignTransportStreamError("stream closed"), id="foreign_transport_error"),
+        pytest.param(openai.APIConnectionError(request=httpx.Request("POST", "https://x")), id="openai_connection"),
+        pytest.param(
+            openai.APIError(
+                "An error occurred during streaming", request=httpx.Request("POST", "https://x"), body=None
+            ),
+            id="openai_api",
+        ),
     ],
 )
 async def test_stream_completes_when_reading_after_terminal_event_fails(
@@ -3058,6 +3083,30 @@ async def test_stream_completes_when_reading_after_terminal_event_fails(
     model = OpenAIResponsesModel(client=injected_client, model_id=model_id)
 
     tru_events = await alist(model.stream(messages))
+    exp_events = [
+        {"messageStart": {"role": "assistant"}},
+        {"contentBlockStart": {"start": {}}},
+        {"contentBlockDelta": {"delta": {"text": "Hello"}}},
+        {"contentBlockStop": {}},
+        {"messageStop": {"stopReason": "end_turn"}},
+    ]
+
+    assert tru_events == exp_events
+    assert response_stream.closed
+
+
+@pytest.mark.asyncio
+async def test_stream_completes_when_server_keeps_stream_open_after_terminal_event(
+    injected_client, model_id, messages, alist
+):
+    text_event = unittest.mock.Mock(type="response.output_text.delta", delta="Hello")
+    completed_event = unittest.mock.Mock(type="response.completed", response=unittest.mock.Mock(usage=None))
+    response_stream = _ClosableStream([text_event, completed_event, _STALL])
+    injected_client.responses.create = unittest.mock.AsyncMock(return_value=response_stream)
+    model = OpenAIResponsesModel(client=injected_client, model_id=model_id)
+
+    with unittest.mock.patch.object(strands.models.openai_responses, "_DRAIN_TIMEOUT_SECONDS", 0.01):
+        tru_events = await asyncio.wait_for(alist(model.stream(messages)), timeout=5)
     exp_events = [
         {"messageStart": {"role": "assistant"}},
         {"contentBlockStart": {"start": {}}},
