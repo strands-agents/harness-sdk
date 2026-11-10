@@ -31,7 +31,7 @@ export function streamKey(sdk: Sdk, language?: Language): string {
 }
 
 /**
- * @param repo  e.g. 'strands-agents/harness-sdk' | 'strands-agents/evals' | 'strands-agents/box'
+ * @param repo  e.g. 'strands-agents/harness-sdk' | 'strands-agents/evals' | 'strands-agents/box' | 'strands-agents/shell'
  * @param tag   the release tag
  */
 export function tagToMeta(repo: string, tag: string): TagMeta | null {
@@ -52,6 +52,10 @@ export function tagToMeta(repo: string, tag: string): TagMeta | null {
     if (!/^v\.?\d/.test(tag)) return null
     return { sdk: 'box', language: undefined, version: cleanVersion(tag) }
   }
+  if (repo.endsWith('/shell')) {
+    if (!/^v\.?\d/.test(tag)) return null
+    return { sdk: 'shell', language: undefined, version: cleanVersion(tag) }
+  }
   // harness-sdk
   const prefix = monorepoPrefix(tag)
   if (prefix) return { ...MONOREPO_STREAMS[prefix], version: cleanVersion(tag.slice(prefix.length)) }
@@ -67,6 +71,7 @@ const npm = (name: string, v: string) => `https://www.npmjs.com/package/${name}/
 export function getPackageUrl(sdk: Sdk, language: Language | undefined, version: string): string {
   if (sdk === 'evals') return pypi('strands-agents-evals', version)
   if (sdk === 'box') return `https://github.com/strands-agents/box/releases/tag/v${version}`
+  if (sdk === 'shell') return `https://github.com/strands-agents/shell/releases/tag/v${version}`
   if (sdk === 'cli') return npm('@strands-agents/cli', version)
   if (sdk === 'harness') {
     return language === 'typescript' ? npm('@strands-agents/harness', version) : pypi('strands-harness', version)

@@ -12,6 +12,7 @@ Windows.
 """
 
 import asyncio
+import errno
 import os
 import shlex
 import sys
@@ -381,8 +382,104 @@ async def test_empty_content_roundtrip(sandbox):
 
 @pytest.mark.asyncio
 async def test_read_nonexistent_file_raises(sandbox):
-    with pytest.raises(FileNotFoundError):
+    with pytest.raises(SandboxPathNotFoundError):
         await sandbox.read_file("nope.txt")
+
+
+@pytest.mark.asyncio
+async def test_read_directory_raises_is_a_directory(sandbox, tmp_path):
+    (tmp_path / "subdir").mkdir()
+    with pytest.raises(IsADirectoryError) as exc_info:
+        await sandbox.read_file("subdir")
+    assert (exc_info.value.errno, exc_info.value.filename, str(exc_info.value)) == (
+        errno.EISDIR,
+        "subdir",
+        "[Errno 21] Is a directory: 'subdir'",
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(not hasattr(os, "geteuid") or os.geteuid() == 0, reason="root bypasses directory permissions")
+async def test_read_file_under_unsearchable_directory_raises_permission_error(sandbox, tmp_path):
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    (locked / "secret.txt").write_text("x")
+    locked.chmod(0o600)
+    try:
+        with pytest.raises(PermissionError) as exc_info:
+            await sandbox.read_file("locked/secret.txt")
+        assert str(exc_info.value) == "[Errno 13] Permission denied: 'locked/secret.txt'"
+    finally:
+        locked.chmod(0o700)
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(not hasattr(os, "geteuid") or os.geteuid() == 0, reason="root bypasses directory permissions")
+async def test_read_file_under_unsearchable_ancestor_raises_permission_error(sandbox, tmp_path):
+    locked = tmp_path / "locked"
+    (locked / "inner").mkdir(parents=True)
+    (locked / "inner" / "secret.txt").write_text("x")
+    locked.chmod(0o600)
+    try:
+        with pytest.raises(PermissionError):
+            await sandbox.read_file("locked/inner/secret.txt")
+    finally:
+        locked.chmod(0o700)
+
+
+@pytest.mark.asyncio
+async def test_read_file_under_missing_or_file_ancestor_raises_not_found(sandbox, tmp_path):
+    (tmp_path / "file.txt").write_text("x")
+    for path in ("missing/a/b.txt", "file.txt/b.txt", str(tmp_path / "missing" / "b.txt")):
+        with pytest.raises(SandboxPathNotFoundError):
+            await sandbox.read_file(path)
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(not hasattr(os, "geteuid") or os.geteuid() == 0, reason="root bypasses directory permissions")
+async def test_read_unreadable_directory_raises_permission_error(sandbox, tmp_path):
+    # Matches the local sandbox, where open() on a mode-000 directory fails with EACCES.
+    locked = tmp_path / "locked"
+    locked.mkdir(mode=0o000)
+    try:
+        with pytest.raises(PermissionError):
+            await sandbox.read_file("locked")
+    finally:
+        locked.chmod(0o700)
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(not hasattr(os, "geteuid") or os.geteuid() == 0, reason="root bypasses file permissions")
+async def test_read_unreadable_file_raises_permission_error(sandbox, tmp_path):
+    secret = tmp_path / "secret.txt"
+    secret.write_text("x")
+    secret.chmod(0o200)
+    try:
+        with pytest.raises(PermissionError) as exc_info:
+            await sandbox.read_file("secret.txt")
+        assert (exc_info.value.errno, exc_info.value.filename) == (errno.EACCES, "secret.txt")
+    finally:
+        secret.chmod(0o600)
+
+
+@pytest.mark.asyncio
+async def test_read_file_failed_cd_is_not_reported_missing(tmp_path):
+    (tmp_path / "real.txt").write_text("x")
+    sandbox = _ShellTestSandbox(str(tmp_path / "missing-workdir"))
+    with pytest.raises(OSError) as exc_info:
+        await sandbox.read_file(str(tmp_path / "real.txt"))
+    assert not isinstance(exc_info.value, FileNotFoundError)
+
+
+@pytest.mark.asyncio
+async def test_read_file_other_failure_raises_plain_oserror(sandbox, monkeypatch):
+    async def fake_execute(self, command, **kwargs):
+        return ExecutionResult(exit_code=1, stdout="", stderr="base64: read error: Input/output error")
+
+    monkeypatch.setattr(PosixShellSandbox, "execute", fake_execute, raising=True)
+    with pytest.raises(OSError) as exc_info:
+        await sandbox.read_file("data.bin")
+    assert (type(exc_info.value), str(exc_info.value)) == (OSError, "base64: read error: Input/output error")
 
 
 @pytest.mark.asyncio

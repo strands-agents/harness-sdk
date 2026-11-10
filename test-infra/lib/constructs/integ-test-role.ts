@@ -130,6 +130,9 @@ export class IntegTestRole extends Construct {
           'arn:aws:bedrock:*:*:inference-profile/global.anthropic.claude-haiku-4-5-20251001-v1:0',
           'arn:aws:bedrock:*:*:inference-profile/global.anthropic.claude-sonnet-4-6',
           'arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-4-6',
+          // AnthropicModel with an injected AsyncAnthropicBedrock client (bedrock-runtime InvokeModel).
+          'arn:aws:bedrock:*:*:inference-profile/us.anthropic.claude-haiku-5-5',
+          'arn:aws:bedrock:*::foundation-model/anthropic.claude-haiku-5-5',
           'arn:aws:bedrock:*::foundation-model/amazon.nova-2-sonic-v1:0',
           'arn:aws:bedrock:*::foundation-model/amazon.nova-2-5-sonic',
           'arn:aws:bedrock:*:*:inference-profile/us.xai.grok-4.7',

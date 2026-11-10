@@ -30,9 +30,11 @@ def _is_truncated(block: ContentBlock | ToolResultContent) -> bool:
 def _truncate_largest_text_blocks(messages: Messages, budget: int = 1, preserve_chars: int = _PRESERVE_CHARS) -> int:
     """Replace the largest untruncated text blocks in non-pinned messages with head+tail previews.
 
-    Up to ``budget`` blocks are truncated, largest first (ties go to the oldest). A block qualifies when
-    truncating it saves more than ``preserve_chars`` characters, so each call either shrinks the history
-    by a meaningful amount or reports that nothing is left.
+    Up to ``budget`` blocks are truncated, largest first (ties go to the oldest). Each end keeps
+    ``preserve_chars`` characters, or a quarter of the block when it is shorter than ``4 * preserve_chars``,
+    so every truncation drops at least half of the block. Blocks of ``preserve_chars`` or fewer characters
+    are never touched, and a block is truncated at most once, keeping about ``min(len / 2, 2 * preserve_chars)``
+    characters: an overflow that is still too large once every block is truncated cannot be fixed here.
 
     Args:
         messages: The conversation history, modified in place.
@@ -56,10 +58,11 @@ def _truncate_largest_text_blocks(messages: Messages, budget: int = 1, preserve_
         key=lambda block: len(block["text"]),
         reverse=True,
     )
-    qualifying = [block for block in candidates[:budget] if len(block["text"]) > 3 * preserve_chars]
+    qualifying = [block for block in candidates[:budget] if len(block["text"]) > preserve_chars]
     for block in qualifying:
         text = block["text"]
-        removed = len(text) - 2 * preserve_chars
+        keep = min(preserve_chars, len(text) // 4)
+        removed = len(text) - 2 * keep
         marker = f"...\n\n... [truncated: {removed} chars removed] ...\n\n..."
-        block["text"] = f"{text[:preserve_chars]}{marker}{text[-preserve_chars:]}"
+        block["text"] = f"{text[:keep]}{marker}{text[len(text) - keep :]}"
     return len(qualifying)

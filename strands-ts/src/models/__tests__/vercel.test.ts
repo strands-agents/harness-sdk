@@ -11,7 +11,15 @@ import { ContextWindowOverflowError, ModelError, ModelThrottledError, ModelNetwo
 import { logger } from '../../logging/logger.js'
 import { warnOnce } from '../../logging/warn-once.js'
 import { collectIterator } from '../../__fixtures__/model-test-helpers.js'
-import { Message, TextBlock, ToolUseBlock, ToolResultBlock, ReasoningBlock, JsonBlock } from '../../types/messages.js'
+import {
+  Message,
+  TextBlock,
+  ToolUseBlock,
+  ToolResultBlock,
+  ReasoningBlock,
+  JsonBlock,
+  UnknownBlock,
+} from '../../types/messages.js'
 import { DocumentBlock, ImageBlock, VideoBlock } from '../../types/media.js'
 import type { ToolSpec } from '../../tools/types.js'
 
@@ -882,6 +890,52 @@ describe('VercelModel', () => {
         expect((prompt[0] as any).role).toBe('assistant')
       })
     })
+
+    it('skips unknown blocks in user and assistant messages and tool results, without a warning', async () => {
+      using warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      const { collect, callArgs } = setupCaptureTest()
+      const unknownBlock = new UnknownBlock({ futureBlock: { value: 1 } })
+      await collect([
+        new Message({ role: 'user', content: [new TextBlock('Hello'), unknownBlock] }),
+        new Message({
+          role: 'assistant',
+          content: [new TextBlock('Hi'), unknownBlock, new ToolUseBlock({ name: 'tool', toolUseId: 'tu1', input: {} })],
+        }),
+        new Message({
+          role: 'user',
+          content: [
+            new ToolResultBlock({
+              toolUseId: 'tu1',
+              status: 'success',
+              content: [new TextBlock('done'), unknownBlock],
+            }),
+          ],
+        }),
+      ])
+      expect(callArgs().prompt).toEqual([
+        { role: 'user', content: [{ type: 'text', text: 'Hello' }] },
+        {
+          role: 'assistant',
+          content: [
+            { type: 'text', text: 'Hi' },
+            { type: 'tool-call', toolCallId: 'tu1', toolName: 'tool', input: {} },
+          ],
+        },
+        {
+          role: 'tool',
+          content: [
+            {
+              type: 'tool-result',
+              toolCallId: 'tu1',
+              toolName: 'tool',
+              output: { type: 'content', value: [{ type: 'text', text: 'done' }] },
+            },
+          ],
+        },
+      ])
+      expect(warnSpy).not.toHaveBeenCalled()
+    })
+
     describe('tool result output formatting', () => {
       function toolResultMessages(
         content: ToolResultBlock['content'],

@@ -23,7 +23,8 @@ import json
 import logging
 import mimetypes
 from collections import Counter
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, AsyncIterator
+from contextlib import asynccontextmanager
 from importlib.metadata import version as get_package_version
 from types import SimpleNamespace
 from typing import Any, Protocol, TypedDict, TypeVar, cast
@@ -62,7 +63,7 @@ from ..types.exceptions import ContextWindowOverflowException, ModelThrottledExc
 from ..types.streaming import StreamEvent  # noqa: E402
 from ..types.tools import ToolChoice, ToolResult, ToolSpec, ToolUse  # noqa: E402
 from ._defaults import resolve_config_metadata  # noqa: E402
-from ._model_info import ModelCapabilities, ModelInfo  # noqa: E402
+from ._model_info import SERVER_SIDE_SUMMARY_OFF, ModelCapabilities, ModelInfo  # noqa: E402
 from ._openai_bedrock import BedrockMantleConfig, resolve_bedrock_client_args  # noqa: E402
 from ._openai_cache import CACHE_LIFETIMES, apply_cache_config  # noqa: E402
 from ._openai_errors import classify_openai_error  # noqa: E402
@@ -176,6 +177,8 @@ class OpenAIResponsesModel(Model):
         self,
         client_args: dict[str, Any] | None = None,
         bedrock_mantle_config: BedrockMantleConfig | None = None,
+        *,
+        client: Client | None = None,
         **model_config: Unpack[OpenAIResponsesConfig],
     ) -> None:
         """Initialize provider instance.
@@ -189,12 +192,24 @@ class OpenAIResponsesModel(Model):
                 OpenAI-compatible endpoints, ``bedrock-mantle`` (the default) or
                 ``bedrock-runtime`` via the config's ``endpoint`` key. See
                 :class:`BedrockMantleConfig` for accepted keys. When set, a fresh bearer
-                token is minted on every request.
+                token is minted on every request. Cannot be combined with ``client``.
+            client: Pre-configured OpenAI-compatible async client to reuse across requests, e.g. an
+                ``openai.AsyncOpenAI`` pointed at an Amazon Bedrock endpoint. The model does not close it,
+                and it should not be shared across asyncio event loops.
             **model_config: Configuration options for the OpenAI Responses API model.
+
+        Raises:
+            ValueError: If ``client`` is combined with ``client_args`` or ``bedrock_mantle_config``.
         """
         validate_config_keys(model_config, self.OpenAIResponsesConfig)
         self.config = dict(model_config)
 
+        if client is not None and client_args:
+            raise ValueError("Only one of 'client' or 'client_args' should be provided, not both.")
+        if client is not None and bedrock_mantle_config is not None:
+            raise ValueError("'bedrock_mantle_config' cannot be combined with a pre-built 'client'.")
+
+        self._custom_client = client
         self.client_args = client_args or {}
         self._bedrock_mantle_config = bedrock_mantle_config
 
@@ -219,15 +234,25 @@ class OpenAIResponsesModel(Model):
             )
         return self.client_args
 
+    @asynccontextmanager
+    async def _get_client(self) -> AsyncIterator[Any]:
+        """Yield the injected client, or a per-request ``AsyncOpenAI`` that is closed afterwards."""
+        if self._custom_client is not None:
+            yield self._custom_client
+        else:
+            async with openai.AsyncOpenAI(**self._resolve_client_args()) as client:
+                yield client
+
     @property
     @override
     def model_info(self) -> ModelInfo:
-        """Adds whether server-side conversation storage is enabled.
+        """Adds whether server-side conversation storage is enabled, and reports server-side summary as off.
 
-        Taken from the ``stateful`` configuration option, which a ``model_info`` override still wins over.
+        Storage is taken from the ``stateful`` configuration option; a ``model_info`` override still wins over both.
         """
         return ModelInfo.merge(
             super().model_info,
+            SERVER_SIDE_SUMMARY_OFF,
             ModelInfo(capabilities=ModelCapabilities(stateful=bool(self.config.get("stateful")))),
             cast(ModelInfo | None, self.config.get("model_info")),
         )
@@ -288,7 +313,7 @@ class OpenAIResponsesModel(Model):
             count_tokens_fields = {"model", "input", "instructions", "tools"}
             request = {k: request[k] for k in request.keys() & count_tokens_fields}
 
-            async with openai.AsyncOpenAI(**self._resolve_client_args()) as client:
+            async with self._get_client() as client:
                 response = await client.responses.input_tokens.count(**request)
                 total_tokens: int = response.input_tokens
 
@@ -351,7 +376,7 @@ class OpenAIResponsesModel(Model):
 
         logger.debug("invoking OpenAI Responses API model")
 
-        async with openai.AsyncOpenAI(**self._resolve_client_args()) as client:
+        async with self._get_client() as client:
             try:
                 response = await client.responses.create(**request)
 
@@ -547,7 +572,7 @@ class OpenAIResponsesModel(Model):
             ContextWindowOverflowException: If the input exceeds the model's context window.
             ModelThrottledException: If the request is throttled by OpenAI (rate limits).
         """
-        async with openai.AsyncOpenAI(**self._resolve_client_args()) as client:
+        async with self._get_client() as client:
             try:
                 request = self._format_request(prompt, system_prompt=system_prompt)
                 request.pop("stream", None)

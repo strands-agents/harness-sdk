@@ -12,6 +12,8 @@ import CatalogFacets from '../components/catalog/CatalogFacets.astro'
 import { CATALOG_TYPES, MAINTAINED_BY_TIERS } from '../components/catalog/types'
 import { toCardModel, sortEntries, type CatalogStatsFile } from '../util/catalog'
 import { pathWithBase } from '../util/links'
+import { integrationsSchema } from '../util/structured-data'
+import { CATALOG_FEED_PATH } from '../util/catalog-feed'
 import statsFile from '../data/catalog-stats.json'
 import '../styles/catalog.css'
 
@@ -19,6 +21,9 @@ const stats = statsFile as CatalogStatsFile
 const entries = await getCollection('catalog')
 const buildDate = new Date()
 const cards = sortEntries(entries.map((e) => toCardModel(e.id, e.data, stats[e.id], buildDate)))
+
+const siteUrl = Astro.site?.origin || 'https://strandsagents.com'
+Astro.locals.structuredData = [integrationsSchema(cards, siteUrl + Astro.url.pathname, siteUrl)]
 
 // The SDK facet renders only when the catalog actually has evals entries;
 // the Verified filter only when at least one entry is actually verified.
@@ -43,6 +48,9 @@ const maintainedByFacets = MAINTAINED_BY_TIERS.map(({ value, label }) => ({
 
 const title = 'Integrations'
 const description = 'Community-built tools, model providers, plugins, and integrations for Strands Agents.'
+const feedHead = [
+  { tag: 'link' as const, attrs: { rel: 'alternate', type: 'application/json', href: pathWithBase(CATALOG_FEED_PATH) } },
+]
 
 // Left sidebar (real Starlight sidebar): browse by type. Each link filters the
 // catalog via ?type=; "All integrations" clears it.
@@ -58,7 +66,7 @@ const sidebar = [
 ]
 ---
 
-<StarlightPage frontmatter={{ title, description, tableOfContents: false }} sidebar={sidebar}>
+<StarlightPage frontmatter={{ title, description, tableOfContents: false, head: feedHead }} sidebar={sidebar}>
   <div class="cat-page">
     <div class="cat-head">
       <p class="cat-subtitle">Tools, model providers, and integrations built by the Strands team and community.</p>
