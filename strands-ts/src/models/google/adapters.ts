@@ -312,9 +312,9 @@ function formatToolResultBlock(block: ToolResultBlock, toolUseIdToName: Map<stri
       case 'documentBlock': {
         const mimeType = toMimeType(c.format) ?? `application/${c.format}`
         if (c.source.type === 'documentSourceBytes') {
-          addMedia(encodeBase64(c.source.bytes), mimeType, c.name)
+          addMedia(encodeBase64(c.source.bytes), mimeType, c.name || `document.${c.format}`)
         } else if (c.source.type === 'documentSourceText') {
-          addMedia(encodeBase64(new TextEncoder().encode(c.source.text)), mimeType, c.name)
+          addMedia(encodeBase64(new TextEncoder().encode(c.source.text)), mimeType, c.name || `document.${c.format}`)
         } else {
           logger.warn('source_type=<%s> | only bytes/text sources supported in gemini tool results', c.source.type)
         }

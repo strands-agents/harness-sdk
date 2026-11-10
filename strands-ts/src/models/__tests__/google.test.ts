@@ -1298,11 +1298,49 @@ describe('GoogleModel', () => {
       const contents = formatMessages(messages)
 
       const resultPart = contents[1]!.parts![0]! as {
-        functionResponse: { parts?: Array<{ inlineData: { displayName: string } }> }
+        functionResponse: { response: unknown; parts?: Array<{ inlineData: { displayName: string } }> }
       }
       const displayNames = resultPart.functionResponse.parts!.map((p) => p.inlineData.displayName)
       expect(new Set(displayNames).size).toBe(displayNames.length)
       expect(displayNames).toEqual(['report.pdf', 'report-1.pdf'])
+      expect(resultPart.functionResponse.response).toEqual({
+        output: [{ $ref: 'report.pdf' }, { $ref: 'report-1.pdf' }],
+      })
+    })
+
+    it('names an unnamed tool-result document after its format', () => {
+      const toolResultBlock = new ToolResultBlock({
+        toolUseId: 'test-id',
+        status: 'success',
+        content: [new DocumentBlock({ name: '', format: 'txt', source: { bytes: new Uint8Array([0x68]) } })],
+      })
+
+      const contents = formatMessages([new Message({ role: 'user', content: [toolResultBlock] })])
+
+      const resultPart = contents[0]!.parts![0]! as {
+        functionResponse: { response: unknown; parts?: Array<{ inlineData: { displayName: string } }> }
+      }
+      expect(resultPart.functionResponse.response).toEqual({ output: [{ $ref: 'document.txt' }] })
+      expect(resultPart.functionResponse.parts!.map((p) => p.inlineData.displayName)).toEqual(['document.txt'])
+    })
+
+    it('skips a location-source image in a tool result without a $ref', () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const toolResultBlock = new ToolResultBlock({
+        toolUseId: 'test-id',
+        status: 'success',
+        content: [
+          new TextBlock('clip'),
+          new ImageBlock({ format: 'png', source: { location: { type: 's3', uri: 's3://bucket/key.png' } } }),
+        ],
+      })
+
+      const contents = formatMessages([new Message({ role: 'user', content: [toolResultBlock] })])
+
+      const resultPart = contents[0]!.parts![0]! as { functionResponse: { response: unknown; parts?: unknown[] } }
+      expect(resultPart.functionResponse.response).toEqual({ output: [{ text: 'clip' }] })
+      expect(resultPart.functionResponse.parts).toBeUndefined()
+      warnSpy.mockRestore()
     })
 
     it('formats document block with bytes source in tool result as inlineData', () => {
