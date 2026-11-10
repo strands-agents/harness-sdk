@@ -266,7 +266,7 @@ function ToolActivityGroup({
   const { color } = TOOL_ACTIVITY[activity]
   const counts = new Map<string, number>()
   for (const entry of entries) {
-    const action = toolAction(entry.name)
+    const action = toolAction(entry.name, entry.input)
     counts.set(action, (counts.get(action) ?? 0) + 1)
   }
   const details = [
@@ -443,7 +443,7 @@ function EntryView({
         <Text wrap="wrap">
           {hiddenOutput ? <Text dimColor>{open ? '▾' : '▸'} </Text> : null}
           <Text color={color} bold>
-            {marker} {toolAction(entry.name)}
+            {marker} {toolAction(entry.name, entry.input)}
           </Text>
           <Text dimColor> {summarizeToolInput(entry.name, entry.input)}</Text>
           {statusLabel ? <Text color={color}> · {statusLabel}</Text> : null}

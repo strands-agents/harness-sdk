@@ -37,6 +37,8 @@ describe('AgentMessaging', () => {
       messaging.register({
         id: 'agent-2',
         name: 'Reviewer',
+        description: 'Review the parser.',
+        backgroundTask: { id: 'task-123', ownerId: 'agent-1' },
         status: () => 'working',
         enqueue: (message) => {
           received.push(message)
@@ -54,7 +56,7 @@ describe('AgentMessaging', () => {
 
       expect(agentMessage.name).toBe('message_agent')
       await expect(agentMessage.invoke({ action: 'list' }, { agent: sender } as ToolContext)).resolves.toEqual({
-        agents: [{ id: 'agent-2', name: 'Reviewer', status: 'working' }],
+        agents: [{ id: 'agent-2', name: 'Reviewer', description: 'Review the parser.', status: 'working' }],
       })
       const result = await agentMessage.invoke(
         { action: 'send', to: 'agent-2', message: 'Please review the parser.' },

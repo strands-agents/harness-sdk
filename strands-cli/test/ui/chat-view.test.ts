@@ -360,11 +360,12 @@ describe('ChatView', () => {
       })
       expect(warning).not.toContain(hint)
       const warningRows = warning.split('\n')
-      const taskRow = warningRows.findIndex((line) => line.includes('Background task running (read)'))
+      const taskRow = warningRows.findIndex((line) => line.includes('Background ·'))
       const mcpRow = warningRows.findIndex((line) => line.includes('3 MCP servers failed to connect'))
       expect(taskRow).toBeGreaterThanOrEqual(0)
-      expect(mcpRow).toBe(taskRow + 1)
-      expect(mcpRow).toBeLessThan(warningRows.findIndex((line) => line.includes('Enter to send')))
+      const inputRow = warningRows.findIndex((line) => line.includes('Enter to send'))
+      expect(mcpRow).toBeLessThan(inputRow)
+      expect(taskRow).toBeGreaterThan(inputRow)
       expect(render()).toContain(hint)
 
       expect(
@@ -1168,8 +1169,8 @@ describe('ChatView', () => {
     expect(updateOutput).toContain('/settings')
   })
 
-  it('shows active background tasks immediately above the composer', () => {
-    const output = renderView({
+  it.each([40, 100])('keeps background activity in one row below the composer at %s columns', (width) => {
+    const props = {
       snapshot: snapshot({
         tasks: [
           {
@@ -1192,14 +1193,22 @@ describe('ChatView', () => {
           },
         ],
       }),
-      terminalWidth: 100,
+      terminalWidth: width,
       terminalHeight: 30,
-    })
+    }
+    const output = renderView(props)
 
-    expect(output).toContain('Background task running (subagent) - task-1')
-    expect(output).toContain('Background task queued (read) - task-2')
-    expect(output).not.toContain('Background task completed (write) - task-3')
-    expect(output.indexOf('Background task queued (read)')).toBeLessThan(output.indexOf('Enter to send'))
+    expect(output).toContain('Background 1/2')
+    expect(output).toContain('subagent')
+    expect(output).not.toContain('task-1')
+    expect(output).not.toContain('write')
+    expect(output.indexOf('Background 1/2')).toBeGreaterThan(output.indexOf('Enter to send'))
+    expect(output.indexOf('Background 1/2')).toBeLessThan(output.indexOf('/settings'))
+    expect(output.split('\n').filter((line) => line.includes('Background'))).toHaveLength(1)
+    const selected = renderView({ ...props, focusedBackgroundTask: 'task-2' })
+    expect(selected).toContain('Background 2/2')
+    expect(selected).toContain('read')
+    expect(selected.split('\n').every((line) => stringWidth(line) <= width)).toBe(true)
   })
 
   it('scrolls the startup lockup with the conversation', () => {
@@ -1556,6 +1565,14 @@ describe('ChatView', () => {
                   },
                 ],
               },
+              {
+                id: 'turn-1:3',
+                type: 'tool',
+                toolUseId: 'list-1',
+                name: 'strands_manage_background_task',
+                input: { mode: 'list' },
+                status: 'success',
+              },
             ],
             status: 'complete',
           },
@@ -1571,6 +1588,8 @@ describe('ChatView', () => {
     expect(output).not.toContain('Read src/auth.ts')
     expect(output).not.toContain('Background task dispatched.')
     expect(output).not.toContain('Status: queued')
+    expect(output).toContain('List background tasks')
+    expect(output).not.toContain('Background list')
   })
 
   it('shows a subagent as background before its dispatch result arrives', () => {
@@ -2170,7 +2189,7 @@ describe('ChatView', () => {
                 type: 'tool',
                 toolUseId: 'message-1',
                 name: 'message_agent',
-                input: { action: 'send', to: 'agent-2', message: 'Please check the parser.' },
+                input: { action: 'send', to: 'agent-2', message: 'Please check the parser.\n\nInclude invalid input.' },
                 status: 'success',
                 result: [
                   {
@@ -2193,6 +2212,11 @@ describe('ChatView', () => {
 
     expect(output).toContain('Message to Reviewer')
     expect(output).toContain('Please check the parser.')
+    expect(output).toContain('Include invalid input.')
+    const lines = output.split('\n')
+    const heading = lines.findIndex((line) => line.includes('Message to Reviewer'))
+    expect(lines[heading]).not.toContain('Please check')
+    expect(lines[heading + 1]).toContain('Please check the parser.')
     expect(output).not.toContain('message_agent')
   })
 

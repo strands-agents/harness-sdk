@@ -584,8 +584,13 @@ starts a continuation turn.
 Turn token totals include delegated work. When detached work finishes, its originating turn's
 total updates; the context meter continues to measure the parent agent's prompt.
 
-Live subagents also appear in `/agents` while they are available for peer messages. They are
-status rows rather than switchable conversations and disappear when the delegated task finishes.
+Background activity appears in one row below the input. Press Down from an empty input, or Tab
+from a draft, to focus it; Left/Right chooses a task and Enter opens its live activity. Esc returns
+to the input without losing the draft.
+
+Live subagents also appear in `/agents` while they are available for peer messages. Select a card
+and press Enter (or click it) to watch its activity; Esc returns to the cards. These views are
+read-only, and the cards disappear when the delegated task finishes.
 
 `/rename <name>` names the active agent in chat, `/agents`, and peer messages, independently of its
 session title. Names are saved with file-backed sessions and restored when reopened. `/rename` without

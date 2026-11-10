@@ -22,7 +22,6 @@ import {
   CONFIG_DOCK_MIN_TERMINAL_WIDTH,
   isComposerPanel,
   isOutlinedComposerPanel,
-  MAX_VISIBLE_BACKGROUND_TASKS,
   type MetadataTarget,
   type ModelPanelFocus,
   type SettingsPanelFocus,
@@ -103,6 +102,8 @@ function ChatViewContent({
   pressedQueuedPrompt,
   editingQueuedPromptId,
   focusedQueuedPrompt,
+  focusedBackgroundTask,
+  hoveredBackgroundTask,
   onMetadataElement,
   onPanelElement,
   onDockElement,
@@ -113,6 +114,7 @@ function ChatViewContent({
   onPanelSliderElement,
   onSuggestionElement,
   onQueuedPromptElement,
+  onBackgroundTaskElement,
   onStatusElement,
   onFrogElement,
   onJumpToBottomElement,
@@ -171,6 +173,8 @@ function ChatViewContent({
   pressedQueuedPrompt?: QueuedPromptTarget
   editingQueuedPromptId?: string
   focusedQueuedPrompt?: QueuedPromptTarget
+  focusedBackgroundTask?: string
+  hoveredBackgroundTask?: boolean
   onMetadataElement?: (target: MetadataTarget, element: DOMElement | null) => void
   onPanelElement?: (element: DOMElement | null) => void
   onDockElement?: (element: DOMElement | null) => void
@@ -181,6 +185,7 @@ function ChatViewContent({
   onPanelSliderElement?: (element: DOMElement | null) => void
   onSuggestionElement?: (index: number, element: DOMElement | null) => void
   onQueuedPromptElement?: (target: QueuedPromptTarget, element: DOMElement | null) => void
+  onBackgroundTaskElement?: (element: DOMElement | null) => void
   onStatusElement?: (element: DOMElement | null) => void
   onFrogElement?: (element: DOMElement | null) => void
   onJumpToBottomElement?: (element: DOMElement | null) => void
@@ -219,10 +224,12 @@ function ChatViewContent({
   const activeBackgroundTasks = snapshot.tasks.filter(
     (task) => task.source === 'background' && isActiveTask(task.status)
   )
-  const visibleBackgroundTasks = activeBackgroundTasks.slice(0, MAX_VISIBLE_BACKGROUND_TASKS)
-  const hiddenBackgroundTasks = activeBackgroundTasks.length - visibleBackgroundTasks.length
+  const backgroundTaskIndex = Math.max(
+    0,
+    activeBackgroundTasks.findIndex((task) => task.id === focusedBackgroundTask)
+  )
+  const backgroundTask = activeBackgroundTasks[backgroundTaskIndex]
   const composerSpinner = useSpinner(Boolean(snapshot.composerStatus), snapshot.settings.animations)
-  const backgroundTaskSpinner = useSpinner(activeBackgroundTasks.length > 0, snapshot.settings.animations)
   const mcpStartupSpinner = useSpinner(snapshot.mcpStartup !== undefined, snapshot.settings.animations)
   const partyFrame = usePartyFrame((party || maxEffort) && snapshot.settings.animations)
   const statusLayout = composerStatusLayout(snapshot, terminalHeight)
@@ -543,16 +550,6 @@ function ChatViewContent({
                   />
                 ) : null}
                 {showVoiceStatus ? <VoiceStatus snapshot={snapshot.voice!} {...(voice ? { voice } : {})} /> : null}
-                {visibleBackgroundTasks.map((task) => (
-                  <BackgroundTaskStatus key={task.id} task={task} spinner={backgroundTaskSpinner} />
-                ))}
-                {hiddenBackgroundTasks > 0 ? (
-                  <Box height={1} flexShrink={0} paddingX={1}>
-                    <Text dimColor wrap="truncate-end">
-                      + {hiddenBackgroundTasks} more background tasks
-                    </Text>
-                  </Box>
-                ) : null}
                 {snapshot.mcpStartup ? (
                   <McpStartupStatus startup={snapshot.mcpStartup} spinner={mcpStartupSpinner} />
                 ) : null}
@@ -591,6 +588,7 @@ function ChatViewContent({
               {...(snapshot.composerStatus ? { busyStatus: `${composerSpinner} ${snapshot.composerStatus}` } : {})}
               {...(snapshot.panel && !composerPanel ? { panelStatus: panelEditorStatus(snapshot.panel) } : {})}
               {...(focusedQueuedPrompt ? { panelStatus: 'Queue · Tab/Shift+Tab move · Enter choose · Esc back' } : {})}
+              {...(focusedBackgroundTask ? { panelStatus: '←→ choose · Enter view · Esc back' } : {})}
               party={party}
               partyFrame={partyFrame}
               energy={maxEffort}
@@ -600,6 +598,16 @@ function ChatViewContent({
             >
               {composerPanel ? panelView : null}
             </PromptEditor>
+            {backgroundTask ? (
+              <BackgroundTaskStatus
+                task={backgroundTask}
+                index={backgroundTaskIndex}
+                total={activeBackgroundTasks.length}
+                focused={focusedBackgroundTask !== undefined}
+                hovered={hoveredBackgroundTask === true}
+                {...(onBackgroundTaskElement ? { onElement: onBackgroundTaskElement } : {})}
+              />
+            ) : null}
           </Box>
           <ComposerFooter
             snapshot={snapshot}
@@ -712,15 +720,44 @@ function McpStartupStatus({ startup, spinner }: { startup: ChatMcpStartup; spinn
   )
 }
 
-function BackgroundTaskStatus({ task, spinner }: { task: ChatTask; spinner: string }): ReactElement {
-  const { warning } = useTheme()
+function BackgroundTaskStatus({
+  task,
+  index,
+  total,
+  focused,
+  hovered,
+  onElement,
+}: {
+  task: ChatTask
+  index: number
+  total: number
+  focused: boolean
+  hovered: boolean
+  onElement?: (element: DOMElement | null) => void
+}): ReactElement {
+  const { accent, warning, selection } = useTheme()
   const status =
     task.status === 'paused' ? 'waiting' : task.status === 'queued' || task.status === 'pending' ? 'queued' : 'running'
   return (
-    <Box height={1} flexShrink={0} paddingX={1}>
-      <Text color={warning} wrap="truncate-end">
-        {spinner} Background task {status} ({task.label}) - {task.id}
-      </Text>
+    <Box
+      ref={onElement}
+      height={1}
+      flexShrink={0}
+      paddingX={1}
+      backgroundColor={focused || hovered ? selection : undefined}
+    >
+      <Box flexShrink={0}>
+        <Text dimColor>Background{total > 1 ? ` ${index + 1}/${total}` : ''} · </Text>
+      </Box>
+      <Box flexGrow={1} flexShrink={1} overflow="hidden">
+        <Text wrap="truncate-end">
+          <Text color={status === 'running' ? accent : warning}>●</Text> {task.label}
+          <Text dimColor> · {status}</Text>
+        </Text>
+      </Box>
+      <Box marginLeft={1} flexShrink={0}>
+        <Text dimColor>{focused ? '←→ Enter Esc' : '↓ view'}</Text>
+      </Box>
     </Box>
   )
 }

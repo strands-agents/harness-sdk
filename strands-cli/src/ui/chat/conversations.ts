@@ -60,6 +60,7 @@ export class ConversationManager implements ChatControllerApi {
   private readonly _stopProjectWatch: (() => void) | undefined
   private _activeId: string
   private _panel: ChatPanel | undefined
+  private _taskOwnerId: string | undefined
   private _snapshot: ChatSnapshot
   private _nextConversation = 2
   private _nextPanel = 1
@@ -229,6 +230,7 @@ export class ConversationManager implements ChatControllerApi {
       this.close()
       return undefined
     }
+    if (this._taskOwnerId && !this.dismissPanel()) return undefined
     if (hasAttachments) {
       this._panel = undefined
       this._emit()
@@ -327,6 +329,15 @@ export class ConversationManager implements ChatControllerApi {
   }
 
   dismissPanel(): boolean {
+    if (this._snapshot.panel?.kind === 'permission') return false
+    if (this._taskOwnerId) {
+      const owner = this._conversations.get(this._taskOwnerId)
+      if (owner?.controller.getSnapshot().panel?.kind === 'permission') return false
+      this._taskOwnerId = undefined
+      owner?.controller.dismissPanel()
+      this._emit()
+      return true
+    }
     if (this._panel?.kind === 'agents' && this._panel.renameInput) {
       delete this._panel.renameInput
       this._openAgentsPanel()
@@ -341,6 +352,12 @@ export class ConversationManager implements ChatControllerApi {
   }
 
   async activatePanelRow(row: ChatPanelRow): Promise<boolean> {
+    if (this._active.controller.getSnapshot().panel?.kind === 'permission') {
+      return this._active.controller.activatePanelRow(row)
+    }
+    if (this._taskOwnerId) {
+      return this._conversations.get(this._taskOwnerId)?.controller.activatePanelRow(row) ?? false
+    }
     if (this._panel?.kind === 'voice') {
       return row.value ? this._voice.handlePanelAction(row.value) : false
     }
@@ -357,6 +374,10 @@ export class ConversationManager implements ChatControllerApi {
         const id = readConversationValue(row.value.slice(0, -'=rename'.length))
         return id ? this._openAgentNameInput(id) : false
       }
+      const task = this._agentMessaging
+        ?.list()
+        .find((endpoint) => row.value === `delegate:${encodeURIComponent(endpoint.id)}`)?.backgroundTask
+      if (task) return this.openTask(task.id, task.ownerId)
       const id = readConversationValue(row.value)
       return id ? this._switchConversation(id) : false
     }
@@ -367,13 +388,24 @@ export class ConversationManager implements ChatControllerApi {
   }
 
   openModelPanel(): Promise<void> {
+    if (this._taskOwnerId && !this.dismissPanel()) return Promise.resolve()
     this._panel = undefined
     return this._active.controller.openModelPanel()
   }
 
   openContextPanel(): void {
+    if (this._taskOwnerId && !this.dismissPanel()) return
     this._panel = undefined
     this._active.controller.openContextPanel()
+  }
+
+  openTask(taskId: string, ownerId = this._activeId): boolean {
+    if (this._snapshot.panel?.kind === 'permission') return false
+    const owner = this._conversations.get(ownerId)
+    if (!owner?.controller.openTask(taskId)) return false
+    this._taskOwnerId = ownerId
+    this._emit()
+    return true
   }
 
   openSkillDetail(name: string): boolean {
@@ -527,6 +559,10 @@ export class ConversationManager implements ChatControllerApi {
       controller,
       unsubscribe: controller.subscribe(() => {
         streamSpokenReply()
+        const panel = controller.getSnapshot().panel
+        if (this._taskOwnerId === endpointId && panel?.kind !== 'detail' && panel?.kind !== 'permission') {
+          this._taskOwnerId = undefined
+        }
         if (this._panel?.kind === 'agents') {
           this._openAgentsPanel(false)
         }
@@ -630,7 +666,8 @@ export class ConversationManager implements ChatControllerApi {
         (endpoint) =>
           ({
             label: endpoint.name,
-            description: 'Live delegate',
+            description: endpoint.description ?? 'Live delegate',
+            ...(endpoint.backgroundTask ? { value: `delegate:${encodeURIComponent(endpoint.id)}` } : {}),
             bold: true,
             current: false,
             badge: {
@@ -669,7 +706,10 @@ export class ConversationManager implements ChatControllerApi {
   private _buildSnapshot(): ChatSnapshot {
     const active = this._active.controller.getSnapshot()
     const { panel: activePanel, ...base } = active
-    const panel = activePanel?.kind === 'permission' ? activePanel : (this._panel ?? activePanel)
+    const taskPanel = this._taskOwnerId
+      ? this._conversations.get(this._taskOwnerId)?.controller.getSnapshot().panel
+      : undefined
+    const panel = activePanel?.kind === 'permission' ? activePanel : (taskPanel ?? this._panel ?? activePanel)
     const afterTurnId = active.activeTurn?.id ?? active.completedTurns.at(-1)?.id
     return {
       ...base,

@@ -1113,7 +1113,14 @@ describe('interactive runtime lifecycle', () => {
         await expect(
           messageAgent.invoke({ action: 'list' }, { agent: parent } as unknown as ToolContext)
         ).resolves.toEqual({
-          agents: [{ id: 'task-1', name: `subagent: ${summary}`, status: 'working' }],
+          agents: [
+            {
+              id: 'task-1',
+              name: 'subagent',
+              description: summary,
+              status: 'working',
+            },
+          ],
         })
         await controller.submit('/agents')
         expect(controller.getSnapshot().panel).toMatchObject({
@@ -1127,11 +1134,18 @@ describe('interactive runtime lifecycle', () => {
               badge: { text: 'idle', tone: 'success' },
             }),
             expect.objectContaining({
-              label: `subagent: ${summary}`,
+              label: 'subagent',
+              description: summary,
+              value: 'delegate:task-1',
               current: false,
               badge: { text: 'working', tone: 'success' },
             }),
           ],
+        })
+        await controller.activatePanelRow(controller.getSnapshot().panel!.rows[1]!)
+        expect(controller.getSnapshot().panel).toMatchObject({
+          kind: 'detail',
+          activity: { task, name: 'subagent', status: 'working' },
         })
         await messageAgent.invoke({ action: 'send', to: 'task-1', message: 'Check the authorization tests.' }, {
           agent: parent,
@@ -1146,6 +1160,8 @@ describe('interactive runtime lifecycle', () => {
           },
         ])
 
+        expect(controller.dismissPanel()).toBe(true)
+        expect(controller.getSnapshot().panel?.kind).toBe('agents')
         await stream.next()
         await vi.waitFor(() => expect(controller.getSnapshot().panel?.title).toBe('Agents'))
         await expect(
@@ -1207,12 +1223,29 @@ describe('interactive runtime lifecycle', () => {
       const listed = (await messageAgent.invoke({ action: 'list' }, {
         agent: mainAgent,
       } as unknown as ToolContext)) as {
-        agents: { id: string; name: string }[]
+        agents: { id: string; name: string; description?: string }[]
       }
-      const mainEndpoint = listed.agents.find((agent) => agent.name.includes('Review main authentication.'))
-      const forkEndpoint = listed.agents.find((agent) => agent.name.includes('Review fork authentication.'))
+      const mainEndpoint = listed.agents.find((agent) => agent.description === 'Review main authentication.')
+      const forkEndpoint = listed.agents.find((agent) => agent.description === 'Review fork authentication.')
       expect(mainEndpoint?.id).toBe('task-1')
       expect(forkEndpoint?.id).toBe('task-2')
+
+      await controller.submit('/agents')
+      for (const endpoint of [mainEndpoint!, forkEndpoint!]) {
+        const row = controller.getSnapshot().panel!.rows.find((row) => row.value === `delegate:${endpoint.id}`)!
+        expect(await controller.activatePanelRow(row)).toBe(true)
+        expect(controller.getSnapshot().panel).toMatchObject({
+          kind: 'detail',
+          activity: { task: endpoint.description },
+        })
+        expect(controller.dismissPanel()).toBe(true)
+        expect(controller.getSnapshot().panel?.kind).toBe('agents')
+        expect(await controller.activatePanelRow(row)).toBe(true)
+        await controller.submit('/settings')
+        expect(controller.getSnapshot().panel?.kind).toBe('settings')
+        controller.dismissPanel()
+        await controller.submit('/agents')
+      }
 
       await messageAgent.invoke({ action: 'send', to: mainEndpoint!.id, message: 'Check the main task.' }, {
         agent: mainAgent,

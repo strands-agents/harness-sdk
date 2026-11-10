@@ -166,7 +166,13 @@ export function AgentsPanel({
                       highlighted={index === activeIndex || index === pressedRow || index === hoveredRow}
                       onElement={(element) => onRowElement?.(index, element)}
                       {...(editing && nameEditor ? { nameEditor } : {})}
-                      actions={editing ? ['rename:save', 'rename:cancel'] : !nameInput && row.value ? ['rename'] : []}
+                      actions={
+                        editing
+                          ? ['rename:save', 'rename:cancel']
+                          : !nameInput && row.value?.startsWith('conversation:')
+                            ? ['rename']
+                            : []
+                      }
                       {...(pressedControl ? { pressedControl } : {})}
                       {...(hoveredControl ? { hoveredControl } : {})}
                       index={index}
@@ -221,7 +227,13 @@ function AgentCard({
 }): ReactElement {
   const { accent, border } = useTheme()
   const contentWidth = Math.max(1, width - 4)
-  const role = row.current ? 'Current' : row.value !== undefined ? 'Chat' : row.badge ? 'Delegate' : undefined
+  const role = row.current
+    ? 'Current'
+    : row.value?.startsWith('conversation:')
+      ? 'Chat'
+      : row.badge
+        ? 'Delegate'
+        : undefined
   const statusWidth = row.badge ? stringWidth(row.badge.text) + 2 : 0
   const showRole = role && contentWidth >= stringWidth(role) + statusWidth + 1
   const descriptionRows = height >= 9 ? 2 : height >= 5 ? 1 : 0

@@ -445,7 +445,7 @@ async function main() {
     } else if (panelsMode) {
       for (const [command, markers, tabMarker] of [
         ['/help', ['Send a message', 'Search help', '› Controls'], undefined],
-        ['/agents', ['Agents', 'Current', 'idle', '1/1', 'Enter switch'], undefined],
+        ['/agents', ['Agents', 'Current', 'idle', '1/1', 'Enter open'], undefined],
         ['/mcp', ['fixture-mcp', 'failed', 'Server is not accepting connections', '→ details', 'R retry'], undefined],
         ['/model', ['Fixture Model Alpha', 'Fixture Model Beta'], '› Fixture Model Alpha'],
         ['/effort', ['Reasoning effort', 'Medium'], undefined],
@@ -474,7 +474,7 @@ async function main() {
           ]) {
             const resizeStart = transcript.length
             resizeTerminal(columns, height)
-            await waitForStableScreen(['Agents', '1/1', columns < 30 ? 'Arrows' : 'Enter switch'], 8_000, resizeStart)
+            await waitForStableScreen(['Agents', '1/1', columns < 30 ? 'Arrows' : 'Enter open'], 8_000, resizeStart)
           }
           const chatStart = transcript.length
           terminal.write('\r')

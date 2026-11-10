@@ -291,6 +291,7 @@ export interface ChatControllerApi {
   dispose(): Promise<void>
   dismissPanel(): boolean
   activatePanelRow(row: ChatPanelRow): Promise<boolean>
+  openTask(taskId: string): boolean
   openSkillDetail(name: string): boolean
   openMcpDetail(name: string): boolean
   retryMcpServer(name: string): Promise<boolean>

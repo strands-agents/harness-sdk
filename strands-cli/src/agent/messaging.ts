@@ -180,13 +180,15 @@ export interface PeerMessage {
   body: string
 }
 
-interface PeerEndpoint extends PeerParticipant {
+interface PeerEndpoint extends Omit<PeerEndpointInfo, 'status'> {
   status(): PeerEndpointInfo['status'] | undefined
   enqueue(message: PeerMessage): boolean | Promise<boolean>
 }
 
 export type PeerEndpointInfo = PeerParticipant & {
   status: 'idle' | 'working'
+  description?: string
+  backgroundTask?: { id: string; ownerId: string }
 }
 
 /** @internal */
@@ -228,7 +230,13 @@ export class AgentMessaging {
     for (const endpoint of this._endpoints.values()) {
       const status = endpoint.status()
       if (endpoint.id !== senderId && status) {
-        peers.push({ id: endpoint.id, name: endpoint.name, status })
+        peers.push({
+          id: endpoint.id,
+          name: endpoint.name,
+          status,
+          ...(endpoint.description ? { description: endpoint.description } : {}),
+          ...(endpoint.backgroundTask ? { backgroundTask: endpoint.backgroundTask } : {}),
+        })
       }
     }
     return peers.sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id))
@@ -279,7 +287,12 @@ export class AgentMessaging {
         const senderId = this._requireSenderId(context.agent)
         if (parsed.action === 'list') {
           const peers = router.list(senderId)
-          return peers instanceof Promise ? peers.then((agents) => ({ agents: [...agents] })) : { agents: [...peers] }
+          const listResult = (
+            agents: readonly PeerEndpointInfo[]
+          ): { agents: Omit<PeerEndpointInfo, 'backgroundTask'>[] } => ({
+            agents: agents.map(({ backgroundTask: _backgroundTask, ...agent }) => agent),
+          })
+          return peers instanceof Promise ? peers.then(listResult) : listResult(peers)
         }
         const recipient = router.send(senderId, parsed.to, parsed.message)
         return recipient instanceof Promise

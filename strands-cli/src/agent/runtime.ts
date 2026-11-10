@@ -272,7 +272,9 @@ export async function createInteractiveRuntime(options: CreateInteractiveRuntime
       const summary = endpoint.task.replace(/\s+/g, ' ').trim()
       agentMessaging.register({
         id: endpointId,
-        name: summary ? `${endpoint.name}: ${graphemes(summary).slice(0, 80).join('')}` : endpoint.name,
+        name: endpoint.name,
+        description: graphemes(summary).slice(0, 80).join(''),
+        backgroundTask: { id: endpoint.taskId, ownerId: peerEndpointId },
         status: () => 'working',
         enqueue: (message): boolean => backgroundInbox.send(endpoint.taskId, peerMessagePrompt(message)),
       })

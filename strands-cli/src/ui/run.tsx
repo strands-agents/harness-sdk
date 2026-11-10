@@ -65,6 +65,7 @@ function reloadingController(previous: ChatControllerApi, close: (exitCode: numb
     dispose: async (): Promise<void> => {},
     dismissPanel: () => false,
     activatePanelRow: async () => false,
+    openTask: () => false,
     openSkillDetail: () => false,
     openMcpDetail: () => false,
     retryMcpServer: async () => false,

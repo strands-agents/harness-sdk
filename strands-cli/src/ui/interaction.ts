@@ -31,7 +31,6 @@ export function errorPanelLayout(
 }
 
 export type MetadataTarget = 'model' | 'effort' | 'permissions' | 'context' | 'cwd'
-export const MAX_VISIBLE_BACKGROUND_TASKS = 4
 export const COMPOSER_RESOURCE_PANEL_HEIGHT = COMPOSER_PANEL_HEIGHT + 2
 export const COMPOSER_EXPANDED_PANEL_HEIGHT = 16
 export const PANEL_SECTION_BORDER_COLUMNS = 2
@@ -145,18 +144,13 @@ export function composerPanelHeight(
 }
 
 function composerStatusRows(snapshot: ChatSnapshot): number {
-  const activeBackgroundTasks = snapshot.tasks.filter(
-    (task) => task.source === 'background' && isActiveTask(task.status)
-  ).length
   return (
     snapshot.pendingSteering.length +
     (snapshot.queuedPrompts.length > 0 || snapshot.status === 'interrupting'
       ? Math.max(1, snapshot.queuedPrompts.length)
       : 0) +
     Number(snapshot.mcpStartup !== undefined) +
-    Number(snapshot.voice !== undefined && snapshot.voice.status !== 'off') +
-    Math.min(activeBackgroundTasks, MAX_VISIBLE_BACKGROUND_TASKS) +
-    Number(activeBackgroundTasks > MAX_VISIBLE_BACKGROUND_TASKS)
+    Number(snapshot.voice !== undefined && snapshot.voice.status !== 'off')
   )
 }
 
@@ -167,7 +161,10 @@ export function composerStatusLayout(
   const rows = composerStatusRows(snapshot)
   const height = Math.min(rows, Math.max(2, Math.floor(terminalHeight / 3)))
   const viewportHeight = height - Number(rows > height)
-  return { height, viewportHeight, maxScroll: rows - viewportHeight }
+  const backgroundHeight = Number(
+    snapshot.tasks.some((task) => task.source === 'background' && isActiveTask(task.status))
+  )
+  return { height: height + backgroundHeight, viewportHeight, maxScroll: rows - viewportHeight }
 }
 
 export function sectionedPanelSidebarWidth(panelWidth: number, preferredWidth = Infinity): number {

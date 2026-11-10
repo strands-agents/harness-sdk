@@ -404,6 +404,8 @@ class TypescriptConnection {
       this._messaging.register({
         id: peer.id,
         name: value.name,
+        ...(value.description ? { description: value.description } : {}),
+        ...(value.backgroundTask ? { backgroundTask: value.backgroundTask } : {}),
         status: () => (this._failure || this._disposal ? undefined : peer.value.status),
         enqueue: (message) => this.call('deliverPeer', { id: value.id, message }),
       })

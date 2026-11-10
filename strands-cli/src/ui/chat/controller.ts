@@ -1112,7 +1112,7 @@ export class ChatController implements ChatControllerApi {
           ? this._selectEffort(row.value.slice('effort:'.length))
           : this._selectModel(row.value)
       case 'tasks':
-        return this._openTaskDetail(row.value)
+        return this.openTask(readTaskValue(row.value) ?? '')
       case 'permissions':
         return this._updatePermissions(row.value)
       case 'tools':
@@ -2748,10 +2748,9 @@ export class ChatController implements ChatControllerApi {
     return this._tasks.some(isUnresolvedBackgroundTask)
   }
 
-  private _openTaskDetail(value: string): boolean {
-    const taskId = readTaskValue(value)
-    const task = taskId ? this._tasks.find((candidate) => candidate.id === taskId) : undefined
-    if (!task) {
+  openTask(taskId: string): boolean {
+    const task = this._tasks.find((candidate) => candidate.id === taskId)
+    if (!task || this._closed || this._resourceChanging || this._panel?.kind === 'permission') {
       return false
     }
 

@@ -172,7 +172,7 @@ function activityDetailLines(activity: BackgroundAgentActivity, width: number, p
     const marker = entry.status === 'running' ? '◐' : entry.status === 'success' ? '✓' : '×'
     const color =
       entry.status === 'running' ? palette.warning : entry.status === 'success' ? palette.success : palette.error
-    push(`${marker} ${toolAction(entry.name)}  ${summarizeToolInput(entry.name, entry.input)}`, {
+    push(`${marker} ${toolAction(entry.name, entry.input)}  ${summarizeToolInput(entry.name, entry.input)}`, {
       color,
       bold: true,
       backgroundColor: palette.surface,
@@ -422,15 +422,21 @@ const TOOL_ACTIONS: Readonly<Record<string, string>> = {
   shell: 'Shell',
   skills: 'Skills',
   strands_config: 'Strands Config',
-  strands_manage_background_task: 'Background',
+  strands_manage_background_task: 'Background tasks',
   todo_write: 'Update tasks',
   web_fetch: 'Fetch',
   web_search: 'Search',
   write: 'Write',
 }
 
-export function toolAction(name: string): string {
+export function toolAction(name: string, input?: JSONValue): string {
   const key = name.replaceAll('-', '_').toLowerCase()
+  if (key === 'strands_manage_background_task' && isRecord(input)) {
+    const action = input.mode ?? input.action
+    if (action === 'list') return 'List background tasks'
+    if (action === 'get') return 'Read background task'
+    if (action === 'cancel') return 'Cancel background task'
+  }
   return Object.hasOwn(TOOL_ACTIONS, key) ? TOOL_ACTIONS[key]! : name
 }
 
@@ -490,6 +496,9 @@ export function summarizeToolInput(name: string, input: JSONValue): string {
       typeof input.action === 'string' ? input.action : typeof input.mode === 'string' ? input.mode : undefined
     const taskId =
       typeof input.task_id === 'string' ? input.task_id : typeof input.taskId === 'string' ? input.taskId : undefined
+    if (normalizedName === 'strands_manage_background_task') {
+      return truncateText(taskId ?? '', 160)
+    }
     if (action || taskId) {
       return truncateText([action, taskId].filter(Boolean).join(' · '), 160)
     }

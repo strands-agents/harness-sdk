@@ -126,8 +126,8 @@ function panelHelpKeys(panel: ChatPanel, width: number, scrollable: boolean): st
       return width < 26
         ? 'Arrows · R rename · Esc'
         : width < 64
-          ? '↑↓←→ · Enter switch · R rename · Esc'
-          : '↑↓←→ / Tab choose · Enter switch · R rename · PgUp/PgDn scroll · Esc back'
+          ? '↑↓←→ · Enter open · R rename · Esc'
+          : '↑↓←→ / Tab choose · Enter open · R rename · PgUp/PgDn scroll · Esc back'
     default:
       return panel.filters?.length ? 'Tab category · Enter · Esc back' : '↑↓ · Enter open · Esc back'
   }
