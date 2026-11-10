@@ -136,6 +136,13 @@ def test_lookup_model_info_returns_the_entry_facts_and_nothing_for_unknown_ids()
         native_structured_output=True,
         server_side_summary=True,
     )
+    for model_id in ("global.anthropic.claude-fable-5-2", "claude-mythos-5-2"):
+        assert lookup_model_info(model_id).capabilities == ModelCapabilities(
+            prompt_caching="cache_points",
+            forced_tool_choice=False,
+            native_structured_output=True,
+            server_side_summary=True,
+        )
     assert lookup_model_info("amazon.nova-pro-v1:0") == ModelInfo(
         capabilities=ModelCapabilities(forced_tool_choice=True, native_structured_output=False),
         limits=ModelLimits(context_window=300_000),

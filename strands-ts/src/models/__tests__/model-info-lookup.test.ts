@@ -44,6 +44,15 @@ describe('shared model info data', () => {
       serverSideSummary: true,
       temporaryMessages: true,
     })
+    for (const modelId of ['global.anthropic.claude-fable-5-2', 'claude-mythos-5-2']) {
+      expect(lookupModelInfo(modelId).capabilities).toEqual({
+        promptCaching: 'cachePoints',
+        forcedToolChoice: false,
+        nativeStructuredOutput: true,
+        serverSideSummary: true,
+        temporaryMessages: true,
+      })
+    }
     expect(lookupModelInfo('amazon.nova-pro-v1:0')).toEqual({
       capabilities: { forcedToolChoice: true, nativeStructuredOutput: false },
       limits: { contextWindow: 300_000 },
