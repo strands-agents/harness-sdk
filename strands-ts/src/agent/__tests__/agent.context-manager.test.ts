@@ -8,7 +8,7 @@ import { ContextManager } from '../../context-manager/context-manager.js'
 import { Offload } from '../../context-manager/strategies/offload/index.js'
 import { createRetrievalTool } from '../../context-manager/retrieval-tool.js'
 import { tool } from '../../tools/tool-factory.js'
-import { TextBlock, ToolResultBlock } from '../../types/messages.js'
+import { OffloadedBlock, TextBlock, ToolResultBlock } from '../../types/messages.js'
 import type { ConversationManager } from '../../conversation-manager/conversation-manager.js'
 
 function internals(agent: Agent): any {
@@ -168,8 +168,10 @@ describe('Agent contextManager', () => {
 
       await agent.invoke('list the rows')
 
-      const stored = (agent.messages[2]!.content[0] as ToolResultBlock).content[0] as TextBlock
-      expect(stored.metadata).toEqual({ offloaded: { method: 'truncate', ref: 'tu-1', tokens: expect.any(Number) } })
+      const stored = (agent.messages[2]!.content[0] as ToolResultBlock).content[0] as OffloadedBlock
+      expect(stored).toEqual(
+        new OffloadedBlock({ text: stored.text, method: 'truncate', ref: 'tu-1', tokens: expect.any(Number) })
+      )
       expect(stored.text).toMatch(/ \[ref: tu-1\]$/)
       const received = (sent.mock.calls[1]![0][2]!.content[0] as ToolResultBlock).content[0]
       expect(received).toBeInstanceOf(TextBlock)

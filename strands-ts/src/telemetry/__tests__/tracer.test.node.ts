@@ -10,6 +10,7 @@ import {
   CachePointBlock,
   InjectedBlock,
   SummaryBlock,
+  OffloadedBlock,
 } from '../../types/messages.js'
 import { MockSpan, eventAttr } from '../../__fixtures__/mock-span.js'
 import { textMessage } from '../../__fixtures__/agent-helpers.js'
@@ -209,11 +210,7 @@ describe('Tracer', () => {
         messages: [
           new Message({
             role: 'user',
-            content: [
-              new TextBlock('[Dropped] [ref: tu-1]', {
-                metadata: { offloaded: { method: 'drop', ref: 'tu-1' } },
-              }),
-            ],
+            content: [new OffloadedBlock({ text: '[Dropped] [ref: tu-1]', method: 'drop', ref: 'tu-1' })],
           }),
         ],
         agentName: 'test-agent',

@@ -197,7 +197,7 @@ export abstract class BaseOffloadStrategy implements OffloadStrategy {
   private _isProtectedResult(block: ToolResultBlock, toolNameMap: Map<string, string>): boolean {
     if (this._stash && toolNameMap.get(block.toolUseId) === RETRIEVAL_TOOL_NAME) return true
     const placeholder = block.content.find(isOffloaded)
-    return placeholder !== undefined && (this._method !== 'drop' || placeholder.metadata.offloaded.method === 'drop')
+    return placeholder !== undefined && (this._method !== 'drop' || placeholder.method === 'drop')
   }
 
   /** Process eligible blocks in a message, replacing each one larger than `threshold` tokens, or every one if unset. */

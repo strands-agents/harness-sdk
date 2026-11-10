@@ -233,11 +233,58 @@ export type ContentBlock =
 export type OffloadMethod = 'drop' | 'truncate' | 'summarize'
 
 /**
- * What a text block stands in for when the context manager offloaded the original.
+ * Data for a text block.
+ */
+export interface TextBlockData {
+  /**
+   * Plain text content.
+   */
+  text: string
+}
+
+/**
+ * Text content block within a message.
+ */
+export class TextBlock implements TextBlockData, JSONSerializable<TextBlockData> {
+  /**
+   * Discriminator for text content.
+   */
+  readonly type = 'textBlock' as const
+
+  /**
+   * Plain text content.
+   */
+  readonly text: string
+
+  constructor(data: string) {
+    this.text = data
+  }
+
+  /**
+   * Serializes the TextBlock to a JSON-compatible TextBlockData object.
+   * Called automatically by JSON.stringify().
+   */
+  toJSON(): TextBlockData {
+    return { text: this.text }
+  }
+
+  /**
+   * Creates a TextBlock instance from TextBlockData.
+   *
+   * @param data - TextBlockData to deserialize
+   * @returns TextBlock instance
+   */
+  static fromJSON(data: TextBlockData): TextBlock {
+    return new TextBlock(data.text)
+  }
+}
+
+/**
+ * Data for an offloaded block.
  *
  * @experimental
  */
-export interface OffloadMetadata {
+export interface OffloadedBlockData extends TextBlockData {
   /**
    * Offload method that left the placeholder.
    */
@@ -256,75 +303,64 @@ export interface OffloadMetadata {
 }
 
 /**
- * Metadata attached to a text block. Not sent to model providers.
+ * The text a context-manager strategy left in place of content it offloaded, recording what that content was.
+ *
+ * A text block to every reader of `agent.messages` and to every model provider — `type` stays `'textBlock'`, since
+ * the content really is text — so only code that cares about the provenance narrows to it with `instanceof`.
  *
  * @experimental
  */
-export interface TextBlockMetadata {
+export class OffloadedBlock extends TextBlock implements OffloadedBlockData {
   /**
-   * Present when the block stands in for content the context manager offloaded.
+   * Offload method that left the placeholder.
    */
-  offloaded?: OffloadMetadata
-}
-
-/**
- * Data for a text block.
- */
-export interface TextBlockData {
-  /**
-   * Plain text content.
-   */
-  text: string
+  readonly method: OffloadMethod
 
   /**
-   * Optional metadata about the block. Not sent to model providers.
+   * Stash reference under which the original is retrievable; absent when it was not stashed.
    */
-  metadata?: TextBlockMetadata
-}
-
-/**
- * Text content block within a message.
- */
-export class TextBlock implements TextBlockData, JSONSerializable<TextBlockData> {
-  /**
-   * Discriminator for text content.
-   */
-  readonly type = 'textBlock' as const
+  readonly ref?: string
 
   /**
-   * Plain text content.
+   * Size of the content this placeholder stands for, in tokens, including any placeholder it replaced; absent when
+   * the token count could not measure it.
    */
-  readonly text: string
+  readonly tokens?: number
+
+  constructor(data: OffloadedBlockData) {
+    super(data.text)
+    this.method = data.method
+    if (data.ref !== undefined) this.ref = data.ref
+    if (data.tokens !== undefined) this.tokens = data.tokens
+  }
 
   /**
-   * Optional metadata about the block. Not sent to model providers.
+   * Serializes the OffloadedBlock to a JSON-compatible OffloadedBlockData object.
+   * Called automatically by JSON.stringify().
    */
-  readonly metadata?: TextBlockMetadata
-
-  constructor(text: string, options?: { metadata?: TextBlockMetadata }) {
-    this.text = text
-    if (options?.metadata !== undefined) {
-      this.metadata = options.metadata
+  override toJSON(): OffloadedBlockData {
+    return {
+      text: this.text,
+      method: this.method,
+      ...(this.ref !== undefined && { ref: this.ref }),
+      ...(this.tokens !== undefined && { tokens: this.tokens }),
     }
   }
 
   /**
-   * Serializes the TextBlock to a JSON-compatible TextBlockData object.
-   * Called automatically by JSON.stringify().
-   */
-  toJSON(): TextBlockData {
-    return { text: this.text, ...(this.metadata !== undefined && { metadata: this.metadata }) }
-  }
-
-  /**
-   * Creates a TextBlock instance from TextBlockData.
+   * Creates an OffloadedBlock instance from OffloadedBlockData.
    *
-   * @param data - TextBlockData to deserialize
-   * @returns TextBlock instance
+   * @param data - OffloadedBlockData to deserialize
+   * @returns OffloadedBlock instance
    */
-  static fromJSON(data: TextBlockData): TextBlock {
-    return new TextBlock(data.text, { ...(data.metadata !== undefined && { metadata: data.metadata }) })
+  static override fromJSON(data: OffloadedBlockData): OffloadedBlock {
+    return new OffloadedBlock(data)
   }
+}
+
+/** Whether text-block data records an offload, so it deserializes back to an {@link OffloadedBlock}. */
+function isOffloadedBlockData(data: TextBlockData): data is OffloadedBlockData {
+  return 'method' in data
 }
 
 /**
@@ -559,7 +595,7 @@ export class ToolResultBlock implements JSONSerializable<{ toolResult: ToolResul
  * @throws Error if the content data type is unknown
  */
 export function toolResultContentFromData(data: ToolResultContentData): ToolResultContent {
-  if ('text' in data) return TextBlock.fromJSON(data)
+  if ('text' in data) return isOffloadedBlockData(data) ? OffloadedBlock.fromJSON(data) : TextBlock.fromJSON(data)
   if ('json' in data) return new JsonBlock(data)
   if ('image' in data) return ImageBlock.fromJSON(data as { image: ImageBlockData })
   if ('video' in data) return VideoBlock.fromJSON(data as { video: VideoBlockData })
@@ -1243,7 +1279,7 @@ export class InjectedBlock implements JSONSerializable<{ injected: InjectedBlock
  */
 export function contentBlockFromData(data: ContentBlockData): ContentBlock {
   if ('text' in data) {
-    return TextBlock.fromJSON(data)
+    return isOffloadedBlockData(data) ? OffloadedBlock.fromJSON(data) : TextBlock.fromJSON(data)
   } else if ('toolUse' in data) {
     return new ToolUseBlock(data.toolUse)
   } else if ('toolResult' in data) {

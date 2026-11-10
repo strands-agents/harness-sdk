@@ -11,6 +11,7 @@ import {
   TextBlock,
   ToolResultBlock,
   ToolUseBlock,
+  OffloadedBlock,
 } from '../../types/messages.js'
 import type { ContentBlock } from '../../types/messages.js'
 import { formatMessages, mapChunkToEvents } from '../google/adapters.js'
@@ -89,9 +90,7 @@ function formatBlock(block: ContentBlock, role: 'user' | 'assistant' = 'user'): 
 
 describe('offloaded blocks', () => {
   it('sends an offloaded block as the text the model receives, at top level and inside a tool result', () => {
-    const placeholder = new TextBlock('[Dropped] [ref: tu-1]', {
-      metadata: { offloaded: { method: 'drop', ref: 'tu-1' } },
-    })
+    const placeholder = new OffloadedBlock({ text: '[Dropped] [ref: tu-1]', method: 'drop', ref: 'tu-1' })
 
     expect(formatBlock(placeholder)[0]!.parts).toEqual([{ text: '[Dropped] [ref: tu-1]' }])
     const toolResult = new ToolResultBlock({ toolUseId: 'tu-1', status: 'success', content: [placeholder] })

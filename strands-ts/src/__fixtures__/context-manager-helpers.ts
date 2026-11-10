@@ -4,12 +4,15 @@
  */
 
 import { Message, TextBlock, ToolResultBlock } from '../types/messages.js'
-import type { OffloadMetadata, OffloadMethod } from '../types/messages.js'
+import type { OffloadedBlockData, OffloadMethod } from '../types/messages.js'
 import type { Agent } from '../agent/agent.js'
 import type { ContextState } from '../context-manager/types.js'
 import type { Stash } from '../context-manager/stash.js'
 import { createMockAgent } from './agent-helpers.js'
 import { isOffloaded } from '../context-manager/placeholder.js'
+
+/** What a placeholder stands in for, without its text. */
+export type OffloadProvenance = Omit<OffloadedBlockData, 'text'>
 
 /** A user message holding one successful tool result with the given text. */
 export function makeToolResultMessage(text: string, toolUseId = 'tool-123'): Message {
@@ -21,16 +24,23 @@ export function makeToolResultMessage(text: string, toolUseId = 'tool-123'): Mes
 
 /** The offload method that left `block` as a placeholder, or undefined when it is not one. */
 export function offloadedBy(block: unknown): OffloadMethod | undefined {
-  return isOffloaded(block) ? block.metadata.offloaded.method : undefined
+  return isOffloaded(block) ? block.method : undefined
 }
 
-/** The metadata of every placeholder in `messages`, including those inside tool results, in history order. */
-export function placeholdersIn(messages: Message[]): OffloadMetadata[] {
+/**
+ * What every placeholder in `messages` stands in for, including those inside tool results, in history order.
+ * Leaves out the placeholder text so an assertion names only the provenance it cares about.
+ */
+export function placeholdersIn(messages: Message[]): OffloadProvenance[] {
   return messages
     .flatMap((message) => message.content)
     .flatMap((block): unknown[] => (block instanceof ToolResultBlock ? block.content : [block]))
     .filter(isOffloaded)
-    .map((block) => block.metadata.offloaded)
+    .map(({ method, ref, tokens }) => ({
+      method,
+      ...(ref !== undefined && { ref }),
+      ...(tokens !== undefined && { tokens }),
+    }))
 }
 
 /** Counts text at four characters per token and everything else at two characters per token of its JSON. */

@@ -2,8 +2,8 @@
  * Offload placeholders: the text block left where content was offloaded, and the wording of each marker it carries.
  */
 
-import { TextBlock, ToolResultBlock } from '../types/messages.js'
-import type { ContentBlock, OffloadMetadata, OffloadMethod, TextBlockMetadata } from '../types/messages.js'
+import { OffloadedBlock, ToolResultBlock } from '../types/messages.js'
+import type { ContentBlock, OffloadMethod } from '../types/messages.js'
 
 /** A bare marker reads to the model as media that never arrived, so it doubts what it saw. */
 const AFTER_RECEIVING = 'removed from context after it was received'
@@ -12,8 +12,8 @@ const AFTER_RECEIVING = 'removed from context after it was received'
 export const REMOVED_MESSAGES = 'earlier messages'
 
 /**
- * The text block that stands in for offloaded content: the preview, followed by the stash reference
- * when the original is retrievable, with what it stands for recorded in `metadata.offloaded`.
+ * The block that stands in for offloaded content: the preview, followed by the stash reference
+ * when the original is retrievable.
  *
  * @param method - Offload method that replaced the content
  * @param preview - Text that stands in for the original
@@ -26,10 +26,13 @@ export function offloadPlaceholder(
   preview: string,
   stashRef: string | undefined,
   tokens = 0
-): TextBlock {
-  const offloaded = { method, ...(stashRef !== undefined && { ref: stashRef }), ...(tokens > 0 && { tokens }) }
-  const text = stashRef === undefined ? preview : `${preview} [ref: ${stashRef}]`
-  return new TextBlock(text, { metadata: { offloaded } })
+): OffloadedBlock {
+  return new OffloadedBlock({
+    text: stashRef === undefined ? preview : `${preview} [ref: ${stashRef}]`,
+    method,
+    ...(stashRef !== undefined && { ref: stashRef }),
+    ...(tokens > 0 && { tokens }),
+  })
 }
 
 /**
@@ -37,10 +40,8 @@ export function offloadPlaceholder(
  *
  * @internal
  */
-export function isOffloaded(
-  block: unknown
-): block is TextBlock & { metadata: TextBlockMetadata & { offloaded: OffloadMetadata } } {
-  return block instanceof TextBlock && block.metadata?.offloaded !== undefined
+export function isOffloaded(block: unknown): block is OffloadedBlock {
+  return block instanceof OffloadedBlock
 }
 
 /**
@@ -52,7 +53,7 @@ export function isOffloaded(
 export function carriedTokens(blocks: readonly ContentBlock[]): number {
   return blocks
     .flatMap((block): unknown[] => (block instanceof ToolResultBlock ? block.content : [block]))
-    .reduce<number>((total, block) => total + (isOffloaded(block) ? (block.metadata.offloaded.tokens ?? 0) : 0), 0)
+    .reduce<number>((total, block) => total + (isOffloaded(block) ? (block.tokens ?? 0) : 0), 0)
 }
 
 /**

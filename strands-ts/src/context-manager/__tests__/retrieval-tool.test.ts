@@ -168,14 +168,7 @@ describe('retrieval tool', () => {
 
     it('refuses to serve a stored placeholder as the original', async () => {
       const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
-      await stash.store(
-        'tool-1',
-        0,
-        encodeJSON({
-          text: '[Dropped] [ref: tool-1]',
-          metadata: { offloaded: { ref: 'tool-1' } },
-        })
-      )
+      await stash.store('tool-1', 0, encodeJSON({ text: '[Dropped] [ref: tool-1]', method: 'drop', ref: 'tool-1' }))
       const retrievalTool = createRetrievalTool(stash)
 
       expect(await invoke(retrievalTool, { reference: 'tool-1' })).toBe(

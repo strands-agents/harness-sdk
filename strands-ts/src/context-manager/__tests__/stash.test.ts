@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { Stash, formatStashKey, parseStashKey } from '../stash.js'
 import { InMemoryStorage } from '../../storage/in-memory-storage.js'
-import { Message, TextBlock, ToolResultBlock } from '../../types/messages.js'
+import { Message, TextBlock, ToolResultBlock, OffloadedBlock } from '../../types/messages.js'
 import { ImageBlock } from '../../types/media.js'
 
 describe('Stash', () => {
@@ -169,20 +169,15 @@ describe('Stash', () => {
       const message = new Message({
         role: 'user',
         content: [
-          new TextBlock('[Dropped] [ref: track-0_0]', {
-            metadata: { offloaded: { method: 'drop', ref: 'track-0_0' } },
-          }),
+          new OffloadedBlock({ text: '[Dropped] [ref: track-0_0]', method: 'drop', ref: 'track-0_0' }),
           new ToolResultBlock({
             toolUseId: 'tu-1',
             status: 'success',
             content: [
-              new TextBlock('[Truncated: 1 block, ~10,973 tokens]\n\nrow-1 [ref: tu-1]', {
-                metadata: {
-                  offloaded: {
-                    method: 'truncate',
-                    ref: 'tu-1',
-                  },
-                },
+              new OffloadedBlock({
+                text: '[Truncated: 1 block, ~10,973 tokens]\n\nrow-1 [ref: tu-1]',
+                method: 'truncate',
+                ref: 'tu-1',
               }),
               new ImageBlock({ format: 'png', source: { bytes: new Uint8Array([1, 2, 3]) } }),
             ],

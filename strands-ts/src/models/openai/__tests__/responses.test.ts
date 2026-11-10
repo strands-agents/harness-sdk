@@ -4,7 +4,7 @@ import { isNode } from '../../../__fixtures__/environment.js'
 import { OpenAIModel } from '../index.js'
 import { ContextWindowOverflowError, MaxTokensError, ModelThrottledError } from '../../../errors.js'
 import { collectGenerator, collectIterator } from '../../../__fixtures__/model-test-helpers.js'
-import { Message, TextBlock, ToolUseBlock, ToolResultBlock } from '../../../types/messages.js'
+import { Message, TextBlock, ToolUseBlock, ToolResultBlock, OffloadedBlock } from '../../../types/messages.js'
 import { ImageBlock, DocumentBlock } from '../../../types/media.js'
 import { CitationsBlock } from '../../../types/citations.js'
 import { StateStore } from '../../../state-store.js'
@@ -521,9 +521,7 @@ describe("OpenAIModel (api: 'responses')", () => {
     })
 
     it('sends an offloaded block as the text the model receives, in user, assistant, and tool-result content', async () => {
-      const placeholder = new TextBlock('[Dropped] [ref: tu-1]', {
-        metadata: { offloaded: { method: 'drop', ref: 'tu-1' } },
-      })
+      const placeholder = new OffloadedBlock({ text: '[Dropped] [ref: tu-1]', method: 'drop', ref: 'tu-1' })
       const messages = [
         new Message({ role: 'user', content: [placeholder] }),
         new Message({ role: 'assistant', content: [placeholder] }),

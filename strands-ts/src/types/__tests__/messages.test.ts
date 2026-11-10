@@ -17,6 +17,7 @@ import {
   type SystemPromptData,
   systemPromptFromData,
   systemPromptToData,
+  OffloadedBlock,
 } from '../messages.js'
 import { AudioBlock, ImageBlock, VideoBlock, DocumentBlock, encodeBase64 } from '../media.js'
 import { CitationsBlock } from '../citations.js'
@@ -185,22 +186,20 @@ describe('TextBlock', () => {
   })
 })
 
-describe('TextBlock standing in for offloaded content', () => {
-  test('carries what it stands in for and serializes it beside the text', () => {
-    const block = new TextBlock('[Dropped] [ref: tu-1]', {
-      metadata: { offloaded: { method: 'drop', ref: 'tu-1' } },
-    })
+describe('OffloadedBlock', () => {
+  test('is a text block that carries what it stands in for and serializes it beside the text', () => {
+    const block = new OffloadedBlock({ text: '[Dropped] [ref: tu-1]', method: 'drop', ref: 'tu-1' })
 
-    expect(block).toEqual({
-      type: 'textBlock',
-      text: '[Dropped] [ref: tu-1]',
-      metadata: { offloaded: { method: 'drop', ref: 'tu-1' } },
-    })
-    expect(block.toJSON()).toEqual({
-      text: '[Dropped] [ref: tu-1]',
-      metadata: { offloaded: { method: 'drop', ref: 'tu-1' } },
-    })
-    expect(TextBlock.fromJSON(block.toJSON())).toEqual(block)
+    expect(block).toBeInstanceOf(TextBlock)
+    expect(block.type).toBe('textBlock')
+    expect(block.toJSON()).toEqual({ text: '[Dropped] [ref: tu-1]', method: 'drop', ref: 'tu-1' })
+    expect(contentBlockFromData(block.toJSON())).toEqual(block)
+  })
+
+  test('omits a ref and token count it was not given', () => {
+    const block = new OffloadedBlock({ text: '[Dropped]', method: 'drop' })
+
+    expect(block.toJSON()).toEqual({ text: '[Dropped]', method: 'drop' })
   })
 
   test('a plain text block carries and serializes no offloaded field', () => {
@@ -209,23 +208,18 @@ describe('TextBlock standing in for offloaded content', () => {
     expect(block).toEqual({ type: 'textBlock', text: 'hello' })
     expect(block.toJSON()).toEqual({ text: 'hello' })
     expect(isOffloaded(block)).toBe(false)
+    expect(contentBlockFromData(block.toJSON())).not.toBeInstanceOf(OffloadedBlock)
   })
 
   test('round-trips through message data at top level and inside a tool result', () => {
     const message = new Message({
       role: 'user',
       content: [
-        new TextBlock('[Dropped] [ref: msg-1_0]', {
-          metadata: { offloaded: { method: 'drop', ref: 'msg-1_0' } },
-        }),
+        new OffloadedBlock({ text: '[Dropped] [ref: msg-1_0]', method: 'drop', ref: 'msg-1_0' }),
         new ToolResultBlock({
           toolUseId: 'tu-1',
           status: 'success',
-          content: [
-            new TextBlock('row-1 [ref: tu-1]', {
-              metadata: { offloaded: { method: 'truncate', ref: 'tu-1' } },
-            }),
-          ],
+          content: [new OffloadedBlock({ text: 'row-1 [ref: tu-1]', method: 'truncate', ref: 'tu-1' })],
         }),
       ],
       trackingId: 'msg-1',
@@ -234,20 +228,12 @@ describe('TextBlock standing in for offloaded content', () => {
     const data = JSON.parse(JSON.stringify(message)) as MessageData
 
     expect(data.content).toEqual([
-      {
-        text: '[Dropped] [ref: msg-1_0]',
-        metadata: { offloaded: { method: 'drop', ref: 'msg-1_0' } },
-      },
+      { text: '[Dropped] [ref: msg-1_0]', method: 'drop', ref: 'msg-1_0' },
       {
         toolResult: {
           toolUseId: 'tu-1',
           status: 'success',
-          content: [
-            {
-              text: 'row-1 [ref: tu-1]',
-              metadata: { offloaded: { method: 'truncate', ref: 'tu-1' } },
-            },
-          ],
+          content: [{ text: 'row-1 [ref: tu-1]', method: 'truncate', ref: 'tu-1' }],
         },
       },
     ])

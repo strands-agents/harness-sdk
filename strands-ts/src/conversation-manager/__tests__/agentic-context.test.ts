@@ -5,7 +5,7 @@ import {
   pinContextTool,
 } from '../../context-manager/modes/agentic/agentic-context.js'
 import { pinMessage } from '../compression/pin-message.js'
-import { Message, TextBlock, ToolUseBlock, ToolResultBlock } from '../../types/messages.js'
+import { Message, TextBlock, ToolUseBlock, ToolResultBlock, OffloadedBlock } from '../../types/messages.js'
 
 function textMsg(role: 'user' | 'assistant', text: string): Message {
   return new Message({ role, content: [new TextBlock(text)] })
@@ -322,11 +322,7 @@ describe('pinContextTool', () => {
         textMsg('assistant', 'Old'),
         new Message({
           role: 'user',
-          content: [
-            new TextBlock('[Dropped] [ref: m_0]', {
-              metadata: { offloaded: { method: 'drop', ref: 'm_0' } },
-            }),
-          ],
+          content: [new OffloadedBlock({ text: '[Dropped] [ref: m_0]', method: 'drop', ref: 'm_0' })],
         }),
         textMsg('assistant', 'New answer'),
       ]

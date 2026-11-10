@@ -69,7 +69,7 @@ export type {
   Role,
   StopReason,
   TextBlockData,
-  OffloadMetadata,
+  OffloadedBlockData,
   ToolUseBlockData,
   ToolResultBlockData,
   ReasoningBlockData,
@@ -94,6 +94,7 @@ export type {
 // Message classes
 export {
   TextBlock,
+  OffloadedBlock,
   ToolUseBlock,
   ToolResultBlock,
   ReasoningBlock,

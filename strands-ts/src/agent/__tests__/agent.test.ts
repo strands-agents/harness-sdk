@@ -11,6 +11,7 @@ import { ConcurrentInvocationError } from '../../errors.js'
 import {
   MaxTokensError,
   TextBlock,
+  OffloadedBlock,
   JsonBlock,
   CachePointBlock,
   Message,
@@ -1937,10 +1938,11 @@ describe('Agent', () => {
           toolUseId: 'tool-1',
           status: 'success',
           content: [
-            new TextBlock(expect.any(String), {
-              metadata: {
-                offloaded: { method: 'truncate', ref: 'tool-1', tokens: expect.any(Number) },
-              },
+            new OffloadedBlock({
+              text: expect.any(String),
+              method: 'truncate',
+              ref: 'tool-1',
+              tokens: expect.any(Number),
             }),
           ],
         }),
