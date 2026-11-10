@@ -122,6 +122,7 @@ export class ConversationVoice {
     try {
       switch (action) {
         case 'voice:start':
+          this._panels.panel()
           await this._voice.start()
           return true
         case 'voice:stop':
