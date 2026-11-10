@@ -8,7 +8,7 @@ import time
 from collections.abc import Mapping
 from typing import Any, Literal, cast
 
-from pydantic import BaseModel, Field, ValidationError, create_model
+from pydantic import BaseModel, Field, ValidationError, create_model, model_validator
 
 from ..models.bedrock import BedrockModel
 from ..models.model import Model
@@ -138,7 +138,7 @@ def _build_answer_model(questions: dict[str, Question]) -> type[BaseModel]:
                 str | None,
                 Field(default=None, description=f"Explanation when answer is '{_UNCERTAIN_LITERAL}'; omit otherwise."),
             )
-        per_question_model = create_model(f"Answer{index}", **entry_fields)
+        per_question_model = create_model(f"Answer{index}", __base__=_AnswerEntry, **entry_fields)
         per_question_model.__doc__ = question["question"]
         fields[_field_name(index, questions)] = (
             per_question_model,
@@ -148,6 +148,21 @@ def _build_answer_model(questions: dict[str, Question]) -> type[BaseModel]:
     model = create_model("DecisionAnswers", **fields)
     model.__doc__ = "Answer for each question in the input decision set."
     return cast(type[BaseModel], model)
+
+
+class _AnswerEntry(BaseModel):
+    """Base for each question's ``{answer, reason?}`` entry."""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_bare_answer(cls, value: Any) -> Any:
+        """Read a bare option string as ``{"answer": value}``.
+
+        Models can collapse a one-field ``{answer}`` object to the option itself (Claude Haiku 4.5
+        returns ``{"candidate": "c1"}`` for an ``{answer}``-only schema). The option is still checked
+        against the question's allowed values; the schema sent to the model is unchanged.
+        """
+        return {"answer": value} if isinstance(value, str) else value
 
 
 def _field_name(index: int, questions: dict[str, Question]) -> str:

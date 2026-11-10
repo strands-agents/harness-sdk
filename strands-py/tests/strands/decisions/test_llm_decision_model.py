@@ -237,6 +237,51 @@ async def test_offers_a_reason_only_on_questions_that_allow_uncertainty():
     assert entry_properties("closed") == {"answer"}
 
 
+class RawProviderModel(RecordingModel):
+    """Passes ``raw`` to the output model unnormalized, as a provider passes tool input through."""
+
+    async def structured_output(
+        self, output_model: type[BaseModel], prompt: Messages, system_prompt: str | None = None, **kwargs: Any
+    ) -> AsyncGenerator[dict[str, Any], None]:
+        self.calls.append({"output_model": output_model, "prompt": prompt, "system_prompt": system_prompt})
+        yield {"output": output_model(**self.raw)}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("uncertainty", [False, None])
+async def test_accepts_an_answer_the_model_returned_without_its_wrapper_object(uncertainty):
+    # Claude Haiku 4.5 returns {"candidate": "c1"} rather than {"candidate": {"answer": "c1"}}.
+    question: Question = {"question": "Which?", "choices": ["c0", "c1"]}
+    if uncertainty is not None:
+        question["uncertainty"] = uncertainty
+    decision = LLMDecisionModel(model=RawProviderModel({"candidate": "c1"}))
+
+    result = await decision.ask("state", {"candidate": question})
+
+    assert result.answers == {"candidate": "c1"}
+
+
+@pytest.mark.asyncio
+async def test_reads_a_bare_uncertain_answer_as_uncertain_without_a_reason():
+    decision = LLMDecisionModel(model=RawProviderModel({"color": "uncertain"}))
+
+    result = await decision.ask("state", {"color": {"question": "Color?", "choices": ["red", "blue"]}})
+
+    answer = result.answers["color"]
+    assert isinstance(answer, Uncertain)
+    assert answer.reason is None
+
+
+@pytest.mark.asyncio
+async def test_still_rejects_a_bare_answer_outside_the_allowed_options():
+    decision = LLMDecisionModel(model=RawProviderModel({"candidate": "c9"}))
+
+    with pytest.raises(StructuredOutputException, match="invalid answer set"):
+        await decision.ask(
+            "state", {"candidate": {"question": "Which?", "choices": ["c0", "c1"], "uncertainty": False}}
+        )
+
+
 @pytest.mark.asyncio
 async def test_appends_uncertain_to_the_enum_by_default():
     model = RecordingModel({"q": "uncertain"})
