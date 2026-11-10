@@ -654,8 +654,8 @@ describe('MemoryManager', () => {
         {
           role: 'user',
           content: [
-            { text: '<memory>\n<entry source="s">dark mode preferred</entry>\n</memory>' },
             { text: 'what is my plan' },
+            { text: '\n\n<memory>\n<entry source="s">dark mode preferred</entry>\n</memory>' },
           ],
           trackingId: anyTrackingId,
         },

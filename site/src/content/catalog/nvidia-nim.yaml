@@ -6,4 +6,4 @@ languages:
     package: strands-nvidia-nim
 github: https://github.com/thiago4go/strands-nvidia-nim
 docsPage: docs/integrations/model-providers/nvidia-nim
-addedDate: 2026-01-01
+addedDate: 2026-01-12

@@ -14,7 +14,7 @@ from collections.abc import Callable
 from typing import Any
 from urllib.parse import urlparse
 
-from strands.memory.types import SearchOptions
+from strands.memory.types import MemoryEntry, SearchOptions
 from strands.vended_memory_stores.bedrock_knowledge_base import BedrockKnowledgeBaseStore
 
 # A best-effort cleanup callback queued during a test and drained by the owning fixture's teardown.
@@ -33,28 +33,34 @@ def unique_marker(label: str) -> str:
 async def search_until(
     store: BedrockKnowledgeBaseStore,
     query: str,
-    predicate: Callable[[str], bool] | None = None,
+    predicate: Callable[[MemoryEntry], bool] | None = None,
     *,
-    timeout_s: float = 60.0,
+    timeout_s: float = 150.0,
     interval_s: float = 2.0,
-) -> str | None:
+) -> MemoryEntry | None:
     """Poll a store search until an entry matches ``predicate`` (default: any result), or time out.
 
-    Returns the matched entry's content, or ``None`` on timeout.
+    Returns the matched entry, or ``None`` on timeout.
 
-    Use when the written content has no test-known document id: extraction rephrases what it writes,
-    and the add tool mints ids internally, so indexing can't be awaited by id via
-    :func:`wait_for_indexed`.
+    Two usage modes, both covered by the default budget:
+
+    - After :func:`wait_for_indexed`, to absorb ``Retrieve`` propagation lag - even after a document
+      reports INDEXED, a single search can miss it. Here the match lands on the first poll and the
+      budget is never consumed.
+    - Standalone, when the written content has no searchable test-known id: extraction rephrases what
+      it writes across an unknown number of documents, so there is no single id to await via
+      :func:`wait_for_indexed`. Here the poll must cover the whole write->index->retrieve pipeline,
+      so the default spans indexing latency (see :func:`wait_for_indexed`) plus retrieve lag.
     """
     if predicate is None:
-        predicate = lambda _content: True  # noqa: E731 - tiny default predicate
+        predicate = lambda _entry: True  # noqa: E731 - tiny default predicate
 
     deadline = time.monotonic() + timeout_s
     while True:
         entries = await store.search(query, SearchOptions(max_search_results=10))
         for entry in entries:
-            if predicate(entry.content):
-                return entry.content
+            if predicate(entry):
+                return entry
         if time.monotonic() >= deadline:
             return None
         await asyncio.sleep(interval_s)
@@ -66,13 +72,14 @@ def wait_for_indexed(
     data_source_id: str,
     document_identifier: dict[str, Any],
     *,
-    timeout_s: float = 30.0,
+    timeout_s: float = 120.0,
     interval_s: float = 2.0,
 ) -> None:
     """Poll until the document reaches INDEXED (or fails/times out).
 
-    Ingestion is async even for ``IngestKnowledgeBaseDocuments``; without this a subsequent
-    ``Retrieve`` can miss the document. The boto3 key casing matches the store
+    Ingestion is async even for ``IngestKnowledgeBaseDocuments`` and routinely takes upward of a
+    minute under load; without this a subsequent ``Retrieve`` can miss the document. The boto3 key
+    casing matches the store
     (``knowledgeBaseId``/``dataSourceId``/``documentIdentifiers``).
 
     Args:

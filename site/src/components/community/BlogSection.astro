@@ -1,0 +1,176 @@
+---
+import type { BlogPost } from '../../util/blog'
+import { formatDate } from '../../util/blog'
+import { pathWithBase } from '../../util/links'
+
+interface Props {
+  posts: BlogPost[]
+}
+
+const { posts } = Astro.props
+---
+
+{
+  posts.length > 0 && (
+    <section id="blog" class="blog-section">
+      <div class="sec-head">
+        <h2>From the blog</h2>
+        <a class="more" href={pathWithBase('/blog/')}>
+          All posts →
+        </a>
+      </div>
+      <div class="row">
+        {posts.map((post) => (
+          <article>
+            <a href={pathWithBase(`/blog/${post.id}/`)} class="post-card">
+              <span class="kicker">{post.data.tags[0] ?? 'Blog'}</span>
+              <h3>{post.data.title}</h3>
+              <p>{post.data.description}</p>
+              <span class="meta">
+                {formatDate(post.data.date)}
+                {post.data.readingTime && ` · ${post.data.readingTime}`}
+              </span>
+            </a>
+          </article>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+<style>
+  .blog-section {
+    padding: 4.25rem 0;
+    border-top: 1px solid #262626;
+  }
+
+  :global([data-theme='light']) .blog-section {
+    border-top-color: rgba(0, 0, 0, 0.1);
+  }
+
+  .sec-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+  }
+
+  h2 {
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: 2.625rem;
+    letter-spacing: -0.02em;
+    font-weight: 600;
+    color: var(--sl-color-white);
+    margin: 0;
+  }
+
+  .more {
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: 0.875rem;
+    color: #00cc5f;
+    font-weight: 600;
+    text-decoration: none;
+  }
+
+  :global([data-theme='light']) .more {
+    color: #008542;
+  }
+
+  .row {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1.5rem;
+    margin-top: 2.5rem;
+  }
+
+  article {
+    display: flex;
+  }
+
+  .post-card {
+    background: rgba(255, 255, 255, 0.05);
+    backdrop-filter: blur(30px);
+    -webkit-backdrop-filter: blur(30px);
+    border-radius: 14px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    padding: 2rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    text-decoration: none;
+    transition:
+      border-color 0.3s ease,
+      box-shadow 0.3s ease;
+    width: 100%;
+  }
+
+  :global([data-theme='light']) .post-card {
+    background: rgba(0, 0, 0, 0.02);
+    border-color: rgba(0, 0, 0, 0.08);
+  }
+
+  .post-card:hover {
+    border-color: rgba(0, 204, 95, 0.3);
+    box-shadow: 0 0 24px rgba(0, 204, 95, 0.06);
+  }
+
+  .kicker {
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: 0.75rem;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: #00cc5f;
+    font-weight: 700;
+  }
+
+  :global([data-theme='light']) .kicker {
+    color: #008542;
+  }
+
+  h3 {
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: 1.25rem;
+    line-height: 1.3;
+    letter-spacing: -0.01em;
+    margin: 0;
+    font-weight: 600;
+    color: var(--sl-color-white);
+  }
+
+  .post-card p {
+    color: var(--sl-color-gray-3);
+    font-size: 0.9rem;
+    line-height: 1.5;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    margin: 0;
+    flex: 1;
+  }
+
+  .meta {
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: 0.75rem;
+    color: var(--sl-color-gray-3);
+  }
+
+  @media (max-width: 900px) {
+    .row {
+      grid-template-columns: 1fr;
+      gap: 1rem;
+      margin-top: 1.75rem;
+    }
+
+    .post-card {
+      padding: 1.375rem 1.5rem;
+    }
+
+    .post-card p {
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    h2 {
+      font-size: 2rem;
+    }
+  }
+</style>

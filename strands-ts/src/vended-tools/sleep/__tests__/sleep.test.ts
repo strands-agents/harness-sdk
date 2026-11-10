@@ -4,19 +4,16 @@ import type { ToolContext } from '../../../index.js'
 import { createMockAgent } from '../../../__fixtures__/agent-helpers.js'
 
 /**
- * Build a fresh ToolContext, optionally wiring an AbortController's signal
- * onto the mock agent for cancellation testing.
+ * Build a fresh ToolContext, optionally using an AbortController's signal
+ * for cancellation testing.
  */
 function createContext(controller?: AbortController): ToolContext {
   const agent = createMockAgent()
-  if (controller) {
-    // Override the mock's default (unaborted) signal with the test's controller.
-    Object.defineProperty(agent, 'cancelSignal', { value: controller.signal, configurable: true })
-  }
   return {
     toolUse: { name: 'sleep', toolUseId: 'test-id', input: {} },
     agent,
     invocationState: {},
+    cancelSignal: controller?.signal ?? agent.cancelSignal,
     interrupt: () => {
       throw new Error('interrupt not available in mock context')
     },
@@ -92,6 +89,7 @@ describe('sleep tool', () => {
     it('aborts immediately when cancelSignal fires mid-sleep', async () => {
       const controller = new AbortController()
       const context = createContext(controller)
+      expect(context.cancelSignal).not.toBe(context.agent.cancelSignal)
 
       const invocation = sleep.invoke({ duration: 5 }, context)
       globalThis.setTimeout(() => controller.abort(), 10)

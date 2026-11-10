@@ -1,9 +1,47 @@
+import { fileURLToPath } from 'node:url'
+
 import { defineCollection, type SchemaContext } from 'astro:content'
 import { z } from 'astro/zod'
 import { docsSchema } from '@astrojs/starlight/schema'
 import { glob, file } from 'astro/loaders'
+import fastGlob from 'fast-glob'
 import { pathToDocsSlug } from './util/links'
 import { TagSchema } from './config/tags'
+import { SDK_META, hasLanguageStreams, type Sdk } from './config/changelog'
+
+export const ALL_SDK_LANGUAGES = ['python', 'typescript'] as const
+
+function optionalGlob(options: Parameters<typeof glob>[0]) {
+  const loader = glob(options)
+  return {
+    ...loader,
+    async load(context: Parameters<typeof loader.load>[0]) {
+      const base = options.base ? new URL(options.base, context.config.root) : context.config.root
+      const basePath = fileURLToPath(base)
+      const files = await fastGlob(options.pattern, { cwd: basePath, onlyFiles: true })
+      if (files.length > 0) return loader.load(context)
+
+      context.store.clear()
+      context.watcher?.add(basePath)
+    },
+  }
+}
+
+export const docsLanguagesSchema = z
+  .union([z.string(), z.array(z.string())])
+  .optional()
+  .superRefine((val, ctx) => {
+    if (!val) return
+    const langs = Array.isArray(val) ? val.map((l) => l.toLowerCase()) : [val.toLowerCase()]
+    if (ALL_SDK_LANGUAGES.every((l) => langs.includes(l))) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          'languages must not list all supported SDKs (python and typescript) — ' +
+          'omit the field entirely when a feature is available in all languages',
+      })
+    }
+  })
 
 const authorSchema = z.object({
   name: z.string(),
@@ -28,6 +66,17 @@ export const sourceLinkSchema = z.object({
 })
 export type SourceLink = z.infer<typeof sourceLinkSchema>
 
+export const externalDocsSchema = z.object({
+  product: z.string(),
+  productId: z.string(),
+  status: z.enum(['preview', 'stable']),
+  repository: z.string().url().startsWith('https://github.com/'),
+  ref: z.string(),
+  revision: z.string().regex(/^[0-9a-f]{40}$/),
+  source: z.string(),
+})
+export type ExternalDocsProvenance = z.infer<typeof externalDocsSchema>
+
 export const changelogEntrySchema = z.object({
   type: z.enum(['feat', 'fix', 'breaking', 'chore', 'docs', 'perf', 'refactor', 'test', 'other']),
   breaking: z.boolean().default(false),
@@ -44,7 +93,7 @@ export type ChangelogEntry = z.infer<typeof changelogEntrySchema>
 
 export const changelogFrontmatterSchema = z
   .object({
-    sdk: z.enum(['harness', 'evals']),
+    sdk: z.enum(Object.keys(SDK_META) as [Sdk, ...Sdk[]]),
     language: z.enum(['python', 'typescript']).optional(),
     version: z.string(),
     tag: z.string(),
@@ -56,14 +105,22 @@ export const changelogFrontmatterSchema = z
     newContributors: z.array(z.object({ login: z.string(), pr: z.number() })).default([]),
   })
   // Tie `language` to `sdk` so bad data can't create bogus streams/routes:
-  // harness releases are per-language (python|typescript); evals is python-only
-  // and omits the field entirely.
+  // per-language products (sdk, harness) require it; single-stream products
+  // (evals, cli, box, shell) omit the field entirely.
   .superRefine((d, ctx) => {
-    if (d.sdk === 'harness' && d.language === undefined) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['language'], message: 'harness releases require a language (python or typescript)' })
+    if (hasLanguageStreams(d.sdk) && d.language === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['language'],
+        message: `${d.sdk} releases require a language (python or typescript)`,
+      })
     }
-    if (d.sdk === 'evals' && d.language !== undefined) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['language'], message: 'evals releases must not set a language (evals is python-only)' })
+    if (!hasLanguageStreams(d.sdk) && d.language !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['language'],
+        message: `${d.sdk} releases must not set a language (${d.sdk} has a single release stream)`,
+      })
     }
   })
 export type ChangelogFrontmatter = z.infer<typeof changelogFrontmatterSchema>
@@ -72,7 +129,7 @@ export type ChangelogFrontmatter = z.infer<typeof changelogFrontmatterSchema>
 // integration (documented by a vendor dev-guide, no Strands-specific
 // installable package) as covering that language, so it still participates
 // in the language facet. The registry link derives from the package name at
-// build time (see toCardModel in util/catalog.ts), so entries never declare
+// build time (see toPublicModel in util/catalog.ts), so entries never declare
 // registry URLs. `.strict()` makes a submitted `registry:` (or any other
 // stray key) fail the build with a clear error instead of being silently
 // ignored.
@@ -98,6 +155,7 @@ export const catalogEntrySchema = z
       'storage',
       'integration',
       'plugin',
+      'observability',
       'agent-extension',
       'intervention',
     ]),
@@ -124,6 +182,11 @@ export const catalogEntrySchema = z
     // on-site docsPage, the card's primary link prefers this over the bare
     // GitHub repo so users land on usage instructions.
     docsUrl: z.string().url().startsWith('https://', 'docsUrl must be https').optional(),
+    // Who stands behind the integration, shown and filtered on the catalog.
+    // `strands` (SDK built-ins) and `aws` are granted by the Strands team;
+    // `partner` requires a maintainer to verify the entry is vended by the
+    // integrator's official org; submitters leave it unset (community).
+    maintainedBy: z.enum(['strands', 'aws', 'partner', 'community']).default('community'),
     // Editorial fields — maintainer-granted only; submitters leave them unset.
     featured: z.boolean().default(false),
     badges: z.array(z.enum(['verified'])).default([]),
@@ -158,6 +221,114 @@ const blogSchema = z.object({
   readingTime: z.string().optional(),
 })
 
+// Regex rejects protocol-relative URLs like //evil.com and /\evil.com that startsWith('/') would accept.
+const internalHref = z.string().regex(/^\/(?![/\\])/, 'course hrefs must be site-relative (start with a single /)')
+
+export const courseSchema = z.object({
+  title: z.string(),
+  number: z.number().int().positive(),
+  status: z.enum(['available', 'in-development', 'proposed']),
+  description: z.string(),
+  href: internalHref,
+  syllabusHref: internalHref.optional(),
+  // Array position is the source of truth for lesson order; titles resolved from docs at render time.
+  lessons: z
+    .array(
+      z.object({
+        href: internalHref,
+      })
+    )
+    .optional(),
+})
+export type Course = z.infer<typeof courseSchema>
+
+// Accepts unquoted YAML dates (Date) or quoted YYYY-MM-DD strings.
+// Round-trip check rejects rolled-over dates: '2026-02-30' passes the regex but coerces to a different ISO date.
+const eventDate = z
+  .union([
+    z.date(),
+    z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, 'event dates must be YYYY-MM-DD')
+      .superRefine((s, ctx) => {
+        const coerced = new Date(s)
+        if (isNaN(coerced.getTime()) || coerced.toISOString().slice(0, 10) !== s) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, message: `invalid calendar date: ${s}` })
+        }
+      }),
+  ])
+  .pipe(z.coerce.date())
+
+export const eventSchema = z
+  .object({
+    title: z.string(),
+    startDate: eventDate,
+    endDate: eventDate.optional(),
+    location: z.string(),
+    href: z.string().optional(),
+    description: z.string().optional(),
+    featured: z.boolean().default(false),
+  })
+  .refine((d) => d.endDate === undefined || d.endDate >= d.startDate, {
+    message: 'endDate must not be before startDate',
+    path: ['endDate'],
+  })
+export type LearnEvent = z.infer<typeof eventSchema>
+
+export const announcementSchema = z
+  .object({
+    title: z.string(),
+    href: z.string(),
+    linkText: z.string().default('Learn more'),
+    // Shown for ANNOUNCEMENT_DAYS from this date; bump it when the content is updated.
+    date: eventDate,
+    // Last day shown, overriding the ANNOUNCEMENT_DAYS window.
+    expires: eventDate.optional(),
+  })
+  .refine((a) => a.expires === undefined || a.expires >= a.date, {
+    message: 'expires must not be before date',
+    path: ['expires'],
+  })
+export type Announcement = z.infer<typeof announcementSchema>
+
+const sampleGuideSchema = z
+  .object({
+    catalogMode: z.enum(['legacy', 'curated']),
+    title: z.string(),
+    description: z.string(),
+    slug: z.string(),
+    language: z.enum(ALL_SDK_LANGUAGES),
+    category: z.string(),
+    categoryLabel: z.string(),
+    collection: z
+      .object({
+        id: z.string(),
+        label: z.string(),
+        description: z.string().optional(),
+        order: z.number().int().nonnegative(),
+      })
+      .optional(),
+    docs: z.array(
+      z.object({
+        label: z.string(),
+        url: z.string().url().startsWith('https://', 'documentation links must use https'),
+      })
+    ),
+    family: z.string().optional(),
+    sourceUrl: z.string().url(),
+    order: z.number().int().nonnegative(),
+  })
+  .strict()
+  .superRefine((guide, context) => {
+    if (!guide.slug.startsWith(`${guide.language}/`)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['slug'],
+        message: `slug must begin with the guide language "${guide.language}/"`,
+      })
+    }
+  })
+
 export const collections = {
   authors: defineCollection({
     loader: file('src/content/authors.yaml'),
@@ -189,45 +360,90 @@ export const collections = {
       base: 'src/content',
       pattern: 'testimonials/**/*.md',
     }),
-    schema: ({ image }: SchemaContext) => z.object({
-      name: z.string(),
-      title: z.string().optional(),
-      logo: image().optional(),
-      dark_logo: image().optional(),
-      link: z.string().url().optional(),
-      order: z.number().default(0),
+    schema: ({ image }: SchemaContext) =>
+      z.object({
+        name: z.string(),
+        title: z.string().optional(),
+        logo: image().optional(),
+        dark_logo: image().optional(),
+        link: z.string().url().optional(),
+        order: z.number().default(0),
+      }),
+  }),
+  courses: defineCollection({
+    loader: glob({
+      base: 'src/content/courses',
+      pattern: '**/*.{yml,yaml}',
     }),
+    schema: courseSchema,
+  }),
+  events: defineCollection({
+    loader: glob({
+      base: 'src/content/events',
+      pattern: '**/*.{yml,yaml}',
+    }),
+    schema: eventSchema,
+  }),
+  announcements: defineCollection({
+    loader: optionalGlob({
+      base: 'src/content/announcements',
+      pattern: '**/*.{yml,yaml}',
+    }),
+    schema: announcementSchema,
+  }),
+  sampleGuides: defineCollection({
+    loader: glob({
+      base: '.build/samples/pages',
+      pattern: '**/*.md',
+    }),
+    schema: sampleGuideSchema,
   }),
   docs: defineCollection({
     loader: glob({
-      base: "src/content",
+      base: 'src/content',
       // We explicitly declare the folders we want to include, as otherwise it includes index.md files
       // in examples which are not intended to be rendered on the site.
       // Long-term we'll be moving examples into the sdk-python repository instead, solving this problem.
       pattern: [
-        "404.mdx",
+        '404.mdx',
 
-        "docs/user-guide/**/*.mdx",
-        "docs/integrations/**/*.mdx",
-        "docs/contribute/**/*.mdx",
-        "docs/examples/**/[!index]*.mdx",
-        "docs/labs/**/*.mdx",
-        "docs/api/python/**/*.mdx",
-        "docs/api/typescript/**/*.(md|mdx)",
+        'docs/user-guide/**/*.{md,mdx}',
+        'docs/learning/**/*.mdx',
+        'docs/integrations/**/*.mdx',
+        'docs/contribute/**/*.mdx',
+        'docs/examples/**/[!index]*.mdx',
+        'docs/labs/**/*.{md,mdx}',
+        'docs/api/python/**/*.mdx',
+        'docs/api/typescript/**/*.(md|mdx)',
       ],
       generateId: generateDocsId,
     }),
     schema: docsSchema({
       // We have certain flags/behavior based on the following properties; see CMS-README.md for more info
       extend: z.object({
-        // Can be a single value or an array of supported values
-        languages: z.union([z.string(), z.array(z.string())]).optional(),
+        languages: docsLanguagesSchema,
         community: z.boolean().default(false),
         experimental: z.boolean().default(false),
+        // Drives the derived "New" sidebar badge for NEW_BADGE_DAYS after this
+        // date (see route-middleware.ts). Never hand-write a literal New badge.
+        addedDate: z.coerce.date().optional(),
         // Category for TypeScript API docs (classes, interfaces, type-aliases, functions)
         category: z.string().optional(),
         // Integration type for filtering (e.g., 'model-provider' for model providers)
-        integrationType: z.enum(['model-provider', 'tool', 'session-manager', 'memory-store', 'storage', 'integration', 'plugin', 'agent-extension', 'intervention']).optional(),
+        integrationType: z
+          .enum([
+            'model-provider',
+            'tool',
+            'session-manager',
+            'memory-store',
+            'storage',
+            'integration',
+            'plugin',
+            'observability',
+            'agent-extension',
+            'intervention',
+          ])
+          .optional(),
         // Short description for catalog listings
         description: z.string().optional(),
         // Array of slugs that should redirect to this page (e.g., old URLs)
@@ -237,6 +453,8 @@ export const collections = {
         // Pointers to the SDK implementation behind this page. Rendered as an
         // "Implementation" section on headless surfaces only (index.md, llms-full.txt).
         sourceLinks: z.array(sourceLinkSchema).optional(),
+        // Provenance for generated pages imported from another repository.
+        externalDocs: externalDocsSchema.optional(),
       }),
     }),
   }),

@@ -14,6 +14,7 @@ import type { LocalAgent } from '../types/agent.js'
 export class PluginRegistry {
   private readonly _plugins: Map<string, Plugin>
   private readonly _pending: Plugin[]
+  private _initializationPromise?: Promise<void>
 
   constructor(plugins: Plugin[] = []) {
     this._plugins = new Map()
@@ -22,11 +23,16 @@ export class PluginRegistry {
 
   /**
    * Initialize all pending plugins with the agent.
-   * Safe to call multiple times — only runs once per pending batch.
+   * Safe to call multiple times — subsequent calls share the first initialization result, including failures.
    *
    * @param agent - The agent instance to initialize plugins with
    */
   async initialize(agent: LocalAgent): Promise<void> {
+    this._initializationPromise ??= this._initialize(agent)
+    return this._initializationPromise
+  }
+
+  private async _initialize(agent: LocalAgent): Promise<void> {
     while (this._pending.length > 0) {
       const plugin = this._pending.shift()!
       await this._addAndInit(plugin, agent)
@@ -39,11 +45,11 @@ export class PluginRegistry {
     }
     this._plugins.set(plugin.name, plugin)
 
+    await plugin.initAgent(agent)
+
     const tools = plugin.getTools?.() ?? []
     if (tools.length > 0) {
       agent.toolRegistry.add(tools)
     }
-
-    await plugin.initAgent(agent)
   }
 }

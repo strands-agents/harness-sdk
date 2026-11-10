@@ -5,4 +5,4 @@ languages:
   python:
     package: strands-redis-session-manager
 github: https://github.com/lekhnath/strands-redis-session-manager
-addedDate: 2026-07-27
+addedDate: 2025-11-16

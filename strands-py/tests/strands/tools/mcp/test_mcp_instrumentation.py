@@ -1,3 +1,4 @@
+import threading
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -11,6 +12,7 @@ from strands.tools.mcp.mcp_instrumentation import (
     SessionContextAttachingReader,
     SessionContextSavingWriter,
     TransportContextExtractingReader,
+    inject_trace_context,
     mcp_instrumentation,
 )
 
@@ -24,6 +26,63 @@ def reset_mcp_instrumentation():
     yield
     # Reset after test too
     mcp_inst._instrumentation_applied = False
+
+
+class TestInjectTraceContext:
+    def test_injects_context_into_empty_meta(self):
+        """Test that trace context is injected when no metadata is supplied."""
+        with patch.object(propagate, "get_global_textmap") as mock_textmap:
+            mock_textmap.return_value.inject = lambda carrier: carrier.update({"traceparent": "00-abc-def-01"})
+
+            result = inject_trace_context(None)
+
+            assert result == {"traceparent": "00-abc-def-01"}
+
+    def test_preserves_existing_meta_entries(self):
+        """Test that caller-supplied metadata survives injection."""
+        with patch.object(propagate, "get_global_textmap") as mock_textmap:
+            mock_textmap.return_value.inject = lambda carrier: carrier.update({"traceparent": "00-abc-def-01"})
+
+            result = inject_trace_context({"com.example/request_id": "abc-123"})
+
+            assert result == {"com.example/request_id": "abc-123", "traceparent": "00-abc-def-01"}
+
+    def test_does_not_mutate_input(self):
+        """Test that the caller's metadata dict is copied, not mutated."""
+        original = {"com.example/request_id": "abc-123"}
+
+        with patch.object(propagate, "get_global_textmap") as mock_textmap:
+            mock_textmap.return_value.inject = lambda carrier: carrier.update({"traceparent": "00-abc-def-01"})
+
+            inject_trace_context(original)
+
+        assert original == {"com.example/request_id": "abc-123"}
+
+    def test_returns_none_when_nothing_to_send(self):
+        """Test that None is returned when there is no metadata and no active context."""
+        with patch.object(propagate, "get_global_textmap") as mock_textmap:
+            mock_textmap.return_value.inject = lambda carrier: None
+
+            result = inject_trace_context(None)
+
+            assert result is None
+
+    def test_propagator_error_does_not_raise(self):
+        """Test that a failing propagator never escapes to fail the tool call.
+
+        Guards https://github.com/strands-agents/harness-sdk/pull/3611#discussion_r3706469408: custom
+        propagators (configurable via OTEL_PROPAGATORS) may raise, and telemetry must not break calls.
+        """
+
+        def broken_inject(carrier):
+            raise RuntimeError("propagator boom")
+
+        with patch.object(propagate, "get_global_textmap") as mock_textmap:
+            mock_textmap.return_value.inject = broken_inject
+
+            result = inject_trace_context({"com.example/request_id": "abc-123"})
+
+            assert result == {"com.example/request_id": "abc-123"}
 
 
 class TestItemWithContext:
@@ -321,24 +380,6 @@ class TestSessionContextAttachingReader:
         assert items[0] == regular_item
 
 
-# Mock Pydantic-like class for testing
-class MockPydanticParams:
-    """Mock class that behaves like a Pydantic model."""
-
-    def __init__(self, **data):
-        self._data = data
-
-    def model_dump(self, by_alias=False):
-        return self._data.copy()
-
-    @classmethod
-    def model_validate(cls, data):
-        return cls(**data)
-
-    def __getattr__(self, name):
-        return self._data.get(name)
-
-
 class TestMCPInstrumentation:
     def test_mcp_instrumentation_called_on_client_init(self):
         """Test that mcp_instrumentation is called when MCPClient is initialized."""
@@ -358,8 +399,8 @@ class TestMCPInstrumentation:
     def test_mcp_instrumentation_idempotent_with_multiple_clients(self):
         """Test that mcp_instrumentation is only called once even with multiple MCPClient instances."""
 
-        # Mock the wrap_function_wrapper to count calls
-        with patch("strands.tools.mcp.mcp_instrumentation.wrap_function_wrapper") as mock_wrap:
+        # Mock register_post_import_hook to count calls
+        with patch("strands.tools.mcp.mcp_instrumentation.register_post_import_hook") as mock_register:
             # Mock transport
             def mock_transport():
                 read_stream = AsyncMock()
@@ -368,28 +409,21 @@ class TestMCPInstrumentation:
 
             # Create first MCPClient instance - should apply instrumentation
             MCPClient(mock_transport)
-            first_call_count = mock_wrap.call_count
+            first_call_count = mock_register.call_count
 
             # Create second MCPClient instance - should NOT apply instrumentation again
             MCPClient(mock_transport)
 
-            # wrap_function_wrapper should not be called again for the second client
-            assert mock_wrap.call_count == first_call_count
+            # register_post_import_hook should not be called again for the second client
+            assert mock_register.call_count == first_call_count
 
-    def test_mcp_instrumentation_calls_wrap_function_wrapper(self):
-        """Test that mcp_instrumentation calls the expected wrapper functions."""
+    def test_mcp_instrumentation_registers_server_side_hooks(self):
+        """Test that mcp_instrumentation registers the transport and session wrappers on the 1.x line."""
         with (
-            patch("strands.tools.mcp.mcp_instrumentation.wrap_function_wrapper") as mock_wrap,
+            patch("strands.tools.mcp.mcp_instrumentation.MCP_V2", False),
             patch("strands.tools.mcp.mcp_instrumentation.register_post_import_hook") as mock_register,
         ):
             mcp_instrumentation()
-
-            # Verify wrap_function_wrapper was called for client patching
-            mock_wrap.assert_called_once_with(
-                "mcp.shared.session",
-                "BaseSession.send_request",
-                mock_wrap.call_args_list[0][0][2],  # The patch function
-            )
 
             # Verify register_post_import_hook was called for transport and session wrappers
             assert mock_register.call_count == 2
@@ -399,167 +433,41 @@ class TestMCPInstrumentation:
             assert "mcp.server.streamable_http" in registered_modules
             assert "mcp.server.session" in registered_modules
 
-    def test_patch_mcp_client_injects_context_pydantic_model(self):
-        """Test that the client patch injects OpenTelemetry context into Pydantic models."""
-        # Create a mock request with tools/call method and Pydantic params
-        mock_request = MagicMock()
-        mock_request.root.method = "tools/call"
-
-        # Use our mock Pydantic-like class
-        mock_params = MockPydanticParams(existing="param")
-        mock_request.root.params = mock_params
-
-        # Create the patch function
-        with patch("strands.tools.mcp.mcp_instrumentation.wrap_function_wrapper") as mock_wrap:
+    def test_mcp_instrumentation_skips_patches_on_mcp_v2(self):
+        """Test that the server-side patches are not applied when mcp 2.x is installed."""
+        with (
+            patch("strands.tools.mcp.mcp_instrumentation.MCP_V2", True),
+            patch("strands.tools.mcp.mcp_instrumentation.register_post_import_hook") as mock_register,
+        ):
             mcp_instrumentation()
-            patch_function = mock_wrap.call_args_list[0][0][2]
 
-        # Mock the wrapped function
-        mock_wrapped = MagicMock()
+            mock_register.assert_not_called()
 
-        with patch.object(propagate, "get_global_textmap") as mock_textmap:
-            mock_textmap_instance = MagicMock()
-            mock_textmap.return_value = mock_textmap_instance
+    def test_mcp_instrumentation_applies_once_under_concurrency(self):
+        """Test that concurrent callers cannot apply the patches more than once.
 
-            # Call the patch function
-            patch_function(mock_wrapped, None, [mock_request], {})
+        Guards https://github.com/strands-agents/harness-sdk/pull/3611#discussion_r3706469411: an
+        unlocked check-and-set let concurrent MCPClient construction stack duplicate wrappers.
+        """
+        with (
+            patch("strands.tools.mcp.mcp_instrumentation.MCP_V2", False),
+            patch("strands.tools.mcp.mcp_instrumentation.register_post_import_hook") as mock_register,
+        ):
+            threads = [threading.Thread(target=mcp_instrumentation) for _ in range(8)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(timeout=5)
 
-            # Verify context was injected
-            mock_textmap_instance.inject.assert_called_once()
-            mock_wrapped.assert_called_once_with(mock_request)
+            # Two hooks registered exactly once, regardless of caller count
+            assert mock_register.call_count == 2
 
-            # Verify the params object is still a MockPydanticParams (or dict if fallback occurred)
-            assert hasattr(mock_request.root.params, "model_dump") or isinstance(mock_request.root.params, dict)
-
-    def test_patch_mcp_client_preserves_existing_meta_pydantic(self):
-        """Test that instrumentation preserves existing _meta values in Pydantic models."""
-        mock_request = MagicMock()
-        mock_request.root.method = "tools/call"
-
-        # Pydantic model with existing _meta (returned via by_alias=True)
-        mock_params = MockPydanticParams(_meta={"com.example/request_id": "abc-123"}, name="echo")
-        mock_request.root.params = mock_params
-
-        with patch("strands.tools.mcp.mcp_instrumentation.wrap_function_wrapper") as mock_wrap:
+    def test_mcp_instrumentation_skip_is_sticky(self):
+        """Test that a skipped application still marks instrumentation as applied."""
+        with patch("strands.tools.mcp.mcp_instrumentation.MCP_V2", True):
             mcp_instrumentation()
-            patch_function = mock_wrap.call_args_list[0][0][2]
 
-        mock_wrapped = MagicMock()
-
-        with patch.object(propagate, "get_global_textmap") as mock_textmap:
-            mock_textmap_instance = MagicMock()
-            mock_textmap.return_value = mock_textmap_instance
-
-            patch_function(mock_wrapped, None, [mock_request], {})
-
-            # Verify the reconstructed params use the key "_meta" (alias) not "meta" (Python name)
-            validated_params = mock_request.root.params.model_dump(by_alias=True)
-            assert "_meta" in validated_params
-            assert validated_params["_meta"]["com.example/request_id"] == "abc-123"
-
-    def test_patch_mcp_client_injects_context_dict_params(self):
-        """Test that the client patch injects OpenTelemetry context into dict params."""
-        # Create a mock request with tools/call method and dict params
-        mock_request = MagicMock()
-        mock_request.root.method = "tools/call"
-        mock_request.root.params = {"existing": "param"}
-
-        # Create the patch function
-        with patch("strands.tools.mcp.mcp_instrumentation.wrap_function_wrapper") as mock_wrap:
+        with patch("strands.tools.mcp.mcp_instrumentation.register_post_import_hook") as mock_register:
             mcp_instrumentation()
-            patch_function = mock_wrap.call_args_list[0][0][2]
 
-        # Mock the wrapped function
-        mock_wrapped = MagicMock()
-
-        with patch.object(propagate, "get_global_textmap") as mock_textmap:
-            mock_textmap_instance = MagicMock()
-            mock_textmap.return_value = mock_textmap_instance
-
-            # Call the patch function
-            patch_function(mock_wrapped, None, [mock_request], {})
-
-            # Verify context was injected
-            mock_textmap_instance.inject.assert_called_once()
-            mock_wrapped.assert_called_once_with(mock_request)
-
-            # Verify _meta was added to the params dict
-            assert "_meta" in mock_request.root.params
-
-    def test_patch_mcp_client_skips_non_tools_call(self):
-        """Test that the client patch skips non-tools/call methods."""
-        mock_request = MagicMock()
-        mock_request.root.method = "other/method"
-
-        with patch("strands.tools.mcp.mcp_instrumentation.wrap_function_wrapper") as mock_wrap:
-            mcp_instrumentation()
-            patch_function = mock_wrap.call_args_list[0][0][2]
-
-        mock_wrapped = MagicMock()
-
-        with patch.object(propagate, "get_global_textmap") as mock_textmap:
-            mock_textmap_instance = MagicMock()
-            mock_textmap.return_value = mock_textmap_instance
-
-            patch_function(mock_wrapped, None, [mock_request], {})
-
-            # Verify context injection was skipped
-            mock_textmap_instance.inject.assert_not_called()
-            mock_wrapped.assert_called_once_with(mock_request)
-
-    def test_patch_mcp_client_handles_exception_gracefully(self):
-        """Test that the client patch handles exceptions gracefully."""
-        # Create a mock request that will cause an exception
-        mock_request = MagicMock()
-        mock_request.root.method = "tools/call"
-        mock_request.root.params = MagicMock()
-        mock_request.root.params.model_dump.side_effect = Exception("Test exception")
-
-        with patch("strands.tools.mcp.mcp_instrumentation.wrap_function_wrapper") as mock_wrap:
-            mcp_instrumentation()
-            patch_function = mock_wrap.call_args_list[0][0][2]
-
-        mock_wrapped = MagicMock()
-
-        # Should not raise an exception, should call wrapped function normally
-        patch_function(mock_wrapped, None, [mock_request], {})
-        mock_wrapped.assert_called_once_with(mock_request)
-
-    def test_patch_mcp_client_pydantic_fallback_to_dict(self):
-        """Test that Pydantic model recreation falls back to dict on failure."""
-
-        # Create a Pydantic-like class that fails on model_validate
-        class FailingMockPydanticParams:
-            def __init__(self, **data):
-                self._data = data
-
-            def model_dump(self, by_alias=False):
-                return self._data.copy()
-
-            def model_validate(self, data):
-                raise Exception("Reconstruction failed")
-
-        # Create a mock request with failing Pydantic params
-        mock_request = MagicMock()
-        mock_request.root.method = "tools/call"
-
-        failing_params = FailingMockPydanticParams(existing="param")
-        mock_request.root.params = failing_params
-
-        with patch("strands.tools.mcp.mcp_instrumentation.wrap_function_wrapper") as mock_wrap:
-            mcp_instrumentation()
-            patch_function = mock_wrap.call_args_list[0][0][2]
-
-        mock_wrapped = MagicMock()
-
-        with patch.object(propagate, "get_global_textmap") as mock_textmap:
-            mock_textmap_instance = MagicMock()
-            mock_textmap.return_value = mock_textmap_instance
-
-            # Call the patch function
-            patch_function(mock_wrapped, None, [mock_request], {})
-
-            # Verify it fell back to dict
-            assert isinstance(mock_request.root.params, dict)
-            assert "_meta" in mock_request.root.params
-            mock_wrapped.assert_called_once_with(mock_request)
+            mock_register.assert_not_called()

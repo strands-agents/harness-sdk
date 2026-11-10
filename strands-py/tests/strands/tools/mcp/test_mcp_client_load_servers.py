@@ -1,11 +1,15 @@
 """Unit tests for MCPClient.load_servers (mcpServers JSON config loading)."""
 
 import json
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 
 import pytest
 
+from strands.tools.mcp._compat import MCP_V2
 from strands.tools.mcp.mcp_client import MCPClient
+
+# mcp 2.x renamed the provider's `scopes` keyword to `scope`.
+SCOPE_KWARG = "scope" if MCP_V2 else "scopes"
 
 
 @pytest.fixture
@@ -28,7 +32,7 @@ def transports():
     """Patch the three transport constructors as imported into mcp_client."""
     with (
         patch("strands.tools.mcp.mcp_client.stdio_client") as stdio,
-        patch("strands.tools.mcp.mcp_client.streamablehttp_client") as http,
+        patch("strands.tools.mcp.mcp_client.streamable_http_transport") as http,
         patch("strands.tools.mcp.mcp_client.sse_client") as sse,
         patch("strands.tools.mcp.mcp_client.StdioServerParameters") as params,
     ):
@@ -55,7 +59,7 @@ def test_url_detects_streamable_http(mock_client, transports):
     clients = MCPClient.load_servers({"srv": {"url": "https://example.com/mcp"}})
     assert len(clients) == 1
     _open(mock_client[0][0])
-    transports["http"].assert_called_once_with(url="https://example.com/mcp", headers=None)
+    transports["http"].assert_called_once_with(url="https://example.com/mcp", headers=None, auth=None)
     transports["sse"].assert_not_called()
 
 
@@ -95,7 +99,9 @@ def test_interpolates_in_headers(mock_client, transports, monkeypatch):
     monkeypatch.setenv("TOKEN", "abc")
     MCPClient.load_servers({"srv": {"url": "https://example.com/mcp", "headers": {"Authorization": "Bearer ${TOKEN}"}}})
     _open(mock_client[0][0])
-    transports["http"].assert_called_once_with(url="https://example.com/mcp", headers={"Authorization": "Bearer abc"})
+    transports["http"].assert_called_once_with(
+        url="https://example.com/mcp", headers={"Authorization": "Bearer abc"}, auth=None
+    )
 
 
 def test_interpolates_in_command_and_args(mock_client, transports, monkeypatch):
@@ -161,6 +167,32 @@ def test_default_startup_timeout(mock_client, transports):
     }
 
 
+def test_prefix_with_server_name_uses_config_key(mock_client, transports):
+    MCPClient.load_servers({"slack": {"command": "node"}}, prefix_with_server_name=True)
+    assert mock_client[0][1]["prefix"] == "slack"
+
+
+def test_prefix_with_server_name_sanitizes_config_key(mock_client, transports):
+    MCPClient.load_servers({"awslabs.aws-docs mcp/server": {"command": "node"}}, prefix_with_server_name=True)
+    assert mock_client[0][1]["prefix"] == "awslabs_aws-docs_mcp_server"
+    assert mock_client[0][1]["application_name"] == "awslabs.aws-docs mcp/server"
+
+
+def test_prefix_with_server_name_explicit_prefix_is_not_sanitized(mock_client, transports):
+    MCPClient.load_servers({"slack": {"command": "node", "prefix": "a.b"}}, prefix_with_server_name=True)
+    assert mock_client[0][1]["prefix"] == "a.b"
+
+
+def test_prefix_with_server_name_explicit_prefix_wins(mock_client, transports):
+    MCPClient.load_servers({"slack": {"command": "node", "prefix": "chat"}}, prefix_with_server_name=True)
+    assert mock_client[0][1]["prefix"] == "chat"
+
+
+def test_prefix_with_server_name_empty_prefix_opts_out(mock_client, transports):
+    MCPClient.load_servers({"slack": {"command": "node", "prefix": ""}}, prefix_with_server_name=True)
+    assert mock_client[0][1]["prefix"] == ""
+
+
 def test_tool_filters_compiled_to_regex(mock_client, transports):
     MCPClient.load_servers(
         {"srv": {"command": "node", "tool_filters": {"allowed": ["search_.*"], "rejected": ["^delete_"]}}}
@@ -200,7 +232,7 @@ def test_extracts_mcp_servers_key(mock_client, transports, tmp_path):
     _open(mock_client[0][0])
     _open(mock_client[1][0])
     transports["stdio"].assert_called_once()
-    transports["http"].assert_called_once_with(url="https://x.com", headers=None)
+    transports["http"].assert_called_once_with(url="https://x.com", headers=None, auth=None)
 
 
 def test_flat_object_without_wrapper(mock_client, transports, tmp_path):
@@ -294,7 +326,7 @@ def test_continue_on_error_skips_server_with_failed_config(mock_client, transpor
     assert len(clients) == 1
     # The one surviving client must be "ok" (http), not the broken stdio server that failed to build.
     _open(mock_client[0][0])
-    transports["http"].assert_called_once_with(url="https://example.com/mcp", headers=None)
+    transports["http"].assert_called_once_with(url="https://example.com/mcp", headers=None, auth=None)
     transports["stdio"].assert_not_called()
 
 
@@ -312,6 +344,26 @@ def test_continue_on_error_passed_to_client(mock_client, transports):
     assert mock_client[0][1]["continue_on_error"] is True
 
 
+def test_continue_on_error_default_skips_failed_server_and_passes_to_client(mock_client, transports):
+    clients = MCPClient.load_servers(
+        {"bad": {"command": "${MISSING_VAR_XYZ}"}, "good": {"command": "node"}}, continue_on_error=True
+    )
+    assert len(clients) == 1
+    assert mock_client[0][1]["continue_on_error"] is True
+
+
+def test_continue_on_error_server_key_overrides_default(mock_client, transports):
+    with pytest.raises(ValueError, match="MISSING_VAR_XYZ"):
+        MCPClient.load_servers(
+            {"bad": {"command": "${MISSING_VAR_XYZ}", "continue_on_error": False}}, continue_on_error=True
+        )
+
+
+def test_continue_on_error_server_key_false_overrides_default_for_client(mock_client, transports):
+    MCPClient.load_servers({"srv": {"command": "node", "continue_on_error": False}}, continue_on_error=True)
+    assert mock_client[0][1]["continue_on_error"] is False
+
+
 def test_mixed_config_non_opted_in_failure_aborts_whole_load(mock_client, transports):
     """continue_on_error is per-server, not global: a failing server that did not opt in aborts the load.
 
@@ -324,3 +376,88 @@ def test_mixed_config_non_opted_in_failure_aborts_whole_load(mock_client, transp
                 "strict": {"command": "node", "env": {"V": "${NONEXISTENT_VAR}"}},
             }
         )
+
+
+# OAuth Client Credentials (auth) Tests
+
+
+def test_config_auth_builds_client_credentials_provider(mock_client, transports):
+    with patch("mcp.client.auth.extensions.client_credentials.ClientCredentialsOAuthProvider") as provider_cls:
+        MCPClient.load_servers(
+            {
+                "srv": {
+                    "url": "https://example.com/mcp",
+                    "auth": {"client_id": "id", "client_secret": "secret", "scopes": ["read", "write"]},
+                }
+            }
+        )
+    _open(mock_client[0][0])
+
+    provider_cls.assert_called_once_with(
+        server_url="https://example.com/mcp",
+        storage=ANY,
+        client_id="id",
+        client_secret="secret",
+        **{SCOPE_KWARG: "read write"},
+    )
+    assert transports["http"].call_args.kwargs["auth"] is provider_cls.return_value
+
+
+def test_auth_interpolates_env_vars(mock_client, transports, monkeypatch):
+    monkeypatch.setenv("OAUTH_ID", "env-id")
+    monkeypatch.setenv("OAUTH_SECRET", "env-secret")
+    with patch("mcp.client.auth.extensions.client_credentials.ClientCredentialsOAuthProvider") as provider_cls:
+        MCPClient.load_servers(
+            {
+                "srv": {
+                    "url": "https://example.com/mcp",
+                    "auth": {"client_id": "${OAUTH_ID}", "client_secret": "${OAUTH_SECRET}"},
+                }
+            }
+        )
+
+    assert provider_cls.call_args.kwargs["client_id"] == "env-id"
+    assert provider_cls.call_args.kwargs["client_secret"] == "env-secret"
+
+
+def test_auth_with_sse_transport_raises(mock_client, transports):
+    with pytest.raises(ValueError, match="'auth' for streamable-http transport only"):
+        MCPClient.load_servers(
+            {
+                "srv": {
+                    "url": "https://example.com/sse",
+                    "transport": "sse",
+                    "auth": {"client_id": "id", "client_secret": "secret"},
+                }
+            }
+        )
+
+
+def test_auth_with_stdio_transport_raises(mock_client, transports):
+    with pytest.raises(ValueError, match="'auth' for streamable-http transport only"):
+        MCPClient.load_servers({"srv": {"command": "node", "auth": {"client_id": "id", "client_secret": "secret"}}})
+
+
+@pytest.mark.parametrize("auth", [{}, {"client_id": "id"}])
+def test_auth_missing_required_keys_raises(mock_client, transports, auth):
+    with pytest.raises(ValueError, match="missing required keys"):
+        MCPClient.load_servers({"srv": {"url": "https://example.com/mcp", "auth": auth}})
+
+
+@pytest.mark.parametrize("auth", ["not-a-dict", [], 0, ""])
+def test_auth_non_dict_raises(mock_client, transports, auth):
+    with pytest.raises(ValueError, match="'auth' must be an object"):
+        MCPClient.load_servers({"srv": {"url": "https://example.com/mcp", "auth": auth}})
+
+
+def test_auth_unknown_keys_warn(mock_client, transports, caplog):
+    with caplog.at_level("WARNING", logger="strands.tools.mcp.mcp_client"):
+        MCPClient.load_servers(
+            {
+                "srv": {
+                    "url": "https://example.com/mcp",
+                    "auth": {"client_id": "id", "client_secret": "secret", "unexpected": "value"},
+                }
+            }
+        )
+    assert "ignoring unrecognized auth keys" in caplog.text

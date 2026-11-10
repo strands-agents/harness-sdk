@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import {
+  countIfSelected,
   matchesFilters,
+  selectOnly,
   stateToQuery,
   queryToState,
   type CatalogFilterState,
@@ -8,7 +10,15 @@ import {
 } from '../src/util/catalog-filter'
 
 function state(overrides: Partial<CatalogFilterState> = {}): CatalogFilterState {
-  return { search: '', types: new Set(), languages: new Set(), badges: new Set(), sdk: 'agents', ...overrides }
+  return {
+    search: '',
+    types: new Set(),
+    languages: new Set(),
+    badges: new Set(),
+    maintainedBy: new Set(),
+    sdk: 'agents',
+    ...overrides,
+  }
 }
 
 const card: CardFilterData = {
@@ -16,6 +26,7 @@ const card: CardFilterData = {
   type: 'tool',
   languages: ['python'],
   badges: ['verified'],
+  maintainedBy: 'community',
   sdk: 'agents',
 }
 
@@ -69,6 +80,7 @@ describe('URL state round-trip', () => {
       types: new Set(['tool', 'plugin']),
       languages: new Set(['python']),
       badges: new Set(['verified']),
+      maintainedBy: new Set(['partner']),
       sdk: 'evals',
     })
     const back = queryToState(stateToQuery(s))
@@ -76,7 +88,39 @@ describe('URL state round-trip', () => {
     expect(back.types).toEqual(new Set(['tool', 'plugin']))
     expect(back.languages).toEqual(new Set(['python']))
     expect(back.badges).toEqual(new Set(['verified']))
+    expect(back.maintainedBy).toEqual(new Set(['partner']))
     expect(back.sdk).toBe('evals')
+  })
+
+  it('filters by maintainer tier', () => {
+    expect(matchesFilters(card, state({ maintainedBy: new Set(['community', 'aws']) }))).toBe(true)
+    expect(matchesFilters(card, state({ maintainedBy: new Set(['strands']) }))).toBe(false)
+  })
+
+  it('parses maintainer tiers from a deep link', () => {
+    expect(queryToState('by=strands,aws').maintainedBy).toEqual(new Set(['strands', 'aws']))
+    expect(queryToState('by=official').maintainedBy).toEqual(new Set())
+  })
+
+  it('countIfSelected holds other facets and swaps in the probed value', () => {
+    const cards = [
+      card,
+      { ...card, type: 'plugin', maintainedBy: 'aws' },
+      { ...card, type: 'tool', maintainedBy: 'aws' },
+    ]
+    const s = state({ maintainedBy: new Set(['aws']) })
+    expect(countIfSelected(cards, s, 'types', 'tool')).toBe(1)
+    expect(countIfSelected(cards, s, 'types', 'session-manager')).toBe(0)
+    // probing within the same facet replaces the current selection
+    expect(countIfSelected(cards, s, 'maintainedBy', 'community')).toBe(1)
+  })
+
+  it('selectOnly replaces the selection and re-picking clears it', () => {
+    const set = new Set(['model-provider'])
+    selectOnly(set, 'tool')
+    expect(set).toEqual(new Set(['tool']))
+    selectOnly(set, 'tool')
+    expect(set).toEqual(new Set())
   })
 
   it('drops unknown values when parsing', () => {

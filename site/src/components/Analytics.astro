@@ -36,6 +36,17 @@
     return segments.slice(start).join('|') || 'home'
   }
 
+  // First line of copied text, for code-copy labels — enough to tell an
+  // `npm install …` from a `pip install …` or a `from strands import …` without
+  // logging an entire snippet. Expressive Code stores its code in a data-code
+  // attribute with newlines encoded as U+007F; normalize those first. Capped so
+  // a long first line can't bloat the analytics label.
+  function firstLine(text) {
+    if (!text) return ''
+    var line = String(text).replace(/\u007f/g, '\n').split('\n')[0].trim()
+    return line.length > 120 ? line.slice(0, 119) + '…' : line
+  }
+
   // Consent is enforced by the WebSDK listener itself - events dispatched here
   // are silently dropped if the user has not accepted performance cookies via Shortbread.
   function dispatchXdmEvent(eventType, awsContent, useBeacon) {
@@ -164,14 +175,25 @@
       )
       if (copyBtn) {
         var copyLabel
+        var copyText = ''
         if (copyBtn.matches('button.install-copy')) {
           var installEl = copyBtn.closest('[data-copy]')
           var cmd = installEl && installEl.getAttribute('data-copy')
           copyLabel = cmd ? 'install:' + cmd : 'install'
+          copyText = cmd || ''
         } else {
           copyLabel = pageHierarchy(window.location.pathname)
+          // Expressive Code stores the block's raw code on the copy button's
+          // data-code attribute; fall back to the rendered <code> text.
+          copyText = copyBtn.getAttribute('data-code') || ''
+          if (!copyText) {
+            var pre = copyBtn.closest('figure, .expressive-code, pre')
+            var codeEl = pre && pre.querySelector('code')
+            copyText = codeEl ? codeEl.textContent : ''
+          }
         }
-        dispatchCTAClick('code-copy:' + copyLabel, 'customClick')
+        var snippet = firstLine(copyText)
+        dispatchCTAClick('code-copy:' + copyLabel + (snippet ? ' | ' + snippet : ''), 'customClick')
         return
       }
 
@@ -270,6 +292,18 @@
   setupClickTracking()
   setupSearchTracking()
   setupScrollTracking()
+
+  // Copy-to-clipboard events from the shared helper (src/util/clipboard.ts fires
+  // `strands:copy` with detail.label, e.g. 'install:pip', 'install:npm',
+  // 'code:use-cases:Python', and detail.text with the exact copied string).
+  // Routed through the one consent-gated pipeline; the first line of the text is
+  // appended so we can tell which command/snippet a reader copied.
+  window.addEventListener('strands:copy', function (e) {
+    var detail = (e && e.detail) || {}
+    if (!detail.label) return
+    var snippet = firstLine(detail.text)
+    dispatchCTAClick('code-copy:' + detail.label + (snippet ? ' | ' + snippet : ''), 'customClick')
+  })
 
   // If view transitions (ClientRouter) are enabled later, navigations won't reload the page,
   // so reset the per-page scroll baseline on astro:page-load. No-op while full reloads are used.

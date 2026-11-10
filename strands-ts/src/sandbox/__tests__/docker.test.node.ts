@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { DockerSandbox } from '../docker.js'
 import { streamProcess } from '../stream-process.js'
 import type { ExecutionResult } from '../types.js'
-import { SANDBOX_SHELL_DESCRIPTION } from '../../vended-tools/bash/types.js'
+import { SANDBOX_SHELL_DESCRIPTION } from '../../vended-tools/shell/types.js'
 
 const OK: ExecutionResult = { type: 'executionResult', exitCode: 0, stdout: '', stderr: '', outputFiles: [] }
 

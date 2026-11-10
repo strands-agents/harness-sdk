@@ -6,4 +6,4 @@ languages:
     package: strands-vllm
 github: https://github.com/agents-community/strands-vllm
 docsPage: docs/integrations/model-providers/vllm
-addedDate: 2026-01-01
+addedDate: 2026-01-23

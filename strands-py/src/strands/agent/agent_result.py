@@ -4,8 +4,8 @@ This module defines the AgentResult class which encapsulates the complete respon
 """
 
 from collections.abc import Sequence
-from dataclasses import dataclass
-from typing import Any, cast
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, cast
 
 from pydantic import BaseModel
 
@@ -13,7 +13,11 @@ from ..experimental.checkpoint import Checkpoint
 from ..interrupt import Interrupt
 from ..telemetry.metrics import EventLoopMetrics
 from ..types.content import Message
+from ..types.session import decode_bytes_values, encode_bytes_values
 from ..types.streaming import StopReason
+
+if TYPE_CHECKING:
+    from .invocation_context import InvocationContext
 
 
 @dataclass
@@ -30,6 +34,10 @@ class AgentResult:
         checkpoint: Checkpoint captured when the agent paused for durable execution.
             Populated only when stop_reason == "checkpoint". See
             strands.experimental.checkpoint for usage.
+        invocation_context: The request this call ran in; its ``usage`` covers the whole
+            request, while ``metrics`` covers this agent only. It is live: background work the
+            request started still adds to it. Pass it as ``invocation_context`` to a later call
+            to continue on the same limits and usage.
     """
 
     stop_reason: StopReason
@@ -39,13 +47,15 @@ class AgentResult:
     interrupts: Sequence[Interrupt] | None = None
     structured_output: BaseModel | None = None
     checkpoint: Checkpoint | None = None
+    invocation_context: "InvocationContext | None" = field(default=None, repr=False, compare=False)
 
     @property
     def context_size(self) -> int | None:
         """Most recent context size in tokens from the last LLM call.
 
         Returns:
-            The input token count from the most recent cycle, or None if no data is available.
+            The total prompt the model processed on the most recent cycle, including cached tokens, or
+            None if no data is available.
         """
         return self.metrics.latest_context_size
 
@@ -54,7 +64,8 @@ class AgentResult:
         """Projected context size for the next model call.
 
         Returns:
-            The projected token count (inputTokens + outputTokens), or None if no data is available.
+            The projected token count (total prompt including cached tokens plus generated output), or
+            None if no data is available.
         """
         return self.metrics.projected_context_size
 
@@ -104,7 +115,7 @@ class AgentResult:
         if data.get("type") != "agent_result":
             raise TypeError(f"AgentResult.from_dict: unexpected type {data.get('type')!r}")
 
-        message = cast(Message, data.get("message"))
+        message = cast(Message, decode_bytes_values(data.get("message")))
         stop_reason = cast(StopReason, data.get("stop_reason"))
         checkpoint_data = data.get("checkpoint")
         checkpoint = Checkpoint.from_dict(checkpoint_data) if checkpoint_data else None
@@ -120,12 +131,15 @@ class AgentResult:
     def to_dict(self) -> dict[str, Any]:
         """Convert this AgentResult to JSON-serializable dictionary.
 
+        Binary values in ``message`` (for example Converse ``redactedContent`` blobs)
+        are base64-encoded with the same helpers used by session persistence.
+
         Returns:
             Dictionary containing serialized AgentResult data
         """
         return {
             "type": "agent_result",
-            "message": self.message,
+            "message": encode_bytes_values(self.message),
             "stop_reason": self.stop_reason,
             "checkpoint": self.checkpoint.to_dict() if self.checkpoint else None,
         }

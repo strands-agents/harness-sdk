@@ -1,9 +1,10 @@
 name: strands-apify
 description: Apify platform integration giving Strands Agents access to thousands of pre-built Actors for web scraping, search, and e-commerce crawling.
 integrationType: tool
+maintainedBy: partner
 languages:
   python:
     package: strands-apify
 github: https://github.com/apify/strands-apify
 docsPage: docs/integrations/tools/strands-apify
-addedDate: 2026-01-01
+addedDate: 2026-07-09

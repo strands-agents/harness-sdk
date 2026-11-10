@@ -61,6 +61,7 @@ export interface MultiAgentPlugin {
 export class MultiAgentPluginRegistry {
   private readonly _plugins: Map<string, MultiAgentPlugin>
   private readonly _pending: MultiAgentPlugin[]
+  private _initializationPromise?: Promise<void>
 
   constructor(plugins: MultiAgentPlugin[] = []) {
     this._plugins = new Map()
@@ -69,11 +70,16 @@ export class MultiAgentPluginRegistry {
 
   /**
    * Initialize all pending plugins with the orchestrator.
-   * Safe to call multiple times — only runs once.
+   * Safe to call multiple times — subsequent calls share the first initialization result, including failures.
    *
    * @param orchestrator - The orchestrator instance to initialize plugins with
    */
   async initialize(orchestrator: MultiAgent): Promise<void> {
+    this._initializationPromise ??= this._initialize(orchestrator)
+    return this._initializationPromise
+  }
+
+  private async _initialize(orchestrator: MultiAgent): Promise<void> {
     while (this._pending.length > 0) {
       const plugin = this._pending.shift()!
       await this._addAndInit(plugin, orchestrator)

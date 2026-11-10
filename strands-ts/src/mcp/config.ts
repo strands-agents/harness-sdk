@@ -42,10 +42,21 @@ export interface McpServerConfig {
   toolFilters?: SerializableMcpToolFilters
   /** When true, this server is skipped during loadServers. */
   disabled?: boolean
-  /** When true, config or connection failures skip this server instead of throwing. */
+  /** When true, skip config/connection failures and overlong prefixed names during tool listing with warnings. */
   continueOnError?: boolean
-  /** Task-augmented tool execution configuration (experimental). */
+  /** Configuration for automatic execution of legacy (2025-11-25) MCP task tools. Experimental: subject to change. */
   tasksConfig?: TasksConfig
+}
+
+/** Options controlling how `McpClient.loadServers` translates config entries into clients. */
+export interface McpLoadServersOptions {
+  /**
+   * When true, servers without an explicit `prefix` use their config key as the tool name prefix,
+   * so same-named tools from different servers no longer collide. Characters outside `[A-Za-z0-9_-]`
+   * in the key (e.g. the dot in `awslabs.foo`) are replaced with `_`. Takes precedence over a
+   * default `prefix`; a server can still opt out with `prefix: ''`.
+   */
+  prefixWithServerName?: boolean
 }
 
 /**
@@ -59,7 +70,8 @@ export interface McpServerConfig {
  */
 export type McpServerLoader = (
   config: string | Record<string, McpServerConfig>,
-  defaults?: McpClientOptions
+  defaults?: McpClientOptions,
+  options?: McpLoadServersOptions
 ) => Promise<McpClientConfig[]>
 
 /**

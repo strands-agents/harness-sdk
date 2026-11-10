@@ -1,9 +1,10 @@
 name: agent-control
 description: Runtime control plane that evaluates every agent input and output against configurable policies to block prompt injection, PII leakage, and rogue tool calls.
 integrationType: plugin
+maintainedBy: partner
 languages:
   python:
     package: agent-control-sdk[strands-agents]
 github: https://github.com/agentcontrol/agent-control
 docsPage: docs/integrations/plugins/agent-control
-addedDate: 2026-01-01
+addedDate: 2026-03-11

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { toCardModel, sortEntries, NEW_BADGE_DAYS } from '../src/util/catalog'
+import { toCardModel, sortEntries } from '../src/util/catalog'
+import { NEW_BADGE_DAYS } from '../src/util/new-badge'
 import type { CatalogEntryData } from '../src/content.config'
 
 const BUILD_DATE = new Date('2026-07-17')
@@ -10,6 +11,7 @@ function entry(overrides: Partial<CatalogEntryData> = {}): CatalogEntryData {
     description: 'Example integration',
     integrationType: 'tool',
     sdk: 'agents',
+    maintainedBy: 'community',
     languages: { python: { package: 'strands-example' } },
     github: 'https://github.com/example/strands-example',
     featured: false,

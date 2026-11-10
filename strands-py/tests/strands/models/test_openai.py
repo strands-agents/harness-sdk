@@ -1,6 +1,7 @@
 import logging
 import os
 import unittest.mock
+from types import SimpleNamespace
 
 import httpx
 import openai
@@ -8,6 +9,9 @@ import pydantic
 import pytest
 
 import strands
+from strands.agent import AgentMetadata
+from strands.models import CacheConfig
+from strands.models.litellm import LiteLLMModel
 from strands.models.openai import OpenAIModel
 from strands.types.exceptions import ContextWindowOverflowException, ModelThrottledException
 
@@ -598,7 +602,9 @@ def test_format_request_tool_choice_tool():
     assert tru_result == exp_result
 
 
-def test_format_request_messages(system_prompt):
+@pytest.mark.parametrize("model_class", [OpenAIModel, LiteLLMModel])
+@pytest.mark.parametrize("text_position", [None, "before", "after"])
+def test_format_request_messages(system_prompt, model_class, text_position):
     messages = [
         {
             "content": [],
@@ -627,7 +633,11 @@ def test_format_request_messages(system_prompt):
         },
     ]
 
-    tru_result = OpenAIModel.format_request_messages(messages, system_prompt)
+    if text_position is not None:
+        position = 0 if text_position == "before" else len(messages[-1]["content"])
+        messages[-1]["content"].insert(position, {"text": "Injected context"})
+
+    tru_result = model_class.format_request_messages(messages, system_prompt)
     exp_result = [
         {
             "content": system_prompt,
@@ -656,6 +666,76 @@ def test_format_request_messages(system_prompt):
             "role": "tool",
             "tool_call_id": "c1",
         },
+    ]
+    if model_class is LiteLLMModel:
+        exp_result[0]["content"] = [{"type": "text", "text": system_prompt}]
+    if text_position is not None:
+        exp_result.append({"role": "user", "content": [{"type": "text", "text": "Injected context"}]})
+    assert tru_result == exp_result
+
+
+@pytest.mark.parametrize("model_class", [OpenAIModel, LiteLLMModel])
+def test_format_request_messages_groups_tool_results_before_text_and_images(model_class):
+    messages = [
+        {
+            "role": "assistant",
+            "content": [
+                {"toolUse": {"toolUseId": tool_id, "name": "image_tool", "input": {}}} for tool_id in ["t1", "t2"]
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "toolResult": {
+                        "toolUseId": "t1",
+                        "status": "success",
+                        "content": [
+                            {"text": "Image generated"},
+                            {"image": {"format": "png", "source": {"bytes": b"image"}}},
+                        ],
+                    }
+                },
+                {"text": "Injected context"},
+                {"toolResult": {"toolUseId": "t2", "status": "success", "content": [{"text": "done"}]}},
+            ],
+        },
+    ]
+
+    tru_result = model_class.format_request_messages(messages)
+    exp_result = [
+        {
+            "role": "assistant",
+            "tool_calls": [
+                {"id": tool_id, "type": "function", "function": {"name": "image_tool", "arguments": "{}"}}
+                for tool_id in ["t1", "t2"]
+            ],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "t1",
+            "content": [
+                {"type": "text", "text": "Image generated"},
+                {
+                    "type": "text",
+                    "text": (
+                        "Tool successfully returned an image. "
+                        "The image is being provided in the following user message."
+                    ),
+                },
+            ],
+        },
+        {"role": "tool", "tool_call_id": "t2", "content": "done"},
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "data:image/png;base64,aW1hZ2U=", "detail": "auto", "format": "image/png"},
+                }
+            ],
+        },
+        {"role": "user", "content": [{"type": "text", "text": "Injected context"}]},
     ]
     assert tru_result == exp_result
 
@@ -720,6 +800,111 @@ def test_format_request_respects_legacy_stream_param(openai_client, model_id, me
 
     assert tru_request["stream"] is False
     assert "stream_options" not in tru_request
+
+
+def test_cache_key_maps_to_prompt_cache_key(openai_client, model_id, messages):
+    _ = openai_client
+    model = OpenAIModel(model_id=model_id, cache_config=CacheConfig(cache_key="tenant-42"))
+
+    assert model.format_request(messages)["prompt_cache_key"] == "tenant-42"
+
+
+def test_cache_key_absent_when_unset(openai_client, model_id, messages):
+    _ = openai_client
+    model = OpenAIModel(model_id=model_id, cache_config=CacheConfig())
+
+    assert "prompt_cache_key" not in model.format_request(messages)
+
+
+def test_cache_key_derived_from_agent_metadata_session(openai_client, model_id, messages):
+    _ = openai_client
+    model = OpenAIModel(model_id=model_id, cache_config=CacheConfig())
+
+    request = model.format_request(messages, agent_metadata=AgentMetadata(session_id="s1"))
+
+    assert request["prompt_cache_key"] == "strands-s1"
+
+
+def test_configured_cache_key_wins_over_agent_metadata(openai_client, model_id, messages):
+    _ = openai_client
+    model = OpenAIModel(model_id=model_id, cache_config=CacheConfig(cache_key="tenant-42"))
+
+    request = model.format_request(messages, agent_metadata=AgentMetadata(session_id="s1"))
+
+    assert request["prompt_cache_key"] == "tenant-42"
+
+
+def test_false_cache_key_opts_out_of_agent_metadata(openai_client, model_id, messages):
+    _ = openai_client
+    model = OpenAIModel(model_id=model_id, cache_config=CacheConfig(cache_key=False))
+
+    request = model.format_request(messages, agent_metadata=AgentMetadata(session_id="s1"))
+
+    assert "prompt_cache_key" not in request
+
+
+def test_agent_metadata_without_session_yields_no_cache_key(openai_client, model_id, messages):
+    _ = openai_client
+    model = OpenAIModel(model_id=model_id, cache_config=CacheConfig())
+
+    request = model.format_request(messages, agent_metadata=AgentMetadata(session_id=None))
+
+    assert "prompt_cache_key" not in request
+
+
+@pytest.mark.asyncio
+async def test_stream_derives_prompt_cache_key_from_agent_session(openai_client, model_id, agenerator, alist):
+    """stream threads agent_metadata so the outbound request carries the derived routing key."""
+    model = OpenAIModel(model_id=model_id, cache_config=CacheConfig())
+    mock_delta = unittest.mock.Mock(content=None, tool_calls=None, reasoning_content=None)
+    mock_event_1 = unittest.mock.Mock(choices=[unittest.mock.Mock(finish_reason="stop", delta=mock_delta)])
+    mock_event_2 = unittest.mock.Mock()
+    mock_event_3 = unittest.mock.Mock(usage=None)
+    openai_client.chat.completions.create = unittest.mock.AsyncMock(
+        return_value=agenerator([mock_event_1, mock_event_2, mock_event_3]),
+    )
+
+    await alist(model.stream([{"role": "user", "content": []}], agent_metadata=AgentMetadata(session_id="s1")))
+
+    _, call_kwargs = openai_client.chat.completions.create.call_args
+    assert call_kwargs["prompt_cache_key"] == "strands-s1"
+
+
+def test_explicit_prompt_cache_key_in_params_wins(openai_client, model_id, messages):
+    _ = openai_client
+    model = OpenAIModel(
+        model_id=model_id,
+        params={"prompt_cache_key": "explicit"},
+        cache_config=CacheConfig(cache_key="from-config"),
+    )
+
+    assert model.format_request(messages)["prompt_cache_key"] == "explicit"
+
+
+@pytest.mark.parametrize("retention", ["24h", "in_memory"])
+def test_translatable_ttl_maps_to_prompt_cache_retention(openai_client, model_id, messages, retention):
+    _ = openai_client
+    model = OpenAIModel(model_id=model_id, cache_config=CacheConfig(cache_key="k", ttl=retention))
+
+    assert model.format_request(messages)["prompt_cache_retention"] == retention
+
+
+def test_untranslatable_ttl_is_ignored_and_warned(openai_client, model_id, messages):
+    _ = openai_client
+    model = OpenAIModel(model_id=model_id, cache_config=CacheConfig(cache_key="k", ttl="5m"))
+
+    with pytest.warns(UserWarning, match="not an openai retention value"):
+        request = model.format_request(messages)
+
+    assert "prompt_cache_retention" not in request
+
+
+def test_placement_fields_are_no_ops_warned(openai_client, model_id, messages):
+    _ = openai_client
+    model = OpenAIModel(model_id=model_id, cache_config=CacheConfig(strategy="anthropic", cache_key="k"))
+
+    with pytest.warns(UserWarning, match="have no effect"):
+        model.format_request(messages)
 
 
 def test_format_request_with_tool_choice_auto(model, messages, tool_specs, system_prompt):
@@ -904,6 +1089,11 @@ def test_format_request_with_tool_choice_tool(model, messages, tool_specs, syste
             {"chunk_type": "message_stop", "data": "length"},
             {"messageStop": {"stopReason": "max_tokens"}},
         ),
+        # Message Stop - Content Filtered
+        (
+            {"chunk_type": "message_stop", "data": "content_filter"},
+            {"messageStop": {"stopReason": "content_filtered"}},
+        ),
         # Message Stop - End Turn
         (
             {"chunk_type": "message_stop", "data": "stop"},
@@ -947,43 +1137,38 @@ def test_format_chunk_unknown_type(model):
         model.format_chunk(event)
 
 
-def test_format_chunk_metadata_with_cache_tokens(model):
-    """Test format_chunk for metadata with cache tokens present."""
-    mock_usage = unittest.mock.Mock()
-    mock_usage.prompt_tokens = 100
-    mock_usage.completion_tokens = 50
-    mock_usage.total_tokens = 150
-
-    mock_tokens_details = unittest.mock.Mock()
-    mock_tokens_details.cached_tokens = 25
-    mock_usage.prompt_tokens_details = mock_tokens_details
-
-    event = {"chunk_type": "metadata", "data": mock_usage}
-
-    result = model.format_chunk(event)
-
-    assert result["metadata"]["usage"]["inputTokens"] == 100
-    assert result["metadata"]["usage"]["outputTokens"] == 50
-    assert result["metadata"]["usage"]["totalTokens"] == 150
-    assert result["metadata"]["usage"]["cacheReadInputTokens"] == 25
-
-
-def test_format_chunk_metadata_with_zero_cached_tokens(model):
-    """Test format_chunk for metadata when cached_tokens is 0."""
-    mock_usage = unittest.mock.Mock()
-    mock_usage.prompt_tokens = 100
-    mock_usage.completion_tokens = 50
-    mock_usage.total_tokens = 150
-
-    mock_tokens_details = unittest.mock.Mock()
-    mock_tokens_details.cached_tokens = 0
-    mock_usage.prompt_tokens_details = mock_tokens_details
-
-    event = {"chunk_type": "metadata", "data": mock_usage}
-
-    result = model.format_chunk(event)
-
-    assert "cacheReadInputTokens" not in result["metadata"]["usage"]
+@pytest.mark.parametrize(
+    ("tokens_details", "exp_cache"),
+    [
+        (
+            {"cached_tokens": 25, "cache_write_tokens": 4346},
+            {"cacheReadInputTokens": 25, "cacheWriteInputTokens": 4346},
+        ),
+        ({"cached_tokens": 25, "cache_write_tokens": 0}, {"cacheReadInputTokens": 25, "cacheWriteInputTokens": 0}),
+        ({"cached_tokens": 0, "cache_write_tokens": 0}, {"cacheReadInputTokens": 0, "cacheWriteInputTokens": 0}),
+        ({"cached_tokens": 25}, {"cacheReadInputTokens": 25}),
+        ({"cached_tokens": 0}, {"cacheReadInputTokens": 0}),
+        ({"cache_write_tokens": 0}, {"cacheWriteInputTokens": 0}),
+        ({"cached_tokens": None, "cache_write_tokens": None}, {}),
+        ({"cached_tokens": "25", "cache_write_tokens": "10"}, {}),
+        ({}, {}),
+    ],
+)
+def test_format_chunk_metadata_with_cache_tokens(tokens_details, exp_cache, model):
+    usage = SimpleNamespace(
+        prompt_tokens=100,
+        completion_tokens=50,
+        total_tokens=150,
+        prompt_tokens_details=SimpleNamespace(**tokens_details),
+    )
+    tru_chunk = model.format_chunk({"chunk_type": "metadata", "data": usage})
+    exp_chunk = {
+        "metadata": {
+            "usage": {"inputTokens": 100, "outputTokens": 50, "totalTokens": 150, **exp_cache},
+            "metrics": {"latencyMs": 0},
+        },
+    }
+    assert tru_chunk == exp_chunk
 
 
 @pytest.mark.asyncio
@@ -1366,6 +1551,34 @@ def test_format_request_messages_excludes_reasoning_content():
         },
     ]
     assert tru_result == exp_result
+
+
+def test_format_request_warns_once_for_reasoning_content_across_history(model, caplog):
+    """Warns once per request regardless of how many messages carry reasoning (#4990)."""
+    caplog.set_level(logging.WARNING, logger="strands.models.openai")
+    reasoning_turn = {
+        "role": "assistant",
+        "content": [{"reasoningContent": {"reasoningText": {"text": "thinking"}}}, {"text": "step"}],
+    }
+    messages = [{"role": "user", "content": [{"text": "go"}]}, reasoning_turn, reasoning_turn, reasoning_turn]
+
+    model.format_request(messages)
+
+    tru_messages = [
+        record.getMessage() for record in caplog.records if "reasoningContent is not supported" in record.getMessage()
+    ]
+    exp_messages = [
+        "count=<3> | reasoningContent is not supported in multi-turn conversations with the Chat Completions API"
+    ]
+    assert tru_messages == exp_messages
+
+
+def test_format_request_does_not_warn_without_reasoning_content(model, messages, caplog):
+    caplog.set_level(logging.WARNING, logger="strands.models.openai")
+
+    model.format_request(messages)
+
+    assert "reasoningContent is not supported" not in caplog.text
 
 
 @pytest.mark.asyncio
@@ -1817,6 +2030,17 @@ def test_format_request_filters_s3_source_image(model, caplog):
     assert "Location sources are not supported by OpenAI" in caplog.text
 
 
+def test_format_request_skips_message_cache_point(model, caplog):
+    caplog.set_level(logging.WARNING, logger="strands.models.openai")
+
+    messages = [{"role": "user", "content": [{"text": "durable prefix"}, {"cachePoint": {"type": "default"}}]}]
+
+    request = model.format_request(messages)
+
+    assert request["messages"][0]["content"] == [{"text": "durable prefix", "type": "text"}]
+    assert "cachePoint content block is not supported by OpenAI" in caplog.text
+
+
 def test_format_request_filters_location_source_document(model, caplog):
     """Test that documents with Location sources are filtered out with warning."""
     caplog.set_level(logging.WARNING, logger="strands.models.openai")
@@ -2005,6 +2229,69 @@ class TestOpenAIModelBedrockMantleConfig:
         resolved = model._resolve_client_args()
         assert resolved["base_url"] == "https://bedrock-mantle.us-east-1.api.aws/openai/v1"
 
+    @pytest.mark.parametrize(
+        ("model_id", "expected_path"),
+        [
+            # Regression for #3654: Mantle rejects the wrong base path with HTTP 400
+            # validation_error. The affected ids use /openai/v1; controls below pin /v1.
+            ("xai.grok-4.3", "/openai/v1"),
+            ("google.gemma-4-31b", "/openai/v1"),
+            ("google.gemma-4-26b-a4b", "/openai/v1"),
+            ("google.gemma-4-e2b", "/openai/v1"),
+            ("openai.gpt-5.6-terra", "/openai/v1"),
+            ("openai.gpt-5.6-cyber", "/openai/v1"),
+            ("openai.gpt-daybreak-blue-5.6-sol", "/openai/v1"),
+            ("openai.gpt-6-astra", "/openai/v1"),
+            ("openai.gpt-6.1-sol", "/openai/v1"),
+            # Gemma 3 is served from /v1 while Gemma 4 is not, so `google.` cannot be a prefix.
+            ("google.gemma-3-27b-it", "/v1"),
+            ("google.gemma-3-4b-it", "/v1"),
+            ("openai.gpt-oss-120b", "/v1"),
+            ("openai.gpt-oss-safeguard-20b", "/v1"),
+            ("qwen.qwen3-32b", "/v1"),
+            ("deepseek.v3.2", "/v1"),
+            ("mistral.ministral-3-8b-instruct", "/v1"),
+            ("zai.glm-5", "/v1"),
+            ("moonshotai.kimi-k2.5", "/v1"),
+            ("minimax.minimax-m2", "/v1"),
+            ("nvidia.nemotron-nano-9b-v2", "/v1"),
+            ("writer.palmyra-vision-7b", "/v1"),
+        ],
+    )
+    def test_bedrock_mantle_config_base_path_per_model(
+        self, model_id, expected_path, openai_client, mock_provide_token
+    ):
+        """Each Mantle model resolves to the base path it is actually served from."""
+        _ = openai_client
+        _ = mock_provide_token
+        model = OpenAIModel(model_id=model_id, bedrock_mantle_config={"region": "us-east-1"})
+
+        resolved = model._resolve_client_args()
+        assert resolved["base_url"] == f"https://bedrock-mantle.us-east-1.api.aws{expected_path}"
+
+    @pytest.mark.parametrize(
+        ("model_id", "expected_path"),
+        [
+            # Point releases within a verified line, beyond the verified catalog.
+            ("xai.grok-4.9", "/openai/v1"),
+            ("openai.gpt-5.9-unreleased", "/openai/v1"),
+            ("openai.gpt-6-nova", "/openai/v1"),
+            ("openai.gpt-6.1-sol", "/openai/v1"),
+            # New lines the prefixes deliberately do not cover.
+            ("xai.grok-5", "/v1"),
+            ("xai.grok-5-preview", "/v1"),
+            ("openai.gpt-6oss-20b", "/v1"),
+        ],
+    )
+    def test_bedrock_mantle_config_unverified_ids(self, model_id, expected_path, openai_client, mock_provide_token):
+        """Ids beyond the verified catalog: a known line routes by prefix, a new line falls to /v1."""
+        _ = openai_client
+        _ = mock_provide_token
+        model = OpenAIModel(model_id=model_id, bedrock_mantle_config={"region": "us-east-1"})
+
+        resolved = model._resolve_client_args()
+        assert resolved["base_url"] == f"https://bedrock-mantle.us-east-1.api.aws{expected_path}"
+
     def test_bedrock_mantle_config_forwards_credentials_provider_and_expiry(self, openai_client, mock_provide_token):
         """Optional credentials_provider and expiry are forwarded to provide_token."""
         _ = openai_client
@@ -2153,5 +2440,111 @@ class TestOpenAIModelBedrockMantleConfig:
         _ = openai_client
         mock_provide_token.side_effect = RuntimeError("no credentials in chain")
         model = OpenAIModel(model_id="openai.gpt-oss-120b", bedrock_mantle_config={"region": "us-east-1"})
-        with pytest.raises(RuntimeError, match="Bedrock Mantle bearer token.*us-east-1"):
+        with pytest.raises(RuntimeError, match="Amazon Bedrock bearer token.*us-east-1"):
             model._resolve_client_args()
+
+    @pytest.mark.parametrize(
+        "model_id",
+        [
+            # Cross-Region inference profile ids.
+            "global.openai.gpt-5.6-luna",
+            "us.openai.gpt-5.6-sol",
+            "us-gov.openai.gpt-5.6-terra",
+            # A foundation-model id resolves to the same fixed path.
+            "openai.gpt-oss-120b",
+        ],
+    )
+    def test_bedrock_mantle_config_endpoint_runtime_base_url(self, model_id, openai_client, mock_provide_token):
+        """endpoint='bedrock-runtime' resolves to the fixed /openai/v1 base path."""
+        _ = openai_client
+        model = OpenAIModel(
+            model_id=model_id,
+            bedrock_mantle_config={"endpoint": "bedrock-runtime", "region": "ap-northeast-1"},
+        )
+
+        resolved = model._resolve_client_args()
+
+        assert resolved["base_url"] == "https://bedrock-runtime.ap-northeast-1.amazonaws.com/openai/v1"
+        assert resolved["api_key"] == "bedrock-api-key-deadbeef&Version=1"
+        mock_provide_token.assert_called_once_with(region="ap-northeast-1")
+
+    @pytest.mark.parametrize(
+        ("model_id", "expected_url"),
+        [
+            ("openai.gpt-oss-120b", "https://bedrock-mantle.us-east-1.api.aws/v1"),
+            ("openai.gpt-5.6-luna", "https://bedrock-mantle.us-east-1.api.aws/openai/v1"),
+        ],
+    )
+    def test_bedrock_mantle_config_endpoint_mantle_is_the_default(
+        self, model_id, expected_url, openai_client, mock_provide_token
+    ):
+        """An explicit endpoint='bedrock-mantle' resolves exactly like omitting the key."""
+        _ = openai_client
+        _ = mock_provide_token
+        explicit = OpenAIModel(
+            model_id=model_id, bedrock_mantle_config={"endpoint": "bedrock-mantle", "region": "us-east-1"}
+        )
+        default = OpenAIModel(model_id=model_id, bedrock_mantle_config={"region": "us-east-1"})
+
+        assert explicit._resolve_client_args()["base_url"] == expected_url
+        assert default._resolve_client_args()["base_url"] == expected_url
+
+    @pytest.mark.parametrize("endpoint", ["bedrock-runtime ", "runtime", "Bedrock-Runtime", "", None])
+    def test_bedrock_mantle_config_endpoint_rejects_unknown_value(self, endpoint, openai_client, mock_provide_token):
+        """An unknown endpoint fails loudly, before a token is minted."""
+        _ = openai_client
+        model = OpenAIModel(
+            model_id="openai.gpt-oss-120b",
+            bedrock_mantle_config={"endpoint": endpoint, "region": "us-east-1"},
+        )
+
+        with pytest.raises(ValueError, match="Unknown Bedrock endpoint"):
+            model._resolve_client_args()
+        mock_provide_token.assert_not_called()
+
+    def test_bedrock_mantle_config_endpoint_runtime_merges_with_client_args(self, openai_client, mock_provide_token):
+        """endpoint='bedrock-runtime' composes with client_args the same way Mantle does."""
+        _ = openai_client
+        _ = mock_provide_token
+        model = OpenAIModel(
+            model_id="global.openai.gpt-5.6-luna",
+            client_args={"timeout": 42},
+            bedrock_mantle_config={"endpoint": "bedrock-runtime", "region": "us-west-2"},
+        )
+
+        resolved = model._resolve_client_args()
+
+        assert resolved["base_url"] == "https://bedrock-runtime.us-west-2.amazonaws.com/openai/v1"
+        assert resolved["timeout"] == 42
+
+    def test_bedrock_mantle_config_endpoint_runtime_requires_region(self, openai_client, mock_provide_token):
+        """A missing region is rejected on bedrock-runtime too, before a token is minted."""
+        _ = openai_client
+        with (
+            unittest.mock.patch("boto3.Session") as mock_session_cls,
+            unittest.mock.patch.dict(os.environ, {}, clear=True),
+        ):
+            mock_session_cls.return_value.region_name = None
+            model = OpenAIModel(
+                model_id="global.openai.gpt-5.6-luna", bedrock_mantle_config={"endpoint": "bedrock-runtime"}
+            )
+            # The Region lists differ per endpoint, so the message points at the right one.
+            with pytest.raises(ValueError, match="Could not resolve an AWS region.*endpoints-region-availability"):
+                model._resolve_client_args()
+        mock_provide_token.assert_not_called()
+
+
+def test_format_request_logs_skipped_blocks_once_per_request(model, caplog):
+    caplog.set_level(logging.WARNING, logger="strands.models.openai")
+    s3_image = {"image": {"format": "png", "source": {"location": {"type": "s3", "uri": "s3://bucket/key.png"}}}}
+    messages = []
+    for turn in range(3):
+        messages.append({"role": "user", "content": [{"text": "look"}, s3_image, {"cachePoint": {"type": "default"}}]})
+        messages.append({"role": "assistant", "content": [{"text": f"answer {turn}"}]})
+
+    model.format_request(messages)
+
+    messages_logged = [record.getMessage() for record in caplog.records]
+    assert len(messages_logged) == 2
+    assert "count=<3> | Location sources are not supported by OpenAI" in messages_logged[0]
+    assert "count=<3> | cachePoint content block is not supported by OpenAI" in messages_logged[1]

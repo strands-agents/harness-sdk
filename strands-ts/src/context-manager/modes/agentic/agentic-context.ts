@@ -6,6 +6,7 @@
 
 import { z } from 'zod'
 import { Message, TextBlock } from '../../../types/messages.js'
+import { createAuxiliaryInvocationContext } from '../../../agent/invocation-context.js'
 import { tool } from '../../../tools/tool-factory.js'
 import { pinMessage, unpinMessage, isPinned } from '../../../conversation-manager/compression/pin-message.js'
 import {
@@ -17,8 +18,7 @@ import {
 } from '../../../conversation-manager/compression/context-compression.js'
 import type { InvokeModelContext } from '../../../middleware/stages.js'
 import type { MiddlewareInputHandler } from '../../../middleware/types.js'
-import type { Model } from '../../../models/model.js'
-import { DEFAULT_CONTEXT_WINDOW_LIMIT } from '../../../conversation-manager/conversation-manager.js'
+import { DEFAULT_CONTEXT_WINDOW_LIMIT } from '../../../models/defaults.js'
 
 /** Default number of recent messages to preserve verbatim during summarization or truncation. */
 const DEFAULT_KEEP_RECENT_MESSAGES = 10
@@ -120,7 +120,12 @@ export const summarizeContextTool = tool({
 
     let summaryMessage
     try {
-      summaryMessage = await generateSummary(eligible, agent.model)
+      summaryMessage = await generateSummary(
+        eligible,
+        agent.auxModel,
+        undefined,
+        createAuxiliaryInvocationContext(context?.invocationContext)
+      )
     } catch (err) {
       return `Summarization failed: ${err instanceof Error ? err.message : 'unknown error'}`
     }
@@ -181,21 +186,21 @@ export const truncateContextTool = tool({
   },
 })
 
-export function createTokenUsageMiddleware(model: Model): MiddlewareInputHandler<InvokeModelContext> {
+export function createTokenUsageMiddleware(): MiddlewareInputHandler<InvokeModelContext> {
   return async (context: InvokeModelContext): Promise<InvokeModelContext> => {
     const projectedInputTokens = context.projectedInputTokens
     if (projectedInputTokens === undefined) {
       return context
     }
 
-    const contextWindowLimit = model.getConfig().contextWindowLimit ?? DEFAULT_CONTEXT_WINDOW_LIMIT
+    const contextWindowLimit = context.model.modelInfo.limits?.contextWindow ?? DEFAULT_CONTEXT_WINDOW_LIMIT
     const remaining = Math.max(0, contextWindowLimit - projectedInputTokens)
     const percentUsed = ((projectedInputTokens / contextWindowLimit) * 100).toFixed(1)
 
     const statusText =
       `\n\n<context-status>\n` +
-      `<used>${projectedInputTokens.toLocaleString()} / ${contextWindowLimit.toLocaleString()} tokens (${percentUsed}%)</used>\n` +
-      `<remaining>~${remaining.toLocaleString()} tokens</remaining>\n` +
+      `<used>${projectedInputTokens.toLocaleString('en-US')} / ${contextWindowLimit.toLocaleString('en-US')} tokens (${percentUsed}%)</used>\n` +
+      `<remaining>~${remaining.toLocaleString('en-US')} tokens</remaining>\n` +
       `</context-status>`
 
     const messages = [...context.messages]
@@ -210,7 +215,10 @@ export function createTokenUsageMiddleware(model: Model): MiddlewareInputHandler
       ...(lastMessage.metadata && { metadata: lastMessage.metadata }),
     })
 
-    return { ...context, messages }
+    // The live token count makes this block per-call, so a cache point must stay ahead of it. Only
+    // counted for a user message: elsewhere it would move the cache point off an unrelated message.
+    const appended = lastMessage.role === 'user' ? 1 : 0
+    return { ...context, messages, dynamicTrailingBlocks: (context.dynamicTrailingBlocks ?? 0) + appended }
   }
 }
 

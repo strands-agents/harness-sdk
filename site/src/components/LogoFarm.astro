@@ -1,0 +1,193 @@
+---
+import databricks from '../assets/logos/databricks.svg?raw';
+import datadog from '../assets/logos/datadog.svg?raw';
+import jefferies from '../assets/logos/jefferies.svg?raw';
+import mrhTrowe from '../assets/logos/mrh-trowe.svg?raw';
+import neo4j from '../assets/logos/neo4j.svg?raw';
+import nttDocomo from '../assets/logos/ntt-docomo.svg?raw';
+import thrad from '../assets/logos/thrad.svg?raw';
+
+const logos = [
+  {
+    name: 'Jefferies',
+    svg: jefferies,
+    href: 'https://aws.amazon.com/blogs/machine-learning/building-trade-assistant-how-jefferies-optimized-front-office-trading-operations-with-ai/',
+  },
+  {
+    name: 'Databricks',
+    svg: databricks,
+    href: 'https://docs.databricks.com/aws/en/mlflow3/genai/tracing/integrations/strands',
+  },
+  { name: 'Datadog', svg: datadog, href: 'https://www.datadoghq.com/blog/ai-guard-aws-strands-agents/' },
+  { name: 'Neo4j', svg: neo4j, href: 'https://neo4j.com/labs/genai-ecosystem/strands-agents-neo4j/' },
+  {
+    name: 'Thrad',
+    svg: thrad,
+    href: 'https://aws.amazon.com/blogs/machine-learning/multi-agent-social-intelligence-with-strands-agents-and-amazon-bedrock/',
+  },
+  {
+    name: 'NTT Docomo',
+    svg: nttDocomo,
+    href: 'https://press.aboutamazon.com/aws/2026/3/ntt-docomo-launches-commercial-5g-core-network-on-aws',
+  },
+  {
+    name: 'MRH Trowe',
+    svg: mrhTrowe,
+    href: 'https://aws.amazon.com/blogs/machine-learning/how-mrh-trowe-enabled-secure-self-service-ai-agents-in-financial-services/',
+  },
+];
+---
+
+<section class="logo-farm" aria-label="Companies using Strands">
+  <div class="logo-farm__inner">
+    <div class="logo-farm__row">
+      {logos.map((logo) => (
+        <a
+          class="logo-farm__cell"
+          href={logo.href}
+          target="_blank"
+          rel="noopener noreferrer"
+          data-logo={logo.name}
+          aria-label={`${logo.name} (opens in a new tab)`}
+        >
+          <span class="logo-farm__logo" aria-hidden="true" set:html={logo.svg} />
+        </a>
+      ))}
+    </div>
+  </div>
+</section>
+
+<style>
+  .logo-farm {
+    background: var(--bg);
+    color: var(--fg);
+    width: 100%;
+    padding: 79px 55px;
+  }
+
+  .logo-farm__inner {
+    display: flex;
+    flex-direction: column;
+    gap: 47px;
+    max-width: 1332px;
+    margin: 0 auto;
+  }
+
+  /* Logos keep their natural widths; the row wraps and stays centered when it runs out of room. */
+  .logo-farm__row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 32px 36px;
+  }
+
+  .logo-farm__cell {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 56px;
+    color: inherit;
+    text-decoration: none;
+    border-radius: 8px;
+  }
+
+  .logo-farm__cell:hover .logo-farm__logo,
+  .logo-farm__cell:focus-visible .logo-farm__logo {
+    filter: drop-shadow(0 0 4px var(--strands-green)) drop-shadow(0 0 14px var(--strands-green));
+    transform: scale(1.05);
+  }
+
+  .logo-farm__cell:focus-visible {
+    outline: 2px solid var(--strands-green);
+    outline-offset: 6px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .logo-farm__logo {
+      transition: none;
+    }
+
+    .logo-farm__cell:hover .logo-farm__logo,
+    .logo-farm__cell:focus-visible .logo-farm__logo {
+      transform: none;
+    }
+  }
+
+  .logo-farm__logo {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    max-width: 100%;
+    transition:
+      filter 0.25s ease,
+      transform 0.25s ease;
+  }
+
+  .logo-farm__logo :global(svg) {
+    display: block;
+    width: auto;
+    height: 32px;
+    max-width: 100%;
+  }
+
+  /* Neo4j's lowercase wordmark with a descender reads small at the shared height. */
+  .logo-farm__cell[data-logo='Neo4j'] :global(svg) {
+    height: 40px;
+  }
+
+  /* The Bits mascot is taller than the wordmark, so the lockup needs more height to match. */
+  .logo-farm__cell[data-logo='Datadog'] :global(svg) {
+    height: 44px;
+  }
+
+  /* The small "NTT" above the wordmark takes up part of the height. */
+  .logo-farm__cell[data-logo='NTT Docomo'] :global(svg) {
+    height: 36px;
+  }
+
+  /* The "TROWE" line under "MRH" takes up part of the height. */
+  .logo-farm__cell[data-logo='MRH Trowe'] :global(svg) {
+    height: 40px;
+  }
+
+  @media (max-width: 767px) {
+    .logo-farm {
+      padding: 40px 19px;
+    }
+
+    .logo-farm__inner {
+      gap: 32px;
+    }
+
+    /* Three per row on phones, with any short final row centered. */
+    .logo-farm__row {
+      gap: 24px 16px;
+    }
+
+    .logo-farm__cell {
+      width: calc((100% - 32px) / 3);
+      height: 40px;
+    }
+
+    .logo-farm__logo :global(svg) {
+      height: 20px;
+    }
+
+    .logo-farm__cell[data-logo='Neo4j'] :global(svg) {
+      height: 26px;
+    }
+
+    .logo-farm__cell[data-logo='Datadog'] :global(svg) {
+      height: 28px;
+    }
+
+    .logo-farm__cell[data-logo='NTT Docomo'] :global(svg) {
+      height: 22px;
+    }
+
+    .logo-farm__cell[data-logo='MRH Trowe'] :global(svg) {
+      height: 26px;
+    }
+  }
+</style>

@@ -62,6 +62,14 @@ Middleware is intended to supersede hooks. The Input/Output phases already cover
 
 We may revisit this later.
 
+## Per-call model
+
+`InvokeModelContext.model` is the model the terminal invokes, initialized from `agent.model`. Middleware can replace it for one call without mutating agent state; the selected model also determines the model ID recorded on the trace span:
+
+```typescript
+const modified = { ...context, model: otherModel }
+```
+
 ## Metadata transport (future)
 
 No metadata fields exist today, but the wrappers are designed to carry them. This section documents the intent so implementations stay consistent when metadata is added.

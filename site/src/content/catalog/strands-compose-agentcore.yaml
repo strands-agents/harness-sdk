@@ -5,4 +5,4 @@ languages:
   python:
     package: strands-compose-agentcore
 github: https://github.com/strands-compose/bedrock-agentcore
-addedDate: 2026-07-19
+addedDate: 2026-04-12

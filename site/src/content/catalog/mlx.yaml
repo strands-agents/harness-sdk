@@ -6,4 +6,4 @@ languages:
     package: strands-mlx
 github: https://github.com/cagataycali/strands-mlx
 docsPage: docs/integrations/model-providers/mlx
-addedDate: 2026-01-01
+addedDate: 2026-01-12

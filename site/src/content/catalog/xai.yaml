@@ -6,4 +6,4 @@ languages:
     package: strands-xai
 github: https://github.com/Cerrix/strands-xai
 docsPage: docs/integrations/model-providers/xai
-addedDate: 2026-01-01
+addedDate: 2026-02-03

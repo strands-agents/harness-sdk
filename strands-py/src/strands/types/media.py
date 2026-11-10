@@ -5,6 +5,7 @@ These types are modeled after the Bedrock API.
 - Bedrock docs: https://docs.aws.amazon.com/bedrock/latest/APIReference/API_Types_Amazon_Bedrock_Runtime.html
 """
 
+from dataclasses import dataclass
 from typing import Literal, TypeAlias
 
 from typing_extensions import Required, TypedDict
@@ -45,6 +46,73 @@ class S3Location(Location, total=False):
 
 
 SourceLocation: TypeAlias = Location | S3Location
+
+
+AudioFormat = Literal[
+    "mp3",
+    "opus",
+    "wav",
+    "aac",
+    "flac",
+    "mp4",
+    "ogg",
+    "mkv",
+    "mka",
+    "x-aac",
+    "m4a",
+    "mpeg",
+    "mpga",
+    "pcm",
+    "webm",
+]
+"""Supported audio formats."""
+
+
+class AudioSource(TypedDict, total=False):
+    """Contains the content of an audio block.
+
+    Only one of `bytes` or `location` should be specified.
+
+    Attributes:
+        bytes: The binary content of the audio.
+        location: Location of the audio.
+    """
+
+    bytes: bytes
+    location: SourceLocation
+
+
+class AudioContent(TypedDict):
+    """Audio to include in a message.
+
+    Attributes:
+        format: The format of the audio.
+        source: The source containing the audio content.
+    """
+
+    format: AudioFormat
+    source: AudioSource
+
+
+class _AudioBlockData(TypedDict):
+    audio: AudioContent
+
+
+@dataclass
+class AudioBlock:
+    """Audio content for a message.
+
+    Attributes:
+        format: Audio format.
+        source: Source containing the audio.
+    """
+
+    format: AudioFormat
+    source: AudioSource
+
+    def to_dict(self) -> _AudioBlockData:
+        """Return the dictionary form of this block."""
+        return {"audio": {"format": self.format, "source": self.source}}
 
 
 class DocumentSource(TypedDict, total=False):
@@ -105,6 +173,27 @@ class ImageContent(TypedDict):
 
     format: ImageFormat
     source: ImageSource
+
+
+class _ImageBlockData(TypedDict):
+    image: ImageContent
+
+
+@dataclass
+class ImageBlock:
+    """Image content for a message.
+
+    Attributes:
+        format: Image format.
+        source: Source containing the image.
+    """
+
+    format: ImageFormat
+    source: ImageSource
+
+    def to_dict(self) -> _ImageBlockData:
+        """Return the dictionary form of this block."""
+        return {"image": {"format": self.format, "source": self.source}}
 
 
 VideoFormat = Literal["flv", "mkv", "mov", "mpeg", "mpg", "mp4", "three_gp", "webm", "wmv"]

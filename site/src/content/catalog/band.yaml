@@ -1,0 +1,10 @@
+name: band
+description: Chat rooms on Band where your Strands agent collaborates with humans and other agents with routing, durable room history, and peer discovery.
+integrationType: integration
+maintainedBy: partner
+languages:
+  python:
+    package: band-sdk[strands]
+github: https://github.com/band-ai/band-sdk-python
+docsUrl: https://github.com/band-ai/band-sdk-python/blob/main/examples/strands/README.md
+addedDate: 2026-08-16

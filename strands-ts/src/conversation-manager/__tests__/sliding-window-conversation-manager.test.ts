@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
+import { TestModelProvider } from '../../__fixtures__/model-test-helpers.js'
 import { SlidingWindowConversationManager } from '../sliding-window-conversation-manager.js'
 import {
   ContextWindowOverflowError,
@@ -10,12 +11,12 @@ import {
   ToolUseBlock,
   ToolResultBlock,
   VideoBlock,
-  type Model,
 } from '../../index.js'
 import { AfterInvocationEvent, AfterModelCallEvent, BeforeModelCallEvent } from '../../hooks/events.js'
 import { createMockAgent, invokeTrackedHook } from '../../__fixtures__/agent-helpers.js'
+import { logger } from '../../logging/logger.js'
 import type { Agent } from '../../agent/agent.js'
-import type { BaseModelConfig } from '../../models/model.js'
+import { Model } from '../../models/model.js'
 
 async function triggerSlidingWindow(manager: SlidingWindowConversationManager, agent: Agent): Promise<void> {
   const pluginAgent = createMockAgent()
@@ -34,6 +35,39 @@ async function triggerContextOverflow(
   const event = new AfterModelCallEvent({ agent, model: {} as any, attemptCount: 1, error, invocationState: {} })
   await invokeTrackedHook(pluginAgent, event)
   return event
+}
+
+function createToolUseMessage(name: string, toolUseId: string): Message {
+  return new Message({
+    role: 'assistant',
+    content: [new ToolUseBlock({ name, toolUseId, input: {} })],
+  })
+}
+
+function createToolResultMessage(toolUseId: string, text: string): Message {
+  return new Message({
+    role: 'user',
+    content: [
+      new ToolResultBlock({
+        toolUseId,
+        status: 'success',
+        content: [new TextBlock(text)],
+      }),
+    ],
+  })
+}
+
+function createToolHeavyHistory(): Message[] {
+  return [
+    new Message({ role: 'user', content: [new TextBlock('Review this PR')] }),
+    createToolUseMessage('getDiff', 'id-1'),
+    createToolResultMessage('id-1', 'Diff'),
+    createToolUseMessage('getFile', 'id-2'),
+    createToolResultMessage('id-2', 'File'),
+    createToolUseMessage('getTree', 'id-3'),
+    createToolResultMessage('id-3', 'Tree'),
+    new Message({ role: 'assistant', content: [new TextBlock('Review complete')] }),
+  ]
 }
 
 describe('SlidingWindowConversationManager', () => {
@@ -971,6 +1005,296 @@ describe('SlidingWindowConversationManager', () => {
       expect(mockAgent.messages[0]!.content[0]!).toEqual({ type: 'textBlock', text: 'Message 2' })
     })
 
+    it('falls back to a complete tool pair when no plain user trim point exists', async () => {
+      const manager = new SlidingWindowConversationManager({ windowSize: 4, shouldTruncateResults: false })
+      const messages = createToolHeavyHistory()
+      const mockAgent = createMockAgent({ messages })
+      const expectedMessages = [messages[0]!, ...messages.slice(5)]
+
+      await triggerContextOverflow(manager, mockAgent, new ContextWindowOverflowError('Context overflow'))
+
+      // startIndex=4 has no plain user boundary; fallback index 5 keeps index 0 as the user-first anchor (#2085).
+      expect(mockAgent.messages).toEqual(expectedMessages)
+      expect(mockAgent.messages.map((message) => message.role)).toEqual(['user', 'assistant', 'user', 'assistant'])
+    })
+
+    it('keeps routine window management user-first when it uses the tool-pair fallback', async () => {
+      const manager = new SlidingWindowConversationManager({ windowSize: 4, shouldTruncateResults: false })
+      const messages = createToolHeavyHistory()
+      const mockAgent = createMockAgent({ messages })
+      const expectedMessages = [messages[0]!, ...messages.slice(5)]
+
+      await triggerSlidingWindow(manager, mockAgent)
+
+      // The proactive path uses the same fallback without exposing an overflow error to the caller.
+      expect(mockAgent.messages).toEqual(expectedMessages)
+      expect(mockAgent.messages.map((message) => message.role)).toEqual(['user', 'assistant', 'user', 'assistant'])
+    })
+
+    it('prefers a plain user trim point over a reachable complete tool pair later in range', async () => {
+      const manager = new SlidingWindowConversationManager({ windowSize: 4, shouldTruncateResults: false })
+      const messages = [
+        new Message({ role: 'user', content: [new TextBlock('First')] }),
+        new Message({ role: 'assistant', content: [new TextBlock('Response A')] }),
+        new Message({ role: 'user', content: [new TextBlock('Plain user message')] }),
+        createToolUseMessage('lookup', 'id-1'),
+        createToolResultMessage('id-1', 'Result'),
+        new Message({ role: 'assistant', content: [new TextBlock('Final')] }),
+      ]
+      const mockAgent = createMockAgent({ messages })
+      const expectedMessages = messages.slice(2)
+
+      await triggerContextOverflow(manager, mockAgent, new ContextWindowOverflowError('Context overflow'))
+
+      // startIndex=2 is the plain user boundary; the complete pair at indices 3–4 must not override it.
+      expect(mockAgent.messages).toEqual(expectedMessages)
+      expect(mockAgent.messages[0]!.content[0]).toEqual({ type: 'textBlock', text: 'Plain user message' })
+    })
+
+    it('does not treat a user message containing tool use as an assistant tool-pair boundary', () => {
+      const manager = new SlidingWindowConversationManager({ windowSize: 4, shouldTruncateResults: false })
+      const messages = [
+        new Message({ role: 'user', content: [new TextBlock('Anchor')] }),
+        new Message({ role: 'assistant', content: [new TextBlock('Old response')] }),
+        new Message({
+          role: 'user',
+          content: [
+            new ToolResultBlock({
+              toolUseId: 'orphan',
+              status: 'success',
+              content: [new TextBlock('Orphan result')],
+            }),
+            new ToolUseBlock({ name: 'lookup', toolUseId: 'id-1', input: {} }),
+          ],
+        }),
+        createToolResultMessage('id-1', 'Result'),
+        new Message({ role: 'assistant', content: [new TextBlock('Response')] }),
+        new Message({ role: 'assistant', content: [new TextBlock('Final')] }),
+      ]
+      const before = [...messages]
+
+      const result = manager.reduce({
+        agent: createMockAgent({ messages }),
+        model: {} as Model,
+        error: new ContextWindowOverflowError('Context overflow'),
+      })
+
+      // startIndex=2 reaches only a user tool message and an orphaned result, so fallback must decline.
+      expect(result).toBe(false)
+      expect(messages).toEqual(before)
+    })
+
+    it('returns false when an assistant tool use is not followed by a tool result', () => {
+      const manager = new SlidingWindowConversationManager({ windowSize: 4, shouldTruncateResults: false })
+      const messages = [
+        new Message({ role: 'user', content: [new TextBlock('Anchor')] }),
+        new Message({ role: 'assistant', content: [new TextBlock('Old response')] }),
+        createToolUseMessage('lookup', 'id-1'),
+        new Message({
+          role: 'user',
+          content: [new ToolUseBlock({ name: 'anotherLookup', toolUseId: 'id-2', input: {} })],
+        }),
+        new Message({ role: 'assistant', content: [new TextBlock('Response')] }),
+        new Message({ role: 'assistant', content: [new TextBlock('Final')] }),
+      ]
+      const before = [...messages]
+
+      const result = manager.reduce({
+        agent: createMockAgent({ messages }),
+        model: {} as Model,
+        error: new ContextWindowOverflowError('Context overflow'),
+      })
+
+      // startIndex=2 has an assistant tool use, but index 3 is not a tool result.
+      expect(result).toBe(false)
+      expect(messages).toEqual(before)
+    })
+
+    it('uses the pinned first user as a safe fallback anchor', () => {
+      const manager = new SlidingWindowConversationManager({
+        windowSize: 2,
+        shouldTruncateResults: false,
+        pinFirst: 1,
+      })
+      const messages = [
+        new Message({ role: 'user', content: [new TextBlock('Pinned user')] }),
+        new Message({ role: 'assistant', content: [new TextBlock('Old response')] }),
+        new Message({ role: 'user', content: [new TextBlock('Old request')] }),
+        createToolUseMessage('lookup', 'id-1'),
+        createToolResultMessage('id-1', 'Old result'),
+        createToolUseMessage('lookup', 'id-2'),
+        createToolResultMessage('id-2', 'Recent result'),
+      ]
+
+      const result = manager.reduce({
+        agent: createMockAgent({ messages }),
+        model: {} as Model,
+        error: new ContextWindowOverflowError('Context overflow'),
+      })
+
+      // startIndex=5 selects the recent pair; the pinned user at index 0 provides a valid prefix.
+      expect(result).toBe(true)
+      expect(messages.map((message) => message.role)).toEqual(['user', 'assistant', 'user'])
+      expect(messages.map((message) => message.content[0])).toEqual([
+        expect.objectContaining({ type: 'textBlock', text: 'Pinned user' }),
+        expect.objectContaining({ type: 'toolUseBlock', toolUseId: 'id-2' }),
+        expect.objectContaining({ type: 'toolResultBlock', toolUseId: 'id-2' }),
+      ])
+    })
+
+    it('declines fallback when a pinned prefix ends with an assistant message', () => {
+      const manager = new SlidingWindowConversationManager({
+        windowSize: 2,
+        shouldTruncateResults: false,
+        pinFirst: 2,
+      })
+      const messages = [
+        new Message({ role: 'user', content: [new TextBlock('Pinned user')] }),
+        new Message({ role: 'assistant', content: [new TextBlock('Pinned response')] }),
+        new Message({ role: 'user', content: [new TextBlock('Old request')] }),
+        createToolUseMessage('lookup', 'id-1'),
+        createToolResultMessage('id-1', 'Old result'),
+        createToolUseMessage('lookup', 'id-2'),
+        createToolResultMessage('id-2', 'Recent result'),
+      ]
+      const before = [...messages]
+      const debugSpy = vi.spyOn(logger, 'debug').mockImplementation(() => {})
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+
+      const result = manager.reduce({
+        agent: createMockAgent({ messages }),
+        model: {} as Model,
+        error: new ContextWindowOverflowError('Context overflow'),
+      })
+
+      // Appending fallback index 5 after the pinned assistant would create adjacent assistant messages.
+      expect(result).toBe(false)
+      expect(messages).toEqual(before)
+      expect(messages.map((message) => message.role)).toEqual([
+        'user',
+        'assistant',
+        'user',
+        'assistant',
+        'user',
+        'assistant',
+        'user',
+      ])
+      expect(debugSpy).toHaveBeenCalledWith(
+        'window_size=<2>, trim_index=<5> | complete tool pair found but no valid user anchor, declining fallback'
+      )
+      expect(warnSpy).not.toHaveBeenCalledWith(expect.stringContaining('no valid trim point found'))
+      debugSpy.mockRestore()
+      warnSpy.mockRestore()
+    })
+
+    it('declines fallback when non-contiguous pinned messages do not alternate', async () => {
+      const { pinMessage } = await import('../compression/pin-message.js')
+      const manager = new SlidingWindowConversationManager({ windowSize: 2, shouldTruncateResults: false })
+      const messages = [
+        new Message({ role: 'user', content: [new TextBlock('Pinned user one')] }),
+        new Message({ role: 'assistant', content: [new TextBlock('Unpinned response')] }),
+        new Message({ role: 'user', content: [new TextBlock('Pinned user two')] }),
+        new Message({ role: 'assistant', content: [new TextBlock('Old response')] }),
+        new Message({ role: 'user', content: [new TextBlock('Old request')] }),
+        createToolUseMessage('lookup', 'id-1'),
+        createToolResultMessage('id-1', 'Old result'),
+        createToolUseMessage('lookup', 'id-2'),
+        createToolResultMessage('id-2', 'Recent result'),
+      ]
+      pinMessage(messages, 0)
+      pinMessage(messages, 2)
+      const before = [...messages]
+
+      const result = manager.reduce({
+        agent: createMockAgent({ messages }),
+        model: {} as Model,
+        error: new ContextWindowOverflowError('Context overflow'),
+      })
+
+      // Removing the unpinned assistant at index 1 would make the pinned users adjacent.
+      expect(result).toBe(false)
+      expect(messages).toEqual(before)
+    })
+
+    it('declines fallback when the first pinned message is an orphaned tool result', async () => {
+      const { pinMessage } = await import('../compression/pin-message.js')
+      const manager = new SlidingWindowConversationManager({ windowSize: 2, shouldTruncateResults: false })
+      const messages = [
+        createToolResultMessage('orphan', 'Orphan result'),
+        new Message({ role: 'assistant', content: [new TextBlock('Old response')] }),
+        new Message({ role: 'user', content: [new TextBlock('Old request')] }),
+        createToolUseMessage('lookup', 'id-1'),
+        createToolResultMessage('id-1', 'Old result'),
+        createToolUseMessage('lookup', 'id-2'),
+        createToolResultMessage('id-2', 'Recent result'),
+      ]
+      pinMessage(messages, 0)
+      const before = [...messages]
+
+      const result = manager.reduce({
+        agent: createMockAgent({ messages }),
+        model: {} as Model,
+        error: new ContextWindowOverflowError('Context overflow'),
+      })
+
+      // An orphaned tool result cannot be the retained user-first anchor.
+      expect(result).toBe(false)
+      expect(messages).toEqual(before)
+    })
+
+    it('declines fallback when the last pinned message carries a bare tool use block', () => {
+      const manager = new SlidingWindowConversationManager({
+        windowSize: 2,
+        shouldTruncateResults: false,
+        pinFirst: 1,
+      })
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [new ToolUseBlock({ name: 'weird', toolUseId: 'weird-1', input: {} })],
+        }),
+        new Message({ role: 'assistant', content: [new TextBlock('Old response')] }),
+        new Message({ role: 'user', content: [new TextBlock('Old request')] }),
+        createToolUseMessage('lookup', 'id-1'),
+        createToolResultMessage('id-1', 'Old result'),
+        createToolUseMessage('lookup', 'id-2'),
+        createToolResultMessage('id-2', 'Recent result'),
+      ]
+      const before = [...messages]
+
+      const result = manager.reduce({
+        agent: createMockAgent({ messages }),
+        model: {} as Model,
+        error: new ContextWindowOverflowError('Context overflow'),
+      })
+
+      // Role alone is insufficient: the pinned user contains an unpaired tool use.
+      expect(result).toBe(false)
+      expect(messages).toEqual(before)
+    })
+
+    it('declines fallback when no plain user message exists before the tool pair', () => {
+      const manager = new SlidingWindowConversationManager({ windowSize: 2, shouldTruncateResults: false })
+      const messages = [
+        createToolResultMessage('orphan-0', 'Orphan result'),
+        createToolUseMessage('lookup', 'id-1'),
+        createToolResultMessage('id-1', 'Result 1'),
+        createToolUseMessage('lookup', 'id-2'),
+        createToolResultMessage('id-2', 'Result 2'),
+      ]
+      const before = [...messages]
+
+      const result = manager.reduce({
+        agent: createMockAgent({ messages }),
+        model: {} as Model,
+        error: new ContextWindowOverflowError('Context overflow'),
+      })
+
+      // startIndex=3 selects id-2, but all earlier user messages carry tool content.
+      expect(result).toBe(false)
+      expect(messages).toEqual(before)
+    })
+
     it('allows trim when oldest message is text or other non-tool content', async () => {
       const manager = new SlidingWindowConversationManager({ windowSize: 2 })
       const messages = [
@@ -1192,7 +1516,8 @@ describe('SlidingWindowConversationManager', () => {
         new Message({ role: 'user', content: [new TextBlock('Message 3')] }),
         new Message({ role: 'assistant', content: [new TextBlock('Response 3')] }),
       ]
-      const mockModel = { getConfig: () => ({ contextWindowLimit: 1000 }) as BaseModelConfig } as any
+      const mockModel = new TestModelProvider() as any
+      mockModel.updateConfig({ contextWindowLimit: 1000 })
       const mockAgent = createMockAgent({ messages })
       manager.initAgent(mockAgent)
 
@@ -1216,7 +1541,8 @@ describe('SlidingWindowConversationManager', () => {
         new Message({ role: 'user', content: [new TextBlock('Message 1')] }),
         new Message({ role: 'assistant', content: [new TextBlock('Response 1')] }),
       ]
-      const mockModel = { getConfig: () => ({ contextWindowLimit: 1000 }) as BaseModelConfig } as any
+      const mockModel = new TestModelProvider() as any
+      mockModel.updateConfig({ contextWindowLimit: 1000 })
       const mockAgent = createMockAgent({ messages })
       manager.initAgent(mockAgent)
 

@@ -16,11 +16,13 @@ canonicalUrl: "https://aws.amazon.com/blogs/opensource/introducing-strands-labs-
 draft: false
 ---
 
-We're introducing [Strands Labs](https://github.com/strands-labs), a new Strands GitHub organization designed to give developers the ability to get hands-on with experimental, state-of-the-art approaches to agentic AI development. The Strands Agents SDK -- available for both [Python](https://github.com/strands-agents/harness-sdk) and [TypeScript](https://github.com/strands-agents/sdk-typescript) -- has gained incredible traction in the developer community since we released it as open source in May of 2025. The SDK has been downloaded 14 million + times, and the AWS team has been hard at work adding new functionality, including experiments like [Steering](https://strandsagents.com/latest/documentation/docs/user-guide/concepts/experimental/steering/), to support a very active developer community. Strands' model-driven approach has proven itself as simple, powerful and scalable for everything from prototyping to enterprise production workloads. Learn more about Strands and the model-driven approach [here](https://aws.amazon.com/blogs/opensource/strands-agents-and-the-model-driven-approach/).
+We're introducing [Strands Labs](https://github.com/strands-labs), a new Strands GitHub organization designed to give developers the ability to get hands-on with experimental, state-of-the-art approaches to agentic AI development. The Strands Agents SDK -- available for both [Python](https://github.com/strands-agents/harness-sdk) and [TypeScript](https://github.com/strands-agents/sdk-typescript) -- has gained incredible traction in the developer community since we released it as open source in May of 2025. The SDK has been downloaded 14 million + times, and the AWS team has been hard at work adding new functionality, including experiments like [Steering](https://strandsagents.com/latest/documentation/docs/user-guide/sdk/experimental/steering/), to support a very active developer community. Strands' model-driven approach has proven itself as simple, powerful and scalable for everything from prototyping to enterprise production workloads. Learn more about Strands and the model-driven approach [here](https://aws.amazon.com/blogs/opensource/strands-agents-and-the-model-driven-approach/).
 
 We've chosen to make Strands Labs a separate GitHub organization to encourage innovation through experimentation, and to push the frontier of agentic development. We've also opened Strands Labs to all the development teams across Amazon -- meaning, they can all contribute their innovative open source projects for community use and feedback. This model will encourage faster experimentation, learning, and growth for Strands' community of developers, without coupling experiments to the Strands SDK and its production use release cycle. You can expect all projects in Strands-Labs to ship with clear use cases, functional code, and tests to help you get started.
 
 At launch, we're making Strands Labs available with three projects. The first is [Robots](https://github.com/strands-labs/robots), the second is [Robots Sim](https://github.com/strands-labs/robots-sim) and the third is [AI Functions](https://github.com/strands-labs/ai-functions).
+
+> **Update:** Since this launch, Strands Labs has grown. **Robots Sim** has been archived - its simulation capability now ships built into [Strands Robots](https://strandsagents.com/latest/documentation/docs/labs/robots/) (a `Robot()` call returns a MuJoCo simulation by default). Strands Labs today also includes [Strands for Cosmos](https://strandsagents.com/latest/documentation/docs/labs/strands-for-cosmos/), [Benchmark Harnesses](https://strandsagents.com/latest/documentation/docs/labs/benchmark-harnesses/), [Harness Optimizer](https://strandsagents.com/latest/documentation/docs/labs/harness-optimizer/), and [PyWebRTC Audio](https://strandsagents.com/latest/documentation/docs/labs/pywebrtc-audio/). See the [Strands Labs overview](https://strandsagents.com/latest/documentation/docs/labs/) for the full, current list.
 
 1. **Robots:** With Robots, we're exploring how AI agents extend to the edge and the physical world, where they don't just process information but interact with the physical environment around us. Through a unified Strands Agents interface, physical AI agents can control diverse robots by connecting AI capabilities directly to physical sensors and hardware.
 2. **Robots Sim:** Robots Sim integrates your agentic robots with simulated 3D physics-enabled worlds, enabling rapid prototyping and algorithm development in a safe, simulated environment without requiring physical robotic hardware. It's perfect for iterating on agent strategies, testing Vision-Language-Action (VLA) model policies, and validating approaches before real-world deployment.
@@ -64,6 +66,8 @@ agent("place the apple in the basket")
 ```
 
 The Robot class running on edge devices can delegate complex reasoning to the cloud using LLMs and other models when needed. VLA models provide millisecond-level control for physical actions, but when the system encounters situations requiring deeper reasoning -- like planning multi-step tasks or making decisions based on historical patterns -- it can consult more powerful cloud-based agents.
+
+**Get started with Strands Robots:** [Documentation](https://strandsagents.com/latest/documentation/docs/labs/robots/) - [PyPI (`strands-robots`)](https://pypi.org/project/strands-robots/) - [GitHub](https://github.com/strands-labs/robots)
 
 ## Strands Robot Sim
 
@@ -129,6 +133,8 @@ if __name__ == "__main__":
     main(max_episodes=args.max_episodes)
 ```
 
+> **Note:** Robots Sim is now **archived**. Its simulation and iterative-control workflow have been folded into [Strands Robots](https://strandsagents.com/latest/documentation/docs/labs/robots/), where `Robot()` returns a MuJoCo simulation by default - no separate `strands-robots-sim` install is needed. The example above is retained as a historical record of the launch API.
+
 ## AI Functions
 
 AI Functions introduces a new way to write code with agents where you write Python functions with natural language specifications instead of code. Using the @ai_function decorator, you define what you want a function to do through description and validation conditions. AI Functions leverages the Strands agent loop to generate the implementation, validate the output, and automatically retry if validation fails. Consider loading invoice data from files in unknown formats. Traditional approaches require determining the file format, writing transformation logic for each format, constructing prompts, parsing responses, and orchestrating retries when validation fails. This typically involves dozens of lines of code and may not account for every scenario. With AI Functions, you write a small function describing the desired output, and a validator function expressing what success looks like. The LLM determines the file format, writes the transformation code, and returns a real Python DataFrame object.
@@ -182,6 +188,8 @@ df = import_invoice('data/invoice.sqlite3')
 # Merge revisions of the same product
 df = fuzzy_merge_products(df)
 ```
+
+**Get started with AI Functions:** [Documentation](https://strandsagents.com/latest/documentation/docs/labs/ai-functions/) - [PyPI (`strands-ai-functions`)](https://pypi.org/project/strands-ai-functions/) - [GitHub](https://github.com/strands-labs/ai-functions)
 
 As we move forward, we expect to share more projects via Strands-Labs with the Strands developer community, and we look forward to your feedback to continue to make Strands better.
 

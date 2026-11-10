@@ -1,10 +1,11 @@
 name: s3-vectors-memory
 description: Long-term semantic memory for Strands Agents via Amazon S3 Vectors, storing conversation summaries as vectors and recalling them on later runs.
 integrationType: plugin
+maintainedBy: aws
 languages:
   python:
     package: strands-s3-vectors-memory
 github: https://github.com/aws-samples/data-for-saas-patterns/tree/main/samples/multi-tenant-strands-s3-vectors-memory
 docsPage: docs/integrations/plugins/s3-vectors-memory
 featured: true
-addedDate: 2026-01-01
+addedDate: 2026-04-09

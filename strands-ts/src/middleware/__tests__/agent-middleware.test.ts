@@ -71,12 +71,30 @@ describe('Agent middleware integration — InvokeModelStage', () => {
       await agent.invoke('Test prompt')
 
       expect(receivedContext?.agent).toBe(agent)
+      expect(receivedContext?.model).toBe(model)
       expect(receivedContext).toMatchObject({
         systemPrompt: 'Be helpful',
         messages: expect.arrayContaining([expect.any(Message)]),
         toolSpecs: expect.arrayContaining([expect.objectContaining({ name: 'testTool' })]),
         invocationState: expect.anything(),
       })
+    })
+
+    it('middleware can select the model for one call', async () => {
+      const defaultModel = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Default response' })
+      const selectedModel = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Selected response' })
+      const defaultStreamSpy = vi.spyOn(defaultModel, 'stream')
+      const agent = new Agent({ model: defaultModel, printer: false })
+
+      agent.addMiddleware(InvokeModelStage.Input, async (context) => ({
+        ...context,
+        model: selectedModel,
+      }))
+
+      const result = await agent.invoke('Test prompt')
+
+      expect(result.lastMessage.content).toEqual([new TextBlock('Selected response')])
+      expect(defaultStreamSpy).not.toHaveBeenCalled()
     })
 
     it('middleware result is used as the model call result', async () => {

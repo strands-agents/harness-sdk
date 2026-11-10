@@ -1,7 +1,7 @@
 import asyncio
 
 from strands import Agent
-from strands_tools import calculator
+from strands.vended_tools import sleep
 
 from strands_evals import Case, Experiment
 from strands_evals.evaluators import ToolParameterAccuracyEvaluator
@@ -19,7 +19,7 @@ def user_task_function(case: Case) -> dict:
         # IMPORTANT: trace_attributes with session IDs are required when using StrandsInMemorySessionMapper
         # to prevent spans from different test cases from being mixed together in the memory exporter
         trace_attributes={"gen_ai.conversation.id": case.session_id, "session.id": case.session_id},
-        tools=[calculator],
+        tools=[sleep],
         callback_handler=None,
     )
     agent_response = agent(case.input)
@@ -32,19 +32,19 @@ def user_task_function(case: Case) -> dict:
 # 2. Create test cases
 test_cases = [
     Case[str, str](
-        name="simple-calculation",
-        input="Calculate the square root of 144",
-        metadata={"category": "math", "difficulty": "easy"},
+        name="one-second-pause",
+        input="Pause for 1 second using the sleep tool.",
+        metadata={"category": "timing", "difficulty": "easy"},
     ),
     Case[str, str](
-        name="percentage-calculation",
-        input="What's 20 percent of 250?",
-        metadata={"category": "math", "difficulty": "easy"},
+        name="two-second-pause",
+        input="Pause for 2 seconds using the sleep tool.",
+        metadata={"category": "timing", "difficulty": "easy"},
     ),
     Case[str, str](
-        name="complex-calculation",
-        input="I need to calculate 15 + 27, then multiply the result by 3, and finally subtract 10.",
-        metadata={"category": "math", "difficulty": "medium"},
+        name="three-second-pause",
+        input="Pause for 3 seconds using the sleep tool.",
+        metadata={"category": "timing", "difficulty": "medium"},
     ),
 ]
 

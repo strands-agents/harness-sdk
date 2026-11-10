@@ -6,4 +6,4 @@ languages:
     package: strands-valkey-session-manager
 github: https://github.com/jeromevdl/strands-valkey-session-manager
 docsPage: docs/integrations/session-managers/strands-valkey-session-manager
-addedDate: 2026-01-01
+addedDate: 2025-11-17

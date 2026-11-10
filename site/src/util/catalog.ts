@@ -1,9 +1,12 @@
 /**
- * Build-time processing for catalog entries: derives card view-models from
- * collection data, joins the bot-maintained stats file, and orders the grid.
+ * Build-time processing for catalog entries: derives the public entry model
+ * shared by the catalog page and the /integrations.json feed, builds card
+ * view-models on top of it, joins the bot-maintained stats file, and orders
+ * the grid.
  */
 
 import type { CatalogEntryData } from '../content.config'
+import { isNew } from './new-badge'
 
 export interface CatalogStats {
   stars?: number
@@ -19,6 +22,7 @@ export interface CatalogCardModel {
   name: string
   description: string
   integrationType: CatalogEntryData['integrationType']
+  maintainedBy: CatalogEntryData['maintainedBy']
   sdk: 'agents' | 'evals'
   languages: ('python' | 'typescript')[]
   href: string
@@ -32,52 +36,46 @@ export interface CatalogCardModel {
   downloads?: number
 }
 
-/** Window (in days) during which an entry carries the derived "new" badge. */
-export const NEW_BADGE_DAYS = 30
+type CatalogLanguage = 'python' | 'typescript'
 
-export function toCardModel(
-  id: string,
-  data: CatalogEntryData,
-  stats: CatalogStats | undefined,
-  buildDate: Date
-): CatalogCardModel {
-  const languages: ('python' | 'typescript')[] = []
-  const registryLinks: CatalogCardModel['registryLinks'] = []
-  // Registry links derive from the package name so an entry can't point its
-  // PyPI/npm icon at a different (or malicious) page than the package it
-  // names. A language block without a package is a guide-only integration:
-  // it counts toward the language facet but has no registry link to render.
-  if (data.languages.python) {
-    languages.push('python')
-    const pkg = data.languages.python.package
-    if (pkg) {
-      // An extras-qualified package (`temporalio[strands-agents]`) lives on
-      // PyPI under its base name.
-      registryLinks.push({ label: 'PyPI', href: `https://pypi.org/project/${pkg.replace(/\[.*\]$/, '')}/` })
-    }
+const LANGUAGES: CatalogLanguage[] = ['python', 'typescript']
+const REGISTRY_LABELS = { python: 'PyPI', typescript: 'npm' } as const
+
+/** Public fields of a catalog entry with build-time derivations applied; editorial fields stay out. */
+export interface CatalogPublicModel {
+  id: string
+  name: string
+  description: string
+  integrationType: CatalogEntryData['integrationType']
+  sdk: CatalogEntryData['sdk']
+  maintainedBy: CatalogEntryData['maintainedBy']
+  languages: Partial<Record<CatalogLanguage, { package?: string; registryUrl?: string }>>
+  github: string
+  /** Site-relative path of the on-site integration page, when there is one. */
+  docsPath?: string
+  docsUrl?: string
+  addedDate: Date
+}
+
+function registryUrl(language: CatalogLanguage, pkg: string): string {
+  // An extras-qualified package (`temporalio[strands-agents]`) lives on PyPI
+  // under its base name. Scoped npm names (@scope/name) work unencoded.
+  if (language === 'python') return `https://pypi.org/project/${pkg.replace(/\[.*\]$/, '')}/`
+  return `https://www.npmjs.com/package/${pkg}`
+}
+
+export function toPublicModel(id: string, data: CatalogEntryData): CatalogPublicModel {
+  // Registry URLs derive from the package name so an entry can't point its
+  // PyPI/npm link at a different (or malicious) page than the package it
+  // names. A language block without a package is a guide-only integration.
+  const languages: CatalogPublicModel['languages'] = {}
+  for (const language of LANGUAGES) {
+    const block = data.languages[language]
+    if (!block) continue
+    languages[language] = block.package
+      ? { package: block.package, registryUrl: registryUrl(language, block.package) }
+      : {}
   }
-  if (data.languages.typescript) {
-    languages.push('typescript')
-    const pkg = data.languages.typescript.package
-    if (pkg) {
-      // Scoped names (@scope/name) work unencoded in npm package URLs.
-      registryLinks.push({ label: 'npm', href: `https://www.npmjs.com/package/${pkg}` })
-    }
-  }
-
-  // The displayed maintainer derives from the GitHub URL's owner segment —
-  // the repo the entry links to is the source of truth for ownership.
-  const maintainer = new URL(data.github).pathname.split('/')[1] ?? ''
-
-  const badges: string[] = [...data.badges]
-  const ageDays = (buildDate.getTime() - data.addedDate.getTime()) / 86_400_000
-  if (ageDays >= 0 && ageDays < NEW_BADGE_DAYS) badges.push('new')
-
-  // Primary link priority: on-site docs page, then the integration's own
-  // Strands instructions page, then the bare GitHub repo.
-  const docsHref = data.docsPage ? `/${data.docsPage}/` : undefined
-
-  const totalDownloads = (stats?.downloads?.python ?? 0) + (stats?.downloads?.typescript ?? 0)
 
   return {
     id,
@@ -85,10 +83,51 @@ export function toCardModel(
     description: data.description,
     integrationType: data.integrationType,
     sdk: data.sdk,
+    maintainedBy: data.maintainedBy,
     languages,
-    href: docsHref ?? data.docsUrl ?? data.github,
-    external: !docsHref,
     github: data.github,
+    ...(data.docsPage && { docsPath: `/${data.docsPage}/` }),
+    ...(data.docsUrl && { docsUrl: data.docsUrl }),
+    addedDate: data.addedDate,
+  }
+}
+
+export function toCardModel(
+  id: string,
+  data: CatalogEntryData,
+  stats: CatalogStats | undefined,
+  buildDate: Date
+): CatalogCardModel {
+  const model = toPublicModel(id, data)
+  // Guide-only languages count toward the language facet but have no registry link.
+  const languages = LANGUAGES.filter((language) => model.languages[language])
+  const registryLinks = languages.flatMap((language) => {
+    const href = model.languages[language]?.registryUrl
+    return href ? [{ label: REGISTRY_LABELS[language], href }] : []
+  })
+
+  // The displayed maintainer derives from the GitHub URL's owner segment —
+  // the repo the entry links to is the source of truth for ownership.
+  const maintainer = new URL(model.github).pathname.split('/')[1] ?? ''
+
+  const badges: string[] = [...data.badges]
+  if (isNew(model.addedDate, buildDate)) badges.push('new')
+
+  const totalDownloads = (stats?.downloads?.python ?? 0) + (stats?.downloads?.typescript ?? 0)
+
+  return {
+    id,
+    name: model.name,
+    description: model.description,
+    integrationType: model.integrationType,
+    maintainedBy: model.maintainedBy,
+    sdk: model.sdk,
+    languages,
+    // Primary link priority: on-site docs page, then the integration's own
+    // Strands instructions page, then the bare GitHub repo.
+    href: model.docsPath ?? model.docsUrl ?? model.github,
+    external: !model.docsPath,
+    github: model.github,
     registryLinks,
     maintainer,
     featured: data.featured,

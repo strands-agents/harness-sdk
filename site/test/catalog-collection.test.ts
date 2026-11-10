@@ -1,7 +1,10 @@
+import { existsSync, readdirSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, it, expect } from 'vitest'
 import { getCollection } from 'astro:content'
 import { catalogEntrySchema } from '../src/content.config'
 import { CATALOG_TYPES } from '../src/components/catalog/types'
+import stats from '../src/data/catalog-stats.json'
 
 describe('catalog content collection', () => {
   it('loads catalog entries with validated data', async () => {
@@ -67,6 +70,24 @@ describe('catalog content collection', () => {
         languages: { typescript: { package: 'x', registry: 'https://www.npmjs.com/package/x' } },
       }).success
     ).toBe(false)
+  })
+
+  it('accepts every maintainer tier and defaults to community', () => {
+    const base = {
+      name: 'tiered-entry',
+      description: 'maintainer tier probe',
+      integrationType: 'model-provider',
+      languages: { python: {} },
+      github: 'https://github.com/strands-agents/harness-sdk',
+      addedDate: '2025-12-01',
+    }
+    for (const maintainedBy of ['strands', 'aws', 'partner', 'community']) {
+      expect(catalogEntrySchema.safeParse({ ...base, maintainedBy }).success, maintainedBy).toBe(true)
+    }
+    const parsed = catalogEntrySchema.safeParse(base)
+    expect(parsed.success).toBe(true)
+    if (parsed.success) expect(parsed.data.maintainedBy).toBe('community')
+    expect(catalogEntrySchema.safeParse({ ...base, maintainedBy: 'official' }).success).toBe(false)
   })
 
   it('rejects an unknown language key', () => {
@@ -144,6 +165,53 @@ describe('catalog content collection', () => {
     }
   })
 
+  it('loads built-in SDK entries', async () => {
+    const entries = await getCollection('catalog')
+    const anthropic = entries.find((e) => e.id === 'anthropic')
+    expect(anthropic).toBeDefined()
+    expect(anthropic!.data.maintainedBy).toBe('strands')
+    expect(anthropic!.data.docsPage).toBe('docs/user-guide/sdk/model-providers/anthropic')
+    // The content layer silently drops entries whose YAML fails to parse;
+    // matching loaded ids against the on-disk files catches that and names
+    // the dropped entry, without pinning counts.
+    const fileIds = readdirSync('src/content/catalog', { recursive: true })
+      .map((f) => String(f).replaceAll('\\', '/'))
+      .filter((f) => f.endsWith('.yaml'))
+      .map((f) => f.slice(0, -'.yaml'.length))
+      .sort()
+    expect(entries.map((e) => e.id).sort()).toEqual(fileIds)
+    const byTier = Map.groupBy(entries, (e) => e.data.maintainedBy)
+    expect(byTier.get('strands')?.length).toBeGreaterThan(0)
+    expect(byTier.get('aws')?.length).toBeGreaterThan(0)
+    expect(byTier.get('partner')?.length).toBeGreaterThan(0)
+    // Built-ins point at their source path in the SDK monorepo and always
+    // have on-site docs.
+    for (const e of byTier.get('strands') ?? []) {
+      expect(e.data.github, e.id).toMatch(/^https:\/\/github\.com\/strands-agents\/harness-sdk\//)
+      expect(e.data.docsPage, e.id).toBeDefined()
+    }
+  })
+
+  it('built-in github links resolve to real monorepo paths', async () => {
+    // Built-ins deep-link their source (blob/tree under main); unlike docsPage
+    // nothing else validates them, so a repo restructure would rot the links
+    // silently without this.
+    const entries = await getCollection('catalog')
+    for (const e of entries.filter((x) => x.data.maintainedBy === 'strands')) {
+      const m = /^https:\/\/github\.com\/strands-agents\/harness-sdk\/(?:blob|tree)\/main\/(.+)$/.exec(e.data.github)
+      expect(m, `${e.id}: ${e.data.github}`).not.toBeNull()
+      expect(existsSync(join('..', m![1])), `${e.id}: ${m![1]} missing from the repo`).toBe(true)
+    }
+  })
+
+  it('has no catalog-stats keys for removed integrations', async () => {
+    // The refresh-stats workflow prunes removed entries only on its weekly
+    // run; a key left behind by a removed integration otherwise lingers.
+    const entries = await getCollection('catalog')
+    const ids = new Set(entries.map((e) => e.id))
+    expect(Object.keys(stats).filter((k) => !ids.has(k))).toEqual([])
+  })
+
   it('every docsPage points at a real docs collection entry', async () => {
     const [entries, docs] = await Promise.all([getCollection('catalog'), getCollection('docs')])
     const docIds = new Set(docs.map((d) => d.id))
@@ -165,5 +233,15 @@ describe('catalog content collection', () => {
     for (const page of communityPages) {
       expect(cataloged.has(page.id), `community page ${page.id} has no catalog entry`).toBe(true)
     }
+  })
+
+  it('every vended tool docs page has a built-in catalog entry', async () => {
+    const [entries, docs] = await Promise.all([getCollection('catalog'), getCollection('docs')])
+    const cataloged = new Set(entries.filter((e) => e.data.maintainedBy === 'strands').map((e) => e.data.docsPage))
+    const prefix = 'docs/user-guide/sdk/tools/vended-tools/'
+    const missing = docs
+      .map((d) => d.id)
+      .filter((id) => id.startsWith(prefix) && id !== `${prefix}index` && !cataloged.has(id))
+    expect(missing).toEqual([])
   })
 })

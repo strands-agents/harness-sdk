@@ -2,14 +2,13 @@
 
 A robust tool for executing bash shell commands in Node.js environments with persistent session support.
 
-> **`bash` vs `makeShell`**: this directory exports two different tools. `bash`
-> spawns a persistent `bash` process directly on the host, so it requires bash and
-> keeps state across calls -- that is what this document describes. `makeShell`
-> builds a stateless tool that routes commands through a
-> [Sandbox](../../sandbox/base.ts), which runs `sh` locally and in Docker or the
-> remote login shell over SSH; commands passed to it must not rely on
-> bash-specific syntax. `makeBash` is a deprecated alias of `makeShell` and will
-> be removed in v2.0.0.
+> **`bash` vs `makeShell`**: these are two different tools. `bash` spawns a
+> persistent `bash` process directly on the host, so it requires bash and keeps
+> state across calls -- that is what this document describes. `makeShell`, which
+> lives in [`../shell`](../shell/), builds a stateless tool that routes commands
+> through a [Sandbox](../../sandbox/base.ts), which runs `sh` locally and in
+> Docker or the remote login shell over SSH; commands passed to it must not rely
+> on bash-specific syntax.
 
 ## ⚠️ Security Warning
 

@@ -18,6 +18,7 @@ from typing_extensions import Unpack
 
 from ...memory.types import MemoryEntry, MemoryStore, Metadata, SearchOptions
 from ...storage import InMemoryStorage, LocalFileStorage, Storage
+from ...storage.search.keyword import token_overlap_score, tokenize
 from .types import TestMemoryAddResult, TestMemoryStoreConfig
 
 DEFAULT_MAX_SEARCH_RESULTS = 10
@@ -52,23 +53,6 @@ def _sanitize_name(name: str) -> str:
     return re.sub(r"[^\w\-.]", "_", sanitized, flags=re.ASCII)
 
 
-def _tokenize(text: str) -> set[str]:
-    r"""Lowercase and split text into a set of word tokens, dropping empties.
-
-    Splits on any run of non-word characters. Ensures cross-SDK compatibility.
-    """
-    return {token for token in re.split(r"\W+", text.lower()) if token}
-
-
-def _token_overlap_score(query_tokens: set[str], content: str) -> int:
-    """Lexical relevance score for one record.
-
-    The number of distinct query tokens that appear in the content; a higher count means more of the
-    query's words are present. Returns 0 when there is no overlap.
-    """
-    return len(query_tokens & _tokenize(content))
-
-
 class TestMemoryStore(MemoryStore):
     """A :class:`~strands.memory.types.MemoryStore` backed by a local JSON file.
 
@@ -84,9 +68,12 @@ class TestMemoryStore(MemoryStore):
     of entries), not production workloads — use a managed store like ``BedrockKnowledgeBaseStore`` for
     that. Writes within one event loop are serialized; concurrent writers across processes are not.
 
-    Persistence is backed by the unified :class:`~strands.storage.Storage` interface: ``persist=True``
-    (the default) uses a :class:`~strands.storage.LocalFileStorage`, ``persist=False`` an ephemeral
-    :class:`~strands.storage.InMemoryStorage`.
+    Persistence is backed by the unified :class:`~strands.storage.Storage` interface internally:
+    ``persist=True`` (the default) uses a :class:`~strands.storage.LocalFileStorage`, ``persist=False``
+    an ephemeral :class:`~strands.storage.InMemoryStorage`. Unlike other subsystems
+    (SnapshotSessionManager, ContextOffloader), this store does not accept an external ``Storage``
+    or resolve from the agent-level ``storage`` — it manages its own backend via ``persist`` and
+    ``path``.
 
     The on-disk format is shared with the TypeScript SDK's ``TestMemoryStore``: records use the same
     camelCase keys (``id``, ``content``, ``metadata``, ``createdAt``) and the same timestamp shape, so
@@ -184,7 +171,7 @@ class TestMemoryStore(MemoryStore):
             raise ValueError("TestMemoryStore: max_search_results must be at least 1.")
         limit = caller_max or self.max_search_results or DEFAULT_MAX_SEARCH_RESULTS
 
-        query_tokens = _tokenize(query)
+        query_tokens = tokenize(query)
         if not query_tokens:
             return []
 
@@ -192,7 +179,7 @@ class TestMemoryStore(MemoryStore):
 
         scored: list[tuple[dict[str, Any], int]] = []
         for record in records:
-            score = _token_overlap_score(query_tokens, record["content"])
+            score = token_overlap_score(query_tokens, record["content"])
             if score > 0:
                 scored.append((record, score))
 

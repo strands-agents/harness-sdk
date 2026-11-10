@@ -19,21 +19,21 @@ const toolResult = () =>
 // resolveTrigger predicates take an InjectionContext; tests only exercise `messages`, so a minimal bag suffices.
 const injectionCtx = (messages: MessageData[]) => ({ messages }) as unknown as InjectionContext
 describe('foldIntoLastUserMessage', () => {
-  it('prepends the text as a leading TextBlock on the last user message, ahead of its content', () => {
+  it('appends the text as a trailing TextBlock on the last user message, behind its content', () => {
     const messages = [user('original task'), assistant('prior step'), user('next ask')]
     const result = foldIntoLastUserMessage(messages, 'INJECTED')
 
-    // The earlier user/assistant turns are untouched; the last user message gains a leading INJECTED
-    // block ahead of its own content, keeping the user's ask in the recency slot.
-    expect(result.map((m) => m.toJSON())).toStrictEqual([
+    // A trailing run is the only placement a provider can keep out of its cached prefix.
+    expect(result.messages.map((message) => message.toJSON())).toStrictEqual([
       { role: 'user', content: [{ text: 'original task' }], trackingId: anyTrackingId },
       { role: 'assistant', content: [{ text: 'prior step' }], trackingId: anyTrackingId },
       {
         role: 'user',
-        content: [{ text: 'INJECTED' }, { text: 'next ask' }],
+        content: [{ text: 'next ask' }, { text: '\n\nINJECTED' }],
         trackingId: anyTrackingId,
       },
     ])
+    expect(result.appended).toBe(1)
   })
 
   it('preserves the folded-into message tracking id (same logical message)', () => {
@@ -41,7 +41,7 @@ describe('foldIntoLastUserMessage', () => {
     const result = foldIntoLastUserMessage([assistant('prior'), target], 'INJECTED')
 
     // Folding rewrites content but it is the same message, so its tracking id must survive.
-    expect(result[1]!.trackingId).toBe('durable-1')
+    expect(result.messages[1]!.trackingId).toBe('durable-1')
   })
 
   it('returns a new array and does not mutate the input or its messages', () => {
@@ -49,24 +49,23 @@ describe('foldIntoLastUserMessage', () => {
     const messages = [assistant('prior'), original]
     const result = foldIntoLastUserMessage(messages, 'INJECTED')
 
-    expect(result).not.toBe(messages)
+    expect(result.messages).not.toBe(messages)
     expect(messages[1]).toBe(original)
     expect(original.content).toHaveLength(1) // untouched
-    expect(result[1]).not.toBe(original)
+    expect(result.messages[1]).not.toBe(original)
   })
 
   it('appends after the tool result block when the target is a tool-result turn', () => {
     const tr = toolResult()
     const result = foldIntoLastUserMessage([user('task'), assistant('thinking'), tr], 'INJECTED')
 
-    // Providers require the tool result to be the first block in the turn, so the injected text is
-    // appended rather than prepended here.
-    expect(result.map((m) => m.toJSON())).toStrictEqual([
+    // A tool result must stay first in the turn answering a tool use; appending satisfies that.
+    expect(result.messages.map((message) => message.toJSON())).toStrictEqual([
       { role: 'user', content: [{ text: 'task' }], trackingId: anyTrackingId },
       { role: 'assistant', content: [{ text: 'thinking' }], trackingId: anyTrackingId },
       {
         role: 'user',
-        content: [tr.toJSON().content[0], { text: 'INJECTED' }],
+        content: [tr.toJSON().content[0], { text: '\n\nINJECTED' }],
         trackingId: anyTrackingId,
       },
     ])
@@ -76,12 +75,12 @@ describe('foldIntoLastUserMessage', () => {
     const messages = [user('first'), assistant('a'), user('second')]
     const result = foldIntoLastUserMessage(messages, 'INJECTED')
 
-    expect(result.map((m) => m.toJSON())).toStrictEqual([
+    expect(result.messages.map((message) => message.toJSON())).toStrictEqual([
       { role: 'user', content: [{ text: 'first' }], trackingId: anyTrackingId }, // earlier user untouched
       { role: 'assistant', content: [{ text: 'a' }], trackingId: anyTrackingId },
       {
         role: 'user',
-        content: [{ text: 'INJECTED' }, { text: 'second' }],
+        content: [{ text: 'second' }, { text: '\n\nINJECTED' }],
         trackingId: anyTrackingId,
       },
     ])
@@ -94,13 +93,27 @@ describe('foldIntoLastUserMessage', () => {
       metadata: { custom: { keep: 'me' } },
     })
     const result = foldIntoLastUserMessage([tagged], 'INJECTED')
-    expect(result[0]!.metadata?.custom).toStrictEqual({ keep: 'me' })
+    expect(result.messages[0]!.metadata?.custom).toStrictEqual({ keep: 'me' })
   })
 
   it('returns the input unchanged when there is no user message', () => {
     const messages = [assistant('only assistant')]
     const result = foldIntoLastUserMessage(messages, 'INJECTED')
-    expect(result).toBe(messages)
+    expect(result.messages).toBe(messages)
+    expect(result.appended).toBe(0)
+  })
+
+  it('reports no per-call trailing blocks when the fold target is not the last message', () => {
+    // Counting an earlier message's blocks would make the provider count back through the wrong one.
+    const result = foldIntoLastUserMessage([user('ask'), assistant('reply')], 'INJECTED')
+
+    expect(result.messages[0]!.toJSON().content).toStrictEqual([{ text: 'ask' }, { text: '\n\nINJECTED' }])
+    expect(result.appended).toBe(0)
+  })
+
+  it('omits the blank-line separator when the target message has no content', () => {
+    const result = foldIntoLastUserMessage([new Message({ role: 'user', content: [] })], 'INJECTED')
+    expect(result.messages[0]!.toJSON().content).toStrictEqual([{ text: 'INJECTED' }])
   })
 })
 
@@ -172,7 +185,7 @@ describe('createInjectionMiddleware', () => {
       { role: 'assistant', content: [{ text: 'prior' }], trackingId: anyTrackingId },
       {
         role: 'user',
-        content: [{ text: 'INJECTED' }, { text: 'ask' }],
+        content: [{ text: 'ask' }, { text: '\n\nINJECTED' }],
         trackingId: anyTrackingId,
       },
     ])
@@ -229,7 +242,7 @@ describe('createInjectionMiddleware', () => {
       { role: 'assistant', content: [{ text: 'a' }], trackingId: anyTrackingId },
       {
         role: 'user',
-        content: [tr.toJSON().content[0], { text: 'INJECTED' }],
+        content: [tr.toJSON().content[0], { text: '\n\nINJECTED' }],
         trackingId: anyTrackingId,
       },
     ])
@@ -265,5 +278,47 @@ describe('createInjectionMiddleware', () => {
     await handler(input)
 
     expect(before.content).toHaveLength(1) // the original user message is untouched
+  })
+
+  describe('per-call trailing blocks reporting', () => {
+    // The boundary a provider needs is reported on the context, not written into the messages.
+    it('reports one trailing block as per-call', async () => {
+      const handler = createInjectionMiddleware({ renderContent: async () => 'INJECTED' })
+      const result = await handler(ctx([user('ask')]))
+
+      expect(result.dynamicTrailingBlocks).toBe(1)
+    })
+
+    it('accumulates across producers on one call', async () => {
+      const first = createInjectionMiddleware({ renderContent: async () => 'ONE' })
+      const second = createInjectionMiddleware({ renderContent: async () => 'TWO' })
+
+      const result = await second(await first(ctx([user('ask')])))
+
+      expect(result.dynamicTrailingBlocks).toBe(2)
+    })
+
+    it('reports nothing when injection is skipped', async () => {
+      const handler = createInjectionMiddleware({ renderContent: async () => '' })
+      const result = await handler(ctx([user('ask')]))
+
+      expect(result.dynamicTrailingBlocks ?? 0).toBe(0)
+    })
+
+    it('reports nothing when the fold target is not the last message', async () => {
+      const handler = createInjectionMiddleware({ renderContent: async () => 'INJECTED', trigger: 'everyTurn' })
+      const result = await handler(ctx([user('ask'), assistant('reply')]))
+
+      expect(result.dynamicTrailingBlocks).toBe(0)
+    })
+
+    it('emits no cache point into the messages', async () => {
+      // Most providers reject a cachePoint inside a message, so the framework never writes one.
+      const handler = createInjectionMiddleware({ renderContent: async () => 'INJECTED' })
+      const result = await handler(ctx([user('ask')]))
+
+      const blocks = result.messages.flatMap((message) => (message as Message).content)
+      expect(blocks.some((block) => block.type === 'cachePointBlock')).toBe(false)
+    })
   })
 })

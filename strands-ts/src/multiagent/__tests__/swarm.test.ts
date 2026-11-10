@@ -11,6 +11,7 @@ import { AgentNode } from '../nodes.js'
 import { Swarm } from '../swarm.js'
 import { SessionManager } from '../../session/session-manager.js'
 import { MockSnapshotStorage } from '../../__fixtures__/mock-storage-provider.js'
+import type { MultiAgentPlugin } from '../plugins.js'
 
 /**
  * Creates an agent that produces a structured output handoff via the strands_structured_output tool.
@@ -791,6 +792,27 @@ describe('Swarm', () => {
       // B no longer exists, so _findResumeNode falls back to start node A
       expect(result.status).toBe(Status.COMPLETED)
       expect(result.results.map((r) => r.nodeId)).toStrictEqual(['a', 'a'])
+    })
+  })
+
+  describe('plugin initialization failure', () => {
+    it('keeps a plugin initialization failure fail-closed across retries', async () => {
+      const initializationError = new Error('plugin initialization failed')
+      const plugin: MultiAgentPlugin = {
+        name: 'failing-plugin',
+        initMultiAgent: () => {
+          throw initializationError
+        },
+      }
+      const agent = new Agent({
+        model: new MockMessageModel().addTurn({ type: 'textBlock', text: 'hi' }),
+        printer: false,
+        id: 'a',
+      })
+      const swarm = new Swarm({ nodes: [agent], start: 'a', plugins: [plugin] })
+
+      await expect(swarm.initialize()).rejects.toBe(initializationError)
+      await expect(swarm.initialize()).rejects.toBe(initializationError)
     })
   })
 })

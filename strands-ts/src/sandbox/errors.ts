@@ -1,15 +1,20 @@
 /**
- * Error types for sandbox command and code execution.
+ * Error types raised by sandbox execution and file operations.
  *
- * These are runtime throwables raised by sandbox execution; consumers can
- * branch on them via `instanceof` to distinguish timeouts from aborts.
+ * Consumers can branch on them via `instanceof`.
  */
 
 /**
  * Thrown by sandbox execution when the configured `timeout` elapses.
+ *
+ * `stdout` and `stderr` hold whatever the process wrote before it was killed.
  */
 export class SandboxTimeoutError extends Error {
-  constructor(seconds: number) {
+  constructor(
+    seconds: number,
+    readonly stdout = '',
+    readonly stderr = ''
+  ) {
     super(`Execution timed out after ${seconds} seconds`)
     this.name = 'SandboxTimeoutError'
   }
@@ -26,12 +31,45 @@ export class SandboxAbortError extends Error {
 }
 
 /**
- * Thrown by {@link Sandbox.listFiles} when the path does not exist, distinguishing
- * genuine absence from permission or transport failures (which throw plain errors).
+ * Thrown by {@link Sandbox.listFiles} and {@link Sandbox.readFile} when the path does not exist, distinguishing
+ * genuine absence from permission failures ({@link SandboxPermissionError} from `readFile`) and transport failures
+ * (plain errors).
+ *
+ * `code` is `'ENOENT'`, so checks written for Node fs errors also match it.
  */
 export class SandboxPathNotFoundError extends Error {
-  constructor(path: string) {
-    super(`Path not found: ${path}`)
+  readonly code = 'ENOENT'
+
+  constructor(path: string, options?: ErrorOptions) {
+    super(`Path not found: ${path}`, options)
     this.name = 'SandboxPathNotFoundError'
+  }
+}
+
+/**
+ * Thrown by {@link Sandbox.readFile} when the path is a directory.
+ *
+ * `code` is `'EISDIR'`, so checks written for Node fs errors also match it.
+ */
+export class SandboxIsADirectoryError extends Error {
+  readonly code = 'EISDIR'
+
+  constructor(path: string, options?: ErrorOptions) {
+    super(`Is a directory: ${path}`, options)
+    this.name = 'SandboxIsADirectoryError'
+  }
+}
+
+/**
+ * Thrown by {@link Sandbox.readFile} when the file, or a directory above it, is not accessible.
+ *
+ * `code` is `'EACCES'`, so checks written for Node fs errors also match it.
+ */
+export class SandboxPermissionError extends Error {
+  readonly code = 'EACCES'
+
+  constructor(path: string, options?: ErrorOptions) {
+    super(`Permission denied: ${path}`, options)
+    this.name = 'SandboxPermissionError'
   }
 }

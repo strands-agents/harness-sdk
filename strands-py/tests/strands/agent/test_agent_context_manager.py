@@ -5,8 +5,16 @@ from unittest.mock import MagicMock
 import pytest
 
 from strands import Agent, Plugin
-from strands.agent.conversation_manager import SlidingWindowConversationManager, SummarizingConversationManager
-from strands.vended_plugins.context_offloader import ContextOffloader, InMemoryStorage
+from strands._context_manager.context_manager import ContextManager
+from strands.agent.conversation_manager import (
+    NullConversationManager,
+    SlidingWindowConversationManager,
+)
+from strands.session.file_session_manager import FileSessionManager
+from strands.session.repository_session_manager import RepositorySessionManager
+from strands.session.snapshot_session_manager import SnapshotSessionManager
+from strands.storage.in_memory_storage import InMemoryStorage
+from tests.fixtures.mock_session_repository import MockedSessionRepository
 
 
 @pytest.fixture
@@ -26,59 +34,32 @@ class TestContextManagerNone:
         agent = Agent(model=mock_model, context_manager=None)
         assert isinstance(agent.conversation_manager, SlidingWindowConversationManager)
 
-    def test_no_offloader_plugin_by_default(self, mock_model):
+    def test_no_context_manager_plugin_by_default(self, mock_model):
         agent = Agent(model=mock_model)
-        assert "context_offloader" not in agent._plugin_registry._plugins
+        assert "strands:context-manager" not in agent._plugin_registry._plugins
 
 
 class TestContextManagerAuto:
-    def test_uses_summarizing_conversation_manager(self, mock_model):
+    def test_uses_null_conversation_manager(self, mock_model):
         agent = Agent(model=mock_model, context_manager="auto")
-        assert isinstance(agent.conversation_manager, SummarizingConversationManager)
+        assert isinstance(agent.conversation_manager, NullConversationManager)
 
-    def test_summary_ratio_is_benchmark_default(self, mock_model):
+    def test_registers_context_manager_plugin(self, mock_model):
         agent = Agent(model=mock_model, context_manager="auto")
-        assert agent.conversation_manager.summary_ratio == 0.3
+        assert "strands:context-manager" in agent._plugin_registry._plugins
 
-    def test_proactive_compression_at_85_percent(self, mock_model):
+    def test_context_manager_instance_created(self, mock_model):
         agent = Agent(model=mock_model, context_manager="auto")
-        assert agent.conversation_manager._compression_threshold == 0.85
-
-    def test_adds_context_offloader_plugin(self, mock_model):
-        agent = Agent(model=mock_model, context_manager="auto")
-        assert "context_offloader" in agent._plugin_registry._plugins
-
-    def test_offloader_max_result_tokens(self, mock_model):
-        agent = Agent(model=mock_model, context_manager="auto")
-        offloader = agent._plugin_registry._plugins["context_offloader"]
-        assert offloader._max_result_tokens == 1500
-
-    def test_offloader_preview_tokens(self, mock_model):
-        agent = Agent(model=mock_model, context_manager="auto")
-        offloader = agent._plugin_registry._plugins["context_offloader"]
-        assert offloader._preview_tokens == 750
-
-    def test_offloader_uses_in_memory_storage(self, mock_model):
-        agent = Agent(model=mock_model, context_manager="auto")
-        offloader = agent._plugin_registry._plugins["context_offloader"]
-        assert isinstance(offloader._storage, InMemoryStorage)
+        assert agent._context_manager_instance is not None
+        assert isinstance(agent._context_manager_instance, ContextManager)
 
 
 class TestContextManagerCoexistence:
-    def test_user_conversation_manager_is_respected(self, mock_model):
+    def test_user_conversation_manager_ignored_with_warning(self, mock_model):
         user_conversation_manager = SlidingWindowConversationManager(window_size=20)
-        agent = Agent(model=mock_model, context_manager="auto", conversation_manager=user_conversation_manager)
-        assert agent.conversation_manager is user_conversation_manager
-
-    def test_offloader_still_added_with_user_conversation_manager(self, mock_model):
-        user_conversation_manager = SlidingWindowConversationManager(window_size=20)
-        agent = Agent(model=mock_model, context_manager="auto", conversation_manager=user_conversation_manager)
-        assert "context_offloader" in agent._plugin_registry._plugins
-
-    def test_user_offloader_not_overridden(self, mock_model):
-        user_offloader = ContextOffloader(storage=MagicMock(), max_result_tokens=3000, preview_tokens=1000)
-        agent = Agent(model=mock_model, context_manager="auto", plugins=[user_offloader])
-        assert agent._plugin_registry._plugins["context_offloader"]._max_result_tokens == 3000
+        with pytest.warns(UserWarning, match="context_manager is set, ignoring co-provided conversation_manager"):
+            agent = Agent(model=mock_model, context_manager="auto", conversation_manager=user_conversation_manager)
+        assert isinstance(agent.conversation_manager, NullConversationManager)
 
     def test_user_plugins_preserved(self, mock_model):
         class MyPlugin(Plugin):
@@ -87,7 +68,19 @@ class TestContextManagerCoexistence:
         plugin = MyPlugin()
         agent = Agent(model=mock_model, context_manager="auto", plugins=[plugin])
         assert "my_plugin" in agent._plugin_registry._plugins
-        assert "context_offloader" in agent._plugin_registry._plugins
+        assert "strands:context-manager" in agent._plugin_registry._plugins
+
+
+class TestContextManagerFalse:
+    def test_false_disables_context_management(self, mock_model):
+        agent = Agent(model=mock_model, context_manager=False)
+        assert isinstance(agent.conversation_manager, NullConversationManager)
+        assert "strands:context-manager" not in agent._plugin_registry._plugins
+
+    def test_false_with_user_conversation_manager(self, mock_model):
+        user_cm = SlidingWindowConversationManager(window_size=20)
+        agent = Agent(model=mock_model, context_manager=False, conversation_manager=user_cm)
+        assert agent.conversation_manager is user_cm
 
 
 class TestContextManagerErrors:
@@ -98,5 +91,61 @@ class TestContextManagerErrors:
             Agent(model=stateful_model, context_manager="auto")
 
     def test_raises_with_unsupported_value(self, mock_model):
-        with pytest.raises(ValueError, match="Unsupported context_manager value"):
+        with pytest.raises(ValueError, match="Unknown context_manager preset"):
             Agent(model=mock_model, context_manager="manual")
+
+
+class TestContextManagerSessionManagerCompatibility:
+    @pytest.fixture
+    def repository_session_manager(self):
+        return RepositorySessionManager(session_id="s1", session_repository=MockedSessionRepository())
+
+    @pytest.mark.parametrize("context_manager", ["auto", ContextManager()])
+    def test_raises_with_repository_session_manager(self, mock_model, repository_session_manager, context_manager):
+        with pytest.raises(ValueError, match="cannot be used with a RepositorySessionManager"):
+            Agent(model=mock_model, session_manager=repository_session_manager, context_manager=context_manager)
+
+    def test_raises_with_repository_session_manager_subclass(self, mock_model, tmp_path):
+        session_manager = FileSessionManager(session_id="s1", storage_dir=str(tmp_path))
+        with pytest.raises(ValueError, match="cannot be used with a RepositorySessionManager"):
+            Agent(model=mock_model, session_manager=session_manager, context_manager="auto")
+
+    @pytest.mark.parametrize("context_manager", [None, False])
+    def test_allows_repository_session_manager_without_context_manager(
+        self, mock_model, repository_session_manager, context_manager
+    ):
+        agent = Agent(model=mock_model, session_manager=repository_session_manager, context_manager=context_manager)
+        assert agent.context_manager is None
+
+    def test_allows_snapshot_session_manager(self, mock_model):
+        session_manager = SnapshotSessionManager("s1", storage=InMemoryStorage())
+        agent = Agent(model=mock_model, session_manager=session_manager, context_manager="auto")
+        assert isinstance(agent.context_manager, ContextManager)
+
+
+class TestContextManagerProperty:
+    """Tests for the Agent.context_manager property."""
+
+    def test_returns_none_when_no_context_manager(self, mock_model):
+        agent = Agent(model=mock_model)
+        assert agent.context_manager is None
+
+    def test_returns_context_manager_instance(self, mock_model):
+        from strands._context_manager.context_manager import ContextManager
+
+        context_manager = ContextManager()
+        agent = Agent(model=mock_model, context_manager=context_manager)
+        assert agent.context_manager is context_manager
+
+    def test_returns_instance_for_auto_mode(self, mock_model):
+        from strands._context_manager.context_manager import ContextManager
+
+        agent = Agent(model=mock_model, context_manager="auto")
+        assert isinstance(agent.context_manager, ContextManager)
+
+    def test_rejects_context_manager_passed_via_plugins(self, mock_model):
+        from strands._context_manager.context_manager import ContextManager
+
+        context_manager = ContextManager()
+        with pytest.raises(ValueError, match="passed via plugins"):
+            Agent(model=mock_model, plugins=[context_manager])

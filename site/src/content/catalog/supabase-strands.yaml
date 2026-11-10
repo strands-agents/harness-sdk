@@ -5,4 +5,4 @@ languages:
   python:
     package: supabase-strands
 github: https://github.com/siddharthkrish/strands-supabase-session-manager
-addedDate: 2026-07-19
+addedDate: 2026-02-25

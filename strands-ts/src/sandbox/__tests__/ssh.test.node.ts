@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { SshSandbox } from '../ssh.js'
 import { streamProcess } from '../stream-process.js'
-import { SANDBOX_SHELL_DESCRIPTION } from '../../vended-tools/bash/types.js'
+import { SANDBOX_SHELL_DESCRIPTION } from '../../vended-tools/shell/types.js'
 
 vi.mock('../stream-process.js', () => ({
   streamProcess: vi.fn(async function* () {

@@ -9,11 +9,13 @@ Set LLAMACPP_TEST_URL environment variable to use a different server URL.
 """
 
 import os
+import uuid
 
 import pytest
 from pydantic import BaseModel
 
 from strands.models.llamacpp import LlamaCppModel
+from strands.models.model import CacheConfig
 from strands.types.content import Message
 
 # Get server URL from environment or use default
@@ -403,6 +405,39 @@ async def test_cache_prompt(llamacpp_model: LlamaCppModel) -> None:
     # Both should give valid responses
     assert "4" in response1
     assert "6" in response2
+
+
+@pytest.mark.asyncio
+async def test_cache_read_tokens_are_surfaced() -> None:
+    """llama.cpp's reused prompt prefix is surfaced end to end as cacheReadInputTokens.
+
+    A first request over a unique long prefix has nothing to read back; a second request over the same
+    prefix reuses it, so its cacheReadInputTokens is positive and larger. A control model that forces
+    ``cache_prompt=False`` reuses nothing — proving the flag, not just the server's default, drives reuse.
+    """
+    # Unique so a rerun cannot read a prior run's cache entry; long enough that the reused count clearly
+    # exceeds the chat-template prefix.
+    system_prompt = f"Session {uuid.uuid4()}. " + ("You are a helpful assistant. Always be concise. " * 40)
+
+    async def cache_read_tokens(model: LlamaCppModel, user_text: str) -> int:
+        messages: list[Message] = [{"role": "user", "content": [{"text": user_text}]}]
+        reads = 0
+        async for event in model.stream(messages, system_prompt=system_prompt):
+            if "metadata" in event:
+                reads = event["metadata"]["usage"].get("cacheReadInputTokens", 0)
+        return reads
+
+    cached = LlamaCppModel(base_url=LLAMACPP_URL, cache_config=CacheConfig())
+    cold_reads = await cache_read_tokens(cached, "What is 2+2?")
+    warm_reads = await cache_read_tokens(cached, "What is 3+3?")
+
+    assert warm_reads > 0, "second request should reuse the cached prefix (cacheReadInputTokens > 0)"
+    assert warm_reads > cold_reads, "second request should reuse more of the prefix than the first"
+
+    # Control: cache_prompt=False suppresses reuse, so the feature — not the server default — is what gates it.
+    uncached = LlamaCppModel(base_url=LLAMACPP_URL, params={"cache_prompt": False})
+    await cache_read_tokens(uncached, "What is 2+2?")
+    assert await cache_read_tokens(uncached, "What is 3+3?") == 0, "cache_prompt=False should reuse nothing"
 
 
 @pytest.mark.asyncio

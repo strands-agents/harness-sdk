@@ -1,0 +1,10 @@
+name: Context Injector
+description: 'Fold real-time text into the model input before each call: a clock, environment facts, or a lookup, without storing it in history.'
+integrationType: plugin
+maintainedBy: strands
+languages:
+  python: {}
+  typescript: {}
+github: https://github.com/strands-agents/harness-sdk/tree/main/strands-py/src/strands/vended_plugins/context_injector
+docsPage: docs/user-guide/sdk/plugins/context-injector
+addedDate: 2026-06-12

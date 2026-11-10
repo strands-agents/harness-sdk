@@ -47,6 +47,35 @@ function toAttributeValue(value: JSONValue): MetadataAttributeValue | undefined 
   return undefined
 }
 
+/** Unwraps the `NumericValue` wrapper (aws/aws-sdk-js-v3#8246) to the stored number; anything else passes through. */
+function fromAttributeValue(value: JSONValue): JSONValue {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return value
+  const { string: encoded, type } = value as { string?: JSONValue; type?: JSONValue }
+  if (typeof encoded !== 'string' || type !== 'bigDecimal') return value
+  // Number('') and Number('  ') are 0, which would coerce a blank payload instead of preserving it.
+  if (encoded.trim() === '') return value
+  const parsed = Number(encoded)
+  return Number.isFinite(parsed) ? parsed : value
+}
+
+/**
+ * Whether a retrieval score sits inside the configured `minScore` / `maxScore` bound.
+ *
+ * Unset bounds keep everything. A result the knowledge base did not score is also kept: there is
+ * nothing to compare it against, and a bound should not silently discard entries whose relevance is
+ * unknown.
+ */
+function passesScoreBound(
+  score: number | undefined,
+  minScore: number | undefined,
+  maxScore: number | undefined
+): boolean {
+  if (score == null) return true
+  if (minScore !== undefined) return score >= minScore
+  if (maxScore !== undefined) return score <= maxScore
+  return true
+}
+
 /**
  * S3 ingestion settings for {@link BedrockKnowledgeBaseStore}, required when `dataSourceType` is `'S3'`.
  *
@@ -144,6 +173,10 @@ export interface BedrockKnowledgeBaseStoreConfig extends MemoryStoreConfig {
    * filtering at search time is supplied separately as retrieval `userContext`.
    */
   accessControlList?: BedrockKnowledgeBaseAccessControlEntry[]
+  /** Floor a result must meet (`score >= minScore`). Use for similarity-scored knowledge bases, where a higher score is a better match. Mutually exclusive with `maxScore`. */
+  minScore?: number
+  /** Ceiling a result must not exceed (`score <= maxScore`). Use for distance-scored knowledge bases, where a lower score is a better match. Mutually exclusive with `minScore`. */
+  maxScore?: number
 }
 
 /**
@@ -201,6 +234,8 @@ export class BedrockKnowledgeBaseStore implements MemoryStore {
   readonly name: string
   readonly description?: string
   readonly maxSearchResults?: number
+  readonly minScore?: number
+  readonly maxScore?: number
   readonly writable: boolean
   readonly extraction?: boolean | ExtractionConfig
 
@@ -232,8 +267,19 @@ export class BedrockKnowledgeBaseStore implements MemoryStore {
   public readonly accessControlList: BedrockKnowledgeBaseAccessControlEntry[] | undefined
 
   constructor(options: BedrockKnowledgeBaseStoreConfig) {
-    const { config, scope, name, description, writable, maxSearchResults, filter, extraction, accessControlList } =
-      options
+    const {
+      config,
+      scope,
+      name,
+      description,
+      writable,
+      maxSearchResults,
+      minScore,
+      maxScore,
+      filter,
+      extraction,
+      accessControlList,
+    } = options
 
     this.name = name
     if (description !== undefined) this.description = description
@@ -243,6 +289,13 @@ export class BedrockKnowledgeBaseStore implements MemoryStore {
       }
       this.maxSearchResults = maxSearchResults
     }
+    if (minScore !== undefined && maxScore !== undefined) {
+      throw new Error(
+        `BedrockKnowledgeBaseStore: minScore and maxScore are mutually exclusive, but both are set (minScore=${minScore}, maxScore=${maxScore}).`
+      )
+    }
+    if (minScore !== undefined) this.minScore = minScore
+    if (maxScore !== undefined) this.maxScore = maxScore
     this.writable = writable ?? false
     if (extraction !== undefined) this.extraction = extraction
 
@@ -306,6 +359,11 @@ export class BedrockKnowledgeBaseStore implements MemoryStore {
    * @returns Matching memory entries ordered by relevance. Each entry's `metadata` includes
    *   user-provided attributes plus two reserved synthetic keys: `_relevanceScore` (number) and
    *   `_sourceLocation` (Bedrock retrieval location object).
+   *
+   *   When the store sets `minScore` or `maxScore`, results are filtered on that bound after the
+   *   knowledge base retrieval, so fewer than `maxSearchResults` entries may come back, and a query
+   *   the knowledge base has no good answer for can legitimately return none. A result the knowledge
+   *   base did not score is kept.
    */
   async search(query: string, options?: SearchOptions): Promise<MemoryEntry[]> {
     if (options?.maxSearchResults !== undefined && options.maxSearchResults < 1) {
@@ -340,25 +398,36 @@ export class BedrockKnowledgeBaseStore implements MemoryStore {
       throw error
     }
 
-    return (response.retrievalResults ?? []).map((result) => {
-      const metadata: Record<string, JSONValue> = {}
-      if (result.metadata) {
-        for (const [key, value] of Object.entries(result.metadata)) {
-          metadata[key] = value as JSONValue
+    const results = response.retrievalResults ?? []
+    const entries = results
+      .filter((result) => passesScoreBound(result.score, this.minScore, this.maxScore))
+      .map((result) => {
+        const metadata: Record<string, JSONValue> = {}
+        if (result.metadata) {
+          for (const [key, value] of Object.entries(result.metadata)) {
+            metadata[key] = fromAttributeValue(value as JSONValue)
+          }
         }
-      }
-      if (result.location) {
-        metadata._sourceLocation = result.location as unknown as JSONValue
-      }
-      if (result.score != null) {
-        metadata._relevanceScore = result.score
-      }
+        if (result.location) {
+          metadata._sourceLocation = result.location as unknown as JSONValue
+        }
+        if (result.score != null) {
+          metadata._relevanceScore = result.score
+        }
 
-      return {
-        content: result.content?.text ?? '',
-        metadata,
-      }
-    })
+        return {
+          content: result.content?.text ?? '',
+          metadata,
+        }
+      })
+
+    if (this.minScore !== undefined || this.maxScore !== undefined) {
+      logger.debug(
+        `store=<${this.name}>, minScore=<${this.minScore}>, maxScore=<${this.maxScore}>, retrieved=<${results.length}>, kept=<${entries.length}> | score bound applied`
+      )
+    }
+
+    return entries
   }
 
   /**

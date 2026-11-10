@@ -156,6 +156,33 @@ def test_agent_invoke_document_input(assistant_agent, letter_pdf):
     assert "shareholder" in text
 
 
+def test_agent_invoke_tool_returning_media(yellow_img, letter_pdf):
+    @strands.tool
+    def fetch_attachments() -> dict:
+        """Fetch the attached photo and letter."""
+        return {
+            "status": "success",
+            "content": [
+                {"image": {"format": "png", "source": {"bytes": yellow_img}}},
+                {"document": {"format": "pdf", "name": "letter", "source": {"bytes": letter_pdf}}},
+            ],
+        }
+
+    # Only Gemini 3 and later models read media in function responses.
+    model = GeminiModel(
+        client_args={"api_key": os.getenv("GOOGLE_API_KEY")},
+        model_id="gemini-3.1-flash-lite",
+        params={"temperature": 0.15},
+    )
+    agent = Agent(model=model, tools=[fetch_attachments])
+
+    result = agent("Call fetch_attachments. What color is the photo, and who is the letter addressed to?")
+    text = str(result).lower()
+
+    assert "yellow" in text
+    assert "shareholder" in text
+
+
 def test_agent_structured_output(assistant_agent, weather):
     tru_weather = assistant_agent.structured_output(type(weather), "The time is 12:00 and the weather is sunny")
     exp_weather = weather
@@ -266,11 +293,20 @@ def test_agent_with_reasoning_content(model, assistant_agent):
     assert result.message["content"][0]["reasoningContent"]["reasoningText"]["text"]
 
 
+def test_agent_usage_tokens_hold_total_invariant(tool_agent):
+    result = tool_agent("What is the current time and weather in New York?")
+
+    usage = result.metrics.accumulated_usage
+    assert usage["inputTokens"] > 0
+    assert usage["outputTokens"] > 0
+    assert usage["totalTokens"] == usage["inputTokens"] + usage["outputTokens"]
+
+
 class TestCountTokens:
     @pytest.fixture
     def model(self):
         return GeminiModel(
-            model_id="gemini-2.0-flash",
+            model_id="gemini-3.1-flash-lite",
             client_args={"api_key": os.environ["GOOGLE_API_KEY"]},
             use_native_token_count=True,
         )

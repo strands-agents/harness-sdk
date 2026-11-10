@@ -9,7 +9,7 @@ import { streamProcess } from './stream-process.js'
 import type { ExecutionResult, StreamChunk } from './types.js'
 import type { Tool } from '../tools/tool.js'
 import { makeFileEditor, DEFAULT_FILE_EDITOR_DESCRIPTION } from '../vended-tools/file-editor/index.js'
-import { makeShell, SANDBOX_SHELL_DESCRIPTION } from '../vended-tools/bash/index.js'
+import { makeShell, SANDBOX_SHELL_DESCRIPTION } from '../vended-tools/shell/index.js'
 
 // Known-safe SSH options. Options that execute commands, tunnel traffic, or load
 // external config are excluded. Reviewed and approved by AppSec.

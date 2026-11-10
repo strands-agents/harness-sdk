@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 312" width="720" height="312">
+  <!-- Type: loop (two-station). Story: the agent and the validator alternate, with feedback flowing back, until the response passes or the budget runs out. -->
+  <defs>
+    <marker id="arrow" viewBox="0 0 8 6" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+      <path class="dg-head" d="M0,0 L8,3 L0,6 Z"/>
+    </marker>
+    <marker id="arrow-accent" viewBox="0 0 8 6" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+      <path class="dg-head is-accent" d="M0,0 L8,3 L0,6 Z"/>
+    </marker>
+  </defs>
+
+  <!-- Zones -->
+  <rect class="dg-zone" x="168" y="24" width="536" height="160" rx="8"/>
+  <text class="dg-eyebrow" x="184" y="44">GOAL LOOP</text>
+
+  <!-- Edges (drawn before nodes) -->
+  <path class="dg-edge" d="M128,104 H206" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M368,88 H526" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M528,120 H370" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M568,144 V238" marker-end="url(#arrow)"/>
+  <path class="dg-edge is-accent" d="M648,144 V238" marker-end="url(#arrow-accent)"/>
+
+  <!-- Edge labels -->
+  <rect class="dg-mask is-on-zone" x="416" y="68" width="64" height="12" rx="2"/>
+  <text class="dg-label" x="448" y="77" text-anchor="middle">RESPONSE</text>
+  <rect class="dg-mask is-on-zone" x="400" y="98" width="96" height="12" rx="2"/>
+  <text class="dg-label" x="448" y="107.5" text-anchor="middle">FAILED: RETRY</text>
+  <text class="dg-label" x="560" y="215" text-anchor="end">OUT OF BUDGET</text>
+  <text class="dg-label is-accent" x="656" y="215">PASSED</text>
+
+  <!-- Nodes -->
+  <rect class="dg-node is-input" x="16" y="72" width="112" height="64" rx="6"/>
+  <text class="dg-name" x="72" y="101" text-anchor="middle">Prompt</text>
+  <text class="dg-sub" x="72" y="119" text-anchor="middle">your request</text>
+
+  <rect class="dg-node is-focal" x="208" y="64" width="160" height="80" rx="6"/>
+  <text class="dg-name is-focal-text" x="288" y="101" text-anchor="middle">Agent</text>
+  <text class="dg-sub" x="288" y="119" text-anchor="middle">produces a response</text>
+
+  <rect class="dg-node" x="528" y="64" width="160" height="80" rx="6"/>
+  <text class="dg-name" x="608" y="101" text-anchor="middle">Validator</text>
+  <text class="dg-sub" x="608" y="119" text-anchor="middle">judge or function</text>
+
+  <rect class="dg-node" x="496" y="240" width="208" height="56" rx="6"/>
+  <text class="dg-name" x="600" y="265" text-anchor="middle">Done</text>
+  <text class="dg-sub" x="600" y="283" text-anchor="middle">returns the last response</text>
+</svg>

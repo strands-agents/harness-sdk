@@ -15,7 +15,7 @@ jobs:
   authorization-check:
     name: Authorization Check
     permissions: read-all
-    runs-on: ubuntu-latest
+    runs-on: strands-agents_ubuntu-latest_4-core
     outputs:
       approval-env: ${{ steps.auth.outputs.approval-env }}
     steps:
@@ -28,7 +28,7 @@ jobs:
 
   build-and-deploy:
     name: Build and Deploy Preview
-    runs-on: ubuntu-latest
+    runs-on: strands-agents_ubuntu-latest_4-core
     needs: authorization-check
     environment: ${{ needs.authorization-check.outputs.approval-env }}
 
@@ -51,7 +51,7 @@ jobs:
       # Derived paths (defined once, used everywhere)
       BUILD_OUTPUT_DIR: site/dist
       S3_PATH: pr-cms-${{ github.event.pull_request.number }}
-      PREVIEW_URL: https://${{ secrets.CLOUDFRONT_DOMAIN }}/pr-cms-${{ github.event.pull_request.number }}/docs/user-guide/quickstart/overview/
+      PREVIEW_URL: https://${{ secrets.CLOUDFRONT_DOMAIN }}/pr-cms-${{ github.event.pull_request.number }}/
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
     defaults:
@@ -63,13 +63,24 @@ jobs:
         uses: actions/checkout@v7
         with:
           ref: ${{ env.PR_HEAD_SHA }}
+          fetch-depth: 0
           persist-credentials: false
           allow-unsafe-pr-checkout: true  # opt back into fork-PR checkout, blocked by default in checkout@v7
+
+      - name: Checkout samples
+        uses: actions/checkout@v7
+        with:
+          # Intentionally unpinned: each site build imports the latest samples default branch.
+          repository: strands-agents/samples
+          path: samples-source
+          persist-credentials: false
 
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
+          # Not .node-version: the checkout is the PR head, so it would follow the PR branch.
           node-version: '22'
+          check-latest: true
 
       - name: Install dependencies
         run: npm ci
@@ -77,6 +88,8 @@ jobs:
       - name: Build CMS
         env:
           ASTRO_BASE_PATH: /${{ env.S3_PATH }}/
+          SAMPLES_SOURCE_DIR: ${{ github.workspace }}/samples-source
+          SAMPLES_REQUIRE_SOURCE: '1'
         run: npm run cms:build
 
       - name: Configure AWS credentials
@@ -91,6 +104,7 @@ jobs:
         working-directory: .
         run: |
           aws s3 sync ${{ env.BUILD_OUTPUT_DIR }}/ s3://${{ env.S3_BUCKET }}/${{ env.S3_PATH }}/ \
+            --delete \
             --cache-control "public, max-age=3600"
 
       - name: Invalidate CloudFront cache for PR preview
@@ -121,21 +135,41 @@ jobs:
               pull_number: prNumber,
             });
 
-            // Build preview links for changed doc pages
-            const docFiles = files
-              .filter(f => f.filename.startsWith('site/src/content/docs/') && f.filename.endsWith('.mdx'))
-              .filter(f => f.status !== 'removed');
+            // Map a changed file to the site path it renders at, or null if it
+            // has no page of its own.
+            const toUrlPath = (filename) => {
+              const docsMatch = filename.match(/^site\/src\/content\/docs\/(.+)\.mdx$/);
+              if (docsMatch) {
+                const route = docsMatch[1].replace(/(^|\/)index$/, '');
+                return route ? `/docs/${route}/` : '/docs/';
+              }
+              // Catalog entries all render on the /integrations/ page
+              if (/^site\/src\/content\/catalog\/.+\.ya?ml$/.test(filename)) {
+                return '/integrations/';
+              }
+              // Static Astro pages; dynamic [param] routes have no single URL
+              const pageMatch = filename.match(/^site\/src\/pages\/(.+)\.astro$/);
+              if (pageMatch && !pageMatch[1].includes('[')) {
+                const route = pageMatch[1].replace(/(^|\/)index$/, '');
+                return route ? `/${route}/` : '/';
+              }
+              return null;
+            };
 
-            const previewLinks = docFiles.map(f => {
-              const urlPath = f.filename
-                .replace('site/src/content/docs/', '/docs/')
-                .replace(/\/index\.mdx$/, '/')
-                .replace(/\.mdx$/, '/');
-              const label = urlPath.replace(/^\/docs\//, '').replace(/\/$/, '');
+            // Build preview links for changed pages
+            const urlPaths = [...new Set(
+              files
+                .filter(f => f.status !== 'removed')
+                .map(f => toUrlPath(f.filename))
+                .filter(Boolean)
+            )].sort();
+
+            const previewLinks = urlPaths.map(urlPath => {
+              const label = urlPath.replace(/^\/(docs\/)?/, '').replace(/\/$/, '') || 'home';
               return `- [${label}](${baseUrl}${urlPath})`;
             });
 
-            const fallbackUrl = `${baseUrl}/docs/user-guide/quickstart/overview/`;
+            const fallbackUrl = `${baseUrl}/`;
 
             // Find existing bot comment
             const comments = await github.rest.issues.listComments({

@@ -32,6 +32,15 @@ export interface ToolSpec {
    * JSON Schema defining the expected output structure for the tool.
    */
   outputSchema?: JSONSchema
+
+  /**
+   * Untrusted tool-behavior hints (e.g. MCP `readOnlyHint`, `destructiveHint`); never a security boundary.
+   *
+   * Not sent to model provider APIs. A missing key means unknown, not `false` — per MCP spec
+   * `destructiveHint` and `openWorldHint` default to `true` when absent — and the field is absent
+   * entirely for non-MCP tools.
+   */
+  annotations?: Record<string, JSONValue | undefined>
 }
 
 /**

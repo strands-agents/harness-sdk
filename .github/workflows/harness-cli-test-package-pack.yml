@@ -1,0 +1,110 @@
+name: 'Harness CLI: Test Package Pack'
+
+# End-to-end package install smoke test for the Strands CLI (`@strands-agents/cli`).
+# Reusable; called by CI and release-harness-cli.yml. Reproduces a real user's install:
+# `npm pack` the CLI, install the tarball in a tempdir OUTSIDE the repo tree (so
+# nothing hoists), and run the `strands` bin. The CLI's @strands-agents/harness /
+# @strands-agents/sdk deps resolve from the registry (ranged, not pinned), so only
+# the CLI tarball is packed.
+
+on:
+  workflow_call:
+    inputs:
+      release-sha:
+        description: Optional full release commit SHA from origin/main history
+        required: false
+        type: string
+        default: ''
+      version:
+        description: 'If set, stamp the tarball with this version via `npm version --no-git-tag-version`. Required at release time; PR-time callers leave this empty.'
+        required: false
+        type: string
+        default: ''
+
+jobs:
+  test-package-pack:
+    name: ${{ matrix.os-name }}
+    permissions:
+      contents: read
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os-name: Linux
+            runner: strands-agents_ubuntu-latest_4-core
+          - os-name: macOS
+            runner: macos-latest
+          - os-name: Windows
+            runner: strands-agents_windows-latest_4-core
+    defaults:
+      run:
+        working-directory: strands-cli
+    steps:
+      - name: Checkout pull request
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Checkout event revision
+        if: github.event_name != 'pull_request'
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Select trusted release commit
+        if: inputs.release-sha != ''
+        shell: bash
+        working-directory: .
+        env:
+          RELEASE_SHA: ${{ inputs.release-sha }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] ||
+             ! git merge-base --is-ancestor "$RELEASE_SHA" refs/remotes/origin/main; then
+            echo "::error::release-sha must be a full commit SHA from origin/main history."
+            exit 1
+          fi
+          git checkout --detach "$RELEASE_SHA"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Setup Python for the terminal driver
+        id: python
+        uses: actions/setup-python@v7.0.0
+        with:
+          python-version: '3.12'
+
+      - name: Stamp version (release only)
+        if: inputs.version != ''
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+        run: npm version "$VERSION" --no-git-tag-version
+
+      - name: Pack, install in a tmpdir, run the bin
+        env:
+          PYTHON: ${{ steps.python.outputs.python-path }}
+          STRANDS_CLI_KEEP_TARBALL: 'true'
+        run: npm run test:package-install
+
+      - name: Upload tarball for downstream inspect/publish
+        if: matrix.os-name == 'Linux'
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: harness-cli-npm-build-output
+          path: strands-cli/*.tgz
+          if-no-files-found: error
+          retention-days: 7
