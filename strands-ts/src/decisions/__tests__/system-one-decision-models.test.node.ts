@@ -296,6 +296,19 @@ describe.each(PROVIDERS)('$name', ({ create, endpoint, defaultModelId, providerN
       expect((error as Error).cause).toBeDefined()
     })
 
+    it('sends an oversized request and maps the server HTTP 413 to ContextWindowOverflowError', async () => {
+      const fetch = fakeFetch({ error: 'request body too large' }, { status: 413 })
+      const decision = create({ apiKey: 'test-key', fetch })
+
+      const error = await decision.ask('x'.repeat(64 * 1024), { q: { question: 'ok?', choices: 'boolean' } }).then(
+        () => undefined,
+        (caught: unknown) => caught
+      )
+
+      expect(error).toBeInstanceOf(ContextWindowOverflowError)
+      expect(fetch).toHaveBeenCalledTimes(1)
+    })
+
     it('wraps transport failures as ModelError with the original cause', async () => {
       const fetch = vi.fn(async (): Promise<Response> => {
         throw new Error('offline')
@@ -457,19 +470,6 @@ describe('DecisionsAPIDecisionModel', () => {
       )
 
       await expect(decision.ask('state', questions)).rejects.toThrow(/at most 8 questions/)
-      expect(fetch).not.toHaveBeenCalled()
-    })
-
-    it('enforces the provider request-body limit before sending', async () => {
-      const fetch = fakeFetch(responseBody({}))
-      const decision = new DecisionsAPIDecisionModel({ apiKey: 'test-key', fetch })
-
-      const error = await decision.ask('x'.repeat(33 * 1024), { q: { question: 'ok?', choices: 'boolean' } }).then(
-        () => undefined,
-        (caught: unknown) => caught
-      )
-
-      expect(error).toBeInstanceOf(ContextWindowOverflowError)
       expect(fetch).not.toHaveBeenCalled()
     })
   })

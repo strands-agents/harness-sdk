@@ -11,7 +11,6 @@ const DECISIONS_API_ENDPOINT = 'https://decisionapi.net/v1/systemone'
 const DECISIONS_API_DEFAULT_MODEL_ID = '~typesafe/jev-latest'
 const DECISIONS_API_DEFAULT_MIN_CONFIDENCE = 0.5
 const DECISIONS_API_MAX_QUESTIONS = 8
-const DECISIONS_API_MAX_BODY_BYTES = 32 * 1024
 
 /** Options for constructing a {@link DecisionsAPIDecisionModel}. */
 export interface DecisionsAPIDecisionModelOptions {
@@ -53,7 +52,6 @@ export class DecisionsAPIDecisionModel extends DecisionModel {
       modelId: DECISIONS_API_DEFAULT_MODEL_ID,
       defaultMinConfidence: DECISIONS_API_DEFAULT_MIN_CONFIDENCE,
       maxQuestions: DECISIONS_API_MAX_QUESTIONS,
-      maxBodyBytes: DECISIONS_API_MAX_BODY_BYTES,
     })
   }
 
