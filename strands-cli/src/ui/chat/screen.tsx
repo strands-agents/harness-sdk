@@ -157,6 +157,7 @@ export function ChatApp({
   const [dismissedSuggestions, setDismissedSuggestions] = useState<string>()
   const [panelSelection, setPanelSelection] = useState(0)
   const [panelQuery, setPanelQuery] = useState('')
+  const [agentNameEditor, setAgentNameEditor] = useState<EditorState>(emptyEditor)
   const [panelFilter, setPanelFilter] = useState('all')
   const [dockLanguage, setDockLanguage] = useState<ChatConfigurationLanguage | undefined>(undefined)
   const [dockScroll, setDockScroll] = useState<number | undefined>(undefined)
@@ -341,6 +342,9 @@ export function ChatApp({
         controller.dismissPanel()
         return Promise.resolve(true)
       }
+      if (panelKind === 'agents' && row.value === 'rename:save') {
+        row = { ...row, value: `rename:save:${encodeURIComponent(agentNameEditor.input)}` }
+      }
       return controller.activatePanelRow(row).then((activated) => {
         if (
           panelKind === 'models' &&
@@ -357,7 +361,7 @@ export function ChatApp({
         return activated
       })
     },
-    [controller, installableUpdate, rememberDetailParent, setEditor]
+    [agentNameEditor.input, controller, installableUpdate, rememberDetailParent, setEditor]
   )
   const finishQueuedPromptEdit = useCallback((): void => {
     const draft = queuedPromptDraftRef.current
@@ -493,6 +497,7 @@ export function ChatApp({
     statusLayout.maxScroll,
   ])
   const viewProps = {
+    agentNameEditor,
     snapshot,
     input: editor.input,
     cursor: editor.cursor,
@@ -705,6 +710,17 @@ export function ChatApp({
 
   useLayoutEffect(() => {
     resetPanelPosition()
+    if (snapshot.panel?.kind === 'agents' && snapshot.panel.renameInput) {
+      const { id, defaultName } = snapshot.panel.renameInput
+      setAgentNameEditor({ ...emptyEditor(), input: defaultName, cursor: graphemes(defaultName).length })
+      const selected = snapshot.panel.rows.findIndex((row) => row.value === `conversation:${encodeURIComponent(id)}`)
+      panelSelectionRef.current = Math.max(0, selected)
+      setPanelSelection(panelSelectionRef.current)
+      const { capacity, columns } = agentGridLayout(width, height)
+      const start = revealAgentGridSelection(selected, 0, capacity, snapshot.panel.rows.length, columns)
+      panelViewportStartRef.current = start
+      setPanelViewportStart(start)
+    }
     if (snapshot.panel?.kind === 'permission' && snapshot.panel.selected !== undefined) {
       panelSelectionRef.current = snapshot.panel.selected
       setPanelSelection(snapshot.panel.selected)
@@ -896,6 +912,7 @@ export function ChatApp({
             scrollDetail(value, scroll, maxScroll, false, Math.min(3, Math.max(1, previewHeight - 1)))
           )
         } else if (snapshot.panel?.kind === 'agents') {
+          if (snapshot.panel.renameInput) return
           const { capacity, columns } = agentGridLayout(terminalWidth, terminalHeight)
           const nextStart = scrollAgentGridViewport(
             panelViewportStartRef.current,
@@ -990,6 +1007,7 @@ export function ChatApp({
           : false
       const panelRowIndex = snapshot.panel ? elementAtMouse(panelRowElements, mouse) : undefined
       const panelControlTarget =
+        snapshot.panel?.kind === 'agents' ||
         snapshot.panel?.kind === 'settings' ||
         snapshot.panel?.kind === 'voice' ||
         snapshot.panel?.kind === 'config' ||
@@ -1206,9 +1224,15 @@ export function ChatApp({
         }
         void activateRow({
           ...row,
-          value: row.control?.kind === 'toggle' ? row.value : `${row.value}=${target.value}`,
+          value:
+            snapshot.panel?.kind === 'agents' && snapshot.panel.renameInput
+              ? target.value
+              : row.control?.kind === 'toggle'
+                ? row.value
+                : `${row.value}=${target.value}`,
         })
       } else if (panelRowIndex !== undefined) {
+        if (snapshot.panel?.kind === 'agents' && snapshot.panel.renameInput) return
         panelSelectionRef.current = panelRowIndex
         setPanelSelection(panelRowIndex)
         const row = panelRows?.[panelRowIndex]
@@ -1323,6 +1347,18 @@ export function ChatApp({
       }
 
       if (snapshot.panel) {
+        if (snapshot.panel.kind === 'agents' && snapshot.panel.renameInput) {
+          if (key.escape) {
+            controller.dismissPanel()
+          } else if (key.return) {
+            void activateRow({ label: 'Save', description: '', value: 'rename:save' })
+          } else if (!key.tab) {
+            setAgentNameEditor(
+              (current) => reduceInputSequence(current, character.replace(/\r?\n/g, ' '), key, 'idle').state
+            )
+          }
+          return
+        }
         if (
           snapshot.panel.kind === 'detail' ||
           snapshot.panel.kind === 'help-detail' ||
@@ -1785,13 +1821,20 @@ export function ChatApp({
           return
         }
         if (snapshot.panel.kind === 'agents') {
+          const selected = rows[Math.min(panelSelectionRef.current, rows.length - 1)]
+          if (character.toLowerCase() === 'r' && !key.ctrl && !key.meta && selected?.value) {
+            void activateRow({ ...selected, value: `${selected.value}=rename` })
+            return
+          }
           if (key.return) {
-            const selected = rows[Math.min(panelSelectionRef.current, rows.length - 1)]
             if (selected?.value) void activateRow(selected)
             return
           }
           const { columns } = agentGridLayout(terminalWidth, terminalHeight)
-          const next = moveAgentGridSelection(panelSelectionRef.current, key, rows.length, columns, rowCapacity)
+          const next =
+            key.tab && rows.length > 0
+              ? (panelSelectionRef.current + (key.shift ? -1 : 1) + rows.length) % rows.length
+              : moveAgentGridSelection(panelSelectionRef.current, key, rows.length, columns, rowCapacity)
           if (next !== undefined) {
             panelSelectionRef.current = next
             setPanelSelection(next)

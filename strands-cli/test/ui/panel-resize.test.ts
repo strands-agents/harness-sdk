@@ -539,13 +539,35 @@ describe('mounted panel resizing', () => {
         expect(view.screen()).not.toContain('/settings')
       })
     }
+    const activeAgent = manager.getSnapshot().runtime.agent
+    await view.press('r')
+    await vi.waitFor(() => {
+      expect(view.screen()).toContain('Rename agent')
+      expect(view.screen()).toContain(selected.label)
+      expect(view.screen()).toContain('Save')
+    })
+    await view.press('\u0015')
+    await view.press('Lead reviewer')
+    for (const [width, height] of terminalSizes) {
+      await view.resize(width, height)
+      await vi.waitFor(() => {
+        view.fits()
+        expect(view.screen()).toContain('Lead reviewer')
+        expect(view.screen()).toContain('Save')
+        expect(view.screen()).toContain('Cancel')
+      })
+    }
+    await view.press('\r')
+    await vi.waitFor(() => expect(manager.getSnapshot().panel).not.toHaveProperty('renameInput'))
+    expect(manager.getSnapshot().runtime.agent).toBe(activeAgent)
+    expect(manager.getSnapshot().panel?.rows.find((row) => row.value === selected.value)?.label).toBe('Lead reviewer')
     await view.press('\r')
     await vi.waitFor(() => expect(manager.getSnapshot().panel).toBeUndefined())
     await manager.submit('/agents')
     expect(manager.getSnapshot().panel?.rows.find((row) => row.current)?.value).toBe(selected.value)
   })
 
-  it('restores the conversation and unsent draft after leaving full-screen Agents', async () => {
+  it('preserves the conversation and draft when cancelling or saving an agent name', async () => {
     const manager = new ConversationManager(createController().controller, {
       fork: async () => createController().controller,
     })
@@ -561,12 +583,26 @@ describe('mounted panel resizing', () => {
       expect(view.screen()).not.toContain('model-00')
     })
 
+    await manager.submit('/rename')
+    await vi.waitFor(() => expect(view.screen()).toContain('Rename agent'))
+    await view.press('\u0015')
+    await view.press('Discarded name')
+    await view.click(view.point('Cancel'))
+    expect(manager.getSnapshot().runtime.agent).toBe('Strands harness')
+    await view.click(view.point('Rename'))
+    await view.press('\u0015')
+    await view.press('Reviewr')
+    await view.press('\u001b[D')
+    await view.press('e')
+    await view.press('\r')
+    await vi.waitFor(() => expect(manager.getSnapshot().runtime.agent).toBe('Reviewer'))
     await view.press('\u001b')
     await vi.waitFor(() => {
       expect(manager.getSnapshot().panel).toBeUndefined()
       expect(view.screen()).toContain('Remember this conversation')
       expect(view.screen()).toContain('Keep this draft')
       expect(view.screen()).toContain('model-00')
+      expect(manager.getSnapshot().completedTurns[0]?.agentName).toBe('Reviewer')
     })
   })
 

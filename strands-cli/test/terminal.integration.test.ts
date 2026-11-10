@@ -15,7 +15,7 @@ describe('TUI panel integration', () => {
     expect(clean).not.toContain('Viewing Send a message')
     expect(clean).toContain('Current')
     expect(clean).toContain('Enter switch')
-    expect(clean).toContain('Arrows · Enter')
+    expect(clean).toContain('Arrows · R rename')
     expect(clean).not.toContain('Viewing Agents')
     expect(clean).toContain('Server is not accepting connections')
     expect(clean).toContain('→ details')

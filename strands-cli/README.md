@@ -447,7 +447,7 @@ These commands are local to the full-screen Ink UI:
 | `/effort [level]`              | Open the effort slider or set the reasoning effort directly        |
 | `/fork [request]`              | Fork the current conversation into an independent agent            |
 | `/agents`                      | View conversations and live subagents                              |
-| `/rename [name]`               | Rename the current saved session (same as `/sessions rename`)      |
+| `/rename [name]`               | Rename the active agent                                            |
 | `/sessions`                    | Browse and resume saved sessions                                   |
 | `/skills`                      | Browse available and active Agent Skills                           |
 | `/file [clear\|<paths>...]`    | Attach files to the next message                                   |
@@ -569,7 +569,7 @@ In Ink, `/sessions` lists sessions from registered workspaces and can resume the
 The CLI keeps this catalog under `~/.strands/sessions/`; existing sessions there or under
 `~/.strands/cli/sessions/` remain available without moving them.
 
-`/rename <name>` (or `/sessions rename <name>`) names the current saved session and updates the terminal
+`/sessions rename <name>` names the current saved session and updates the terminal
 title. Saved names return when you reopen the session. Leave out the name to have the agent's
 auxiliary model—or its active model when no auxiliary model is available—suggest a three-word name
 in the background from a copy of the conversation; if that fails, the existing name stays.
@@ -586,6 +586,11 @@ total updates; the context meter continues to measure the parent agent's prompt.
 
 Live subagents also appear in `/agents` while they are available for peer messages. They are
 status rows rather than switchable conversations and disappear when the delegated task finishes.
+
+`/rename <name>` names the active agent in chat, `/agents`, and peer messages, independently of its
+session title. Names are saved with file-backed sessions and restored when reopened. `/rename` without
+a name opens the editor; in `/agents`, select a card and press `R` or click **Rename**. Enter saves and
+Esc cancels.
 
 Plain, print, and direct library invocations use the normal wait-for-completion behavior, as do
 ACP sessions unless the client opts in to [background updates](#acp-server).

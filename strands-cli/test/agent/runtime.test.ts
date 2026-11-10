@@ -190,16 +190,19 @@ describe('interactive runtime lifecycle', () => {
     await mkdir(join(sessionDirectory, 'saved-one'), { recursive: true })
     await writeFile(
       join(sessionDirectory, 'saved-one', 'cli-session.json'),
-      JSON.stringify({ version: 1, name: 'Release planning' })
+      JSON.stringify({ version: 1, name: 'Release planning', agentName: 'Reviewer' })
     )
-    const agent = fakeAgent('old')
-    Object.assign(agent, { sessionManager: { sessionId: 'saved-one' } })
-    mocks.createHarness.mockResolvedValueOnce(agent)
+    const { createHarness } = await vi.importActual<typeof import('@strands-agents/harness')>('@strands-agents/harness')
+    mocks.createHarness.mockImplementation(createHarness)
     const controller = await createInteractiveChat({
+      cwd: dirname(testSessionRoot),
       agentOptions: { model: 'bedrock/old', session: { id: 'Saved.One', dir: sessionDirectory } },
     })
+    let replacement: Awaited<ReturnType<typeof createInteractiveChat>> | undefined
+    let reopened: Awaited<ReturnType<typeof createInteractiveChat>> | undefined
     try {
       expect(controller.getSnapshot().runtime).toMatchObject({
+        agent: 'Reviewer',
         session: 'Release planning',
         sessionName: 'Release planning',
       })
@@ -207,15 +210,54 @@ describe('interactive runtime lifecycle', () => {
       await controller.submit('/rename Shipping')
       expect(JSON.parse(await readFile(join(sessionDirectory, 'saved-one', 'cli-session.json'), 'utf8'))).toEqual({
         version: 1,
-        name: 'Shipping',
+        name: 'Release planning',
+        agentName: 'Shipping',
       })
       expect(await readdir(sessionDirectory)).toEqual(['saved-one'])
       const switchModel = vi.spyOn(controller.backend, 'switchModel')
       await controller.submit('/model bedrock/old')
       expect(switchModel).toHaveBeenCalledWith('bedrock/old')
-      expect(controller.getSnapshot().runtime).toMatchObject({ session: 'Shipping', sessionName: 'Shipping' })
+      expect(controller.getSnapshot().runtime).toMatchObject({
+        agent: 'Shipping',
+        session: 'Release planning',
+        sessionName: 'Release planning',
+      })
+      const captured = await controller.captureConversations()
+      const originalMetadata = join(sessionDirectory, 'saved-one', 'cli-session.json')
+      await writeFile(
+        originalMetadata,
+        JSON.stringify({ version: 1, name: 'Release planning', agentName: 'Another open agent' })
+      )
+      replacement = await createInteractiveChat(
+        {
+          cwd: dirname(testSessionRoot),
+          agentOptions: { model: 'bedrock/old', session: { id: 'Saved.One', dir: sessionDirectory } },
+        },
+        captured
+      )
+      expect(replacement.getSnapshot().runtime.agent).toBe('Shipping')
+      expect(JSON.parse(await readFile(originalMetadata, 'utf8')).agentName).toBe('Another open agent')
+      await replacement.dispose()
+      replacement = undefined
+      const replacementDirectory = join(dirname(testSessionRoot), 'replacement-sessions')
+      const options = {
+        cwd: dirname(testSessionRoot),
+        agentOptions: { model: 'bedrock/old', session: { id: 'replacement', dir: replacementDirectory } },
+      }
+      replacement = await createInteractiveChat(options, captured)
+      expect(replacement.getSnapshot().runtime.agent).toBe('Shipping')
+      expect(JSON.parse(await readFile(join(replacementDirectory, 'replacement', 'cli-session.json'), 'utf8'))).toEqual(
+        {
+          version: 1,
+          agentName: 'Shipping',
+        }
+      )
+      await replacement.dispose()
+      replacement = undefined
+      reopened = await createInteractiveChat(options)
+      expect(reopened.getSnapshot().runtime.agent).toBe('Shipping')
     } finally {
-      await controller.dispose()
+      await Promise.all([controller.dispose(), replacement?.dispose(), reopened?.dispose()])
     }
   })
 
@@ -1273,6 +1315,7 @@ describe('interactive runtime lifecycle', () => {
       await previous.submit('/fork')
       previous.dismissPanel()
       await previous.submit('/fork')
+      await previous.submit('/rename Reviewer')
       await previous.backend.setEffort?.('high')
       agents[0]!.messages.push(Message.fromJSON({ role: 'user', content: [{ text: 'Primary state' }] }))
       agents[1]!.messages.push(Message.fromJSON({ role: 'user', content: [{ text: 'Fork state' }] }))
@@ -1287,6 +1330,7 @@ describe('interactive runtime lifecycle', () => {
       }
       current = await createInteractiveChat(options, captured, 'agent-1')
       const restored = await current.captureConversations()
+      expect(current.getSnapshot().runtime.agent).toBe('Reviewer')
       expect(restored.activeId).toBe(captured.activeId)
       expect(restored.entries.map(({ id, title, description }) => ({ id, title, description }))).toEqual(
         captured.entries.map(({ id, title, description }) => ({ id, title, description }))

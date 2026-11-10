@@ -104,7 +104,11 @@ export interface ChatPanelBase {
 
 export type NewChatPanel =
   | (ChatPanelBase & {
-      kind: 'context' | 'skills' | 'agents' | 'tools' | 'voice' | 'help' | 'error'
+      kind: 'context' | 'skills' | 'tools' | 'voice' | 'help' | 'error'
+    })
+  | (ChatPanelBase & {
+      kind: 'agents'
+      renameInput?: { id: string; defaultName: string }
     })
   | (ChatPanelBase & {
       kind: 'mcp'

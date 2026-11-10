@@ -53,6 +53,7 @@ export function PanelHelpFooter({
 }
 
 function panelHelpKeys(panel: ChatPanel, width: number, scrollable: boolean): string {
+  if (panel.kind === 'agents' && panel.renameInput) return 'Enter save · Esc cancel'
   if (panel.kind === 'permission') {
     return panel.stage
       ? '↑↓←→ · Enter save rule · Esc back'
@@ -123,10 +124,10 @@ function panelHelpKeys(panel: ChatPanel, width: number, scrollable: boolean): st
       return '↑↓ · Enter choose · → details · Esc back'
     case 'agents':
       return width < 26
-        ? 'Arrows · Enter · Esc'
+        ? 'Arrows · R rename · Esc'
         : width < 64
-          ? '↑↓←→ · Enter switch · Esc'
-          : '↑↓←→ choose · Enter switch · PgUp/PgDn scroll · Esc back'
+          ? '↑↓←→ · Enter switch · R rename · Esc'
+          : '↑↓←→ / Tab choose · Enter switch · R rename · PgUp/PgDn scroll · Esc back'
     default:
       return panel.filters?.length ? 'Tab category · Enter · Esc back' : '↑↓ · Enter open · Esc back'
   }

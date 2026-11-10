@@ -256,7 +256,7 @@ export class ChatController implements ChatControllerApi {
     if (options.initialTurns) {
       this._completedTurns = [...options.initialTurns]
     } else if (options.initialMessages) {
-      this._completedTurns.push(...projectMessages(options.initialMessages, backend.name))
+      this._completedTurns.push(...projectMessages(options.initialMessages, this.name))
     }
     this._nextTurn = this._completedTurns.length + 1
     this._context = { ...(backend.contextUsage?.() ?? {}) }
@@ -297,6 +297,30 @@ export class ChatController implements ChatControllerApi {
 
   readonly getSnapshot = (): ChatSnapshot => this._snapshot
 
+  get name(): string {
+    return this._runtime.agent
+  }
+
+  setAgentName(name: string): void {
+    this._runtime.agent = sanitizeTerminalText(name)
+    this._emit()
+  }
+
+  async renameAgent(name: string): Promise<void> {
+    const normalized = sanitizeTerminalText(name).replace(/\s+/g, ' ').trim()
+    if (!normalized) throw new Error('Agent names cannot be empty.')
+    if (this._resourceChanging) throw new Error('Wait for the current change to finish before renaming the agent.')
+    this._resourceChanging = true
+    try {
+      if (this._sessions?.current) await this._sessions.renameAgent?.(normalized)
+      this._activeProjector?.setAgentName(normalized)
+      this._completedTurns = this._completedTurns.map((turn) => ({ ...turn, agentName: normalized }))
+      this.setAgentName(normalized)
+    } finally {
+      this._finishResourceChange()
+    }
+  }
+
   async captureConversation(): Promise<ChatConversation> {
     if (!this._backend.captureConversation) {
       throw new Error('This agent cannot transfer its conversation.')
@@ -310,6 +334,7 @@ export class ChatController implements ChatControllerApi {
     return {
       snapshot: await this._backend.captureConversation(),
       completedTurns: [...this._completedTurns],
+      ...(this.name !== this._backend.name ? { agentName: this.name } : {}),
       ...(this._configurationBaseline ? { configurationBaseline: this._configurationBaseline } : {}),
       model: this._runtime.model,
       workspace: this._runtime.cwd,
@@ -669,7 +694,7 @@ export class ChatController implements ChatControllerApi {
     attachments?: readonly ChatAttachment[]
   ): Promise<ChatTurn> {
     const turnId = `turn-${this._nextTurn++}`
-    const projector = new TurnProjector(turnId, prompt, this._backend.name, turnSource, peer, attachments)
+    const projector = new TurnProjector(turnId, prompt, this.name, turnSource, peer, attachments)
     const usageGeneration = this._usageGeneration
     const presentationAbort = new AbortController()
     const execution: TurnExecution = { phase: 'running', projector, presentationAbort }
@@ -1369,7 +1394,11 @@ export class ChatController implements ChatControllerApi {
         await (argument ? this._handleSessionsCommand(argument) : this._openSessionsPanel())
         break
       case 'rename':
-        await this._handleSessionsCommand(`rename${argument ? ` ${argument}` : ''}`)
+        try {
+          await this.renameAgent(argument)
+        } catch (error) {
+          this._openError('agent rename failed', argument, errorMessage(error))
+        }
         break
       case 'skills':
         await this._openSkillsPanel()
@@ -1959,6 +1988,9 @@ export class ChatController implements ChatControllerApi {
       this._invalidateSessions()
       this._sessionCache = undefined
       this._refreshRuntime()
+      if (this.name !== this._backend.name && this._sessions?.current) {
+        await this._sessions.renameAgent?.(this.name)
+      }
       this._panel = undefined
       this._panelStack.length = 0
       this._emit()
@@ -2592,7 +2624,6 @@ export class ChatController implements ChatControllerApi {
         : (info?.sessionId ?? (this._backend.protocol === 'strands' ? this._runtime.session : 'not saved'))
     const runtime: ChatRuntimeInfo = {
       ...this._runtime,
-      agent: this._backend.name,
       backendId: this._backend.id,
       protocol: this._backend.protocol,
       model: model ?? info?.model ?? this._runtime.model,

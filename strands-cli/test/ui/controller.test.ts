@@ -2517,7 +2517,7 @@ describe('ChatController', () => {
       },
     })
 
-    await controller.submit('/rename')
+    await controller.submit('/sessions rename')
     await controller.submit('/sessions rename Chosen name')
     resolveName('Stale Generated Name')
 

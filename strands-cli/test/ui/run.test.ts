@@ -75,7 +75,8 @@ describe('runInkChat', () => {
 
     try {
       await vi.waitFor(() => expect(finish).toBeDefined())
-      await manager.submit('/rename Renamed session')
+      await manager.submit('/sessions rename Renamed session')
+      await manager.submit('/rename Reviewer')
       await manager.submit('/help')
       await manager.submit('/fork')
       await manager.submit('/agents')

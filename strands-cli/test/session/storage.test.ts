@@ -256,12 +256,15 @@ describe('session catalog', () => {
         name: 'Release planning',
       })
 
-      await sessions.renameCurrent('Ship checklist')
+      const reopened = new FileSessionRuntime({ sessionId, sessionDirectory: sessionsDirectory }, sessionsDirectory, {
+        workspace,
+      })
+      await Promise.all([sessions.renameCurrent('Ship checklist'), reopened.renameAgent('Reviewer')])
       const metadata = JSON.parse(await readFile(join(sessionsDirectory, sessionId, 'cli-session.json'), 'utf8')) as {
         version: number
         name: string
       }
-      expect(metadata).toEqual({ version: 1, name: 'Ship checklist' })
+      expect(metadata).toEqual({ version: 1, name: 'Ship checklist', agentName: 'Reviewer' })
       await expect(sessions.list()).resolves.toEqual([
         expect.objectContaining({
           id: sessionId,

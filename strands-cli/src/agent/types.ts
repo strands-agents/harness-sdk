@@ -263,6 +263,7 @@ export interface ChatEffortOption {
 export interface ChatConversation {
   snapshot: Snapshot
   completedTurns: readonly ChatTurn[]
+  agentName?: string
   configurationBaseline?: ChatConfigurationBaseline
   model: string
   selection?: Pick<ChatForkState, 'model' | 'thinking'>

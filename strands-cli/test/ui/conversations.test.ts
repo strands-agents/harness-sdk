@@ -828,6 +828,8 @@ describe('ConversationManager', () => {
     await manager.submit('/fork')
     const running = manager.submit('long task')
     await vi.waitFor(() => expect(manager.getSnapshot().status).toBe('running'))
+    await manager.submit('/rename Background reviewer')
+    expect(manager.getSnapshot().activeTurn?.agentName).toBe('Background reviewer')
 
     await manager.submit('/agents')
     const main = manager.getSnapshot().panel?.rows.find((row) => row.label === 'Strands harness')
@@ -848,7 +850,7 @@ describe('ConversationManager', () => {
         badge: { text: 'idle', tone: 'success' },
       }),
       expect.objectContaining({
-        label: 'Fork 2',
+        label: 'Background reviewer',
         description: 'Fork of Strands harness',
         bold: true,
         current: false,
@@ -904,28 +906,43 @@ describe('ConversationManager', () => {
     await manager.dispose()
   })
 
-  it('routes /rename to saved sessions without changing peer names', async () => {
+  it('renames the active agent in the transcript and peer directory without changing its session', async () => {
     const agentMessaging = new AgentMessaging()
-    const rename = vi.spyOn(agentMessaging, 'rename')
-    const primary = new ChatController(backend('primary', emptyRun))
+    agentMessaging.register({ id: 'agent-1', name: 'Original name', status: () => 'idle', enqueue: () => true })
+    const receive = vi.fn(() => true)
+    agentMessaging.register({ id: 'receiver', name: 'Reader', status: () => 'idle', enqueue: receive })
+    const primary = new ChatController(backend('primary', emptyRun), {
+      runtime: { session: 'Release audit', sessionName: 'Release audit' },
+    })
     const manager = new ConversationManager(primary, {
       fork: async () => primary,
       agentMessaging,
     })
 
+    await manager.submit('Review this change')
     await manager.submit('/rename Lead Reviewer')
-    expect(manager.getSnapshot().panel).toMatchObject({ kind: 'error', title: 'session rename unavailable' })
+    expect(manager.getSnapshot().runtime).toMatchObject({
+      agent: 'Lead Reviewer',
+      session: 'Release audit',
+      sessionName: 'Release audit',
+    })
+    expect(manager.getSnapshot().completedTurns[0]?.agentName).toBe('Lead Reviewer')
     await manager.submit('/agents')
 
-    expect(rename).toHaveBeenCalledExactlyOnceWith('agent-1', 'Strands harness')
+    expect(agentMessaging.list('receiver')).toEqual([{ id: 'agent-1', name: 'Lead Reviewer', status: 'idle' }])
+    await agentMessaging.send('agent-1', 'receiver', 'Review the release')
+    expect(receive).toHaveBeenCalledWith({
+      from: { id: 'agent-1', name: 'Lead Reviewer' },
+      body: 'Review the release',
+    })
     expect(manager.getSnapshot().panel?.rows[0]).toMatchObject({
-      label: 'Strands harness',
+      label: 'Lead Reviewer',
       current: true,
       badge: { text: 'idle' },
     })
     expect(manager.getSnapshot().runtime.configuration).toContainEqual({
       label: 'agent',
-      value: 'Strands harness (1 total)',
+      value: 'Lead Reviewer (1 total)',
     })
     await manager.dispose()
   })
@@ -1040,7 +1057,7 @@ describe('ConversationManager', () => {
     await manager.submit('/agents')
     expect(manager.getSnapshot().panel?.rows).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ label: 'Parser cleanup · two' }),
+        expect.objectContaining({ label: 'Strands harness · two' }),
         expect.objectContaining({ label: 'Strands harness' }),
       ])
     )

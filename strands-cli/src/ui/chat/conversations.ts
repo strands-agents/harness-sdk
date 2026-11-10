@@ -20,12 +20,11 @@ import { watchAgentProject } from '../../project/watch.js'
 import { sessionWorkspaceLabel, type SessionTarget } from '../../session/sessions.js'
 import type { VoiceInput } from '../../agent/voice.js'
 
-const MANAGER_COMMANDS = new Set(['agents', 'fork', 'voice'])
+const MANAGER_COMMANDS = new Set(['agents', 'fork', 'voice', 'rename'])
 const AGENTS_PANEL_TITLE = 'Agents'
 
 interface ConversationRecord {
   id: string
-  title: string
   description: string
   controller: ChatController
   unsubscribe: () => void
@@ -33,7 +32,7 @@ interface ConversationRecord {
 
 export interface InitialConversations {
   activeId: string
-  entries: readonly Omit<ConversationRecord, 'unsubscribe'>[]
+  entries: readonly (Omit<ConversationRecord, 'unsubscribe'> & { title: string })[]
 }
 
 interface ConversationManagerOptions {
@@ -76,7 +75,7 @@ export class ConversationManager implements ChatControllerApi {
         entries: [
           {
             id: 'agent-1',
-            title: initial.backend.name,
+            title: initial.name,
             description: initial.backend.info?.().description || 'Primary agent',
             controller: initial,
           },
@@ -169,8 +168,8 @@ export class ConversationManager implements ChatControllerApi {
       throw new Error('Finish or cancel running work in all conversations before applying setup changes.')
     }
     const entries: ChatConversations['entries'][number][] = []
-    for (const { id, title, description, controller } of this._conversations.values()) {
-      entries.push({ id, title, description, conversation: await controller.captureConversation() })
+    for (const { id, description, controller } of this._conversations.values()) {
+      entries.push({ id, title: controller.name, description, conversation: await controller.captureConversation() })
     }
     return { activeId: this._activeId, entries }
   }
@@ -240,6 +239,11 @@ export class ConversationManager implements ChatControllerApi {
     const argument = invocation?.argument ?? ''
     if (command === 'agents') {
       this._openAgentsPanel()
+      return undefined
+    }
+    if (command === 'rename') {
+      if (argument) await this._renameAgent(this._activeId, unquote(argument))
+      else this._openAgentNameInput(this._activeId)
       return undefined
     }
     if (command === 'fork') {
@@ -323,6 +327,11 @@ export class ConversationManager implements ChatControllerApi {
   }
 
   dismissPanel(): boolean {
+    if (this._panel?.kind === 'agents' && this._panel.renameInput) {
+      delete this._panel.renameInput
+      this._openAgentsPanel()
+      return true
+    }
     if (this._panel) {
       this._panel = undefined
       this._emit()
@@ -336,6 +345,18 @@ export class ConversationManager implements ChatControllerApi {
       return row.value ? this._voice.handlePanelAction(row.value) : false
     }
     if (this._panel?.kind === 'agents') {
+      const editing = this._panel.renameInput
+      if (editing) {
+        if (row.value === 'rename:cancel') return this.dismissPanel()
+        if (row.value?.startsWith('rename:save:')) {
+          return this._renameAgent(editing.id, decodeURIComponent(row.value.slice('rename:save:'.length)))
+        }
+        return false
+      }
+      if (row.value?.endsWith('=rename')) {
+        const id = readConversationValue(row.value.slice(0, -'=rename'.length))
+        return id ? this._openAgentNameInput(id) : false
+      }
       const id = readConversationValue(row.value)
       return id ? this._switchConversation(id) : false
     }
@@ -426,7 +447,7 @@ export class ConversationManager implements ChatControllerApi {
         return false
       }
       const id = controller.peerEndpointId ?? `agent-${this._nextConversation++}`
-      this._addConversation(id, `${title} · ${workspace}`, controller, 'Saved session')
+      this._addConversation(id, target.agentName ?? `${controller.name} · ${workspace}`, controller, 'Saved session')
       this._activeId = id
       this._panel = undefined
       this._emit()
@@ -446,7 +467,7 @@ export class ConversationManager implements ChatControllerApi {
     if (source.controller.backend.reconstructable?.() === false) {
       this._openError(
         'fork unavailable',
-        source.title,
+        source.controller.name,
         'This source must expose a reconstructable agent factory before it can be forked.'
       )
       return undefined
@@ -454,13 +475,17 @@ export class ConversationManager implements ChatControllerApi {
     if (source.controller.busy) {
       this._openError(
         'fork unavailable',
-        source.title,
+        source.controller.name,
         'Wait for this turn to finish or interrupt it before forking the conversation.'
       )
       return undefined
     }
     if (this._opening) {
-      this._openError('fork unavailable', source.title, 'Wait for the conversation that is opening to finish.')
+      this._openError(
+        'fork unavailable',
+        source.controller.name,
+        'Wait for the conversation that is opening to finish.'
+      )
       return undefined
     }
 
@@ -476,13 +501,13 @@ export class ConversationManager implements ChatControllerApi {
       }
       const id = controller.peerEndpointId ?? `agent-${this._nextConversation++}`
       const title = prompt ? conversationTitle(prompt) : `Fork ${id.slice('agent-'.length)}`
-      this._addConversation(id, title, controller, `Fork of ${source.title}`)
+      this._addConversation(id, title, controller, `Fork of ${source.controller.name}`)
       this._activeId = id
       this._panel = undefined
       this._emit()
       return prompt ? controller.submit(prompt) : undefined
     } catch (error) {
-      this._openError('fork failed', source.title, errorMessage(error))
+      this._openError('fork failed', source.controller.name, errorMessage(error))
       return undefined
     } finally {
       this._opening = undefined
@@ -493,11 +518,11 @@ export class ConversationManager implements ChatControllerApi {
 
   private _addConversation(id: string, title: string, controller: ChatController, description: string): void {
     const endpointId = controller.peerEndpointId ?? id
+    controller.setAgentName(title)
     this._nextConversation = Math.max(this._nextConversation, Number(endpointId.slice('agent-'.length)) + 1)
     const streamSpokenReply = this._voice.followConversation(controller, () => endpointId === this._activeId)
     const record: ConversationRecord = {
       id: endpointId,
-      title: sanitizeTerminalText(title),
       description: sanitizeTerminalText(description),
       controller,
       unsubscribe: controller.subscribe(() => {
@@ -510,7 +535,38 @@ export class ConversationManager implements ChatControllerApi {
       }),
     }
     this._conversations.set(endpointId, record)
-    this._agentMessaging?.rename(endpointId, record.title)
+    this._agentMessaging?.rename(endpointId, controller.name)
+  }
+
+  private _openAgentNameInput(id: string): boolean {
+    const conversation = this._conversations.get(id)
+    if (!conversation) return false
+    this._openAgentsPanel(false)
+    this._panel = this._makePanel({
+      ...this._panel!,
+      kind: 'agents',
+      renameInput: { id, defaultName: conversation.controller.name },
+    })
+    this._emit()
+    return true
+  }
+
+  private async _renameAgent(id: string, name: string): Promise<boolean> {
+    const conversation = this._conversations.get(id)
+    if (!conversation) return false
+    try {
+      await conversation.controller.renameAgent(name)
+      this._agentMessaging?.rename(id, conversation.controller.name)
+      if (this._panel?.kind === 'agents' && this._panel.renameInput?.id === id) {
+        delete this._panel.renameInput
+        this._openAgentsPanel(false)
+      }
+      this._emit()
+      return true
+    } catch (error) {
+      this._openError('agent rename failed', name, errorMessage(error))
+      return false
+    }
   }
 
   private _reloadProjectIfReady(): void {
@@ -541,6 +597,7 @@ export class ConversationManager implements ChatControllerApi {
   }
 
   private _openAgentsPanel(emit = true): void {
+    const renameInput = this._panel?.kind === 'agents' ? this._panel.renameInput : undefined
     const existingId =
       this._panel?.kind === 'agents' && this._panel.title === AGENTS_PANEL_TITLE ? this._panel.id : undefined
     const conversations = [...this._conversations.values()]
@@ -556,7 +613,7 @@ export class ConversationManager implements ChatControllerApi {
       .map((conversation) => {
         const status = conversationStatus(conversation.controller.getSnapshot())
         return {
-          label: conversation.title,
+          label: conversation.controller.name,
           description: conversation.description,
           value: `conversation:${encodeURIComponent(conversation.id)}`,
           bold: true,
@@ -585,6 +642,7 @@ export class ConversationManager implements ChatControllerApi {
     this._panel = this._makePanel({
       kind: 'agents',
       title: AGENTS_PANEL_TITLE,
+      ...(renameInput ? { renameInput } : {}),
       rows: [...conversations, ...generalists],
     })
     if (existingId) {
@@ -635,7 +693,7 @@ export class ConversationManager implements ChatControllerApi {
         ...active.runtime,
         configuration: [
           ...(active.runtime.configuration ?? []),
-          { label: 'agent', value: `${this._active.title} (${this._conversations.size} total)` },
+          { label: 'agent', value: `${this._active.controller.name} (${this._conversations.size} total)` },
         ],
       },
     }

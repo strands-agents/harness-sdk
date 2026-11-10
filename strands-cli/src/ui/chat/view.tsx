@@ -77,6 +77,7 @@ function ChatViewContent({
   panelSelection = 0,
   panelViewportStart = 0,
   panelQuery = '',
+  agentNameEditor,
   panelFilter = 'all',
   modelPanelFocus = 'models',
   modelProfileSelection = 0,
@@ -144,6 +145,7 @@ function ChatViewContent({
   panelSelection?: number
   panelViewportStart?: number
   panelQuery?: string
+  agentNameEditor?: { input: string; cursor: number }
   panelFilter?: string
   modelPanelFocus?: ModelPanelFocus
   modelProfileSelection?: number
@@ -347,10 +349,14 @@ function ChatViewContent({
             start={start}
             width={terminalWidth}
             height={terminalHeight}
+            {...(agentNameEditor ? { nameEditor: agentNameEditor } : {})}
             {...(pressedPanelRow !== undefined ? { pressedRow: pressedPanelRow } : {})}
             {...(hoveredPanelRow !== undefined ? { hoveredRow: hoveredPanelRow } : {})}
             {...(onPanelElement ? { onPanelElement } : {})}
             {...(onPanelRowElement ? { onRowElement: onPanelRowElement } : {})}
+            {...(onPanelControlElement ? { onControlElement: onPanelControlElement } : {})}
+            {...(pressedPanelControl ? { pressedControl: pressedPanelControl } : {})}
+            {...(hoveredPanelControl ? { hoveredControl: hoveredPanelControl } : {})}
             {...(clipboardNotice
               ? {
                   clipboardNotice:

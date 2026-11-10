@@ -59,7 +59,6 @@ export function helpRows(
     compact: backend.compact !== undefined,
     clear: backend.clear !== undefined,
     sessions: options.sessions,
-    rename: options.sessions,
     skills: options.skills,
     mcp: options.mcp,
     permissions: backend.permissionStatus !== undefined,
@@ -68,7 +67,7 @@ export function helpRows(
     export: options.export,
     config: options.config,
   }
-  const managedCommands = new Set(['fork', 'agents', 'voice', 'file'])
+  const managedCommands = new Set(['fork', 'agents', 'rename', 'voice', 'file'])
   const tools = backend.info?.().tools
   return [
     ...CONTROLS.map(([label, shortcut, description], index) => ({
