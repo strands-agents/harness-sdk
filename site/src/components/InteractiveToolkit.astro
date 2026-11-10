@@ -469,6 +469,12 @@ const pillars = [
     flex: 1;
   }
 
+  @media (min-width: 1024px) {
+    .toolkit__section-cards > .toolkit__card:not(.is-open) {
+      flex: 1;
+    }
+  }
+
   /* When a card is expanded, its pillar widens to 2fr while the other two
      stay 1fr. The wide track follows the open card's pillar. */
   .toolkit__cards-grid:has(.toolkit__card.is-open) .toolkit__section {
@@ -907,13 +913,7 @@ const pillars = [
     }
 
     .toolkit__card {
-      height: auto;
       min-height: 0;
-    }
-
-    .toolkit__card:not(.is-open) {
-      height: auto;
-      min-height: 168px;
     }
   }
 
