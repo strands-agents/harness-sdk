@@ -28,7 +28,7 @@ from ..experimental.checkpoint import Checkpoint, CheckpointPosition
 from ..hooks import AfterModelCallEvent, AfterToolsEvent, BeforeModelCallEvent, BeforeToolsEvent
 from ..interrupt import InterruptException, PendingToolExecution
 from ..middleware.stages import InvokeModelContext, InvokeModelStage
-from ..models._request_messages import count_tokens_as_sent
+from ..models._model_proxy import ModelProxy
 from ..telemetry.metrics import Trace, _total_prompt_tokens
 from ..telemetry.tracer import Tracer, get_tracer
 from ..tools._validator import validate_and_prepare_tools
@@ -59,7 +59,6 @@ from ..types.streaming import StopReason
 from ..types.tools import ToolChoiceToolDict, ToolResult, ToolSpec, ToolUse
 from ._recover_message_on_max_tokens_reached import recover_message_on_max_tokens_reached
 from ._retry import ModelRetryStrategy
-from .streaming import stream_messages
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
@@ -125,12 +124,11 @@ async def _estimate_input_tokens(agent: "Agent") -> int:
         if not new_messages:
             return known_baseline
         # System prompt and tool spec tokens are already included in the baseline
-        return known_baseline + await count_tokens_as_sent(agent.model, new_messages)
+        return known_baseline + await ModelProxy(agent.model).count_tokens(new_messages)
 
     # Cold start: resolve tool specs lazily for estimation only
     tool_specs = agent.tool_registry.get_all_tool_specs()
-    return await count_tokens_as_sent(
-        agent.model,
+    return await ModelProxy(agent.model).count_tokens(
         messages,
         tool_specs=tool_specs,
         system_prompt=agent.system_prompt,
@@ -899,11 +897,10 @@ def _make_invoke_model_terminal(
         )
         with trace_api.use_span(model_invoke_span, end_on_exit=False):
             try:
-                async for event in stream_messages(
-                    ctx.model,
-                    system_prompt_str,
+                async for event in ModelProxy(ctx.model).stream(
                     ctx.messages,
                     tool_specs,
+                    system_prompt_str,
                     system_prompt_content=system_prompt_content,
                     tool_choice=ctx.tool_choice,
                     invocation_state=ctx.invocation_state,

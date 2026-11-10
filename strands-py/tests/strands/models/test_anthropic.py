@@ -15,7 +15,7 @@ import pytest
 import strands
 from strands.agent.agent_metadata import AgentMetadata
 from strands.models import Model, ModelCapabilities, ModelInfo, ModelLimits, SummarizeResult
-from strands.models._request_messages import count_tokens_as_sent
+from strands.models._model_proxy import ModelProxy
 from strands.models.anthropic import AnthropicModel
 from strands.models.model import CacheConfig, CacheToolsConfig
 from strands.tools import convert_pydantic_to_tool_spec
@@ -3741,7 +3741,8 @@ async def test_count_tokens_leaves_cleared_injected_blocks_out_of_the_token_esti
     with_earlier = conversation({"role": "user", "content": [{"text": "first"}, _injected("x" * 400)]})
     without_earlier = conversation({"role": "user", "content": [{"text": "first"}]})
 
-    assert await count_tokens_as_sent(model, with_earlier) == await count_tokens_as_sent(model, without_earlier)
+    proxy = ModelProxy(model)
+    assert await proxy.count_tokens(with_earlier) == await proxy.count_tokens(without_earlier)
 
 
 @pytest.mark.asyncio

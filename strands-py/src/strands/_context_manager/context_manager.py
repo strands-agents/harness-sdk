@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Literal
 
 from ..agent.invocation_context import _create_auxiliary_invocation_context
 from ..hooks.events import AfterModelCallEvent, BeforeModelCallEvent, MessageAddedEvent
-from ..models._request_messages import count_tokens_as_sent
+from ..models._model_proxy import ModelProxy
 from ..plugins.plugin import Plugin
 from ..storage.in_memory_storage import InMemoryStorage
 from ..storage.storage import _EPHEMERAL
@@ -289,7 +289,7 @@ class ContextManager(Plugin):
             input_tokens = precomputed_input_tokens
         else:
             try:
-                input_tokens = await count_tokens_as_sent(agent.model, messages)
+                input_tokens = await ModelProxy(agent.model).count_tokens(messages)
             except Exception:
                 logger.warning("agent_id=<%s> | token counting failed, skipping strategies", agent.agent_id)
                 return False
@@ -311,7 +311,7 @@ class ContextManager(Plugin):
                 acted = await strategy.apply(context)
                 if acted:
                     any_acted = True
-                    new_tokens = await count_tokens_as_sent(agent.model, messages)
+                    new_tokens = await ModelProxy(agent.model).count_tokens(messages)
                     context.utilization = agent.model.estimate_utilization(new_tokens)
                     logger.debug("strategy=<%s>, agent_id=<%s> | strategy applied", strategy.name, agent.agent_id)
             except Exception:

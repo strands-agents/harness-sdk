@@ -10,8 +10,7 @@ messages by type.
 import logging
 from typing import TYPE_CHECKING, Literal
 
-from ....event_loop.streaming import process_stream
-from ....models._request_messages import prepare_request_messages
+from ....models._model_proxy import ModelProxy
 from ....types.content import ContentBlock, Message
 from ....types.exceptions import ContextWindowOverflowException
 
@@ -178,15 +177,10 @@ async def generate_summary(
         {"role": "user", "content": [{"text": "Please summarize this conversation."}]}
     ]
 
-    summarization_messages, _ = prepare_request_messages(model, summarization_messages)
-    chunks = model.stream(
-        summarization_messages,
-        tool_specs=None,
-        system_prompt=resolved_system_prompt,
-    )
-
     result_message: Message | None = None
-    async for event in process_stream(chunks, invocation_context=invocation_context):
+    async for event in ModelProxy(model).stream(
+        summarization_messages, None, resolved_system_prompt, invocation_context=invocation_context
+    ):
         if "stop" in event:
             _, result_message, _, _ = event["stop"]
 

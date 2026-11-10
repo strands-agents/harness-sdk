@@ -19,7 +19,7 @@ from ..types.streaming import StreamEvent
 from ..types.tools import ToolChoice, ToolSpec
 from ._defaults import DEFAULT_CONTEXT_WINDOW_LIMIT
 from ._model_info import ModelCapabilities, ModelInfo, ModelLimits, lookup_model_info
-from ._request_messages import _latest_user_index
+from ._model_proxy import _latest_user_index
 from ._summarize import SummarizeResult, _summarize_with_stream
 
 if TYPE_CHECKING:

@@ -13,7 +13,6 @@ from pydantic import BaseModel
 
 from ..agent.agent_metadata import AgentMetadata
 from ..agent.invocation_context import InvocationContext
-from ..models._request_messages import prepare_request_messages
 from ..tools import InvalidToolUseNameException
 from ..tools.tools import validate_tool_use_name
 from ..types._events import (
@@ -546,7 +545,7 @@ async def stream_messages(
     invocation_context: InvocationContext | None = None,
     **kwargs: Any,
 ) -> AsyncGenerator[TypedEvent, None]:
-    """Streams messages to the model and processes the response.
+    """Streams messages to the model and processes the response, through the SDK-internal ``ModelProxy``.
 
     Args:
         model: Model provider.
@@ -571,36 +570,21 @@ async def stream_messages(
     Yields:
         The reason for stopping, the final message, and the usage metrics
     """
+    from ..models._model_proxy import ModelProxy
+
     logger.debug("model=<%s> | streaming messages", model)
-
-    messages = _normalize_messages(messages)
-    # Whitelist only role and content before sending to the model provider.
-    # This ensures metadata (and any future non-model fields) never leak to providers.
-    messages = [Message(role=msg["role"], content=msg["content"]) for msg in messages]
-    messages, injected_trailing_blocks = prepare_request_messages(model, messages)
-    # The cache point stays ahead of injected text, which the next call no longer sends.
-    dynamic_trailing_blocks = max(dynamic_trailing_blocks, injected_trailing_blocks)
-    start_time = time.time()
-
-    # Omitted when unset, so an ordinary call's arguments are unchanged.
-    optional_kwargs: dict[str, Any] = {}
-    if dynamic_trailing_blocks:
-        optional_kwargs["dynamic_trailing_blocks"] = dynamic_trailing_blocks
-    if structured_output_model:
-        optional_kwargs["structured_output_model"] = structured_output_model
-
-    chunks = model.stream(
+    async for event in ModelProxy(model).stream(
         messages,
-        tool_specs if tool_specs else None,
+        tool_specs,
         system_prompt,
         tool_choice=tool_choice,
         system_prompt_content=system_prompt_content,
         invocation_state=invocation_state,
         model_state=model_state,
+        dynamic_trailing_blocks=dynamic_trailing_blocks,
         cancel_signal=cancel_signal,
         agent_metadata=agent_metadata,
-        **optional_kwargs,
-    )
-
-    async for event in process_stream(chunks, start_time, cancel_signal, invocation_context):
+        structured_output_model=structured_output_model,
+        invocation_context=invocation_context,
+    ):
         yield event

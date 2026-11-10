@@ -5,10 +5,10 @@ import threading
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from ..event_loop.streaming import stream_messages
 from ..types.content import ContentBlock, Message, Messages, SummaryBlock, SystemContentBlock
 from ..types.event_loop import Usage
 from ..types.tools import ToolSpec
+from ._model_proxy import ModelProxy
 
 if TYPE_CHECKING:
     from ..agent.agent_metadata import AgentMetadata
@@ -68,11 +68,10 @@ async def _summarize_with_stream(
     stop_reason = None
     reply: Message | None = None
     usage: Usage | None = None
-    async for event in stream_messages(
-        model,
-        system_prompt,
+    async for event in ModelProxy(model).stream(
         _with_instructions(messages, f"{_SUMMARIZE_GUARD}\n\n{instructions or DEFAULT_SUMMARIZE_INSTRUCTIONS}"),
-        tool_specs or [],
+        tool_specs,
+        system_prompt,
         system_prompt_content=system_prompt_content,
         cancel_signal=cancel_signal,
         agent_metadata=agent_metadata,
