@@ -49,6 +49,7 @@ export {
   StructuredOutputError,
   ToolNotFoundError,
   DefaultNotConfiguredError,
+  NotImplementedError,
   StorageError,
 } from './errors.js'
 
@@ -73,6 +74,7 @@ export type {
   ReasoningBlockData,
   CachePointBlockData,
   GuardContentBlockData,
+  SummaryBlockData,
   GuardContentText,
   GuardContentImage,
   GuardQualifier,
@@ -97,6 +99,8 @@ export {
   CachePointBlock,
   GuardContentBlock,
   InjectedBlock,
+  SummaryBlock,
+  UnknownBlock,
   Message,
   JsonBlock,
   contentBlockFromData,
@@ -201,7 +205,13 @@ export {
 } from './models/streaming.js'
 
 // Model provider types
-export type { BaseModelConfig, CountTokensOptions, StreamOptions, CacheConfig } from './models/model.js'
+export type {
+  BaseModelConfig,
+  CountTokensOptions,
+  StreamOptions,
+  SummarizeOptions,
+  CacheConfig,
+} from './models/model.js'
 export type { ModelInfo, ModelCapabilities, ModelLimits, PromptCaching } from './models/model-info.js'
 
 export { Model } from './models/model.js'

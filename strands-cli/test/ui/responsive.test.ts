@@ -1,0 +1,173 @@
+import { createElement, type ReactElement } from 'react'
+import type { Instance } from 'ink'
+import stringWidth from 'string-width'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+import { ChatController, type ChatControllerOptions } from '../../src/ui/chat/controller.js'
+import { CliConfigStore } from '../../src/config/store.js'
+import { sanitizeTerminalText } from '../../src/terminal/text.js'
+import { ChatApp } from '../../src/ui/chat/screen.js'
+import { SetupWizard } from '../../src/ui/setup/wizard.js'
+import { idleBackend } from '../fixtures/chat-backend.js'
+import { render, ttyInput, ttyOutput } from '../fixtures/terminal.js'
+
+// Colored output paints solid cells as backgrounds, leaving only the half-block glyphs as text.
+const STRANDS_WORDMARK = /STRANDS|▄▟[ █]{3}▙▄|█▀▀ ▀█▀ █▀█ ▄▀█ █▄ █ █▀▄ █▀▀|▀▀ ▀ ▀ {2}▀ {2}▄▀ {3}▄ {4}▀▄ {2}▀▀/
+
+const instances: Instance[] = []
+const controllers: ChatController[] = []
+
+afterEach(async () => {
+  for (const instance of instances.splice(0)) {
+    instance.unmount()
+    await instance.waitUntilExit()
+  }
+  await Promise.all(controllers.splice(0).map((controller) => controller.dispose()))
+})
+
+function controller(options: ChatControllerOptions = {}): ChatController {
+  const result = new ChatController(idleBackend(), {
+    settings: { animations: false },
+    ...options,
+  })
+  controllers.push(result)
+  return result
+}
+
+async function mount(element: ReactElement, columns: number, rows: number) {
+  const input = ttyInput()
+  const output = ttyOutput(columns, rows)
+  let frame = ''
+  output.on('data', (chunk: Buffer) => {
+    if (chunk.toString().includes('\n')) frame = sanitizeTerminalText(chunk.toString())
+  })
+  const instance = render(element, {
+    stdin: input,
+    stdout: output,
+    stderr: output,
+    interactive: true,
+    debug: true,
+    patchConsole: false,
+    exitOnCtrlC: false,
+  })
+  instances.push(instance)
+  await instance.waitUntilRenderFlush()
+  return {
+    input,
+    instance,
+    screen: (): string => frame,
+    fits: (): void => {
+      const lines = frame.trimEnd().split('\n')
+      expect(lines.length).toBeLessThanOrEqual(output.rows)
+      expect(lines.every((line) => stringWidth(line) <= output.columns)).toBe(true)
+    },
+    resize: async (nextColumns: number, nextRows: number): Promise<void> => {
+      output.columns = nextColumns
+      output.rows = nextRows
+      output.emit('resize')
+      await instance.waitUntilRenderFlush()
+    },
+  }
+}
+
+describe('responsive welcome art', () => {
+  it('shows discovered skill descriptions in slash suggestions', async () => {
+    const target = controller({
+      skills: {
+        list: async () => [
+          {
+            name: 'review',
+            description: 'Review code carefully',
+            instructions: 'Inspect carefully.',
+            active: false,
+          },
+        ],
+        activate: async () => undefined,
+      },
+    })
+    await target.start()
+    const view = await mount(createElement(ChatApp, { controller: target }), 60, 16)
+
+    view.input.write('/rev')
+
+    await vi.waitFor(() => {
+      view.fits()
+      expect(view.screen()).toContain('/review [request]')
+      expect(view.screen()).toContain('Review code carefully')
+    })
+  })
+
+  it.each([8, 10])('keeps slash suggestions and the footer visible at %s rows', async (rows) => {
+    const view = await mount(createElement(ChatApp, { controller: controller() }), 40, rows)
+    view.input.write('/')
+    await vi.waitFor(() => {
+      view.fits()
+      expect(view.screen()).toContain('/help')
+      expect(view.screen()).toContain('/settings')
+    })
+  })
+
+  it('shrinks and restores the welcome banner while retaining the composer draft', async () => {
+    const view = await mount(createElement(ChatApp, { controller: controller() }), 120, 40)
+    expect(view.screen()).toMatch(STRANDS_WORDMARK)
+    view.input.write('keep this draft')
+    await view.instance.waitUntilRenderFlush()
+
+    for (const [columns, rows] of [
+      [80, 24],
+      [40, 16],
+      [22, 10],
+      [120, 40],
+    ] as const) {
+      await view.resize(columns, rows)
+      await vi.waitFor(() => {
+        view.fits()
+        expect(view.screen().replace(/\s/g, '')).toContain('keepthisdraft')
+        expect(view.screen()).toContain('/settings')
+        expect(view.screen()).toMatch(STRANDS_WORDMARK)
+      })
+    }
+  })
+
+  it('keeps setup choices visible in a narrow window and after resizing', async () => {
+    const view = await mount(
+      createElement(SetupWizard, { config: CliConfigStore.memory(), onComplete: () => {}, onCancel: () => {} }),
+      40,
+      40
+    )
+    expect(view.screen()).toMatch(STRANDS_WORDMARK)
+    for (const [columns, rows] of [
+      [40, 16],
+      [65, 40],
+      [66, 40],
+      [92, 37],
+      [93, 37],
+      [120, 40],
+      [40, 24],
+    ] as const) {
+      await view.resize(columns, rows)
+      await vi.waitFor(() => {
+        view.fits()
+        for (const choice of ['Quickstart', 'Customize', 'Import']) {
+          expect(view.screen()).toContain(choice)
+        }
+        if (rows >= 37) {
+          const lines = view.screen().split('\n')
+          const titleRows = ['Quickstart', 'Customize', 'Import'].map((title) =>
+            lines.findIndex((line) =>
+              line
+                .trim()
+                .split(/\s{2,}/)
+                .includes(title)
+            )
+          )
+          expect(titleRows.every((row) => row >= 0)).toBe(true)
+          expect(new Set(titleRows).size).toBe(columns >= 66 ? 2 : 3)
+        }
+        expect(view.screen()).toContain('Shift+Tab')
+        expect(view.screen()).toMatch(/[Cc]lick/)
+        expect(view.screen()).toContain('↑↓')
+      })
+    }
+  })
+})

@@ -2,7 +2,7 @@
 
 import asyncio
 from threading import Event, Lock
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 import pytest
 
@@ -37,7 +37,10 @@ class TestServerMetadata:
             "openWorldHint": True,
         }
 
-    @pytest.mark.parametrize(("name", "params"), [("search_docs", ["query", "k"]), ("fetch_doc", ["uri", "section"])])
+    @pytest.mark.parametrize(
+        ("name", "params"),
+        [("search_docs", ["query", "k", "alternate_queries"]), ("fetch_doc", ["uri", "section"])],
+    )
     def test_parameters_are_described_in_schema(self, name, params):
         properties = _listed_tools()[name]["inputSchema"]["properties"]
 
@@ -47,6 +50,99 @@ class TestServerMetadata:
         k_schema = _listed_tools()["search_docs"]["inputSchema"]["properties"]["k"]
 
         assert (k_schema["minimum"], k_schema["maximum"]) == (1, 20)
+
+    def test_alternate_queries_are_an_optional_bounded_string_array(self):
+        input_schema = _listed_tools()["search_docs"]["inputSchema"]
+        alternates_schema = {
+            key: value for key, value in input_schema["properties"]["alternate_queries"].items() if key != "description"
+        }
+
+        assert alternates_schema == {
+            "type": "array",
+            "items": {"type": "string"},
+            "maxItems": 4,
+            "default": [],
+            "title": "Alternate Queries",
+        }
+        assert input_schema["required"] == ["query"]
+
+
+def _doc(name: str) -> Doc:
+    return Doc(uri=f"https://strandsagents.com/{name}.md", display_title=name, content="", index_title="")
+
+
+@patch("strands_mcp_server.server.cache")
+class TestSearchDocsAlternateQueries:
+    """Tests for searching several phrasings of one question."""
+
+    def test_single_query_keeps_bm25_scores(self, mock_cache):
+        mock_cache.get_index.return_value.search.return_value = [(2.5, _doc("a"))]
+        mock_cache.get_url_cache.return_value = {}
+        mock_cache.SNIPPET_HYDRATE_MAX = 5
+
+        tru_result = search_docs("agent loop", k=3)
+
+        mock_cache.get_index.return_value.search.assert_called_once_with("agent loop", k=3)
+        assert tru_result == [{"url": "https://strandsagents.com/a.md", "title": "a", "score": 2.5, "snippet": "a"}]
+
+    def test_pages_matched_by_several_phrasings_rank_first(self, mock_cache):
+        a, b, c = _doc("a"), _doc("b"), _doc("c")
+        rankings = {"stop after 5 turns": [(9.0, a), (8.0, b)], "turn limit": [(7.0, b), (6.0, c)]}
+        mock_cache.get_index.return_value.search.side_effect = lambda query, k: rankings[query]
+        mock_cache.get_url_cache.return_value = {}
+        mock_cache.SNIPPET_HYDRATE_MAX = 5
+
+        tru_result = search_docs("stop after 5 turns", k=3, alternate_queries=["turn limit"])
+
+        assert mock_cache.get_index.return_value.search.call_args_list == [
+            call("stop after 5 turns", k=20),
+            call("turn limit", k=20),
+        ]
+        assert tru_result == [
+            {"url": "https://strandsagents.com/b.md", "title": "b", "score": 0.033, "snippet": "b"},
+            {"url": "https://strandsagents.com/a.md", "title": "a", "score": 0.016, "snippet": "a"},
+            {"url": "https://strandsagents.com/c.md", "title": "c", "score": 0.016, "snippet": "c"},
+        ]
+
+    def test_duplicate_and_blank_phrasings_are_searched_once(self, mock_cache):
+        mock_cache.get_index.return_value.search.return_value = []
+        mock_cache.get_url_cache.return_value = {}
+        mock_cache.SNIPPET_HYDRATE_MAX = 5
+
+        search_docs("turn limit", alternate_queries=["Turn Limit", "turn  limit", "  ", "max cycles"])
+
+        assert mock_cache.get_index.return_value.search.call_args_list == [
+            call("turn limit", k=20),
+            call("max cycles", k=20),
+        ]
+
+    @pytest.mark.parametrize(
+        ("query", "alternate_queries", "searched"),
+        [
+            ("  ", ["turn limit"], "turn limit"),
+            ("turn limit", ["Turn-Limit", " turn limit "], "turn limit"),
+        ],
+        ids=["blank-query", "alternates-collapse"],
+    )
+    def test_single_distinct_phrasing_keeps_bm25_scores(self, mock_cache, query, alternate_queries, searched):
+        mock_cache.get_index.return_value.search.return_value = [(2.5, _doc("a"))]
+        mock_cache.get_url_cache.return_value = {}
+        mock_cache.SNIPPET_HYDRATE_MAX = 5
+
+        tru_result = search_docs(query, k=3, alternate_queries=alternate_queries)
+
+        assert mock_cache.get_index.return_value.search.call_args_list == [call(searched, k=3)]
+        assert tru_result == [{"url": "https://strandsagents.com/a.md", "title": "a", "score": 2.5, "snippet": "a"}]
+
+    @pytest.mark.parametrize("alternate_queries", [[], ["", " ", "?!"]], ids=["no-alternates", "blank-alternates"])
+    def test_all_blank_phrasings_return_no_results_without_searching(self, mock_cache, alternate_queries):
+        mock_cache.get_url_cache.return_value = {}
+        mock_cache.SNIPPET_HYDRATE_MAX = 5
+
+        tru_result = search_docs("  ", alternate_queries=alternate_queries)
+
+        assert tru_result == []
+        mock_cache.get_index.return_value.search.assert_not_called()
 
 
 @patch("strands_mcp_server.server.cache")

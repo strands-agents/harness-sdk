@@ -1,5 +1,5 @@
 import { unwrapInvocationContext, type InvocationContext } from '../agent/invocation-context.js'
-import { Message, TextBlock, type ContentBlock } from '../types/messages.js'
+import { Message, TextBlock, ToolResultBlock, type ContentBlock } from '../types/messages.js'
 import { latestUserIndex } from './model.js'
 import type { CountTokensOptions, Model, StreamAggregatedResult, StreamOptions } from './model.js'
 import type { ModelStreamEvent } from './streaming.js'
@@ -15,7 +15,8 @@ import type { ModelStreamEvent } from './streaming.js'
  * An `InjectedBlock` reaches a model whose `modelInfo.capabilities.temporaryMessages` is `true` as it is
  * stored, and that provider sends it so the model reads it only until the next user message. Every
  * other model, custom ones included, gets the latest user message's injected blocks as text and none
- * of the earlier ones.
+ * of the earlier ones. A tool result whose content is all `UnknownBlock`s gets a placeholder text, since
+ * providers skip unknown blocks and some reject an empty tool result.
  *
  * @internal
  */
@@ -28,7 +29,8 @@ export class ModelProxy {
 
   /**
    * Delegates to the wrapped model's `streamAggregated` with the messages the model accepts,
-   * passing every event through unchanged, then adds the call's usage to the request.
+   * passing every event through unchanged, then adds the call's usage to the request. A model without
+   * `serverSideSummary` gets each summary block's text instead of the block.
    *
    * @param messages - The conversation history to send to the model
    * @param options - Optional streaming configuration
@@ -63,10 +65,26 @@ export class ModelProxy {
   }
 
   private _prepare(messages: Message[]): RenderedMessages {
+    messages = withUnknownOnlyToolResultsFilled(this._withSummaryText(messages))
     if (!messages.some(hasInjectedBlock) || this._model.modelInfo.capabilities?.temporaryMessages === true) {
       return { messages, dynamicTrailingBlocks: 0 }
     }
     return renderInjectedBlocks(messages)
+  }
+
+  /** Replaces summary blocks with their text, since only a provider with server-side summaries reads them. */
+  private _withSummaryText(messages: Message[]): Message[] {
+    const hasSummary = messages.some((message) => message.content.some((block) => block.type === 'summaryBlock'))
+    if (!hasSummary || this._model.modelInfo.capabilities?.serverSideSummary === true) return messages
+    return messages.map(
+      (message) =>
+        new Message({
+          role: message.role,
+          content: message.content.map((block) => (block.type === 'summaryBlock' ? new TextBlock(block.text) : block)),
+          trackingId: message.trackingId,
+          ...(message.metadata !== undefined && { metadata: message.metadata }),
+        })
+    )
   }
 
   /** Adds a completed call's reported usage to the request. */
@@ -106,6 +124,41 @@ function renderInjectedBlocks(messages: Message[]): RenderedMessages {
     return withContent(message, content)
   })
   return { messages: rendered, dynamicTrailingBlocks }
+}
+
+/**
+ * Gives a tool result whose content is all `UnknownBlock`s a placeholder text. Providers skip unknown blocks, and
+ * some reject a tool result left with no content (Nova on Bedrock, OpenAI chat), on every later call.
+ */
+function withUnknownOnlyToolResultsFilled(messages: Message[]): Message[] {
+  if (!messages.some((message) => message.content.some(isUnknownOnlyToolResult))) return messages
+  return messages.map((message) =>
+    message.content.some(isUnknownOnlyToolResult)
+      ? withContent(
+          message,
+          message.content.map((block) =>
+            isUnknownOnlyToolResult(block)
+              ? new ToolResultBlock({
+                  toolUseId: block.toolUseId,
+                  status: block.status,
+                  content: [new TextBlock(UNSUPPORTED_CONTENT_PLACEHOLDER)],
+                  ...(block.error !== undefined && { error: block.error }),
+                })
+              : block
+          )
+        )
+      : message
+  )
+}
+
+const UNSUPPORTED_CONTENT_PLACEHOLDER = '[unsupported content omitted]'
+
+function isUnknownOnlyToolResult(block: ContentBlock): block is ToolResultBlock {
+  return (
+    block.type === 'toolResultBlock' &&
+    block.content.length > 0 &&
+    block.content.every((content) => content.type === 'unknownBlock')
+  )
 }
 
 function withContent(message: Message, content: ContentBlock[]): Message {

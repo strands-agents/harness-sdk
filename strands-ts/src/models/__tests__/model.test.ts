@@ -7,10 +7,11 @@ import {
   ReasoningBlock,
   GuardContentBlock,
   InjectedBlock,
+  SummaryBlock,
 } from '../../types/messages.js'
 import { CitationsBlock } from '../../types/citations.js'
 import { TestModelProvider, collectGenerator } from '../../__fixtures__/model-test-helpers.js'
-import { MaxTokensError, ModelError } from '../../errors.js'
+import { MaxTokensError, ModelError, NotImplementedError } from '../../errors.js'
 import { Model } from '../model.js'
 import { mergeModelInfo, type ModelInfo } from '../model-info.js'
 import type { BaseModelConfig, StreamOptions } from '../model.js'
@@ -1101,7 +1102,30 @@ describe('Model.modelId', () => {
   })
 })
 
+describe('summarize', () => {
+  it('has no server-side summary in the base model', async () => {
+    const provider = new TestModelProvider()
+
+    await expect(provider.summarize([new Message({ role: 'user', content: [new TextBlock('hi')] })])).rejects.toThrow(
+      new NotImplementedError('model=<TestModelProvider> | model has no server-side summary')
+    )
+  })
+})
+
 describe('countTokens', () => {
+  it('counts summary text like a text block', async () => {
+    const provider = new TestModelProvider()
+    const text = 'x'.repeat(400)
+
+    const summary = await provider.countTokens([
+      new Message({ role: 'assistant', content: [new SummaryBlock({ text })] }),
+    ])
+
+    expect(summary).toBe(
+      await provider.countTokens([new Message({ role: 'assistant', content: [new TextBlock(text)] })])
+    )
+  })
+
   it('estimates text block tokens using chars/4 heuristic', async () => {
     const provider = new TestModelProvider()
     const messages = [new Message({ role: 'user', content: [new TextBlock('Hello world')] })]
@@ -1311,9 +1335,9 @@ describe('countTokens', () => {
 })
 
 describe('info', () => {
-  it('knows only that temporary messages are off for a provider with no model id, and unknown stateful reads as false', () => {
+  it('knows only that temporary messages and server-side summary are off for a provider with no model id, and unknown stateful reads as false', () => {
     const provider = new TestModelProvider()
-    expect(provider.modelInfo).toEqual({ capabilities: { temporaryMessages: false } })
+    expect(provider.modelInfo).toEqual({ capabilities: { temporaryMessages: false, serverSideSummary: false } })
     expect(provider.stateful).toBe(false)
   })
 
