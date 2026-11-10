@@ -56,6 +56,8 @@ export async function summarizeWithStream(
   messages: Message[],
   options?: SummarizeOptions
 ): Promise<SummarizeResult> {
+  // A cancel before the call, such as during a server-side summary that then failed, sends no request.
+  if (options?.cancelSignal?.aborted) return { content: [], usage: createEmptyUsage() }
   const instructions = `${SUMMARIZE_GUARD}\n\n${options?.instructions || DEFAULT_SUMMARIZE_INSTRUCTIONS}`
   const cancelSignal = options?.cancelSignal
   const streamOptions: StreamOptions = {

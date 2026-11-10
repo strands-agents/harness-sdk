@@ -21,6 +21,7 @@ import {
 import { ImageBlock, DocumentBlock, VideoBlock } from '../../types/media.js'
 import { warnOnce } from '../../logging/warn-once.js'
 import { logger } from '../../logging/logger.js'
+import { createEmptyUsage } from '../streaming.js'
 import { CitationsBlock } from '../../types/citations.js'
 import { z } from 'zod'
 import { clearStructuredOutputSupport, toNativeOutputSchema } from '../native-output.js'
@@ -3590,6 +3591,30 @@ describe('AnthropicModel server-side summary', () => {
     warnSpy.mockRestore()
   })
 
+  it('sends no client-side request after a cancel during compaction', async () => {
+    const controller = new AbortController()
+    const client = {
+      messages: { stream: vi.fn() },
+      beta: {
+        messages: {
+          stream: vi.fn(() => ({
+            finalMessage: async () => {
+              controller.abort()
+              throw new Anthropic.APIConnectionError({ message: 'aborted' })
+            },
+          })),
+        },
+      },
+    } as unknown as Anthropic
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+
+    const result = await compactionModel(client).summarize(hi(), { cancelSignal: controller.signal })
+
+    expect(result).toEqual({ content: [], usage: createEmptyUsage() })
+    expect(client.messages.stream).not.toHaveBeenCalled()
+    warnSpy.mockRestore()
+  })
+
   it('throws errors other than an API error', async () => {
     const client = {
       messages: { stream: vi.fn() },
@@ -3700,10 +3725,10 @@ describe('AnthropicModel server-side summary', () => {
     expect(model.modelInfo.capabilities?.serverSideSummary).toBe(true)
   })
 
-  it.each(['claude-sonnet-4-5', 'm1'])('turns server-side summary off for other model %s', (modelId) => {
+  it.each(['claude-sonnet-4-5', 'm1'])('leaves server-side summary unknown for other model %s', (modelId) => {
     const model = new AnthropicModel({ apiKey: 'sk-ant-test', modelId, maxTokens: 1 })
 
-    expect(model.modelInfo.capabilities?.serverSideSummary).toBe(false)
+    expect(model.modelInfo.capabilities?.serverSideSummary).toBeUndefined()
   })
 
   it('sends the compaction text without the capability', async () => {

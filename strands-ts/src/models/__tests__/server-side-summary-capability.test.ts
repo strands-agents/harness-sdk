@@ -44,14 +44,6 @@ describe('models without server-side summary', () => {
     ],
     ['google', (modelInfo) => new GoogleModel({ modelId: MODEL_ID, apiKey: 'k', ...(modelInfo && { modelInfo }) })],
     ['vercel', (modelInfo) => new VercelModel({ provider: vercelProvider(), ...(modelInfo && { modelInfo }) })],
-    [
-      'a custom Model subclass',
-      (modelInfo) => {
-        const model = new TestModelProvider()
-        model.updateConfig({ modelId: MODEL_ID, ...(modelInfo && { modelInfo }) })
-        return model
-      },
-    ],
   ])('%s turns it off for listed models unless the modelInfo override sets it', (_name, makeModel) => {
     expect(makeModel().modelInfo.capabilities?.serverSideSummary).toBe(false)
     const override: ModelInfo = { capabilities: { serverSideSummary: true } }
@@ -59,8 +51,7 @@ describe('models without server-side summary', () => {
   })
 })
 
-describe('a custom provider with server-side summary on', () => {
-  // TS turns the capability off for a custom Model subclass, so the override stands in for Python's listed id.
+describe('a custom provider with a listed id', () => {
   it('stores its summary as text', async () => {
     const requests: Message[][] = []
     const model = new TestModelProvider(async function* () {
@@ -70,7 +61,7 @@ describe('a custom provider with server-side summary on', () => {
       yield { type: 'modelContentBlockStopEvent' }
       yield { type: 'modelMessageStopEvent', stopReason: 'endTurn' }
     })
-    model.updateConfig({ modelId: MODEL_ID, modelInfo: { capabilities: { serverSideSummary: true } } })
+    model.updateConfig({ modelId: MODEL_ID })
     const stream = model.stream.bind(model)
     vi.spyOn(model, 'stream').mockImplementation((messages, options) => {
       requests.push(messages)

@@ -203,18 +203,15 @@ async function placeTextSummary(messages: Message[], end: number, summary: strin
 /**
  * Returns the end of the opening messages a server-side summary replaces, or undefined when it cannot replace them.
  *
- * The agent's model replays the summary block, so it must be the same provider and model as the summarizer. A tool
- * use in message 0 or a pin among the summarized messages hands the pass to the client-side summary.
+ * The agent's model replays the summary block, so both it and the summarizer must support it. A tool use in
+ * message 0 or a pin among the summarized messages hands the pass to the client-side summary.
  */
 function serverSideEnd(context: ContextState, model: Model, safe: Message[]): number | undefined {
   const { messages } = context
-  const agentModel = context.agent.model
-  if (!(
-    model.modelInfo.capabilities?.serverSideSummary === true &&
-    agentModel.modelInfo.capabilities?.serverSideSummary === true &&
-    model.constructor === agentModel.constructor &&
-    model.modelId === agentModel.modelId
-  )) {
+  if (
+    model.modelInfo.capabilities?.serverSideSummary !== true ||
+    context.agent.model.modelInfo.capabilities?.serverSideSummary !== true
+  ) {
     return undefined
   }
   const end = endOf(messages, safe)

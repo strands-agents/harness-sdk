@@ -374,14 +374,10 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
     }
   }
 
-  /** Turns temporary messages and server-side summary back on for the models the shared model info lists. */
+  /** Turns temporary messages back on for the models the shared model info lists. */
   override get modelInfo(): ModelInfo {
-    const { temporaryMessages, serverSideSummary } = lookupModelInfo(this.modelId ?? '').capabilities ?? {}
-    return mergeModelInfo(
-      super.modelInfo,
-      { capabilities: { temporaryMessages, serverSideSummary } },
-      this._config.modelInfo
-    )
+    const { temporaryMessages } = lookupModelInfo(this.modelId ?? '').capabilities ?? {}
+    return mergeModelInfo(super.modelInfo, { capabilities: { temporaryMessages } }, this._config.modelInfo)
   }
 
   updateConfig(modelConfig: AnthropicModelConfig): void {

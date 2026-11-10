@@ -17,7 +17,7 @@ import { MaxTokensError, ModelError } from '../../errors.js'
 import { Model } from '../model.js'
 import { mergeModelInfo, type ModelInfo } from '../model-info.js'
 import type { BaseModelConfig, StreamOptions } from '../model.js'
-import { isModelStreamEvent, type ModelStreamEvent, type Usage } from '../streaming.js'
+import { createEmptyUsage, isModelStreamEvent, type ModelStreamEvent, type Usage } from '../streaming.js'
 import { DEFAULT_SUMMARIZE_INSTRUCTIONS, SUMMARIZE_GUARD } from '../summarize.js'
 import { logger } from '../../logging/logger.js'
 import { anyTrackingId } from '../../__fixtures__/message-helpers.js'
@@ -1255,6 +1255,18 @@ describe('summarize', () => {
     warnSpy.mockRestore()
   })
 
+  it('sends no request when cancelled before the call', async () => {
+    const controller = new AbortController()
+    controller.abort()
+    const model = new TestModelProvider()
+    const stream = vi.spyOn(model, 'stream')
+
+    const result = await model.summarize(hi(), { cancelSignal: controller.signal })
+
+    expect(result).toEqual({ content: [], usage: createEmptyUsage() })
+    expect(stream).not.toHaveBeenCalled()
+  })
+
   it('returns an empty summary when the stream throws after a cancel', async () => {
     const controller = new AbortController()
     const model = new TestModelProvider(async function* () {
@@ -1539,9 +1551,9 @@ describe('countTokens', () => {
 })
 
 describe('info', () => {
-  it('knows only that temporary messages and server-side summary are off for a provider with no model id, and unknown stateful reads as false', () => {
+  it('knows only that temporary messages are off for a provider with no model id, and unknown stateful reads as false', () => {
     const provider = new TestModelProvider()
-    expect(provider.modelInfo).toEqual({ capabilities: { temporaryMessages: false, serverSideSummary: false } })
+    expect(provider.modelInfo).toEqual({ capabilities: { temporaryMessages: false } })
     expect(provider.stateful).toBe(false)
   })
 

@@ -370,7 +370,10 @@ function baseModel(serverSideSummary = false) {
 }
 
 /** An agent on a {@link baseModel}, with a system prompt, a tool, a cancel signal and agent metadata. */
-function mockAgent(messages: Message[], options: { serverSideSummary?: boolean; systemPrompt?: string | null } = {}) {
+function mockAgent(
+  messages: Message[],
+  options: { serverSideSummary?: boolean; systemPrompt?: string | null; auxModel?: unknown } = {}
+) {
   const spies = baseModel(options.serverSideSummary)
   const controller = new AbortController()
   const systemPrompt = options.systemPrompt === undefined ? AGENT_PROMPT : options.systemPrompt
@@ -382,6 +385,7 @@ function mockAgent(messages: Message[], options: { serverSideSummary?: boolean; 
       cancelSignal: controller.signal,
       agentMetadata: { sessionId: 'session' },
       ...(systemPrompt !== null && { systemPrompt }),
+      ...(options.auxModel !== undefined && { auxModel: options.auxModel }),
     } as unknown as Partial<Agent>,
   })
   return { agent, controller, ...spies }
@@ -660,15 +664,14 @@ describe('batch summary replays the agent request', () => {
 
   it('leaves reasoning out for a model other than the agent model', async () => {
     const messages = replayMessages()
-    const { agent } = mockAgent(messages)
     const auxModel = {
       countTokens: vi.fn(async () => 5000),
       modelInfo: {},
       summarize: vi.fn(async (_messages: Message[]) => summaryResult('aux summary')),
     }
-    const auxAgent = { ...agent, auxModel } as unknown as LocalAgent
+    const { agent } = mockAgent(messages, { auxModel })
 
-    expect(await perMessage().apply({ messages, agent: auxAgent, utilization: 0.9 })).toBe(true)
+    expect(await perMessage().apply({ messages, agent, utilization: 0.9 })).toBe(true)
 
     const expected = replayMessages().slice(0, 4)
     expected[1] = new Message({ role: 'assistant', content: [new TextBlock('old1')] })
@@ -776,9 +779,10 @@ describe('server-side summary', () => {
         return model
       },
     },
-  ])('summarizes client-side when the agent model is $name', async ({ agentModel }) => {
+  ])('places a server-side summary when the agent model is $name', async ({ agentModel }) => {
     const aux = baseModel(true)
-    aux.summarize.mockResolvedValue(summaryResult('compacted', 'anthropic'))
+    const summary = new SummaryBlock({ provider: 'anthropic', text: 'compacted' })
+    aux.summarize.mockResolvedValue({ content: [summary] })
     const messages = serverSideMessages()
     const agent = createMockAgent({
       messages,
@@ -787,7 +791,7 @@ describe('server-side summary', () => {
 
     expect(await perMessage().apply({ messages, agent, utilization: 0.9 })).toBe(true)
 
-    expect(turns(messages)[1]).toEqual({ role: 'assistant', content: [marker(3, 'compacted')] })
+    expect(turns(messages)[1]).toEqual({ role: 'assistant', content: [summary] })
   })
 
   it('summarizes client-side when message 0 holds a tool use', async () => {
@@ -862,11 +866,10 @@ describe('server-side summary', () => {
     { name: 'aux model unsupported', agentSupports: true, auxSupports: false },
   ])('requires both models to support server-side summary: $name', async ({ agentSupports, auxSupports }) => {
     const messages = serverSideMessages()
-    const { agent } = mockAgent(messages, { serverSideSummary: agentSupports })
     const aux = baseModel(auxSupports)
-    const auxAgent = { ...agent, auxModel: aux.model } as unknown as LocalAgent
+    const { agent } = mockAgent(messages, { serverSideSummary: agentSupports, auxModel: aux.model })
 
-    expect(await perMessage().apply({ messages, agent: auxAgent, utilization: 0.9 })).toBe(true)
+    expect(await perMessage().apply({ messages, agent, utilization: 0.9 })).toBe(true)
 
     expect(turns(messages)).toEqual([
       { role: 'user', content: [new TextBlock('task')] },
