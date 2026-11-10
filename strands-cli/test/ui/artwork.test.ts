@@ -7,6 +7,7 @@ import { ChatController } from '../../src/ui/chat/controller.js'
 import { ChatApp } from '../../src/ui/chat/screen.js'
 import { ChatView } from '../../src/ui/chat/view.js'
 import {
+  FROG_FULL_LOCKUP_MIN_WIDTH,
   renderFrogAnimationRuns,
   renderVoiceFrogRuns,
   renderFrogBrandEasterEggFrame,
@@ -176,8 +177,8 @@ describe('Strands intro', () => {
   })
 
   it('shows the frog only beside the wordmark and keeps the wordmark alone when narrower', () => {
-    const full = renderFrogStartupLockup(87, false, 0, 'green', false, {}, 12)
-    const wordOnly = renderFrogStartupLockup(86, false, 0, 'green', false, {}, 19)
+    const full = renderFrogStartupLockup(FROG_FULL_LOCKUP_MIN_WIDTH, false, 0, 'green', false, {}, 12)
+    const wordOnly = renderFrogStartupLockup(FROG_FULL_LOCKUP_MIN_WIDTH - 1, false, 0, 'green', false, {}, 19)
     const small = renderFrogStartupLockup(56, false, 0, 'green', false, {}, 19)
 
     expect(full).toContain('▄▀▀▀▄')

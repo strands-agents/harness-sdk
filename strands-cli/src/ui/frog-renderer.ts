@@ -27,13 +27,13 @@ import {
 export type { FrogAnimationRun, FrogRenderOptions } from './frog-canvas.js'
 
 export const FROG_INTRO_DURATION_MS = 4_200
-// Quadrant blocks keep the reference's stepped edges within the eight-column glyph width.
+// Glyph contours and spacing follow site/src/assets/nav/wordmark.svg on the terminal's quadrant grid.
 const GLYPHS = {
-  A: [' ▗▟█▙▖  ', '█▛▀ ▀▜█ ', '█▌   ▐█ ', '███████ ', '█▌   ▐█ ', '        '],
-  D: ['████▙▖  ', '█▌  ▀▜█ ', '█▌   ▐█ ', '█▌  ▄▟█ ', '████▛▘  ', '        '],
-  N: ['█▙▄  ▐█ ', '█▛▜▄ ▐█ ', '█▌▐█ ▐█ ', '█▌▐█▄▟█ ', '█▌  ▀▜█ ', '        '],
-  R: ['▄▟███▙▄ ', '█▌   ▐█ ', '█▌   ▐█ ', '█████▌  ', '█▌ ▝▀█▌ ', '        '],
-  S: ['▄▟███▙▄ ', '█▌   ▝▀ ', '▀▜███▙▄ ', '▄▖   ▐█ ', '▀▜███▛▀ ', '        '],
+  A: ['  ▄██▄   ', '▗▟▀▘▝▀▙▖ ', '▐█▄▄▄▄█▌ ', '▐█▀▀▀▀█▌ ', '▐█    █▌ ', '         '],
+  D: ['████▙▖   ', '█▌  ▀▜▄  ', '█▌   ▐█  ', '█▌  ▄▟▀  ', '████▛▘   ', '         '],
+  N: ['▐█▄▖  █▌  ', '▐█▀▙▄ █▌  ', '▐█ ██ █▌  ', '▐█ ▀▜▄█▌  ', '▐█  ▝▀█▌  ', '          '],
+  R: ['▗▄████▄▖ ', '▐█    █▌ ', '▐█▄▄▄▄█▌ ', '▐█▀▀█▛   ', '▐█  ▀██  ', '         '],
+  S: ['▄▟███▙▄  ', '█▌   ▝▀  ', ' ▜███▙▄  ', '▄▖   ▐█  ', '▀▜███▛▀  ', '         '],
   T: ['▄▟███▙▄ ', '▀▘▐█ ▝▀ ', '  ▐█    ', '  ▐█    ', '  ▐█    ', '        '],
 } as const
 
