@@ -84,7 +84,7 @@ for (const [language, testName] of [
           command: [
             process.execPath,
             '--import',
-            fixture('live-self-building-observer.mjs'),
+            pathToFileURL(fixture('live-self-building-observer.mjs')).href,
             bin,
             ...(archive ? ['--agent', archive] : []),
           ],
