@@ -8,7 +8,7 @@ import { prepareWorkspaceDependencies } from '../project/archive.js'
 import { sanitizeTerminalText } from '../terminal/text.js'
 import { bindExistingAgent, createDevWorkspace } from './create.js'
 import { DevFailure } from './errors.js'
-import { readDevWorkspace, type DevWorkspace } from './workspace.js'
+import { findDevWorkspace, readDevWorkspace, workspaceFolder, type DevWorkspace } from './workspace.js'
 import type { StartupScreen } from '../ui/run.js'
 import type { HarnessChoice } from './picker.js'
 import { baseHarnessSelection, discoverLocalHarnesses } from './selection.js'
@@ -29,7 +29,7 @@ const selectWorkspace = async (
 ): Promise<DevWorkspace | undefined> => {
   const dev = args.dev!
   const cwd = process.cwd()
-  const destination = dev.workspace ? resolve(cwd, expandHome(dev.workspace)) : undefined
+  const destination = dev.workspace ? await workspaceFolder(resolve(cwd, expandHome(dev.workspace))) : undefined
   if (dev.create)
     return createDevWorkspace({
       destination: destination ?? join(cwd, 'strands-dev'),
@@ -42,7 +42,7 @@ const selectWorkspace = async (
   if (args.agent)
     return openExplicitHarness(resolve(cwd, expandHome(args.agent)), destination ?? join(cwd, 'strands-dev'))
   const existing =
-    (await readDevWorkspace(destination ?? cwd)) ??
+    (await findDevWorkspace(destination ?? cwd)) ??
     (!destination ? await readDevWorkspace(join(cwd, 'strands-dev')) : undefined)
   if (existing && !forceSelection) return existing
   if (destination && !dev.init && !forceSelection)
@@ -60,7 +60,7 @@ const selectWorkspace = async (
     screen,
     async (choice, signal, folder = workspace): Promise<DevWorkspace> => {
       signal.throwIfAborted()
-      const directory = resolve(cwd, expandHome(folder))
+      const directory = await workspaceFolder(resolve(cwd, expandHome(folder)))
       const placed = await placeHarness(choice, { directory, cwd, config, signal, deferDependencies })
       return placed.directory ? placed : initializeWorkspaceBinding(placed, directory)
     }
@@ -213,7 +213,7 @@ export const prepareDevRun = async (
   screen?.signal.throwIfAborted()
   if (!selected) return undefined
   const target = args.dev?.workspace
-    ? resolve(process.cwd(), expandHome(args.dev.workspace))
+    ? await workspaceFolder(resolve(process.cwd(), expandHome(args.dev.workspace)))
     : join(process.cwd(), 'strands-dev')
   const persisted = await readDevWorkspace(selected.directory ?? selected.root)
   const main = await initializeWorkspaceBinding(persisted?.root === selected.root ? persisted : selected, target)

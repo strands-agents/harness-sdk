@@ -1,7 +1,7 @@
 import { constants, type Stats } from 'node:fs'
 import { chmod, link, lstat, mkdir, mkdtemp, open, realpath, rm, rmdir, unlink } from 'node:fs/promises'
 import type { FileHandle } from 'node:fs/promises'
-import { join, resolve } from 'node:path'
+import { basename, join, resolve } from 'node:path'
 
 import { containsPath, expandHome } from '../paths.js'
 import { assertPortablePathComponent } from '../project/packaging.js'
@@ -45,6 +45,29 @@ export const boundDevWorkspace = (workspace: BoundWorkspace): DevWorkspace => ({
     ...(workspace.binding.harness ? { harness: workspace.binding.harness } : {}),
   },
 })
+
+const WORKSPACE_FOLDER = 'strands-dev'
+const WORKSPACE_FOLDER_NAME = /^strands-dev(?:-\d+)?$/u
+
+export async function findDevWorkspace(path: string): Promise<DevWorkspace | undefined> {
+  return (await optionalDetails(join(path, '.config')))?.isDirectory() ? undefined : readDevWorkspace(path)
+}
+
+export async function workspaceFolder(path: string): Promise<string> {
+  if (WORKSPACE_FOLDER_NAME.test(basename(path)) || !(await isFolderOrMissing(path))) return path
+  if ((await optionalDetails(join(path, '.config')))?.isFile()) return path
+  return (await findDevWorkspace(path)) ? path : join(path, WORKSPACE_FOLDER)
+}
+
+async function isFolderOrMissing(path: string): Promise<boolean> {
+  try {
+    return (await lstat(path)).isDirectory()
+  } catch (error) {
+    if (hasCode(error, 'ENOENT')) return true
+    if (hasCode(error, 'ENOTDIR')) return false
+    throw error
+  }
+}
 
 export async function readDevWorkspace(root: string): Promise<DevWorkspace | undefined> {
   const binding = await readWorkspaceBinding(root)

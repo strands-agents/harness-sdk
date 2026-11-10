@@ -86,7 +86,7 @@ strands dev --search-root ../other-projects
 strands dev init --create cli --workspace ./strands-dev
 strands dev --workspace ./strands-dev
 strands dev --agent ./my-project/agent.py
-strands dev init --create python --workspace ./strands-dev/new-agent
+strands dev init --create python --workspace ./new-agent
 ```
 
 The full TUI opens before discovery. Its picker lists the current CLI harness first, discovered harnesses next, and a new-harness option last.
@@ -98,13 +98,18 @@ Discovery reads the current folder and any explicit search roots. It does not ex
 It skips dependency folders, build output, private state, and copied harness libraries.
 
 When the launch directory has no workspace, the picker asks for the workspace folder after you select a harness.
-The folder field starts with `strands-dev/` in the launch directory, or the `--workspace` path. You can edit the path before you continue.
+The folder field starts with `strands-dev/` in the launch directory or in the `--workspace` folder. You can edit the path before you continue.
 A relative path starts from the launch directory. Esc in the folder step goes back to the harness list.
 After you go back from a failed setup, the field starts with the next unused name, for example `strands-dev-2/`.
 
-The folder must be new or empty, or it must be the existing workspace of the selected agent. Dev does not use a folder that contains other files.
-To reopen a workspace in a different folder, run `strands dev` from that folder or pass `--workspace <path>`.
-`--agent` and `--create` do not show the picker. They use `strands-dev/` in the launch directory unless `--workspace` selects a different location.
+Dev creates `strands-dev/` inside the path that you type or give to `--workspace`.
+Dev uses the path as it is when the path ends in `strands-dev` or `strands-dev-N`, or when the path is already a workspace.
+For example, `--workspace ~/my-agents` gives the workspace `~/my-agents/strands-dev/`.
+
+The workspace folder must be new or empty, or it must be the existing workspace of the selected agent.
+A workspace named `strands-dev` reopens from its parent folder or from inside it.
+To reopen a workspace with a different name, run `strands dev` inside it, or give its folder to `--workspace`.
+`--agent` and `--create` do not show the picker. They use `strands-dev/` in the launch directory or in the `--workspace` folder.
 
 Initialization records the persistent agent in `.config` and installs one independent copy under `tmp/`.
 An existing workspace reopens with its recorded initial copy instead of creating another one. `--agent` selects another entrypoint for one launch without changing the manifest.

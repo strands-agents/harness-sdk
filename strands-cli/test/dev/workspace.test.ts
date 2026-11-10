@@ -4,7 +4,13 @@ import { join } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { initializeDevWorkspace, readDevWorkspace, type DevWorkspaceConfig } from '../../src/dev/workspace.js'
+import {
+  initializeDevWorkspace,
+  findDevWorkspace,
+  readDevWorkspace,
+  workspaceFolder,
+  type DevWorkspaceConfig,
+} from '../../src/dev/workspace.js'
 import { temporaryDirectory } from '../fixtures/tempdir.js'
 
 vi.mock('node:fs/promises', async (original) => {
@@ -456,5 +462,76 @@ describe('readDevWorkspace', () => {
     await manifest(root, config({ entrypoint: 'missing.ts' }))
 
     await expect(readDevWorkspace(root)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+})
+
+describe('workspaceFolder', () => {
+  it.each<[string, (path: string) => Promise<unknown>, (path: string) => string]>([
+    ['is missing', async () => undefined, (path) => join(path, 'strands-dev')],
+    ['is an empty folder', (path) => mkdir(path), (path) => join(path, 'strands-dev')],
+    [
+      'holds other files',
+      async (path) => {
+        await mkdir(path)
+        await writeFile(join(path, 'notes.txt'), 'notes')
+      },
+      (path) => join(path, 'strands-dev'),
+    ],
+    [
+      'holds an unrelated .config folder',
+      (path) => mkdir(join(path, '.config'), { recursive: true }),
+      (path) => join(path, 'strands-dev'),
+    ],
+    [
+      'holds a workspace binding',
+      async (path) => {
+        await mkdir(path)
+        await writeFile(join(path, '.config'), '{}')
+      },
+      (path) => path,
+    ],
+    ['is a file', (path) => writeFile(path, 'notes'), (path) => path],
+  ])('shouldResolveTheWorkspaceFolderWhenThePath%s', async (_case, arrange, expected) => {
+    const path = join(await temporaryDirectory(), 'chosen')
+    await arrange(path)
+
+    expect(await workspaceFolder(path)).toBe(expected(path))
+  })
+
+  it.each(['strands-dev-empty', 'my-strands-dev', 'strands-dev-x'])(
+    'shouldCreateStrandsDevInsideAnEmptyFolderNamed%s',
+    async (name) => {
+      const path = join(await temporaryDirectory(), name)
+      await mkdir(path)
+
+      expect(await workspaceFolder(path)).toBe(join(path, 'strands-dev'))
+    }
+  )
+
+  it('shouldReturnThePathAsItIsWhenAFileSitsAboveIt', async () => {
+    const file = join(await temporaryDirectory(), 'notes.txt')
+    await writeFile(file, 'notes')
+
+    expect(await workspaceFolder(join(file, 'child'))).toBe(join(file, 'child'))
+  })
+
+  it('shouldFindNoWorkspaceWhenTheFolderHoldsAnUnrelatedConfigFolder', async () => {
+    const path = await temporaryDirectory()
+    await mkdir(join(path, '.config'))
+
+    expect(await findDevWorkspace(path)).toBeUndefined()
+  })
+
+  it.each(['strands-dev', 'strands-dev-3'])('shouldUseThePathAsItIsWhenItEndsIn%s', async (name) => {
+    const path = join(await temporaryDirectory(), name)
+
+    expect(await workspaceFolder(path)).toBe(path)
+  })
+
+  it('shouldUseThePathAsItIsWhenItHoldsALegacyWorkspace', async () => {
+    const root = await project()
+    await manifest(root, config())
+
+    expect(await workspaceFolder(root)).toBe(root)
   })
 })

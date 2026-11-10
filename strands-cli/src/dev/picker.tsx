@@ -212,8 +212,10 @@ export const HarnessPicker = ({ cli, harnesses, warning, workspace, onSelect }: 
               active={!busy}
             />
           </Box>
-          <Text dimColor>strands dev keeps .config, tmp/, reports, and state in this folder.</Text>
-          <Text dimColor>Use a new or empty folder, or the existing workspace of this agent.</Text>
+          <Text dimColor>strands dev makes a strands-dev folder here for .config, tmp/, reports, and state.</Text>
+          <Text dimColor>
+            strands dev uses a path that ends in strands-dev, or a workspace of this agent, as it is.
+          </Text>
         </Box>
       ) : creating ? (
         <Box flexDirection="column" gap={1}>

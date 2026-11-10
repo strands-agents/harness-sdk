@@ -98,7 +98,7 @@ const parseChatArgs = (argv: string[], devInit?: boolean): ParsedArgs => {
     )
   } else {
     program
-      .option('--workspace <path>', 'open or create this dev workspace')
+      .option('--workspace <path>', 'open this dev workspace, or create strands-dev/ in this folder')
       .option('--search-root <path>', 'search another folder for harnesses (repeatable)', collect, [])
       .option('--create <language>', 'create a cli, typescript, or python harness')
   }

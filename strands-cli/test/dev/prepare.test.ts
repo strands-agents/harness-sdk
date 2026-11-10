@@ -220,6 +220,74 @@ describe('prepareDevRun', () => {
   })
 })
 
+describe('workspace path option', () => {
+  it.each<[string, (parent: string) => Promise<unknown>]>([
+    ['a new folder', async () => undefined],
+    [
+      'a folder with other files',
+      async (parent) => {
+        await mkdir(parent)
+        await writeFile(join(parent, 'notes.txt'), 'notes')
+      },
+    ],
+  ])('shouldCreateAndReopenStrandsDevInsideTheWorkspacePathWhenItIs%s', async (_case, arrange) => {
+    const parent = join(process.cwd(), 'chosen')
+    await arrange(parent)
+    vi.spyOn(CliConfigStore, 'load').mockResolvedValue(config())
+    vi.spyOn(process.stderr, 'write').mockReturnValue(true)
+
+    const created = await prepareDevRun(parseArgs(['dev', 'init', '--create', 'typescript', '--workspace', parent]), {
+      deferPreparation: true,
+    })
+    const reopened = await prepareDevRun(parseArgs(['dev', '--workspace', parent]), { deferPreparation: true })
+
+    expect(created?.workspace.directory).toBe(join(parent, 'strands-dev'))
+    expect(created?.args.dev?.workspace).toBe(join(parent, 'strands-dev'))
+    expect(reopened?.workspace.entrypoint).toBe(created?.workspace.entrypoint)
+  })
+
+  it('shouldBindAnExplicitAgentInsideTheWorkspacePath', async () => {
+    const parent = join(process.cwd(), 'chosen')
+    const source = await fixture()
+    vi.spyOn(CliConfigStore, 'load').mockResolvedValue(config())
+    vi.spyOn(process.stderr, 'write').mockReturnValue(true)
+
+    const prepared = await prepareDevRun(
+      parseArgs(['dev', 'init', '--agent', join(source, 'agent.ts'), '--workspace', parent]),
+      { deferPreparation: true }
+    )
+
+    expect(prepared?.workspace.directory).toBe(join(parent, 'strands-dev'))
+    expect(prepared?.workspace.root).toBe(source)
+  })
+
+  it.each<[string, string[], (launch: string) => Promise<unknown>, (launch: string) => string]>([
+    [
+      'the workspace path',
+      ['--workspace', 'chosen'],
+      async () => undefined,
+      (launch) => join(launch, 'chosen', 'strands-dev'),
+    ],
+    [
+      'a launch folder with an unrelated .config folder',
+      [],
+      (launch) => mkdir(join(launch, '.config')),
+      (launch) => join(launch, 'strands-dev'),
+    ],
+  ])('shouldStartTheFolderFieldInsideStrandsDevWhenTheUserGives%s', async (_case, flags, arrange, expected) => {
+    const launch = process.cwd()
+    await arrange(launch)
+    vi.spyOn(CliConfigStore, 'load').mockResolvedValue(config())
+    vi.spyOn(search, 'discoverHarnesses').mockResolvedValue({ harnesses: [], warnings: [] })
+    vi.spyOn(picker, 'chooseHarness').mockResolvedValue(undefined)
+    const screen = { signal: new AbortController().signal, show: vi.fn() }
+
+    await prepareDevRun(parseArgs(['dev', 'init', ...flags]), { screen, deferPreparation: true })
+
+    expect(vi.mocked(picker.chooseHarness).mock.calls[0]?.[0].workspace).toBe(expected(launch))
+  })
+})
+
 describe('workspace folder selection', () => {
   const selectInFolder = async (choice: (root: string) => HarnessChoice, folder: string, root?: string) => {
     const harnessRoot = root ?? (await fixture())
@@ -245,24 +313,44 @@ describe('workspace folder selection', () => {
   it.each([
     ['an absolute path', (launch: string) => join(launch, 'custom/workspace')],
     ['a path relative to the launch folder', () => 'custom/workspace'],
-  ])('shouldBindTheAgentInTheChosenFolderWhenItIs%s', async (_case, folder) => {
+  ])('shouldBindTheAgentInsideTheChosenFolderWhenItIs%s', async (_case, folder) => {
     const launch = process.cwd()
 
     const prepared = await selectInFolder(discovered, folder(launch))
 
-    expect(prepared?.workspace.directory).toBe(join(launch, 'custom/workspace'))
-    expect(JSON.parse(await readFile(join(launch, 'custom/workspace/.config'), 'utf8')).origin.kind).toBe('discovered')
+    expect(prepared?.workspace.directory).toBe(join(launch, 'custom/workspace/strands-dev'))
+    expect(JSON.parse(await readFile(join(launch, 'custom/workspace/strands-dev/.config'), 'utf8')).origin.kind).toBe(
+      'discovered'
+    )
     await expect(readdir(join(launch, 'strands-dev'))).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
-  it('shouldCreateANewHarnessInAnEmptyFolder', async () => {
-    const folder = join(process.cwd(), 'empty')
+  it.each<[string, (folder: string) => Promise<unknown>]>([
+    ['is empty', (folder) => mkdir(folder)],
+    [
+      'holds other files',
+      async (folder) => {
+        await mkdir(folder)
+        await writeFile(join(folder, 'notes.txt'), 'notes')
+      },
+    ],
+  ])('shouldCreateStrandsDevInsideTheChosenFolderWhenIt%s', async (_case, arrange) => {
+    const folder = join(process.cwd(), 'chosen')
+    await arrange(folder)
+
+    const prepared = await selectInFolder(() => ({ kind: 'create', language: 'typescript', name: 'fresh' }), folder)
+
+    expect(prepared?.workspace.directory).toBe(join(folder, 'strands-dev'))
+    expect(prepared?.workspace.config).toMatchObject({ name: 'fresh', origin: { kind: 'created' } })
+  })
+
+  it('shouldCreateANewHarnessInPlaceWhenTheChosenFolderIsAnEmptyStrandsDevFolder', async () => {
+    const folder = join(process.cwd(), 'strands-dev')
     await mkdir(folder)
 
     const prepared = await selectInFolder(() => ({ kind: 'create', language: 'typescript', name: 'fresh' }), folder)
 
     expect(prepared?.workspace.directory).toBe(folder)
-    expect(prepared?.workspace.config).toMatchObject({ name: 'fresh', origin: { kind: 'created' } })
   })
 
   it('shouldReuseTheFolderWhenItAlreadyHoldsTheSelectedAgent', async () => {
@@ -315,7 +403,7 @@ describe('workspace folder selection', () => {
   it('shouldExpandTheHomeFolderInTheChosenPath', async () => {
     const prepared = await selectInFolder(discovered, '~/dev-workspace')
 
-    expect(prepared?.workspace.directory).toBe(join(homedir(), 'dev-workspace'))
+    expect(prepared?.workspace.directory).toBe(join(homedir(), 'dev-workspace', 'strands-dev'))
   })
 
   it('shouldReportABrokenBindingInTheChosenFolderWithoutReplacingIt', async () => {
@@ -343,10 +431,10 @@ describe('workspace folder selection', () => {
   })
 
   it.each([
-    ['contains other files', 'The folder already contains files.'],
+    ['is a strands-dev folder with other files', 'The folder already contains files.'],
     ['is a file', 'The path is a file, not a folder.'],
   ])('shouldRefuseAPathThat%s', async (kind, message) => {
-    const folder = join(process.cwd(), 'used')
+    const folder = join(process.cwd(), kind === 'is a file' ? 'used' : 'strands-dev')
     if (kind === 'is a file') await writeFile(folder, 'notes')
     else {
       await mkdir(folder)
