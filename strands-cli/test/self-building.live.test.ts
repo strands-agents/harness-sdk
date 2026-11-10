@@ -42,7 +42,7 @@ for (const [language, testName] of [
   ['python', 'adds an MCP server through chat and preserves it across repeated Python export and import'],
 ] as const) {
   it(testName, { timeout: 900_000, retry: 0 }, async () => {
-    const root = await mkdtemp(join(tmpdir(), 'strands-live-self-building-'))
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'strands-live-self-building-')))
     const audit = join(root, 'mcp-calls.jsonl')
     let archive: string | undefined
     try {
