@@ -2933,10 +2933,10 @@ export class Agent implements LocalAgent, InvokableAgent {
         estimate = knownBaseline
       } else {
         // System prompt and tool spec tokens are already included in the baseline from the prior model call
-        estimate = knownBaseline + (await this.model.countTokens(newMessages))
+        estimate = knownBaseline + (await new ModelProxy(this.model).countTokens(newMessages))
       }
     } else {
-      estimate = await this.model.countTokens(this.messages, {
+      estimate = await new ModelProxy(this.model).countTokens(this.messages, {
         ...(streamOptions.systemPrompt !== undefined && { systemPrompt: streamOptions.systemPrompt }),
         ...(streamOptions.toolSpecs !== undefined && { toolSpecs: streamOptions.toolSpecs }),
       })

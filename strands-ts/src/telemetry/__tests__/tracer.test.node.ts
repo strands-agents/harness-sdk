@@ -2,7 +2,15 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import type { Span, SpanAttributeValue } from '@opentelemetry/api'
 import { SpanStatusCode, trace, context } from '@opentelemetry/api'
 import { Tracer } from '../tracer.js'
-import { Message, TextBlock, ToolResultBlock, ToolUseBlock, CachePointBlock } from '../../types/messages.js'
+import {
+  Message,
+  TextBlock,
+  ToolResultBlock,
+  ToolUseBlock,
+  CachePointBlock,
+  InjectedBlock,
+  SummaryBlock,
+} from '../../types/messages.js'
 import { MockSpan, eventAttr } from '../../__fixtures__/mock-span.js'
 import { textMessage } from '../../__fixtures__/agent-helpers.js'
 
@@ -912,6 +920,36 @@ describe('Tracer', () => {
       const parsed = JSON.parse(eventAttr(detailEvents[0]!, 'gen_ai.input.messages'))
       expect(parsed[0].parts[0].type).toBe('tool_call_response')
       expect(parsed[0].parts[0].id).toBe('tu-1')
+    })
+
+    it('maps injected blocks to text parts in latest conventions', () => {
+      vi.stubEnv('OTEL_SEMCONV_STABILITY_OPT_IN', 'gen_ai_latest_experimental')
+      const tracer = new Tracer()
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [new TextBlock('Hi'), new InjectedBlock({ text: 'cwd: /repo', source: 'env' })],
+        }),
+      ]
+      tracer.startModelInvokeSpan({ messages })
+      const detailEvents = mockSpan.getEvents('gen_ai.client.inference.operation.details')
+      const parsed = JSON.parse(eventAttr(detailEvents[0]!, 'gen_ai.input.messages'))
+      expect(parsed[0].parts).toStrictEqual([
+        { type: 'text', content: 'Hi' },
+        { type: 'text', content: 'cwd: /repo' },
+      ])
+    })
+
+    it('maps summary blocks to text parts in latest conventions', () => {
+      vi.stubEnv('OTEL_SEMCONV_STABILITY_OPT_IN', 'gen_ai_latest_experimental')
+      const tracer = new Tracer()
+      const messages = [
+        new Message({ role: 'assistant', content: [new SummaryBlock({ provider: 'anthropic', text: 'compacted' })] }),
+      ]
+      tracer.startModelInvokeSpan({ messages })
+      const detailEvents = mockSpan.getEvents('gen_ai.client.inference.operation.details')
+      const parsed = JSON.parse(eventAttr(detailEvents[0]!, 'gen_ai.input.messages'))
+      expect(parsed[0].parts).toStrictEqual([{ type: 'text', content: 'compacted' }])
     })
 
     it('serializes text block content in stable convention events', () => {

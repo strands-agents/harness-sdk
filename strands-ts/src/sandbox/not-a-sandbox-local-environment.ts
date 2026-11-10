@@ -4,7 +4,7 @@ import { dirname, isAbsolute, join } from 'path'
 import { Sandbox } from './base.js'
 import type { ExecuteOptions } from './base.js'
 import { LANGUAGE_PATTERN, shellQuote } from './constants.js'
-import { SandboxPathNotFoundError } from './errors.js'
+import { SandboxIsADirectoryError, SandboxPathNotFoundError, SandboxPermissionError } from './errors.js'
 import { streamProcess } from './stream-process.js'
 import type { ExecutionResult, FileInfo, StreamChunk } from './types.js'
 import { buildShellEnvPrefix, validateEnvKeys } from './posix-shell.js'
@@ -117,7 +117,21 @@ export class NotASandboxLocalEnvironment extends Sandbox {
   }
 
   async readFile(path: string): Promise<Uint8Array> {
-    return readFile(this._resolvePath(path))
+    try {
+      return await readFile(this._resolvePath(path))
+    } catch (err) {
+      if (isMissingPathError(err)) {
+        throw new SandboxPathNotFoundError(path, { cause: err })
+      }
+      const code = (err as { code?: unknown } | null)?.code
+      if (code === 'EISDIR') {
+        throw new SandboxIsADirectoryError(path, { cause: err })
+      }
+      if (code === 'EACCES' || code === 'EPERM') {
+        throw new SandboxPermissionError(path, { cause: err })
+      }
+      throw err
+    }
   }
 
   async writeFile(path: string, content: Uint8Array): Promise<void> {
@@ -139,7 +153,7 @@ export class NotASandboxLocalEnvironment extends Sandbox {
       // A missing path (or a file where a directory was expected) is non-existence;
       // permission and other errors propagate so callers can surface them.
       if (isMissingPathError(err)) {
-        throw new SandboxPathNotFoundError(path)
+        throw new SandboxPathNotFoundError(path, { cause: err })
       }
       throw err
     }

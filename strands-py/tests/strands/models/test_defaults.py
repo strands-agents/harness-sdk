@@ -114,6 +114,7 @@ class TestGetContextWindowLimit:
         assert get_context_window_limit("gpt-6.1-terra") == 1_050_000
         assert get_context_window_limit("gpt-6-sol") == 1_050_000
         assert get_context_window_limit("gpt-6-luna") == 1_050_000
+        assert get_context_window_limit("gpt-6-cyber") == 1_050_000
         assert get_context_window_limit("gpt-5.4") == 1_050_000
         assert get_context_window_limit("gpt-4o") == 128_000
         assert get_context_window_limit("o3") == 200_000

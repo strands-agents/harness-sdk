@@ -9,7 +9,6 @@ import {
 import { AgentSkills } from '@strands-agents/sdk/vended-plugins/skills'
 
 import { agentConfig, projectConfigOverrides, type ParsedArgs } from './arguments.js'
-import { restoreSessionAgentDefinition } from '../tui/session/agent-definition.js'
 import { importAgentProject, type ImportedAgentProject } from '../tui/project/import.js'
 import type { AgentFactory } from '../tui/project/typescript.js'
 import { requireBedrockRegion } from '../tui/provider/aws-config.js'
@@ -31,8 +30,7 @@ export async function invocationAgentForRun(
   args: ParsedArgs,
   config: InvocationConfigStore,
   cwd = process.cwd(),
-  project?: ImportedAgentProject,
-  restoreDefinition = false
+  project?: ImportedAgentProject
 ): Promise<InvocationAgent> {
   const snapshot = config.snapshot()
   const projectPath = args.agent ?? snapshot.agentProject
@@ -64,10 +62,7 @@ export async function invocationAgentForRun(
     ...(await harnessAgentOptionsFromConfig(profile, baseDir)),
     printer: false,
   }
-  return {
-    profile,
-    options: restoreDefinition ? await restoreSessionAgentDefinition(options, cwd) : options,
-  }
+  return { profile, options }
 }
 
 async function projectOverrides(

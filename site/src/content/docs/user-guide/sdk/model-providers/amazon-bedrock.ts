@@ -334,3 +334,58 @@ async function bedrockMantleConfig() {
   console.log(response)
   // --8<-- [end:mantle_config]
 }
+
+// Claude through the Anthropic Messages API on bedrock-runtime (InvokeModel)
+async function anthropicBedrock() {
+  // --8<-- [start:anthropic_bedrock]
+  const model = new AnthropicModel({
+    modelId: 'global.anthropic.claude-sonnet-4-6',
+    maxTokens: 4096,
+    client: new AnthropicBedrock({ awsRegion: 'us-west-2' }),
+  })
+
+  const agent = new Agent({ model })
+  const response = await agent.invoke('What is 2+2?')
+  console.log(response)
+  // --8<-- [end:anthropic_bedrock]
+}
+
+void anthropicBedrock
+
+// Claude through the Anthropic Messages API on bedrock-mantle
+async function anthropicBedrockMantle() {
+  // --8<-- [start:anthropic_bedrock_mantle]
+  const model = new AnthropicModel({
+    modelId: 'anthropic.claude-haiku-4-5',
+    maxTokens: 4096,
+    client: new AnthropicBedrockMantle({ awsRegion: 'us-west-2' }),
+  })
+
+  const agent = new Agent({ model })
+  const response = await agent.invoke('What is 2+2?')
+  console.log(response)
+  // --8<-- [end:anthropic_bedrock_mantle]
+}
+
+void anthropicBedrockMantle
+
+// OpenAI-compatible APIs with a client built for Bedrock
+async function openaiBedrockClient() {
+  // --8<-- [start:openai_bedrock_client]
+  const region = 'us-east-1'
+  const client = new OpenAI({
+    baseURL: `https://bedrock-mantle.${region}.api.aws/v1`,
+    // Mints a fresh bearer token from your AWS credentials on every request.
+    apiKey: getTokenProvider({ region }),
+  })
+
+  // Responses API; pass `api: 'chat'` for Chat Completions.
+  const model = new OpenAIModel({ modelId: 'openai.gpt-oss-120b', client })
+
+  const agent = new Agent({ model })
+  const response = await agent.invoke('What is 2+2?')
+  console.log(response)
+  // --8<-- [end:openai_bedrock_client]
+}
+
+void openaiBedrockClient

@@ -35,11 +35,7 @@ import { discoverContextWindow, discoverProviderModels } from './provider/discov
 import { requireBedrockRegion } from './provider/aws-config.js'
 import { rethrowWithProviderHint } from './provider/packages.js'
 import { upgradeDesktopAgentProfileMessages } from './session/desktop-profile.js'
-import {
-  initializeAgentDefinition,
-  persistSessionAgentDefinition,
-  restoreSessionAgentDefinition,
-} from './session/agent-definition.js'
+import { initializeAgentDefinition } from './session/agent-definition.js'
 import { DEFAULT_SESSION_DIR, FileSessionRuntime, SessionRootCatalog, type SessionTarget } from './session/sessions.js'
 import { configuredSkillPaths, FileSkillsRuntime, resolveSkillPaths, type SkillPathsOption } from './skills.js'
 import { StrandsChatBackend } from './strands-backend.js'
@@ -178,7 +174,6 @@ export async function createInteractiveChat(options: CreateInteractiveChatOption
     }).catch(rethrowWithProviderHint)
     await initializeAgentDefinition(agent)
     agent.messages = upgradeDesktopAgentProfileMessages(agent.messages)
-    await persistSessionAgentDefinition(agentOptions)
     if (disposed) {
       agentMessaging.unbindAgent(agent)
       throw new Error('Runtime was disposed while building an agent.')
@@ -248,9 +243,6 @@ export async function createInteractiveChat(options: CreateInteractiveChatOption
     const baseAgentOptions: HarnessAgentOptions = sessionEnabled
       ? withSession(selectedAgentOptions, { id: sessionId, dir: sessionDirectory })
       : { ...selectedAgentOptions, session: false }
-    const restoredAgentOptions = options.project
-      ? baseAgentOptions
-      : await restoreSessionAgentDefinition(baseAgentOptions, workspace)
     const skillPaths = resolveSkillPaths(configuredSkillSources, workspace, config.snapshot().settings.skillDiscovery)
     const profileSkillPaths = configuredSkillPaths(configuredSkillSources, workspace)
     const sandbox =
@@ -262,7 +254,7 @@ export async function createInteractiveChat(options: CreateInteractiveChatOption
       ...(configuredMcpServers ? { servers: configuredMcpServers } : {}),
     })
     const configuredTools: NonNullable<HarnessAgentOptions['tools']> = [
-      ...(restoredAgentOptions.tools ?? []),
+      ...(baseAgentOptions.tools ?? []),
       ...mcp.clients,
     ]
     const permissionBroker = new ToolPermissionBroker()
@@ -276,7 +268,7 @@ export async function createInteractiveChat(options: CreateInteractiveChatOption
       return backgroundInbox.observeAgent((prompt): boolean => liveSteering.enqueue(candidate, prompt))
     })
     const controllerOptions: HarnessAgentOptions = {
-      ...withSession(restoredAgentOptions, { id: sessionId, dir: sessionDirectory }),
+      ...withSession(baseAgentOptions, { id: sessionId, dir: sessionDirectory }),
       ...(request.seed ? { model: request.seed.model, effort: profileEffort(request.seed.thinking) } : {}),
       ...(request.sessionManager !== undefined ? { sessionManager: request.sessionManager } : {}),
       skills: skillPaths.length > 0 ? skillPaths : false,

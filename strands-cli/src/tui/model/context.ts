@@ -54,6 +54,7 @@ const FALLBACK_CONTEXT_WINDOWS: ReadonlyMap<string, number> = new Map([
   ['gpt-6.1-terra', 1_050_000],
   ['gpt-6-sol', 1_050_000],
   ['gpt-6-luna', 1_050_000],
+  ['gpt-6-cyber', 1_050_000],
   ['gpt-oss-120b', 131_072],
   ['gpt-oss-20b', 131_072],
   ['gemini-4-argon', 1_048_576],

@@ -10,6 +10,7 @@ import { z } from 'zod'
 import { normalizeError } from '../errors.js'
 import { BedrockModel } from '../models/bedrock.js'
 import { Model } from '../models/model.js'
+import { ModelProxy } from '../models/model-proxy.js'
 import { STRUCTURED_OUTPUT_TOOL_NAME, StructuredOutputTool } from '../tools/structured-output-tool.js'
 import { Message, TextBlock, type ContentBlock, type ToolUseBlock } from '../types/messages.js'
 import { DecisionModel, uncertaintyAllowed } from './decision-model.js'
@@ -34,7 +35,9 @@ const DEFAULT_SYSTEM_PROMPT =
 export interface LLMDecisionModelOptions {
   /**
    * Underlying vended model; must honor forced `toolChoice` so the structured-output
-   * tool is the only possible response. Defaults to a zero-config {@link BedrockModel}.
+   * tool is the only possible response. Defaults to a {@link BedrockModel} with strict tool
+   * use enabled so answers conform to the schema. When passing your own model, enable your
+   * provider's strict mode (e.g. `strictTools: true` on {@link BedrockModel}).
    */
   readonly model?: Model
   /**
@@ -54,7 +57,7 @@ export interface LLMDecisionModelOptions {
  *
  * @example
  * ```typescript
- * const decision = new LLMDecisionModel({ model: new BedrockModel() })
+ * const decision = new LLMDecisionModel({ model: new BedrockModel({ strictTools: true }) })
  * const result = await decision.ask('The fruit is an apple', {
  *   color: {
  *     question: 'What color is the fruit?',
@@ -84,7 +87,7 @@ export class LLMDecisionModel extends DecisionModel {
    */
   constructor(options: LLMDecisionModelOptions = {}) {
     super()
-    const model = options.model ?? new BedrockModel()
+    const model = options.model ?? new BedrockModel({ strictTools: true })
     if (!(model instanceof Model)) throw new TypeError('options.model must be a Model')
     this._model = model
     this._systemPrompt = options.systemPrompt ?? DEFAULT_SYSTEM_PROMPT
@@ -101,7 +104,7 @@ export class LLMDecisionModel extends DecisionModel {
     const systemPrompt = buildSystemPrompt(this._systemPrompt)
 
     const startedAt = globalThis.performance.now()
-    const stream = this._model.streamAggregated(messages, {
+    const stream = new ModelProxy(this._model).streamAggregated(messages, {
       systemPrompt,
       toolSpecs: [tool.toolSpec],
       toolChoice: { tool: { name: tool.name } },

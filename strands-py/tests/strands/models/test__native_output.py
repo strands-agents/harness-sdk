@@ -1,5 +1,6 @@
 import datetime
 import enum
+import re
 from typing import Any, Literal
 
 import anthropic
@@ -17,6 +18,8 @@ from strands.models._native_output import (
     to_native_output_schema,
     unsupported_mechanisms,
 )
+
+ANTHROPIC_VERSION = tuple(int(part) for part in re.findall(r"\d+", anthropic.__version__)[:2])
 
 
 class Person(pydantic.BaseModel):
@@ -36,6 +39,7 @@ class Team(pydantic.BaseModel):
     lead: Person | None = None
     color: Color
     kind: Literal["a", "b"]
+    version: Literal[1]
     code: str = pydantic.Field(pattern=r"^[A-Z]+$", description="Team code")
     founded: datetime.date
     score: float = pydantic.Field(ge=0)
@@ -170,7 +174,8 @@ def test_find_unsupported_native_output_feature(schema, exp_feature):
     assert tru_feature == exp_feature
 
 
-@pytest.mark.parametrize("output_model", [Person, Team, WithNestedDict])
+@pytest.mark.skipif(ANTHROPIC_VERSION < (2, 7), reason="to_native_output_schema mirrors anthropic>=2.7.0")
+@pytest.mark.parametrize("output_model", [Person, Team, WithNestedDict, WithMixedLiteral])
 def test_to_native_output_schema_matches_anthropic_transform_schema(output_model):
     tru_schema = to_native_output_schema(output_model.model_json_schema())
     exp_schema = anthropic.transform_schema(output_model)

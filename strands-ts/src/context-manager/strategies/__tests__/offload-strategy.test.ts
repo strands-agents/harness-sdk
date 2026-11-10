@@ -7,7 +7,7 @@ import {
   insertMarker,
   EmergencyTruncateStrategy,
 } from '../offload/base.js'
-import { Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../../types/messages.js'
+import { InjectedBlock, Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../../types/messages.js'
 import type { Role } from '../../../types/messages.js'
 import { createMockAgent } from '../../../__fixtures__/agent-helpers.js'
 import type { Agent } from '../../../agent/agent.js'
@@ -573,6 +573,17 @@ describe('Offload with * target (fires on everything)', () => {
     const result = await strategy.apply(context)
 
     expect(result).toBe(false)
+  })
+
+  it('leaves injected text in place', async () => {
+    const injected = new InjectedBlock({ text: 'x'.repeat(2500 * 4 + 100), source: 'strands:memory-manager' })
+    const userMsg = new Message({ role: 'user', content: [new TextBlock('ask'), injected] })
+    const strategy = Offload.truncate('*', { previewTokens: 50 }).when({ threshold: 100 })
+
+    const result = await strategy.apply(makeContext([userMsg]))
+
+    expect(result).toBe(false)
+    expect(userMsg.content).toStrictEqual([new TextBlock('ask'), injected])
   })
 })
 
