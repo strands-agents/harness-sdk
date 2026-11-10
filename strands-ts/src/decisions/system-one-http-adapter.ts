@@ -149,11 +149,13 @@ export async function askSystemOne<const Q extends Record<string, Question>>(
     ...(config.modelId !== undefined && { model: config.modelId }),
     questions: toWireQuestions(questions),
   })
-  const bodyBytes = new TextEncoder().encode(body).byteLength
-  if (config.maxBodyBytes !== undefined && bodyBytes > config.maxBodyBytes) {
-    throw new ContextWindowOverflowError(
-      `${config.providerName} decision request is ${bodyBytes} bytes; the provider limit is ${config.maxBodyBytes}`
-    )
+  if (config.maxBodyBytes !== undefined) {
+    const bodyBytes = new TextEncoder().encode(body).byteLength
+    if (bodyBytes > config.maxBodyBytes) {
+      throw new ContextWindowOverflowError(
+        `${config.providerName} decision request is ${bodyBytes} bytes; the provider limit is ${config.maxBodyBytes}`
+      )
+    }
   }
 
   const startedAt = globalThis.performance.now()
