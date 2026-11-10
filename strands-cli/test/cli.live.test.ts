@@ -202,7 +202,9 @@ describe('strands CLI e2e', () => {
       )
       const out = join(cwd, 'out.txt')
       expect(existsSync(out)).toBe(true)
-      expect(readFileSync(out, 'utf8')).toContain('hello')
+      const content = readFileSync(out)
+      const encoding = content[0] === 0xff && content[1] === 0xfe ? 'utf16le' : 'utf8'
+      expect(content.toString(encoding)).toContain('hello')
     } finally {
       rmSync(cwd, { recursive: true, force: true })
       rmSync(home, { recursive: true, force: true })
