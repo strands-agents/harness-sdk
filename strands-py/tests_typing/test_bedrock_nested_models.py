@@ -2,7 +2,8 @@ from typing_extensions import assert_type
 
 from strands.models import BedrockModel
 from strands.models._bedrock_messages import BedrockMessagesModel
-from strands.models._bedrock_openai import BedrockChatCompletionsModel, BedrockResponsesModel
+from strands.models._bedrock_openai import BedrockChatCompletionsModel
+from strands.models._bedrock_openai_responses import BedrockResponsesModel
 
 
 def annotate(

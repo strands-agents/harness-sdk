@@ -185,15 +185,33 @@ def test_missing_sdk_is_reported_as_an_absent_attribute(blocked, name, message):
     subprocess.run([sys.executable, "-c", code], check=True)
 
 
-def test_an_unusable_sdk_is_reported_as_an_absent_attribute(monkeypatch):
-    def fail(*args, **kwargs):
-        raise ImportError("OpenAIResponsesModel requires openai>=2.0.0 (found 1.99.0)")
+def test_openai_1x_keeps_chat_completions_and_reports_responses_as_unavailable():
+    code = (
+        "import importlib.metadata as m; real = m.version\n"
+        "m.version = lambda name: '1.99.0' if name == 'openai' else real(name)\n"
+        "from strands.models import BedrockModel\n"
+        "assert BedrockModel.ChatCompletions.__name__ == 'BedrockChatCompletionsModel'\n"
+        "assert not hasattr(BedrockModel, 'Responses')\n"
+        "try:\n    BedrockModel.Responses\nexcept AttributeError as e:\n"
+        "    assert str(e).startswith('BedrockModel.Responses is unavailable: OpenAIResponsesModel requires "
+        "openai>=2.0.0 (found 1.99.0)'), str(e)"
+    )
 
-    monkeypatch.setattr(importlib, "import_module", fail)
+    subprocess.run([sys.executable, "-c", code], check=True)
 
-    assert not hasattr(BedrockModel, "Responses")
-    with pytest.raises(AttributeError, match=r"^BedrockModel\.Responses is unavailable: .*openai>=2\.0\.0"):
-        BedrockModel.Responses  # noqa: B018
+
+def test_a_missing_vendor_submodule_is_reported_as_an_absent_attribute():
+    code = (
+        "import sys; sys.modules['anthropic.lib'] = None\n"
+        "import inspect\n"
+        "from strands.models import BedrockModel\n"
+        "assert not hasattr(BedrockModel, 'Messages')\n"
+        "inspect.getmembers(BedrockModel)\n"
+        "try:\n    BedrockModel.Messages\nexcept AttributeError as e:\n"
+        "    assert str(e).startswith('BedrockModel.Messages is unavailable: '), str(e)"
+    )
+
+    subprocess.run([sys.executable, "-c", code], check=True)
 
 
 def test_runtime_streams_through_invoke_model_signed_by_the_sdk(captured_requests):

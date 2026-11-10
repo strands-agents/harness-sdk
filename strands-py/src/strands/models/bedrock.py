@@ -249,14 +249,12 @@ class _LazyModelClass:
         # AttributeError, not ImportError, so hasattr, help(), and inspect treat the class as absent.
         try:
             module = importlib.import_module(self._module, __package__)
-        except ModuleNotFoundError as error:
-            if error.name != self._package:
-                raise
-            raise AttributeError(
-                f"{self._attribute} uses the {self._package} SDK, which is not installed: pip install {self._package}"
-            ) from error
         except ImportError as error:
-            raise AttributeError(f"{self._attribute} is unavailable: {error}") from error
+            if error.name == self._package:
+                reason = f"uses the {self._package} SDK, which is not installed: pip install {self._package}"
+            else:
+                reason = f"is unavailable: {error}"
+            raise AttributeError(f"{self._attribute} {reason}") from error
         return getattr(module, self._name)
 
 
@@ -279,11 +277,11 @@ class BedrockModel(Model):
     if TYPE_CHECKING:
         from ._bedrock_messages import BedrockMessagesModel as Messages
         from ._bedrock_openai import BedrockChatCompletionsModel as ChatCompletions
-        from ._bedrock_openai import BedrockResponsesModel as Responses
+        from ._bedrock_openai_responses import BedrockResponsesModel as Responses
     else:
         Messages = _LazyModelClass("._bedrock_messages", "BedrockMessagesModel", "anthropic")
         ChatCompletions = _LazyModelClass("._bedrock_openai", "BedrockChatCompletionsModel", "openai")
-        Responses = _LazyModelClass("._bedrock_openai", "BedrockResponsesModel", "openai")
+        Responses = _LazyModelClass("._bedrock_openai_responses", "BedrockResponsesModel", "openai")
 
     class BedrockConfig(BaseModelConfig, total=False):
         """Configuration options for Bedrock models.

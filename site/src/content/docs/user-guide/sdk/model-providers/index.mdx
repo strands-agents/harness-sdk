@@ -112,7 +112,8 @@ Most providers are available as optional dependencies. Install the provider you 
 <Tab label="Python">
 
 ```bash
-# Amazon Bedrock (BedrockModel) is included in the base install
+# Amazon Bedrock (BedrockModel) is included in the base install. BedrockModel.Messages uses the
+# anthropic SDK and BedrockModel.ChatCompletions / .Responses use the openai SDK; install those yourself.
 pip install strands-agents
 
 # Install with specific provider

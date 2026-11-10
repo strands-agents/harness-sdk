@@ -6,7 +6,8 @@ import pytest
 
 from strands import Agent
 from strands.models import BedrockModel
-from strands.models._bedrock_openai import BedrockChatCompletionsModel, BedrockResponsesModel
+from strands.models._bedrock_openai import BedrockChatCompletionsModel
+from strands.models._bedrock_openai_responses import BedrockResponsesModel
 from strands.models.openai import OpenAIModel
 from strands.models.openai_responses import OpenAIResponsesModel
 
