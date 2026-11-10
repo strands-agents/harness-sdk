@@ -8,7 +8,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from watchdog.events import FileSystemEventHandler
+from watchdog.events import FileModifiedEvent, FileSystemEventHandler
 from watchdog.observers import Observer
 
 from .registry import ToolRegistry
@@ -98,16 +98,18 @@ class ToolWatcher:
         def on_created(self, event: Any) -> None:
             """Reload tools when a new file appears in a watched directory.
 
-            This master handler is the only one scheduled with the Observer, so it must handle on_created too. A file
-            written in place usually raises on_modified as well, which the handler above already catches, but a file
-            moved or renamed into the directory raises on_created alone and would otherwise be dropped - for example
-            the first tool copied into an empty tools directory. reload_tool loads a new file the same as a changed
-            one and is safe to call again for a follow-up on_modified, so route creations through on_modified.
-
             Args:
                 event: The file system event that triggered this handler.
             """
             self.on_modified(event)
+
+        def on_moved(self, event: Any) -> None:
+            """Reload tools when a file is renamed or moved into a watched directory.
+
+            Args:
+                event: The file system event that triggered this handler.
+            """
+            self.on_modified(FileModifiedEvent(event.dest_path))
 
     def start(self) -> None:
         """Start watching all tools directories for changes."""
