@@ -36,6 +36,8 @@ export interface BackgroundAgentActivity {
 
 interface MutableActivity extends Omit<BackgroundAgentActivity, 'entries'> {
   entries: BackgroundAgentActivityEntry[]
+  stream?: PassThrough
+  result?: Extract<AgentStreamEvent, { type: 'agentResultEvent' }>
 }
 
 export class BackgroundAgentActivityStore {
@@ -44,7 +46,6 @@ export class BackgroundAgentActivityStore {
   private readonly _toolTasks = new Map<string, string>()
   private readonly _taskListeners = new Map<string, Set<(activity: BackgroundAgentActivity | undefined) => void>>()
   private readonly _inbox: BackgroundAgentInbox | undefined
-  private readonly _streams = new Map<string, PassThrough>()
 
   constructor(inbox?: BackgroundAgentInbox) {
     this._inbox = inbox
@@ -72,21 +73,24 @@ export class BackgroundAgentActivityStore {
       return
     }
     projectAgentEvent(activity, event.event)
-    this._streams.get(toolUseId)?.write(event.event)
+    if (event.event.type === 'agentResultEvent') activity.result = event.event
+    activity.stream?.write(event.event)
     this._notifyTool(toolUseId)
   }
 
   readonly onComplete = (event: { toolUseId: string }): void => {
     const toolUseId = sanitizeTerminalText(event.toolUseId)
+    const activity = this._activities.get(toolUseId)
     this._settle(toolUseId, 'completed')
-    this._streams.get(toolUseId)?.end()
+    activity?.stream?.end()
     this._inbox?.complete(toolUseId)
   }
 
   readonly onError = (event: { toolUseId: string; error: Error }): void => {
     const toolUseId = sanitizeTerminalText(event.toolUseId)
+    const activity = this._activities.get(toolUseId)
     this._settle(toolUseId, 'failed', event.error.message)
-    this._streams.get(toolUseId)?.destroy(event.error)
+    activity?.stream?.end()
     this._inbox?.complete(toolUseId)
   }
 
@@ -156,9 +160,19 @@ export class BackgroundAgentActivityStore {
     return this._inbox?.run(toolUseId, operation) ?? operation()
   }
 
-  async *follow(toolUseId: string, agent: Agent): AsyncGenerator<ChatEvent, ChatRunResult, undefined> {
+  follow(toolUseId: string, agent: Agent): AsyncGenerator<ChatEvent, ChatRunResult, undefined> {
+    const activity = this._activities.get(toolUseId)
     const stream = new PassThrough({ objectMode: true })
-    this._streams.set(toolUseId, stream)
+    if (activity) activity.stream = stream
+    if (activity?.status !== 'working') stream.end()
+    return this._follow(activity, agent, stream)
+  }
+
+  private async *_follow(
+    activity: MutableActivity | undefined,
+    agent: Agent,
+    stream: PassThrough
+  ): AsyncGenerator<ChatEvent, ChatRunResult, undefined> {
     let result: AgentResult | undefined
     try {
       for await (const event of stream as AsyncIterable<AgentStreamEvent>) {
@@ -166,10 +180,12 @@ export class BackgroundAgentActivityStore {
         if (event.type === 'agentResultEvent') result = event.result
         yield* projectChatEvent(event)
       }
+      if (activity?.status === 'failed') throw new Error(activity.error ?? 'Subagent failed.')
+      result ??= activity?.result?.agent === agent ? activity.result.result : undefined
       if (!result) throw new Error('Subagent ended without a result.')
       return projectAgentResult(agent, result)
     } finally {
-      this._streams.delete(toolUseId)
+      if (activity?.stream === stream) delete activity.stream
       stream.destroy()
     }
   }
