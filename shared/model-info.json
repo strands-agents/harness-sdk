@@ -112,6 +112,19 @@
         "temporaryMessages": true
       }
     },
+    "claude-fable-5-2": {
+      "limits": {
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000
+      },
+      "capabilities": {
+        "promptCaching": "cachePoints",
+        "forcedToolChoice": false,
+        "nativeStructuredOutput": true,
+        "serverSideSummary": true,
+        "temporaryMessages": true
+      }
+    },
     "claude-sonnet-5": {
       "limits": {
         "contextWindow": 1000000,
@@ -254,6 +267,19 @@
       },
       "capabilities": {
         "promptCaching": "cachePoints"
+      }
+    },
+    "claude-mythos-5-2": {
+      "limits": {
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000
+      },
+      "capabilities": {
+        "promptCaching": "cachePoints",
+        "forcedToolChoice": false,
+        "nativeStructuredOutput": true,
+        "serverSideSummary": true,
+        "temporaryMessages": true
       }
     },
     "claude-mythos-preview": {
