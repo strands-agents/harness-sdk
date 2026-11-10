@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import warnings
 from dataclasses import replace
 from typing import Any
 
@@ -66,6 +67,9 @@ class _ClassifierModel(MockedModelProvider):
         yield {"output": output_model.model_validate({"candidate": {"answer": self.key}})}
 
 
+_NO_ANSWER = object()
+
+
 class _RecordingDecisionModel(DecisionModel):
     """A decision model that records each ask and returns a fixed answer."""
 
@@ -94,9 +98,8 @@ class _RecordingDecisionModel(DecisionModel):
             raise
         if self.error is not None:
             raise self.error
-        return DecisionResult(
-            answers={"candidate": self.answer}, metadata=DecisionMetadata(latency_ms=1), usage=self.usage
-        )
+        answers = {} if self.answer is _NO_ANSWER else {"candidate": self.answer}
+        return DecisionResult(answers=answers, metadata=DecisionMetadata(latency_ms=1), usage=self.usage)
 
 
 class _ConfigGuardModel(MockedModelProvider):
@@ -470,6 +473,15 @@ async def test_select_keeps_the_classifier_system_prompt_free_of_the_policy_and_
     assert "POLICY-MARKER" in json.dumps(classifier.output_models[0].model_json_schema())
 
 
+@pytest.mark.parametrize(
+    "options", [{}, {"routing_policy": "Prefer the cheapest candidate."}], ids=["default", "policy"]
+)
+def test_constructor_emits_no_deprecation_warning_without_system_prompt(options):
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", DeprecationWarning)
+        ClassifierStrategy(_RecordingDecisionModel(), **options)
+
+
 @pytest.mark.asyncio
 async def test_select_accepts_the_deprecated_system_prompt_as_the_routing_policy():
     decision_model = _RecordingDecisionModel()
@@ -524,7 +536,11 @@ async def test_select_classifier_failure_warns_safely_and_declines(classifier, r
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("answer", ["c9", Uncertain("unsure"), True], ids=["unknown-key", "uncertain", "boolean"])
+@pytest.mark.parametrize(
+    "answer",
+    ["c9", "second", Uncertain("unsure"), True, _NO_ANSWER],
+    ids=["unknown-key", "candidate-name", "uncertain", "boolean", "missing"],
+)
 async def test_select_declines_an_answer_that_names_no_candidate(answer, caplog):
     router = _router(_RecordingDecisionModel(answer))
 
