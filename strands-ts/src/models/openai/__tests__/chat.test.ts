@@ -3,7 +3,7 @@ import OpenAI, { APIUserAbortError } from 'openai'
 import { isNode } from '../../../__fixtures__/environment.js'
 import { OpenAIModel } from '../index.js'
 import { ContextWindowOverflowError, ModelThrottledError } from '../../../errors.js'
-import { collectIterator } from '../../../__fixtures__/model-test-helpers.js'
+import { collectIterator, collectGenerator } from '../../../__fixtures__/model-test-helpers.js'
 import { Message, TextBlock, ToolUseBlock, ToolResultBlock, GuardContentBlock } from '../../../types/messages.js'
 import type { SystemContentBlock } from '../../../types/messages.js'
 import { ImageBlock, DocumentBlock, VideoBlock } from '../../../types/media.js'
@@ -1064,6 +1064,86 @@ describe('OpenAIModel', () => {
       expect(stopEvents).toHaveLength(2)
       expect(stopEvents[0]).toEqual({ type: 'modelContentBlockStopEvent' })
       expect(stopEvents[1]).toEqual({ type: 'modelContentBlockStopEvent' })
+    })
+
+    it('streams the first tool before the provider finishes', async () => {
+      let finished = false
+      const client = createMockClient(async function* () {
+        yield {
+          choices: [
+            {
+              index: 0,
+              delta: {
+                tool_calls: [
+                  { index: 0, id: 'first', function: { name: 'lookup', arguments: '{"key":' } },
+                  { index: 1, id: 'second', function: { name: 'lookup', arguments: '{"key":"b"}' } },
+                ],
+              },
+            },
+          ],
+        }
+        yield { choices: [{ index: 0, delta: { tool_calls: [{ index: 0, function: { arguments: '"a"}' } }] } }] }
+        finished = true
+        yield { choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] }
+      })
+      const provider = new OpenAIModel({ api: 'chat', client })
+      const streamed = []
+      for await (const event of provider.stream([
+        new Message({ role: 'user', content: [new TextBlock('Look up both')] }),
+      ])) {
+        if (event.type === 'modelContentBlockDeltaEvent' && event.delta.type === 'toolUseInputDelta') {
+          streamed.push({ input: event.delta.input, finished })
+        }
+      }
+      expect(streamed).toEqual([
+        { input: '{"key":', finished: false },
+        { input: '"a"}', finished: false },
+        { input: '{"key":"b"}', finished: true },
+      ])
+    })
+
+    it('preserves interleaved tool arguments through message aggregation', async () => {
+      const client = createMockClient(async function* () {
+        yield { choices: [{ index: 0, delta: { role: 'assistant', content: 'Working.' } }] }
+        yield {
+          choices: [
+            {
+              index: 0,
+              delta: {
+                tool_calls: [
+                  { index: 0, id: 'front', function: { name: 'enableAppMode', arguments: '{"mode":' } },
+                  { index: 1, id: 'back', function: { name: 'manageTodos', arguments: '{"title":' } },
+                ],
+              },
+            },
+          ],
+        }
+        yield {
+          choices: [
+            {
+              index: 0,
+              delta: {
+                tool_calls: [
+                  { index: 1, function: { arguments: '"Cedar"}' } },
+                  { index: 0, function: { arguments: '"app"}' } },
+                ],
+              },
+            },
+          ],
+        }
+        yield { choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] }
+      })
+      const provider = new OpenAIModel({ api: 'chat', client })
+      const { result } = await collectGenerator(
+        provider.streamAggregated([
+          new Message({ role: 'user', content: [new TextBlock('Enable mode and save Cedar')] }),
+        ])
+      )
+      expect(result.message.content).toEqual([
+        new TextBlock('Working.'),
+        new ToolUseBlock({ toolUseId: 'front', name: 'enableAppMode', input: { mode: 'app' } }),
+        new ToolUseBlock({ toolUseId: 'back', name: 'manageTodos', input: { title: 'Cedar' } }),
+      ])
     })
 
     it('skips tool calls with invalid index', async () => {
