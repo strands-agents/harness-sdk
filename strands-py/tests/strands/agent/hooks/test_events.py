@@ -14,6 +14,7 @@ from strands.hooks import (
     BeforeToolCallEvent,
     BeforeToolsEvent,
     MessageAddedEvent,
+    ModelStreamUpdateEvent,
 )
 from strands.types.content import Message, Messages
 from strands.types.tools import ToolResult, ToolUse
@@ -352,3 +353,19 @@ def test_before_model_call_event_projected_input_tokens_not_writable(agent):
     event = BeforeModelCallEvent(agent=agent, projected_input_tokens=500)
     with pytest.raises(AttributeError, match="Property projected_input_tokens is not writable"):
         event.projected_input_tokens = 1000
+
+
+def test_model_stream_update_event_fields_default_and_writability(agent):
+    chunk = {"contentBlockDelta": {"delta": {"text": "hello"}}}
+
+    tru_event = ModelStreamUpdateEvent(agent=agent, chunk=chunk)
+    exp_event = ModelStreamUpdateEvent(agent=agent, chunk=chunk, invocation_state={})
+    assert tru_event == exp_event
+    assert tru_event.should_reverse_callbacks is False
+
+    with pytest.raises(AttributeError, match="Property agent is not writable"):
+        tru_event.agent = Mock()
+    with pytest.raises(AttributeError, match="Property chunk is not writable"):
+        tru_event.chunk = {}
+    with pytest.raises(AttributeError, match="Property invocation_state is not writable"):
+        tru_event.invocation_state = {}

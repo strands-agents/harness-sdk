@@ -23,38 +23,3 @@ The hooks system enables extensible agent functionality through strongly-typed e
 ## Writable Properties
 
 Some events have writable properties that modify agent behavior. Values are re-read after callbacks complete. For example, `BeforeToolCallEvent.selected_tool` is writable - after invoking the callback, the modified `selected_tool` takes effect for the tool call.
-
-## Available Events
-
-### Model Streaming Events
-
-#### `ModelStreamChunkEvent`
-
-Fired for each raw streaming chunk received from the model during response generation. This event allows hook providers to observe streaming progress in real-time.
-
-**Attributes:**
-- `agent`: The agent instance that triggered this event
-- `chunk`: The raw streaming chunk (`StreamEvent`) from the model response
-
-**Use Cases:**
-- Logging streaming progress
-- Collecting metrics on streaming performance
-- Content filtering during streaming
-- Real-time monitoring of model output
-
-**Example:**
-```python
-from strands.hooks import HookProvider, HookRegistry
-from strands.hooks.events import ModelStreamChunkEvent
-
-class StreamingLogger(HookProvider):
-    def register_hooks(self, registry: HookRegistry) -> None:
-        registry.add_callback(ModelStreamChunkEvent, self.on_chunk)
-
-    def on_chunk(self, event: ModelStreamChunkEvent) -> None:
-        # Log each streaming chunk
-        if "contentBlockDelta" in event.chunk:
-            print(f"Received delta: {event.chunk}")
-
-agent = Agent(hooks=[StreamingLogger()])
-```

@@ -407,18 +407,25 @@ class AfterModelCallEvent(HookEvent):
 
 
 @dataclass
-class ModelStreamChunkEvent(HookEvent):
-    """Event triggered for each streaming chunk from the model.
+class ModelStreamUpdateEvent(HookEvent):
+    """Event triggered for each chunk the model streams.
 
-    This event is fired during model streaming for each chunk received,
-    allowing hook providers to observe streaming progress, implement
-    logging, collect metrics, or perform content filtering.
+    This event is fired between BeforeModelCallEvent and AfterModelCallEvent, once per
+    chunk and before the chunk is yielded to the caller. It is read-only: ``chunk`` is a
+    copy, so modifying it does not change the model response. When a model call is
+    retried, the event fires again for the chunks of the new attempt.
+
+    Note: This event is not fired for invocations to structured_output.
 
     Attributes:
-        chunk: The raw streaming chunk from the model response.
+        chunk: The raw streaming chunk from the model.
+        invocation_state: State and configuration passed through the agent invocation.
+            This can include shared context for multi-agent coordination, request tracking,
+            and dynamic configuration.
     """
 
     chunk: StreamEvent
+    invocation_state: dict[str, Any] = field(default_factory=dict)
 
 
 # Multiagent hook events start here

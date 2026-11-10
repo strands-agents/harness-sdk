@@ -7,7 +7,7 @@ import threading
 import time
 import warnings
 from collections.abc import AsyncGenerator, AsyncIterable
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from pydantic import BaseModel
 
@@ -44,9 +44,6 @@ from ..types.streaming import (
     Usage,
 )
 from ..types.tools import ToolSpec, ToolUse
-
-if TYPE_CHECKING:
-    from ..agent import Agent
 
 logger = logging.getLogger(__name__)
 
@@ -451,9 +448,6 @@ async def process_stream(
     Yields:
         The reason for stopping, the constructed message, and the usage metrics.
     """
-    # Import here to avoid circular imports
-    from ..hooks.events import ModelStreamChunkEvent as ModelStreamChunkHookEvent
-
     stop_reason: StopReason = "end_turn"
     saw_message_stop = False
     first_byte_time = None
@@ -489,10 +483,6 @@ async def process_stream(
         if first_byte_time is None and ("contentBlockDelta" in chunk or "contentBlockStart" in chunk):
             first_byte_time = time.time()
         yield ModelStreamChunkEvent(chunk=chunk)
-
-        # Invoke hook for streaming chunk if agent is provided
-        if agent is not None:
-            await agent.hooks.invoke_callbacks_async(ModelStreamChunkHookEvent(agent=agent, chunk=chunk))
 
         if "messageStart" in chunk:
             state["message"] = handle_message_start(chunk["messageStart"], state["message"])

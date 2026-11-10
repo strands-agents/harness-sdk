@@ -25,6 +25,7 @@ from strands.hooks import (
     BeforeToolsEvent,
     HookRegistry,
     MessageAddedEvent,
+    ModelStreamUpdateEvent,
 )
 from strands.interrupt import Interrupt, PendingToolExecution, _InterruptState
 from strands.telemetry.metrics import EventLoopMetrics, Trace
@@ -2613,3 +2614,42 @@ async def test_event_loop_cycle_cancel_after_tools_stops_without_checkpointing(
 
     assert events[-1]["stop"][0] == "cancelled"
     assert model.stream.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_event_loop_cycle_model_stream_update_hooks_skipped_without_callbacks(
+    agent, model, hook_registry, agenerator, alist
+):
+    chunks = [{"contentBlockDelta": {"delta": {"text": "test text"}}}, {"contentBlockStop": {}}]
+    model.stream.return_value = agenerator(chunks)
+
+    with patch.object(hook_registry, "invoke_callbacks_async", wraps=hook_registry.invoke_callbacks_async) as invoke:
+        stream = strands.event_loop.event_loop.event_loop_cycle(agent=agent, invocation_state={})
+        events = await alist(stream)
+
+    tru_chunks = [event["event"] for event in events if "event" in event]
+    assert tru_chunks == chunks
+
+    tru_event_types = [type(invoke_call.args[0]) for invoke_call in invoke.call_args_list]
+    exp_event_types = [BeforeModelCallEvent, AfterModelCallEvent, MessageAddedEvent]
+    assert tru_event_types == exp_event_types
+
+
+@patch("strands.event_loop.event_loop.get_tracer")
+@pytest.mark.asyncio
+async def test_event_loop_cycle_model_stream_update_hook_exception_ends_model_span(
+    mock_get_tracer, agent, model, mock_tracer, hook_registry, agenerator, alist
+):
+    mock_get_tracer.return_value = mock_tracer
+    model_span = mock_tracer.start_model_invoke_span.return_value
+    model.stream.return_value = agenerator(
+        [{"contentBlockDelta": {"delta": {"text": "test text"}}}, {"contentBlockStop": {}}]
+    )
+    hook_registry.add_callback(ModelStreamUpdateEvent, MagicMock(side_effect=RuntimeError("stop streaming")))
+
+    stream = strands.event_loop.event_loop.event_loop_cycle(agent=agent, invocation_state={})
+    with pytest.raises(RuntimeError, match="stop streaming"):
+        await alist(stream)
+
+    mock_tracer.end_span_with_cancellation.assert_called_once_with(model_span, ANY)
+    mock_tracer.end_model_invoke_span.assert_not_called()

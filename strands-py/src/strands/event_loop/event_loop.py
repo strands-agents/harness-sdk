@@ -25,7 +25,13 @@ from ..agent.invocation_context import (
     _reached_limit,
 )
 from ..experimental.checkpoint import Checkpoint, CheckpointPosition
-from ..hooks import AfterModelCallEvent, AfterToolsEvent, BeforeModelCallEvent, BeforeToolsEvent
+from ..hooks import (
+    AfterModelCallEvent,
+    AfterToolsEvent,
+    BeforeModelCallEvent,
+    BeforeToolsEvent,
+    ModelStreamUpdateEvent,
+)
 from ..interrupt import InterruptException, PendingToolExecution
 from ..middleware.stages import InvokeModelContext, InvokeModelStage
 from ..telemetry.metrics import Trace, _total_prompt_tokens
@@ -37,6 +43,7 @@ from ..types._events import (
     ForceStopEvent,
     ModelMessageEvent,
     ModelStopReason,
+    ModelStreamChunkEvent,
     StartEvent,
     StartEventLoopEvent,
     StructuredOutputEvent,
@@ -587,6 +594,32 @@ async def _invoke_before_model_call_hooks(agent: "Agent", event: BeforeModelCall
     raise InterruptException(interrupts[0])
 
 
+async def _invoke_model_stream_update_hooks(
+    agent: "Agent",
+    model_events: AsyncGenerator[Any, None],
+    invocation_state: dict[str, Any],
+    invocation_context: InvocationContext,
+) -> AsyncGenerator[Any, None]:
+    """Run ModelStreamUpdateEvent hooks on each model stream chunk before yielding it.
+
+    Hooks receive a copy of the chunk, so they cannot change the message assembled from it.
+    """
+    try:
+        async for event in model_events:
+            if isinstance(event, ModelStreamChunkEvent) and agent.hooks._has_callbacks_for(ModelStreamUpdateEvent):
+                await agent.hooks.invoke_callbacks_async(
+                    ModelStreamUpdateEvent(
+                        agent=agent,
+                        chunk=copy.deepcopy(event.chunk),
+                        invocation_state=invocation_state,
+                        invocation_context=invocation_context,
+                    )
+                )
+            yield event
+    finally:
+        await model_events.aclose()
+
+
 async def _handle_model_execution(
     agent: "Agent",
     cycle_span: Any,
@@ -732,10 +765,13 @@ async def _handle_model_execution(
             # Run through the middleware chain. The ModelStopReason is the stage result; middleware
             # may yield other events around it, so it is selected by type and the last one wins.
             stop_event: ModelStopReason | None = None
-            async for event in agent._middleware_registry.invoke(
+            model_events = agent._middleware_registry.invoke(
                 InvokeModelStage,
                 middleware_context,
                 _make_invoke_model_terminal(agent, cycle_span, tracer, model_state_snapshot, invocation_context),
+            )
+            async for event in _invoke_model_stream_update_hooks(
+                agent, model_events, invocation_state, invocation_context
             ):
                 if isinstance(event, ModelStopReason):
                     stop_event = event
@@ -918,6 +954,10 @@ def _make_invoke_model_terminal(
                 tracer.end_model_invoke_span(model_invoke_span, message, usage, metrics, stop_reason)
             except Exception as e:
                 tracer.end_span_with_error(model_invoke_span, str(e), e)
+                raise
+            except GeneratorExit as cancellation:
+                # The stream was closed early, for example by a ModelStreamUpdateEvent hook that raised.
+                tracer.end_span_with_cancellation(model_invoke_span, cancellation)
                 raise
 
     return terminal

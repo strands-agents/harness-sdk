@@ -422,6 +422,17 @@ class HookRegistry:
         """
         return bool(self._registered_callbacks)
 
+    def _has_callbacks_for(self, event_type: type[BaseHookEvent]) -> bool:
+        """Check if the registry has any callbacks registered for the given event type.
+
+        Args:
+            event_type: The event type to check.
+
+        Returns:
+            True if there are callbacks registered for the event type, False otherwise.
+        """
+        return bool(self._registered_callbacks.get(event_type))
+
     def get_callbacks_for(self, event: TEvent) -> Generator[HookCallback[TEvent], None, None]:
         """Get callbacks registered for the given event in the appropriate order.
 
