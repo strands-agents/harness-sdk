@@ -1,0 +1,400 @@
+import { createElement as h } from 'react'
+import { Box, renderToString } from 'ink'
+import chalk from 'chalk'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+import { DEFAULT_CHAT_SETTINGS, FROG_THEMES, THEME_COLOR_KEYS, type ChatSettings } from '../../src/ui/chat/types.js'
+import { Markdown } from '../../src/ui/markdown.js'
+import { MediaView } from '../../src/ui/media.js'
+import { contextColor, detailLines, permissionLines } from '../../src/ui/presentation.js'
+import { PromptEditor } from '../../src/ui/chat/prompt.js'
+import { SettingsControl } from '../../src/ui/panels/settings.js'
+import {
+  currentCanvasColor,
+  currentColorMode,
+  observeTerminalColorMode,
+  subscribeColorMode,
+} from '../../src/terminal/theme-detection.js'
+import { getTheme, Text, ThemeProvider } from '../../src/ui/theme.js'
+import { ChatView } from '../../src/ui/chat/view.js'
+import { SetupWizard } from '../../src/ui/setup/wizard.js'
+import { CliConfigStore } from '../../src/config/store.js'
+import { snapshot } from '../fixtures/chat-snapshot.js'
+import { render, ttyInput, ttyOutput } from '../fixtures/terminal.js'
+
+const colorLevel = chalk.level
+
+beforeEach(() => {
+  chalk.level = 3
+})
+
+afterEach(() => {
+  chalk.level = colorLevel
+  vi.unstubAllEnvs()
+})
+
+function settings(frogTheme: ChatSettings['frogTheme'] = 'green'): ChatSettings {
+  return { ...DEFAULT_CHAT_SETTINGS, frogTheme }
+}
+
+function ansi(hex: string, background = false): string {
+  const channels = [1, 3, 5].map((offset) => Number.parseInt(hex.slice(offset, offset + 2), 16))
+  return `\u001b[${background ? 48 : 38};2;${channels.join(';')}m`
+}
+
+function luminance(hex: string): number {
+  const channels = [1, 3, 5].map((offset) => {
+    const channel = Number.parseInt(hex.slice(offset, offset + 2), 16) / 255
+    return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4
+  })
+  return channels[0]! * 0.2126 + channels[1]! * 0.7152 + channels[2]! * 0.0722
+}
+
+describe('theme resolution', () => {
+  it.each(FROG_THEMES)('provides readable light and dark colors for %s', (name) => {
+    for (const mode of ['light', 'dark'] as const) {
+      const theme = getTheme(settings(name), mode)
+      expect(theme.mode).toBe(mode)
+      for (const key of name === 'green' ? THEME_COLOR_KEYS : (['accent'] as const)) {
+        expect(theme[key]).toMatch(/^#[\da-f]{6}$/i)
+      }
+      const textColors =
+        name === 'green'
+          ? (['foreground', 'muted', 'accent', 'hover', 'success', 'warning', 'error'] as const)
+          : (['accent'] as const)
+      for (const foreground of textColors) {
+        for (const background of ['background', 'surface', 'panel', 'selection'] as const) {
+          const light = Math.max(luminance(theme[foreground]), luminance(theme[background]))
+          const dark = Math.min(luminance(theme[foreground]), luminance(theme[background]))
+          const description = `${name}/${mode}: ${foreground} on ${background}`
+          expect((light + 0.05) / (dark + 0.05), description).toBeGreaterThanOrEqual(4.5)
+        }
+      }
+    }
+  })
+})
+
+describe('terminal background detection', () => {
+  it.each([
+    ['0000/0000/0000', 'dark'],
+    ['ffff/ffff/ffff', 'light'],
+  ] as const)('resolves delayed split OSC 11 rgb:%s to %s without consuming typed input', async (rgb, mode) => {
+    const input = ttyInput()
+    const output = ttyOutput(80, 24)
+    let query = ''
+    output.on('data', (chunk: Buffer) => {
+      query += chunk.toString()
+    })
+
+    const observer = observeTerminalColorMode(input, output)
+    await vi.waitFor(() => expect(query).toBe('\u001b[?2031h\u001b]11;?\u001b\\'))
+    input.write(`x\u001b]11;rgb:${rgb.slice(0, 9)}`)
+    await vi.waitFor(() => expect(observer.input.readableLength).toBe(1))
+    input.write(`${rgb.slice(9)}\u001b\\`)
+
+    await observer.ready
+    expect(getTheme(settings()).mode).toBe(mode)
+    expect(currentCanvasColor()).toBe(mode === 'dark' ? '#000000' : '#ffffff')
+    expect(getTheme(settings()).canvas).toBe(currentCanvasColor())
+    expect(observer.input.read()?.toString()).toBe('x')
+    expect(input.setRawMode).toHaveBeenCalledExactlyOnceWith(true)
+    observer.dispose()
+    expect(query).toContain('\u001b[?2031l')
+  })
+
+  it('defaults to dark without a terminal', async () => {
+    const input = ttyInput()
+    input.isTTY = false
+    await observeTerminalColorMode(input, ttyOutput(80, 24)).ready
+    expect(currentColorMode()).toBe('dark')
+    expect(input.setRawMode).not.toHaveBeenCalled()
+  })
+
+  it('retains raw input until disposal and restores it even if terminal output closes', async () => {
+    const input = ttyInput()
+    vi.mocked(input.setRawMode).mockImplementation((raw) => {
+      input.isRaw = raw
+      return input
+    })
+    const output = ttyOutput(80, 24)
+    const observer = observeTerminalColorMode(input, output)
+    observer.input.setRawMode(false)
+    expect(input.isRaw).toBe(true)
+    vi.spyOn(output, 'write').mockImplementation(() => {
+      throw new Error('Terminal closed')
+    })
+    expect(() => observer.dispose()).toThrow('Terminal closed')
+    await observer.ready
+    expect(input.isRaw).toBe(false)
+  })
+
+  it('tracks terminal color-scheme notifications without passing them to Ink', async () => {
+    const input = ttyInput()
+    const output = ttyOutput(80, 24)
+    let terminalWrites = ''
+    output.on('data', (chunk: Buffer) => {
+      terminalWrites += chunk.toString()
+    })
+    const changed = vi.fn()
+    const unsubscribe = subscribeColorMode(changed)
+    const watcher = observeTerminalColorMode(input, output)
+    let forwarded = ''
+    watcher.input.on('data', (chunk: Buffer) => {
+      forwarded += chunk.toString()
+    })
+
+    try {
+      expect(terminalWrites).toBe('\u001b[?2031h\u001b]11;?\u001b\\')
+      input.write('\u001b]11;rgb:0000/0000/0000\u001b\\')
+      await watcher.ready
+      terminalWrites = ''
+      changed.mockClear()
+      input.write('a\u001b[?997;')
+      input.write('2nb')
+      await vi.waitFor(() => expect(terminalWrites).toContain('\u001b]11;?\u001b\\'))
+      input.write('\u001b]11;rgb:ffff/ffff/ffff\u001b\\')
+      await vi.waitFor(() => expect(currentColorMode()).toBe('light'))
+      expect(currentCanvasColor()).toBe('#ffffff')
+      expect(changed).toHaveBeenCalledOnce()
+      expect(forwarded).toBe('ab')
+      input.write('\u001b[?997;1n')
+      input.write('\u001b]11;rgb:0000/0000/0000\u001b\\')
+      await vi.waitFor(() => expect(currentColorMode()).toBe('dark'))
+    } finally {
+      unsubscribe()
+      watcher.dispose()
+    }
+  })
+})
+
+describe('themed Ink output', () => {
+  it.each(['light', 'dark'] as const)('leaves the terminal canvas unpainted in %s mode', async (mode) => {
+    const appearance = { ...settings(), animations: false }
+    for (const screen of ['chat', 'setup'] as const) {
+      const input = ttyInput()
+      const output = ttyOutput(120, 45)
+      let frame = ''
+      output.on('data', (chunk: Buffer) => {
+        if (chunk.toString().includes('\n')) frame = chunk.toString()
+      })
+      const children =
+        screen === 'chat'
+          ? h(ChatView, {
+              snapshot: snapshot({ settings: appearance }),
+              input: '',
+              cursor: 0,
+              terminalWidth: 120,
+              terminalHeight: 45,
+            })
+          : h(SetupWizard, {
+              config: CliConfigStore.memory({}, appearance),
+              checkForUpdate: async () => undefined,
+              onComplete: () => {},
+            })
+      const instance = render(h(ThemeProvider, { settings: appearance, detectedMode: mode, children }), {
+        stdin: input,
+        stdout: output,
+        stderr: output,
+        debug: true,
+        interactive: true,
+        patchConsole: false,
+        exitOnCtrlC: false,
+      })
+      try {
+        await instance.waitUntilRenderFlush()
+        expect(frame, screen).toContain('\n')
+        expect(frame.split('\n')[0], `${screen} canvas`).not.toMatch(/\[(?:48;|4[0-7]m|10[0-7]m)/u)
+      } finally {
+        instance.unmount()
+      }
+    }
+  })
+
+  it('restores the explicit foreground after composer commands', () => {
+    const theme = getTheme(settings(), 'light')
+    const input = '/model improve the response'
+    const output = renderToString(
+      h(ThemeProvider, {
+        settings: settings(),
+        detectedMode: 'light',
+        children: h(PromptEditor, {
+          input,
+          cursor: input.length,
+          actionableCommandToken: '/model',
+        }),
+      })
+    )
+    expect(output).toContain(`${ansi(theme.accent)}/model${ansi(theme.foreground)} improve the respons`)
+  })
+
+  it('preserves an explicit text background through nested styles inside a panel', () => {
+    const theme = getTheme(settings(), 'light')
+    const output = renderToString(
+      h(ThemeProvider, {
+        settings: settings(),
+        detectedMode: 'light',
+        children: h(
+          Box,
+          { backgroundColor: theme.panel },
+          h(Text, { backgroundColor: 'red', color: theme.panel }, 'background ', h(Text, { bold: true }, 'child'))
+        ),
+      })
+    )
+    expect(output).toContain(`${ansi(theme.error, true)}${ansi(theme.panel)}background \u001b[1mchild`)
+  })
+
+  it('preserves inherited styles and semantic colors', () => {
+    const theme = getTheme(settings(), 'light')
+    const output = renderToString(
+      h(ThemeProvider, {
+        settings: settings(),
+        detectedMode: 'light',
+        children: h(
+          Box,
+          { flexDirection: 'column' },
+          h(Text, null, 'plain'),
+          h(Text, { color: 'white' }, 'neutral'),
+          h(Text, { color: 'red' }, 'parent ', h(Text, { bold: true }, 'nested')),
+          h(Text, { color: 'green' }, 'success'),
+          h(Text, { color: 'yellow' }, 'warning'),
+          h(Text, { color: 'cyan' }, 'accent'),
+          h(Text, { color: 'magenta' }, 'hover'),
+          h(Text, { color: 'red', dimColor: true }, 'muted')
+        ),
+      })
+    )
+    expect(output).toContain(`${ansi(theme.foreground)}plain`)
+    expect(output).toContain(`${ansi(theme.foreground)}neutral`)
+    expect(output).toContain(`${ansi(theme.error)}parent \u001b[1mnested\u001b[22m`)
+    for (const key of ['success', 'warning', 'accent', 'hover', 'muted'] as const) {
+      expect(output).toContain(`${ansi(theme[key])}${key}`)
+    }
+    expect(output).not.toContain('\u001b[2m')
+  })
+
+  it('propagates the theme accent through child views', () => {
+    const custom = settings('homeland')
+    const theme = getTheme(custom, 'light')
+    const output = renderToString(
+      h(ThemeProvider, {
+        settings: custom,
+        detectedMode: 'light',
+        children: h(
+          Box,
+          { width: 80, height: 28, flexDirection: 'column' },
+          h(Markdown, {
+            children: '# Heading **bold**\n\n`code` and [link](https://example.com)\n\n> Quote\n\n- item',
+          }),
+          h(PromptEditor, { input: 'draft', cursor: 2, width: 60 }),
+          h(MediaView, {
+            content: { type: 'document', name: 'Notes', format: 'txt', source: { type: 'text', text: 'preview' } },
+          }),
+          h(SettingsControl, {
+            rowIndex: 0,
+            control: { kind: 'segmented', options: [{ label: 'Chosen', value: 'chosen', active: true }] },
+          })
+        ),
+      })
+    )
+    expect(output).toContain(ansi(theme.accent))
+    expect(output).toContain(ansi(theme.foreground))
+    expect(output).toContain(ansi(theme.surface, true))
+    expect(output).not.toContain(ansi('#202223', true))
+    expect(output).not.toContain(ansi('#181a1b', true))
+  })
+
+  it('updates mounted memoized content on terminal mode and theme changes', async () => {
+    const source = ttyInput()
+    const output = ttyOutput(80, 24)
+    const writes: string[] = []
+    output.on('data', (chunk: Buffer) => writes.push(chunk.toString()))
+    const watcher = observeTerminalColorMode(source, output)
+    source.write('\u001b]11;rgb:0000/0000/0000\u001b\\')
+    await watcher.ready
+    const child = h(Markdown, { children: '# Stable **heading**' })
+    const tree = (config = settings()) => h(ThemeProvider, { settings: config, children: child })
+    const instance = render(tree(), {
+      stdin: watcher.input,
+      stdout: output,
+      stderr: output,
+      interactive: true,
+      patchConsole: false,
+      exitOnCtrlC: false,
+    })
+    try {
+      await instance.waitUntilRenderFlush()
+      writes.length = 0
+      source.write('\u001b[?997;2n')
+      source.write('\u001b]11;rgb:ffff/ffff/ffff\u001b\\')
+      await vi.waitFor(() => expect(currentColorMode()).toBe('light'))
+      await instance.waitUntilRenderFlush()
+      expect(writes.join('')).toContain(ansi(getTheme(settings(), 'light').accent))
+      writes.length = 0
+      instance.rerender(tree(settings('merlin')))
+      await instance.waitUntilRenderFlush()
+      expect(writes.join('')).toContain(ansi(getTheme(settings('merlin'), 'light').accent))
+      expect(writes.join('')).not.toContain('\u001b]11;?')
+    } finally {
+      source.write('\u001b[?997;1n')
+      source.write('\u001b]11;rgb:0000/0000/0000\u001b\\')
+      await vi.waitFor(() => expect(currentColorMode()).toBe('dark'))
+      instance.unmount()
+      await instance.waitUntilExit()
+      watcher.dispose()
+    }
+  })
+
+  it('uses the supplied palette for permission, activity, and context colors', () => {
+    const palette = getTheme(settings('merlin'), 'light')
+    const details = permissionLines(
+      {
+        id: 'permission',
+        kind: 'permission',
+        title: 'Review',
+        rows: [],
+        request: {
+          id: 'request',
+          toolName: 'write',
+          input: { path: 'file.ts' },
+          options: [],
+          action: 'file.ts',
+          diff: {
+            path: 'file.ts',
+            lines: [
+              { kind: 'add', text: 'added' },
+              { kind: 'remove', text: 'removed' },
+            ],
+          },
+        },
+      },
+      80,
+      palette
+    )
+    expect(details.find((line) => line.label === 'Tool')).toMatchObject({ text: 'write', color: palette.accent })
+    expect(details.find((line) => line.label === 'Changes')).toMatchObject({ text: '+1 -1 lines' })
+    const activity = detailLines(
+      {
+        id: 'task',
+        kind: 'detail',
+        title: 'Task',
+        rows: [],
+        activity: {
+          toolUseId: 'tool',
+          name: 'Strands harness',
+          task: 'Work',
+          status: 'working',
+          entries: [{ type: 'tool', toolUseId: 'read', name: 'read', input: {}, status: 'running' }],
+        },
+      },
+      80,
+      palette
+    )
+    expect(activity.find((line) => line.text.includes('Read'))).toMatchObject({
+      color: palette.warning,
+      backgroundColor: palette.surface,
+    })
+    expect(contextColor({ currentTokens: 80, contextWindow: 100 }, palette)).toBe(palette.warning)
+    expect(contextColor({ currentTokens: 95, contextWindow: 100 }, palette)).toBe(palette.error)
+    expect(contextColor({}, palette)).toBe(palette.accent)
+  })
+})

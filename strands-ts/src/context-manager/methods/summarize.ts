@@ -13,6 +13,7 @@ import {
   GuardContentBlock,
   JsonBlock,
   Message,
+  SummaryBlock,
   TextBlock,
   ToolResultBlock,
   ToolUseBlock,
@@ -118,6 +119,7 @@ function toSummarizerBlocks(block: ContentBlock | ToolResultContent): ContentBlo
   if (block instanceof GuardContentBlock) {
     return [new TextBlock(block.text ? block.text.text : '[image omitted]')]
   }
+  if (block instanceof SummaryBlock) return [new TextBlock(block.text)]
   if (block instanceof VideoBlock) return [new TextBlock('[video omitted]')]
   if (block instanceof AudioBlock) return [new TextBlock('[audio omitted]')]
   return []

@@ -57,7 +57,7 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           missing=0 unverified=0
-          for repo in strands-agents/harness-sdk strands-agents/evals strands-agents/box; do
+          for repo in strands-agents/harness-sdk strands-agents/evals strands-agents/box strands-agents/shell; do
             code=0
             npm run -s changelog:sync -- --check --source-repo "$repo" || code=$?
             if [ "$code" = 1 ]; then missing=1; elif [ "$code" != 0 ]; then unverified=1; fi
