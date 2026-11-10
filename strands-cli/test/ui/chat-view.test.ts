@@ -7,6 +7,7 @@ import { snapshot } from '../fixtures/chat-snapshot.js'
 import { render, ttyOutput } from '../fixtures/terminal.js'
 
 import { ChatView } from '../../src/ui/chat/view.js'
+import { useStartupContentRows } from '../../src/ui/startup.js'
 import { TurnView } from '../../src/ui/chat/transcript-turn.js'
 import { Markdown } from '../../src/ui/markdown.js'
 import {
@@ -2978,19 +2979,44 @@ describe('ChatView', () => {
         { columns: 120 }
       )
     ).split('\n')
-  const brandAnimationRows = 24
+  const brandRows = 18
 
   it.each([
-    [50, 1],
-    [70, 11],
-  ])('shouldSpaceStartupContentEvenlyBelowTheBrandAnimationWhenTheTerminalHas%sRows', (terminalHeight, gap) => {
+    [50, 4],
+    [70, 14],
+  ])('shouldSpaceStartupContentEvenlyBelowTheBrandWhenTheTerminalHas%sRows', (terminalHeight, gap) => {
     const frame = startupFrame(terminalHeight)
     const top = frame.findIndex((line) => line.includes('╭'))
     const bottom = frame.findIndex((line) => line.includes('╰'))
 
-    expect(top - brandAnimationRows).toBe(gap)
+    expect(top - brandRows).toBe(gap)
     expect(frame.length - 1 - bottom).toBe(gap)
     expect(frame.join('\n')).not.toContain('/settings')
+  })
+
+  const StartupRowsProbe = (): ReactElement =>
+    createElement(Box, { height: useStartupContentRows() }, createElement(Text, {}, 'Startup rows'))
+
+  it.each([
+    [34, 10],
+    [40, 19],
+    [60, 19],
+  ])('shouldKeepStartupContentBelowTheBrandWhenItFillsItsRowsAt%sRows', (terminalHeight, top) => {
+    const frame = sanitizeTerminalText(
+      renderView(
+        {
+          snapshot: snapshot(),
+          terminalWidth: 120,
+          terminalHeight,
+          startupContent: createElement(StartupRowsProbe),
+        },
+        { columns: 120 }
+      )
+    ).split('\n')
+    const bottom = frame.findIndex((line) => line.includes('╰'))
+
+    expect(frame.findIndex((line) => line.includes('╭'))).toBe(top)
+    expect(frame.length - 1 - bottom).toBe(1)
   })
 
   it('shouldKeepStartupContentOneRowAboveTheBottomWhenTheBrandAnimationLeavesNoRoom', () => {

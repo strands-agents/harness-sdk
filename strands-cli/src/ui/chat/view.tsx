@@ -31,7 +31,7 @@ import { PromptEditor, promptContentSize, CommandPalette } from './prompt.js'
 import { ResourcePanel } from '../panels/panel.js'
 import { AgentsPanel, agentGridLayout, clampAgentGridViewport } from '../panels/agents.js'
 import { FROG_ANIMATION_HEIGHT, FrogEasterEgg, type FrogVariant, VOICE_FROG_HEIGHT, VoiceFrog } from '../frog.js'
-import { StartupView, startupHeaderLayout, useBrandAnimation } from '../startup.js'
+import { StartupContentRows, StartupView, startupHeaderLayout, useBrandAnimation } from '../startup.js'
 import { TranscriptViewport } from './transcript.js'
 import { PARTY_FRAME_INTERVAL_MS, usePartyFrame, useSpinner, FadeIn } from '../animation.js'
 import { Box, Text, ThemeProvider, useTheme } from '../theme.js'
@@ -47,6 +47,9 @@ import { sanitizeTerminalText } from '../../terminal/text.js'
 
 export type QueuedPromptAction = 'edit' | 'delete' | 'up' | 'down'
 export type QueuedPromptTarget = `${string}:${QueuedPromptAction}`
+
+const STARTUP_CARD_RESERVED_ROWS = 13
+const STARTUP_CARD_FRAME_ROWS = 6
 
 export function ChatView(props: Parameters<typeof ChatViewContent>[0]): ReactElement {
   return (
@@ -293,11 +296,15 @@ function ChatViewContent({
   const startupReservedRightWidth = wideConfigurationDock ? configDockWidth + CONFIG_DOCK_GAP : 0
   // The transcript reflows into the space left of the dock instead of running underneath it.
   const transcriptReservedRightWidth = hasActivity ? startupReservedRightWidth : 0
+  const startupHeadroom = !startupContent
+  const startupAvailableHeight = terminalHeight - (startupHeadroom ? commandDeckHeight : STARTUP_CARD_RESERVED_ROWS)
   const { headerHeight: startupHeaderHeight } = startupHeaderLayout(
     terminalWidth,
-    terminalHeight - commandDeckHeight,
-    startupReservedRightWidth
+    startupAvailableHeight,
+    startupReservedRightWidth,
+    startupHeadroom
   )
+  const startupContentRows = Math.max(1, terminalHeight - startupHeaderHeight - STARTUP_CARD_FRAME_ROWS)
   // A stable header element keeps the memoized transcript from re-rendering on spinner ticks.
   const { settings } = snapshot
   const frogBrandElapsedMs = useBrandAnimation(frogBrandAnimationId, settings.animations)
@@ -305,9 +312,10 @@ function ChatViewContent({
     () => (
       <StartupView
         terminalWidth={terminalWidth}
-        availableHeight={terminalHeight - commandDeckHeight}
+        availableHeight={startupAvailableHeight}
         animate={settings.animations}
         reservedRightWidth={startupReservedRightWidth}
+        headroom={startupHeadroom}
         {...(introStartedAt !== undefined ? { introStartedAt } : {})}
         theme={settings.frogTheme}
         partyElapsedMs={partyFrame * PARTY_FRAME_INTERVAL_MS}
@@ -318,8 +326,8 @@ function ChatViewContent({
     ),
     [
       terminalWidth,
-      terminalHeight,
-      commandDeckHeight,
+      startupAvailableHeight,
+      startupHeadroom,
       settings.animations,
       startupReservedRightWidth,
       introStartedAt,
@@ -623,7 +631,7 @@ function ChatViewContent({
               paddingX={1}
               paddingY={1}
             >
-              {startupContent}
+              <StartupContentRows value={startupContentRows}>{startupContent}</StartupContentRows>
             </Box>
           </Box>
         </Box>
