@@ -28,6 +28,7 @@ export type { GoogleModelConfig, GoogleModelOptions }
 import { classifyGoogleError, type GoogleErrorType } from './errors.js'
 import { formatMessages, mapChunkToEvents } from './adapters.js'
 import { MODEL_DEFAULTS, defaultModelWarningMessage } from '../defaults.js'
+import { mergeModelInfo, SERVER_SIDE_SUMMARY_OFF, type ModelInfo } from '../model-info.js'
 import { warnOnce } from '../../logging/warn-once.js'
 import { logger } from '../../logging/logger.js'
 
@@ -164,6 +165,11 @@ export class GoogleModel extends Model<GoogleModelConfig> {
   /** The configured model ID, else the default one that gets sent. */
   override get modelId(): string {
     return this._config.modelId ?? MODEL_DEFAULTS.gemini.modelId
+  }
+
+  /** Turns `serverSideSummary` off, which a `modelInfo` override still wins over. */
+  override get modelInfo(): ModelInfo {
+    return mergeModelInfo(super.modelInfo, SERVER_SIDE_SUMMARY_OFF, this._config.modelInfo)
   }
 
   /**
