@@ -5,22 +5,30 @@ import { randomUUID } from 'node:crypto'
 import { resolve } from 'node:path'
 import { Readable, Writable } from 'node:stream'
 
+import { hasReadyBackgroundResults, interactiveBackgroundTasks, readBackgroundTasks } from '../agent/background.js'
 import { projectAgentEvent, projectAgentResult } from '../agent/events.js'
 import { loadMcp } from '../agent/mcp.js'
 import { requireBedrockRegion } from '../model/aws-config.js'
 import { HARNESS_VERSION, readCliVersion } from '../package-version.js'
 import {
   AGENT_DEFINITION_META_KEY,
-  persistSessionAgentDefinition,
-  restoreSessionAgentDefinition,
+  initializeAgentDefinition,
   sessionAgentDefinitionFromMeta,
 } from '../session/agent-definition.js'
 import { upgradeDesktopAgentProfileMessages } from '../session/desktop-profile.js'
 import { DEFAULT_SESSION_DIR, hasSavedSession, sessionDir, sessionSettings, withSession } from '../session/sessions.js'
 import { latestRootModelUsage, RunUsage } from '../usage.js'
-import { projectPrompt, replaySessionHistory, sendChatEvent, toAcpStopReason, toAcpUsage } from './acp-events.js'
+import {
+  backgroundTaskUpdate,
+  projectPrompt,
+  replaySessionHistory,
+  sendChatEvent,
+  toAcpStopReason,
+  toAcpUsage,
+} from './acp-events.js'
 
 const SESSION_SHUTDOWN_TIMEOUT_MS = 1_000
+const BACKGROUND_TASKS_META_KEY = 'strands/backgroundTasks'
 
 type AgentBuilder = (options: HarnessAgentOptions) => Promise<Agent>
 
@@ -28,13 +36,13 @@ interface AcpSession {
   agent: Agent
   mcpClients: readonly McpClient[]
   activePrompt?: Promise<void>
+  background?: { publish: () => Promise<void>; dispose: () => void }
 }
 
 export class AcpService {
   private readonly _agentOptions: HarnessAgentOptions
   private readonly _buildAgent: AgentBuilder
   private readonly _sharedMcpClients: readonly McpClient[]
-  private readonly _sourceAgent: boolean
   private readonly _sessions = new Map<string, AcpSession>()
   private readonly _openingSessions = new Set<string>()
 
@@ -46,13 +54,11 @@ export class AcpService {
     options: {
       buildAgent?: AgentBuilder
       sharedMcpClients?: readonly McpClient[]
-      sourceAgent?: boolean
     } = {}
   ) {
     this._agentOptions = { ...agentOptions, printer: false }
     this._buildAgent = options.buildAgent ?? createHarness
     this._sharedMcpClients = options.sharedMcpClients ?? []
-    this._sourceAgent = options.sourceAgent ?? false
   }
 
   initialize(params: acp.InitializeRequest): acp.InitializeResponse {
@@ -70,14 +76,22 @@ export class AcpService {
       },
       _meta: {
         [AGENT_DEFINITION_META_KEY]: true,
+        [BACKGROUND_TASKS_META_KEY]: { version: 1 },
       },
     }
   }
 
-  async newSession(params: acp.NewSessionRequest): Promise<acp.NewSessionResponse> {
+  async newSession(params: acp.NewSessionRequest, client?: acp.AgentContext): Promise<acp.NewSessionResponse> {
     this._setWorkspace(params.cwd)
     const sessionId = randomUUID()
-    await this._openSession(sessionId, params.mcpServers, sessionAgentDefinitionFromMeta(params._meta))
+    const backgroundUpdates = client !== undefined && backgroundUpdatesRequested(params._meta)
+    const session = await this._openSession(
+      sessionId,
+      params.mcpServers,
+      sessionAgentDefinitionFromMeta(params._meta),
+      { backgroundUpdates }
+    )
+    if (backgroundUpdates && client) this._watchBackgroundTasks(sessionId, session, client)
     return { sessionId }
   }
 
@@ -94,19 +108,28 @@ export class AcpService {
     if (!(await hasSavedSession(sessionDirectory, sessionId))) {
       throw acp.RequestError.resourceNotFound(sessionId)
     }
+    const backgroundUpdates = backgroundUpdatesRequested(params._meta)
     const session = await this._openSession(
       sessionId,
       params.mcpServers,
       sessionAgentDefinitionFromMeta(params._meta),
-      true
+      { resume: true, backgroundUpdates }
     )
     try {
-      await replaySessionHistory(session.agent, sessionId, client)
+      await replaySessionHistory(
+        session.agent,
+        sessionId,
+        client,
+        backgroundUpdates
+          ? new Set(readBackgroundTasks(session.agent).flatMap((task) => (task.toolUseId ? [task.toolUseId] : [])))
+          : undefined
+      )
     } catch (error) {
       this._sessions.delete(sessionId)
       await disposeSession(session)
       throw error
     }
+    if (backgroundUpdates) this._watchBackgroundTasks(sessionId, session, client)
     return {}
   }
 
@@ -118,6 +141,9 @@ export class AcpService {
     if (session.activePrompt) {
       throw new Error(`Session ${params.sessionId} is already processing a prompt.`)
     }
+    if (session.background && params.prompt.length === 0 && !hasReadyBackgroundResults(session.agent)) {
+      return { stopReason: 'end_turn' }
+    }
     const stream = session.agent.stream(projectPrompt(params.prompt))
     let settlePrompt: () => void
     session.activePrompt = new Promise<void>((resolve) => {
@@ -128,8 +154,20 @@ export class AcpService {
       let latestModelUsage: Usage | undefined
       let next = await stream.next()
       while (!next.done) {
+        // The SDK removes delivered tasks from state after these events.
+        if (next.value.type === 'beforeModelCallEvent' || next.value.type === 'afterInvocationEvent') {
+          await session.background?.publish()
+        }
         latestModelUsage = latestRootModelUsage(session.agent, next.value) ?? latestModelUsage
         for (const event of projectAgentEvent(next.value)) {
+          if (
+            session.background &&
+            event.type === 'toolResult' &&
+            readBackgroundTasks(session.agent).some((task) => task.toolUseId === event.toolUseId)
+          ) {
+            await session.background.publish()
+            continue
+          }
           await sendChatEvent(client, params.sessionId, event)
         }
         next = await stream.next()
@@ -175,7 +213,7 @@ export class AcpService {
     sessionId: string,
     mcpServers: readonly acp.McpServer[],
     sessionAgentDefinition?: Pick<HarnessAgentOptions, 'name' | 'description' | 'instructions'>,
-    resume = false
+    options: { resume?: boolean; backgroundUpdates?: boolean } = {}
   ): Promise<AcpSession> {
     this._assertOpen()
     if (this._sessions.has(sessionId) || this._openingSessions.has(sessionId)) {
@@ -187,23 +225,21 @@ export class AcpService {
     try {
       mcpClients = await loadAcpMcpClients(mcpServers)
       this._assertOpen()
-      const baseOptions = withSession(this._agentOptions, { id: sessionId })
-      const restoredAgentOptions = this._sourceAgent ? baseOptions : await restoreSessionAgentDefinition(baseOptions)
       const agentOptions = {
-        ...restoredAgentOptions,
+        ...withSession(this._agentOptions, { id: sessionId }),
         ...sessionAgentDefinition,
         tools: [...(this._agentOptions.tools ?? []), ...this._sharedMcpClients, ...mcpClients],
         printer: false,
+        ...(options.backgroundUpdates ? { backgroundTasks: interactiveBackgroundTasks(this._agentOptions) } : {}),
       }
       requireBedrockRegion(agentOptions.model)
       agent = await this._buildAgent(agentOptions)
       this._assertOpen()
-      if (resume && agent.sessionManager?.sessionId !== sessionId) {
+      if (options.resume && agent.sessionManager?.sessionId !== sessionId) {
         throw acp.RequestError.resourceNotFound(sessionId)
       }
-      await agent.initialize()
+      await initializeAgentDefinition(agent)
       agent.messages = upgradeDesktopAgentProfileMessages(agent.messages)
-      await persistSessionAgentDefinition(agentOptions)
       this._assertOpen()
       const session = { agent, mcpClients }
       this._sessions.set(sessionId, session)
@@ -217,6 +253,48 @@ export class AcpService {
       throw error
     } finally {
       this._openingSessions.delete(sessionId)
+    }
+  }
+
+  private _watchBackgroundTasks(sessionId: string, session: AcpSession, client: acp.AgentContext): void {
+    this._assertOpen()
+    const statuses = new Map<string, string>()
+    let pending = Promise.resolve()
+    let stopped = false
+    let timer: NodeJS.Timeout
+    const publish = (): Promise<void> => {
+      const tasks = readBackgroundTasks(session.agent).reverse()
+      const sent = pending.then(async () => {
+        for (const task of tasks) {
+          if (stopped) return
+          if (!task.toolUseId || statuses.get(task.id) === task.status) continue
+          await client.notify(acp.methods.client.session.update, {
+            sessionId,
+            update: backgroundTaskUpdate(task, task.toolUseId),
+          })
+          statuses.set(task.id, task.status)
+        }
+        for (const id of statuses.keys()) {
+          if (!tasks.some((task) => task.id === id)) statuses.delete(id)
+        }
+      })
+      pending = sent.catch(() => undefined)
+      return sent
+    }
+    const poll = (): void => {
+      void publish()
+        .catch(() => undefined)
+        .finally(() => {
+          if (!stopped) timer = setTimeout(poll, 200).unref()
+        })
+    }
+    timer = setTimeout(poll, 200).unref()
+    session.background = {
+      publish,
+      dispose: (): void => {
+        stopped = true
+        clearTimeout(timer)
+      },
     }
   }
 
@@ -249,7 +327,7 @@ export function createAcpApp(
   return acp
     .agent({ name: 'strands' })
     .onRequest(acp.methods.agent.initialize, (context) => service.initialize(context.params))
-    .onRequest(acp.methods.agent.session.new, (context) => service.newSession(context.params))
+    .onRequest(acp.methods.agent.session.new, (context) => service.newSession(context.params, context.client))
     .onRequest(acp.methods.agent.session.load, (context) => service.loadSession(context.params, context.client))
     .onRequest(acp.methods.agent.authenticate, () => ({}))
     .onRequest(acp.methods.agent.session.prompt, (context) => service.prompt(context.params, context.client))
@@ -262,7 +340,6 @@ export async function runAcpServer(
   agentOptions: HarnessAgentOptions = {},
   options: {
     buildAgent?: AgentBuilder
-    sourceAgent?: boolean
     mcpPaths?: readonly string[]
     mcpStrictPaths?: readonly string[]
     mcpDigests?: Readonly<Record<string, string>>
@@ -278,7 +355,6 @@ export async function runAcpServer(
   const service = new AcpService(agentOptions, {
     sharedMcpClients: sharedMcp?.clients ?? [],
     ...(options.buildAgent ? { buildAgent: options.buildAgent } : {}),
-    ...(options.sourceAgent ? { sourceAgent: true } : {}),
   })
   try {
     const stream = acp.ndJsonStream(Writable.toWeb(process.stdout), Readable.toWeb(process.stdin))
@@ -323,9 +399,19 @@ async function disconnectMcpClients(clients: readonly McpClient[]): Promise<void
 }
 
 async function disposeSession(session: AcpSession): Promise<void> {
+  session.background?.dispose()
   session.agent.cancel()
   await settleWithin(Promise.resolve(session.activePrompt).then(() => session.agent.shutdown())).catch(() => undefined)
   await disconnectMcpClients(session.mcpClients)
+}
+
+function backgroundUpdatesRequested(meta: Record<string, unknown> | null | undefined): boolean {
+  const requested = meta?.[BACKGROUND_TASKS_META_KEY]
+  return (
+    typeof requested === 'object' &&
+    requested !== null &&
+    (requested as { waitForCompletion?: unknown }).waitForCompletion === false
+  )
 }
 
 async function settleWithin(promise: Promise<void>): Promise<void> {

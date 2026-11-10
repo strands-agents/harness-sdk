@@ -1,3 +1,5 @@
+import type { ChildProcessWithoutNullStreams } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -209,9 +211,17 @@ it.each(['missing.py', '../outside.py', 'notes.txt'] as const)(
   }
 )
 
-it.each(['typescript', 'python'] as const)(
-  'installs %s archive dependencies through an aliased home, but leaves source projects alone',
-  async (language) => {
+// https://github.com/strands-agents/harness-sdk/pull/5194#discussion_r4483785396
+it.each([
+  ['typescript', 'default', false],
+  ['python', 'default', false],
+  ['python', 'relative', true],
+  ['python', 'external', false],
+  ['python', 'internal', true],
+  ['python', 'aliased-internal', true],
+] as const)(
+  'installs %s archive dependencies with a %s cache through an aliased home, but leaves source projects alone',
+  async (language, cache, disableCache) => {
     temporary = await mkdtemp(join(tmpdir(), 'strands-archive-'))
     const testHome = join(temporary, 'home')
     const alias = join(temporary, 'alias')
@@ -228,6 +238,20 @@ it.each(['typescript', 'python'] as const)(
     )
     const extracted = importAgentProject(archive)
     const project = importAgentProject(extracted.entrypoint)
+    vi.stubEnv('PIP_NO_CACHE_DIR', undefined)
+    vi.stubEnv(
+      'PIP_CACHE_DIR',
+      cache === 'default'
+        ? undefined
+        : cache === 'relative'
+          ? 'pip/cache'
+          : join(cache === 'internal' ? realpathSync(project.root) : temporary, 'pip-cache')
+    )
+    if (cache === 'aliased-internal') {
+      const alias = join(temporary, 'project-alias')
+      await symlink(realpathSync(project.root), alias, 'junction')
+      vi.stubEnv('PIP_CACHE_DIR', join(alias, 'pip', 'cache'))
+    }
     if (language === 'python') {
       const executable = process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python'
       const directory = join(project.root, '.venv', process.platform === 'win32' ? 'Scripts' : 'bin')
@@ -256,7 +280,8 @@ it.each(['typescript', 'python'] as const)(
     expect(execute).toHaveBeenCalledTimes(2)
     expect(execute.mock.calls[0]?.[2].cwd).toBe(realpathSync(project.root))
     if (language === 'python') {
-      expect(execute.mock.calls[0]?.[2].env).toMatchObject({ PIP_NO_CACHE_DIR: '1' })
+      expect(execute.mock.calls[0]?.[2].env.PIP_NO_CACHE_DIR).toBe(disableCache ? '1' : undefined)
+      expect(execute.mock.calls[0]?.[2].env.PIP_CACHE_DIR).toBe(process.env.PIP_CACHE_DIR)
     }
     expect(await readFile(join(project.root, '.strands-dependencies'), 'utf8')).toMatch(/^[a-f0-9]{64}$/u)
 
@@ -348,5 +373,3 @@ async function archiveWithMode(mode: number, zip64: boolean, compress = true): P
   await writeFile(archive, await completed)
   return archive
 }
-import type { ChildProcessWithoutNullStreams } from 'node:child_process'
-import { randomUUID } from 'node:crypto'

@@ -1,16 +1,13 @@
 #!/usr/bin/env node
 
 import { Buffer } from 'node:buffer'
-import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { EventEmitter } from 'node:events'
 import { existsSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createInterface } from 'node:readline'
-import { StringDecoder } from 'node:string_decoder'
 import { clearTimeout, setTimeout } from 'node:timers'
 import { fileURLToPath } from 'node:url'
+import { spawnPosix } from './posix-terminal.mjs'
 import { TerminalScreen } from './terminal-screen.mjs'
 
 const ANSI_ESCAPE = new RegExp(String.raw`\u001b(?:\[[0-?]*[ -/]*[@-~]|\][^\u0007]*(?:\u0007|\u001b\\))`, 'gu')
@@ -131,7 +128,7 @@ async function main() {
       (marker) => !(styled || marker.startsWith('__') ? output : screen.text).includes(marker)
     )
     throw new Error(
-      `missing markers ${JSON.stringify(missing)}; returncode=${returnCode}; screen=${screen.text}; output=${transcript}`
+      `missing markers ${JSON.stringify(missing)}; unexpected markers ${JSON.stringify(absent.filter((marker) => screen.text.includes(marker)))}; returncode=${returnCode}; screen=${screen.text}; output=${transcript}`
     )
   }
   const waitForStableScreen = (markers, timeout = 8_000, start = 0, absent = []) =>
@@ -261,8 +258,9 @@ async function main() {
       await waitForStableScreen(['Queue gate waiting'])
       for (const prompt of ['delete by mouse', 'delete by keyboard', 'clear with enter', 'keep this']) {
         await typeInComposer(prompt)
+        const start = transcript.length
         terminal.write('\r')
-        await waitForStableScreen(['Queued', prompt])
+        await waitForStableScreen([`· ${prompt}  `], 8_000, start)
       }
       await clickText('Delete')
       await waitForStableScreen(['keep this'], 8_000, 0, ['delete by mouse'])
@@ -281,11 +279,51 @@ async function main() {
       await waitForStableScreen(['delete by keyboard · editing'])
       terminal.write('\u0004')
       await waitForStableScreen(['keep this'], 8_000, 0, ['delete by keyboard'])
-      terminal.write('\u001b')
-      await waitForStableScreen(['Executed: keep this', 'Enter to send'])
+      for (const prompt of ['steer this', 'delete button']) {
+        await typeInComposer(prompt)
+        const start = transcript.length
+        terminal.write('\r')
+        await waitForStableScreen([`· ${prompt}  `], 8_000, start)
+      }
+      await typeInComposer('Keep my draft')
+      terminal.write('\t')
+      await waitForStableScreen(['›↓', 'Queue · Tab/Shift+Tab'])
+      terminal.write('\r')
+      await waitForStableScreen(['Queued 2/3 · keep this'])
+      terminal.write('\u001b[Z')
+      await waitForStableScreen(['›↑'])
+      terminal.write('\r')
+      await waitForStableScreen(['Queued 1/3 · keep this'])
+      terminal.write('\t')
+      await waitForStableScreen(['›↓'])
+      terminal.write('\t')
+      await waitForStableScreen(['›Edit'])
+      terminal.write('\r')
+      await waitForStableScreen(['keep this · editing'])
+      terminal.write('\u0015')
+      await waitForStableScreen(['▌Enter to queue'])
+      terminal.write('edited keep')
+      await waitForStableScreen(['edited keep'])
+      terminal.write('\r')
+      await waitForStableScreen(['Queued 1/3 · edited keep', 'Keep my draft'])
+      terminal.write('\u001b[Z')
+      await waitForStableScreen(['›Delete'])
+      terminal.write('\r')
+      await waitForStableScreen(['Keep my draft'], 8_000, 0, ['delete button'])
+      terminal.write('\u001b[Z')
+      await waitForStableScreen(['›Delete'])
+      terminal.write('\u001b[Z')
+      await waitForStableScreen(['›Steer'])
+      terminal.write('\r')
+      await waitForStableScreen(['Executed: steer this', 'Executed: edited keep', 'Keep my draft'])
+      if (screen.text.indexOf('Executed: steer this') > screen.text.indexOf('Executed: edited keep')) {
+        throw new Error('Steering did not run ahead of the other queued message')
+      }
       if (transcript.includes('Executed: delete') || transcript.includes('Executed: clear')) {
         throw new Error('A deleted queued message was executed')
       }
+      terminal.write('\u0015')
+      await waitForStableScreen(['Enter to send'])
     } else if (scenario === 'editor') {
       await typeInComposer('/config')
       terminal.write('\r')
@@ -392,8 +430,7 @@ async function main() {
       terminal.write('\r')
       await waitFor(['Approval accepted', '__CHAT_IDLE__'], 8_000, false)
     } else if (setupExportMode) {
-      terminal.write('/setup')
-      await waitFor(['/setup'], 2_000, false)
+      await typeInComposer('/setup')
       terminal.write('\r')
       await waitFor(['__SETUP_REQUESTED__'], 8_000, false)
       const command = `/export typescript ${process.env.STRANDS_CLI_TEST_EXPORT_PATH}`
@@ -408,7 +445,7 @@ async function main() {
     } else if (panelsMode) {
       for (const [command, markers, tabMarker] of [
         ['/help', ['Send a message', 'Search help', '› Controls'], undefined],
-        ['/agents', ['Agents', 'Current', 'idle', '1/1', 'Enter switch'], undefined],
+        ['/agents', ['Agents', 'Current', 'idle', '1/1', 'Enter open'], undefined],
         ['/mcp', ['fixture-mcp', 'failed', 'Server is not accepting connections', '→ details', 'R retry'], undefined],
         ['/model', ['Fixture Model Alpha', 'Fixture Model Beta'], '› Fixture Model Alpha'],
         ['/effort', ['Reasoning effort', 'Medium'], undefined],
@@ -437,7 +474,7 @@ async function main() {
           ]) {
             const resizeStart = transcript.length
             resizeTerminal(columns, height)
-            await waitForStableScreen(['Agents', '1/1', columns < 30 ? 'Arrows' : 'Enter switch'], 8_000, resizeStart)
+            await waitForStableScreen(['Agents', '1/1', columns < 30 ? 'Arrows' : 'Enter open'], 8_000, resizeStart)
           }
           const chatStart = transcript.length
           terminal.write('\r')
@@ -583,41 +620,6 @@ async function main() {
       rmSync(statePath, { force: true })
       rmSync(`${statePath}.tmp`, { force: true })
     }
-  }
-}
-
-function spawnPosix(command, args, rows) {
-  const child = spawn(
-    process.env.PYTHON ?? 'python3',
-    ['-u', fileURLToPath(new URL('./tui-integration-terminal.py', import.meta.url)), String(rows), command, ...args],
-    { stdio: ['pipe', 'pipe', 'inherit'], env: { ...process.env, CI: 'false', TERM: 'xterm-256color' } }
-  )
-  const events = new EventEmitter()
-  const decoder = new StringDecoder('utf8')
-  const lines = createInterface({ input: child.stdout })
-  let result
-  lines.on('line', (line) => {
-    const message = JSON.parse(line)
-    if (message.type === 'data') events.emit('data', decoder.write(Buffer.from(message.data, 'base64')))
-    else result = message
-  })
-  child.on('error', (error) => process.stderr.write(`${error.message}\n`))
-  child.on('close', (code) => {
-    events.emit('data', decoder.end())
-    events.emit('exit', result ?? { exitCode: code ?? 1, inputModeRestored: false })
-    lines.close()
-  })
-  const subscribe = (event, listener) => {
-    events.on(event, listener)
-    return { dispose: () => events.off(event, listener) }
-  }
-  const send = (message) => child.stdin.write(`${JSON.stringify(message)}\n`)
-  return {
-    onData: (listener) => subscribe('data', listener),
-    onExit: (listener) => subscribe('exit', listener),
-    write: (data) => send({ type: 'write', data }),
-    resize: (columns, rows) => send({ type: 'resize', columns, rows }),
-    kill: () => child.stdin.end(),
   }
 }
 

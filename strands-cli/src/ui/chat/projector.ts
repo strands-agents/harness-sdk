@@ -172,6 +172,10 @@ export class TurnProjector {
     return this._turn.entries.some((entry) => entry.type === 'tool' && matches(entry.name))
   }
 
+  setAgentName(name: string): void {
+    this._turn.agentName = name
+  }
+
   snapshot(): ChatTurn {
     return {
       id: this._turn.id,

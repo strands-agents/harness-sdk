@@ -275,19 +275,13 @@ export function settingDescription(settings: ChatSettings, key: SettingKey): str
   }
 }
 
-export function parseSettings(value: unknown, path: string): ChatSettings {
-  if (value === undefined) {
+export function parseSettings(value: unknown): ChatSettings {
+  if (!isRecord(value)) {
     return globalThis.structuredClone(DEFAULT_CHAT_SETTINGS)
   }
-  if (!isRecord(value)) {
-    throw new Error(`Invalid CLI config at ${path}: settings must be an object`)
-  }
   const booleanSetting = (key: keyof ChatSettings): boolean => {
-    const selected = value[key] ?? DEFAULT_CHAT_SETTINGS[key]
-    if (typeof selected !== 'boolean') {
-      throw new Error(`Invalid CLI config at ${path}: settings.${key} must be a boolean`)
-    }
-    return selected
+    const selected = value[key]
+    return typeof selected === 'boolean' ? selected : DEFAULT_CHAT_SETTINGS[key] === true
   }
 
   const transcriptSpacing =
@@ -306,10 +300,9 @@ export function parseSettings(value: unknown, path: string): ChatSettings {
     CONTEXT_OFFLOAD_THRESHOLD_OPTIONS.find(({ value: option }) => option === value.contextOffloadThreshold)?.value ??
     DEFAULT_CHAT_SETTINGS.contextOffloadThreshold
 
-  const disabledMcpServers = value.disabledMcpServers ?? DEFAULT_CHAT_SETTINGS.disabledMcpServers
-  if (!Array.isArray(disabledMcpServers) || disabledMcpServers.some((entry) => typeof entry !== 'string')) {
-    throw new Error(`Invalid CLI config at ${path}: settings.disabledMcpServers must be an array of strings`)
-  }
+  const disabledMcpServers = Array.isArray(value.disabledMcpServers)
+    ? value.disabledMcpServers.filter((entry): entry is string => typeof entry === 'string')
+    : [...DEFAULT_CHAT_SETTINGS.disabledMcpServers]
 
   return {
     transcriptSpacing,
@@ -318,7 +311,7 @@ export function parseSettings(value: unknown, path: string): ChatSettings {
     toolOutput,
     frogTheme,
     mcpDiscovery: booleanSetting('mcpDiscovery'),
-    disabledMcpServers: disabledMcpServers as readonly string[],
+    disabledMcpServers,
     skillDiscovery: booleanSetting('skillDiscovery'),
     agentMessaging: booleanSetting('agentMessaging'),
     telemetry: booleanSetting('telemetry'),

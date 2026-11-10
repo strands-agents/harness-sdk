@@ -305,6 +305,9 @@ discarding the current draft.
 Use Alt+↑/↓ or click Edit to edit a queued message. Enter saves and Esc restores your draft.
 Click Delete, or press Ctrl+D while editing, to remove it. Saving empty text deletes a message
 unless it has attachments.
+Tab and Shift+Tab focus the queue's Edit, Steer, Delete, and reorder buttons; Enter activates
+the focused button and Esc returns to your draft. Steer redirects the running turn, or interrupts
+it and runs that queued message next when live steering is unavailable.
 Prefix an Ink input with `!` to run a shell command directly in the active workspace without
 invoking the model, for example `!git status`. Each command runs once through the agent's shell
 sandbox while the full-screen UI remains open, and its output is rendered inline without compact
@@ -342,7 +345,7 @@ Run `strands --help` for the parser's current list.
 | `--mcp-config <path>`         | All modes       | Add an MCP configuration file; repeat for multiple files                                                                                |
 
 Explicit CLI values apply only to the current invocation. Dedicated flags override `--set`, which
-overrides the saved profile; imported agents take their configuration from their code:
+overrides the saved profile or authored agent configuration. Unspecified values keep the Harness defaults:
 
 ```bash
 strands --agent ./reviewer --prompt "Review this change"
@@ -554,8 +557,8 @@ directories (`./.agent/skills` by default); `--skills off` disables skills entir
 The Ink backend installs the Strands Harness SDK's Cedar intervention before constructing the agent
 through `createHarness()`. Cedar automatically permits workspace-local `read` calls (after
 canonical-path and symlink checks), `todo_write`, `retrieve_context`, and `retrieve_offloaded_content`. Every other built-in
-or MCP tool call opens a permission panel with **Allow once**, **Allow forever**, **Deny once**,
-and **Deny forever**. Forever choices let you select a specific action or the whole tool.
+or MCP tool call opens a permission panel with **Allow once**, **Always allow**, **Deny once**,
+and **Always deny**. Saved choices let you select a specific action or the whole tool.
 Saved allow and deny rules are written to `~/.strands/cli.toml` and apply across launches.
 Shell scopes match command text; they do not sandbox what commands execute.
 A denial is returned to the agent as a denied tool call.
@@ -574,7 +577,8 @@ interventions supplied by the caller or an operating-system sandbox. Permission 
 user-owned; the CLI does not load a project config file that could silently enable bypass mode.
 Use `/permissions` to inspect or change the mode and remove saved tool grants.
 Use `/settings` to persist presentation preferences in the same file. Disabling animations also
-skips the startup intro on later launches.
+skips the startup intro on later launches. Unrecognized or invalid presentation settings use their
+defaults without preventing startup; unknown settings keys are preserved when saving.
 
 This approval layer is not an operating-system sandbox. Unless a caller supplies a Strands
 `sandbox`, the harness's shell, file, MCP, delegate, and Background Task work runs in the host process with
@@ -602,7 +606,7 @@ These commands are local to the full-screen Ink UI:
 | `/effort [level]`              | Open the effort slider or set the reasoning effort directly        |
 | `/fork [request]`              | Fork the current conversation into an independent agent            |
 | `/agents`                      | View conversations and live subagents                              |
-| `/rename [name]`               | Rename the current saved session (same as `/sessions rename`)      |
+| `/rename [name]`               | Rename the active agent                                            |
 | `/sessions`                    | Browse and resume saved sessions                                   |
 | `/skills`                      | Browse available and active Agent Skills                           |
 | `/file [clear\|<paths>...]`    | Attach files to the next message                                   |
@@ -663,6 +667,22 @@ includes the Python sidecar; `uv` installs its Python dependencies on first use.
 stdin/stdout. It creates a harness agent for each ACP session, supports client-supplied MCP servers, and
 supports loading saved sessions with transcript replay. Start a separate process for each workspace.
 
+The built-in and TypeScript ACP server advertises background updates through
+`_meta["strands/backgroundTasks"] = { "version": 1 }` in `initialize`. A client opts in on
+`session/new` or `session/load` with `_meta: { "strands/backgroundTasks": { "waitForCompletion": false } }`.
+For an opted-in session:
+
+- Turns can finish while background tasks run. Explicitly disabled background tasks stay disabled.
+- Task changes arrive as `tool_call_update` notifications for the original tool call, with
+  `_meta["strands/backgroundTask"] = { taskId, status }`. Final updates include the result or error.
+- An empty `session/prompt` delivers ready results through the SDK. It makes no model call when
+  nothing is ready. Like other prompts, it gets a busy error while a turn is running.
+- Restoring a session reports tasks the SDK recovered as failed; it does not restart their work.
+
+Updates are checked between turns and before the SDK consumes results. Closing the connection stops
+notifications and uses normal agent shutdown; it does not add a background-task cancellation policy.
+Clients that do not opt in, and the Python ACP server, keep their existing behavior.
+
 ## Models, sessions, and background work
 
 ### Choosing a model
@@ -696,13 +716,22 @@ strands --session-id my-project "where did we leave off?"
 
 Pass `--session off` to disable conversation saving. Long-term memory is controlled separately by `--memory`.
 
-The built-in agent saves sessions under `~/.strands/sessions/`, grouped by workspace, so nothing is
-written into your project. Sessions written by earlier versions under `~/.strands/cli/sessions/`
-remain available. Set `session.dir` to keep them somewhere else; authored agents (`--agent`) keep
-their own `session.dir`, which defaults to `./.agent/sessions`. In Ink, `/sessions` lists saved
-sessions from every workspace and can resume any of them, including from another worktree.
+For built-in profiles and TypeScript agents, resuming restores the saved conversation while keeping
+the current agent's instructions and system prompt. Python agents follow the Python SDK: both resume
+and startup with a saved session ID restore the saved system prompt along with the conversation,
+replacing the current prompt.
+Session files are trusted input: resume only sessions you created, not ones that came with a cloned repository.
 
-`/rename <name>` (or `/sessions rename <name>`) names the current saved session and updates the terminal
+Sessions use the Harness default, `./.agent/sessions`. Set `session.dir` to keep them somewhere else;
+authored agents (`--agent`) keep their own session configuration. Relative paths resolve against
+the profile's base directory, or the current workspace when no base directory is set.
+For authored agents with sessions disabled or a custom session manager, `--session-id` is ignored;
+the authored configuration controls session identity.
+In Ink, `/sessions` lists sessions from registered workspaces and can resume them across worktrees.
+The CLI keeps this catalog under `~/.strands/sessions/`; existing sessions there or under
+`~/.strands/cli/sessions/` remain available without moving them.
+
+`/sessions rename <name>` names the current saved session and updates the terminal
 title. Saved names return when you reopen the session. Leave out the name to have the agent's
 auxiliary model—or its active model when no auxiliary model is available—suggest a three-word name
 in the background from a copy of the conversation; if that fails, the existing name stays.
@@ -717,11 +746,22 @@ starts a continuation turn.
 Turn token totals include delegated work. When detached work finishes, its originating turn's
 total updates; the context meter continues to measure the parent agent's prompt.
 
-Live subagents also appear in `/agents` while they are available for peer messages. They are
-status rows rather than switchable conversations and disappear when the delegated task finishes.
+Background activity appears in one row below the input. Press Down from an empty input, or Tab
+from a non-command draft, to focus it; Left/Right chooses a task and Enter opens its live activity.
+Tab stays with slash-command completion. Esc returns to the input without losing the draft.
 
-Plain, print, ACP-server, and direct library invocations use the normal wait-for-completion
-behavior. Ink blocks model-family restarts and session replacement while
+Live subagents also appear in `/agents` while they are available for peer messages. Select a card
+and press Enter (or click it) to watch its activity; Esc returns to the cards. These views are
+read-only, and the cards disappear when the delegated task finishes.
+
+`/rename <name>` names the active agent in chat, `/agents`, and peer messages, independently of its
+session title. Names are saved with file-backed sessions and restored when reopened. `/rename` without
+a name opens the editor; in `/agents`, select a card and press `R` or click **Rename**. Enter saves and
+Esc cancels.
+
+Plain, print, and direct library invocations use the normal wait-for-completion behavior, as do
+ACP sessions unless the client opts in to [background updates](#acp-server).
+Ink blocks model-family restarts and session replacement while
 Background Tasks are running or waiting for delivery. Use the library's `backgroundTasks` option
 for custom policy or to disable the feature.
 

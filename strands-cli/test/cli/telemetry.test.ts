@@ -54,9 +54,9 @@ describe('telemetryEnabled', () => {
   })
 
   it('parses the telemetry setting and its toggle update', () => {
-    expect(parseSettings({ telemetry: false }, 'config.json').telemetry).toBe(false)
-    expect(parseSettings(undefined, 'config.json').telemetry).toBe(true)
-    expect(() => parseSettings({ telemetry: 'yes' }, 'config.json')).toThrow('settings.telemetry must be a boolean')
+    expect(parseSettings({ telemetry: false }).telemetry).toBe(false)
+    expect(parseSettings(undefined).telemetry).toBe(true)
+    expect(parseSettings({ telemetry: 'yes' }).telemetry).toBe(true)
     expect(parseSettingUpdate('telemetry', DEFAULT_CHAT_SETTINGS)).toEqual({ telemetry: false })
   })
 })

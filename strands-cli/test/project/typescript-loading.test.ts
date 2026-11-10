@@ -1,11 +1,13 @@
 import { execFile } from 'node:child_process'
 import { createServer, type ServerResponse } from 'node:http'
+import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { URL } from 'node:url'
 import { promisify } from 'node:util'
 import { ImageBlock, Message } from '@strands-agents/sdk'
+import { strToU8, zipSync } from 'fflate'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { parseArgs } from '../../src/cli/arguments.js'
@@ -86,6 +88,93 @@ console.log(JSON.stringify({options: loaded.options, agents}))
 }
 
 describe('TypeScript source loading', () => {
+  it.each([
+    {
+      session: '{ id: "authored", dir: "custom-sessions" }',
+      argv: ['--session-id', 'chosen'],
+      expected: { id: 'chosen', dir: 'custom-sessions' },
+    },
+    { session: 'false', argv: ['--session-id', 'chosen'], expected: false },
+    {
+      session: '{ id: "authored", dir: "custom-sessions" }',
+      argv: ['--session', 'on', '--set', 'session.id="chosen"'],
+      expected: { id: 'chosen', dir: 'custom-sessions' },
+    },
+    { session: 'manager', argv: ['--session', 'on', '--session-id', 'chosen'], expected: 'manager' },
+  ])('preserves authored storage with $argv and session=$session', async ({ session, argv, expected }) => {
+    await writeFile(
+      join(root, 'agent.ts'),
+      `import { createHarness } from '@strands-agents/harness'
+import { SessionManager, MemoryManager } from '@strands-agents/sdk'
+import { LocalFileStorage } from '@strands-agents/sdk/storage'
+import { FileMemoryStore } from '@strands-agents/sdk/vended-memory-stores/file-memory-store'
+const manager = new SessionManager({ sessionId: 'managed', storage: new LocalFileStorage('custom-sessions') })
+const memory = new MemoryManager({ stores: [new FileMemoryStore({ name: 'memory', storage: new LocalFileStorage('custom-memory'), extraction: false })], injection: false, searchToolConfig: false })
+export const agent = createHarness({ ...${JSON.stringify(defaults)}, session: ${session}, memory })
+`
+    )
+    const invocationUrl = new URL('../../src/cli/invocation.ts', import.meta.url).href
+    const argumentsUrl = new URL('../../src/cli/arguments.ts', import.meta.url).href
+    const storeUrl = new URL('../../src/config/store.ts', import.meta.url).href
+    const script = `
+const { invocationAgentForRun } = await import(${JSON.stringify(invocationUrl)})
+const { parseArgs } = await import(${JSON.stringify(argumentsUrl)})
+const { CliConfigStore } = await import(${JSON.stringify(storeUrl)})
+const { SessionManager, MemoryManager } = await import(${JSON.stringify(import.meta.resolve('@strands-agents/sdk'))})
+const invocation = await invocationAgentForRun(parseArgs(['--agent', ${JSON.stringify(join(root, 'agent.ts'))}, '--memory', 'on', ...${JSON.stringify(argv)}]), CliConfigStore.memory())
+console.log(JSON.stringify({ session: invocation.options.session instanceof SessionManager ? 'manager' : invocation.options.session, memory: invocation.options.memory instanceof MemoryManager }))
+`
+    const { stdout } = await run(
+      process.execPath,
+      ['--import', import.meta.resolve('tsx/esm'), '--input-type=module', '--eval', script],
+      { cwd: root }
+    )
+    expect(JSON.parse(stdout)).toEqual({
+      session: expected,
+      memory: true,
+    })
+  })
+
+  it.each([
+    'builtinTools={"*":false,"web_fetch":{"model":{"kind":"model","module":"./model.mjs","export":"model"}}}',
+    'builtinTools.web_fetch.transport="direct"',
+    'builtinTools.web_fetch.model={"kind":"model","module":"./model.mjs","export":"model"}',
+    'builtinTools.read.media=false',
+  ])('preserves authored tools and models with --set %s', async (assignment) => {
+    await writeFile(
+      join(root, 'agent.ts'),
+      `import { createHarness } from '@strands-agents/harness'
+import { model } from './model.mjs'
+export const agent = createHarness({ ...${JSON.stringify(defaults)}, builtinTools: ${assignment.includes('.read.') ? "['read']" : "{ '*': false, web_fetch: { model } }"} })
+`
+    )
+    await writeFile(
+      join(root, 'model.mjs'),
+      `import { BedrockModel } from '@strands-agents/sdk'
+export const model = new BedrockModel({ modelId: 'fixture', region: 'us-east-1' })
+`
+    )
+    const script = `
+const { invocationAgentForRun } = await import(${JSON.stringify(new URL('../../src/cli/invocation.ts', import.meta.url).href)})
+const { parseArgs } = await import(${JSON.stringify(new URL('../../src/cli/arguments.ts', import.meta.url).href)})
+const { CliConfigStore } = await import(${JSON.stringify(new URL('../../src/config/store.ts', import.meta.url).href)})
+const args = parseArgs(['--agent', ${JSON.stringify(join(root, 'agent.ts'))}, '--set', ${JSON.stringify(assignment)}])
+const invocation = await invocationAgentForRun(args, CliConfigStore.memory())
+const agent = await invocation.buildAgent(invocation.options)
+console.log(JSON.stringify(agent.tools.map(tool => tool.name)))
+await agent.shutdown()
+`
+    const { stdout } = await run(
+      process.execPath,
+      ['--import', import.meta.resolve('tsx/esm'), '--input-type=module', '--eval', script],
+      { cwd: root }
+    )
+    expect(JSON.parse(stdout)).toEqual([
+      assignment.includes('.read.') ? 'read' : 'web_fetch',
+      'strands_manage_background_task',
+    ])
+  })
+
   // Authored project options preserve HTTPS skill sources (#4574).
   it('preserves HTTPS skills while resolving authored project paths', () => {
     const url = 'https://example.com/SKILL.md'
@@ -438,6 +527,73 @@ agent.model = new LocalModel()
     }
     return text
   }
+
+  // https://github.com/strands-agents/harness-sdk/actions/runs/42844610170/job/129928784311
+  it('lets archive installation finish before starting the source-loading deadline', async () => {
+    const archive = join(root, 'agent.zip')
+    const installing = join(root, 'installing')
+    const release = join(root, 'release')
+    await writeFile(
+      archive,
+      zipSync({
+        'agent.ts': strToU8(source()),
+        'value.ts': strToU8("export const value = 'installed'\n"),
+        'package.json': strToU8(
+          JSON.stringify({ private: true, type: 'module', scripts: { postinstall: 'node install.cjs' } })
+        ),
+        'install.cjs': strToU8(`
+const fs = require('node:fs')
+fs.writeFileSync(${JSON.stringify(installing)}, '')
+const deadline = Date.now() + 30000
+const timer = setInterval(() => {
+  if (fs.existsSync(${JSON.stringify(release)})) {
+    fs.mkdirSync('node_modules', { recursive: true })
+    clearInterval(timer)
+  } else if (Date.now() > deadline) process.exit(1)
+}, 25)
+`),
+      })
+    )
+    const cancellation = new AbortController()
+    let settled = false
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const opening = TypescriptBackend.open(
+      {
+        project: importAgentProject(archive),
+        args: parseArgs([]),
+        cwd: root,
+        initialWorkspace: root,
+        peerEndpointId: 'agent-1',
+        mcpPaths: [],
+        mcpStrictPaths: [],
+      },
+      CliConfigStore.memory({}, { mcpDiscovery: false, skillDiscovery: false, agentMessaging: false }),
+      new AgentMessaging(),
+      cancellation.signal
+    )
+      .then((result) => {
+        backends.push(result.backend)
+        return result
+      })
+      .finally(() => {
+        settled = true
+      })
+    void opening.catch(() => {})
+    try {
+      await vi.waitFor(() => expect(existsSync(installing)).toBe(true), { timeout: 15000 })
+      await vi.advanceTimersByTimeAsync(60_001)
+      expect(settled).toBe(false)
+      vi.useRealTimers()
+      await writeFile(release, '')
+      const { backend } = await opening
+      expect(await answer(backend, 'ready')).toContain('installed;ready')
+    } finally {
+      vi.useRealTimers()
+      await writeFile(release, '')
+      cancellation.abort()
+      await opening.catch(() => {})
+    }
+  }, 30000)
 
   it('replaces complete source generations and preserves binary messages without loading them in the parent', async () => {
     await writeFile(join(root, 'value.ts'), "export const value = 'v0'\n")

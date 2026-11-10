@@ -4,8 +4,8 @@ on:
   release:
     types: [published]
   schedule:
-    # Backstop for missed release events, and the only same-day path for evals
-    # and box releases (neither can dispatch cross-repo with its GITHUB_TOKEN,
+    # Backstop for missed release events, and the only same-day path for evals,
+    # box, and shell releases (none can dispatch cross-repo with its GITHUB_TOKEN,
     # and the bot PAT has no write here). skip-existing makes a no-op run
     # nearly free, so a 2-hourly cadence caps changelog lag at ~2h.
     - cron: '17 */2 * * *'
@@ -110,7 +110,7 @@ jobs:
           TAG: ${{ inputs.tag }}
         run: npm run changelog:sync
 
-      # Evals and box release from their own repos, which cannot dispatch this
+      # Evals, box, and shell release from their own repos, which cannot dispatch this
       # workflow, so every run backfills them too. A failure in one source must
       # not block the others.
       - name: Generate missing evals changelog files
@@ -129,6 +129,16 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.CHANGELOG_BOT_TOKEN }}
           SOURCE_REPO: strands-agents/box
+          MODE: backfill
+          SKIP_EXISTING: 'true'
+        run: npm run changelog:sync
+
+      - name: Generate missing shell changelog files
+        if: success() || failure()
+        working-directory: site
+        env:
+          GITHUB_TOKEN: ${{ secrets.CHANGELOG_BOT_TOKEN }}
+          SOURCE_REPO: strands-agents/shell
           MODE: backfill
           SKIP_EXISTING: 'true'
         run: npm run changelog:sync

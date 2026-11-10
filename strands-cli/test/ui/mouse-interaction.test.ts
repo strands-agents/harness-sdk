@@ -10,15 +10,14 @@ import { ChatApp } from '../../src/ui/chat/screen.js'
 import { ChatController } from '../../src/ui/chat/controller.js'
 import { type ChatPermissionRequest, type ChatTask } from '../../src/agent/types.js'
 import { AgentMessaging } from '../../src/agent/messaging.js'
-import { PythonVoiceSession } from '../../src/agent/voice.js'
 import { ConversationManager } from '../../src/ui/chat/conversations.js'
 import { AgentSkillsRuntime } from '../../src/agent/skills.js'
 import { idleBackend } from '../fixtures/chat-backend.js'
 
 describe('TUI mouse input', () => {
   it.each([
-    ['Allow forever', 'allow-always'],
-    ['Deny forever', 'deny-always'],
+    ['Always allow', 'allow-always'],
+    ['Always deny', 'deny-always'],
   ])('navigates and clicks the %s scope buttons in a short terminal', async (label, optionId) => {
     const input = ttyInput()
     const output = ttyOutput(100, 16)
@@ -46,9 +45,9 @@ describe('TUI mouse input', () => {
       action: 'git status --short --branch',
       options: [
         { id: 'allow-once', label: 'Allow once', kind: 'allow_once' },
-        { id: 'allow-always', label: 'Allow forever', kind: 'allow_always' },
+        { id: 'allow-always', label: 'Always allow', kind: 'allow_always' },
         { id: 'deny', label: 'Deny once', kind: 'reject_once' },
-        { id: 'deny-always', label: 'Deny forever', kind: 'reject_always' },
+        { id: 'deny-always', label: 'Always deny', kind: 'reject_always' },
       ],
       scopes: [
         { rule: 'shell(git status --short --branch)', label: 'git status --short --branch' },
@@ -126,7 +125,7 @@ describe('TUI mouse input', () => {
     expect(controller.getSnapshot().panel?.kind).toBe('config')
   })
 
-  it('activates model and permission metadata and the Voice and Settings buttons from direct clicks', async () => {
+  it('activates model and permission metadata and the Setup and Settings buttons from direct clicks', async () => {
     const input = ttyInput()
     const output = ttyOutput(80, 16)
     const frame = captureFrame(output)
@@ -146,13 +145,14 @@ describe('TUI mouse input', () => {
       yield { type: 'textDelta', text: '' }
       return { stopReason: 'endTurn', context: { projectedTokens: 100, contextWindow: 1_000 } }
     }
+    const requestSetup = vi.fn()
     const controller = new ChatController(target, {
       settings: { animations: false },
       runtime: { version: '1.2.3', model: 'bedrock/test', cwd: '/work' },
+      requestSetup,
     })
     await controller.submit('measure context')
-    const voice = new PythonVoiceSession()
-    const manager = new ConversationManager(controller, { voice, fork: async () => controller })
+    const manager = new ConversationManager(controller, { fork: async () => controller })
     const instance = render(createElement(ChatApp, { controller: manager }), {
       stdin: input,
       stdout: output,
@@ -165,21 +165,20 @@ describe('TUI mouse input', () => {
       await instance.waitUntilRenderFlush()
 
       const settingsTarget = findText(frame(), '/settings')
-      const voiceTarget = findText(frame(), '/voice')
+      const setupTarget = findText(frame(), '/setup')
       const modelTarget = findText(frame(), 'bedrock/test')
       const permissionTarget = findText(frame(), 'Ask')
-      expect(voiceTarget.row).toBe(settingsTarget.row)
-      expect(voiceTarget.column).toBeLessThan(settingsTarget.column)
+      expect(setupTarget.row).toBe(settingsTarget.row)
+      expect(setupTarget.column).toBeLessThan(settingsTarget.column)
 
       input.write(mouseInputSequence(0, settingsTarget.column, settingsTarget.row, 'M'))
       input.write(mouseInputSequence(3, settingsTarget.column, settingsTarget.row, 'm'))
 
       await vi.waitFor(() => expect(manager.getSnapshot().panel?.kind).toBe('settings'))
       await instance.waitUntilRenderFlush()
-      input.write(mouseInputSequence(0, voiceTarget.column, voiceTarget.row, 'M'))
-      input.write(mouseInputSequence(3, voiceTarget.column, voiceTarget.row, 'm'))
-      await vi.waitFor(() => expect(manager.getSnapshot().panel?.kind).toBe('voice'))
-      expect(voice.getSnapshot().status).toBe('off')
+      input.write(mouseInputSequence(0, setupTarget.column, setupTarget.row, 'M'))
+      input.write(mouseInputSequence(3, setupTarget.column, setupTarget.row, 'm'))
+      await vi.waitFor(() => expect(requestSetup).toHaveBeenCalledOnce())
 
       manager.dismissPanel()
       controller.dismissPanel()
@@ -390,6 +389,20 @@ describe('TUI mouse input', () => {
       expect(manager.backend).toBe(fork.backend)
       await manager.submit('/agents')
       expect(manager.getSnapshot().panel!.rows.find((row) => row.current)?.label).toBe('Fork 2')
+      await instance.waitUntilRenderFlush()
+      const renameTarget = findText(frame(), 'Rename')
+      input.write(mouseInputSequence(0, renameTarget.column, renameTarget.row, 'M'))
+      input.write(mouseInputSequence(3, renameTarget.column, renameTarget.row, 'm'))
+      await vi.waitFor(() => expect(frame().join('\n')).toContain('Rename agent'))
+      input.write('\u0015')
+      await instance.waitUntilRenderFlush()
+      input.write('Reviewer')
+      await instance.waitUntilRenderFlush()
+      const saveTarget = findText(frame(), 'Save')
+      input.write(mouseInputSequence(0, saveTarget.column, saveTarget.row, 'M'))
+      input.write(mouseInputSequence(3, saveTarget.column, saveTarget.row, 'm'))
+      await vi.waitFor(() => expect(manager.getSnapshot().runtime.agent).toBe('Reviewer'))
+      expect(manager.getSnapshot().panel!.rows.find((row) => row.current)?.label).toBe('Reviewer')
     } finally {
       instance.unmount()
       await instance.waitUntilExit()
@@ -839,6 +852,16 @@ describe('TUI mouse input', () => {
       for (let index = 1; index <= 40; index++) queued.push(controller.submit(`Work item ${index}`))
       input.write('Keep draft')
       await vi.waitFor(() => expect(frame().join('\n')).toContain('Keep draft'))
+      input.write('\u001b[Z')
+      await vi.waitFor(() => expect(frame().join('\n')).toContain('Work item 40'))
+      expect(frame().join('\n')).toContain('›Delete')
+      input.write('\u001b')
+      await vi.waitFor(() => expect(frame().join('\n')).toContain('Keep draft'))
+      input.write('\t')
+      await vi.waitFor(() => expect(frame().join('\n')).toContain('Queued 1/40'))
+      expect(frame().join('\n')).toContain('›↓')
+      input.write('\u001b')
+      await vi.waitFor(() => expect(frame().join('\n')).toContain('Keep draft'))
       const status = findText(frame(), 'Queued 1/40')
       for (let index = 0; index < 20; index++) {
         input.write(mouseInputSequence(65, status.column, status.row, 'M'))
@@ -869,15 +892,26 @@ describe('TUI mouse input', () => {
       expect(frame().join('\n')).toContain('↓ 0 hidden')
       expect(frame().join('\n')).toContain('Revised item')
       expect(frame().join('\n')).toContain('/settings')
+      for (const prompt of controller.getSnapshot().queuedPrompts.slice(0, -2)) {
+        controller.removeQueuedPrompt(prompt.id)
+      }
+      await vi.waitFor(() => expect(frame().join('\n')).toContain('Queued 1/2'))
+      expect(frame().join('\n')).not.toContain('hidden ·')
+      expect(frame().join('\n')).toContain('Revised item')
       release()
       await Promise.all([running, ...queued])
+      expect(controller.getSnapshot().completedTurns.map((turn) => turn.prompt)).toEqual([
+        'first',
+        'Revised item',
+        'Work item 39',
+      ])
       await vi.waitFor(() => expect(frame().join('\n')).not.toContain('hidden ·'))
       expect(frame().join('\n')).toContain('Keep draft')
     } finally {
-      release()
-      await Promise.all([running, ...queued])
       instance.unmount()
       await controller.dispose()
+      release()
+      await Promise.all([running, ...queued])
     }
   }, 15_000)
 
@@ -980,6 +1014,112 @@ describe('TUI mouse input', () => {
     })
     input.write('\u001b')
     await vi.waitFor(() => expect(controller.getSnapshot().panel).toBeUndefined())
+  })
+
+  it('opens interactive subagent chats from the background row and agent cards while preserving each draft', async () => {
+    const input = ttyInput()
+    const output = ttyOutput(100, 24)
+    const frame = captureFrame(output)
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const primary = new ChatController(
+      idleBackend({
+        watchTasks(listener) {
+          listener([{ id: 'review', label: 'Reviewer', status: 'working', source: 'background' }])
+          return () => {}
+        },
+      }),
+      { settings: { animations: false } }
+    )
+    const childBackend = idleBackend()
+    const send = vi.spyOn(childBackend, 'stream')
+    const messaging = new AgentMessaging()
+    messaging.register({
+      id: 'reviewer',
+      name: 'Reviewer',
+      backgroundTask: { id: 'review', ownerId: 'agent-1' },
+      status: () => 'working',
+      enqueue: () => true,
+      chat: {
+        backend: childBackend,
+        prompt: 'Review authentication.',
+        stream: (async function* () {
+          yield { type: 'textDelta' as const, text: 'Inspecting routes.' }
+          await gate
+          return { stopReason: 'endTurn' }
+        })(),
+      },
+    })
+    const controller = new ConversationManager(primary, { fork: async () => primary, agentMessaging: messaging })
+    const instance = render(createElement(ChatApp, { controller }), {
+      stdin: input,
+      stdout: output,
+      stderr: ttyOutput(100, 24),
+      exitOnCtrlC: false,
+      patchConsole: false,
+      interactive: true,
+    })
+    try {
+      await instance.waitUntilRenderFlush()
+      input.write('Parent draft')
+      await vi.waitFor(() => expect(frame().join('\n')).toContain('Parent draft'))
+      input.write('\t')
+      await vi.waitFor(() => expect(frame().join('\n')).toContain('←→ choose · Enter view'))
+      input.write('\r')
+      await vi.waitFor(() => {
+        expect(controller.getSnapshot().conversationId).toBe('reviewer')
+        expect(controller.getSnapshot().panel).toBeUndefined()
+        expect(frame().join('\n')).toContain('Inspecting routes.')
+        expect(frame().join('\n')).not.toContain('Parent draft')
+      })
+      input.write('Child follow-up')
+      await vi.waitFor(() => expect(frame().join('\n')).toContain('Child follow-up'))
+      await controller.submit('/agents')
+      await instance.waitUntilRenderFlush()
+      input.write('\u001b[C')
+      await instance.waitUntilRenderFlush()
+      input.write('\r')
+      await vi.waitFor(() => {
+        expect(controller.getSnapshot().conversationId).toBe('agent-1')
+        expect(frame().join('\n')).toContain('Parent draft')
+        expect(frame().join('\n')).not.toContain('Child follow-up')
+      })
+      const background = findText(frame(), 'Background ·')
+      input.write(mouseInputSequence(0, background.column, background.row, 'M'))
+      input.write(mouseInputSequence(3, background.column, background.row, 'm'))
+      await vi.waitFor(() => expect(frame().join('\n')).toContain('Child follow-up'))
+      input.write('\r')
+      await vi.waitFor(() => expect(controller.getSnapshot().queuedPrompts).toHaveLength(1))
+      release()
+      await vi.waitFor(() => expect(send).toHaveBeenCalledWith('Child follow-up'))
+      await vi.waitFor(() => expect(controller.getSnapshot().completedTurns).toHaveLength(2))
+      await controller.submit('/agents')
+      await instance.waitUntilRenderFlush()
+      input.write('\r')
+      await vi.waitFor(() => {
+        expect(controller.getSnapshot().conversationId).toBe('reviewer')
+        expect(controller.getSnapshot().panel).toBeUndefined()
+      })
+      input.write('Another child draft')
+      await vi.waitFor(() => expect(frame().join('\n')).toContain('Another child draft'))
+      input.write('\u001b')
+      await vi.waitFor(() => {
+        expect(controller.getSnapshot().conversationId).toBe('agent-1')
+        expect(frame().join('\n')).toContain('Parent draft')
+      })
+      controller.openTask('review')
+      await vi.waitFor(() => expect(frame().join('\n')).toContain('Another child draft'))
+      const back = findText(frame(), 'Esc back')
+      input.write(mouseInputSequence(0, back.column, back.row, 'M'))
+      input.write(mouseInputSequence(3, back.column, back.row, 'm'))
+      await vi.waitFor(() => expect(controller.getSnapshot().conversationId).toBe('agent-1'))
+      expect(primary.getSnapshot().completedTurns).toHaveLength(0)
+    } finally {
+      release()
+      await controller.dispose()
+    }
   })
 
   it('changes permission mode, searches tools, and toggles a custom grant', async () => {

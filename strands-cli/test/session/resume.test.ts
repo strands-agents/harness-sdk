@@ -4,19 +4,48 @@ import { DEFAULT_HARNESS_AGENT_CONFIG } from '@strands-agents/harness'
 import { describe, expect, it } from 'vitest'
 
 import { agentConfig, parseArgs } from '../../src/cli/arguments.js'
-import { workspaceSessionDirectory } from '../../src/session/catalog.js'
 import { sessionResumeCommand } from '../../src/session/sessions.js'
 
 describe('session resume commands', () => {
-  it('uses the session-id flag for a built-in session in the current workspace', () => {
-    const workspace = process.cwd()
+  it('pins the saved directory even when it matches the workspace default', () => {
     expect(
-      sessionResumeCommand({
-        sessionId: 'saved-session',
-        sessionDirectory: workspaceSessionDirectory(workspace),
-        workspace,
-      })
-    ).toBe('strands --session-id saved-session')
+      sessionResumeCommand(
+        {
+          sessionId: 'saved-session',
+          sessionDirectory: '/workspace/.agent/sessions',
+          workspace: '/workspace',
+        },
+        { cwd: '/workspace', platform: 'linux' }
+      )
+    ).toBe(`strands --session-id saved-session --set 'session.dir="/workspace/.agent/sessions"'`)
+  })
+
+  it('includes the directory when resuming sessions stored under the home catalog', () => {
+    expect(
+      sessionResumeCommand(
+        {
+          sessionId: 'saved-session',
+          sessionDirectory: '/home/user/.strands/sessions/workspace-0123456789ab',
+          workspace: '/workspace',
+        },
+        { cwd: '/workspace', platform: 'linux' }
+      )
+    ).toBe(
+      `strands --session-id saved-session --set 'session.dir="/home/user/.strands/sessions/workspace-0123456789ab"'`
+    )
+  })
+
+  it('pins the Harness default directory on Windows', () => {
+    expect(
+      sessionResumeCommand(
+        {
+          sessionId: 'saved-session',
+          sessionDirectory: 'C:\\workspace\\.agent\\sessions',
+          workspace: 'C:\\workspace',
+        },
+        { cwd: 'C:\\workspace', platform: 'win32' }
+      )
+    ).toBe(`strands --session-id saved-session --set 'session.dir="C:\\\\workspace\\\\.agent\\\\sessions"'`)
   })
 
   it('quotes imported agents and custom directories as literal shell arguments', () => {

@@ -32,7 +32,7 @@ describe('/rename', () => {
       await mkdir(join(sessionDirectory, 'saved-session'), { recursive: true })
       await writeFile(
         join(sessionDirectory, 'saved-session', 'cli-session.json'),
-        JSON.stringify({ version: 1, name: 'Python release planning' })
+        JSON.stringify({ version: 1, name: 'Python release planning', agentName: 'Python reviewer' })
       )
       manager = await createPythonChat(
         source,
@@ -42,6 +42,7 @@ describe('/rename', () => {
         () => {}
       )
       expect(manager.getSnapshot().runtime).toMatchObject({
+        agent: 'Python reviewer',
         session: 'Python release planning',
         sessionName: 'Python release planning',
       })
@@ -52,27 +53,66 @@ describe('/rename', () => {
     }
   })
 
-  it('persists the same session metadata as /sessions rename', async () => {
+  // https://github.com/strands-agents/harness-sdk/pull/5194#discussion_r4525136903
+  it('persists independent agent and session names and reports metadata write failures', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'strands-rename-'))
-    const sessions = new FileSessionRuntime({ sessionId: 'saved-session', sessionDirectory: directory }, directory, {
+    const host = { sessionId: 'saved-session', sessionDirectory: directory }
+    const sessions = new FileSessionRuntime(host, directory, {
       workspace: directory,
     })
-    const primary = new ChatController(idleBackend(), { sessions })
+    const backend = idleBackend({
+      info: () => ({ sessionId: host.sessionId }),
+      async clear() {
+        host.sessionId = 'fresh-session'
+        await mkdir(join(directory, host.sessionId, 'cli-session.json'), { recursive: true })
+      },
+    })
+    const primary = new ChatController(backend, { sessions })
     const manager = new ConversationManager(primary, { fork: async () => primary })
 
     try {
-      await manager.submit('/rename Release planning')
+      await manager.submit('/sessions rename Release planning')
+      await manager.submit('/rename Reviewer')
       expect(JSON.parse(await readFile(join(directory, 'saved-session', 'cli-session.json'), 'utf8'))).toEqual({
         version: 1,
         name: 'Release planning',
+        agentName: 'Reviewer',
       })
       expect(manager.getSnapshot()).toMatchObject({
-        runtime: { session: 'Release planning', sessionName: 'Release planning' },
+        runtime: { agent: 'Reviewer', session: 'Release planning', sessionName: 'Release planning' },
         panel: { kind: 'sessions', rows: [{ label: 'Release planning', current: true }] },
       })
       await manager.submit('/sessions rename Ship checklist')
       expect(manager.getSnapshot().runtime.sessionName).toBe('Ship checklist')
-      expect(await sessions.resolve('saved-session')).toMatchObject({ name: 'Ship checklist' })
+      expect(await sessions.resolve('saved-session')).toMatchObject({ name: 'Ship checklist', agentName: 'Reviewer' })
+      const reopened = new FileSessionRuntime(host, directory, { workspace: directory })
+      expect(await reopened.resolve('saved-session')).toMatchObject({ name: 'Ship checklist', agentName: 'Reviewer' })
+
+      await manager.submit('/rename ""')
+      expect(manager.getSnapshot().runtime.agent).toBe('Reviewer')
+      expect(manager.getSnapshot().panel?.rows[0]?.description).toBe('Agent names cannot be empty.')
+
+      host.sessionId = 'blocked'
+      await writeFile(join(directory, 'blocked'), 'not a directory')
+      await manager.submit('/rename Unsaved name')
+      expect(manager.getSnapshot().runtime.agent).toBe('Reviewer')
+      expect(manager.getSnapshot().panel).toMatchObject({ kind: 'error', title: 'agent rename failed' })
+
+      await manager.submit('Previous turn')
+      expect(manager.getSnapshot().completedTurns).toHaveLength(1)
+      await manager.submit('/clear')
+      expect(manager.getSnapshot()).toMatchObject({
+        runtime: { agent: 'Reviewer', session: 'fresh-session' },
+        completedTurns: [],
+        notices: [
+          { status: 'error', text: expect.stringContaining('Conversation cleared; agent name could not be saved:') },
+        ],
+      })
+      expect(manager.getSnapshot().runtime.sessionName).toBeUndefined()
+      expect(manager.getSnapshot().panel).toBeUndefined()
+      expect(manager.getSnapshot().composerStatus).toBeUndefined()
+      await manager.submit('New turn')
+      expect(manager.getSnapshot().completedTurns).toHaveLength(1)
     } finally {
       await manager.dispose()
       await rm(directory, { recursive: true, force: true })

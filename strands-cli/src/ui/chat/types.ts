@@ -105,7 +105,11 @@ export interface ChatPanelBase {
 
 export type NewChatPanel =
   | (ChatPanelBase & {
-      kind: 'context' | 'skills' | 'agents' | 'tools' | 'voice' | 'help' | 'error'
+      kind: 'context' | 'skills' | 'tools' | 'voice' | 'help' | 'error'
+    })
+  | (ChatPanelBase & {
+      kind: 'agents'
+      renameInput?: { id: string; defaultName: string }
     })
   | (ChatPanelBase & {
       kind: 'mcp'
@@ -205,6 +209,7 @@ export interface ChatMcpStartup {
 
 export interface ChatSnapshot {
   conversationId?: string
+  parentAgent?: { id: string; name: string }
   completedTurns: readonly ChatTurn[]
   activeTurn?: ChatTurn
   pendingSteering: readonly string[]
@@ -285,6 +290,7 @@ export interface ChatControllerApi {
   submit(input: ChatInput): Promise<ChatTurn | undefined>
   enqueuePeerMessage?(message: PeerMessage): boolean
   steer(input: string): Promise<ChatTurn | undefined>
+  steerQueued(id?: string): boolean
   updateQueuedPrompt(id: string, prompt: string): boolean
   removeQueuedPrompt(id: string): boolean
   moveQueuedPrompt(id: string, direction: -1 | 1): boolean
@@ -293,6 +299,8 @@ export interface ChatControllerApi {
   dispose(): Promise<void>
   dismissPanel(): boolean
   activatePanelRow(row: ChatPanelRow): Promise<boolean>
+  openTask(taskId: string): boolean
+  returnToParent?(): boolean
   openSkillDetail(name: string): boolean
   openMcpDetail(name: string): boolean
   retryMcpServer(name: string): Promise<boolean>

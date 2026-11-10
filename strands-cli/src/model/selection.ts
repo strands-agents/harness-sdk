@@ -1,4 +1,5 @@
 import { supportsThinking } from '@strands-agents/harness'
+import { EFFORT_LEVELS } from '@strands-agents/harness/internal'
 
 import type { ChatEffortOption } from '../agent/types.js'
 import { PROVIDER_IDS, type ProfileEffort, type ProviderId } from '../config/store.js'
@@ -33,17 +34,6 @@ const BEDROCK_XAI_EFFORTS = ['low', 'medium', 'high', 'xhigh'] as const
  * to the library's `Effort` with `profileEffort()` before it reaches `createHarness`.
  */
 export type EffortInput = string | boolean | null | undefined
-
-const PROFILE_EFFORT_LEVELS: readonly ProfileEffort[] = [
-  'auto',
-  'off',
-  'minimal',
-  'low',
-  'medium',
-  'high',
-  'xhigh',
-  'max',
-]
 
 export interface SelectableModel {
   id: string
@@ -99,7 +89,7 @@ export async function validateModelSelection(
 }
 
 export function validateEffortSelection(effort: string, options: readonly ChatEffortOption[]): void {
-  const supported = [...options.map((option) => option.id), 'auto']
+  const supported = [...options.map((option) => option.id), 'auto', 'off']
   if (!supported.includes(effort)) {
     throw new ModelControlError(
       `Reasoning effort ${JSON.stringify(effort)} is not supported. Choose: ${supported.join(', ')}.`
@@ -132,7 +122,7 @@ export function profileEffort(thinking: EffortInput): ProfileEffort {
   if (value === 'none') {
     return 'off'
   }
-  return PROFILE_EFFORT_LEVELS.find((level) => level === value) ?? 'auto'
+  return EFFORT_LEVELS.find((level) => level === value) ?? 'auto'
 }
 
 function effortLevels(modelId: string): readonly string[] {
@@ -204,7 +194,10 @@ export function effortForModel(
 ): Exclude<EffortInput, undefined> {
   const levels = effortLevels(modelId)
   const current = effortValue(thinking)
-  if (levels.includes(current) || (current === 'off' && levels.includes('none'))) {
+  if (current === 'none') {
+    return 'off'
+  }
+  if (current === 'off' || levels.includes(current)) {
     return thinking
   }
   return 'auto'

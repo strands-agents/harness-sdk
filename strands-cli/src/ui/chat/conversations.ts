@@ -1,14 +1,14 @@
 import { ConversationVoice } from './voice.js'
 import { makePanel } from './panel-state.js'
-import type {
+import {
   ChatController,
-  ChatControllerApi,
-  NewChatPanel,
-  ChatPanel,
-  ChatPanelRow,
-  ChatSnapshot,
-  ChatSettings,
-  ChatVoiceStore,
+  type ChatControllerApi,
+  type NewChatPanel,
+  type ChatPanel,
+  type ChatPanelRow,
+  type ChatSnapshot,
+  type ChatSettings,
+  type ChatVoiceStore,
 } from './controller.js'
 import type { ChatConversations, ChatInput, ChatTurn } from '../../agent/types.js'
 import { parseCommandInvocation, unquote, type CommandAssistance } from './commands.js'
@@ -20,12 +20,11 @@ import { watchAgentProject } from '../../project/watch.js'
 import { sessionWorkspaceLabel, type SessionTarget } from '../../session/sessions.js'
 import type { VoiceInput } from '../../agent/voice.js'
 
-const MANAGER_COMMANDS = new Set(['agents', 'fork', 'voice'])
+const MANAGER_COMMANDS = new Set(['agents', 'fork', 'voice', 'rename'])
 const AGENTS_PANEL_TITLE = 'Agents'
 
 interface ConversationRecord {
   id: string
-  title: string
   description: string
   controller: ChatController
   unsubscribe: () => void
@@ -33,7 +32,7 @@ interface ConversationRecord {
 
 export interface InitialConversations {
   activeId: string
-  entries: readonly Omit<ConversationRecord, 'unsubscribe'>[]
+  entries: readonly (Omit<ConversationRecord, 'unsubscribe'> & { title: string })[]
 }
 
 interface ConversationManagerOptions {
@@ -61,6 +60,7 @@ export class ConversationManager implements ChatControllerApi {
   private readonly _stopProjectWatch: (() => void) | undefined
   private _activeId: string
   private _panel: ChatPanel | undefined
+  private _taskOwnerId: string | undefined
   private _snapshot: ChatSnapshot
   private _nextConversation = 2
   private _nextPanel = 1
@@ -78,7 +78,7 @@ export class ConversationManager implements ChatControllerApi {
         entries: [
           {
             id: 'agent-1',
-            title: initial.backend.name,
+            title: initial.name,
             description: initial.backend.info?.().description || 'Primary agent',
             controller: initial,
           },
@@ -141,6 +141,7 @@ export class ConversationManager implements ChatControllerApi {
       )
     }
     this._stopAgentMessaging = this._agentMessaging?.subscribe(() => {
+      this._attachDelegates()
       if (this._panel?.kind === 'agents' && this._panel.title === AGENTS_PANEL_TITLE) {
         this._openAgentsPanel(false)
       }
@@ -179,10 +180,11 @@ export class ConversationManager implements ChatControllerApi {
       throw new Error('Finish or cancel running work in all conversations before applying setup changes.')
     }
     const entries: ChatConversations['entries'][number][] = []
-    for (const { id, title, description, controller } of this._conversations.values()) {
-      entries.push({ id, title, description, conversation: await controller.captureConversation() })
+    for (const { id, description, controller } of this._conversations.values()) {
+      if (this._agentMessaging?.getEndpoint(id)?.backgroundTask) continue
+      entries.push({ id, title: controller.name, description, conversation: await controller.captureConversation() })
     }
-    return { activeId: this._activeId, entries }
+    return { activeId: entries.some(({ id }) => id === this._activeId) ? this._activeId : entries[0]!.id, entries }
   }
 
   pauseVoiceInput(): () => void {
@@ -248,6 +250,7 @@ export class ConversationManager implements ChatControllerApi {
       this.close()
       return undefined
     }
+    if (this._taskOwnerId && !this.dismissPanel()) return undefined
     if (hasAttachments) {
       this._panel = undefined
       this._emit()
@@ -258,6 +261,11 @@ export class ConversationManager implements ChatControllerApi {
     const argument = invocation?.argument ?? ''
     if (command === 'agents') {
       this._openAgentsPanel()
+      return undefined
+    }
+    if (command === 'rename') {
+      if (argument) await this._renameAgent(this._activeId, unquote(argument))
+      else this._openAgentNameInput(this._activeId)
       return undefined
     }
     if (command === 'fork') {
@@ -289,6 +297,10 @@ export class ConversationManager implements ChatControllerApi {
 
   updateQueuedPrompt(id: string, prompt: string): boolean {
     return this._active.controller.updateQueuedPrompt(id, prompt)
+  }
+
+  steerQueued(id?: string): boolean {
+    return this._active.controller.steerQueued(id)
   }
 
   removeQueuedPrompt(id: string): boolean {
@@ -337,6 +349,20 @@ export class ConversationManager implements ChatControllerApi {
   }
 
   dismissPanel(): boolean {
+    if (this._snapshot.panel?.kind === 'permission') return false
+    if (this._taskOwnerId) {
+      const owner = this._conversations.get(this._taskOwnerId)
+      if (owner?.controller.getSnapshot().panel?.kind === 'permission') return false
+      this._taskOwnerId = undefined
+      owner?.controller.dismissPanel()
+      this._emit()
+      return true
+    }
+    if (this._panel?.kind === 'agents' && this._panel.renameInput) {
+      delete this._panel.renameInput
+      this._openAgentsPanel()
+      return true
+    }
     if (this._panel) {
       this._panel = undefined
       this._emit()
@@ -346,10 +372,32 @@ export class ConversationManager implements ChatControllerApi {
   }
 
   async activatePanelRow(row: ChatPanelRow): Promise<boolean> {
+    if (this._active.controller.getSnapshot().panel?.kind === 'permission') {
+      return this._active.controller.activatePanelRow(row)
+    }
+    if (this._taskOwnerId) {
+      return this._conversations.get(this._taskOwnerId)?.controller.activatePanelRow(row) ?? false
+    }
     if (this._panel?.kind === 'voice') {
       return row.value ? this._voice.handlePanelAction(row.value) : false
     }
     if (this._panel?.kind === 'agents') {
+      const editing = this._panel.renameInput
+      if (editing) {
+        if (row.value === 'rename:cancel') return this.dismissPanel()
+        if (row.value?.startsWith('rename:save:')) {
+          return this._renameAgent(editing.id, decodeURIComponent(row.value.slice('rename:save:'.length)))
+        }
+        return false
+      }
+      if (row.value?.endsWith('=rename')) {
+        const id = readConversationValue(row.value.slice(0, -'=rename'.length))
+        return id ? this._openAgentNameInput(id) : false
+      }
+      const task = this._agentMessaging
+        ?.list()
+        .find((endpoint) => row.value === `delegate:${encodeURIComponent(endpoint.id)}`)?.backgroundTask
+      if (task) return this.openTask(task.id, task.ownerId)
       const id = readConversationValue(row.value)
       return id ? this._switchConversation(id) : false
     }
@@ -360,13 +408,34 @@ export class ConversationManager implements ChatControllerApi {
   }
 
   openModelPanel(): Promise<void> {
+    if (this._taskOwnerId && !this.dismissPanel()) return Promise.resolve()
     this._panel = undefined
     return this._active.controller.openModelPanel()
   }
 
   openContextPanel(): void {
+    if (this._taskOwnerId && !this.dismissPanel()) return
     this._panel = undefined
     this._active.controller.openContextPanel()
+  }
+
+  openTask(taskId: string, ownerId = this._activeId): boolean {
+    if (this._snapshot.panel?.kind === 'permission') return false
+    const delegate = this._agentMessaging
+      ?.list()
+      .find((endpoint) => endpoint.backgroundTask?.id === taskId && endpoint.backgroundTask.ownerId === ownerId)
+    if (delegate && this._conversations.has(delegate.id)) return this._switchConversation(delegate.id)
+    const owner = this._conversations.get(ownerId)
+    if (!owner?.controller.openTask(taskId)) return false
+    this._taskOwnerId = ownerId
+    this._emit()
+    return true
+  }
+
+  returnToParent(): boolean {
+    if (this._snapshot.panel?.kind === 'permission') return false
+    const ownerId = this._agentMessaging?.getEndpoint(this._activeId)?.backgroundTask?.ownerId
+    return ownerId !== undefined && this._switchConversation(ownerId)
   }
 
   openSkillDetail(name: string): boolean {
@@ -440,7 +509,7 @@ export class ConversationManager implements ChatControllerApi {
         return false
       }
       const id = controller.peerEndpointId ?? `agent-${this._nextConversation++}`
-      this._addConversation(id, `${title} · ${workspace}`, controller, 'Saved session')
+      this._addConversation(id, target.agentName ?? `${controller.name} · ${workspace}`, controller, 'Saved session')
       this._activeId = id
       this._panel = undefined
       this._emit()
@@ -460,7 +529,7 @@ export class ConversationManager implements ChatControllerApi {
     if (source.controller.backend.reconstructable?.() === false) {
       this._openError(
         'fork unavailable',
-        source.title,
+        source.controller.name,
         'This source must expose a reconstructable agent factory before it can be forked.'
       )
       return undefined
@@ -468,13 +537,17 @@ export class ConversationManager implements ChatControllerApi {
     if (source.controller.busy) {
       this._openError(
         'fork unavailable',
-        source.title,
+        source.controller.name,
         'Wait for this turn to finish or interrupt it before forking the conversation.'
       )
       return undefined
     }
     if (this._opening) {
-      this._openError('fork unavailable', source.title, 'Wait for the conversation that is opening to finish.')
+      this._openError(
+        'fork unavailable',
+        source.controller.name,
+        'Wait for the conversation that is opening to finish.'
+      )
       return undefined
     }
 
@@ -490,13 +563,13 @@ export class ConversationManager implements ChatControllerApi {
       }
       const id = controller.peerEndpointId ?? `agent-${this._nextConversation++}`
       const title = prompt ? conversationTitle(prompt) : `Fork ${id.slice('agent-'.length)}`
-      this._addConversation(id, title, controller, `Fork of ${source.title}`)
+      this._addConversation(id, title, controller, `Fork of ${source.controller.name}`)
       this._activeId = id
       this._panel = undefined
       this._emit()
       return prompt ? controller.submit(prompt) : undefined
     } catch (error) {
-      this._openError('fork failed', source.title, errorMessage(error))
+      this._openError('fork failed', source.controller.name, errorMessage(error))
       return undefined
     } finally {
       this._opening = undefined
@@ -507,15 +580,19 @@ export class ConversationManager implements ChatControllerApi {
 
   private _addConversation(id: string, title: string, controller: ChatController, description: string): void {
     const endpointId = controller.peerEndpointId ?? id
-    this._nextConversation = Math.max(this._nextConversation, Number(endpointId.slice('agent-'.length)) + 1)
+    controller.setAgentName(title)
+    this._nextConversation = Math.max(this._nextConversation, (Number(endpointId.slice('agent-'.length)) || 0) + 1)
     const streamSpokenReply = this._voice.followConversation(controller, () => endpointId === this._activeId)
     const record: ConversationRecord = {
       id: endpointId,
-      title: sanitizeTerminalText(title),
       description: sanitizeTerminalText(description),
       controller,
       unsubscribe: controller.subscribe(() => {
         streamSpokenReply()
+        const panel = controller.getSnapshot().panel
+        if (this._taskOwnerId === endpointId && panel?.kind !== 'detail' && panel?.kind !== 'permission') {
+          this._taskOwnerId = undefined
+        }
         if (this._panel?.kind === 'agents') {
           this._openAgentsPanel(false)
         }
@@ -524,7 +601,61 @@ export class ConversationManager implements ChatControllerApi {
       }),
     }
     this._conversations.set(endpointId, record)
-    this._agentMessaging?.rename(endpointId, record.title)
+    this._agentMessaging?.rename(endpointId, controller.name)
+  }
+
+  private _attachDelegates(): void {
+    for (const info of this._agentMessaging?.list() ?? []) {
+      if (this._conversations.has(info.id)) continue
+      const endpoint = this._agentMessaging?.getEndpoint(info.id)
+      if (!endpoint?.chat) continue
+      const owner = this._conversations.get(info.backgroundTask?.ownerId ?? '')
+      if (!owner) continue
+      endpoint.chat.attached = true
+      const controller = new ChatController(endpoint.chat.backend, {
+        peerEndpointId: info.id,
+        settings: owner.controller.getSnapshot().settings,
+        runtime: {
+          cwd: owner.controller.getSnapshot().runtime.cwd,
+          version: owner.controller.getSnapshot().runtime.version,
+        },
+      })
+      endpoint.status = (): 'working' | 'idle' => (controller.busy ? 'working' : 'idle')
+      endpoint.enqueue = (message): boolean => controller.enqueuePeerMessage(message, true)
+      this._addConversation(info.id, info.name, controller, info.description ?? `Subagent of ${owner.controller.name}`)
+      void controller.follow(endpoint.chat.prompt, endpoint.chat.stream)
+    }
+  }
+
+  private _openAgentNameInput(id: string): boolean {
+    const conversation = this._conversations.get(id)
+    if (!conversation) return false
+    this._openAgentsPanel(false)
+    this._panel = this._makePanel({
+      ...this._panel!,
+      kind: 'agents',
+      renameInput: { id, defaultName: conversation.controller.name },
+    })
+    this._emit()
+    return true
+  }
+
+  private async _renameAgent(id: string, name: string): Promise<boolean> {
+    const conversation = this._conversations.get(id)
+    if (!conversation) return false
+    try {
+      await conversation.controller.renameAgent(name)
+      this._agentMessaging?.rename(id, conversation.controller.name)
+      if (this._panel?.kind === 'agents' && this._panel.renameInput?.id === id) {
+        delete this._panel.renameInput
+        this._openAgentsPanel(false)
+      }
+      this._emit()
+      return true
+    } catch (error) {
+      this._openError('agent rename failed', name, errorMessage(error))
+      return false
+    }
   }
 
   private _reloadProjectIfReady(): void {
@@ -551,12 +682,14 @@ export class ConversationManager implements ChatControllerApi {
       return false
     }
     this._activeId = id
+    this._taskOwnerId = undefined
     this._panel = undefined
     this._emit()
     return true
   }
 
   private _openAgentsPanel(emit = true): void {
+    const renameInput = this._panel?.kind === 'agents' ? this._panel.renameInput : undefined
     const existingId =
       this._panel?.kind === 'agents' && this._panel.title === AGENTS_PANEL_TITLE ? this._panel.id : undefined
     const conversations = [...this._conversations.values()]
@@ -572,7 +705,7 @@ export class ConversationManager implements ChatControllerApi {
       .map((conversation) => {
         const status = conversationStatus(conversation.controller.getSnapshot())
         return {
-          label: conversation.title,
+          label: conversation.controller.name,
           description: conversation.description,
           value: `conversation:${encodeURIComponent(conversation.id)}`,
           bold: true,
@@ -589,7 +722,8 @@ export class ConversationManager implements ChatControllerApi {
         (endpoint) =>
           ({
             label: endpoint.name,
-            description: 'Live delegate',
+            description: endpoint.description ?? 'Live delegate',
+            ...(endpoint.backgroundTask ? { value: `delegate:${encodeURIComponent(endpoint.id)}` } : {}),
             bold: true,
             current: false,
             badge: {
@@ -601,6 +735,7 @@ export class ConversationManager implements ChatControllerApi {
     this._panel = this._makePanel({
       kind: 'agents',
       title: AGENTS_PANEL_TITLE,
+      ...(renameInput ? { renameInput } : {}),
       rows: [...conversations, ...generalists],
     })
     if (existingId) {
@@ -627,11 +762,17 @@ export class ConversationManager implements ChatControllerApi {
   private _buildSnapshot(): ChatSnapshot {
     const active = this._active.controller.getSnapshot()
     const { panel: activePanel, ...base } = active
-    const panel = activePanel?.kind === 'permission' ? activePanel : (this._panel ?? activePanel)
+    const taskPanel = this._taskOwnerId
+      ? this._conversations.get(this._taskOwnerId)?.controller.getSnapshot().panel
+      : undefined
+    const panel = activePanel?.kind === 'permission' ? activePanel : (taskPanel ?? this._panel ?? activePanel)
     const afterTurnId = active.activeTurn?.id ?? active.completedTurns.at(-1)?.id
+    const ownerId = this._agentMessaging?.getEndpoint(this._activeId)?.backgroundTask?.ownerId
+    const parent = ownerId ? this._conversations.get(ownerId) : undefined
     return {
       ...base,
       conversationId: this._activeId,
+      ...(parent ? { parentAgent: { id: parent.id, name: parent.controller.name } } : {}),
       ...(panel ? { panel } : {}),
       notices:
         this._opening === 'fork' && !this._closed && !this._disposed
@@ -652,7 +793,7 @@ export class ConversationManager implements ChatControllerApi {
         ...(active.runtime.devWorkspace ? { sourceWatching: this._sourceWatching } : {}),
         configuration: [
           ...(active.runtime.configuration ?? []),
-          { label: 'agent', value: `${this._active.title} (${this._conversations.size} total)` },
+          { label: 'agent', value: `${this._active.controller.name} (${this._conversations.size} total)` },
         ],
       },
     }

@@ -1,11 +1,11 @@
-import { type HarnessAgentConfig, type HarnessAgentOptions, type SessionConfig } from '@strands-agents/harness'
+import { type HarnessAgentOptions, type SessionConfig } from '@strands-agents/harness'
 import { SessionManager } from '@strands-agents/sdk'
 import { promises as fs } from 'node:fs'
 import { basename, join, posix, resolve, win32 } from 'node:path'
 import { isMissingPathError } from '../paths.js'
 import { errorMessage, graphemes, sanitizeTerminalText } from '../terminal/text.js'
 import { isRecord } from '../values.js'
-import { workspaceSessionDirectory, type SessionRootCatalog } from './catalog.js'
+import type { SessionRootCatalog } from './catalog.js'
 
 /** The `session` option unpacked: `enabled` mirrors the harness toggle (`undefined` leaves the default on). */
 export interface SessionSettings {
@@ -80,9 +80,7 @@ export function sessionResumeCommand(
   const command = ['strands']
   if (session.agentProject) command.push('--agent', quote(session.agentProject))
   command.push('--session-id', quote(session.sessionId))
-  if (session.agentProject || directory !== workspaceSessionDirectory(workspace)) {
-    command.push('--set', quote(`session.dir=${JSON.stringify(directory)}`))
-  }
+  command.push('--set', quote(`session.dir=${JSON.stringify(directory)}`))
   const resume = command.join(' ')
   if (workspace === paths.resolve(options.cwd ?? process.cwd())) return resume
   const changeDirectory =
@@ -97,26 +95,12 @@ function quoteArgument(value: string, platform: NodeJS.Platform): string {
   return platform === 'win32' ? `'${value.replaceAll("'", "''")}'` : `'${value.replaceAll("'", "'\\''")}'`
 }
 
-export { SessionRootCatalog, sessionRootDirectory, workspaceSessionDirectory } from './catalog.js'
+export { SessionRootCatalog } from './catalog.js'
 
 const SESSION_REFERENCE_PREFIX = 'strands-session:'
 const SESSION_METADATA_FILE = 'cli-session.json'
+const sessionNameWrites = new Map<string, Promise<void>>()
 export const DEFAULT_SESSION_DIR = './.agent/sessions'
-
-/**
- * Points the built-in agent's sessions at its central workspace directory unless the profile disables
- * sessions or chooses its own `session.dir`.
- */
-export function withWorkspaceSessionDirectory(
-  options: HarnessAgentOptions,
-  profile: Pick<HarnessAgentConfig, 'session'>,
-  workspace: string
-): HarnessAgentOptions {
-  if (profile.session === false || (typeof profile.session === 'object' && profile.session.dir !== undefined)) {
-    return options
-  }
-  return withSession(options, { dir: workspaceSessionDirectory(workspace) })
-}
 
 interface SessionInfo extends Partial<SessionMetadata> {
   id: string
@@ -130,6 +114,7 @@ interface SessionInfo extends Partial<SessionMetadata> {
 export interface SessionTarget {
   sessionId: string
   name?: string
+  agentName?: string
   sessionDirectory: string
   workspace: string
   active: boolean
@@ -142,6 +127,7 @@ export interface ChatSessionRuntime {
   list(): Promise<readonly SessionInfo[]>
   resolve(reference: string): Promise<SessionTarget>
   renameCurrent?(name: string): Promise<{ sessionId: string; name: string }>
+  renameAgent?(name: string): Promise<{ sessionId: string; name: string }>
 }
 
 interface SessionMetadata {
@@ -152,7 +138,8 @@ interface SessionMetadata {
 
 interface SessionNameDocument {
   version: 1
-  name: string
+  name?: string
+  agentName?: string
 }
 
 export class FileSessionRuntime implements ChatSessionRuntime {
@@ -236,10 +223,11 @@ export class FileSessionRuntime implements ChatSessionRuntime {
     if (!root) {
       throw new Error(`The workspace for session ${JSON.stringify(selected.id)} is no longer registered.`)
     }
-    const name = await readSessionName(join(root.directory, selected.id))
+    const { name, agentName } = await readSessionNames(join(root.directory, selected.id))
     return {
       sessionId: selected.id,
       ...(name ? { name } : {}),
+      ...(agentName ? { agentName } : {}),
       sessionDirectory: selected.directory,
       workspace: root.workspace,
       active:
@@ -247,16 +235,34 @@ export class FileSessionRuntime implements ChatSessionRuntime {
     }
   }
 
-  async renameCurrent(name: string): Promise<{ sessionId: string; name: string }> {
+  renameCurrent(name: string): Promise<{ sessionId: string; name: string }> {
+    return this._rename('name', name)
+  }
+
+  renameAgent(name: string): Promise<{ sessionId: string; name: string }> {
+    return this._rename('agentName', name)
+  }
+
+  private async _rename(field: 'name' | 'agentName', name: string): Promise<{ sessionId: string; name: string }> {
     if (!this._host.sessionId) {
       throw new Error('The current session is not file-backed.')
     }
     const sessionId = sanitizeSessionId(this._host.sessionId)
     const normalizedName = normalizeSessionText(name)
     if (!normalizedName) {
-      throw new Error('Session names cannot be empty.')
+      throw new Error(`${field === 'name' ? 'Session' : 'Agent'} names cannot be empty.`)
     }
-    await writeSessionName(join(resolve(this._host.sessionDirectory), sessionId), normalizedName)
+    const directory = join(resolve(this._host.sessionDirectory), sessionId)
+    const writing = (sessionNameWrites.get(directory) ?? Promise.resolve()).then(() =>
+      writeSessionNames(directory, { [field]: normalizedName })
+    )
+    const pending = writing.catch(() => undefined)
+    sessionNameWrites.set(directory, pending)
+    try {
+      await writing
+    } finally {
+      if (sessionNameWrites.get(directory) === pending) sessionNameWrites.delete(directory)
+    }
     return {
       sessionId: sanitizeTerminalText(sessionId),
       name: normalizedName,
@@ -333,7 +339,7 @@ async function readSession(directory: string, id: string, active: boolean): Prom
     }
   }
 
-  const [metadata, name] = await Promise.all([readSessionMetadata(path), readSessionName(path)])
+  const [metadata, { name }] = await Promise.all([readSessionMetadata(path), readSessionNames(path)])
   return {
     id: sanitizeTerminalText(id),
     ...(name ? { name } : {}),
@@ -342,21 +348,28 @@ async function readSession(directory: string, id: string, active: boolean): Prom
   }
 }
 
-async function readSessionName(sessionDirectory: string): Promise<string | undefined> {
+async function readSessionNames(sessionDirectory: string): Promise<SessionNameDocument> {
   try {
     const document = JSON.parse(await fs.readFile(join(sessionDirectory, SESSION_METADATA_FILE), 'utf8')) as unknown
-    if (!isRecord(document) || document.version !== 1 || typeof document.name !== 'string') {
-      return undefined
+    if (isRecord(document) && document.version === 1) {
+      return {
+        version: 1,
+        ...(typeof document.name === 'string' ? { name: normalizeSessionText(document.name) } : {}),
+        ...(typeof document.agentName === 'string' ? { agentName: normalizeSessionText(document.agentName) } : {}),
+      }
     }
-    return normalizeSessionText(document.name) || undefined
   } catch {
-    return undefined
+    return { version: 1 }
   }
+  return { version: 1 }
 }
 
-async function writeSessionName(sessionDirectory: string, name: string): Promise<void> {
+async function writeSessionNames(
+  sessionDirectory: string,
+  names: Pick<SessionNameDocument, 'name' | 'agentName'>
+): Promise<void> {
   await fs.mkdir(sessionDirectory, { recursive: true })
-  const document: SessionNameDocument = { version: 1, name }
+  const document = { ...(await readSessionNames(sessionDirectory)), ...names }
   await fs.writeFile(join(sessionDirectory, SESSION_METADATA_FILE), `${JSON.stringify(document, null, 2)}\n`, {
     mode: 0o600,
   })

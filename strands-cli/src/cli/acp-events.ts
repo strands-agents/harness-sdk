@@ -2,7 +2,7 @@ import * as acp from '@agentclientprotocol/sdk'
 import type { Agent, ContentBlockData, DocumentFormat, ImageFormat } from '@strands-agents/sdk'
 
 import { projectMediaContent, projectToolResultContent } from '../agent/events.js'
-import type { ChatEvent, ChatMediaContent, ChatToolResultContent, TokenUsage } from '../agent/types.js'
+import type { ChatEvent, ChatMediaContent, ChatTask, ChatToolResultContent, TokenUsage } from '../agent/types.js'
 
 const IMAGE_FORMATS = ['png', 'jpg', 'jpeg', 'gif', 'webp'] satisfies readonly ImageFormat[]
 const DOCUMENT_FORMATS = [
@@ -51,7 +51,8 @@ function documentFormat(mimeType: string | null | undefined, name: string): Docu
 export async function replaySessionHistory(
   agent: Pick<Agent, 'messages'>,
   sessionId: string,
-  client: acp.AgentContext
+  client: acp.AgentContext,
+  backgroundToolCalls?: ReadonlySet<string>
 ): Promise<void> {
   for (const message of agent.messages) {
     for (const block of message.content) {
@@ -84,6 +85,7 @@ export async function replaySessionHistory(
           })
           break
         case 'toolResultBlock':
+          if (backgroundToolCalls?.has(block.toolUseId)) break
           await sendSessionUpdate(client, sessionId, {
             sessionUpdate: 'tool_call_update',
             toolCallId: block.toolUseId,
@@ -153,6 +155,19 @@ export async function sendChatEvent(client: acp.AgentContext, sessionId: string,
         ...(event.error ? { rawOutput: { error: event.error } } : {}),
       })
       break
+  }
+}
+
+export function backgroundTaskUpdate(task: ChatTask, toolCallId: string): acp.SessionUpdate {
+  const terminal = task.deliveryState === 'ready'
+  const text = task.result || task.error || (task.status === 'cancelled' ? 'Cancelled.' : undefined)
+  return {
+    sessionUpdate: 'tool_call_update',
+    toolCallId,
+    status: terminal ? (task.status === 'completed' ? 'completed' : 'failed') : 'in_progress',
+    ...(terminal && text ? { content: [{ type: 'content', content: { type: 'text', text } }] } : {}),
+    ...(terminal && task.error ? { rawOutput: { error: task.error } } : {}),
+    _meta: { 'strands/backgroundTask': { taskId: task.id, status: task.status } },
   }
 }
 

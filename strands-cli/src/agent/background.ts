@@ -1,15 +1,19 @@
 import {
   type Agent,
   type AgentStreamEvent,
+  type AgentResult,
   type Tool,
   type ToolContext,
   type ToolResultContent,
   type ToolStreamGenerator,
 } from '@strands-agents/sdk'
+import type { HarnessAgentOptions } from '@strands-agents/harness'
+import { PassThrough } from 'node:stream'
 import { sanitizeTerminalText, sanitizeTerminalValue } from '../terminal/text.js'
 import { isRecord } from '../values.js'
 import { type BackgroundAgentInbox } from './messaging.js'
-import { type ChatEntry, type ChatTask } from './types.js'
+import { type ChatEntry, type ChatTask, type ChatEvent, type ChatRunResult } from './types.js'
+import { projectAgentEvent as projectChatEvent, projectAgentResult } from './events.js'
 
 type BackgroundTextEntry = Omit<Extract<ChatEntry, { type: 'reasoning' | 'assistant' }>, 'id'>
 
@@ -32,6 +36,8 @@ export interface BackgroundAgentActivity {
 
 interface MutableActivity extends Omit<BackgroundAgentActivity, 'entries'> {
   entries: BackgroundAgentActivityEntry[]
+  stream?: PassThrough
+  result?: Extract<AgentStreamEvent, { type: 'agentResultEvent' }>
 }
 
 export class BackgroundAgentActivityStore {
@@ -67,18 +73,24 @@ export class BackgroundAgentActivityStore {
       return
     }
     projectAgentEvent(activity, event.event)
+    if (event.event.type === 'agentResultEvent') activity.result = event.event
+    activity.stream?.write(event.event)
     this._notifyTool(toolUseId)
   }
 
   readonly onComplete = (event: { toolUseId: string }): void => {
     const toolUseId = sanitizeTerminalText(event.toolUseId)
+    const activity = this._activities.get(toolUseId)
     this._settle(toolUseId, 'completed')
+    activity?.stream?.end()
     this._inbox?.complete(toolUseId)
   }
 
   readonly onError = (event: { toolUseId: string; error: Error }): void => {
     const toolUseId = sanitizeTerminalText(event.toolUseId)
+    const activity = this._activities.get(toolUseId)
     this._settle(toolUseId, 'failed', event.error.message)
+    activity?.stream?.end()
     this._inbox?.complete(toolUseId)
   }
 
@@ -146,6 +158,36 @@ export class BackgroundAgentActivityStore {
 
   runAgentScope<T>(toolUseId: string, operation: () => Promise<T>): Promise<T> {
     return this._inbox?.run(toolUseId, operation) ?? operation()
+  }
+
+  follow(toolUseId: string, agent: Agent): AsyncGenerator<ChatEvent, ChatRunResult, undefined> {
+    const activity = this._activities.get(toolUseId)
+    const stream = new PassThrough({ objectMode: true })
+    if (activity) activity.stream = stream
+    if (activity?.status !== 'working') stream.end()
+    return this._follow(activity, agent, stream)
+  }
+
+  private async *_follow(
+    activity: MutableActivity | undefined,
+    agent: Agent,
+    stream: PassThrough
+  ): AsyncGenerator<ChatEvent, ChatRunResult, undefined> {
+    let result: AgentResult | undefined
+    try {
+      for await (const event of stream as AsyncIterable<AgentStreamEvent>) {
+        if ('agent' in event && event.agent !== agent) continue
+        if (event.type === 'agentResultEvent') result = event.result
+        yield* projectChatEvent(event)
+      }
+      if (activity?.status === 'failed') throw new Error(activity.error ?? 'Subagent failed.')
+      result ??= activity?.result?.agent === agent ? activity.result.result : undefined
+      if (!result) throw new Error('Subagent ended without a result.')
+      return projectAgentResult(agent, result)
+    } finally {
+      if (activity?.stream === stream) delete activity.stream
+      stream.destroy()
+    }
   }
 
   private _settle(toolUseId: string, status: 'completed' | 'failed', error?: string): void {
@@ -371,6 +413,20 @@ interface StoredBackgroundTask {
   result?: { content?: unknown }
   error?: { message?: string }
   lastUpdatedAt?: string
+}
+
+export function interactiveBackgroundTasks(
+  options: HarnessAgentOptions
+): Exclude<HarnessAgentOptions['backgroundTasks'], undefined> {
+  const configured = options.backgroundTasks
+  if (configured === false) {
+    return false
+  }
+  return { ...(configured === true ? {} : configured), waitForCompletion: false }
+}
+
+export function hasReadyBackgroundResults(agent: Agent): boolean {
+  return readBackgroundTasks(agent).some((task) => task.deliveryState === 'ready')
 }
 
 export function readBackgroundTasks(agent: Agent): ChatTask[] {

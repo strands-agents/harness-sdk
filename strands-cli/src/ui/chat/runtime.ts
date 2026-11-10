@@ -41,6 +41,28 @@ import {
   type RuntimeBackendRequest,
 } from '../../agent/runtime.js'
 
+async function restoreSessionNames(
+  sessions: FileSessionRuntime,
+  conversation?: ChatConversation
+): Promise<Pick<SessionTarget, 'name' | 'agentName'>> {
+  const names: Pick<SessionTarget, 'name' | 'agentName'> = sessions.current
+    ? await sessions.resolve(sessions.current)
+    : {}
+  if (!conversation?.agentName) return names
+  const previous = conversation.session
+  const current = sessions.currentTarget
+  if (
+    current &&
+    conversation.agentName !== names.agentName &&
+    (!previous ||
+      previous.sessionId !== current.sessionId ||
+      resolve(previous.sessionDirectory) !== current.sessionDirectory)
+  ) {
+    await sessions.renameAgent(conversation.agentName)
+  }
+  return { ...names, agentName: conversation.agentName }
+}
+
 export async function createTypescriptChat(
   path: string,
   config: CliConfigStore,
@@ -81,9 +103,9 @@ export async function createTypescriptChat(
         workspace: backend.cwd,
         currentSessionResumable: backend.sessionIdentity !== undefined,
       })
-      const sessionName = sessions.current ? (await sessions.resolve(sessions.current)).name : undefined
-      if (disposed) throw new Error('Runtime was disposed while building an agent.')
       const conversation = initialOptions.conversation
+      const { name: sessionName, agentName } = await restoreSessionNames(sessions, conversation)
+      if (disposed) throw new Error('Runtime was disposed while building an agent.')
       const controller = new ChatController(backend, {
         runtime: {
           version: HARNESS_VERSION,
@@ -99,6 +121,7 @@ export async function createTypescriptChat(
           cwd: backend.cwd,
           session: sessionName ?? backend.sessionId ?? (backend.state.managedSession ? 'managed' : 'in-memory'),
           ...(sessionName ? { sessionName } : {}),
+          ...(agentName ? { agent: agentName } : {}),
         },
         settings: { ...config.snapshot().settings, ...settings },
         initialMessages: messages,
@@ -190,13 +213,18 @@ export async function createTypescriptChat(
           },
           entry.id
         )
-        entries.push({ id: entry.id, title: entry.title, description: entry.description, controller })
+        entries.push({
+          id: entry.id,
+          title: controller.name,
+          description: entry.description,
+          controller,
+        })
       }
     } else {
       const controller = await openController(options)
       entries.push({
         id: 'agent-1',
-        title: controller.backend.name,
+        title: controller.name,
         description: controller.backend.info?.().description || 'Primary agent',
         controller,
       })
@@ -285,7 +313,7 @@ export async function createPythonChat(
       workspace: backend.cwd,
       currentSessionResumable: backend.sessionIdentity !== undefined,
     })
-    const sessionName = sessions.current ? (await sessions.resolve(sessions.current)).name : undefined
+    const { name: sessionName, agentName } = await restoreSessionNames(sessions, conversation)
     return new ChatController(backend, {
       runtime: {
         cwd: backend.cwd,
@@ -301,6 +329,7 @@ export async function createPythonChat(
           : {}),
         session: sessionName ?? backend.sessionId ?? 'managed',
         ...(sessionName ? { sessionName } : {}),
+        ...(agentName ? { agent: agentName } : {}),
       },
       settings: snapshot.settings,
       initialMessages: backend.messages,
@@ -354,13 +383,18 @@ export async function createPythonChat(
           },
           conversation
         )
-        entries.push({ id: entry.id, title: entry.title, description: entry.description, controller })
+        entries.push({
+          id: entry.id,
+          title: controller.name,
+          description: entry.description,
+          controller,
+        })
       }
     } else {
       const controller = await openController({ ...options, interactive: true })
       entries.push({
         id: 'agent-1',
-        title: controller.backend.name,
+        title: controller.name,
         description: controller.backend.info?.().description || 'Primary agent',
         controller,
       })
@@ -485,12 +519,13 @@ export async function createInteractiveChat(
       conversation
     )
     try {
-      const sessionName = sessions.current ? (await sessions.resolve(sessions.current)).name : undefined
+      const { name: sessionName, agentName } = await restoreSessionNames(sessions, conversation)
       const controller = new ChatController(backend, {
         runtime: {
           version: HARNESS_VERSION,
           session: sessionName ?? runtime.sessionId ?? (request.sessionManager !== undefined ? 'managed' : 'in-memory'),
           ...(sessionName ? { sessionName } : {}),
+          ...(agentName ? { agent: agentName } : {}),
           cwd: workspace,
         },
         settings: { ...configSnapshot.settings, ...request.settings },
@@ -632,7 +667,12 @@ export async function createInteractiveChat(
           },
           entry.conversation
         )
-        entries.push({ id: entry.id, title: entry.title, description: entry.description, controller })
+        entries.push({
+          id: entry.id,
+          title: controller.name,
+          description: entry.description,
+          controller,
+        })
       }
     } else {
       const primary = await createController({
@@ -643,7 +683,7 @@ export async function createInteractiveChat(
       })
       entries.push({
         id: 'agent-1',
-        title: primary.backend.name,
+        title: primary.name,
         description: primary.backend.info?.().description || 'Primary agent',
         controller: primary,
       })

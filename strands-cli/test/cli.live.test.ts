@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { createHarness } from '@strands-agents/harness'
 import { tool } from '@strands-agents/sdk'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { ChatController } from '../src/ui/chat/controller.js'
 import { AgentModelRuntime } from '../src/model/runtime.js'
@@ -40,7 +40,20 @@ describe('strands CLI e2e', () => {
   it(
     'delegates a spoken Bedrock request and speaks the live harness result',
     { timeout: 240_000, retry: 0 },
-    async () => {
+    async ({ skip }) => {
+      try {
+        await run('uv', ['--version'])
+      } catch (error) {
+        if (
+          process.env.GITHUB_EVENT_NAME === 'pull_request_target' &&
+          error instanceof Error &&
+          'code' in error &&
+          error.code === 'ENOENT'
+        ) {
+          skip('uv is not installed; live voice integration was not run.')
+        }
+        throw error
+      }
       const cwd = mkdtempSync(join(tmpdir(), 'strands-cli-voice-integ-'))
       const observationsPath = join(cwd, 'voice-events.jsonl')
       const wordPath = join(cwd, 'word.txt')
@@ -100,27 +113,25 @@ describe('strands CLI e2e', () => {
         controller = new ChatController(new StrandsChatBackend(new AgentModelRuntime(agent)))
         manager = new ConversationManager(controller, { voice, fork: async () => controller! })
         await manager.submit('/voice on')
-        await expect
-          .poll(
-            () => {
-              const snapshot = voice.getSnapshot()
-              if (snapshot.status === 'error') throw new Error(snapshot.message)
-              const events = readVoiceObservations(observationsPath)
-              return {
-                turns: controller!.getSnapshot().completedTurns.length,
-                replies: events.filter((event) => event.type === 'speech_output_complete').length,
-                resultSpoken: events.some(
-                  (event) =>
-                    event.type === 'transcript' &&
-                    event.role === 'assistant' &&
-                    event.is_final &&
-                    event.current_transcript?.toLowerCase().includes(word)
-                ),
-              }
-            },
-            { timeout: 90_000, interval: 100 }
-          )
-          .toEqual({ turns: 1, replies: 2, resultSpoken: true })
+        await vi.waitUntil(
+          () => {
+            const snapshot = voice.getSnapshot()
+            if (snapshot.status === 'error') throw new Error(snapshot.message)
+            const events = readVoiceObservations(observationsPath)
+            return (
+              controller!.getSnapshot().completedTurns.length === 1 &&
+              events.filter((event) => event.type === 'speech_output_complete').length === 2 &&
+              events.some(
+                (event) =>
+                  event.type === 'transcript' &&
+                  event.role === 'assistant' &&
+                  event.is_final &&
+                  event.current_transcript?.toLowerCase().includes(word)
+              )
+            )
+          },
+          { timeout: 90_000, interval: 100 }
+        )
 
         expect(requests.filter((request) => request.action === 'send_instruction')).toHaveLength(1)
         expect(toolResults).toEqual([word])

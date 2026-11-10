@@ -170,25 +170,59 @@ async def permission(request):
         pending_permissions.pop(request_id, None)
 
 
-def overrides_from_config(partial):
+def merge_assigned_option(authored, converted, paths, path):
+    if any(path == assigned or path.startswith(assigned + ".") for assigned in paths) or not isinstance(converted, dict):
+        return converted
+    if path == "builtinTools" and isinstance(authored, list):
+        authored = {"*": False, **dict.fromkeys(authored, True)}
+    merged: dict[str, object] = dict(authored) if isinstance(authored, dict) else {}
+    for name in {assigned[len(path) + 1:].split(".")[0] for assigned in paths if assigned.startswith(path + ".")}:
+        key = name if name in converted else re.sub(r"[A-Z]", lambda match: "_" + match[0].lower(), name)
+        merged[key] = merge_assigned_option(merged.get(key), converted.get(key), paths, f"{path}.{name}")
+    return merged
+
+
+def overrides_from_config(partial, authored, assignments):
     if not partial:
         return {}
     config = define_harness_agent_config(partial)
     options = harness_agent_kwargs_from_config(config)
     # These values are normally omitted by the config loader when equal to defaults.
-    for key in ("builtinTools", "builtinPlugins", "caching", "description", "instructions", "sessionId"):
+    for key in ("builtinTools", "builtinPlugins", "caching", "description", "instructions"):
         if key in partial:
-            options[re.sub(r"[A-Z]", lambda match: "_" + match[0].lower(), key)] = config[key]
+            options.setdefault(re.sub(r"[A-Z]", lambda match: "_" + match[0].lower(), key), config[key])
     aliases = {
         "subagents": "tools",
         "modelModule": "model",
-        "webFetchModelModule": "web_fetch_model",
-        "memoryStores": "memory_store",
+        "memoryStores": "memory",
         "interventionModules": "interventions",
     }
     keys = {aliases.get(key, re.sub(r"[A-Z]", lambda match: "_" + match[0].lower(), key)) for key in partial}
     keys.update(partial.get("agentConfig", {}))
     keys.update(partial.get("agentConfigModules", {}))
+    for key, empty in {"tools": [], "plugins": [], "mcp_servers": {}, "interventions": None, "sandbox": None}.items():
+        if key in keys:
+            options.setdefault(key, empty)
+    paths = [assignment.split("=", 1)[0] for assignment in assignments]
+    for field in partial:
+        if field in aliases or field == "agentConfigModules":
+            continue
+        fields = partial[field] if field == "agentConfig" else [field]
+        for name in fields:
+            path = f"agentConfig.{name}" if field == "agentConfig" else name
+            key = name if field == "agentConfig" else re.sub(r"[A-Z]", lambda match: "_" + match[0].lower(), name)
+            if key in partial.get("agentConfigModules", {}) or any(
+                alias in partial and option == key for alias, option in aliases.items()
+            ):
+                continue
+            if not any(assigned.startswith(path + ".") for assigned in paths):
+                continue
+            value = authored.get(key)
+            if key == "mcp_servers" and isinstance(value, str):
+                with open(value) as source:
+                    document = json.load(source)
+                value = document.get("mcpServers", document)
+            options[key] = merge_assigned_option(value, options.get(key), paths, path)
     return {
         key: options[key]
         for key in keys
@@ -328,28 +362,21 @@ class Runtime:
     def __init__(self, module, command):
         self.module = module
         partial = command.get("overrides", {})
-        for assignment in command.get("assignments", []):
-            path, raw = assignment.split("=", 1)
-            keys = path.split(".")
-            try:
-                value = json.loads(raw)
-            except ValueError:
-                value = raw
-            if len(keys) == 1:
-                partial[keys[0]] = value
-            else:
-                target = partial.setdefault(keys[0], {})
-                if not isinstance(target, dict):
-                    target = {}
-                    partial[keys[0]] = target
-                for key in keys[1:-1]:
-                    if not isinstance(target.get(key), dict):
-                        target[key] = {}
-                    target = target[key]
-                target[keys[-1]] = value
-        self.options = overrides_from_config(partial)
-        self.explicit_option_keys = set(self.options)
         authored = getattr(module, "_strands_options", {})
+        self.options = overrides_from_config(partial, authored, command.get("assignments", []))
+        flags = command.get("configFlags", {})
+        for key in ("session", "memory"):
+            if flags.get(key) == "off":
+                self.options[key] = False
+            elif flags.get(key) == "on":
+                value = self.options.get(key, authored.get(key))
+                self.options[key] = True if value is None or value is False else value
+            elif flags.get(key) is not None:
+                raise ValueError(f"--{key} must be 'on' or 'off'.")
+        session = self.options.get("session", authored.get("session", True))
+        if flags.get("sessionId") is not None and (session is True or isinstance(session, dict)):
+            self.options["session"] = {**(session if isinstance(session, dict) else {}), "id": flags["sessionId"]}
+        self.explicit_option_keys = set(self.options)
         if command.get("devWorkspace"):
             isolated = isolate_dev_options({**authored, **self.options}, Path(command["devWorkspace"]).resolve())
             for key in ("session", "memory"):
@@ -407,7 +434,7 @@ class Runtime:
         self.factory = getattr(module, "create_agent", None)
         self.interactive = command.get("interactive", False)
         self.mcp_servers = command.get("mcpServers", {})
-        self.skill_paths = command.get("skillPaths", [])
+        self.skill_paths = command.get("skillPaths", []) if self.options.get("skills", authored.get("skills", True)) else []
         self.cancel_signal = threading.Event()
         self.reload_requested = False
         self.context_estimates = None
@@ -474,8 +501,13 @@ class Runtime:
                 None,
             )
             if skills:
-                skills.set_available_skills([*skills.get_available_skills(agent), *self.skill_paths])
+                authored_skills = {skill.name: skill for skill in skills.get_available_skills(agent)}
+                skills.set_available_skills([*authored_skills.values(), *self.skill_paths])
                 await skills.init_agent(agent)
+                # Merge resolved skills: the SDK loads filesystem paths after Skill instances.
+                skills.set_available_skills(
+                    [authored_skills.get(skill.name, skill) for skill in skills.get_available_skills(agent)]
+                )
             else:
                 agent._plugin_registry.add_and_init(AgentSkills(skills=self.skill_paths))
         self.attach_context_capture(agent)
@@ -490,7 +522,7 @@ class Runtime:
             except ImportError:
                 return
         registry = getattr(agent, "_middleware_registry", None)
-        add_middleware = getattr(registry, "add_middleware", None)
+        add_middleware = getattr(agent, "add_middleware", None) or getattr(registry, "add_middleware", None)
         handlers_by_stage = getattr(registry, "_handlers", None)
         if not callable(add_middleware) or not isinstance(handlers_by_stage, dict):
             return
@@ -663,7 +695,7 @@ class Runtime:
                 self.agent.messages,
                 tool_specs=self.agent.tool_registry.get_all_tool_specs(),
                 system_prompt=self.agent.system_prompt,
-                system_prompt_content=self.agent._system_prompt_content,
+                system_prompt_content=self.agent.system_prompt_content,
             )
         except Exception:
             # The meter stays empty until the next model response reports usage.
@@ -806,7 +838,7 @@ class Runtime:
     async def command(self, command):
         kind = command["type"]
         if kind == "conversation":
-            from strands.types._snapshot import Snapshot
+            from strands.types import Snapshot
 
             snapshot = command.get("snapshot")
             if snapshot:
@@ -866,7 +898,7 @@ class Runtime:
             entries = await stash.take_snapshot() if stash is not None else {}
             self.result({"stopReason": "stash", "finalText": json.dumps(entries, default=encode)})
         elif kind == "seed":
-            from strands.types._snapshot import Snapshot
+            from strands.types import Snapshot
 
             self.agent.load_snapshot(Snapshot.from_dict(json.loads(command["snapshot"], object_hook=decode)))
             stash = agent_stash(self.agent)

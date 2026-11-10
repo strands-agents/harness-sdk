@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useSyncExternalStore, type ReactElement, type ReactNode } from 'react'
 import type { DOMElement } from 'ink'
+import { isRecord } from '../../values.js'
 
 import type { ChatAttachmentSummary, ChatConfigurationLanguage, ChatTask } from '../../agent/types.js'
 import type { ChatMcpStartup, ChatPanel, ChatSnapshot, ChatVoiceStore } from './controller.js'
@@ -22,7 +23,6 @@ import {
   CONFIG_DOCK_MIN_TERMINAL_WIDTH,
   isComposerPanel,
   isOutlinedComposerPanel,
-  MAX_VISIBLE_BACKGROUND_TASKS,
   type MetadataTarget,
   type ModelPanelFocus,
   type SettingsPanelFocus,
@@ -46,7 +46,14 @@ import {
 } from '../panels/configuration.js'
 import { sanitizeTerminalText } from '../../terminal/text.js'
 
-export type QueuedPromptAction = 'edit' | 'delete' | 'up' | 'down'
+export const QUEUED_PROMPT_ACTIONS = [
+  { action: 'up', label: '↑' },
+  { action: 'down', label: '↓' },
+  { action: 'edit', label: 'Edit' },
+  { action: 'steer', label: 'Steer' },
+  { action: 'delete', label: 'Delete' },
+] as const
+export type QueuedPromptAction = (typeof QUEUED_PROMPT_ACTIONS)[number]['action']
 export type QueuedPromptTarget = `${string}:${QueuedPromptAction}`
 
 export function ChatView(props: Parameters<typeof ChatViewContent>[0]): ReactElement {
@@ -72,6 +79,7 @@ function ChatViewContent({
   panelSelection = 0,
   panelViewportStart = 0,
   panelQuery = '',
+  agentNameEditor,
   panelFilter = 'all',
   modelPanelFocus = 'models',
   modelProfileSelection = 0,
@@ -96,6 +104,9 @@ function ChatViewContent({
   hoveredSuggestion,
   pressedQueuedPrompt,
   editingQueuedPromptId,
+  focusedQueuedPrompt,
+  focusedBackgroundTask,
+  hoveredBackgroundTask,
   onMetadataElement,
   onPanelElement,
   onDockElement,
@@ -106,6 +117,7 @@ function ChatViewContent({
   onPanelSliderElement,
   onSuggestionElement,
   onQueuedPromptElement,
+  onBackgroundTaskElement,
   onStatusElement,
   onFrogElement,
   onJumpToBottomElement,
@@ -139,6 +151,7 @@ function ChatViewContent({
   panelSelection?: number
   panelViewportStart?: number
   panelQuery?: string
+  agentNameEditor?: { input: string; cursor: number }
   panelFilter?: string
   modelPanelFocus?: ModelPanelFocus
   modelProfileSelection?: number
@@ -163,6 +176,9 @@ function ChatViewContent({
   hoveredSuggestion?: number
   pressedQueuedPrompt?: QueuedPromptTarget
   editingQueuedPromptId?: string
+  focusedQueuedPrompt?: QueuedPromptTarget
+  focusedBackgroundTask?: string
+  hoveredBackgroundTask?: boolean
   onMetadataElement?: (target: MetadataTarget, element: DOMElement | null) => void
   onPanelElement?: (element: DOMElement | null) => void
   onDockElement?: (element: DOMElement | null) => void
@@ -173,6 +189,7 @@ function ChatViewContent({
   onPanelSliderElement?: (element: DOMElement | null) => void
   onSuggestionElement?: (index: number, element: DOMElement | null) => void
   onQueuedPromptElement?: (target: QueuedPromptTarget, element: DOMElement | null) => void
+  onBackgroundTaskElement?: (element: DOMElement | null) => void
   onStatusElement?: (element: DOMElement | null) => void
   onFrogElement?: (element: DOMElement | null) => void
   onJumpToBottomElement?: (element: DOMElement | null) => void
@@ -211,10 +228,12 @@ function ChatViewContent({
   const activeBackgroundTasks = snapshot.tasks.filter(
     (task) => task.source === 'background' && isActiveTask(task.status)
   )
-  const visibleBackgroundTasks = activeBackgroundTasks.slice(0, MAX_VISIBLE_BACKGROUND_TASKS)
-  const hiddenBackgroundTasks = activeBackgroundTasks.length - visibleBackgroundTasks.length
+  const backgroundTaskIndex = Math.max(
+    0,
+    activeBackgroundTasks.findIndex((task) => task.id === focusedBackgroundTask)
+  )
+  const backgroundTask = activeBackgroundTasks[backgroundTaskIndex]
   const composerSpinner = useSpinner(Boolean(snapshot.composerStatus), snapshot.settings.animations)
-  const backgroundTaskSpinner = useSpinner(activeBackgroundTasks.length > 0, snapshot.settings.animations)
   const mcpStartupSpinner = useSpinner(snapshot.mcpStartup !== undefined, snapshot.settings.animations)
   const partyFrame = usePartyFrame((party || maxEffort) && snapshot.settings.animations)
   const statusLayout = composerStatusLayout(snapshot, terminalHeight)
@@ -264,7 +283,11 @@ function ChatViewContent({
   const expandedCommandDeckHeight = composerStatusRows + suggestionRows + editorHeight + 2
   // The dock stays up after a configuration turn ends, until the next prompt starts a turn.
   const configurationTurn = (snapshot.activeTurn ?? snapshot.completedTurns.at(-1))?.entries.some(
-    (entry) => entry.type === 'tool' && isConfigurationTool(entry.name)
+    (entry) =>
+      entry.type === 'tool' &&
+      isConfigurationTool(entry.name) &&
+      isRecord(entry.input) &&
+      (entry.input.action === 'update' || entry.input.action === 'apply')
   )
   const configurationPanel = snapshot.panel?.kind === 'config' ? snapshot.panel : undefined
   const liveConfiguration = snapshot.configuration ?? configurationPanel?.configuration
@@ -341,10 +364,14 @@ function ChatViewContent({
             start={start}
             width={terminalWidth}
             height={terminalHeight}
+            {...(agentNameEditor ? { nameEditor: agentNameEditor } : {})}
             {...(pressedPanelRow !== undefined ? { pressedRow: pressedPanelRow } : {})}
             {...(hoveredPanelRow !== undefined ? { hoveredRow: hoveredPanelRow } : {})}
             {...(onPanelElement ? { onPanelElement } : {})}
             {...(onPanelRowElement ? { onRowElement: onPanelRowElement } : {})}
+            {...(onPanelControlElement ? { onControlElement: onPanelControlElement } : {})}
+            {...(pressedPanelControl ? { pressedControl: pressedPanelControl } : {})}
+            {...(hoveredPanelControl ? { hoveredControl: hoveredPanelControl } : {})}
             {...(clipboardNotice ? { clipboardNotice: clipboardNoticeText(clipboardNotice) } : {})}
           />
         </PanelHelpContext>
@@ -423,6 +450,7 @@ function ChatViewContent({
               <TranscriptViewport
                 header={startupView}
                 turns={snapshot.completedTurns}
+                interruptKey={snapshot.parentAgent ? 'ctrl+c' : 'esc'}
                 {...(snapshot.panel?.kind === 'permission'
                   ? { approvalToolName: snapshot.panel.request.toolName }
                   : {})}
@@ -506,7 +534,7 @@ function ChatViewContent({
         <Box
           position="absolute"
           marginTop={Math.max(0, terminalHeight - expandedCommandDeckHeight)}
-          width="100%"
+          width={editorWidth}
           height={expandedCommandDeckHeight}
           flexDirection="column"
           backgroundColor={canvas}
@@ -541,20 +569,11 @@ function ChatViewContent({
                     interrupting={snapshot.status === 'interrupting'}
                     {...(pressedQueuedPrompt ? { pressed: pressedQueuedPrompt } : {})}
                     {...(editingQueuedPromptId ? { editingId: editingQueuedPromptId } : {})}
+                    {...(focusedQueuedPrompt ? { focused: focusedQueuedPrompt } : {})}
                     {...(onQueuedPromptElement ? { onActionElement: onQueuedPromptElement } : {})}
                   />
                 ) : null}
                 {showVoiceStatus ? <VoiceStatus snapshot={snapshot.voice!} {...(voice ? { voice } : {})} /> : null}
-                {visibleBackgroundTasks.map((task) => (
-                  <BackgroundTaskStatus key={task.id} task={task} spinner={backgroundTaskSpinner} />
-                ))}
-                {hiddenBackgroundTasks > 0 ? (
-                  <Box height={1} flexShrink={0} paddingX={1}>
-                    <Text dimColor wrap="truncate-end">
-                      + {hiddenBackgroundTasks} more background tasks
-                    </Text>
-                  </Box>
-                ) : null}
                 {snapshot.mcpStartup ? (
                   <McpStartupStatus startup={snapshot.mcpStartup} spinner={mcpStartupSpinner} />
                 ) : null}
@@ -587,11 +606,13 @@ function ChatViewContent({
               maxRows={editorMaxRows}
               maxHeight={editorMaxHeight}
               {...(snapshot.status === 'running' || snapshot.status === 'interrupting'
-                ? { placeholder: 'Enter to queue • Alt+↑ edit queue • / for commands' }
+                ? { placeholder: 'Enter to queue • Tab queue actions • Alt+↑ edit queue' }
                 : {})}
               {...(actionableCommandToken ? { actionableCommandToken } : {})}
               {...(snapshot.composerStatus ? { busyStatus: `${composerSpinner} ${snapshot.composerStatus}` } : {})}
               {...(snapshot.panel && !composerPanel ? { panelStatus: panelEditorStatus(snapshot.panel) } : {})}
+              {...(focusedQueuedPrompt ? { panelStatus: 'Queue · Tab/Shift+Tab move · Enter choose · Esc back' } : {})}
+              {...(focusedBackgroundTask ? { panelStatus: '←→ choose · Enter view · Esc back' } : {})}
               party={party}
               partyFrame={partyFrame}
               energy={maxEffort}
@@ -601,6 +622,36 @@ function ChatViewContent({
             >
               {composerPanel ? panelView : null}
             </PromptEditor>
+            {snapshot.parentAgent ? (
+              <Box height={1} flexShrink={0} paddingX={1} justifyContent="space-between">
+                <Box ref={(element) => onActionElement?.('parent', element)} flexShrink={1} marginRight={1}>
+                  <Box flexShrink={1} overflow="hidden">
+                    <Text color={hoveredAction === 'parent' ? accent : foreground} wrap="truncate-end">
+                      ← {snapshot.parentAgent.name}
+                    </Text>
+                  </Box>
+                  <Box flexShrink={0}>
+                    <Text color={hoveredAction === 'parent' ? accent : foreground}> · Esc back</Text>
+                  </Box>
+                </Box>
+                <Box flexShrink={0}>
+                  <Text dimColor>
+                    {terminalWidth >= 90 ? 'Temporary chat · closes on setup or exit' : 'Temporary chat'}
+                  </Text>
+                </Box>
+              </Box>
+            ) : null}
+            {backgroundTask ? (
+              <BackgroundTaskStatus
+                task={backgroundTask}
+                index={backgroundTaskIndex}
+                total={activeBackgroundTasks.length}
+                focused={focusedBackgroundTask !== undefined}
+                hovered={hoveredBackgroundTask === true}
+                hint={input.startsWith('/') ? 'click view' : input ? 'Tab view' : '↓ view'}
+                {...(onBackgroundTaskElement ? { onElement: onBackgroundTaskElement } : {})}
+              />
+            ) : null}
           </Box>
           <ComposerFooter
             snapshot={snapshot}
@@ -709,15 +760,46 @@ function McpStartupStatus({ startup, spinner }: { startup: ChatMcpStartup; spinn
   )
 }
 
-function BackgroundTaskStatus({ task, spinner }: { task: ChatTask; spinner: string }): ReactElement {
-  const { warning } = useTheme()
+function BackgroundTaskStatus({
+  task,
+  index,
+  total,
+  focused,
+  hovered,
+  hint,
+  onElement,
+}: {
+  task: ChatTask
+  index: number
+  total: number
+  focused: boolean
+  hovered: boolean
+  hint: string
+  onElement?: (element: DOMElement | null) => void
+}): ReactElement {
+  const { accent, warning, selection } = useTheme()
   const status =
     task.status === 'paused' ? 'waiting' : task.status === 'queued' || task.status === 'pending' ? 'queued' : 'running'
   return (
-    <Box height={1} flexShrink={0} paddingX={1}>
-      <Text color={warning} wrap="truncate-end">
-        {spinner} Background task {status} ({task.label}) - {task.id}
-      </Text>
+    <Box
+      ref={onElement}
+      height={1}
+      flexShrink={0}
+      paddingX={1}
+      backgroundColor={focused || hovered ? selection : undefined}
+    >
+      <Box flexShrink={0}>
+        <Text dimColor>Background{total > 1 ? ` ${index + 1}/${total}` : ''} · </Text>
+      </Box>
+      <Box flexGrow={1} flexShrink={1} overflow="hidden">
+        <Text wrap="truncate-end">
+          <Text color={status === 'running' ? accent : warning}>●</Text> {task.label}
+          <Text dimColor> · {status}</Text>
+        </Text>
+      </Box>
+      <Box marginLeft={1} flexShrink={0}>
+        <Text dimColor>{focused ? '←→ Enter Esc' : hint}</Text>
+      </Box>
     </Box>
   )
 }
@@ -793,12 +875,14 @@ function QueuedPromptSummary({
   interrupting,
   pressed,
   editingId,
+  focused,
   onActionElement,
 }: {
   prompts: ChatSnapshot['queuedPrompts']
   interrupting: boolean
   pressed?: QueuedPromptTarget
   editingId?: string
+  focused?: QueuedPromptTarget
   onActionElement?: (target: QueuedPromptTarget, element: DOMElement | null) => void
 }): ReactElement {
   const { warning, accent } = useTheme()
@@ -836,18 +920,18 @@ function QueuedPromptSummary({
               </Box>
               {prompt.source !== 'peer' ? (
                 <Box flexShrink={0}>
-                  {(
-                    [
-                      { target: `${prompt.id}:up`, label: '↑', disabled: userIndex === 0 },
-                      { target: `${prompt.id}:down`, label: '↓', disabled: userIndex === userPrompts.length - 1 },
-                      { target: `${prompt.id}:edit`, label: 'Edit', active: editingId === prompt.id },
-                      { target: `${prompt.id}:delete`, label: 'Delete' },
-                    ] as const
-                  ).map((button) => (
+                  {QUEUED_PROMPT_ACTIONS.map(({ action, label }) => (
                     <QueueButton
-                      key={button.target}
-                      {...button}
+                      key={action}
+                      target={`${prompt.id}:${action}`}
+                      label={label}
+                      disabled={
+                        (action === 'up' && userIndex === 0) ||
+                        (action === 'down' && userIndex === userPrompts.length - 1)
+                      }
+                      active={action === 'edit' && editingId === prompt.id}
                       {...(pressed ? { pressed } : {})}
+                      {...(focused ? { focused } : {})}
                       {...(onActionElement ? { onElement: onActionElement } : {})}
                     />
                   ))}
@@ -876,6 +960,7 @@ function QueueButton({
   disabled = false,
   active = false,
   pressed,
+  focused,
   onElement,
 }: {
   target: QueuedPromptTarget
@@ -883,9 +968,10 @@ function QueueButton({
   disabled?: boolean
   active?: boolean
   pressed?: QueuedPromptTarget
+  focused?: QueuedPromptTarget
   onElement?: (target: QueuedPromptTarget, element: DOMElement | null) => void
 }): ReactElement {
-  const { warning, accent, panel, selection, surface } = useTheme()
+  const { warning, accent, panel, selection, surface, foreground } = useTheme()
   const registerElement = useCallback(
     (element: DOMElement | null): void => {
       onElement?.(target, element)
@@ -897,11 +983,17 @@ function QueueButton({
       {...(!disabled && onElement ? { ref: registerElement } : {})}
       flexShrink={0}
       marginLeft={1}
-      paddingX={1}
-      backgroundColor={disabled ? panel : pressed === target ? selection : active ? warning : accent}
+      backgroundColor={
+        focused === target ? selection : disabled ? panel : pressed === target ? selection : active ? warning : accent
+      }
     >
-      <Text {...(!disabled ? { color: surface } : {})} dimColor={disabled} bold={!disabled}>
-        {label}
+      <Text
+        {...(focused === target ? { color: foreground } : !disabled ? { color: surface } : {})}
+        dimColor={disabled}
+        bold={!disabled}
+      >
+        {focused === target ? '›' : ' '}
+        {label}{' '}
       </Text>
     </Box>
   )

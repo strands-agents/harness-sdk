@@ -12,7 +12,7 @@ import { idleBackend } from '../fixtures/chat-backend.js'
 import { render, ttyInput, ttyOutput } from '../fixtures/terminal.js'
 
 // Colored output paints solid cells as backgrounds, leaving only the half-block glyphs as text.
-const STRANDS_WORDMARK = /STRANDS|╚════╝|█▀▀ ▀█▀ █▀█ ▄▀█ █▄ █ █▀▄ █▀▀|▀▀ ▀ ▀ {2}▀ {2}▄▀ {3}▄ {4}▀▄ {2}▀▀/
+const STRANDS_WORDMARK = /STRANDS|▄▟[ █]{3}▙▄|█▀▀ ▀█▀ █▀█ ▄▀█ █▄ █ █▀▄ █▀▀|▀▀ ▀ ▀ {2}▀ {2}▄▀ {3}▄ {4}▀▄ {2}▀▀/
 
 const instances: Instance[] = []
 const controllers: ChatController[] = []

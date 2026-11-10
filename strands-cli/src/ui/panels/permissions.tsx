@@ -88,9 +88,9 @@ export function PermissionPanel({
             header={
               <Text bold wrap="truncate-end">
                 {panel.stage === 'allow-always'
-                  ? 'Allow forever'
+                  ? 'Always allow'
                   : panel.stage === 'deny-always'
-                    ? 'Deny forever'
+                    ? 'Always deny'
                     : 'Choose an action'}
               </Text>
             }

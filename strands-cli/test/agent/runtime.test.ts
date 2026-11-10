@@ -18,6 +18,7 @@ import {
   type Tool,
   type ToolContext,
   type ToolStreamEvent,
+  type ModelStreamEvent,
 } from '@strands-agents/sdk'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { BedrockModel } from '@strands-agents/sdk/models/bedrock'
@@ -48,16 +49,18 @@ vi.mock('../../src/agent/mcp.js', async (importOriginal) => ({
 }))
 
 import { createInteractiveChat as createInteractiveChatRuntime } from '../../src/ui/chat/runtime.js'
-import { createInteractiveRuntime, interactiveBackgroundTasks } from '../../src/agent/runtime.js'
+import { createInteractiveRuntime } from '../../src/agent/runtime.js'
+import { interactiveBackgroundTasks } from '../../src/agent/background.js'
 import { CliConfigStore } from '../../src/config/store.js'
-import { sessionId } from '../../src/session/sessions.js'
-import { workspaceSessionDirectory } from '../../src/session/sessions.js'
+import { sessionId, SessionRootCatalog } from '../../src/session/sessions.js'
 import { StrandsChatBackend } from '../../src/agent/backend.js'
 import { LiveSteering } from '../../src/agent/messaging.js'
 import { defineHarnessAgentConfig } from '@strands-agents/harness'
 import * as providerDiscovery from '../../src/model/discovery.js'
 import * as projectWatch from '../../src/project/watch.js'
 import { parse, stringify } from 'smol-toml'
+
+import { SystemPromptRecordingModel, writeSessionWithSavedSystemPrompt } from '../fixtures/saved-system-prompt.js'
 
 let testSessionRoot = ''
 
@@ -121,6 +124,25 @@ describe('interactiveBackgroundTasks', () => {
 })
 
 describe('interactive runtime lifecycle', () => {
+  it('builds the agent from the profile when the resumed session saved its own agent definition', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'strands-runtime-definition-'))
+    await writeSessionWithSavedSystemPrompt(join(workspace, '.agent', 'sessions'), 'saved-session')
+    mocks.createHarness.mockResolvedValueOnce(fakeAgent('old'))
+    const controller = await createInteractiveChat({
+      cwd: workspace,
+      agentOptions: { session: { id: 'saved-session' } },
+    })
+    try {
+      expect(mocks.createHarness).toHaveBeenCalledWith(
+        expect.objectContaining({ session: expect.objectContaining({ id: 'saved-session' }) })
+      )
+      expect(mocks.createHarness.mock.calls[0]?.[0]).not.toHaveProperty('instructions')
+    } finally {
+      await controller.dispose()
+      await rm(workspace, { recursive: true, force: true })
+    }
+  })
+
   it('owns a backend without a controller and forbids in-process reconstruction when disabled', async () => {
     const flush = vi.fn(async () => {})
     const agent = fakeAgent('anthropic.claude-old', 'single-generation', { flush })
@@ -169,16 +191,19 @@ describe('interactive runtime lifecycle', () => {
     await mkdir(join(sessionDirectory, 'saved-one'), { recursive: true })
     await writeFile(
       join(sessionDirectory, 'saved-one', 'cli-session.json'),
-      JSON.stringify({ version: 1, name: 'Release planning' })
+      JSON.stringify({ version: 1, name: 'Release planning', agentName: 'Reviewer' })
     )
-    const agent = fakeAgent('old')
-    Object.assign(agent, { sessionManager: { sessionId: 'saved-one' } })
-    mocks.createHarness.mockResolvedValueOnce(agent)
+    const { createHarness } = await vi.importActual<typeof import('@strands-agents/harness')>('@strands-agents/harness')
+    mocks.createHarness.mockImplementation(createHarness)
     const controller = await createInteractiveChat({
+      cwd: dirname(testSessionRoot),
       agentOptions: { model: 'bedrock/old', session: { id: 'Saved.One', dir: sessionDirectory } },
     })
+    let replacement: Awaited<ReturnType<typeof createInteractiveChat>> | undefined
+    let reopened: Awaited<ReturnType<typeof createInteractiveChat>> | undefined
     try {
       expect(controller.getSnapshot().runtime).toMatchObject({
+        agent: 'Reviewer',
         session: 'Release planning',
         sessionName: 'Release planning',
       })
@@ -186,15 +211,54 @@ describe('interactive runtime lifecycle', () => {
       await controller.submit('/rename Shipping')
       expect(JSON.parse(await readFile(join(sessionDirectory, 'saved-one', 'cli-session.json'), 'utf8'))).toEqual({
         version: 1,
-        name: 'Shipping',
+        name: 'Release planning',
+        agentName: 'Shipping',
       })
       expect(await readdir(sessionDirectory)).toEqual(['saved-one'])
       const switchModel = vi.spyOn(controller.backend, 'switchModel')
       await controller.submit('/model bedrock/old')
       expect(switchModel).toHaveBeenCalledWith('bedrock/old')
-      expect(controller.getSnapshot().runtime).toMatchObject({ session: 'Shipping', sessionName: 'Shipping' })
+      expect(controller.getSnapshot().runtime).toMatchObject({
+        agent: 'Shipping',
+        session: 'Release planning',
+        sessionName: 'Release planning',
+      })
+      const captured = await controller.captureConversations()
+      const originalMetadata = join(sessionDirectory, 'saved-one', 'cli-session.json')
+      await writeFile(
+        originalMetadata,
+        JSON.stringify({ version: 1, name: 'Release planning', agentName: 'Another open agent' })
+      )
+      replacement = await createInteractiveChat(
+        {
+          cwd: dirname(testSessionRoot),
+          agentOptions: { model: 'bedrock/old', session: { id: 'Saved.One', dir: sessionDirectory } },
+        },
+        captured
+      )
+      expect(replacement.getSnapshot().runtime.agent).toBe('Shipping')
+      expect(JSON.parse(await readFile(originalMetadata, 'utf8')).agentName).toBe('Another open agent')
+      await replacement.dispose()
+      replacement = undefined
+      const replacementDirectory = join(dirname(testSessionRoot), 'replacement-sessions')
+      const options = {
+        cwd: dirname(testSessionRoot),
+        agentOptions: { model: 'bedrock/old', session: { id: 'replacement', dir: replacementDirectory } },
+      }
+      replacement = await createInteractiveChat(options, captured)
+      expect(replacement.getSnapshot().runtime.agent).toBe('Shipping')
+      expect(JSON.parse(await readFile(join(replacementDirectory, 'replacement', 'cli-session.json'), 'utf8'))).toEqual(
+        {
+          version: 1,
+          agentName: 'Shipping',
+        }
+      )
+      await replacement.dispose()
+      replacement = undefined
+      reopened = await createInteractiveChat(options)
+      expect(reopened.getSnapshot().runtime.agent).toBe('Shipping')
     } finally {
-      await controller.dispose()
+      await Promise.all([controller.dispose(), replacement?.dispose(), reopened?.dispose()])
     }
   })
 
@@ -1016,6 +1080,101 @@ describe('interactive runtime lifecycle', () => {
     }
   )
 
+  it.each([false, true])('keeps subagent chat and queued follow-ups on the same agent (failure: %s)', async (fail) => {
+    const { createHarness } = await vi.importActual<typeof import('@strands-agents/harness')>('@strands-agents/harness')
+    mocks.createHarness.mockImplementation(createHarness)
+    const model = new SystemPromptRecordingModel()
+    let releaseChild!: () => void
+    const childGate = new Promise<void>((resolve) => {
+      releaseChild = resolve
+    })
+    model.stream = async function* (messages): AsyncIterable<ModelStreamEvent> {
+      const prompt = messages.at(-1)?.content[0]
+      yield { type: 'modelMessageStartEvent', role: 'assistant' }
+      if (prompt?.type === 'textBlock' && prompt.text === 'Dispatch reviewer') {
+        yield {
+          type: 'modelContentBlockStartEvent',
+          start: { type: 'toolUseStart', name: 'subagent', toolUseId: 'dispatch' },
+        }
+        yield {
+          type: 'modelContentBlockDeltaEvent',
+          delta: { type: 'toolUseInputDelta', input: JSON.stringify({ task: 'Review authentication.' }) },
+        }
+        yield { type: 'modelContentBlockStopEvent' }
+        yield { type: 'modelMessageStopEvent', stopReason: 'toolUse' }
+        return
+      }
+      yield { type: 'modelContentBlockStartEvent' }
+      yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: 'Checking routes.' } }
+      if (prompt?.type === 'textBlock' && prompt.text === 'Review authentication.') {
+        await childGate
+        if (fail) throw new Error('Bedrock is unable to process your request.')
+      }
+      yield { type: 'modelContentBlockStopEvent' }
+      yield { type: 'modelMessageStopEvent', stopReason: 'endTurn' }
+    }
+    const controller = await createInteractiveChat({
+      config: CliConfigStore.memory({ mode: 'bypassPermissions' }),
+      agentOptions: { model, skills: false, memory: false, session: false, builtinTools: ['subagent'] },
+    })
+    try {
+      await controller.submit('Dispatch reviewer')
+      await vi.waitFor(() => expect(controller.getSnapshot().tasks).toHaveLength(1))
+      expect(controller.openTask(controller.getSnapshot().tasks[0]!.id)).toBe(true)
+      const childBackend = controller.backend as StrandsChatBackend
+      expect(controller.getSnapshot()).toMatchObject({
+        conversationId: 'task-1',
+        status: 'running',
+      })
+      expect(controller.getSnapshot().panel).toBeUndefined()
+      const parentId = controller.getSnapshot().parentAgent!.id
+      expect(controller.returnToParent()).toBe(true)
+      const parentBackend = controller.backend as StrandsChatBackend
+      const messageAgent = parentBackend.agent.toolRegistry.get('message_agent') as FunctionTool
+      await messageAgent.invoke({ action: 'send', to: 'task-1', message: 'Prioritize expired tokens.' }, {
+        agent: parentBackend.agent,
+      } as unknown as ToolContext)
+      expect(controller.getSnapshot().conversationId).toBe(parentId)
+      expect(controller.openTask(controller.getSnapshot().tasks[0]!.id)).toBe(true)
+      expect(controller.getSnapshot().pendingSteering).toEqual([expect.stringContaining('Prioritize expired tokens.')])
+      const queued = controller.submit('Also check the tests.')
+      expect(controller.getSnapshot().queuedPrompts).toHaveLength(1)
+      releaseChild()
+      await queued
+      await vi.waitFor(() => expect(controller.getSnapshot().completedTurns).toHaveLength(fail ? 3 : 2))
+      expect(controller.getSnapshot().completedTurns.map((turn) => turn.status)).toEqual(
+        fail ? ['error', 'complete', 'complete'] : ['complete', 'complete']
+      )
+      expect(childBackend.agent.messages.map((message) => message.content[0])).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ text: 'Review authentication.' }),
+          expect.objectContaining({ text: expect.stringContaining('Prioritize expired tokens.') }),
+          expect.objectContaining({ text: 'Also check the tests.' }),
+        ])
+      )
+      await controller.submit('/agents')
+      await controller.activatePanelRow(
+        controller.getSnapshot().panel!.rows.find((row) => row.value === 'conversation:agent-1')!
+      )
+      expect(controller.getSnapshot().conversationId).toBe('agent-1')
+      await controller.submit('/agents')
+      await controller.activatePanelRow(
+        controller.getSnapshot().panel!.rows.find((row) => row.value === 'conversation:task-1')!
+      )
+      expect(controller.backend).toBe(childBackend)
+      await controller.submit('One more question.')
+      expect(childBackend.agent.messages.at(-2)?.content[0]).toMatchObject({ text: 'One more question.' })
+      await vi.waitFor(async () => {
+        const captured = await controller.captureConversations()
+        expect(captured.activeId).toBe('agent-1')
+        expect(captured.entries.map(({ id }) => id)).toEqual(['agent-1'])
+      })
+    } finally {
+      releaseChild()
+      await controller.dispose()
+    }
+  })
+
   it.each([['a'.repeat(79) + '👩‍💻tail', 'a'.repeat(79) + '👩‍💻']])(
     'exposes a live background subagent as a temporary task-addressed message endpoint (%s)',
     async (task, summary) => {
@@ -1050,7 +1209,14 @@ describe('interactive runtime lifecycle', () => {
         await expect(
           messageAgent.invoke({ action: 'list' }, { agent: parent } as unknown as ToolContext)
         ).resolves.toEqual({
-          agents: [{ id: 'task-1', name: `subagent: ${summary}`, status: 'working' }],
+          agents: [
+            {
+              id: 'task-1',
+              name: 'subagent',
+              description: summary,
+              status: 'working',
+            },
+          ],
         })
         await controller.submit('/agents')
         expect(controller.getSnapshot().panel).toMatchObject({
@@ -1064,11 +1230,18 @@ describe('interactive runtime lifecycle', () => {
               badge: { text: 'idle', tone: 'success' },
             }),
             expect.objectContaining({
-              label: `subagent: ${summary}`,
+              label: 'subagent',
+              description: summary,
+              value: 'delegate:task-1',
               current: false,
               badge: { text: 'working', tone: 'success' },
             }),
           ],
+        })
+        await controller.activatePanelRow(controller.getSnapshot().panel!.rows[1]!)
+        expect(controller.getSnapshot().panel).toMatchObject({
+          kind: 'detail',
+          activity: { task, name: 'subagent', status: 'working' },
         })
         await messageAgent.invoke({ action: 'send', to: 'task-1', message: 'Check the authorization tests.' }, {
           agent: parent,
@@ -1083,6 +1256,8 @@ describe('interactive runtime lifecycle', () => {
           },
         ])
 
+        expect(controller.dismissPanel()).toBe(true)
+        expect(controller.getSnapshot().panel?.kind).toBe('agents')
         await stream.next()
         await vi.waitFor(() => expect(controller.getSnapshot().panel?.title).toBe('Agents'))
         await expect(
@@ -1144,12 +1319,29 @@ describe('interactive runtime lifecycle', () => {
       const listed = (await messageAgent.invoke({ action: 'list' }, {
         agent: mainAgent,
       } as unknown as ToolContext)) as {
-        agents: { id: string; name: string }[]
+        agents: { id: string; name: string; description?: string }[]
       }
-      const mainEndpoint = listed.agents.find((agent) => agent.name.includes('Review main authentication.'))
-      const forkEndpoint = listed.agents.find((agent) => agent.name.includes('Review fork authentication.'))
+      const mainEndpoint = listed.agents.find((agent) => agent.description === 'Review main authentication.')
+      const forkEndpoint = listed.agents.find((agent) => agent.description === 'Review fork authentication.')
       expect(mainEndpoint?.id).toBe('task-1')
       expect(forkEndpoint?.id).toBe('task-2')
+
+      await controller.submit('/agents')
+      for (const endpoint of [mainEndpoint!, forkEndpoint!]) {
+        const row = controller.getSnapshot().panel!.rows.find((row) => row.value === `delegate:${endpoint.id}`)!
+        expect(await controller.activatePanelRow(row)).toBe(true)
+        expect(controller.getSnapshot().panel).toMatchObject({
+          kind: 'detail',
+          activity: { task: endpoint.description },
+        })
+        expect(controller.dismissPanel()).toBe(true)
+        expect(controller.getSnapshot().panel?.kind).toBe('agents')
+        expect(await controller.activatePanelRow(row)).toBe(true)
+        await controller.submit('/settings')
+        expect(controller.getSnapshot().panel?.kind).toBe('settings')
+        controller.dismissPanel()
+        await controller.submit('/agents')
+      }
 
       await messageAgent.invoke({ action: 'send', to: mainEndpoint!.id, message: 'Check the main task.' }, {
         agent: mainAgent,
@@ -1252,6 +1444,7 @@ describe('interactive runtime lifecycle', () => {
       await previous.submit('/fork')
       previous.dismissPanel()
       await previous.submit('/fork')
+      await previous.submit('/rename Reviewer')
       await previous.backend.setEffort?.('high')
       agents[0]!.messages.push(Message.fromJSON({ role: 'user', content: [{ text: 'Primary state' }] }))
       agents[1]!.messages.push(Message.fromJSON({ role: 'user', content: [{ text: 'Fork state' }] }))
@@ -1266,6 +1459,7 @@ describe('interactive runtime lifecycle', () => {
       }
       current = await createInteractiveChat(options, captured, 'agent-1')
       const restored = await current.captureConversations()
+      expect(current.getSnapshot().runtime.agent).toBe('Reviewer')
       expect(restored.activeId).toBe(captured.activeId)
       expect(restored.entries.map(({ id, title, description }) => ({ id, title, description }))).toEqual(
         captured.entries.map(({ id, title, description }) => ({ id, title, description }))
@@ -1550,18 +1744,16 @@ describe('interactive runtime lifecycle', () => {
     const secondWorkspace = join(directory, 'second')
     const explicitMcp = join(directory, '.claude.json')
     const sessionRoot = join(directory, 'config', 'sessions')
-    const firstSessions = workspaceSessionDirectory(firstWorkspace, sessionRoot)
-    const secondSessions = workspaceSessionDirectory(secondWorkspace, sessionRoot)
+    const firstSessions = join(firstWorkspace, '.agent', 'sessions')
+    const secondSessions = join(secondWorkspace, '.agent', 'sessions')
     await mkdir(join(secondWorkspace, '.agent', 'skills', 'remote'), { recursive: true })
     await writeFile(
       join(secondWorkspace, '.agent', 'skills', 'remote', 'SKILL.md'),
       '---\nname: remote\ndescription: Remote workspace skill\n---\nRemote instructions.'
     )
     await mkdir(join(secondSessions, 'saved-two'), { recursive: true })
-    await writeFile(
-      join(secondSessions, 'workspace.json'),
-      JSON.stringify({ version: 1, workspace: secondWorkspace, lastSeenAt: '2026-08-15T00:00:00.000Z' })
-    )
+    const catalog = await SessionRootCatalog.load(sessionRoot)
+    await catalog.register(secondSessions, secondWorkspace)
     mocks.createHarness
       .mockResolvedValueOnce(fakeAgent('old', 'first-agent'))
       .mockResolvedValueOnce(fakeAgent('old', 'second-agent'))
@@ -1640,9 +1832,10 @@ describe('interactive runtime lifecycle', () => {
         completedTurns: [{ prompt: 'keep the first workspace alive' }],
       })
 
-      await expect(readFile(join(firstSessions, 'workspace.json'), 'utf8').then(JSON.parse)).resolves.toMatchObject({
-        workspace: firstWorkspace,
-      })
+      await catalog.refresh()
+      expect(catalog.roots()).toEqual(
+        expect.arrayContaining([expect.objectContaining({ directory: firstSessions, workspace: firstWorkspace })])
+      )
 
       await controller.dispose()
       disposed = true

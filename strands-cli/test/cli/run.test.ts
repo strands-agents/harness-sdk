@@ -1,3 +1,5 @@
+import * as harness from '@strands-agents/harness'
+import * as readline from 'node:readline/promises'
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
@@ -19,6 +21,21 @@ import * as mcpConfig from '../../src/config/mcp.js'
 import { resolveMcpConfig } from '../../src/config/trust.js'
 import { applyProviderEnvironmentValues, CliConfigStore } from '../../src/config/store.js'
 import { stringify } from 'smol-toml'
+
+import {
+  harnessSystemPrompt,
+  SAVED_INSTRUCTIONS,
+  SAVED_SYSTEM_PROMPT,
+  SystemPromptRecordingModel,
+  writeSessionWithSavedSystemPrompt,
+} from '../fixtures/saved-system-prompt.js'
+
+vi.mock('@strands-agents/harness', async (importOriginal) => ({
+  ...(await importOriginal<typeof harness>()),
+}))
+vi.mock('node:readline/promises', async (importOriginal) => ({
+  ...(await importOriginal<typeof readline>()),
+}))
 
 describe('agentConfig', () => {
   it('preserves defaults when no flags are supplied', () => {
@@ -313,7 +330,100 @@ describe('profile model persistence', () => {
   })
 })
 
+describe('saved session prompts', () => {
+  it.each(['print', 'plain'] as const)('keeps the current profile prompt in %s mode', async (mode) => {
+    const workspace = await mkdtemp(join(tmpdir(), 'strands-console-session-'))
+    await writeSessionWithSavedSystemPrompt(join(workspace, '.agent', 'sessions'), 'saved-session')
+    const model = new SystemPromptRecordingModel()
+    const build = harness.createHarness
+    const create = vi.spyOn(harness, 'createHarness').mockImplementation((options) =>
+      build({
+        ...options,
+        model,
+        builtinTools: [],
+        builtinPlugins: [],
+        contextManager: false,
+        memory: false,
+        skills: false,
+      })
+    )
+    const config = vi.spyOn(CliConfigStore, 'load').mockResolvedValue(CliConfigStore.memory())
+    const cwd = vi.spyOn(process, 'cwd').mockReturnValue(workspace)
+    const output = vi.spyOn(process.stdout, 'write').mockReturnValue(true)
+    const errors = vi.spyOn(process.stderr, 'write').mockReturnValue(true)
+    const prompt = vi.spyOn(readline, 'createInterface').mockReturnValue({
+      question: async () => 'exit',
+      close: () => {},
+    } as unknown as readline.Interface)
+    const stdinIsTty = process.stdin.isTTY
+    const stdoutIsTty = process.stdout.isTTY
+    const exitCode = process.exitCode
+    process.stdin.isTTY = true
+    process.stdout.isTTY = false
+    try {
+      await main([...(mode === 'print' ? ['-p'] : []), 'continue', '--session-id', 'saved-session'])
+      expect(errors).not.toHaveBeenCalled()
+      expect(model.systemPrompts).toEqual([harnessSystemPrompt()])
+      expect(model.systemPrompts[0]).not.toContain(SAVED_SYSTEM_PROMPT)
+      expect(model.systemPrompts[0]).not.toContain(SAVED_INSTRUCTIONS)
+      expect(model.firstMessageTexts).toEqual(['earlier request'])
+    } finally {
+      process.stdin.isTTY = stdinIsTty
+      process.stdout.isTTY = stdoutIsTty
+      process.exitCode = exitCode
+      for (const spy of [create, config, cwd, output, errors, prompt]) spy.mockRestore()
+      await rm(workspace, { recursive: true, force: true })
+    }
+  })
+})
+
 describe('project invocation', () => {
+  it.each([
+    { argv: [], expected: { dir: '.agent/sessions' } },
+    { argv: ['--session-id', 'saved-session'], expected: { id: 'saved-session', dir: '.agent/sessions' } },
+    { argv: ['--set', 'session.dir="custom-sessions"'], expected: { dir: 'custom-sessions' } },
+    { argv: ['--session', 'off'], expected: false as const },
+  ])('preserves Harness session storage for $argv', async ({ argv, expected }) => {
+    const workspace = join(tmpdir(), 'strands-invocation-workspace')
+    const invocation = await invocationAgentForRun(parseArgs(argv), CliConfigStore.memory(), workspace)
+    expect(invocation.options.session).toEqual(
+      expected === false ? false : { ...expected, dir: join(workspace, expected.dir) }
+    )
+  })
+
+  it.each([true, { id: 'saved-session' }, { dir: 'custom-sessions' }] as const)(
+    'resolves profile session storage against its base directory: %j',
+    async (session) => {
+      const workspace = join(tmpdir(), 'strands-invocation-workspace')
+      const profileBaseDir = join(tmpdir(), 'strands-profile-base')
+      const config = {
+        snapshot: () => ({
+          profile: defineHarnessAgentConfig({ model: 'openai/gpt-5', session }),
+          profileBaseDir,
+        }),
+        applyProviderEnvironment: () => {},
+      }
+      const invocation = await invocationAgentForRun(parseArgs([]), config, workspace)
+      expect(invocation.options.session).toEqual({
+        ...(session === true ? {} : session),
+        dir: join(profileBaseDir, session !== true && 'dir' in session ? session.dir : '.agent/sessions'),
+      })
+    }
+  )
+
+  it('preserves an absolute session directory when resuming from another workspace', async () => {
+    const workspace = join(tmpdir(), 'strands-invocation-workspace')
+    const sessionDirectory = join(tmpdir(), 'strands-saved-sessions')
+    const args = parseArgs([
+      '--session-id',
+      'saved-session',
+      '--set',
+      `session.dir=${JSON.stringify(sessionDirectory)}`,
+    ])
+    const invocation = await invocationAgentForRun(args, CliConfigStore.memory(), workspace)
+    expect(invocation.options.session).toEqual({ id: 'saved-session', dir: sessionDirectory })
+  })
+
   it('loads saved-profile packages and explicitly selected environment files', async () => {
     const directory = await realpath(await mkdtemp(join(tmpdir(), 'strands-cli-profile-')))
     const root = join(directory, 'project')

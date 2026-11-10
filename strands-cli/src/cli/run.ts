@@ -6,7 +6,7 @@ import { confirmWorkspaceMcp, resolveMcpConfig } from '../config/trust.js'
 import { initLogging } from '../logging.js'
 import { rethrowWithProviderHint } from '../model/packages.js'
 import { importAgentProject } from '../project/import.js'
-import { withWorkspaceSessionDirectory } from '../session/sessions.js'
+import { initializeAgentDefinition } from '../session/agent-definition.js'
 import { errorMessage } from '../terminal/text.js'
 import { parseArgs, shouldPersistModelChanges, type CliRunMode, type ParsedArgs } from './arguments.js'
 import { runPlainChat, runTurn } from './console.js'
@@ -157,7 +157,6 @@ async function runAcp(args: ParsedArgs): Promise<void> {
     const invocation = await invocationAgentForRun(args, config)
     await runAcpServer(await withDiscoveredSkills(invocation.options, settings.skillDiscovery), {
       ...(invocation.buildAgent ? { buildAgent: invocation.buildAgent } : {}),
-      ...(invocation.project ? { sourceAgent: true } : {}),
       mcpPaths: mcp.paths,
       mcpStrictPaths: mcp.strictPaths,
       ...(mcp.expectedDigests ? { mcpDigests: mcp.expectedDigests } : {}),
@@ -201,7 +200,7 @@ async function runConsole(
       )
       return
     }
-    const invocation = await invocationAgentForRun(args, config, process.cwd(), project, true)
+    const invocation = await invocationAgentForRun(args, config, process.cwd(), project)
     const { settings } = config.snapshot()
     const options = await withDiscoveredSkills(invocation.options, settings.skillDiscovery)
     const mcp = await resolveMcpConfig(args.mcpConfig, {
@@ -220,6 +219,7 @@ async function runConsole(
       options.tools = [...(options.tools ?? []), ...loadedMcp.clients]
     }
     agent = await (invocation.buildAgent ?? createHarness)(options).catch(rethrowWithProviderHint)
+    await initializeAgentDefinition(agent)
     if (mode === 'print') {
       await runTurn(agent, request!)
     } else {
@@ -385,10 +385,9 @@ async function runInteractive(
           profile && !launch?.agentProject
             ? {
                 profile,
-                options: withWorkspaceSessionDirectory(
-                  await harnessAgentOptionsFromConfig(profile, config.snapshot().profileBaseDir ?? initialWorkspace),
+                options: await harnessAgentOptionsFromConfig(
                   profile,
-                  initialWorkspace
+                  config.snapshot().profileBaseDir ?? initialWorkspace
                 ),
               }
             : await invocationAgentForRun(launch?.agentProject ? { ...args, agent: launch.agentProject } : args, config)

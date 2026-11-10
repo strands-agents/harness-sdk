@@ -50,9 +50,9 @@ permit (
 
 const PERMISSION_OPTIONS: readonly ChatPermissionOption[] = [
   { id: 'allow-once', label: 'Allow once', kind: 'allow_once' },
-  { id: 'allow-always', label: 'Allow forever', kind: 'allow_always' },
+  { id: 'allow-always', label: 'Always allow', kind: 'allow_always' },
   { id: 'deny', label: 'Deny once', kind: 'reject_once' },
-  { id: 'deny-always', label: 'Deny forever', kind: 'reject_always' },
+  { id: 'deny-always', label: 'Always deny', kind: 'reject_always' },
 ]
 
 export type PermissionDecision =
@@ -63,12 +63,14 @@ export type PermissionDecision =
 type PermissionListener = (request: ChatPermissionRequest | undefined) => void
 
 interface PermissionRequestDetails {
+  agent?: object
   diff?: ChatDiffPreview
   action?: string
   scopes?: ChatPermissionRequest['scopes']
 }
 
 interface PendingPermission {
+  agent?: object
   request: ChatPermissionRequest
   resolve: (decision: PermissionDecision) => void
 }
@@ -101,7 +103,7 @@ export class ToolPermissionBroker {
       ...(diff ? { diff } : {}),
     }
     return new Promise((resolveDecision) => {
-      this._queue.push({ request, resolve: resolveDecision })
+      this._queue.push({ request, resolve: resolveDecision, ...(details.agent ? { agent: details.agent } : {}) })
       this._activateNext()
     })
   }
@@ -130,14 +132,20 @@ export class ToolPermissionBroker {
     }
   }
 
-  cancelAll(): void {
-    const pending = [...(this._active ? [this._active] : []), ...this._queue]
-    this._active = undefined
-    this._queue.length = 0
+  cancelAll(agent?: object): void {
+    const pending = [...(this._active ? [this._active] : []), ...this._queue].filter(
+      (permission) => !agent || permission.agent === agent
+    )
+    const activeCancelled = this._active !== undefined && pending.includes(this._active)
+    if (activeCancelled) this._active = undefined
+    for (let index = this._queue.length - 1; index >= 0; index--) {
+      if (pending.includes(this._queue[index]!)) this._queue.splice(index, 1)
+    }
     for (const permission of pending) {
       permission.resolve(DENY)
     }
-    this._notify(undefined)
+    if (activeCancelled) this._notify(undefined)
+    this._activateNext()
   }
 
   dispose(): void {
@@ -253,8 +261,16 @@ export class CedarPermissions extends InterventionHandler {
     }
 
     const diff = toolName === 'strands_config' ? this._configurationPreview?.() : await buildFileChangePreview(event)
-    const decision = await requestToolPermission(this._broker, toolName, input, this._workspace, diff)
-    return applyPermissionDecision(this._config, toolName, decision)
+    const signal = event.agent.cancelSignal
+    const cancel = (): void => this._broker.cancelAll(event.agent)
+    signal.addEventListener('abort', cancel, { once: true })
+    try {
+      const pending = requestToolPermission(this._broker, toolName, input, this._workspace, diff, event.agent)
+      if (signal.aborted) cancel()
+      return applyPermissionDecision(this._config, toolName, await pending)
+    } finally {
+      signal.removeEventListener('abort', cancel)
+    }
   }
 
   permissionStatus(): CliConfigSnapshot {
@@ -285,10 +301,12 @@ export function requestToolPermission(
   toolName: string,
   input: BeforeToolCallEvent['toolUse']['input'],
   workspace: string,
-  diff?: ChatDiffPreview
+  diff?: ChatDiffPreview,
+  agent?: object
 ): Promise<PermissionDecision> {
   const action = permissionAction(toolName, input, workspace)
   return broker.request(toolName, input, {
+    ...(agent ? { agent } : {}),
     ...(diff ? { diff } : {}),
     ...(action !== undefined ? { action } : {}),
     scopes: permissionScopes(toolName, input, workspace),

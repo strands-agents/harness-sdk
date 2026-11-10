@@ -14,8 +14,8 @@ describe('TUI panel integration', () => {
     expect(clean).not.toContain('Viewing Help')
     expect(clean).not.toContain('Viewing Send a message')
     expect(clean).toContain('Current')
-    expect(clean).toContain('Enter switch')
-    expect(clean).toContain('Arrows · Enter')
+    expect(clean).toContain('Enter open')
+    expect(clean).toContain('Arrows · R rename')
     expect(clean).not.toContain('Viewing Agents')
     expect(clean).toContain('Server is not accepting connections')
     expect(clean).toContain('→ details')
@@ -56,7 +56,7 @@ describe('TUI shell integration', () => {
   })
 })
 
-const STRANDS_WORDMARK = /STRANDS|╚════╝|█▀▀ ▀█▀ █▀█ ▄▀█ █▄ █ █▀▄ █▀▀|▀▀ ▀ ▀ {2}▀ {2}▄▀ {3}▄ {4}▀▄ {2}▀▀/
+const STRANDS_WORDMARK = /STRANDS|▄▟[ █]{3}▙▄|█▀▀ ▀█▀ █▀█ ▄▀█ █▄ █ █▀▄ █▀▀|▀▀ ▀ ▀ {2}▀ {2}▄▀ {3}▄ {4}▀▄ {2}▀▀/
 
 describe('TUI startup integration', () => {
   it('bypasses the intro when the full frog does not fit', async () => {
@@ -146,10 +146,10 @@ describe('TUI workflow integration', () => {
     expectRestoredTerminal(result)
   })
 
-  it('deletes queued messages by mouse, keyboard, and blank edit without executing them', async () => {
+  it('edits, steers, deletes, and reorders queued messages through the keyboard', async () => {
     const result = await runTuiScenario('queue')
     expect(result.returnCode).toBe(0)
-    expect(result.screens.join('\n')).toContain('Executed: keep this')
+    expect(result.screens.join('\n')).toContain('Executed: edited keep')
     expectRestoredTerminal(result)
   })
 

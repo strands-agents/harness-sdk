@@ -1,9 +1,11 @@
 import { type Key, type DOMElement } from 'ink'
-import { moveSelection, revealPanelSelection } from '../interaction.js'
+import { moveSelection, panelControlTarget, revealPanelSelection } from '../interaction.js'
 import { type ReactElement } from 'react'
 import stringWidth from 'string-width'
 import { type ChatPanelRow } from '../chat/controller.js'
+import type { EditorState } from '../../terminal/composer.js'
 import { PanelHelpFooter } from '../footer.js'
+import { EditableText } from '../text-input.js'
 import { badgeColor, type PanelRowsProps } from './shared.js'
 import { Box, Text, useTheme } from '../theme.js'
 
@@ -104,10 +106,22 @@ export function AgentsPanel({
   onPanelElement,
   onRowElement,
   clipboardNotice,
-}: PanelRowsProps & { height: number; clipboardNotice?: string }): ReactElement {
+  nameEditor,
+  pressedControl,
+  hoveredControl,
+  onControlElement,
+}: PanelRowsProps & {
+  height: number
+  clipboardNotice?: string
+  nameEditor?: Pick<EditorState, 'input' | 'cursor'>
+  pressedControl?: string
+  hoveredControl?: string
+  onControlElement?: (target: string, element: DOMElement | null) => void
+}): ReactElement {
   const { accent } = useTheme()
   const layout = agentGridLayout(width, height)
   const activeIndex = Math.max(0, Math.min(selected, panel.rows.length - 1))
+  const nameInput = panel.kind === 'agents' ? panel.renameInput : undefined
   return (
     <Box
       ref={onPanelElement}
@@ -120,7 +134,7 @@ export function AgentsPanel({
     >
       <Box height={1} flexShrink={0} marginBottom={1} justifyContent="space-between">
         <Text color={accent} bold wrap="truncate-end">
-          {panel.title}
+          {nameInput ? 'Rename agent' : panel.title}
         </Text>
         <Box marginLeft={1} flexShrink={0}>
           <Text dimColor>
@@ -141,6 +155,7 @@ export function AgentsPanel({
             >
               {rows.slice(gridRow * layout.columns, (gridRow + 1) * layout.columns).map((row, column) => {
                 const index = start + gridRow * layout.columns + column
+                const editing = row.value === `conversation:${encodeURIComponent(nameInput?.id ?? '')}`
                 return (
                   <Box key={`${panel.id}-${index}`} marginLeft={column > 0 ? layout.columnGap : 0} flexShrink={0}>
                     <AgentCard
@@ -150,6 +165,18 @@ export function AgentsPanel({
                       selected={index === activeIndex}
                       highlighted={index === activeIndex || index === pressedRow || index === hoveredRow}
                       onElement={(element) => onRowElement?.(index, element)}
+                      {...(editing && nameEditor ? { nameEditor } : {})}
+                      actions={
+                        editing
+                          ? ['rename:save', 'rename:cancel']
+                          : !nameInput && row.value?.startsWith('conversation:')
+                            ? ['rename']
+                            : []
+                      }
+                      {...(pressedControl ? { pressedControl } : {})}
+                      {...(hoveredControl ? { hoveredControl } : {})}
+                      index={index}
+                      {...(onControlElement ? { onControlElement } : {})}
                     />
                   </Box>
                 )
@@ -178,6 +205,12 @@ function AgentCard({
   selected,
   highlighted,
   onElement,
+  nameEditor,
+  actions,
+  pressedControl,
+  hoveredControl,
+  index,
+  onControlElement,
 }: {
   row: ChatPanelRow
   width: number
@@ -185,10 +218,22 @@ function AgentCard({
   selected: boolean
   highlighted: boolean
   onElement: (element: DOMElement | null) => void
+  nameEditor?: Pick<EditorState, 'input' | 'cursor'>
+  actions: readonly string[]
+  pressedControl?: string
+  hoveredControl?: string
+  index: number
+  onControlElement?: (target: string, element: DOMElement | null) => void
 }): ReactElement {
   const { accent, border } = useTheme()
   const contentWidth = Math.max(1, width - 4)
-  const role = row.current ? 'Current' : row.value !== undefined ? 'Chat' : row.badge ? 'Delegate' : undefined
+  const role = row.current
+    ? 'Current'
+    : row.value?.startsWith('conversation:')
+      ? 'Chat'
+      : row.badge
+        ? 'Delegate'
+        : undefined
   const statusWidth = row.badge ? stringWidth(row.badge.text) + 2 : 0
   const showRole = role && contentWidth >= stringWidth(role) + statusWidth + 1
   const descriptionRows = height >= 9 ? 2 : height >= 5 ? 1 : 0
@@ -222,19 +267,44 @@ function AgentCard({
         </Box>
       ) : null}
       <Box flexGrow={1} flexDirection="column" alignItems="center" justifyContent="center" overflow="hidden">
-        <Text
-          {...(highlighted || row.current ? { color: accent } : {})}
-          bold={selected || row.bold === true}
-          wrap="truncate-end"
-        >
-          {row.label}
-        </Text>
+        {nameEditor ? (
+          <EditableText value={nameEditor.input} cursor={nameEditor.cursor} width={contentWidth} active />
+        ) : (
+          <Text
+            {...(highlighted || row.current ? { color: accent } : {})}
+            bold={selected || row.bold === true}
+            wrap="truncate-end"
+          >
+            {row.label}
+          </Text>
+        )}
       </Box>
       {descriptionRows > 0 && row.description ? (
         <Box height={descriptionRows} flexShrink={0} overflow="hidden" justifyContent="center">
           <Text dimColor wrap={descriptionRows === 1 ? 'truncate-end' : 'wrap'}>
             {row.description}
           </Text>
+        </Box>
+      ) : null}
+      {actions.length > 0 ? (
+        <Box flexShrink={0} justifyContent="center" gap={1}>
+          {actions.map((action) => {
+            const target = panelControlTarget(index, action)
+            const active = target === pressedControl || target === hoveredControl
+            return (
+              <Box
+                key={action}
+                ref={(element) => onControlElement?.(target, element)}
+                borderStyle={height >= 8 ? 'single' : undefined}
+                borderColor={active ? accent : border}
+                paddingX={1}
+              >
+                <Text {...(active ? { color: accent } : {})}>
+                  {action === 'rename:save' ? 'Save' : action === 'rename:cancel' ? 'Cancel' : 'Rename'}
+                </Text>
+              </Box>
+            )
+          })}
         </Box>
       ) : null}
     </Box>

@@ -14,7 +14,6 @@ import { configurationFromStore, type RequestSetup, type SetupChange } from '../
 import { runInkChat } from '../../src/ui/run.js'
 import * as processTree from '../../src/terminal/process-tree.js'
 import { ConversationManager } from '../../src/ui/chat/conversations.js'
-import { workspaceSessionDirectory } from '../../src/session/catalog.js'
 import { idleBackend } from '../fixtures/chat-backend.js'
 
 describe('runInkChat', () => {
@@ -76,7 +75,8 @@ describe('runInkChat', () => {
 
     try {
       await vi.waitFor(() => expect(finish).toBeDefined())
-      await manager.submit('/rename Renamed session')
+      await manager.submit('/sessions rename Renamed session')
+      await manager.submit('/rename Reviewer')
       await manager.submit('/help')
       await manager.submit('/fork')
       await manager.submit('/agents')
@@ -509,7 +509,7 @@ describe('runInkChat', () => {
       Object.defineProperty(controller, 'resumeSession', {
         value: {
           sessionId: 'saved-session',
-          sessionDirectory: workspaceSessionDirectory(process.cwd()),
+          sessionDirectory: join(process.cwd(), '.agent', 'sessions'),
           workspace: process.cwd(),
         },
       })
@@ -548,7 +548,8 @@ describe('runInkChat', () => {
     expect(writes[0]).toContain('?1049h')
     const outputText = writes.join('')
     if (saved) {
-      expect(writes.at(-1)).toBe('\nResume with: strands --session-id saved-session\n')
+      expect(writes.at(-1)).toContain('\nResume with: strands --session-id saved-session --set ')
+      expect(writes.at(-1)).toContain(`session.dir=${JSON.stringify(join(process.cwd(), '.agent', 'sessions'))}`)
       expect(outputText.indexOf('?1049l')).toBeLessThan(outputText.indexOf('Resume with:'))
     } else {
       expect(writes.at(-1)).toContain('?1049l')
@@ -568,7 +569,7 @@ describe('runInkChat', () => {
     Object.defineProperty(controller, 'resumeSession', {
       value: {
         sessionId: 'interrupted-session',
-        sessionDirectory: workspaceSessionDirectory(process.cwd()),
+        sessionDirectory: join(process.cwd(), '.agent', 'sessions'),
         workspace: process.cwd(),
       },
     })
@@ -825,7 +826,7 @@ describe('runInkChat', () => {
       expect(source).toHaveBeenCalledOnce()
 
       input.write('/setup')
-      await vi.waitFor(() => expect(frame().join('\n')).toContain('/setup'))
+      await vi.waitFor(() => expect(frame().join('\n')).toContain('/setup▌'))
       input.write('\r')
       await vi.waitFor(() => expect(frame().join('\n')).toContain('Esc to return to chat'))
       input.write('\u001b')

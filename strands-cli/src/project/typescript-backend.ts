@@ -107,6 +107,7 @@ export interface TypescriptRunResult extends Omit<ChatRunResult, 'watchUsage'> {
 
 /** @internal */
 export interface TypescriptCalls {
+  prepare: { input: ImportedAgentProject; result: void }
   init: { input: TypescriptInit; result: { metadata: TypescriptMetadata; messages: MessageData[] } }
   start: { input: TypescriptStream; result: number }
   next: { input: number; result: IteratorResult<ChatEvent, TypescriptRunResult> }
@@ -257,9 +258,12 @@ class TypescriptConnection {
     const connection = new TypescriptConnection(child, config, messaging, init.peerEndpointId)
     const cancel = (): void => connection.fail(new Error('TypeScript agent loading cancelled.'))
     signal?.addEventListener('abort', cancel, { once: true })
-    const timeout = setTimeout(() => connection.fail(new Error('TypeScript agent loading timed out.')), 60_000)
+    let timeout: NodeJS.Timeout | undefined
     try {
       signal?.throwIfAborted()
+      // Dependency installation has its own deadline and can outlast source loading.
+      await connection.call('prepare', init.project)
+      timeout = setTimeout(() => connection.fail(new Error('TypeScript agent loading timed out.')), 60_000)
       const result = await connection.call('init', init)
       connection.metadata = result.metadata
       return { connection, messages: result.messages.map((message) => Message.fromJSON(message)) }
@@ -404,6 +408,8 @@ class TypescriptConnection {
       this._messaging.register({
         id: peer.id,
         name: value.name,
+        ...(value.description ? { description: value.description } : {}),
+        ...(value.backgroundTask ? { backgroundTask: value.backgroundTask } : {}),
         status: () => (this._failure || this._disposal ? undefined : peer.value.status),
         enqueue: (message) => this.call('deliverPeer', { id: value.id, message }),
       })

@@ -1205,15 +1205,18 @@ describe('ChatController', () => {
     expect(controller.getSnapshot().completedTurns.map((turn) => turn.status)).toEqual(['cancelled', 'complete'])
   })
 
-  it('keeps attachment content while a prompt waits in the queue', async () => {
+  it('keeps attachment content when editing and steering a queued prompt', async () => {
     let release!: () => void
     const gate = new Promise<void>((resolve) => {
       release = resolve
     })
     const prompts: Array<string | ContentBlockData[]> = []
+    const queueSteering = vi.fn(() => true)
     const controller = new ChatController(
       idleBackend({
         id: 'attachment-queue-test',
+        queueSteering,
+        drainSteering: () => [],
         async *stream(prompt) {
           prompts.push(prompt)
           yield { type: 'textDelta', text: 'Done.' }
@@ -1249,9 +1252,18 @@ describe('ChatController', () => {
     expect(controller.updateQueuedPrompt('queued-1', '')).toBe(true)
     expect(controller.getSnapshot().queuedPrompts).toMatchObject([{ id: 'queued-1', prompt: '' }])
 
+    const followUp = controller.submit('follow-up')
+    controller.moveQueuedPrompt('queued-1', 1)
+    expect(controller.steerQueued('queued-1')).toBe(true)
+    expect(queueSteering).not.toHaveBeenCalled()
+    expect(controller.getSnapshot().queuedPrompts.map(({ id }) => id)).toEqual(['queued-1', 'queued-2'])
     release()
-    await Promise.all([first, queued])
-    expect(prompts).toEqual(['first', [{ document: { name: 'notes md', format: 'md', source: { text: 'hello' } } }]])
+    await Promise.all([first, queued, followUp])
+    expect(prompts).toEqual([
+      'first',
+      [{ document: { name: 'notes md', format: 'md', source: { text: 'hello' } } }],
+      'follow-up',
+    ])
   })
 
   it('accepts and runs queued prompts in order while the active turn continues', async () => {
@@ -1575,7 +1587,7 @@ describe('ChatController', () => {
     ])
   })
 
-  it('injects steering into a running turn without cancelling it', async () => {
+  it.each(['direct', 'queued'])('injects %s steering into a running turn without cancelling it', async (source) => {
     let release!: () => void
     const gate = new Promise<void>((resolve) => {
       release = resolve
@@ -1595,7 +1607,15 @@ describe('ChatController', () => {
 
     const running = controller.submit('first')
     await vi.waitFor(() => expect(controller.getSnapshot().status).toBe('running'))
-    await controller.steer('change direction now')
+    if (source === 'queued') {
+      const queued = controller.submit('change direction now')
+      expect(controller.steerQueued('missing')).toBe(false)
+      expect(controller.steerQueued()).toBe(true)
+      await expect(queued).resolves.toBeUndefined()
+      expect(controller.steerQueued()).toBe(false)
+    } else {
+      await controller.steer('change direction now')
+    }
 
     expect(target.queueSteering).toHaveBeenCalledWith('change direction now', expect.any(Function))
     expect(target.cancel).not.toHaveBeenCalled()
@@ -2497,7 +2517,7 @@ describe('ChatController', () => {
       },
     })
 
-    await controller.submit('/rename')
+    await controller.submit('/sessions rename')
     await controller.submit('/sessions rename Chosen name')
     resolveName('Stale Generated Name')
 
@@ -2626,9 +2646,9 @@ describe('ChatController', () => {
       action: 'git status',
       options: [
         { id: 'allow-once', label: 'Allow once', kind: 'allow_once' },
-        { id: 'allow-always', label: 'Allow forever', kind: 'allow_always' },
+        { id: 'allow-always', label: 'Always allow', kind: 'allow_always' },
         { id: 'deny', label: 'Deny once', kind: 'reject_once' },
-        { id: 'deny-always', label: 'Deny forever', kind: 'reject_always' },
+        { id: 'deny-always', label: 'Always deny', kind: 'reject_always' },
       ],
       scopes: [
         { rule: 'bash(git status)', label: 'git status' },
@@ -2643,9 +2663,9 @@ describe('ChatController', () => {
         kind: 'permission',
         rows: [
           { label: 'Allow once' },
-          { label: 'Allow forever…', description: 'Always allow · choose how broadly' },
+          { label: 'Always allow…', description: 'Always allow · choose how broadly' },
           { label: 'Deny once', tone: 'danger' },
-          { label: 'Deny forever…', tone: 'danger' },
+          { label: 'Always deny…', tone: 'danger' },
         ],
       },
     })

@@ -50,6 +50,23 @@ afterEach(() => {
 })
 
 describe('ChatView', () => {
+  it.each([40, 70, 100])('keeps the parent and interrupt shortcuts visible in a subagent chat at %sx24', (width) => {
+    const output = sanitizeTerminalText(
+      renderView({
+        snapshot: snapshot({
+          parentAgent: { id: 'agent-1', name: 'Parent agent with a long descriptive name' },
+          activeTurn: { id: 'child-turn', agentName: 'Child', prompt: 'Work', entries: [], status: 'running' },
+        }),
+        terminalWidth: width,
+        terminalHeight: 24,
+      })
+    )
+    expect(output).toContain('Esc back')
+    expect(output).toContain('ctrl+c to interrupt')
+    expect(output).toContain('Temporary chat')
+    expect(output.split('\n').length).toBeLessThanOrEqual(24)
+  })
+
   it('wraps setup text by terminal cells without splitting graphemes', () => {
     expect(wrapLines('abcd😀x\n你好吗\n\te\u0301\r\n', 5)).toEqual(['abcd', '😀x', '你好', '吗', '    e\u0301', ''])
     expect(wrapLines('ab', 0)).toEqual(['a', 'b'])
@@ -212,7 +229,7 @@ describe('ChatView', () => {
     expect(sanitizeTerminalText(frame)).toContain('+    changed')
   })
 
-  it('docks the live configuration while strands_config is active on a wide terminal', () => {
+  it.each(['inspect', 'models', 'update', 'apply'])('only docks config changes for strands_config %s', (action) => {
     const prompt = 'Update the config and reflow the transcript into the space left of the dock, then BESIDE_THE_DOCK'
     const activeTurn = {
       id: 'turn-1',
@@ -224,7 +241,7 @@ describe('ChatView', () => {
           type: 'tool' as const,
           toolUseId: 'config-1',
           name: 'strands_config',
-          input: { action: 'models' as const, query: 'opus' },
+          input: { action, query: 'opus' },
           status: 'running' as const,
         },
       ],
@@ -251,7 +268,13 @@ describe('ChatView', () => {
       terminalHeight: 30,
     })
 
-    expect(wide).toContain('Strands Config models: opus')
+    expect(wide).toContain('Strands Config')
+    const editing = action === 'update' || action === 'apply'
+    if (!editing) {
+      expect(wide).not.toContain('await createHarness')
+      expect(wide).not.toContain('TypeScript')
+      return
+    }
     expect(wide).toContain('await createHarness')
     expect(undocked).toContain('BESIDE_THE_DOCK')
     expect(wide).toContain('BESIDE_THE_DOCK')
@@ -322,7 +345,9 @@ describe('ChatView', () => {
       terminalHeight: 24,
     })
 
-    expect(output.indexOf('╚════╝')).toBeLessThan(output.indexOf('Nothing to compact yet'))
+    const plainOutput = sanitizeTerminalText(output)
+    expect(plainOutput).toContain('▄▟   ▙▄')
+    expect(plainOutput.indexOf('▄▟   ▙▄')).toBeLessThan(plainOutput.indexOf('Nothing to compact yet'))
   })
 
   it.each([80, 120])(
@@ -358,11 +383,12 @@ describe('ChatView', () => {
       })
       expect(warning).not.toContain(hint)
       const warningRows = warning.split('\n')
-      const taskRow = warningRows.findIndex((line) => line.includes('Background task running (read)'))
+      const taskRow = warningRows.findIndex((line) => line.includes('Background ·'))
       const mcpRow = warningRows.findIndex((line) => line.includes('3 MCP servers failed to connect'))
       expect(taskRow).toBeGreaterThanOrEqual(0)
-      expect(mcpRow).toBe(taskRow + 1)
-      expect(mcpRow).toBeLessThan(warningRows.findIndex((line) => line.includes('Enter to send')))
+      const inputRow = warningRows.findIndex((line) => line.includes('Enter to send'))
+      expect(mcpRow).toBeLessThan(inputRow)
+      expect(taskRow).toBeGreaterThan(inputRow)
       expect(render()).toContain(hint)
 
       expect(
@@ -1134,9 +1160,9 @@ describe('ChatView', () => {
     expect(rows.at(-1)).toContain('bedrock/test')
     expect(rows.at(-1)).toContain('/work')
     expect(rows.at(-2)?.trim()).toBe('')
-    expect(rows.at(-1)).toContain('/settings')
+    expect(rows.at(-1)).toContain('/setup  /settings')
     expect(rows.at(-1)).not.toContain('Enter')
-    expect(output).not.toContain('/setup')
+    expect(output).not.toContain('/voice')
     expect(output).not.toContain('/help')
 
     const runningOutput = renderView({
@@ -1153,7 +1179,7 @@ describe('ChatView', () => {
       terminalWidth: 100,
       terminalHeight: 40,
     })
-    expect(runningOutput).toContain('Enter to queue • Alt+↑ edit queue • / for commands')
+    expect(runningOutput).toContain('Enter to queue • Tab queue actions • Alt+↑ edit queue')
     expect(runningOutput).not.toContain('Enter to send')
 
     const updateOutput = renderView({
@@ -1166,8 +1192,8 @@ describe('ChatView', () => {
     expect(updateOutput).toContain('/settings')
   })
 
-  it('shows active background tasks immediately above the composer', () => {
-    const output = renderView({
+  it.each([40, 100])('keeps background activity in one row below the composer at %s columns', (width) => {
+    const props = {
       snapshot: snapshot({
         tasks: [
           {
@@ -1190,14 +1216,31 @@ describe('ChatView', () => {
           },
         ],
       }),
-      terminalWidth: 100,
+      terminalWidth: width,
       terminalHeight: 30,
-    })
+    }
+    const output = renderView(props)
 
-    expect(output).toContain('Background task running (subagent) - task-1')
-    expect(output).toContain('Background task queued (read) - task-2')
-    expect(output).not.toContain('Background task completed (write) - task-3')
-    expect(output.indexOf('Background task queued (read)')).toBeLessThan(output.indexOf('Enter to send'))
+    expect(output).toContain('Background 1/2')
+    expect(output).toContain('subagent')
+    expect(output).not.toContain('task-1')
+    expect(output).not.toContain('write')
+    expect(output.indexOf('Background 1/2')).toBeGreaterThan(output.indexOf('Enter to send'))
+    expect(output.indexOf('Background 1/2')).toBeLessThan(output.indexOf('/settings'))
+    expect(output.split('\n').filter((line) => line.includes('Background'))).toHaveLength(1)
+    const activityRow = output.split('\n').find((line) => line.includes('Background'))!
+    expect(activityRow.trimEnd().endsWith('↓ view')).toBe(true)
+    expect(stringWidth(activityRow)).toBeLessThanOrEqual(width - 2)
+    expect(output).toContain('↓ view')
+    expect(renderView({ ...props, input: 'Draft' })).toContain('Tab view')
+    expect(renderView({ ...props, input: '/he' })).toContain('click view')
+    const selected = renderView({ ...props, focusedBackgroundTask: 'task-2' })
+    expect(selected).toContain('Background 2/2')
+    expect(selected).toMatch(/read|rea…/)
+    const selectedRow = selected.split('\n').find((line) => line.includes('Background'))!
+    expect(selectedRow.trimEnd().endsWith('←→ Enter Esc')).toBe(true)
+    expect(stringWidth(selectedRow)).toBeLessThanOrEqual(width - 2)
+    expect(selected.split('\n').every((line) => stringWidth(line) <= width)).toBe(true)
   })
 
   it('scrolls the startup lockup with the conversation', () => {
@@ -1218,8 +1261,8 @@ describe('ChatView', () => {
       })
     )
 
-    expect(output).toContain('╚════╝')
-    expect(output.indexOf('╚════╝')).toBeLessThan(output.indexOf('hello'))
+    expect(output).toContain('▄▟   ▙▄')
+    expect(output.indexOf('▄▟   ▙▄')).toBeLessThan(output.indexOf('hello'))
     expect(output.indexOf('hello')).toBeLessThan(output.indexOf('answer'))
 
     const continuedOutput = sanitizeTerminalText(
@@ -1243,7 +1286,7 @@ describe('ChatView', () => {
         terminalHeight: 40,
       })
     )
-    expect(continuedOutput).not.toContain('╚════╝')
+    expect(continuedOutput).not.toContain('▄▟   ▙▄')
   })
 
   it('keeps the transcript on its latest rows in the frame where a turn completes', async () => {
@@ -1285,7 +1328,7 @@ describe('ChatView', () => {
       expect(frames.length).toBeGreaterThan(0)
       for (const frame of frames) {
         expect(frame).toContain('answer line 29')
-        expect(frame).not.toContain('╚════╝')
+        expect(frame).not.toContain('▄▟   ▙▄')
       }
     } finally {
       instance.unmount()
@@ -1554,6 +1597,14 @@ describe('ChatView', () => {
                   },
                 ],
               },
+              {
+                id: 'turn-1:3',
+                type: 'tool',
+                toolUseId: 'list-1',
+                name: 'strands_manage_background_task',
+                input: { mode: 'list' },
+                status: 'success',
+              },
             ],
             status: 'complete',
           },
@@ -1569,6 +1620,8 @@ describe('ChatView', () => {
     expect(output).not.toContain('Read src/auth.ts')
     expect(output).not.toContain('Background task dispatched.')
     expect(output).not.toContain('Status: queued')
+    expect(output).toContain('List background tasks')
+    expect(output).not.toContain('Background list')
   })
 
   it('shows a subagent as background before its dispatch result arrives', () => {
@@ -1809,9 +1862,9 @@ describe('ChatView', () => {
           },
           rows: [
             { label: 'Allow once', description: 'Run only this call', value: 'allow' },
-            { label: 'Allow forever…', description: 'Always allow · choose how broadly', value: 'always' },
+            { label: 'Always allow…', description: 'Always allow · choose how broadly', value: 'always' },
             { label: 'Deny once', description: 'Block this call', value: 'deny', tone: 'danger' },
-            { label: 'Deny forever…', description: 'Always block', value: 'never', tone: 'danger' },
+            { label: 'Always deny…', description: 'Always block', value: 'never', tone: 'danger' },
           ],
         },
       }),
@@ -1829,7 +1882,7 @@ describe('ChatView', () => {
     expect(divider).toBeLessThan(50)
     expect(row('Action')).toMatch(/Action\s+\/Users\/test\/Desktop/u)
     expect(sanitizeTerminalText(output)).toContain('test.txt')
-    expect(output).toContain('Deny forever…')
+    expect(output).toContain('Always deny…')
     expect(output).toContain('Run only this call')
     expect(output).not.toContain('The treasure is buried.')
     expect(output).toContain('Strands harness requests permission')
@@ -1911,7 +1964,7 @@ describe('ChatView', () => {
       request,
       rows: [
         { label: 'Allow once', description: 'Run only this call', value: 'allow', tone: 'success' },
-        { label: 'Allow forever…', description: 'Always allow', value: 'trust', tone: 'success' },
+        { label: 'Always allow…', description: 'Always allow', value: 'trust', tone: 'success' },
         { label: 'Deny once', description: 'Block this call', value: 'deny', tone: 'danger' },
       ],
     }
@@ -1981,7 +2034,7 @@ describe('ChatView', () => {
     expect(output).toContain('Queued 1/2')
     expect(output).toContain('Run the focused tests')
     expect(output).toContain('Edit')
-    expect(lines.find((line) => line.includes('Queued 1/2'))).not.toContain('Steer')
+    expect(lines.find((line) => line.includes('Queued 1/2'))).toContain('Steer')
   })
 
   it('shows that cancellation is still draining before queued work can run', () => {
@@ -2168,7 +2221,7 @@ describe('ChatView', () => {
                 type: 'tool',
                 toolUseId: 'message-1',
                 name: 'message_agent',
-                input: { action: 'send', to: 'agent-2', message: 'Please check the parser.' },
+                input: { action: 'send', to: 'agent-2', message: 'Please check the parser.\n\nInclude invalid input.' },
                 status: 'success',
                 result: [
                   {
@@ -2191,6 +2244,11 @@ describe('ChatView', () => {
 
     expect(output).toContain('Message to Reviewer')
     expect(output).toContain('Please check the parser.')
+    expect(output).toContain('Include invalid input.')
+    const lines = output.split('\n')
+    const heading = lines.findIndex((line) => line.includes('Message to Reviewer'))
+    expect(lines[heading]).not.toContain('Please check')
+    expect(lines[heading + 1]).toContain('Please check the parser.')
     expect(output).not.toContain('message_agent')
   })
 

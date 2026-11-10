@@ -3,20 +3,25 @@ import {
   InterventionActions,
   InterventionHandler,
   Message,
+  MessageAddedEvent,
   TextBlock,
   tool,
   type BeforeModelCallEvent,
+  type Agent,
   type JSONValue,
   type LocalAgent,
   type Plugin,
 } from '@strands-agents/sdk'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { isRecord } from '../values.js'
+import type { ChatBackend, ChatEvent, ChatRunResult } from './types.js'
 
 interface BackgroundAgentEndpoint {
   taskId: string
   name: string
   task: string
+  toolUseId: string
+  agent?: Agent
 }
 
 type BackgroundAgentEndpointEvent =
@@ -40,7 +45,7 @@ type BackgroundAgentEndpointListener = (event: BackgroundAgentEndpointEvent) => 
 export class BackgroundAgentInbox {
   private readonly _scope = new AsyncLocalStorage<string>()
   private readonly _descriptors = new Map<string, BackgroundAgentDescriptor>()
-  private readonly _targets = new Map<string, (prompt: string) => boolean>()
+  private readonly _targets = new Map<string, { enqueue: (prompt: string) => boolean; agent?: Agent }>()
   private readonly _toolUseByTask = new Map<string, string>()
   private readonly _availableTasks = new Set<string>()
   private readonly _settledTools = new Set<string>()
@@ -61,15 +66,15 @@ export class BackgroundAgentInbox {
     this._publishAvailable(toolUseId)
   }
 
-  observeAgent(enqueue: (prompt: string) => boolean): (() => void) | undefined {
+  observeAgent(enqueue: (prompt: string) => boolean, agent?: Agent): (() => void) | undefined {
     const toolUseId = this._scope.getStore()
     if (!toolUseId || this._settledTools.has(toolUseId) || this._targets.has(toolUseId)) {
       return undefined
     }
-    this._targets.set(toolUseId, enqueue)
+    this._targets.set(toolUseId, { enqueue, ...(agent ? { agent } : {}) })
     this._publishAvailable(toolUseId)
     return () => {
-      if (this._targets.get(toolUseId) !== enqueue) {
+      if (this._targets.get(toolUseId)?.enqueue !== enqueue) {
         return
       }
       this._targets.delete(toolUseId)
@@ -97,7 +102,7 @@ export class BackgroundAgentInbox {
   send(taskId: string, prompt: string): boolean {
     const toolUseId = this._toolUseByTask.get(taskId)
     const target = toolUseId ? this._targets.get(toolUseId) : undefined
-    return target?.(prompt) ?? false
+    return target?.enqueue(prompt) ?? false
   }
 
   complete(toolUseId: string): void {
@@ -141,6 +146,8 @@ export class BackgroundAgentInbox {
         taskId,
         name: descriptor.name,
         task: descriptor.task,
+        toolUseId,
+        ...(this._targets.get(toolUseId)?.agent ? { agent: this._targets.get(toolUseId)!.agent } : {}),
       },
     })
   }
@@ -180,13 +187,21 @@ export interface PeerMessage {
   body: string
 }
 
-interface PeerEndpoint extends PeerParticipant {
+interface PeerEndpoint extends Omit<PeerEndpointInfo, 'status'> {
   status(): PeerEndpointInfo['status'] | undefined
   enqueue(message: PeerMessage): boolean | Promise<boolean>
+  chat?: {
+    attached?: boolean
+    backend: ChatBackend
+    prompt: string
+    stream: AsyncGenerator<ChatEvent, ChatRunResult, undefined>
+  }
 }
 
 export type PeerEndpointInfo = PeerParticipant & {
   status: 'idle' | 'working'
+  description?: string
+  backgroundTask?: { id: string; ownerId: string }
 }
 
 /** @internal */
@@ -206,6 +221,10 @@ export class AgentMessaging {
     }
     this._endpoints.set(endpoint.id, endpoint)
     this._emit()
+  }
+
+  getEndpoint(id: string): PeerEndpoint | undefined {
+    return this._endpoints.get(id)
   }
 
   rename(id: string, name: string): void {
@@ -228,7 +247,13 @@ export class AgentMessaging {
     for (const endpoint of this._endpoints.values()) {
       const status = endpoint.status()
       if (endpoint.id !== senderId && status) {
-        peers.push({ id: endpoint.id, name: endpoint.name, status })
+        peers.push({
+          id: endpoint.id,
+          name: endpoint.name,
+          status,
+          ...(endpoint.description ? { description: endpoint.description } : {}),
+          ...(endpoint.backgroundTask ? { backgroundTask: endpoint.backgroundTask } : {}),
+        })
       }
     }
     return peers.sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id))
@@ -244,6 +269,10 @@ export class AgentMessaging {
 
   unbindAgent(agent: LocalAgent): void {
     this._agentEndpoints.delete(agent)
+  }
+
+  bindAgent(agent: LocalAgent, endpointId: string): void {
+    this._agentEndpoints.set(agent, endpointId)
   }
 
   createPlugin(
@@ -279,7 +308,12 @@ export class AgentMessaging {
         const senderId = this._requireSenderId(context.agent)
         if (parsed.action === 'list') {
           const peers = router.list(senderId)
-          return peers instanceof Promise ? peers.then((agents) => ({ agents: [...agents] })) : { agents: [...peers] }
+          const listResult = (
+            agents: readonly PeerEndpointInfo[]
+          ): { agents: Omit<PeerEndpointInfo, 'backgroundTask'>[] } => ({
+            agents: agents.map(({ backgroundTask: _backgroundTask, ...agent }) => agent),
+          })
+          return peers instanceof Promise ? peers.then(listResult) : listResult(peers)
         }
         const recipient = router.send(senderId, parsed.to, parsed.message)
         return recipient instanceof Promise
@@ -290,7 +324,7 @@ export class AgentMessaging {
     return {
       name: 'strands:agent-messaging',
       initAgent: (agent): void => {
-        this._agentEndpoints.set(agent, endpointId)
+        this.bindAgent(agent, endpointId)
       },
       getTools: () => [messageAgent],
     }
@@ -449,11 +483,24 @@ export class LiveSteering extends InterventionHandler {
     }
     this._observed.add(agent)
     const closeObservedAgent = this._onAgentObserved?.(agent)
+    let resume: { message: Message; count: number } | undefined
+    agent.addHook(MessageAddedEvent, (event) => {
+      if (!resume || event.message !== resume.message) return
+      const updates = this._updates.get(event.agent)?.splice(0, resume.count) ?? []
+      resume = undefined
+      this._markConsumed(updates)
+    })
     agent.addHook(AfterInvocationEvent, (event) => {
-      const updates = this._take(event.agent)
+      const updates = this._updates.get(event.agent) ?? []
       if (updates.length > 0) {
-        event.resume = updates.map((update) => update.prompt).join('\n\n')
-        this._markConsumed(updates)
+        resume = {
+          message: new Message({
+            role: 'user',
+            content: [new TextBlock(updates.map((update) => update.prompt).join('\n\n'))],
+          }),
+          count: updates.length,
+        }
+        event.resume = [resume.message]
       }
       void Promise.resolve().then(() => {
         if (event.resume === undefined) {

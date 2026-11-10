@@ -6,7 +6,7 @@ import { contextColor, metadataPlacements } from './presentation.js'
 import { Text, useTheme } from './theme.js'
 
 export const PanelHelpContext = createContext<ChatPanel | undefined>(undefined)
-export type FooterAction = 'voice' | 'settings' | 'setup' | 'help' | 'update'
+export type FooterAction = 'settings' | 'setup' | 'help' | 'update' | 'parent'
 
 export function panelModelId(panel: ChatPanel | undefined, row?: ChatPanelRow): string | undefined {
   if (panel?.kind !== 'models' || panel.awsProfile?.open) return undefined
@@ -53,6 +53,7 @@ export function PanelHelpFooter({
 }
 
 function panelHelpKeys(panel: ChatPanel, width: number, scrollable: boolean): string {
+  if (panel.kind === 'agents' && panel.renameInput) return 'Enter save · Esc cancel'
   if (panel.kind === 'permission') {
     return panel.stage
       ? '↑↓←→ · Enter save rule · Esc back'
@@ -126,10 +127,10 @@ function panelHelpKeys(panel: ChatPanel, width: number, scrollable: boolean): st
       return '↑↓ · Enter choose · → details · Esc back'
     case 'agents':
       return width < 26
-        ? 'Arrows · Enter · Esc'
+        ? 'Arrows · R rename · Esc'
         : width < 64
-          ? '↑↓←→ · Enter switch · Esc'
-          : '↑↓←→ choose · Enter switch · PgUp/PgDn scroll · Esc back'
+          ? '↑↓←→ · Enter open · R rename · Esc'
+          : '↑↓←→ / Tab choose · Enter open · R rename · PgUp/PgDn scroll · Esc back'
     default:
       return panel.filters?.length ? 'Tab category · Enter · Esc back' : '↑↓ · Enter open · Esc back'
   }

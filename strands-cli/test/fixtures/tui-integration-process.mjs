@@ -16,6 +16,9 @@ if (process.argv[2] === '--editor') {
   process.stdout.write('EDITOR_READY\n')
   const input = await new Promise((resolve) => process.stdin.once('data', resolve))
   if (input.toString().trim() !== 'editor input') throw new Error('Editor did not receive input')
+  if (process.env.STRANDS_CLI_TEST_EDITOR_RESULT) {
+    await writeFile(process.env.STRANDS_CLI_TEST_EDITOR_RESULT, input.toString().trim())
+  }
   process.stdout.write('\u001b[?1049l')
   process.stdout.write('EDITOR_INPUT_OK\n')
   process.exit(0)
@@ -23,18 +26,11 @@ if (process.argv[2] === '--editor') {
 
 await import('../../dist/src/terminal/ink.js')
 const sourceRoot = process.env.STRANDS_CLI_TEST_DIST === 'true' ? '../../dist/src' : '../../src'
-const [
-  { WorkspaceSandbox },
-  { ChatController },
-  { runInkChat },
-  { ConversationManager },
-  { workspaceSessionDirectory },
-] = await Promise.all([
+const [{ WorkspaceSandbox }, { ChatController }, { runInkChat }, { ConversationManager }] = await Promise.all([
   import(`${sourceRoot}/agent/sandbox.js`),
   import(`${sourceRoot}/ui/chat/controller.js`),
   import(`${sourceRoot}/ui/run.js`),
   import(`${sourceRoot}/ui/chat/conversations.js`),
-  import(`${sourceRoot}/session/catalog.js`),
 ])
 
 const sandbox = new WorkspaceSandbox(process.cwd())
@@ -97,7 +93,7 @@ const backend = {
     ? {
         sessionIdentity: {
           sessionId: 'fixture-session',
-          sessionDirectory: workspaceSessionDirectory(process.cwd()),
+          sessionDirectory: join(process.cwd(), '.agent', 'sessions'),
           workspace: process.cwd(),
           configured: { sessionId: null, sessionDir: '.agent/sessions' },
         },

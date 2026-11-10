@@ -125,6 +125,7 @@ export const TranscriptViewport = memo(function TranscriptViewport({
   turns,
   activeTurn,
   approvalToolName,
+  interruptKey,
   notices,
   settings,
   scrollOffset,
@@ -138,6 +139,7 @@ export const TranscriptViewport = memo(function TranscriptViewport({
   activeTurn?: ChatTurn
   /** The tool whose call is paused on an open approval prompt. */
   approvalToolName?: string
+  interruptKey?: string
   notices: readonly ChatNotice[]
   settings: ChatSnapshot['settings']
   scrollOffset: number
@@ -298,6 +300,7 @@ export const TranscriptViewport = memo(function TranscriptViewport({
               turn={activeTurn}
               settings={settings}
               {...(approvalToolName !== undefined ? { approvalToolName } : {})}
+              {...(interruptKey ? { interruptKey } : {})}
               active
               expandedToolGroups={expandedToolGroups}
               {...(onToolGroupElement ? { onToolGroupElement } : {})}

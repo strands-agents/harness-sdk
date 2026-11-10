@@ -45,9 +45,14 @@ describe('prompt history', () => {
 })
 
 describe('slash palette during a turn', () => {
-  it('opens while the agent works, closes on Esc without cancelling, and runs live commands', async () => {
+  // https://github.com/strands-agents/harness-sdk/pull/5194#discussion_r4525136610
+  it.each([false, true])('completes dismissed suggestions during background work (queued=%s)', async (queued) => {
     let finishTurn = (): void => {}
     const backend = idleBackend({
+      watchTasks(listener) {
+        listener([{ id: 'review', label: 'Reviewer', status: 'working', source: 'background' }])
+        return () => {}
+      },
       async *stream() {
         yield { type: 'textDelta', text: 'working' }
         await new Promise<void>((resolve) => {
@@ -62,6 +67,10 @@ describe('slash palette during a turn', () => {
     try {
       void controller.submit('start')
       await vi.waitFor(() => expect(controller.busy).toBe(true))
+      if (queued) {
+        void controller.submit('Next message')
+        await vi.waitFor(() => expect(controller.getSnapshot().queuedPrompts).toHaveLength(1))
+      }
       input.write('/he')
       await vi.waitFor(() => expect(frame()).toContain('Browse controls, commands'))
       input.write('\u001b')
@@ -69,8 +78,8 @@ describe('slash palette during a turn', () => {
       expect(backend.cancel).not.toHaveBeenCalled()
       expect(controller.busy).toBe(true)
 
-      input.write('l')
-      await vi.waitFor(() => expect(frame()).toContain('Browse controls, commands'))
+      input.write('\t')
+      await vi.waitFor(() => expect(frame()).toContain('/help ▌'))
       input.write('\r')
       await vi.waitFor(() => expect(controller.getSnapshot().panel?.kind).toBe('help'))
       expect(controller.busy).toBe(true)

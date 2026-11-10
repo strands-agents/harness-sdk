@@ -55,7 +55,7 @@ import {
 import type { ChatSkillsRuntime, SkillActivation, SkillInfo } from '../../agent/skills.js'
 import type { McpServerInfo } from '../../agent/mcp.js'
 import { mcpFailure } from '../mcp-diagnostics.js'
-import { type PeerMessage } from '../../agent/messaging.js'
+import { peerMessagePrompt, type PeerMessage } from '../../agent/messaging.js'
 import { modelDisplayName } from '../../model/metadata.js'
 import { modelControlErrorMessage } from '../../model/selection.js'
 import { presentChatStream, type StreamPresentationOptions } from './stream-presentation.js'
@@ -258,7 +258,7 @@ export class ChatController implements ChatControllerApi {
     if (options.initialTurns) {
       this._completedTurns = [...options.initialTurns]
     } else if (options.initialMessages) {
-      this._completedTurns.push(...projectMessages(options.initialMessages, backend.name))
+      this._completedTurns.push(...projectMessages(options.initialMessages, this.name))
     }
     this._nextTurn = this._completedTurns.length + 1
     this._context = { ...(backend.contextUsage?.() ?? {}) }
@@ -307,6 +307,30 @@ export class ChatController implements ChatControllerApi {
 
   readonly getSnapshot = (): ChatSnapshot => this._snapshot
 
+  get name(): string {
+    return this._runtime.agent
+  }
+
+  setAgentName(name: string): void {
+    this._runtime.agent = sanitizeTerminalText(name)
+    this._emit()
+  }
+
+  async renameAgent(name: string): Promise<void> {
+    const normalized = sanitizeTerminalText(name).replace(/\s+/g, ' ').trim()
+    if (!normalized) throw new Error('Agent names cannot be empty.')
+    if (this._resourceChanging) throw new Error('Wait for the current change to finish before renaming the agent.')
+    this._resourceChanging = true
+    try {
+      if (this._sessions?.current) await this._sessions.renameAgent?.(normalized)
+      this._activeProjector?.setAgentName(normalized)
+      this._completedTurns = this._completedTurns.map((turn) => ({ ...turn, agentName: normalized }))
+      this.setAgentName(normalized)
+    } finally {
+      this._finishResourceChange()
+    }
+  }
+
   async captureConversation(): Promise<ChatConversation> {
     if (!this._backend.captureConversation) {
       throw new Error('This agent cannot transfer its conversation.')
@@ -320,6 +344,7 @@ export class ChatController implements ChatControllerApi {
     return {
       snapshot: await this._backend.captureConversation(),
       completedTurns: [...this._completedTurns],
+      ...(this.name !== this._backend.name ? { agentName: this.name } : {}),
       ...(this._configurationBaseline ? { configurationBaseline: this._configurationBaseline } : {}),
       model: this._runtime.model,
       workspace: this._runtime.cwd,
@@ -416,6 +441,10 @@ export class ChatController implements ChatControllerApi {
     }
   }
 
+  follow(prompt: string, stream: AsyncGenerator<ChatEvent, ChatRunResult, undefined>): Promise<ChatTurn> {
+    return this._runStream(prompt, stream, 'model')
+  }
+
   private async _discoverSkillNames(): Promise<void> {
     if (!this._skills || this._backend.protocol !== 'strands') {
       return
@@ -491,7 +520,7 @@ export class ChatController implements ChatControllerApi {
     return this._executeSubmission(submission)
   }
 
-  enqueuePeerMessage(message: PeerMessage): boolean {
+  enqueuePeerMessage(message: PeerMessage, steerWhileRunning = false): boolean {
     if (
       this._closed ||
       this._resourceChanging ||
@@ -500,6 +529,7 @@ export class ChatController implements ChatControllerApi {
     ) {
       return false
     }
+    if (steerWhileRunning && this._queueLiveSteering(peerMessagePrompt(message))) return true
     this._pendingSubmissions.push({
       kind: 'peer',
       id: `queued-${this._nextSubmission++}`,
@@ -541,6 +571,24 @@ export class ChatController implements ChatControllerApi {
       this.cancel()
     }
     return pending
+  }
+
+  steerQueued(id = this._pendingSubmissions.find((pending) => pending.kind === 'user')?.id): boolean {
+    if (!id || this._closed) return false
+    const index = this._pendingSubmissions.findIndex((pending) => pending.kind === 'user' && pending.id === id)
+    const pending = this._pendingSubmissions[index]
+    if (pending?.kind !== 'user') return false
+    const { text, attachments } = pending.input
+    if (attachments.length === 0 && !/^[!/$]/u.test(text) && this._queueLiveSteering(text)) {
+      this._pendingSubmissions.splice(index, 1)
+      pending.resolve(undefined)
+    } else {
+      this._pendingSubmissions.splice(index, 1)
+      this._pendingSubmissions.unshift(pending)
+      if (!this._steeringDrain) this.cancel()
+    }
+    this._emit()
+    return true
   }
 
   updateQueuedPrompt(id: string, prompt: string): boolean {
@@ -676,7 +724,7 @@ export class ChatController implements ChatControllerApi {
     attachments?: readonly ChatAttachment[]
   ): Promise<ChatTurn> {
     const turnId = `turn-${this._nextTurn++}`
-    const projector = new TurnProjector(turnId, prompt, this._backend.name, turnSource, peer, attachments)
+    const projector = new TurnProjector(turnId, prompt, this.name, turnSource, peer, attachments)
     const usageGeneration = this._usageGeneration
     const presentationAbort = new AbortController()
     const execution: TurnExecution = { phase: 'running', projector, presentationAbort }
@@ -1094,7 +1142,7 @@ export class ChatController implements ChatControllerApi {
           ? this._selectEffort(row.value.slice('effort:'.length))
           : this._selectModel(row.value)
       case 'tasks':
-        return this._openTaskDetail(row.value)
+        return this.openTask(readTaskValue(row.value) ?? '')
       case 'permissions':
         return this._updatePermissions(row.value)
       case 'tools':
@@ -1387,7 +1435,11 @@ export class ChatController implements ChatControllerApi {
         await (argument ? this._handleSessionsCommand(argument) : this._openSessionsPanel())
         break
       case 'rename':
-        await this._handleSessionsCommand(`rename${argument ? ` ${argument}` : ''}`)
+        try {
+          await this.renameAgent(argument)
+        } catch (error) {
+          this._openError('agent rename failed', argument, errorMessage(error))
+        }
         break
       case 'skills':
         await this._openSkillsPanel()
@@ -1977,6 +2029,13 @@ export class ChatController implements ChatControllerApi {
       this._invalidateSessions()
       this._sessionCache = undefined
       this._refreshRuntime()
+      if (this.name !== this._backend.name && this._sessions?.current) {
+        try {
+          await this._sessions.renameAgent?.(this.name)
+        } catch (error) {
+          this._addNotice('error', `Conversation cleared; agent name could not be saved: ${errorMessage(error)}`)
+        }
+      }
       this._panel = undefined
       this._panelStack.length = 0
       this._emit()
@@ -2629,7 +2688,6 @@ export class ChatController implements ChatControllerApi {
         : (info?.sessionId ?? (this._backend.protocol === 'strands' ? this._runtime.session : 'not saved'))
     const runtime: ChatRuntimeInfo = {
       ...this._runtime,
-      agent: this._backend.name,
       backendId: this._backend.id,
       protocol: this._backend.protocol,
       model: model ?? info?.model ?? this._runtime.model,
@@ -2754,10 +2812,9 @@ export class ChatController implements ChatControllerApi {
     return this._tasks.some(isUnresolvedBackgroundTask)
   }
 
-  private _openTaskDetail(value: string): boolean {
-    const taskId = readTaskValue(value)
-    const task = taskId ? this._tasks.find((candidate) => candidate.id === taskId) : undefined
-    if (!task) {
+  openTask(taskId: string): boolean {
+    const task = this._tasks.find((candidate) => candidate.id === taskId)
+    if (!task || this._closed || this._resourceChanging || this._panel?.kind === 'permission') {
       return false
     }
 

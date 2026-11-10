@@ -15,6 +15,7 @@ import type { RuntimeConfig } from '../config/store.js'
 import { effortForModel, effortOptions, validateEffortSelection } from '../model/selection.js'
 import { DEFAULT_SESSION_DIR, sessionSettings } from '../session/sessions.js'
 import { errorMessage } from '../terminal/text.js'
+import { prepareArchiveDependencies } from './archive.js'
 import { agentPrivatePaths } from './export.js'
 import type {
   TypescriptCall,
@@ -333,6 +334,7 @@ async function close(): Promise<void> {
 }
 
 async function dispatch(call: TypescriptCall): Promise<unknown> {
+  if (call.operation === 'prepare') return prepareArchiveDependencies(call.input.root, call.input.language)
   if (call.operation === 'init') {
     if (started) throw new Error('TypeScript runtime can only be initialized once.')
     initialization = initialize(call.input)

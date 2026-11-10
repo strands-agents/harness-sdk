@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
+import { setImmediate } from 'node:timers/promises'
 import {
   TextBlock,
   ToolResultBlock,
-  type Agent,
+  Agent,
   type AgentStreamEvent,
   type BeforeModelCallEvent,
   type LocalAgent,
@@ -14,8 +15,53 @@ import {
 import { BackgroundAgentActivityStore, observeSubagentActivity } from '../../src/agent/background.js'
 import { BackgroundAgentInbox } from '../../src/agent/messaging.js'
 import { LiveSteering } from '../../src/agent/messaging.js'
+import { StrandsChatBackend } from '../../src/agent/backend.js'
+import { AgentModelRuntime } from '../../src/model/runtime.js'
+import { ChatController } from '../../src/ui/chat/controller.js'
+import { SystemPromptRecordingModel } from '../fixtures/saved-system-prompt.js'
 
 describe('BackgroundAgentActivityStore', () => {
+  // https://github.com/strands-agents/harness-sdk/pull/5194#discussion_r4526854352
+  it.each([
+    ['before follow', false],
+    ['before follow', true],
+    ['before first pull', false],
+    ['before first pull', true],
+    ['while following', false],
+    ['while following', true],
+  ] as const)('settles child chat when the task ends %s (failure: %s)', async (timing, fail) => {
+    const store = new BackgroundAgentActivityStore()
+    const agent = new Agent({ model: new SystemPromptRecordingModel(), printer: false, contextManager: false })
+    const controller = new ChatController(new StrandsChatBackend(new AgentModelRuntime(agent)))
+    const toolUseId = 'review'
+    store.onStart({ name: 'reviewer', task: 'Review', toolUseId })
+    const stream = timing === 'before follow' ? undefined : store.follow(toolUseId, agent)
+    let turn = timing === 'while following' ? controller.follow('Review', stream!) : undefined
+    try {
+      if (fail) {
+        store.onError({ toolUseId, error: new Error('Review failed.') })
+      } else {
+        for await (const event of agent.stream('Review')) store.onEvent({ toolUseId, event })
+        store.onComplete({ toolUseId })
+      }
+      // Let completion/error callbacks run before the first pull.
+      await setImmediate()
+      turn ??= controller.follow('Review', stream ?? store.follow(toolUseId, agent))
+      await vi.waitFor(() => expect(controller.busy).toBe(false))
+      await expect(turn).resolves.toMatchObject(
+        fail ? { status: 'error', error: 'Review failed.' } : { status: 'complete' }
+      )
+      if (!fail)
+        expect(controller.getSnapshot().completedTurns[0]?.entries).toContainEqual(
+          expect.objectContaining({ type: 'assistant', text: 'done' })
+        )
+    } finally {
+      store.onComplete({ toolUseId })
+      await turn
+      await controller.dispose()
+    }
+  })
+
   it('observes subagent tool progress and restores the original stream', async () => {
     const childEvent = {
       type: 'modelStreamUpdateEvent',
@@ -117,6 +163,7 @@ describe('BackgroundAgentActivityStore', () => {
         type: 'available',
         endpoint: {
           taskId: 'task-0',
+          toolUseId: 'generalist-0',
           name: 'subagent',
           task: 'Review authentication.',
         },

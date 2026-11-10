@@ -1,6 +1,6 @@
 import { createHarness, type HarnessAgentConfig, type HarnessAgentOptions } from '@strands-agents/harness'
 import { resolveInterventions } from '@strands-agents/harness/internal'
-import type { Agent, Message, Tool } from '@strands-agents/sdk'
+import { Agent, type Message, type Tool } from '@strands-agents/sdk'
 import { Offload } from '@strands-agents/sdk/experimental'
 import { ContextInjector } from '@strands-agents/sdk/vended-plugins'
 import { AgentSkills } from '@strands-agents/sdk/vended-plugins/skills'
@@ -17,11 +17,7 @@ import { AgentModelRuntime } from '../model/runtime.js'
 import { profileEffort } from '../model/selection.js'
 import type { ImportedAgentProject } from '../project/import.js'
 import type { AgentFactory } from '../project/typescript.js'
-import {
-  initializeAgentDefinition,
-  persistSessionAgentDefinition,
-  restoreSessionAgentDefinition,
-} from '../session/agent-definition.js'
+import { initializeAgentDefinition } from '../session/agent-definition.js'
 import { upgradeDesktopAgentProfileMessages } from '../session/desktop-profile.js'
 import {
   DEFAULT_SESSION_DIR,
@@ -32,7 +28,7 @@ import {
 } from '../session/sessions.js'
 import { graphemes } from '../terminal/text.js'
 import { StrandsChatBackend } from './backend.js'
-import { BackgroundAgentActivityStore, observeSubagentActivity } from './background.js'
+import { BackgroundAgentActivityStore, interactiveBackgroundTasks, observeSubagentActivity } from './background.js'
 import { CONFIGURATION_INSTRUCTIONS, createConfigurationTool } from './configuration.js'
 import { loadMcp, type LoadedMcp, type LoadMcpOptions } from './mcp.js'
 import {
@@ -57,7 +53,7 @@ export interface CreateInteractiveRuntimeOptions {
   mcpPaths?: readonly string[]
   mcpStrictPaths?: readonly string[]
   mcpDigests?: Readonly<Record<string, string>>
-  /** Directory holding the built-in agent's per-workspace session directories; defaults to `~/.strands/sessions`. */
+  /** Directory holding the session catalog; defaults to `~/.strands/sessions`. */
   sessionRoot?: string
   config: RuntimeConfig
   agentMessaging?: AgentMessaging
@@ -210,7 +206,6 @@ export async function createInteractiveRuntime(options: CreateInteractiveRuntime
       if (disposed) throw new Error('Runtime was disposed while building an agent.')
       await initializeAgentDefinition(agent)
       agent.messages = upgradeDesktopAgentProfileMessages(agent.messages)
-      await persistSessionAgentDefinition(agentOptions)
       if (disposed) throw new Error('Runtime was disposed while building an agent.')
       agents.add(agent)
       if (skills) skillsByAgent.set(agent, skills)
@@ -267,7 +262,7 @@ export async function createInteractiveRuntime(options: CreateInteractiveRuntime
         const endpointId = backgroundEndpointIds.get(event.taskId)
         if (endpointId) {
           backgroundEndpointIds.delete(event.taskId)
-          agentMessaging.unregister(endpointId)
+          if (!agentMessaging.getEndpoint(endpointId)?.chat?.attached) agentMessaging.unregister(endpointId)
         }
         return
       }
@@ -275,11 +270,35 @@ export async function createInteractiveRuntime(options: CreateInteractiveRuntime
       const endpointId = `task-${nextBackgroundEndpoint++}`
       backgroundEndpointIds.set(endpoint.taskId, endpointId)
       const summary = endpoint.task.replace(/\s+/g, ' ').trim()
+      const childBackend = endpoint.agent
+        ? new StrandsChatBackend(new AgentModelRuntime(endpoint.agent, { sessionDir: sessionDirectory }), {
+            steering: liveSteering,
+            permissions: { broker: permissionBroker, policy: cedarPermissions, shared: true },
+            contextScope: workspace,
+            dispose: (): void => agentMessaging.unregister(endpointId),
+          })
+        : undefined
+      if (childBackend && endpoint.agent) {
+        backends.add(childBackend)
+        agents.add(endpoint.agent)
+        agentMessaging.bindAgent(endpoint.agent, endpointId)
+      }
       agentMessaging.register({
         id: endpointId,
-        name: summary ? `${endpoint.name}: ${graphemes(summary).slice(0, 80).join('')}` : endpoint.name,
+        name: endpoint.name,
+        description: graphemes(summary).slice(0, 80).join(''),
+        backgroundTask: { id: endpoint.taskId, ownerId: peerEndpointId },
         status: () => 'working',
         enqueue: (message): boolean => backgroundInbox.send(endpoint.taskId, peerMessagePrompt(message)),
+        ...(childBackend && endpoint.agent
+          ? {
+              chat: {
+                backend: childBackend,
+                prompt: endpoint.task,
+                stream: backgroundActivity.follow(endpoint.toolUseId, endpoint.agent),
+              },
+            }
+          : {}),
       })
     })
     const workspace = resolve(request.workspace)
@@ -295,9 +314,6 @@ export async function createInteractiveRuntime(options: CreateInteractiveRuntime
     const baseAgentOptions: HarnessAgentOptions = sessionEnabled
       ? withSession(selectedAgentOptions, { id: sessionId, dir: sessionDirectory })
       : { ...selectedAgentOptions, session: false }
-    const restoredAgentOptions = options.project
-      ? baseAgentOptions
-      : await restoreSessionAgentDefinition(baseAgentOptions, workspace)
     const sandbox =
       configuredSandbox === undefined || configuredSandbox === false
         ? new WorkspaceSandbox(workspace)
@@ -314,7 +330,7 @@ export async function createInteractiveRuntime(options: CreateInteractiveRuntime
       dispose: (): Promise<void> => (mcpDisposal ??= loadedMcp.dispose()),
     }
     const configuredTools: NonNullable<HarnessAgentOptions['tools']> = [
-      ...(restoredAgentOptions.tools ?? []),
+      ...(baseAgentOptions.tools ?? []),
       ...mcp.clients,
     ]
     const permissionBroker = new ToolPermissionBroker()
@@ -328,10 +344,13 @@ export async function createInteractiveRuntime(options: CreateInteractiveRuntime
       },
     })
     const liveSteering: LiveSteering = new LiveSteering((candidate) => {
-      return backgroundInbox.observeAgent((prompt): boolean => liveSteering.enqueue(candidate, prompt))
+      return backgroundInbox.observeAgent(
+        (prompt): boolean => liveSteering.enqueue(candidate, prompt),
+        candidate instanceof Agent ? candidate : undefined
+      )
     })
     const controllerOptions: HarnessAgentOptions = {
-      ...withSession(restoredAgentOptions, { id: sessionId, dir: sessionDirectory }),
+      ...withSession(baseAgentOptions, { id: sessionId, dir: sessionDirectory }),
       ...(request.seed ? { model: request.seed.model, effort: profileEffort(request.seed.thinking) } : {}),
       ...(request.sessionManager !== undefined ? { sessionManager: request.sessionManager } : {}),
       sandbox,
@@ -564,16 +583,6 @@ function createInteractiveSessionId(): string {
     .replace(/\.\d{3}Z$/, 'z')
     .toLowerCase()
   return `${timestamp}-${randomUUID().slice(0, 8)}`
-}
-
-export function interactiveBackgroundTasks(
-  options: HarnessAgentOptions
-): Exclude<HarnessAgentOptions['backgroundTasks'], undefined> {
-  const configured = options.backgroundTasks
-  if (configured === false) {
-    return false
-  }
-  return { ...(configured === true ? {} : configured), waitForCompletion: false }
 }
 
 async function loadSessionCatalog(root: string | undefined): Promise<SessionRootCatalog | undefined> {

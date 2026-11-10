@@ -145,7 +145,7 @@ export class CliConfigStore {
       parseProviderEnvironment(document.providers, path),
       parseProfile(document.profile, path),
       parsePermissions(document.permissions, path),
-      parseSettings(document.settings, path),
+      parseSettings(document.settings),
       options.persist !== false
     )
     if (options.persist !== false && (document !== loadedDocument || legacyPath)) {
@@ -218,7 +218,7 @@ export class CliConfigStore {
 
   async useAgentProject(entrypoint: string, settings: Partial<ChatSettings> = {}): Promise<void> {
     return this._enqueueWrite(async () => {
-      const nextSettings = parseSettings({ ...this._settings, ...settings }, this._path)
+      const nextSettings = parseSettings({ ...this._settings, ...settings })
       const document = {
         ...this._document,
         onboarding: { version: SETUP_VERSION },
@@ -300,7 +300,7 @@ export class CliConfigStore {
       const priorProviders = isRecord(this._document.providers) ? this._document.providers : {}
       const priorProfile = isRecord(this._document.profile) ? this._document.profile : {}
       const priorPermissions = isRecord(this._document.permissions) ? this._document.permissions : {}
-      const settings = parseSettings({ ...this._settings, ...configuration.settings }, this._path)
+      const settings = parseSettings({ ...this._settings, ...configuration.settings })
       const document = {
         ...this._document,
         agentProject: options.agentProject,
@@ -403,7 +403,7 @@ export class CliConfigStore {
   setSettings(settings: Partial<ChatSettings>): Promise<void> {
     const requested = globalThis.structuredClone(settings)
     return this._enqueueWrite(async () => {
-      const next = parseSettings({ ...this._settings, ...requested }, this._path)
+      const next = parseSettings({ ...this._settings, ...requested })
       const priorSettings = isRecord(this._document.settings) ? this._document.settings : {}
       const document = {
         ...this._document,

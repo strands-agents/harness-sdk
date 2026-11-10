@@ -177,7 +177,9 @@ describe('AgentModelRuntime thinking controls', () => {
     ['high', 'bedrock/us.anthropic.claude-3-haiku-20240307-v1:0', 'auto'],
     ['max', 'bedrock/openai.gpt-oss-120b-1:0', 'auto'],
     ['high', 'bedrock/openai.gpt-oss-120b-1:0', 'high'],
-    [null, 'bedrock/anthropic.claude-opus-4-8', 'auto'],
+    [null, 'bedrock/anthropic.claude-opus-4-8', null],
+    ['off', 'bedrock/anthropic.claude-opus-4-8', 'off'],
+    ['none', 'bedrock/anthropic.claude-opus-4-8', 'off'],
   ] as const)('carries %s effort into %s as %s', async (thinking, target, expected) => {
     const requested: (EffortInput | undefined)[] = []
     const runtime = runtimeFor('global.anthropic.claude-opus-4-8', thinking, (options) => {
@@ -538,7 +540,9 @@ describe('model selection validation', () => {
     await expect(runtime.restart('ollama/invalid-id')).rejects.toThrow(
       'Unknown model "ollama/invalid-id". Use /model to choose an available model.'
     )
-    await expect(runtime.setEffort('turbo')).rejects.toThrow('Reasoning effort "turbo" is not supported. Choose: auto.')
+    await expect(runtime.setEffort('turbo')).rejects.toThrow(
+      'Reasoning effort "turbo" is not supported. Choose: auto, off.'
+    )
     expect(runtime.agent).toBe(agent)
     expect(runtime.current).toBe('qwen3:8b')
     expect(runtime.thinking).toBe('auto')
@@ -648,6 +652,9 @@ describe('AgentModelRuntime persistence', () => {
     await runtime.setEffort('low')
     expect(onModelChange).toHaveBeenLastCalledWith({ model: 'bedrock/anthropic.claude-current-v1:0', effort: 'low' })
 
+    await runtime.setEffort('off')
+    expect(onModelChange).toHaveBeenLastCalledWith({ model: 'bedrock/anthropic.claude-current-v1:0', effort: 'off' })
+
     await runtime.setEffort('auto')
     expect(onModelChange).toHaveBeenLastCalledWith({
       model: 'bedrock/anthropic.claude-current-v1:0',
@@ -667,6 +674,6 @@ describe('AgentModelRuntime persistence', () => {
     expect(onModelChange).toHaveBeenLastCalledWith({ model: 'openai/gpt-5', effort: 'off' })
 
     await expect(runtime.setEffort('turbo')).rejects.toThrow('not supported')
-    expect(onModelChange).toHaveBeenCalledTimes(5)
+    expect(onModelChange).toHaveBeenCalledTimes(6)
   })
 })
