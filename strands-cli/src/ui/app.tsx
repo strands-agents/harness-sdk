@@ -17,6 +17,7 @@ import { useTerminalSize } from './terminal-size.js'
 import { resolveModelTarget } from '../model/selection.js'
 import { type SettingsUpdateStatus } from './chat/panel-state.js'
 import { ChatView } from './chat/view.js'
+import { StartupStatus } from './startup.js'
 
 export interface McpTrustRequest {
   workspace: string
@@ -217,10 +218,13 @@ export function ChatRoot({
   if (!controller) {
     placeholderEntranceFade.current ??= !deckShown.current
     deckShown.current = true
+    const startupCard =
+      startupContent ??
+      (startupStatus ? <StartupStatus status={startupStatus} animate={settings.animations} /> : undefined)
     return (
       <ChatView
-        snapshot={{ ...startupSnapshot(settings, config), ...(startupStatus ? { composerStatus: startupStatus } : {}) }}
-        {...(startupContent ? { startupContent } : {})}
+        snapshot={startupSnapshot(settings, config)}
+        {...(startupCard ? { startupContent: startupCard } : {})}
         entranceFade={placeholderEntranceFade.current}
         input=""
         cursor={0}

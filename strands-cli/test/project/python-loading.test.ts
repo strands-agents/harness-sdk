@@ -96,6 +96,30 @@ describe.skipIf(!existsSync(python))('Python source loading', () => {
     return next.value
   }
 
+  // https://github.com/strands-agents/harness-sdk/pull/6024
+  it('keeps shell subprocess input separate from worker commands', { timeout: 15_000 }, async () => {
+    const backend = await open(
+      `from strands.types.tools import ToolContext\n${baseSource
+        .replace('@tool\ndef status()', '@tool(context=True)\nasync def status(tool_context: ToolContext)')
+        .replace('"builtin_plugins": [], ', '')
+        .replace(
+          'return "authored tool"',
+          `result = await tool_context.agent.sandbox.execute(
+        "node -e \\"process.stdin.resume(); process.stdin.on('end', () => console.log('CHILD_EOF'))\\"",
+        timeout=5,
+    )
+    return result.stdout.strip()`
+        )}`
+    )
+    expect(await turn(backend)).toContainEqual(
+      expect.objectContaining({
+        type: 'toolResult',
+        status: 'success',
+        content: [{ type: 'text', text: 'CHILD_EOF' }],
+      })
+    )
+  })
+
   it.each([
     ['memory store', 'memory=MemoryManager(stores=[memory_store], injection=False)'],
     [

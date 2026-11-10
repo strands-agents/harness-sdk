@@ -3037,29 +3037,23 @@ describe('ChatView', () => {
         { columns: 120 }
       )
     ).split('\n')
-  const brandRows = 18
+  const wordmarkRows = 9
 
-  it.each([
-    [50, 4],
-    [70, 14],
-  ])('shouldSpaceStartupContentEvenlyBelowTheBrandWhenTheTerminalHas%sRows', (terminalHeight, gap) => {
+  it.each([50, 70])('shouldSpaceStartupContentEvenlyBelowTheWordmarkWhenTheTerminalHas%sRows', (terminalHeight) => {
     const frame = startupFrame(terminalHeight)
     const top = frame.findIndex((line) => line.includes('╭'))
     const bottom = frame.findIndex((line) => line.includes('╰'))
 
-    expect(top - brandRows).toBe(gap)
-    expect(frame.length - 1 - bottom).toBe(gap)
+    expect(frame.slice(0, wordmarkRows).join('\n')).toMatch(/▄▟[ █]{3}▙▄/)
+    expect(Math.abs(top - wordmarkRows - (frame.length - 1 - bottom))).toBeLessThanOrEqual(1)
     expect(frame.join('\n')).not.toContain('/settings')
   })
 
   const StartupRowsProbe = (): ReactElement =>
     createElement(Box, { height: useStartupContentRows() }, createElement(Text, {}, 'Startup rows'))
 
-  it.each([
-    [34, 10],
-    [40, 19],
-    [60, 19],
-  ])('shouldKeepStartupContentBelowTheBrandWhenItFillsItsRowsAt%sRows', (terminalHeight, top) => {
+  it.each([34, 40, 60])('shouldStartFullStartupContentRightBelowTheWordmarkAt%sRows', (terminalHeight) => {
+    const top = wordmarkRows + 1
     const frame = sanitizeTerminalText(
       renderView(
         {

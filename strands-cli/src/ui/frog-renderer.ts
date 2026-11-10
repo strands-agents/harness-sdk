@@ -182,6 +182,10 @@ export function frogStartupHeight(width: number, availableHeight: number): numbe
   if (width >= FROG_FULL_LOCKUP_MIN_WIDTH && availableHeight >= 26) {
     return lockupLayout(width).height
   }
+  return frogWordmarkHeight(width, availableHeight)
+}
+
+export function frogWordmarkHeight(width: number, availableHeight: number): number {
   if (width >= BRAND_WORD.width && availableHeight >= wordOnlyHeight(width) + 8) {
     return wordOnlyHeight(width)
   }
