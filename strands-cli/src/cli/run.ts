@@ -422,7 +422,7 @@ async function runInteractive(
       },
       {
         ...(request ? { firstRequest: request } : {}),
-        intro: config.snapshot().settings.animations,
+        intro: !args.dev && config.snapshot().settings.animations,
         setup: !args.dev && (args.setup || (!args.agent && !config.snapshot().agentProject && config.needsSetup())),
         ...(prepare ? { prepare } : {}),
         ...(args.dev?.init ? { exitAfterInitialization: true } : {}),

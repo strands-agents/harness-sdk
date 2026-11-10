@@ -320,13 +320,14 @@ function ChatViewContent({
   const startupReservedRightWidth = wideConfigurationDock ? configDockWidth + CONFIG_DOCK_GAP : 0
   // The transcript reflows into the space left of the dock instead of running underneath it.
   const transcriptReservedRightWidth = hasActivity ? startupReservedRightWidth : 0
-  const startupHeadroom = !startupContent
-  const startupAvailableHeight = terminalHeight - (startupHeadroom ? commandDeckHeight : STARTUP_CARD_RESERVED_ROWS)
+  const startupBrand = startupContent ? 'wordmark' : 'lockup'
+  const startupAvailableHeight =
+    terminalHeight - (startupBrand === 'lockup' ? commandDeckHeight : STARTUP_CARD_RESERVED_ROWS)
   const { headerHeight: startupHeaderHeight } = startupHeaderLayout(
     terminalWidth,
     startupAvailableHeight,
     startupReservedRightWidth,
-    startupHeadroom
+    startupBrand
   )
   const startupContentRows = Math.max(1, terminalHeight - startupHeaderHeight - STARTUP_CARD_FRAME_ROWS)
   // A stable header element keeps the memoized transcript from re-rendering on spinner ticks.
@@ -339,7 +340,7 @@ function ChatViewContent({
         availableHeight={startupAvailableHeight}
         animate={settings.animations}
         reservedRightWidth={startupReservedRightWidth}
-        headroom={startupHeadroom}
+        brand={startupBrand}
         {...(introStartedAt !== undefined ? { introStartedAt } : {})}
         theme={settings.frogTheme}
         partyElapsedMs={partyFrame * PARTY_FRAME_INTERVAL_MS}
@@ -351,7 +352,7 @@ function ChatViewContent({
     [
       terminalWidth,
       startupAvailableHeight,
-      startupHeadroom,
+      startupBrand,
       settings.animations,
       startupReservedRightWidth,
       introStartedAt,

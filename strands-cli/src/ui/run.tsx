@@ -21,6 +21,8 @@ import { sessionResumeCommand } from '../session/sessions.js'
 import { sanitizeTerminalText } from '../terminal/text.js'
 import { devFailure } from '../dev/errors.js'
 
+const STARTUP_STATUS_DELAY_MS = 300
+
 export interface StartupScreen {
   signal: AbortSignal
   show(content: ReactElement | undefined, status?: string): void
@@ -142,6 +144,7 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
   let trustRequest: McpTrustRequest | undefined
   let startupContent: ReactElement | undefined
   let startupStatus: string | undefined
+  let startupStatusReveal: ReturnType<typeof setTimeout> | undefined
   const setupBridge: SetupBridge = {
     request: (): void => {},
     confirmMcp: (workspace, paths): Promise<boolean> =>
@@ -437,6 +440,7 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
     process.off('SIGHUP', onSighup)
     process.off('exit', onProcessExit)
     process.off('uncaughtExceptionMonitor', onProcessExit)
+    clearTimeout(startupStatusReveal)
     for (const restore of [
       (): void => instance?.unmount(),
       (): void => instance?.cleanup(),
@@ -475,14 +479,20 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
       controller = source
       watchTerminalTitle(controller)
     }
-    if (controller || controllerFactory || options.setup || options.prepare) renderChat()
+    if (!options.prepare && (controller || controllerFactory || options.setup)) renderChat()
+    const showStartup = (): void => {
+      clearTimeout(startupStatusReveal)
+      startupStatusReveal = undefined
+      renderChat()
+    }
     const screen: StartupScreen = {
       signal: startupAbort.signal,
       show: (content, status): void => {
         if (startupAbort.signal.aborted) return
         startupContent = content
         startupStatus = status
-        renderChat()
+        if (instance || content) return showStartup()
+        if (status) startupStatusReveal ??= setTimeout(showStartup, STARTUP_STATUS_DELAY_MS)
       },
     }
     const prepareStartup = async (): Promise<boolean> => {
@@ -497,7 +507,7 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
       if (!(await prepareStartup())) return pendingExitCode ?? 0
       startupContent = undefined
       startupStatus = undefined
-      renderChat()
+      showStartup()
     }
     const setupExit = await Promise.race([setupTask, startupExitTask])
     if (setupExit !== 0 || exitAfterSetup) {
