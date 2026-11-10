@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { ModelProxy } from '../model-proxy.js'
-import type { StreamAggregatedResult } from '../model.js'
 import type { ToolSpec } from '../../tools/types.js'
+import type { StreamAggregatedResult } from '../model.js'
 import { type ModelStreamEvent } from '../streaming.js'
 import { InvocationContextImpl } from '../../agent/invocation-context.js'
 import { anyTrackingId } from '../../__fixtures__/message-helpers.js'
@@ -369,7 +369,7 @@ describe('ModelProxy', () => {
     })
   })
 
-  describe('tool references', () => {
+  describe('deferred tools', () => {
     const definition = {
       name: 'shell',
       description: 'Run a command',
@@ -391,7 +391,7 @@ describe('ModelProxy', () => {
 
     /** Sends the history through the proxy and returns the tool result content the model received. */
     async function sentContent(
-      deferredTools?: 'native',
+      deferredTools?: 'native' | 'stubs',
       toolSpecs: ToolSpec[] = [definition]
     ): Promise<ToolResultBlock['content']> {
       const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'ok' })
@@ -401,14 +401,49 @@ describe('ModelProxy', () => {
       return (streamSpy.mock.calls[0]![0][0]!.content[0] as ToolResultBlock).content
     }
 
+    /** Sends one deferred spec and one pinned spec through the proxy and returns the specs the model received. */
+    async function sentToolSpecs(deferredTools?: 'native' | 'stubs'): Promise<ToolSpec[] | undefined> {
+      const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'ok' })
+      model.updateConfig({ modelInfo: { capabilities: { deferredTools } } })
+      const streamSpy = vi.spyOn(model, 'stream')
+      await drain(
+        new ModelProxy(model).streamAggregated([userMessage('go')], {
+          toolSpecs: [{ ...definition, deferLoading: true }, pinned],
+        })
+      )
+      return streamSpy.mock.calls[0]![1]?.toolSpecs
+    }
+    const pinned = { name: 'strands_load_tools', description: 'Load tools.', inputSchema: { type: 'object' as const } }
+
+    it('sends a deferred spec as a stub with an open schema to a model that takes stubs', async () => {
+      expect(await sentToolSpecs('stubs')).toEqual([
+        {
+          name: 'shell',
+          description: 'Run a command Call strands_load_tools with this name for its parameters first.',
+          inputSchema: { type: 'object' },
+        },
+        pinned,
+      ])
+    })
+
+    it.each([
+      ['a model that defers natively', 'native' as const],
+      ['a model without deferred tools', undefined],
+    ])('sends the deferred spec as it is to %s', async (_name, deferredTools) => {
+      expect(await sentToolSpecs(deferredTools)).toEqual([{ ...definition, deferLoading: true }, pinned])
+    })
+
     it('passes the reference to a model that defers tools natively, whose provider sends it', async () => {
       expect(await sentContent('native')).toEqual([new ToolReferenceBlock({ name: 'shell' })])
     })
 
-    it("sends the call's parameters for the tool as text to a model without deferred tools", async () => {
+    it.each([
+      ['a model that takes stubs', 'stubs' as const],
+      ['a model without deferred tools', undefined],
+    ])("sends the call's parameters for the tool as text to %s", async (_name, deferredTools) => {
       const changed = { ...definition, inputSchema: { type: 'object' as const, properties: {} } }
 
-      expect(await sentContent(undefined, [changed])).toEqual([
+      expect(await sentContent(deferredTools, [changed])).toEqual([
         new TextBlock(`shell parameters: ${JSON.stringify(changed.inputSchema)}`),
       ])
     })

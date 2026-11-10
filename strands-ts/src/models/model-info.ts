@@ -19,9 +19,9 @@ export type PromptCaching = 'unsupported' | 'auto' | 'cachePoints'
 
 /**
  * How a model keeps deferred tool schemas out of its context until it loads them: `'native'` sends them with the
- * API's own deferral flag, and `'unsupported'` sends every schema.
+ * API's own deferral flag, `'stubs'` sends each as a stub with an open schema, and `'unsupported'` sends every schema.
  */
-export type DeferredTools = 'unsupported' | 'native'
+export type DeferredTools = 'unsupported' | 'native' | 'stubs'
 
 /**
  * What the model can do. A yes/no fact is a `boolean`; a fact with more than two states is a string
@@ -53,8 +53,9 @@ export interface ModelCapabilities {
   /**
    * How the model and provider defer tool schemas; see {@link DeferredTools}. The shared data gives the path on the
    * model vendor's own API, but `Model.modelInfo` reports `'unsupported'` unless the provider takes one
-   * (`AnthropicModel`). On another provider, which sends every full spec, a `modelInfo` override that turns it on only
-   * changes the `strands_load_tools` result: `BedrockModel` names each loaded tool and other providers leave it out.
+   * (`AnthropicModel`, and `BedrockModel` with stubs for Claude). On another provider, which sends every full spec, a
+   * `modelInfo` override that sets `'native'` only changes the `strands_load_tools` result: `BedrockModel` names each
+   * loaded tool and other providers leave it out.
    */
   readonly deferredTools?: DeferredTools | undefined
 }

@@ -45,8 +45,9 @@ export interface ToolSpec {
   /**
    * Keep the input schema out of the model's context until the model loads it.
    *
-   * A provider whose model info reports `deferredTools: 'native'` sends the tool with its API's deferral flag. At least
-   * one tool must stay non-deferred. Other providers ignore this field and send the full specification.
+   * A provider whose model info reports `deferredTools: 'native'` sends the tool with its API's deferral flag, and
+   * every other provider ignores this field. Through an agent, a model that reports `'stubs'` gets the tool as a stub
+   * with an open schema instead. At least one tool must stay non-deferred.
    *
    * @internal Set by context manager strategies; tool authors should configure the strategy instead.
    */

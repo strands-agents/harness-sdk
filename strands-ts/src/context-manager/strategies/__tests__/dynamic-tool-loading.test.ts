@@ -4,6 +4,7 @@ import { MockMessageModel } from '../../../__fixtures__/mock-message-model.js'
 import { Agent } from '../../../agent/agent.js'
 import { logger } from '../../../logging/logger.js'
 import { heuristicJson } from '../../../models/model.js'
+import { ModelRouter } from '../../../models/routing/router.js'
 import type { DeferredTools } from '../../../models/model-info.js'
 import type { JSONValue } from '../../../types/json.js'
 import { tool } from '../../../tools/tool-factory.js'
@@ -145,6 +146,74 @@ describe('DynamicToolLoadingStrategy', () => {
     expect(deferredNames(toolSpecs!)).toEqual(['shell', 'read', 'write'])
   })
 
+  it('sends stubs that point at strands_load_tools and answers a call made before the load with the schema', async () => {
+    const callback = vi.fn(({ value }: { value: string }) => `shell:${value}`)
+    const guarded = tool({
+      name: 'shell',
+      description: 'Run shell.',
+      inputSchema: z.object({ value: z.string() }),
+      callback,
+    })
+    const { agent, model } = makeAgent('stubs', { tools: [guarded] })
+    model
+      .addTurn({ type: 'toolUseBlock', name: 'shell', toolUseId: 'early', input: {} })
+      .addTurn({ type: 'toolUseBlock', name: 'shell', toolUseId: 'loaded', input: { value: 'ls' } })
+      .addTurn({ type: 'textBlock', text: 'done' })
+
+    await agent.invoke('List the files.')
+
+    const [toolSpecs] = sentToolSpecs(model)
+    expect(toolSpecs!.find((spec) => spec.name === 'shell')).toEqual({
+      name: 'shell',
+      description: 'Run shell. Call strands_load_tools with this name for its parameters first.',
+      inputSchema: { type: 'object' },
+    })
+    expect(agent.messages[2]!.content[0]).toEqual(
+      new ToolResultBlock({
+        toolUseId: 'early',
+        status: 'error',
+        content: [
+          new TextBlock(
+            'Not run: shell was called before its parameters were loaded. They are loaded now; call it again.'
+          ),
+          new ToolReferenceBlock({ name: 'shell' }),
+        ],
+      })
+    )
+    expect(callback).toHaveBeenCalledTimes(1)
+    expect(callback).toHaveBeenCalledWith({ value: 'ls' }, expect.anything())
+  })
+
+  it('guards a stub call made by the model a ModelRouter picked, not by the default model', async () => {
+    const callback = vi.fn(({ value }: { value: string }) => `shell:${value}`)
+    const guarded = tool({
+      name: 'shell',
+      description: 'Run shell.',
+      inputSchema: z.object({ value: z.string() }),
+      callback,
+    })
+    const stubs = new MockMessageModel()
+      .addTurn({ type: 'toolUseBlock', name: 'shell', toolUseId: 'early', input: {} })
+      .addTurn({ type: 'textBlock', text: 'done' })
+    stubs.updateConfig({ modelInfo: { capabilities: { deferredTools: 'stubs' } } })
+    const router = new ModelRouter([new MockMessageModel(), stubs], {
+      strategy: { select: async (context) => context.candidates[1] },
+    })
+    const agent = new Agent({
+      model: router,
+      tools: [guarded],
+      contextManager: { strategies: [new DynamicToolLoadingStrategy()] },
+      printer: false,
+    })
+
+    await agent.invoke('List the files.')
+
+    expect((agent.messages[2]!.content[0] as ToolResultBlock).content[0]).toEqual(
+      new TextBlock('Not run: shell was called before its parameters were loaded. They are loaded now; call it again.')
+    )
+    expect(callback).not.toHaveBeenCalled()
+  })
+
   it('keeps the first call plan when a tool is registered later, and sends the new tool in full', async () => {
     const { agent, model } = makeAgent('native')
     model.addTurn({ type: 'textBlock', text: 'one' }).addTurn({ type: 'textBlock', text: 'two' })
@@ -204,6 +273,18 @@ describe('DynamicToolLoadingStrategy', () => {
     await agent.invoke('Hi.')
 
     expect(deferredNames(sentToolSpecs(model)[0]!)).toEqual(['shell'])
+  })
+
+  it('keeps deferring when a later call model defers another way', async () => {
+    const { agent, model } = makeAgent('native')
+    model.addTurn({ type: 'textBlock', text: 'one' }).addTurn({ type: 'textBlock', text: 'two' })
+
+    await agent.invoke('First.')
+    model.updateConfig({ modelInfo: { capabilities: { deferredTools: 'stubs' } } })
+    await agent.invoke('Second.')
+
+    const [, second] = sentToolSpecs(model)
+    expect(second!.find((spec) => spec.name === 'shell')?.inputSchema).toEqual({ type: 'object' })
   })
 
   it('sends every spec without the loader on a model that can not defer', async () => {

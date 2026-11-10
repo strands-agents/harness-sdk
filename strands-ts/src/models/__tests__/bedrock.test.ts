@@ -1009,20 +1009,28 @@ describe('BedrockModel', () => {
       expect(toolConfig.tools.length).toBe(1)
     })
 
-    it('sends a deferred tool as a full spec, since Converse cannot defer tools', async () => {
-      const provider = new BedrockModel({ modelId: 'us.anthropic.claude-opus-5-5' })
-      const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
-      collectIterator(
-        provider.stream(messages, {
-          toolSpecs: [
-            { name: 'calculator', description: 'Calculate', inputSchema: { type: 'object' }, deferLoading: true },
-          ],
-        })
-      )
-      expect(provider.modelInfo.capabilities?.deferredTools).toBe('unsupported')
-      expect(mockConverseStreamCommand.mock.lastCall?.[0]?.toolConfig?.tools).toStrictEqual([
-        { toolSpec: { name: 'calculator', description: 'Calculate', inputSchema: { json: { type: 'object' } } } },
-      ])
+    describe('deferred tools', () => {
+      it.each([
+        ['Claude', { modelId: 'us.anthropic.claude-opus-5-5' }, 'stubs'],
+        ['Claude with strictTools', { modelId: 'us.anthropic.claude-opus-5-5', strictTools: true }, 'unsupported'],
+        ['a model whose own API does not defer tools', { modelId: 'us.amazon.nova-pro-v1:0' }, 'unsupported'],
+      ])('reports deferredTools for %s', (_name, config, expected) => {
+        expect(new BedrockModel(config).modelInfo.capabilities?.deferredTools).toBe(expected)
+      })
+
+      it('sends a deferred tool as a full spec when called directly, since ModelProxy makes the stubs', async () => {
+        const provider = new BedrockModel({ modelId: 'us.anthropic.claude-opus-5-5' })
+        const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+        const inputSchema = { type: 'object' as const, properties: { expression: { type: 'string' as const } } }
+        collectIterator(
+          provider.stream(messages, {
+            toolSpecs: [{ name: 'calculator', description: 'Calculate', inputSchema, deferLoading: true }],
+          })
+        )
+        expect(mockConverseStreamCommand.mock.lastCall?.[0]?.toolConfig?.tools).toStrictEqual([
+          { toolSpec: { name: 'calculator', description: 'Calculate', inputSchema: { json: inputSchema } } },
+        ])
+      })
     })
 
     it('formats tool specs without outputSchema in Bedrock requests', async () => {

@@ -35,7 +35,7 @@ _PACKAGE_COPY = pathlib.Path(__file__).parents[3] / "src" / "strands" / "models"
 _MODEL_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9.:@-]*$")
 _LIMIT_KEYS = ("contextWindow", "maxOutputTokens")
 # The TypeScript SDK reads this key; the Python loader skips it until the port.
-_DEFERRED_TOOLS_VALUES = ("unsupported", "native")
+_DEFERRED_TOOLS_VALUES = ("unsupported", "native", "stubs")
 _BOOLEAN_CAPABILITY_KEYS = (
     "stateful",
     "forcedToolChoice",
