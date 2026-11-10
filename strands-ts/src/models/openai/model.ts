@@ -237,8 +237,8 @@ export class OpenAIModel extends Model<OpenAIModelConfig> {
       const streamState: ChatStreamState = {
         messageStarted: false,
         textContentBlockStarted: false,
+        toolCalls: new Map(),
       }
-      const activeToolCalls = new Map<number, boolean>()
 
       let bufferedUsage: {
         type: 'modelMetadataEvent'
@@ -275,7 +275,7 @@ export class OpenAIModel extends Model<OpenAIModelConfig> {
           continue
         }
 
-        const events = mapChatChunkToEvents(chunk, streamState, activeToolCalls)
+        const events = mapChatChunkToEvents(chunk, streamState)
         for (const event of events) {
           if (event.type === 'modelMessageStopEvent' && bufferedUsage) {
             yield bufferedUsage

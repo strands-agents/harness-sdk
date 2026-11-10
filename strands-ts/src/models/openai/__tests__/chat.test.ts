@@ -3,7 +3,7 @@ import OpenAI, { APIUserAbortError } from 'openai'
 import { isNode } from '../../../__fixtures__/environment.js'
 import { OpenAIModel } from '../index.js'
 import { ContextWindowOverflowError, ModelThrottledError } from '../../../errors.js'
-import { collectIterator } from '../../../__fixtures__/model-test-helpers.js'
+import { collectGenerator, collectIterator } from '../../../__fixtures__/model-test-helpers.js'
 import { Message, TextBlock, ToolUseBlock, ToolResultBlock, GuardContentBlock } from '../../../types/messages.js'
 import type { SystemContentBlock } from '../../../types/messages.js'
 import { ImageBlock, DocumentBlock, VideoBlock } from '../../../types/media.js'
@@ -1206,6 +1206,100 @@ describe('OpenAIModel', () => {
       // Both text and tool blocks should have stop events
       const stopEvents = events.filter((e) => e.type === 'modelContentBlockStopEvent')
       expect(stopEvents.length).toBeGreaterThan(0)
+    })
+
+    describe('aggregation', () => {
+      // Parallel tool_calls deltas carry two indexes whose blocks must not interleave:
+      // each call streams as its own start/deltas/stop sequence so streamAggregated
+      // keeps every call.
+      it('keeps every call from parallel tool_calls deltas', async () => {
+        const mockClient = createMockClient(async function* () {
+          yield { choices: [{ delta: { role: 'assistant' }, index: 0 }] }
+          yield {
+            choices: [
+              {
+                delta: {
+                  tool_calls: [
+                    { index: 0, id: 'call_1', type: 'function', function: { name: 'get_weather', arguments: '' } },
+                  ],
+                },
+                index: 0,
+              },
+            ],
+          }
+          yield {
+            choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: '{"city":' } }] }, index: 0 }],
+          }
+          yield {
+            choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: '"Seattle"}' } }] }, index: 0 }],
+          }
+          yield {
+            choices: [
+              {
+                delta: {
+                  tool_calls: [
+                    { index: 1, id: 'call_2', type: 'function', function: { name: 'get_time', arguments: '' } },
+                  ],
+                },
+                index: 0,
+              },
+            ],
+          }
+          yield {
+            choices: [{ delta: { tool_calls: [{ index: 1, function: { arguments: '{"tz":"PST"}' } }] }, index: 0 }],
+          }
+          yield { choices: [{ finish_reason: 'tool_calls', delta: {}, index: 0 }] }
+        })
+
+        const provider = new OpenAIModel({ api: 'chat', client: mockClient })
+        const messages = [new Message({ role: 'user', content: [new TextBlock('Weather and time in Seattle?')] })]
+
+        const { result } = await collectGenerator(provider.streamAggregated(messages))
+
+        expect(result.stopReason).toBe('toolUse')
+        expect(result.message.content).toEqual([
+          new ToolUseBlock({ name: 'get_weather', toolUseId: 'call_1', input: { city: 'Seattle' } }),
+          new ToolUseBlock({ name: 'get_time', toolUseId: 'call_2', input: { tz: 'PST' } }),
+        ])
+      })
+
+      // Text streamed before tool_calls must close as its own block so both the text
+      // and the tool call survive aggregation.
+      it('keeps text streamed before tool_calls', async () => {
+        const mockClient = createMockClient(async function* () {
+          yield { choices: [{ delta: { role: 'assistant' }, index: 0 }] }
+          yield { choices: [{ delta: { content: 'Let me check the weather for you.' }, index: 0 }] }
+          yield {
+            choices: [
+              {
+                delta: {
+                  tool_calls: [
+                    {
+                      index: 0,
+                      id: 'call_1',
+                      type: 'function',
+                      function: { name: 'get_weather', arguments: '{"city":"Seattle"}' },
+                    },
+                  ],
+                },
+                index: 0,
+              },
+            ],
+          }
+          yield { choices: [{ finish_reason: 'tool_calls', delta: {}, index: 0 }] }
+        })
+
+        const provider = new OpenAIModel({ api: 'chat', client: mockClient })
+        const messages = [new Message({ role: 'user', content: [new TextBlock("What's the weather in Seattle?")] })]
+
+        const { result } = await collectGenerator(provider.streamAggregated(messages))
+
+        expect(result.stopReason).toBe('toolUse')
+        expect(result.message.content).toEqual([
+          new TextBlock('Let me check the weather for you.'),
+          new ToolUseBlock({ name: 'get_weather', toolUseId: 'call_1', input: { city: 'Seattle' } }),
+        ])
+      })
     })
   })
 
