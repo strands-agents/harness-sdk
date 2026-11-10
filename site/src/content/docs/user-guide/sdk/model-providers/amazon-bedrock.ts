@@ -243,6 +243,34 @@ async function guardrailsExample() {
   // --8<-- [end:guardrails]
 }
 
+// Guarding specific content with guardContent blocks
+async function guardContentExample() {
+  // --8<-- [start:guard_content]
+  const bedrockModel = new BedrockModel({
+    modelId: 'global.anthropic.claude-sonnet-5-5',
+    guardrailConfig: {
+      guardrailIdentifier: 'your-guardrail-id',
+      guardrailVersion: 'DRAFT',
+    },
+  })
+
+  const agent = new Agent({ model: bedrockModel })
+
+  // Only the guardContent block below is evaluated by the guardrail
+  const response = await agent.invoke([
+    {
+      guardContent: {
+        text: {
+          text: 'Untrusted text to evaluate against the guardrail.',
+          qualifiers: ['guard_content'], // Required in TypeScript
+        },
+      },
+    },
+    { text: 'Summarize the text above.' },
+  ])
+  // --8<-- [end:guard_content]
+}
+
 async function requestTimeoutExample() {
   // --8<-- [start:request_timeout]
   const bedrockModel = new BedrockModel({
