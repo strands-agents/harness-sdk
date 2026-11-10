@@ -900,6 +900,17 @@ class TestClientSideSummariesUseModelSummarize:
         assert mock_agent.model.summarize.await_args.kwargs["instructions"] == "Be very brief."
 
     @pytest.mark.asyncio
+    async def test_a_custom_system_prompt_reaches_batch_summaries(self, mock_agent):
+        mock_agent.model.summarize = unittest.mock.AsyncMock(return_value=_summary("provider summary"))
+        messages = TestServerSideSummary._messages()
+        mock_agent.messages = messages
+        strategy = Offload.summarize("*", {"system_prompt": "Be very brief."}).when(utilization=0.8, preserve_recent=1)
+
+        assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is True
+
+        assert mock_agent.model.summarize.await_args.kwargs["instructions"] == "Be very brief."
+
+    @pytest.mark.asyncio
     async def test_a_block_summary_sends_the_block_instructions_without_a_system_prompt(self, mock_agent):
         messages = self._tool_result_messages()
         mock_agent.messages = messages

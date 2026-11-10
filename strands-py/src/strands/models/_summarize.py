@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # A reply that stopped for any other reason, such as a cancellation or a guardrail, holds no summary.
-_SUMMARY_STOP_REASONS = frozenset({"end_turn", "max_tokens"})
+_SUMMARY_STOP_REASONS = frozenset({"end_turn", "max_tokens", "stop_sequence"})
 
 # The request can carry the caller's own persona and tools, so every request opens with this, whatever the
 # caller's instructions say.
@@ -60,8 +60,8 @@ async def _summarize_with_stream(
     """Summarize ``messages`` by sending them as a request that ends with one summarize instruction.
 
     The request is sent as given, the way the agent sends its own, so it can share the agent's prompt cache. A reply
-    that ends for a reason other than ``end_turn`` or ``max_tokens``, such as a tool call, a cancellation or a
-    guardrail, or that holds no text, gives an empty result.
+    that ends for a reason other than ``end_turn``, ``max_tokens`` or ``stop_sequence``, such as a tool call, a
+    cancellation or a guardrail, or that holds no text, gives an empty result.
     """
     stop_reason = None
     reply: Message | None = None

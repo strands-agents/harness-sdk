@@ -926,8 +926,9 @@ async def test_summarize_base_returns_an_empty_summary_when_cancelled_mid_stream
 
 
 @pytest.mark.asyncio
-async def test_summarize_base_keeps_a_reply_cut_off_at_the_output_limit():
-    model = RecordingModel(reply=("partial",), stop_reason="max_tokens")
+@pytest.mark.parametrize("stop_reason", ["max_tokens", "stop_sequence"])
+async def test_summarize_base_keeps_a_reply_that_stopped_at_a_limit(stop_reason):
+    model = RecordingModel(reply=("partial",), stop_reason=stop_reason)
 
     result = await model.summarize([{"role": "user", "content": [{"text": "hi"}]}])
 
