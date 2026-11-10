@@ -2,6 +2,7 @@
 
 import json
 import re
+import threading
 import unittest.mock
 
 import pytest
@@ -11,6 +12,7 @@ from strands._context_manager.stash import Stash
 from strands._context_manager.strategies.offload import Offload
 from strands._context_manager.strategies.offload.drop import DROPPED_MARKER
 from strands._context_manager.types import ContextState
+from strands.models import Model
 from strands.storage.in_memory_storage import InMemoryStorage
 from strands.types.content import ContentBlock, Message, Messages
 from strands.types.tools import ToolResult, ToolUse
@@ -40,8 +42,14 @@ def mock_agent():
     agent.model.count_tokens = unittest.mock.AsyncMock(return_value=5000)
     agent.model.estimate_utilization = unittest.mock.MagicMock(return_value=0.9)
     agent.model.stream = _make_stream_events("Summary of content.")
+
+    async def summarize(messages, **kwargs):
+        return await Model.summarize(agent.model, messages, **kwargs)
+
+    agent.model.summarize = summarize
     agent.aux_model = agent.model
     agent.messages = []
+    agent._cancel_signal = threading.Event()
     return agent
 
 
