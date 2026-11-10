@@ -6,7 +6,7 @@ import { expandHome } from '../paths.js'
 import { importAgentProject, type ImportedAgentProject } from '../project/import.js'
 import { planProjectPreparation } from '../project/preparation-plan.js'
 import { discoverHarnesses, type DiscoveredHarness } from './search.js'
-import { readDevWorkspace } from './workspace.js'
+import { readDevWorkspace, WORKSPACE_FOLDER } from './workspace.js'
 
 export interface BaseHarnessSelection {
   name: string
@@ -23,11 +23,12 @@ export const baseHarnessSelection = async (
   cwd: string,
   destination?: string
 ): Promise<BaseHarnessSelection> => {
-  const source = baseHarnessProject(snapshot, cwd)?.entrypoint ?? snapshot.path
-  const workspace = resolve(cwd, destination ?? 'strands-dev')
-  const existing =
-    (await readDevWorkspace(workspace)) ??
-    (!destination ? await readDevWorkspace(join(workspace, 'base-cli')) : undefined)
+  const project = baseHarnessProject(snapshot, cwd)
+  const source = project?.entrypoint ?? snapshot.path
+  const launchWorkspace = resolve(cwd, destination ?? WORKSPACE_FOLDER)
+  const legacy = destination ? undefined : await readDevWorkspace(join(launchWorkspace, 'base-cli'))
+  const workspace = destination || legacy || !project ? launchWorkspace : join(project.root, WORKSPACE_FOLDER)
+  const existing = (await readDevWorkspace(workspace)) ?? legacy
   return {
     name: existing?.config.name ?? snapshot.profile.name,
     source,

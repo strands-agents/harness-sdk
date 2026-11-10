@@ -14,6 +14,14 @@ export type ProjectInstallation = {
   | { profile: HarnessAgentConfig; language: AgentProjectLanguage; skills: readonly string[]; baseDir: string }
 )
 
+export const installProjectDependencies = async (project: ImportedAgentProject): Promise<void> => {
+  try {
+    await prepareWorkspaceDependencies(project.root, project.language)
+  } catch (error) {
+    throw devFailure(error, { operation: 'install', path: project.root })
+  }
+}
+
 export const installAgentProject = async (options: ProjectInstallation): Promise<ImportedAgentProject> => {
   options.signal?.throwIfAborted()
   if ('source' in options) {
@@ -39,13 +47,7 @@ export const installAgentProject = async (options: ProjectInstallation): Promise
   options.signal?.throwIfAborted()
   const project = importAgentProject(options.destination)
   if (options.prepare) await options.prepare(project)
-  else if (!options.deferDependencies) {
-    try {
-      await prepareWorkspaceDependencies(project.root, project.language)
-    } catch (error) {
-      throw devFailure(error, { operation: 'install', path: project.root })
-    }
-  }
+  else if (!options.deferDependencies) await installProjectDependencies(project)
   options.signal?.throwIfAborted()
   return project
 }

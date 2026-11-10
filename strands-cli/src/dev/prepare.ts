@@ -6,11 +6,18 @@ import { containsPath, expandHome } from '../paths.js'
 import { importAgentProject } from '../project/import.js'
 import { prepareWorkspaceDependencies } from '../project/archive.js'
 import { sanitizeTerminalText } from '../terminal/text.js'
-import { bindExistingAgent, createDevWorkspace } from './create.js'
+import { bindExistingAgent, createDevProject, createDevWorkspace, newProjectFolder, numberedFolder } from './create.js'
 import { DevFailure } from './errors.js'
-import { findDevWorkspace, readDevWorkspace, workspaceFolder, type DevWorkspace } from './workspace.js'
+import {
+  findDevWorkspace,
+  readDevWorkspace,
+  workspaceFolder,
+  WORKSPACE_FOLDER,
+  type DevWorkspace,
+} from './workspace.js'
 import type { StartupScreen } from '../ui/run.js'
 import type { HarnessChoice } from './picker.js'
+import type { DiscoveredHarness } from './search.js'
 import { baseHarnessSelection, discoverLocalHarnesses } from './selection.js'
 import { ensureInitialCandidate, initializeWorkspaceBinding } from './initialize.js'
 
@@ -18,6 +25,74 @@ export interface PreparedDevRun {
   args: ParsedArgs
   config: CliConfigStore
   workspace: DevWorkspace
+}
+
+interface CreationRequest {
+  kind: 'cli' | 'typescript' | 'python'
+  destination: string | undefined
+  cwd: string
+  config: CliConfigStore
+  signal: AbortSignal | undefined
+  deferDependencies: boolean
+}
+
+const createRequested = async ({
+  kind,
+  destination,
+  cwd,
+  config,
+  signal,
+  deferDependencies,
+}: CreationRequest): Promise<DevWorkspace> => {
+  const snapshot = config.snapshot()
+  const options = { snapshot, cwd, ...(signal ? { signal } : {}), ...(deferDependencies ? { deferDependencies } : {}) }
+  if (kind !== 'cli' && !destination) return createDevProject({ ...options, parent: cwd, language: kind })
+  return createDevWorkspace({
+    ...options,
+    kind,
+    destination: destination ?? (await baseHarnessSelection(snapshot, cwd)).workspace,
+  })
+}
+
+interface FolderDefaults {
+  folderFor: (choice: HarnessChoice) => string | undefined
+  newProject?: string
+}
+
+const folderDefaults = async (
+  cliFolder: string,
+  harnesses: readonly DiscoveredHarness[],
+  { cwd, destination, forceSelection }: { cwd: string; destination: string | undefined; forceSelection: boolean }
+): Promise<FolderDefaults> => {
+  const fresh = async (folder: string): Promise<string> => (forceSelection ? availableFolder(folder) : folder)
+  if (destination) {
+    const folder = await fresh(destination)
+    return { folderFor: () => folder }
+  }
+  const suggest = (preferred: string, choice: HarnessChoice): Promise<string> =>
+    availableFolder(preferred, forceSelection ? undefined : (workspace): boolean => holdsChoice(workspace, choice))
+  const cli = await fresh(cliFolder)
+  const found = new Map(
+    await Promise.all(
+      harnesses.map(
+        async (harness) =>
+          [
+            harness.entrypoint,
+            (!forceSelection && harness.workspace?.directory) ||
+              (await suggest(join(harness.root, WORKSPACE_FOLDER), { kind: 'discovered', harness })),
+          ] as const
+      )
+    )
+  )
+  return {
+    folderFor: (choice) =>
+      choice.kind === 'cli'
+        ? cli
+        : choice.kind === 'discovered'
+          ? (found.get(choice.harness.entrypoint) ?? join(choice.harness.root, WORKSPACE_FOLDER))
+          : undefined,
+    newProject: await newProjectFolder(cwd),
+  }
 }
 
 const selectWorkspace = async (
@@ -31,19 +106,11 @@ const selectWorkspace = async (
   const cwd = process.cwd()
   const destination = dev.workspace ? await workspaceFolder(resolve(cwd, expandHome(dev.workspace))) : undefined
   if (dev.create)
-    return createDevWorkspace({
-      destination: destination ?? join(cwd, 'strands-dev'),
-      kind: dev.create,
-      snapshot: config.snapshot(),
-      ...(deferDependencies ? { deferDependencies: true } : {}),
-      cwd,
-      ...(screen ? { signal: screen.signal } : {}),
-    })
-  if (args.agent)
-    return openExplicitHarness(resolve(cwd, expandHome(args.agent)), destination ?? join(cwd, 'strands-dev'))
+    return createRequested({ kind: dev.create, destination, cwd, config, signal: screen?.signal, deferDependencies })
+  if (args.agent) return openExplicitHarness(resolve(cwd, expandHome(args.agent)), destination)
   const existing =
     (await findDevWorkspace(destination ?? cwd)) ??
-    (!destination ? await readDevWorkspace(join(cwd, 'strands-dev')) : undefined)
+    (!destination ? await readDevWorkspace(join(cwd, WORKSPACE_FOLDER)) : undefined)
   if (existing && !forceSelection) return existing
   if (destination && !dev.init && !forceSelection)
     throw new Error(`No dev workspace at ${destination}. Run strands dev init --workspace <path> --create cli.`)
@@ -53,13 +120,15 @@ const selectWorkspace = async (
   const base = await baseHarnessSelection(config.snapshot(), cwd, destination)
   const harnesses = await discoverLocalHarnesses(cwd, dev.searchRoots, base.excludedEntrypoints)
   screen.signal.throwIfAborted()
+  const folders = await folderDefaults(base.workspace, harnesses, { cwd, destination, forceSelection })
   const { chooseHarness } = await import('./picker.js')
-  const workspace = forceSelection ? await unusedFolder(base.workspace) : base.workspace
   return chooseHarness(
-    { cli: { name: base.name, path: base.source }, harnesses, workspace },
+    { cli: { name: base.name, path: base.source }, harnesses, ...folders },
     screen,
-    async (choice, signal, folder = workspace): Promise<DevWorkspace> => {
+    async (choice, signal, chosen): Promise<DevWorkspace> => {
       signal.throwIfAborted()
+      const folder = chosen ?? folders.folderFor(choice)
+      if (folder === undefined) return createInLaunchFolder(choice, { cwd, config, signal, deferDependencies })
       const directory = await workspaceFolder(resolve(cwd, expandHome(folder)))
       const placed = await placeHarness(choice, { directory, cwd, config, signal, deferDependencies })
       return placed.directory ? placed : initializeWorkspaceBinding(placed, directory)
@@ -97,19 +166,17 @@ const folderEntries = async (directory: string): Promise<string[]> => {
   }
 }
 
-const MAX_FOLDER_SUFFIX = 100
-
-const unusedFolder = async (preferred: string): Promise<string> => {
-  for (let suffix = 1; suffix <= MAX_FOLDER_SUFFIX; suffix++) {
-    const candidate = suffix === 1 ? preferred : `${preferred}-${suffix}`
-    const unused = await folderEntries(candidate).then(
-      (entries) => entries.length === 0,
-      () => false
-    )
-    if (unused) return candidate
-  }
-  return preferred
+const acceptsFolder = async (folder: string, holds?: (workspace: DevWorkspace) => boolean): Promise<boolean> => {
+  const entries = await folderEntries(folder).catch(() => undefined)
+  if (!entries) return false
+  if (!entries.length) return true
+  if (!holds) return false
+  const existing = await readDevWorkspace(folder).catch(() => undefined)
+  return existing !== undefined && holds(existing)
 }
+
+const availableFolder = async (preferred: string, holds?: (workspace: DevWorkspace) => boolean): Promise<string> =>
+  (await numberedFolder(preferred, (folder) => acceptsFolder(folder, holds))) ?? preferred
 
 const holdsChoice = ({ root, config }: DevWorkspace, choice: HarnessChoice): boolean => {
   switch (choice.kind) {
@@ -152,47 +219,47 @@ const createInFolder = async (
   })
 }
 
+const createInLaunchFolder = async (
+  choice: HarnessChoice,
+  { cwd, config, signal, deferDependencies }: Omit<HarnessPlacement, 'directory'>
+): Promise<DevWorkspace> => {
+  if (choice.kind !== 'create') throw new Error('Choose a workspace folder for this harness.')
+  const snapshot = config.snapshot()
+  snapshot.profile = { ...snapshot.profile, name: choice.name }
+  return createDevProject({
+    parent: cwd,
+    language: choice.language,
+    snapshot,
+    cwd,
+    signal,
+    ...(deferDependencies ? { deferDependencies: true } : {}),
+  })
+}
+
 const placeHarness = async (choice: HarnessChoice, placement: HarnessPlacement): Promise<DevWorkspace> => {
   if ((await folderEntries(placement.directory)).length) return reuseFolder(choice, placement.directory)
   if (choice.kind === 'discovered') return openExplicitHarness(choice.harness.entrypoint, placement.directory)
   return createInFolder(choice, placement)
 }
 
-const openExplicitHarness = async (path: string, directory?: string): Promise<DevWorkspace> => {
+const openExplicitHarness = async (path: string, folder?: string): Promise<DevWorkspace> => {
   const details = await lstat(path)
   if (details.isSymbolicLink()) throw new Error('Select a real harness path, not a symbolic link.')
-  if (details.isDirectory()) {
-    const existing = await readDevWorkspace(path)
-    if (existing && !directory) return existing
-  }
   const project = importAgentProject(path)
-  if (directory) {
-    const existing = await readDevWorkspace(directory)
-    if (existing) {
-      if (project.root !== existing.root) throw new Error('The explicit agent must belong to the bound project.')
-      return {
-        ...existing,
-        entrypoint: project.entrypoint,
-        config: {
-          ...existing.config,
-          language: project.language,
-          entrypoint: relative(project.root, project.entrypoint).split(sep).join('/'),
-        },
-      }
-    }
+  const directory =
+    folder ?? (await availableFolder(join(project.root, WORKSPACE_FOLDER), ({ root }) => root === project.root))
+  const existing = await readDevWorkspace(directory)
+  if (!existing) return bindExistingAgent(directory, project.entrypoint)
+  if (project.root !== existing.root) throw new Error('The explicit agent must belong to the bound project.')
+  return {
+    ...existing,
+    entrypoint: project.entrypoint,
+    config: {
+      ...existing.config,
+      language: project.language,
+      entrypoint: relative(project.root, project.entrypoint).split(sep).join('/'),
+    },
   }
-  const legacy = await readDevWorkspace(project.root)
-  if (legacy && !directory)
-    return {
-      ...legacy,
-      entrypoint: project.entrypoint,
-      config: {
-        ...legacy.config,
-        language: project.language,
-        entrypoint: relative(project.root, project.entrypoint).split(sep).join('/'),
-      },
-    }
-  return bindExistingAgent(directory ?? join(project.root, 'strands-dev'), project.entrypoint)
 }
 
 export const prepareDevRun = async (
@@ -214,7 +281,7 @@ export const prepareDevRun = async (
   if (!selected) return undefined
   const target = args.dev?.workspace
     ? await workspaceFolder(resolve(process.cwd(), expandHome(args.dev.workspace)))
-    : join(process.cwd(), 'strands-dev')
+    : join(selected.root, WORKSPACE_FOLDER)
   const persisted = await readDevWorkspace(selected.directory ?? selected.root)
   const main = await initializeWorkspaceBinding(persisted?.root === selected.root ? persisted : selected, target)
   const workspace =

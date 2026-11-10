@@ -2,7 +2,7 @@ import { lstat, mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { CliConfigStore } from '../../src/config/store.js'
-import { createDevWorkspace, bindExistingAgent } from '../../src/dev/create.js'
+import { createDevProject, createDevWorkspace, bindExistingAgent } from '../../src/dev/create.js'
 import { readDevWorkspace } from '../../src/dev/workspace.js'
 import * as installer from '../../src/project/archive.js'
 import { temporaryDirectory } from '../fixtures/tempdir.js'
@@ -179,5 +179,74 @@ describe('createDevWorkspace', () => {
     expect(bound.root).toBe(cwd)
     expect(bound.entrypoint).toBe(join(cwd, 'agent.ts'))
     expect(await readFile(bound.entrypoint, 'utf8')).toBe('source')
+  })
+})
+
+describe('createDevProject', () => {
+  it.each(['typescript', 'python'] as const)(
+    'shouldCreateTheProjectInStrandsWorkspaceWithItsWorkspaceInsideWhenCreatingA%sHarness',
+    async (language) => {
+      const cwd = await temporaryDirectory()
+      const install = vi.spyOn(installer, 'prepareWorkspaceDependencies').mockResolvedValue()
+
+      const workspace = await createDevProject({ cwd, parent: cwd, language, snapshot: snapshot() })
+
+      const root = join(cwd, 'strands-workspace')
+      const entrypoint = language === 'python' ? 'agent/agent.py' : 'agent/agent.ts'
+      expect(workspace.root).toBe(root)
+      expect(workspace.directory).toBe(join(root, 'strands-dev'))
+      expect(workspace.entrypoint).toBe(join(root, entrypoint))
+      expect(workspace.config.origin.kind).toBe('created')
+      expect(install).toHaveBeenCalledExactlyOnceWith(root, language)
+      expect(JSON.parse(await readFile(join(root, 'strands-dev/.config'), 'utf8')).agent).toEqual({
+        path: '..',
+        entrypoint,
+        language,
+      })
+      expect(await readDevWorkspace(workspace.directory!)).toEqual(workspace)
+      expect(await readdir(cwd)).toEqual(['strands-workspace'])
+    }
+  )
+
+  it('shouldUseTheNextFreeNameWhenStrandsWorkspaceIsTaken', async () => {
+    const cwd = await temporaryDirectory()
+    await mkdir(join(cwd, 'strands-workspace'))
+    await writeFile(join(cwd, 'strands-workspace-2'), 'notes')
+
+    const workspace = await createDevProject({
+      cwd,
+      parent: cwd,
+      language: 'typescript',
+      snapshot: snapshot(),
+      deferDependencies: true,
+    })
+
+    expect(workspace.root).toBe(join(cwd, 'strands-workspace-3'))
+    expect(await readdir(join(cwd, 'strands-workspace'))).toEqual([])
+    expect(await readFile(join(cwd, 'strands-workspace-2'), 'utf8')).toBe('notes')
+  })
+
+  it('shouldRemoveOnlyTheNewProjectWhenInstallationFails', async () => {
+    const cwd = await temporaryDirectory()
+    await writeFile(join(cwd, 'keep.txt'), 'keep')
+    vi.spyOn(installer, 'prepareWorkspaceDependencies').mockRejectedValue(new Error('install failed'))
+
+    await expect(createDevProject({ cwd, parent: cwd, language: 'typescript', snapshot: snapshot() })).rejects.toThrow(
+      'install failed'
+    )
+    expect(await readdir(cwd)).toEqual(['keep.txt'])
+  })
+
+  it('shouldLeaveNoProjectWhenCreationIsCancelled', async () => {
+    const cwd = await temporaryDirectory()
+    const abort = new AbortController()
+    vi.spyOn(installer, 'prepareWorkspaceDependencies').mockImplementation(async () => {
+      abort.abort(new Error('cancelled'))
+    })
+
+    await expect(
+      createDevProject({ cwd, parent: cwd, language: 'python', snapshot: snapshot(), signal: abort.signal })
+    ).rejects.toThrow('cancelled')
+    expect(await readdir(cwd)).toEqual([])
   })
 })

@@ -3,12 +3,14 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { parseArgs } from '../../src/cli/arguments.js'
+import { containsPath } from '../../src/paths.js'
 import { CliConfigStore } from '../../src/config/store.js'
 import { bindWorkspace } from '../../src/dev/binding.js'
 import { bindExistingAgent } from '../../src/dev/create.js'
 import type { HarnessChoice } from '../../src/dev/picker.js'
 import { prepareDevRun } from '../../src/dev/prepare.js'
 import * as search from '../../src/dev/search.js'
+import type { DiscoveredHarness } from '../../src/dev/search.js'
 import * as picker from '../../src/dev/picker.js'
 import { initializeDevWorkspace } from '../../src/dev/workspace.js'
 import * as installer from '../../src/project/archive.js'
@@ -47,7 +49,7 @@ afterEach(() => {
 })
 
 describe('prepareDevRun', () => {
-  it('shouldInitializeTheLaunchDirectoryAndCopyAnExistingAgentOnce', async () => {
+  it('shouldInitializeTheWorkspaceNextToTheAgentAndCopyTheAgentOnce', async () => {
     const launch = process.cwd()
     const source = await fixture()
     const saved = config()
@@ -57,14 +59,17 @@ describe('prepareDevRun', () => {
 
     const first = await prepareDevRun(parseArgs(['dev', 'init', '--agent', join(source, 'agent.ts')]))
 
-    const directory = join(launch, 'strands-dev')
+    const directory = join(source, 'strands-dev')
     const binding = JSON.parse(await readFile(join(directory, '.config'), 'utf8'))
     expect(binding.agent).toMatchObject({ path: source, entrypoint: 'agent.ts' })
     expect(first?.workspace.directory).toBe(directory)
     expect(first?.args.agent).toBe(join(source, 'agent.ts'))
     const marker = JSON.parse(await readFile(join(directory, 'tmp/initial.json'), 'utf8'))
     expect(await readFile(join(directory, 'tmp', marker.id, 'agent/agent.ts'), 'utf8')).toBe(original)
+    expect(await readdir(join(directory, 'tmp', marker.id, 'agent'))).not.toContain('strands-dev')
+    expect(await readdir(launch)).toEqual([])
 
+    vi.mocked(process.cwd).mockReturnValue(source)
     const second = await prepareDevRun(parseArgs(['dev', 'init']))
 
     expect(second?.args.agent).toBe(first?.args.agent)
@@ -194,12 +199,14 @@ describe('prepareDevRun', () => {
       {
         cli: { name: 'Saved CLI', path: 'in-memory' },
         harnesses: [{ ...harness, preparationStatus: 'Needs setup' }],
-        workspace: join(cwd, 'strands-dev'),
+        folderFor: expect.any(Function),
+        newProject: join(cwd, 'strands-workspace'),
       },
       screen,
       expect.any(Function)
     )
     expect(prepared?.workspace.root).toBe(root)
+    expect(prepared?.workspace.directory).toBe(join(root, 'strands-dev'))
     expect(JSON.stringify(vi.mocked(picker.chooseHarness).mock.calls ?? [])).not.toContain(
       'Workspace config version must be 1.'
     )
@@ -284,8 +291,95 @@ describe('workspace path option', () => {
 
     await prepareDevRun(parseArgs(['dev', 'init', ...flags]), { screen, deferPreparation: true })
 
-    expect(vi.mocked(picker.chooseHarness).mock.calls[0]?.[0].workspace).toBe(expected(launch))
+    expect(vi.mocked(picker.chooseHarness).mock.calls[0]?.[0].folderFor?.({ kind: 'cli' })).toBe(expected(launch))
   })
+})
+
+describe('default workspace placement', () => {
+  const pickerOptions = async (
+    harnesses: DiscoveredHarness[],
+    flags: string[] = []
+  ): Promise<Parameters<typeof picker.chooseHarness>[0]> => {
+    vi.spyOn(CliConfigStore, 'load').mockResolvedValue(config())
+    vi.spyOn(search, 'discoverHarnesses').mockResolvedValue({ harnesses, warnings: [] })
+    vi.spyOn(picker, 'chooseHarness').mockResolvedValue(undefined)
+    const screen = { signal: new AbortController().signal, show: vi.fn() }
+    await prepareDevRun(parseArgs(['dev', ...flags]), { screen, deferPreparation: true })
+    return vi.mocked(picker.chooseHarness).mock.calls[0]![0]
+  }
+  const found = (root: string): DiscoveredHarness => ({
+    name: 'Found',
+    entrypoint: join(root, 'agent.ts'),
+    root,
+    language: 'typescript',
+  })
+  const createChoice: HarnessChoice = { kind: 'create', language: 'typescript', name: 'fresh' }
+
+  it('shouldSuggestAStrandsDevFolderNextToEachFoundHarnessWhenThePickerOpens', async () => {
+    const plain = await fixture()
+    const taken = await fixture()
+    await bindExistingAgent(join(taken, 'strands-dev'), join(await fixture(), 'agent.ts'))
+    const reopened = await fixture()
+    const workspace = await bindExistingAgent(join(process.cwd(), 'elsewhere'), join(reopened, 'agent.ts'))
+
+    const options = await pickerOptions([found(plain), found(taken), { ...found(reopened), workspace }])
+
+    expect(options.folderFor?.({ kind: 'discovered', harness: found(plain) })).toBe(join(plain, 'strands-dev'))
+    expect(options.folderFor?.({ kind: 'discovered', harness: found(taken) })).toBe(join(taken, 'strands-dev-2'))
+    expect(options.folderFor?.({ kind: 'discovered', harness: found(reopened) })).toBe(join(process.cwd(), 'elsewhere'))
+    expect(options.folderFor?.(createChoice)).toBeUndefined()
+  })
+
+  it('shouldAskForTheFolderOfEveryChoiceWhenTheUserGivesAWorkspacePath', async () => {
+    const root = await fixture()
+
+    const options = await pickerOptions([found(root)], ['init', '--workspace', 'chosen'])
+
+    expect(options.folderFor?.({ kind: 'discovered', harness: found(root) })).toBe(
+      join(process.cwd(), 'chosen', 'strands-dev')
+    )
+    expect(options.folderFor?.(createChoice)).toBe(join(process.cwd(), 'chosen', 'strands-dev'))
+    expect(options.newProject).toBeUndefined()
+  })
+
+  it('shouldCreateTheNewHarnessInStrandsWorkspaceInTheLaunchFolderWhenItHasNoFolder', async () => {
+    const launch = process.cwd()
+    vi.spyOn(CliConfigStore, 'load').mockResolvedValue(config())
+    vi.spyOn(search, 'discoverHarnesses').mockResolvedValue({ harnesses: [], warnings: [] })
+    vi.spyOn(picker, 'chooseHarness').mockImplementation(async (_options, screen, open) =>
+      open(createChoice, screen.signal)
+    )
+    const screen = { signal: new AbortController().signal, show: vi.fn() }
+
+    const first = await prepareDevRun(parseArgs(['dev']), { screen, deferPreparation: true })
+    const second = await prepareDevRun(parseArgs(['dev']), { screen, deferPreparation: true, forceSelection: true })
+
+    const project = join(launch, 'strands-workspace')
+    expect(first?.workspace.root).toBe(project)
+    expect(first?.workspace.directory).toBe(join(project, 'strands-dev'))
+    expect(first?.workspace.config).toMatchObject({ name: 'fresh', origin: { kind: 'created' } })
+    expect(JSON.parse(await readFile(join(project, 'strands-dev/.config'), 'utf8')).agent.path).toBe('..')
+    expect(containsPath(project, first!.workspace.entrypoint)).toBe(true)
+    expect(second?.workspace.root).toBe(join(launch, 'strands-workspace-2'))
+    expect((await readdir(launch)).sort()).toEqual(['strands-workspace', 'strands-workspace-2'])
+  })
+
+  it.each(['typescript', 'python'])(
+    'shouldCreateTheProjectAndItsWorkspaceInTheLaunchFolderWhenCreatingA%sHarness',
+    async (language) => {
+      const launch = process.cwd()
+      vi.spyOn(CliConfigStore, 'load').mockResolvedValue(config())
+      vi.spyOn(process.stderr, 'write').mockReturnValue(true)
+
+      const prepared = await prepareDevRun(parseArgs(['dev', 'init', '--create', language]), {
+        deferPreparation: true,
+      })
+
+      expect(prepared?.workspace.root).toBe(join(launch, 'strands-workspace'))
+      expect(prepared?.workspace.directory).toBe(join(launch, 'strands-workspace', 'strands-dev'))
+      expect(prepared?.workspace.config.language).toBe(language)
+    }
+  )
 })
 
 describe('workspace folder selection', () => {
@@ -427,7 +521,9 @@ describe('workspace folder selection', () => {
 
     await prepareDevRun(parseArgs(['dev']), { screen, deferPreparation: true, forceSelection: true })
 
-    expect(vi.mocked(picker.chooseHarness).mock.calls[0]?.[0].workspace).toBe(join(launch, 'strands-dev-3'))
+    expect(vi.mocked(picker.chooseHarness).mock.calls[0]?.[0].folderFor?.({ kind: 'cli' })).toBe(
+      join(launch, 'strands-dev-3')
+    )
   })
 
   it.each([

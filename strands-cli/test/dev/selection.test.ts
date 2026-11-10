@@ -46,7 +46,19 @@ describe('base harness selection', () => {
 
     expect(base.source).toBe(original.entrypoint)
     expect(base.name).toBe('CLI copy')
+    expect(base.workspace).toBe(join(root, 'strands-dev'))
     expect(found).toEqual([other])
+  })
+
+  it('shouldPlaceTheBaseCliWorkspaceNextToItsSavedProjectWhenOneExists', async () => {
+    const root = await temporaryDirectory()
+    const original = await project(join(root, 'original'))
+    const snapshot = CliConfigStore.memory().snapshot()
+    snapshot.agentProject = original.entrypoint
+
+    const base = await baseHarnessSelection(snapshot, root)
+
+    expect(base.workspace).toBe(join(original.root, 'strands-dev'))
   })
 
   it('shouldDeduplicatePhysicalPathsWhenAnAliasPointsToTheBaseSource', async () => {

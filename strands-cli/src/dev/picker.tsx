@@ -26,7 +26,8 @@ interface PickerProps {
   cli?: BaseCliOption
   harnesses: readonly DiscoveredHarness[]
   warning?: string
-  workspace?: string
+  folderFor?: (choice: HarnessChoice) => string | undefined
+  newProject?: string
   onSelect: (selection: HarnessChoice | undefined, workspace?: string) => void | Promise<void>
 }
 
@@ -62,19 +63,26 @@ type FormField = 'name' | 'language'
 const otherLanguage = (current: 'typescript' | 'python'): 'typescript' | 'python' =>
   current === 'typescript' ? 'python' : 'typescript'
 
-export const HarnessPicker = ({ cli, harnesses, warning, workspace, onSelect }: PickerProps): ReactElement => {
+export const HarnessPicker = ({
+  cli,
+  harnesses,
+  warning,
+  folderFor,
+  newProject,
+  onSelect,
+}: PickerProps): ReactElement => {
   const [selection, setSelection] = useState(0)
   const [creating, setCreating] = useState(false)
   const [placing, setPlacing] = useState<HarnessChoice>()
   const [language, setLanguage] = useState<'typescript' | 'python'>('typescript')
   const [field, setField] = useState<FormField>('name')
   const [name, setName] = useState('new-harness')
-  const [folder, setFolder] = useState(() => ({ value: workspace ?? '', cursor: graphemes(workspace ?? '').length }))
+  const [folder, setFolder] = useState({ value: '', cursor: 0 })
   const [failure, setFailure] = useState<string>()
   const failureCopyHint = useCopyableError(failure)
   const [busy, setBusy] = useState(false)
   const pending = useRef(false)
-  const asksFolder = workspace !== undefined
+  const folderOf = (choice?: HarnessChoice): string | undefined => (choice ? folderFor?.(choice) : undefined)
   const { accent, error: errorColor, warning: warningColor, selection: selectionColor, border } = useTheme()
   const { columns } = useTerminalSize()
   const availableRows = useStartupContentRows()
@@ -99,18 +107,20 @@ export const HarnessPicker = ({ cli, harnesses, warning, workspace, onSelect }: 
     })),
     {
       label: 'Create a new harness',
-      detail: 'Start a separate project from your saved profile.',
+      detail: newProject
+        ? `Creates ${sanitizeTerminalText(newProject)} from your saved profile.`
+        : 'Start a separate project from your saved profile.',
       group: 'NEW PROJECT',
       language: '',
     },
   ]
-  const submit = (choice: HarnessChoice | undefined): void => {
+  const submit = (choice: HarnessChoice | undefined, workspace?: string): void => {
     if (pending.current && choice) return
     pending.current = true
     setBusy(choice !== undefined)
     setFailure(undefined)
     void Promise.resolve()
-      .then(() => (choice && asksFolder ? onSelect(choice, folder.value.trim()) : onSelect(choice)))
+      .then(() => (choice && workspace !== undefined ? onSelect(choice, workspace) : onSelect(choice)))
       .catch((error: unknown) => {
         setFailure(devFailure(error, { operation: 'open' }).message)
       })
@@ -120,8 +130,10 @@ export const HarnessPicker = ({ cli, harnesses, warning, workspace, onSelect }: 
       })
   }
   const choose = (choice: HarnessChoice): void => {
-    if (!asksFolder) return submit(choice)
+    const suggested = folderOf(choice)
+    if (suggested === undefined) return submit(choice)
     setFailure(undefined)
+    setFolder({ value: suggested, cursor: graphemes(suggested).length })
     setPlacing(choice)
   }
   const leaveFolder = (): void => {
@@ -130,7 +142,8 @@ export const HarnessPicker = ({ cli, harnesses, warning, workspace, onSelect }: 
     setCreating(false)
   }
   const editFolder = (input: string, key: Key): void => {
-    if (key.return) return folder.value.trim() ? submit(placing) : setFailure('Enter a workspace folder.')
+    if (key.return)
+      return folder.value.trim() ? submit(placing, folder.value.trim()) : setFailure('Enter a workspace folder.')
     if (key.tab || (key.ctrl && input === 'j')) return
     setFolder((current) => {
       const { state } = reduceInputSequence(
@@ -179,9 +192,14 @@ export const HarnessPicker = ({ cli, harnesses, warning, workspace, onSelect }: 
   const localNotice = 'Until then, development changes stay in this local workspace.'
   const projectNotice = 'Local project only. Your CLI default stays unchanged.'
   const detailNoteRows = (showsFolder: boolean): number =>
-    cli ? Number(showsFolder) + lineCount(globalNotice) + lineCount(localNotice) : lineCount(projectNotice)
+    Number(showsFolder) + (cli ? lineCount(globalNotice) + lineCount(localNotice) : lineCount(projectNotice))
   const step = placing ? 'folder' : creating ? 'name' : 'list'
-  const next = asksFolder ? 'continue' : { list: 'open', name: 'create', folder: 'open' }[step]
+  const createsInPlace = folderOf({ kind: 'create', name, language }) === undefined
+  const next = {
+    list: folderOf(selected.choice) === undefined ? 'open' : 'continue',
+    name: createsInPlace ? 'create' : 'continue',
+    folder: 'open',
+  }[step]
   const screens = {
     list: {
       heading: 'Select a harness',
@@ -218,11 +236,12 @@ export const HarnessPicker = ({ cli, harnesses, warning, workspace, onSelect }: 
   const visible = rows.slice(start, start + capacity)
   const detailNotes =
     capacity === Math.min(MAX_VISIBLE_ROWS, rows.length)
-      ? (asksFolder ? [true, false] : [false])
+      ? (folderFor ? [true, false] : [false])
           .map((showsFolder) => ({ showsFolder, rows: detailNoteRows(showsFolder) }))
           .find(({ rows: needed }) => needed <= listRows - listHeight)
       : undefined
   const detailHeight = SOURCE_DETAIL_HEIGHT + (detailNotes?.rows ?? 0)
+  const selectedFolder = folderOf(selected.choice)
   return (
     <Box flexDirection="column">
       <Box marginBottom={1} justifyContent="space-between">
@@ -262,6 +281,11 @@ export const HarnessPicker = ({ cli, harnesses, warning, workspace, onSelect }: 
             {field === 'language' ? '›' : ' '} Language: {language}
           </Text>
           <Text dimColor>A new local project. Your CLI default stays unchanged.</Text>
+          {createsInPlace && newProject ? (
+            <Text dimColor wrap="truncate-middle">
+              Creates {sanitizeTerminalText(newProject)} with the agent and its strands-dev folder.
+            </Text>
+          ) : null}
         </Box>
       ) : (
         <>
@@ -305,18 +329,22 @@ export const HarnessPicker = ({ cli, harnesses, warning, workspace, onSelect }: 
             <Text dimColor wrap="truncate-middle">
               {selected.choice ? `Source: ${selected.detail}` : selected.detail}
             </Text>
-            {detailNotes && selected.choice?.kind === 'cli' ? (
+            {detailNotes && selected.choice ? (
               <>
-                {detailNotes.showsFolder ? (
+                {detailNotes.showsFolder && selectedFolder !== undefined ? (
                   <Text dimColor wrap="truncate-middle">
-                    Workspace: {sanitizeTerminalText(folder.value)}
+                    Workspace: {sanitizeTerminalText(selectedFolder)}
                   </Text>
                 ) : null}
-                <Text>{globalNotice}</Text>
-                <Text dimColor>{localNotice}</Text>
+                {selected.choice.kind === 'cli' ? (
+                  <>
+                    <Text>{globalNotice}</Text>
+                    <Text dimColor>{localNotice}</Text>
+                  </>
+                ) : (
+                  <Text dimColor>{projectNotice}</Text>
+                )}
               </>
-            ) : detailNotes && selected.choice ? (
-              <Text dimColor>{projectNotice}</Text>
             ) : null}
           </Box>
         </>

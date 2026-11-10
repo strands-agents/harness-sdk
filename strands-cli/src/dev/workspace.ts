@@ -46,7 +46,7 @@ export const boundDevWorkspace = (workspace: BoundWorkspace): DevWorkspace => ({
   },
 })
 
-const WORKSPACE_FOLDER = 'strands-dev'
+export const WORKSPACE_FOLDER = 'strands-dev'
 const WORKSPACE_FOLDER_NAME = /^strands-dev(?:-\d+)?$/u
 
 export async function findDevWorkspace(path: string): Promise<DevWorkspace | undefined> {

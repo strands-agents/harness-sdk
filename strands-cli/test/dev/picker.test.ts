@@ -26,7 +26,7 @@ describe('HarnessPicker', () => {
         { height: 40, width: columns, flexDirection: 'column', justifyContent: 'flex-end' },
         createElement(HarnessPicker, {
           cli: { name: 'Saved profile', path: '/home/test/.strands/cli.toml' },
-          workspace: '/work/base-cli',
+          folderFor: () => '/work/base-cli',
           harnesses: [harness],
           onSelect: vi.fn(),
         })
@@ -193,7 +193,7 @@ describe('HarnessPicker', () => {
       createElement(HarnessPicker, {
         cli: { name: 'Saved profile', path: '/home/test/.strands/cli.toml' },
         harnesses,
-        workspace: '/work/strands-dev',
+        folderFor: () => '/work/strands-dev',
         onSelect: selected,
       }),
       { stdin: input, stdout: output }
@@ -304,7 +304,7 @@ describe('HarnessPicker', () => {
       createElement(HarnessPicker, {
         cli: { name: 'Saved profile', path: '/home/test/.strands/cli.toml' },
         harnesses: [],
-        workspace: '/work/strands-dev',
+        folderFor: () => '/work/strands-dev',
         onSelect: selected,
       }),
       { stdin: input, stdout: output }
@@ -322,6 +322,65 @@ describe('HarnessPicker', () => {
 
     await vi.waitFor(() => expect(selected).toHaveBeenLastCalledWith({ kind: 'cli' }, '/work/strands-dev-2'))
     expect(selected).toHaveBeenCalledTimes(2)
+  })
+
+  const withPlacement = () => {
+    const input = ttyInput()
+    const output = ttyOutput(100, 36)
+    const frame = captureFrame(output)
+    const selected = vi.fn()
+    const other = { ...harness, name: 'Other harness', entrypoint: '/other/agent.py', root: '/other' }
+    render(
+      createElement(HarnessPicker, {
+        cli: { name: 'Saved profile', path: '/home/test/.strands/cli.toml' },
+        harnesses: [harness, other],
+        folderFor: (choice) =>
+          choice.kind === 'cli'
+            ? '/launch/strands-dev'
+            : choice.kind === 'discovered'
+              ? `${choice.harness.root}/strands-dev`
+              : undefined,
+        newProject: '/launch/strands-workspace',
+        onSelect: selected,
+      }),
+      { stdin: input, stdout: output }
+    )
+    return { input, text: () => frame().join('\n'), selected, other }
+  }
+
+  it('shouldPrefillTheFolderNextToEachHarnessWhenTheUserSelectsIt', async () => {
+    const { input, text, selected, other } = withPlacement()
+    await vi.waitFor(() => expect(text()).toContain('Workspace: /launch/strands-dev'))
+    input.write('\u001b[B')
+    await vi.waitFor(() => expect(text()).toContain('Workspace: /project/strands-dev'))
+    input.write('\u001b[B')
+    await vi.waitFor(() => expect(text()).toContain('Workspace: /other/strands-dev'))
+    input.write('\r')
+
+    await vi.waitFor(() => expect(text()).toContain('Workspace folder: /other/strands-dev'))
+    input.write('\r')
+
+    await vi.waitFor(() =>
+      expect(selected).toHaveBeenCalledWith({ kind: 'discovered', harness: other }, '/other/strands-dev')
+    )
+  })
+
+  it('shouldCreateInTheLaunchFolderWithoutAFolderStepWhenTheNewHarnessHasNoFolder', async () => {
+    const { input, text, selected } = withPlacement()
+    await vi.waitFor(() => expect(text()).toContain('Select a harness'))
+    for (const _ of [1, 2, 3]) input.write('\u001b[B')
+    await vi.waitFor(() => expect(text()).toContain('Creates /launch/strands-workspace from your saved profile.'))
+    input.write('\r')
+    await vi.waitFor(() =>
+      expect(text()).toContain('Creates /launch/strands-workspace with the agent and its strands-dev folder.')
+    )
+    expect(text()).toContain('Enter create')
+    input.write('\r')
+
+    await vi.waitFor(() =>
+      expect(selected).toHaveBeenCalledWith({ kind: 'create', name: 'new-harness', language: 'typescript' })
+    )
+    expect(text()).not.toContain('Choose a workspace folder')
   })
 
   const createForm = async () => {

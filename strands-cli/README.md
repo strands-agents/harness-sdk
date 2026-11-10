@@ -97,26 +97,39 @@ Creation errors stay in the picker so you can retry without restarting the CLI.
 Discovery reads the current folder and any explicit search roots. It does not execute source or follow symbolic links.
 It skips dependency folders, build output, private state, and copied harness libraries.
 
-When the launch directory has no workspace, the picker asks for the workspace folder after you select a harness.
-The folder field starts with `strands-dev/` in the launch directory or in the `--workspace` folder. You can edit the path before you continue.
-A relative path starts from the launch directory. Esc in the folder step goes back to the harness list.
+When the launch directory has no workspace, the picker asks for the workspace folder after you select an existing harness.
+The folder field starts with `strands-dev/` in the folder of the selected project. For example, `~/agents/support/agent.py` gives `~/agents/support/strands-dev/`.
+For a harness that already has a workspace, the field starts with that workspace folder.
+When `strands-dev/` contains a different agent, the field starts with the next unused name.
+
+For the Base CLI, the field starts next to its saved project. When the Base CLI has only a saved profile, the field starts in the launch directory.
+You can edit the path before you continue. A relative path starts from the launch directory. Esc in the folder step goes back to the harness list.
 After you go back from a failed setup, the field starts with the next unused name, for example `strands-dev-2/`.
+
+**Create a new harness** does not ask for a folder. Dev creates the project in `strands-workspace/` in the launch directory.
+The workspace of the new project is `strands-workspace/strands-dev/`. When `strands-workspace/` exists, dev uses the next unused name, for example `strands-workspace-2/`.
 
 Dev creates `strands-dev/` inside the path that you type or give to `--workspace`.
 Dev uses the path as it is when the path ends in `strands-dev` or `strands-dev-N`, or when the path is already a workspace.
 For example, `--workspace ~/my-agents` gives the workspace `~/my-agents/strands-dev/`.
+With `--workspace`, the folder field of each choice starts in that folder. Then a new harness goes into `agent/` inside the workspace.
 
 The workspace folder must be new or empty, or it must be the existing workspace of the selected agent.
 A workspace named `strands-dev` reopens from its parent folder or from inside it.
 To reopen a workspace with a different name, run `strands dev` inside it, or give its folder to `--workspace`.
-`--agent` and `--create` do not show the picker. They use `strands-dev/` in the launch directory or in the `--workspace` folder.
+
+`--agent` and `--create` do not show the picker. `--agent` uses `strands-dev/` in the folder of the agent project.
+`--create typescript` and `--create python` create `strands-workspace/` in the launch directory. `--create cli` uses the Base CLI folder.
+With `--workspace`, the two flags use that folder.
 
 Initialization records the persistent agent in `.config` and installs one independent copy under `tmp/`.
 An existing workspace reopens with its recorded initial copy instead of creating another one. `--agent` selects another entrypoint for one launch without changing the manifest.
 Without a terminal, select an existing workspace, an entrypoint, or a creation option explicitly.
 `strands dev init` prepares the workspace and exits without a model request.
 
-New agents use the same project exporter and dependency installer as exported agents. Their persistent project lives in `agent/` inside the dev workspace.
+New agents use the same project exporter and dependency installer as exported agents.
+A new agent from the picker is in `strands-workspace/` in the launch directory, and its workspace is inside that project.
+With `--workspace`, or for a Base CLI that has only a saved profile, the new project is in `agent/` inside the workspace.
 Selecting an existing agent records its project path without copying or regenerating its source.
 Base CLI uses the saved source project when one exists. Otherwise, dev installs a persistent project from the saved profile.
 Local model modules and static imports are packaged without changing the saved profile. Credentials remain external.
@@ -162,6 +175,25 @@ If an import is missing, check the selected root and declared dependencies. For 
 
 `.config` is a JSON file. It identifies the persistent project and its entrypoint. `tmp/` is a sibling directory, not part of `.config`.
 
+A new harness from the picker has this layout:
+
+```text
+strands-workspace/
+  package.json
+  agent/agent.ts
+  strands-dev/
+    .config
+    tmp/
+      <candidate-id>/
+        baseline/
+        agent/
+        candidate.json
+        reports/
+      initial.json
+```
+
+With `--workspace`, dev puts the new project in `agent/` inside the workspace:
+
 ```text
 strands-dev/
   .config
@@ -169,16 +201,11 @@ strands-dev/
     package.json
     agent/agent.ts
   tmp/
-    <candidate-id>/
-      baseline/
-      agent/
-      candidate.json
-      reports/
-    initial.json
 ```
 
 For Python, the exported project contains its Python entrypoint and dependency files instead.
-The top-level `agent/` exists only when dev creates a new persistent project. Existing projects can live outside the workspace.
+The top-level `agent/` exists only when dev creates a new project inside the workspace. Existing projects can be outside the workspace.
+When the workspace is inside the project, dev keeps the workspace out of candidate copies, `/export`, and the source watcher.
 
 ```json
 {
@@ -194,6 +221,8 @@ The top-level `agent/` exists only when dev creates a new persistent project. Ex
   }
 }
 ```
+
+In `strands-workspace/strands-dev/.config`, `agent.path` is `..`.
 
 `agent.path` resolves relative to `.config`, or can be absolute. `agent.entrypoint` resolves inside that project.
 `origin.kind` is `cli`, `discovered`, or `created`. Optional source metadata records where the binding came from.

@@ -31,10 +31,10 @@ import { resolveSkillPaths } from '../../agent/skills.js'
 import { DEFAULT_STREAM_PRESENTATION } from './stream-presentation.js'
 import { errorMessage } from '../../terminal/text.js'
 import { PythonVoiceSession } from '../../agent/voice.js'
-import { importAgentProject } from '../../project/import.js'
+import { importAgentProject, type ImportedAgentProject } from '../../project/import.js'
 import { PythonBackend, type PythonOptions } from '../../project/python.js'
 import { TypescriptBackend, type TypescriptInit } from '../../project/typescript-backend.js'
-import { readDevWorkspace } from '../../dev/workspace.js'
+import { readDevWorkspace, type DevWorkspace } from '../../dev/workspace.js'
 import {
   createInteractiveRuntime,
   type CreateInteractiveRuntimeOptions,
@@ -62,6 +62,11 @@ async function restoreSessionNames(
   }
   return { ...names, agentName: conversation.agentName }
 }
+
+const nestedWorkspace = (project: ImportedAgentProject, workspace: DevWorkspace | undefined): string[] =>
+  workspace?.directory && workspace.directory !== project.root && containsPath(project.root, workspace.directory)
+    ? [workspace.directory]
+    : []
 
 export async function createTypescriptChat(
   path: string,
@@ -150,7 +155,9 @@ export async function createTypescriptChat(
             project,
             backend.name,
             language,
-            backend.privatePaths === null ? null : [backend.sessionDirectory, ...backend.privatePaths],
+            backend.privatePaths === null
+              ? null
+              : [backend.sessionDirectory, ...backend.privatePaths, ...nestedWorkspace(project, devWorkspace)],
             destination,
             output
           ),
@@ -278,11 +285,7 @@ export async function createTypescriptChat(
               return [
                 backend.sessionDirectory,
                 ...(backend.privatePaths ?? []),
-                ...(devWorkspace?.directory &&
-                devWorkspace.directory !== project.root &&
-                containsPath(project.root, devWorkspace.directory)
-                  ? [devWorkspace.directory]
-                  : []),
+                ...nestedWorkspace(project, devWorkspace),
               ].map((path) => resolve(backend.cwd, path))
             }),
         reloadProject: (conversationId, paths): void =>
@@ -348,7 +351,15 @@ export async function createPythonChat(
       awsProfile: awsProfileSelection(config, requestSetup, undefined, project.entrypoint),
       project,
       exportAgentProject: (language, destination, output): Promise<string | undefined> => {
-        return exportSourceProject(project, backend.name, language, backend.privatePaths, destination, output)
+        const privatePaths = backend.privatePaths
+        return exportSourceProject(
+          project,
+          backend.name,
+          language,
+          privatePaths === null ? null : [...privatePaths, ...nestedWorkspace(project, devWorkspace)],
+          destination,
+          output
+        )
       },
       configurationSource: () => configurationSource(config.snapshot().profile, project),
     })
@@ -427,16 +438,7 @@ export async function createPythonChat(
         voice: new PythonVoiceSession({ cwd: options.cwd ?? process.cwd() }),
         project,
         projectPrivatePaths:
-          privatePaths === null
-            ? null
-            : [
-                ...privatePaths,
-                ...(devWorkspace?.directory &&
-                devWorkspace.directory !== project.root &&
-                containsPath(project.root, devWorkspace.directory)
-                  ? [devWorkspace.directory]
-                  : []),
-              ],
+          privatePaths === null ? null : [...privatePaths, ...nestedWorkspace(project, devWorkspace)],
         reloadProject: (conversationId, paths): void =>
           requestSetup({ agentProject: project.entrypoint, conversationId, reloadedFiles: paths }),
       }
