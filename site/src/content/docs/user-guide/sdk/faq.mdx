@@ -1,0 +1,187 @@
+---
+title: Frequently asked questions
+description: >-
+  Answers to common questions about choosing, building, and running agents with
+  the Strands Harness SDK.
+sidebar:
+  label: FAQ
+tags: [event-loop, tool-authoring, multi-agent, deployment, safety]
+---
+
+This page answers the decisions that come up most often when building with the
+Strands Harness SDK. Follow the links in each answer for configuration and API
+details.
+
+## What is the difference between Strands harness and the Strands Harness SDK?
+
+[Strands harness](../harness/) is a complete agent harness with opinionated,
+overridable defaults. The Strands Harness SDK provides the agent loop and the
+components used to build a harness yourself, including tools, memory, sessions,
+plugins, and interventions.
+
+Start with Strands harness when its defaults fit your application. Start with the
+SDK when you need to choose each component or control the orchestration. Because
+Strands harness is built on the SDK, you can
+[replace individual components later](../harness/composing-with-sdk/).
+
+## Can I keep my current model when moving to Strands?
+
+Usually, when the provider supports the capabilities your agent uses. The agent
+loop is separate from the [model provider](./model-providers/), so you can change
+the provider while keeping the agent's structure. For example, an application
+migrating from OpenAI can keep its OpenAI model and credentials while replacing
+its agent orchestration.
+
+Tool definitions, state handling, and multi-agent behavior still need to match
+the Strands APIs. The [OpenAI migration guide](../migrate/openai/) maps those
+concepts and calls out behavior that does not have a direct one-to-one
+translation.
+
+## Should I use the Python or TypeScript SDK?
+
+Choose the SDK that fits your application's runtime. Both implement the core
+agent loop and support tools, MCP tools, streaming, structured output, sessions,
+and the main multi-agent patterns.
+
+Feature and provider support are not always identical. Bidirectional agents are
+currently Python-only, for example. Use the
+[Python quickstart](./quickstart/python/) or
+[TypeScript quickstart](./quickstart/typescript/), then check the language tabs
+and provider pages for the feature you need.
+
+## How does streaming differ from bidirectional streaming?
+
+Standard [streaming](./streaming/async-iterators/) emits events as one agent
+invocation produces its response. Both SDKs support async iteration, and Python
+also supports callback handlers.
+
+[Bidirectional agents](./bidi/) keep a live, full-duplex session open. They can
+accept new text or audio while the model is still responding, which supports
+interruptible voice and other real-time interactions. Check the
+[Bidi model adapters](./bidi/models/) for the current provider support.
+
+## How do custom tools and MCP tools run?
+
+A [custom tool](./tools/custom-tools/) is application code registered directly
+with an agent. An [MCP tool](./tools/mcp-tools/) is discovered and called through
+an MCP server. Both appear to the model as tools, so an agent can use them
+together.
+
+When one model response requests several tools, both SDKs run them concurrently
+by default. Use a [sequential executor](./tools/executors/) when order matters or
+when the tools share mutable state that is not safe to access concurrently.
+
+## Which multi-agent pattern should I choose?
+
+Choose based on who controls the execution path:
+
+- **Agents as tools:** one coordinator keeps control and calls specialists.
+- **Agent-to-Agent (A2A):** independently deployed agents communicate across
+  service boundaries.
+- **Graph:** you define the allowed nodes and edges, including branches and loops.
+- **Swarm:** agents choose which peer receives the next handoff.
+- **Workflow:** code owns a fixed dependency graph for repeatable work.
+
+See [multi-agent patterns](./multi-agent/multi-agent-patterns/) for examples and
+tradeoffs.
+
+## What is the difference between sessions, memory, and context management?
+
+[Session management](./agents/session-management/) persists conversation and
+agent state so work can resume later. [Long-term memory](./memory/overview/)
+stores selected knowledge that can be recalled across sessions without replaying
+the full conversation.
+
+[Context management](./context-management) controls what remains in the active
+model context during a conversation. Applications often use all three: sessions
+for continuity, memory for durable knowledge, and context management for the
+current model window.
+
+## How do automatic and agentic context management differ?
+
+[Automatic mode](./context-management/built-in-modes/) uses SDK-defined
+thresholds and actions to offload, truncate, or summarize context. A summary can
+still be model-written, but the SDK decides when the strategy runs.
+
+Agentic mode gives the model context-usage information and tools so it can decide
+when and what to compress or protect. It offers more judgment at the cost of
+additional model work. The context manager strategy API, including agentic mode,
+is experimental.
+
+## How does structured output handle invalid results?
+
+[Structured output](./agents/structured-output-behavior/) turns your schema into
+a tool that the model calls. Strands validates the tool input and returns any
+validation errors to the model so it can correct the result.
+
+Set a failed structured-output attempt limit when you need a firm bound. If the
+model reaches it, the invocation ends with a specific limit stop reason instead
+of retrying indefinitely.
+
+## How do hooks, plugins, middleware, and interventions differ?
+
+- [Hooks](./agents/hooks/) respond to lifecycle events on an agent.
+- [Plugins](./plugins/) package reusable behavior and attach it to agents.
+- [Middleware](./agents/middleware/) wraps model or tool execution.
+- [Interventions](./agents/interventions/) inspect an action and can allow,
+  modify, reject, or pause it.
+
+Use hooks for event-driven integration, middleware for execution wrappers,
+plugins for reusable distribution, and interventions for control decisions.
+
+## How do I require approval for risky tool calls?
+
+Add [Human in the Loop](./agents/approve-before-acting/) to pause selected tool
+calls until a person approves or rejects them. Its optional model-based risk
+classifier reduces unnecessary prompts, but the classifier is a judgment, not an
+authorization guarantee.
+
+For a tool that must always prompt, use an explicit tool rule. For a permission
+that no reviewer can override, enforce deterministic authorization such as a
+Cedar policy before the approval step.
+
+## What is the difference between retries and invocation limits?
+
+[Retry strategies](./agents/retry-strategies/) recover individual model calls
+from transient provider failures. Retry conditions, backoff, and defaults differ
+between SDKs and providers, so configure them for the runtime you use.
+
+[Production lifecycle controls](./agents/lifecycle-controls/) bound the complete
+agent invocation. They cap turns, tokens, or failed structured-output attempts,
+support cancellation, and return a stop reason that the application can handle.
+
+## Where can I deploy a Strands agent?
+
+Strands agents run in your application process, so deployment consists of placing
+that application behind an environment-specific entry point. The
+[deployment guides](./deploy/) cover serverless, container, Kubernetes, and
+managed agent-runtime options.
+
+Choose a target based on latency, streaming, state, network access, scaling, and
+isolation requirements. Keep those environment details outside the agent when
+possible so the same agent code can move between targets.
+
+## How do I observe a Strands agent in production?
+
+The SDK emits
+[OpenTelemetry traces and metrics](./observability-evaluation/observability/) and
+integrates with your application's logging. Configure trace and metric exporters
+or a collector, configure your logging handlers, then monitor model calls, tool
+calls, latency, token use, errors, and application outcomes.
+
+Telemetry can contain prompts, messages, and tool input or output. Treat it as
+sensitive data: restrict access and retention, collect only what you need, and
+[redact personal data](./safety-security/pii-redaction/).
+
+## Which security controls must I configure for production?
+
+No single SDK setting makes an agent secure. Treat system prompts as one layer,
+not an enforceable boundary. Combine least-privilege tools, deterministic
+authorization, interventions, validation, guardrails, trusted history, and
+telemetry controls. See [Secure for production](./safety-security/).
+
+Sandboxing is also explicit. In Python and TypeScript on Node.js, omitting the
+`sandbox` setting makes command and file tools use the host process's
+permissions. Configure a [Docker or SSH sandbox](./sandbox/), or a custom backend
+with the guarantees you need. The sandbox interface routes operations, while the
+backend and its environment determine the actual isolation boundary.
