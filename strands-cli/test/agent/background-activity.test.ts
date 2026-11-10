@@ -117,6 +117,7 @@ describe('BackgroundAgentActivityStore', () => {
         type: 'available',
         endpoint: {
           taskId: 'task-0',
+          toolUseId: 'generalist-0',
           name: 'subagent',
           task: 'Review authentication.',
         },

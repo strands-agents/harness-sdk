@@ -64,10 +64,15 @@ export function turnActivity(turn: ChatTurn, awaitingApproval: boolean): TurnAct
   return turn.source === 'peer' ? 'respondingToPeer' : 'working'
 }
 
-export function turnActivityText(activity: TurnActivity, turn: ChatTurn, spinner: string): string {
+export function turnActivityText(
+  activity: TurnActivity,
+  turn: ChatTurn,
+  spinner: string,
+  interruptKey = 'esc'
+): string {
   const { label, animated, interruptible } = TURN_ACTIVITY[activity]
   const subject = activity === 'respondingToPeer' ? `${label} ${turn.peer?.name ?? 'agent'}` : label
-  return `${animated ? spinner : PAUSED_MARKER} ${subject}${interruptible ? ' (esc to interrupt)' : ''}`
+  return `${animated ? spinner : PAUSED_MARKER} ${subject}${interruptible ? ` (${interruptKey} to interrupt)` : ''}`
 }
 
 export function toolActivity(status: ToolStatus, paused: boolean): ToolActivity {
@@ -89,6 +94,7 @@ export function TurnView({
   turn,
   settings,
   active = false,
+  interruptKey,
   approvalToolName,
   expandedToolGroups,
   onToolGroupElement,
@@ -96,6 +102,7 @@ export function TurnView({
   turn: ChatTurn
   settings: ChatSnapshot['settings']
   active?: boolean
+  interruptKey?: string
   /** The tool whose call is paused on an open approval prompt; stills the spinners. */
   approvalToolName?: string
   expandedToolGroups: ReadonlySet<string>
@@ -168,7 +175,7 @@ export function TurnView({
       })}
       {active && turn.status === 'running' && !silentOpening ? (
         <Box flexDirection="column" marginTop={1}>
-          <Text color={theme.warning}>{turnActivityText(activity, turn, spinner)}</Text>
+          <Text color={theme.warning}>{turnActivityText(activity, turn, spinner, interruptKey)}</Text>
           {activity === 'waitingForResponse' ? (
             <Text dimColor>No response for 30s. /exit to close, then resume.</Text>
           ) : null}

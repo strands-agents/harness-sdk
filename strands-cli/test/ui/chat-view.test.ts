@@ -50,6 +50,23 @@ afterEach(() => {
 })
 
 describe('ChatView', () => {
+  it.each([40, 70, 100])('keeps the parent and interrupt shortcuts visible in a subagent chat at %sx24', (width) => {
+    const output = sanitizeTerminalText(
+      renderView({
+        snapshot: snapshot({
+          parentAgent: { id: 'agent-1', name: 'Parent agent with a long descriptive name' },
+          activeTurn: { id: 'child-turn', agentName: 'Child', prompt: 'Work', entries: [], status: 'running' },
+        }),
+        terminalWidth: width,
+        terminalHeight: 24,
+      })
+    )
+    expect(output).toContain('Esc back')
+    expect(output).toContain('ctrl+c to interrupt')
+    expect(output).toContain('Temporary chat')
+    expect(output.split('\n').length).toBeLessThanOrEqual(24)
+  })
+
   it('wraps setup text by terminal cells without splitting graphemes', () => {
     expect(wrapLines('abcd😀x\n你好吗\n\te\u0301\r\n', 5)).toEqual(['abcd', '😀x', '你好', '吗', '    e\u0301', ''])
     expect(wrapLines('ab', 0)).toEqual(['a', 'b'])
@@ -1211,12 +1228,18 @@ describe('ChatView', () => {
     expect(output.indexOf('Background 1/2')).toBeGreaterThan(output.indexOf('Enter to send'))
     expect(output.indexOf('Background 1/2')).toBeLessThan(output.indexOf('/settings'))
     expect(output.split('\n').filter((line) => line.includes('Background'))).toHaveLength(1)
+    const activityRow = output.split('\n').find((line) => line.includes('Background'))!
+    expect(activityRow.trimEnd().endsWith('↓ view')).toBe(true)
+    expect(stringWidth(activityRow)).toBeLessThanOrEqual(width - 2)
     expect(output).toContain('↓ view')
     expect(renderView({ ...props, input: 'Draft' })).toContain('Tab view')
     expect(renderView({ ...props, input: '/he' })).toContain('click view')
     const selected = renderView({ ...props, focusedBackgroundTask: 'task-2' })
     expect(selected).toContain('Background 2/2')
-    expect(selected).toContain('read')
+    expect(selected).toMatch(/read|rea…/)
+    const selectedRow = selected.split('\n').find((line) => line.includes('Background'))!
+    expect(selectedRow.trimEnd().endsWith('←→ Enter Esc')).toBe(true)
+    expect(stringWidth(selectedRow)).toBeLessThanOrEqual(width - 2)
     expect(selected.split('\n').every((line) => stringWidth(line) <= width)).toBe(true)
   })
 

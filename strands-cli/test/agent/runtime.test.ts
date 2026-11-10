@@ -18,6 +18,7 @@ import {
   type Tool,
   type ToolContext,
   type ToolStreamEvent,
+  type ModelStreamEvent,
 } from '@strands-agents/sdk'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { BedrockModel } from '@strands-agents/sdk/models/bedrock'
@@ -59,7 +60,7 @@ import * as providerDiscovery from '../../src/model/discovery.js'
 import * as projectWatch from '../../src/project/watch.js'
 import { parse, stringify } from 'smol-toml'
 
-import { writeSessionWithSavedSystemPrompt } from '../fixtures/saved-system-prompt.js'
+import { SystemPromptRecordingModel, writeSessionWithSavedSystemPrompt } from '../fixtures/saved-system-prompt.js'
 
 let testSessionRoot = ''
 
@@ -1078,6 +1079,101 @@ describe('interactive runtime lifecycle', () => {
       }
     }
   )
+
+  it.each([false, true])('keeps subagent chat and queued follow-ups on the same agent (failure: %s)', async (fail) => {
+    const { createHarness } = await vi.importActual<typeof import('@strands-agents/harness')>('@strands-agents/harness')
+    mocks.createHarness.mockImplementation(createHarness)
+    const model = new SystemPromptRecordingModel()
+    let releaseChild!: () => void
+    const childGate = new Promise<void>((resolve) => {
+      releaseChild = resolve
+    })
+    model.stream = async function* (messages): AsyncIterable<ModelStreamEvent> {
+      const prompt = messages.at(-1)?.content[0]
+      yield { type: 'modelMessageStartEvent', role: 'assistant' }
+      if (prompt?.type === 'textBlock' && prompt.text === 'Dispatch reviewer') {
+        yield {
+          type: 'modelContentBlockStartEvent',
+          start: { type: 'toolUseStart', name: 'subagent', toolUseId: 'dispatch' },
+        }
+        yield {
+          type: 'modelContentBlockDeltaEvent',
+          delta: { type: 'toolUseInputDelta', input: JSON.stringify({ task: 'Review authentication.' }) },
+        }
+        yield { type: 'modelContentBlockStopEvent' }
+        yield { type: 'modelMessageStopEvent', stopReason: 'toolUse' }
+        return
+      }
+      yield { type: 'modelContentBlockStartEvent' }
+      yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: 'Checking routes.' } }
+      if (prompt?.type === 'textBlock' && prompt.text === 'Review authentication.') {
+        await childGate
+        if (fail) throw new Error('Bedrock is unable to process your request.')
+      }
+      yield { type: 'modelContentBlockStopEvent' }
+      yield { type: 'modelMessageStopEvent', stopReason: 'endTurn' }
+    }
+    const controller = await createInteractiveChat({
+      config: CliConfigStore.memory({ mode: 'bypassPermissions' }),
+      agentOptions: { model, skills: false, memory: false, session: false, builtinTools: ['subagent'] },
+    })
+    try {
+      await controller.submit('Dispatch reviewer')
+      await vi.waitFor(() => expect(controller.getSnapshot().tasks).toHaveLength(1))
+      expect(controller.openTask(controller.getSnapshot().tasks[0]!.id)).toBe(true)
+      const childBackend = controller.backend as StrandsChatBackend
+      expect(controller.getSnapshot()).toMatchObject({
+        conversationId: 'task-1',
+        status: 'running',
+      })
+      expect(controller.getSnapshot().panel).toBeUndefined()
+      const parentId = controller.getSnapshot().parentAgent!.id
+      expect(controller.returnToParent()).toBe(true)
+      const parentBackend = controller.backend as StrandsChatBackend
+      const messageAgent = parentBackend.agent.toolRegistry.get('message_agent') as FunctionTool
+      await messageAgent.invoke({ action: 'send', to: 'task-1', message: 'Prioritize expired tokens.' }, {
+        agent: parentBackend.agent,
+      } as unknown as ToolContext)
+      expect(controller.getSnapshot().conversationId).toBe(parentId)
+      expect(controller.openTask(controller.getSnapshot().tasks[0]!.id)).toBe(true)
+      expect(controller.getSnapshot().pendingSteering).toEqual([expect.stringContaining('Prioritize expired tokens.')])
+      const queued = controller.submit('Also check the tests.')
+      expect(controller.getSnapshot().queuedPrompts).toHaveLength(1)
+      releaseChild()
+      await queued
+      await vi.waitFor(() => expect(controller.getSnapshot().completedTurns).toHaveLength(fail ? 3 : 2))
+      expect(controller.getSnapshot().completedTurns.map((turn) => turn.status)).toEqual(
+        fail ? ['error', 'complete', 'complete'] : ['complete', 'complete']
+      )
+      expect(childBackend.agent.messages.map((message) => message.content[0])).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ text: 'Review authentication.' }),
+          expect.objectContaining({ text: expect.stringContaining('Prioritize expired tokens.') }),
+          expect.objectContaining({ text: 'Also check the tests.' }),
+        ])
+      )
+      await controller.submit('/agents')
+      await controller.activatePanelRow(
+        controller.getSnapshot().panel!.rows.find((row) => row.value === 'conversation:agent-1')!
+      )
+      expect(controller.getSnapshot().conversationId).toBe('agent-1')
+      await controller.submit('/agents')
+      await controller.activatePanelRow(
+        controller.getSnapshot().panel!.rows.find((row) => row.value === 'conversation:task-1')!
+      )
+      expect(controller.backend).toBe(childBackend)
+      await controller.submit('One more question.')
+      expect(childBackend.agent.messages.at(-2)?.content[0]).toMatchObject({ text: 'One more question.' })
+      await vi.waitFor(async () => {
+        const captured = await controller.captureConversations()
+        expect(captured.activeId).toBe('agent-1')
+        expect(captured.entries.map(({ id }) => id)).toEqual(['agent-1'])
+      })
+    } finally {
+      releaseChild()
+      await controller.dispose()
+    }
+  })
 
   it.each([['a'.repeat(79) + '👩‍💻tail', 'a'.repeat(79) + '👩‍💻']])(
     'exposes a live background subagent as a temporary task-addressed message endpoint (%s)',

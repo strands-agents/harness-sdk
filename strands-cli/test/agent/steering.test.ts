@@ -47,7 +47,7 @@ describe('LiveSteering', () => {
     ])
   })
 
-  it('preserves the completed response before continuing with steering', async () => {
+  it.each([false, true])('preserves steering across the final model boundary (failure: %s)', async (fail) => {
     const steering = new LiveSteering()
     const requests: string[][] = []
     const consumed = vi.fn()
@@ -72,6 +72,7 @@ describe('LiveSteering', () => {
         yield { type: 'modelMessageStartEvent', role: 'assistant' }
         yield { type: 'modelContentBlockStartEvent' }
         yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: response } }
+        if (fail && this.callCount === 1) throw new Error('Bedrock is unable to process your request.')
         yield { type: 'modelContentBlockStopEvent' }
         yield { type: 'modelMessageStopEvent', stopReason: 'endTurn' }
         yield {
@@ -84,6 +85,16 @@ describe('LiveSteering', () => {
 
     agent = new Agent({ model: new SteeringModel(), interventions: [steering], printer: false })
     steering.observeAgent(agent)
+    if (fail) {
+      await expect(agent.invoke('message 1')).rejects.toThrow('Bedrock is unable to process your request.')
+      expect(consumed).not.toHaveBeenCalled()
+      expect(requests).toHaveLength(1)
+      const undelivered = steering.drain(agent)
+      expect(undelivered).toEqual(['steering message'])
+      await agent.invoke(undelivered.join('\n\n'))
+      expect(requests.at(-1)?.at(-1)).toBe('steering message')
+      return
+    }
     await agent.invoke('message 1')
 
     expect(consumed).toHaveBeenCalledOnce()

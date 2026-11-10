@@ -205,6 +205,7 @@ export interface ChatMcpStartup {
 
 export interface ChatSnapshot {
   conversationId?: string
+  parentAgent?: { id: string; name: string }
   completedTurns: readonly ChatTurn[]
   activeTurn?: ChatTurn
   pendingSteering: readonly string[]
@@ -292,6 +293,7 @@ export interface ChatControllerApi {
   dismissPanel(): boolean
   activatePanelRow(row: ChatPanelRow): Promise<boolean>
   openTask(taskId: string): boolean
+  returnToParent?(): boolean
   openSkillDetail(name: string): boolean
   openMcpDetail(name: string): boolean
   retryMcpServer(name: string): Promise<boolean>

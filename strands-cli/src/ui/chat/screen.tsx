@@ -198,6 +198,10 @@ export function ChatApp({
   const [expandedToolGroups, setExpandedToolGroups] = useState<ReadonlySet<string>>(new Set())
   const editorRef = useRef(editor)
   const attachmentsRef = useRef(attachments)
+  const conversationDrafts = useRef(
+    new Map<string | undefined, { editor: EditorState; attachments: readonly ChatAttachment[] }>()
+  )
+  const editorConversation = useRef(snapshot.conversationId)
   const attachmentWorkRef = useRef({ pending: Promise.resolve() })
   const pendingInputRef = useRef<InputQueue | undefined>(undefined)
   const inputCommitRef = useRef<{ revision: number; resolve: (() => void) | undefined }>({
@@ -264,6 +268,18 @@ export function ChatApp({
     attachmentsRef.current = next
     setAttachmentState(next)
   }, [])
+  useLayoutEffect(() => {
+    if (editorConversation.current === snapshot.conversationId) return
+    conversationDrafts.current.set(editorConversation.current, {
+      editor: editorRef.current,
+      attachments: attachmentsRef.current,
+    })
+    editorConversation.current = snapshot.conversationId
+    const draft = conversationDrafts.current.get(snapshot.conversationId)
+    setEditor(draft?.editor ?? emptyEditor())
+    setAttachments(draft?.attachments ?? [])
+    setTranscriptScroll(0)
+  }, [snapshot.conversationId, setEditor, setAttachments])
   const clearAttachments = useCallback((): void => {
     attachmentWorkRef.current = { pending: Promise.resolve() }
     setAttachments([])
@@ -1294,7 +1310,9 @@ export function ChatApp({
         const task = tasks.find((candidate) => candidate.id === viewPropsRef.current.focusedBackgroundTask) ?? tasks[0]
         if (task) controller.openTask(task.id)
       } else if (footerAction) {
-        if (footerAction === 'update' && availableUpdate) {
+        if (footerAction === 'parent') {
+          controller.returnToParent?.()
+        } else if (footerAction === 'update' && availableUpdate) {
           startupUpdatePrompt.current = false
           setUpdatePromptVersion(availableUpdate)
         } else {
@@ -2008,6 +2026,7 @@ export function ChatApp({
         setDismissedSuggestions(currentEditor.input)
         return
       }
+      if (key.escape && snapshot.parentAgent && controller.returnToParent?.()) return
       if (suggestions.length > 0) {
         const current = Math.min(suggestionSelectionRef.current, suggestions.length - 1)
         const next = moveSelection(current, key, suggestions.length, suggestions.length)

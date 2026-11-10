@@ -2,7 +2,7 @@ import { createElement } from 'react'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-import { Agent, type AgentStreamEvent } from '@strands-agents/sdk'
+import { Agent } from '@strands-agents/sdk'
 import { AgentSkills, Skill } from '@strands-agents/sdk/vended-plugins/skills'
 import { render, captureFrame, mouseInputSequence, ttyInput, ttyOutput } from '../fixtures/terminal.js'
 
@@ -10,7 +10,6 @@ import { ChatApp } from '../../src/ui/chat/screen.js'
 import { ChatController } from '../../src/ui/chat/controller.js'
 import { type ChatPermissionRequest, type ChatTask } from '../../src/agent/types.js'
 import { AgentMessaging } from '../../src/agent/messaging.js'
-import { BackgroundAgentActivityStore } from '../../src/agent/background.js'
 import { ConversationManager } from '../../src/ui/chat/conversations.js'
 import { AgentSkillsRuntime } from '../../src/agent/skills.js'
 import { idleBackend } from '../fixtures/chat-backend.js'
@@ -1017,34 +1016,43 @@ describe('TUI mouse input', () => {
     await vi.waitFor(() => expect(controller.getSnapshot().panel).toBeUndefined())
   })
 
-  it('opens live delegates from the background row and agent cards without losing the composer draft', async () => {
+  it('opens interactive subagent chats from the background row and agent cards while preserving each draft', async () => {
     const input = ttyInput()
     const output = ttyOutput(100, 24)
     const frame = captureFrame(output)
-    const activity = new BackgroundAgentActivityStore()
-    activity.onStart({ name: 'Reviewer', task: 'Review authentication.', toolUseId: 'dispatch' })
-    activity.linkTask('review', 'dispatch')
-    let taskListener!: (tasks: readonly ChatTask[]) => void
-    const target = idleBackend()
-    target.watchTasks = (listener) => {
-      taskListener = listener
-      listener([])
-      return () => {}
-    }
-    target.getTaskActivity = (id) => activity.get(id)
-    target.watchTaskActivity = (id, listener) => activity.subscribe(id, listener)
-    const primary = new ChatController(target, { settings: { animations: false } })
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const primary = new ChatController(
+      idleBackend({
+        watchTasks(listener) {
+          listener([{ id: 'review', label: 'Reviewer', status: 'working', source: 'background' }])
+          return () => {}
+        },
+      }),
+      { settings: { animations: false } }
+    )
+    const childBackend = idleBackend()
+    const send = vi.spyOn(childBackend, 'stream')
     const messaging = new AgentMessaging()
     messaging.register({
       id: 'reviewer',
       name: 'Reviewer',
-      description: 'Review authentication.',
       backgroundTask: { id: 'review', ownerId: 'agent-1' },
       status: () => 'working',
       enqueue: () => true,
+      chat: {
+        backend: childBackend,
+        prompt: 'Review authentication.',
+        stream: (async function* () {
+          yield { type: 'textDelta' as const, text: 'Inspecting routes.' }
+          await gate
+          return { stopReason: 'endTurn' }
+        })(),
+      },
     })
     const controller = new ConversationManager(primary, { fork: async () => primary, agentMessaging: messaging })
-    let release: (() => void) | undefined
     const instance = render(createElement(ChatApp, { controller }), {
       stdin: input,
       stdout: output,
@@ -1054,105 +1062,62 @@ describe('TUI mouse input', () => {
       interactive: true,
     })
     try {
-      taskListener([
-        { id: 'review', label: 'Reviewer', status: 'working', source: 'background' },
-        { id: 'read', label: 'Read docs', status: 'queued', source: 'background' },
-      ])
       await instance.waitUntilRenderFlush()
-      input.write('Unsent draft')
-      await vi.waitFor(() => expect(frame().join('\n')).toContain('Unsent draft'))
+      input.write('Parent draft')
+      await vi.waitFor(() => expect(frame().join('\n')).toContain('Parent draft'))
       input.write('\t')
       await vi.waitFor(() => expect(frame().join('\n')).toContain('←→ choose · Enter view'))
-      input.write('\u001b[C')
-      await vi.waitFor(() => expect(frame().join('\n')).toContain('Background 2/2'))
       input.write('\r')
-      await vi.waitFor(() =>
-        expect(controller.getSnapshot().panel).toMatchObject({
-          kind: 'detail',
-          body: expect.stringContaining('Read docs'),
-        })
-      )
-      input.write('\u001b')
-      await vi.waitFor(() => expect(frame().join('\n')).toContain('Unsent draft'))
-
-      const background = findText(frame(), 'Background 1/2')
-      input.write(mouseInputSequence(0, background.column, background.row, 'M'))
-      input.write(mouseInputSequence(3, background.column, background.row, 'm'))
-      await vi.waitFor(() => expect(controller.getSnapshot().panel).toMatchObject({ activity: { name: 'Reviewer' } }))
-      activity.onEvent({
-        toolUseId: 'dispatch',
-        event: {
-          type: 'modelStreamUpdateEvent',
-          event: { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: 'Inspecting routes.' } },
-        } as AgentStreamEvent,
+      await vi.waitFor(() => {
+        expect(controller.getSnapshot().conversationId).toBe('reviewer')
+        expect(controller.getSnapshot().panel).toBeUndefined()
+        expect(frame().join('\n')).toContain('Inspecting routes.')
+        expect(frame().join('\n')).not.toContain('Parent draft')
       })
-      await vi.waitFor(() => expect(frame().join('\n')).toContain('Inspecting routes.'))
-      input.write('\u001b')
-      await vi.waitFor(() => expect(frame().join('\n')).toContain('Unsent draft'))
-      input.write('\r')
-      await vi.waitFor(() => expect(controller.getSnapshot().completedTurns).toHaveLength(1))
-      input.write('\u001b[A')
-      await vi.waitFor(() =>
-        expect(
-          frame()
-            .join('\n')
-            .match(/Unsent draft/g)
-        ).toHaveLength(2)
-      )
-      input.write('\u001b[B')
-      await instance.waitUntilRenderFlush()
-      input.write('\u001b[B')
-      await vi.waitFor(() => expect(frame().join('\n')).toContain('←→ choose · Enter view'))
-      input.write('\r')
-      await vi.waitFor(() => expect(controller.getSnapshot().panel).toMatchObject({ activity: { name: 'Reviewer' } }))
-      input.write('\u001b')
-      await vi.waitFor(() => expect(controller.getSnapshot().panel).toBeUndefined())
-
-      const gate = new Promise<void>((resolve) => {
-        release = resolve
-      })
-      target.stream = async function* (prompt) {
-        yield { type: 'textDelta', text: 'Working.' }
-        if (prompt === 'Queue blocker') await gate
-        return { stopReason: 'endTurn' }
-      }
-      const running = controller.submit('Queue blocker')
-      await vi.waitFor(() => expect(controller.getSnapshot().status).toBe('running'))
-      const queued = controller.submit('Next message')
-      await vi.waitFor(() => expect(frame().join('\n')).toContain('Queued · Next message'))
-      input.write('Draft alongside queue')
-      await instance.waitUntilRenderFlush()
-      input.write('\u001b[Z')
-      await vi.waitFor(() => expect(frame().join('\n')).toContain('←→ choose · Enter view'))
-      input.write('\r')
-      await vi.waitFor(() => expect(controller.getSnapshot().panel).toMatchObject({ activity: { name: 'Reviewer' } }))
-      input.write('\u001b')
-      await vi.waitFor(() => expect(frame().join('\n')).toContain('Draft alongside queue'))
-      expect(controller.getSnapshot().queuedPrompts.map((prompt) => prompt.prompt)).toEqual(['Next message'])
-      release!()
-      await Promise.all([running, queued])
-
+      input.write('Child follow-up')
+      await vi.waitFor(() => expect(frame().join('\n')).toContain('Child follow-up'))
       await controller.submit('/agents')
       await instance.waitUntilRenderFlush()
-      input.write('\t')
+      input.write('\u001b[C')
       await instance.waitUntilRenderFlush()
       input.write('\r')
-      await vi.waitFor(() => expect(controller.getSnapshot().panel).toMatchObject({ activity: { name: 'Reviewer' } }))
-      input.write('\u001b')
-      await vi.waitFor(() => expect(controller.getSnapshot().panel?.kind).toBe('agents'))
+      await vi.waitFor(() => {
+        expect(controller.getSnapshot().conversationId).toBe('agent-1')
+        expect(frame().join('\n')).toContain('Parent draft')
+        expect(frame().join('\n')).not.toContain('Child follow-up')
+      })
+      const background = findText(frame(), 'Background ·')
+      input.write(mouseInputSequence(0, background.column, background.row, 'M'))
+      input.write(mouseInputSequence(3, background.column, background.row, 'm'))
+      await vi.waitFor(() => expect(frame().join('\n')).toContain('Child follow-up'))
+      input.write('\r')
+      await vi.waitFor(() => expect(controller.getSnapshot().queuedPrompts).toHaveLength(1))
+      release()
+      await vi.waitFor(() => expect(send).toHaveBeenCalledWith('Child follow-up'))
+      await vi.waitFor(() => expect(controller.getSnapshot().completedTurns).toHaveLength(2))
+      await controller.submit('/agents')
       await instance.waitUntilRenderFlush()
       input.write('\r')
-      await vi.waitFor(() => expect(controller.getSnapshot().panel).toMatchObject({ activity: { name: 'Reviewer' } }))
-      activity.onComplete({ toolUseId: 'dispatch' })
-      messaging.unregister('reviewer')
-      await vi.waitFor(() =>
-        expect(controller.getSnapshot().panel).toMatchObject({ activity: { status: 'completed' } })
-      )
+      await vi.waitFor(() => {
+        expect(controller.getSnapshot().conversationId).toBe('reviewer')
+        expect(controller.getSnapshot().panel).toBeUndefined()
+      })
+      input.write('Another child draft')
+      await vi.waitFor(() => expect(frame().join('\n')).toContain('Another child draft'))
       input.write('\u001b')
-      await vi.waitFor(() => expect(controller.getSnapshot().panel?.kind).toBe('agents'))
-      expect(controller.getSnapshot().panel!.rows).toHaveLength(1)
+      await vi.waitFor(() => {
+        expect(controller.getSnapshot().conversationId).toBe('agent-1')
+        expect(frame().join('\n')).toContain('Parent draft')
+      })
+      controller.openTask('review')
+      await vi.waitFor(() => expect(frame().join('\n')).toContain('Another child draft'))
+      const back = findText(frame(), 'Esc back')
+      input.write(mouseInputSequence(0, back.column, back.row, 'M'))
+      input.write(mouseInputSequence(3, back.column, back.row, 'm'))
+      await vi.waitFor(() => expect(controller.getSnapshot().conversationId).toBe('agent-1'))
+      expect(primary.getSnapshot().completedTurns).toHaveLength(0)
     } finally {
-      release?.()
+      release()
       await controller.dispose()
     }
   })

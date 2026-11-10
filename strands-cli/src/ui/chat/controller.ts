@@ -55,7 +55,7 @@ import {
 import type { ChatSkillsRuntime, SkillActivation, SkillInfo } from '../../agent/skills.js'
 import type { McpServerInfo } from '../../agent/mcp.js'
 import { mcpFailure } from '../mcp-diagnostics.js'
-import { type PeerMessage } from '../../agent/messaging.js'
+import { peerMessagePrompt, type PeerMessage } from '../../agent/messaging.js'
 import { modelDisplayName } from '../../model/metadata.js'
 import { modelControlErrorMessage } from '../../model/selection.js'
 import { presentChatStream, type StreamPresentationOptions } from './stream-presentation.js'
@@ -416,6 +416,10 @@ export class ChatController implements ChatControllerApi {
     }
   }
 
+  follow(prompt: string, stream: AsyncGenerator<ChatEvent, ChatRunResult, undefined>): Promise<ChatTurn> {
+    return this._runStream(prompt, stream, 'model')
+  }
+
   private async _discoverSkillNames(): Promise<void> {
     if (!this._skills || this._backend.protocol !== 'strands') {
       return
@@ -491,7 +495,7 @@ export class ChatController implements ChatControllerApi {
     return this._executeSubmission(submission)
   }
 
-  enqueuePeerMessage(message: PeerMessage): boolean {
+  enqueuePeerMessage(message: PeerMessage, steerWhileRunning = false): boolean {
     if (
       this._closed ||
       this._resourceChanging ||
@@ -500,6 +504,7 @@ export class ChatController implements ChatControllerApi {
     ) {
       return false
     }
+    if (steerWhileRunning && this._queueLiveSteering(peerMessagePrompt(message))) return true
     this._pendingSubmissions.push({
       kind: 'peer',
       id: `queued-${this._nextSubmission++}`,

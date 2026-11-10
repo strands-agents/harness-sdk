@@ -454,6 +454,7 @@ function ChatViewContent({
               <TranscriptViewport
                 header={startupView}
                 turns={snapshot.completedTurns}
+                interruptKey={snapshot.parentAgent ? 'ctrl+c' : 'esc'}
                 {...(snapshot.panel?.kind === 'permission'
                   ? { approvalToolName: snapshot.panel.request.toolName }
                   : {})}
@@ -515,7 +516,7 @@ function ChatViewContent({
         <Box
           position="absolute"
           marginTop={Math.max(0, terminalHeight - expandedCommandDeckHeight)}
-          width="100%"
+          width={editorWidth}
           height={expandedCommandDeckHeight}
           flexDirection="column"
           backgroundColor={canvas}
@@ -603,6 +604,25 @@ function ChatViewContent({
             >
               {composerPanel ? panelView : null}
             </PromptEditor>
+            {snapshot.parentAgent ? (
+              <Box height={1} flexShrink={0} paddingX={1} justifyContent="space-between">
+                <Box ref={(element) => onActionElement?.('parent', element)} flexShrink={1} marginRight={1}>
+                  <Box flexShrink={1} overflow="hidden">
+                    <Text color={hoveredAction === 'parent' ? accent : foreground} wrap="truncate-end">
+                      ← {snapshot.parentAgent.name}
+                    </Text>
+                  </Box>
+                  <Box flexShrink={0}>
+                    <Text color={hoveredAction === 'parent' ? accent : foreground}> · Esc back</Text>
+                  </Box>
+                </Box>
+                <Box flexShrink={0}>
+                  <Text dimColor>
+                    {terminalWidth >= 90 ? 'Temporary chat · closes on setup or exit' : 'Temporary chat'}
+                  </Text>
+                </Box>
+              </Box>
+            ) : null}
             {backgroundTask ? (
               <BackgroundTaskStatus
                 task={backgroundTask}

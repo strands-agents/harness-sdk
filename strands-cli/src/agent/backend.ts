@@ -55,6 +55,7 @@ interface StrandsChatBackendOptions {
   permissions?: {
     broker: ToolPermissionBroker
     policy: CedarPermissions
+    shared?: boolean
   }
   steering?: LiveSteering
   contextScope?: string
@@ -72,6 +73,7 @@ export class StrandsChatBackend implements ChatBackend {
   private readonly _taskActivity: BackgroundAgentActivityStore | undefined
   private readonly _dispose: (() => void | Promise<void>) | undefined
   private readonly _permissions: ToolPermissionBroker | undefined
+  private readonly _sharedPermissions: boolean
   private readonly _permissionPolicy: CedarPermissions | undefined
   private readonly _steering: LiveSteering | undefined
   private readonly _contextScope: string | undefined
@@ -89,6 +91,7 @@ export class StrandsChatBackend implements ChatBackend {
     this._contextWindow = options.contextWindow
     this._taskActivity = options.taskActivity
     this._permissions = options.permissions?.broker
+    this._sharedPermissions = options.permissions?.shared ?? false
     this._permissionPolicy = options.permissions?.policy
     this._steering = options.steering
     this._contextScope = options.contextScope
@@ -476,7 +479,7 @@ export class StrandsChatBackend implements ChatBackend {
 
   cancel(): void {
     this._shell.cancel()
-    this._permissions?.cancelAll()
+    this._permissions?.cancelAll(this._sharedPermissions ? this._runtime.agent : undefined)
     this._runtime.cancel()
   }
 
@@ -485,7 +488,8 @@ export class StrandsChatBackend implements ChatBackend {
     clearInterval(this._taskTimer)
     this._taskTimer = undefined
     this._taskListeners.clear()
-    this._permissions?.dispose()
+    if (this._sharedPermissions) this._permissions?.cancelAll(this._runtime.agent)
+    else this._permissions?.dispose()
     this._runtime.cancel()
     await this._dispose?.()
   }

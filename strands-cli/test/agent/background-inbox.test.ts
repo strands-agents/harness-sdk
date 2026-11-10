@@ -1,4 +1,4 @@
-import type { LocalAgent } from '@strands-agents/sdk'
+import type { InvokeArgs, LocalAgent } from '@strands-agents/sdk'
 import { describe, expect, it, vi } from 'vitest'
 
 import { BackgroundAgentInbox } from '../../src/agent/messaging.js'
@@ -59,8 +59,7 @@ describe('BackgroundAgentInbox', () => {
   it('stays available when final-boundary steering resumes the child', async () => {
     type FinalEvent = {
       agent: LocalAgent
-      _getResult(): { stopReason: string }
-      resume: string | undefined
+      resume: InvokeArgs | undefined
     }
     const inbox = new BackgroundAgentInbox()
     const callbacks: ((event: FinalEvent) => void)[] = []
@@ -84,7 +83,6 @@ describe('BackgroundAgentInbox', () => {
     expect(inbox.send('task-1', 'Check the final result.')).toBe(true)
     const event: FinalEvent = {
       agent: child,
-      _getResult: () => ({ stopReason: 'endTurn' }),
       resume: undefined,
     }
 
@@ -93,7 +91,9 @@ describe('BackgroundAgentInbox', () => {
     }
     await Promise.resolve()
 
-    expect(event.resume).toBe('Check the final result.')
+    expect(event.resume).toMatchObject([
+      { role: 'user', content: [{ type: 'textBlock', text: 'Check the final result.' }] },
+    ])
     expect(inbox.send('task-1', 'One more check.')).toBe(true)
   })
 })

@@ -6,7 +6,7 @@ import { contextColor, metadataPlacements } from './presentation.js'
 import { Text, useTheme } from './theme.js'
 
 export const PanelHelpContext = createContext<ChatPanel | undefined>(undefined)
-export type FooterAction = 'settings' | 'setup' | 'help' | 'update'
+export type FooterAction = 'settings' | 'setup' | 'help' | 'update' | 'parent'
 
 export function panelModelId(panel: ChatPanel | undefined, row?: ChatPanelRow): string | undefined {
   if (panel?.kind !== 'models' || panel.awsProfile?.open) return undefined

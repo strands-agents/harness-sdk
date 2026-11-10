@@ -1,14 +1,14 @@
 import { ConversationVoice } from './voice.js'
 import { makePanel } from './panel-state.js'
-import type {
+import {
   ChatController,
-  ChatControllerApi,
-  NewChatPanel,
-  ChatPanel,
-  ChatPanelRow,
-  ChatSnapshot,
-  ChatSettings,
-  ChatVoiceStore,
+  type ChatControllerApi,
+  type NewChatPanel,
+  type ChatPanel,
+  type ChatPanelRow,
+  type ChatSnapshot,
+  type ChatSettings,
+  type ChatVoiceStore,
 } from './controller.js'
 import type { ChatConversations, ChatInput, ChatTurn } from '../../agent/types.js'
 import { parseCommandInvocation, unquote, type CommandAssistance } from './commands.js'
@@ -132,6 +132,7 @@ export class ConversationManager implements ChatControllerApi {
       )
     }
     this._stopAgentMessaging = this._agentMessaging?.subscribe(() => {
+      this._attachDelegates()
       if (this._panel?.kind === 'agents' && this._panel.title === AGENTS_PANEL_TITLE) {
         this._openAgentsPanel(false)
       }
@@ -170,9 +171,10 @@ export class ConversationManager implements ChatControllerApi {
     }
     const entries: ChatConversations['entries'][number][] = []
     for (const { id, description, controller } of this._conversations.values()) {
+      if (this._agentMessaging?.getEndpoint(id)?.backgroundTask) continue
       entries.push({ id, title: controller.name, description, conversation: await controller.captureConversation() })
     }
-    return { activeId: this._activeId, entries }
+    return { activeId: entries.some(({ id }) => id === this._activeId) ? this._activeId : entries[0]!.id, entries }
   }
 
   pauseVoiceInput(): () => void {
@@ -401,11 +403,21 @@ export class ConversationManager implements ChatControllerApi {
 
   openTask(taskId: string, ownerId = this._activeId): boolean {
     if (this._snapshot.panel?.kind === 'permission') return false
+    const delegate = this._agentMessaging
+      ?.list()
+      .find((endpoint) => endpoint.backgroundTask?.id === taskId && endpoint.backgroundTask.ownerId === ownerId)
+    if (delegate && this._conversations.has(delegate.id)) return this._switchConversation(delegate.id)
     const owner = this._conversations.get(ownerId)
     if (!owner?.controller.openTask(taskId)) return false
     this._taskOwnerId = ownerId
     this._emit()
     return true
+  }
+
+  returnToParent(): boolean {
+    if (this._snapshot.panel?.kind === 'permission') return false
+    const ownerId = this._agentMessaging?.getEndpoint(this._activeId)?.backgroundTask?.ownerId
+    return ownerId !== undefined && this._switchConversation(ownerId)
   }
 
   openSkillDetail(name: string): boolean {
@@ -551,7 +563,7 @@ export class ConversationManager implements ChatControllerApi {
   private _addConversation(id: string, title: string, controller: ChatController, description: string): void {
     const endpointId = controller.peerEndpointId ?? id
     controller.setAgentName(title)
-    this._nextConversation = Math.max(this._nextConversation, Number(endpointId.slice('agent-'.length)) + 1)
+    this._nextConversation = Math.max(this._nextConversation, (Number(endpointId.slice('agent-'.length)) || 0) + 1)
     const streamSpokenReply = this._voice.followConversation(controller, () => endpointId === this._activeId)
     const record: ConversationRecord = {
       id: endpointId,
@@ -572,6 +584,29 @@ export class ConversationManager implements ChatControllerApi {
     }
     this._conversations.set(endpointId, record)
     this._agentMessaging?.rename(endpointId, controller.name)
+  }
+
+  private _attachDelegates(): void {
+    for (const info of this._agentMessaging?.list() ?? []) {
+      if (this._conversations.has(info.id)) continue
+      const endpoint = this._agentMessaging?.getEndpoint(info.id)
+      if (!endpoint?.chat) continue
+      const owner = this._conversations.get(info.backgroundTask?.ownerId ?? '')
+      if (!owner) continue
+      endpoint.chat.attached = true
+      const controller = new ChatController(endpoint.chat.backend, {
+        peerEndpointId: info.id,
+        settings: owner.controller.getSnapshot().settings,
+        runtime: {
+          cwd: owner.controller.getSnapshot().runtime.cwd,
+          version: owner.controller.getSnapshot().runtime.version,
+        },
+      })
+      endpoint.status = (): 'working' | 'idle' => (controller.busy ? 'working' : 'idle')
+      endpoint.enqueue = (message): boolean => controller.enqueuePeerMessage(message, true)
+      this._addConversation(info.id, info.name, controller, info.description ?? `Subagent of ${owner.controller.name}`)
+      void controller.follow(endpoint.chat.prompt, endpoint.chat.stream)
+    }
   }
 
   private _openAgentNameInput(id: string): boolean {
@@ -627,6 +662,7 @@ export class ConversationManager implements ChatControllerApi {
       return false
     }
     this._activeId = id
+    this._taskOwnerId = undefined
     this._panel = undefined
     this._emit()
     return true
@@ -711,9 +747,12 @@ export class ConversationManager implements ChatControllerApi {
       : undefined
     const panel = activePanel?.kind === 'permission' ? activePanel : (taskPanel ?? this._panel ?? activePanel)
     const afterTurnId = active.activeTurn?.id ?? active.completedTurns.at(-1)?.id
+    const ownerId = this._agentMessaging?.getEndpoint(this._activeId)?.backgroundTask?.ownerId
+    const parent = ownerId ? this._conversations.get(ownerId) : undefined
     return {
       ...base,
       conversationId: this._activeId,
+      ...(parent ? { parentAgent: { id: parent.id, name: parent.controller.name } } : {}),
       ...(panel ? { panel } : {}),
       notices:
         this._opening === 'fork' && !this._closed && !this._disposed

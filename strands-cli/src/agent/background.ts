@@ -1,16 +1,19 @@
 import {
   type Agent,
   type AgentStreamEvent,
+  type AgentResult,
   type Tool,
   type ToolContext,
   type ToolResultContent,
   type ToolStreamGenerator,
 } from '@strands-agents/sdk'
 import type { HarnessAgentOptions } from '@strands-agents/harness'
+import { PassThrough } from 'node:stream'
 import { sanitizeTerminalText, sanitizeTerminalValue } from '../terminal/text.js'
 import { isRecord } from '../values.js'
 import { type BackgroundAgentInbox } from './messaging.js'
-import { type ChatEntry, type ChatTask } from './types.js'
+import { type ChatEntry, type ChatTask, type ChatEvent, type ChatRunResult } from './types.js'
+import { projectAgentEvent as projectChatEvent, projectAgentResult } from './events.js'
 
 type BackgroundTextEntry = Omit<Extract<ChatEntry, { type: 'reasoning' | 'assistant' }>, 'id'>
 
@@ -41,6 +44,7 @@ export class BackgroundAgentActivityStore {
   private readonly _toolTasks = new Map<string, string>()
   private readonly _taskListeners = new Map<string, Set<(activity: BackgroundAgentActivity | undefined) => void>>()
   private readonly _inbox: BackgroundAgentInbox | undefined
+  private readonly _streams = new Map<string, PassThrough>()
 
   constructor(inbox?: BackgroundAgentInbox) {
     this._inbox = inbox
@@ -68,18 +72,21 @@ export class BackgroundAgentActivityStore {
       return
     }
     projectAgentEvent(activity, event.event)
+    this._streams.get(toolUseId)?.write(event.event)
     this._notifyTool(toolUseId)
   }
 
   readonly onComplete = (event: { toolUseId: string }): void => {
     const toolUseId = sanitizeTerminalText(event.toolUseId)
     this._settle(toolUseId, 'completed')
+    this._streams.get(toolUseId)?.end()
     this._inbox?.complete(toolUseId)
   }
 
   readonly onError = (event: { toolUseId: string; error: Error }): void => {
     const toolUseId = sanitizeTerminalText(event.toolUseId)
     this._settle(toolUseId, 'failed', event.error.message)
+    this._streams.get(toolUseId)?.destroy(event.error)
     this._inbox?.complete(toolUseId)
   }
 
@@ -147,6 +154,24 @@ export class BackgroundAgentActivityStore {
 
   runAgentScope<T>(toolUseId: string, operation: () => Promise<T>): Promise<T> {
     return this._inbox?.run(toolUseId, operation) ?? operation()
+  }
+
+  async *follow(toolUseId: string, agent: Agent): AsyncGenerator<ChatEvent, ChatRunResult, undefined> {
+    const stream = new PassThrough({ objectMode: true })
+    this._streams.set(toolUseId, stream)
+    let result: AgentResult | undefined
+    try {
+      for await (const event of stream as AsyncIterable<AgentStreamEvent>) {
+        if ('agent' in event && event.agent !== agent) continue
+        if (event.type === 'agentResultEvent') result = event.result
+        yield* projectChatEvent(event)
+      }
+      if (!result) throw new Error('Subagent ended without a result.')
+      return projectAgentResult(agent, result)
+    } finally {
+      this._streams.delete(toolUseId)
+      stream.destroy()
+    }
   }
 
   private _settle(toolUseId: string, status: 'completed' | 'failed', error?: string): void {

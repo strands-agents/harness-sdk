@@ -1,6 +1,6 @@
 import { createHarness, type HarnessAgentConfig, type HarnessAgentOptions } from '@strands-agents/harness'
 import { resolveInterventions } from '@strands-agents/harness/internal'
-import type { Agent, Message, Tool } from '@strands-agents/sdk'
+import { Agent, type Message, type Tool } from '@strands-agents/sdk'
 import { Offload } from '@strands-agents/sdk/experimental'
 import { ContextInjector } from '@strands-agents/sdk/vended-plugins'
 import { AgentSkills } from '@strands-agents/sdk/vended-plugins/skills'
@@ -262,7 +262,7 @@ export async function createInteractiveRuntime(options: CreateInteractiveRuntime
         const endpointId = backgroundEndpointIds.get(event.taskId)
         if (endpointId) {
           backgroundEndpointIds.delete(event.taskId)
-          agentMessaging.unregister(endpointId)
+          if (!agentMessaging.getEndpoint(endpointId)?.chat?.attached) agentMessaging.unregister(endpointId)
         }
         return
       }
@@ -270,6 +270,19 @@ export async function createInteractiveRuntime(options: CreateInteractiveRuntime
       const endpointId = `task-${nextBackgroundEndpoint++}`
       backgroundEndpointIds.set(endpoint.taskId, endpointId)
       const summary = endpoint.task.replace(/\s+/g, ' ').trim()
+      const childBackend = endpoint.agent
+        ? new StrandsChatBackend(new AgentModelRuntime(endpoint.agent, { sessionDir: sessionDirectory }), {
+            steering: liveSteering,
+            permissions: { broker: permissionBroker, policy: cedarPermissions, shared: true },
+            contextScope: workspace,
+            dispose: (): void => agentMessaging.unregister(endpointId),
+          })
+        : undefined
+      if (childBackend && endpoint.agent) {
+        backends.add(childBackend)
+        agents.add(endpoint.agent)
+        agentMessaging.bindAgent(endpoint.agent, endpointId)
+      }
       agentMessaging.register({
         id: endpointId,
         name: endpoint.name,
@@ -277,6 +290,15 @@ export async function createInteractiveRuntime(options: CreateInteractiveRuntime
         backgroundTask: { id: endpoint.taskId, ownerId: peerEndpointId },
         status: () => 'working',
         enqueue: (message): boolean => backgroundInbox.send(endpoint.taskId, peerMessagePrompt(message)),
+        ...(childBackend && endpoint.agent
+          ? {
+              chat: {
+                backend: childBackend,
+                prompt: endpoint.task,
+                stream: backgroundActivity.follow(endpoint.toolUseId, endpoint.agent),
+              },
+            }
+          : {}),
       })
     })
     const workspace = resolve(request.workspace)
@@ -322,7 +344,10 @@ export async function createInteractiveRuntime(options: CreateInteractiveRuntime
       },
     })
     const liveSteering: LiveSteering = new LiveSteering((candidate) => {
-      return backgroundInbox.observeAgent((prompt): boolean => liveSteering.enqueue(candidate, prompt))
+      return backgroundInbox.observeAgent(
+        (prompt): boolean => liveSteering.enqueue(candidate, prompt),
+        candidate instanceof Agent ? candidate : undefined
+      )
     })
     const controllerOptions: HarnessAgentOptions = {
       ...withSession(baseAgentOptions, { id: sessionId, dir: sessionDirectory }),

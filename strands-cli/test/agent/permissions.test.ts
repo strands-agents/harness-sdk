@@ -12,6 +12,25 @@ import { formatPermissionPanelBody } from '../../src/ui/chat/panel-state.js'
 import { sanitizeTerminalText } from '../../src/terminal/text.js'
 
 describe('CedarPermissions', () => {
+  it('cancels one agent without denying another agent’s pending permission', async () => {
+    const broker = new ToolPermissionBroker()
+    const child = {}
+    const parent = {}
+    let active: string | undefined
+    broker.subscribe((request) => {
+      active = request?.id
+    })
+    const first = broker.request('shell', {}, { agent: child })
+    const second = broker.request('write', {}, { agent: parent })
+    const third = broker.request('shell', {}, { agent: child })
+    broker.cancelAll(child)
+    await expect(first).resolves.toEqual({ type: 'deny' })
+    await expect(third).resolves.toEqual({ type: 'deny' })
+    expect(broker.respond(active!, 'allow-once')).toBe(true)
+    await expect(second).resolves.toEqual({ type: 'allow-once' })
+    broker.dispose()
+  })
+
   it('saves the new mode before releasing a pending tool approval', async () => {
     const config = CliConfigStore.memory()
     let finishSaving!: () => void

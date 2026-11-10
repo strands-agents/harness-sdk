@@ -164,7 +164,11 @@ export function composerStatusLayout(
   const backgroundHeight = Number(
     snapshot.tasks.some((task) => task.source === 'background' && isActiveTask(task.status))
   )
-  return { height: height + backgroundHeight, viewportHeight, maxScroll: rows - viewportHeight }
+  return {
+    height: height + backgroundHeight + Number(snapshot.parentAgent !== undefined),
+    viewportHeight,
+    maxScroll: rows - viewportHeight,
+  }
 }
 
 export function sectionedPanelSidebarWidth(panelWidth: number, preferredWidth = Infinity): number {
