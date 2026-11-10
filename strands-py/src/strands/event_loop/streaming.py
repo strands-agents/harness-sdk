@@ -308,14 +308,25 @@ def handle_content_block_stop(state: dict[str, Any]) -> dict[str, Any]:
             current_tool_use["input"] = {}
         else:
             try:
-                current_tool_use["input"] = json.loads(raw_input)
+                parsed_input = json.loads(raw_input)
             except ValueError:
                 logger.warning(
                     "tool_name=<%s>, raw_input=<%s> | failed to parse tool input json, defaulting to empty dict",
                     current_tool_use.get("name", "unknown"),
                     raw_input[:200] if isinstance(raw_input, str) else "",
                 )
-                current_tool_use["input"] = {}
+                parsed_input = {}
+            if not isinstance(parsed_input, dict):
+                # Tool input must be a JSON object. Providers occasionally send null, a list or a
+                # bare scalar for a zero-argument tool; pass those on as empty input instead of
+                # failing the call with a validation error.
+                logger.warning(
+                    "tool_name=<%s>, raw_input=<%s> | tool input json is not an object, defaulting to empty dict",
+                    current_tool_use.get("name", "unknown"),
+                    raw_input[:200] if isinstance(raw_input, str) else "",
+                )
+                parsed_input = {}
+            current_tool_use["input"] = parsed_input
 
         tool_use_id = current_tool_use.get("toolUseId", "")
         tool_use_name = current_tool_use.get("name", "")

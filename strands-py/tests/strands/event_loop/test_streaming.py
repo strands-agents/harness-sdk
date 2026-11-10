@@ -729,6 +729,30 @@ def test_handle_content_block_stop_logs_warning_on_malformed_json(mock_logger):
     assert "{invalid json}" in str(call_args)
 
 
+@pytest.mark.parametrize(
+    "raw_input",
+    ["null", "[1]", "5", '"x"', "true", "NaN"],
+)
+@unittest.mock.patch("strands.event_loop.streaming.logger")
+def test_handle_content_block_stop_defaults_non_object_input_to_empty_dict(mock_logger, raw_input):
+    """Tool input that is valid JSON but not an object is treated as empty input."""
+    state = {
+        "content": [],
+        "current_tool_use": {"toolUseId": "123", "name": "zero_arg_tool", "input": raw_input},
+        "text": "",
+        "reasoningText": "",
+        "citationsContent": [],
+        "redactedContent": b"",
+    }
+
+    updated_state = strands.event_loop.streaming.handle_content_block_stop(state)
+
+    tool_use = updated_state["content"][0]["toolUse"]
+    assert tool_use["input"] == {}
+    mock_logger.warning.assert_called_once()
+    assert "not an object" in str(mock_logger.warning.call_args)
+
+
 @unittest.mock.patch("strands.event_loop.streaming.logger")
 def test_handle_content_block_stop_no_warning_for_empty_input(mock_logger):
     """Zero-argument tools with empty input should not log a warning."""
