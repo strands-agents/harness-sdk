@@ -26,7 +26,8 @@ async function runPtySmoke(
   shellMode?: 'command' | 'interrupt',
   startupTyping = false,
   frog = false,
-  resize = false
+  resize = false,
+  exitMode?: 'exit' | 'exception' | 'rejection'
 ): Promise<PtyResult & { output: string }> {
   const driver = fileURLToPath(new URL('./fixtures/tui-pty-driver.py', import.meta.url))
   const loader = fileURLToPath(new URL('./fixtures/strands-cli-routing-source-loader.mjs', import.meta.url))
@@ -45,6 +46,7 @@ async function runPtySmoke(
         ...(startupTyping ? { STRANDS_CLI_TEST_STARTUP_TYPING: 'true' } : {}),
         ...(frog ? { STRANDS_CLI_TEST_FROG_MODE: 'true' } : {}),
         ...(resize ? { STRANDS_CLI_TEST_RESIZE: 'true' } : {}),
+        ...(exitMode ? { STRANDS_CLI_TEST_EXIT_MODE: exitMode } : {}),
       },
     }
   )
@@ -66,9 +68,23 @@ function expectRestoredTerminal(result: PtyResult & { output: string }): void {
   expect(result.output.indexOf(enterAlternateScreen)).toBeLessThan(result.output.indexOf(leaveAlternateScreen))
   expect(result.output.indexOf(enableMouse)).toBeLessThan(result.output.indexOf(disableMouse))
   expect(result.output.slice(result.output.lastIndexOf(leaveAlternateScreen))).not.toContain(enableMouse)
+  expect(result.output.lastIndexOf('\u001b[?1002h')).toBeLessThan(result.output.lastIndexOf(disableMouse))
+  expect(result.output.lastIndexOf('\u001b[?1003h')).toBeLessThan(result.output.lastIndexOf(disableMouse))
 }
 
 describe.skipIf(process.platform === 'win32')('TUI PTY lifecycle', () => {
+  // Mouse reporting must stay disabled after exit: https://github.com/strands-agents/harness-sdk/issues/4961
+  it.each([
+    ['exit', 23],
+    ['exception', 1],
+    ['rejection', 1],
+  ] as const)('restores the terminal after an abrupt %s', async (mode, status) => {
+    const result = await runPtySmoke(false, undefined, false, false, false, mode)
+
+    expect(result.returnCode).toBe(status)
+    expectRestoredTerminal(result)
+  })
+
   it('resizes the real PTY without blanking and restores the terminal after /exit', async () => {
     const result = await runPtySmoke(false, undefined, false, false, true)
     const frames = Buffer.from(result.resizeTranscript, 'base64').toString()
