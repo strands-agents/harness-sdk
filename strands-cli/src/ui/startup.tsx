@@ -18,6 +18,31 @@ import { type AppearanceSettings } from './setup/steps.js'
 
 const LOCKUP_SLIDE_DURATION_MS = 400
 
+export function startupHeaderLayout(
+  terminalWidth: number,
+  availableHeight: number,
+  reservedRightWidth = 0
+): {
+  maxWidth: number
+  lockupWidth: number
+  lockupHeight: number
+  fullLockup: boolean
+  paddingTop: number
+  headerHeight: number
+} {
+  const maxWidth = Math.max(1, terminalWidth - 2)
+  const artworkMaxWidth = Math.max(1, maxWidth - reservedRightWidth)
+  // Sized to the artwork so the column centers it.
+  const lockupWidth = frogStartupWidth(artworkMaxWidth, frogStartupHeight(artworkMaxWidth, availableHeight))
+  const lockupHeight = frogStartupHeight(lockupWidth, availableHeight)
+  const fullLockup =
+    lockupWidth >= FROG_FULL_LOCKUP_MIN_WIDTH && lockupHeight >= frogStartupHeight(lockupWidth, Infinity)
+  const paddingTop = startupLockupTopPadding(fullLockup, lockupHeight)
+  // The hopping frog needs more headroom than the resting artwork.
+  const headerHeight = fullLockup ? 24 : paddingTop + lockupHeight + 1
+  return { maxWidth, lockupWidth, lockupHeight, fullLockup, paddingTop, headerHeight }
+}
+
 export function StartupView({
   terminalWidth,
   availableHeight,
@@ -43,16 +68,11 @@ export function StartupView({
 }): ReactElement {
   const palette = useTheme()
   const frogOptions = { colorMode: palette.mode }
-  const maxWidth = Math.max(1, terminalWidth - 2)
-  const artworkMaxWidth = Math.max(1, maxWidth - reservedRightWidth)
-  // Sized to the artwork so the column centers it.
-  const lockupWidth = frogStartupWidth(artworkMaxWidth, frogStartupHeight(artworkMaxWidth, availableHeight))
-  const lockupHeight = frogStartupHeight(lockupWidth, availableHeight)
-  const fullLockup =
-    lockupWidth >= FROG_FULL_LOCKUP_MIN_WIDTH && lockupHeight >= frogStartupHeight(lockupWidth, Infinity)
-  const paddingTop = startupLockupTopPadding(fullLockup, lockupHeight)
-  // The hopping frog needs more headroom than the resting artwork.
-  const headerHeight = fullLockup ? 24 : paddingTop + lockupHeight + 1
+  const { maxWidth, lockupWidth, lockupHeight, fullLockup, paddingTop, headerHeight } = startupHeaderLayout(
+    terminalWidth,
+    availableHeight,
+    reservedRightWidth
+  )
   const introElapsedMs = useStartupIntro(introStartedAt, animate && fullLockup)
   const frogHitbox = frogStartupHitbox(lockupWidth, lockupHeight)
   const brandElapsedMs = useBrandAnimationFrame(

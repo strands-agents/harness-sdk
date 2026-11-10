@@ -50,7 +50,8 @@ describe('dev startup screen', () => {
       await vi.waitFor(() => expect(frames().join('\n')).toContain('Harness selection inside the TUI'))
       expect(events.indexOf('screen')).toBeLessThan(events.indexOf('prepare'))
       expect(renderApp).toHaveBeenCalledOnce()
-      expect(frames().join('\n')).toContain('/settings')
+      expect(frames().join('\n')).toContain('╚════╝')
+      expect(frames().join('\n')).not.toContain('/settings')
       expect(factory).not.toHaveBeenCalled()
     } finally {
       release()

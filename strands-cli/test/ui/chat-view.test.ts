@@ -1,6 +1,6 @@
 import chalk from 'chalk'
 import { createElement, type ReactElement } from 'react'
-import { renderToString } from 'ink'
+import { Box, Text, renderToString } from 'ink'
 import stringWidth from 'string-width'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { snapshot } from '../fixtures/chat-snapshot.js'
@@ -2964,6 +2964,42 @@ describe('ChatView', () => {
       expect(error).not.toContain('Viewing')
       expect(error).not.toContain('Esc to dismiss')
     }
+  })
+
+  const startupFrame = (terminalHeight: number): string[] =>
+    sanitizeTerminalText(
+      renderView(
+        {
+          snapshot: snapshot(),
+          terminalWidth: 120,
+          terminalHeight,
+          startupContent: createElement(Box, { height: 20 }, createElement(Text, {}, 'Startup choice')),
+        },
+        { columns: 120 }
+      )
+    ).split('\n')
+  const brandAnimationRows = 24
+
+  it.each([
+    [50, 1],
+    [70, 11],
+  ])('shouldSpaceStartupContentEvenlyBelowTheBrandAnimationWhenTheTerminalHas%sRows', (terminalHeight, gap) => {
+    const frame = startupFrame(terminalHeight)
+    const top = frame.findIndex((line) => line.includes('╭'))
+    const bottom = frame.findIndex((line) => line.includes('╰'))
+
+    expect(top - brandAnimationRows).toBe(gap)
+    expect(frame.length - 1 - bottom).toBe(gap)
+    expect(frame.join('\n')).not.toContain('/settings')
+  })
+
+  it('shouldKeepStartupContentOneRowAboveTheBottomWhenTheBrandAnimationLeavesNoRoom', () => {
+    const frame = startupFrame(30)
+    const bottom = frame.findIndex((line) => line.includes('╰'))
+
+    expect(frame).toHaveLength(30)
+    expect(frame.length - 1 - bottom).toBe(1)
+    expect(frame.join('\n')).toContain('Startup choice')
   })
 })
 

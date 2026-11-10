@@ -31,7 +31,7 @@ import { PromptEditor, promptContentSize, CommandPalette } from './prompt.js'
 import { ResourcePanel } from '../panels/panel.js'
 import { AgentsPanel, agentGridLayout, clampAgentGridViewport } from '../panels/agents.js'
 import { FROG_ANIMATION_HEIGHT, FrogEasterEgg, type FrogVariant, VOICE_FROG_HEIGHT, VoiceFrog } from '../frog.js'
-import { StartupView, useBrandAnimation } from '../startup.js'
+import { StartupView, startupHeaderLayout, useBrandAnimation } from '../startup.js'
 import { TranscriptViewport } from './transcript.js'
 import { PARTY_FRAME_INTERVAL_MS, usePartyFrame, useSpinner, FadeIn } from '../animation.js'
 import { Box, Text, ThemeProvider, useTheme } from '../theme.js'
@@ -293,6 +293,11 @@ function ChatViewContent({
   const startupReservedRightWidth = wideConfigurationDock ? configDockWidth + CONFIG_DOCK_GAP : 0
   // The transcript reflows into the space left of the dock instead of running underneath it.
   const transcriptReservedRightWidth = hasActivity ? startupReservedRightWidth : 0
+  const { headerHeight: startupHeaderHeight } = startupHeaderLayout(
+    terminalWidth,
+    terminalHeight - commandDeckHeight,
+    startupReservedRightWidth
+  )
   // A stable header element keeps the memoized transcript from re-rendering on spinner ticks.
   const { settings } = snapshot
   const frogBrandElapsedMs = useBrandAnimation(frogBrandAnimationId, settings.animations)
@@ -444,28 +449,6 @@ function ChatViewContent({
             ) : (
               startupView
             )}
-          </Box>
-        ) : null}
-        {startupContent ? (
-          <Box
-            position="absolute"
-            width="100%"
-            height="100%"
-            flexDirection="column"
-            justifyContent="flex-end"
-            paddingX={1}
-            paddingBottom={1}
-          >
-            <Box
-              flexDirection="column"
-              borderStyle="round"
-              borderColor={accent}
-              backgroundColor={canvas}
-              paddingX={1}
-              paddingY={1}
-            >
-              {startupContent}
-            </Box>
           </Box>
         ) : null}
         {showConfigurationDock && liveConfiguration ? (
@@ -620,6 +603,31 @@ function ChatViewContent({
           />
         </Box>
       </FadeIn>
+      {startupContent ? (
+        <Box position="absolute" width={editorWidth} height={terminalHeight} flexDirection="column">
+          <Box flexBasis={startupHeaderHeight} flexShrink={1} />
+          <Box
+            flexGrow={1}
+            flexShrink={0}
+            flexDirection="column"
+            justifyContent="center"
+            paddingX={1}
+            paddingY={1}
+            backgroundColor={canvas}
+          >
+            <Box
+              flexDirection="column"
+              borderStyle="round"
+              borderColor={accent}
+              backgroundColor={canvas}
+              paddingX={1}
+              paddingY={1}
+            >
+              {startupContent}
+            </Box>
+          </Box>
+        </Box>
+      ) : null}
       {snapshot.panel && snapshot.panel.kind !== 'config' && !composerPanel ? (
         <FadeIn key={snapshot.panel.kind} animate={settings.animations} background={canvas}>
           {panelView}
