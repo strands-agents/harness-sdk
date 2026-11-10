@@ -35,7 +35,7 @@ import {
   type PackagedSource,
 } from './packaging.js'
 import { portableConfig, validateNoConfigSecrets } from './portability.js'
-import { agentProjectSource } from './source.js'
+import { agentProjectSource, type AgentEntrypointPlacement } from './source.js'
 
 export type AgentProjectOutput = 'zip' | 'directory'
 
@@ -123,6 +123,14 @@ export async function exportSavedAgent(
   )
 }
 
+interface ProjectTarget {
+  destination: string
+  baseDir: string
+  overwrite: boolean
+  output: AgentProjectOutput
+  placement: AgentEntrypointPlacement
+}
+
 export async function writeAgentProject(
   profile: HarnessAgentConfig,
   language: AgentProjectLanguage,
@@ -132,9 +140,40 @@ export async function writeAgentProject(
   overwrite = true,
   output: AgentProjectOutput = 'zip'
 ): Promise<string> {
+  return writeProjectFiles(profile, language, skillPaths, {
+    destination,
+    baseDir,
+    overwrite,
+    output,
+    placement: 'agent-folder',
+  })
+}
+
+export async function writeRootAgentProject(
+  profile: HarnessAgentConfig,
+  language: AgentProjectLanguage,
+  skillPaths: readonly string[],
+  destination: string,
+  baseDir = process.cwd()
+): Promise<string> {
+  return writeProjectFiles(profile, language, skillPaths, {
+    destination,
+    baseDir,
+    overwrite: false,
+    output: 'directory',
+    placement: 'project-root',
+  })
+}
+
+async function writeProjectFiles(
+  profile: HarnessAgentConfig,
+  language: AgentProjectLanguage,
+  skillPaths: readonly string[],
+  { destination, baseDir, overwrite, output, placement }: ProjectTarget
+): Promise<string> {
   const { config, skills, sources } = prepareAgentProject(profile, language, skillPaths, baseDir)
   const privatePaths = resolvePrivatePaths(profilePrivatePaths(profile), baseDir)
-  const files = language === 'typescript' ? typescriptProject(config) : pythonProject(config)
+  const files = language === 'typescript' ? typescriptProject(config, placement) : pythonProject(config, placement)
   const zip = new ZipFile()
   let bytes = 0
   const addBytes = (size: number, source: string): void => {
@@ -383,9 +422,15 @@ function validateLocalDependencies(root: string, excluded: ReadonlySet<string>):
   visit(root)
 }
 
-function typescriptProject(config: HarnessAgentConfig): Record<string, string> {
+const ENTRYPOINT_FOLDER: Record<AgentEntrypointPlacement, string> = {
+  'agent-folder': 'agent/',
+  'project-root': '',
+}
+
+function typescriptProject(config: HarnessAgentConfig, placement: AgentEntrypointPlacement): Record<string, string> {
+  const atRoot = placement === 'project-root'
   return {
-    'agent/agent.ts': agentProjectSource(config, 'typescript'),
+    [`${ENTRYPOINT_FOLDER[placement]}agent.ts`]: agentProjectSource(config, 'typescript', placement),
     'package.json': `${JSON.stringify(
       {
         name: slug(config.name),
@@ -422,28 +467,28 @@ function typescriptProject(config: HarnessAgentConfig): Record<string, string> {
           rootDir: '.',
           outDir: 'dist',
         },
-        include: ['agent/**/*'],
+        include: atRoot ? ['agent.ts', 'agent/**/*'] : ['agent/**/*'],
       },
       null,
       2
     )}\n`,
-    'build.mjs': `import { cpSync } from 'node:fs'
+    'build.mjs': `import { cpSync${atRoot ? ', existsSync' : ''} } from 'node:fs'
 
-cpSync('agent', 'dist/agent', {
+${atRoot ? "if (existsSync('agent')) " : ''}cpSync('agent', 'dist/agent', {
   recursive: true,
   filter: (source) => !/\\.[cm]?[jt]sx?$/.test(source),
 })
 `,
     '.env.example': environmentTemplate(config),
     '.gitignore': 'node_modules/\ndist/\n.env\n.env.local\n.agent/memory/\n.agent/sessions/\n',
-    'README.md': projectReadme(config, 'typescript'),
+    'README.md': projectReadme(config, 'typescript', placement),
   }
 }
 
-function pythonProject(config: HarnessAgentConfig): Record<string, string> {
+function pythonProject(config: HarnessAgentConfig, placement: AgentEntrypointPlacement): Record<string, string> {
   return {
-    'agent/agent.py': agentProjectSource(config, 'python'),
-    'agent/__init__.py': '',
+    [`${ENTRYPOINT_FOLDER[placement]}agent.py`]: agentProjectSource(config, 'python', placement),
+    ...(placement === 'agent-folder' ? { 'agent/__init__.py': '' } : {}),
     ...(Object.keys(config.dependencies.typescript).length > 0
       ? {
           'package.json': `${JSON.stringify(
@@ -467,7 +512,7 @@ requires-python = ">=3.10"
 `,
     '.env.example': environmentTemplate(config),
     '.gitignore': '.venv/\nnode_modules/\n__pycache__/\n.env\n.env.local\n.agent/memory/\n.agent/sessions/\n',
-    'README.md': projectReadme(config, 'python'),
+    'README.md': projectReadme(config, 'python', placement),
   }
 }
 
@@ -535,8 +580,15 @@ function environmentTemplate(config: HarnessAgentConfig): string {
     .join('')
 }
 
-function projectReadme(config: HarnessAgentConfig, language: AgentProjectLanguage): string {
+function projectReadme(
+  config: HarnessAgentConfig,
+  language: AgentProjectLanguage,
+  placement: AgentEntrypointPlacement
+): string {
   const python = language === 'python'
+  const entrypoint = `${ENTRYPOINT_FOLDER[placement]}agent.${python ? 'py' : 'ts'}`
+  const pythonModule = placement === 'project-root' ? 'agent' : 'agent.agent'
+  const compiledEntrypoint = `./dist/${ENTRYPOINT_FOLDER[placement]}agent.js`
   const install = python
     ? ['python3 -m venv .venv', 'source .venv/bin/activate', 'python -m pip install -r requirements.txt']
     : ['npm install']
@@ -570,7 +622,7 @@ function projectReadme(config: HarnessAgentConfig, language: AgentProjectLanguag
     'strands --agent . --env-file .env',
     '```',
     '',
-    `Edit \`agent/${python ? 'agent.py' : 'agent.ts'}\` to change the agent. The CLI imports the agent defined there.`,
+    `Edit \`${entrypoint}\` to change the agent. The CLI imports the agent defined there.`,
     'Each new launch imports the code again; there is no separate configuration snapshot.',
     'Packaged tools, skills, plugins, subagents, MCP servers, and policies live under `agent/`.',
     'The harness library is a normal dependency installed from the registry; `.agent/` holds generated sessions and memory.',
@@ -583,7 +635,7 @@ function projectReadme(config: HarnessAgentConfig, language: AgentProjectLanguag
     'and import it from your application entrypoint:',
     '',
     python ? '```python' : '```typescript',
-    python ? 'from agent.agent import agent' : "import { agent } from './dist/agent/agent.js'",
+    python ? `from ${pythonModule} import agent` : `import { agent } from '${compiledEntrypoint}'`,
     python ? 'result = agent("Hello")' : 'const result = await agent.invoke("Hello")',
     '```',
     '',

@@ -4,8 +4,20 @@ import { webFetchModelModule } from '../agent/tools.js'
 import { isRecord } from '../values.js'
 import type { AgentProjectLanguage } from './import.js'
 
-export function agentProjectSource(config: HarnessAgentConfig, language: AgentProjectLanguage): string {
+export type AgentEntrypointPlacement = 'agent-folder' | 'project-root'
+
+const PROJECT_ROOT_EXPRESSIONS: Record<AgentEntrypointPlacement, { python: string; typescript: string }> = {
+  'agent-folder': { python: 'Path(__file__).parent.parent', typescript: "new URL('..', import.meta.url)" },
+  'project-root': { python: 'Path(__file__).parent', typescript: "new URL('.', import.meta.url)" },
+}
+
+export function agentProjectSource(
+  config: HarnessAgentConfig,
+  language: AgentProjectLanguage,
+  placement: AgentEntrypointPlacement = 'agent-folder'
+): string {
   const python = language === 'python'
+  const projectRoot = PROJECT_ROOT_EXPRESSIONS[placement]
   const literal = (value: unknown): string => sourceLiteral(value, python)
   let usesProjectPath = false
   const projectPath = (value: string): string => {
@@ -188,13 +200,13 @@ export function agentProjectSource(config: HarnessAgentConfig, language: AgentPr
       '',
       ...(python
         ? [
-            'project_root = Path(__file__).parent.parent',
+            `project_root = ${projectRoot.python}`,
             '',
             'def project_path(path: str) -> str:',
             '    return str(project_root / path)',
           ]
         : [
-            "const projectRoot = fileURLToPath(new URL('..', import.meta.url))",
+            `const projectRoot = fileURLToPath(${projectRoot.typescript})`,
             '',
             'function projectPath(path: string): string {',
             '  return resolve(projectRoot, path)',
@@ -216,8 +228,8 @@ export function agentProjectSource(config: HarnessAgentConfig, language: AgentPr
     lines.push(
       '',
       python
-        ? `extensions = harness_agent_kwargs_from_config(${literal(modules)}, Path(__file__).parent.parent)`
-        : `const extensions = await harnessAgentOptionsFromConfig(defineHarnessAgentConfig(${literal(modules)}), fileURLToPath(new URL('..', import.meta.url)))`
+        ? `extensions = harness_agent_kwargs_from_config(${literal(modules)}, ${projectRoot.python})`
+        : `const extensions = await harnessAgentOptionsFromConfig(defineHarnessAgentConfig(${literal(modules)}), fileURLToPath(${projectRoot.typescript}))`
     )
   }
   lines.push('', python ? 'agent = create_harness(' : 'export const agent = await createHarness({')

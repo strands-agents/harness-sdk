@@ -98,16 +98,17 @@ Discovery reads the current folder and any explicit search roots. It does not ex
 It skips dependency folders, build output, private state, and copied harness libraries.
 
 When the launch directory has no workspace, the picker asks for the workspace folder after you select an existing harness.
-The folder field starts with `strands-dev/` in the folder of the selected project. For example, `~/agents/support/agent.py` gives `~/agents/support/strands-dev/`.
-For a harness that already has a workspace, the field starts with that workspace folder.
-When `strands-dev/` contains a different agent, the field starts with the next unused name.
+The folder field starts with `strands-dev/` in the folder that contains the harness file. For example, `~/agents/support/agent.py` gives `~/agents/support/strands-dev/`.
+The rule is the same when the file is in a source folder: `~/repo/src/agent.ts` gives `~/repo/src/strands-dev/`.
+When that `strands-dev/` contains a different agent, the field starts with the next unused name, for example `strands-dev-2/`.
 
-For the Base CLI, the field starts next to its saved project. When the Base CLI has only a saved profile, the field starts in the launch directory.
+For the Base CLI, the field starts next to its saved source file. When the Base CLI has only a saved profile, the field starts in the launch directory.
 You can edit the path before you continue. A relative path starts from the launch directory. Esc in the folder step goes back to the harness list.
 After you go back from a failed setup, the field starts with the next unused name, for example `strands-dev-2/`.
 
 **Create a new harness** does not ask for a folder. Dev creates the project in `strands-workspace/` in the launch directory.
-The workspace of the new project is `strands-workspace/strands-dev/`. When `strands-workspace/` exists, dev uses the next unused name, for example `strands-workspace-2/`.
+The harness file is `strands-workspace/agent.py` or `strands-workspace/agent.ts`, and its workspace is `strands-workspace/strands-dev/`.
+When `strands-workspace/` exists, dev uses the next unused name, for example `strands-workspace-2/`.
 
 Dev creates `strands-dev/` inside the path that you type or give to `--workspace`.
 Dev uses the path as it is when the path ends in `strands-dev` or `strands-dev-N`, or when the path is already a workspace.
@@ -118,7 +119,7 @@ The workspace folder must be new or empty, or it must be the existing workspace 
 A workspace named `strands-dev` reopens from its parent folder or from inside it.
 To reopen a workspace with a different name, run `strands dev` inside it, or give its folder to `--workspace`.
 
-`--agent` and `--create` do not show the picker. `--agent` uses `strands-dev/` in the folder of the agent project.
+`--agent` and `--create` do not show the picker. `--agent` uses `strands-dev/` in the folder that contains the agent file, or the ZIP.
 `--create typescript` and `--create python` create `strands-workspace/` in the launch directory. `--create cli` uses the Base CLI folder.
 With `--workspace`, the two flags use that folder.
 
@@ -179,8 +180,8 @@ A new harness from the picker has this layout:
 
 ```text
 strands-workspace/
+  agent.ts
   package.json
-  agent/agent.ts
   strands-dev/
     .config
     tmp/
@@ -203,8 +204,9 @@ strands-dev/
   tmp/
 ```
 
-For Python, the exported project contains its Python entrypoint and dependency files instead.
-The top-level `agent/` exists only when dev creates a new project inside the workspace. Existing projects can be outside the workspace.
+For Python, the project contains `agent.py` and its dependency files instead.
+In `strands-workspace/`, an `agent/` folder holds packaged tools, skills, and policies. Dev makes this folder only when the saved profile has such files.
+The top-level `agent/` in a workspace exists only when dev creates a new project inside the workspace. Existing projects can be outside the workspace.
 When the workspace is inside the project, dev keeps the workspace out of candidate copies, `/export`, and the source watcher.
 
 ```json

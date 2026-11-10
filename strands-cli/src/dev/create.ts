@@ -166,7 +166,12 @@ export const createDevProject = async (options: CreateDevProjectOptions): Promis
   options.signal?.throwIfAborted()
   const input = await profileProject(options.snapshot, options.cwd, options.language)
   const root = await newProjectFolder(resolve(options.cwd))
-  const project = await installAgentProject({ destination: root, deferDependencies: true, ...input })
+  const project = await installAgentProject({
+    destination: root,
+    deferDependencies: true,
+    placement: 'project-root',
+    ...input,
+  })
   try {
     options.signal?.throwIfAborted()
     if (!options.deferDependencies) await installProjectDependencies(project)

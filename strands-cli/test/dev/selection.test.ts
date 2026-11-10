@@ -61,6 +61,19 @@ describe('base harness selection', () => {
     expect(base.workspace).toBe(join(original.root, 'strands-dev'))
   })
 
+  it('shouldPlaceTheBaseCliWorkspaceNextToItsSourceFileWhenTheFileIsInASourceFolder', async () => {
+    const root = await temporaryDirectory()
+    await mkdir(join(root, 'saved/src'), { recursive: true })
+    await writeFile(join(root, 'saved/package.json'), '{"type":"module"}')
+    await writeFile(join(root, 'saved/src/agent.ts'), 'export const agent = {}')
+    const snapshot = CliConfigStore.memory().snapshot()
+    snapshot.agentProject = join(root, 'saved/src/agent.ts')
+
+    const base = await baseHarnessSelection(snapshot, root)
+
+    expect(base.workspace).toBe(join(root, 'saved/src/strands-dev'))
+  })
+
   it('shouldDeduplicatePhysicalPathsWhenAnAliasPointsToTheBaseSource', async () => {
     const root = await temporaryDirectory()
     const original = await project(join(root, 'original'))

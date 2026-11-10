@@ -19,7 +19,7 @@ export const baseHarnessProject = (snapshot: CliConfigSnapshot, cwd: string): Im
   snapshot.agentProject ? importAgentProject(resolve(cwd, expandHome(snapshot.agentProject))) : undefined
 
 export const harnessFolder = (source: string, project: ImportedAgentProject): string =>
-  /\.zip$/iu.test(source) ? dirname(resolve(expandHome(source))) : project.root
+  dirname(/\.zip$/iu.test(source) ? resolve(expandHome(source)) : project.entrypoint)
 
 export const baseHarnessSelection = async (
   snapshot: CliConfigSnapshot,

@@ -1,8 +1,9 @@
 import type { HarnessAgentConfig } from '@strands-agents/harness'
 import { prepareWorkspaceDependencies } from './archive.js'
 import { devFailure } from '../dev/errors.js'
-import { exportSourceProject, writeAgentProject } from './export.js'
+import { exportSourceProject, writeAgentProject, writeRootAgentProject } from './export.js'
 import { importAgentProject, type AgentProjectLanguage, type ImportedAgentProject } from './import.js'
+import type { AgentEntrypointPlacement } from './source.js'
 
 export type ProjectInstallation = {
   destination: string
@@ -11,7 +12,13 @@ export type ProjectInstallation = {
   prepare?: (project: ImportedAgentProject) => Promise<void>
 } & (
   | { source: ImportedAgentProject; name: string; privatePaths: readonly string[] }
-  | { profile: HarnessAgentConfig; language: AgentProjectLanguage; skills: readonly string[]; baseDir: string }
+  | {
+      profile: HarnessAgentConfig
+      language: AgentProjectLanguage
+      skills: readonly string[]
+      baseDir: string
+      placement?: AgentEntrypointPlacement
+    }
 )
 
 export const installProjectDependencies = async (project: ImportedAgentProject): Promise<void> => {
@@ -33,6 +40,8 @@ export const installAgentProject = async (options: ProjectInstallation): Promise
       options.destination,
       'directory'
     )
+  } else if (options.placement === 'project-root') {
+    await writeRootAgentProject(options.profile, options.language, options.skills, options.destination, options.baseDir)
   } else {
     await writeAgentProject(
       options.profile,

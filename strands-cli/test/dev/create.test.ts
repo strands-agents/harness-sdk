@@ -192,7 +192,7 @@ describe('createDevProject', () => {
       const workspace = await createDevProject({ cwd, language, snapshot: snapshot() })
 
       const root = join(cwd, 'strands-workspace')
-      const entrypoint = language === 'python' ? 'agent/agent.py' : 'agent/agent.ts'
+      const entrypoint = language === 'python' ? 'agent.py' : 'agent.ts'
       expect(workspace.root).toBe(root)
       expect(workspace.directory).toBe(join(root, 'strands-dev'))
       expect(workspace.entrypoint).toBe(join(root, entrypoint))
@@ -205,6 +205,8 @@ describe('createDevProject', () => {
       })
       expect(await readDevWorkspace(workspace.directory!)).toEqual(workspace)
       expect(await readdir(cwd)).toEqual(['strands-workspace'])
+      expect(await readdir(root)).toContain(entrypoint)
+      expect(await readdir(root)).not.toContain('agent')
     }
   )
 

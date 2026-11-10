@@ -12,7 +12,7 @@ import { strToU8, unzipSync, zipSync } from 'fflate'
 import * as harness from '@strands-agents/harness'
 import { defineHarnessAgentConfig, harnessAgentOptionsFromConfig } from '@strands-agents/harness'
 
-import { writeAgentProject } from '../../src/project/export.js'
+import { writeAgentProject, writeRootAgentProject } from '../../src/project/export.js'
 import { importAgentProject } from '../../src/project/import.js'
 import { temporaryDirectory, trackTemporaryDirectory } from '../fixtures/tempdir.js'
 
@@ -736,6 +736,64 @@ export const agent = await createHarness({
     await expect(
       writeAgentProject(config, 'typescript', [join(root, 'skills')], join(root, 'agent.zip'))
     ).rejects.toThrow('looks like a credential file')
+  })
+})
+
+describe('root entrypoint projects', () => {
+  it.each(['typescript', 'python'] as const)(
+    'shouldPutTheEntrypointAtTheProjectRootAndKeepPackagedFilesInAgentWhenWritingA%sProject',
+    async (language) => {
+      const root = await temporaryDirectory()
+      const policy = join(root, 'policy.cedar')
+      const skill = join(root, 'skills', 'review')
+      await mkdir(skill, { recursive: true })
+      await writeFile(policy, 'permit(principal, action, resource);')
+      await writeFile(join(skill, 'skill.md'), '# Review')
+      const destination = join(root, 'strands-workspace')
+      const python = language === 'python'
+      const config = defineHarnessAgentConfig({ name: 'Desk', interventions: ['ask', policy] })
+
+      await writeRootAgentProject(config, language, [join(root, 'skills')], destination, root)
+
+      const source = await readFile(join(destination, python ? 'agent.py' : 'agent.ts'), 'utf8')
+      expect(source).toContain(
+        python ? 'project_root = Path(__file__).parent\n' : "fileURLToPath(new URL('.', import.meta.url))"
+      )
+      expect(source).toContain('./agent/policies/0/policy.cedar')
+      expect(await readFile(join(destination, 'agent/policies/0/policy.cedar'), 'utf8')).toBe(
+        'permit(principal, action, resource);'
+      )
+      expect(await readFile(join(destination, 'agent/skills/review/skill.md'), 'utf8')).toBe('# Review')
+      await expect(readFile(join(destination, 'agent', python ? 'agent.py' : 'agent.ts'))).rejects.toMatchObject({
+        code: 'ENOENT',
+      })
+      await expect(readFile(join(destination, 'agent/__init__.py'))).rejects.toMatchObject({ code: 'ENOENT' })
+      expect(importAgentProject(destination)).toMatchObject({
+        root: destination,
+        entrypoint: join(destination, python ? 'agent.py' : 'agent.ts'),
+        language,
+      })
+      const readme = await readFile(join(destination, 'README.md'), 'utf8')
+      expect(readme).toContain(python ? 'Edit `agent.py`' : 'Edit `agent.ts`')
+      expect(readme).toContain(python ? 'from agent import agent' : "from './dist/agent.js'")
+      if (!python) {
+        expect(JSON.parse(await readFile(join(destination, 'tsconfig.json'), 'utf8')).include).toEqual([
+          'agent.ts',
+          'agent/**/*',
+        ])
+        expect(await readFile(join(destination, 'build.mjs'), 'utf8')).toContain("if (existsSync('agent')) cpSync(")
+      }
+    }
+  )
+
+  it('shouldRefuseAnExistingDestinationWhenWritingARootProject', async () => {
+    const root = await temporaryDirectory()
+    const destination = join(root, 'strands-workspace')
+    await mkdir(destination)
+
+    await expect(
+      writeRootAgentProject(defineHarnessAgentConfig({ name: 'Desk' }), 'python', [], destination, root)
+    ).rejects.toThrow(`Export destination already exists: ${destination}`)
   })
 })
 

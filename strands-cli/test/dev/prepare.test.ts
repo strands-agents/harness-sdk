@@ -320,14 +320,24 @@ describe('default workspace placement', () => {
     const plain = await fixture()
     const taken = await fixture()
     await bindExistingAgent(join(taken, 'strands-dev'), join(await fixture(), 'agent.ts'))
-    const reopened = await fixture()
-    const workspace = await bindExistingAgent(join(process.cwd(), 'elsewhere'), join(reopened, 'agent.ts'))
+    const bound = await fixture()
+    const workspace = await bindExistingAgent(join(bound, 'strands-dev'), join(bound, 'agent.ts'))
+    const moved = await fixture()
+    const elsewhere = await bindExistingAgent(join(process.cwd(), 'elsewhere'), join(moved, 'agent.ts'))
 
-    const options = await pickerOptions([found(plain), found(taken), { ...found(reopened), workspace }])
+    const options = await pickerOptions([
+      found(plain),
+      found(taken),
+      { ...found(bound), workspace },
+      { ...found(moved), workspace: elsewhere },
+    ])
 
-    expect(options.folderFor?.({ kind: 'discovered', harness: found(plain) })).toBe(join(plain, 'strands-dev'))
-    expect(options.folderFor?.({ kind: 'discovered', harness: found(taken) })).toBe(join(taken, 'strands-dev-2'))
-    expect(options.folderFor?.({ kind: 'discovered', harness: found(reopened) })).toBe(join(process.cwd(), 'elsewhere'))
+    const folder = (root: string): string | undefined =>
+      options.folderFor?.({ kind: 'discovered', harness: found(root) })
+    expect(folder(plain)).toBe(join(plain, 'strands-dev'))
+    expect(folder(taken)).toBe(join(taken, 'strands-dev-2'))
+    expect(folder(bound)).toBe(join(bound, 'strands-dev'))
+    expect(folder(moved)).toBe(join(moved, 'strands-dev'))
     expect(options.folderFor?.(createChoice)).toBeUndefined()
   })
 
@@ -365,14 +375,21 @@ describe('default workspace placement', () => {
     expect((await readdir(launch)).sort()).toEqual(['strands-workspace', 'strands-workspace-2'])
   })
 
-  it('shouldSuggestTheFolderOfTheProjectRootWhenDiscoveryFindsAPythonHarness', async () => {
+  it('shouldSuggestTheFolderOfTheHarnessFileWhenDiscoveryFindsIt', async () => {
     const launch = process.cwd()
     const harness = 'from strands_harness import create_harness\n\nagent = create_harness(name="Desk")\n'
+    const typescript =
+      "import { createHarness } from '@strands-agents/harness'\nexport const agent = await createHarness({ name: 'Desk' })\n"
     await mkdir(join(launch, 'arielnab'))
     await writeFile(join(launch, 'arielnab/agent.py'), harness)
     await mkdir(join(launch, 'repo/src'), { recursive: true })
     await writeFile(join(launch, 'repo/pyproject.toml'), '[project]\nname = "repo"\n')
     await writeFile(join(launch, 'repo/src/agent.py'), harness)
+    await mkdir(join(launch, 'web/src'), { recursive: true })
+    await writeFile(join(launch, 'web/package.json'), '{"type":"module"}')
+    await writeFile(join(launch, 'web/src/agent.ts'), typescript)
+    await mkdir(join(launch, 'exported/agent'), { recursive: true })
+    await writeFile(join(launch, 'exported/agent/agent.py'), harness)
     vi.spyOn(CliConfigStore, 'load').mockResolvedValue(config())
     vi.spyOn(picker, 'chooseHarness').mockResolvedValue(undefined)
     const screen = { signal: new AbortController().signal, show: vi.fn() }
@@ -385,7 +402,9 @@ describe('default workspace placement', () => {
     )
     expect(folders).toEqual({
       [join(launch, 'arielnab/agent.py')]: join(launch, 'arielnab/strands-dev'),
-      [join(launch, 'repo/src/agent.py')]: join(launch, 'repo/strands-dev'),
+      [join(launch, 'exported/agent/agent.py')]: join(launch, 'exported/agent/strands-dev'),
+      [join(launch, 'repo/src/agent.py')]: join(launch, 'repo/src/strands-dev'),
+      [join(launch, 'web/src/agent.ts')]: join(launch, 'web/src/strands-dev'),
     })
   })
 
@@ -418,6 +437,22 @@ describe('default workspace placement', () => {
 
     expect(prepared?.workspace.directory).toBe(join(root, 'strands-dev-2'))
     expect(prepared?.workspace.root).toBe(root)
+  })
+
+  it('shouldPutTheWorkspaceNextToTheAgentFileWhenAgentPointsIntoASourceFolder', async () => {
+    const root = await temporaryDirectory()
+    await mkdir(join(root, 'src'))
+    await writeFile(join(root, 'package.json'), '{"type":"module"}')
+    await writeFile(join(root, 'src/agent.ts'), 'export const agent = {}')
+    vi.spyOn(CliConfigStore, 'load').mockResolvedValue(config())
+    vi.spyOn(process.stderr, 'write').mockReturnValue(true)
+
+    const prepared = await prepareDevRun(parseArgs(['dev', 'init', '--agent', join(root, 'src/agent.ts')]), {
+      deferPreparation: true,
+    })
+
+    expect(prepared?.workspace.root).toBe(root)
+    expect(prepared?.workspace.directory).toBe(join(root, 'src/strands-dev'))
   })
 
   it('shouldPutTheWorkspaceNextToTheArchiveWhenAgentIsAZip', async () => {

@@ -1,7 +1,7 @@
 import { constants, type Stats } from 'node:fs'
 import { chmod, link, lstat, mkdir, mkdtemp, open, realpath, rm, rmdir, unlink } from 'node:fs/promises'
 import type { FileHandle } from 'node:fs/promises'
-import { basename, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 
 import { containsPath, expandHome } from '../paths.js'
 import { assertPortablePathComponent } from '../project/packaging.js'
@@ -49,8 +49,8 @@ export const boundDevWorkspace = (workspace: BoundWorkspace): DevWorkspace => ({
 export const WORKSPACE_FOLDER = 'strands-dev'
 const WORKSPACE_FOLDER_NAME = /^strands-dev(?:-\d+)?$/u
 
-export const rootWorkspaceFolder = (root: string): string =>
-  WORKSPACE_FOLDER_NAME.test(basename(root)) ? root : join(root, WORKSPACE_FOLDER)
+export const entrypointWorkspaceFolder = ({ root, entrypoint }: DevWorkspace): string =>
+  WORKSPACE_FOLDER_NAME.test(basename(root)) ? root : join(dirname(entrypoint), WORKSPACE_FOLDER)
 
 export async function findDevWorkspace(path: string): Promise<DevWorkspace | undefined> {
   return (await optionalDetails(join(path, '.config')))?.isDirectory() ? undefined : readDevWorkspace(path)

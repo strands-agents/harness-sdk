@@ -1,5 +1,5 @@
 import { lstat, readFile, readdir } from 'node:fs/promises'
-import { join, relative, resolve, sep } from 'node:path'
+import { dirname, join, relative, resolve, sep } from 'node:path'
 import { type ParsedArgs } from '../cli/arguments.js'
 import { CliConfigStore } from '../config/store.js'
 import { containsPath, expandHome } from '../paths.js'
@@ -18,7 +18,7 @@ import { DevFailure } from './errors.js'
 import {
   findDevWorkspace,
   readDevWorkspace,
-  rootWorkspaceFolder,
+  entrypointWorkspaceFolder,
   workspaceFolder,
   WORKSPACE_FOLDER,
   type DevWorkspace,
@@ -89,8 +89,7 @@ const folderDefaults = async (
         async (harness) =>
           [
             harness.entrypoint,
-            (!forceSelection && harness.workspace?.directory) ||
-              (await suggest(join(harness.root, WORKSPACE_FOLDER), { kind: 'discovered', harness })),
+            await suggest(join(dirname(harness.entrypoint), WORKSPACE_FOLDER), { kind: 'discovered', harness }),
           ] as const
       )
     )
@@ -100,7 +99,7 @@ const folderDefaults = async (
       choice.kind === 'cli'
         ? cli
         : choice.kind === 'discovered'
-          ? (found.get(choice.harness.entrypoint) ?? join(choice.harness.root, WORKSPACE_FOLDER))
+          ? (found.get(choice.harness.entrypoint) ?? join(dirname(choice.harness.entrypoint), WORKSPACE_FOLDER))
           : undefined,
     newProject: await newProjectFolder(cwd),
   }
@@ -292,7 +291,7 @@ export const prepareDevRun = async (
   if (!selected) return undefined
   const target = args.dev?.workspace
     ? await workspaceFolder(resolve(process.cwd(), expandHome(args.dev.workspace)))
-    : rootWorkspaceFolder(selected.root)
+    : entrypointWorkspaceFolder(selected)
   const persisted = await readDevWorkspace(selected.directory ?? selected.root)
   const main = await initializeWorkspaceBinding(persisted?.root === selected.root ? persisted : selected, target)
   const workspace =
