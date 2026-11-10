@@ -9,6 +9,8 @@ sourceLinks:
   - path: strands-ts/src/vended-interventions/hitl/classifier.ts
   - path: strands-py/src/strands/decisions/llm_decision_model.py
   - path: strands-ts/src/decisions/llm-decision-model.ts
+  - path: strands-py/src/strands/decisions/typesafe_decision_model.py
+  - path: strands-ts/src/decisions/typesafe-decision-model.ts
 addedDate: 2026-06-03
 ---
 
@@ -125,10 +127,10 @@ To classify with a System One model, pass it as the classifier. A System One mod
 a small decision model that picks between options instead of generating text, so it
 responds faster and costs less per tool call than the LLM judge. It answers one yes/no
 question per tool call, judged against the same risk criteria as the built-in
-classifier. An uncertain answer requires approval and shows its reason in the prompt.
-TypeScript ships `TypeSafeDecisionModel`, which calls TypeSafe's hosted Jev model. In
-Python, subclass `DecisionModel` to wrap one, such as a local
-[Strands Decider](https://github.com/strands-labs/strands-decider) server:
+classifier. An uncertain answer requires approval. `TypeSafeDecisionModel` calls
+TypeSafe's hosted Jev model. To use another one, such as a local
+[Strands Decider](https://github.com/strands-labs/strands-decider) server, subclass
+`DecisionModel`.
 
 <Tabs>
 <Tab label="Python">
@@ -175,7 +177,7 @@ provide your own classification function:
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | <Syntax py="allowed_tools" ts="allowedTools" /> | <Syntax py="list[str]" ts="string[]" /> | <Syntax py="None" ts="undefined" /> | Tools that bypass approval. Supports `"*"` (all) and `"!tool_name"` (negation). |
-| `classifier` | <Syntax py="bool, LLMClassifierConfig, DecisionModel, or callable" ts="boolean, LlmClassifierConfig, DecisionModel, or function" /> | <Syntax py="None" ts="undefined" /> | Risk classifier. <Syntax py="True" ts="true" /> for built-in defaults, a config object for a custom prompt or model, a decision model, or a custom function. |
+| `classifier` | <Syntax py="bool, LLMClassifierConfig, DecisionModel, or callable" ts="boolean, LlmClassifierConfig, { decisionModel }, or function" /> | <Syntax py="None" ts="undefined" /> | Risk classifier. <Syntax py="True" ts="true" /> for built-in defaults, a config object for a custom prompt or model, a decision model, or a custom function. |
 | <Syntax py="enable_trust" ts="enableTrust" /> | <Syntax py="bool" ts="boolean" /> | <Syntax py="False" ts="false" /> | When enabled, trust responses are remembered for the session. |
 | <Syntax py="evaluate_trust" ts="evaluateTrust" /> | Function | Accepts `"t"` or `"trust"` | Custom validator for trust responses. Only evaluated when trust is enabled. |
 | `evaluate` | Function | Accepts <Syntax py='True, "y", or "yes"' ts="true, 'y', or 'yes'" /> | Custom validator for approval responses. |
