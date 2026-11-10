@@ -175,7 +175,8 @@ describe('agent import from workspace Settings', () => {
     const { binding, change, pickers, confirmations } = await importFromSettings(files, { savedConfig })
     const picker = pickers()[0]!
 
-    expect(picker.cli).toEqual({ name: savedConfig.profile.name, path: savedConfig.path, workspace: files.directory })
+    expect(picker.cli).toEqual({ name: savedConfig.profile.name, path: savedConfig.path })
+    expect(picker.workspace).toBeUndefined()
     expect(picker.harnesses.map(({ entrypoint }) => entrypoint)).toEqual([files.other])
     expect(picker.warning).toBe(
       `When you select an agent, strands dev deletes your current agent (current) and the folder ${files.directory}. The project files in ${join(files.launch, 'current')} stay on disk.`

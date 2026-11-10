@@ -1,8 +1,10 @@
 import { createElement, useRef, useState, type ReactElement } from 'react'
-import { Box, useInput } from 'ink'
+import { Box, useInput, type Key } from 'ink'
 import { Text, useTheme } from '../ui/theme.js'
 import type { StartupScreen } from '../ui/run.js'
-import { sanitizeTerminalText, wrapLines } from '../terminal/text.js'
+import { emptyEditor, reduceInputSequence } from '../terminal/composer.js'
+import { graphemes, sanitizeTerminalText, wrapLines } from '../terminal/text.js'
+import { EditableText } from '../ui/text-input.js'
 import type { DiscoveredHarness } from './search.js'
 import { useTerminalSize } from '../ui/terminal-size.js'
 import { userConfigPath } from '../config/store.js'
@@ -16,14 +18,14 @@ export type HarnessChoice =
 export interface BaseCliOption {
   name: string
   path?: string
-  workspace?: string
 }
 
 interface PickerProps {
   cli?: BaseCliOption
   harnesses: readonly DiscoveredHarness[]
   warning?: string
-  onSelect: (selection: HarnessChoice | undefined) => void | Promise<void>
+  workspace?: string
+  onSelect: (selection: HarnessChoice | undefined, workspace?: string) => void | Promise<void>
 }
 
 interface PickerRow {
@@ -34,14 +36,19 @@ interface PickerRow {
   choice?: HarnessChoice
 }
 
-export const HarnessPicker = ({ cli, harnesses, warning, onSelect }: PickerProps): ReactElement => {
+const FOLDER_LABEL = 'Workspace folder: '
+
+export const HarnessPicker = ({ cli, harnesses, warning, workspace, onSelect }: PickerProps): ReactElement => {
   const [selection, setSelection] = useState(0)
   const [creating, setCreating] = useState(false)
+  const [placing, setPlacing] = useState<HarnessChoice>()
   const [language, setLanguage] = useState<'typescript' | 'python'>('typescript')
   const [name, setName] = useState('new-harness')
+  const [folder, setFolder] = useState(() => ({ value: workspace ?? '', cursor: graphemes(workspace ?? '').length }))
   const [failure, setFailure] = useState<string>()
   const [busy, setBusy] = useState(false)
   const pending = useRef(false)
+  const asksFolder = workspace !== undefined
   const { accent, error: errorColor, warning: warningColor, selection: selectionColor, border } = useTheme()
   const { rows: height, columns } = useTerminalSize()
   const rows: PickerRow[] = [
@@ -76,7 +83,7 @@ export const HarnessPicker = ({ cli, harnesses, warning, onSelect }: PickerProps
     setBusy(choice !== undefined)
     setFailure(undefined)
     void Promise.resolve()
-      .then(() => onSelect(choice))
+      .then(() => (choice && asksFolder ? onSelect(choice, folder.value.trim()) : onSelect(choice)))
       .catch((error: unknown) => {
         setFailure(devFailure(error, { operation: 'open' }).message)
       })
@@ -85,23 +92,51 @@ export const HarnessPicker = ({ cli, harnesses, warning, onSelect }: PickerProps
         setBusy(false)
       })
   }
-  useInput((input, key) => {
-    if (key.escape || (key.ctrl && input === 'c')) return submit(undefined)
-    if (pending.current) return
-    if (creating) {
-      if (key.tab) return setLanguage((current) => (current === 'typescript' ? 'python' : 'typescript'))
-      if (key.return && name && name !== '.' && name !== '..') return submit({ kind: 'create', name, language })
-      if (key.backspace || key.delete) return setName((current) => current.slice(0, -1))
-      if (!key.ctrl && !key.meta && /^[a-zA-Z0-9._-]+$/.test(input))
-        setName((current) => `${current}${input}`.slice(0, 64))
-      return
-    }
+  const choose = (choice: HarnessChoice): void => {
+    if (!asksFolder) return submit(choice)
+    setFailure(undefined)
+    setPlacing(choice)
+  }
+  const leaveFolder = (): void => {
+    setFailure(undefined)
+    setPlacing(undefined)
+    setCreating(false)
+  }
+  const editFolder = (input: string, key: Key): void => {
+    if (key.return) return folder.value.trim() ? submit(placing) : setFailure('Enter a workspace folder.')
+    if (key.tab || (key.ctrl && input === 'j')) return
+    setFolder((current) => {
+      const { state } = reduceInputSequence(
+        { ...emptyEditor(), input: current.value, cursor: current.cursor },
+        input.replace(/[\r\n]/g, ''),
+        key,
+        'idle'
+      )
+      return { value: state.input, cursor: state.cursor }
+    })
+  }
+  const editName = (input: string, key: Key): void => {
+    if (key.tab) return setLanguage((current) => (current === 'typescript' ? 'python' : 'typescript'))
+    if (key.return && name && name !== '.' && name !== '..') return choose({ kind: 'create', name, language })
+    if (key.backspace || key.delete) return setName((current) => current.slice(0, -1))
+    if (!key.ctrl && !key.meta && /^[a-zA-Z0-9._-]+$/.test(input))
+      setName((current) => `${current}${input}`.slice(0, 64))
+  }
+  const browse = (key: Key): void => {
     if (key.upArrow) setSelection((current) => (current + rows.length - 1) % rows.length)
     if (key.downArrow) setSelection((current) => (current + 1) % rows.length)
     if (!key.return) return
     const choice = rows[selection]?.choice
-    if (choice) return submit(choice)
+    if (choice) return choose(choice)
     setCreating(true)
+  }
+  useInput((input, key) => {
+    if (key.ctrl && input === 'c') return submit(undefined)
+    if (key.escape) return placing && !pending.current ? leaveFolder() : submit(undefined)
+    if (pending.current) return
+    if (placing) return editFolder(input, key)
+    if (creating) return editName(input, key)
+    browse(key)
   })
   const detailWidth = Math.max(1, columns - 12)
   const lineCount = (text: string): number => wrapLines(text, detailWidth).length
@@ -113,25 +148,56 @@ export const HarnessPicker = ({ cli, harnesses, warning, onSelect }: PickerProps
   const globalNotice = 'Manual import applies these changes globally to plain strands.'
   const localNotice = 'Until then, development changes stay in this local workspace.'
   const projectNotice = 'Local project only. Your CLI default stays unchanged.'
+  const showsFolder = asksFolder && height >= 30
   const detailHeight =
-    3 +
-    (cli
-      ? Number(Boolean(cli.workspace && height >= 30)) + lineCount(globalNotice) + lineCount(localNotice)
-      : lineCount(projectNotice))
+    3 + (cli ? Number(showsFolder) + lineCount(globalNotice) + lineCount(localNotice) : lineCount(projectNotice))
+  const step = placing ? 'folder' : creating ? 'name' : 'list'
+  const next = asksFolder ? 'continue' : { list: 'open', name: 'create', folder: 'open' }[step]
+  const screens = {
+    list: {
+      heading: 'Select a harness',
+      context: `${selection + 1} / ${rows.length}`,
+      hint: `↑↓ select · Enter ${next}`,
+    },
+    name: { heading: 'Create a harness', context: 'New project', hint: `Tab language · Enter ${next}` },
+    folder: {
+      heading: 'Choose a workspace folder',
+      context: placing?.kind === 'create' ? `New project · ${placing.name}` : selected.label,
+      hint: 'Enter continue',
+    },
+  }
+  const { heading, context } = screens[step]
+  const hint = busy
+    ? 'Preparing workspace… · Esc cancel'
+    : `${screens[step].hint} · Esc ${step === 'folder' ? 'back' : 'cancel'}`
   return (
     <Box flexDirection="column">
       <Box marginBottom={1} justifyContent="space-between">
         <Text bold color={accent}>
-          {creating ? 'Create a harness' : 'Select a harness'}
+          {heading}
         </Text>
-        <Text dimColor>{creating ? 'New project' : `${selection + 1} / ${rows.length}`}</Text>
+        <Text dimColor>{context}</Text>
       </Box>
       {notice ? (
         <Box marginBottom={1}>
           <Text color={warningColor}>{notice}</Text>
         </Box>
       ) : null}
-      {creating ? (
+      {placing ? (
+        <Box flexDirection="column" gap={1}>
+          <Box>
+            <Text>{FOLDER_LABEL}</Text>
+            <EditableText
+              value={folder.value}
+              cursor={folder.cursor}
+              width={Math.max(1, detailWidth - FOLDER_LABEL.length)}
+              active={!busy}
+            />
+          </Box>
+          <Text dimColor>strands dev keeps .config, tmp/, reports, and state in this folder.</Text>
+          <Text dimColor>Use a new or empty folder, or the existing workspace of this agent.</Text>
+        </Box>
+      ) : creating ? (
         <Box flexDirection="column" gap={1}>
           <Text>Name: {name}▏</Text>
           <Text>Language: {language}</Text>
@@ -179,9 +245,9 @@ export const HarnessPicker = ({ cli, harnesses, warning, onSelect }: PickerProps
             </Text>
             {selected.choice?.kind === 'cli' ? (
               <>
-                {cli?.workspace && height >= 30 ? (
+                {showsFolder ? (
                   <Text dimColor wrap="truncate-middle">
-                    Workspace: {sanitizeTerminalText(cli.workspace)}
+                    Workspace: {sanitizeTerminalText(folder.value)}
                   </Text>
                 ) : null}
                 <Text>{globalNotice}</Text>
@@ -195,13 +261,7 @@ export const HarnessPicker = ({ cli, harnesses, warning, onSelect }: PickerProps
       )}
       {failure ? <Text color={errorColor}>{failure}</Text> : null}
       <Box marginTop={1}>
-        <Text dimColor>
-          {busy
-            ? 'Preparing workspace… · Esc cancel'
-            : creating
-              ? 'Tab language · Enter create · Esc cancel'
-              : '↑↓ select · Enter open · Esc cancel'}
-        </Text>
+        <Text dimColor>{hint}</Text>
       </Box>
     </Box>
   )
@@ -210,7 +270,7 @@ export const HarnessPicker = ({ cli, harnesses, warning, onSelect }: PickerProps
 export const chooseHarness = async <Opened,>(
   options: Omit<PickerProps, 'onSelect'>,
   screen: StartupScreen,
-  open: (choice: HarnessChoice, signal: AbortSignal) => Promise<Opened>
+  open: (choice: HarnessChoice, signal: AbortSignal, workspace?: string) => Promise<Opened>
 ): Promise<Opened | undefined> => {
   screen.signal.throwIfAborted()
   const operation = new AbortController()
@@ -229,16 +289,15 @@ export const chooseHarness = async <Opened,>(
   screen.show(
     createElement(HarnessPicker, {
       ...options,
-      onSelect: async (choice): Promise<void> => {
+      onSelect: async (choice, workspace): Promise<void> => {
         if (!choice) return cancel()
         let opened: Opened
         try {
-          opened = await open(choice, signal)
+          opened = await open(choice, signal, workspace)
         } catch (error) {
           throw devFailure(error, {
             operation: 'open',
-            path:
-              choice.kind === 'discovered' ? choice.harness.entrypoint : (options.cli?.workspace ?? options.cli?.path),
+            path: choice.kind === 'discovered' ? choice.harness.entrypoint : (workspace ?? options.cli?.path),
           })
         }
         if (!settled && !signal.aborted) {

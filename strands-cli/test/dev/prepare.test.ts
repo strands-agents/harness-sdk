@@ -1,8 +1,12 @@
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { parseArgs } from '../../src/cli/arguments.js'
 import { CliConfigStore } from '../../src/config/store.js'
+import { bindWorkspace } from '../../src/dev/binding.js'
+import { bindExistingAgent } from '../../src/dev/create.js'
+import type { HarnessChoice } from '../../src/dev/picker.js'
 import { prepareDevRun } from '../../src/dev/prepare.js'
 import * as search from '../../src/dev/search.js'
 import * as picker from '../../src/dev/picker.js'
@@ -188,8 +192,9 @@ describe('prepareDevRun', () => {
 
     expect(picker.chooseHarness).toHaveBeenCalledWith(
       {
-        cli: { name: 'Saved CLI', path: 'in-memory', workspace: join(cwd, 'strands-dev') },
+        cli: { name: 'Saved CLI', path: 'in-memory' },
         harnesses: [{ ...harness, preparationStatus: 'Needs setup' }],
+        workspace: join(cwd, 'strands-dev'),
       },
       screen,
       expect.any(Function)
@@ -212,5 +217,145 @@ describe('prepareDevRun', () => {
     const screen = { signal: new AbortController().signal, show: vi.fn() }
     expect(await prepareDevRun(parseArgs(['dev']), { screen })).toBeUndefined()
     await expect(readFile(join(cwd, '.strands/config.json'))).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+})
+
+describe('workspace folder selection', () => {
+  const selectInFolder = async (choice: (root: string) => HarnessChoice, folder: string, root?: string) => {
+    const harnessRoot = root ?? (await fixture())
+    const harness = {
+      name: 'Local',
+      entrypoint: join(harnessRoot, 'agent.ts'),
+      root: harnessRoot,
+      language: 'typescript' as const,
+    }
+    vi.spyOn(CliConfigStore, 'load').mockResolvedValue(config())
+    vi.spyOn(search, 'discoverHarnesses').mockResolvedValue({ harnesses: [harness], warnings: [] })
+    vi.spyOn(picker, 'chooseHarness').mockImplementation(async (_options, screen, open) =>
+      open(choice(harnessRoot), screen.signal, folder)
+    )
+    const screen = { signal: new AbortController().signal, show: vi.fn() }
+    return prepareDevRun(parseArgs(['dev']), { screen, deferPreparation: true })
+  }
+  const discovered = (root: string): HarnessChoice => ({
+    kind: 'discovered',
+    harness: { name: 'Local', entrypoint: join(root, 'agent.ts'), root, language: 'typescript' },
+  })
+
+  it.each([
+    ['an absolute path', (launch: string) => join(launch, 'custom/workspace')],
+    ['a path relative to the launch folder', () => 'custom/workspace'],
+  ])('shouldBindTheAgentInTheChosenFolderWhenItIs%s', async (_case, folder) => {
+    const launch = process.cwd()
+
+    const prepared = await selectInFolder(discovered, folder(launch))
+
+    expect(prepared?.workspace.directory).toBe(join(launch, 'custom/workspace'))
+    expect(JSON.parse(await readFile(join(launch, 'custom/workspace/.config'), 'utf8')).origin.kind).toBe('discovered')
+    await expect(readdir(join(launch, 'strands-dev'))).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('shouldCreateANewHarnessInAnEmptyFolder', async () => {
+    const folder = join(process.cwd(), 'empty')
+    await mkdir(folder)
+
+    const prepared = await selectInFolder(() => ({ kind: 'create', language: 'typescript', name: 'fresh' }), folder)
+
+    expect(prepared?.workspace.directory).toBe(folder)
+    expect(prepared?.workspace.config).toMatchObject({ name: 'fresh', origin: { kind: 'created' } })
+  })
+
+  it('shouldReuseTheFolderWhenItAlreadyHoldsTheSelectedAgent', async () => {
+    const root = await fixture()
+    const folder = join(process.cwd(), 'existing')
+    await bindExistingAgent(folder, join(root, 'agent.ts'))
+    const before = await readFile(join(folder, '.config'), 'utf8')
+
+    const prepared = await selectInFolder(discovered, folder, root)
+
+    expect(prepared?.workspace.directory).toBe(folder)
+    expect(await readFile(join(folder, '.config'), 'utf8')).toBe(before)
+  })
+
+  it.each<[string, (root: string) => HarnessChoice]>([
+    ['a local project', discovered],
+    ['the Base CLI', () => ({ kind: 'cli' })],
+    ['a new harness', () => ({ kind: 'create', language: 'python', name: 'fresh' })],
+  ])('shouldRefuseAFolderThatHoldsAnotherAgentWhenTheChoiceIs%s', async (_case, choice) => {
+    const folder = join(process.cwd(), 'taken')
+    await bindExistingAgent(folder, join(await fixture(), 'agent.ts'))
+    const before = await readFile(join(folder, '.config'), 'utf8')
+
+    await expect(selectInFolder(choice, folder)).rejects.toThrow('The folder contains the workspace of')
+    expect(await readFile(join(folder, '.config'), 'utf8')).toBe(before)
+  })
+
+  it.each<[string, 'cli' | 'created', HarnessChoice]>([
+    ['the Base CLI', 'cli', { kind: 'cli' }],
+    ['the same new harness', 'created', { kind: 'create', language: 'typescript', name: 'fresh' }],
+  ])('shouldReuseTheFolderWhenItHoldsAWorkspaceFor%s', async (_case, kind, choice) => {
+    const root = await fixture()
+    const folder = join(process.cwd(), 'existing')
+    await mkdir(folder)
+    await bindWorkspace(folder, {
+      version: 1,
+      name: 'fresh',
+      agent: { path: root, entrypoint: 'agent.ts', language: 'typescript' },
+      origin: { kind },
+    })
+    const before = await readFile(join(folder, '.config'), 'utf8')
+
+    const prepared = await selectInFolder(() => choice, folder)
+
+    expect(prepared?.workspace.directory).toBe(folder)
+    expect(prepared?.workspace.root).toBe(root)
+    expect(await readFile(join(folder, '.config'), 'utf8')).toBe(before)
+  })
+
+  it('shouldExpandTheHomeFolderInTheChosenPath', async () => {
+    const prepared = await selectInFolder(discovered, '~/dev-workspace')
+
+    expect(prepared?.workspace.directory).toBe(join(homedir(), 'dev-workspace'))
+  })
+
+  it('shouldReportABrokenBindingInTheChosenFolderWithoutReplacingIt', async () => {
+    const folder = join(process.cwd(), 'broken')
+    await mkdir(folder)
+    await writeFile(join(folder, '.config'), '{')
+
+    await expect(selectInFolder(discovered, folder)).rejects.toThrow('Invalid JSON in workspace binding')
+    expect(await readFile(join(folder, '.config'), 'utf8')).toBe('{')
+  })
+
+  it('shouldSuggestTheNextUnusedFolderWhenTheUserReturnsToSelection', async () => {
+    const launch = process.cwd()
+    await bindExistingAgent(join(launch, 'strands-dev'), join(await fixture(), 'agent.ts'))
+    await mkdir(join(launch, 'strands-dev-2'))
+    await writeFile(join(launch, 'strands-dev-2/notes.txt'), 'notes')
+    vi.spyOn(CliConfigStore, 'load').mockResolvedValue(config())
+    vi.spyOn(search, 'discoverHarnesses').mockResolvedValue({ harnesses: [], warnings: [] })
+    vi.spyOn(picker, 'chooseHarness').mockResolvedValue(undefined)
+    const screen = { signal: new AbortController().signal, show: vi.fn() }
+
+    await prepareDevRun(parseArgs(['dev']), { screen, deferPreparation: true, forceSelection: true })
+
+    expect(vi.mocked(picker.chooseHarness).mock.calls[0]?.[0].workspace).toBe(join(launch, 'strands-dev-3'))
+  })
+
+  it.each([
+    ['contains other files', 'The folder already contains files.'],
+    ['is a file', 'The path is a file, not a folder.'],
+  ])('shouldRefuseAPathThat%s', async (kind, message) => {
+    const folder = join(process.cwd(), 'used')
+    if (kind === 'is a file') await writeFile(folder, 'notes')
+    else {
+      await mkdir(folder)
+      await writeFile(join(folder, 'notes.txt'), 'notes')
+    }
+
+    await expect(selectInFolder(discovered, folder)).rejects.toThrow(message)
+    await expect(readFile(join(folder, '.config'))).rejects.toMatchObject({
+      code: expect.stringMatching(/ENOENT|ENOTDIR/),
+    })
   })
 })

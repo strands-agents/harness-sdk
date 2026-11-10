@@ -45,7 +45,7 @@ const baseCliOption = async (
   current: readonly string[]
 ): Promise<BaseCliOption | undefined> => {
   if (workspace.config.origin.kind === 'cli') return undefined
-  const option = { name: savedConfig.profile.name, workspace: workspace.directory }
+  const option = { name: savedConfig.profile.name }
   if (!savedConfig.agentProject) return { ...option, path: savedConfig.path }
   const project = savedAgentProject(savedConfig, launchDirectory)
   if (!project || !outside(workspace.directory)(project)) return undefined

@@ -281,7 +281,11 @@ async function runInteractive(
                 ? {
                     ...requestedArgs,
                     agent: undefined,
-                    dev: { init: requestedArgs.dev!.init, searchRoots: requestedArgs.dev!.searchRoots },
+                    dev: {
+                      init: requestedArgs.dev!.init,
+                      searchRoots: requestedArgs.dev!.searchRoots,
+                      ...(requestedArgs.dev!.workspace ? { workspace: requestedArgs.dev!.workspace } : {}),
+                    },
                   }
                 : requestedArgs
               const prepared = await prepareDevRun(selectionArgs, {

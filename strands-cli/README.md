@@ -97,7 +97,15 @@ Creation errors stay in the picker so you can retry without restarting the CLI.
 Discovery reads the current folder and any explicit search roots. It does not execute source or follow symbolic links.
 It skips dependency folders, build output, private state, and copied harness libraries.
 
-The command creates `strands-dev/` in the launch directory unless `--workspace` selects another location.
+When the launch directory has no workspace, the picker asks for the workspace folder after you select a harness.
+The folder field starts with `strands-dev/` in the launch directory, or the `--workspace` path. You can edit the path before you continue.
+A relative path starts from the launch directory. Esc in the folder step goes back to the harness list.
+After you go back from a failed setup, the field starts with the next unused name, for example `strands-dev-2/`.
+
+The folder must be new or empty, or it must be the existing workspace of the selected agent. Dev does not use a folder that contains other files.
+To reopen a workspace in a different folder, run `strands dev` from that folder or pass `--workspace <path>`.
+`--agent` and `--create` do not show the picker. They use `strands-dev/` in the launch directory unless `--workspace` selects a different location.
+
 Initialization records the persistent agent in `.config` and installs one independent copy under `tmp/`.
 An existing workspace reopens with its recorded initial copy instead of creating another one. `--agent` selects another entrypoint for one launch without changing the manifest.
 Without a terminal, select an existing workspace, an entrypoint, or a creation option explicitly.

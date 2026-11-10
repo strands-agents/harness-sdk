@@ -1,4 +1,4 @@
-import { lstat, mkdir, rm } from 'node:fs/promises'
+import { lstat, mkdir, readdir, rm } from 'node:fs/promises'
 import { basename, dirname, join, relative, resolve, sep } from 'node:path'
 
 import { resolveSkillPaths } from '../agent/skills.js'
@@ -18,16 +18,28 @@ export interface CreateDevWorkspaceOptions {
   deferDependencies?: boolean
 }
 
-const ensureNewDestination = async (path: string): Promise<void> => {
-  try {
-    await lstat(path)
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
+type DestinationClaim = 'created' | 'empty'
+
+const claimDestination = async (path: string): Promise<DestinationClaim> => {
+  const details = await lstat(path).catch((error: unknown) => {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
     throw error
+  })
+  if (!details) {
+    await mkdir(dirname(path), { recursive: true })
+    await mkdir(path, { mode: 0o700 })
+    return 'created'
   }
+  if (details.isDirectory() && (await readdir(path)).length === 0) return 'empty'
   throw new Error(
     `The destination already exists: ${path}. Choose a new workspace path or open the existing workspace.`
   )
+}
+
+const releaseDestination = async (path: string, claim: DestinationClaim): Promise<void> => {
+  if (claim === 'created') return rm(path, { recursive: true, force: true })
+  const entries = await readdir(path).catch(() => [])
+  await Promise.all(entries.map((entry) => rm(join(path, entry), { recursive: true, force: true })))
 }
 
 export const createDevWorkspace = async (options: CreateDevWorkspaceOptions): Promise<DevWorkspace> => {
@@ -35,9 +47,7 @@ export const createDevWorkspace = async (options: CreateDevWorkspaceOptions): Pr
   const destination = resolve(options.cwd, options.destination)
   const existing = await readDevWorkspace(destination)
   if (existing) return existing
-  await ensureNewDestination(destination)
-  await mkdir(dirname(destination), { recursive: true })
-  await mkdir(destination, { mode: 0o700 })
+  const claim = await claimDestination(destination)
   try {
     const origin = {
       kind: options.kind === 'cli' ? ('cli' as const) : ('created' as const),
@@ -85,7 +95,7 @@ export const createDevWorkspace = async (options: CreateDevWorkspaceOptions): Pr
     if (!workspace) throw new Error(`Workspace binding is missing in ${destination}.`)
     return workspace
   } catch (error) {
-    await rm(destination, { recursive: true, force: true })
+    await releaseDestination(destination, claim)
     throw error
   }
 }

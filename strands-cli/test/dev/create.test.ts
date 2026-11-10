@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { CliConfigStore } from '../../src/config/store.js'
@@ -105,6 +105,49 @@ describe('createDevWorkspace', () => {
       createDevWorkspace({ cwd, destination: 'workspace', kind: 'typescript', snapshot: snapshot() })
     ).rejects.toThrow('install failed')
     expect(await readdir(cwd)).toEqual(['keep.txt'])
+  })
+
+  it('shouldCreateTheWorkspaceInsideAnExistingEmptyFolder', async () => {
+    const cwd = await temporaryDirectory()
+    const folder = join(cwd, 'workspace')
+    await mkdir(folder)
+    const { ino } = await lstat(folder)
+    vi.spyOn(installer, 'prepareWorkspaceDependencies').mockResolvedValue()
+
+    const workspace = await createDevWorkspace({
+      cwd,
+      destination: 'workspace',
+      kind: 'typescript',
+      snapshot: snapshot(),
+    })
+
+    expect(workspace.directory).toBe(folder)
+    expect((await lstat(folder)).ino).toBe(ino)
+  })
+
+  it('shouldKeepAnExistingEmptyFolderWhenInstallationFails', async () => {
+    const cwd = await temporaryDirectory()
+    const folder = join(cwd, 'workspace')
+    await mkdir(folder)
+    const { ino } = await lstat(folder)
+    vi.spyOn(installer, 'prepareWorkspaceDependencies').mockRejectedValue(new Error('install failed'))
+
+    await expect(
+      createDevWorkspace({ cwd, destination: 'workspace', kind: 'typescript', snapshot: snapshot() })
+    ).rejects.toThrow('install failed')
+    expect((await lstat(folder)).ino).toBe(ino)
+    expect(await readdir(folder)).toEqual([])
+  })
+
+  it('shouldRefuseADestinationThatContainsFiles', async () => {
+    const cwd = await temporaryDirectory()
+    await mkdir(join(cwd, 'workspace'))
+    await writeFile(join(cwd, 'workspace/keep.txt'), 'keep')
+
+    await expect(
+      createDevWorkspace({ cwd, destination: 'workspace', kind: 'typescript', snapshot: snapshot() })
+    ).rejects.toThrow('The destination already exists')
+    expect(await readdir(join(cwd, 'workspace'))).toEqual(['keep.txt'])
   })
 
   it('shouldLeaveNoWorkspaceWhenInstallationIsCancelled', async () => {

@@ -1,4 +1,4 @@
-import { lstat, readFile } from 'node:fs/promises'
+import { lstat, readFile, readdir } from 'node:fs/promises'
 import { join, relative, resolve, sep } from 'node:path'
 import { type ParsedArgs } from '../cli/arguments.js'
 import { CliConfigStore } from '../config/store.js'
@@ -7,6 +7,7 @@ import { importAgentProject } from '../project/import.js'
 import { prepareWorkspaceDependencies } from '../project/archive.js'
 import { sanitizeTerminalText } from '../terminal/text.js'
 import { bindExistingAgent, createDevWorkspace } from './create.js'
+import { DevFailure } from './errors.js'
 import { readDevWorkspace, type DevWorkspace } from './workspace.js'
 import type { StartupScreen } from '../ui/run.js'
 import type { HarnessChoice } from './picker.js'
@@ -53,34 +54,108 @@ const selectWorkspace = async (
   const harnesses = await discoverLocalHarnesses(cwd, dev.searchRoots, base.excludedEntrypoints)
   screen.signal.throwIfAborted()
   const { chooseHarness } = await import('./picker.js')
-  const open = async (choice: HarnessChoice, signal: AbortSignal): Promise<DevWorkspace> => {
-    signal.throwIfAborted()
-    if (choice.kind === 'discovered')
-      return openExplicitHarness(
-        choice.harness.entrypoint,
-        destination ?? join(forceSelection ? choice.harness.root : cwd, 'strands-dev')
-      )
-    if (choice.kind === 'cli') {
-      const previous = await readDevWorkspace(join(cwd, 'strands-dev', 'base-cli'))
-      if (previous && !destination) return initializeWorkspaceBinding(previous, join(cwd, 'strands-dev'))
-    }
-    const kind = choice.kind === 'cli' ? 'cli' : choice.language
-    const snapshot = config.snapshot()
-    if (choice.kind === 'create') snapshot.profile = { ...snapshot.profile, name: choice.name }
-    return createDevWorkspace({
-      destination: destination ?? join(cwd, 'strands-dev'),
-      kind,
-      snapshot,
-      ...(deferDependencies ? { deferDependencies: true } : {}),
-      cwd,
-      signal,
-    })
-  }
+  const workspace = forceSelection ? await unusedFolder(base.workspace) : base.workspace
   return chooseHarness(
-    { cli: { name: base.name, path: base.source, workspace: base.workspace }, harnesses },
+    { cli: { name: base.name, path: base.source }, harnesses, workspace },
     screen,
-    open
+    async (choice, signal, folder = workspace): Promise<DevWorkspace> => {
+      signal.throwIfAborted()
+      const directory = resolve(cwd, expandHome(folder))
+      const placed = await placeHarness(choice, { directory, cwd, config, signal, deferDependencies })
+      return placed.directory ? placed : initializeWorkspaceBinding(placed, directory)
+    }
   )
+}
+
+interface HarnessPlacement {
+  directory: string
+  cwd: string
+  config: CliConfigStore
+  signal: AbortSignal
+  deferDependencies: boolean
+}
+
+const folderUnavailable = (directory: string, reason: string): DevFailure =>
+  new DevFailure(
+    [
+      'Workspace folder is not available.',
+      `Folder: ${sanitizeTerminalText(directory)}`,
+      `Reason: ${reason}`,
+      'Next: Choose a new or empty folder, or the existing workspace of this agent.',
+    ].join('\n'),
+    undefined
+  )
+
+const folderEntries = async (directory: string): Promise<string[]> => {
+  try {
+    return await readdir(directory)
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    if (code === 'ENOENT') return []
+    if (code === 'ENOTDIR') throw folderUnavailable(directory, 'The path is a file, not a folder.')
+    throw error
+  }
+}
+
+const MAX_FOLDER_SUFFIX = 100
+
+const unusedFolder = async (preferred: string): Promise<string> => {
+  for (let suffix = 1; suffix <= MAX_FOLDER_SUFFIX; suffix++) {
+    const candidate = suffix === 1 ? preferred : `${preferred}-${suffix}`
+    const unused = await folderEntries(candidate).then(
+      (entries) => entries.length === 0,
+      () => false
+    )
+    if (unused) return candidate
+  }
+  return preferred
+}
+
+const holdsChoice = ({ root, config }: DevWorkspace, choice: HarnessChoice): boolean => {
+  switch (choice.kind) {
+    case 'discovered':
+      return root === choice.harness.root
+    case 'cli':
+      return config.origin.kind === 'cli'
+    case 'create':
+      return config.origin.kind === 'created' && config.name === choice.name && config.language === choice.language
+  }
+}
+
+const reuseFolder = async (choice: HarnessChoice, directory: string): Promise<DevWorkspace> => {
+  const existing = await readDevWorkspace(directory)
+  if (existing && !holdsChoice(existing, choice))
+    throw folderUnavailable(
+      directory,
+      `The folder contains the workspace of ${sanitizeTerminalText(existing.config.name)}.`
+    )
+  if (existing)
+    return choice.kind === 'discovered' ? openExplicitHarness(choice.harness.entrypoint, directory) : existing
+  const legacy = choice.kind === 'cli' ? await readDevWorkspace(join(directory, 'base-cli')) : undefined
+  if (legacy) return initializeWorkspaceBinding(legacy, directory)
+  throw folderUnavailable(directory, 'The folder already contains files.')
+}
+
+const createInFolder = async (
+  choice: Exclude<HarnessChoice, { kind: 'discovered' }>,
+  { directory, cwd, config, signal, deferDependencies }: HarnessPlacement
+): Promise<DevWorkspace> => {
+  const snapshot = config.snapshot()
+  if (choice.kind === 'create') snapshot.profile = { ...snapshot.profile, name: choice.name }
+  return createDevWorkspace({
+    destination: directory,
+    kind: choice.kind === 'cli' ? 'cli' : choice.language,
+    snapshot,
+    ...(deferDependencies ? { deferDependencies: true } : {}),
+    cwd,
+    signal,
+  })
+}
+
+const placeHarness = async (choice: HarnessChoice, placement: HarnessPlacement): Promise<DevWorkspace> => {
+  if ((await folderEntries(placement.directory)).length) return reuseFolder(choice, placement.directory)
+  if (choice.kind === 'discovered') return openExplicitHarness(choice.harness.entrypoint, placement.directory)
+  return createInFolder(choice, placement)
 }
 
 const openExplicitHarness = async (path: string, directory?: string): Promise<DevWorkspace> => {
