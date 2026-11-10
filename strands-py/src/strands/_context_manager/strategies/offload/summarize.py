@@ -10,6 +10,7 @@ from typing_extensions import TypedDict
 
 from ....agent.conversation_manager.compression.pin_message import is_pinned
 from ....event_loop.streaming import _record_usage
+from ....models._model_proxy import ModelProxy
 from ....models._summarize import SummarizeResult
 from ....types.content import ContentBlock, Message, Messages, split_system_prompt
 from ....types.tools import ToolResult, ToolResultContent
@@ -187,7 +188,7 @@ async def _place_text_summary(messages: list[Message], end: int, summary: str, m
         " so thinking blocks kept after it will be dropped",
         type(model).__name__,
     )
-    tokens = await model.count_tokens(messages[1:end])
+    tokens = await ModelProxy(model).count_tokens(messages[1:end])
     del messages[1:end]
     _insert_marker(messages, 1, _format_summarized(f"{end - 1} messages", tokens, summary))
     logger.debug("summarized=<%s>, tokens=<%s> | placed a text summary of the opening messages", end - 1, tokens)
@@ -292,7 +293,7 @@ class SummarizeStrategy(BaseOffloadStrategy):
         if not summary:
             return False
 
-        total_tokens = await model.count_tokens(safe)
+        total_tokens = await ModelProxy(model).count_tokens(safe)
 
         removed, lowest_index = _splice_with_pairs(messages, safe)
         if removed == 0:
