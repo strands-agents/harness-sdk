@@ -188,9 +188,7 @@ describe('prepareDevRun', () => {
 
     expect(picker.chooseHarness).toHaveBeenCalledWith(
       {
-        cliName: 'Saved CLI',
-        cliPath: 'in-memory',
-        cliWorkspace: join(cwd, 'strands-dev'),
+        cli: { name: 'Saved CLI', path: 'in-memory', workspace: join(cwd, 'strands-dev') },
         harnesses: [{ ...harness, preparationStatus: 'Needs setup' }],
       },
       screen,

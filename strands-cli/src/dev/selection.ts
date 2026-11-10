@@ -3,8 +3,9 @@ import { join, resolve } from 'node:path'
 
 import type { CliConfigSnapshot } from '../config/store.js'
 import { expandHome } from '../paths.js'
-import { importAgentProject } from '../project/import.js'
-import type { DiscoveredHarness } from './search.js'
+import { importAgentProject, type ImportedAgentProject } from '../project/import.js'
+import { planProjectPreparation } from '../project/preparation-plan.js'
+import { discoverHarnesses, type DiscoveredHarness } from './search.js'
 import { readDevWorkspace } from './workspace.js'
 
 export interface BaseHarnessSelection {
@@ -14,14 +15,15 @@ export interface BaseHarnessSelection {
   excludedEntrypoints: readonly string[]
 }
 
+export const baseHarnessProject = (snapshot: CliConfigSnapshot, cwd: string): ImportedAgentProject | undefined =>
+  snapshot.agentProject ? importAgentProject(resolve(cwd, expandHome(snapshot.agentProject))) : undefined
+
 export const baseHarnessSelection = async (
   snapshot: CliConfigSnapshot,
   cwd: string,
   destination?: string
 ): Promise<BaseHarnessSelection> => {
-  const source = snapshot.agentProject
-    ? importAgentProject(resolve(cwd, expandHome(snapshot.agentProject))).entrypoint
-    : snapshot.path
+  const source = baseHarnessProject(snapshot, cwd)?.entrypoint ?? snapshot.path
   const workspace = resolve(cwd, destination ?? 'strands-dev')
   const existing =
     (await readDevWorkspace(workspace)) ??
@@ -57,4 +59,23 @@ export const distinctHarnesses = async (
     result.push(harness)
   }
   return result
+}
+
+const withPreparationStatus = async (harness: DiscoveredHarness): Promise<DiscoveredHarness> => {
+  try {
+    const plan = await planProjectPreparation(harness)
+    return { ...harness, preparationStatus: plan.manager === 'manual' ? 'Manual setup' : 'Needs setup' }
+  } catch {
+    return { ...harness, preparationStatus: 'Check setup' }
+  }
+}
+
+export const discoverLocalHarnesses = async (
+  cwd: string,
+  searchRoots: readonly string[],
+  excludedEntrypoints: readonly string[]
+): Promise<DiscoveredHarness[]> => {
+  const discovery = await discoverHarnesses([cwd, ...searchRoots.map((path) => resolve(cwd, expandHome(path)))])
+  const harnesses = await distinctHarnesses(discovery.harnesses, excludedEntrypoints)
+  return Promise.all(harnesses.map(withPreparationStatus))
 }

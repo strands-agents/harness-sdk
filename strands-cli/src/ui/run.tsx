@@ -5,7 +5,7 @@ import { ChatRoot, type ChatLaunch, type SetupBridge, type McpTrustRequest } fro
 import type { ChatControllerApi } from './chat/controller.js'
 import type { ChatConversations, ChatConfigurationProject } from '../agent/types.js'
 import type { CliConfigStore } from '../config/store.js'
-import { configurationFromStore, type RequestSetup } from '../agent/configuration.js'
+import { configurationFromStore, type RequestSetup, type WorkspaceAction } from '../agent/configuration.js'
 import { hardExitProcessTree } from '../terminal/process-tree.js'
 import { openAgentProject } from '../terminal/open-editor.js'
 import {
@@ -35,10 +35,7 @@ export interface WorkspaceChange {
 
 interface RunInkChatOptions {
   exitAfterInitialization?: boolean
-  onWorkspaceAction?: (
-    action: 'edit' | 'import' | 'create',
-    screen: StartupScreen
-  ) => Promise<WorkspaceChange | undefined>
+  onWorkspaceAction?: (action: WorkspaceAction, screen: StartupScreen) => Promise<WorkspaceChange | undefined>
   prepare?: (screen: StartupScreen) => Promise<boolean>
   recoverStartup?: (error: unknown, screen: StartupScreen) => Promise<'retry' | 'back' | 'exit'>
   firstRequest?: string
@@ -165,7 +162,7 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
         resolveSetup = resolve
       })
     : Promise.resolve<0 | 130>(0)
-  const changeWorkspace = async (action: 'edit' | 'import' | 'create'): Promise<void> => {
+  const changeWorkspace = async (action: WorkspaceAction): Promise<void> => {
     const previous = controller
     if (!previous || !options.onWorkspaceAction) return
     let disposed = false

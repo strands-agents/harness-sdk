@@ -7,12 +7,10 @@ import { importAgentProject } from '../project/import.js'
 import { prepareWorkspaceDependencies } from '../project/archive.js'
 import { sanitizeTerminalText } from '../terminal/text.js'
 import { bindExistingAgent, createDevWorkspace } from './create.js'
-import { discoverHarnesses, type DiscoveredHarness } from './search.js'
 import { readDevWorkspace, type DevWorkspace } from './workspace.js'
 import type { StartupScreen } from '../ui/run.js'
 import type { HarnessChoice } from './picker.js'
-import { baseHarnessSelection, distinctHarnesses } from './selection.js'
-import { planProjectPreparation } from '../project/preparation-plan.js'
+import { baseHarnessSelection, discoverLocalHarnesses } from './selection.js'
 import { ensureInitialCandidate, initializeWorkspaceBinding } from './initialize.js'
 
 export interface PreparedDevRun {
@@ -51,20 +49,9 @@ const selectWorkspace = async (
   if (!screen)
     throw new Error('Run strands dev init in a terminal, or select --workspace, --agent, or --create explicitly.')
   screen.show(undefined, 'Discovering local harnesses…')
-  const discovery = await discoverHarnesses([cwd, ...dev.searchRoots.map((path) => resolve(cwd, expandHome(path)))])
-  screen.signal.throwIfAborted()
   const base = await baseHarnessSelection(config.snapshot(), cwd, destination)
-  const discovered = await distinctHarnesses(discovery.harnesses, base.excludedEntrypoints)
-  const harnesses = await Promise.all(
-    discovered.map(async (harness): Promise<DiscoveredHarness> => {
-      try {
-        const plan = await planProjectPreparation(harness)
-        return { ...harness, preparationStatus: plan.manager === 'manual' ? 'Manual setup' : 'Needs setup' }
-      } catch {
-        return { ...harness, preparationStatus: 'Check setup' }
-      }
-    })
-  )
+  const harnesses = await discoverLocalHarnesses(cwd, dev.searchRoots, base.excludedEntrypoints)
+  screen.signal.throwIfAborted()
   const { chooseHarness } = await import('./picker.js')
   const open = async (choice: HarnessChoice, signal: AbortSignal): Promise<DevWorkspace> => {
     signal.throwIfAborted()
@@ -90,7 +77,7 @@ const selectWorkspace = async (
     })
   }
   return chooseHarness(
-    { cliName: base.name, cliPath: base.source, cliWorkspace: base.workspace, harnesses },
+    { cli: { name: base.name, path: base.source, workspace: base.workspace }, harnesses },
     screen,
     open
   )

@@ -197,12 +197,17 @@ For the old `strands-dev/base-cli/` layout, selecting Base CLI creates the contr
 In a dev session, `/settings` includes **Strands dev workspace**. This section shows the workspace folder and active agent path.
 
 - **Edit workspace configuration** opens `.config` in your configured editor. Binding changes apply on the next launch.
-- **Import a different agent** replaces the workspace and binds the selected external project.
-- **Create a new agent** replaces the workspace with a new TypeScript or Python project.
+- **Import a different agent** opens the startup agent selector. The selector scans the same folders and hides the current agent.
 
-Import and creation require a separate confirmation. The confirmation identifies the folder and requires you to type `DELETE`.
+In the selector, you can select the Base CLI, a local project, or **Create a new harness** for a new TypeScript or Python project.
+When the current agent is a Base CLI copy, the selector does not show the Base CLI.
+The selector also does not show projects that contain the workspace folder or are inside it.
+A warning in the selector tells you that a selection deletes your current agent in strands dev.
+
+After you select an agent, a separate confirmation shows the folder. Type `DELETE` to confirm, or press Esc to select a different agent.
 Replacement deletes the old workspace contents, including temporary agents, reports, state, and any agent stored inside that folder.
 Agent projects outside the workspace remain untouched. A new chat starts after a successful replacement.
+
 The CLI keeps a backup until the replacement agent starts. If setup fails, it restores the previous workspace and session.
 These actions do not change the default agent for plain `strands`.
 

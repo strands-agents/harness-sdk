@@ -2,7 +2,12 @@ import { resolve } from 'node:path'
 import { containsPath } from '../../paths.js'
 import { type HarnessAgentConfig } from '@strands-agents/harness'
 
-import { configurationFromStore, createBuiltinToolsRuntime, type RequestSetup } from '../../agent/configuration.js'
+import {
+  configurationFromStore,
+  createBuiltinToolsRuntime,
+  type RequestSetup,
+  type WorkspaceAction,
+} from '../../agent/configuration.js'
 import { configurationSource } from '../../config/source.js'
 import { agentPrivatePaths, exportAgentProject, exportSourceProject } from '../../project/export.js'
 import { type ChatConfigurationSource, type ChatConversation, type ChatConversations } from '../../agent/types.js'
@@ -112,8 +117,7 @@ export async function createTypescriptChat(
         requestSetup,
         ...(devWorkspace
           ? {
-              workspaceAction: (action: 'edit' | 'import' | 'create'): void =>
-                requestSetup({ workspaceAction: action }),
+              workspaceAction: (action: WorkspaceAction): void => requestSetup({ workspaceAction: action }),
             }
           : {}),
         awsProfile: awsProfileSelection(config, requestSetup, peerEndpointId, project.entrypoint),
@@ -310,7 +314,7 @@ export async function createPythonChat(
       setSettings: (settings) => config.setSettings(settings),
       requestSetup,
       ...(devWorkspace
-        ? { workspaceAction: (action: 'edit' | 'import' | 'create'): void => requestSetup({ workspaceAction: action }) }
+        ? { workspaceAction: (action: WorkspaceAction): void => requestSetup({ workspaceAction: action }) }
         : {}),
       awsProfile: awsProfileSelection(config, requestSetup, undefined, project.entrypoint),
       project,

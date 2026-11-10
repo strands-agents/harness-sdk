@@ -81,7 +81,7 @@ describe('workspace replacement lifecycle', () => {
     })
     try {
       await vi.waitFor(() => expect(request).toBeDefined())
-      request!({ workspaceAction: 'create' })
+      request!({ workspaceAction: 'import' })
       await vi.waitFor(() => expect(action).toHaveBeenCalledOnce())
       expect(dispose).not.toHaveBeenCalled()
       expect(factory).toHaveBeenCalledOnce()

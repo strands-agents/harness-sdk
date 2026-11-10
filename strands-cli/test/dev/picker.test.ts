@@ -21,9 +21,7 @@ describe('HarnessPicker', () => {
         Box,
         { height: 40, width: columns, flexDirection: 'column', justifyContent: 'flex-end' },
         createElement(HarnessPicker, {
-          cliName: 'Saved profile',
-          cliPath: '/home/test/.strands/cli.toml',
-          cliWorkspace: '/work/base-cli',
+          cli: { name: 'Saved profile', path: '/home/test/.strands/cli.toml', workspace: '/work/base-cli' },
           harnesses: [harness],
           onSelect: vi.fn(),
         })
@@ -55,8 +53,7 @@ describe('HarnessPicker', () => {
     const selected = vi.fn()
     render(
       createElement(HarnessPicker, {
-        cliName: 'Saved profile',
-        cliPath: '/home/test/.strands/cli.toml',
+        cli: { name: 'Saved profile', path: '/home/test/.strands/cli.toml' },
         harnesses: [harness],
         onSelect: selected,
       }),
@@ -77,8 +74,7 @@ describe('HarnessPicker', () => {
     const selected = vi.fn()
     render(
       createElement(HarnessPicker, {
-        cliName: 'Saved profile',
-        cliPath: '/home/test/.strands/cli.toml',
+        cli: { name: 'Saved profile', path: '/home/test/.strands/cli.toml' },
         harnesses: [harness],
         onSelect: selected,
       }),
@@ -108,8 +104,7 @@ describe('HarnessPicker', () => {
     const selected = vi.fn()
     render(
       createElement(HarnessPicker, {
-        cliName: 'Saved profile',
-        cliPath: '/home/test/.strands/cli.toml',
+        cli: { name: 'Saved profile', path: '/home/test/.strands/cli.toml' },
         harnesses: [],
         onSelect: selected,
       }),
@@ -130,6 +125,57 @@ describe('HarnessPicker', () => {
 
     await vi.waitFor(() =>
       expect(selected).toHaveBeenCalledWith({ kind: 'create', name: 'new-harness', language: 'python' })
+    )
+  })
+
+  it('shouldHideTheBaseCliAndWarnWhenNoCliOptionIsGiven', async () => {
+    const input = ttyInput()
+    const output = ttyOutput(100, 36)
+    const frame = captureFrame(output)
+    const selected = vi.fn()
+    render(
+      createElement(HarnessPicker, {
+        harnesses: [harness],
+        warning: 'When you select an agent, strands dev deletes your current agent.',
+        onSelect: selected,
+      }),
+      { stdin: input, stdout: output }
+    )
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('Select a harness'))
+
+    const text = frame().join('\n')
+    expect(text).toContain('When you select an agent, strands dev deletes your current agent.')
+    expect(text).not.toContain('Base CLI')
+    expect(text).not.toContain('CLI DEFAULT')
+    expect(text).toContain('1 / 2')
+    expect(text).toContain('Source: /project/agent.py')
+    input.write('\r')
+
+    await vi.waitFor(() => expect(selected).toHaveBeenCalledWith({ kind: 'discovered', harness }))
+  })
+
+  it('shouldKeepTheWarningVisibleWhileCreatingAHarness', async () => {
+    const input = ttyInput()
+    const output = ttyOutput(100, 36)
+    const frame = captureFrame(output)
+    const selected = vi.fn()
+    render(
+      createElement(HarnessPicker, {
+        harnesses: [],
+        warning: 'When you select an agent, strands dev deletes your current agent.',
+        onSelect: selected,
+      }),
+      { stdin: input, stdout: output }
+    )
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('› Create a new harness'))
+    input.write('\r')
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('Create a harness'))
+
+    expect(frame().join('\n')).toContain('When you select an agent, strands dev deletes your current agent.')
+    input.write('\r')
+
+    await vi.waitFor(() =>
+      expect(selected).toHaveBeenCalledWith({ kind: 'create', name: 'new-harness', language: 'typescript' })
     )
   })
 })

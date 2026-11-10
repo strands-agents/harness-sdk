@@ -4,7 +4,6 @@ import { Text, useTheme } from '../ui/theme.js'
 import type { StartupScreen } from '../ui/run.js'
 import { sanitizeTerminalText, wrapLines } from '../terminal/text.js'
 import type { DiscoveredHarness } from './search.js'
-import type { DevWorkspace } from './workspace.js'
 import { useTerminalSize } from '../ui/terminal-size.js'
 import { userConfigPath } from '../config/store.js'
 import { devFailure } from './errors.js'
@@ -14,21 +13,28 @@ export type HarnessChoice =
   | { kind: 'discovered'; harness: DiscoveredHarness }
   | { kind: 'create'; language: 'typescript' | 'python'; name: string }
 
+export interface BaseCliOption {
+  name: string
+  path?: string
+  workspace?: string
+}
+
 interface PickerProps {
-  cliName: string
-  cliPath?: string
-  cliWorkspace?: string
+  cli?: BaseCliOption
   harnesses: readonly DiscoveredHarness[]
+  warning?: string
   onSelect: (selection: HarnessChoice | undefined) => void | Promise<void>
 }
 
-export const HarnessPicker = ({
-  cliName,
-  cliPath = userConfigPath(),
-  cliWorkspace,
-  harnesses,
-  onSelect,
-}: PickerProps): ReactElement => {
+interface PickerRow {
+  label: string
+  detail: string
+  group: string
+  language: string
+  choice?: HarnessChoice
+}
+
+export const HarnessPicker = ({ cli, harnesses, warning, onSelect }: PickerProps): ReactElement => {
   const [selection, setSelection] = useState(0)
   const [creating, setCreating] = useState(false)
   const [language, setLanguage] = useState<'typescript' | 'python'>('typescript')
@@ -36,20 +42,26 @@ export const HarnessPicker = ({
   const [failure, setFailure] = useState<string>()
   const [busy, setBusy] = useState(false)
   const pending = useRef(false)
-  const { accent, error: errorColor, selection: selectionColor, border } = useTheme()
+  const { accent, error: errorColor, warning: warningColor, selection: selectionColor, border } = useTheme()
   const { rows: height, columns } = useTerminalSize()
-  const rows = [
-    {
-      label: `Base CLI · ${sanitizeTerminalText(cliName)}`,
-      detail: sanitizeTerminalText(cliPath),
-      group: 'CLI DEFAULT',
-      language: '',
-    },
+  const rows: PickerRow[] = [
+    ...(cli
+      ? [
+          {
+            label: `Base CLI · ${sanitizeTerminalText(cli.name)}`,
+            detail: sanitizeTerminalText(cli.path ?? userConfigPath()),
+            group: 'CLI DEFAULT',
+            language: '',
+            choice: { kind: 'cli' } as const,
+          },
+        ]
+      : []),
     ...harnesses.map((harness) => ({
       label: sanitizeTerminalText(harness.name),
       detail: sanitizeTerminalText(harness.entrypoint),
       group: `LOCAL PROJECTS (${harnesses.length})`,
       language: [harness.language, harness.preparationStatus].filter(Boolean).join(' · '),
+      choice: { kind: 'discovered', harness } as const,
     })),
     {
       label: 'Create a new harness',
@@ -87,23 +99,25 @@ export const HarnessPicker = ({
     if (key.upArrow) setSelection((current) => (current + rows.length - 1) % rows.length)
     if (key.downArrow) setSelection((current) => (current + 1) % rows.length)
     if (!key.return) return
-    if (selection === 0) return submit({ kind: 'cli' })
-    const harness = harnesses[selection - 1]
-    if (harness) return submit({ kind: 'discovered', harness })
+    const choice = rows[selection]?.choice
+    if (choice) return submit(choice)
     setCreating(true)
   })
-  const capacity = Math.max(1, Math.min(7, height - 26))
+  const detailWidth = Math.max(1, columns - 12)
+  const lineCount = (text: string): number => wrapLines(text, detailWidth).length
+  const notice = warning ? sanitizeTerminalText(warning) : undefined
+  const capacity = Math.max(1, Math.min(7, height - 26 - (notice ? lineCount(notice) + 1 : 0)))
   const start = Math.min(Math.max(0, selection - capacity + 1), Math.max(0, rows.length - capacity))
   const visible = rows.slice(start, start + capacity)
   const selected = rows[selection]!
-  const detailWidth = Math.max(1, columns - 12)
   const globalNotice = 'Manual import applies these changes globally to plain strands.'
   const localNotice = 'Until then, development changes stay in this local workspace.'
+  const projectNotice = 'Local project only. Your CLI default stays unchanged.'
   const detailHeight =
     3 +
-    Number(Boolean(cliWorkspace && height >= 30)) +
-    wrapLines(globalNotice, detailWidth).length +
-    wrapLines(localNotice, detailWidth).length
+    (cli
+      ? Number(Boolean(cli.workspace && height >= 30)) + lineCount(globalNotice) + lineCount(localNotice)
+      : lineCount(projectNotice))
   return (
     <Box flexDirection="column">
       <Box marginBottom={1} justifyContent="space-between">
@@ -112,11 +126,16 @@ export const HarnessPicker = ({
         </Text>
         <Text dimColor>{creating ? 'New project' : `${selection + 1} / ${rows.length}`}</Text>
       </Box>
+      {notice ? (
+        <Box marginBottom={1}>
+          <Text color={warningColor}>{notice}</Text>
+        </Box>
+      ) : null}
       {creating ? (
         <Box flexDirection="column" gap={1}>
           <Text>Name: {name}▏</Text>
           <Text>Language: {language}</Text>
-          <Text dimColor>A separate local workspace. Your CLI default stays unchanged.</Text>
+          <Text dimColor>A new local project. Your CLI default stays unchanged.</Text>
         </Box>
       ) : (
         <>
@@ -156,20 +175,20 @@ export const HarnessPicker = ({
             flexShrink={0}
           >
             <Text dimColor wrap="truncate-middle">
-              {selection === rows.length - 1 ? selected.detail : `Source: ${selected.detail}`}
+              {selected.choice ? `Source: ${selected.detail}` : selected.detail}
             </Text>
-            {selection === 0 ? (
+            {selected.choice?.kind === 'cli' ? (
               <>
-                {cliWorkspace && height >= 30 ? (
+                {cli?.workspace && height >= 30 ? (
                   <Text dimColor wrap="truncate-middle">
-                    Workspace: {sanitizeTerminalText(cliWorkspace)}
+                    Workspace: {sanitizeTerminalText(cli.workspace)}
                   </Text>
                 ) : null}
                 <Text>{globalNotice}</Text>
                 <Text dimColor>{localNotice}</Text>
               </>
-            ) : selection < rows.length - 1 ? (
-              <Text dimColor>Local project only. Your CLI default stays unchanged.</Text>
+            ) : selected.choice ? (
+              <Text dimColor>{projectNotice}</Text>
             ) : null}
           </Box>
         </>
@@ -188,17 +207,17 @@ export const HarnessPicker = ({
   )
 }
 
-export const chooseHarness = async (
+export const chooseHarness = async <Opened,>(
   options: Omit<PickerProps, 'onSelect'>,
   screen: StartupScreen,
-  open: (choice: HarnessChoice, signal: AbortSignal) => Promise<DevWorkspace>
-): Promise<DevWorkspace | undefined> => {
+  open: (choice: HarnessChoice, signal: AbortSignal) => Promise<Opened>
+): Promise<Opened | undefined> => {
   screen.signal.throwIfAborted()
   const operation = new AbortController()
   const signal = AbortSignal.any([screen.signal, operation.signal])
-  let complete: (workspace: DevWorkspace | undefined) => void = () => undefined
+  let complete: (opened: Opened | undefined) => void = () => undefined
   let settled = false
-  const result = new Promise<DevWorkspace | undefined>((resolve) => {
+  const result = new Promise<Opened | undefined>((resolve) => {
     complete = resolve
   })
   const cancel = (): void => {
@@ -212,18 +231,19 @@ export const chooseHarness = async (
       ...options,
       onSelect: async (choice): Promise<void> => {
         if (!choice) return cancel()
-        let workspace: DevWorkspace
+        let opened: Opened
         try {
-          workspace = await open(choice, signal)
+          opened = await open(choice, signal)
         } catch (error) {
           throw devFailure(error, {
             operation: 'open',
-            path: choice.kind === 'discovered' ? choice.harness.entrypoint : (options.cliWorkspace ?? options.cliPath),
+            path:
+              choice.kind === 'discovered' ? choice.harness.entrypoint : (options.cli?.workspace ?? options.cli?.path),
           })
         }
         if (!settled && !signal.aborted) {
           settled = true
-          complete(workspace)
+          complete(opened)
         }
       },
     }),

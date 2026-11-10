@@ -14,6 +14,7 @@ import { invocationAgentForRun, pythonInvocationOptions, withDiscoveredSkills } 
 import { buildTelemetryPing, sendTelemetryPing, telemetryEnabled } from './telemetry.js'
 import type { CliConfigStore } from '../config/store.js'
 import type { StartupScreen, WorkspaceChange } from '../ui/run.js'
+import type { WorkspaceAction } from '../agent/configuration.js'
 import { devFailure } from '../dev/errors.js'
 
 export { runPlainChat, runTurn, TurnRenderer } from './console.js'
@@ -263,6 +264,7 @@ async function runInteractive(
       suppliedConfig ??
       (args.dev ? await CliConfigStore.load(undefined, { persist: false }) : await CliConfigStore.load())
     config.useEnvironmentFiles(args.envFiles)
+    const savedConfig = config.snapshot()
     let initialWorkspace = process.cwd()
     if (args.dev) await config.setSettings({ updatePrompts: false, telemetry: false })
     const launchDirectory = process.cwd()
@@ -434,13 +436,14 @@ async function runInteractive(
         ...(args.dev
           ? {
               onWorkspaceAction: async (
-                action: 'edit' | 'import' | 'create',
+                action: WorkspaceAction,
                 screen: StartupScreen
               ): Promise<WorkspaceChange | undefined> => {
                 const { prepareWorkspaceChange } = await import('../dev/manage.js')
                 return prepareWorkspaceChange({
                   args,
-                  config,
+                  savedConfig,
+                  launchDirectory,
                   action,
                   screen,
                   select: async (nextArgs, directory) => {
