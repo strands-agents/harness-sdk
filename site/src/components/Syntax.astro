@@ -1,0 +1,70 @@
+---
+import { LANGUAGE_STORAGE_KEY } from '../util/language-preference'
+
+interface Props {
+  py: string;
+  ts: string;
+  plain?: boolean;
+}
+
+const { py, ts, plain = false } = Astro.props;
+---
+
+<syntax-switch>
+  {plain ? (
+    <>
+      <span data-lang="Python">{py}</span>
+      <span data-lang="TypeScript">{ts}</span>
+    </>
+  ) : (
+    <>
+      <code data-lang="Python">{py}</code>
+      <code data-lang="TypeScript">{ts}</code>
+    </>
+  )}
+</syntax-switch>
+
+<style>
+  /* Default: show TypeScript, hide Python (matches site-wide default) */
+  syntax-switch [data-lang="Python"] {
+    display: none;
+  }
+</style>
+
+<script is:inline define:vars={{ STORAGE_KEY: LANGUAGE_STORAGE_KEY }}>
+  (function () {
+    if (window.__strandsSyntaxSwitchInit) return;
+    window.__strandsSyntaxSwitchInit = true;
+
+    var DEFAULT_LANG = 'TypeScript';
+
+    function getLang() {
+      try { return localStorage.getItem(STORAGE_KEY) || DEFAULT_LANG; }
+      catch (e) { return DEFAULT_LANG; }
+    }
+
+    function updateAll() {
+      var lang = getLang();
+      document.querySelectorAll('syntax-switch [data-lang]').forEach(function (el) {
+        el.style.display = el.getAttribute('data-lang') === lang ? 'inline' : 'none';
+      });
+    }
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', updateAll);
+    } else {
+      updateAll();
+    }
+
+    window.addEventListener('storage', function (e) {
+      if (e.key === STORAGE_KEY) updateAll();
+    });
+
+    document.addEventListener('click', function (e) {
+      var btn = e.target && e.target.closest && e.target.closest('.lang-option');
+      if (btn) {
+        Promise.resolve().then(updateAll);
+      }
+    });
+  })();
+</script>

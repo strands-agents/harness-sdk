@@ -1,0 +1,38 @@
+name: "TypeScript: Security Audit"
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        required: true
+        type: string
+
+jobs:
+  security-audit:
+    name: NPM Security Audit
+    permissions:
+      contents: read
+    runs-on: strands-agents_ubuntu-latest_4-core
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Informational: full-tree audit for visibility into pre-existing
+      # advisories. Does not block merge so unrelated PRs are not held hostage
+      # by transitive vulns; drive these down via Dependabot. PR-introduced
+      # vulns are gated by the repo-level Dependency Review job in ci.yml.
+      - name: Run security audit (informational)
+        continue-on-error: true
+        run: npm audit --audit-level=high

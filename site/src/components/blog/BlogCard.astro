@@ -1,0 +1,113 @@
+---
+import type { BlogPost, Author } from '../../util/blog'
+import { formatDate } from '../../util/blog'
+import { pathWithBase } from '../../util/links'
+
+interface Props {
+  post: BlogPost
+  authors: Author[]
+}
+
+const { post, authors } = Astro.props
+const { title, description, date, tags, readingTime, coverImage } = post.data
+const href = pathWithBase(`/blog/${post.id}/`)
+---
+
+<a href={href} class="blog-card">
+  {coverImage && <img src={coverImage} alt="" class="blog-card-cover" />}
+  <div class="blog-card-body">
+    <div class="blog-card-meta">
+      <time datetime={date.toISOString()}>{formatDate(date)}</time>
+      {readingTime && <span class="blog-card-reading-time">{readingTime}</span>}
+    </div>
+    <h3 class="blog-card-title">{title}</h3>
+    <p class="blog-card-description">{description}</p>
+    <div class="blog-card-footer">
+      <div class="blog-card-authors">
+        {authors.map((author) => (
+          <span class="blog-card-author">{author.data.name}</span>
+        ))}
+      </div>
+    </div>
+  </div>
+</a>
+
+<style>
+  .blog-card {
+    display: flex;
+    flex-direction: column;
+    background: rgba(255, 255, 255, 0.06);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border-radius: 16px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    overflow: hidden;
+    text-decoration: none;
+    color: inherit;
+    transition: border-color 0.2s ease, transform 0.2s ease;
+  }
+
+  .blog-card:hover {
+    border-color: rgba(0, 204, 95, 0.4);
+    transform: translateY(-2px);
+  }
+
+  .blog-card-cover {
+    width: 100%;
+    height: 180px;
+    object-fit: cover;
+  }
+
+  .blog-card-body {
+    padding: 1.25rem;
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+  }
+
+  .blog-card-meta {
+    display: flex;
+    gap: 0.75rem;
+    font-size: 0.8rem;
+    color: var(--sl-color-gray-3);
+    font-family: var(--sl-font);
+    margin-bottom: 0.5rem;
+  }
+
+  .blog-card-title {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 1.2rem;
+    font-weight: 600;
+    line-height: 1.3;
+    margin: 0 0 0.5rem;
+    color: var(--sl-color-white);
+  }
+
+  .blog-card-description {
+    font-family: var(--sl-font);
+    font-size: 0.9rem;
+    line-height: 1.5;
+    color: var(--sl-color-gray-2);
+    margin: 0 0 1rem;
+    flex: 1;
+  }
+
+  .blog-card-footer {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
+
+  .blog-card-authors {
+    font-family: var(--sl-font);
+    font-size: 0.8rem;
+    color: var(--sl-color-gray-3);
+  }
+
+  .blog-card-author:not(:last-child)::after {
+    content: ', ';
+  }
+
+</style>

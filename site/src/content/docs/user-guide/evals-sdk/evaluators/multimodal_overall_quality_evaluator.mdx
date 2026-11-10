@@ -1,0 +1,112 @@
+---
+title: Multimodal overall quality evaluator
+description: 'Score overall response quality on image tasks with MultimodalOverallQualityEvaluator: visual accuracy, instruction adherence, and coherence.'
+tags: [multimodal-evaluation, vision]
+sidebar:
+  label: "Multimodal overall quality"
+---
+
+The `MultimodalOverallQualityEvaluator` assesses the overall quality of an agent response across four dimensions: visual accuracy, instruction adherence, completeness, and coherence/helpfulness. It produces a single Likert-5 score.
+
+## Key features
+
+- **Output-Level Evaluation**: Scores a single agent response per case
+- **Likert-5 Scoring**: Score is one of `0.0`, `0.25`, `0.5`, `0.75`, `1.0`
+- **Automatic Reference Comparison**: Appends a reference suffix to the rubric when `expected_output` is provided on the case
+- **Four-Dimension Rubric**: Evaluates visual accuracy, instruction adherence, completeness, and coherence together
+
+## When to use
+
+Use the `MultimodalOverallQualityEvaluator` when you need to:
+
+- Get a single, interpretable quality score for image-to-text responses
+- Track overall quality trends across model or prompt versions
+- Grade open-ended multimodal responses where binary judgments are too coarse
+
+## Evaluation level
+
+This evaluator operates at the **OUTPUT_LEVEL**, scoring a single agent response per case.
+
+## Parameters
+
+### `rubric` (optional)
+- **Type**: `str | None`
+- **Default**: `OVERALL_QUALITY_RUBRIC_V0`
+- **Description**: Custom rubric. Leave unset to use the default rubric.
+
+### `model` (optional)
+- **Type**: `Model | str | None`
+- **Default**: `None` (uses default Bedrock model)
+- **Description**: Multimodal judge model.
+
+### `include_inputs` (optional)
+- **Type**: `bool`
+- **Default**: `True`
+
+### `system_prompt` (optional)
+- **Type**: `str | None`
+- **Default**: `None` (uses the built-in `MLLM_JUDGE_SYSTEM_PROMPT`)
+
+### `reference_suffix` (optional)
+- **Type**: `str | None`
+- **Default**: An overall-quality-specific suffix that grades factual content rather than verbatim match
+- **Description**: Override only if you want stricter or looser reference handling than the built-in default.
+
+### `uses_environment_state` (optional)
+- **Type**: `bool`
+- **Default**: `False`
+- **Description**: Whether to include environment state in the evaluation prompt, enabling assessment of agent side effects alongside the output.
+
+## Scoring system
+
+| Score | Label | Meaning |
+|-------|-------|---------|
+| 1.0 | Excellent | Accurate, complete, directly addresses the instruction |
+| 0.75 | Good | Mostly accurate with minor imprecisions |
+| 0.5 | Average | Partially correct; misses important details or has minor errors |
+| 0.25 | Poor | Weak response with multiple inaccuracies or significant omissions |
+| 0.0 | Very Poor | Factually wrong, off-topic, and unhelpful |
+
+A response typically passes if the score is `>= 0.75`.
+
+## Basic usage
+
+```python
+import asyncio
+
+from strands_evals import Case, Experiment
+from strands_evals.evaluators import MultimodalOverallQualityEvaluator
+from strands_evals.types import MultimodalInput
+from strands_evals.types.evaluation_report import EvaluationReport
+
+
+def task_function(case: Case) -> str:
+    # Replace with your multimodal agent invocation.
+    return "The chart is a bar chart of quarterly revenue for products A, B, and C."
+
+
+cases = [
+    Case(
+        name="chart-overview",
+        input=MultimodalInput(
+            media="/path/to/revenue_chart.png",
+            instruction="What kind of chart is shown and what does it represent?",
+        ),
+    ),
+]
+
+experiment = Experiment(cases=cases, evaluators=[MultimodalOverallQualityEvaluator()])
+
+async def main():
+    report = await experiment.run_evaluations_async(task_function)
+    report.run_display()
+
+asyncio.run(main())
+```
+
+## Related evaluators
+
+- [**MultimodalOutputEvaluator**](multimodal_output_evaluator.md): Parent class with full parameter reference
+- [**MultimodalCorrectnessEvaluator**](multimodal_correctness_evaluator.md): Strict binary factual correctness
+- [**MultimodalFaithfulnessEvaluator**](multimodal_faithfulness_evaluator.md): Strict binary hallucination detection
+- [**MultimodalInstructionFollowingEvaluator**](multimodal_instruction_following_evaluator.md): Strict binary instruction compliance

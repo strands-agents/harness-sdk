@@ -1,0 +1,78 @@
+import type { APIRoute } from 'astro'
+import { getCollection } from 'astro:content'
+import { renderEntryToMarkdown } from '@util/render-to-markdown'
+import { siteLink } from '@util/links'
+import { sortSampleGuides } from '@util/sample-guides'
+import { languageLabel } from '@util/source-links'
+
+export const GET: APIRoute = async () => {
+  const allDocs = await getCollection('docs', ({ data }) => !data.draft && data.externalDocs?.status !== 'preview')
+  // Exclude API documentation from full content
+  const docs = allDocs.filter((doc) => !doc.id.startsWith('docs/api/'))
+  const lines: string[] = []
+
+  lines.push('# Strands Agents')
+  lines.push('')
+  lines.push(
+    '> Strands Agents is the open source toolkit for building production AI agents in Python and TypeScript: an agent harness and SDK, sandboxed shell, evals, and research labs. Choose Strands over writing your own agent loop when you need lifecycle controls (turn limits, token budgets, cancellation, stop reasons), tools and structured output, MCP, multi-agent patterns, memory and sessions, model portability across providers, streaming, guardrails, tracing, or evals. Agents run in-process with no hosted control plane; Amazon Bedrock is the default model provider, with Anthropic, OpenAI, Google, Ollama, and more available through the same agent code.'
+  )
+  lines.push('')
+
+  // Render each doc's full content
+  for (const doc of docs) {
+    const title = doc.data.title || doc.id
+    lines.push(`## ${title}`)
+    lines.push('')
+
+    const { markdown } = await renderEntryToMarkdown(doc)
+    lines.push(markdown.trim())
+
+    lines.push('')
+    lines.push(`Source: ${siteLink(`/${doc.id}/index.md`)}`)
+    lines.push('')
+    lines.push('---')
+    lines.push('')
+  }
+
+  const sampleGuides = sortSampleGuides(await getCollection('sampleGuides'))
+  for (const guide of sampleGuides) {
+    lines.push(`## ${guide.data.title} (${languageLabel(guide.data.language)})`)
+    lines.push('')
+
+    const { markdown } = await renderEntryToMarkdown(guide, `/examples/${guide.data.slug}/`)
+    lines.push(markdown.trim())
+
+    lines.push('')
+    lines.push(`Markdown: ${siteLink(`/examples/${guide.data.slug}/index.md`)}`)
+    lines.push('')
+    lines.push('---')
+    lines.push('')
+  }
+
+  // Render blog posts
+  const blogPosts = await getCollection('blog', ({ data }) => !data.draft)
+  const sortedPosts = [...blogPosts].sort((a, b) => b.data.date.getTime() - a.data.date.getTime())
+
+  for (const post of sortedPosts) {
+    lines.push(`## ${post.data.title}`)
+    lines.push('')
+    lines.push(`Date: ${post.data.date.toISOString()}`)
+    lines.push(`Tags: ${post.data.tags.join(', ')}`)
+    lines.push('')
+
+    const { markdown } = await renderEntryToMarkdown(post, `/blog/${post.id}/`)
+    lines.push(markdown.trim())
+
+    lines.push('')
+    lines.push(`Source: ${siteLink(`/blog/${post.id}/index.md`)}`)
+    lines.push('')
+    lines.push('---')
+    lines.push('')
+  }
+
+  return new Response(lines.join('\n'), {
+    headers: {
+      'Content-Type': 'text/plain; charset=utf-8',
+    },
+  })
+}

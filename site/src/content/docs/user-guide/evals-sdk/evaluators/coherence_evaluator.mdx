@@ -1,0 +1,109 @@
+---
+title: Coherence evaluator
+description: 'Assess the logical consistency and flow of agent responses with CoherenceEvaluator, an LLM judge with a five-level scoring rubric.'
+tags: [conversation-management]
+sidebar:
+  label: "Coherence"
+---
+
+The `CoherenceEvaluator` assesses whether an agent's response maintains logical consistency, flows naturally, and presents ideas in a well-organized manner. It uses an LLM-as-judge approach with a five-level scoring rubric.
+
+## Key features
+
+- **Trace-Level Evaluation**: Evaluates the most recent turn in the conversation
+- **Five-Level Scoring**: Granular scale from "Not At All" to "Completely Yes"
+- **Context-Aware**: Considers conversation history when evaluating coherence
+- **Structured Reasoning**: Provides step-by-step reasoning for each evaluation
+
+## When to use
+
+Use the `CoherenceEvaluator` when you need to:
+
+- Assess logical consistency of agent responses
+- Detect contradictions or reasoning gaps
+- Evaluate whether responses flow naturally
+- Measure quality of multi-step reasoning
+
+## Evaluation level
+
+This evaluator operates at the **TRACE_LEVEL**, evaluating the most recent turn in the conversation.
+
+## Parameters
+
+### `model` (optional)
+- **Type**: `Union[Model, str, None]`
+- **Default**: `None` (uses default Bedrock model)
+- **Description**: The model to use as the judge.
+
+### `system_prompt` (optional)
+- **Type**: `str | None`
+- **Default**: `None` (uses built-in template)
+- **Description**: Custom system prompt for the judge model.
+
+### `include_inputs` (optional)
+- **Type**: `bool`
+- **Default**: `True`
+- **Description**: Whether to include the input prompt in the evaluation context.
+
+### `version` (optional)
+- **Type**: `str`
+- **Default**: `"v0"`
+- **Description**: Prompt template version.
+
+## Scoring system
+
+| Rating | Score | Description |
+|--------|-------|-------------|
+| Not At All | 0.0 | Response is completely incoherent or contradictory |
+| Not Generally | 0.25 | Significant logical gaps or inconsistencies |
+| Neutral/Mixed | 0.5 | Both coherent and incoherent elements |
+| Generally Yes | 0.75 | Mostly coherent with minor reasoning issues |
+| Completely Yes | 1.0 | Fully coherent and logically consistent |
+
+A response passes the evaluation if the score is >= 0.5.
+
+## Basic usage
+
+:::caution[Required: Session ID Trace Attributes]
+When using `StrandsInMemorySessionMapper`, you **must** include session ID trace attributes in your agent configuration. This prevents spans from different test cases from being mixed together in the memory exporter.
+:::
+
+```python
+import asyncio
+
+from strands import Agent
+from strands_evals import Case, Experiment
+from strands_evals.evaluators import CoherenceEvaluator
+from strands_evals.mappers import StrandsInMemorySessionMapper
+from strands_evals.telemetry import StrandsEvalsTelemetry
+
+telemetry = StrandsEvalsTelemetry().setup_in_memory_exporter()
+
+def task_function(case: Case) -> dict:
+    agent = Agent(
+        trace_attributes={"session.id": case.session_id},
+        callback_handler=None
+    )
+    response = agent(case.input)
+    spans = telemetry.in_memory_exporter.get_finished_spans()
+    mapper = StrandsInMemorySessionMapper()
+    session = mapper.map_to_session(spans, session_id=case.session_id)
+    return {"output": str(response), "trajectory": session}
+
+cases = [
+    Case(name="reasoning", input="Explain why the sky is blue in simple terms.")
+]
+
+experiment = Experiment(cases=cases, evaluators=[CoherenceEvaluator()])
+async def main():
+    report = await experiment.run_evaluations_async(task_function)
+    report.run_display()
+
+asyncio.run(main())
+```
+
+## Related evaluators
+
+- [**ConcisenessEvaluator**](conciseness_evaluator.md): Evaluates response brevity
+- [**ResponseRelevanceEvaluator**](response_relevance_evaluator.md): Evaluates relevance to user questions
+- [**HelpfulnessEvaluator**](helpfulness_evaluator.md): Evaluates helpfulness from user perspective

@@ -1,0 +1,173 @@
+name: Bot PR Review Gate
+
+on:
+  pull_request_target:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+  pull_request_review:
+    types: [submitted, dismissed]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request_target' || github.event_name == 'pull_request_review' }}
+
+# pull_request_target runs in the base-repo context. This job only reads PR
+# metadata and reviews and sets the check status — it never checks out or
+# executes PR head code, and needs no write scope.
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  check-bot-reviews:
+    name: 2 Approvers for Bots
+    runs-on: strands-agents_ubuntu-latest_4-core
+    steps:
+      - name: Enforce maintainer reviews for bot/agent PRs
+        uses: actions/github-script@v9
+        env:
+          REQUIRED_APPROVALS: '2'
+          MAINTAINER_ROLES: 'maintain,admin'
+          # Trusted automation that bypasses the gate entirely. dependabot is a
+          # GitHub bot, but dependency bumps don't need two human approvals.
+          EXEMPT_AUTHORS: 'dependabot[bot]'
+        with:
+          script: |
+            // ┌──────────────────────────────────────────────────────────────┐
+            // │ WHAT THIS BLOCKS                                               │
+            // │ A PR into `main` cannot merge until REQUIRED_APPROVALS         │
+            // │ maintainers approve IF it is authored by a bot/agent.          │
+            // │                                                                │
+            // │ A PR counts as bot/agent when ANY of these are true:           │
+            // │   1. the author account is a GitHub Bot   (user.type)          │
+            // │   2. the author login matches a bot/agent name pattern         │
+            // │   3. the PR carries a bot/automation label                     │
+            // │   4. the PR was opened via a GitHub App                        │
+            // │   5. a commit is authored by a `[bot]@` email                  │
+            // │                                                                │
+            // │ EXEMPT_AUTHORS (e.g. dependabot) skip the gate entirely.       │
+            // │ Everything else — i.e. human PRs — is never affected.          │
+            // └──────────────────────────────────────────────────────────────┘
+
+            const pr = context.payload.pull_request;
+            if (pr.base.ref !== 'main') {
+              console.log(`PR targets ${pr.base.ref}, not main — skipping.`);
+              return;
+            }
+
+            const requiredApprovals = parseInt(process.env.REQUIRED_APPROVALS, 10);
+            const maintainerRoles = process.env.MAINTAINER_ROLES
+              .split(',').map(r => r.trim()).filter(Boolean);
+            const exemptAuthors = (process.env.EXEMPT_AUTHORS || '')
+              .split(',').map(a => a.trim().toLowerCase()).filter(Boolean);
+
+            const author = pr.user.login;
+
+            // Trusted automation is exempt before any detection runs.
+            if (exemptAuthors.includes(author.toLowerCase())) {
+              console.log(`Author "${author}" is exempt — no review requirement.`);
+              return;
+            }
+
+            // Bot/agent author-name patterns. Named service bots are anchored;
+            // the `agent` patterns are intentionally broad so accounts like
+            // "kiro-agent" / "agent-of-x" are gated (may also match a human
+            // handle containing "agent" — such PRs can still merge with the
+            // required approvals).
+            const botUsernamePatterns = [
+              /\[bot\]$/,
+              /^renovate(\[bot\])?$/i,
+              /^github-actions(\[bot\])?$/i,
+              /^snyk-bot$/i,
+              /^codecov(\[bot\])?$/i,
+              /^mergify(\[bot\])?$/i,
+              /^greenkeeper(\[bot\])?$/i,
+              /agent$/i, /-agent/i, /agent-/i, /'s[ -]agent/i,
+            ];
+            // Reserved `[bot]@` commit-email shape only. Broad noreply patterns
+            // are excluded — they are the default privacy email for *humans*.
+            const botEmailPatterns = [/\[bot\]@/i];
+            // Labels a maintainer can apply to opt a PR into the gate.
+            const botLabels = new Set([
+              'bot', 'dependencies', 'automated', 'auto-generated', 'agent',
+            ]);
+
+            // --- Evaluate each signal -------------------------------------
+            const isBotAccount = pr.user.type === 'Bot';
+            const nameMatches = botUsernamePatterns.some(p => p.test(author));
+            const matchedLabels = (pr.labels || [])
+              .map(l => l.name.toLowerCase())
+              .filter(l => botLabels.has(l));
+            const viaGitHubApp = Boolean(pr.performed_via_github_app);
+
+            const commits = await github.paginate(github.rest.pulls.listCommits, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pr.number,
+            });
+            const botCommitEmails = [...new Set(
+              commits
+                .map(c => c.commit.author && c.commit.author.email)
+                .filter(email => email && botEmailPatterns.some(p => p.test(email)))
+            )];
+
+            // --- What (if anything) flagged this PR -----------------------
+            const reasons = [];
+            if (isBotAccount)            reasons.push('author is a GitHub Bot account');
+            if (nameMatches)             reasons.push(`author name "${author}" matches a bot/agent pattern`);
+            if (matchedLabels.length)    reasons.push(`labelled: ${matchedLabels.join(', ')}`);
+            if (viaGitHubApp)            reasons.push(`opened via GitHub App "${pr.performed_via_github_app.name}"`);
+            if (botCommitEmails.length)  reasons.push(`bot commit email: ${botCommitEmails.join(', ')}`);
+
+            if (reasons.length === 0) {
+              console.log(`PR author "${author}" is not a bot/agent — no review requirement.`);
+              return;
+            }
+            console.log(`Bot/agent PR detected:\n  - ${reasons.join('\n  - ')}`);
+
+            // --- Count maintainer approvals -------------------------------
+            // Only the latest review per user counts. COMMENTED reviews are
+            // ignored: per GitHub merge semantics a later comment does not
+            // revoke an existing APPROVED state.
+            const reviews = await github.paginate(github.rest.pulls.listReviews, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pr.number,
+            });
+            const latestReviewByUser = new Map();
+            for (const review of reviews) {
+              if (!review.user) continue;
+              if (review.state === 'COMMENTED') continue;
+              latestReviewByUser.set(review.user.login, review.state);
+            }
+
+            async function isMaintainer(username) {
+              try {
+                const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  username,
+                });
+                return maintainerRoles.includes(data.role_name);
+              } catch (error) {
+                console.log(`Failed to check permission for ${username}: ${error.message}`);
+                return false;
+              }
+            }
+
+            const approvedBy = [];
+            for (const [login, state] of latestReviewByUser.entries()) {
+              if (state !== 'APPROVED') continue;
+              if (await isMaintainer(login)) approvedBy.push(login);
+            }
+
+            console.log(`Maintainer approvals: ${approvedBy.length}/${requiredApprovals}`);
+            console.log(`Approved by: ${approvedBy.join(', ') || 'none'}`);
+
+            if (approvedBy.length < requiredApprovals) {
+              core.setFailed(
+                `Bot/agent PRs require at least ${requiredApprovals} maintainer approvals before merging. ` +
+                `Currently have ${approvedBy.length}/${requiredApprovals}. ` +
+                `Maintainers are repository collaborators with role: ${maintainerRoles.join(' or ')}.`
+              );
+            }

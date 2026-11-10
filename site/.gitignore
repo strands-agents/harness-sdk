@@ -1,0 +1,25 @@
+*.DS_Store
+.cache/
+/app.tar
+/app/
+*.bak
+__pycache__
+.venv
+.idea
+*.egg-info
+
+dist
+node_modules
+.astro
+uv.lock
+
+temp_python_sdk
+sdk-typescript
+
+# Generated documentation
+docs/api-reference/
+__*__/
+.build
+
+mise.toml
+*.log

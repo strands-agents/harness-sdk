@@ -1,0 +1,62 @@
+name: Content Addition
+description: Suggest new content for the documentation
+title: "[NEW CONTENT] "
+labels: ["documentation"]
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting new content for our documentation!
+
+        **Adding a community integration?** Use the integrations submission flow instead —
+        one YAML file plus the Integration submission PR template. See the guide:
+        https://strandsagents.com/docs/integrations/get-featured/
+  
+  - type: textarea
+    id: proposed-content
+    attributes:
+      label: Proposed Content
+      description: Describe the content you'd like to see added
+      placeholder: I think the documentation should include...
+    validations:
+      required: true
+      
+  - type: textarea
+    id: location
+    attributes:
+      label: Location
+      description: Where should this content be placed in the documentation structure?
+      placeholder: This should be added to the section on...
+    validations:
+      required: true
+      
+  - type: textarea
+    id: rationale
+    attributes:
+      label: Rationale
+      description: Why is this content valuable for the project documentation?
+      placeholder: This content would be valuable because...
+    validations:
+      required: true
+      
+  - type: textarea
+    id: content-outline
+    attributes:
+      label: Content Outline (Optional)
+      description: If you have ideas for how the content should be structured, provide an outline
+      placeholder: |
+        1. Introduction
+        2. Key concepts
+        3. Examples
+    validations:
+      required: false
+      
+  - type: textarea
+    id: references
+    attributes:
+      label: References
+      description: Include links to any reference material or examples
+      placeholder: Related resources or examples
+    validations:
+      required: false

@@ -1,0 +1,67 @@
+name: "Docs: CI"
+
+on:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: site
+
+jobs:
+  ci:
+    name: CI
+    runs-on: strands-agents_ubuntu-latest_4-core
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Checkout samples
+        uses: actions/checkout@v7
+        with:
+          # Temporary curated-catalog baseline from samples#342; move to its merged SHA after landing.
+          repository: strands-agents/samples
+          ref: 220e21c0209773a5425f0e824e0930e03600da66
+          path: samples-source
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check formatting
+        run: npm run format:check
+
+      - name: Build
+        run: npm run cms:build
+        # The full docs build (~890 pages + generated API reference) peaks above
+        # Node's default heap on the runner; raise the ceiling to avoid an OOM.
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+          SAMPLES_SOURCE_DIR: ${{ github.workspace }}/samples-source
+          SAMPLES_REQUIRE_SOURCE: '1'
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build TypeScript SDK
+        run: npm install --ignore-scripts && npm run build && rm -rf node_modules
+        working-directory: strands-ts
+
+      - name: Re-link SDK types
+        run: npm install
+
+      - name: Typecheck snippets
+        run: npm run typecheck:snippets
+
+      - name: Test
+        run: npm test

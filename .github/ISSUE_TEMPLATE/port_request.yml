@@ -1,0 +1,66 @@
+name: Port Request
+description: Kick off a port of completed work (feature or fix) from one SDK language into another via strandly
+title: "[PORT] "
+labels: ["port"]
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Kicks off a port from one SDK language to another. Once filled out, hand
+        this issue to the strandly port workflow:
+
+        ```
+        strandly port --issue <ISSUE_ID>
+        ```
+
+  - type: dropdown
+    id: source
+    attributes:
+      label: Source SDK
+      description: The language the work is being ported FROM.
+      default: 0
+      options:
+        - strands-ts
+        - strands-py
+    validations:
+      required: true
+
+  - type: dropdown
+    id: target
+    attributes:
+      label: Target SDK
+      description: The language the work is being ported INTO.
+      default: 0
+      options:
+        - strands-py
+        - strands-ts
+    validations:
+      required: true
+
+  - type: textarea
+    id: related-files
+    attributes:
+      label: Related Files
+      description: |
+        Every source-SDK artifact for this change (source, tests, docs), one
+        repo-relative path per line and nothing else.
+
+        Example:
+        ```
+        strands-ts/src/models/anthropic.ts
+        strands-ts/src/models/__tests__/anthropic.test.ts
+        strands-ts/test/integ/models/anthropic.test.ts
+        site/src/content/docs/.../anthropic.mdx
+        ```
+      render: text
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: completeness
+    attributes:
+      label: Confirmation
+      options:
+        - label: The change is complete in the source SDK, and every related artifact is listed above (source, tests, and docs, if the change has any).
+          required: true

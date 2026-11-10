@@ -1,0 +1,671 @@
+/* Catalog page: header, featured row, filter controls, card grid.
+   Follows the changelog page's design language (see changelog.css): same
+   accent-text token, control radii, meta type scale, and Starlight theme
+   variables so light/dark adapt automatically. */
+
+:root {
+  /* Accent for TEXT/links; darkened in light mode for WCAG AA (mirrors
+     --cl-accent-text in changelog.css). */
+  --cat-accent-text: var(--sl-color-accent);
+  --cat-text-meta: 0.78rem;
+  --cat-radius-control: 8px;
+  --cat-radius-card: 12px;
+}
+[data-theme='light'] {
+  --cat-accent-text: #067a39;
+}
+
+/* Fill the content column (Starlight's content-panel already centers and pads
+   it to --sl-content-width, so the page shares the docs/product pages' spacing
+   and top divider). This stylesheet only loads on /integrations. */
+.sl-markdown-content :where(.cat-page) {
+  max-width: none;
+}
+
+/* The catalog is a grid, not prose, so give it more room than the 50rem prose
+   column and let it widen on large screens: cards stay wide enough to show full
+   titles and descriptions. Scoped to this page with :has() (catalog.css only
+   loads on /integrations). */
+body:has(.cat-page) {
+  --sl-content-width: 62rem;
+}
+@media (min-width: 96rem) {
+  body:has(.cat-page) {
+    --sl-content-width: 84rem;
+  }
+}
+
+.cat-page {
+  padding-bottom: 4rem;
+  font-family: var(--sl-font);
+}
+
+/* Reset Starlight markdown spacing on our subtree (same trick as .cl-page). */
+.cat-page :where(h1, h2, h3, p, div, button, ul, li, section, form, article, dialog, a, span, kbd) {
+  margin-top: 0;
+}
+/* Starlight's sibling margin-top rule outranks the :where reset for grid items
+   (its :not() arguments carry element specificity). Cards must never carry
+   external margins: with grid-auto-rows: 1fr, a margin on all-but-the-first
+   card makes the first card render taller than the rest of its row. */
+.cat-grid > .cat-card,
+.cat-grid > .cat-cta {
+  margin: 0;
+}
+.cat-page :where(svg) {
+  margin: 0;
+}
+
+/* ── Header ─────────────────────────────────────────────────────────────── */
+
+.cat-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 1.75rem;
+}
+.cat-head-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.4rem;
+}
+.cat-head-actions .cat-cta-btn {
+  margin-top: 0;
+}
+.cat-head-actions .cat-note {
+  margin: 0;
+}
+.cat-eyebrow {
+  display: inline-block;
+  margin-bottom: 0.25rem;
+  font-family: var(--sl-font-mono);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--sl-color-accent-high, var(--accent-green));
+  text-decoration: none;
+}
+.cat-eyebrow:hover {
+  text-decoration: underline;
+}
+/* Match the site's page titles: JetBrains Mono, not the body font. */
+.cat-title {
+  font-family: var(--sl-font-mono);
+  font-size: clamp(2rem, 4vw, 2.75rem);
+  font-weight: 600;
+  color: var(--sl-color-white);
+  margin: 0;
+}
+.cat-subtitle {
+  color: var(--sl-color-gray-3);
+  font-size: 1rem;
+  margin: 0.4rem 0 0;
+}
+.cat-note {
+  color: var(--sl-color-gray-3);
+  font-size: var(--cat-text-meta);
+  margin: 0 0 0.35rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Cards ──────────────────────────────────────────────────────────────── */
+
+.cat-grid {
+  min-width: 0;
+  display: grid;
+  /* Fit as many ~18rem tracks as the content width allows, so the grid gains
+     columns on wide screens instead of stretching a fixed three. min(100%, …)
+     keeps a single column from overflowing the narrowest viewports. */
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 18rem), 1fr));
+  /* Rows size to their content so full titles and descriptions are never
+     clipped; cards within a row still stretch to a shared height. */
+  gap: 1.4rem;
+}
+
+.cat-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  /* Grid items default to min-width auto; without this a card's nowrap
+     footer would widen its track past the container on narrow screens. */
+  min-width: 0;
+  gap: 0.6rem;
+  border: 1px solid var(--sl-color-hairline, var(--sl-color-gray-5));
+  border-radius: var(--cat-radius-card);
+  padding: 1.4rem;
+  background: var(--sl-color-bg-nav);
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease;
+}
+.cat-card:hover {
+  border-color: color-mix(in srgb, var(--sl-color-accent) 45%, var(--sl-color-gray-5));
+  background: color-mix(in srgb, var(--sl-color-accent) 4%, var(--sl-color-bg-nav));
+}
+.cat-card[hidden] {
+  display: none;
+}
+
+/* Featured entries live in the same grid (sorted first) and are marked by a
+   Featured chip in the card head plus a light accent border tint. */
+.cat-card--featured {
+  border-color: color-mix(in srgb, var(--sl-color-accent) 25%, var(--sl-color-gray-5));
+}
+
+/* Whole-card click: the title link stretches over the card; secondary links
+   re-raise themselves above it. */
+.cat-card-title::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: var(--cat-radius-card);
+}
+.cat-card:focus-within {
+  border-color: var(--cat-accent-text);
+}
+
+/* Type tile: the entry's integration-type glyph in a calm accent tint, so
+   cards of the same type share one mark and the tile reads as meaning. */
+.cat-tile {
+  flex-shrink: 0;
+  width: 2.5rem;
+  height: 2.5rem;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  color: var(--sl-color-gray-2);
+  background: color-mix(in srgb, var(--sl-color-accent) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--sl-color-accent) 14%, transparent);
+}
+
+/* Header row: the type tile beside the title/stats/flags cluster. The
+   description and footer are siblings below it and span the full card
+   width, so nothing sits indented under the icon. */
+.cat-card-header {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  min-width: 0;
+}
+
+/* Head stacks vertically beside the tile: title, then the star/download
+   stats directly below it, then the flag chips on their own row. */
+.cat-card-head {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+}
+.cat-card-title {
+  font-weight: 600;
+  font-size: 1.05rem;
+  color: var(--sl-color-white);
+  text-decoration: none;
+  /* Wrap to at most two lines rather than truncating a name mid-word. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  max-width: 100%;
+}
+.cat-card-stats {
+  display: inline-flex;
+  gap: 0.55rem;
+  flex-shrink: 0;
+  /* Sit tight under the title — smaller than the head's row gap. */
+  margin-top: -0.1rem;
+  font-size: var(--cat-text-meta);
+  color: var(--sl-color-gray-3);
+}
+.cat-card:hover .cat-card-title {
+  color: var(--cat-accent-text);
+}
+.cat-external {
+  font-size: 0.75rem;
+  color: var(--sl-color-gray-3);
+}
+
+/* Flag cluster is its own full-width row below the header: Featured / New /
+   Verified / maintainer chips together, left-aligned, with a gap between. */
+.cat-card-flags {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+/* Card flags mirror Starlight's sidebar .sl-badge treatment (see Badge.astro):
+   bordered rectangle, system-mono, xs type — so a "New" here reads identically
+   to a "New" in the docs side menu. The --sl-badge-* variables are defined
+   globally on :root by Starlight's Badge component. */
+.cat-flag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-family: var(--sl-font-system-mono);
+  font-size: var(--sl-text-xs);
+  line-height: 1;
+  padding: 0.125rem 0.375rem;
+  border: 1px solid;
+  border-radius: 0.25rem;
+}
+/* Cap the mark height (the AWS logo ships taller than the chip text) so every
+   flag chip is the same height and the flags row never varies card to card. */
+.cat-flag svg {
+  height: 0.85rem;
+  width: auto;
+}
+/* Variant colors follow the docs sidebar badges but lightened: outline-only
+   (no fill) so the flags read as quiet metadata rather than solid chips. */
+.cat-flag--new {
+  color: var(--sl-badge-tip-text);
+  background: color-mix(in srgb, var(--sl-badge-tip-bg) 35%, transparent);
+  border-color: color-mix(in srgb, var(--sl-badge-tip-border) 55%, transparent);
+}
+/* Featured/Verified are maintainer-granted: brand-green outline keeps them
+   distinct from the informational New without a solid fill. */
+.cat-flag--verified,
+.cat-flag--featured {
+  color: var(--cat-accent-text);
+  background: color-mix(in srgb, var(--sl-color-accent) 7%, transparent);
+  border-color: color-mix(in srgb, var(--sl-color-accent) 40%, transparent);
+}
+
+.cat-card-desc {
+  color: var(--sl-color-gray-2);
+  font-size: 0.92rem;
+  line-height: 1.6;
+  margin: 0;
+}
+
+.cat-card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.7rem;
+  /* Pinned to the card bottom; absorbs the extra height when a card is
+     stretched to match a taller sibling in its grid row. */
+  margin-top: auto;
+  padding-top: 0.15rem;
+  font-size: var(--cat-text-meta);
+  color: var(--sl-color-gray-3);
+  min-width: 0;
+}
+.cat-facts {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.3rem 0.6rem;
+  min-width: 0;
+}
+.cat-type {
+  color: var(--sl-color-gray-3);
+  white-space: nowrap;
+}
+.cat-stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.cat-stat svg {
+  flex-shrink: 0;
+}
+.cat-links {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.65rem;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+/* Secondary links sit above the stretched title link. Each holds a 14px brand
+   mark (GitHub / PyPI / npm) with a title tooltip and aria-label for the name. */
+.cat-link {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  color: var(--sl-color-gray-3);
+  text-decoration: none;
+}
+.cat-link svg {
+  display: block;
+}
+/* 24px hit area around the 14px mark. */
+.cat-link::before {
+  content: '';
+  position: absolute;
+  inset: -5px;
+}
+.cat-link:hover {
+  color: var(--cat-accent-text);
+}
+
+/* ── Filters ────────────────────────────────────────────────────────────── */
+
+.cat-filters {
+  margin-bottom: 1.75rem;
+}
+.cat-filters-row,
+/* Inline facet bar (no modal): sits above the grid. */
+.cat-facets {
+  margin-bottom: 1.5rem;
+}
+
+.cat-facet-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.7rem;
+}
+
+/* Search and type filters live in the left sidebar (see Sidebar.astro), which
+   is hidden below 50rem; this bar stands in for it there. */
+.cat-mobile-filters {
+  display: none;
+}
+@media (max-width: 49.9375rem) {
+  .cat-mobile-filters {
+    position: sticky;
+    top: var(--sl-nav-height);
+    z-index: 2;
+    display: flex;
+    gap: 0.5rem;
+    margin: 0 calc(-1 * var(--sl-content-pad-x)) 0.9rem;
+    padding: 0.6rem var(--sl-content-pad-x);
+    background: var(--sl-color-bg);
+    border-bottom: 1px solid var(--sl-color-gray-5);
+  }
+}
+.cat-mobile-search,
+.cat-mobile-type {
+  min-width: 0;
+  height: 2.75rem;
+  padding: 0 0.75rem;
+  border: 1px solid var(--sl-color-gray-5);
+  border-radius: var(--cat-radius-control);
+  background: var(--sl-color-bg);
+  color: var(--sl-color-white);
+  font: inherit;
+  /* Below 16px iOS zooms the page on focus. */
+  font-size: 1rem;
+}
+.cat-mobile-search {
+  flex: 1 1 auto;
+}
+.cat-mobile-type {
+  flex: 0 1 9.5rem;
+}
+
+/* Segmented control groups (mirrors .cl-lang / .cl-sdk). */
+.cat-seg {
+  display: inline-flex;
+  align-items: stretch;
+  flex: 0 0 auto;
+  border: 1px solid var(--sl-color-gray-5);
+  border-radius: var(--cat-radius-control);
+  overflow: hidden;
+}
+.cat-seg-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.8rem;
+  background: transparent;
+  color: var(--sl-color-gray-3);
+  font: inherit;
+  line-height: 1.2;
+  font-size: 0.82rem;
+  font-weight: 600;
+  border: 0;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.cat-seg .cat-seg-btn + .cat-seg-btn {
+  border-left: 1px solid var(--sl-color-gray-5);
+}
+.cat-seg-btn[aria-pressed='true'],
+.cat-seg-btn[aria-checked='true'] {
+  background: color-mix(in srgb, var(--sl-color-accent) 14%, transparent);
+  color: var(--cat-accent-text);
+}
+
+/* Vertical divider between filter groups in the facet row (language / SDK |
+   maintainer | status) so the single combined row still reads as distinct
+   controls. */
+.cat-facet-sep {
+  align-self: stretch;
+  width: 1px;
+  min-height: 1.5rem;
+  background: var(--sl-color-gray-5);
+  margin-inline: 0.2rem;
+}
+
+/* Type chip rail (mirrors .cl-area chips, laid out horizontally). */
+.cat-type-rail {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+.cat-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.9rem;
+  line-height: 1.2;
+  padding: 0.3rem 0.65rem;
+  border-radius: var(--cat-radius-control);
+  border: 1px solid transparent;
+  color: var(--sl-color-gray-2);
+  background: transparent;
+  cursor: pointer;
+  font-family: inherit;
+}
+.cat-chip:hover {
+  background: color-mix(in srgb, var(--sl-color-gray-5) 40%, transparent);
+}
+.cat-chip[aria-pressed='true'] {
+  border-color: var(--cat-accent-text);
+  color: var(--cat-accent-text);
+  background: color-mix(in srgb, var(--sl-color-accent) 8%, transparent);
+}
+.cat-count {
+  color: var(--sl-color-gray-3);
+  font-size: var(--cat-text-meta);
+  font-variant-numeric: tabular-nums;
+}
+.cat-chip[aria-pressed='true'] .cat-count {
+  color: inherit;
+}
+
+/* ── States & footer ────────────────────────────────────────────────────── */
+
+.cat-empty {
+  text-align: center;
+  color: var(--sl-color-gray-3);
+  font-size: 0.9rem;
+  margin-block: 3rem;
+}
+
+/* Submit CTA: a dashed "add yours" tile at the end of the grid. Not a
+   .cat-card, so the filter script never hides it. */
+.cat-cta {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 0.45rem;
+  min-height: 8rem;
+  padding: 1.25rem;
+  border: 1px dashed color-mix(in srgb, var(--sl-color-accent) 40%, var(--sl-color-gray-5));
+  border-radius: var(--cat-radius-card);
+  background: color-mix(in srgb, var(--sl-color-accent) 3%, transparent);
+}
+.cat-cta-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--sl-color-white);
+  margin: 0;
+}
+.cat-cta-body {
+  font-size: 0.84rem;
+  line-height: 1.6;
+  color: var(--sl-color-gray-3);
+  margin: 0;
+}
+/* Button treatment mirrors the changelog's .cl-novel-btn. */
+.cat-cta-btn {
+  display: inline-block;
+  margin-top: 0.35rem;
+  padding: 0.4rem 1rem;
+  border-radius: var(--cat-radius-control);
+  font-size: 0.82rem;
+  font-weight: 600;
+  background: var(--sl-color-accent);
+  color: var(--sl-color-text-invert);
+  text-decoration: none;
+  border: 1px solid var(--sl-color-accent);
+}
+.cat-cta-btn:hover {
+  background: color-mix(in srgb, var(--sl-color-accent) 85%, black);
+}
+
+.cat-disclaimer {
+  margin-top: 2.5rem;
+  text-align: center;
+  color: var(--sl-color-gray-3);
+  font-size: 0.8rem;
+}
+
+/* Below the desktop width the combined facet row would wrap and strand the
+   vertical dividers, so stack the groups instead: the language / SDK segments,
+   then the maintainer chips, then the status chips, each on its own line. */
+@media (max-width: 63.9375rem) {
+  .cat-facet-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.7rem;
+  }
+  .cat-facet-sep {
+    display: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .cat-head {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .cat-head-actions {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cat-card {
+    transition: none;
+  }
+}
+
+/* Docs drawer: slide-over panel hosting an embedded (?embed, chromeless) docs
+   page in an iframe. Right-side panel on desktop, full-screen sheet below the
+   site header on narrow viewports. Same <dialog> mechanics as .cat-dialog. */
+.cat-drawer {
+  position: fixed;
+  inset: 0 0 0 auto;
+  width: min(720px, 92vw);
+  height: 100%;
+  max-height: none;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-inline-start: 1px solid var(--sl-color-gray-5);
+  background: var(--sl-color-bg-nav);
+  color: var(--sl-color-gray-2);
+  box-shadow: -16px 0 48px rgb(0 0 0 / 0.35);
+  display: none;
+  flex-direction: column;
+}
+.cat-drawer[open] {
+  display: flex;
+  animation: cat-drawer-in 200ms ease-out;
+}
+@keyframes cat-drawer-in {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+.cat-drawer::backdrop {
+  background: rgb(0 0 0 / 0.5);
+  backdrop-filter: blur(2px);
+}
+@media (max-width: 800px) {
+  .cat-drawer {
+    inset: var(--sl-nav-height, 0px) 0 0 0;
+    width: 100%;
+    height: auto;
+    border-inline-start: 0;
+    border-top: 1px solid var(--sl-color-gray-5);
+  }
+  .cat-drawer[open] {
+    animation-name: cat-drawer-up;
+  }
+  @keyframes cat-drawer-up {
+    from {
+      transform: translateY(100%);
+    }
+    to {
+      transform: translateY(0);
+    }
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cat-drawer[open] {
+    animation: none;
+  }
+}
+.cat-drawer-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  padding: 0.8rem 1rem;
+  border-bottom: 1px solid var(--sl-color-gray-5);
+}
+.cat-drawer-name {
+  flex: 1;
+  font-weight: 600;
+  font-size: 1rem;
+  color: var(--sl-color-white);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cat-drawer-full {
+  font-size: 0.8rem;
+  color: var(--cat-accent-text);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.cat-drawer-full:hover {
+  text-decoration: underline;
+}
+.cat-drawer-frame {
+  flex: 1;
+  width: 100%;
+  border: 0;
+  background: var(--sl-color-bg);
+}

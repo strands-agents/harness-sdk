@@ -1,0 +1,234 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  detect-changes:
+    name: Detect Changes
+    runs-on: strands-agents_ubuntu-latest_4-core
+    permissions:
+      pull-requests: read
+      contents: read
+    outputs:
+      python: ${{ steps.filter.outputs.python }}
+      typescript: ${{ steps.filter.outputs.typescript }}
+      docs: ${{ steps.filter.outputs.docs }}
+      mcp: ${{ steps.filter.outputs.mcp }}
+      harness-py: ${{ steps.filter.outputs.harness-py }}
+      harness-ts: ${{ steps.filter.outputs.harness-ts }}
+      strands-py-src: ${{ steps.filter.outputs.strands-py-src }}
+      strands-ts-src: ${{ steps.filter.outputs.strands-ts-src }}
+      strands-cli: ${{ steps.filter.outputs.strands-cli }}
+      pr-metrics: ${{ steps.filter.outputs.pr-metrics }}
+      integ-metrics: ${{ steps.filter.outputs.integ-metrics }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4
+        id: filter
+        with:
+          # `**/!(*.md)` excludes docs-only changes from the SDK test matrices; keep it an
+          # extglob, not a `!**/*.md` negation (paths-filter OR-s patterns, so a bare negation fires on everything).
+          filters: |
+            python:
+              - 'strands-py/**/!(*.md)'
+              - '.github/workflows/python-*'
+              - '.github/workflows/ci.yml'
+            typescript:
+              - 'strands-ts/**/!(*.md)'
+              - 'package.json'
+              - 'package-lock.json'
+              - '.github/workflows/typescript-*'
+              - '.github/workflows/ci.yml'
+            docs:
+              - 'site/**'
+              - '.github/workflows/docs-*'
+              - '.github/workflows/ci.yml'
+            mcp:
+              - 'strands-mcp/**/!(*.md)'
+              - '.github/workflows/mcp-*'
+              - '.github/workflows/ci.yml'
+            harness-py:
+              - 'harness-py/**/!(*.md)'
+              - '.github/workflows/harness-py-*'
+              - '.github/workflows/ci.yml'
+            harness-ts:
+              - 'harness-ts/**/!(*.md)'
+              - '.github/workflows/harness-ts-*'
+              - '.github/workflows/ci.yml'
+            # SDK runtime sources: changes here also run the harness suites against the local SDK.
+            strands-py-src:
+              - 'strands-py/src/**/!(*.md)'
+              - 'strands-py/pyproject.toml'
+            strands-ts-src:
+              - 'strands-ts/src/**/!(*.md)'
+              - 'strands-ts/package.json'
+              - 'strands-ts/tsconfig.base.json'
+            strands-cli:
+              - 'strands-cli/**/!(*.md)'
+              - '.github/workflows/harness-cli-*'
+              - '.github/workflows/ci.yml'
+            pr-metrics:
+              - '.github/scripts/pr-metrics/**'
+              - '.github/workflows/pr-metrics-*'
+              - '.github/workflows/ci.yml'
+              # Defines the test:pr-metrics script this job runs.
+              - 'package.json'
+            integ-metrics:
+              - '.github/scripts/upload-integ-test-metrics.py'
+              - '.github/scripts/test_upload_integ_test_metrics.py'
+              - 'test-infra/dashboards/**'
+              - '.github/workflows/ci.yml'
+
+  dependency-review:
+    name: Dependency Review
+    # Repo-level security gate covering every ecosystem in the monorepo
+    # (npm + Python) via GitHub's dependency graph. Diffs the PR against its
+    # base and fails only on vulnerabilities the PR introduces (adds or bumps
+    # to a vulnerable version); pre-existing advisories do not block.
+    # PR-only: it needs a base ref to diff, so it is skipped on dispatch.
+    if: github.event_name == 'pull_request'
+    runs-on: strands-agents_ubuntu-latest_4-core
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/dependency-review-action@v5
+        with:
+          fail-on-severity: high
+
+  python:
+    name: Python
+    needs: detect-changes
+    if: needs.detect-changes.outputs.python == 'true'
+    uses: ./.github/workflows/python-test-lint.yml
+    permissions:
+      contents: read
+    with:
+      ref: ${{ github.event.pull_request.head.sha || github.sha }}
+    secrets:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+  typescript:
+    name: TypeScript
+    needs: detect-changes
+    if: needs.detect-changes.outputs.typescript == 'true'
+    uses: ./.github/workflows/typescript-pr-and-push.yml
+    permissions:
+      contents: read
+
+  docs:
+    name: Docs
+    needs: detect-changes
+    if: needs.detect-changes.outputs.docs == 'true' || needs.detect-changes.outputs.python == 'true' || needs.detect-changes.outputs.typescript == 'true'
+    uses: ./.github/workflows/docs-ci.yml
+    permissions:
+      contents: read
+
+  mcp:
+    name: MCP
+    needs: detect-changes
+    if: needs.detect-changes.outputs.mcp == 'true'
+    uses: ./.github/workflows/mcp-pr-and-push.yml
+    permissions:
+      contents: read
+
+  harness-python:
+    name: Harness Python
+    needs: detect-changes
+    if: needs.detect-changes.outputs.harness-py == 'true' || needs.detect-changes.outputs.strands-py-src == 'true'
+    uses: ./.github/workflows/harness-py-test-lint.yml
+    permissions:
+      contents: read
+    with:
+      ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      local-strands-py: ${{ needs.detect-changes.outputs.strands-py-src == 'true' }}
+
+  harness-typescript:
+    name: Harness TypeScript
+    needs: detect-changes
+    if: needs.detect-changes.outputs.harness-ts == 'true' || needs.detect-changes.outputs.strands-ts-src == 'true'
+    uses: ./.github/workflows/harness-ts-test-lint.yml
+    permissions:
+      contents: read
+    with:
+      ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      local-strands-ts: ${{ needs.detect-changes.outputs.strands-ts-src == 'true' }}
+
+  cli:
+    name: Strands CLI
+    needs: detect-changes
+    if: needs.detect-changes.outputs.strands-cli == 'true'
+    uses: ./.github/workflows/harness-cli-test-lint.yml
+    permissions:
+      contents: read
+    with:
+      ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+  pr-metrics:
+    name: PR Metrics Scripts
+    needs: detect-changes
+    if: needs.detect-changes.outputs.pr-metrics == 'true'
+    runs-on: strands-agents_ubuntu-latest_4-core
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          package-manager-cache: false
+      # The TypeScript cases need the pinned compiler, and skip silently without
+      # it — install so they actually run here.
+      - name: Install analyzers
+        run: npm ci --ignore-scripts --no-audit --no-fund --prefix .github/scripts/pr-metrics/tools
+      - run: npm run test:pr-metrics
+      - name: Check formatting
+        run: npx --yes prettier@3 --check '.github/scripts/pr-metrics/*.mjs'
+
+  integ-metrics:
+    name: Integ Metrics
+    needs: detect-changes
+    if: needs.detect-changes.outputs.integ-metrics == 'true'
+    runs-on: strands-agents_ubuntu-latest_4-core
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7.1.0
+        with:
+          python-version: '3.12'
+      - name: Install publisher dependencies
+        run: pip install --no-cache-dir boto3 pytest 'ruff>=0.16.0,<0.17.0'
+      - run: python -m pytest .github/scripts -q
+      - name: Lint
+        run: |
+          ruff check .github/scripts/*.py test-infra/dashboards/*.py
+          ruff format --check .github/scripts/upload-integ-test-metrics.py .github/scripts/test_upload_integ_test_metrics.py test-infra/dashboards/generate.py test-infra/dashboards/check_series.py
+      - name: Check dashboards are up to date
+        run: python test-infra/dashboards/generate.py --check
+
+  ci-gate:
+    name: CI Gate
+    if: always()
+    needs: [detect-changes, dependency-review, python, typescript, docs, mcp, harness-python, harness-typescript, cli, pr-metrics, integ-metrics]
+    runs-on: strands-agents_ubuntu-latest_4-core
+    permissions: {}
+    steps:
+      - uses: re-actors/alls-green@b5b5b37504aa4183270bd3d855c52a67f212be35 # release/v1
+        with:
+          allowed-skips: dependency-review, python, typescript, docs, mcp, harness-python, harness-typescript, cli, pr-metrics, integ-metrics
+          jobs: ${{ toJSON(needs) }}

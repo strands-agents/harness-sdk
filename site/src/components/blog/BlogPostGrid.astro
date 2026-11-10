@@ -1,0 +1,44 @@
+---
+import BlogCard from './BlogCard.astro'
+import type { BlogPost } from '../../util/blog'
+import { resolveAuthors } from '../../util/blog'
+
+interface Props {
+  posts: BlogPost[]
+}
+
+const { posts } = Astro.props
+
+// Resolve authors for all posts
+const postsWithAuthors = await Promise.all(
+  posts.map(async (post) => ({
+    post,
+    authors: await resolveAuthors(post.data.authors),
+  }))
+)
+---
+
+{postsWithAuthors.length > 0 ? (
+  <div class="blog-grid">
+    {postsWithAuthors.map(({ post, authors }) => (
+      <BlogCard post={post} authors={authors} />
+    ))}
+  </div>
+) : (
+  <p class="blog-empty">No posts found.</p>
+)}
+
+<style>
+  .blog-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr));
+    gap: 1.5rem;
+  }
+
+  .blog-empty {
+    font-family: var(--sl-font);
+    color: var(--sl-color-gray-3);
+    text-align: center;
+    padding: 3rem 0;
+  }
+</style>

@@ -1,0 +1,262 @@
+---
+title: "How Steering Hooks Achieved 100% Agent Accuracy Where Prompts and Workflows Failed"
+date: 2026-03-18
+description: "Steering hooks achieved a 100% accuracy pass rate across 600 evaluation runs, compared to 82.5% for simple prompt-based instructions and 80.8% for graph-based workflows."
+authors:
+  - clare-liguori
+tags:
+  - Steering
+  - Evaluation
+  - Best Practices
+draft: false
+---
+
+When I start building a new AI agent, I usually begin with some tools and the simplest possible prompt. Something like, "You are a helpful assistant that detects high-severity issues reported in customer feedback." I run the agent a bunch of times, observe what it does, and start iterating. The prompt grows. I add clarifications. I add "DO NOT" statements. Before long, my simple prompt has become a wall of instructions that the model often follows, sometimes ignores, and occasionally interprets in creative ways I didn't anticipate. I fix one behavior, another drifts. I test a dozen times on my laptop and everything looks great, and I deploy. Then the agent runs hundreds of times a day, and the long tail of unexpected inputs finds every gap in my prompt. So I add more rules, test again, deploy again. It's a prompting treadmill.
+
+With the [Strands Agents SDK](https://strandsagents.com), we embrace a [model-driven approach](/blog/strands-agents-model-driven-approach/) to building agents: instead of writing complex orchestration code, we let the model drive its own behavior, reasoning, planning, and selecting tools autonomously. This approach is powerful and flexible, but how do you guide the model's behavior without falling back onto the prompting treadmill?
+
+That's the problem that Strands steering solves. In my testing, **steering hooks achieved a 100% accuracy pass rate across 600 evaluation runs**, compared to 82.5% for simple prompt-based instructions and 80.8% for graph-based workflows, while also preserving the model's ability to reason and adapt. In this post, I'll walk through how steering hooks work, how agent steering compares to other approaches, and the evaluation data behind these results.
+
+## Approaches to guiding agent behavior at scale
+
+Before diving into Strands steering, let's look at the approaches that agent developers commonly use today to try to get their AI agents to behave reliably.
+
+### Prompt engineering
+
+This is the most common starting point. You write a system prompt describing what the agent should do, iterate based on observed behavior, and gradually accumulate rules and constraints. This works well for simple agents, but for complex multi-step tasks, monolithic prompts become unwieldy. Models start ignoring instructions buried deep in long prompts, hallucinate tool inputs, or fail to follow critical procedures. You can test a prompt against every scenario you can think of, but production traffic will always surface new scenarios you didn't predict. Every new edge case means another line in the prompt, and you're never quite sure if adding a new rule will break something that was working before.
+
+### Standard operating procedures (SOPs)
+
+[Agent SOPs](https://github.com/strands-agents/agent-sop) are structured, natural language documents that describe step-by-step workflows for agents to follow. They use RFC 2119 keywords (MUST, SHOULD, MAY) to provide precise instructions while preserving the agent's reasoning ability. SOPs have been widely adopted inside Amazon, with thousands of SOPs across teams automating everything from code reviews to incident response.
+
+SOPs are a powerful middle ground between flexibility and control. They give agents detailed procedural guidance while still letting the model adapt to unexpected inputs. The tradeoff is token cost: a detailed SOP for something like a complex thirty-step workflow can be very long, consuming significant input tokens on every request.
+
+### Workflows and graphs
+
+Another approach is to define rigid workflows using graph and multi-agent abstractions, like the [graph](https://strandsagents.com/docs/user-guide/sdk/multi-agent/graph/) and [workflow](https://strandsagents.com/docs/user-guide/sdk/multi-agent/workflow/) patterns in Strands. You decompose the agent's task into discrete nodes with defined edges between them, applying what we know from deterministic programming (if statements, loops, conditional branches) to agent behavior.
+
+This approach can produce predictable behavior for well-defined workflows, but it undermines the flexibility and reasoning ability that makes recent, powerful models valuable in the first place. When a user's request doesn't fit neatly into the predefined graph, the agent fails. The more diverse your inputs, the more uncovered paths you discover, and the more complex and brittle the graph becomes.
+
+## Enter Strands steering
+
+[Strands steering](https://strandsagents.com/docs/user-guide/sdk/agents/interventions/steering/) takes a different approach. Instead of front-loading all instructions into a monolithic prompt or constraining the agent to a rigid workflow, steering provides **just-in-time guidance** to the agent at the moments that matter.
+
+The core idea is simple: rather than telling the agent everything upfront and hoping it remembers, you define steering handlers that observe what the agent is doing and provide targeted guidance when it's about to go off track. Rather than a 10-page instruction manual the agent has to keep in mind at all times, steering handlers deliver the right guidance at the right moment, when the agent is actually about to make a decision that matters.
+
+Steering's just-in-time guidance breaks the prompting treadmill: instead of adding more natural language rules to a growing prompt, you add targeted handlers that fire only when needed. Handlers get access to a ledger of all tools the agent has called so far (including their inputs and outputs), so you can enforce rules about tool ordering, parameter validation, and data flow between tools.
+
+Steering handlers can intercept agent behavior at two points via [hooks](https://strandsagents.com/docs/user-guide/sdk/agents/hooks/):
+
+1. **Before tool calls**: When the agent is about to call a tool, a steering handler can first inspect the tool name and parameters. It can decide whether to let the call proceed or cancel it with guidance back to the model. For example: "You used the wrong customer ID as input to this tool", or "You must verify the customer's identity before processing this request."
+2. **After model responses**: When the model generates a response to the user, a steering handler can first evaluate the output and either accept it or discard it with feedback, causing the model to try again. For example: "Your response didn't follow the required escalation format. Please revise."
+
+A steering handler can be a plain Python function that evaluates the tool call or model response against deterministic rules. Deterministic handlers run identically on every invocation and can be unit tested, so behavioral rules that pass your test suite will hold for every invocation in production. A steering handler can also use an LLM as a judge for more nuanced evaluation like tone checking.
+
+Steering is complementary with enforcement layers outside the agent. For example, you can use [Amazon Bedrock AgentCore Policy Engine](https://aws.amazon.com/blogs/aws/amazon-bedrock-agentcore-adds-quality-evaluations-and-policy-controls-for-deploying-trusted-ai-agents/) to enforce parameter constraints at the MCP server gateway level, while using steering handlers inside the agent for workflow validation and tone control.
+
+## Demo: Library book renewal agent
+
+To put these approaches to the test, I built a sample agent that demonstrates different ways to guide agent behavior. The agent is a chatbot that helps users renew books they've checked out from the library. It has access to five tools:
+
+- **User info**: Returns the user's library card number
+- **Checked out books**: Returns the user's currently checked out books
+- **Book status**: Returns whether a book is active or recalled
+- **Renew book**: Processes a book renewal
+- **Send confirmation**: Sends a confirmation email after renewal
+
+The agent must follow four behavioral guidelines:
+
+1. **Workflow adherence**: Check book status (not recalled) and retrieve the user's library card number *before* renewing. Send a confirmation *after* a successful renewal.
+2. **Parameter constraint**: Renewal period must be ≤ 30 days.
+3. **Input validation**: The library card number on the renewal request must match the user's actual card number (no hallucinated values).
+4. **Tone adherence**: All communication must be positive and encouraging about continued learning.
+
+I built five versions of this agent, each using a different behavior control mechanism:
+
+1. **No instructions**: Just "You are a helpful librarian" as a baseline. No behavioral guidance at all.
+2. **Simple instructions**: A summary of the four guidelines above in the system prompt.
+3. **SOP**: A detailed standard operating procedure with step-by-step instructions.
+4. **Steering**: Strands steering handlers for workflow validation and tone control, plus an AgentCore Policy Engine policy for the 30-day renewal constraint.
+5. **Workflow**: A graph of specialized agent nodes implementing the renewal workflow.
+
+### How the steering handlers work
+
+The steering version uses four handlers that compose together as plugins on the agent:
+
+```python
+agent = Agent(
+    tools=tools,
+    system_prompt=system_prompt,
+    plugins=[
+        renewal_workflow_handler,
+        confirmation_workflow_handler,
+        confirmation_tone_handler,
+        model_tone_handler,
+    ],
+)
+```
+
+Here's the **renewal workflow steering handler**, which intercepts `renew_book` tool calls and validates the agent's workflow:
+
+```python
+async def steer_before_tool(
+    self, *, agent, tool_use, **kwargs
+):
+    # Only validate renewal attempts
+    if tool_use.get("name") != "renew_book":
+        return Proceed(reason="Not a renewal tool call")
+
+    # Get the history of tool calls from the ledger
+    ctx = self.steering_context.data.get()
+    ledger = ctx.get("ledger", {})
+    tool_calls = ledger.get("tool_calls", [])
+
+    # Was book status verified first?
+    status_checked = any(
+        c["tool_name"] == "get_book_status"
+        and c["status"] == "success"
+        for c in tool_calls
+    )
+    if not status_checked:
+        return Guide(
+            reason="Check book status before renewing."
+            " Use get_book_status first, then retry."
+        )
+
+    # Is the book recalled?
+    for c in tool_calls:
+        if (
+            c["tool_name"] == "get_book_status"
+            and c["status"] == "success"
+        ):
+            result = json.loads(c["result"][0]["text"])
+            if result.get("status") == "RECALLED":
+                return Guide(
+                    reason="Cannot renew a RECALLED book."
+                )
+
+    # Does the library card match the user's actual card?
+    renewal_card = tool_use.get("input", {}).get(
+        "library_card_number"
+    )
+    for c in tool_calls:
+        if (
+            c["tool_name"] == "get_user_info"
+            and c["status"] == "success"
+        ):
+            result = json.loads(c["result"][0]["text"])
+            user_card = result["library_card_number"]
+            if renewal_card != user_card:
+                return Guide(
+                    reason=f"Wrong library card."
+                    f" Use {user_card} instead."
+                )
+
+    return Proceed(reason="Workflow validation passed")
+```
+
+This handler is pure Python, no LLM calls, fully deterministic, and easy to unit test. It reads from the built-in ledger that tracks every tool call the agent has made, and provides targeted guidance when the agent tries to skip steps or use incorrect data. ([Full implementation on GitHub](https://github.com/strands-agents/samples/blob/main/python/05-technical-use-cases/steering/library-book-renewal-agent/src/library_agent_demo/steering/renewal_workflow_steering_handler.py))
+
+Here's the **tone validation steering handler**, which intercepts and evaluates model responses using a standalone LLM judge agent:
+
+```python
+async def steer_after_model(
+    self, *, agent, message, stop_reason, **kwargs
+):
+    if stop_reason != "end_turn":
+        return Proceed(reason="Not a final response")
+
+    text = " ".join(
+        block.get("text", "")
+        for block in message.get("content", [])
+    )
+
+    # Run an LLM judge agent to evaluate tone
+    steering_agent = Agent(
+        system_prompt=TONE_PROMPT,
+        model=steering_model,
+    )
+    result = steering_agent(
+        f"Evaluate this message:\n\n{text}",
+        structured_output_model=ToneDecision,
+    )
+
+    if result.structured_output.decision == "guide":
+        return Guide(reason=result.structured_output.reason)
+    return Proceed(reason="Tone check passed")
+```
+
+This handler uses an LLM as a judge to evaluate the primary agent's output, which lets you enforce nuanced behavioral rules like tone that are difficult to express as deterministic code. ([Full implementation on GitHub](https://github.com/strands-agents/samples/blob/main/python/05-technical-use-cases/steering/library-book-renewal-agent/src/library_agent_demo/steering/model_tone_steering_handler.py))
+
+## Evaluation results
+
+I evaluated each agent version against six scenarios designed to test different aspects of behavioral compliance:
+
+1. **Happy path**: Normal renewal workflow
+2. **Excessive period**: User requests 90 days (must enforce 30-day limit)
+3. **Recalled book**: Book is recalled (must refuse renewal)
+4. **Mismatched card**: User provides wrong card number (must use correct one)
+5. **Adversarial tone**: User asks agent to be rude (must maintain positive tone)
+6. **Informational query**: User asks what books they have (must answer without renewing)
+
+I ran each scenario 100 times per agent version (600 runs per agent, 3,000 runs total) and evaluated the results using the [Strands Evaluation SDK](https://strandsagents.com/docs/user-guide/evals-sdk/quickstart/) to check workflow adherence, tool call correctness, and tone. This volume of runs simulates the kind of variance you'd see at production scale. Differences between approaches that are invisible in ten test runs become clearer over hundreds of iterations.
+
+Here are the results:
+
+| Agent | Pass Rate | Avg Input Tokens | Avg Output Tokens |
+|-------|-----------|-----------------|-------------------|
+| No instructions | 15.7% | 1,870 | 401 |
+| Simple instructions | 82.5% | 2,329 | 430 |
+| SOP | 99.8% | 9,879 | 459 |
+| **Steering** | **100.0%** | **3,346** | **598** |
+| Workflow | 80.8% | 3,116 | 1,125 |
+
+And the scenario-level breakdown:
+
+| Scenario | No instructions | Simple | SOP | Steering | Workflow |
+|----------|----------------|--------|-----|----------|----------|
+| Happy path | 0% | 87% | 100% | 100% | 98% |
+| Excessive period | 0% | 100% | 100% | 100% | 99% |
+| Recalled book | 0% | 87% | 100% | 100% | 100% |
+| Mismatched card | 0% | 57% | 99% | 100% | 99% |
+| Adversarial tone | 0% | 64% | 100% | 100% | 87% |
+| Informational query | 94% | 100% | 100% | 100% | 2% |
+
+### What the data tells us
+
+**Steering achieves the highest accuracy at moderate cost.** At 100% pass rate, steering outperformed simple instructions by 17.5 percentage points and graph-based workflows by 19.2 percentage points. Compared to the SOP agent, which achieved similar accuracy (99.8%), steering used 66% fewer input tokens. Steering did use 44% more input tokens than simple instructions (the overhead of providing guidance back to the agent when it strayed), but simple instructions only achieved 82.5% accuracy.
+
+**Steering is more token-efficient than workflows.** Steering used only 7% more input tokens than the workflow agent, but 47% fewer output tokens. The output token savings come from avoiding the multi-agent coordination overhead in graph-based approaches, where each node in the graph is a separate agent generating its own responses and passing on state to the next agent. This difference in token usage matters because output tokens are typically much more expensive than input tokens; for many models, output tokens can cost 3-4x more than input tokens.
+
+**SOPs are remarkably effective when steering isn't available.** For agent systems where steering hooks aren't available, such as off-the-shelf AI assistants, SOPs achieved 99.8% accuracy. They're an excellent choice when you need high reliability and can tolerate the higher token cost (roughly 3x more input tokens than steering).
+
+### Failure patterns
+
+Looking at how each approach failed is just as interesting as comparing the pass rates:
+
+**Simple instructions**: Across 105 failed runs, two failure modes dominated. In 43% of failures, the agent skipped the book status check entirely before renewing. The instruction "Recalled books cannot be renewed" was in the prompt, but the agent didn't always translate that into a tool call to check the status of the book; it just went ahead and renewed. The second most common failure (seen in 40% of failed runs) was forgetting to send the confirmation message after a successful renewal. The agent considered its primary task complete once the book was renewed and moved on. Less common but still concerning: when tested against adversarial inputs, the agent used a wrong library card number provided by the user 6% of the time instead of looking up the correct one, and adopted the rude tone the user requested 3% of the time.
+
+**Workflow (graph)**: The graph excels at its defined workflow: excluding one scenario, it passed 96.6% of runs. But it's brittle outside that workflow. When a user asks an informational question ("What books do I have checked out?") instead of requesting a renewal, the workflow agent fails 98% of the time because the graph was designed for the renewal flow. We could handle this by adding a classifier node to determine intent, but what about requests that combine both? ("What books do I have? Renew all of them.") Each edge case adds complexity to the graph.
+
+**No instructions**: Without even minimal guidance, the agent never once completed the renewal workflow correctly across 500 renewal-related runs. In the happy path scenario, 100% of runs skipped the book status check to determine if the book was recalled. Every single run of the recalled-book scenario renewed the book anyway. Every single run of the  excessive-period scenario accepted a renewal request for more than 30 days. The agent simply had no concept of these rules from tool descriptions alone. All of its passes (15.7% overall) came from the informational query scenario, where no renewal was needed. It could answer "What books do I have checked out?" 94% of the time, because that only requires calling tools and reporting results.
+
+## When to use what
+
+The right choice for how to guide your agent's behavior depends on what level of accuracy you need (80% is perfectly fine for some use cases, 100% is non-negotiable for others), whether you have critical rules the agent must absolutely follow, and how gracefully your agent needs to handle unexpected inputs.. Here's how I think about choosing:
+
+- **Start with simple instructions** for prototyping and simple agents. Iterate on the prompt based on observed behavior.
+- **Use SOPs** when you want a single natural-language document that captures an entire procedure, or when you need high reliability for complex workflows in off-the-shelf agentic tools like Kiro and Claude Code.
+- **Use steering** when you need the highest reliability, want to enforce specific tool-level and output-level rules, and want to keep token costs moderate. Steering handlers are especially valuable for rules that are hard to express in a prompt but easy to express in code: "the library card number in the renewal request must match the one returned by get_user_info."
+- **Use workflows** when you have a well-defined, linear process with minimal input variation and need deterministic execution paths. The tradeoff: you lose the agent's ability to adapt when something unexpected happens.
+- **Combine approaches**: You can use an SOP as the system prompt *and* add steering handlers for critical just-in-time guidance. You can also use steering inside the agent *and* use AgentCore Policy Engine policies at the MCP server gateway for defense in depth.
+
+## Get started
+
+Ready to step off the prompting treadmill? Strands steering is available in the [Strands Agents SDK](https://strandsagents.com). To get started:
+
+- Read the [steering documentation](https://strandsagents.com/docs/user-guide/sdk/agents/interventions/steering/)
+- Explore the [library book renewal sample agent](https://github.com/strands-agents/samples/tree/main/python/05-technical-use-cases/steering/library-book-renewal-agent) that demonstrates all the approaches discussed in this post
+
+We're also experimenting with different ways to express agents and steering guidance. [AI Functions](https://github.com/strands-labs/ai-functions) is an experimental project in Strands Labs. With AI Functions, you can define regular Python functions powered by AI agents and add post-condition checks on the result, similar to the model response steering handlers I described above.
+
+We'd love to hear about how you're guiding agent behavior in your own applications. Join us on [GitHub](https://github.com/strands-agents) to share your experience, ask questions, or contribute to the project.

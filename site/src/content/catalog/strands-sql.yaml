@@ -1,0 +1,9 @@
+name: strands-sql
+description: General-purpose SQL tool for Strands Agents — PostgreSQL, MySQL, and SQLite via SQLAlchemy.
+integrationType: tool
+languages:
+  python:
+    package: strands-sql
+github: https://github.com/NithiN-1808/strands-sql
+docsPage: docs/integrations/tools/strands-sql
+addedDate: 2026-04-11

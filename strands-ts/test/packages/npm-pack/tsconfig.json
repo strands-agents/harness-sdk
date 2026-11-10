@@ -1,0 +1,21 @@
+// Consumer-side type-check config for the packaging smoke test. Runs against
+// the installed @strands-agents/sdk tarball's .d.ts surface, not the SDK
+// source. Kept minimal on purpose — we want errors in verify.ts, not false
+// positives from stricter-than-needed options.
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "nodenext",
+    "lib": ["ES2022"],
+    "strict": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "types": ["node"],
+    "noEmit": true
+  },
+  "include": ["verify.ts"]
+}

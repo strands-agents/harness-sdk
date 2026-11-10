@@ -1,0 +1,138 @@
+---
+title: Amazon AgentCore Tool Search
+community: true
+description: Semantic tool discovery for agents using Amazon Bedrock AgentCore Gateway
+integrationType: plugin
+languages: Python
+project:
+  pypi: https://pypi.org/project/bedrock-agentcore/
+  github: https://github.com/aws/bedrock-agentcore-sdk-python
+  maintainer: aws
+service:
+  name: Amazon Bedrock AgentCore
+  link: https://docs.aws.amazon.com/bedrock/latest/userguide/agentcore.html
+---
+
+The [AgentCore Tool Search plugin](https://github.com/aws/bedrock-agentcore-sdk-python/tree/main/src/bedrock_agentcore/gateway/integrations/strands/plugins/agentcore_tool_search) enables semantic tool discovery for Strands Agents using [Amazon Bedrock AgentCore Gateway](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/gateway-using-mcp-semantic-search.html). It allows agents to dynamically load only the relevant tools for each invocation by deriving user intent from conversation history, even when hundreds of tools are registered on the gateway.
+
+The plugin derives user intent from conversation history and queries AgentCore Gateway's semantic search to load only the relevant tools for each invocation. Intent derivation is pluggable — the built-in provider reuses the parent agent's model by default, or you can supply your own `IntentProvider` implementation for full control over how intent is classified.
+
+## Installation
+
+```bash
+pip install 'bedrock-agentcore[strands-agents]'
+```
+
+## Usage
+
+```python
+from mcp_proxy_for_aws.client import aws_iam_streamablehttp_client
+from strands import Agent
+from strands.tools.mcp import MCPClient
+from bedrock_agentcore.gateway.integrations.strands.plugins import AgentCoreToolSearchPlugin
+
+mcp_client = MCPClient(lambda: aws_iam_streamablehttp_client(
+    endpoint="https://<gateway-id>.gateway.bedrock-agentcore.<region>.amazonaws.com/mcp",
+    aws_region="us-east-1",
+    aws_service="bedrock-agentcore",
+))
+
+with mcp_client:
+    agent = Agent(plugins=[AgentCoreToolSearchPlugin(mcp_client=mcp_client)])
+    agent("Find me afternoon flights to New York")
+```
+
+## How It Works
+
+On each agent invocation:
+
+1. **User query** — the user sends a query to the Strands agent
+2. **Hook** — the agent triggers the `AgentCoreToolSearchPlugin` before model invocation
+3. **Derive intent** — the `IntentProvider` sends the last N messages from conversation history to the configured LLM to produce a concise intent string
+4. **Search gateway** — the intent is passed to AgentCore Gateway's `x_amz_bedrock_agentcore_search` tool to obtain the most relevant tools
+5. **Invoke LLM** — the agent invokes the LLM with the user query along with the matched tools from registered MCP targets (Lambda, API Gateway, MCP Server)
+
+Previously loaded tools are cleared before each search, so the agent always has the most relevant tools available.
+
+## Intent Provider
+
+An `IntentProvider` is responsible for analyzing conversation messages and producing a concise intent string that drives tool search. The plugin calls `derive_intent(messages, model)` before each invocation to determine what tools to load.
+
+### StrandsIntentProvider
+
+`StrandsIntentProvider` uses a Strands Agent to classify the last few conversation messages into a concise intent string. By default it uses the parent agent's model.
+
+**Basic usage (uses the agent's model automatically):**
+
+```python
+from bedrock_agentcore.gateway.integrations.strands.plugins import AgentCoreToolSearchPlugin
+
+agent = Agent(plugins=[
+    AgentCoreToolSearchPlugin(mcp_client=mcp_client)
+])
+```
+
+**With a custom model for intent classification:**
+
+```python
+from strands.models.bedrock import BedrockModel
+from bedrock_agentcore.gateway.integrations.strands.plugins import AgentCoreToolSearchPlugin
+from bedrock_agentcore.gateway.integrations.strands.plugins.agentcore_tool_search.intent_providers import StrandsIntentProvider
+
+intent_model = BedrockModel(model_id="us.anthropic.claude-haiku-4-5-20251001-v1:0")
+agent = Agent(plugins=[
+    AgentCoreToolSearchPlugin(
+        mcp_client=mcp_client,
+        intent_provider=StrandsIntentProvider(model=intent_model),
+    )
+])
+```
+
+**With a custom system prompt:**
+
+```python
+from bedrock_agentcore.gateway.integrations.strands.plugins import AgentCoreToolSearchPlugin
+from bedrock_agentcore.gateway.integrations.strands.plugins.agentcore_tool_search.intent_providers import StrandsIntentProvider
+
+agent = Agent(plugins=[
+    AgentCoreToolSearchPlugin(
+        mcp_client=mcp_client,
+        intent_provider=StrandsIntentProvider(
+            system_prompt="Classify the user's intent in one sentence. Focus on the action, not details."
+        ),
+    )
+])
+```
+
+### Custom Intent Provider
+
+You can provide your own intent derivation strategy by subclassing `IntentProvider`:
+
+```python
+from bedrock_agentcore.gateway.integrations.strands.plugins.agentcore_tool_search.intent_providers import IntentProvider
+
+class MyIntentProvider(IntentProvider):
+    def derive_intent(self, messages: list[dict], model=None) -> str:
+        # custom logic to derive intent
+        return "intent string"
+
+agent = Agent(plugins=[
+    AgentCoreToolSearchPlugin(
+        mcp_client=mcp_client,
+        intent_provider=MyIntentProvider(),
+    )
+])
+```
+
+## Prerequisites
+
+- An AgentCore Gateway with [semantic search](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/gateway-using-mcp-semantic-search.html) enabled
+- Tools registered on the gateway with descriptions
+- AWS credentials with access to the gateway
+
+For more details, see the [AgentCore Gateway documentation](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/gateway-building.html).
+
+## References
+
+- [AgentCore SDK](https://github.com/aws/bedrock-agentcore-sdk-python)
+- [AgentCore Gateway documentation](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/gateway-building.html)

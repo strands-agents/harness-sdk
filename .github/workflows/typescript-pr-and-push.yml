@@ -1,0 +1,41 @@
+name: "TypeScript: Pull Request and Push"
+
+on:
+  workflow_call:
+  push:
+    branches: [ main ]
+    paths:
+      - 'strands-ts/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/typescript-*'
+  workflow_dispatch:
+
+jobs:
+  call-security-audit:
+    uses: ./.github/workflows/typescript-security-audit.yml
+    permissions:
+      contents: read
+    with:
+      ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+  call-ts-check:
+    uses: ./.github/workflows/typescript-ts-check.yml
+    permissions:
+      contents: read
+    with:
+      ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+  call-ts-test:
+    uses: ./.github/workflows/typescript-ts-test.yml
+    permissions:
+      contents: read
+    with:
+      ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+  call-test-package-pack:
+    uses: ./.github/workflows/typescript-test-package-pack.yml
+    permissions:
+      contents: read
+    with:
+      ref: ${{ github.event.pull_request.head.sha || github.sha }}

@@ -1,0 +1,57 @@
+---
+/**
+ * A reusable table component. Column headers and styles are defined via the
+ * `columns` prop. Cell content is rendered by the default slot, which is called
+ * as a function with `(item, colIndex)` for each cell.
+ *
+ * Because the slot runs in the caller's Astro/MDX context, it has full access to
+ * `import.meta.env.BASE_URL` and can render any JSX elements.
+ *
+ * @example
+ * ---
+ * const base = import.meta.env.BASE_URL.replace(/\/$/, '')
+ * const columns = [
+ *   { header: "Package" },
+ *   { header: "Python", style: { textAlign: 'center' } },
+ * ]
+ * ---
+ * <SimpleTable data={tools} {columns}>
+ *   {(item, col) => [
+ *     <a href={`${base}${item.href}`}>{item.displayTitle}</a>,
+ *     item.pythonSupport ? '✅' : '❌',
+ *   ][col]}
+ * </SimpleTable>
+ */
+
+interface Column {
+  header: string
+  style?: Record<string, string>
+}
+
+interface Props {
+  data: Record<string, any>[]
+  columns: Column[]
+}
+
+const { data, columns } = Astro.props
+---
+
+<table>
+  <thead>
+    <tr>
+      {columns.map((col) => (
+        <th style={col.style}>{col.header}</th>
+      ))}
+    </tr>
+  </thead>
+  <tbody>
+    {await Promise.all(data.map(async (item) => (
+      <tr>
+        {await Promise.all(columns.map(async (col, colIndex) => {
+          const html = await Astro.slots.render('default', [item, colIndex])
+          return <td style={col.style} set:html={html} />
+        }))}
+      </tr>
+    )))}
+  </tbody>
+</table>

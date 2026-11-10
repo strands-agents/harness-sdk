@@ -1,0 +1,55 @@
+name: Technical Correction
+description: Report technical inaccuracies in the documentation
+title: "[CORRECTION] "
+labels: ["documentation"]
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping us ensure technical accuracy in our documentation!
+  
+  - type: input
+    id: documentation-location
+    attributes:
+      label: Documentation Location
+      description: Provide the URL or file path where the correction is needed
+      placeholder: docs/api-reference.md or https://example.com/docs/page
+    validations:
+      required: true
+      
+  - type: textarea
+    id: current-content
+    attributes:
+      label: Current Content
+      description: Quote or describe the current content that is technically incorrect
+      placeholder: The documentation currently states that...
+    validations:
+      required: true
+      
+  - type: textarea
+    id: correction-needed
+    attributes:
+      label: Correction Needed
+      description: Explain what the correct information should be
+      placeholder: The correct information is...
+    validations:
+      required: true
+      
+  - type: textarea
+    id: supporting-evidence
+    attributes:
+      label: Supporting Evidence
+      description: Include links or references that verify the correct information
+      placeholder: This can be verified by...
+    validations:
+      required: true
+      
+  - type: textarea
+    id: additional-information
+    attributes:
+      label: Additional Information
+      description: Any other details that may be relevant to understand or implement the correction
+      placeholder: Other relevant details...
+    validations:
+      required: false

@@ -1,0 +1,23 @@
+---
+import type { GetStaticPaths } from 'astro'
+import { render } from 'astro:content'
+import BlogPostLayout from '../../layouts/BlogPostLayout.astro'
+import { getPublishedPosts, resolveAuthors } from '../../util/blog'
+
+export const getStaticPaths: GetStaticPaths = async () => {
+  const posts = await getPublishedPosts()
+  return posts.map((post) => ({
+    params: { slug: post.id },
+    props: { post },
+  }))
+}
+
+const { post } = Astro.props
+const authors = await resolveAuthors(post.data.authors)
+const { Content, remarkPluginFrontmatter } = await render(post)
+const readingTime = remarkPluginFrontmatter?.readingTime as string | undefined
+---
+
+<BlogPostLayout post={post} authors={authors} readingTime={readingTime}>
+  <Content />
+</BlogPostLayout>

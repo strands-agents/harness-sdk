@@ -1,0 +1,116 @@
+---
+import type { GetStaticPaths } from 'astro'
+import { getCollection } from 'astro:content'
+import BlogLayout from '../../../layouts/BlogLayout.astro'
+import BlogPostGrid from '../../../components/blog/BlogPostGrid.astro'
+import { getPostsByAuthor } from '../../../util/blog'
+import { pathWithBase } from '../../../util/links'
+
+export const getStaticPaths: GetStaticPaths = async () => {
+  const authors = await getCollection('authors')
+  return authors.map((author) => ({
+    params: { author: author.id },
+    props: { author },
+  }))
+}
+
+const { author } = Astro.props
+const posts = await getPostsByAuthor(author.id)
+---
+
+<BlogLayout title={author.data.name} description={author.data.bio} noindex>
+  <div class="author-page">
+    <a href={pathWithBase('/blog/')} class="back-link">&larr; All posts</a>
+
+    <header class="author-header">
+      {author.data.avatar && <img src={author.data.avatar} alt="" class="author-avatar" />}
+      <div class="author-info">
+        <h1>{author.data.name}</h1>
+        <p class="author-role">{author.data.role}</p>
+        <p class="author-bio">{author.data.bio}</p>
+      </div>
+    </header>
+
+    <section class="author-posts">
+      <h2>{posts.length} post{posts.length !== 1 ? 's' : ''}</h2>
+      <BlogPostGrid posts={posts} />
+    </section>
+  </div>
+</BlogLayout>
+
+<style>
+  .author-page {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 2rem 1.5rem 4rem;
+  }
+
+  .back-link {
+    font-family: var(--sl-font);
+    font-size: 0.875rem;
+    color: var(--sl-color-gray-3);
+    text-decoration: none;
+    display: inline-block;
+    margin-bottom: 1.5rem;
+  }
+
+  .back-link:hover {
+    color: #00cc60;
+  }
+
+  .author-header {
+    display: flex;
+    align-items: flex-start;
+    gap: 1.5rem;
+    margin-bottom: 2.5rem;
+    padding-bottom: 2rem;
+    border-bottom: 1px solid var(--sl-color-gray-5);
+  }
+
+  .author-avatar {
+    width: 80px;
+    height: 80px;
+    border-radius: 50%;
+    object-fit: cover;
+    flex-shrink: 0;
+  }
+
+  .author-info h1 {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 2rem;
+    font-weight: 700;
+    color: var(--sl-color-white);
+    margin: 0 0 0.25rem;
+  }
+
+  .author-role {
+    font-family: var(--sl-font);
+    font-size: 1rem;
+    color: #00cc60;
+    margin: 0 0 0.75rem;
+  }
+
+  .author-bio {
+    font-family: var(--sl-font);
+    font-size: 1rem;
+    color: var(--sl-color-gray-2);
+    line-height: 1.5;
+    margin: 0;
+  }
+
+  .author-posts h2 {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: var(--sl-color-gray-2);
+    margin: 0 0 1.5rem;
+  }
+
+  @media (max-width: 640px) {
+    .author-header {
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+    }
+  }
+</style>

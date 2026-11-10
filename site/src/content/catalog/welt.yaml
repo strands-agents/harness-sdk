@@ -1,0 +1,11 @@
+name: welt
+description: Slack front end for Strands agents on Amazon Bedrock AgentCore — streaming replies, file exchange, and human-in-the-loop approvals in threads.
+integrationType: integration
+languages:
+  python:
+    package: welt-io-strands
+  typescript:
+    package: "@welt-io/strands"
+github: https://github.com/iwamot/welt
+docsPage: docs/integrations/integrations/welt
+addedDate: 2026-08-04

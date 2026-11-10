@@ -1,0 +1,10 @@
+{
+  "//": "Fixture for .github/workflows/test-package-pack.yml. Copied to a tempdir outside the monorepo, then the SDK tarball is installed on top. Only dev tooling lives here — required peer deps are auto-installed from the tarball's peerDependencies metadata; optional peers are deliberately omitted so module-load-time references to them fail the test.",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "typescript": "^6.0.2",
+    "tsx": "^4.21.0",
+    "@types/node": "^25.6.0"
+  }
+}

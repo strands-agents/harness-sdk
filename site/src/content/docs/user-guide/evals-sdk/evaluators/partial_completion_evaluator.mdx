@@ -1,0 +1,261 @@
+---
+title: Partial completion evaluator
+description: 'Measure the fraction of a user goal an agent achieved with PartialCompletionEvaluator, a continuous 0.0 to 1.0 score for multi-step tasks.'
+tags: [error-handling, tool-evaluation, simulation]
+sidebar:
+  label: "Partial completion"
+---
+
+The `PartialCompletionEvaluator` scores what fraction of the user's goal was achieved, returning a continuous 0.0 to 1.0 score. Unlike the binary `GoalSuccessRateEvaluator`, this evaluator captures partial progress when an agent completes some sub-steps of a multi-step task but cannot finish the rest. A complete example can be found [here](https://github.com/strands-agents/harness-sdk/blob/main/site/docs/examples/evals-sdk/chaos_partial_completion_evaluator.py).
+
+## Key features
+
+- **Trace-Level Evaluation**: Evaluates the full conversation trace to assess progress across all task sub-steps
+- **Continuous Scoring**: Fine-grained 0.0 to 1.0 scale captures partial progress
+- **Sub-Goal Decomposition**: Evaluates completion of individual task steps
+- **Structured Reasoning**: Provides step-by-step reasoning for each evaluation
+- **Async Support**: Supports both synchronous and asynchronous evaluation
+
+## When to use
+
+Use the `PartialCompletionEvaluator` when you need to:
+
+- Measure how much of a multi-step task was completed
+- Distinguish between "got nothing done" and "completed most steps"
+- Quantify graceful degradation under increasing failure severity
+- Identify which failure types cause the most progress loss
+- Compare agent resilience across different configurations
+
+## Evaluation level
+
+This evaluator operates at the **TRACE_LEVEL**, evaluating the full conversation trace to assess progress across all task sub-steps.
+
+## Parameters
+
+### `version` (optional)
+- **Type**: `str`
+- **Default**: `"v0"`
+- **Description**: Prompt template version for the judge's system prompt.
+
+### `model` (optional)
+- **Type**: `Model | str | None`
+- **Default**: `None` (uses the default Bedrock model)
+- **Description**: The model to use as the judge.
+
+### `system_prompt` (optional)
+- **Type**: `str | None`
+- **Default**: `None` (uses the built-in prompt for the selected `version`)
+- **Description**: Overrides the judge's system prompt.
+
+### `name` (optional)
+- **Type**: `str | None`
+- **Default**: `None`
+- **Description**: Custom evaluator name shown in the evaluation report.
+
+## Scoring system
+
+| Score | Interpretation |
+|-------|---------------|
+| 1.0 | Full goal achieved, all sub-steps completed |
+| 0.7-0.9 | Most sub-goals completed, one or two blocked |
+| 0.4-0.6 | Partial progress, some steps completed, key steps blocked |
+| 0.1-0.3 | Minimal progress, early steps completed but majority blocked |
+| 0.0 | No progress: agent gave up entirely, crashed, or completed nothing |
+
+A response passes the evaluation if the score is >= 0.5.
+
+The evaluator decomposes the task into logical sub-steps based on the conversation context and assesses which were completed based on the tool call history and agent responses.
+
+## Basic usage
+
+```python
+import asyncio
+from typing import Any
+
+from pydantic import BaseModel, Field
+
+from strands import Agent
+from strands_evals.chaos import ChaosCase, ChaosExperiment, ChaosPlugin, NetworkError, TruncateFields
+from strands_evals.evaluators.chaos import PartialCompletionEvaluator
+from strands_evals.eval_task_handler import TracedHandler, eval_task
+from strands_evals.simulation import ToolSimulator
+
+tool_simulator = ToolSimulator()
+
+class FlightSearchResponse(BaseModel):
+    flights: list[dict[str, Any]] = Field(default_factory=list)
+    status: str = Field(default="success")
+
+class BookFlightResponse(BaseModel):
+    booking_id: str = Field(default="")
+    status: str = Field(default="success")
+
+@tool_simulator.tool(output_schema=FlightSearchResponse)
+def search_flights(origin: str, destination: str, date: str) -> dict[str, Any]:
+    """Search for available flights between two cities on a given date."""
+    pass
+
+@tool_simulator.tool(output_schema=BookFlightResponse)
+def book_flight(flight_id: str) -> dict[str, Any]:
+    """Book a specific flight by its flight ID."""
+    pass
+
+chaos_plugin = ChaosPlugin()
+_search_tool = tool_simulator.get_tool("search_flights")
+_book_tool = tool_simulator.get_tool("book_flight")
+
+# Search works (degraded) but booking fails: partial completion expected
+chaos_cases = [
+    ChaosCase(
+        name="search_degraded_booking_fails",
+        input="Find me a flight from SFO to JFK on May 20 and book the cheapest one.",
+        effects={
+            "tool_effects": {
+                "search_flights": [TruncateFields(max_length=5)],
+                "book_flight": [NetworkError(error_message="Connection reset by peer")],
+            },
+        },
+    ),
+]
+
+@eval_task(TracedHandler())
+def task_function(case: ChaosCase):
+    return Agent(
+        system_prompt="You are a travel booking assistant.",
+        tools=[_search_tool, _book_tool],
+        plugins=[chaos_plugin],
+        callback_handler=None,
+        trace_attributes={"session.id": case.session_id},
+    )
+
+experiment = ChaosExperiment(
+    cases=chaos_cases,
+    evaluators=[PartialCompletionEvaluator()],
+)
+
+async def main():
+    report = await experiment.run_evaluations_async(task=task_function, max_workers=10)
+    report.run_display()
+
+asyncio.run(main())
+```
+
+## Evaluation output
+
+The `PartialCompletionEvaluator` returns `EvaluationOutput` objects with:
+
+- **score**: Float between 0.0 and 1.0
+- **test_pass**: `True` if score >= 0.5, `False` otherwise
+- **reason**: Step-by-step reasoning explaining which sub-steps were completed and which were not
+- **label**: Score as string
+
+## What gets evaluated
+
+The evaluator examines:
+
+1. **User Request**: The original task and its implicit sub-goals
+2. **Tool Call History**: Which tools were called and their results
+3. **Agent Response**: What the agent ultimately communicated to the user
+4. **Sub-Goal Progress**:
+   - How many logical sub-steps of the task were completed?
+   - Which steps succeeded and which failed?
+   - Did the agent deliver partial value to the user?
+
+## Best practices
+
+1. **Use Multi-Step Tasks**: The evaluator is most valuable for tasks with multiple distinct sub-goals
+2. **Capture Complete Sessions**: Include all tool calls and their results in the trajectory
+3. **Combine with GoalSuccessRateEvaluator**: Use both to distinguish total failure from partial progress
+4. **Test Graduated Failures**: Inject failures at different points in the task to measure degradation curves
+5. **Provide Clear Task Descriptions**: Multi-step tasks with distinct phases produce the most informative scores
+
+## Common patterns
+
+### Pattern 1: Multi-step task assessment
+Evaluate how much of a search-book-confirm workflow was completed.
+
+### Pattern 2: Degradation curve
+Sweep failure intensity to map when partial completion drops off.
+
+### Pattern 3: Comparison with binary evaluation
+Use alongside `GoalSuccessRateEvaluator` to see how much value was still delivered when the binary evaluator scores 0.
+
+## Example scenarios
+
+### Scenario 1: Full completion
+```
+User: "Find a flight to Paris, book it, and send me a confirmation."
+Agent: [searches flights, books cheapest, sends confirmation email]
+Evaluation: 1.0 - All three sub-goals completed
+```
+
+### Scenario 2: Partial completion (booking fails)
+```
+User: "Find a flight to Paris, book it, and send me a confirmation."
+Agent: [searches flights successfully, booking fails with network error]
+Final: "I found several flights to Paris but wasn't able to complete the booking."
+Evaluation: 0.4 - Search completed, booking and confirmation blocked
+```
+
+### Scenario 3: Minimal completion
+```
+User: "Find a flight to Paris, book it, and send me a confirmation."
+Agent: [search times out immediately]
+Final: "I'm unable to search for flights right now."
+Evaluation: 0.0 - No sub-goals completed
+```
+
+### Scenario 4: Most steps completed
+```
+User: "Find a flight to Paris, book it, and send me a confirmation."
+Agent: [searches flights, books successfully, confirmation email fails]
+Final: "Your flight is booked! I couldn't send the confirmation email, but your booking ID is ABC123."
+Evaluation: 0.8 - Search and booking completed, only confirmation failed
+```
+
+## Common issues and solutions
+
+### Issue 1: Score is always 1.0 or 0.0
+**Problem**: Evaluator doesn't produce intermediate scores.
+**Solution**: Ensure test cases involve multi-step tasks. Single-step tasks will produce binary results.
+
+### Issue 2: No trajectory data
+**Problem**: Evaluator returns empty results.
+**Solution**: Ensure telemetry captures full session including tool call spans and results.
+
+### Issue 3: Sub-goal decomposition seems wrong
+**Problem**: Evaluator decomposes the task differently than expected.
+**Solution**: Use clearer, more explicit task descriptions in the case input.
+
+## Differences from other evaluators
+
+- **vs. GoalSuccessRateEvaluator**: Goal success is binary (1.0 or 0.0); partial completion is continuous, giving credit for steps completed even when the full goal fails. Use both to separate "total failure" from "almost made it."
+- **vs. RecoveryStrategyEvaluator**: Partial completion scores the *outcome* (how much got done); recovery scores the *process* (how the agent handled failures). High partial completion with low recovery means the remaining tools worked without the agent needing to adapt.
+- **vs. HelpfulnessEvaluator**: Helpfulness evaluates turn-level response quality; partial completion measures session-level task progress as a fraction of sub-goals completed.
+- **vs. TrajectoryEvaluator**: Trajectory evaluates the overall action sequence for workflow quality; partial completion quantifies fractional task progress as a continuous 0.0 to 1.0 score.
+
+## Use cases
+
+### Use case 1: Chaos testing
+Measure how much of a task completes when tools are deliberately failed.
+
+### Use case 2: Service degradation
+Quantify user impact during partial service outages.
+
+### Use case 3: Agent comparison
+Compare how much value different agent configurations deliver under the same failure conditions.
+
+### Use case 4: Regression testing
+Detect regressions where agents complete fewer sub-steps than before.
+
+## Related evaluators
+
+- [**GoalSuccessRateEvaluator**](goal_success_rate_evaluator): Binary goal achievement assessment
+- [**RecoveryStrategyEvaluator**](recovery_strategy_evaluator): Evaluates quality of recovery actions
+- [**FailureCommunicationEvaluator**](failure_communication_evaluator): Evaluates how well agents communicate failures
+- [**HelpfulnessEvaluator**](helpfulness_evaluator): Evaluates response helpfulness from user perspective
+- [**TrajectoryEvaluator**](trajectory_evaluator): Evaluates the sequence of actions taken
+
+## Related documentation
+
+- [Chaos Testing](/docs/user-guide/evals-sdk/chaos_testing/): Chaos testing overview and guide

@@ -5,14 +5,18 @@ on:
     branches: [main]
     types: [opened, edited, synchronize, reopened]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   validate-pr-title:
-    runs-on: ubuntu-latest
+    runs-on: strands-agents_ubuntu-latest_4-core
     permissions:
       pull-requests: read
     steps:
       - name: Check PR title follows conventional commits
-        uses: amannn/action-semantic-pull-request@v6
+        uses: amannn/action-semantic-pull-request@48f256284bd46cdaab1048c3721360e808335d50 # v6
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -20,6 +24,7 @@ jobs:
             feat
             fix
             docs
+            blog
             style
             refactor
             perf
@@ -28,6 +33,7 @@ jobs:
             ci
             chore
             revert
+            design
           requireScope: false
           subjectPattern: ^[a-z].+$
           subjectPatternError: |

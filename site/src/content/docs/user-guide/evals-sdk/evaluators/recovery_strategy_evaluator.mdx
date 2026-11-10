@@ -1,0 +1,265 @@
+---
+title: Recovery strategy evaluator
+description: 'Score how well an agent recovers from tool failures with RecoveryStrategyEvaluator: alternative approaches, retries, and strategy variation.'
+tags: [error-handling, tool-evaluation, simulation]
+sidebar:
+  label: "Recovery strategy"
+---
+
+The `RecoveryStrategyEvaluator` scores the quality of an agent's recovery actions when tools fail. It evaluates whether the agent attempts alternative approaches, retries appropriately, and varies its strategies rather than repeating the same failed action. A complete example can be found [here](https://github.com/strands-agents/harness-sdk/blob/main/site/docs/examples/evals-sdk/chaos_recovery_strategy_evaluator.py).
+
+## Key features
+
+- **Trace-Level Evaluation**: Evaluates the full conversation trace including tool call patterns, retries, and alternative approaches
+- **Five-Level Scoring**: Granular scale from "Failure" to "Excellent"
+- **Multi-Dimensional Assessment**: Evaluates exploration breadth, retry discipline, and approach variation
+- **Structured Reasoning**: Provides step-by-step reasoning for each evaluation
+- **Async Support**: Supports both synchronous and asynchronous evaluation
+
+## When to use
+
+Use the `RecoveryStrategyEvaluator` when you need to:
+
+- Assess whether agents attempt alternative approaches when tools fail
+- Evaluate retry behavior (appropriate retries vs. infinite loops)
+- Detect agents that give up immediately on first failure
+- Measure quality and variety of recovery strategies
+- Compare recovery sophistication across agent configurations
+
+## Evaluation level
+
+This evaluator operates at the **TRACE_LEVEL**, evaluating the full conversation trace including tool call patterns, retries, and alternative approaches.
+
+## Parameters
+
+### `version` (optional)
+- **Type**: `str`
+- **Default**: `"v0"`
+- **Description**: Prompt template version for the judge's system prompt.
+
+### `model` (optional)
+- **Type**: `Model | str | None`
+- **Default**: `None` (uses the default Bedrock model)
+- **Description**: The model to use as the judge.
+
+### `system_prompt` (optional)
+- **Type**: `str | None`
+- **Default**: `None` (uses the built-in prompt for the selected `version`)
+- **Description**: Overrides the judge's system prompt.
+
+### `name` (optional)
+- **Type**: `str | None`
+- **Default**: `None`
+- **Description**: Custom evaluator name shown in the evaluation report.
+
+## Scoring system
+
+| Rating | Score | Description |
+|--------|-------|-------------|
+| Failure | 0.0 | Agent gives up immediately or crashes on first failure |
+| Poor | 0.25 | Agent retries the same failed action with no variation |
+| Acceptable | 0.5 | Minimal recovery, or no failures occurred to recover from |
+| Good | 0.75 | Agent retries with variation or tries alternative tools |
+| Excellent | 1.0 | Agent demonstrates sophisticated recovery: retries, fallbacks, escalation, and adaptation |
+
+A response passes the evaluation if the score is >= 0.5.
+
+When no tool failures occur during the session, the evaluator produces a neutral score of 0.5, since there are no failures to assess recovery behavior against.
+
+## Basic usage
+
+```python
+import asyncio
+from typing import Any
+
+from pydantic import BaseModel, Field
+
+from strands import Agent
+from strands_evals.chaos import ChaosCase, ChaosExperiment, ChaosPlugin, ExecutionError, Timeout
+from strands_evals.evaluators.chaos import RecoveryStrategyEvaluator
+from strands_evals.eval_task_handler import TracedHandler, eval_task
+from strands_evals.simulation import ToolSimulator
+
+tool_simulator = ToolSimulator()
+
+class FlightSearchResponse(BaseModel):
+    flights: list[dict[str, Any]] = Field(default_factory=list)
+    status: str = Field(default="success")
+
+class HotelSearchResponse(BaseModel):
+    hotels: list[dict[str, Any]] = Field(default_factory=list)
+    status: str = Field(default="success")
+
+@tool_simulator.tool(output_schema=FlightSearchResponse)
+def search_flights(origin: str, destination: str, date: str) -> dict[str, Any]:
+    """Search for available flights between two cities on a given date."""
+    pass
+
+@tool_simulator.tool(output_schema=HotelSearchResponse)
+def search_hotels(city: str, check_in: str, check_out: str) -> dict[str, Any]:
+    """Search for available hotels in a city for given dates."""
+    pass
+
+chaos_plugin = ChaosPlugin()
+_flights_tool = tool_simulator.get_tool("search_flights")
+_hotels_tool = tool_simulator.get_tool("search_hotels")
+
+# Flight search times out but hotel search works: agent should pivot
+chaos_cases = [
+    ChaosCase(
+        name="flight_timeout_hotel_available",
+        input="Plan my trip to Tokyo: find flights from SFO and hotels for May 20-23.",
+        effects={"tool_effects": {"search_flights": [Timeout()]}},
+    ),
+    ChaosCase(
+        name="flight_and_booking_fail",
+        input="Find a flight from NYC to London on June 1.",
+        effects={"tool_effects": {"search_flights": [ExecutionError(error_message="Internal server error")]}},
+    ),
+]
+
+@eval_task(TracedHandler())
+def task_function(case: ChaosCase):
+    return Agent(
+        system_prompt=(
+            "You are a travel planning assistant. If a tool fails, "
+            "try alternative tools that can partially fulfill the request. "
+            "Do NOT retry the same failed tool more than once."
+        ),
+        tools=[_flights_tool, _hotels_tool],
+        plugins=[chaos_plugin],
+        callback_handler=None,
+        trace_attributes={"session.id": case.session_id},
+    )
+
+experiment = ChaosExperiment(
+    cases=chaos_cases,
+    evaluators=[RecoveryStrategyEvaluator()],
+)
+
+async def main():
+    report = await experiment.run_evaluations_async(task=task_function, max_workers=10)
+    report.run_display()
+
+asyncio.run(main())
+```
+
+## Evaluation output
+
+The `RecoveryStrategyEvaluator` returns `EvaluationOutput` objects with:
+
+- **score**: Float (0.0, 0.25, 0.5, 0.75, or 1.0)
+- **test_pass**: `True` if score >= 0.5, `False` otherwise
+- **reason**: Step-by-step reasoning explaining the evaluation
+- **label**: One of the categorical labels (e.g., "Good", "Excellent")
+
+## What gets evaluated
+
+The evaluator examines:
+
+1. **Tool Call Patterns**: Sequence of tool calls and their results
+2. **Retry Behavior**: Whether the agent retried failed tools and how many times
+3. **Recovery Quality**:
+   - **Exploration breadth**: Did the agent try alternative tools or approaches?
+   - **Retry discipline**: Did it retry appropriately (not excessively)?
+   - **Approach variation**: Did retries use different strategies (different parameters, different tools)?
+
+## Best practices
+
+1. **Provide Alternative Tools**: Give agents access to multiple tools that can partially fulfill the same goal
+2. **Add Recovery Instructions**: System prompts with explicit recovery guidance help agents score higher
+3. **Capture Complete Sessions**: Include all tool call attempts and retries in the trajectory
+4. **Combine with Other Evaluators**: Use alongside `FailureCommunicationEvaluator` and `PartialCompletionEvaluator`
+5. **Test Various Failure Severities**: Include single-tool failures and multi-tool failures
+
+## Common patterns
+
+### Pattern 1: Fallback to alternative tools
+Evaluate if the agent pivots to a different tool when the primary one fails.
+
+### Pattern 2: Retry with variation
+Assess if the agent retries with different parameters instead of repeating the same call.
+
+### Pattern 3: Graceful escalation
+Measure if the agent escalates to the user when all automated recovery options are exhausted.
+
+## Example scenarios
+
+### Scenario 1: Excellent recovery
+```
+Tool: search_flights -> Timeout
+Agent: [retries search_flights with broader date range -> still fails]
+Agent: [calls search_hotels for the destination instead]
+Final: "I couldn't find flight info, but I found hotels in Tokyo for your dates."
+Evaluation: Excellent (1.0) - Tried variation, then pivoted to alternative
+```
+
+### Scenario 2: Good recovery
+```
+Tool: search_flights -> NetworkError
+Agent: [retries search_flights once -> still fails]
+Final: "Flight search is unavailable. Please try again later."
+Evaluation: Good (0.75) - Retried once, then communicated clearly
+```
+
+### Scenario 3: Poor recovery
+```
+Tool: search_flights -> Timeout
+Agent: [retries search_flights 5 times with identical parameters]
+Final: "I'm having trouble finding flights."
+Evaluation: Poor (0.25) - Excessive retries with no variation
+```
+
+### Scenario 4: No recovery
+```
+Tool: search_flights -> ExecutionError
+Agent: "I can't help with that."
+Evaluation: Failure (0.0) - Gave up immediately without any attempt
+```
+
+## Common issues and solutions
+
+### Issue 1: Score is always 0.5
+**Problem**: Evaluator always returns neutral score.
+**Solution**: Ensure tool failures are present in the trace. If no tools fail, the evaluator returns 0.5 by design.
+
+### Issue 2: Agent retries excessively
+**Problem**: Agent retries the same tool many times, getting a low recovery score.
+**Solution**: Add retry limits to the system prompt (e.g., "Do NOT retry more than once").
+
+### Issue 3: No trajectory data
+**Problem**: Evaluator returns empty results.
+**Solution**: Ensure telemetry captures full session including all tool call spans.
+
+## Differences from other evaluators
+
+- **vs. FailureCommunicationEvaluator**: Recovery scores the agent's *actions* (retries, fallbacks, tool switching); communication scores the agent's *words* (how it explains failures). Both can be high, both can be low, or one without the other.
+- **vs. PartialCompletionEvaluator**: Recovery scores the quality of recovery *attempts* regardless of outcome; partial completion scores the *result* regardless of how the agent got there. Excellent recovery may still yield low completion if all alternatives also fail.
+- **vs. TrajectoryEvaluator**: Trajectory evaluates the full action sequence holistically for workflow adherence; recovery specifically targets the quality of failure-response actions within that sequence.
+- **vs. ToolSelectionEvaluator**: Tool selection checks if correct tools were chosen under normal conditions; recovery evaluates whether the agent adapted its tool choices appropriately when failures occurred.
+
+## Use cases
+
+### Use case 1: Chaos testing
+Evaluate agent recovery strategies under deliberately injected tool failures.
+
+### Use case 2: Agent configuration comparison
+Compare how different system prompts affect recovery behavior.
+
+### Use case 3: Retry policy validation
+Verify agents follow expected retry policies (retry once, then fallback).
+
+### Use case 4: Multi-tool resilience
+Test whether agents use alternative tools when primary ones fail.
+
+## Related evaluators
+
+- [**FailureCommunicationEvaluator**](failure_communication_evaluator): Evaluates how well agents communicate failures
+- [**PartialCompletionEvaluator**](partial_completion_evaluator): Measures what fraction of goals were achieved
+- [**TrajectoryEvaluator**](trajectory_evaluator): Evaluates the sequence of actions taken
+- [**ToolSelectionEvaluator**](tool_selection_evaluator): Evaluates whether correct tools were selected
+- [**GoalSuccessRateEvaluator**](goal_success_rate_evaluator): Binary goal achievement assessment
+
+## Related documentation
+
+- [Chaos Testing](/docs/user-guide/evals-sdk/chaos_testing/): Chaos testing overview and guide

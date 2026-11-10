@@ -1,0 +1,244 @@
+---
+title: Serialization
+description: 'Save, load, version, and share evaluation work with JSON serialization for Strands Evals experiments and evaluation reports.'
+---
+
+Strands Evals provides JSON serialization for experiments and reports, enabling you to save, load, version, and share evaluation work.
+
+## Saving experiments
+
+```python
+from strands_evals import Experiment
+
+# Save to file
+experiment.to_file("my_experiment.json")
+experiment.to_file("my_experiment")  # .json added automatically
+
+# Relative path
+experiment.to_file("experiments/baseline.json")
+
+# Absolute path
+experiment.to_file("/path/to/experiments/baseline.json")
+```
+
+## Loading experiments
+
+```python
+# Load from file
+experiment = Experiment.from_file("my_experiment.json")
+
+print(f"Loaded {len(experiment.cases)} cases")
+print(f"Evaluators: {[e.get_type_name() for e in experiment.evaluators]}")
+```
+
+## Custom evaluators
+
+Pass custom evaluator classes when loading:
+
+```python
+from strands_evals.evaluators import Evaluator
+from strands_evals.types.evaluation import EvaluationOutput
+
+class CustomEvaluator(Evaluator):
+    def evaluate(self, evaluation_case):
+        # Custom logic: must return list[EvaluationOutput]
+        return [EvaluationOutput(score=1.0, test_pass=True, reason="...")]
+
+# Save with custom evaluator
+experiment = Experiment(
+    cases=cases,
+    evaluators=[CustomEvaluator()]
+)
+experiment.to_file("custom.json")
+
+# Load with custom evaluator class
+loaded = Experiment.from_file(
+    "custom.json",
+    custom_evaluators=[CustomEvaluator]
+)
+```
+
+## Dictionary conversion
+
+```python
+# To dictionary
+experiment_dict = experiment.to_dict()
+
+# From dictionary
+experiment = Experiment.from_dict(experiment_dict)
+
+# With custom evaluators
+experiment = Experiment.from_dict(
+    experiment_dict,
+    custom_evaluators=[CustomEvaluator]
+)
+```
+
+## Saving reports
+
+`run_evaluations` returns a single `EvaluationReport`. When the experiment runs multiple evaluators, each row in `report.cases` carries an `evaluator` key naming the evaluator that produced it. Use that key to filter by evaluator when needed.
+
+```python
+import asyncio
+
+# Run evaluation
+async def main():
+    report = await experiment.run_evaluations_async(task_function)
+
+    # Save the full report directly (writes JSON; .json is added if missing)
+    report.to_file("report")
+
+    # Or build a custom JSON payload
+    import json
+
+    report_data = {
+        "overall_score": report.overall_score,
+        "scores": report.scores,
+        "test_passes": report.test_passes,
+        "reasons": report.reasons,
+        "cases": report.cases,
+    }
+
+    with open("report_summary.json", "w") as f:
+        json.dump(report_data, f, indent=2)
+
+asyncio.run(main())
+```
+
+## Versioning strategies
+
+### Timestamp versioning
+
+```python
+from datetime import datetime
+
+timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+experiment.to_file(f"experiment_{timestamp}.json")
+```
+
+### Semantic versioning
+
+```python
+experiment.to_file("experiment_v1.json")
+experiment.to_file("experiment_v2.json")
+```
+
+## Organizing files
+
+### Directory structure
+
+```
+experiments/
+├── baseline/
+│   ├── experiment.json
+│   └── reports/
+├── iteration_1/
+│   ├── experiment.json
+│   └── reports/
+└── final/
+    ├── experiment.json
+    └── reports/
+```
+
+### Organized saving
+
+```python
+from pathlib import Path
+
+base_dir = Path("experiments/iteration_1")
+base_dir.mkdir(parents=True, exist_ok=True)
+
+# Save experiment
+experiment.to_file(base_dir / "experiment.json")
+
+# Save reports
+reports_dir = base_dir / "reports"
+reports_dir.mkdir(exist_ok=True)
+```
+
+## Saving experiments with reports
+
+```python
+import asyncio
+from pathlib import Path
+
+def save_with_report(experiment, report, base_name):
+    base_path = Path(f"evaluations/{base_name}")
+    base_path.mkdir(parents=True, exist_ok=True)
+
+    # Save experiment definition and the report side by side
+    experiment.to_file(str(base_path / "experiment.json"))
+    report.to_file(str(base_path / "report.json"))
+
+# Usage
+async def main():
+    report = await experiment.run_evaluations_async(task_function)
+    save_with_report(experiment, report, "baseline_20250115")
+
+asyncio.run(main())
+```
+
+## Error handling
+
+```python
+from pathlib import Path
+
+def safe_load(path, custom_evaluators=None):
+    try:
+        file_path = Path(path)
+        
+        if not file_path.exists():
+            raise FileNotFoundError(f"File not found: {path}")
+        
+        if file_path.suffix != ".json":
+            raise ValueError(f"Expected .json file, got: {file_path.suffix}")
+        
+        experiment = Experiment.from_file(path, custom_evaluators=custom_evaluators)
+        print(f"Loaded {len(experiment.cases)} cases")
+        return experiment
+
+    except Exception as e:
+        print(f"Failed to load: {e}")
+        return None
+```
+
+## Best practices
+
+### 1. Use consistent naming
+
+```python
+# Good
+experiment.to_file("customer_service_baseline_v1.json")
+
+# Less helpful
+experiment.to_file("test.json")
+```
+
+### 2. Validate after loading
+
+```python
+experiment = Experiment.from_file("experiment.json")
+
+assert len(experiment.cases) > 0, "No cases loaded"
+assert len(experiment.evaluators) > 0, "No evaluators loaded"
+```
+
+### 3. Include metadata
+
+```python
+experiment_data = experiment.to_dict()
+experiment_data["metadata"] = {
+    "created_date": datetime.now().isoformat(),
+    "description": "Baseline evaluation",
+    "version": "1.0"
+}
+
+with open("experiment.json", "w") as f:
+    json.dump(experiment_data, f, indent=2)
+```
+
+## Related documentation
+
+- [Experiment Management](experiment_management.md): Organize experiments
+- [Experiment Generator](../experiment_generator.md): Generate experiments
+- [Quickstart Guide](../quickstart.md): Get started with Strands Evals

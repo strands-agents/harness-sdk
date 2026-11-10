@@ -1,0 +1,23 @@
+---
+import type { ChangelogEntry } from '../../content.config'
+import { HIDDEN_AREAS } from '../../util/changelog'
+
+interface Props { entry: ChangelogEntry }
+const { entry } = Astro.props
+const isBreaking = entry.breaking || entry.type === 'breaking'
+const tags = entry.areas.filter((a) => !HIDDEN_AREAS.has(a))
+---
+<li
+  class="cl-entry"
+  data-areas={tags.join(' ')}
+  data-type={entry.type}
+  data-search={`${entry.title} ${entry.author ?? ''}`.toLowerCase()}
+>
+  {isBreaking && <span class="cl-break">break</span>}
+  {entry.prUrl ? (
+    <a class="cl-entry-title" href={entry.prUrl} target="_blank" rel="noopener">{entry.title}</a>
+  ) : (
+    <span class="cl-entry-title">{entry.title}</span>
+  )}
+  {tags.map((a) => <span class="cl-atag">{a}</span>)}
+</li>

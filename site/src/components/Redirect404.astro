@@ -1,0 +1,91 @@
+---
+import { buildRedirectFromMap } from '../util/redirect.build'
+
+const redirectFromMap = await buildRedirectFromMap()
+---
+
+<!--
+  Redirect404: handles client-side redirects for old/moved URLs that land on the 404 page.
+
+  The problem: when a user hits a URL that no longer exists, the browser renders the 404 page
+  before any JavaScript runs. Without intervention, users see a flash of the 404 content before
+  being redirected to the correct page.
+
+  The solution:
+  1. The global style hides .main-pane immediately via CSS, before any paint.
+  2. tryRedirect() checks if the current URL matches a known redirect rule. If it does,
+     location.replace() fires and the user navigates away without ever seeing the 404 content.
+  3. If no redirect applies (genuine 404), showPage() reveals .main-pane immediately.
+  4. The 3s timeout is a safety net: if something goes wrong (e.g. location.replace throws),
+     the page will always become visible again rather than staying blank forever.
+-->
+
+<style is:global>
+  .main-pane {
+    visibility: hidden;
+  }
+</style>
+
+<noscript>
+  <!-- Without JS, the page would stay hidden forever since only the script reveals .main-pane -->
+  <style>
+    .main-pane {
+      visibility: visible !important;
+    }
+  </style>
+</noscript>
+
+<script id="redirect-map" type="application/json" set:html={JSON.stringify(redirectFromMap)} />
+
+<script>
+  import { resolveRedirectFromUrl } from '../util/redirect'
+
+  const redirectFromMap = JSON.parse(document.getElementById('redirect-map')!.textContent!)
+
+  // Safety net: reveal the page after 3s no matter what, in case the redirect doesn't fire
+  const showTimeout = setTimeout(showPage, 3000)
+
+  if (!tryRedirect()) {
+    showPage()
+    clearTimeout(showTimeout)
+  }
+
+  function tryRedirect() {
+    const base = import.meta.env.BASE_URL.replace(/\/$/, '')
+    // Strip the base prefix so resolveRedirectFromUrl only sees the path relative to the site root
+    const rawPath = window.location.pathname
+    const pathWithoutBase = base && rawPath.startsWith(base) ? rawPath.slice(base.length) || '/' : rawPath
+
+    const target = resolveRedirectFromUrl(pathWithoutBase, redirectFromMap)
+    if (!target) return false
+
+    // External URLs come only from explicit rules in SLUG_RULES (e.g. /discord).
+    // resolveRedirectFromUrl never returns an external URL from path normalization alone.
+    if (target.startsWith('https://') || target.startsWith('http://')) {
+      console.log(`[Redirect404] Redirecting ${window.location.href} → ${target}`)
+      window.location.replace(target)
+      return true
+    }
+
+    const destPath = target === '/' ? `${base}/` : `${base}/${target}`
+
+    const currentPath = window.location.pathname.replace(/\/+$/, '')
+    if (destPath.replace(/\/+$/, '') === currentPath) return false
+
+    // Preserve query params and the hash fragment when redirecting to an
+    // internal path (fragments never reach the server, so only this
+    // client-side hop can carry a deep link like #section through a rename)
+    const destUrl = new URL(destPath, window.location.origin)
+    new URLSearchParams(window.location.search).forEach((v, k) => destUrl.searchParams.set(k, v))
+    destUrl.hash = window.location.hash
+
+    console.log(`[Redirect404] Redirecting ${window.location.href} → ${destUrl.href}`)
+    window.location.replace(destUrl.href)
+    return true
+  }
+
+  function showPage() {
+    const el = document.querySelector('.main-pane') as HTMLElement
+    if (el) el.style.visibility = 'visible'
+  }
+</script>

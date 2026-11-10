@@ -1,0 +1,13 @@
+*.js
+!jest.config.js
+*.d.ts
+node_modules
+
+# Un-ignore the CDK app entry point (root .gitignore ignores bin/)
+!bin/
+!bin/*.ts
+
+# CDK asset staging directory
+.cdk.staging
+cdk.out
+cdk.context.json

@@ -1,0 +1,86 @@
+---
+title: Strands Shell security model
+description: How the Kernel boundary mediates filesystem, network, and credential access, what Strands Shell guarantees, and when to add OS-level isolation.
+sidebar:
+  label: "Security model"
+---
+
+Strands Shell exists to answer one question: what should this shell be allowed to touch?
+The Kernel enforces the answer as the mediation boundary for filesystem, network, and
+credential operations initiated inside Strands Shell. This boundary does not extend to
+other tools registered with an agent, including community tools. Those tools retain
+their own security properties. This page explains where the Shell boundary sits, what
+it guarantees, and the threat models it does and doesn't cover.
+
+The framing that matters most: **Strands Shell is a mediation layer, not a hardened
+sandbox.** It enforces what an agent *should* reach through a least-privilege policy.
+It runs in the same process as your code, not in a VM. Getting this distinction right
+is the difference between an appropriate deployment and a false sense of safety.
+
+## The Kernel boundary
+
+All effects initiated inside Strands Shell flow through the Kernel. There's no path
+around it: the shell makes no `fork`, no `exec`, and no raw syscalls, because the
+engine runs entirely in userspace. A command that wants to read a file, reach a URL,
+or use a credential asks the Kernel, and the Kernel applies policy.
+
+The default Kernel is backed by an in-memory virtual filesystem and enforces four guarantees:
+
+1. **Filesystem isolation.** The VFS exposes only explicitly bound paths. No path can escape its declared mounts, and `..` components, symlinks, and bind-path tricks are checked against the mount boundary.
+2. **Network SSRF guard.** A two-layer check filters network access: a URL-level parse plus IP filtering at DNS-resolution time. It blocks RFC1918, link-local, loopback, IMDS, IPv4-mapped IPv6, 6to4, and Teredo addresses by default.
+3. **Credential injection.** Secrets are matched per URL prefix with a path-boundary check and injected only on the original request, then stripped on redirects.
+4. **No syscalls.** There's no `fork`, `exec`, or raw syscall path for a command to reach the host environment.
+
+A custom Kernel (for embedding the shell in another runtime) carries its own security properties. The guarantees above describe the bundled implementation.
+
+## Least privilege by default
+
+Out of the box, a shell has no host files or credentials and uses the
+[default network policy](configuration.md#network-access). The TOML config defaults
+bind mode to `copy` (the safe choice), but the Python and Node.js constructors default
+to `direct`; always pass `mode` explicitly in code. The practices that follow from the
+principle of least privilege are:
+
+- **Prefer `copy` over `direct` binds for source code.** A `copy` bind snapshots files into the VFS, isolating the agent from your live filesystem. Reserve `direct` for output directories where the agent must persist results.
+- **Scope binds narrowly.** Bind `/my/project/src`, not `/my/project` or `/`. The agent doesn't need your `.git`, your `.env`, or your `node_modules`.
+- **Allowlist URLs explicitly.** Don't allowlist a bare `https://`; that disables the SSRF guard. List the specific endpoints the agent needs.
+- **Keep a timeout set.** The config-driven API defaults to a 30-second per-command timeout, which bounds runaway commands. Raise it for long-running work rather than removing it.
+- **Set `max_output`.** Cap the output an agent can generate so a single command can't fill memory. 1 MiB is a reasonable default.
+
+The [configuration guide](configuration.md) shows how to apply each of these.
+
+## How credentials stay out of reach
+
+The credential design solves a specific problem: an agent that can make HTTP requests should be able to *use* a secret without being able to *read* it. A secret in an environment variable fails this, because any command can print the environment.
+
+Strands Shell injects credentials at request time, keyed to a URL prefix. The value doesn't enter the agent's reach: it's absent from the environment, from command output, from error messages, and from the Lua scripting context. The Kernel injects only on the original request and doesn't re-inject on a redirect, even one that points back to the same host. That closes the exfiltration path where an agent follows a crafted redirect to a logging endpoint and reads the forwarded header.
+
+## What is out of scope
+
+Some properties are explicitly not part of the security boundary. Treating them as guarantees would be a mistake:
+
+- **Resource exhaustion within configured limits.** Limits are best-effort. They catch runaway agents; they don't stop deliberate attempts to exhaust CPU or memory. Use OS-level cgroups for hard caps.
+- **Speculative execution and side channels.** The same-process architecture doesn't defend against timing attacks. Use VM isolation for that threat model.
+- **Multi-tenancy within one process.** A shell instance is single-owner. Sharing one instance across mutually distrusting agents is a documented non-goal.
+- **Memory-safety exploits in the engine itself.** The Kernel mediates policy; it's not a defense against an attacker who compromises the host process.
+- **Reading files the agent was granted.** A bind is a grant. An agent reading a directory you bound is the system working as designed.
+
+## Choosing the right isolation
+
+Match the tool to the threat model:
+
+- **"My agent shouldn't touch anything I haven't allowed."** The Kernel handles this directly. This covers the common cases: a coding agent on a repository, a research agent with a scoped API key, a CI assistant. No container required.
+- **"An untrusted tenant is running arbitrary adversarial code."** Add OS-level isolation. Run each shell instance inside a container or microVM, and let the Kernel handle in-process mediation on top. Construction is cheap, so one shell per session is the intended pattern.
+
+The two layers compose. The Kernel gives you fine-grained, fast mediation; the
+container gives you a hard kernel boundary. For adversarial workloads, use both.
+
+## Reporting a security issue
+
+A bypass of filesystem mediation, the SSRF guard, or credential injection within the
+bundled Strands Shell Kernel is a security issue, not a normal bug. Reaching a path
+outside a bound mount, defeating the Shell metadata-service block, exfiltrating an
+injected credential, or causing one Shell MCP session to read another session's state
+all qualify.
+
+Don't open a public GitHub issue. Report through the [AWS Vulnerability Disclosure Program on HackerOne](https://hackerone.com/aws_vdp) or by email to `aws-security@amazon.com`. The repository's [SECURITY.md](https://github.com/strands-agents/shell/blob/main/SECURITY.md) has the full policy and the complete in-scope and out-of-scope lists.

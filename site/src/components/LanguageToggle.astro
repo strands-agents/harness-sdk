@@ -1,0 +1,312 @@
+---
+/**
+ * Global Python/TypeScript language toggle, rendered identically in the header
+ * (full and collapsed), the mobile menu, and the mobile "On this page" bar. Reads/writes the shared AutoSyncTabs
+ * localStorage key so the toggle and inline code tabs stay in sync, and on
+ * language-specific pages navigates to the counterpart resolved at build time
+ * (see util/language-switch.ts). Event-channel and key details are inline below.
+ */
+import { getCollection } from 'astro:content'
+import { LANGUAGE_STORAGE_KEY, DEFAULT_LANGUAGE_LABEL } from '../util/language-preference'
+import { getLanguageSwitchTarget, type LanguageSlug } from '../util/language-switch'
+import { getApiCounterpartMap } from '../util/api-counterparts'
+import { getBase, pathWithBase } from '../util/links'
+import {
+  sampleGuideLanguageFromPath,
+  sampleGuideSwitchPath,
+  sortSampleGuides,
+} from '../util/sample-guides'
+import typescriptIcon from '../assets/lang/typescript.svg?raw'
+import pythonIcon from '../assets/lang/python.svg?raw'
+
+const allDocs = await getCollection('docs')
+const docIds = new Set(allDocs.map((doc) => doc.id))
+const apiCounterparts = getApiCounterpartMap(allDocs)
+
+// Strip the base so slugs compare against bare collection ids, then re-apply it
+const base = getBase()
+const rawPath = Astro.url.pathname
+const currentPath = base && rawPath.startsWith(base) ? rawPath.slice(base.length) || '/' : rawPath
+const sampleGuideLanguage = sampleGuideLanguageFromPath(rawPath)
+const sampleGuideSlug = sampleGuideLanguage
+  ? currentPath.replace(/^\/examples\//, '').replace(/\/$/, '')
+  : undefined
+const sampleGuides = sampleGuideLanguage ? sortSampleGuides(await getCollection('sampleGuides')) : []
+const currentSampleGuide = sampleGuideSlug
+  ? sampleGuides.find((guide) => guide.data.slug === sampleGuideSlug)
+  : undefined
+
+function switchHref(lang: LanguageSlug): string | undefined {
+  if (currentSampleGuide) {
+    const target = sampleGuideSwitchPath(sampleGuides, currentSampleGuide.data.slug, lang)
+    return target ? pathWithBase(target) : undefined
+  }
+
+  const target = getLanguageSwitchTarget(currentPath, lang, docIds, apiCounterparts)
+  return target ? pathWithBase(target) : undefined
+}
+
+const sampleGuideLanguageLabel =
+  sampleGuideLanguage === 'python' ? 'Python' : sampleGuideLanguage === 'typescript' ? 'TypeScript' : undefined
+
+// On single-language docs pages, disable the unavailable side.
+// `starlightRoute` is a getter that throws off non-Starlight pages — try/catch required.
+let routeData
+try {
+  routeData = Astro.locals.starlightRoute?.entry.data
+} catch {
+  routeData = undefined
+}
+const pageLanguages = routeData?.languages
+  ? (Array.isArray(routeData.languages) ? routeData.languages : [routeData.languages]).map((l) => l.toLowerCase())
+  : undefined
+const resolvedLanguages = pageLanguages?.length ? pageLanguages : undefined
+const sampleLanguageAvailable = (language: LanguageSlug) =>
+  currentSampleGuide?.data.language === language ||
+  (currentSampleGuide !== undefined &&
+    sampleGuideSwitchPath(sampleGuides, currentSampleGuide.data.slug, language) !== undefined)
+const pythonDisabled = currentSampleGuide
+  ? !sampleLanguageAvailable('python')
+  : resolvedLanguages !== undefined && !resolvedLanguages.includes('python')
+const typescriptDisabled = currentSampleGuide
+  ? !sampleLanguageAvailable('typescript')
+  : resolvedLanguages !== undefined && !resolvedLanguages.includes('typescript')
+---
+
+<language-toggle
+  class="language-toggle"
+  role="radiogroup"
+  aria-label="Preferred language"
+>
+  <button
+    class="lang-option"
+    role="radio"
+    aria-checked="false"
+    aria-label="TypeScript"
+    data-lang="TypeScript"
+    data-switch-href={switchHref('typescript')}
+    disabled={typescriptDisabled}
+    title={typescriptDisabled ? 'This page is Python-only' : undefined}
+  >
+    <span class="lang-icon" set:html={typescriptIcon} />
+    <span class="lang-label">TypeScript</span>
+  </button>
+  <button
+    class="lang-option"
+    role="radio"
+    aria-checked="false"
+    aria-label="Python"
+    data-lang="Python"
+    data-switch-href={switchHref('python')}
+    disabled={pythonDisabled}
+    title={pythonDisabled ? 'This page is TypeScript-only' : undefined}
+  >
+    <span class="lang-icon" set:html={pythonIcon} />
+    <span class="lang-label">Python</span>
+  </button>
+</language-toggle>
+
+<style>
+  /* Icon pill toggle.
+     One control with identical sizing everywhere it appears — the header, the
+     mobile menu, the "On this page" bar, and the homepage code cards. Each option shows the language's
+     logo; the text label is kept for screen readers only. */
+  .language-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    padding: 3px;
+    background: var(--toggle-bg);
+    border-radius: 999px;
+  }
+
+  .lang-option {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 6px 10px;
+    border: 1px solid var(--toggle-inactive-border);
+    border-radius: 999px;
+    background: var(--toggle-inactive-bg);
+    color: var(--toggle-inactive-fg);
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease;
+  }
+
+  .lang-option:hover {
+    color: var(--toggle-hover-fg);
+  }
+
+  .lang-icon {
+    display: inline-flex;
+  }
+
+  .lang-icon :global(svg) {
+    display: block;
+    width: 18px;
+    height: 18px;
+  }
+
+  .lang-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .lang-option[aria-checked='true'] {
+    background: var(--toggle-active-bg);
+    border-color: transparent;
+    color: var(--strands-black);
+    font-weight: 500;
+    filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.15));
+  }
+
+  .lang-option:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  .lang-option:disabled:hover {
+    color: var(--toggle-inactive-fg);
+  }
+
+  /* Light mode: fill the track (not a border — avoids box shrink) and drop
+     per-option borders for a clean segmented pill. */
+  :global([data-theme='light']) .language-toggle {
+    background: rgba(0, 0, 0, 0.06);
+  }
+
+  :global([data-theme='light']) .lang-option {
+    border-color: transparent;
+  }
+</style>
+
+<script
+  is:inline
+  define:vars={{
+    STORAGE_KEY: LANGUAGE_STORAGE_KEY,
+    DEFAULT_LANG: DEFAULT_LANGUAGE_LABEL,
+    PAGE_LANGUAGE: sampleGuideLanguageLabel,
+  }}
+>
+  (function () {
+    // Idempotency guard: multiple instances on one page, run logic once.
+    if (window.__strandsLanguageToggleInit) return;
+    window.__strandsLanguageToggleInit = true;
+    // STORAGE_KEY + DEFAULT_LANG injected via define:vars from language-preference.ts.
+
+    function getPreference() {
+      try {
+        return localStorage.getItem(STORAGE_KEY) || DEFAULT_LANG;
+      } catch (e) {
+        if (typeof console !== 'undefined') console.debug('[LanguageToggle] localStorage read error:', e);
+        return DEFAULT_LANG;
+      }
+    }
+
+    function setPreference(lang) {
+      try {
+        localStorage.setItem(STORAGE_KEY, lang);
+      } catch (e) {
+        if (typeof console !== 'undefined') console.debug('[LanguageToggle] localStorage write error:', e);
+      }
+    }
+
+    /** Sync Starlight tab groups by clicking the matching tab. */
+    function syncStarlightTabs(lang) {
+      document.querySelectorAll('starlight-tabs').forEach(function (tabGroup) {
+        var tabs = tabGroup.querySelectorAll('[role="tab"]');
+        tabs.forEach(function (tab) {
+          if (tab.textContent.trim() === lang && tab.getAttribute('aria-selected') !== 'true') {
+            tab.click();
+          }
+        });
+      });
+    }
+
+    /** Sample routes win; other single-language pages resolve to their available language. */
+    function effectiveLanguage(lang) {
+      if (PAGE_LANGUAGE) return PAGE_LANGUAGE;
+      var enabled = Array.prototype.filter.call(
+        document.querySelectorAll('language-toggle .lang-option'),
+        function (btn) { return !btn.disabled; }
+      );
+      // No toggle rendered on this page: the preference stands.
+      if (enabled.length === 0) return lang;
+      var match = enabled.some(function (btn) { return btn.dataset.lang === lang; });
+      return match ? lang : enabled[0].dataset.lang;
+    }
+
+    function updateToggle(lang) {
+      // Exactly one radio is always checked: `lang` is already the effective
+      // language, so it always names an enabled button when one exists.
+      document.querySelectorAll('language-toggle .lang-option').forEach(function (btn) {
+        if (btn.disabled) return;
+        btn.setAttribute('aria-checked', btn.dataset.lang === lang ? 'true' : 'false');
+      });
+    }
+
+    /** Full UI sync: toggle state + inline tabs. */
+    function syncAll(lang) {
+      var effective = effectiveLanguage(lang);
+      updateToggle(effective);
+      syncStarlightTabs(effective);
+    }
+
+    // Guard against feedback loops.
+    var applying = false;
+
+    function applyLanguage(lang, notify) {
+      if (applying) return;
+      applying = true;
+      setPreference(lang);
+      syncAll(lang);
+      if (notify) {
+        window.dispatchEvent(new CustomEvent('lang-change', { detail: lang }));
+        window.dispatchEvent(new CustomEvent('lang-preference-changed', { detail: { lang: lang } }));
+      }
+      applying = false;
+    }
+
+    var current = PAGE_LANGUAGE || getPreference();
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', function () { applyLanguage(current, false); });
+    } else {
+      applyLanguage(current, false);
+    }
+
+    document.addEventListener('click', function (e) {
+      var btn = e.target.closest('.lang-option');
+      if (!btn || btn.disabled) return;
+      var lang = btn.dataset.lang;
+      if (!lang) return;
+      applyLanguage(lang, true);
+
+      var switchHref = btn.dataset.switchHref;
+      if (switchHref) {
+        window.location.href = switchHref;
+      }
+    });
+
+    window.addEventListener('storage', function (e) {
+      if (e.key === STORAGE_KEY && e.newValue) {
+        applyLanguage(e.newValue, false);
+      }
+    });
+
+    window.addEventListener('lang-change', function (e) {
+      var lang = e && e.detail;
+      if (lang) applyLanguage(lang, false);
+    });
+    window.addEventListener('lang-preference-changed', function (e) {
+      var lang = e && e.detail && e.detail.lang;
+      if (lang) applyLanguage(lang, false);
+    });
+  })();
+</script>

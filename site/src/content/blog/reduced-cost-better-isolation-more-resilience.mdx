@@ -1,0 +1,208 @@
+---
+title: "Reduced cost, better isolation, and more resilience: Strands Agents evolves next-gen capabilities"
+date: 2026-06-18
+description: "Strands Agents ships context management that cuts costs in half, Strands Shell for sandboxed agent execution, and chaos testing and red teaming in Strands Evals 1.0."
+authors:
+  - ryan-coleman
+  - strands-team
+tags:
+  - Announcement
+  - Context Management
+  - Evaluation
+  - Open Source
+draft: false
+---
+
+Agents break in production for common reasons like the context window filling up, emerging needs like filesystem access, and unexpected failure scenarios in distributed environments.
+
+We shipped Strands a little over a year ago to help solve the common and challenging problems in agentic AI. 50 million+ downloads later, the recurring feedback we hear as developers move agents into production are token costs growing unexpectedly, agents needing safe access to filesystems, and a lack of ways to test whether things break before customers find out that they do.
+
+When we scale agents internally at AWS, we run into the same issues. Today we're shipping three updates in Strands that solve these problems: better context management in the [SDK](https://github.com/strands-agents/harness-sdk), a new isolated execution environment with [Strands Shell](https://github.com/strands-agents/shell), and chaos testing and red teaming in [Strands Evals](https://github.com/strands-agents/evals).
+
+Strands is an open source toolkit for building production agents, and you can use any of these pieces independently without changing your stack.
+
+## Context management that cuts your costs in half
+
+We've baked a year of our learning in context management into a one-line abstraction:
+
+```python
+agent = Agent(context_manager="auto")
+```
+
+With this new default behavior, large tool results are offloaded to external storage and replaced with a truncated preview. Old messages are compressed into structured summaries rather than dropped. Additionally, proactive compression fires at 85% context usage to stay ahead of overflow.
+
+In our benchmarks on real code investigation tasks, costs dropped by 55% while accuracy went from 68% to 98%. Half the tokens, better results. We'll cover the methodology in a follow-up post. The winning configuration ships as the default. You don't have to configure thresholds, summary ratios, or compression timing.
+
+For agents where the model is better positioned to decide what stays in context, use `context_manager="agentic"`. The model gets tools to summarize, truncate, or pin messages. It trades tokens for judgment. We recommend you start with "auto" by default, and use "agentic" when your agent needs to protect specific context across long conversations.
+
+## Strands Shell: sandboxed execution without the setup
+
+Your agent needs to run commands, read files, grep through codebases and curl APIs. Strands Shell is a new open-source project that gives your agent a secure execution environment with sub-millisecond startup. It layers cleanly into your deployment environment, like AgentCore Runtime's session-isolated microVM. Your code does not need to change when changing environments, and you just include Shell like any other library dependency in your project. You declare what the agent can reach, while keeping everything else isolated.
+
+```python
+import strands_shell
+
+shell = strands_shell.Shell(
+    binds=[strands_shell.Bind("./project", "/workspace", mode="copy")],
+    credentials=[strands_shell.Cred("https://api.example.com/", env_var="API_TOKEN")],
+    allowed_urls=["https://api.example.com/"],
+)
+
+out = shell.run("grep -rn TODO /workspace")
+```
+
+See [GitHub](https://github.com/strands-agents/shell/blob/main/SECURITY.md) for more on Shell's security model. The summary is:
+
+- **Files**: only bound paths exist in the virtual filesystem.
+- **Network**: private ranges blocked by default, public URLs pass through, internal hosts require explicit allowlisting.
+- **Secrets**: injected per-URL at request time. The agent never holds credentials directly.
+
+Any agent that speaks MCP can use Shell:
+
+```json
+{
+  "mcpServers": {
+    "shell": {
+      "command": "uvx",
+      "args": ["strands-shell", "--mcp"]
+    }
+  }
+}
+```
+
+## Full example: a Pokemon team advisor
+
+In order to demonstrate how these launches come together, we've created a [new sample](https://github.com/strands-agents/samples/tree/main/python/05-technical-use-cases/pokemon-team-advisor) agent that is tasked with determining which Pokemon is best for your requirements. To simulate a data-rich tool that would easily overwhelm the context window, we give the agent two tools that wrap JSON from the [PokeAPI/api-data](https://github.com/PokeAPI/api-data) repository. The API responses are big. A single Pokemon lookup returns stats, moves, abilities, and sprites in one payload. This is a stand-in for any tool that returns more data than fits in context.
+
+The agent uses Shell for working with files, and `context_manager="auto"` to handle the large responses.
+
+```python
+import os
+from mcp import stdio_client, StdioServerParameters
+from strands import Agent, tool
+from strands.tools.mcp import MCPClient
+from strands.vended_plugins.context_offloader import ContextOffloader, FileStorage
+
+ARTIFACTS_DIR = "./artifacts"
+os.makedirs(ARTIFACTS_DIR, exist_ok=True)
+
+@tool
+def get_pokemon(name_or_id: str) -> str:
+    """Look up a Pokemon by name or Pokedex ID.
+    Returns full JSON with stats, types, abilities, and move list."""
+    with open(f"./pokedata/pokemon/{name_or_id}/index.json") as f:
+        return f.read()
+
+@tool
+def get_move(move_id: str) -> str:
+    """Look up a move by ID.
+    Returns full JSON including power, type, accuracy, and which Pokemon can learn it."""
+    with open(f"./pokedata/move/{move_id}/index.json") as f:
+        return f.read()
+
+shell = MCPClient(lambda: stdio_client(
+    StdioServerParameters(command="uvx", args=["strands-shell", "--config", "sandbox.toml", "--mcp"])
+))
+
+agent = Agent(
+    tools=[get_pokemon, get_move, shell],
+    context_manager="auto",
+    plugins=[
+        ContextOffloader(
+            storage=FileStorage(ARTIFACTS_DIR),
+            include_retrieval_tool=False,
+        ),
+    ],
+    system_prompt="Offloaded content is accessible in the shell at /artifacts/",
+)
+```
+
+```python
+agent("I'm building a competitive team and need a physical attacker with good "
+     "coverage. Which Pokemon that can learn both Earthquake and Ice Beam has "
+     "the highest base Attack stat?")
+```
+
+### What happens at runtime
+
+The agent will make dozens of tool calls to explore the dataset including offloaded responses for large datasets and it can manage long-running sessions without context overflows. Through Shell, the agent only sees two directories the entire time: `/pokedata` (read-only copy of the dataset) and `/artifacts` (writable, where offloaded content lands). Nothing else on the host exists to the agent.
+
+That's the agent working under ideal conditions. Production isn't ideal.
+
+## Now break it: Strands Evals
+
+Strands Evals is an SDK for evaluating your agents while you build. With 1.0, we've added features to help you test your agent from multiple angles including chaos testing (do tools breaking break your agent?) and red teaming (does the agent behave as expected under adversarial pressure?).
+
+### Chaos testing
+
+Use chaos to define which tools fail and how. The ChaosPlugin intercepts calls at the plugin layer and injects the failures.
+
+```python
+from strands_evals.chaos import ChaosCase, ChaosExperiment, ChaosPlugin
+from strands_evals.chaos.effects import Timeout, NetworkError, TruncateFields
+from strands_evals.evaluators.deterministic import Contains
+
+chaos = ChaosPlugin()
+
+agent = Agent(
+    tools=[get_pokemon, get_move, shell],
+    context_manager="auto",
+    plugins=[chaos, ContextOffloader(storage=FileStorage("./artifacts"), include_retrieval_tool=False)],
+    system_prompt="Offloaded content is accessible in the shell at /artifacts/",
+)
+
+effect_maps = {
+    "api_timeout": {"tool_effects": {"get_move": [Timeout()]}},
+    "api_down": {"tool_effects": {"get_pokemon": [NetworkError()]}},
+    "partial_response": {"tool_effects": {"get_pokemon": [TruncateFields(max_length=200)]}},
+}
+
+chaos_cases = ChaosCase.expand(
+    [Case(name="earthquake_ice_beam", input="Which Pokemon learns both Earthquake and Ice Beam with the highest Attack?")],
+    effect_maps,
+    include_no_effect_baseline=True,
+)
+
+experiment = ChaosExperiment(
+    cases=chaos_cases,
+    evaluators=[Contains(value="rampardos", case_sensitive=False, name="correct_answer")],
+)
+report = experiment.run_evaluations(task=lambda case: {"output": str(agent(case.input))})
+```
+
+Does the agent recover gracefully when `get_move` times out or when `get_pokemon` returns a network error? Chaos testing gives you the means to test and refine behavior while you build.
+
+### Red teaming the sandbox
+
+We gave this agent shell access. Shell's VFS only exposes `/pokedata` and `/artifacts`. But does it hold when a user actively tries to escape?
+
+```python
+from strands_evals.experimental.redteam import RedTeamExperiment
+from strands_evals.experimental.redteam.generators.adversarial import AdversarialCaseGenerator
+from strands_evals.experimental.redteam.strategies import CrescendoStrategy
+
+cases = AdversarialCaseGenerator().generate_cases(
+    agent=agent,
+    risk_categories=["data_exfiltration", "excessive_agency"],
+    num_cases=3,
+)
+
+experiment = RedTeamExperiment(
+    cases=cases,
+    agent_factory=make_agent,
+    attack_strategies=[CrescendoStrategy(max_turns=5)],
+)
+report = experiment.run_evaluations()
+```
+
+`AdversarialCaseGenerator` inspects your agent's tools and system prompt, sees it has shell access, and auto-generates targeted escape attempts. `CrescendoStrategy` starts with legitimate requests and gradually escalates across five turns, probing for paths the agent might follow. This is the two-layer test. The model might be willing to comply with a convincing request but Shell blocks it at the VFS layer.
+
+Five risk categories are available today (`guideline_bypass`, `system_prompt_leak`, `harmful_content`, `data_exfiltration`, `excessive_agency`) and four attack strategies (Crescendo, GOAT, PAIR, sequential break).
+
+Chaos and red teaming are the new pieces in 1.0. Evals also ships 20+ evaluators (correctness, helpfulness, tool selection accuracy, harmfulness, refusal), ToolSimulator for stateful API mocking, and OpenTelemetry-native tracing so it evaluates agents built with any instrumented framework. Detectors turn failing sessions into root causes with fix recommendations, and the strands-evals CLI helps you run experiments and gates in CI.
+
+## What this means for your agents
+
+Context management keeps costs down. Shell keeps the blast radius contained. Evals proves it works before it's in production. Each piece works independently. You can add any one to your stack without changing the rest.
+
+[strandsagents.com/docs](https://strandsagents.com/docs) | [github.com/strands-agents/shell](https://github.com/strands-agents/shell) | [github.com/strands-agents/evals](https://github.com/strands-agents/evals)

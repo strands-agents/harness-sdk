@@ -1,0 +1,9 @@
+name: Vercel AI SDK
+description: Run Strands agents on any Vercel AI SDK provider through the VercelModel adapter, using @ai-sdk packages.
+integrationType: model-provider
+maintainedBy: strands
+languages:
+  typescript: {}
+github: https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/vercel.ts
+docsPage: docs/user-guide/sdk/model-providers/vercel
+addedDate: 2026-03-27

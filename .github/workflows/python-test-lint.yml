@@ -1,0 +1,172 @@
+name: "Python: Test and Lint"
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        required: true
+        type: string
+    secrets:
+      CODECOV_TOKEN:
+        required: false
+
+jobs:
+  unit-test:
+    name: Unit Tests - Python ${{ matrix.python-version }} - ${{ matrix.os-name }}
+    permissions:
+      contents: read
+    strategy:
+      matrix:
+       include:
+        # Linux
+        - os: strands-agents_ubuntu-latest_4-core
+          os-name: 'linux'
+          python-version: "3.10"
+        - os: strands-agents_ubuntu-latest_4-core
+          os-name: 'linux'
+          python-version: "3.11"
+        - os: strands-agents_ubuntu-latest_4-core
+          os-name: 'linux'
+          python-version: "3.12"
+        - os: strands-agents_ubuntu-latest_4-core
+          os-name: 'linux'
+          python-version: "3.13"
+        - os: strands-agents_ubuntu-latest_4-core
+          os-name: 'linux'
+          python-version: "3.14"
+        # Windows
+        - os: strands-agents_windows-latest_4-core
+          os-name: 'windows'
+          python-version: "3.10"
+        - os: strands-agents_windows-latest_4-core
+          os-name: 'windows'
+          python-version: "3.11"
+        - os: strands-agents_windows-latest_4-core
+          os-name: 'windows'
+          python-version: "3.12"
+        - os: strands-agents_windows-latest_4-core
+          os-name: 'windows'
+          python-version: "3.13"
+        - os: strands-agents_windows-latest_4-core
+          os-name: 'windows'
+          python-version: "3.14"
+        # MacOS - latest only; not enough runners for macOS
+        - os: macos-latest
+          os-name: 'macOS'
+          python-version: "3.14"
+      fail-fast: true
+    runs-on: ${{ matrix.os }}
+    # Successful unit-test legs run in ~3-4 min (slowest observed ~16 min);
+    # 25 min caps a hung step instead of letting it run to the 6-hour default.
+    timeout-minutes: 25
+    env:
+      LOG_LEVEL: DEBUG
+    defaults:
+      run:
+        working-directory: strands-py
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@v7.1.0
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install dependencies
+        run: |
+          pip install --no-cache-dir hatch
+      - name: Run Unit tests
+        id: tests
+        # Retry failing tests so a flaky test doesn't block a release; a
+        # genuinely broken test still fails after the reruns and holds the gate.
+        run: hatch test tests --cover --reruns 2 --reruns-delay 5
+        continue-on-error: false
+
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+  unit-test-mcp-v1:
+    name: MCP 1.x Compat
+    # The dependency range spans both `mcp` major versions and fresh installs resolve mcp 2.x, so the unit-test matrix
+    # only ever exercises 2.x and the 1.x branches of `_compat` run against mocks there. This job force-installs mcp
+    # 1.x to verify against the real package that `import strands` succeeds and the MCP client suite passes, including
+    # the legacy 2025-11-25 task workflow, which is 1.x-only. The modern-protocol integ tests
+    # (tests_integ/mcp/test_mcp_client_v2.py) require 2.x, so they run in the integration-test workflow's main scope.
+    runs-on: strands-agents_ubuntu-latest_4-core
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: strands-py
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v7.1.0
+        with:
+          python-version: '3.10'
+
+      - name: Install package, then force mcp 1.x
+        run: |
+          pip install --no-cache-dir -e . \
+            "pytest>=9.0.0,<10.0.0" \
+            "pytest-asyncio>=1.0.0,<1.5.0" \
+            "pytest-timeout>=2.0.0,<3.0.0" \
+            "pytest-cov>=6.0.0,<8.0.0" \
+            "moto>=5.1.0,<6.0.0"
+          pip install --no-cache-dir "mcp>=1.23.0,<2.0.0"
+
+      - name: Verify import and version flag
+        run: python -c "import strands; from strands.tools.mcp import _compat; assert not _compat.MCP_V2"
+
+      # With coverage: the 1.x branches of `_compat` execute only in this job,
+      # so without this upload they always show as uncovered on the patch.
+      - name: Run MCP tests
+        run: |
+          pytest tests/strands/tools/mcp -vv --cov=src/strands --cov-report=xml
+
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+  lint:
+    name: Lint
+    runs-on: strands-agents_ubuntu-latest_4-core
+    # Lint typically runs in ~2 min; 20 min caps a hung step instead of
+    # letting it run to the 6-hour default.
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: strands-py
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v7.1.0
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          pip install --no-cache-dir hatch
+
+      - name: Run lint
+        id: lint
+        run: hatch fmt --check
+        continue-on-error: false

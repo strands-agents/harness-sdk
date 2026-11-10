@@ -1,0 +1,108 @@
+---
+title: Response relevance evaluator
+description: 'Verify agent responses address what the user actually asked with ResponseRelevanceEvaluator and its five-level relevance scale.'
+sidebar:
+  label: "Response relevance"
+---
+
+The `ResponseRelevanceEvaluator` evaluates whether an agent's response is relevant to the user's question. It assesses if the response addresses what was actually asked, rather than going off-topic or providing unrelated information.
+
+## Key features
+
+- **Trace-Level Evaluation**: Evaluates the most recent turn in the conversation
+- **Five-Level Scoring**: Granular scale from "Not At All" to "Completely Yes"
+- **Async Support**: Supports both synchronous and asynchronous evaluation
+- **Structured Reasoning**: Provides step-by-step reasoning for each evaluation
+
+## When to use
+
+Use the `ResponseRelevanceEvaluator` when you need to:
+
+- Detect off-topic or tangential responses
+- Ensure agents stay focused on the user's question
+- Identify cases where agents misinterpret user intent
+- Measure response alignment with user queries
+
+## Evaluation level
+
+This evaluator operates at the **TRACE_LEVEL**, evaluating the most recent turn in the conversation.
+
+## Parameters
+
+### `model` (optional)
+- **Type**: `Union[Model, str, None]`
+- **Default**: `None` (uses default Bedrock model)
+- **Description**: The model to use as the judge.
+
+### `system_prompt` (optional)
+- **Type**: `str | None`
+- **Default**: `None` (uses built-in template)
+- **Description**: Custom system prompt for the judge model.
+
+### `include_inputs` (optional)
+- **Type**: `bool`
+- **Default**: `True`
+- **Description**: Whether to include the input prompt in the evaluation context.
+
+### `version` (optional)
+- **Type**: `str`
+- **Default**: `"v0"`
+- **Description**: Prompt template version.
+
+## Scoring system
+
+| Rating | Score | Description |
+|--------|-------|-------------|
+| Not At All | 0.0 | Response is completely unrelated to the question |
+| Not Generally | 0.25 | Response is mostly off-topic with minor relevance |
+| Neutral/Mixed | 0.5 | Response partially addresses the question |
+| Generally Yes | 0.75 | Response is mostly relevant with minor tangents |
+| Completely Yes | 1.0 | Response directly and fully addresses the question |
+
+A response passes the evaluation if the score is >= 0.5.
+
+## Basic usage
+
+:::caution[Required: Session ID Trace Attributes]
+When using `StrandsInMemorySessionMapper`, you **must** include session ID trace attributes in your agent configuration. This prevents spans from different test cases from being mixed together in the memory exporter.
+:::
+
+```python
+import asyncio
+
+from strands import Agent
+from strands_evals import Case, Experiment
+from strands_evals.evaluators import ResponseRelevanceEvaluator
+from strands_evals.mappers import StrandsInMemorySessionMapper
+from strands_evals.telemetry import StrandsEvalsTelemetry
+
+telemetry = StrandsEvalsTelemetry().setup_in_memory_exporter()
+
+def task_function(case: Case) -> dict:
+    agent = Agent(
+        trace_attributes={"session.id": case.session_id},
+        callback_handler=None
+    )
+    response = agent(case.input)
+    spans = telemetry.in_memory_exporter.get_finished_spans()
+    mapper = StrandsInMemorySessionMapper()
+    session = mapper.map_to_session(spans, session_id=case.session_id)
+    return {"output": str(response), "trajectory": session}
+
+cases = [
+    Case(name="relevance-check", input="How do I reset my password?")
+]
+
+experiment = Experiment(cases=cases, evaluators=[ResponseRelevanceEvaluator()])
+async def main():
+    report = await experiment.run_evaluations_async(task_function)
+    report.run_display()
+
+asyncio.run(main())
+```
+
+## Related evaluators
+
+- [**CoherenceEvaluator**](coherence_evaluator.md): Evaluates logical consistency
+- [**CorrectnessEvaluator**](correctness_evaluator.md): Evaluates factual accuracy
+- [**FaithfulnessEvaluator**](faithfulness_evaluator.md): Checks if responses are grounded in conversation history

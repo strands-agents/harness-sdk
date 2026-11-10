@@ -1,0 +1,167 @@
+---
+title: Failure detection
+description: 'Detect semantic failures in agent traces with detect_failures: hallucinations, tool misuse, and policy violations across a 20+ category taxonomy.'
+tags: [failure-diagnosis, error-handling]
+sidebar:
+  label: "Failure detection"
+---
+
+`detect_failures` analyzes an agent execution `Session` and identifies semantic failures: hallucinations, tool errors, policy violations, repetitive behavior, and more. It uses an LLM to evaluate each span against a 20+ category failure taxonomy and returns structured results with span locations, failure categories, confidence levels, and evidence.
+
+## Key features
+
+- **20+ failure categories**: Covers execution errors, hallucinations, tool misuse, orchestration errors, and more
+- **Confidence-based filtering**: Filter results by `ConfidenceLevel.LOW`, `MEDIUM`, or `HIGH` thresholds
+- **Automatic chunking**: Sessions exceeding context limits are split into token-bounded chunks with overlap, analyzed independently, and merged
+- **Resilient parsing**: Malformed LLM output is handled gracefully: bad chunks return empty results rather than crashing
+
+## When to use
+
+Use `detect_failures` when you need to:
+
+- **Identify specific failure points** in an agent trace
+- **Categorize failures** using a standardized taxonomy
+- **Filter by severity** using confidence thresholds
+- **Feed failures into root cause analysis** (`analyze_root_cause`)
+
+For a combined detect-and-analyze pipeline, use [`diagnose_session`](diagnosis.md) instead.
+
+## Parameters
+
+### `session` (required)
+- **Type**: `Session`
+- **Description**: The Session object containing traces and spans to analyze.
+
+### `confidence_threshold` (optional)
+- **Type**: `ConfidenceLevel`
+- **Default**: `ConfidenceLevel.LOW`
+- **Description**: Minimum confidence level to include a failure. Maps to numeric thresholds: `LOW` = 0.5, `MEDIUM` = 0.75, `HIGH` = 0.9.
+
+### `model` (optional)
+- **Type**: `Model | str | None`
+- **Default**: `None` (uses Claude Sonnet via Bedrock)
+- **Description**: The model to use for analysis. Can be a `Model` instance, a Bedrock model ID string, or `None` for the default.
+
+## Basic usage
+
+```python
+from strands_evals.detectors import detect_failures
+
+# session is a Session object from a trace provider or in-memory mapper
+result = detect_failures(session)
+
+print(f"Session: {result.session_id}")
+print(f"Failures found: {len(result.failures)}")
+
+for failure in result.failures:
+    print(f"\nSpan: {failure.span_id}")
+    for i, cat in enumerate(failure.category):
+        print(f"  [{failure.confidence[i]:.0%}] {cat}")
+        print(f"    {failure.evidence[i]}")
+```
+
+## Filtering by confidence
+
+Use `confidence_threshold` to control sensitivity:
+
+```python
+from strands_evals.detectors import ConfidenceLevel
+
+# High precision: only include failures the LLM is very confident about
+result = detect_failures(session, confidence_threshold=ConfidenceLevel.HIGH)
+
+# Medium: balanced between precision and recall
+result = detect_failures(session, confidence_threshold=ConfidenceLevel.MEDIUM)
+
+# Low (default): include everything the LLM flagged
+result = detect_failures(session, confidence_threshold=ConfidenceLevel.LOW)
+```
+
+The threshold filters at the per-category level within each span. A span with two categories (one high-confidence and one low-confidence) retains only the high-confidence category when `confidence_threshold=ConfidenceLevel.HIGH`.
+
+## Using with remote traces
+
+Combine with trace providers to analyze production agent sessions:
+
+```python
+from strands_evals.providers import CloudWatchProvider
+from strands_evals.detectors import detect_failures, ConfidenceLevel
+
+provider = CloudWatchProvider(agent_name="my-agent", region="us-east-1")
+data = provider.get_evaluation_data(session_id="session-123")
+
+result = detect_failures(data.trajectory, confidence_threshold=ConfidenceLevel.MEDIUM)
+
+for failure in result.failures:
+    print(f"[{failure.category[0]}] {failure.evidence[0]}")
+```
+
+## Custom model
+
+```python
+from strands.models.bedrock import BedrockModel
+from strands_evals.detectors import detect_failures
+
+model = BedrockModel(model_id="global.anthropic.claude-sonnet-5")
+result = detect_failures(session, model=model)
+```
+
+## Output structure
+
+`detect_failures` returns a `FailureOutput`:
+
+```python
+class FailureOutput(BaseModel):
+    session_id: str
+    failures: list[FailureItem]
+
+class FailureItem(BaseModel):
+    span_id: str          # Span where failure occurred
+    category: list[str]   # Failure classifications
+    confidence: list[float]  # Confidence per category (0.0–1.0)
+    evidence: list[str]   # Evidence per category
+```
+
+A single span can have multiple failure categories. The `category`, `confidence`, and `evidence` lists are element-wise aligned: `category[i]` corresponds to `confidence[i]` and `evidence[i]`.
+
+## Failure categories
+
+The detector uses a taxonomy organized by parent category:
+
+| Parent Category | Categories | Description |
+|----------------|------------|-------------|
+| **execution-error** | authentication, resource-not-found, service-errors, rate-limiting, formatting, timeout, resource-exhaustion, environment, tool-schema | Runtime failures with explicit error signals |
+| **task-instruction** | non-compliance, problem-id | Failure to follow directives or identify the correct approach |
+| **incorrect-actions** | tool-selection, poor-information-retrieval, clarification, inappropriate-info-request | Using wrong tools, wrong queries, or asking unnecessary questions |
+| **context-handling-error** | context-handling-failures | Loss of conversation context or state |
+| **hallucination** | hall-capabilities, hall-misunderstand, hall-usage, hall-history, hall-params, fabricate-tool-outputs | Fabricating information, capabilities, or tool outputs |
+| **repetitive-behavior** | repetition-tool, repetition-info, step-repetition | Repeating actions, requests, or workflow steps without justification |
+| **orchestration-related-errors** | reasoning-mismatch, goal-deviation, premature-termination, unaware-termination | Workflow and planning failures |
+| **llm-output** | nonsensical | Malformed, incoherent, or leaked internal state |
+| **configuration-mismatch** | tool-definition | Tool setup doesn't match its actual behavior |
+| **coding-use-case-specific** | edge-case-oversights, dependency-issues | Code generation and modification failures |
+
+## How chunking works
+
+When a session exceeds the model's context window (~200K tokens), the detector automatically falls back to chunked analysis:
+
+1. **Pre-flight check**: Estimates token count using tiktoken and compares against a safety margin
+2. **Split**: Spans are divided into token-bounded chunks with 5-span overlap for context continuity
+3. **Analyze**: Each chunk is analyzed independently
+4. **Merge**: Results are deduplicated by span_id, keeping the highest confidence per category when the same span appears in multiple chunks
+
+If the pre-flight check passes but the model still returns a context error, the detector catches it and retries with chunking. This two-layer approach maximizes the chance of using direct (higher quality) analysis while handling edge cases gracefully.
+
+## Best practices
+
+1. **Start with `ConfidenceLevel.LOW`** to see all potential issues, then raise to `MEDIUM` or `HIGH` to focus on high-confidence findings
+2. **Use with `analyze_root_cause`** to understand _why_ failures happened, not just _what_ failed
+3. **Pass failures to RCA explicitly** rather than re-detecting: `analyze_root_cause(session, failures=result.failures)`
+4. **Use `diagnose_session`** when you want both detection and RCA in a single call
+
+## Related documentation
+
+- [Root Cause Analysis](root_cause_analysis.md): Analyze why failures happened
+- [Session Diagnosis](diagnosis.md): Combined detection + RCA pipeline
+- [Detectors Overview](index.md): High-level detectors guide
+- [Remote Trace Providers](../how-to/trace_providers.md): Fetch traces from production backends

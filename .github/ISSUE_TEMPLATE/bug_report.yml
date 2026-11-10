@@ -1,13 +1,20 @@
 name: Bug Report
 description: Report a bug in the Strands Agents SDK
 title: "[BUG] "
-labels: ["bug", "triage"]
+labels: ["triage"]
 assignees: []
 body:
   - type: markdown
     attributes:
       value: |
         Thanks for taking the time to fill out this bug report for Strands SDK!
+  - type: textarea
+    id: human-overview
+    attributes:
+      label: Human Overview
+      description: |
+        If an AI agent drafted this issue, a human must give a short overview here in their own words. An AI agent MUST NOT fill out this section. See team/AI_USAGE_POLICY.md. (50 words)
+      placeholder: In my own words, this bug...
   - type: checkboxes
     id: "checks"
     attributes:
@@ -19,6 +26,16 @@ body:
           required: true
         - label: "I have searched [./issues](./issues?q=) and there are no duplicates of my issue"
           required: true
+  - type: dropdown
+    id: sdk-language
+    attributes:
+      label: SDK Language
+      description: Which Strands SDK are you using?
+      options:
+        - Python
+        - TypeScript
+    validations:
+      required: true
   - type: input
     id: strands-version
     attributes:
@@ -28,11 +45,11 @@ body:
     validations:
       required: true
   - type: input
-    id: python-version
+    id: language-version
     attributes:
-      label: Python Version
-      description: Which version of Python are you using?
-      placeholder: e.g., 3.10.5
+      label: Language Runtime Version
+      description: Which version of Python or Node.js are you using?
+      placeholder: e.g., Python 3.10.5 or Node.js 20.17.0
     validations:
       required: true
   - type: input
@@ -50,8 +67,10 @@ body:
       description: How did you install Strands?
       options:
         - pip
+        - npm
+        - yarn
+        - pnpm
         - git clone
-        - binary
         - other
     validations:
       required: true
@@ -59,7 +78,7 @@ body:
     id: steps-to-reproduce
     attributes:
       label: Steps to Reproduce
-      description: Detailed steps to reproduce the behavior
+      description: Detailed steps to reproduce the behavior. Put longer logs or traces in Additional Context. (200 words)
       placeholder: |
         1. Code Snippet (Minimal reproducible example)
         2. Install Strands using...
@@ -71,26 +90,35 @@ body:
     id: expected-behavior
     attributes:
       label: Expected Behavior
-      description: A clear description of what you expected to happen
+      description: A clear description of what you expected to happen. (50 words)
     validations:
       required: true
   - type: textarea
     id: actual-behavior
     attributes:
       label: Actual Behavior
-      description: What actually happened
+      description: What actually happened. Put longer logs or traces in Additional Context. (100 words)
     validations:
       required: true
-  - type: textarea
-    id: additional-context
-    attributes:
-      label: Additional Context
-      description: Any other relevant information, logs, screenshots, etc.
   - type: textarea
     id: possible-solution
     attributes:
       label: Possible Solution
-      description: Optional - If you have suggestions on how to fix the bug
+      description: Optional - If you have suggestions on how to fix the bug. (100 words)
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional Context
+      description: |
+        Optional. Extended context that doesn't fit above: longer logs, screenshots, or supplementary background.
+        Wrap it in a <details> block so the issue stays scannable by default.
+      placeholder: |
+        <details>
+        <summary>Extended context (optional)</summary>
+
+        <!-- Extended content here -->
+
+        </details>
   - type: input
     id: related-issues
     attributes:

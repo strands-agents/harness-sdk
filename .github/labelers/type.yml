@@ -1,0 +1,42 @@
+# .github/labelers/type.yml
+# Classifies issues by type (bug, feature, etc.)
+# Use max_labels: 1 in the workflow since these are mutually exclusive.
+# On issue events, each label also maps to a native issue type via `type:`.
+
+instructions: |
+  Choose exactly one type. You are given only the title and body — there is no diff or file list, so judge from those.
+  The conventional-commit prefix in the title is authoritative when present, including its optional scope (e.g. "feat(core):" counts as "feat:"). Match the prefix regardless of scope:
+  - "feat" -> enhancement
+  - "fix" -> bug
+  - "chore", "ci", "build", "refactor", "perf", "style", "test" -> chore
+  - "docs" -> documentation
+  The prefix wins even when the description sounds user-facing: a "perf:" or "refactor:" title is a chore. When no conventional-commit prefix is present, fall back to the body: maintenance with no user-facing impact (dependency bumps, CI config, internal refactors) is a chore, while anything that adds or changes user-facing functionality is an enhancement.
+  If the title starts with [BUG] it is a bug. If the title starts with [FEATURE] it is an enhancement.
+  If the title starts with [DOCS], [NEW CONTENT], or [CORRECTION] it is documentation. If the title starts with [QUESTION] it is a question.
+  If the title starts with [PORT] it ports completed work into the other SDK: a ported fix is a bug, anything else is an enhancement.
+  Documentation changes, corrections, or additions are documentation. Documentation questions are questions.
+  Proposals or discussions about API shape, architecture, or UX before any implementation are design; this takes precedence over enhancement even when the proposal describes new functionality.
+  Requests for or drafts of blog posts, announcements, or long-form articles are blog; this takes precedence over documentation and enhancement for prose content meant for the site.
+
+labels:
+  bug:
+    description: "Something is broken or not working as documented"
+    type: Bug
+  enhancement:
+    description: "New feature request or improvement to existing functionality"
+    type: Feature
+  question:
+    description: "User asking for help, clarification, or how to do something"
+    type: Task
+  chore:
+    description: "Maintenance tasks, dependency updates, CI changes, refactoring with no user-facing impact"
+    type: Chore
+  documentation:
+    description: "Documentation changes, improvements, additions, content updates"
+    type: Documentation
+  design:
+    description: "Proposal or discussion about API shape, architecture, or UX before implementation"
+    type: Design
+  blog:
+    description: "Blog post or long-form article for the site (announcements, tutorials, deep-dives)"
+    type: Blog

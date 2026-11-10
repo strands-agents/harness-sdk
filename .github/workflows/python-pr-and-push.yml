@@ -1,0 +1,40 @@
+name: "Python: Pull Request and Push"
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'strands-py/**'
+      - '.github/workflows/python-*'
+  workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  call-test-lint:
+    uses: ./.github/workflows/python-test-lint.yml
+    permissions:
+      contents: read
+    with:
+      ref: ${{ github.event.pull_request.head.sha || github.sha }}
+    secrets:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+  check-api:
+    runs-on: strands-agents_ubuntu-latest_4-core
+    permissions:
+      contents: read
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v7
+      with:
+        fetch-depth: 0
+    - name: Setup uv
+      uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+    - name: Check API breaking changes
+      run: |
+        if ! uvx griffe check --search strands-py/src --format github strands --against "main"; then
+          echo "Potential API changes detected (review if actually breaking)"
+          exit 1
+        fi

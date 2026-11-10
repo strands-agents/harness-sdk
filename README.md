@@ -1,7 +1,10 @@
 <div align="center">
   <div>
     <a href="https://strandsagents.com">
-      <img src="https://strandsagents.com/latest/assets/logo-github.svg" alt="Strands Agents" width="55px" height="105px">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="https://strandsagents.com/latest/assets/wordmark-github-dark.svg">
+        <img src="https://strandsagents.com/latest/assets/wordmark-github-light.svg" alt="Strands" width="320">
+      </picture>
     </a>
   </div>
 
@@ -14,298 +17,179 @@
   </h2>
 
   <div align="center">
-    <a href="https://github.com/strands-agents/sdk-python/graphs/commit-activity"><img alt="GitHub commit activity" src="https://img.shields.io/github/commit-activity/m/strands-agents/sdk-python"/></a>
-    <a href="https://github.com/strands-agents/sdk-python/issues"><img alt="GitHub open issues" src="https://img.shields.io/github/issues/strands-agents/sdk-python"/></a>
-    <a href="https://github.com/strands-agents/sdk-python/pulls"><img alt="GitHub open pull requests" src="https://img.shields.io/github/issues-pr/strands-agents/sdk-python"/></a>
-    <a href="https://github.com/strands-agents/sdk-python/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/github/license/strands-agents/sdk-python"/></a>
-    <a href="https://pypi.org/project/strands-agents/"><img alt="PyPI version" src="https://img.shields.io/pypi/v/strands-agents"/></a>
-    <a href="https://python.org"><img alt="Python versions" src="https://img.shields.io/pypi/pyversions/strands-agents"/></a>
+    <a href="https://github.com/strands-agents/harness-sdk/graphs/commit-activity"><img alt="GitHub commit activity" src="https://img.shields.io/github/commit-activity/m/strands-agents/harness-sdk"/></a>
+    <a href="https://github.com/strands-agents/harness-sdk/issues"><img alt="GitHub open issues" src="https://img.shields.io/github/issues/strands-agents/harness-sdk"/></a>
+    <a href="https://github.com/strands-agents/harness-sdk/pulls"><img alt="GitHub open pull requests" src="https://img.shields.io/github/issues-pr/strands-agents/harness-sdk"/></a>
+    <a href="https://github.com/strands-agents/harness-sdk/blob/main/LICENSE.APACHE"><img alt="License" src="https://img.shields.io/github/license/strands-agents/harness-sdk"/></a>
   </div>
   
   <p>
     <a href="https://strandsagents.com/">Documentation</a>
     ◆ <a href="https://github.com/strands-agents/samples">Samples</a>
-    ◆ <a href="https://github.com/strands-agents/sdk-python">Python SDK</a>
-    ◆ <a href="https://github.com/strands-agents/tools">Tools</a>
-    ◆ <a href="https://github.com/strands-agents/agent-builder">Agent Builder</a>
-    ◆ <a href="https://github.com/strands-agents/mcp-server">MCP Server</a>
+    ◆ <a href="https://github.com/strands-agents/harness-sdk/tree/main/strands-cli">CLI</a>
+    ◆ <a href="https://github.com/strands-agents/harness-sdk/tree/main/strands-mcp">MCP Server</a>
+    ◆ <a href="https://discord.gg/strands">Discord</a>
+    <br>
+    Harness (<a href="https://github.com/strands-agents/harness-sdk/tree/main/harness-py">Python</a>, <a href="https://github.com/strands-agents/harness-sdk/tree/main/harness-ts">TypeScript</a>)
+    ◆ SDK (<a href="https://github.com/strands-agents/harness-sdk/tree/main/strands-py">Python</a>, <a href="https://github.com/strands-agents/harness-sdk/tree/main/strands-ts">TypeScript</a>)
+    ◆ <a href="https://github.com/strands-agents/box">Box</a>
+    ◆ <a href="https://github.com/strands-agents/shell">Shell</a>
+    ◆ <a href="https://github.com/strands-agents/evals">Evals</a>
+    ◆ <a href="https://github.com/strands-labs">Labs</a>
   </p>
 </div>
 
-Strands Agents is a simple yet powerful SDK that takes a model-driven approach to building and running AI agents. From simple conversational assistants to complex autonomous workflows, from local development to production deployment, Strands Agents scales with your needs.
+Strands Agents is an open-source SDK for building and running AI agents in Python and TypeScript. Choose Strands when you would otherwise write your own agent loop: it runs in your process with no hosted control plane, and it covers the jobs a hand-rolled loop grows into. In one SDK you get [lifecycle controls](https://strandsagents.com/docs/user-guide/concepts/agents/agent-loop/) (turn limits, token budgets, cancellation, stop reasons), [tools](https://strandsagents.com/docs/user-guide/concepts/tools/) and [structured output](https://strandsagents.com/docs/user-guide/concepts/agents/structured-output/), [MCP](https://strandsagents.com/docs/user-guide/concepts/tools/mcp-tools/), [multi-agent patterns](https://strandsagents.com/docs/user-guide/concepts/multi-agent/multi-agent-patterns/), [memory](https://strandsagents.com/docs/user-guide/concepts/memory/overview/) and [sessions](https://strandsagents.com/docs/user-guide/concepts/agents/session-management/), [model portability](https://strandsagents.com/docs/user-guide/concepts/model-providers/), [streaming](https://strandsagents.com/docs/user-guide/concepts/streaming/), [guardrails](https://strandsagents.com/docs/user-guide/safety-security/guardrails/), [tracing](https://strandsagents.com/docs/user-guide/observability-evaluation/observability/), and [evals](https://strandsagents.com/docs/user-guide/evals-sdk/quickstart/).
 
-## Feature Overview
+Using a coding agent? Install the Strands plugin for Claude Code, Codex, or Cursor.
+It adds framework selection, scaffolding, tool authoring, MCP server connections, web
+framework guides, and LangGraph migration guidance. See
+[Use Strands with AI coding agents](https://strandsagents.com/docs/user-guide/build-with-ai/)
+for install and verification steps.
 
-- **Lightweight & Flexible**: Simple agent loop that just works and is fully customizable
-- **Model Agnostic**: Support for Amazon Bedrock, Anthropic, Gemini, LiteLLM, Llama, Ollama, OpenAI, Writer, and custom providers
-- **Advanced Capabilities**: Multi-agent systems, autonomous agents, and streaming support
-- **Built-in MCP**: Native support for Model Context Protocol (MCP) servers, enabling access to thousands of pre-built tools
+This monorepo contains Strands harness, the Python and TypeScript SDKs, the documentation site, and supporting packages:
+
+| Directory | Description |
+|-----------|-------------|
+| [`harness-py/`](harness-py/) | Python Strands harness: fully assembled agent via `create_harness()` ([PyPI](https://pypi.org/project/strands-harness/) · [docs](https://strandsagents.com/docs/user-guide/harness/)) |
+| [`harness-ts/`](harness-ts/) | TypeScript Strands harness: fully assembled agent via `createHarness()` ([npm](https://www.npmjs.com/package/@strands-agents/harness) · [docs](https://strandsagents.com/docs/user-guide/harness/)) |
+| [`strands-cli/`](strands-cli/) | `strands` CLI: prototype and chat with a harness agent from the terminal ([npm](https://www.npmjs.com/package/@strands-agents/cli)) |
+| [`strands-py/`](strands-py/) | Python SDK: agent loop, model providers, tools ([PyPI](https://pypi.org/project/strands-agents/) · [releases](https://github.com/strands-agents/harness-sdk/releases?q=python%2F&expanded=false)) |
+| [`strands-ts/`](strands-ts/) | TypeScript SDK: agent loop, model providers, tools ([npm](https://www.npmjs.com/package/@strands-agents/sdk) · [releases](https://github.com/strands-agents/harness-sdk/releases?q=typescript%2F&expanded=false)) |
+| [`strands-mcp/`](strands-mcp/) | MCP server that gives coding agents knowledge about building with Strands Agents ([PyPI](https://pypi.org/project/strands-agents-mcp-server/)) |
+| [`site/`](site/) | Source for the [strandsagents.com](https://strandsagents.com) documentation site (Astro/Starlight) |
+| [`team/`](team/) | Governance and cross-SDK process docs (tenets, decisions, PR & compatibility guidelines, and `designs/` proposals) |
+| [`test-infra/`](test-infra/) | CDK stack provisioning the AWS resources a subset of integration tests run against (knowledge bases, SSH sandboxes) |
+
+## Why Strands
+
+Build an agent harness. Control it end-to-end.
+
+- **Build your way.** Any model, any cloud. Context management, execution limits, and observability built in before you write a line of config. Swap backends when you scale; your code stays the same.
+- **Model agnostic.** First-class support for Amazon Bedrock, Anthropic, OpenAI, and Gemini, plus [many more providers](https://strandsagents.com/docs/user-guide/concepts/model-providers/) and custom ones.
+- **Stay in control.** The agent loop traces every decision by default. Hooks let you intercept any step to log it, validate it, or redirect it.
+- **Deliver outcomes that work.** Guardrails catch mistakes before they run. Steering handlers let agents correct themselves instead of failing silently.
+
+MCP, streaming, multi-agent patterns, and structured output are all built in.
 
 ## Quick Start
 
-```bash
-# Install Strands Agents
-pip install strands-agents strands-agents-tools
-```
+The easiest way to get started is with **[Strands harness](https://strandsagents.com/docs/user-guide/harness/)**, a fully assembled, state-of-the-art agent. A single `create_harness()` (Python) or `createHarness()` (TypeScript) call gives you an optimized agent with benchmarked defaults for the model, tools, memory, sessions, and context management — ready to take from idea to production. Follow the [harness quickstart](https://strandsagents.com/docs/user-guide/harness/quickstart/), or see the [Python Strands harness](harness-py/) and [TypeScript Strands harness](harness-ts/) packages to get started.
 
-```python
-from strands import Agent
-from strands_tools import calculator
-agent = Agent(tools=[calculator])
-agent("What is the square root of 1764")
-```
-
-> **Note**: For the default Amazon Bedrock model provider, you'll need AWS credentials configured and model access enabled for Claude 4 Sonnet in the us-west-2 region. See the [Quickstart Guide](https://strandsagents.com/) for details on configuring other model providers.
-
-## Installation
-
-Ensure you have Python 3.10+ installed, then:
+### Python
 
 ```bash
-# Create and activate virtual environment
-python -m venv .venv
-source .venv/bin/activate  # On Windows use: .venv\Scripts\activate
-
-# Install Strands and tools
-pip install strands-agents strands-agents-tools
+pip install strands-harness
 ```
-
-## Features at a Glance
-
-### Python-Based Tools
-
-Easily build tools using Python decorators:
 
 ```python
-from strands import Agent, tool
+from strands_harness import create_harness
 
-@tool
-def word_count(text: str) -> int:
-    """Count words in text.
-
-    This docstring is used by the LLM to understand the tool's purpose.
-    """
-    return len(text.split())
-
-agent = Agent(tools=[word_count])
-response = agent("How many words are in this sentence?")
+agent = create_harness()
+agent("Find the slowest test in this repo and explain why it's slow")
 ```
 
-**Hot Reloading from Directory:**
-Enable automatic tool loading and reloading from the `./tools/` directory:
-
-```python
-from strands import Agent
-
-# Agent will watch ./tools/ directory for changes
-agent = Agent(load_tools_from_directory=True)
-response = agent("Use any tools you find in the tools directory")
-```
-
-### MCP Support
-
-Seamlessly integrate Model Context Protocol (MCP) servers:
-
-```python
-from strands import Agent
-from strands.tools.mcp import MCPClient
-from mcp import stdio_client, StdioServerParameters
-
-aws_docs_client = MCPClient(
-    lambda: stdio_client(StdioServerParameters(command="uvx", args=["awslabs.aws-documentation-mcp-server@latest"]))
-)
-
-with aws_docs_client:
-   agent = Agent(tools=aws_docs_client.list_tools_sync())
-   response = agent("Tell me about Amazon Bedrock and how to use it with Python")
-```
-
-### Multiple Model Providers
-
-Support for various model providers:
-
-```python
-from strands import Agent
-from strands.models import BedrockModel
-from strands.models.ollama import OllamaModel
-from strands.models.llamaapi import LlamaAPIModel
-from strands.models.gemini import GeminiModel
-from strands.models.llamacpp import LlamaCppModel
-
-# Bedrock
-bedrock_model = BedrockModel(
-  model_id="us.amazon.nova-pro-v1:0",
-  temperature=0.3,
-  streaming=True, # Enable/disable streaming
-)
-agent = Agent(model=bedrock_model)
-agent("Tell me about Agentic AI")
-
-# Google Gemini
-gemini_model = GeminiModel(
-  client_args={
-    "api_key": "your_gemini_api_key",
-  },
-  model_id="gemini-2.5-flash",
-  params={"temperature": 0.7}
-)
-agent = Agent(model=gemini_model)
-agent("Tell me about Agentic AI")
-
-# Ollama
-ollama_model = OllamaModel(
-  host="http://localhost:11434",
-  model_id="llama3"
-)
-agent = Agent(model=ollama_model)
-agent("Tell me about Agentic AI")
-
-# Llama API
-llama_model = LlamaAPIModel(
-    model_id="Llama-4-Maverick-17B-128E-Instruct-FP8",
-)
-agent = Agent(model=llama_model)
-response = agent("Tell me about Agentic AI")
-```
-
-Built-in providers:
- - [Amazon Bedrock](https://strandsagents.com/latest/user-guide/concepts/model-providers/amazon-bedrock/)
- - [Anthropic](https://strandsagents.com/latest/user-guide/concepts/model-providers/anthropic/)
- - [Gemini](https://strandsagents.com/latest/user-guide/concepts/model-providers/gemini/)
- - [Cohere](https://strandsagents.com/latest/user-guide/concepts/model-providers/cohere/)
- - [LiteLLM](https://strandsagents.com/latest/user-guide/concepts/model-providers/litellm/)
- - [llama.cpp](https://strandsagents.com/latest/user-guide/concepts/model-providers/llamacpp/)
- - [LlamaAPI](https://strandsagents.com/latest/user-guide/concepts/model-providers/llamaapi/)
- - [MistralAI](https://strandsagents.com/latest/user-guide/concepts/model-providers/mistral/)
- - [Ollama](https://strandsagents.com/latest/user-guide/concepts/model-providers/ollama/)
- - [OpenAI](https://strandsagents.com/latest/user-guide/concepts/model-providers/openai/)
- - [OpenAI Responses API](https://strandsagents.com/latest/user-guide/concepts/model-providers/openai/)
- - [SageMaker](https://strandsagents.com/latest/user-guide/concepts/model-providers/sagemaker/)
- - [Writer](https://strandsagents.com/latest/user-guide/concepts/model-providers/writer/)
-
-Custom providers can be implemented using [Custom Providers](https://strandsagents.com/latest/user-guide/concepts/model-providers/custom_model_provider/)
-
-### Example tools
-
-Strands offers an optional strands-agents-tools package with pre-built tools for quick experimentation:
-
-```python
-from strands import Agent
-from strands_tools import calculator
-agent = Agent(tools=[calculator])
-agent("What is the square root of 1764")
-```
-
-It's also available on GitHub via [strands-agents/tools](https://github.com/strands-agents/tools).
-
-### Bidirectional Streaming
-
-> **⚠️ Experimental Feature**: Bidirectional streaming is currently in experimental status. APIs may change in future releases as we refine the feature based on user feedback and evolving model capabilities.
-
-Build real-time voice and audio conversations with persistent streaming connections. Unlike traditional request-response patterns, bidirectional streaming maintains long-running conversations where users can interrupt, provide continuous input, and receive real-time audio responses. Get started with your first BidiAgent by following the [Quickstart](https://strandsagents.com/latest/documentation/docs/user-guide/concepts/experimental/bidirectional-streaming/quickstart) guide. 
-
-**Supported Model Providers:**
-- Amazon Nova Sonic (v1, v2)
-- Google Gemini Live
-- OpenAI Realtime API
-
-**Installation:**
+### TypeScript
 
 ```bash
-# Server-side only (no audio I/O dependencies)
-pip install strands-agents[bidi]
-
-# With audio I/O support (includes PyAudio dependency)
-pip install strands-agents[bidi,bidi-io]
+npm install @strands-agents/harness
 ```
 
-**Quick Example:**
+```typescript
+import { createHarness } from '@strands-agents/harness'
+
+const agent = await createHarness()
+await agent.invoke("Find the slowest test in this repo and explain why it's slow")
+```
+
+Start here to get a batteries-included agent, then drop down to the SDKs below when you want to own the agent loop and wire up tools, model providers, and memory yourself. The [harness configuration reference](https://strandsagents.com/docs/user-guide/harness/reference/configuration/) documents every default you can override.
+
+The [Quickstart Guide](https://strandsagents.com/docs/user-guide/quickstart/overview/) covers configuring providers (Amazon Bedrock, Anthropic, OpenAI, Gemini, Ollama, and more).
+
+## Working with the SDK
+
+The Strands Harness SDK lets you go deeper and control every part of the agent: the loop, tools, model providers, memory, sessions, and hooks. You can dive into the SDK after working with Strands harness or if you prefer building your own harness from the ground up when the assembled defaults aren't enough.
+
+### Python
+
+Requires Python 3.10+:
+
+```bash
+pip install strands-agents
+```
 
 ```python
-import asyncio
-from strands.experimental.bidi import BidiAgent
-from strands.experimental.bidi.models import BidiNovaSonicModel
-from strands.experimental.bidi.io import BidiAudioIO, BidiTextIO
-from strands.experimental.bidi.tools import stop_conversation
-from strands_tools import calculator
+from strands import Agent
+from strands.vended_tools import http_request
 
-async def main():
-    # Create bidirectional agent with Nova Sonic v2
-    model = BidiNovaSonicModel()
-    agent = BidiAgent(model=model, tools=[calculator, stop_conversation])
-
-    # Setup audio and text I/O (requires bidi-io extra)
-    audio_io = BidiAudioIO()
-    text_io = BidiTextIO()
-
-    # Run with real-time audio streaming
-    # Say "stop conversation" to gracefully end the conversation
-    await agent.run(
-        inputs=[audio_io.input()],
-        outputs=[audio_io.output(), text_io.output()]
-    )
-
-if __name__ == "__main__":
-    asyncio.run(main())
+agent = Agent(tools=[http_request])
+agent("Tell me about the Strands harness features: https://strandsagents.com/docs/user-guide/harness/index.md")
 ```
 
-> **Note**: `BidiAudioIO` and `BidiTextIO` require the `bidi-io` extra. For server-side deployments where audio I/O is handled by clients (browsers, mobile apps), install only `strands-agents[bidi]` and implement custom input/output handlers using the `BidiInput` and `BidiOutput` protocols.
+The [Python SDK README](strands-py/) covers tools, model providers, MCP, and bidirectional streaming.
 
-**Configuration Options:**
+### TypeScript
 
-```python
-from strands.experimental.bidi.models import BidiNovaSonicModel
+To build a Strands agent in TypeScript, install the SDK in a Node.js 22+ ESM project (`"type": "module"`):
 
-# Configure audio settings and turn detection (v2 only)
-model = BidiNovaSonicModel(
-    provider_config={
-        "audio": {
-            "input_rate": 16000,
-            "output_rate": 16000,
-            "voice": "matthew"
-        },
-        "turn_detection": {
-            "endpointingSensitivity": "MEDIUM"  # HIGH, MEDIUM, or LOW
-        },
-        "inference": {
-            "max_tokens": 2048,
-            "temperature": 0.7
-        }
-    }
-)
-
-# Configure I/O devices
-audio_io = BidiAudioIO(
-    input_device_index=0,  # Specific microphone
-    output_device_index=1,  # Specific speaker
-    input_buffer_size=10,
-    output_buffer_size=10
-)
-
-# Text input mode (type messages instead of speaking)
-text_io = BidiTextIO()
-await agent.run(
-    inputs=[text_io.input()],  # Use text input
-    outputs=[audio_io.output(), text_io.output()]
-)
-
-# Multi-modal: Both audio and text input
-await agent.run(
-    inputs=[audio_io.input(), text_io.input()],  # Speak OR type
-    outputs=[audio_io.output(), text_io.output()]
-)
+```bash
+npm install @strands-agents/sdk
 ```
+
+```typescript
+import { Agent } from '@strands-agents/sdk'
+import { httpRequest } from '@strands-agents/sdk/vended-tools/http-request'
+
+const agent = new Agent({ tools: [httpRequest] })
+await agent.invoke('Tell me about the Strands harness features: https://strandsagents.com/docs/user-guide/harness/index.md')
+```
+
+The agent uses Amazon Bedrock by default, so configure AWS credentials or pass another model.
+Start with the [TypeScript quickstart](https://strandsagents.com/docs/user-guide/sdk/quickstart/typescript/)
+to configure a model provider, run your first agent, and add tools. Use the
+[TypeScript API reference](https://strandsagents.com/docs/api/typescript/) for the full
+SDK surface, or explore more examples in the [TypeScript SDK README](strands-ts/).
 
 ## Documentation
 
 For detailed guidance & examples, explore our documentation:
 
 - [User Guide](https://strandsagents.com/)
-- [Quick Start Guide](https://strandsagents.com/latest/user-guide/quickstart/)
-- [Agent Loop](https://strandsagents.com/latest/user-guide/concepts/agents/agent-loop/)
-- [Examples](https://strandsagents.com/latest/examples/)
-- [API Reference](https://strandsagents.com/latest/api-reference/agent/)
-- [Production & Deployment Guide](https://strandsagents.com/latest/user-guide/deploy/operating-agents-in-production/)
+- [Strands Harness Guide](https://strandsagents.com/docs/user-guide/harness/) ([quickstart](https://strandsagents.com/docs/user-guide/harness/quickstart/) · [configuration reference](https://strandsagents.com/docs/user-guide/harness/reference/configuration/))
+- [Quick Start Guide](https://strandsagents.com/docs/user-guide/quickstart/overview/)
+- [Agent Loop](https://strandsagents.com/docs/user-guide/concepts/agents/agent-loop/)
+- [Bidirectional Streaming](https://strandsagents.com/docs/user-guide/sdk/bidi/) (Python)
+- [Examples](https://strandsagents.com/docs/examples/)
+- API Reference: [Python](https://strandsagents.com/docs/api/python/strands.agent.agent/) · [TypeScript](https://strandsagents.com/docs/api/typescript/)
+- [Production & Deployment Guide](https://strandsagents.com/docs/user-guide/deploy/operating-agents-in-production/)
+
+The docs themselves live in this monorepo under [`site/`](site/), and doc PRs are welcome alongside code changes.
+
+## Development
+
+Git operations (commits, branches, PRs) are done from the repo root. Each package has its own toolchain:
+
+**Python SDK** (`strands-py/`):
+```bash
+cd strands-py
+pip install hatch
+hatch test        # run unit tests
+hatch fmt         # format & lint
+```
+
+**TypeScript SDK** (`strands-ts/`):
+```bash
+npm ci            # install from repo root
+npm run build     # build
+npm test          # run unit tests
+```
+
+**Documentation site** (`site/`):
+```bash
+cd site
+npm install
+npm run dev       # local dev server at http://localhost:4321/
+```
 
 ## Contributing ❤️
 
@@ -316,11 +200,13 @@ We welcome contributions! See our [Contributing Guide](CONTRIBUTING.md) for deta
 - Code of Conduct
 - Reporting of security issues
 
+## Stay in touch with the team
+Come meet the Strands team and other users on [**Discord**](https://discord.com/invite/strands)
+
 ## License
 
-This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the Apache License 2.0 - see the [LICENSE.APACHE](LICENSE.APACHE) file for details.
 
 ## Security
 
 See [CONTRIBUTING](CONTRIBUTING.md#security-issue-notifications) for more information.
-

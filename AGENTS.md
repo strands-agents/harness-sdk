@@ -1,562 +1,108 @@
-# AGENTS.md
+# Agent Development Guide - Strands Agents Monorepo
 
-This document provides context, patterns, and guidelines for AI coding assistants working in this repository. For human contributors, see [CONTRIBUTING.md](./CONTRIBUTING.md).
+This document provides guidance for AI agents working in the Strands Agents monorepo. For human contributor guidelines, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
-## Product Overview
+This file is shared by agents with different goals — writing code, opening PRs, helping contributors — and is organized by task.
 
-Strands Agents is an open-source Python SDK for building AI agents with a model-driven approach. It provides a lightweight, flexible framework that scales from simple conversational assistants to complex autonomous workflows.
+## Context
 
-**Core Features:**
-- Model Agnostic: Multiple model providers (Amazon Bedrock, Anthropic, OpenAI, Gemini, Ollama, etc.)
-- Python-Based Tools: Simple `@tool` decorator with hot reloading
-- MCP Integration: Native Model Context Protocol support
-- Multi-Agent Systems: Agent-to-agent, swarms, and graph patterns
-- Streaming Support: Real-time response streaming
-- Hooks: Event-driven extensibility for agent lifecycle
-- Session Management: Pluggable session managers (file, S3, custom)
-- Observability: OpenTelemetry tracing and metrics
-
-## Directory Structure
+### Monorepo Layout
 
 ```
 strands-agents/
-│
-├── src/strands/                          # Main package source code
-│   ├── agent/                            # Core agent implementation
-│   │   ├── agent.py                      # Main Agent class
-│   │   ├── agent_result.py               # Agent execution results
-│   │   ├── base.py                       # AgentBase protocol (agent interface)
-│   │   ├── a2a_agent.py                  # A2AAgent client for remote A2A agents
-│   │   ├── state.py                      # Agent state management
-│   │   └── conversation_manager/         # Message history strategies
-│   │       ├── conversation_manager.py           # Base conversation manager
-│   │       ├── null_conversation_manager.py      # No-op manager
-│   │       ├── sliding_window_conversation_manager.py  # Window-based
-│   │       └── summarizing_conversation_manager.py     # Summarization-based
-│   │
-│   ├── event_loop/                       # Agent execution loop
-│   │   ├── event_loop.py                 # Main loop logic
-│   │   ├── streaming.py                  # Streaming response handling
-│   │   └── _recover_message_on_max_tokens_reached.py
-│   │
-│   ├── models/                           # Model provider implementations
-│   │   ├── model.py                      # Base model interface
-│   │   ├── bedrock.py                    # Amazon Bedrock
-│   │   ├── anthropic.py                  # Anthropic Claude
-│   │   ├── openai.py                     # OpenAI
-│   │   ├── gemini.py                     # Google Gemini
-│   │   ├── ollama.py                     # Ollama local models
-│   │   ├── litellm.py                    # LiteLLM unified interface
-│   │   ├── mistral.py                    # Mistral AI
-│   │   ├── llamaapi.py                   # LlamaAPI
-│   │   ├── llamacpp.py                   # llama.cpp local
-│   │   ├── sagemaker.py                  # AWS SageMaker
-│   │   ├── writer.py                     # Writer AI
-│   │   └── _validation.py                # Validation utilities
-│   │
-│   ├── tools/                            # Tool system
-│   │   ├── decorator.py                  # @tool decorator
-│   │   ├── tools.py                      # Tool base classes
-│   │   ├── tool_provider.py              # ToolProvider interface
-│   │   ├── registry.py                   # Tool registration
-│   │   ├── loader.py                     # Dynamic tool loading
-│   │   ├── watcher.py                    # Hot reload
-│   │   ├── _caller.py                    # Tool invocation
-│   │   ├── _validator.py                 # Tool validation
-│   │   ├── _tool_helpers.py              # Helper utilities
-│   │   ├── executors/                    # Tool execution environments
-│   │   │   ├── _executor.py              # Base executor
-│   │   │   ├── concurrent.py             # Thread/process pool
-│   │   │   └── sequential.py             # Sequential execution
-│   │   ├── mcp/                          # Model Context Protocol
-│   │   │   ├── mcp_client.py             # MCP client implementation
-│   │   │   ├── mcp_agent_tool.py         # MCP tool wrapper
-│   │   │   ├── mcp_types.py              # MCP type definitions
-│   │   │   ├── mcp_tasks.py              # Task-augmented execution config
-│   │   │   └── mcp_instrumentation.py    # MCP telemetry
-│   │   └── structured_output/            # Structured output handling
-│   │       ├── structured_output_tool.py
-│   │       ├── structured_output_utils.py
-│   │       └── _structured_output_context.py
-│   │
-│   ├── multiagent/                       # Multi-agent patterns
-│   │   ├── base.py                       # Base multi-agent classes
-│   │   ├── graph.py                      # Graph-based orchestration
-│   │   ├── swarm.py                      # Swarm pattern
-│   │   ├── a2a/                          # Agent-to-agent protocol
-│   │   │   ├── executor.py               # A2A executor
-│   │   │   ├── server.py                 # A2A server
-│   │   │   └── converters.py             # Strands/A2A type converters
-│   │   └── nodes/                        # Graph node implementations
-│   │
-│   ├── types/                            # Type definitions
-│   │   ├── content.py                    # Content types (text, images, etc.)
-│   │   ├── tools.py                      # Tool-related types
-│   │   ├── streaming.py                  # Streaming event types
-│   │   ├── exceptions.py                 # Custom exceptions
-│   │   ├── agent.py                      # Agent types
-│   │   ├── session.py                    # Session types
-│   │   ├── multiagent.py                 # Multi-agent types
-│   │   ├── guardrails.py                 # Guardrail types
-│   │   ├── interrupt.py                  # Interrupt types
-│   │   ├── media.py                      # Media types
-│   │   ├── citations.py                  # Citation types
-│   │   ├── traces.py                     # Trace types
-│   │   ├── event_loop.py                 # Event loop types
-│   │   ├── json_dict.py                  # JSON dict utilities
-│   │   ├── collections.py                # Collection types
-│   │   ├── _events.py                    # Internal event types
-│   │   ├── a2a.py                        # A2A protocol types
-│   │   └── models/                       # Model-specific types
-│   │
-│   ├── session/                          # Session management
-│   │   ├── session_manager.py            # Base interface
-│   │   ├── file_session_manager.py       # File-based storage
-│   │   ├── s3_session_manager.py         # S3 storage
-│   │   ├── repository_session_manager.py # Repository pattern
-│   │   └── session_repository.py         # Storage interface
-│   │
-│   ├── telemetry/                        # Observability (OpenTelemetry)
-│   │   ├── tracer.py                     # Tracing
-│   │   ├── metrics.py                    # Metrics collection
-│   │   ├── metrics_constants.py          # Metric definitions
-│   │   └── config.py                     # Configuration
-│   │
-│   ├── hooks/                            # Event hooks system
-│   │   ├── events.py                     # Hook event definitions
-│   │   ├── registry.py                   # Hook registration
-│   │   └── _type_inference.py            # Event type inference from type hints
-│   │
-│   ├── plugins/                          # Plugin system
-│   │   ├── plugin.py                     # Plugin base class
-│   │   ├── decorator.py                  # @hook decorator
-│   │   └── registry.py                   # PluginRegistry for tracking plugins
-│   │
-│   ├── handlers/                         # Event handlers
-│   │   └── callback_handler.py           # Callback handling
-│   │
-│   ├── vended_plugins/                   # Production plugin implementations
-│   │   ├── steering/                     # Agent steering system
-│   │   │   ├── context_providers/        # Context data providers (e.g., ledger)
-│   │   │   ├── core/                     # Base classes, actions, context
-│   │   │   └── handlers/                 # Handler implementations (e.g., LLM)
-│   │   └── skills/                       # AgentSkills.io integration (Skill, AgentSkills)
-│   │
-│   ├── experimental/                     # Experimental features (API may change)
-│   │   ├── agent_config.py               # Experimental agent config
-│   │   ├── bidi/                         # Bidirectional streaming
-│   │   │   ├── agent/                    # Bidi agent implementation
-│   │   │   ├── io/                       # Input/output handling
-│   │   │   ├── models/                   # Bidi model providers
-│   │   │   ├── tools/                    # Bidi tools
-│   │   │   ├── types/                    # Bidi types
-│   │   │   └── _async/                   # Async utilities
-│   │   ├── hooks/                        # Experimental hooks
-│   │   │   ├── events.py
-│   │   │   └── multiagent/
-│   │   ├── steering/                     # Deprecated aliases for vended_plugins/steering
-│   │   └── tools/                        # Deprecated aliases for strands.tools
-│   │
-│   ├── __init__.py                       # Public API exports
-│   ├── interrupt.py                      # Interrupt handling
-│   ├── _async.py                         # Async utilities
-│   ├── _exception_notes.py               # Exception helpers
-│   ├── _identifier.py                    # ID generation
-│   └── py.typed                          # PEP 561 marker
-│
-├── tests/                                # Unit tests (mirrors src/)
-│   ├── conftest.py                       # Pytest fixtures
-│   ├── fixtures/                         # Test fixtures
-│   │   ├── mocked_model_provider.py      # Mock model for testing
-│   │   ├── mock_agent_tool.py
-│   │   ├── mock_hook_provider.py
-│   │   └── ...
-│   └── strands/                          # Tests mirror src/strands/
-│       ├── agent/
-│       ├── event_loop/
-│       ├── models/
-│       ├── tools/
-│       ├── multiagent/
-│       ├── types/
-│       ├── session/
-│       ├── telemetry/
-│       ├── hooks/
-│       ├── plugins/
-│       ├── handlers/
-│       ├── experimental/
-│       └── utils/
-│
-├── tests_integ/                          # Integration tests
-│   ├── conftest.py
-│   ├── models/                           # Model provider tests
-│   │   ├── test_model_bedrock.py
-│   │   ├── test_model_anthropic.py
-│   │   ├── test_model_openai.py
-│   │   ├── test_model_gemini.py
-│   │   ├── test_model_ollama.py
-│   │   └── ...
-│   ├── mcp/                              # MCP integration tests
-│   │   ├── test_mcp_client.py
-│   │   ├── echo_server.py
-│   │   └── ...
-│   ├── tools/                            # Tool system tests
-│   ├── hooks/                            # Hook tests
-│   ├── interrupts/                       # Interrupt tests
-│   ├── steering/                         # Steering tests
-│   ├── bidi/                             # Bidirectional streaming tests
-│   ├── a2a/                              # A2A agent integration tests
-│   ├── test_multiagent_graph.py
-│   ├── test_multiagent_swarm.py
-│   ├── test_stream_agent.py
-│   ├── test_session.py
-│   └── ...
-│
-├── docs/                                 # Developer documentation
-│   ├── README.md                         # Docs folder overview
-│   ├── STYLE_GUIDE.md                    # Code style conventions
-│   ├── HOOKS.md                          # Hooks system guide
-│   ├── PR.md                             # PR description guidelines
-│   └── MCP_CLIENT_ARCHITECTURE.md        # MCP threading architecture
-│
-├── pyproject.toml                        # Project config (build, deps, tools)
-├── AGENTS.md                             # This file
-└── CONTRIBUTING.md                       # Human contributor guidelines
+├── harness-py/         # Python Strands harness (hatch) — see harness-py/AGENTS.md
+├── harness-ts/         # TypeScript Strands harness (npm) — see harness-ts/AGENTS.md
+├── strands-cli/        # strands CLI (npm) — see strands-cli/AGENTS.md
+├── strands-py/         # Python SDK (hatch) — see strands-py/AGENTS.md
+├── strands-ts/         # TypeScript SDK (npm workspace) — see strands-ts/AGENTS.md
+├── strands-mcp/        # MCP server with Strands docs for coding agents (hatch)
+├── site/               # Documentation site (Astro) — see site/AGENTS.md
+├── team/               # Governance + cross-SDK process (tenets, decisions, API bar-raising, PR & compatibility guidelines, designs/ proposals)
+├── test-infra/         # CDK stack for integ tests that require provisioned AWS infra
+├── .agents/            # Agent skills and references
+├── package.json        # npm workspace root
+└── .github/workflows/  # CI (ci.yml is the merge gate)
 ```
 
-### Directory Purposes
+Determine which sub-project you're in and follow its conventions — each has its own `AGENTS.md`.
 
-- **`src/strands/`**: All production code
-- **`tests/`**: Unit tests mirroring src/ structure
-- **`tests_integ/`**: Integration tests with real model providers
-- **`docs/`**: Developer documentation for contributors
+### Where the "why" lives: `team/`
 
-**IMPORTANT**: After making changes that affect the directory structure (adding new directories, moving files, or adding significant new files), you MUST update this directory structure section to reflect the current state of the repository.
+Before designing a feature or changing an API, read the relevant context in `team/`. It captures the reasoning the code itself doesn't:
 
-## Development Workflow
+- **`team/designs/`** — RFC-style proposals for significant features (numbered `NNNN-*.md`). The richest source of architectural context: problem framing, the chosen approach, alternatives considered, and consequences. If you're touching a major subsystem, find its design doc first.
+- **`team/DECISIONS.md`** — lightweight architecture decision records for smaller calls.
+- **`team/TENETS.md`** — the principles a contribution should align with.
+- **`team/API_BAR_RAISING.md`** and **`team/FEATURE_LIFECYCLE.md`** — the bar and process for API changes and feature deprecation.
 
-### 1. Environment Setup
+## Writing Code
 
-```bash
-hatch shell                                    # Enter dev environment
-pre-commit install -t pre-commit -t commit-msg # Install hooks
-```
+- **Code conventions**: Follow the conventions in the sub-project's own `AGENTS.md` (`strands-py/AGENTS.md`, `strands-ts/AGENTS.md`, `site/AGENTS.md`) — they define the style, patterns, and directory layout for that toolchain.
+- **Write for low complexity**: every PR is labeled with the [cognitive complexity](https://www.sonarsource.com/docs/CognitiveComplexity.pdf) of the most complex function it touches, and nesting drives the score. Write flat control flow (guard clauses, extracted helpers, lookup tables over branch ladders) and keep refactors in their own PR. Why we measure and how the score works: [team/COMPLEXITY.md](./team/COMPLEXITY.md). Check before pushing with `npm run complexity` (or `hatch run complexity` from `strands-py/`).
+- **Branching**: `git checkout -b agent-tasks/{ISSUE_NUMBER}`
+- **Commits**: Use [conventional commits](https://www.conventionalcommits.org/) — `feat:`, `fix:`, `refactor:`, `docs:`, etc.
+- **CI**: The `ci.yml` merge gate detects which paths changed and runs only relevant checks.
+- **Skills**: Reusable, repo-specific workflows live under `.agents/skills/` — for PRs (`pr-create`, `pr-writer`, `pr-feedback`), docs (`docs-writer`, `docs-reviewer`, `docs-audit`, `docs-verifier`, `docs-planner`), and code review (`strands-review`). See [`.agents/skills/README.md`](./.agents/skills/README.md) for what each does and when to use it.
+- **Doc `sourceLinks` track source files**: Doc pages under `site/` point at their backing implementation via `sourceLinks` frontmatter — repo-relative paths into `strands-py/` and `strands-ts/`. When you **rename or move a source file**, update any `sourceLinks` that reference its old path in the same change. The site build only fails on a malformed path or an unmapped file extension, **not** on a path that still resolves to the wrong (or now-nonexistent) file, so a stale reference rots silently. Find affected pages with `grep -rn "<old/path>" site/src/content/docs`.
 
-### 2. Making Changes
+### Cross-SDK Conventions
 
-1. Create feature branch
-2. Implement changes following the patterns below
-3. Run quality checks before committing
-4. Commit with conventional commits (`feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`)
-5. Push and open PR
+These rules apply to **both** SDKs. Each sub-guide (`strands-py/AGENTS.md`, `strands-ts/AGENTS.md`) shows the language-idiomatic form; the shared intent lives here so the two cannot drift apart. The two SDKs aim for parity in *concepts and names*, not identical code.
 
-### 3. Pull Request Guidelines
+- **Plugin / construct naming**: name a construct for what it *does*, not for the interface it implements. `AgentSkills`, `ContextOffloader`, `GoalLoop` — never an `…Plugin` suffix. (Python's `vended_plugins` and TS's `vended-plugins` already follow this.)
+- **Cross-SDK parity**: when a name, constant, or hook event exists in both SDKs, keep them in sync.
+  - **Identifiers** match, re-cased to the language idiom (`snake_case` ↔ `camelCase`).
+  - **Single-word string-literal values** are byte-identical (`'user'`, `'success'`).
+  - **Multi-word string-literal values** are `snake_case` in Python and `camelCase` in TypeScript (`tool_use` ↔ `toolUse`); convert via an explicit map, never emit the other language's casing.
+  - **Wire field names** (keys exchanged with a provider API) keep their wire format in both SDKs even when it breaks the language's casing convention (`inputSchema`, `tool_use_id`).
+  - **Hook event names are shared** across SDKs (modulo the suffix convention). When you add a hook event in one SDK, add the matching name in the other.
+- **Auxiliary model calls resolve through `agent.aux_model` / `agent.auxModel`**: any SDK component that makes its own model call outside the main agent loop (summarization, memory extraction, classification, judging, steering, web fetch) takes an optional `model=` and, when it is omitted, resolves to `agent.aux_model` — never to `agent.model` directly. `aux_model` itself defaults to the agent's main `model`, so with no configuration a side call uses the same model the agent uses; the setting is opt-in and exists so one knob can move every side call to a cheaper model. State the order in each component's `model` docstring as `this model > agent.aux_model > agent.model` — just the order, not the mechanics.
+- **Public vs internal API**: mark anything exported-but-not-public so consumers don't depend on it — Python keeps it out of `__all__` (and should prefix the module `_`); TypeScript keeps it out of the `index.ts` barrel and tags it `@internal`.
+- **`invocationState` is user-only**: `invocationState` / `invocation_state` belongs to the user. SDK code must never use it to carry, store, key, or forward internal state. Existing SDK uses of it are debt, not precedent.
+- **Structured logging format**: `field=<value>, field=<value> | lowercase human-readable message`, no punctuation, pipe-separate multiple statements. Python interpolates with `%s` (never f-strings; ruff `G` enforces it); TypeScript uses template literals (never printf `%s`/`%d`).
+- **Evergreen, to-the-point comments**: a comment states only what cannot be inferred from the code (a constraint, an invariant, a non-obvious why) and states it briefly. Reasoning that explains or defends a change to its reviewer belongs in the PR description, not the source. Never narrate how the code changed or what it used to be ("improved", "previously", "used to", "which would previously have crashed"). This applies to tests too — a regression test for a discovered bug links the issue it guards against and states the behavior it guarantees; a test written as part of feature development carries no issue reference. ("deprecated"/"legacy" is fine when it describes a stable API surface or runtime state; it's forbidden only when narrating how the code itself changed.)
 
-When creating pull requests, you MUST follow the guidelines in PR.md. Key principles:
+- **Directory & file naming parity**: subsystem directories use the language-idiomatic separator (`snake_case` in Python, `kebab-case` in TypeScript) but the stem matches word-for-word so they are mechanically translatable (`vended_plugins/` ↔ `vended-plugins/`, `conversation_manager/` ↔ `conversation-manager/`).
 
-Focus on WHY: Explain motivation and user impact, not implementation details
-Document public API changes: Show before/after code examples
-Be concise: Use prose over bullet lists; avoid exhaustive checklists
-Target senior engineers: Assume familiarity with the SDK
-Exclude implementation details: Leave these to code comments and diffs
-See PR.md for the complete guidance and template.
+### Testing
 
-### 4. Quality Gates
+When writing tests, follow the sub-project's testing guidance — `strands-py/docs/TESTING.md` for the Python SDK, `strands-ts/docs/TESTING.md` for the TypeScript SDK.
 
-Pre-commit hooks run automatically on commit:
-- Formatting (ruff)
-- Linting (ruff + mypy)
-- Tests (pytest)
-- Commit message validation (commitizen)
+**`test-infra/` guardrails.** The `test-infra/` CDK stack deploys real AWS resources (Bedrock KBs, EC2 instances) that a small subset of integration tests depend on. Most tests do not need it — they run without provisioned infrastructure.
 
-All checks must pass before commit is allowed.
+- **Do not deploy this stack** unless you are explicitly working on the test infrastructure itself or iterating on tests that resolve SSM parameters from it.
+- **Never set `STRANDS_TEST_INFRA_INTERNAL=true`** unless deploying to the Strands team's own test account. This attaches a broad internal policy and GitHub OIDC trust that is meaningless (and wasteful) outside the internal account.
+- **To run infrastructure-dependent integ tests without deploying anything**, open a PR — CI runs them against pre-provisioned resources automatically.
 
-## Coding Patterns and Best Practices
+## Creating PRs
 
-### Logging Style
+See [PR guidelines](./team/PR.md). Use the `pr-create` and `pr-writer` skills under `.agents/skills/` to draft and open PRs.
 
-Use structured logging with field-value pairs followed by human-readable messages:
+If you are opening a PR on behalf of a contributor, the human is the author and is accountable for everything you submit. A small, focused change that its author fully understands is the single biggest predictor of a fast review and an accepted PR. (See [CONTRIBUTING.md](./CONTRIBUTING.md#using-ai-tools) for the human-facing version.)
 
-```python
-logger.debug("field1=<%s>, field2=<%s> | human readable message", field1, field2)
-```
+- **Understand before you submit.** The contributor must be able to explain why every line works and defend the design. If you produced code you cannot explain plainly, simplify or explain it before opening the PR.
+- **Keep it small and focused.** One logical change per PR. A branch that touches several sub-projects (`strands-py/`, `strands-ts/`, `site/`) is almost always several PRs. Smaller PRs are easier to understand, guide, and merge.
+- **Open an issue first for anything significant**, so maintainers can align on the approach before time is invested.
+- **Don't pad the change.** No drive-by reformatting, unrelated refactors, or speculative abstractions — they make the diff hard to review and the change hard to trust.
+- **Verify before opening.** Run the relevant sub-project's checks (see [Development Environment](./CONTRIBUTING.md#development-environment), or the sub-project's own `AGENTS.md`) and make sure the change passes the `ci.yml` merge gate locally. Don't open a PR with known lint, type, or test failures.
+- **Actually exercise the change, don't just rely on the gate.** Automated checks confirm the code is *valid*, not that the feature *works*. Run the behavior end to end — a manual script, a REPL snippet, the CLI, or an example — and confirm it does what the PR claims, including edge cases. If you can't exercise it (e.g. requires provisioned infra), say so explicitly in the PR rather than implying it was tested. Where it helps a reviewer, include the script or commands you ran.
+- **Self-review the diff** end to end as if you were the reviewer, and confirm you can truthfully check every box in the PR template — including the item attesting that you have reviewed and understand every line of code in the PR, including any generated by AI tools. Then use the `pr-writer` skill so the description explains the **why**.
 
-**Guidelines:**
-- Add context as `FIELD=<VALUE>` pairs at the beginning
-- Separate pairs with commas
-- Enclose values in `<>` for readability (especially for empty values)
-- Use `%s` string interpolation (not f-strings) for performance
-- Use lowercase messages, no punctuation
-- Separate multiple statements with pipe `|`
+## Reviewing
 
-**Good:**
-```python
-logger.debug("user_id=<%s>, action=<%s> | user performed action", user_id, action)
-logger.info("request_id=<%s>, duration_ms=<%d> | request completed", request_id, duration)
-logger.warning("attempt=<%d>, max_attempts=<%d> | retry limit approaching", attempt, max_attempts)
-```
+### Documentation changes
 
-**Bad:**
-```python
-logger.debug(f"User {user_id} performed action {action}")  # Don't use f-strings
-logger.info("Request completed in %d ms.", duration)       # Don't add punctuation
-```
+When a change touches documentation under `site/`, apply the documentation skills in `.agents/skills/` in addition to standard code review:
 
-### Type Annotations
+- **`.agents/skills/docs-reviewer/SKILL.md`** — voice consistency, structure, terminology, and code-example quality.
+- **`.agents/skills/docs-audit/SKILL.md`** — technical accuracy against live SDK sources (import paths, method signatures, API correctness).
 
-All code must include type annotations:
-- Function parameters and return types required
-- No implicit optional types
-- Use `typing` or `typing_extensions` for complex types
-- Mypy strict mode enforced
+Verify terminology against `.agents/references/terminology.md` and MDX authoring patterns against `.agents/references/mdx-authoring.md`. It is critical that you actually read these referenced source files before reviewing — their criteria do not apply if you only skim this summary.
 
-```python
-def process_message(content: str, max_tokens: int | None = None) -> AgentResult:
-    ...
-```
+## Working with the Community
 
-### Docstrings
+When helping someone contribute, you are a guide — not a gatekeeper, not a substitute author. The contribution is theirs; help them make it good and learn along the way. The standard for what makes a good contribution lives in [CONTRIBUTING.md](CONTRIBUTING.md#using-ai-tools); this is about the people.
 
-Use Google-style docstrings for all public functions, classes, and modules:
-
-```python
-def example_function(param1: str, param2: int) -> bool:
-    """Brief description of function.
-
-    Longer description if needed. This docstring is used by LLMs
-    to understand the function's purpose when used as a tool.
-
-    Args:
-        param1: Description of param1
-        param2: Description of param2
-
-    Returns:
-        Description of return value
-
-    Raises:
-        ValueError: When invalid input is provided
-    """
-    pass
-```
-
-### Import Organization
-
-Imports must be at the top of the file.
-
-Imports are automatically organized by ruff/isort:
-1. Standard library imports
-2. Third-party imports
-3. Local application imports
-
-Use absolute imports for cross-package references, relative imports within packages.
-
-```python
-# Standard library
-import logging
-from typing import Any
-
-# Third-party
-import boto3
-from pydantic import BaseModel
-
-# Local
-from strands.agent import Agent
-from .tools import Tool
-```
-
-### File Organization
-
-- Each major feature in its own directory
-- Base classes and interfaces defined first
-- Implementation-specific code in separate files
-- Private modules prefixed with `_`
-- Test files prefixed with `test_`
-
-### Naming Conventions
-
-- **Variables/Functions**: `snake_case`
-- **Classes**: `PascalCase`
-- **Constants**: `UPPER_SNAKE_CASE`
-- **Private members**: Prefix with `_`
-
-### Error Handling
-
-- Use custom exceptions from `strands.types.exceptions`
-- Provide clear error messages with context
-- Don't swallow exceptions silently
-
-## Testing Patterns
-
-### Unit Tests (`tests/`)
-
-- Mirror the `src/strands/` structure exactly
-- Focus on isolated component testing
-- Use mocking for external dependencies (models, AWS services)
-- Use fixtures from `tests/fixtures/` (e.g., `mocked_model_provider.py`)
-
-```python
-# tests/strands/agent/test_agent.py mirrors src/strands/agent/agent.py
-```
-
-### Integration Tests (`tests_integ/`)
-
-- End-to-end testing with real model providers
-- Require credentials/API keys (set via environment variables)
-- Organized by feature area
-
-### Test File Naming
-
-- Unit tests: `test_{module}.py` in `tests/strands/{path}/`
-- Integration tests: `test_{feature}.py` in `tests_integ/`
-
-### Running Tests
-
-```bash
-hatch test                           # Run unit tests
-hatch test -c                        # Run with coverage
-hatch run test-integ                 # Run integration tests
-hatch test tests/strands/agent/      # Run specific directory
-hatch test --all                     # Test all Python versions (3.10-3.13)
-```
-
-### Writing Tests
-
-- Use pytest fixtures for setup/teardown
-- Use `moto` for mocking AWS services
-- Use `pytest.mark.asyncio` for async tests
-- Keep tests focused and independent
-
-## MCP Tasks (Experimental)
-
-The SDK supports MCP task-augmented execution for long-running tools. This feature is experimental and aligns with the MCP specification 2025-11-25.
-
-### Overview
-
-Task-augmented execution allows tools to run asynchronously with a workflow:
-1. Create task via `call_tool_as_task`
-2. Poll for completion via `poll_task`
-3. Get result via `get_task_result`
-
-### Configuration
-
-Enable tasks by passing a `TasksConfig` to `MCPClient`:
-
-```python
-from datetime import timedelta
-from strands.tools.mcp import MCPClient, TasksConfig
-
-# Enable with defaults (ttl=1min, poll_timeout=5min)
-client = MCPClient(transport, tasks_config={})
-
-# Or configure explicitly
-client = MCPClient(
-    transport,
-    tasks_config=TasksConfig(
-        ttl=timedelta(minutes=2),           # Task time-to-live
-        poll_timeout=timedelta(minutes=10),  # Polling timeout
-    ),
-)
-```
-
-### Tool Support Levels
-
-MCP tools declare their task support via `execution.taskSupport`:
-- `TASK_REQUIRED`: Tool must use task-augmented execution
-- `TASK_OPTIONAL`: Tool can use tasks if client opts in
-- `TASK_FORBIDDEN`: Tool does not support tasks (default)
-
-### Decision Logic
-
-Task-augmented execution is used when ALL conditions are met:
-1. Client opts in via `tasks_config` (not None)
-2. Server advertises task capability (`tasks.requests.tools.call`)
-3. Tool's `taskSupport` is `required` or `optional`
-
-### Key Files
-
-- `src/strands/tools/mcp/mcp_tasks.py` - `TasksConfig` and defaults
-- `src/strands/tools/mcp/mcp_client.py` - Task execution logic (`_call_tool_as_task_and_poll_async`)
-- `tests/strands/tools/mcp/test_mcp_client_tasks.py` - Unit tests
-- `tests_integ/mcp/test_mcp_client_tasks.py` - Integration tests
-- `tests_integ/mcp/task_echo_server.py` - Test server with task support
-
-## Things to Do
-
-- Use explicit return types for all functions
-- Write Google-style docstrings for public APIs
-- Use structured logging format
-- Add type annotations everywhere
-- Use relative imports within packages
-- Mirror src/ structure in tests/
-- Run `hatch fmt --formatter` and `hatch fmt --linter` before committing
-- Follow conventional commits (`feat:`, `fix:`, `docs:`, etc.)
-
-## Things NOT to Do
-
-- Don't use f-strings in logging calls
-- Don't use `Any` type without good reason
-- Don't skip type annotations
-- Don't put unit tests outside `tests/strands/` structure
-- Don't commit without running pre-commit hooks
-- Don't add punctuation to log messages
-- Don't use implicit optional types
-
-## Development Commands
-
-```bash
-# Environment
-hatch shell                    # Enter dev environment
-
-# Formatting & Linting
-hatch fmt --formatter          # Format code
-hatch fmt --linter             # Run linters (ruff + mypy)
-
-# Testing
-hatch test                     # Run unit tests
-hatch test -c                  # Run with coverage
-hatch run test-integ           # Run integration tests
-hatch test --all               # Test all Python versions
-
-# Pre-commit
-pre-commit run --all-files     # Run all hooks manually
-
-# Readiness Check
-hatch run prepare              # Run all checks (format, lint, test)
-
-# Build
-hatch build                    # Build package
-```
-
-## Agent-Specific Notes
-
-### Writing Code
-
-- Make the SMALLEST reasonable changes to achieve the desired outcome
-- Prefer simple, clean, maintainable solutions over clever ones
-- Reduce code duplication, even if refactoring takes extra effort
-- Match the style and formatting of surrounding code
-- Fix broken things immediately when you find them
-
-### Code Comments
-
-- Comments should explain WHAT the code does or WHY it exists
-- NEVER add comments about what used to be there or how something changed
-- NEVER refer to temporal context ("recently refactored", "moved")
-- Keep comments concise and evergreen
-
-### Code Review Considerations
-
-- Address all review comments
-- Test changes thoroughly
-- Update documentation if behavior changes
-- Maintain test coverage
-- Follow conventional commit format for fix commits
-
-## Additional Resources
-
-- [Strands Agents Documentation](https://strandsagents.com/)
-- [CONTRIBUTING.md](./CONTRIBUTING.md) - Human contributor guidelines
-- [docs/](./docs/) - Developer documentation
-  - [STYLE_GUIDE.md](./docs/STYLE_GUIDE.md) - Code style conventions
-  - [HOOKS.md](./docs/HOOKS.md) - Hooks system guide
-  - [PR.md](./docs/PR.md) - PR description guidelines
-  - [MCP_CLIENT_ARCHITECTURE.md](./docs/MCP_CLIENT_ARCHITECTURE.md) - MCP threading design
+- **Point people to the community.** Real questions and design discussion belong with people — the [Discord](https://discord.gg/strands) and [GitHub Discussions](https://github.com/strands-agents/harness-sdk/discussions).
+- **Assume good faith.** Most contributors are learning; meet them where they are. Good first issues are for bringing newcomers in, not just tickets to close.
+- **Talk with contributors, not at them.** Warm, plain, concise. One question at a time, no walls of text, never patronizing. Explain the *why* so it teaches rather than dictates.

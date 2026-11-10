@@ -1,0 +1,94 @@
+---
+import type { BlogPost, Author } from '../../util/blog'
+import { formatDate } from '../../util/blog'
+import { pathWithBase } from '../../util/links'
+
+interface Props {
+  post: BlogPost
+  authors: Author[]
+}
+
+const { post, authors } = Astro.props
+const { title, description, date, tags } = post.data
+const href = pathWithBase(`/blog/${post.id}/`)
+---
+
+<a href={href} class="featured-post">
+  <div class="featured-post-meta">
+    <time datetime={date.toISOString()}>{formatDate(date)}</time>
+  </div>
+  <h2 class="featured-post-title">{title}</h2>
+  <p class="featured-post-description">{description}</p>
+  <div class="featured-post-authors">
+    {authors.map((author) => (
+      <span class="featured-post-author">{author.data.name}</span>
+    ))}
+  </div>
+</a>
+
+<style>
+  .featured-post {
+    display: block;
+    padding: 2rem;
+    background: rgba(255, 255, 255, 0.04);
+    border-radius: 16px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    text-decoration: none;
+    color: inherit;
+    transition: border-color 0.2s ease;
+    margin-bottom: 2.5rem;
+  }
+
+  .featured-post:hover {
+    border-color: rgba(0, 204, 95, 0.4);
+  }
+
+  .featured-post-meta {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    font-family: var(--sl-font);
+    font-size: 0.85rem;
+    color: var(--sl-color-gray-3);
+    margin-bottom: 0.75rem;
+  }
+
+  .featured-post-title {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: clamp(1.5rem, 3vw, 2rem);
+    font-weight: 700;
+    line-height: 1.25;
+    margin: 0 0 0.75rem;
+    color: var(--sl-color-white);
+  }
+
+  .featured-post-description {
+    font-family: var(--sl-font);
+    font-size: 1.0625rem;
+    line-height: 1.6;
+    color: var(--sl-color-gray-2);
+    margin: 0 0 1rem;
+    max-width: 720px;
+  }
+
+  .featured-post-authors {
+    font-family: var(--sl-font);
+    font-size: 0.85rem;
+    color: var(--sl-color-gray-3);
+  }
+
+  .featured-post-author:not(:last-child)::after {
+    content: ', ';
+  }
+
+  /* On phones the card's inset squeezes the long title; drop the horizontal
+     padding and chrome so the post aligns to the header and uses the full width. */
+  @media (max-width: 640px) {
+    .featured-post {
+      padding: 0.5rem 0 1.5rem;
+      background: transparent;
+      border: none;
+      border-radius: 0;
+    }
+  }
+</style>

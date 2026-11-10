@@ -1,0 +1,46 @@
+name: Documentation Question
+description: Ask a question about the documentation
+title: "[QUESTION] "
+labels: ["documentation"]
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to ask a question about our documentation!
+  
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: Clearly state your question about the documentation
+      placeholder: I'm confused about how to...
+    validations:
+      required: true
+      
+  - type: textarea
+    id: documentation-context
+    attributes:
+      label: Documentation Context
+      description: Please provide links or references to the relevant documentation sections
+      placeholder: This relates to the section on...
+    validations:
+      required: false
+      
+  - type: textarea
+    id: what-tried
+    attributes:
+      label: What I've Already Tried
+      description: Describe any research you've already done to try to find the answer
+      placeholder: I've already looked at...
+    validations:
+      required: false
+      
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional Context
+      description: Add any other context or screenshots about your question here
+      placeholder: Other relevant information...
+    validations:
+      required: false

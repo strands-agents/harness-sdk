@@ -1,0 +1,8 @@
+name: strands-adb
+description: Android device control tools for Strands Agents via ADB, enabling agents to interact with Android emulators and physical devices.
+integrationType: tool
+languages:
+  python:
+    package: strands-adb
+github: https://github.com/cagataycali/strands-adb
+addedDate: 2026-04-27

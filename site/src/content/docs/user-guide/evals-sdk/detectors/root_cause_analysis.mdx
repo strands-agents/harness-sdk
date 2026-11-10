@@ -1,0 +1,207 @@
+---
+title: Root cause analysis
+description: 'Trace failure chains in agent sessions with analyze_root_cause: classify causality, assess propagation impact, and get fix recommendations.'
+tags: [failure-diagnosis, observability, error-handling]
+sidebar:
+  label: "Root cause analysis"
+---
+
+`analyze_root_cause` performs deep causal analysis of detected failures in an agent execution session. It traces failure chains, classifies causality (primary vs. secondary vs. tertiary), assesses propagation impact, and produces actionable fix recommendations: not just what failed, but why and how to fix it.
+
+## Key features
+
+- **Causal chain analysis**: Distinguishes between root causes and their downstream effects
+- **Propagation impact assessment**: Determines whether failures caused task termination, quality degradation, incorrect paths, or were contained
+- **Fix recommendations**: Classifies fixes as system prompt changes, tool description updates, or other infrastructure fixes
+- **3-tier fallback strategy**: Handles large sessions via direct analysis, failure path pruning, and chunked analysis with merge
+- **Automatic failure detection**: If no failures are provided, calls `detect_failures` automatically
+
+## When to use
+
+Use `analyze_root_cause` when you need to:
+
+- **Understand causal relationships** between failures in a session
+- **Get fix recommendations** for detected failures
+- **Determine propagation impact**: did the failure cascade or stay contained?
+- **Prioritize fixes** based on causality (fix primary failures first)
+
+For a combined detect-and-analyze pipeline, use [`diagnose_session`](diagnosis.md) instead.
+
+## Parameters
+
+### `session` (required)
+- **Type**: `Session`
+- **Description**: The Session object containing traces and spans to analyze.
+
+### `failures` (optional)
+- **Type**: `list[FailureItem] | None`
+- **Default**: `None`
+- **Description**: List of failures from `detect_failures()`. If `None`, `detect_failures()` is called automatically. Pass this explicitly when you've already run failure detection to avoid duplicate work.
+
+### `model` (optional)
+- **Type**: `Model | str | None`
+- **Default**: `None` (uses Claude Sonnet via Bedrock)
+- **Description**: The model to use for analysis. Can be a `Model` instance, a Bedrock model ID string, or `None` for the default.
+
+## Basic usage
+
+```python
+from strands_evals.detectors import detect_failures, analyze_root_cause, ConfidenceLevel
+
+# Step 1: Detect failures
+failure_output = detect_failures(session, confidence_threshold=ConfidenceLevel.MEDIUM)
+
+# Step 2: Analyze root causes (pass failures to avoid re-detection)
+rca_output = analyze_root_cause(session, failures=failure_output.failures)
+
+for rc in rca_output.root_causes:
+    print(f"Failure span: {rc.failure_span_id}")
+    print(f"  Root cause at: {rc.location}")
+    print(f"  Causality: {rc.causality}")
+    print(f"  Impact: {rc.propagation_impact}")
+    print(f"  Explanation: {rc.root_cause_explanation}")
+    print(f"  Fix type: {rc.fix_type}")
+    print(f"  Recommendation: {rc.fix_recommendation}")
+```
+
+## Auto-detection mode
+
+If you don't provide failures, `analyze_root_cause` calls `detect_failures` internally:
+
+```python
+from strands_evals.detectors import analyze_root_cause
+
+# Automatically detects failures first, then analyzes root causes
+rca_output = analyze_root_cause(session)
+```
+
+This is convenient for one-off analysis but means failure detection runs with default settings (`confidence_threshold=ConfidenceLevel.LOW`). For more control, detect failures separately.
+
+## Output structure
+
+`analyze_root_cause` returns an `RCAOutput`:
+
+```python
+class RCAOutput(BaseModel):
+    root_causes: list[RCAItem]
+
+class RCAItem(BaseModel):
+    failure_span_id: str              # The failure span this explains
+    location: str                     # Span where root cause originated
+    causality: str                    # PRIMARY_FAILURE | SECONDARY_FAILURE | TERTIARY_FAILURE
+    propagation_impact: list[str]     # Impact types (see table below)
+    failure_detection_timing: str     # When failure was detected in execution
+    completion_status: str            # Overall task completion status
+    root_cause_explanation: str
+    fix_type: str                     # SYSTEM_PROMPT_FIX | TOOL_DESCRIPTION_FIX | OTHERS
+    fix_recommendation: str
+```
+
+### Causality classification
+
+| Value | Meaning |
+|-------|---------|
+| `PRIMARY_FAILURE` | Original source of the problem, independent of other failures |
+| `SECONDARY_FAILURE` | Direct consequence of a primary failure |
+| `TERTIARY_FAILURE` | Downstream effect of a secondary failure |
+| `UNCLEAR` | Insufficient context to determine causality |
+
+### Propagation impact
+
+| Value | Meaning |
+|-------|---------|
+| `TASK_TERMINATION` | Complete task failure, execution cannot continue |
+| `QUALITY_DEGRADATION` | Task completes but with reduced output quality |
+| `INCORRECT_PATH` | Forces fundamentally different strategy |
+| `STATE_CORRUPTION` | Agent develops incorrect understanding of state |
+| `NO_PROPAGATION` | Contained failure, recovered within 1-2 turns |
+| `UNCLEAR` | Cannot determine impact |
+
+### Failure detection timing
+
+| Value | Meaning |
+|-------|---------|
+| `IMMEDIATELY_AT_OCCURRENCE` | Failure was detected as soon as it happened |
+| `SEVERAL_STEPS_LATER` | Failure was detected after a few more steps |
+| `ONLY_AT_TASK_END` | Failure was only apparent when the task completed |
+| `SILENT_UNDETECTED` | Failure went undetected during execution |
+
+### Completion status
+
+| Value | Meaning |
+|-------|---------|
+| `COMPLETE_SUCCESS` | Task completed successfully despite the failure |
+| `PARTIAL_SUCCESS` | Task partially completed |
+| `COMPLETE_FAILURE` | Task failed entirely |
+
+### Fix types
+
+| Value | When to use |
+|-------|-------------|
+| `SYSTEM_PROMPT_FIX` | Agent behavior issues, missing guidelines, incorrect reasoning patterns |
+| `TOOL_DESCRIPTION_FIX` | Tool parameter confusion, unclear capabilities, missing constraint documentation |
+| `OTHERS` | Tool implementation bugs, API errors, infrastructure issues |
+
+## How the 3-tier strategy works
+
+Root cause analysis requires understanding the full causal context of failures, which can be challenging for large sessions. The analyzer uses three progressively more aggressive strategies:
+
+### Tier 1: Direct analysis
+
+The full session and failures are sent to the LLM in a single call. This produces the highest quality results because the model sees the complete execution context.
+
+### Tier 2: Failure path pruning
+
+If the session exceeds context limits, the analyzer prunes the session to keep only spans on failure paths:
+
+- **Ancestors**: All spans from root to each failure span (the causal chain)
+- **Descendants**: Up to 10 child spans per failure (the downstream context)
+
+This typically reduces session size by 50-90% while preserving the information needed for causal analysis.
+
+### Tier 3: Chunked analysis with merge
+
+If the pruned session still exceeds context limits, it is split into per-trace windows:
+
+1. Each window is analyzed independently
+2. Results from all windows are merged using a dedicated merge prompt that deduplicates and reconciles findings
+
+## Example: Analyzing a production trace
+
+```python
+from strands_evals.providers import CloudWatchProvider
+from strands_evals.detectors import detect_failures, analyze_root_cause, ConfidenceLevel
+
+# Fetch a trace from CloudWatch
+provider = CloudWatchProvider(agent_name="booking-agent", region="us-east-1")
+data = provider.get_evaluation_data(session_id="session-456")
+
+# Detect and analyze
+failures = detect_failures(data.trajectory, confidence_threshold=ConfidenceLevel.MEDIUM)
+rca = analyze_root_cause(data.trajectory, failures=failures.failures)
+
+# Group recommendations by fix type
+from collections import defaultdict
+by_type = defaultdict(list)
+for rc in rca.root_causes:
+    by_type[rc.fix_type].append(rc.fix_recommendation)
+
+for fix_type, recs in by_type.items():
+    print(f"\n{fix_type}:")
+    for rec in recs:
+        print(f"  - {rec}")
+```
+
+## Best practices
+
+1. **Pass failures explicitly** when you've already run `detect_failures`: avoids redundant LLM calls
+2. **Use `ConfidenceLevel.MEDIUM`** for failure detection before RCA to reduce noise in root cause analysis
+3. **Fix primary failures first**: secondary and tertiary failures often resolve when their root cause is addressed
+4. **Group recommendations by fix type** to batch related changes (e.g., all system prompt fixes together)
+5. **Use `diagnose_session`** when you want the full pipeline in a single call
+
+## Related documentation
+
+- [Failure Detection](failure_detection.md): Identify failures before analyzing root causes
+- [Session Diagnosis](diagnosis.md): Combined detection + RCA pipeline
+- [Detectors Overview](index.md): High-level detectors guide

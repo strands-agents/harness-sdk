@@ -1,0 +1,106 @@
+---
+title: Strands Shell commands
+description: The full command inventory in Strands Shell, with supported flags, shell builtins, and known divergences from GNU and BSD coreutils behavior.
+sidebar:
+  label: "Commands"
+---
+
+Strands Shell reimplements a curated subset of POSIX and coreutils in Rust, targeting the operations agents reach for most rather than a complete toolset. This page is the reference for what is supported and where behavior diverges from GNU or BSD: missing flags, unsupported features, and known gaps.
+
+This page covers the external commands the shell reimplements. They group into text
+processing, file contents, file management, path and system utilities, networking, JSON,
+and search. The shell language and builtins have their own page,
+[Shell language and builtins](shell-language.md); `lua` is covered in
+[Lua scripting](lua-scripting.md).
+
+## General callouts
+
+These notes apply across commands:
+
+- Regex uses the Rust `regex` crate. Backreferences and lookaround are unavailable, so `grep -P` is unsupported and GNU BRE escapes are not translated.
+- `jq` is backed by [`jaq`](https://github.com/01mf02/jaq), a jq subset.
+- Unsupported flags are rejected, not ignored. Idioms like `cp -p`, `set -o pipefail`, or `ln -sf` produce an error rather than succeeding with incorrect behavior.
+- Multiple file arguments are not uniformly supported. `cut` and `uniq` read only the first file; `head` and `tail` return a hard error; `cat`, `sort`, and `wc` handle multiple files correctly.
+- Malformed numeric input passes silently. `test`, `[`, and arithmetic `$(( ))` treat non-numeric or empty operands as `0` without an error.
+- Stdin under `strands-shell -c` is not connected to commands (`bad fd 0`). Use an in-shell pipe instead.
+
+## Text processing
+
+| Command | Notable gaps |
+|---|---|
+| `grep` | No `-P`, backreferences, lookaround, or `-f`. `-o` on empty-matching patterns emits blank lines. |
+| `sed` | No branching (`b`, `t`, `:label`) or multiline (`N`, `D`, `P`); no `-f`. `s///N` replaces the incorrect match; range `c` emits per line. |
+| `tr` | Missing `[:punct:]`, `[:cntrl:]`, and `[c*n]` repeats. `-c` two-set translate uses the incorrect replacement character. |
+| `cut` | No `-b` or `--complement`. Reads only the first file when given several. |
+| `sort` | No `-c`, `-o`, `-V`, or `-h` (`-h` incorrectly prints help). Keyed-tie order is non-deterministic. Loads all input into memory. |
+| `uniq` | No `-w` or `-D`. Reads only the first file when given several. |
+| `wc` | No `-m` (char count) or `-L`. Counts are correct; column padding differs from coreutils. |
+
+## File contents
+
+| Command | Notable gaps |
+|---|---|
+| `cat` | No `-b`, `-s`, `-A`, `-e`, or `-t`; no `-` stdin operand. |
+| `head` | No `-c`, negative `-n`, or `head -5` shorthand. Multiple files produce a hard error (no `==>` headers). |
+| `tail` | No `-c`, `-f` or `-F` follow, or shorthand. Multiple files produce a hard error. |
+| `tee` | No `-i`. Standard usage (stdout plus files, `-a`) is supported. |
+
+## File management
+
+| Command | Notable gaps |
+|---|---|
+| `cp` | `-r` works, including nested directories; no `-p`, `-a`, `-f`, or `-i`. `cp f f` silently succeeds. |
+| `mv` | Rename, move, and cross-mount operations work; no `-f`, `-i`, `-n`, or `-v`. |
+| `rm` | `-r`, `-f`, and symlink non-follow behave correctly; no `-d` or `-i`. |
+| `mkdir` | No `-m`. An invalid-option path returns exit 0. |
+| `rmdir` | No `-p`. |
+| `touch` | File creation and timestamp update only; no `-t`, `-d`, `-c`, or `-r` (cannot set a specific time). |
+| `ln` | `-s` only; hard links are refused by design; no `-f`, so `ln -sf` fails. |
+| `chmod` | Full support. Octal and symbolic modes; no `-R`. |
+
+## Path and system
+
+| Command | Notable gaps |
+|---|---|
+| `ls` | `-l` omits owner, group, and link count; `-a` omits `.` and `..`. No `-t`, `-S`, `-d`, `-F`, or `-h`. Output is always single-column. |
+| `basename` | No `-a` or `-s`. `basename /` and `""` diverge from coreutils. |
+| `dirname` | Single operand only. A trailing slash is mishandled (`/usr/lib/` becomes `/usr/lib`). |
+| `readlink` | Plain read only; no `-f`, `-e`, or `-m` canonicalization. |
+| `mktemp` | No `-u` or `-t`. |
+| `date` | `%s` is not expanded; unknown specifiers pass through literally; no `-d` or `-r`. UTC only. |
+| `env` | Print-only. `env VAR=v cmd`, `-i`, and `-u` are not supported; use the shell-prefix form instead. |
+| `echo` | Expands escapes by default; `-e` and `-E` are printed literally (escape expansion cannot be disabled). |
+| `pwd` | Full support, including `-L` and `-P`. |
+| `sleep` | No unit suffixes (`0.1s`). Respects the shell timeout. |
+| `true`, `false` | Full support. |
+
+## Networking
+
+| Command | Notable gaps |
+|---|---|
+| `curl` | GET, POST, JSON, headers, auth, redirects, and `-w` are supported. No `--max-time`, `--connect-timeout`, or `--retry` (risk of an indefinite hang); no `-I`, `-F`, `-A`, `-G`, or cookie jar. SSRF and credential controls are enforced. |
+
+The SSRF guard and credential injection on `curl` are security features, covered in the [security model](security.md). They are not optional and cannot be disabled per command.
+
+## JSON
+
+| Command | Notable gaps |
+|---|---|
+| `jq` (jaq) | Broad filter coverage. A missing nested key throws an error, which breaks the `.a.b // default` pattern; no `--arg`, `--argjson`, or `-S`; `inputs` and `setpath` are absent. |
+
+## Search
+
+| Command | Notable gaps |
+|---|---|
+| `find` | `-name`, `-type`, `-maxdepth`, `-exec`, and `-print0` are supported. No `-delete`, `-size`, `-mtime`, `-prune`, or `-regex`. Children are sorted alphabetically, not in readdir order. |
+| `xargs` | Space-separated `-n`, `-I`, `-0`, and `-d` are supported; attached forms (`-n1`, `-I{}`) and `-t`, `-r`, `-L`, `-P` are not. Implicitly behaves as `-r`. |
+
+## Scripting and shell language
+
+`lua` runs a sandboxed Lua 5.4 interpreter for logic that would otherwise sprawl across
+a chain of pipes: multi-step transforms, structured-data manipulation, or calling nested
+MCP servers as Lua modules. See [Lua scripting](lua-scripting.md).
+
+The shell language itself (pipelines, redirections, conditionals, loops, functions, and
+expansions) and the builtins (`test`, `printf`, `read`, `set`, and the rest) are
+documented in [Shell language and builtins](shell-language.md).

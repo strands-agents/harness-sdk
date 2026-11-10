@@ -1,0 +1,16 @@
+.DS_Store
+build
+__pycache__*
+.coverage*
+.env
+.venv
+.mypy_cache
+.pytest_cache
+.ruff_cache
+*.bak
+.vscode
+dist
+repl_state
+.kiro
+uv.lock
+.audio_cache

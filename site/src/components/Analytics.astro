@@ -1,0 +1,312 @@
+---
+/**
+ * Analytics instrumentation via AWS WebSDK (Adobe Analytics under the hood).
+ * Dispatches custom events through the WebSDK's event listener system.
+ * Included in Head.astro for all pages.
+ */
+---
+
+<script is:inline>
+;(function () {
+  'use strict'
+
+  // Guard against this inline script running more than once on a page.
+  if (window.__strandsAnalyticsInit) return
+  window.__strandsAnalyticsInit = true
+
+  // The AWS WebSDK listens on this single event name and reads event content from the
+  // XDM `_aws` namespace (detail.xdm._aws.<namespace>). Events sent in any other shape are
+  // rejected by its validators and silently dropped. Values verified against the upstream
+  // source: AWSMarketingAdobeWebSDKHelpers (constants + helpers/*-event.ts).
+  var ANALYTICS_EVENT_LISTENER = 'custom-awsm-acs-event-listener'
+
+  var scrollData = { initial: 0, max: 0, latest: 0 }
+  var scrollSent = false
+
+  // --- Helpers ---
+
+  // Pipe-delimited page hierarchy from the URL path, used to label code-copy events.
+  // Anchors on the 'docs' segment and takes everything after it, so any leading base
+  // path (e.g. a "/pr-xxxx/" preview deploy) is ignored:
+  // /pr-x/docs/user-guide/quickstart/ -> "user-guide|quickstart".
+  function pageHierarchy(pathname) {
+    var segments = pathname.replace(/^\/|\/$/g, '').split('/').filter(Boolean)
+    var docsIndex = segments.indexOf('docs')
+    var start = docsIndex >= 0 ? docsIndex + 1 : 0
+    return segments.slice(start).join('|') || 'home'
+  }
+
+  // First line of copied text, for code-copy labels — enough to tell an
+  // `npm install …` from a `pip install …` or a `from strands import …` without
+  // logging an entire snippet. Expressive Code stores its code in a data-code
+  // attribute with newlines encoded as U+007F; normalize those first. Capped so
+  // a long first line can't bloat the analytics label.
+  function firstLine(text) {
+    if (!text) return ''
+    var line = String(text).replace(/\u007f/g, '\n').split('\n')[0].trim()
+    return line.length > 120 ? line.slice(0, 119) + '…' : line
+  }
+
+  // Consent is enforced by the WebSDK listener itself - events dispatched here
+  // are silently dropped if the user has not accepted performance cookies via Shortbread.
+  function dispatchXdmEvent(eventType, awsContent, useBeacon) {
+    var detail = {
+      eventType: eventType,
+      xdm: { _aws: awsContent },
+      useBeacon: !!useBeacon,
+    }
+    window.dispatchEvent(new CustomEvent(ANALYTICS_EVENT_LISTENER, { detail: detail }))
+  }
+
+  // navigates: pass true for clicks that take the user to another page (links, toggles that
+  // redirect). Those are dispatched via beacon so the request isn't cancelled on unload - the
+  // same reason scroll depth uses the beacon path. In-page clicks (tabs, copy) pass false.
+  function dispatchCTAClick(name, type, navigates) {
+    // Collapse whitespace so labels stay clean regardless of the source (textContent from
+    // elements with icons/SVG/newlines, hrefs, etc.) - keeps every caller consistent.
+    var cleanName = String(name).replace(/\s+/g, ' ').trim()
+    dispatchXdmEvent(
+      'web.awsm.customCTAClick',
+      {
+        pageInteraction: {
+          click: { name: cleanName, type: type || 'customClick' },
+        },
+      },
+      !!navigates
+    )
+  }
+
+  function dispatchSearchEvent(searchTerm, resultCount) {
+    dispatchXdmEvent('web.awsm.search', {
+      searchOperations: {
+        searchTerm: searchTerm,
+        searchFilter: [],
+        resultCount: resultCount,
+      },
+    })
+  }
+
+  // --- 1. Click Tracking (anchors, nav tabs, code copy, outbound, UI controls) ---
+
+  function setupClickTracking() {
+    document.addEventListener('click', function (e) {
+      if (!e.target || !e.target.closest) return
+
+      // Anchor / TOC clicks
+      var anchorLink = e.target.closest('a[href^="#"]')
+      if (anchorLink) {
+        var anchor = anchorLink.getAttribute('href').replace('#', '')
+        if (!anchor) return
+        var isToc = !!anchorLink.closest('nav.right-sidebar, [class*="toc"], starlight-toc')
+        var prefix = isToc ? 'toc-click' : 'anchor-click'
+        dispatchCTAClick(prefix + ':' + anchor, 'linkClick')
+        return
+      }
+
+      // Nav tab clicks
+      var navTab = e.target.closest('.nav-tab, .mobile-nav-link')
+      if (navTab) {
+        var label = navTab.textContent.trim().replace(/\s*↗$/, '')
+        dispatchCTAClick('nav-tab:' + label, 'click', true)
+        return
+      }
+
+      // Language toggle (Python / TypeScript) - language-toggle > button.lang-option[data-lang]
+      var langControl = e.target.closest('.language-toggle .lang-option')
+      if (langControl) {
+        var lang = (langControl.getAttribute('data-lang') || '').trim()
+        // The toggle navigates to the paired page in the other language, so beacon it.
+        dispatchCTAClick('lang-toggle:' + lang, 'click', true)
+        return
+      }
+
+      // GitHub dropdown menu links (.github-dropdown .github-link, label in .github-link-text)
+      var ghLink = e.target.closest('.github-dropdown a.github-link')
+      if (ghLink) {
+        var ghTextEl = ghLink.querySelector('.github-link-text')
+        var ghLabel = (ghTextEl ? ghTextEl.textContent : ghLink.textContent).trim().replace(/\s*↗$/, '')
+        dispatchCTAClick('github-menu:' + ghLabel, 'linkClick', true)
+        return
+      }
+
+      // Sidebar collapsible group expand/collapse (nav.sidebar > details > summary).
+      // Skip the inner group-link anchor so its navigation is tracked as a normal link, not an expand.
+      var sidebarSummary = e.target.closest('nav.sidebar summary')
+      if (sidebarSummary && !e.target.closest('.group-link')) {
+        var groupLabelEl = sidebarSummary.querySelector('.group-label, .section-label')
+        var groupLabel = (groupLabelEl ? groupLabelEl.textContent : sidebarSummary.textContent).trim()
+        dispatchCTAClick('sidebar-expand:' + groupLabel, 'click')
+        return
+      }
+
+      // Tab clicks (npm/yarn, OS, etc.). AutoSyncTabs hides the Python/TypeScript language
+      // tablists (display:none) and routes language switching through the header toggle, so a
+      // real click only lands on a visible tablist - which excludes those redundant language tabs.
+      var tab = e.target.closest('[role="tab"]')
+      if (tab) {
+        dispatchCTAClick('tab:' + tab.textContent.trim(), 'click')
+        return
+      }
+
+      // Landing page CTAs. Buttons have short text labels; the Labs/Evals cards wrap a
+      // large block of text, so use their href (stable, concise) instead of textContent.
+      var homeCta = e.target.closest('a.cta-button, a.le-card')
+      if (homeCta) {
+        var ctaLabel = homeCta.matches('a.le-card') ? homeCta.getAttribute('href') : homeCta.textContent
+        dispatchCTAClick('home-cta:' + ctaLabel, 'linkClick', true)
+        return
+      }
+
+      // Blog post cards and navigation
+      var blogCard = e.target.closest('a.blog-card')
+      if (blogCard) {
+        dispatchCTAClick('blog-card:' + blogCard.getAttribute('href'), 'linkClick', true)
+        return
+      }
+      var blogNav = e.target.closest('a.blog-post-author, a.blog-back-link')
+      if (blogNav) {
+        dispatchCTAClick('blog-nav:' + blogNav.textContent.trim(), 'linkClick', true)
+        return
+      }
+
+      // Code copy button (docs Starlight + landing CodeBlock + install commands)
+      var copyBtn = e.target.closest(
+        '.copy button, button.copy, [data-code] button, button.copy-button, button.copy-button-floating, button.install-copy'
+      )
+      if (copyBtn) {
+        var copyLabel
+        var copyText = ''
+        if (copyBtn.matches('button.install-copy')) {
+          var installEl = copyBtn.closest('[data-copy]')
+          var cmd = installEl && installEl.getAttribute('data-copy')
+          copyLabel = cmd ? 'install:' + cmd : 'install'
+          copyText = cmd || ''
+        } else {
+          copyLabel = pageHierarchy(window.location.pathname)
+          // Expressive Code stores the block's raw code on the copy button's
+          // data-code attribute; fall back to the rendered <code> text.
+          copyText = copyBtn.getAttribute('data-code') || ''
+          if (!copyText) {
+            var pre = copyBtn.closest('figure, .expressive-code, pre')
+            var codeEl = pre && pre.querySelector('code')
+            copyText = codeEl ? codeEl.textContent : ''
+          }
+        }
+        var snippet = firstLine(copyText)
+        dispatchCTAClick('code-copy:' + copyLabel + (snippet ? ' | ' + snippet : ''), 'customClick')
+        return
+      }
+
+      // Outbound links
+      var link = e.target.closest('a[href]')
+      if (link && link.hostname && link.hostname !== window.location.hostname) {
+        dispatchCTAClick('outbound:' + link.hostname + link.pathname, 'linkClick', true)
+        return
+      }
+    })
+  }
+
+  // --- 2. Search Events ---
+
+  function setupSearchTracking() {
+    var searchTimeout = null
+
+    document.addEventListener('input', function (e) {
+      var input = e.target
+      if (!input || !input.matches || !input.matches('[data-pagefind-ui] input')) return
+
+      clearTimeout(searchTimeout)
+      // 800ms debounce captures user intent; result count may lag if Pagefind
+      // hasn't responded yet, but this is acceptable for analytics purposes.
+      searchTimeout = setTimeout(function () {
+        var term = input.value
+        if (!term) return
+        var results = document.querySelectorAll('[data-pagefind-ui] .pagefind-ui__result')
+        dispatchSearchEvent(term, results.length)
+      }, 800)
+    })
+  }
+
+  // --- 3. Scroll Depth ---
+
+  function updateScroll() {
+    var scrollTop = window.scrollY || document.documentElement.scrollTop
+    var docHeight = document.documentElement.scrollHeight - window.innerHeight
+    var depth = docHeight > 0 ? Math.round((scrollTop / docHeight) * 100) : 0
+    scrollData.latest = depth
+    if (depth > scrollData.max) scrollData.max = depth
+  }
+
+  function sendScrollDepth() {
+    if (scrollSent) return
+    scrollSent = true
+    updateScroll()
+    dispatchXdmEvent(
+      'web.awsm.pageInteraction',
+      {
+        pageInteraction: {
+          name: 'scroll',
+          scrollDepths: {
+            initial: scrollData.initial,
+            max: scrollData.max,
+            latest: scrollData.latest,
+          },
+        },
+      },
+      true
+    )
+  }
+
+  function setupScrollTracking() {
+    var debounceTimer
+    window.addEventListener('scroll', function () {
+      clearTimeout(debounceTimer)
+      debounceTimer = setTimeout(updateScroll, 200)
+    }, { passive: true })
+
+    window.addEventListener('beforeunload', sendScrollDepth)
+
+    // visibilitychange is more reliable on mobile (iOS Safari doesn't always fire beforeunload)
+    document.addEventListener('visibilitychange', function () {
+      if (document.visibilityState === 'hidden') {
+        sendScrollDepth()
+      }
+    })
+  }
+
+  function resetScrollData() {
+    scrollData.initial = 0
+    scrollData.max = 0
+    scrollData.latest = 0
+    scrollSent = false
+    setTimeout(function () {
+      updateScroll()
+      scrollData.initial = scrollData.latest
+    }, 500)
+  }
+
+  // --- 4. Setup ---
+  // The WebSDK auto-fires the standard page view (web.webpagedetails.pageViews) and derives
+  // Base URL, entry/exit, and section data from the URL server-side, so no page-view event is
+  // sent here. Each full page load re-runs this IIFE, so setup below runs fresh per page.
+  setupClickTracking()
+  setupSearchTracking()
+  setupScrollTracking()
+
+  // Copy-to-clipboard events from the shared helper (src/util/clipboard.ts fires
+  // `strands:copy` with detail.label, e.g. 'install:pip', 'install:npm',
+  // 'code:use-cases:Python', and detail.text with the exact copied string).
+  // Routed through the one consent-gated pipeline; the first line of the text is
+  // appended so we can tell which command/snippet a reader copied.
+  window.addEventListener('strands:copy', function (e) {
+    var detail = (e && e.detail) || {}
+    if (!detail.label) return
+    var snippet = firstLine(detail.text)
+    dispatchCTAClick('code-copy:' + detail.label + (snippet ? ' | ' + snippet : ''), 'customClick')
+  })
+
+  // If view transitions (ClientRouter) are enabled later, navigations won't reload the page,
+  // so reset the per-page scroll baseline on astro:page-load. No-op while full reloads are used.
+  document.addEventListener('astro:page-load', resetScrollData)
+})()
+</script>

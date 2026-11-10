@@ -1,0 +1,8 @@
+name: strands-mcp-server
+description: Transforms any Strands Agent into an MCP server exposing its tools over HTTP or stdio transports with a built-in CLI.
+integrationType: integration
+languages:
+  python:
+    package: strands-mcp-server
+github: https://github.com/cagataycali/strands-mcp-server
+addedDate: 2025-11-11

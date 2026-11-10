@@ -1,0 +1,184 @@
+---
+title: Experiment management
+description: 'Organize evaluation test cases into experiments: use metadata for filtering, group related cases, and adapt experiments across agent versions.'
+---
+
+Strands Evals organizes test cases into `Experiment` objects. This guide covers practical patterns for managing experiments and test cases.
+
+## Organizing test cases
+
+### Using metadata for organization
+
+```python
+from strands_evals import Case
+
+# Add metadata for filtering and organization
+cases = [
+    Case(
+        name="easy-math",
+        input="What is 2 + 2?",
+        metadata={
+            "category": "math",
+            "difficulty": "easy",
+            "tags": ["arithmetic"]
+        }
+    ),
+    Case(
+        name="hard-math",
+        input="Solve x^2 + 5x + 6 = 0",
+        metadata={
+            "category": "math",
+            "difficulty": "hard",
+            "tags": ["algebra"]
+        }
+    )
+]
+
+# Filter by metadata (Case.metadata defaults to None, so guard with `or {}`)
+easy_cases = [c for c in cases if (c.metadata or {}).get("difficulty") == "easy"]
+```
+
+### Naming conventions
+
+```python
+# Pattern: {category}-{subcategory}-{number}
+Case(name="knowledge-geography-001", input="..."),
+Case(name="math-arithmetic-001", input="..."),
+```
+
+## Managing multiple experiments
+
+### Experiment collections
+
+```python
+import asyncio
+
+from strands_evals import Experiment
+
+experiments = {
+    "baseline": Experiment(cases=baseline_cases, evaluators=[...]),
+    "with_tools": Experiment(cases=tool_cases, evaluators=[...]),
+    "edge_cases": Experiment(cases=edge_cases, evaluators=[...])
+}
+
+# Run all
+async def main():
+    for name, exp in experiments.items():
+        print(f"Running {name}...")
+        report = await exp.run_evaluations_async(task_function)
+
+asyncio.run(main())
+```
+
+### Combining experiments
+
+```python
+# Merge cases from multiple experiments
+combined = Experiment(
+    cases=exp1.cases + exp2.cases + exp3.cases,
+    evaluators=[OutputEvaluator()]
+)
+```
+
+### Combining reports from different experiments
+
+`run_evaluations` already returns a single `EvaluationReport` even when the experiment has multiple evaluators: each row in `report.cases` carries an `evaluator` key naming the evaluator that produced it.
+
+If you've run separate experiments and want to merge their reports into one table, use `EvaluationReport.flatten`:
+
+```python
+import asyncio
+
+async def main():
+    report_a = await experiment_a.run_evaluations_async(task_function)
+    report_b = await experiment_b.run_evaluations_async(task_function)
+
+    from strands_evals.types.evaluation_report import EvaluationReport
+    combined = EvaluationReport.flatten([report_a, report_b])
+    combined.run_display()  # All cases from both runs in one table
+
+asyncio.run(main())
+```
+
+## Modifying experiments
+
+### Adding cases
+
+`Experiment.cases` returns a deep copy on read, so `.append` / `.extend` on the property are silently dropped. Use the setter to replace the list:
+
+```python
+# Add single case
+experiment.cases = experiment.cases + [new_case]
+
+# Add multiple
+experiment.cases = experiment.cases + additional_cases
+```
+
+### Updating evaluators
+
+```python
+from strands_evals.evaluators import HelpfulnessEvaluator
+
+# Replace evaluators
+experiment.evaluators = [
+    OutputEvaluator(),
+    HelpfulnessEvaluator()
+]
+```
+
+## Session IDs
+
+Each case gets a unique session ID automatically:
+
+```python
+case = Case(input="test")
+print(case.session_id)  # Auto-generated UUID
+
+# Or provide custom
+case = Case(input="test", session_id="custom-123")
+```
+
+## Best practices
+
+### 1. Use descriptive names
+
+```python
+# Good
+Case(name="customer-service-refund-request", input="...")
+
+# Less helpful
+Case(name="test1", input="...")
+```
+
+### 2. Include rich metadata
+
+```python
+Case(
+    name="complex-query",
+    input="...",
+    metadata={
+        "category": "customer_service",
+        "difficulty": "medium",
+        "expected_tools": ["search_orders"],
+        "created_date": "2025-01-15"
+    }
+)
+```
+
+### 3. Version your experiments
+
+```python
+experiment.to_file("experiment_v1.json")
+experiment.to_file("experiment_v2.json")
+
+# Or with timestamps
+from datetime import datetime
+timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+experiment.to_file(f"experiment_{timestamp}.json")
+```
+
+## Related documentation
+
+- [Serialization](serialization.md): Save and load experiments
+- [Experiment Generator](../experiment_generator.md): Generate experiments automatically
+- [Quickstart Guide](../quickstart.md): Get started with experiments

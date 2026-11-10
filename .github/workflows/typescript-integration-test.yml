@@ -1,0 +1,250 @@
+name: "TypeScript: Secure Integration Test"
+
+on:
+  pull_request_target:
+    branches: [main]
+    paths:
+      - 'strands-ts/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/typescript-*'
+  merge_group:
+    types: [checks_requested]
+  # Nightly full run of main (staggered 30 min after the Python suite so the
+  # two do not compete for provider quotas). Gives the CloudWatch dashboards a
+  # flakiness baseline that no PR's own breakage can pollute. Scheduled runs
+  # check out main's own code, so authorization-check is skipped for them.
+  schedule:
+    - cron: '47 6 * * *'
+  # workflow_call entry — TRUST INVARIANT.
+  #
+  # Lets another workflow in this repo reuse the integ tests against an
+  # arbitrary `ref` while keeping AWS_*. The authorization-check below is
+  # skipped on this path because the only callers
+  # (release-python.yml / release-typescript.yml) are workflow_dispatch-
+  # gated, which already requires repo write access.
+  #
+  # Before adding another caller, check all of:
+  #   1. Cannot be triggered by an unauthenticated user or a fork
+  #      (no pull_request; no pull_request_target without an auth gate;
+  #      no push from non-main branches).
+  #   2. Cannot be coerced into a fork-PR ref. validate-call-ref below is
+  #      the runtime guard, but condition 1 should make that unnecessary.
+  #   3. AWS_ROLE / STRANDS_INTEG_TEST_ROLE are scoped to least privilege.
+  workflow_call:
+    inputs:
+      ref:
+        required: true
+        type: string
+      full_suite:
+        description: 'Run the entire integ suite instead of the change-based selective set. Releases set this so the published artifact is always fully exercised.'
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: typescript-integration-test-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ inputs.ref == '' && github.event_name == 'pull_request_target' }}
+
+jobs:
+  validate-call-ref:
+    name: Validate workflow_call ref
+    if: inputs.ref != ''
+    runs-on: strands-agents_ubuntu-latest_4-core
+    permissions:
+      contents: read
+    # Reject ref shapes that could check out untrusted code:
+    # `refs/pull/*` (fork-PR merge refs) and `owner:branch` (cross-repo
+    # refs) fail; plain branches and SHAs pass.
+    #
+    # We do not also block on `github.event.repository.fork`. That flag is
+    # only `true` when this workflow runs on a fork's own runner — which
+    # is a legitimate case (release-python.yml's `run_integ_tests: true`
+    # lets a fork-owner test the pipeline with their own secrets). The
+    # ref-shape check above is what actually rejects untrusted refs.
+    steps:
+      - name: Reject untrusted-shaped refs
+        env:
+          REF: ${{ inputs.ref }}
+        run: |
+          set -euo pipefail
+          case "$REF" in
+            refs/pull/*|*:*)
+              echo "::error::workflow_call ref '$REF' looks like a fork PR or cross-repo ref."
+              exit 1
+              ;;
+          esac
+          echo "ref '$REF' passed shape check."
+
+  authorization-check:
+    name: Check access
+    needs: [validate-call-ref]
+    # `needs` only runs after non-skipped predecessors. validate-call-ref is
+    # skipped on pull_request_target / merge_group (inputs.ref is empty), so
+    # we use `if: always()` to ensure auth-check still runs there. On
+    # workflow_call, validate-call-ref must have succeeded.
+    if: |
+      always() &&
+      (needs.validate-call-ref.result == 'success' || needs.validate-call-ref.result == 'skipped')
+    permissions:
+      contents: read
+    runs-on: strands-agents_ubuntu-latest_4-core
+    outputs:
+      approval-env: ${{ steps.auth.outputs.approval-env }}
+    steps:
+      - name: Check Authorization
+        id: auth
+        uses: strands-agents/devtools/authorization-check@main
+        with:
+          # Skip on merge_group (gated by branch protection), on schedule (runs
+          # main's own code; there is no PR author to check) and on the release
+          # (the caller — release.yml — is workflow_dispatch gated, see the
+          # trigger comment above). `github.event_name` can't identify the
+          # release here — inside a reusable workflow it reports the caller's
+          # event, never 'workflow_call' — so key off `inputs.ref`, which only a
+          # workflow_call caller supplies (empty on pull_request_target /
+          # merge_group / schedule). Matches the validate-call-ref guard above.
+          skip-check: ${{ github.event_name == 'merge_group' || github.event_name == 'schedule' || inputs.ref != '' }}
+          username: ${{ github.event.pull_request.user.login || 'invalid' }}
+          allowed-roles: 'triage,write,maintain,admin'
+
+  run-integration-tests:
+    name: Run integration tests
+    runs-on: strands-agents_ubuntu-latest_4-core
+    needs: authorization-check
+    if: always() && needs.authorization-check.result == 'success'
+    environment:
+      name: ${{ needs.authorization-check.outputs.approval-env }}
+      deployment: false
+    permissions:
+      id-token: write
+      pull-requests: read
+      contents: read
+    steps:
+      - name: Configure Credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+         role-to-assume: ${{ secrets.STRANDS_INTEG_TEST_ROLE }}
+         aws-region: us-east-1
+         mask-aws-account-id: true
+
+      - name: Checkout head commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.event.pull_request.head.sha }} # PR commit, or release.yml's ref
+          fetch-depth: 0  # full history so selective testing can diff against the base
+          persist-credentials: false  # Don't persist credentials for subsequent actions
+          allow-unsafe-pr-checkout: true  # opt back into fork-PR checkout, blocked by default in checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Install dependencies
+        run: |
+          npm ci --ignore-scripts
+          npm install --no-save "@tobilu/qmd@^2.8.0"
+          npm run test:browser:install
+
+      - name: Build the package
+        run: npm run build
+
+      # Releases pin a SHA on main history and scheduled runs execute main
+      # itself; the selective runner would diff either against origin/main,
+      # find no changes, and skip — so both force the full suite.
+      - name: Run integration tests (full suite)
+        if: ${{ inputs.full_suite == true || github.event_name == 'schedule' }}
+        run: npm run test:integ:all
+
+      # Runs on every path that is NOT a full-suite run: PR and merge_group
+      # (where `inputs.full_suite` is null, not false) and any workflow_call
+      # that leaves it defaulted. The condition is the exact complement of the
+      # full-suite step above, so exactly one always runs — a PR can never
+      # match neither and silently skip integ.
+      - name: Run integration tests (selective)
+        if: ${{ inputs.full_suite != true && github.event_name != 'schedule' }}
+        env:
+          # PR events expose the base SHA directly; merge_group exposes it as
+          # merge_group.base_sha. Falling back to the merge-queue base avoids
+          # diffing against origin/main (which would miss interactions with
+          # earlier-enqueued PRs and could narrow the test set unsafely).
+          SELECTIVE_BASE_REF: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: npm run test:integ:selective
+
+      - name: Upload test artifacts
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: test-artifacts-integ
+          path: ./strands-ts/test/.artifacts/
+          retention-days: 4
+          include-hidden-files: true # needed because the path has a directory starting with a '.'
+          if-no-files-found: ignore
+
+  upload-metrics:
+    runs-on: strands-agents_ubuntu-latest_4-core
+    needs: run-integration-tests
+    # Publishes to the team's CloudWatch via STRANDS_INTEG_TEST_ROLE. Only run
+    # when the integration-test job actually executed; on fork PRs the auth
+    # environment gate skips the test job and no test-artifacts-integ artifact
+    # is produced, so this job would otherwise fail on artifact download.
+    if: always() && (needs.run-integration-tests.result == 'success' || needs.run-integration-tests.result == 'failure')
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Configure Credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.STRANDS_INTEG_TEST_ROLE }}
+          aws-region: us-east-1
+          mask-aws-account-id: true
+
+      - name: Checkout main
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          sparse-checkout: |
+            .github/scripts
+          persist-credentials: false
+
+      # The artifact's contents come from PR test code, so extract it into its
+      # own directory rather than the workspace root — otherwise a crafted
+      # artifact containing .github/scripts/... would overwrite the trusted
+      # script checked out from main before the next step executes it.
+      #
+      # continue-on-error because selective runs that select no integ tests
+      # upload no artifact at all (if-no-files-found: ignore above); the
+      # publish step below skips gracefully when the report is absent.
+      - name: Download test artifacts
+        id: download
+        uses: actions/download-artifact@v8.0.2
+        continue-on-error: true
+        with:
+          name: test-artifacts-integ
+          path: downloaded-artifacts
+
+      # The junit classnames carry the vitest project (strands-ts/vitest.config.ts),
+      # so the two projects' identically named tests are separate TestName values.
+      # --max-test-names 2000: a full-suite run publishes about 1500 names
+      # (integ-node ~850, integ-browser ~650), above the publisher's default of
+      # 1000; 2000 still catches a cardinality explosion. Per-partition headroom
+      # is checked by test-infra/dashboards/check_series.py (#5644).
+      #
+      # Do not re-run this job after a partial failure: put_metric_data has no
+      # idempotency key, so batches that succeeded before the failure are already
+      # stored and a re-run republishes them, double-counting that run. Fix the
+      # cause and let the next run publish instead.
+      - name: Publish test metrics to CloudWatch
+        env:
+          REPO_NAME: ${{ github.event.repository.name }}
+        run: |
+          REPORT=downloaded-artifacts/test-report/junit/report.xml
+          if [ ! -f "$REPORT" ]; then
+            echo "No JUnit report found (integ tests skipped or failed before reporting); nothing to publish."
+            exit 0
+          fi
+          pip install --no-cache-dir boto3
+          python .github/scripts/upload-integ-test-metrics.py "$REPORT" "$REPO_NAME" typescript --max-test-names 2000

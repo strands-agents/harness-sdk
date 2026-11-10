@@ -1,0 +1,196 @@
+---
+title: "Introducing Strands Labs: Get hands-on today with state-of-the-art, experimental approaches to agentic development"
+date: 2026-02-23
+description: "Strands Labs is a new GitHub organization designed to give developers the ability to get hands-on with experimental, state-of-the-art approaches to agentic AI development."
+authors:
+  - joy-chakraborty
+  - alessandro-achille
+  - arron-bailiss
+  - andrew-shamiya
+  - belle-guttman
+  - ryan-coleman
+tags:
+  - Open Source
+  - Announcement
+canonicalUrl: "https://aws.amazon.com/blogs/opensource/introducing-strands-labs-get-hands-on-today-with-state-of-the-art-experimental-approaches-to-agentic-development/"
+draft: false
+---
+
+We're introducing [Strands Labs](https://github.com/strands-labs), a new Strands GitHub organization designed to give developers the ability to get hands-on with experimental, state-of-the-art approaches to agentic AI development. The Strands Agents SDK -- available for both [Python](https://github.com/strands-agents/harness-sdk) and [TypeScript](https://github.com/strands-agents/sdk-typescript) -- has gained incredible traction in the developer community since we released it as open source in May of 2025. The SDK has been downloaded 14 million + times, and the AWS team has been hard at work adding new functionality, including experiments like [Steering](https://strandsagents.com/latest/documentation/docs/user-guide/sdk/experimental/steering/), to support a very active developer community. Strands' model-driven approach has proven itself as simple, powerful and scalable for everything from prototyping to enterprise production workloads. Learn more about Strands and the model-driven approach [here](https://aws.amazon.com/blogs/opensource/strands-agents-and-the-model-driven-approach/).
+
+We've chosen to make Strands Labs a separate GitHub organization to encourage innovation through experimentation, and to push the frontier of agentic development. We've also opened Strands Labs to all the development teams across Amazon -- meaning, they can all contribute their innovative open source projects for community use and feedback. This model will encourage faster experimentation, learning, and growth for Strands' community of developers, without coupling experiments to the Strands SDK and its production use release cycle. You can expect all projects in Strands-Labs to ship with clear use cases, functional code, and tests to help you get started.
+
+At launch, we're making Strands Labs available with three projects. The first is [Robots](https://github.com/strands-labs/robots), the second is [Robots Sim](https://github.com/strands-labs/robots-sim) and the third is [AI Functions](https://github.com/strands-labs/ai-functions).
+
+> **Update:** Since this launch, Strands Labs has grown. **Robots Sim** has been archived - its simulation capability now ships built into [Strands Robots](https://strandsagents.com/latest/documentation/docs/labs/robots/) (a `Robot()` call returns a MuJoCo simulation by default). Strands Labs today also includes [Strands for Cosmos](https://strandsagents.com/latest/documentation/docs/labs/strands-for-cosmos/), [Benchmark Harnesses](https://strandsagents.com/latest/documentation/docs/labs/benchmark-harnesses/), [Harness Optimizer](https://strandsagents.com/latest/documentation/docs/labs/harness-optimizer/), and [PyWebRTC Audio](https://strandsagents.com/latest/documentation/docs/labs/pywebrtc-audio/). See the [Strands Labs overview](https://strandsagents.com/latest/documentation/docs/labs/) for the full, current list.
+
+1. **Robots:** With Robots, we're exploring how AI agents extend to the edge and the physical world, where they don't just process information but interact with the physical environment around us. Through a unified Strands Agents interface, physical AI agents can control diverse robots by connecting AI capabilities directly to physical sensors and hardware.
+2. **Robots Sim:** Robots Sim integrates your agentic robots with simulated 3D physics-enabled worlds, enabling rapid prototyping and algorithm development in a safe, simulated environment without requiring physical robotic hardware. It's perfect for iterating on agent strategies, testing Vision-Language-Action (VLA) model policies, and validating approaches before real-world deployment.
+3. **AI Functions:** AI Functions let developers define an agent using natural language specifications instead of code, writing pre and post conditions in Python that validate behavior and generate working implementations. This experiment is intended to narrow the trust gap when generating code with LLMs by focusing developer time on how to validate their intention, letting the framework do the rest.
+
+Let's dive into each of these below to showcase how these projects push the frontier of agentic development.
+
+## Strands Robots
+
+Agentic AI systems are rapidly expanding beyond the digital world and into the physical domain, where AI agents perceive, reason, and act in real environments. As AI systems increasingly interact with the physical world through robotics, autonomous vehicles, and smart infrastructure, a fundamental question emerges: How do we build agents that leverage massive cloud compute for complex reasoning while maintaining millisecond-level responsiveness for physical sensing and actuation?
+
+Strands Robots provides the orchestration, intelligence, and infrastructure layer, transforming individual edge devices into coordinated agentic physical AI systems. Through this project, our aim is to democratize physical AI through simple APIs, open source libraries, and managed services.
+
+Strands Robots extends the Strands Agents capability for: AI agents to control physical robots through a unified Strands Agents interface that connects AI agents to physical sensors and hardware. It also enables Rapid prototyping and algorithm development in a safe, simulated environment without requiring physical robotic hardware, which is perfect for iterating on agent strategies, testing VLA policies, and validating approaches before real-world deployment.
+
+In this lab demonstration, a [SO-101 robotic arm](https://github.com/TheRobotStudio/SO-ARM100) handles manipulation with the [NVIDIA GR00T](https://github.com/NVIDIA/Isaac-GR00T) vision-language-action model (VLA). The VLA model combines visual perception, language understanding, and action prediction in a single model. GR00T takes camera images, robot joint positions, and language instructions as input and directly outputs new target joint positions. In partnership with NVIDIA, we integrated NVIDIA GR00T with Strands Agents and demonstrated the Strands agent to run on [NVIDIA Jetson](https://www.nvidia.com/en-us/autonomous-machines/embedded-systems/) edge hardware to control the SO-101 robotic arm, showcasing how sophisticated AI capabilities can execute directly on embedded systems.
+
+We additionally integrated with [Hugging Face's LeRobot](https://github.com/huggingface/lerobot) that provides data and hardware interfaces that make working with robotics hardware accessible. By combining hardware abstractions like LeRobot with VLA models (e.g. NVIDIA GR00T), we can create edge AI applications that perceive, reason, and act in the physical world.
+
+As part of this initiative and to make this easier for builders, we've released an experimental Robot class with a simple interface for connecting hardware to VLA models such as NVIDIA GR00T. For instance, to deploy an agent on an edge device to utilize the NVIDIA GR00T VLA model in conjunction with the SO-101 robotic arm for a task such as "picking and placing an apple into a basket," the Strands Robot class can be employed as:
+
+```python
+from strands import Agent
+from strands_robots import Robot
+
+# Create robot with cameras
+robot = Robot(
+    tool_name="my_arm",
+    robot="so101_follower",
+    cameras={
+        "front": {"type": "opencv", "index_or_path": "/dev/video0", "fps": 30},
+        "wrist": {"type": "opencv", "index_or_path": "/dev/video2", "fps": 30}
+    },
+    port="/dev/ttyACM0",
+    data_config="so100_dualcam"
+)
+
+# Create agent with robot tool
+agent = Agent(tools=[robot])
+agent("place the apple in the basket")
+```
+
+The Robot class running on edge devices can delegate complex reasoning to the cloud using LLMs and other models when needed. VLA models provide millisecond-level control for physical actions, but when the system encounters situations requiring deeper reasoning -- like planning multi-step tasks or making decisions based on historical patterns -- it can consult more powerful cloud-based agents.
+
+**Get started with Strands Robots:** [Documentation](https://strandsagents.com/latest/documentation/docs/labs/robots/) - [PyPI (`strands-robots`)](https://pypi.org/project/strands-robots/) - [GitHub](https://github.com/strands-labs/robots)
+
+## Strands Robot Sim
+
+The Strands Robot Simulation provides an environment for rapid prototyping Agentic Robotics without requiring physical robotics hardware. It supports Libero benchmark environments, Isaac-GR00T VLA policy support via ZMQ, an extensible interface for VLA providers, capture simulation episodes as MP4 videos, non-blocking simulation with status monitoring, fast testing without dependencies, and GR00T inference service management. This simulation project currently supports two execution modes: full episode execution with final results and iterative control with visual feedback per batch. The modular design of Strands Robot Simulation enables developers to swap policy implementations or simulation environments without restructuring core logic. The control loop executes steps sequentially, collecting observations from cameras and joint sensors, and feeding this data to policy models that generate motor commands within fixed-size action horizons.
+
+For instance, the following example illustrates how to utilize the SimEnv class from strands_robots_sim to control simulated robots within Libero environments employing policies generated by the NVIDIA GR00T. This example assumes that Libero is installed, the GR00T inference service is operational on port 8000, and Docker with isaac-gr00t containers are accessible.
+
+```python
+import asyncio
+import argparse
+import random
+from strands import Agent
+from strands_robots_sim import SimEnv, gr00t_inference
+
+def main(max_episodes=10):
+    # Create simulation environment
+    sim_env = SimEnv(
+        tool_name="my_libero_sim",
+        env_type="libero",
+        task_suite="libero_10",
+        data_config="libero_10"
+    )
+
+    # Create agent
+    agent = Agent(tools=[sim_env, gr00t_inference])
+
+    try:
+       # Start GR00T inference
+        result = agent.tool.gr00t_inference(
+            action="start",
+            checkpoint_path="/data/checkpoints/gr00t-n1.5-libero-long-posttrain",
+            port=8000,
+            data_config="examples.Libero.custom_data_config:LiberoDataConfig"
+        )
+
+        async def init_sim_env():
+            return await sim_env.sim_env.initialize()
+
+        if not asyncio.run(init_sim_env()):
+            raise RuntimeError("Failed to initialize simulation environment")
+
+        # Randomly select a task
+        selected_task = random.choice(sim_env.sim_env.available_tasks)
+
+        # Set the task name in the environment
+        sim_env.sim_env.set_task_name(selected_task)
+
+        # Control simulated robot with natural language
+        agent(f"Run the task '{selected_task}' for {max_episodes} episode(s) with max_steps_per_episode=500 and record video")
+
+        # Check final status
+        final_status = agent.tool.my_libero_sim(action="status")
+        print(f"Final status: {final_status}")
+    except Exception as e:
+        print(f"Example failed with error: {e}")
+        print("- Install simulation dependencies: pip install strands-robots[sim]")
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description='Run Libero simulation with GR00T policy')
+    parser.add_argument('--max-episodes', type=int, default=10,
+                        help='Maximum number of episodes to run (default: 10)')
+    args = parser.parse_args()
+    main(max_episodes=args.max_episodes)
+```
+
+> **Note:** Robots Sim is now **archived**. Its simulation and iterative-control workflow have been folded into [Strands Robots](https://strandsagents.com/latest/documentation/docs/labs/robots/), where `Robot()` returns a MuJoCo simulation by default - no separate `strands-robots-sim` install is needed. The example above is retained as a historical record of the launch API.
+
+## AI Functions
+
+AI Functions introduces a new way to write code with agents where you write Python functions with natural language specifications instead of code. Using the @ai_function decorator, you define what you want a function to do through description and validation conditions. AI Functions leverages the Strands agent loop to generate the implementation, validate the output, and automatically retry if validation fails. Consider loading invoice data from files in unknown formats. Traditional approaches require determining the file format, writing transformation logic for each format, constructing prompts, parsing responses, and orchestrating retries when validation fails. This typically involves dozens of lines of code and may not account for every scenario. With AI Functions, you write a small function describing the desired output, and a validator function expressing what success looks like. The LLM determines the file format, writes the transformation code, and returns a real Python DataFrame object.
+
+```python
+from ai_functions import ai_function
+from pandas import DataFrame, api
+
+def check_invoice_dataframe(df: DataFrame):
+    """Post-condition: validate DataFrame structure."""
+    assert {'product_name', 'quantity', 'price', 'purchase_date'}.issubset(df.columns)
+    assert api.types.is_integer_dtype(df['quantity']), "quantity must be an integer"
+    assert api.types.is_float_dtype(df['price']), "price must be a float"
+    assert api.types.is_datetime64_any_dtype(df['purchase_date']), "purchase_date must be a datetime64"
+    assert not df.duplicated(subset=['product_name', 'price', 'purchase_date']).any(), "The combination of product_name, price, and purchase_date must be unique"
+
+# code execution has to be explicitly enabled
+@ai_function(
+    code_execution_mode="local",
+    code_executor_additional_imports=["pandas.*", "sqlite3", "json"],
+    post_conditions=[check_invoice_dataframe],
+)
+def import_invoice(path: str) -> DataFrame:
+    """
+    The file `{path}` contains purchase logs. Extract them in a DataFrame with columns:
+    - product_name (str)
+    - quantity (int)
+    - price (float)
+    - purchase_date (datetime)
+    """
+
+@ai_function(
+    code_execution_mode="local",
+    code_executor_additional_imports=["pandas.*"],
+)
+def fuzzy_merge_products(invoice: DataFrame) -> DataFrame:
+    """
+    Find product names that denote different versions of the same product, normalize them
+    by removing version suffixes and unifying spelling variants, update the product names
+    with the normalized names, and return a DataFrame with the same structure
+    (same columns and rows).
+    """
+
+# Load a JSON (the agent has to inspect the JSON to understand how to map it to a DataFrame)
+df = import_invoice('data/invoice.json')
+print("Invoice total:", df['price'].sum())
+
+# Load a SQLite database. The agent will dynamically check the schema and generate
+# the necessary queries to read it and convert it to the desired format)
+df = import_invoice('data/invoice.sqlite3')
+# Merge revisions of the same product
+df = fuzzy_merge_products(df)
+```
+
+**Get started with AI Functions:** [Documentation](https://strandsagents.com/latest/documentation/docs/labs/ai-functions/) - [PyPI (`strands-ai-functions`)](https://pypi.org/project/strands-ai-functions/) - [GitHub](https://github.com/strands-labs/ai-functions)
+
+As we move forward, we expect to share more projects via Strands-Labs with the Strands developer community, and we look forward to your feedback to continue to make Strands better.
+
+Dive into these new approaches to agentic AI and start experimenting today in [Strands Labs](https://github.com/strands-labs).

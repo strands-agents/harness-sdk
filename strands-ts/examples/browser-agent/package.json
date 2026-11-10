@@ -1,0 +1,25 @@
+{
+    "name": "browser-agent-example",
+    "private": true,
+    "version": "0.0.0",
+    "type": "module",
+    "scripts": {
+        "prepare": "npm ci --prefix ../../..",
+        "dev": "vite",
+        "build": "vite build",
+        "preview": "vite preview"
+    },
+    "dependencies": {
+        "@anthropic-ai/sdk": "^0.71.2",
+        "@strands-agents/sdk": "*",
+        "marked": "^17.0.3",
+        "openai": "^6.33.0"
+    },
+    "devDependencies": {
+        "typescript": "^5.5.0",
+        "vite": "^8.0.9"
+    },
+    "workspaces": [
+        "../../"
+    ]
+}

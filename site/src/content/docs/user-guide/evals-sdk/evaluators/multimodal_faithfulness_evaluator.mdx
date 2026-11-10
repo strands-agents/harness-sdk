@@ -1,0 +1,134 @@
+---
+title: Multimodal faithfulness evaluator
+description: 'Catch visual hallucinations with MultimodalFaithfulnessEvaluator, which checks agent responses for invented details not grounded in the image.'
+tags: [multimodal-evaluation, vision]
+sidebar:
+  label: "Multimodal faithfulness"
+---
+
+The `MultimodalFaithfulnessEvaluator` assesses whether an agent response is grounded in the image content, detecting hallucinations such as invented details, unsupported assumptions, external knowledge, and speculation.
+
+## Key features
+
+- **Output-Level Evaluation**: Scores a single agent response per case
+- **Binary Scoring**: `1.0` if fully grounded, `0.0` if any hallucination is found
+- **Automatic Reference Comparison**: Appends a reference suffix to the rubric when `expected_output` is provided on the case
+- **Hallucination Detection**: Designed to catch invented details, unsupported assumptions, and speculation
+
+## When to use
+
+Use the `MultimodalFaithfulnessEvaluator` when you need to:
+
+- Detect hallucinations in image captions or VQA answers
+- Verify that a response only states what is verifiable from the image
+- Screen for inferred-but-unseen details (emotions, off-screen events, brand names, locations)
+- Complement correctness checks with a groundedness check
+
+## Evaluation level
+
+This evaluator operates at the **OUTPUT_LEVEL**, scoring a single agent response per case.
+
+## Parameters
+
+### `rubric` (optional)
+- **Type**: `str | None`
+- **Default**: `FAITHFULNESS_RUBRIC_V0`
+- **Description**: Custom rubric. Leave unset to use the default rubric.
+
+### `model` (optional)
+- **Type**: `Model | str | None`
+- **Default**: `None` (uses default Bedrock model)
+- **Description**: Multimodal judge model.
+
+### `include_inputs` (optional)
+- **Type**: `bool`
+- **Default**: `True`
+
+### `system_prompt` (optional)
+- **Type**: `str | None`
+- **Default**: `None` (uses the built-in `MLLM_JUDGE_SYSTEM_PROMPT`)
+
+### `reference_suffix` (optional)
+- **Type**: `str | None`
+- **Default**: `None` (uses the built-in default suffix)
+
+### `uses_environment_state` (optional)
+- **Type**: `bool`
+- **Default**: `False`
+- **Description**: Whether to include environment state in the evaluation prompt, enabling assessment of agent side effects alongside the output.
+
+## Scoring system
+
+| Score | Label | Meaning |
+|-------|-------|---------|
+| 1.0 | Faithful | Response only contains information verifiable from the image |
+| 0.0 | Unfaithful | Response contains one or more hallucinations |
+
+A response passes only if the score is `1.0`.
+
+## Basic usage
+
+```python
+import asyncio
+
+from strands_evals import Case, Experiment
+from strands_evals.evaluators import MultimodalFaithfulnessEvaluator
+from strands_evals.types import MultimodalInput
+from strands_evals.types.evaluation_report import EvaluationReport
+
+
+def task_function(case: Case) -> str:
+    # Replace with your multimodal agent invocation.
+    return "A family is having a picnic in Central Park."
+
+
+cases = [
+    Case(
+        name="park-scene",
+        input=MultimodalInput(
+            media="/path/to/picnic.jpg",
+            instruction="Describe what is happening in the image.",
+        ),
+    ),
+]
+
+experiment = Experiment(cases=cases, evaluators=[MultimodalFaithfulnessEvaluator()])
+
+async def main():
+    report = await experiment.run_evaluations_async(task_function)
+    report.run_display()
+
+asyncio.run(main())
+```
+
+## Combining with other evaluators
+
+Pair with correctness to distinguish "wrong" from "ungrounded". `Experiment.run_evaluations` returns one combined report across all evaluators. Each row in `report.cases` carries an `evaluator` key naming the producing evaluator:
+
+```python
+from strands_evals import Experiment
+from strands_evals.evaluators import (
+    MultimodalCorrectnessEvaluator,
+    MultimodalFaithfulnessEvaluator,
+)
+from strands_evals.types.evaluation_report import EvaluationReport
+
+evaluators = [
+    MultimodalCorrectnessEvaluator(),   # Are the claims factually right?
+    MultimodalFaithfulnessEvaluator(),  # Are they supported by the image?
+]
+
+experiment = Experiment(cases=cases, evaluators=evaluators)
+
+async def main():
+    report = await experiment.run_evaluations_async(task_function)
+    report.run_display()
+
+asyncio.run(main())
+```
+
+## Related evaluators
+
+- [**MultimodalOutputEvaluator**](multimodal_output_evaluator.md): Parent class with full parameter reference
+- [**MultimodalCorrectnessEvaluator**](multimodal_correctness_evaluator.md): Strict factual correctness
+- [**FaithfulnessEvaluator**](faithfulness_evaluator.md): Text-only counterpart grounded in conversation history

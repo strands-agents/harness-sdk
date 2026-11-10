@@ -1,0 +1,67 @@
+---
+import BlogLayout from '../../layouts/BlogLayout.astro'
+import BlogFeaturedPost from '../../components/blog/BlogFeaturedPost.astro'
+import BlogPostGrid from '../../components/blog/BlogPostGrid.astro'
+import { getPublishedPosts, resolveAuthors } from '../../util/blog'
+
+const posts = await getPublishedPosts()
+
+const [featuredPost, ...remainingPosts] = posts
+const featuredAuthors = featuredPost ? await resolveAuthors(featuredPost.data.authors) : []
+---
+
+<BlogLayout title="Blog" description="News and updates from the Strands Agents team.">
+  <div class="blog-index">
+    <header class="blog-index-header">
+      <h1>Blog</h1>
+      <p>News and updates from the Strands Agents team.</p>
+    </header>
+
+    {/* Each post has its own indexed page; keep the listing out of the index so
+        search results point at the post, not this aggregate page. */}
+    <div data-pagefind-ignore>
+      {featuredPost && (
+        <BlogFeaturedPost post={featuredPost} authors={featuredAuthors} />
+      )}
+
+      {remainingPosts.length > 0 && (
+        <BlogPostGrid posts={remainingPosts} />
+      )}
+    </div>
+  </div>
+</BlogLayout>
+
+<style>
+  .blog-index {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 2rem 1.5rem 4rem;
+  }
+
+  /* The content panel already pads the page on phones. */
+  @media (max-width: 49.9375rem) {
+    .blog-index {
+      padding-inline: 0;
+    }
+  }
+
+  .blog-index-header {
+    margin-bottom: 2rem;
+  }
+
+  .blog-index-header h1 {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: clamp(2rem, 5vw, 3rem);
+    font-weight: 700;
+    color: var(--sl-color-white);
+    margin: 0 0 0.5rem;
+  }
+
+  .blog-index-header p {
+    font-family: var(--sl-font);
+    font-size: 1.125rem;
+    color: var(--sl-color-gray-2);
+    margin: 0;
+  }
+
+</style>

@@ -1,0 +1,453 @@
+---
+import ChangelogLayout from '../../layouts/ChangelogLayout.astro'
+import ChangelogHeader from '../../components/changelog/ChangelogHeader.astro'
+import ChangelogFilters from '../../components/changelog/ChangelogFilters.astro'
+import ChangelogVersion from '../../components/changelog/ChangelogVersion.astro'
+import { getReleases, getAreaCounts } from '../../util/changelog'
+import '../../styles/changelog.css'
+
+const releases = await getReleases()
+const allEntries = releases.flatMap((r) => r.data.entries)
+// Area facet from the curated `areas` field (canonical area-* taxonomy).
+// Counts shown on chips are recomputed client-side per active SDK+language.
+const areaCounts = getAreaCounts(allEntries)
+---
+<ChangelogLayout title="Changelog" description="Every release across Strands Agents products.">
+  <div class="cl-page">
+    <ChangelogHeader />
+    <div class="cl-mobile-bar" data-pagefind-ignore>
+      <button class="cl-filter-btn" type="button" data-cl-filter-open aria-expanded="false">
+        ☰ Filters <span class="cl-badge" data-cl-active-count hidden>0</span>
+      </button>
+      <span class="cl-note" data-cl-count>{releases.length} releases</span>
+    </div>
+    {/* Each release has its own indexed page; keep the feed out of the index so
+        search results point at the release, not this aggregate page. */}
+    <div class="cl-body" data-pagefind-ignore>
+      <ChangelogFilters areas={areaCounts} />
+      <div class="cl-feed">
+        <p class="cl-sr-status" role="status" aria-live="polite" data-cl-sr-status></p>
+        <div class="cl-feed-inner">
+          <ol class="cl-feed-list" role="list">
+            {releases.map((release) => (
+              <li class="cl-version-item"><ChangelogVersion release={release} /></li>
+            ))}
+          </ol>
+          <p class="cl-empty" data-cl-empty hidden>No releases match the current filters.</p>
+          <div class="cl-novel" data-cl-ts-evals hidden>
+            <div class="cl-novel-emoji">🛸</div>
+            <h2 class="cl-novel-title">Evals hasn't learned TypeScript… yet.</h2>
+            <p class="cl-novel-body">
+              Strands Evals is currently Python-only. Our TypeScript support is still
+              somewhere in the backlog, sipping espresso and refusing to compile.
+            </p>
+            <p class="cl-novel-body">
+              Want to nudge it along? Tell us you'd use it — the more
+              <code>+1</code>s, the sooner it ships.
+            </p>
+            <div class="cl-novel-actions">
+              <a
+                class="cl-novel-btn"
+                href="https://github.com/strands-agents/evals/issues/new?title=Feature%20request%3A%20TypeScript%20support%20for%20Strands%20Evals&body=I%27d%20like%20to%20use%20Strands%20Evals%20from%20TypeScript."
+                target="_blank"
+                rel="noopener"
+              >Request TypeScript support <span aria-hidden="true">↗</span></a>
+              <button class="cl-novel-link" type="button" data-cl-switch-python>
+                …or show me the Python releases
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</ChangelogLayout>
+
+<script>
+  // Client-side faceted filtering. State: SDK (toggle), language (global pref), areas (chips), search.
+  // This is a processed (bundled) script, so importing shared config works —
+  // no hand-maintained mirror of SDK metadata.
+  import { SDK_META, hasLanguageStreams, type Sdk } from '../../config/changelog'
+  import { LANGUAGE_STORAGE_KEY, DEFAULT_LANGUAGE_LABEL } from '../../util/language-preference'
+
+  const LANG_KEY = LANGUAGE_STORAGE_KEY // shared with the global LanguageToggle
+  const SDK_LANGS: Record<string, readonly string[]> = Object.fromEntries(
+    Object.entries(SDK_META).map(([sdk, meta]) => [sdk, meta.languages])
+  )
+  const isKnownSdk = (s: string) => Object.hasOwn(SDK_LANGS, s)
+
+  const root = document
+  const versions = Array.from(root.querySelectorAll<HTMLElement>('.cl-version'))
+  const sdkBtns = Array.from(root.querySelectorAll<HTMLElement>('[data-cl-sdk-btn]'))
+  const langBtns = Array.from(root.querySelectorAll<HTMLElement>('[data-cl-lang-btn]'))
+  const langRow = root.querySelector<HTMLElement>('[data-cl-lang]')?.closest<HTMLElement>('.cl-control-row')
+  const areaBtns = Array.from(root.querySelectorAll<HTMLElement>('[data-cl-area]'))
+  const searchInput = root.querySelector<HTMLInputElement>('[data-cl-search]')
+  const emptyEl = root.querySelector<HTMLElement>('[data-cl-empty]')
+  const tsEvalsEl = root.querySelector<HTMLElement>('[data-cl-ts-evals]')
+  const countEl = root.querySelector<HTMLElement>('[data-cl-count]')
+  const srStatusEl = root.querySelector<HTMLElement>('[data-cl-sr-status]')
+  const activeCountEl = root.querySelector<HTMLElement>('[data-cl-active-count]')
+
+  const params = new URLSearchParams(location.search)
+  // Validate the URL-provided sdk with an own-property check — `in` would pass
+  // prototype-chain keys like ?sdk=toString and crash every lookup below.
+  const urlSdk = params.get('sdk') || ''
+  const state = {
+    sdk: isKnownSdk(urlSdk) ? urlSdk : 'sdk',
+    areas: new Set((params.get('area') || '').split(',').filter(Boolean)),
+    search: params.get('q') || '',
+  }
+
+  // Site-wide default (DEFAULT_LANGUAGE_LABEL) and key are shared via util/language-preference.
+  function globalLang(): string {
+    try { return localStorage.getItem(LANG_KEY) || DEFAULT_LANGUAGE_LABEL } catch { return DEFAULT_LANGUAGE_LABEL }
+  }
+  function langSlug(): string { return globalLang() === 'TypeScript' ? 'typescript' : 'python' }
+
+  // Set the global language preference (slug form) and notify the whole site,
+  // keeping the header LanguageToggle and our local toggle in sync.
+  function setLang(slug: string) {
+    const label = slug === 'typescript' ? 'TypeScript' : 'Python'
+    try { localStorage.setItem(LANG_KEY, label) } catch {}
+    window.dispatchEvent(new CustomEvent('lang-preference-changed', { detail: { lang: label } }))
+  }
+
+  // The language the user is asking for (global pref), unconstrained by SDK.
+  function requestedLang(): string { return langSlug() }
+  // Whether the current SDK actually ships the requested language.
+  function sdkHasRequestedLang(): boolean {
+    return SDK_LANGS[state.sdk].includes(requestedLang())
+  }
+  // The language whose versions we display. For harness this is the requested
+  // language; for evals (python-only) it's always python.
+  function effectiveLang(): string {
+    const allowed = SDK_LANGS[state.sdk]
+    const pref = requestedLang()
+    return allowed.includes(pref) ? pref : allowed[0]
+  }
+
+  // Does a version belong to the current SDK + effective language view?
+  function inCurrentStream(v: HTMLElement, lang: string): boolean {
+    if (v.dataset.sdk !== state.sdk) return false
+    if (hasLanguageStreams(state.sdk as Sdk)) return v.dataset.language === lang
+    return true
+  }
+
+  // An entry's areas: the curated `areas` field only (canonical taxonomy from
+  // area-* labels / the backfill classifier). Raw conventional-commit scopes
+  // are deliberately NOT folded in — they're an unbounded vocabulary (`tests`,
+  // `readme`, `gemini`, …) that polluted the filter sidebar. Mirrors
+  // getAreaCounts in util/changelog.ts.
+  function entryAreas(e: HTMLElement): Set<string> {
+    return new Set((e.dataset.areas || '').split(' ').filter(Boolean))
+  }
+
+  // Recompute area chip counts + visibility from the versions in the current
+  // SDK+language stream (independent of which areas are selected).
+  function refreshAreaChips(lang: string) {
+    const counts = new Map<string, number>()
+    for (const v of versions) {
+      if (!inCurrentStream(v, lang)) continue
+      const seen = new Set<string>()
+      v.querySelectorAll<HTMLElement>('.cl-entry').forEach((e) => {
+        for (const a of entryAreas(e)) seen.add(a)
+      })
+      for (const a of seen) counts.set(a, (counts.get(a) ?? 0) + 1)
+    }
+    for (const btn of areaBtns) {
+      const area = btn.dataset.clArea!
+      const n = counts.get(area) ?? 0
+      const cE = btn.querySelector<HTMLElement>('.cl-count')
+      if (cE) cE.textContent = String(n)
+      // Hide chips with no releases in this stream; deselect them too. Hide the
+      // wrapping <li> so the flex gap collapses with the chip.
+      ;(btn.closest('li') || btn).hidden = n === 0
+      if (n === 0 && state.areas.has(area)) {
+        state.areas.delete(area)
+        btn.setAttribute('aria-pressed', 'false')
+      }
+    }
+  }
+
+  function syncUrl() {
+    const p = new URLSearchParams()
+    if (state.sdk !== 'sdk') p.set('sdk', state.sdk)
+    if (state.areas.size) p.set('area', [...state.areas].join(','))
+    if (state.search) p.set('q', state.search)
+    const qs = p.toString()
+    // Preserve the hash — apply() runs on initial load, and rebuilding the URL
+    // without location.hash would strip a deep-link anchor before we scroll.
+    history.replaceState(null, '', (qs ? `?${qs}` : location.pathname) + location.hash)
+  }
+
+  function apply() {
+    const lang = effectiveLang()
+    // Special case: user asked for TypeScript but Evals is Python-only.
+    const tsEvals = state.sdk === 'evals' && !sdkHasRequestedLang()
+    if (tsEvalsEl) tsEvalsEl.hidden = !tsEvals
+
+    // Sync the local language toggle: only show languages this SDK ships,
+    // and mark the effective one as pressed.
+    const sdkLangs = SDK_LANGS[state.sdk]
+    if (langRow) langRow.hidden = sdkLangs.length === 0
+    for (const btn of langBtns) {
+      const l = btn.dataset.clLangBtn!
+      btn.hidden = !sdkLangs.includes(l)
+      btn.setAttribute('aria-pressed', l === lang ? 'true' : 'false')
+    }
+
+    refreshAreaChips(lang)
+
+    const q = state.search.trim().toLowerCase()
+    const hasEntryFilter = state.areas.size > 0 || q.length > 0
+    let visible = 0
+    let latestMarked = false // versions are pre-sorted newest-first per stream
+    for (const v of versions) {
+      if (tsEvals) { v.hidden = true; continue }
+      const vSdk = v.dataset.sdk
+      const vLang = v.dataset.language
+      // Version-level gate: product, and (for per-language products) one language at a time.
+      let show = vSdk === state.sdk
+      if (show && hasLanguageStreams(state.sdk as Sdk)) show = vLang === lang
+      // "Latest" badge: the newest version in the current stream, so filtering
+      // or scrolling can't make you mistake an older release for the newest.
+      // Independent of area/search — it marks the stream's true latest.
+      const latestBadge = v.querySelector<HTMLElement>('[data-cl-latest]')
+      if (latestBadge) {
+        const isLatest = show && !latestMarked
+        latestBadge.hidden = !isLatest
+        if (isLatest) latestMarked = true
+      }
+      // Per-entry filtering by area + search; a version survives only if it
+      // still has at least one visible entry when entry-level filters are active.
+      const entries = Array.from(v.querySelectorAll<HTMLElement>('.cl-entry'))
+      let anyEntryVisible = false
+      for (const e of entries) {
+        let entryShow = true
+        if (state.areas.size) {
+          const ea = entryAreas(e)
+          entryShow = [...state.areas].some((a) => ea.has(a))
+        }
+        if (entryShow && q) {
+          // Search the entry's title + author only (precomputed), not structural
+          // text like commit SHAs or PR numbers.
+          entryShow = (e.dataset.search || '').includes(q)
+        }
+        e.hidden = !entryShow
+        if (entryShow) anyEntryVisible = true
+      }
+      if (show && hasEntryFilter) show = anyEntryVisible
+      // Overflow expanders: hide when all their entries are filtered out (no
+      // misleading "Show N more"), and auto-open when a filter is active and
+      // a match is inside — otherwise matches hide behind a closed expander
+      // and look like missing results. Collapse again when filters clear.
+      v.querySelectorAll<HTMLElement>('details.cl-more').forEach((det) => {
+        const any = Array.from(det.querySelectorAll<HTMLElement>('.cl-entry')).some((e) => !e.hidden)
+        det.hidden = !any
+        ;(det as HTMLDetailsElement).open = hasEntryFilter && any
+      })
+      // Hide group headers whose following entries are all hidden. Entries
+      // inside the standalone "Other" expander belong to no header — exclude
+      // them so they can't keep the Fixes header alive on their own.
+      const children = Array.from(v.querySelectorAll<HTMLElement>('.cl-group, .cl-entry'))
+      let currentGroup: HTMLElement | null = null
+      let groupHasVisible = false
+      const flush = () => { if (currentGroup) currentGroup.hidden = !groupHasVisible }
+      for (const child of children) {
+        if (child.classList.contains('cl-group')) {
+          flush()
+          currentGroup = child
+          groupHasVisible = false
+        } else if (!child.hidden && !child.closest('details.cl-other')) {
+          groupHasVisible = true
+        }
+      }
+      flush()
+      v.hidden = !show
+      if (show) visible++
+    }
+    // Generic empty state only when not showing the witty TS/Evals panel.
+    if (emptyEl) emptyEl.hidden = tsEvals || visible > 0
+    const countText = tsEvals
+      ? 'Python only'
+      : `${visible} release${visible === 1 ? '' : 's'}`
+    if (countEl) countEl.textContent = countText
+    // Announce result changes to assistive tech (always-rendered live region,
+    // unlike the count which is hidden on desktop). Skip on first paint.
+    if (srStatusEl) {
+      const msg = tsEvals
+        ? 'Evals has no TypeScript releases.'
+        : `${countText} match the current filters.`
+      if (srStatusEl.dataset.ready) srStatusEl.textContent = msg
+      srStatusEl.dataset.ready = '1'
+    }
+    if (activeCountEl) {
+      activeCountEl.textContent = String(state.areas.size)
+      activeCountEl.hidden = state.areas.size === 0
+    }
+    syncUrl()
+    // Re-pick the rail highlight — the current version may just have been hidden.
+    refreshSpy()
+  }
+
+  // SDK toggle
+  sdkBtns.forEach((btn) => {
+    btn.setAttribute('aria-pressed', btn.dataset.clSdkBtn === state.sdk ? 'true' : 'false')
+    btn.addEventListener('click', () => {
+      state.sdk = btn.dataset.clSdkBtn!
+      sdkBtns.forEach((b) => b.setAttribute('aria-pressed', b === btn ? 'true' : 'false'))
+      // Selecting an SDK that doesn't ship the current language: flip to one it
+      // does (e.g. Evals → Python), so users never land on the dead-end panel.
+      if (!SDK_LANGS[state.sdk].includes(langSlug())) {
+        setLang(SDK_LANGS[state.sdk][0])
+      }
+      apply()
+    })
+  })
+
+  // Local language toggle (mirrors the global header switcher)
+  langBtns.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      setLang(btn.dataset.clLangBtn!)
+      apply()
+    })
+  })
+
+  // Area chips
+  areaBtns.forEach((btn) => {
+    const area = btn.dataset.clArea!
+    btn.setAttribute('aria-pressed', state.areas.has(area) ? 'true' : 'false')
+    btn.addEventListener('click', () => {
+      if (state.areas.has(area)) state.areas.delete(area)
+      else state.areas.add(area)
+      btn.setAttribute('aria-pressed', state.areas.has(area) ? 'true' : 'false')
+      apply()
+    })
+  })
+
+  // Search
+  searchInput?.addEventListener('input', () => { state.search = searchInput.value; apply() })
+  if (searchInput && state.search) searchInput.value = state.search
+
+  // React to global language switch: same tab (custom event) + other tabs (storage).
+  window.addEventListener('lang-preference-changed', () => apply())
+  window.addEventListener('storage', (e) => { if (e.key === LANG_KEY) apply() })
+
+  // "…show me the Python releases" escape hatch on the TS/Evals panel:
+  // flip the global preference to Python and notify the rest of the site.
+  root.querySelector('[data-cl-switch-python]')?.addEventListener('click', () => {
+    try { localStorage.setItem(LANG_KEY, 'Python') } catch {}
+    window.dispatchEvent(new CustomEvent('lang-preference-changed', { detail: { lang: 'Python' } }))
+    apply()
+  })
+
+  // Mobile drawer
+  const rail = root.querySelector<HTMLElement>('[data-cl-rail]')
+  const scrim = root.querySelector<HTMLElement>('[data-cl-scrim]')
+  const filterOpen = root.querySelector<HTMLButtonElement>('[data-cl-filter-open]')
+  const railClose = root.querySelector<HTMLButtonElement>('[data-cl-filter-close]')
+  function setDrawer(open: boolean) {
+    rail?.toggleAttribute('data-open', open); scrim?.toggleAttribute('data-open', open)
+    filterOpen?.setAttribute('aria-expanded', String(open))
+    if (open) railClose?.focus()
+    else if (rail?.contains(document.activeElement)) filterOpen?.focus()
+  }
+  filterOpen?.addEventListener('click', () => setDrawer(true))
+  railClose?.addEventListener('click', () => setDrawer(false))
+  scrim?.addEventListener('click', () => setDrawer(false))
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && rail?.hasAttribute('data-open')) setDrawer(false)
+  })
+
+  // Scroll-spy: light up the timeline rail of the version currently in the
+  // top band of the viewport. Observer callbacks only report elements whose
+  // intersection CHANGED, so track the full intersecting set across calls and
+  // recompute the topmost — otherwise the highlight latches onto a version
+  // that left the band while an earlier-entered one was still inside.
+  let currentSpy: HTMLElement | null = null
+  const inBand = new Set<HTMLElement>()
+  function refreshSpy() {
+    let next: HTMLElement | null = null
+    let bestTop = Infinity
+    for (const v of inBand) {
+      if (v.hidden) continue
+      const top = v.getBoundingClientRect().top
+      if (top < bestTop) { bestTop = top; next = v }
+    }
+    if (next !== currentSpy) {
+      currentSpy?.classList.remove('cl-current')
+      next?.classList.add('cl-current')
+      currentSpy = next
+    }
+  }
+  const spy = new IntersectionObserver(
+    (records) => {
+      for (const r of records) {
+        if (r.isIntersecting) inBand.add(r.target as HTMLElement)
+        else inBand.delete(r.target as HTMLElement)
+      }
+      refreshSpy()
+    },
+    // A narrow band near the top of the viewport decides the "current" version.
+    { rootMargin: '-10% 0px -70% 0px' }
+  )
+  versions.forEach((v) => spy.observe(v))
+
+  // Malformed hashes (e.g. '#%E0') make decodeURIComponent throw — a bad deep
+  // link must not abort the whole script before the initial apply().
+  function safeHashId(): string {
+    try { return decodeURIComponent(location.hash.slice(1)) } catch { return '' }
+  }
+
+  // Deep links: if the URL anchors a version that the current filter state
+  // hides (wrong SDK/language selected), switch filters so it's visible,
+  // then scroll. Runs before the initial apply() so there's no flash.
+  function honorAnchor() {
+    const id = safeHashId()
+    if (!id) return false
+    const target = root.getElementById(id)
+    if (!target || !target.classList.contains('cl-version')) return false
+    const tSdk = target.dataset.sdk
+    const tLang = target.dataset.language
+    if (tSdk && tSdk !== state.sdk && isKnownSdk(tSdk)) {
+      state.sdk = tSdk
+      sdkBtns.forEach((b) => b.setAttribute('aria-pressed', b.dataset.clSdkBtn === tSdk ? 'true' : 'false'))
+    }
+    if (tSdk === 'sdk' && tLang && tLang !== effectiveLang()) {
+      setLang(tLang)
+    }
+    return true
+  }
+
+  // Scroll to the hash target reliably under content-visibility: versions
+  // above the target only have ESTIMATED heights until rendered, so a single
+  // immediate scrollIntoView lands short. Force real layout on everything up
+  // to the target first, scroll, then re-correct once more after the engine
+  // settles, and release the layout override.
+  function scrollToAnchor() {
+    const id = safeHashId()
+    const target = id ? root.getElementById(id) : null
+    if (!target) return
+    const upTo: HTMLElement[] = []
+    for (const v of versions) {
+      if (!v.hidden) upTo.push(v)
+      if (v === target) break
+    }
+    upTo.forEach((v) => (v.style.contentVisibility = 'visible'))
+    target.scrollIntoView()
+    // Second pass after layout/paint settles catches any residual drift,
+    // then restore content-visibility for normal scrolling perf.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        target.scrollIntoView()
+        upTo.forEach((v) => (v.style.contentVisibility = ''))
+      })
+    })
+  }
+
+  const hadAnchor = honorAnchor()
+  apply()
+  if (hadAnchor) scrollToAnchor()
+  window.addEventListener('hashchange', () => { if (honorAnchor()) { apply(); scrollToAnchor() } })
+</script>

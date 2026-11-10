@@ -1,0 +1,10 @@
+{
+  "type": "module",
+  "name": "test-package",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Test package to verify SDK works without bundler",
+  "dependencies": {
+    "@strands-agents/sdk": "file:../../.."
+  }
+}

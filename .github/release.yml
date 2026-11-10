@@ -1,0 +1,14 @@
+changelog:
+  exclude:
+    labels:
+      - dependencies
+  categories:
+    - title: Python SDK
+      labels:
+        - python
+    - title: TypeScript SDK
+      labels:
+        - typescript
+    - title: Other Changes
+      labels:
+        - "*"

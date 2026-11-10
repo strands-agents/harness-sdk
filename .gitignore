@@ -1,17 +1,86 @@
-.DS_Store
-build
+# Dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Test lock files
+**/test/packages/**/package-lock.json
+
+# Build outputs
+dist/
+build/
+*.tsbuildinfo
+target/
+
+# Python
+__pycache__/
 __pycache__*
-.coverage*
+.pycache/
+.pytest_cache/
+.ruff_cache/
+.venv/
+*.egg-info/
+*.pyd
+*.so
+*.dylib
+*.pdb
+
+# Coverage reports
+coverage/
+
+# IDE files
+.claude/*
+!.claude/skills
+!.claude/references
+.kiro/*
+!.kiro/skills
+!.kiro/references
+.vscode/
+.idea/
+*.swp
+*.swo
+.gradle/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Environment files
 .env
-.venv
-.mypy_cache
-.pytest_cache
-.ruff_cache
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Github workflow artifacts
+.artifact
+
+# Test artifacts
+**/test/.artifacts
+
+# Misc
 *.bak
-.vscode
-dist
-repl_state
-.kiro
-uv.lock
-.audio_cache
-CLAUDE.md
+*.backup
+**/mutants.out*/
+bin/
+# strands-cli ships a tracked bin entrypoint; keep it out of the bin/ rule above.
+!strands-cli/bin/
+
+# LLM
+.claude/settings.local.json
+
+# dev
+.vitest*
+.local/
+
+.superpowers/
+site/docs/superpowers/
+.agent
+
+# Copied from shared/model-info.json by each SDK's build (strands-ts prepare/prebuild, strands-py hatch_build.py)
+strands-ts/src/models/model-info.json
+strands-py/src/strands/models/model_info.json

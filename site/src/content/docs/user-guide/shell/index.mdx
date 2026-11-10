@@ -1,0 +1,96 @@
+---
+title: Strands Shell
+description: Strands Shell is an in-process shell sandbox that gives agents a fast, isolated command line with filesystem, network, and credential mediation built in.
+sidebar:
+  label: "Overview"
+---
+
+import { CardGrid, LinkCard } from '@astrojs/starlight/components'
+
+Agents run shell commands in tight loops: install dependencies, run tests, grep for
+errors, iterate. Those loops need to be fast, and they need to be contained. An agent
+that can run `curl` can also read your cloud credentials, reach your internal network,
+and overwrite files you didn't intend to expose.
+
+Strands Shell is a Bourne-compatible shell that runs inside your own process. It ships
+`grep`, `sed`, `jq`, `curl`, `find`, and dozens of other commands without calling
+`fork`, `exec`, or a raw syscall. You declare which host files, internal URLs, and
+credentials the shell can reach, and everything else doesn't exist to the agent. It runs
+from Python, Node.js, or a built-in MCP server. The source is on
+[GitHub](https://github.com/strands-agents/shell).
+
+<CardGrid>
+  <LinkCard
+    title="Quickstart"
+    href="quickstart/"
+    description="Install the shell and run your first sandboxed command."
+  />
+  <LinkCard
+    title="How it works"
+    href="how-it-works/"
+    description="Why the shell isolates at the process, and how the Kernel boundary fits together."
+  />
+  <LinkCard
+    title="Configure the sandbox"
+    href="configuration/"
+    description="Bind directories, inject credentials, and set the network allowlist."
+  />
+  <LinkCard
+    title="Run the MCP server"
+    href="mcp-server/"
+    description="Expose the shell to any MCP-compatible agent framework."
+  />
+  <LinkCard
+    title="Security model"
+    href="security/"
+    description="The Kernel boundary, the SSRF guard, and credential handling."
+  />
+  <LinkCard
+    title="Reference"
+    href="reference/"
+    description="The CLI, the API, the command inventory, and the TOML schema in one place."
+  />
+</CardGrid>
+
+## Run a command
+
+Create a shell, bind a directory into it, and run a command. Only bound directories are
+visible inside the sandbox, so `/my/project` on your host appears as `/workspace` and
+the agent can't see anything else.
+
+<Tabs>
+  <Tab label="Python">
+    ```python
+    import strands_shell
+
+    shell = strands_shell.Shell(
+        binds=[strands_shell.Bind("/my/project", "/workspace", mode="copy")],
+    )
+
+    result = shell.run("grep -rn TODO /workspace")
+    print(result.stdout)
+    ```
+  </Tab>
+  <Tab label="TypeScript">
+    ```typescript
+    import { Shell } from '@strands-agents/shell'
+
+    const shell = await Shell.create({
+      binds: [{ source: '/my/project', destination: '/workspace', mode: 'copy' }],
+    })
+
+    const result = await shell.run('grep -rn TODO /workspace')
+    console.log(result.stdout)
+    ```
+  </Tab>
+</Tabs>
+
+## Where to go next
+
+New to Strands Shell? Start with the [quickstart](quickstart/), which runs the same
+command through all three surfaces, then [configure the sandbox](configuration/) to
+grant the binds, credentials, and network access your agent needs. To understand the
+tradeoff the shell makes and where its boundary holds, read [how it works](how-it-works/)
+and the [security model](security/). When you need to look something up, the
+[reference](reference/) collects the CLI, the API, the command inventory, and the TOML
+schema in one place.

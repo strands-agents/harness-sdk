@@ -1,0 +1,295 @@
+---
+title: Evaluating remote traces
+description: 'Evaluate production agent traces without re-running them: fetch execution data from CloudWatch, Langfuse, or OpenSearch with trace providers.'
+tags: [observability]
+---
+
+Trace providers fetch agent execution data from observability backends and convert it into the format the evaluation pipeline expects. This lets you run evaluators against traces from production or staging agents without re-running them.
+
+## Available providers
+
+| Provider | Backend | Auth |
+|----------|---------|------|
+| `CloudWatchProvider` | AWS CloudWatch Logs (Bedrock AgentCore runtime logs) | AWS credentials (boto3) |
+| `LangfuseProvider` | Langfuse | API keys |
+| `OpenSearchProvider` | OpenSearch (self-hosted or Amazon OpenSearch Service) | Basic auth or SigV4 |
+
+## Installation
+
+The CloudWatch provider works out of the box since `boto3` is a core dependency:
+
+```bash
+pip install strands-agents-evals
+```
+
+For the Langfuse provider, install the optional `langfuse` extra:
+
+```bash
+pip install strands-agents-evals[langfuse]
+```
+
+For the OpenSearch provider, install the optional `opensearch` extra:
+
+```bash
+pip install strands-agents-evals[opensearch]
+```
+
+## CloudWatch provider
+
+The `CloudWatchProvider` queries CloudWatch Logs Insights to retrieve OpenTelemetry log records from Bedrock AgentCore runtime log groups.
+
+### Setup
+
+```python
+from strands_evals.providers import CloudWatchProvider
+
+# Option 1: Provide the log group directly
+provider = CloudWatchProvider(
+    log_group="/aws/bedrock-agentcore/runtimes/my-agent-abc123-DEFAULT",
+    region="us-east-1",
+)
+
+# Option 2: Discover the log group from the agent name
+provider = CloudWatchProvider(agent_name="my-agent", region="us-east-1")
+```
+
+You must provide either `log_group` or `agent_name`. When using `agent_name`, the provider calls `describe_log_groups` to find the runtime log group automatically.
+
+The `region` parameter falls back to the `AWS_REGION` environment variable, then `AWS_DEFAULT_REGION`, then `us-east-1`.
+
+### Configuration
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `region` | `AWS_REGION` env var | AWS region for the CloudWatch client |
+| `log_group` | `None` | Full CloudWatch log group path |
+| `agent_name` | `None` | Agent name used to discover the log group |
+| `lookback_days` | `30` | How many days back to search for traces |
+| `query_timeout_seconds` | `60.0` | Maximum seconds to wait for a Logs Insights query |
+
+## Langfuse provider
+
+The `LangfuseProvider` fetches traces and observations via the Langfuse Python SDK, converting them to typed spans for evaluation.
+
+### Setup
+
+```python
+from strands_evals.providers import LangfuseProvider
+
+# Reads LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY from env by default
+provider = LangfuseProvider()
+
+# Or pass credentials explicitly
+provider = LangfuseProvider(
+    public_key="pk-...",
+    secret_key="sk-...",
+    host="https://us.cloud.langfuse.com",
+)
+```
+
+### Configuration
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `public_key` | `LANGFUSE_PUBLIC_KEY` env var | Langfuse public API key |
+| `secret_key` | `LANGFUSE_SECRET_KEY` env var | Langfuse secret API key |
+| `host` | `LANGFUSE_HOST` env var or `https://us.cloud.langfuse.com` | Langfuse API host URL |
+| `timeout` | `120` | Request timeout in seconds |
+
+## OpenSearch provider
+
+The `OpenSearchProvider` retrieves agent traces from OpenSearch using [opensearch-genai-observability-sdk-py](https://github.com/opensearch-project/genai-observability-sdk-py). It works with both self-hosted OpenSearch clusters and Amazon OpenSearch Service.
+
+### Setup
+
+```python
+from strands_evals.providers import OpenSearchProvider
+
+# Basic auth (self-hosted)
+provider = OpenSearchProvider(
+    host="https://localhost:9200",
+    auth=("admin", "password"),
+    verify_certs=False,
+)
+
+# SigV4 auth (Amazon OpenSearch Service)
+from opensearchpy import RequestsAWSV4SignerAuth
+import boto3
+
+credentials = boto3.Session().get_credentials()
+auth = RequestsAWSV4SignerAuth(credentials, "us-east-1", "es")
+provider = OpenSearchProvider(
+    host="https://my-domain.us-east-1.es.amazonaws.com",
+    auth=auth,
+)
+```
+
+:::note[Sending traces to OpenSearch]
+[OpenSearch](https://opensearch.org/) can store and visualize OpenTelemetry traces sent via OTLP. For setup instructions covering self-managed and managed deployments, see the [OpenSearch Observability: Send Data](https://observability.opensearch.org/docs/send-data/) guide or jump straight to [Ingest Your First Traces](https://observability.opensearch.org/docs/get-started/quickstart/first-traces/).
+:::
+
+### Configuration
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `host` | `https://localhost:9200` | OpenSearch endpoint URL |
+| `index` | `otel-v1-apm-span-*` | Index pattern for span documents |
+| `auth` | `None` | `(username, password)` tuple for basic auth, or `RequestsAWSV4SignerAuth` for SigV4 |
+| `verify_certs` | `True` | Whether to verify TLS certificates |
+
+## Running evaluations on remote traces
+
+All providers implement the same `TraceProvider` interface with a single method:
+
+```python
+data = provider.get_evaluation_data(session_id="my-session-id")
+# data["output"]     -> str (final agent response)
+# data["trajectory"] -> Session (traces and spans)
+```
+
+Pass the provider's data into the standard `Experiment` pipeline by wrapping it in a task function:
+
+```python
+import asyncio
+
+from strands_evals import Case, Experiment
+from strands_evals.evaluators import CoherenceEvaluator, OutputEvaluator
+from strands_evals.providers import CloudWatchProvider
+
+provider = CloudWatchProvider(log_group="/aws/...", region="us-east-1")
+
+def task(case: Case) -> dict:
+    return provider.get_evaluation_data(case.input)
+
+cases = [
+    Case(
+        name="session_1",
+        input="my-session-id",
+        expected_output="any",
+    ),
+]
+
+evaluators = [
+    OutputEvaluator(
+        rubric="Score 1.0 if the output is coherent. Score 0.0 otherwise."
+    ),
+    CoherenceEvaluator(),
+]
+
+experiment = Experiment(cases=cases, evaluators=evaluators)
+
+async def main():
+    report = await experiment.run_evaluations_async(task)
+    print(f"{report.overall_score:.2f} - {report.reasons}")
+
+asyncio.run(main())
+```
+
+The same pattern works with `LangfuseProvider` or `OpenSearchProvider`: swap the provider initialization.
+
+## Error handling
+
+Providers raise specific exceptions when traces cannot be retrieved:
+
+```python
+from strands_evals.providers import SessionNotFoundError, ProviderError
+
+try:
+    data = provider.get_evaluation_data("unknown-session")
+except SessionNotFoundError:
+    print("No traces found for that session")
+except ProviderError:
+    print("Provider unreachable or query failed")
+```
+
+Both exceptions inherit from `TraceProviderError`, so you can catch that for a single handler:
+
+```python
+from strands_evals.providers import TraceProviderError
+
+try:
+    data = provider.get_evaluation_data(session_id)
+except TraceProviderError as e:
+    print(f"Failed to retrieve traces: {e}")
+```
+
+## Session mappers
+
+Session mappers convert raw telemetry spans into the `Session` format that evaluators consume. While providers handle fetching traces from backends, mappers handle the conversion logic. You typically use mappers directly when working with in-memory spans or third-party instrumentation libraries.
+
+### Available mappers
+
+| Mapper | Use Case |
+|--------|----------|
+| `StrandsInMemorySessionMapper` | Strands Harness SDK in-memory spans (default for local evaluation) |
+| `LangChainOtelSessionMapper` | LangChain apps instrumented with OpenTelemetry |
+| `OpenInferenceSessionMapper` | Apps instrumented with OpenInference (e.g., Arize Phoenix) |
+
+For CloudWatch Logs records, use `CloudWatchProvider` rather than a mapper; the provider fetches the records and converts them in one step.
+
+### Auto-Detection
+
+If you're unsure which mapper to use for a set of OTEL spans, use `detect_otel_mapper`:
+
+```python
+from strands_evals.mappers import detect_otel_mapper
+
+# Returns the appropriate mapper class based on span attributes
+MapperClass = detect_otel_mapper(spans)
+mapper = MapperClass()
+session = mapper.map_to_session(spans, session_id="my-session")
+```
+
+### LangChain OTEL mapper
+
+For LangChain applications instrumented with Traceloop or other OTEL-based instrumentors:
+
+```python
+from strands_evals.mappers import LangChainOtelSessionMapper
+
+mapper = LangChainOtelSessionMapper()
+session = mapper.map_to_session(span_dicts, session_id="my-session")
+```
+
+The mapper recognizes LangChain-specific span attributes like `traceloop.entity.name` and maps them to the evaluation `Session` format.
+
+### OpenInference mapper
+
+For applications instrumented with OpenInference (used by Arize Phoenix, LlamaIndex, etc.):
+
+```python
+from strands_evals.mappers import OpenInferenceSessionMapper
+
+mapper = OpenInferenceSessionMapper()
+session = mapper.map_to_session(span_dicts, session_id="my-session")
+```
+
+The mapper recognizes OpenInference semantic conventions like `openinference.span.kind` and converts them appropriately.
+
+## Implementing a custom provider
+
+Subclass `TraceProvider` and implement `get_evaluation_data` to integrate with any observability backend:
+
+```python
+from strands_evals.providers import TraceProvider
+from strands_evals.types.evaluation import TaskOutput
+
+class MyProvider(TraceProvider):
+    def get_evaluation_data(self, session_id: str) -> TaskOutput:
+        # 1. Fetch traces from your backend
+        # 2. Convert to a Session object with Trace and Span types
+        # 3. Extract the final agent response
+        return TaskOutput(output="final response", trajectory=session)
+```
+
+The returned `TaskOutput` must contain:
+
+- **`output`**: The final agent response text
+- **`trajectory`**: A `Session` object containing `Trace` objects with typed spans (`AgentInvocationSpan`, `InferenceSpan`, `ToolExecutionSpan`)
+
+## Related documentation
+
+- [Getting Started](../quickstart.md): Set up your first evaluation experiment
+- [Output Evaluator](../evaluators/output_evaluator.md): Evaluate agent response quality
+- [Trajectory Evaluator](../evaluators/trajectory_evaluator.md): Evaluate tool usage and execution paths
+- [Helpfulness Evaluator](../evaluators/helpfulness_evaluator.md): Assess agent helpfulness

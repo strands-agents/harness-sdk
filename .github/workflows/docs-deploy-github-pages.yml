@@ -1,0 +1,126 @@
+name: "Docs: Deploy to GitHub Pages"
+
+on:
+  workflow_dispatch:
+    inputs:
+      skip_changelog_check:
+        description: 'Deploy even if a published release has no changelog entry yet'
+        type: boolean
+        default: false
+      content_snapshot:
+        description: 'Upstream content: latest refs or CI-pinned baselines'
+        type: choice
+        options:
+          - latest
+          - locked
+        default: latest
+
+permissions:
+  contents: write
+
+defaults:
+  run:
+    working-directory: site
+
+jobs:
+  deploy:
+    runs-on: strands-agents_ubuntu-latest_4-core
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Checkout samples snapshot
+        uses: actions/checkout@v7
+        with:
+          # Locked mode uses a reviewed Samples baseline; latest mode follows main.
+          repository: strands-agents/samples
+          ref: ${{ inputs.content_snapshot == 'locked' && '6226307ed8f6de1face333d3daec638593aeedf3' || 'main' }}
+          path: samples-source
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Releases must ship with their changelog: merge the open
+      # "docs(changelog): sync release notes" PR first (see CHANGELOG-SYNC.md).
+      - name: Check every release has a changelog entry
+        if: ${{ !inputs.skip_changelog_check }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          missing=0 unverified=0
+          for repo in strands-agents/harness-sdk strands-agents/evals strands-agents/box strands-agents/shell; do
+            code=0
+            npm run -s changelog:sync -- --check --source-repo "$repo" || code=$?
+            if [ "$code" = 1 ]; then missing=1; elif [ "$code" != 0 ]; then unverified=1; fi
+          done
+          if [ "$missing" = 1 ]; then
+            echo "::error::Merge the open changelog PR before deploying: https://github.com/strands-agents/harness-sdk/pulls?q=is%3Apr+is%3Aopen+head%3Achangelog%2Fsync"
+          fi
+          if [ "$unverified" = 1 ]; then
+            echo "::error::Could not list releases from GitHub; re-run the deploy, or check skip_changelog_check if the API is down."
+          fi
+          [ "$missing" = 0 ] && [ "$unverified" = 0 ]
+
+      - name: Resolve latest external documentation
+        if: ${{ inputs.content_snapshot != 'locked' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: npm run external-docs:update-lock
+
+      - name: Resolve samples revision
+        id: samples_snapshot
+        run: |
+          samples_revision="$(git -C "$GITHUB_WORKSPACE/samples-source" rev-parse HEAD)"
+          echo "revision=$samples_revision" >> "$GITHUB_OUTPUT"
+
+      - name: Record documentation inputs snapshot
+        id: content_snapshot
+        env:
+          SAMPLES_REVISION: ${{ steps.samples_snapshot.outputs.revision }}
+        run: |
+          content_snapshot="$(node -e '
+            const { products } = require("./external-docs.lock.json")
+            const revisions = products.map(({ id, revision }) => `${id}@${revision}`)
+            revisions.push(`samples@${process.env.SAMPLES_REVISION}`)
+            process.stdout.write(revisions.join(", "))
+          ')"
+          echo "snapshot=$content_snapshot" >> "$GITHUB_OUTPUT"
+          printf 'Documentation snapshot: `%s`\n' "$content_snapshot" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Build CMS
+        run: npm run cms:build
+        env:
+          SAMPLES_SOURCE_DIR: ${{ github.workspace }}/samples-source
+          SAMPLES_REQUIRE_SOURCE: '1'
+          SITE_DOMAIN: https://strandsagents.com
+
+      - name: Create latest/ symlinks for llms.txt files
+        run: |
+          mkdir -p dist/latest
+          ln dist/llms.txt dist/latest/llms.txt
+          ln dist/llms-full.txt dist/latest/llms-full.txt
+
+      - name: Deploy to gh-pages branch
+        working-directory: .
+        env:
+          CONTENT_SNAPSHOT: ${{ steps.content_snapshot.outputs.snapshot }}
+          SITE_REVISION: ${{ github.sha }}
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git fetch origin gh-pages || true
+          git worktree add gh-pages-deploy origin/gh-pages 2>/dev/null || git worktree add --orphan -b gh-pages gh-pages-deploy
+          rsync -a --delete --exclude='.git' --exclude='CNAME' site/dist/ gh-pages-deploy/
+          cd gh-pages-deploy
+          git add -A
+          git diff --cached --quiet || git commit -m "Deploy to GitHub Pages from $SITE_REVISION ($CONTENT_SNAPSHOT)"
+          git push origin HEAD:gh-pages

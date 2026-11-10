@@ -1,0 +1,179 @@
+---
+title: Configure the sandbox
+description: Bind host directories, inject credentials per URL, set the network allowlist, and tune resource limits for Strands Shell, in code or from a TOML file.
+sidebar:
+  label: "Configure the sandbox"
+---
+
+A fresh shell starts without host files or credentials and uses the
+[default network policy](#network-access). You grant additional access by declaring
+which directories the agent sees, which credentials get injected on which requests,
+and which internal URLs the shell may reach. This guide covers each option, plus
+resource limits and the TOML format that captures the whole policy in one file.
+
+Every option is available both as a constructor argument and as a TOML key. Use the constructor when the policy is dynamic (per session, computed at runtime); use TOML when the policy is static and you want it under version control or shared with the [MCP server](mcp-server.md).
+
+The examples below use the Python API. The Node.js API takes the same options as a config object with camelCase keys (`allowedUrls`, `configFile`, `maxOutput`), and the TOML format is identical across both.
+
+## Binds
+
+A bind maps a host directory into the shell's virtual filesystem. The agent sees the destination path; everything outside a bound path doesn't exist.
+
+Each bind has a mode that decides how host and sandbox relate:
+
+- `copy` snapshots the host directory into the VFS at construction time. The agent's reads and writes stay inside the sandbox and don't touch your host files. Use this for source code.
+- `direct` passes reads and writes through to the host in real time. The agent can modify your live files, and host-side changes after construction are visible to the agent. Use this only for designated output directories.
+
+```python
+import strands_shell
+
+shell = strands_shell.Shell(
+    binds=[
+        strands_shell.Bind("/host/project", "/workspace", mode="copy"),
+        strands_shell.Bind("/tmp/output", "/output", mode="direct"),
+    ],
+)
+```
+
+:::caution
+The TOML parser defaults `mode` to `copy` when omitted, but the Python and Node.js constructors default to `direct`. Always pass `mode` explicitly when constructing a `Bind` in code to avoid accidentally granting live host access.
+:::
+
+Add `readonly=True` to reject writes through a mount even in `direct` mode, which lets you expose a live host directory for reading without risking modification.
+
+```python
+strands_shell.Bind("/host/reference", "/ref", mode="direct", readonly=True)
+```
+
+:::caution
+A `direct` bind is live. The agent can read and modify host files in real time, including deleting them. Avoid `direct`-binding a directory that holds secrets, credentials, or configuration you don't want the agent to change. When in doubt, use `copy`.
+:::
+
+## Credentials
+
+A credential rule attaches a secret to a URL prefix. When a command makes a request to a matching URL, the Kernel injects the secret as a bearer token at request time. The agent doesn't hold the value: it doesn't appear in the environment, in command output, or in the Lua scripting context.
+
+Provide the secret one of two ways, and exactly one: an inline `token`, or an `env_var` resolved against the process environment when the shell is constructed.
+
+```python
+shell = strands_shell.Shell(
+    credentials=[
+        strands_shell.Cred("https://api.example.com/", env_var="API_TOKEN"),
+    ],
+    allowed_urls=["https://api.example.com/"],
+)
+
+# The bearer token from $API_TOKEN is injected automatically.
+result = shell.run("curl https://api.example.com/v1/status")
+```
+
+The Kernel matches on URL prefix with a path-boundary check, and it injects only on the original request. It doesn't re-inject on a redirect, even a redirect back to the same host, which closes the credential-exfiltration path where an agent follows a redirect to a logging endpoint.
+
+## Network access
+
+By default `curl` blocks private address ranges (RFC1918, link-local, loopback, and cloud metadata endpoints such as IMDS) while letting public URLs through. The block happens at DNS-resolution time, so a public hostname that resolves to a private address is still blocked.
+
+To permit a specific internal host, add its URL prefix to `allowed_urls`.
+
+```python
+shell = strands_shell.Shell(
+    allowed_urls=["https://internal-api.corp.example.com/"],
+)
+```
+
+:::caution
+Don't allowlist a bare scheme like `https://`. A prefix that broad permits every host and disables the SSRF guard entirely. List the specific endpoints the agent needs.
+:::
+
+## Behavioral settings
+
+Three top-level settings tune how commands run:
+
+- `env` seeds environment variables into the shell.
+- `timeout` sets a per-command wall-clock limit in seconds. It defaults to 30, which bounds runaway commands out of the box; raise it for long-running work. It must be a positive, finite number.
+- `umask` sets the file-creation mask. The default is `0o022`.
+
+```python
+shell = strands_shell.Shell(
+    env={"PROJECT": "demo"},
+    timeout=30.0,
+)
+```
+
+## Resource limits
+
+Resource caps go in a single `Limits` bundle, separate from behavioral settings so protective caps stay visually distinct from runtime behavior. Override only the caps you care about; the rest keep their defaults.
+
+```python
+shell = strands_shell.Shell(
+    limits=strands_shell.Limits(
+        max_output=1 << 20,
+        max_file_size=10 << 20,
+    ),
+)
+```
+
+| Limit | Default | Caps |
+|---|---|---|
+| `max_output` | 1 MiB | Bytes of output captured from a single command |
+| `max_file_size` | 10 MiB | Bytes a single file may reach on write or read |
+| `max_fds` | 128 | Open file descriptors at once |
+| `max_bg_jobs` | 8 | Concurrent background jobs |
+| `max_pipeline` | 16 | Stages in a single pipeline |
+| `max_input` | 1 MiB | Bytes of a single input |
+| `max_inodes` | 10,000 | Total files and directories in the VFS |
+| `max_depth` | 64 | Directory nesting depth |
+
+These caps are best-effort. They stop a runaway agent from exhausting memory or hanging; they aren't a defense against an adversary actively trying to break out. For hard guarantees, see the [security model](security.md).
+
+## TOML configuration
+
+When the policy is static, declare it in a TOML file. The Python and Node.js constructors accept a config file path, and the [MCP server](mcp-server.md) reads the same format through its `--config` flag. Pass a file and explicit constructor arguments together, and the explicit arguments win.
+
+```toml
+umask = "022"
+
+[[bind]]
+mode = "copy"
+source = "/host/project"
+destination = "/workspace"
+
+[[bind]]
+mode = "direct"
+source = "/tmp/output"
+destination = "/output"
+
+[[cred]]
+url = "https://api.openai.com/v1/"
+methods = ["POST"]
+kind = "bearer"
+api_key_env = "OPENAI_API_KEY"
+
+allowed_urls = ["https://api.openai.com/"]
+
+[env]
+PROJECT = "demo"
+
+[limits]
+timeout = 30
+max_output = 1048576
+```
+
+Load it in code:
+
+```python
+shell = strands_shell.Shell(config_file="sandbox.toml")
+```
+
+A few rules the parser enforces:
+
+- Unknown keys are rejected, so a typo like `timeout_seconds` fails loudly instead of being silently ignored.
+- In TOML, `bind` mode defaults to `copy` when omitted. Note that this differs from the Python and Node.js constructors, which default to `direct`. Always specify `mode` explicitly in code.
+- A `cred` entry needs a `kind` (`bearer` or `query`) and exactly one of `api_key` or `api_key_env`. A `query` credential also needs a `param` naming the query parameter.
+- `timeout` is in whole seconds and defaults to 30 when the key is absent. A value of `0` is rejected, because it would expire every command immediately.
+
+## Next steps
+
+- [Commands](commands.md): the full command inventory and supported flags.
+- [MCP Server](mcp-server.md): serve this configuration to any MCP-compatible agent.
+- [Security Model](security.md): how binds, credential injection, and the SSRF guard hold up, and where they stop.

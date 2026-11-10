@@ -1,0 +1,55 @@
+name: "Python: Check Markdown Links"
+
+on:
+  schedule:
+    - cron: '0 9 * * 1' # Every Monday at 9am UTC
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  check-links:
+    runs-on: strands-agents_ubuntu-latest_4-core
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: gaurav-nelson/github-action-markdown-link-check@3c3b66f1f7d0900e37b71eca45b63ea9eedfce31 # v1.0.17
+        id: link-check
+        with:
+          use-quiet-mode: 'yes'
+          use-verbose-mode: 'yes'
+          config-file: 'strands-py/.markdown-link-check.json'
+          folder-path: 'strands-py'
+        continue-on-error: true
+
+      - name: Create issue if links are broken
+        if: steps.link-check.outcome == 'failure'
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const title = '🔗 Broken markdown links detected';
+            const label = 'broken-links';
+
+            // Check for existing open issue to avoid duplicates
+            const existing = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: label,
+            });
+
+            if (existing.data.length > 0) {
+              console.log(`Issue already exists: #${existing.data[0].number}`);
+              return;
+            }
+
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title,
+              body: `The weekly markdown link check found broken links.\n\nSee the [workflow run](${runUrl}) for details.`,
+              labels: [label],
+            });

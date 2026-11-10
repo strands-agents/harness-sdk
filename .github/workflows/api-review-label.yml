@@ -1,0 +1,35 @@
+name: API Review Label Check
+
+on:
+  pull_request_target:
+    branches: [main]
+    types: [opened, reopened, synchronize, labeled, unlabeled]
+
+jobs:
+  check-api-review-label:
+    runs-on: strands-agents_ubuntu-latest_4-core
+    permissions:
+      pull-requests: read
+    steps:
+      - name: Enforce api/review-complete when api/needs-review is present
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const labels = context.payload.pull_request.labels.map(l => l.name);
+            const needsReview = labels.includes('api/needs-review');
+            const reviewComplete = labels.includes('api/review-complete');
+
+            if (!needsReview && !reviewComplete) {
+              core.info('No API review labels present — skipping check.');
+              return;
+            }
+
+            if (needsReview && !reviewComplete) {
+              core.setFailed(
+                'This PR has the "api/needs-review" label but is missing "api/review-complete". ' +
+                'An API reviewer must complete their review before this PR can be merged.'
+              );
+              return;
+            }
+
+            core.info('API review is complete.');

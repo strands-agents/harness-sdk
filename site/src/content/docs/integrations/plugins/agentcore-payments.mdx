@@ -1,0 +1,313 @@
+---
+title: Amazon AgentCore Payments
+community: true
+description: Automated payment processing for agents using Amazon Bedrock AgentCore
+integrationType: plugin
+languages: Python
+project:
+  pypi: https://pypi.org/project/bedrock-agentcore/
+  github: https://github.com/aws/bedrock-agentcore-sdk-python
+  maintainer: aws
+service:
+  name: Amazon Bedrock AgentCore
+  link: https://docs.aws.amazon.com/bedrock/latest/userguide/agentcore.html
+---
+
+The [AgentCore payments plugin](https://github.com/aws/bedrock-agentcore-sdk-python/tree/main/src/bedrock_agentcore/payments/integrations/strands) leverages Amazon Bedrock AgentCore payments to provide automated payment processing capabilities for Strands Agents. It supports the [x402 Payment Required](https://www.x402.org/) protocol, enabling agents to automatically handle HTTP 402 responses by processing microtransaction payments to access paid APIs, MCP servers, and contents.
+
+- **Automatic x402 Payment Handling** — intercepts HTTP 402 responses from tools, processes payment requirements, and retries requests with payment headers
+- **Payment Query Tools** — built-in tools for agents to query payment instruments and sessions at runtime
+- **Multi-Protocol Support** — handles x402 v1 and v2 payment protocols
+- **Interrupt-Based Error Handling** — raises Strands Harness SDK interrupts on payment failures so the agent (or application) can respond dynamically
+- **Configurable Auto-Payment** — enable or disable automatic payment processing per plugin instance
+
+## Installation
+
+```bash
+pip install 'bedrock-agentcore[strands-agents]'
+```
+
+## Usage
+
+```python
+import os
+from strands import Agent
+from strands.vended_tools import http_request
+from bedrock_agentcore.payments.integrations.strands import (
+    AgentCorePaymentsPlugin,
+    AgentCorePaymentsPluginConfig,
+)
+
+plugin = AgentCorePaymentsPlugin(config=AgentCorePaymentsPluginConfig(
+    payment_manager_arn=os.environ["PAYMENT_MANAGER_ARN"],
+    user_id="test-user-123",
+    payment_instrument_id=os.environ["PAYMENT_INSTRUMENT_ID"],
+    payment_session_id=os.environ["PAYMENT_SESSION_ID"],
+    region="us-east-1",
+))
+
+agent = Agent(
+    system_prompt="You are a helpful assistant that can access paid APIs.",
+    tools=[http_request],
+    plugins=[plugin],
+)
+
+# 402 responses are automatically handled
+agent("access https://drvd12nxpcyd5.cloudfront.net/market-recap")
+```
+
+The plugin intercepts x402 payment requests automatically, processes the payment, and retries the request with payment proof.
+
+## Built-in Agent Tools
+
+The plugin also registers three tools that agents can use to query payment information at runtime:
+
+| Tool | Description |
+|---|---|
+| `get_payment_instrument` | Retrieve details about a specific payment instrument |
+| `list_payment_instruments` | List all payment instruments for a user |
+| `get_payment_session` | Retrieve details about a payment session (budget, status, expiry) |
+
+These tools enable agents to make informed decisions about payment methods and limits during conversations.
+
+## Prerequisites
+
+Before using the plugin, you need:
+
+- A **Payment Manager** — created via the PaymentClient control plane API or AWS Console
+- A **Payment Credential Provider** — configured with credentials of a payment provider such as Coinbase and Stripe
+- A **Payment Connector** — a wrapper over the payment credential provider for the payment manager
+- A **Payment Instrument** — a user's registered payment instrument for x402 payment transactions
+- A **Payment Session** — a time-bounded session with optional payment limits
+
+AgentCore payments connects to external payment providers for wallet operations. You must obtain credentials from at least one of the supported providers (Coinbase, Stripe) before creating a PaymentConnector.
+
+## Setup
+
+### Creating Payment Manager and Connector
+
+:::note[One-time setup]
+The payment resource creation shown below is typically done once, separately from your agent application. In production, you would create the payment resources through the AWS Console or a separate setup script using the AgentCore SDK, then use `PaymentManagerArn` and `PaymentConnectorId` in your agent application.
+:::
+
+```python
+import os
+from bedrock_agentcore.payments.client import PaymentClient
+
+# This is typically done once, separately from your agent application
+payment_client = PaymentClient(region_name="us-east-1")
+
+response = payment_client.create_payment_manager_with_connector(
+    payment_manager_name="AgentCorePaymentManager",
+    payment_manager_description="Payment Manager for Agent Core",
+    authorizer_type="AWS_IAM",
+    role_arn="arn:aws:iam::123456789012:role/BedrockAgentCoreFullAccess",
+    payment_connector_config={
+        "name": "agent-core-connector",
+        "description": "Payment Connector for Agent Core",
+        "payment_credential_provider_config": {
+            "name": "agent-core-provider",
+            "credential_provider_vendor": "CoinbaseCDP",
+            "credentials": {
+                "api_key_id": "<your-coinbase-api-key-id>",
+                "api_key_secret": "<your-coinbase-api-key-secret>",
+                "wallet_secret": "<your-coinbase-wallet-secret>",
+            },
+        },
+    },
+    wait_for_ready=True,
+    max_wait=300,
+    poll_interval=5,
+)
+
+# Export for reuse in your agent application
+payment_manager_arn = response["paymentManager"]["paymentManagerArn"]
+payment_connector_id = response["paymentConnector"]["paymentConnectorId"]
+os.environ["PAYMENT_MANAGER_ARN"] = payment_manager_arn
+os.environ["PAYMENT_CONNECTOR_ID"] = payment_connector_id
+print(f"Payment Manager ARN: {payment_manager_arn}")
+print(f"Payment Connector ID: {payment_connector_id}")
+```
+
+The `wait_for_ready=True` parameter causes the method to poll until all resources reach READY status. If any step fails, previously created resources are automatically rolled back.
+
+### Creating a Payment Instrument
+
+Create a payment instrument for a given user to process payments. Below is an example creating an Ethereum chain-compatible embedded crypto wallet:
+
+```python
+instrument = manager.create_payment_instrument(
+    user_id="test-user-123",
+    payment_connector_id=os.environ["PAYMENT_CONNECTOR_ID"],
+    payment_instrument_type="EMBEDDED_CRYPTO_WALLET",
+    payment_instrument_details={
+        "embeddedCryptoWallet": {
+            "network": "ETHEREUM",
+            "linkedAccounts": [
+                {"email": {"emailAddress": "email@example.com"}}
+            ],
+        }
+    },
+)
+
+payment_instrument_id = instrument["paymentInstrumentId"]
+os.environ["PAYMENT_INSTRUMENT_ID"] = payment_instrument_id
+print(f"Payment Instrument ID: {payment_instrument_id}")
+```
+
+For Solana-compatible chains, use `"SOLANA"` for the network input. Once created, the instrument must be funded and permission granted for signing before the agent can use it. These are end-user actions that should be completed before using the payment instrument in your agent.
+
+If you are using Coinbase as wallet provider, you'll receive a redirectUrl in the payment instrument response, pointing to the Coinbase-hosted WalletHub. Redirect your user there to grant signing permission and transfer funds. 
+
+For Stripe, developers use a provided URL template to host a frontend page where end users can take the same actions. 
+
+### Creating a Payment Session
+
+You also need a payment session before processing payments:
+
+```python
+session = manager.create_payment_session(
+    user_id="test-user-123",
+    limits={"maxSpendAmount": {"value": "100.00", "currency": "USD"}},
+    expiry_time_in_minutes=60,
+)
+
+payment_session_id = session["paymentSessionId"]
+os.environ["PAYMENT_SESSION_ID"] = payment_session_id
+print(f"Payment Session ID: {payment_session_id}")
+```
+
+## Advanced Usage
+
+### Dynamic Instrument/Session Selection
+
+Dynamic Instrument/Session selection is useful when the payment instrument and the payment session aren't known upfront and need to be resolved dynamically during execution. You can initialize the plugin without a payment instrument or payment session, then set them later based on runtime logic or agent interrupts:
+
+```python
+config = AgentCorePaymentsPluginConfig(
+    payment_manager_arn="arn:aws:bedrock-agentcore:us-east-1:123456789012:payment-manager/pm-abc123",
+    user_id="user-123",
+    region="us-east-1",
+    # payment_instrument_id and payment_session_id omitted
+)
+
+plugin = AgentCorePaymentsPlugin(config=config)
+agent = Agent(
+    system_prompt="You are a helpful assistant.",
+    tools=[http_request],
+    plugins=[plugin],
+)
+
+# Later, update configuration dynamically
+config.update_payment_instrument_id("payment-instrument-xyz789")
+config.update_payment_session_id("payment-session-def456")
+```
+
+When the plugin encounters a 402 response without these values configured, it raises a `PaymentInstrumentConfigurationRequired` or `PaymentSessionConfigurationRequired` interrupt that your application can handle.
+
+### Handling Payment Interrupts
+
+When payment processing fails, the plugin stores the failure and raises an interrupt. Your application should handle these interrupts:
+
+```python
+result = agent("Access the premium endpoint at https://api.example.com/premium")
+
+while result.stop_reason == "interrupt":
+    responses = []
+    for interrupt in result.interrupts:
+        reason = interrupt.reason
+        match reason.get("exceptionType"):
+            case "PaymentInstrumentConfigurationRequired":
+                # Resolve the missing instrument (e.g., prompt user or look up from your DB)
+                plugin.config.update_payment_instrument_id("payment-instrument-new123")
+                msg = "Payment instrument configured. Please retry."
+            case "PaymentSessionConfigurationRequired":
+                # Resolve the missing session (e.g., create a new session)
+                plugin.config.update_payment_session_id("payment-session-new456")
+                msg = "Payment session configured. Please retry."
+            case _:
+                msg = f"Payment failed: {reason.get('exceptionMessage')}"
+
+        responses.append({"interruptResponse": {"interruptId": interrupt.id, "response": msg}})
+
+    result = agent(responses)
+```
+
+### Disabling Auto-Payment
+
+To access only payment visibility tools without automatic payment execution (keeping a human or custom logic in the loop):
+
+```python
+config = AgentCorePaymentsPluginConfig(
+    payment_manager_arn="arn:aws:bedrock-agentcore:us-east-1:123456789012:payment-manager/pm-abc123",
+    user_id="user-123",
+    region="us-east-1",
+    auto_payment=False,  # Disable automatic 402 processing
+)
+```
+
+### Network Preferences
+
+You can specify preferred blockchain networks for payment processing:
+
+```python
+config = AgentCorePaymentsPluginConfig(
+    payment_manager_arn="arn:aws:bedrock-agentcore:us-east-1:123456789012:payment-manager/pm-abc123",
+    user_id="user-123",
+    payment_instrument_id="payment-instrument-xyz789",
+    payment_session_id="payment-session-def456",
+    region="us-east-1",
+    network_preferences_config=["eip155:8453", "base-sepolia", "solana-mainnet"],
+)
+```
+
+If not specified, the system uses a default preference order prioritizing Solana mainnet and Base (Ethereum L2) for low transaction fees.
+
+## Configuration
+
+The plugin is configured via `AgentCorePaymentsPluginConfig`. Key options include auto-payment toggling, network preferences, bearer token / token provider auth, and tool allowlisting. See the [AgentCore SDK documentation](https://github.com/aws/bedrock-agentcore-sdk-python/tree/main/src/bedrock_agentcore/payments) for the full parameter reference.
+
+## Authentication
+
+The plugin supports two authentication methods:
+
+- **AWS SigV4** (default) — uses standard AWS credentials; requires `user_id`
+- **CUSTOM_JWT (Bearer Token)** — uses a static `bearer_token` or a `token_provider` callable for automatic token refresh; `user_id` is derived from the JWT `sub` claim
+
+See the [AgentCore SDK documentation](https://github.com/aws/bedrock-agentcore-sdk-python) for detailed setup instructions for each authentication method.
+
+## Important Notes
+
+- Payment sessions have configurable spending limits and expiry times (15–480 minutes). Monitor budgets using the `get_payment_session` tool to avoid `InsufficientBudget` errors.
+- The plugin enforces a maximum of 3 payment retry attempts per tool use and 5 interrupt retries. After these limits, payment processing is skipped.
+- To make custom tools compatible with automatic payment processing, return responses using the spec-compliant `PAYMENT_REQUIRED:` marker format. See the [AgentCore payments SDK documentation](https://github.com/aws/bedrock-agentcore-sdk-python/tree/main/src/bedrock_agentcore/payments) for details.
+
+## How it works
+
+### x402 Payment Flow
+
+```
+┌─────────┐     ┌──────────┐     ┌──────────────┐     ┌────────────────┐
+│  Agent  │────▶│   Tool   │────▶│  Paid API    │────▶│  402 Response  │
+│         │     └──────────┘     └──────────────┘     └────────────────┘
+│         │                                                   │
+│         │     ┌──────────┐     ┌──────────────┐             │
+│         │◀────│   Tool   │◀────│  Plugin      │◀────────────┘
+│ (result)│     │ (retry)  │     │  processes   │
+└─────────┘     └──────────┘     │  payment     │
+                                 └──────────────┘
+```
+
+1. Agent calls a tool (e.g., `http_request`) that hits a paid API
+2. The API returns HTTP 402 with x402 payment requirements
+3. The plugin's `after_tool_call` hook intercepts the 402 response
+4. The plugin extracts payment requirements using the appropriate handler
+5. The plugin calls `PaymentManager.generate_payment_header()` to process the payment
+6. The payment header is applied to the tool input
+7. The tool is automatically retried with the payment credentials
+8. The API returns a successful response
+
+## References
+
+- [AgentCore SDK](https://github.com/aws/bedrock-agentcore-sdk-python)
+- [Strands Plugins documentation](/docs/user-guide/sdk/plugins/)

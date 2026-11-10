@@ -1,0 +1,71 @@
+---
+title: strands-code-agent
+community: true
+description: A coding agent that replaces tool-calling with code generation in a persistent Python REPL
+integrationType: agent-extension
+languages: Python
+sidebar:
+  label: "Code Agent"
+project:
+  pypi: https://pypi.org/project/strands-code-agent/
+  github: https://github.com/aws-samples/sample-strands-code-agent
+  maintainer: aws-samples
+---
+
+[strands-code-agent](https://github.com/aws-samples/sample-strands-code-agent) provides a `CodeAgent` that replaces the tool-calling paradigm with code generation as the agent's primary action interface. Rather than invoking structured tools, the agent writes Python code in a persistent REPL where domain capabilities are exposed as importable library functions. This keeps intermediate data as native Python objects in memory and lets the agent compose multi-step logic in a single code block.
+
+In empirical evaluations on the Data Agent Benchmark, this approach achieves higher accuracy (+7%) while consuming 78% fewer input tokens, 67% fewer output tokens, completing tasks 56% faster, and requiring 35% fewer reasoning cycles compared to an equivalent tool-calling agent.
+
+## Installation
+
+```bash
+pip install strands-code-agent
+```
+
+## Usage
+
+```python
+from strands_code_agent import CodeAgent
+
+agent = CodeAgent(system_prompt="You are a helpful data analyst.")
+
+response = agent("What is 2 ** 10?")
+```
+
+The agent receives a `python_repl` tool automatically and solves tasks by writing and executing Python code.
+
+## Toolkits
+
+A `Toolkit` bundles everything the REPL needs for a specific domain — authorized imports, initialization code, usage instructions, and domain-specific functions:
+
+```python
+from strands_code_agent import CodeAgent
+from strands_code_agent.toolkits import DATA_ANALYSIS_TOOLKIT, VISUALIZATION_TOOLKIT
+
+agent = CodeAgent(
+    system_prompt="You are a data analyst.",
+    toolkits=[DATA_ANALYSIS_TOOLKIT, VISUALIZATION_TOOLKIT],
+)
+```
+
+You can also expose your own functions as domain-specific code:
+
+```python
+from strands_code_agent import CodeAgent, Toolkit
+
+def calculate_roi(investment: float, returns: float) -> float:
+    """Calculate return on investment as a percentage."""
+    return (returns - investment) / investment * 100
+
+agent = CodeAgent(
+    system_prompt="You are a finance assistant.",
+    toolkits=[Toolkit(domain_specific_code=[calculate_roi])],
+)
+```
+
+## References
+
+- [GitHub repository](https://github.com/aws-samples/sample-strands-code-agent)
+- [PyPI package](https://pypi.org/project/strands-code-agent/)
+- [Data Analyst Agent example](https://github.com/aws-solutions-library-samples/guidance-for-agentic-data-analyst-using-amazon-bedrock-agentcore-on-aws/blob/main/agent/aws_data_analyst/data_analyst_agent.py#L92)
+- [Geospatial Agent example](https://github.com/aws-samples/sample-geospatial-code-agent/blob/main/agent/geospatial_agent/agent.py#L93)

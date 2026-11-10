@@ -1,0 +1,28 @@
+---
+import { getCollection } from 'astro:content'
+import { buildPythonApiSidebar, type SidebarEntry, type DocInfo } from '../dynamic-sidebar'
+
+// Get all docs and build sidebar structure
+const allDocs = await getCollection('docs')
+const docInfos: DocInfo[] = allDocs.map((doc) => ({
+  id: doc.id,
+  title: doc.data.title as string,
+}))
+
+const sidebar = buildPythonApiSidebar(docInfos, '')
+
+// Recursive function to render sidebar entries as nested lists
+function renderEntry(entry: SidebarEntry): string {
+  if (entry.type === 'link') {
+    return `<li><a href="${entry.href}">${entry.label}</a></li>`
+  } else if (entry.type === 'group') {
+    const children = entry.entries.map((child) => renderEntry(child)).join('')
+    return `<li><strong>${entry.label}</strong><ul>${children}</ul></li>`
+  }
+  return ''
+}
+
+const html = `<ul>${sidebar.map((entry) => renderEntry(entry)).join('')}</ul>`
+---
+
+<Fragment set:html={html} />

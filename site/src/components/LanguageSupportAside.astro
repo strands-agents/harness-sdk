@@ -1,0 +1,15 @@
+---
+import { Aside } from '@astrojs/starlight/components';
+
+interface Props {
+  languages: string | string[];
+}
+
+const { languages } = Astro.props;
+
+const languageText = Array.isArray(languages) ? languages.join(' and ') : languages;
+---
+
+<Aside type="note" title="Language Support">
+  This feature is only supported in {languageText}.
+</Aside>

@@ -1,0 +1,90 @@
+---
+project:
+  pypi: https://pypi.org/project/strands-sql/
+  github: https://github.com/NithiN-1808/strands-sql
+  maintainer: NithiN-1808
+service:
+  name: SQLAlchemy
+  link: https://www.sqlalchemy.org/
+title: strands-sql
+community: true
+description: General-purpose SQL tool for Strands Agents — PostgreSQL, MySQL, and SQLite via SQLAlchemy.
+integrationType: tool
+languages: Python
+sidebar:
+  label: "strands-sql"
+---
+
+[strands-sql](https://github.com/NithiN-1808/strands-sql) is a general-purpose SQL tool for Strands Agents — supports PostgreSQL, MySQL, and SQLite via SQLAlchemy with built-in safety controls.
+
+## Installation
+
+```bash
+# SQLite (no extra driver needed)
+pip install strands-sql
+
+# PostgreSQL
+pip install "strands-sql[postgres]"
+
+# MySQL
+pip install "strands-sql[mysql]"
+```
+
+## Usage
+
+```python
+from strands import Agent
+from strands_sql import sql_database
+
+agent = Agent(tools=[sql_database])
+
+# Discover the schema
+agent.tool.sql_database(action="schema_summary")
+
+# Run a query
+agent.tool.sql_database(
+    action="query",
+    sql="SELECT * FROM orders WHERE amount > 100 LIMIT 20",
+)
+
+# Describe a table
+agent.tool.sql_database(action="describe_table", table="users")
+```
+
+## Key Features
+
+- **Multi-dialect support**: PostgreSQL, MySQL, and SQLite via SQLAlchemy
+- **Safe by default**: read-only mode, row limits, query timeouts
+- **Access control**: table allowlist and blocklist
+- **LLM-friendly output**: Markdown and CSV result formats
+- **Schema discovery**: `list_tables`, `describe_table`, `schema_summary`
+- **Query execution**: `query`, `execute`, `explain`
+
+## Configuration
+
+Set your database connection via environment variable:
+
+```bash
+export DATABASE_URL="postgresql://user:password@localhost:5432/mydb"
+```
+
+Or pass it directly per call:
+
+```python
+agent.tool.sql_database(
+    action="list_tables",
+    connection_string="sqlite:///./local.db",
+)
+```
+
+## Troubleshooting
+
+- **No connection string found** — make sure `DATABASE_URL` is set or pass `connection_string` explicitly.
+- **Write query blocked** — write operations require `read_only=False` explicitly.
+- **Timeout errors** — increase `query_timeout` (default: 30s).
+
+## Resources
+
+- [PyPI Package](https://pypi.org/project/strands-sql/)
+- [GitHub Repository](https://github.com/NithiN-1808/strands-sql)
+- [SQLAlchemy Docs](https://docs.sqlalchemy.org/)

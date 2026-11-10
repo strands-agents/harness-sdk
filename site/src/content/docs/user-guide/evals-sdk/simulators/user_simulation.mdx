@@ -1,0 +1,411 @@
+---
+title: User simulation
+description: 'Simulate realistic end users with ActorSimulator to evaluate agents in dynamic, goal-oriented multi-turn conversations without scripted inputs.'
+tags: [simulation, conversation-management]
+---
+
+To evaluate your agent over a multi-turn conversation, you need something to play the user. `ActorSimulator` does that: it generates goal-oriented user messages, reacts to each agent response, and stops when the goal is met or a turn limit is reached.
+
+The `from_case_for_user_simulator()` factory builds a user simulator from a `Case`, generating a user profile and goal from the case input and its `task_description` metadata:
+
+```python
+from strands_evals import ActorSimulator, Case
+
+case = Case(
+    input="I need to book a flight to Paris",
+    metadata={"task_description": "Flight booking confirmed"}
+)
+
+# Automatically configured for user simulation
+user_sim = ActorSimulator.from_case_for_user_simulator(
+    case=case,
+    max_turns=10
+)
+```
+
+## When to use
+
+Reach for user simulation when you need to:
+
+- Evaluate agents in multi-turn user conversations
+- Test how agents handle realistic user behavior
+- Assess goal completion from the user's perspective
+- Generate diverse user interaction patterns
+- Evaluate agents without predefined conversation scripts
+- Test conversational flow and context maintenance with users
+
+## Basic usage
+
+### Simple user simulation
+
+```python
+from strands import Agent
+from strands_evals import Case, ActorSimulator
+
+# Create test case
+case = Case(
+    name="flight-booking",
+    input="I need to book a flight to Paris next week",
+    metadata={"task_description": "Flight booking confirmed"}
+)
+
+# Create user simulator
+user_sim = ActorSimulator.from_case_for_user_simulator(
+    case=case,
+    max_turns=5  # Limits conversation length; simulator may stop earlier if goal is achieved
+)
+
+# Create target agent to evaluate
+agent = Agent(
+    system_prompt="You are a helpful travel assistant.",
+    callback_handler=None
+)
+
+# Run multi-turn conversation
+user_message = case.input
+conversation_log = []
+
+while user_sim.has_next():
+    # Agent responds
+    agent_response = agent(user_message)
+    agent_message = str(agent_response)
+    conversation_log.append({"role": "agent", "message": agent_message})
+    
+    # User simulator generates next message
+    user_result = user_sim.act(agent_message)
+    user_message = str(user_result.structured_output.message)
+    conversation_log.append({"role": "user", "message": user_message})
+
+print(f"Conversation completed in {len(conversation_log) // 2} turns")
+```
+
+To shape the simulated user beyond the factory defaults (its profile, system
+prompt, tools, or model), see [Customizing User Simulation](customize_user_simulation.md).
+
+## Integration with evaluators
+
+### With trace-based evaluators
+
+```python
+import asyncio
+
+from strands import Agent
+from strands_evals import Case, Experiment, ActorSimulator
+from strands_evals.evaluators import HelpfulnessEvaluator
+from strands_evals.mappers import StrandsInMemorySessionMapper
+from strands_evals.telemetry import StrandsEvalsTelemetry
+
+# Setup telemetry
+telemetry = StrandsEvalsTelemetry().setup_in_memory_exporter()
+memory_exporter = telemetry.in_memory_exporter
+
+def task_function(case: Case) -> dict:
+    # Create simulator
+    user_sim = ActorSimulator.from_case_for_user_simulator(
+        case=case,
+        max_turns=5
+    )
+    
+    # Create target agent
+    agent = Agent(
+        trace_attributes={
+            "gen_ai.conversation.id": case.session_id,
+            "session.id": case.session_id
+        },
+        system_prompt="You are a helpful assistant.",
+        callback_handler=None
+    )
+    
+    # Collect spans across all turns
+    all_spans = []
+    user_message = case.input
+    
+    while user_sim.has_next():
+        # Agent responds
+        agent_response = agent(user_message)
+        agent_message = str(agent_response)
+        
+        # User simulator responds
+        user_result = user_sim.act(agent_message)
+        user_message = str(user_result.structured_output.message)
+    
+    all_spans = memory_exporter.get_finished_spans()
+    # Map spans to session
+    mapper = StrandsInMemorySessionMapper()
+    session = mapper.map_to_session(all_spans, session_id=case.session_id)
+    
+    return {"output": agent_message, "trajectory": session}
+
+# Create test cases
+test_cases = [
+    Case(
+        name="booking-1",
+        input="I need to book a flight to Paris",
+        metadata={"task_description": "Flight booking confirmed"}
+    )
+]
+
+# Run evaluation
+evaluators = [HelpfulnessEvaluator()]
+experiment = Experiment(cases=test_cases, evaluators=evaluators)
+
+async def main():
+    report = await experiment.run_evaluations_async(task_function)
+    report.run_display()
+
+asyncio.run(main())
+```
+
+## Conversation control
+
+### Automatic stopping
+
+The simulator automatically stops when:
+
+1. **Goal Completion**: The actor sets `stop=True` on its structured output (signalling the goal has been reached). `simulator.stop` is then `True` and `has_next()` returns `False`.
+2. **Turn Limit**: The configured `max_turns` is reached.
+
+Detect goal completion via `user_result.structured_output.stop` rather than scanning the message text.
+
+```python
+user_sim = ActorSimulator.from_case_for_user_simulator(
+    case=case,
+    max_turns=10  # Stop after 10 turns
+)
+
+# Check if conversation should continue
+while user_sim.has_next():
+    # ... conversation logic ...
+    pass
+```
+
+### Manual turn tracking
+
+```python
+turn_count = 0
+max_turns = 5
+
+while user_sim.has_next() and turn_count < max_turns:
+    agent_response = agent(user_message)
+    user_result = user_sim.act(str(agent_response))
+    user_message = str(user_result.structured_output.message)
+    turn_count += 1
+
+print(f"Conversation ended after {turn_count} turns")
+```
+
+## Actor response structure
+
+Each `act()` call returns an `AgentResult` whose `structured_output` is an `ActorResponse` with a `reasoning` field and a `message` field. The `reasoning` field shows why the simulator responded the way it did, which helps you judge whether it is behaving realistically:
+
+```python
+user_result = user_sim.act(agent_message)
+
+# Access structured output
+reasoning = user_result.structured_output.reasoning
+message = user_result.structured_output.message
+
+print(f"Actor's reasoning: {reasoning}")
+print(f"Actor's message: {message}")
+
+# Example output:
+# Actor's reasoning: "The agent provided flight options but didn't ask for my preferred time. 
+#                     I should specify that I prefer morning flights to move the conversation forward."
+# Actor's message: "Thanks! Do you have any morning flights available?"
+```
+
+The reasoning is particularly useful for:
+- **Debugging**: Understanding why the simulator isn't reaching the goal
+- **Validation**: Ensuring the simulator is behaving realistically
+- **Analysis**: Identifying patterns in how users respond to agent behavior
+
+## Complete example: Customer service evaluation
+
+```python
+from strands import Agent
+from strands_evals import Case, Experiment, ActorSimulator
+from strands_evals.evaluators import HelpfulnessEvaluator, GoalSuccessRateEvaluator
+from strands_evals.mappers import StrandsInMemorySessionMapper
+from strands_evals.telemetry import StrandsEvalsTelemetry
+
+# Setup telemetry
+telemetry = StrandsEvalsTelemetry().setup_in_memory_exporter()
+memory_exporter = telemetry.in_memory_exporter
+
+def customer_service_task(case: Case) -> dict:
+    """Simulate customer service interaction."""
+    
+    # Create user simulator
+    user_sim = ActorSimulator.from_case_for_user_simulator(
+        case=case,
+        max_turns=8
+    )
+    
+    # Create customer service agent
+    agent = Agent(
+        trace_attributes={
+            "gen_ai.conversation.id": case.session_id,
+            "session.id": case.session_id
+        },
+        system_prompt="""
+        You are a helpful customer service agent.
+        - Be empathetic and professional
+        - Gather necessary information
+        - Provide clear solutions
+        - Confirm customer satisfaction
+        """,
+        callback_handler=None
+    )
+    
+    # Run conversation
+    all_spans = []
+    user_message = case.input
+    conversation_history = []
+    
+    while user_sim.has_next():
+        memory_exporter.clear()
+        
+        # Agent responds
+        agent_response = agent(user_message)
+        agent_message = str(agent_response)
+        conversation_history.append({
+            "role": "agent",
+            "message": agent_message
+        })
+        
+        # Collect spans
+        turn_spans = list(memory_exporter.get_finished_spans())
+        all_spans.extend(turn_spans)
+        
+        # User responds
+        user_result = user_sim.act(agent_message)
+        user_message = str(user_result.structured_output.message)
+        conversation_history.append({
+            "role": "user",
+            "message": user_message,
+            "reasoning": user_result.structured_output.reasoning
+        })
+    
+    # Map to session
+    mapper = StrandsInMemorySessionMapper()
+    session = mapper.map_to_session(all_spans, session_id=case.session_id)
+    
+    return {
+        "output": agent_message,
+        "trajectory": session,
+        "conversation_history": conversation_history
+    }
+
+# Create diverse test cases
+test_cases = [
+    Case(
+        name="order-issue",
+        input="My order #12345 hasn't arrived and it's been 2 weeks",
+        metadata={
+            "category": "order_tracking",
+            "task_description": "Order status checked, issue resolved, customer satisfied"
+        }
+    ),
+    Case(
+        name="product-return",
+        input="I want to return a product that doesn't fit",
+        metadata={
+            "category": "returns",
+            "task_description": "Return initiated, return label provided, customer satisfied"
+        }
+    ),
+    Case(
+        name="billing-question",
+        input="I was charged twice for my last order",
+        metadata={
+            "category": "billing",
+            "task_description": "Billing issue identified, refund processed, customer satisfied"
+        }
+    )
+]
+
+# Run evaluation with multiple evaluators
+evaluators = [
+    HelpfulnessEvaluator(),
+    GoalSuccessRateEvaluator()
+]
+
+experiment = Experiment(cases=test_cases, evaluators=evaluators)
+
+async def main():
+    report = await experiment.run_evaluations_async(customer_service_task)
+
+    # The experiment returns a single combined report. Each row in `report.cases`
+    # carries an `evaluator` key naming the producing evaluator.
+    report.run_display()
+
+asyncio.run(main())
+```
+
+## Troubleshooting
+
+### Issue: Simulator stops too early
+
+**Solution**: Increase max_turns or check task_description clarity
+
+```python
+user_sim = ActorSimulator.from_case_for_user_simulator(
+    case=case,
+    max_turns=15  # Increase limit
+)
+```
+
+### Issue: Simulator doesn't stop
+
+**Solution**: Ensure task_description is achievable and clear
+
+```python
+# Make goal specific and achievable
+case = Case(
+    input="I need help",
+    metadata={
+        "task_description": "Specific, measurable goal that can be completed"
+    }
+)
+```
+
+### Issue: Unrealistic responses
+
+**Solution**: Use custom profile or adjust system prompt
+
+```python
+custom_prompt = """
+You are simulating a realistic user with: {actor_profile}
+
+Be natural and human-like:
+- Don't be overly formal
+- Ask follow-up questions naturally
+- Express emotions appropriately
+- Set `stop=True` only when truly satisfied
+"""
+
+user_sim = ActorSimulator.from_case_for_user_simulator(
+    case=case,
+    system_prompt_template=custom_prompt
+)
+```
+
+### Issue: Capturing simulator traces
+
+**Solution**: Always clear exporter before agent calls
+
+```python
+while user_sim.has_next():
+    memory_exporter.clear()  # Critical: clear before agent call
+    agent_response = agent(user_message)
+    spans = list(memory_exporter.get_finished_spans())
+    # ... rest of logic ...
+```
+
+## Related documentation
+
+- [Customizing User Simulation](customize_user_simulation.md): Custom profiles, prompts, tools, and models
+- [Simulators Overview](index.md): Learn about the ActorSimulator and simulator framework
+- [Quickstart Guide](../quickstart.md): Get started with Strands Evals
+- [Helpfulness Evaluator](../evaluators/helpfulness_evaluator.md): Evaluate conversation helpfulness
+- [Goal Success Rate Evaluator](../evaluators/goal_success_rate_evaluator.md): Assess goal completion

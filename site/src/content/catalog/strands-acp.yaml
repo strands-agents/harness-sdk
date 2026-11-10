@@ -1,0 +1,9 @@
+name: "strands-acp"
+description: "Bridges any Strands agent to the Agent Client Protocol, enabling interoperability with ACP-compatible orchestration systems."
+integrationType: integration
+languages:
+  typescript:
+    package: "@ryancormack/strands-acp"
+github: https://github.com/ryancormack/strands-acp
+featured: true
+addedDate: 2026-05-21

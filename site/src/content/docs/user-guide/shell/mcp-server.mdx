@@ -1,0 +1,109 @@
+---
+title: Run the MCP server
+description: Expose Strands Shell to any MCP-compatible agent over stdio, with four sandboxed tools and optional nested MCP servers surfaced as Lua modules.
+sidebar:
+  label: "Run the MCP server"
+---
+
+The built-in MCP server exposes a sandboxed shell over JSON-RPC on stdio, so any framework that speaks the [Model Context Protocol](https://modelcontextprotocol.io/) can use it without a line of binding code. This is the integration path when you aren't embedding the Python or Node.js API directly.
+
+## Start the server
+
+Run the server with the `--mcp` flag. With no config, it starts a bare in-memory
+sandbox without host files or credentials and uses the
+[default network policy](configuration.md#network-access).
+
+```bash
+uvx strands-shell --mcp
+```
+
+To grant access, pass a [TOML config file](configuration.md#toml-configuration) before the flag. The server applies the same binds, credentials, allowlist, and limits you'd set in code.
+
+```bash
+uvx strands-shell --config sandbox.toml --mcp
+```
+
+To register the server with an MCP client, point the client's configuration at the same command:
+
+```json
+{
+  "mcpServers": {
+    "shell": {
+      "command": "uvx",
+      "args": ["strands-shell", "--config", "sandbox.toml", "--mcp"]
+    }
+  }
+}
+```
+
+## The four tools
+
+The server exposes four tools. All filesystem paths are absolute paths inside the sandbox VFS.
+
+### `shell`
+
+Runs a command in the virtual shell. The response carries two text blocks: the first is stdout, the second is stderr (both always present, empty when a stream produced nothing). The exit code is in the response metadata.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `command` | string | yes | The shell command string to execute. |
+| `timeout_ms` | number | no | Timeout in milliseconds. Default 30000. |
+
+State persists across calls on the same connection. A `cd`, an `export`, or a function defined in one `shell` call is visible in the next.
+
+### `read_file`
+
+Reads a file from the VFS. Text files return as line-numbered text, 1-indexed, honoring `offset` and `limit`. Images return as image content; other binary files return as embedded resource blobs.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `file_path` | string | yes | Absolute path to the file. |
+| `offset` | number | no | 1-indexed line to start from. Default 1. |
+| `limit` | number | no | Maximum lines to return. Default 2000. |
+
+### `write_file`
+
+Creates or overwrites a file in the VFS.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `file_path` | string | yes | Absolute path to the file. |
+| `content` | string | yes | The content to write. |
+
+### `list_dir`
+
+Lists the entries in a directory in the VFS.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `dir_path` | string | yes | Absolute path to the directory. |
+
+## Nested MCP servers as Lua modules
+
+A shell config can declare other MCP servers under `[[mcp]]` entries. Each one becomes a Lua module inside the shell, callable from the `lua` command with `require`. This lets an agent reach your existing MCP tools through the same sandboxed shell, with the tool's responses available as ordinary Lua tables.
+
+```toml
+[[mcp]]
+name = "my_tools"
+command = "/path/to/mcp-server"
+args = ["--stdio"]
+```
+
+Inside the shell, the server's tools arrive as a table:
+
+```lua
+local tools = require("my_tools")
+local result = tools.search({ query = "deny by default" })
+print(result)
+```
+
+Nested MCP servers are a native-target feature. They aren't available under the WASM build, which has no MCP server or client and no `--config` flag.
+
+## When to use the MCP server
+
+Reach for the MCP server when your agent already speaks MCP and you want isolation without writing binding code: the agent gets a shell plus file tools, all mediated by the Kernel, configured from one TOML file. When you're writing the agent host yourself in Python or Node.js, embed the [Python](quickstart.md#python) or [Node.js](quickstart.md#nodejs) API directly instead, which gives you the typed `Output`, file operations, and per-session control without a subprocess.
+
+## Next steps
+
+- [Configuration](configuration.md): the full TOML schema for binds, credentials, the allowlist, and limits.
+- [Security Model](security.md): what the sandbox guarantees per session and why one shell per session is the contract.

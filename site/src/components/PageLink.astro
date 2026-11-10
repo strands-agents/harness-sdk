@@ -1,0 +1,37 @@
+---
+import { getCollection } from 'astro:content'
+import { resolveHref, getBase, pathWithBase } from '../util/links'
+
+interface Props {
+  href: string
+  [key: string]: any
+}
+
+const { href, ...rest } = Astro.props
+
+// Get all docs for lookup
+const allDocs = await getCollection('docs')
+const docSlugs = new Set(allDocs.map((doc) => doc.id))
+
+// Strip base from current path so resolveHref works with bare slugs,
+// then re-apply base to the resolved result
+const base = getBase()
+const rawPath = Astro.url.pathname
+const currentPath = base && rawPath.startsWith(base) ? rawPath.slice(base.length) : rawPath
+const { resolvedHref: resolved, found } = resolveHref(href, currentPath, docSlugs)
+
+// Re-apply base only to relative resolved paths (absolute URLs are returned as-is)
+const resolvedHref = resolved.startsWith('/') ? pathWithBase(resolved) : resolved
+
+// Log warning in development if link wasn't found
+if (!found) {
+  const route = Astro.locals.starlightRoute
+  console.warn([
+    `[PageLink] On page "${route?.entry?.filePath}"`,
+    `could not resolve "${href}"`,
+    `currentPath: "${currentPath}"`,
+  ].join(', '))
+}
+---
+
+<a href={resolvedHref} {...rest}><slot /></a>

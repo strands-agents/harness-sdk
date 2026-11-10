@@ -1,0 +1,8 @@
+name: "grantex"
+description: "Strands tools that verify Grantex grant tokens and enforce scoped, revocable permissions before tool execution."
+integrationType: integration
+languages:
+  typescript:
+    package: "@grantex/strands"
+github: https://github.com/mishrasanjeev/grantex
+addedDate: 2026-06-20

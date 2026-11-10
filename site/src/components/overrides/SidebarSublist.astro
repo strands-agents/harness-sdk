@@ -1,0 +1,187 @@
+---
+import { Icon, Badge } from '@astrojs/starlight/components';
+import { languageCodeForLabel } from '../../util/source-links'
+
+interface Props {
+  sublist: any[];
+  nested?: boolean;
+  depth?: number;
+}
+
+const { sublist = [], nested = false, depth = 0 } = Astro.props;
+const isTopLevel = depth === 0;
+
+function hasCurrentChild(entries: any[]): boolean {
+  return entries.some((e: any) => 
+    e.type === "link" ? e.isCurrent : hasCurrentChild(e.entries || [])
+  );
+}
+
+
+// Top-level Python / TypeScript groups follow the header language toggle (see Sidebar.astro).
+function sidebarLang(label: string): string | undefined {
+  return languageCodeForLabel(label)
+}
+---
+
+<ul class:list={{ "top-level": !nested }}>
+  {sublist.map((entry: any) => {
+    return (
+      <li>
+        {entry.type === "link" ? (
+          <a href={entry.href} aria-current={entry.isCurrent ? "page" : undefined} class:list={[{ large: !nested }, entry.attrs?.class]}>
+            <span>{entry.label}</span>
+            {entry.badge && (
+              <Badge
+                variant={entry.badge.variant}
+                class={entry.badge.class}
+                text={entry.badge.text}
+                size='small'
+              />
+            )}
+          </a>
+        ) : isTopLevel && entry.collapsed !== true ? (
+          /* Top-level groups: non-collapsible section headers */
+          <div class="section-group" data-sidebar-lang={sidebarLang(entry.label)}>
+            <span class="section-label">
+              {entry.label}
+              {entry.badge && (
+                <Badge
+                  variant={entry.badge.variant}
+                  class={entry.badge.class}
+                  text={entry.badge.text}
+                  size='small'
+                />
+              )}
+            </span>
+            <Astro.self sublist={entry.entries} nested={true} depth={depth + 1} />
+          </div>
+        ) : (
+          /* Label is plain text, not a link — an <a> inside <summary> is nested-interactive (WCAG). */
+          <details class:list={[{ 'top-level-collapsible': isTopLevel }]} open={hasCurrentChild(entry.entries) || !entry.collapsed}>
+            <summary>
+              <span class="group-label">
+                {entry.label}
+                {entry.badge && (
+                  <Badge
+                    variant={entry.badge.variant}
+                    class={entry.badge.class}
+                    text={entry.badge.text}
+                    size='small'
+                  />
+                )}
+              </span>
+              <Icon name="right-caret" class="caret" size="1.25rem" />
+            </summary>
+            <Astro.self sublist={entry.entries} nested={true} depth={depth + 1} />
+          </details>
+        )}
+      </li>
+    );
+  })}
+</ul>
+
+<style>
+  @layer starlight.core {
+    ul { --sl-sidebar-item-padding-inline: 0.5rem; list-style: none; padding: 0; }
+    li { overflow-wrap: anywhere; }
+    /* Only indent items at depth 2+ (skip first level under section headers) */
+    ul ul ul li { margin-inline-start: var(--sl-sidebar-item-padding-inline); border-inline-start: 1px solid var(--sl-color-hairline-light); padding-inline-start: var(--sl-sidebar-item-padding-inline); }
+    .large { font-size: var(--sl-text-lg); font-weight: 600; color: var(--sl-color-white); }
+    .top-level > li + li { margin-top: 0.75rem; }
+    
+    /* Top-level section headers */
+    .section-group { margin-bottom: 0.25rem; }
+    .section-label { display: block; font-weight: 700; color: var(--sl-color-white); text-transform: uppercase; letter-spacing: 0.05em; font-size: 0.6875rem; padding: 0.5em var(--sl-sidebar-item-padding-inline); }
+    /* Indent the items directly under a section header so sub-items read as
+       children of the uppercase header rather than sitting flush with it. */
+    .section-group > ul > li > a:not(.group-link),
+    .section-group > ul > li > details > summary { padding-inline-start: 1rem; }
+
+    /* Top-level collapsible groups: match section header styling */
+    .top-level-collapsible > summary { font-weight: 700; color: var(--sl-color-white); text-transform: uppercase; letter-spacing: 0.05em; font-size: 0.6875rem; padding: 0.5em var(--sl-sidebar-item-padding-inline); }
+    .top-level-collapsible > summary .group-link { font-weight: 700; color: var(--sl-color-white); text-transform: uppercase; letter-spacing: 0.05em; font-size: 0.6875rem; text-decoration: none; }
+    .top-level-collapsible > summary .group-link:hover { color: var(--sl-color-text-accent); }
+
+    /* Collapsible group summary - styled like links */
+    summary { 
+      display: flex; 
+      align-items: center; 
+      justify-content: space-between; 
+      padding: 0.3em var(--sl-sidebar-item-padding-inline); 
+      line-height: 1.4; 
+      cursor: pointer; 
+      user-select: none;
+      border-radius: 0.25rem;
+      color: var(--sl-color-gray-2);
+    }
+    summary:hover, summary:focus { color: var(--sl-color-white); }
+    summary::marker, summary::-webkit-details-marker { display: none; }
+    
+    /* Group link - navigates to first item */
+    .group-link {
+      flex: 1;
+      font-size: var(--sl-text-sm);
+      text-decoration: none;
+      color: var(--sl-color-gray-2);
+    }
+    .group-link:hover { color: var(--sl-color-white); }
+    
+    /* Group label fallback - same styling as link text */
+    .group-label { 
+      flex: 1;
+      font-size: var(--sl-text-sm);
+    }
+    
+    /* Caret icon */
+    .caret { 
+      transition: transform 0.2s ease-in-out; 
+      flex-shrink: 0; 
+      width: 1.25rem; 
+      height: 1.25rem;
+      color: var(--sl-color-gray-3);
+    }
+    :global([dir="rtl"]) .caret { transform: rotateZ(180deg); }
+    [open] > summary .caret { transform: rotateZ(90deg); }
+    
+    /* Links */
+    a:not(.group-link) { 
+      display: block; 
+      border-radius: 0.25rem; 
+      text-decoration: none; 
+      color: var(--sl-color-gray-2); 
+      padding: 0.3em var(--sl-sidebar-item-padding-inline); 
+      line-height: 1.4; 
+    }
+    a:not(.group-link):hover, a:not(.group-link):focus { color: var(--sl-color-white); }
+    a[aria-current="page"], a[aria-current="page"]:hover, a[aria-current="page"]:focus { 
+      font-weight: 600; 
+      color: var(--docs-active-fg);
+      background-color: var(--sl-color-accent); 
+    }
+    .group-link[aria-current="page"], .group-link[aria-current="page"]:hover, .group-link[aria-current="page"]:focus {
+      color: var(--docs-active-fg);
+    }
+    
+    @media (min-width: 50rem) { 
+      .top-level > li + li { margin-top: 0.5rem; } 
+      .large { font-size: var(--sl-text-base); } 
+      a:not(.group-link) { font-size: var(--sl-text-sm); }
+    }
+
+    /* Badge carries its own leading gap so spacing is identical for links,
+       section headers, and group labels, regardless of label whitespace */
+    .sl-badge {
+      font-size: .75em !important;
+      margin-inline-start: 0.75em;
+    }
+
+    /* On the selected row (green background) the pale "tip" badge is hard to
+       read, so flip it to a solid white pill with dark text. */
+    a[aria-current="page"] .sl-badge {
+      background-color: #fff !important;
+      border-color: #fff !important;
+      color: var(--strands-black, #111) !important;
+    }
+  }
+</style>

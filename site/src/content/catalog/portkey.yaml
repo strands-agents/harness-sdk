@@ -1,0 +1,9 @@
+name: portkey
+description: Routes Strands model calls through Portkey's AI gateway via the OpenAI-compatible endpoint, adding guardrails, fallbacks, and observability.
+integrationType: model-provider
+maintainedBy: partner
+languages:
+  python: {}
+github: https://github.com/Portkey-AI/gateway
+docsUrl: https://portkey.ai/docs/integrations/agents/strands
+addedDate: 2025-05-27

@@ -1,0 +1,451 @@
+"""Parameterized integration tests for bidirectional streaming.
+
+Tests fundamental functionality across multiple model providers (Bedrock, Google, and OpenAI),
+including multi-turn conversations, audio I/O, text transcription, and tool execution.
+
+This demonstrates the provider-agnostic design of the bidirectional streaming system.
+"""
+
+import asyncio
+import logging
+import os
+
+import pytest
+
+from strands import tool
+from strands.bidi.agent import BidiAgent
+from strands.bidi.hooks import BidiResponseStopEvent
+from strands.bidi.models import GoogleGeminiLiveModel, OpenAIRealtimeModel
+from strands.bidi.types import BidiResponseStartEvent, BidiTranscriptBlockEvent
+from strands.bidi.types import BidiResponseStopEvent as BidiResponseStopStreamEvent
+from strands.types._events import ToolResultEvent
+from strands.types.media import ImageBlock
+
+from .context import BidirectionalTestContext
+from .hook_utils import HookEventCollector
+
+logger = logging.getLogger(__name__)
+
+
+def create_bedrock_nova_sonic_model(**kwargs):
+    """Create a Nova Sonic model without importing its Python 3.12-only SDK during collection."""
+    from strands.bidi.models import BedrockNovaSonicModel
+
+    return BedrockNovaSonicModel(**kwargs)
+
+
+# Simple calculator tool for testing
+@tool
+def calculator(operation: str, x: float, y: float) -> float:
+    """Perform basic arithmetic operations.
+
+    Args:
+        operation: The operation to perform (add, subtract, multiply, divide)
+        x: First number
+        y: Second number
+
+    Returns:
+        Result of the operation
+    """
+    if operation == "add":
+        return x + y
+    elif operation == "subtract":
+        return x - y
+    elif operation == "multiply":
+        return x * y
+    elif operation == "divide":
+        if y == 0:
+            raise ValueError("Cannot divide by zero")
+        return x / y
+    else:
+        raise ValueError(f"Unknown operation: {operation}")
+
+
+# Provider configurations
+PROVIDER_CONFIGS = {
+    "bedrock_nova_sonic": {
+        "model_factory": create_bedrock_nova_sonic_model,
+        "model_kwargs": {"model_id": "amazon.nova-2-5-sonic", "region": "us-east-1"},
+        "silence_duration": 2.5,  # Nova Sonic needs 2+ seconds of silence
+        "env_vars": ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"],
+        "skip_reason": "AWS credentials not available",
+    },
+    "openai_realtime": {
+        "model_factory": OpenAIRealtimeModel,
+        "model_kwargs": {
+            "model_id": "gpt-realtime-2.1",
+            "transcription_model_id": "gpt-4o-transcribe",
+            "params": {
+                "output_modalities": ["audio"],  # OpenAI only supports audio OR text, not both
+                "audio": {
+                    "input": {
+                        "format": {"type": "audio/pcm", "rate": 24000},
+                        "turn_detection": {
+                            "type": "server_vad",
+                            "threshold": 0.5,
+                            "silence_duration_ms": 700,
+                        },
+                    },
+                    "output": {"format": {"type": "audio/pcm", "rate": 24000}, "voice": "alloy"},
+                },
+            },
+        },
+        "silence_duration": 1.0,  # OpenAI has faster VAD
+        "env_vars": ["OPENAI_API_KEY"],
+        "skip_reason": "OPENAI_API_KEY not available",
+    },
+    "google_gemini_live": {
+        "model_factory": GoogleGeminiLiveModel,
+        "model_kwargs": {
+            "model_id": "gemini-3.8-live",
+        },
+        "silence_duration": 1.5,  # Google Gemini Live has good VAD, similar to OpenAI
+        "env_vars": ["GOOGLE_API_KEY"],
+        "skip_reason": "GOOGLE_API_KEY not available",
+    },
+}
+
+
+def check_provider_available(provider_name: str) -> tuple[bool, str]:
+    """Check if a provider's credentials are available.
+
+    Args:
+        provider_name: Name of the provider to check.
+
+    Returns:
+        Tuple of (is_available, skip_reason).
+    """
+    config = PROVIDER_CONFIGS[provider_name]
+    env_vars = config["env_vars"]
+
+    missing_vars = [var for var in env_vars if not os.getenv(var)]
+
+    if missing_vars:
+        return False, f"{config['skip_reason']}: {', '.join(missing_vars)}"
+
+    return True, ""
+
+
+@pytest.fixture(params=list(PROVIDER_CONFIGS.keys()))
+def provider_config(request):
+    """Provide configuration for each model provider.
+
+    This fixture is parameterized to run tests against all available providers.
+    """
+    provider_name = request.param
+    config = PROVIDER_CONFIGS[provider_name]
+
+    # Check if provider is available
+    is_available, skip_reason = check_provider_available(provider_name)
+    if not is_available:
+        pytest.skip(skip_reason)
+
+    return {
+        "name": provider_name,
+        **config,
+    }
+
+
+@pytest.fixture
+def hook_collector():
+    """Provide a hook event collector for tracking all events."""
+    return HookEventCollector()
+
+
+@pytest.fixture
+def agent_with_calculator(provider_config, hook_collector):
+    """Provide bidirectional agent with calculator tool for the given provider.
+
+    Note: Session lifecycle (start/end) is handled by BidirectionalTestContext.
+    """
+    model_factory = provider_config["model_factory"]
+    model_kwargs = provider_config["model_kwargs"]
+
+    model = model_factory(**model_kwargs)
+    return BidiAgent(
+        model=model,
+        tools=[calculator],
+        system_prompt="You are a helpful assistant with access to a calculator tool. Keep responses brief.",
+        hooks=[hook_collector],
+    )
+
+
+@pytest.mark.asyncio
+async def test_bidirectional_agent(agent_with_calculator, audio_generator, provider_config, hook_collector):
+    """Test multi-turn conversation with follow-up questions across providers.
+
+    This test runs against all configured providers (Bedrock, Google, and OpenAI)
+    to validate provider-agnostic functionality.
+
+    Validates:
+    - Session lifecycle (start/end via context manager)
+    - Audio input streaming
+    - Speech-to-text transcription
+    - Tool execution (calculator) with hook verification
+    - Multi-turn conversation flow
+    - Complete user and assistant transcripts in conversation history
+    - Text-to-speech audio output
+    """
+    provider_name = provider_config["name"]
+    silence_duration = provider_config["silence_duration"]
+
+    logger.info("provider=<%s> | testing provider", provider_name)
+
+    async with BidirectionalTestContext(agent_with_calculator, audio_generator) as ctx:
+        # Turn 1: Simple greeting to test basic audio I/O
+        await ctx.say("Hello, can you hear me?")
+        # Wait for silence to trigger provider's VAD/silence detection
+        await asyncio.sleep(silence_duration)
+        await ctx.wait_for_response()
+
+        text_outputs_turn1 = ctx.get_text_outputs()
+
+        # Validate turn 1 - just check we got a response
+        assert len(text_outputs_turn1) > 0, f"[{provider_name}] No text output received in turn 1"
+
+        logger.info("provider=<%s> | turn 1 complete received response", provider_name)
+        logger.info("provider=<%s>, response=<%s> | turn 1 response", provider_name, text_outputs_turn1[0][:100])
+
+        # Turn 2: Follow-up to test multi-turn conversation
+        await ctx.say("What's your name?")
+        # Wait for silence to trigger provider's VAD/silence detection
+        await asyncio.sleep(silence_duration)
+        await ctx.wait_for_response()
+
+        text_outputs_turn2 = ctx.get_text_outputs()
+
+        # Validate turn 2 - check we got more responses
+        assert len(text_outputs_turn2) > len(text_outputs_turn1), f"[{provider_name}] No new text output in turn 2"
+
+        logger.info("provider=<%s> | turn 2 complete multi-turn conversation works", provider_name)
+        logger.info("provider=<%s>, response_count=<%d> | total responses", provider_name, len(text_outputs_turn2))
+
+        # User transcription can finish after the assistant response.
+        async def wait_for_user_transcripts():
+            while (
+                sum(
+                    event.get("type") == "bidi_transcript_block" and event.get("role") == "user"
+                    for event in ctx.get_events()
+                )
+                < 2
+            ):
+                await asyncio.sleep(0.05)
+
+        await asyncio.wait_for(wait_for_user_transcripts(), timeout=10)
+        messages = agent_with_calculator.messages
+        assert [message["role"] for message in messages] == ["user", "assistant"] * 2
+        for message in messages:
+            assert message["metadata"]["custom"]["bidi"] == {"kind": "transcript", "status": "complete"}
+            assert len(message["content"]) == 1
+            assert message["content"][0]["text"].strip()
+        assert len({message["tracking_id"] for message in messages}) == len(messages)
+
+        # Validate audio outputs
+        audio_outputs = ctx.get_audio_outputs()
+        assert len(audio_outputs) > 0, f"[{provider_name}] No audio output received"
+        total_audio_bytes = sum(len(audio) for audio in audio_outputs)
+
+        response_events = [event for event in ctx.get_events() if isinstance(event, BidiResponseStopStreamEvent)]
+        assert response_events, f"[{provider_name}] No response completion received"
+        response_starts = [event for event in ctx.get_events() if isinstance(event, BidiResponseStartEvent)]
+        tru_response_ids = [event.response_id for event in response_starts]
+        exp_response_ids = [event.response_id for event in response_events]
+        assert tru_response_ids == exp_response_ids
+        assert len(set(tru_response_ids)) == len(tru_response_ids)
+        active_response = None
+        active_transcripts = {}
+        seen_transcripts = set()
+        audio_active = False
+        for event in ctx.get_events():
+            if event.get("type") in ("bidi_transcript_start", "bidi_transcript_delta", "bidi_transcript_block"):
+                transcript = event["content_id"]
+                if event["type"] == "bidi_transcript_start":
+                    assert transcript not in seen_transcripts
+                    seen_transcripts.add(transcript)
+                    active_transcripts[transcript] = event["role"]
+                else:
+                    assert active_transcripts[transcript] == event["role"]
+                    if event["type"] == "bidi_transcript_block":
+                        del active_transcripts[transcript]
+            if event.get("type") == "bidi_audio_start":
+                assert active_response is not None
+                assert not audio_active
+                audio_active = True
+            elif event.get("type") in ("bidi_audio_delta", "bidi_audio_stop"):
+                assert audio_active
+                if event["type"] == "bidi_audio_stop":
+                    audio_active = False
+            if isinstance(event, BidiResponseStartEvent):
+                assert active_response is None
+                active_response = event.response_id
+            elif event.get("type") == "bidi_audio_delta" or (
+                event.get("type") in ("bidi_transcript_start", "bidi_transcript_delta", "bidi_transcript_block")
+                and event.get("role") == "assistant"
+            ):
+                assert active_response is not None
+            elif isinstance(event, BidiResponseStopStreamEvent):
+                assert event.response_id == active_response
+                assert not audio_active
+                active_response = None
+        assert active_response is None
+        assert not audio_active
+        assert not active_transcripts
+        tru_events = hook_collector.get_events_by_type("response_stop")
+        exp_events = [
+            BidiResponseStopEvent(agent=agent_with_calculator, response_id=event.response_id)
+            for event in response_events
+        ]
+        assert tru_events == exp_events
+
+        # Verify tool execution hooks if tools were called
+        tool_calls = hook_collector.get_tool_calls()
+        if len(tool_calls) > 0:
+            logger.info("provider=<%s> | tool execution detected", provider_name)
+            # Verify hooks are properly paired
+            verified_tools = hook_collector.verify_tool_execution()
+            logger.info(
+                "provider=<%s>, tools_called=<%s> | tool execution hooks verified",
+                provider_name,
+                verified_tools,
+            )
+        else:
+            logger.info("provider=<%s> | no tools were called during conversation", provider_name)
+
+        # Summary
+        logger.info("=" * 60)
+        logger.info("provider=<%s> | multi-turn conversation test passed", provider_name)
+        logger.info("provider=<%s> | test summary", provider_name)
+        logger.info("event_count=<%d> | total events", len(ctx.get_events()))
+        logger.info("text_response_count=<%d> | text responses", len(text_outputs_turn2))
+        logger.info(
+            "audio_chunk_count=<%d>, audio_bytes=<%d> | audio chunks",
+            len(audio_outputs),
+            total_audio_bytes,
+        )
+        logger.info(
+            "tool_calls=<%d> | tool execution count",
+            len(tool_calls),
+        )
+        logger.info("=" * 60)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider_config", ["openai_realtime", "google_gemini_live"], indirect=True)
+async def test_send_image_and_text(provider_config, yellow_img):
+    """An image and its question form one user message and receive a visual answer."""
+    model = provider_config["model_factory"](**provider_config["model_kwargs"])
+    agent = BidiAgent(model=model)
+    image = ImageBlock(format="png", source={"bytes": yellow_img})
+    question = "What is the main color in this image? Answer with just the color name."
+
+    async with BidirectionalTestContext(agent) as context:
+        await agent.send([image, question])
+        await context.wait_for_response(timeout=30)
+
+        tru_response = " ".join(
+            event.transcript
+            for event in context.get_events()
+            if isinstance(event, BidiTranscriptBlockEvent) and event.role == "assistant"
+        )
+        assert "yellow" in tru_response.lower()
+
+        user_messages = [message for message in agent.messages if message["role"] == "user"]
+        assert len(user_messages) == 1
+        tru_content = user_messages[0]["content"]
+        exp_content = [image.to_dict(), {"text": question}]
+        assert tru_content == exp_content
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider_config", "model_kwargs", "content_type"),
+    [
+        ("openai_realtime", {"params": {"output_modalities": ["text"]}}, "text"),
+        (
+            "google_gemini_live",
+            {
+                "model_id": "gemini-3.1-flash-live-preview",
+                "params": {"thinking_config": {"thinking_level": "high", "include_thoughts": True}},
+            },
+            "reasoning",
+        ),
+    ],
+    indirect=["provider_config"],
+)
+async def test_receive_text_and_reasoning(provider_config, model_kwargs, content_type):
+    """Receive nonempty text or reasoning deltas and completed blocks."""
+    model = provider_config["model_factory"](**(provider_config["model_kwargs"] | model_kwargs))
+    agent = BidiAgent(model=model)
+
+    async with BidirectionalTestContext(agent) as context:
+        await context.send(
+            "A bag has 3 red, 4 blue, and 5 green balls. Three balls are drawn without replacement. "
+            "What is the probability that exactly two share a color and the third is a different color? "
+            "Think carefully and give a brief answer."
+        )
+        await context.wait_for_response(timeout=60)
+        events = context.get_events()
+
+    assert any(event["type"] == f"bidi_{content_type}_delta" and event["delta"].strip() for event in events)
+    assert any(event["type"] == f"bidi_{content_type}_block" and event["text"].strip() for event in events)
+
+
+@pytest.mark.asyncio
+async def test_tool_history_and_response_boundaries(agent_with_calculator, audio_generator):
+    """Complete tool exchanges remain adjacent while the provider continues its response."""
+    agent = agent_with_calculator
+    agent.system_prompt = "Use the calculator for arithmetic. Answer with the result in one short sentence."
+    async with BidirectionalTestContext(agent, audio_generator) as context:
+        await context.say("Please use the calculator to multiply thirty seven by nineteen.")
+        while True:
+            await context.wait_for_response(timeout=30)
+            results = [
+                (index, block["toolResult"])
+                for index, message in enumerate(agent.messages)
+                for block in message["content"]
+                if "toolResult" in block and "703" in str(block["toolResult"]["content"])
+            ]
+            events = context.get_events()
+            result_index = next(
+                (index for index, event in enumerate(events) if event.get("type") == "tool_result"), len(events)
+            )
+            if results and any(
+                event.get("type") == "bidi_transcript_block" and event.get("role") == "assistant"
+                for event in events[result_index + 1 :]
+            ):
+                break
+        assert results
+        for index, result in results:
+            assert result["status"] == "success"
+            tool_use_id = result["toolUseId"]
+            assert agent.messages[index]["metadata"]["custom"]["bidi"] == {"kind": "tool_result"}
+            dispatch_index = next(
+                position
+                for position, message in enumerate(agent.messages)
+                if message.get("metadata", {}).get("custom", {}).get("bidi") == {"kind": "tool_dispatch"}
+                and any(block.get("toolResult", {}).get("toolUseId") == tool_use_id for block in message["content"])
+            )
+            assert dispatch_index < index
+            assert ToolResultEvent(result) in events
+            request = [block for block in agent.messages[index - 1]["content"] if "toolUse" in block]
+            assert {
+                "toolUse": {
+                    "toolUseId": tool_use_id,
+                    "name": calculator.tool_name,
+                    "input": {"operation": "multiply", "x": 37, "y": 19},
+                }
+            } in request
+            assert agent.messages[dispatch_index - 1]["content"] == request
+        events = context.get_events()
+        starts = [event.response_id for event in events if isinstance(event, BidiResponseStartEvent)]
+        completions = [event.response_id for event in events if isinstance(event, BidiResponseStopStreamEvent)]
+        assert starts == completions
+        assert len(starts) == len(set(starts))
+        for index, message in enumerate(agent.messages):
+            tool_use_ids = [block["toolUse"]["toolUseId"] for block in message["content"] if "toolUse" in block]
+            if tool_use_ids:
+                result_message = agent.messages[index + 1]
+                assert result_message["role"] == "user"
+                assert [
+                    block["toolResult"]["toolUseId"] for block in result_message["content"] if "toolResult" in block
+                ] == tool_use_ids

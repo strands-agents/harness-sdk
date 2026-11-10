@@ -1,0 +1,279 @@
+---
+title: Session diagnosis
+description: 'Run the full failure diagnosis pipeline with diagnose_session: detect failures, analyze root causes, and get deduplicated fix recommendations.'
+tags: [failure-diagnosis, observability, error-handling]
+sidebar:
+  label: "Session diagnosis"
+---
+
+`diagnose_session` runs the full detection-and-analysis pipeline in a single call: it detects failures, performs root cause analysis on any failures found, and returns a combined `DiagnosisResult` with deduplicated fix recommendations. It also integrates directly into the `Experiment` class via `DiagnosisConfig` for automatic diagnosis of failing evaluation cases.
+
+## Key features
+
+- **Single-call pipeline**: Runs `detect_failures` then `analyze_root_cause` in sequence
+- **Deduplicated recommendations**: The `.recommendations` property returns unique fix suggestions across all root causes
+- **Experiment integration**: Wire into `Experiment` with `DiagnosisConfig` for automatic diagnosis
+- **Configurable triggers**: Run diagnosis on every case (`DiagnosisTrigger.ALWAYS`) or only on failing cases (`DiagnosisTrigger.ON_FAILURE`)
+
+## When to use
+
+Use `diagnose_session` when you need to:
+
+- **Run the full pipeline** without managing individual detector calls
+- **Integrate diagnosis into experiments** for automatic debugging of failing cases
+- **Get a single result object** with failures, root causes, and recommendations
+
+Use the individual detectors (`detect_failures`, `analyze_root_cause`) when you need finer control, for example running failure detection with different confidence thresholds before deciding whether to proceed with RCA.
+
+## Parameters
+
+### `session` (required)
+- **Type**: `Session`
+- **Description**: The Session object containing traces and spans to diagnose.
+
+### `model` (optional)
+- **Type**: `Model | str | None`
+- **Default**: `None` (uses Claude Sonnet via Bedrock)
+- **Description**: The model for both failure detection and root cause analysis.
+
+### `confidence_threshold` (optional)
+- **Type**: `ConfidenceLevel`
+- **Default**: `ConfidenceLevel.LOW`
+- **Description**: Minimum confidence level for failure detection.
+
+## Basic usage
+
+```python
+from strands_evals.detectors import diagnose_session
+
+result = diagnose_session(session)
+
+# Failures found
+print(f"Failures: {len(result.failures)}")
+for f in result.failures:
+    print(f"  [{f.category[0]}] at span {f.span_id}")
+
+# Root causes
+print(f"\nRoot causes: {len(result.root_causes)}")
+for rc in result.root_causes:
+    print(f"  {rc.causality} at {rc.location}: {rc.root_cause_explanation}")
+
+# Deduplicated recommendations
+print("\nRecommendations:")
+for rec in result.recommendations:
+    print(f"  - {rec}")
+```
+
+## Output structure
+
+`diagnose_session` returns a `DiagnosisResult`:
+
+```python
+class DiagnosisResult(BaseModel):
+    session_id: str
+    failures: list[FailureItem]
+    root_causes: list[RCAItem]
+
+    @property
+    def recommendations(self) -> list[str]:
+        """Deduplicated fix recommendations from all root causes."""
+```
+
+If no failures are detected, `root_causes` will be empty and `recommendations` will return an empty list.
+
+## Integration with experiments
+
+Wire diagnosis into the `Experiment` class to diagnose cases automatically during evaluation. Pass a `DiagnosisConfig` to the experiment.
+
+### DiagnosisConfig
+
+```python
+from strands_evals import DiagnosisConfig
+from strands_evals.detectors import ConfidenceLevel, DiagnosisTrigger
+
+class DiagnosisConfig(BaseModel):
+    trigger: DiagnosisTrigger = DiagnosisTrigger.ON_FAILURE
+    model: Model | str | None = None
+    confidence_threshold: ConfidenceLevel = ConfidenceLevel.MEDIUM
+```
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `trigger` | `DiagnosisTrigger.ON_FAILURE` | When to run diagnosis. `ON_FAILURE` runs only when at least one evaluator fails. `ALWAYS` runs on every case. |
+| `model` | `None` | Model for the detectors. `None` uses the default. |
+| `confidence_threshold` | `ConfidenceLevel.MEDIUM` | Minimum confidence for failure detection. |
+
+### Example: Diagnose failing cases
+
+```python
+import asyncio
+
+from strands import Agent
+from strands_evals import Case, Experiment, DiagnosisConfig, eval_task, TracedHandler
+from strands_evals.detectors import ConfidenceLevel, DiagnosisTrigger
+from strands_evals.evaluators import GoalSuccessRateEvaluator
+
+@eval_task(TracedHandler())
+def my_agent_task():
+    return Agent(
+        system_prompt="You are a helpful travel booking assistant.",
+        callback_handler=None,
+    )
+
+cases = [
+    Case(
+        name="booking-1",
+        input="Book me a flight from NYC to London for next Friday.",
+        metadata={"task_description": "Flight booked with confirmation number"},
+    ),
+    Case(
+        name="booking-2",
+        input="I need to cancel my reservation ABC123.",
+        metadata={"task_description": "Reservation cancelled successfully"},
+    ),
+]
+
+experiment = Experiment(
+    cases=cases,
+    evaluators=[GoalSuccessRateEvaluator()],
+    diagnosis_config=DiagnosisConfig(
+        trigger=DiagnosisTrigger.ON_FAILURE,
+        confidence_threshold=ConfidenceLevel.MEDIUM,
+    ),
+)
+
+async def main():
+    report = await experiment.run_evaluations_async(my_agent_task, max_workers=1)
+    report.run_display()
+    return report
+
+report = asyncio.run(main())
+```
+
+### Viewing recommendations
+
+Display recommendations in the evaluation report:
+
+```python
+# Display with recommendations column
+report.display(include_recommendations=True)
+```
+
+Or access them programmatically:
+
+```python
+for i, rec in enumerate(report.recommendations):
+    if rec is not None:
+        case_name = report.cases[i].get("name", f"case_{i}")
+        passed = report.test_passes[i]
+        print(f"[{'PASS' if passed else 'FAIL'}] {case_name}")
+        print(f"  Recommendation: {rec}")
+```
+
+### Accessing full diagnosis data
+
+The full diagnosis dict (failures + root causes) is available per case:
+
+```python
+for i, diagnosis in enumerate(report.diagnoses):
+    if diagnosis is not None:
+        case_name = report.cases[i].get("name", f"case_{i}")
+        n_failures = len(diagnosis.get("failures", []))
+        n_rca = len(diagnosis.get("root_causes", []))
+        print(f"{case_name}: {n_failures} failures, {n_rca} root causes")
+
+        for rc in diagnosis.get("root_causes", []):
+            print(f"  [{rc['fix_type']}] {rc['fix_recommendation']}")
+```
+
+### Trigger modes
+
+**`DiagnosisTrigger.ON_FAILURE` (default)**: Diagnosis runs only when at least one evaluator returns `test_pass=False` for the case. This is the most efficient option: no LLM calls are spent diagnosing passing cases.
+
+```python
+DiagnosisConfig(trigger=DiagnosisTrigger.ON_FAILURE)
+```
+
+**`DiagnosisTrigger.ALWAYS`**: Diagnosis runs on every case regardless of evaluator results. Useful for deep analysis or when you want to detect latent issues in passing cases (e.g., the agent succeeded but through a suboptimal path).
+
+```python
+DiagnosisConfig(trigger=DiagnosisTrigger.ALWAYS)
+```
+
+### Requirements
+
+Diagnosis requires the task function to return a `Session` object as the trajectory. This means using either:
+
+- The `@eval_task(TracedHandler())` decorator (recommended)
+- A manual task function that collects spans and maps them to a `Session` via `StrandsInMemorySessionMapper`
+- A trace provider that returns `Session` objects
+
+If the trajectory is not a `Session` (e.g., it's a plain list of tool names), diagnosis is silently skipped for that case.
+
+## Example: Full workflow
+
+This example shows the complete workflow: run evaluations with diagnosis, then analyze the results.
+
+```python
+import asyncio
+
+from strands import Agent
+from strands_evals import Case, Experiment, DiagnosisConfig, eval_task, TracedHandler
+from strands_evals.detectors import ConfidenceLevel, DiagnosisTrigger
+from strands_evals.evaluators import OutputEvaluator, GoalSuccessRateEvaluator
+from strands.vended_tools import notebook
+
+@eval_task(TracedHandler())
+def notes_agent():
+    return Agent(
+        tools=[notebook],
+        system_prompt="Use the notebook tool to organize the user's notes.",
+        callback_handler=None,
+    )
+
+cases = [
+    Case(
+        name="basic-notes",
+        input='Create a notebook named "ideas" and add three project ideas.',
+        expected_output="Three ideas were added to the ideas notebook.",
+        metadata={"task_description": "Notebook updated successfully"},
+    ),
+]
+
+experiment = Experiment(
+    cases=cases,
+    evaluators=[
+        OutputEvaluator(rubric="Score 1.0 if the answer is numerically correct. Score 0.0 otherwise."),
+        GoalSuccessRateEvaluator(),
+    ],
+    diagnosis_config=DiagnosisConfig(
+        trigger=DiagnosisTrigger.ON_FAILURE,
+        confidence_threshold=ConfidenceLevel.MEDIUM,
+    ),
+)
+
+async def main():
+    report = await experiment.run_evaluations_async(notes_agent, max_workers=1)
+
+    # The experiment returns one combined report across all evaluators;
+    # each row in `report.cases` carries an `evaluator` key naming the producer.
+    report.display(include_recommendations=True)
+
+asyncio.run(main())
+```
+
+## Best practices
+
+1. **Start with `DiagnosisTrigger.ON_FAILURE`** to minimize LLM costs: only diagnose cases that actually fail
+2. **Use `ConfidenceLevel.MEDIUM`** for diagnosis to balance signal and noise
+3. **Use `TracedHandler`** with the `@eval_task` decorator to automatically collect `Session` objects
+4. **Group recommendations across cases** to identify systematic issues vs. one-off problems
+5. **Use `DiagnosisTrigger.ALWAYS` sparingly**: it's useful for deep analysis but doubles the LLM cost per case
+
+## Related documentation
+
+- [Failure Detection](failure_detection.md): Standalone failure detection
+- [Root Cause Analysis](root_cause_analysis.md): Standalone root cause analysis
+- [Detectors Overview](index.md): High-level detectors guide
+- [Task Decorator](../how-to/eval_task.md): Simplify task functions with `@eval_task`
+- [Remote Trace Providers](../how-to/trace_providers.md): Fetch traces from production backends

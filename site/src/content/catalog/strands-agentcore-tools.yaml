@@ -1,0 +1,8 @@
+name: strands-agentcore-tools
+description: Strands tools for AWS Bedrock AgentCore lifecycle management — wraps AgentCore APIs as callable tools for Strands agents.
+integrationType: tool
+languages:
+  python:
+    package: strands-agentcore-tools
+github: https://github.com/cagataycali/strands-agentcore-tools
+addedDate: 2025-10-25

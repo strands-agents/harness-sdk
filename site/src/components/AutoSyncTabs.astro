@@ -1,0 +1,91 @@
+---
+/**
+ * A wrapper around Starlight's Tabs component that auto-generates
+ * the syncKey based on the labels of the TabItems passed in.
+ * 
+ * Tabs with identical sets of labels will automatically sync together.
+ * 
+ * Usage:
+ * <AutoSyncTabs>
+ *   <TabItem label="npm">npm install</TabItem>
+ *   <TabItem label="yarn">yarn add</TabItem>
+ * </AutoSyncTabs>
+ *
+ * Special case: language tabs.
+ * When the labels are exactly the language pair {"Python", "TypeScript"},
+ * the wrapper is marked with `data-language-tabs` so the inline tablist
+ * can be visually hidden via global CSS. The site's header LanguageToggle
+ * remains the single language selector. Tab logic, syncing, and switching
+ * are unchanged — only the inline UI is hidden.
+ */
+import { Tabs } from '@astrojs/starlight/components';
+
+interface Props {
+  /** Optional explicit syncKey. If provided, auto-generation is skipped. */
+  syncKey?: string;
+}
+
+const { syncKey: explicitSyncKey } = Astro.props;
+
+// Render the slot to get the HTML content
+const slotContent = await Astro.slots.render('default');
+
+// Extract labels from starlight-tab-item elements
+const labelMatches = slotContent.matchAll(/data-label="([^"]+)"/g);
+const labels = [...labelMatches].map(match => match[1]);
+
+/**
+ * Generate a simple hash from a string.
+ * Used to create consistent sync keys from tab labels.
+ */
+function hashString(str: string): string {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash; // Convert to 32-bit integer
+  }
+  return Math.abs(hash).toString(36);
+}
+
+// Generate syncKey from labels if not explicitly provided
+const syncKey = explicitSyncKey ?? (labels.length > 0 ? hashString(labels.join('|')) : undefined);
+
+// Detect language tabs (Python + TypeScript pair, in any order).
+// Only this exact pair is treated as a "language tab" — other tab groups
+// (npm/yarn, OS variants, IDE choice, etc.) keep their normal tablist UI.
+const labelSet = new Set(labels);
+const isLanguageTabs =
+  labels.length === 2 &&
+  labelSet.has('Python') &&
+  labelSet.has('TypeScript');
+---
+
+{isLanguageTabs ? (
+  <div data-language-tabs>
+    <Tabs syncKey={syncKey}>
+      <Fragment set:html={slotContent} />
+    </Tabs>
+  </div>
+) : (
+  <Tabs syncKey={syncKey}>
+    <Fragment set:html={slotContent} />
+  </Tabs>
+)}
+
+<style is:global>
+  /*
+   * Hide the inline tablist for language tabs only.
+   * The header LanguageToggle is the single source of truth for language
+   * selection — inline tablists became visually distracting on pages with
+   * many language tab groups. The Starlight tab logic is preserved (panels
+   * are still selectively shown/hidden by Starlight), so the header toggle
+   * can programmatically switch tabs via tab.click() exactly as before.
+   *
+   * We keep the inline tablist for non-language tabs (e.g. macOS/Windows,
+   * npm/yarn) — those still need an inline selector.
+   */
+  [data-language-tabs] starlight-tabs > .tablist-wrapper {
+    display: none;
+  }
+</style>

@@ -1,0 +1,27 @@
+---
+import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro'
+import { pathWithBase } from '../util/links'
+
+interface Props { title: string; description?: string }
+const { title, description } = Astro.props
+const pageUrl = new URL(Astro.url.pathname, Astro.site).href
+
+const head = [
+  { tag: 'link' as const, attrs: { rel: 'canonical', href: pageUrl } },
+  { tag: 'meta' as const, attrs: { property: 'og:title', content: title } },
+  { tag: 'meta' as const, attrs: { property: 'og:type', content: 'website' } },
+  { tag: 'link' as const, attrs: { rel: 'alternate', type: 'application/rss+xml', title: 'Strands Agents Changelog', href: pathWithBase('/changelog/feed.xml') } },
+]
+if (description) head.push({ tag: 'meta' as const, attrs: { property: 'og:description', content: description } })
+---
+<StarlightPage
+  frontmatter={{ title, description, template: 'splash', head, hero: { actions: [] } }}
+  hasSidebar={false}
+>
+  {/* Splash pages omit the `id="_top"` that Starlight puts on doc-page h1s,
+      leaving the "Skip to content" link (href="#_top") with no target. Anchor
+      it here so the skip link works on changelog pages. */}
+  <div id="_top">
+    <slot />
+  </div>
+</StarlightPage>

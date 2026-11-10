@@ -1,0 +1,313 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Strands Browser Agent Example</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 0;
+      margin: 0;
+      background-color: #f5f5f7;
+      color: #1d1d1f;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    h1 {
+      margin: 1rem 0;
+      font-weight: 600;
+    }
+
+    #main-content {
+      display: flex;
+      flex-direction: row;
+      width: 100%;
+      max-width: 1200px;
+      flex: 1;
+      min-height: 0;
+      gap: 2rem;
+      padding: 0 2rem 1rem;
+      box-sizing: border-box;
+    }
+
+    #canvas-container {
+      flex: 1;
+      min-width: 400px;
+      height: 100%;
+      resize: horizontal;
+      overflow: hidden;
+    }
+
+    #canvas {
+      width: 100%;
+      height: 100%;
+      border: 1px solid #d2d2d7;
+      border-radius: 12px;
+      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+    }
+
+    #chat-container {
+      background: white;
+      border-radius: 12px;
+      border: 1px solid #d2d2d7;
+      box-shadow: 0 10px 20px rgba(0, 0, 0, 0.1);
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+      height: 100%;
+      overflow: hidden;
+    }
+
+    #messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 1.5rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    .message {
+      padding: 0.75rem 1rem;
+      border-radius: 18px;
+      max-width: 80%;
+      line-height: 1.4;
+      white-space: pre-wrap;
+    }
+
+    .user {
+      background-color: #0071e3;
+      color: white;
+      align-self: flex-end;
+      border-bottom-right-radius: 4px;
+    }
+
+    .agent {
+      background-color: #f5f5f7;
+      color: #1d1d1f;
+      align-self: flex-start;
+      border-bottom-left-radius: 4px;
+    }
+
+    #input-area {
+      display: flex;
+      padding: 1rem;
+      border-top: 1px solid #e5e5e5;
+      background-color: white;
+    }
+
+    #user-input {
+      flex: 1;
+      padding: 0.75rem 1rem;
+      border: 1px solid #d2d2d7;
+      border-radius: 20px;
+      margin-right: 0.75rem;
+      font-size: 1rem;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    #user-input:focus {
+      border-color: #0071e3;
+    }
+
+    button {
+      padding: 0.5rem 1.25rem;
+      background-color: #0071e3;
+      color: white;
+      border: none;
+      border-radius: 20px;
+      cursor: pointer;
+      font-size: 1rem;
+      font-weight: 500;
+      transition: background-color 0.2s;
+      margin-left: 0.5rem;
+    }
+
+    button:hover {
+      background-color: #0077ed;
+    }
+
+    button:disabled {
+      background-color: #d2d2d7;
+      cursor: not-allowed;
+    }
+
+    #settings-btn {
+      position: absolute;
+      top: 1rem;
+      right: 1rem;
+      background-color: #f5f5f7;
+      color: #1d1d1f;
+      border: 1px solid #d2d2d7;
+    }
+
+    #settings-btn:hover {
+      background-color: #e8e8ed;
+    }
+
+    #settings-modal {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background-color: rgba(0, 0, 0, 0.5);
+      z-index: 1000;
+      justify-content: center;
+      align-items: center;
+    }
+
+    #settings-modal.show {
+      display: flex;
+    }
+
+    #settings-content {
+      background: white;
+      border-radius: 12px;
+      padding: 2rem;
+      max-width: 500px;
+      width: 90%;
+    }
+
+    #settings-content h2 {
+      margin-top: 0;
+    }
+
+    #settings-content label {
+      display: block;
+      margin: 1rem 0 0.5rem;
+      font-weight: 500;
+    }
+
+    #settings-content input,
+    #settings-content select {
+      width: 100%;
+      padding: 0.75rem;
+      border: 1px solid #d2d2d7;
+      border-radius: 8px;
+      font-size: 1rem;
+      box-sizing: border-box;
+    }
+
+    #settings-content .button-group {
+      display: flex;
+      gap: 0.5rem;
+      margin-top: 1.5rem;
+    }
+
+    #settings-content .button-group button {
+      flex: 1;
+    }
+
+    .openai-fields,
+    .anthropic-fields,
+    .bedrock-fields {
+      display: none;
+    }
+
+    .openai-fields.show,
+    .anthropic-fields.show,
+    .bedrock-fields.show {
+      display: block;
+    }
+
+    .loading-dots span {
+      animation: blink 1.4s infinite;
+      font-size: 1.5em;
+    }
+    .loading-dots span:nth-child(2) { animation-delay: 0.2s; }
+    .loading-dots span:nth-child(3) { animation-delay: 0.4s; }
+    @keyframes blink {
+      0%, 20% { opacity: 0; }
+      50% { opacity: 1; }
+      100% { opacity: 0; }
+    }
+  </style>
+</head>
+
+<body>
+  <button type="button" id="settings-btn">⚙️ Settings</button>
+  <h1>Browser Agent Example</h1>
+
+  <div
+    style="background-color: #fff3cd; color: #856404; padding: 1rem; border: 1px solid #ffeeba; border-radius: 8px; margin: 0 2rem 1rem; text-align: center; font-weight: 500;">
+    ⚠️ Warning: This browser agent example is not productionized and may be unsafe. Do not use in production without
+    proper security measures.
+  </div>
+
+  <div id="main-content">
+    <div id="canvas-container">
+      <!-- allow-scripts + allow-same-origin together do not provide real sandboxing.
+           Both are required for parent-frame access to contentDocument and contentWindow.eval().
+           Do not rely on this iframe sandbox for security. -->
+      <iframe id="canvas" sandbox="allow-scripts allow-same-origin"
+        srcdoc="<!DOCTYPE html><html><head><style>html,body{margin:0;padding:1rem;background:white;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:1.5rem;text-align:center;overflow:hidden;width:fit-content;height:fit-content}</style></head><body>I am a canvas. change me!</body></html>"></iframe>
+    </div>
+
+    <div id="chat-container">
+      <div id="messages">
+        <div class="message agent">Hello! I can modify the canvas on the left. 👈
+          <br />Try asking me "change background to blue" or "make it a circle".
+        </div>
+      </div>
+      <form id="input-area">
+        <input type="text" id="user-input" placeholder="Message the agent..." autocomplete="off">
+        <button type="submit" id="send-btn">Send</button>
+        <button type="button" id="clear-btn">Clear</button>
+      </form>
+    </div>
+  </div>
+
+  <div id="settings-modal">
+    <div id="settings-content">
+      <h2>Settings</h2>
+      <label for="provider-select">Model Provider</label>
+      <select id="provider-select">
+        <option value="openai">OpenAI</option>
+        <option value="anthropic">Anthropic</option>
+        <option value="bedrock">AWS Bedrock</option>
+      </select>
+
+      <div class="openai-fields show">
+        <label for="openai-key">OpenAI API Key</label>
+        <input type="password" id="openai-key" placeholder="sk-...">
+      </div>
+
+      <div class="anthropic-fields">
+        <label for="anthropic-key">Anthropic API Key</label>
+        <input type="password" id="anthropic-key" placeholder="sk-ant-...">
+      </div>
+
+      <div class="bedrock-fields">
+        <label for="bedrock-region">AWS Region</label>
+        <input type="text" id="bedrock-region" placeholder="us-west-2">
+
+        <label for="bedrock-access-key">AWS Access Key ID</label>
+        <input type="password" id="bedrock-access-key">
+
+        <label for="bedrock-secret-key">AWS Secret Access Key</label>
+        <input type="password" id="bedrock-secret-key">
+
+        <label for="bedrock-session-token">AWS Session Token (optional)</label>
+        <input type="password" id="bedrock-session-token" placeholder="Optional - for temporary credentials">
+      </div>
+
+      <div class="button-group">
+        <button type="button" id="save-settings-btn">Save</button>
+        <button type="button" id="cancel-settings-btn">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="/src/index.ts"></script>
+</body>
+
+</html>

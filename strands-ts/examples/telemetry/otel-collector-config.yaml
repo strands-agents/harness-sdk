@@ -1,0 +1,31 @@
+# OpenTelemetry Collector configuration
+# Receives traces from the Strands agent and exports them to Jaeger for visualization.
+
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+processors:
+  batch:
+    timeout: 1s
+    send_batch_size: 1024
+
+exporters:
+  # Export traces to Jaeger
+  otlphttp/jaeger:
+    endpoint: http://jaeger:4318
+
+  # Log traces to the collector's stdout (useful for debugging the pipeline)
+  debug:
+    verbosity: basic
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlphttp/jaeger, debug]

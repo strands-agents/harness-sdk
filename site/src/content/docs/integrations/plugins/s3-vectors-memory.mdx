@@ -1,0 +1,165 @@
+---
+title: S3 Vectors Memory Plugin
+community: true
+description: Long-term semantic memory for Strands Agents backed by Amazon S3 Vectors
+integrationType: plugin
+languages: Python
+sidebar:
+  label: "S3 Vectors Memory"
+project:
+  pypi: https://pypi.org/project/strands-s3-vectors-memory/
+  github: https://github.com/aws-samples/data-for-saas-patterns/tree/main/samples/multi-tenant-strands-s3-vectors-memory
+  maintainer: aws-samples
+service:
+  name: Amazon S3 Vectors
+  link: https://docs.aws.amazon.com/AmazonS3/latest/userguide/s3-vectors.html
+---
+
+The [S3 Vectors Memory Plugin](https://github.com/aws-samples/data-for-saas-patterns/tree/main/samples/multi-tenant-strands-s3-vectors-memory) gives any Strands Agent long-term semantic memory backed by [Amazon S3 Vectors](https://docs.aws.amazon.com/AmazonS3/latest/userguide/s3-vectors.html). At the end of a conversation, the plugin summarizes the exchange using the agent's own model and stores the summary as a searchable vector. On subsequent conversations, relevant summaries are retrieved and injected into the system prompt — the agent remembers without bloating the context window.
+
+Available in two modes:
+
+- **Single-tenant** — one shared index, ambient AWS credentials
+- **Multi-tenant** — one index per tenant, IAM credentials scoped per tenant via the [Token Vending Machine (TVM)](https://docs.aws.amazon.com/prescriptive-guidance/latest/patterns/implement-saas-tenant-isolation-for-amazon-s3-by-using-an-aws-lambda-token-vending-machine.html) pattern
+
+## Requirements
+
+- Python 3.10+
+- `strands-agents >= 1.0.0`
+- `boto3 >= 1.34.0`
+- `cachetools >= 5.3.0`
+- AWS account with [Amazon S3 Vectors](https://docs.aws.amazon.com/AmazonS3/latest/userguide/s3-vectors.html) access
+- Amazon Bedrock access for:
+  - An embedding model — `amazon.nova-2-multimodal-embeddings-v1:0` (default)
+  - A chat model — e.g. `us.anthropic.claude-sonnet-4-5-20250929-v1:0`
+
+## Installation
+
+```bash
+pip install strands-s3-vectors-memory
+```
+
+## AWS Setup
+
+**1. Create an S3 Vectors bucket:**
+
+```bash
+aws s3vectors create-vector-bucket --vector-bucket-name my-vector-memory
+```
+
+**2. Create the index:**
+
+```bash
+aws s3vectors create-index \
+  --vector-bucket-name my-vector-memory \
+  --index-name memory \
+  --data-type float32 --dimension 1024 --distance-metric cosine \
+  --metadata-configuration '{"nonFilterableMetadataKeys":["content","stored_at","conversation_id","type"]}'
+```
+
+**3. For multi-tenant, create the TVM IAM role** using the [setup script](https://github.com/aws-samples/data-for-saas-patterns/blob/main/samples/multi-tenant-strands-s3-vectors-memory/scripts/setup_tvm_role.sh) provided in the repository:
+
+```bash
+bash setup_tvm_role.sh my-vector-memory
+export S3_VECTOR_TVM_ROLE_ARN=<printed-arn>
+```
+
+## Usage
+
+### Single-tenant
+
+```python
+import os
+from strands import Agent
+from strands.models import BedrockModel
+from strands_s3_vectors_memory import S3VectorMemory, S3VectorMemoryPlugin
+
+BASE_PROMPT = """You are a helpful assistant.
+
+{memory_context}
+
+Use prior context naturally in your responses."""
+
+store  = S3VectorMemory(bucket_name=os.environ["S3_VECTOR_BUCKET_NAME"])
+plugin = S3VectorMemoryPlugin(store=store, base_prompt=BASE_PROMPT)
+
+agent = Agent(
+    model         = BedrockModel(),
+    name          = "assistant",        # required — used as memory namespace key
+    plugins       = [plugin],
+    system_prompt = BASE_PROMPT,
+)
+
+# Turn 1 — agent responds; memory not yet stored
+agent("My favourite framework is Strands Agents.", invocation_state={
+    "user_id": "user-001", "conversation_id": "conv-001", "end_session": False,
+})
+
+# Turn 2 — end_session=True triggers background summarization and vector store
+agent("Thanks, bye.", invocation_state={
+    "user_id": "user-001", "conversation_id": "conv-001", "end_session": True,
+})
+
+# Next session — plugin retrieves the stored summary and injects it into the prompt
+agent("What do you know about my preferences?", invocation_state={
+    "user_id": "user-001", "conversation_id": "conv-002", "end_session": False,
+})
+```
+
+`BASE_PROMPT` must contain a `{memory_context}` placeholder. The plugin fills it with retrieved summaries on the first turn of each conversation, or replaces it with an empty string when no relevant memories are found.
+
+### Multi-tenant
+
+```python
+import os
+from strands import Agent
+from strands.models import BedrockModel
+from strands_s3_vectors_memory import MultiTenantS3VectorMemory, S3VectorMemoryPlugin
+
+store  = MultiTenantS3VectorMemory(
+    bucket_name  = os.environ["S3_VECTOR_BUCKET_NAME"],
+    tvm_role_arn = os.environ["S3_VECTOR_TVM_ROLE_ARN"],
+)
+plugin = S3VectorMemoryPlugin(store=store, base_prompt=BASE_PROMPT)
+
+agent = Agent(
+    model         = BedrockModel(),
+    name          = "assistant",
+    plugins       = [plugin],
+    system_prompt = BASE_PROMPT,
+)
+
+agent("Our Q4 budget is $2M.", invocation_state={
+    "tenant_context":  {"tenantId": "tenant-001"},
+    "user_id":         "user-456",
+    "conversation_id": "conv-001",
+    "end_session":     True,
+})
+```
+
+## Configuration
+
+### Environment variables
+
+| Variable | Required | Description |
+|---|---|---|
+| `S3_VECTOR_BUCKET_NAME` | Yes | S3 Vectors bucket name |
+| `AWS_REGION` | No (default: `us-east-1`) | AWS region |
+| `S3_VECTOR_TVM_ROLE_ARN` | Multi-tenant only | TVM IAM role ARN |
+
+### `invocation_state` keys
+
+| Key | Required | Description |
+|---|---|---|
+| `user_id` | Yes | Scopes vector filter to this user |
+| `conversation_id` | Yes | Scopes buffer and summary key |
+| `end_session` | No (default `False`) | If `True`, summarizes and stores the conversation after the response (non-blocking) |
+| `tenant_context` | Multi-tenant only | Dict with `tenantId` key |
+
+## References
+
+- [GitHub](https://github.com/aws-samples/data-for-saas-patterns/tree/main/samples/multi-tenant-strands-s3-vectors-memory)
+- [PyPI](https://pypi.org/project/strands-s3-vectors-memory/)
+- [Plugin reference](https://github.com/aws-samples/data-for-saas-patterns/blob/main/samples/multi-tenant-strands-s3-vectors-memory/docs/strands-s3-vector-memory-plugin.md)
+- [Amazon S3 Vectors](https://docs.aws.amazon.com/AmazonS3/latest/userguide/s3-vectors.html)
+- [Token Vending Machine pattern](https://docs.aws.amazon.com/prescriptive-guidance/latest/patterns/implement-saas-tenant-isolation-for-amazon-s3-by-using-an-aws-lambda-token-vending-machine.html)

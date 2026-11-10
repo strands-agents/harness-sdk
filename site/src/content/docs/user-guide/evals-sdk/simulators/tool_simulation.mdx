@@ -1,0 +1,419 @@
+---
+title: Tool simulation
+description: 'Replace real tool execution with LLM-generated, schema-validated responses using ToolSimulator to evaluate agents without live infrastructure.'
+tags: [simulation, tool-evaluation]
+---
+
+When your agent calls tools that need live infrastructure, you can replace them with LLM-generated responses for evaluation. With `ToolSimulator`, you register a tool with a decorator, give it an output schema, and optionally share state across related tools. Each time the agent calls a simulated tool, an LLM generates a schema-valid response instead of running the real function.
+
+Reach for tool simulation when:
+
+- Real tools require live infrastructure (APIs, databases, hardware)
+- You need controllable tool behavior for evaluation
+- You want to test agent tool-use patterns without side effects
+- Tools are still under development or unavailable in the test environment
+
+```python
+from typing import Any
+from pydantic import BaseModel, Field
+from strands import Agent
+from strands_evals.simulation.tool_simulator import ToolSimulator
+
+tool_simulator = ToolSimulator()
+
+class WeatherResponse(BaseModel):
+    temperature: float = Field(..., description="Temperature in Fahrenheit")
+    conditions: str = Field(..., description="Weather conditions")
+
+@tool_simulator.tool(output_schema=WeatherResponse)
+def get_weather(city: str) -> dict[str, Any]:
+    """Get current weather for a city."""
+    pass
+
+weather_tool = tool_simulator.get_tool("get_weather")
+agent = Agent(tools=[weather_tool], callback_handler=None)
+response = agent("What's the weather in Seattle?")
+```
+
+## How it works
+
+1. **Tool Registration**: The `@tool_simulator.tool()` decorator captures function metadata (name, docstring, type hints) via Strands' `FunctionToolMetadata`. The function body is never executed.
+2. **Simulation Wrapper**: When retrieved via `get_tool()`, the real function is replaced with an LLM-backed wrapper that can be passed to a Strands `Agent`.
+3. **LLM Invocation**: On each call, the wrapper builds a prompt containing the tool's input schema, output schema, user parameters, and current state context, then invokes an Agent to generate a response.
+4. **State Tracking**: A `StateRegistry` records call history and shared state across tools, providing the LLM with context for consistent responses.
+
+## Basic usage
+
+### Registering a tool
+
+Define a function with type hints and a docstring, then decorate it with `@tool_simulator.tool()`. Provide an `output_schema` to control the response structure. Retrieve the registered tool with `get_tool()` and pass it to a Strands agent.
+
+```python
+from typing import Any
+from pydantic import BaseModel, Field
+from strands import Agent
+from strands_evals.simulation.tool_simulator import ToolSimulator
+
+tool_simulator = ToolSimulator()
+
+class OrderStatus(BaseModel):
+    order_id: str = Field(..., description="Order identifier")
+    status: str = Field(..., description="Current order status")
+    estimated_delivery: str = Field(..., description="Estimated delivery date")
+
+@tool_simulator.tool(output_schema=OrderStatus)
+def check_order(order_id: str) -> dict[str, Any]:
+    """Check the current status of a customer order."""
+    pass
+
+order_tool = tool_simulator.get_tool("check_order")
+agent = Agent(
+    system_prompt="You are a customer service assistant.",
+    tools=[order_tool],
+    callback_handler=None,
+)
+response = agent("Where is my order #12345?")
+```
+
+### Custom tool names
+
+Override the default function name:
+
+```python
+@tool_simulator.tool(name="lookup_order", output_schema=OrderStatus)
+def check_order(order_id: str) -> dict[str, Any]:
+    """Check the current status of a customer order."""
+    pass
+
+# Retrieved by custom name
+tool = tool_simulator.get_tool("lookup_order")
+```
+
+## Shared state
+
+Tools that operate on the same environment can share state via `share_state_id`. When multiple tools share a state key, the LLM sees call history from all of them, enabling consistent behavior across related tools.
+
+```python
+from enum import Enum
+from pydantic import BaseModel, Field
+
+tool_simulator = ToolSimulator()
+
+class HVACMode(str, Enum):
+    HEAT = "heat"
+    COOL = "cool"
+    AUTO = "auto"
+    OFF = "off"
+
+class HVACResponse(BaseModel):
+    temperature: float = Field(..., description="Target temperature in Fahrenheit")
+    mode: HVACMode = Field(..., description="HVAC mode")
+    status: str = Field(default="success", description="Operation status")
+
+class SensorResponse(BaseModel):
+    temperature: float = Field(..., description="Current temperature in Fahrenheit")
+    humidity: float = Field(..., description="Current humidity percentage")
+
+@tool_simulator.tool(
+    share_state_id="room_environment",
+    initial_state_description="Room environment: temperature 68F, humidity 45%, HVAC off",
+    output_schema=HVACResponse,
+)
+def hvac_controller(temperature: float, mode: str) -> dict:
+    """Control heating/cooling system that affects room temperature and humidity."""
+    pass
+
+@tool_simulator.tool(
+    share_state_id="room_environment",
+    output_schema=SensorResponse,
+)
+def room_sensor() -> dict:
+    """Read current room temperature and humidity."""
+    pass
+
+# Both tools share the "room_environment" state
+hvac_tool = tool_simulator.get_tool("hvac_controller")
+sensor_tool = tool_simulator.get_tool("room_sensor")
+agent = Agent(tools=[hvac_tool, sensor_tool], callback_handler=None)
+```
+
+### Initial state description
+
+The `initial_state_description` parameter provides the LLM with baseline context about the environment. This is included in every prompt so the LLM can generate responses consistent with the starting conditions:
+
+```python
+@tool_simulator.tool(
+    initial_state_description="Database contains users: alice (admin), bob (viewer). No pending invitations.",
+    output_schema=UserLookupResponse,
+)
+def lookup_user(username: str) -> dict:
+    """Look up a user in the system."""
+    pass
+```
+
+## Integration with experiments
+
+Use ToolSimulator within an Experiment to evaluate agent tool-use behavior end-to-end:
+
+```python
+import asyncio
+
+from pydantic import BaseModel, Field
+from strands import Agent
+from strands_evals import Case, Experiment
+from strands_evals.evaluators import GoalSuccessRateEvaluator
+from strands_evals.simulation.tool_simulator import ToolSimulator
+from strands_evals.mappers import StrandsInMemorySessionMapper
+from strands_evals.telemetry import StrandsEvalsTelemetry
+
+# Setup telemetry
+telemetry = StrandsEvalsTelemetry().setup_in_memory_exporter()
+memory_exporter = telemetry.in_memory_exporter
+tool_simulator = ToolSimulator()
+
+class HVACResponse(BaseModel):
+    temperature: float = Field(..., description="Target temperature in Fahrenheit")
+    mode: str = Field(..., description="HVAC mode")
+    status: str = Field(default="success", description="Operation status")
+
+@tool_simulator.tool(
+    share_state_id="room_environment",
+    initial_state_description="Room: 68F, humidity 45%, HVAC off",
+    output_schema=HVACResponse,
+)
+def hvac_controller(temperature: float, mode: str) -> dict:
+    """Control heating/cooling system."""
+    pass
+
+def task_function(case: Case) -> dict:
+    hvac_tool = tool_simulator.get_tool("hvac_controller")
+    agent = Agent(
+        trace_attributes={
+            "gen_ai.conversation.id": case.session_id,
+            "session.id": case.session_id,
+        },
+        system_prompt="You are an HVAC control assistant.",
+        tools=[hvac_tool],
+        callback_handler=None,
+    )
+    response = agent(case.input)
+
+    spans = memory_exporter.get_finished_spans()
+    mapper = StrandsInMemorySessionMapper()
+    session = mapper.map_to_session(spans, session_id=case.session_id)
+
+    return {"output": str(response), "trajectory": session}
+
+test_cases = [
+    Case(name="heat_control", input="Turn on the heat to 72 degrees"),
+    Case(name="cool_down", input="It's too hot, cool the room to 65 degrees"),
+]
+
+evaluators = [GoalSuccessRateEvaluator()]
+experiment = Experiment(cases=test_cases, evaluators=evaluators)
+
+async def main():
+    report = await experiment.run_evaluations_async(task_function)
+    report.run_display()
+
+asyncio.run(main())
+```
+
+
+## API reference
+
+### ToolSimulator
+
+| Method | Description |
+|--------|-------------|
+| `tool(output_schema, name, share_state_id, initial_state_description)` | Decorator to register a simulated tool |
+| `get_tool(tool_name)` | Retrieve a simulation-wrapped tool by name |
+| `get_state(state_key)` | Get current state for a tool or shared state group |
+| `list_tools()` | List all registered tool names |
+| `clear_tools()` | Clear all registered tools |
+
+### StateRegistry
+
+| Method | Description |
+|--------|-------------|
+| `initialize_state_via_description(initial_state_description, state_key)` | Pre-seed state with context |
+| `get_state(state_key)` | Retrieve state dict for a tool or shared group |
+| `cache_tool_call(tool_name, state_key, response_data, parameters)` | Record a tool call |
+| `clear_state(state_key)` | Clear state for a specific key |
+
+### Data models
+
+**RegisteredTool:**
+
+```python
+class RegisteredTool(BaseModel):
+    name: str                                    # Tool name
+    function: Callable | None                    # Underlying DecoratedFunctionTool
+    output_schema: type[BaseModel] | None        # Pydantic output schema
+    initial_state_description: str | None         # Initial state context
+    share_state_id: str | None                   # Shared state key
+```
+
+**DefaultToolResponse:**
+
+```python
+class DefaultToolResponse(BaseModel):
+    response: str  # Default response when no output_schema is provided
+```
+
+
+## Advanced usage and configurations
+
+### Inspecting state
+
+Use `get_state()` to examine call history and initial state for debugging:
+
+```python
+# Before agent invocation
+initial_state = tool_simulator.get_state("room_environment")
+print(f"Initial state: {initial_state.get('initial_state')}")
+print(f"Previous calls: {initial_state.get('previous_calls', [])}")
+
+# After agent invocation
+final_state = tool_simulator.get_state("room_environment")
+for call in final_state["previous_calls"]:
+    print(f"  {call['tool_name']}: {call['parameters']} -> {call['response']}")
+```
+
+Each call record contains:
+- `tool_name`: Name of the tool that was called
+- `parameters`: The parameters passed to the tool
+- `response`: The LLM-generated response
+- `timestamp`: When the call was made
+
+### Configuration
+
+#### Custom model
+
+Specify a different model for simulation inference:
+
+```python
+# Via model ID string (Bedrock)
+tool_simulator = ToolSimulator(model="anthropic.claude-haiku-4-5-20251001-v1:0")
+
+# Via Strands Model provider
+from strands.models import BedrockModel
+
+model = BedrockModel(model_id="anthropic.claude-haiku-4-5-20251001-v1:0")
+tool_simulator = ToolSimulator(model=model)
+```
+
+#### Cache size
+
+Control how many tool calls are retained per state key:
+
+```python
+# Default: 20 calls per state key
+tool_simulator = ToolSimulator(max_tool_call_cache_size=20)
+
+# Increase for long-running evaluations
+tool_simulator = ToolSimulator(max_tool_call_cache_size=50)
+```
+
+When the cache is full, the oldest calls are evicted (FIFO).
+
+#### Custom state registry
+
+Provide your own `StateRegistry` for advanced state management:
+
+```python
+from strands_evals.simulation.tool_simulator import StateRegistry, ToolSimulator
+
+registry = StateRegistry(max_tool_call_cache_size=100)
+tool_simulator = ToolSimulator(state_registry=registry)
+```
+
+### Running independent simulator instances
+
+You can create multiple `ToolSimulator` instances side by side. Each instance maintains its own tool registry and state, so you can run parallel experiment configurations in the same codebase:
+
+```python
+simulator_a = ToolSimulator()
+simulator_b = ToolSimulator()
+
+# Each instance has an independent tool registry and state,
+# ideal for comparing agent behavior across different tool setups.
+```
+
+This is useful when you want to A/B test different tool configurations, output schemas, or initial state descriptions against the same agent.
+
+### Seeding state from real data
+
+Because `initial_state_description` accepts natural language, you can get creative with how you seed context. For tools that interact with tabular data, use a `DataFrame.describe()` call to generate statistical summaries and pass those statistics directly as the state description. `ToolSimulator` will generate responses that reflect realistic data distributions, without ever accessing the actual data:
+
+```python
+import pandas as pd
+
+df = pd.read_csv("sales_data.csv")
+stats_summary = df.describe().to_string()
+
+@tool_simulator.tool(
+    initial_state_description=f"Sales database statistics:\n{stats_summary}",
+    output_schema=SalesQueryResponse,
+)
+def query_sales(region: str, quarter: str) -> dict:
+    """Query sales data by region and quarter."""
+    pass
+```
+
+This approach lets you ground simulated responses in real data characteristics while keeping the actual data out of the evaluation loop.
+
+
+## Troubleshooting
+
+### Issue: Tool not found
+
+`get_tool()` returns `None` if the tool name doesn't match:
+
+```python
+tool = tool_simulator.get_tool("my_tool")
+if tool is None:
+    print(f"Available tools: {tool_simulator.list_tools()}")
+```
+
+### Issue: Inconsistent responses across calls
+
+Ensure related tools share state and that initial state is set:
+
+```python
+# Without shared state, each tool has independent context
+@tool_simulator.tool(share_state_id="shared_env", initial_state_description="...", output_schema=...)
+def tool_a(...): ...
+
+@tool_simulator.tool(share_state_id="shared_env", output_schema=...)
+def tool_b(...): ...
+```
+
+### Issue: State re-initialization warning
+
+If you see a warning about state already being initialized, it means two tools with the same `share_state_id` both provide `initial_state_description`. Only the first one takes effect:
+
+```python
+# First tool initializes state
+@tool_simulator.tool(
+    share_state_id="env",
+    initial_state_description="Starting state",  # This takes effect
+    output_schema=...,
+)
+def tool_a(...): ...
+
+# Second tool's initial_state_description is ignored with a warning
+@tool_simulator.tool(
+    share_state_id="env",
+    initial_state_description="Different state",  # Ignored
+    output_schema=...,
+)
+def tool_b(...): ...
+```
+
+## Related documentation
+
+- [Simulators Overview](index.md): Overview of the simulator framework
+- [User Simulation](user_simulation.md): Simulate multi-turn user conversations
+- [Quickstart Guide](../quickstart.md): Get started with Strands Evals
+- [Goal Success Rate Evaluator](../evaluators/goal_success_rate_evaluator.md): Assess goal completion

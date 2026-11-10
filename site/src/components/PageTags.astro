@@ -1,0 +1,270 @@
+---
+/**
+ * Clickable tag pills at the bottom of user-guide articles.
+ *
+ * Pill row stays static — never reflows. Clicking a pill opens a single
+ * shared panel below the row showing every other user-guide page carrying
+ * that tag. Click the same pill again (or the panel's close button) to
+ * collapse.
+ *
+ * State is driven by a small script that toggles an `is-active` class on
+ * the clicked pill and the `hidden` attribute on each panel.
+ *
+ * Uses an `aria-expanded` disclosure pattern (each pill is a disclosure
+ * button revealing its panel). Not a full ARIA tablist — that would
+ * require arrow-key navigation, focus management, and `tabindex` shuffling
+ * we don't currently implement.
+ */
+import { getCollection } from 'astro:content'
+import { slug as githubSlug } from 'github-slugger'
+import { userGuidePagesWithTag } from '../util/related-docs'
+import { pathWithBase } from '../util/links'
+
+const { starlightRoute } = Astro.locals
+const entry = starlightRoute.entry
+
+const allDocs = entry.collection === 'docs' ? await getCollection('docs') : []
+const tags: string[] = entry.collection === 'docs' ? (entry.data.tags ?? []) : []
+
+// Panel id must be unique per (page, tag) and safe for HTML attribute use.
+// github-slugger is the same library Astro uses internally for slugs.
+const panelId = (tag: string) => `pagetags-${githubSlug(entry.id)}-${githubSlug(tag)}`
+
+const items = tags.map((tag) => ({
+  tag,
+  matches: userGuidePagesWithTag(tag, entry, allDocs),
+  panelId: panelId(tag),
+}))
+---
+
+{items.length > 0 && (
+  <aside class="page-tags not-content" aria-label="Tags">
+    <div class="page-tags__label">Tags</div>
+
+    <div class="page-tags__row">
+      {items.map(({ tag, matches, panelId }) => (
+        <button
+          type="button"
+          class="page-tags__pill"
+          data-tag={tag}
+          aria-expanded="false"
+          aria-controls={panelId}
+        >
+          <span class="page-tags__name">{tag}</span>
+          <span class="page-tags__count" aria-hidden="true">{matches.length}</span>
+        </button>
+      ))}
+    </div>
+
+    {items.map(({ tag, matches, panelId }) => (
+      <div class="page-tags__panel" id={panelId} data-tag={tag} hidden>
+        <div class="page-tags__panel-header">
+          <span class="page-tags__panel-tag">{tag}</span>
+          <span class="page-tags__panel-count">{`${matches.length} ${matches.length === 1 ? 'page' : 'pages'}`}</span>
+          <button type="button" class="page-tags__close" data-action="close" aria-label="Close">×</button>
+        </div>
+        {matches.length > 0 ? (
+          <ul class="page-tags__matches">
+            {matches.map((m) => (
+              <li>
+                <a href={pathWithBase(`/${m.slug}/`)}>{m.title}</a>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p class="page-tags__empty">No other pages with this tag.</p>
+        )}
+      </div>
+    ))}
+  </aside>
+)}
+
+<script>
+  function init() {
+    document.querySelectorAll<HTMLElement>('aside.page-tags').forEach((root) => {
+      const pills = root.querySelectorAll<HTMLButtonElement>('.page-tags__pill')
+      const panels = root.querySelectorAll<HTMLElement>('.page-tags__panel')
+      const closeButtons = root.querySelectorAll<HTMLButtonElement>('[data-action="close"]')
+
+      function setActive(tag: string | null) {
+        pills.forEach((p) => {
+          const isActive = p.dataset.tag === tag
+          p.setAttribute('aria-expanded', String(isActive))
+          p.classList.toggle('is-active', isActive)
+        })
+        panels.forEach((p) => {
+          p.hidden = p.dataset.tag !== tag
+        })
+      }
+
+      pills.forEach((pill) => {
+        pill.addEventListener('click', () => {
+          const isActive = pill.classList.contains('is-active')
+          setActive(isActive ? null : pill.dataset.tag ?? null)
+        })
+      })
+
+      closeButtons.forEach((b) =>
+        b.addEventListener('click', () => setActive(null))
+      )
+    })
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init)
+  } else {
+    init()
+  }
+</script>
+
+<style>
+  .page-tags {
+    margin-top: 2.5rem;
+  }
+
+  .page-tags__label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--sl-color-gray-3);
+    margin-bottom: 0.625rem;
+  }
+
+  .page-tags__row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  .page-tags__pill {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    padding: 0.375rem 0.75rem 0.375rem 0.875rem;
+    border: 1px solid var(--sl-color-gray-5);
+    border-radius: 999px;
+    font-size: 0.875rem;
+    font-weight: 500;
+    line-height: 1.3;
+    color: var(--sl-color-text);
+    background: transparent;
+    cursor: pointer;
+    transition: border-color 0.15s ease, color 0.15s ease, background-color 0.15s ease;
+  }
+
+  .page-tags__pill:hover {
+    border-color: var(--sl-color-text-accent);
+    color: var(--sl-color-text-accent);
+  }
+
+  /* Selected pill matches Starlight's own active-link pattern (used on
+     [aria-current='page'] in the left sidebar): accent fill with inverted
+     text. These are theme-aware tokens, so light/dark mode adapt for free. */
+  .page-tags__pill.is-active,
+  .page-tags__pill.is-active:hover {
+    border-color: var(--sl-color-text-accent);
+    background-color: var(--sl-color-text-accent);
+    color: var(--sl-color-text-invert);
+  }
+
+  /* Plain-text count next to the tag name. No bubble — quieter visual. */
+  .page-tags__count {
+    font-size: 0.75rem;
+    color: var(--sl-color-gray-3);
+  }
+
+  /* Inside the active pill the inverted-text color carries through */
+  .page-tags__pill.is-active .page-tags__count {
+    color: inherit;
+    opacity: 0.7;
+  }
+
+  .page-tags__panel {
+    margin-top: 0.75rem;
+    padding: 0.625rem 1rem 0.75rem;
+    border: 1px solid var(--sl-color-hairline);
+    border-radius: 0.5rem;
+  }
+
+  .page-tags__panel-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .page-tags__panel-tag {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--sl-color-text);
+  }
+
+  /* Slightly de-emphasized count next to the tag name */
+  .page-tags__panel-count {
+    font-size: 0.75rem;
+    color: var(--sl-color-gray-4);
+    font-weight: 500;
+  }
+
+  .page-tags__close {
+    margin-left: auto;
+    width: 1.75rem;
+    height: 1.75rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--sl-color-gray-3);
+    cursor: pointer;
+    font-size: 1.25rem;
+    line-height: 1;
+    transition: background-color 0.15s ease, color 0.15s ease;
+  }
+  .page-tags__close:hover {
+    background-color: var(--sl-color-gray-5);
+    color: var(--sl-color-text);
+  }
+
+  /* Constrain link grid width so the two columns feel connected,
+     not floating in a wide-page sea. Caps at ~content width. */
+  .page-tags__matches {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    columns: 2;
+    column-gap: 1.5rem;
+    max-width: 44rem;
+  }
+  /* Space between separate items comes from li padding; space between
+     wrapped lines of a single long title comes from the li's
+     line-height (an inline anchor's own line-height doesn't size the
+     line box — the line-box parent does). */
+  .page-tags__matches li {
+    margin: 0;
+    padding: 0.1875rem 0;
+    break-inside: avoid;
+    line-height: 1.2;
+  }
+  .page-tags__matches a {
+    color: var(--sl-color-text-accent);
+    text-decoration: none;
+    font-size: 0.875rem;
+  }
+  .page-tags__matches a:hover {
+    text-decoration: underline;
+  }
+
+  .page-tags__empty {
+    margin: 0;
+    font-size: 0.875rem;
+    color: var(--sl-color-gray-3);
+    font-style: italic;
+  }
+
+  @media (max-width: 768px) {
+    .page-tags__matches { columns: 1; }
+  }
+</style>

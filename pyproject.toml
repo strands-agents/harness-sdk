@@ -1,332 +1,51 @@
-[build-system]
-requires = ["hatchling", "hatch-vcs"]
-build-backend = "hatchling.build"
-
-
 [project]
-name = "strands-agents"
-dynamic = ["version"]  # Version determined by git tags
-description = "A model-driven approach to building AI agents in just a few lines of code"
-readme = "README.md"
+name = "strands-monorepo-tools"
+version = "0.0.0"
+description = "Shared Python tooling for the Strands monorepo. Not published."
 requires-python = ">=3.10"
-license = {text = "Apache-2.0"}
-authors = [
-    {name = "AWS", email = "opensource@amazon.com"},
-]
-classifiers = [
-    "Development Status :: 5 - Production/Stable",
-    "Intended Audience :: Developers",
-    "License :: OSI Approved :: Apache Software License",
-    "Operating System :: OS Independent",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "Programming Language :: Python :: 3.13",
-    "Programming Language :: Python :: 3.14",
-    "Topic :: Scientific/Engineering :: Artificial Intelligence",
-    "Topic :: Software Development :: Libraries :: Python Modules",
-]
 dependencies = [
-    "boto3>=1.26.0,<2.0.0",
-    "botocore>=1.29.0,<2.0.0",
-    "docstring_parser>=0.15,<1.0",
-    "jsonschema>=4.0.0,<5.0.0",
-    "mcp>=1.23.0,<2.0.0",
-    "pydantic>=2.4.0,<3.0.0",
-    "typing-extensions>=4.13.2,<5.0.0",
-    "pyyaml>=6.0.0,<7.0.0",
-    "watchdog>=6.0.0,<7.0.0",
-    "opentelemetry-api>=1.30.0,<2.0.0",
-    "opentelemetry-sdk>=1.30.0,<2.0.0",
-    "opentelemetry-instrumentation-threading>=0.51b0,<1.00b0",
+    # Linter/formatter. Range matches strands-py and harness-py so the whole monorepo
+    # (and the pre-commit hook) resolves the same ruff.
+    "ruff>=0.16.0,<0.17.0",
+    # Type checker.
+    "pyright>=1.1.400",
+    # Test runner for the shared venv.
+    "pytest>=9.0.3",
+    "pytest-asyncio>=1.3.0",
 ]
 
+[tool.setuptools]
+# We don't ship a distribution. Suppress the auto-discovery warning.
+packages = []
 
-[project.optional-dependencies]
-anthropic = ["anthropic>=0.21.0,<1.0.0"]
-gemini = ["google-genai>=1.32.0,<2.0.0"]
-litellm = ["litellm>=1.75.9,<2.0.0", "openai>=1.68.0,<1.110.0"]
-llamaapi = ["llama-api-client>=0.1.0,<1.0.0"]
-mistral = ["mistralai>=1.8.2"]
-ollama = ["ollama>=0.4.8,<1.0.0"]
-openai = ["openai>=1.68.0,<2.0.0"]
-writer = ["writer-sdk>=2.2.0,<3.0.0"]
-sagemaker = [
-    "boto3-stubs[sagemaker-runtime]>=1.26.0,<2.0.0",
-    "openai>=1.68.0,<2.0.0",  # SageMaker uses OpenAI-compatible interface
-]
-otel = ["opentelemetry-exporter-otlp-proto-http>=1.30.0,<2.0.0"]
-docs = [
-    "sphinx>=5.0.0,<10.0.0",
-    "sphinx-rtd-theme>=1.0.0,<4.0.0",
-    "sphinx-autodoc-typehints>=1.12.0,<4.0.0",
-]
-
-a2a = [
-    "a2a-sdk>=0.3.0,<0.4.0",
-    "a2a-sdk[sql]>=0.3.0,<0.4.0",
-    "uvicorn>=0.34.2,<1.0.0",
-    "httpx>=0.28.1,<1.0.0",
-    "fastapi>=0.115.12,<1.0.0",
-    "starlette>=0.46.2,<1.0.0",
-]
-
-bidi = [
-    "aws_sdk_bedrock_runtime; python_version>='3.12'",
-    "smithy-aws-core>=0.0.1; python_version>='3.12'",
-]
-bidi-io = [
-    "prompt_toolkit>=3.0.0,<4.0.0",
-    "pyaudio>=0.2.13,<1.0.0",
-]
-bidi-gemini = ["google-genai>=1.32.0,<2.0.0"]
-bidi-openai = ["websockets>=15.0.0,<17.0.0"]
-
-all = ["strands-agents[a2a,anthropic,docs,gemini,litellm,llamaapi,mistral,ollama,openai,writer,sagemaker,otel]"]
-bidi-all = ["strands-agents[a2a,bidi,bidi-io,bidi-gemini,bidi-openai,docs,otel]"]
-
-dev = [
-    "commitizen>=4.4.0,<5.0.0",
-    "hatch>=1.0.0,<2.0.0",
-    "moto>=5.1.0,<6.0.0",
-    "mypy>=1.15.0,<2.0.0",
-    "pre-commit>=3.2.0,<4.6.0",
-    "pytest>=9.0.0,<10.0.0",
-    "pytest-cov>=7.0.0,<8.0.0",
-    "pytest-asyncio>=1.0.0,<1.4.0",
-    "pytest-timeout>=2.0.0,<3.0.0",
-    "pytest-xdist>=3.0.0,<4.0.0",
-    "ruff>=0.13.0,<0.15.0",
-    "tenacity>=9.0.0,<10.0.0",
-]
-
-[project.urls]
-Homepage = "https://github.com/strands-agents/sdk-python"
-"Bug Tracker" = "https://github.com/strands-agents/sdk-python/issues"
-Documentation = "https://strandsagents.com"
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+cache_dir = ".pytest_cache"
 
 
-[tool.hatch.build.targets.wheel]
-packages = ["src/strands"]
-
-
-[tool.hatch.version]
-source = "vcs"  # Use git tags for versioning
-
-
-[tool.hatch.envs.hatch-static-analysis]
-installer = "uv"
-features = ["all"]
-dependencies = [
-  "mypy>=1.15.0,<2.0.0",
-  "ruff>=0.13.0,<0.15.0",
-  # Include required package dependencies for mypy
-  "strands-agents @ {root:uri}",
-]
-python = "3.10"
-
-# Define static-analysis scripts so we can include mypy as part of the linting check
-[tool.hatch.envs.hatch-static-analysis.scripts]
-format-check = [
-    "ruff format --check"
-]
-format-fix = [
-    "ruff format"
-]
-lint-check = [
-    "ruff check",
-    "mypy ./src"
-]
-lint-fix = [
-    "ruff check --fix"
-]
-
-
-[tool.hatch.envs.hatch-test]
-installer = "uv"
-features = ["all"]
-extra-args = ["-n", "auto", "-vv"]
-dependencies = [
-    "pytest>=9.0.0,<10.0.0",
-    "pytest-cov>=7.0.0,<8.0.0",
-    "pytest-asyncio>=1.0.0,<1.4.0",
-    "pytest-timeout>=2.0.0,<3.0.0",
-    "pytest-xdist>=3.0.0,<4.0.0",
-    "pytest-timeout>=2.0.0,<3.0.0",
-    "moto>=5.1.0,<6.0.0",
-]
-
-[[tool.hatch.envs.hatch-test.matrix]]
-python = ["3.14", "3.13", "3.12", "3.11", "3.10"]
-
-[tool.hatch.envs.hatch-test.scripts]
-run = "pytest{env:HATCH_TEST_ARGS:} {args}" # Run with: hatch test
-run-cov = "pytest{env:HATCH_TEST_ARGS:} {args} --cov --cov-config=pyproject.toml --cov-report html --cov-report xml {args}" # Run with: hatch test -c
-cov-combine = []
-cov-report = []
-
-
-[tool.hatch.envs.default]
-installer = "uv"
-dev-mode = true
-features = ["all"]
-dependencies = [
-    "commitizen>=4.4.0,<5.0.0",
-    "hatch>=1.0.0,<2.0.0",
-    "pre-commit>=3.2.0,<4.6.0",
-]
-
-
-[tool.hatch.envs.default.scripts]
-list = "echo 'Scripts commands available for default env:'; hatch env show --json | jq --raw-output '.default.scripts | keys[]'"
-
-format = "hatch fmt --formatter"
-test-format = "hatch fmt --formatter --check"
-
-lint = "hatch fmt --linter"
-test-lint = "hatch fmt --linter --check"
-
-test = "hatch test {args}"
-test-integ = "hatch test tests_integ {args}"
-
-prepare = [
-    "hatch run format",
-    "hatch run lint",
-    "hatch run test-lint",
-    "hatch test --all"
-]
-
-[tool.mypy]
-python_version = "3.10"
-warn_return_any = true
-warn_unused_configs = true
-disallow_untyped_defs = true
-disallow_incomplete_defs = true
-check_untyped_defs = true
-disallow_untyped_decorators = true
-no_implicit_optional = true
-warn_redundant_casts = true
-warn_unused_ignores = true
-warn_no_return = true
-warn_unreachable = true
-follow_untyped_imports = true
-ignore_missing_imports = false
-exclude = ["src/strands/experimental/bidi"]
-
-[[tool.mypy.overrides]]
-module = ["strands.experimental.bidi.*"]
-follow_imports = "skip"
-
+# Ruff config lives here because ruff walks up from the file it's linting
+# and the monorepo has a single style.
 [tool.ruff]
 line-length = 120
-include = ["examples/**/*.py", "src/**/*.py", "tests/**/*.py", "tests_integ/**/*.py"]
-exclude = ["src/strands/experimental/bidi/**/*.py", "tests/strands/experimental/bidi/**/*.py", "tests_integ/bidi/**/*.py"]
 
 [tool.ruff.lint]
 select = [
   "B",   # flake8-bugbear
-  "D",   # pydocstyle
   "E",   # pycodestyle
   "F",   # pyflakes
-  "G",   # logging format
   "I",   # isort
-  "LOG", # logging
-  "UP"   # pyupgrade
+  "UP",  # pyupgrade
 ]
 
-[tool.ruff.lint.per-file-ignores]
-"!src/**/*.py" = ["D"]
 
-[tool.ruff.lint.pydocstyle]
-convention = "google"
-
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-asyncio_default_fixture_loop_scope = "function"
-addopts = "--ignore=tests/strands/experimental/bidi --ignore=tests_integ/bidi --junit-xml=build/test-results.xml"
-timeout = 90
-
-
-[tool.coverage.run]
-branch = true
-source = ["src"]
-context = "thread"
-parallel = true
-concurrency = ["thread", "multiprocessing"]
-omit = ["src/strands/experimental/bidi/*"]
-
-[tool.coverage.report]
-show_missing = true
-
-[tool.coverage.html]
-directory = "build/coverage/html"
-
-[tool.coverage.xml]
-output = "build/coverage/coverage.xml"
-
-
-[tool.commitizen]
-name = "cz_conventional_commits"
-tag_format = "v$version"
-bump_message = "chore(release): bump version $current_version -> $new_version"
-version_files = ["pyproject.toml:version"]
-update_changelog_on_bump = true
-style = [
-    ["qmark", "fg:#ff9d00 bold"],
-    ["question", "bold"],
-    ["answer", "fg:#ff9d00 bold"],
-    ["pointer", "fg:#ff9d00 bold"],
-    ["highlighted", "fg:#ff9d00 bold"],
-    ["selected", "fg:#cc5454"],
-    ["separator", "fg:#cc5454"],
-    ["instruction", ""],
-    ["text", ""],
-    ["disabled", "fg:#858585 italic"]
-]
-
-# =========================
-# Bidi development configs
-# =========================
-
-[tool.hatch.envs.bidi]
-dev-mode = true
-features = ["dev", "bidi-all"]
-installer = "uv"
-
-[tool.hatch.envs.bidi.scripts]
-prepare = [
-    "hatch run bidi-lint:format-fix",
-    "hatch run bidi-lint:quality-fix",
-    "hatch run bidi-lint:type-check",
-    "hatch run bidi-test:test-cov",
-]
-
-[tool.hatch.envs.bidi-lint]
-template = "bidi"
-
-[tool.hatch.envs.bidi-lint.scripts]
-format-check = "format-fix --check"
-format-fix = "ruff format {args} --target-version py312 ./src/strands/experimental/bidi/**/*.py"
-quality-check = "ruff check {args} --target-version py312 ./src/strands/experimental/bidi/**/*.py"
-quality-fix = "quality-check --fix"
-type-check = "mypy {args} --python-version 3.12 ./src/strands/experimental/bidi/**/*.py"
-
-[tool.hatch.envs.bidi-test]
-template = "bidi"
-
-[tool.hatch.envs.bidi-test.scripts]
-test = "pytest {args} tests/strands/experimental/bidi"
-test-cov = """
-test \
-    --cov=strands.experimental.bidi \
-    --cov-config= \
-    --cov-branch \
-    --cov-report=term-missing \
-    --cov-report=xml:build/coverage/bidi-coverage.xml \
-    --cov-report=html:build/coverage/bidi-html
-"""
-
-[[tool.hatch.envs.bidi-test.matrix]]
-python = ["3.13", "3.12"]
+# Pyright config lives here for the same reason as ruff: one rule for
+# the whole monorepo. Pyright walks up to find the nearest pyproject.
+# `exclude` is omitted so pyright inherits its built-in defaults
+# (**/node_modules, **/__pycache__, **/.*); setting it would replace
+# those, not merge.
+[tool.pyright]
+pythonVersion = "3.10"
+pythonPlatform = "All"
+typeCheckingMode = "standard"
+reportMissingTypeStubs = false
+reportMissingImports = "warning"

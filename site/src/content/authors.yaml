@@ -1,0 +1,304 @@
+- id: namrataghadi-galileo
+  name: Namrata Ghadi
+  role: "Engineer, Galileo"
+  bio: Namrata Ghadi is an engineer at Galileo, building the platform that helps teams evaluate, observe, and safeguard GenAI applications and agents.
+
+- id: alessandro-achille
+  name: Alessandro Achille
+  role: "Principal Applied Scientist, AWS"
+  bio: Alessandro Achille is a Principal Applied Scientist for AWS Agentic AI, working on autonomous coding agents, machine learning foundations, privacy, and hardware-software co-design.
+
+- id: andrew-shamiya
+  name: Andrew Shamiya
+  role: "Product Marketing Manager, AWS"
+  bio: Andrew Shamiya is a Product Marketing Manager for AWS Agentic AI. He focuses on helping developers choose and deploy agentic systems.
+
+- id: arron-bailiss
+  name: Arron Bailiss
+  role: "Principal Engineer, AWS"
+  bio: Arron Bailiss is a Principal Engineer focused on agentic AI at AWS, working at the intersection of artificial intelligence, machine learning, and robotics.
+
+- id: belle-guttman
+  name: Belle Guttman
+  role: "Engineering Leader, AWS"
+  bio: Belle Guttman leads the Agentic AI Engineering teams at AWS responsible for the Strands Harness SDK and agentic chat in Q Developer products.
+
+- id: clare-liguori
+  name: Clare Liguori
+  role: "Senior Principal Engineer, AWS"
+  bio: Clare Liguori is a Senior Principal Engineer at AWS. She works on Kiro and has been building AI agents since early 2023.
+
+- id: joy-chakraborty
+  name: Joy Chakraborty
+  role: "Senior Technical Program Manager, AWS"
+  bio: Joy Chakraborty is a Senior Technical Program Manager for AWS Agentic AI Foundation. He currently manages the Strands Agents and AgentCore Integration programs.
+
+- id: ryan-coleman
+  name: Ryan Coleman
+  role: "Product Manager, AWS"
+  bio: Ryan Coleman is a product manager at Amazon Web Services focused on AI developer tools and agentic frameworks.
+
+- id: james-hood
+  name: James Hood
+  role: "Principal Software Engineer, Amazon"
+  bio: James is a Principal Software Engineer and 16-year Amazon veteran with experience across AWS and Stores. He founded Amazon's internal AI "power user" community and now focuses on integrating AI into internal builder tools as part of the Amazon software builder experience organization.
+
+- id: nicholas-clegg
+  name: Nicholas Clegg
+  role: "Senior Software Engineer, AWS Agentic AI"
+  bio: Nick is a Senior Software Engineer at AWS Agentic AI, developing the Strands Harness SDK. He combines his experience building agentic coding products with a focus on empowering developers to create the next generation of AI agent applications.
+
+- id: jawhny-cooke
+  name: Jawhny Cooke
+  role: "Senior Anthropic Specialist Solutions Architect, AWS"
+  bio: Jawhny Cooke is a Senior Anthropic Specialist Solutions Architect for Generative AI at AWS. He specializes in integrating and deploying Anthropic models on AWS infrastructure.
+
+- id: mark-roy
+  name: Mark Roy
+  role: "Principal Machine Learning Architect, AWS"
+  bio: Mark Roy is a Principal Machine Learning Architect for AWS, helping customers design and build generative AI solutions.
+
+- id: vadim-omeltchenko
+  name: Vadim Omeltchenko
+  role: "Sr. AI/ML Solutions Architect, AWS"
+  bio: Vadim Omeltchenko is a Sr. AI/ML Solutions Architect who is passionate about helping AWS customers innovate in the cloud.
+
+- id: albert-zhao
+  name: Albert Zhao
+  role: "Developer Experience Engineer, AWS"
+  bio: Albert Zhao is a DX Engineer at AWS focused on the Strands Harness SDK, robotics, and developer experience.
+
+- id: strands-team
+  name: Strands Agents Team
+  role: Core Team
+  bio: The team behind the Strands Harness SDK.
+
+- id: cagatay-cali
+  name: Cagatay Cali
+  role: "Research Engineer, AWS"
+  bio: Cagatay Cali is a Research Engineer at AWS focused on Agentic AI and robotics. He designs interfaces that connect AI agents to physical robots, enabling developers to control robotic systems through natural language.
+
+- id: rachita-chandra
+  name: Rachita Chandra
+  role: "Prototyping Solutions Architect, AWS"
+  bio: Rachita Chandra is a Prototyping Solutions Architect specializing in implementing generative AI and machine learning solutions for workloads on AWS.
+
+- id: aaron-su
+  name: Aaron Su
+  role: "Solutions Architect, AWS"
+  bio: Aaron Su is a Solutions Architect at Amazon Web Services, helping startups build and scale AI solutions from concept to production. He is passionate about physical AI and agentic systems.
+
+- id: pgrayy
+  name: Patrick Gray
+  role: "Software Engineer, AWS Agentic AI"
+  bio: Patrick is a Senior Software Engineer at AWS Agentic AI working on the Strands Harness SDK.
+
+- id: ishan-singh
+  name: Ishan Singh
+  role: "Sr. Applied Scientist, AWS"
+  bio: Ishan Singh is a Sr. Applied Scientist at Amazon Web Services, helping customers build generative AI solutions with expertise in building innovative and responsible AI products.
+
+- id: abhishek-kumar
+  name: Abhishek Kumar
+  role: "Applied Scientist, AWS"
+  bio: Abhishek Kumar is an Applied Scientist at AWS focusing on agent observability, simulation, and evaluation.
+
+- id: jonathan-buck
+  name: Jonathan Buck
+  role: "Senior Software Engineer, AWS"
+  bio: Jonathan Buck is a Senior Software Engineer at Amazon Web Services focused on building agent environments, evaluation infrastructure, and systems to support productization of agentic AI.
+
+- id: vinayak-arannil
+  name: Vinayak Arannil
+  role: "Sr. Applied Scientist, AWS"
+  bio: Vinayak Arannil is a Sr. Applied Scientist at Amazon Web Services helping build capabilities on AgentCore and Strands to enable customers to evaluate agentic applications.
+
+- id: akarsha-sehwag
+  name: Akarsha Sehwag
+  role: "Generative AI Data Scientist, AWS"
+  bio: Akarsha Sehwag is a Generative AI Data Scientist for the Amazon Bedrock AgentCore team with over 6 years of experience in production AI/ML solutions across enterprise sectors.
+
+- id: po-shin-chen
+  name: Po-Shin Chen
+  role: "Software Developer, AWS"
+  bio: Po-Shin Chen is a Software Developer focusing on agentic AI development and evaluations at Amazon Web Services, responsible for core capabilities in agent frameworks and evaluation.
+
+- id: smeet-dhakecha
+  name: Smeet Dhakecha
+  role: "Research Engineer, Amazon"
+  bio: Smeet Dhakecha is a Research Engineer at Amazon within the Agentic AI Science team, working on agent simulation, evaluation systems, and data transformation pipeline infrastructure.
+
+- id: darren-wang
+  name: Darren Wang
+  role: "Research Engineer, AWS"
+  bio: Darren Wang is a Research Engineer at Amazon Web Services who bridges AI research and production systems, specializing in agent simulation and evaluation frameworks.
+
+- id: xuan-qi
+  name: Xuan Qi
+  role: "Applied Scientist, AWS"
+  bio: Xuan Qi is an Applied Scientist at Amazon Web Services focusing on ML modeling and simulation, translating scientific concepts into practical AI applications.
+
+- id: sangmin-woo
+  name: Sangmin Woo
+  role: "Applied Scientist, AWS"
+  bio: Sangmin Woo is an Applied Scientist at AWS AI Labs working on machine learning for agentic AI, with a focus on evaluation frameworks and improving agent behavior and performance. His interests span agentic AI, generative models, and multimodal AI.
+
+- id: sungyeon-kim
+  name: Sungyeon Kim
+  role: "Applied Scientist, Amazon"
+  bio: Sungyeon Kim is an Applied Scientist at Amazon Agentic AI with a research background in computer vision, multimodal learning, and retrieval systems, currently focused on multimodal understanding and evaluation frameworks for AI agents.
+
+- id: haibo-ding
+  name: Haibo Ding
+  role: "Principal Applied Scientist, Amazon"
+  bio: Haibo Ding is a Principal Applied Scientist at Amazon Agentic AI working on agent evaluation, tool optimization, and foundation model evaluation and critic models. He holds a Ph.D. from the University of Utah and has served as an area chair for AAAI and ACL.
+
+- id: ian-holtz
+  name: Ian Holtz
+  role: "Sr. GTM Specialist, Agentic Coding, AWS"
+  bio: Ian Holtz is a Sr. GTM Specialist for Agentic Coding at AWS, helping developers discover and adopt AI-powered development tools and agentic frameworks.
+
+- id: ed-fraga
+  name: Ed Fraga
+  role: "Sr. Specialist SA, Bedrock, AWS"
+  bio: Ed Fraga is a Sr. Specialist Solutions Architect for Amazon Bedrock at AWS, helping customers design and build generative AI solutions with foundation models.
+
+- id: guande-wu
+  name: Guande Wu
+  role: "Applied Scientist, AWS"
+  bio: Guande Wu is an Applied Scientist at AWS Agentic AI working on agent optimization and harness tuning.
+
+- id: han-ding
+  name: Han Ding
+  role: "Applied Scientist, AWS"
+  bio: Han Ding is an Applied Scientist at AWS Agentic AI working on agent optimization.
+
+- id: linbo-liu
+  name: Linbo Liu
+  role: "Applied Scientist, AWS"
+  bio: Linbo Liu is an Applied Scientist at AWS Agentic AI working on agent optimization.
+
+- id: yawei-wang
+  name: Yawei Wang
+  role: "Applied Scientist, AWS"
+  bio: Yawei Wang is an Applied Scientist at AWS Agentic AI working on agent optimization.
+
+- id: panpan-xu
+  name: Panpan Xu
+  role: "Principal Applied Scientist, AWS"
+  bio: Panpan Xu is a Principal Applied Scientist at AWS Agentic AI working on agent optimization.
+
+- id: tim-moreton
+  name: Tim Moreton
+  role: "Sr. Technical Content Creator, AWS"
+  bio: Tim Moreton is a Sr. Technical Content Creator at AWS working on Strands Agents and agentic AI.
+
+- id: fernando-dingler
+  name: Fernando Dingler
+  role: "Principal Engineer, AWS"
+  bio: Fernando Dingler is a Principal Engineer at AWS working on Strands Agents and Strands Box.
+
+- id: chen-wu
+  name: Chen Wu
+  role: "Principal Applied Scientist, AWS"
+  bio: Chen Wu is a Principal Applied Scientist working on agent optimization.
+
+- id: ramon-li
+  name: Ramon Li
+  role: "Software Engineer, AWS"
+  bio: Ramon Li is a Software Engineer at AWS working on the Strands Harness SDK.
+
+- id: ariel-nabavian
+  name: Ariel Nabavian
+  role: "Software Engineer, AWS Agentic AI"
+  bio: Ariel is a software engineer at AWS Agentic AI working on the Strands Harness SDK.
+
+- id: owen-kaplan
+  name: Owen Kaplan
+  role: "Software Engineer, AWS Agentic AI"
+  bio: Owen is a software engineer at AWS Agentic AI working on the Strands Harness SDK.
+
+- id: murat-kaan-meral
+  name: Murat Kaan Meral
+  role: "Software Engineer, AWS Agentic AI"
+  bio: Murat is a software engineer at AWS Agentic AI working on the Strands Harness SDK.
+
+- id: gautam-sirdeshmukh
+  name: Gautam Sirdeshmukh
+  role: "Software Engineer, AWS Agentic AI"
+  bio: Gautam is a software engineer at AWS Agentic AI working on the Strands Harness SDK.
+
+- id: marc-brooker
+  name: Marc Brooker
+  role: "VP and Distinguished Engineer, AWS"
+  bio: Marc Brooker is a VP and Distinguished Engineer at AWS in Seattle, working on agentic AI, especially safety and policy for AI agents. He previously worked on EC2, EBS, databases, and serverless.
+
+- id: mike-chambers
+  name: Mike Chambers
+  role: "Senior AI Specialist Developer Advocate, AWS"
+  bio: Mike Chambers is a Senior AI Specialist Developer Advocate at AWS, helping developers build with generative AI and agents.
+
+- id: fabio-nonato-de-paula
+  name: Fabio Nonato de Paula
+  role: "Principal Applied Scientist, AWS"
+  bio: Fabio Nonato de Paula is a Principal Applied Scientist at AWS working on agentic AI.
+
+- id: morgan-willis
+  name: Morgan Willis
+  role: "Principal Developer Advocate, AWS"
+  bio: Morgan Willis is a Principal Developer Advocate at AWS working on agents.
+
+- id: chris-smith
+  name: Chris Smith
+  role: "Senior Solutions Architect, AWS"
+  bio: Chris Smith is a Senior Solutions Architect at AWS focused on agents and helping customers run them in production.
+
+- id: rachit-mehta
+  name: Rachit Mehta
+  role: "Software Engineer, AWS Agentic AI"
+  bio: Rachit is a software engineer at AWS Agentic AI working on the Strands Harness SDK.
+
+- id: spencer-romo
+  name: Spencer Romo
+  role: "Senior Data Scientist, AWS"
+  bio: Spencer Romo is a Senior Data Scientist in AWS Forward Deployed Engineering. He maintains Stickler, the open source AWS library for field-level evaluation of structured output, and built the StructuredOutputSimilarity evaluator in Strands Evals on top of it.
+
+- id: vincil-bishop
+  name: Vincil Bishop
+  role: "Senior Deep Learning Architect, AWS"
+  bio: Vincil Bishop is a Senior Deep Learning Architect in AWS Forward Deployed Engineering and a contributor to Stickler.
+
+- id: diego-galaviz
+  name: Diego Galavíz
+  role: "Deep Learning Architect, AWS"
+  bio: Diego Galavíz is a Deep Learning Architect in AWS Forward Deployed Engineering and a contributor to Stickler.
+
+- id: harry-cavanagh
+  name: Harry Cavanagh
+  role: "Data Scientist, AWS"
+  bio: Harry Cavanagh is a Data Scientist in AWS Forward Deployed Engineering and a contributor to Stickler.
+
+- id: hayley-park
+  name: Hayley Park
+  role: "Applied Scientist, AWS"
+  bio: Hayley Park is an Applied Scientist in AWS Forward Deployed Engineering.
+
+- id: arnaud-jean
+  name: Arnaud Jean
+  role: "Developer Advocate, AWS"
+  bio: Arnaud Jean is a Developer Advocate at AWS working with developers building agents on Strands.
+
+- id: kevin-orellana
+  name: Kevin Orellana
+  role: "Software Developer"
+  bio: Kevin Orellana is a Strands contributor.
+
+- id: carr-onstott
+  name: Carr Onstott
+  role: "Principal Engineer, AWS"
+  bio: Carr Onstott is a Principal Engineer at AWS working on platform services.
+
+- id: mehul-jaiswal
+  name: Mehul Jaiswal
+  role: "Software Engineer, AWS"
+  bio: Mehul Jaiswal is a Software Engineer at AWS working on platform services.

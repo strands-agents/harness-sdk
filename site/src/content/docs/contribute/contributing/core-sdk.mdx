@@ -1,0 +1,147 @@
+---
+title: Contributing to the SDK
+description: 'Contribute to the Strands core SDK for Python and TypeScript: find open issues, set up your development environment, and submit changes for review.'
+sidebar:
+  label: "SDK"
+---
+
+The SDK powers every Strands agent: the agent loop, model integrations, tool execution, and streaming. When you fix a bug or improve performance here, you help every developer who uses Strands.
+
+This guide covers contributing to the Python and TypeScript SDKs: what we accept, how to set up your development environment, and how to submit changes for review.
+
+## Find something to work on
+
+Looking for a place to start? Check our issues labeled "ready for contribution": these are well-defined and ready for community work.
+
+- [SDK issues](https://github.com/strands-agents/harness-sdk/issues?q=is%3Aissue+state%3Aopen+label%3A%22ready+for+contribution%22)
+
+Before starting work on any issue, check if someone is already assigned or working on it.
+
+## What we accept
+
+We welcome contributions that improve the SDK for everyone. Focus on changes that benefit the entire community rather than solving niche use cases.
+
+- **Bug fixes with tests** that verify the fix and prevent regression
+- **Performance improvements with benchmarks** showing measurable gains
+- **Documentation improvements** including docstrings, code examples, and guides
+- **Features that align with our [roadmap](https://github.com/orgs/strands-agents/projects/8/views/1)** and development tenets
+- **Small, focused changes** that solve a specific problem clearly
+
+## What we don't accept
+
+Some contributions don't fit the core SDK. Understanding this upfront saves you time and helps us maintain focus on what matters most.
+
+- **Large refactors without prior discussion**: Major architectural changes require a [feature proposal](./feature-proposals.md)
+- **Breaking changes without approval**: We maintain backward compatibility carefully. Breaking changes require a [feature proposal](./feature-proposals.md)
+- **External tools**: [Build your own extension](./extensions.md) instead for full ownership
+- **Changes without tests**: Tests ensure quality and prevent regressions (documentation changes excepted)
+- **Niche features**: Features serving narrow use cases belong in extensions
+
+If you're unsure whether your contribution fits, [open a discussion](https://github.com/strands-agents/harness-sdk/discussions) first.
+
+## Set up your development environment
+
+Setup differs between Python and TypeScript.
+
+<Tabs>
+<Tab label="Python">
+
+Clone the repository and enter the Python SDK directory:
+
+```bash
+git clone https://github.com/strands-agents/harness-sdk.git
+cd harness-sdk/strands-py
+```
+
+We use [hatch](https://hatch.pypa.io/) for Python development. Hatch manages virtual environments, dependencies, testing, and formatting. Enter the virtual environment and install pre-commit hooks:
+
+```bash
+hatch shell
+pre-commit install -t pre-commit -t commit-msg
+```
+
+The pre-commit hooks run code formatters, linters, tests, and commit message validation before each commit.
+
+Verify your setup by running the tests:
+
+```bash
+hatch test                  # Run unit tests
+hatch test -c               # Run with coverage report
+```
+
+You can also run linters and formatters manually:
+
+```bash
+hatch fmt --linter          # Check for code quality issues
+hatch fmt --formatter       # Auto-format code with ruff
+```
+
+To run all quality checks at once (format, lint, and tests across every supported Python version), use the prepare script:
+
+```bash
+hatch run prepare           # Run all checks before committing
+```
+
+**Development tips:**
+
+- Use `hatch run test-integ` to run integration tests with real model providers
+- Run `hatch test --all` to test across every supported Python version
+- Check [CONTRIBUTING.md](https://github.com/strands-agents/harness-sdk/blob/main/CONTRIBUTING.md) for the full development workflow
+</Tab>
+<Tab label="TypeScript">
+
+Clone the repository and install dependencies:
+
+```bash
+git clone https://github.com/strands-agents/harness-sdk.git
+cd harness-sdk
+npm install
+```
+
+The TypeScript SDK uses npm for dependency management, with automated quality checks wired in through Husky git hooks. The `prepare` script installs those hooks:
+
+```bash
+npm run prepare
+```
+
+Verify your setup by running all quality checks:
+
+```bash
+npm run check               # Run all checks (lint, format, type-check, tests)
+```
+
+You can also run individual checks:
+
+```bash
+npm test                    # Run unit tests
+npm run type-check          # TypeScript type checking
+npm run format              # Format code with Prettier
+```
+
+**Development tips:**
+
+- Use `npm run test:integ` to run integration tests
+- Run `npm run test:all` to test in both Node.js and browser environments
+- Check [CONTRIBUTING.md](https://github.com/strands-agents/harness-sdk/blob/main/CONTRIBUTING.md) for the full development workflow
+</Tab>
+</Tabs>
+
+## Submit your contribution
+
+After making your changes, submit them for review:
+
+1. **Fork and create a branch** with a descriptive name like `fix/session-memory-leak` or `feat/add-hooks-support`
+2. **Write tests** for your changes: tests are required for all code changes
+3. **Run quality checks** before committing to ensure everything passes:
+    - Python: `hatch run prepare`
+    - TypeScript: `npm run check`
+4. **Use [conventional commits](https://www.conventionalcommits.org/)** like `fix: resolve memory leak in session manager` or `feat: add streaming support to tools`
+5. **Submit a pull request** referencing the issue number in the description
+6. **Respond to feedback**: we review within a few days and may request changes
+
+The pre-commit hooks catch issues before you push, but you can also run checks manually.
+
+## Related guides
+
+- [Feature proposals](./feature-proposals.md): For significant features requiring discussion
+- [Team documentation](https://github.com/strands-agents/harness-sdk/tree/main/team): Our tenets, decisions, and API review process

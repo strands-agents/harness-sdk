@@ -48,9 +48,32 @@ Our team follows these core principles when designing and implementing features.
 
 When proposing solutions or reviewing code, we reference these principles to guide our decisions. If two approaches seem equally valid, we choose the one that best aligns with our tenets.
 
+The `team/` folder holds the rest of our shared context: the full [tenets](./team/TENETS.md), [decision records](./team/DECISIONS.md), the [API bar-raising](./team/API_BAR_RAISING.md) and [feature lifecycle](./team/FEATURE_LIFECYCLE.md) processes, and our [design proposals](./team/designs/). For a significant feature or a breaking change, start with a design proposal in [`team/designs/`](./team/designs/) — see its [README](./team/designs/README.md) for the template and process.
+
 ## Development Environment
 
-This project uses [hatchling](https://hatch.pypa.io/latest/build/#hatchling) as the build backend and [hatch](https://hatch.pypa.io/latest/) for development workflow management.
+This is a monorepo containing the Strands harness, Python SDK, TypeScript SDK, CLI, MCP server, documentation site, and integ test infrastructure. Each has its own toolchain:
+
+| Area | Directory | Toolchain |
+|------|-----------|-----------|
+| Python harness | [`harness-py/`](./harness-py/) | hatch |
+| TypeScript harness | [`harness-ts/`](./harness-ts/) | npm |
+| CLI | [`strands-cli/`](./strands-cli/) | npm |
+| Python SDK | [`strands-py/`](./strands-py/) | hatch |
+| TypeScript SDK | [`strands-ts/`](./strands-ts/) | npm workspace |
+| MCP server | [`strands-mcp/`](./strands-mcp/) | hatch |
+| Docs site | [`site/`](./site/) | Astro (npm) |
+| Integ test infrastructure | [`test-infra/`](./test-infra/) | AWS CDK (npm) |
+
+### Python SDK
+
+The Python SDK uses [hatchling](https://hatch.pypa.io/latest/build/#hatchling) as the build backend and [hatch](https://hatch.pypa.io/latest/) for development workflow management.
+
+All `hatch` commands should be run from the `strands-py/` subdirectory (where `pyproject.toml` lives):
+
+```bash
+cd strands-py
+```
 
 ### Setting Up Your Development Environment
 
@@ -112,7 +135,7 @@ We use the following tools to ensure code quality:
 1. **ruff** - For formatting and linting
 2. **mypy** - For static type checking
 
-These tools are configured in the [pyproject.toml](./pyproject.toml) file. Please ensure your code passes all linting and type checks before submitting a pull request:
+These tools are configured in the [pyproject.toml](./strands-py/pyproject.toml) file. Please ensure your code passes all linting and type checks before submitting a pull request:
 
 ```bash
 # Run all checks
@@ -122,8 +145,106 @@ hatch fmt --linter
 
 If you're using an IDE like VS Code or PyCharm, consider configuring it to use these tools automatically.
 
-For additional details on styling, please see our dedicated [Style Guide](./docs/STYLE_GUIDE.md).
+For additional details on styling, please see our dedicated [Style Guide](./strands-py/docs/STYLE_GUIDE.md).
 
+
+### TypeScript SDK
+
+The TypeScript SDK uses an npm workspace rooted at the repository root.
+
+```bash
+npm ci              # install dependencies (from repo root)
+npm run build       # build
+npm test            # run unit tests
+npm run lint        # lint
+npm run type-check  # type checking
+```
+
+#### Running Selective Integration Tests Locally
+
+From the repository root, run only the integration tests relevant to your
+changes (computed relative to `main`, including uncommitted edits):
+
+```bash
+npm run test:integ:selective
+```
+
+This uses Vitest's module graph to run only the `integ-node` and
+`integ-browser` specs that depend on the source files you changed. If you
+alter a structural file (`package.json`, `package-lock.json`, a `strands-ts`
+`tsconfig`, `vitest.config.ts`, a shared integration fixture under
+`test/integ/__fixtures__/`, or a TypeScript CI workflow), the full
+integration suite runs automatically.
+
+### Documentation Site
+
+The documentation site uses Astro with the Starlight theme.
+
+```bash
+cd site
+npm install
+npm run dev                # local dev server at http://localhost:4321/
+npm run build              # production build
+npm run typecheck          # type checking
+npm run typecheck:snippets # type check code examples
+```
+
+For docs contribution guidelines, see [site/CONTRIBUTING.md](./site/CONTRIBUTING.md).
+
+### PR Size and Complexity
+
+Every PR is labeled with a `size/*` and a `complexity/*` label. Both are
+informational — they help reviewers budget attention and neither blocks a merge.
+
+You can see the same numbers before you push. From the repository root:
+
+```bash
+npm run complexity:setup   # once, to install the analyzers
+npm run complexity         # report labels for your branch vs origin/main
+```
+
+Python contributors can use hatch instead, from `strands-py/`:
+
+```bash
+cd strands-py
+hatch run complexity
+```
+
+**`size/*`** counts changed lines in source and prose, and **excludes tests,
+lockfiles, and snapshots**. Thorough tests should never push a PR into a bigger
+bucket, so write as many as the change deserves.
+
+**`complexity/*`** reports the [cognitive complexity](https://www.sonarsource.com/docs/CognitiveComplexity.pdf)
+of the most complex function your diff touches — roughly, how hard the control
+flow is to hold in your head. It scores only the functions you actually
+changed, and a touched function counts only if your change *increased* its
+score over the merge base, so pre-existing complexity is never billed to you;
+a PR that touches functions without increasing any lands at `complexity/low`.
+`complexity/high` (above 25) is a hint
+that a function may be worth splitting, not a rule; sometimes a complex
+function is the honest solution.
+
+A docs-only or test-only PR touches no SDK source and gets no complexity label.
+
+The labels exist because review attention is the scarcest resource this
+project has: they let maintainers triage which PRs need an unhurried senior
+read, and they give you the same signal locally before a reviewer sees it. The
+reasoning, the scoring model, and the practices that keep code under the
+thresholds live in [team/COMPLEXITY.md](./team/COMPLEXITY.md).
+
+## Using AI Tools
+
+We love AI. We build with coding agents every day, and you're welcome to use them too — they're a great way to move fast and explore a codebase.
+
+That said, **you are the author of your pull request, not your agent.** Before you open a PR, make sure you understand the code well enough to explain why it works, defend the design choices, and maintain it if asked. If you couldn't walk a reviewer through it line by line, it's not ready yet.
+
+A few things that help us help you:
+
+- **Keep changes small and incremental.** A focused PR that does one thing is far easier for us to understand, guide, and merge than a large one that touches many areas. When in doubt, split it up.
+- **Open an issue first for anything significant**, so we can align on the approach before you (or your agent) invest the time.
+- **Review every line your agent generates.** Delete what you don't need, simplify what's over-engineered, and make sure tests actually exercise the behavior — not just pass. Trim comments that narrate the agent's reasoning: a comment should state only what a reader cannot infer from the code.
+
+High-quality PRs get reviewed faster and are far more likely to be accepted. Taking the time to understand and trim your changes is the single best thing you can do to get them merged.
 
 ## Contributing via Pull Requests
 Contributions via pull requests are much appreciated. Before sending us a pull request, please ensure that:
@@ -132,7 +253,7 @@ Contributions via pull requests are much appreciated. Before sending us a pull r
 2. You check existing open, and recently merged, pull requests to make sure someone else hasn't addressed the problem already.
 3. You open an issue to discuss any significant work - we would hate for your time to be wasted.
 
-For guidance on writing effective PR descriptions, see our [PR Description Guidelines](./docs/PR.md).
+For guidance on writing effective PR descriptions, see our [PR Description Guidelines](./team/PR.md).
 
 To send us a pull request, please:
 
@@ -158,4 +279,4 @@ If you discover a potential security issue in this project we ask that you notif
 
 ## Licensing
 
-See the [LICENSE](./LICENSE) file for our project's licensing. We will ask you to confirm the licensing of your contribution.
+See the [LICENSE.APACHE](./LICENSE.APACHE) and [LICENSE.MIT](./LICENSE.MIT) files for our project's licensing. We will ask you to confirm the licensing of your contribution.

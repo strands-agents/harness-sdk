@@ -1,0 +1,9 @@
+name: llama.cpp
+description: Run Strands agents on local quantized models served by llama.cpp, with grammar constraints and advanced sampling.
+integrationType: model-provider
+maintainedBy: strands
+languages:
+  python: {}
+github: https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/llamacpp.py
+docsPage: docs/user-guide/sdk/model-providers/llamacpp
+addedDate: 2025-09-10

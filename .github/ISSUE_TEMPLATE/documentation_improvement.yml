@@ -1,0 +1,55 @@
+name: Documentation Improvement
+description: Suggest improvements to the documentation
+title: "[DOCS] "
+labels: ["documentation"]
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping us improve our documentation!
+  
+  - type: input
+    id: documentation-section
+    attributes:
+      label: Documentation Section
+      description: Identify the section (page URL or file path) that needs improvement
+      placeholder: docs/getting-started.md or https://example.com/docs/page
+    validations:
+      required: true
+      
+  - type: textarea
+    id: current-state
+    attributes:
+      label: Current State
+      description: Describe the current state of the documentation
+      placeholder: Currently, the documentation says...
+    validations:
+      required: true
+      
+  - type: textarea
+    id: suggested-improvement
+    attributes:
+      label: Suggested Improvement
+      description: Provide a clear description of the suggested improvement
+      placeholder: I suggest changing it to...
+    validations:
+      required: true
+      
+  - type: textarea
+    id: rationale
+    attributes:
+      label: Rationale
+      description: Explain why this improvement would be helpful
+      placeholder: This improvement would help because...
+    validations:
+      required: true
+      
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional Context
+      description: Add any other context, examples, or references
+      placeholder: Other relevant information...
+    validations:
+      required: false

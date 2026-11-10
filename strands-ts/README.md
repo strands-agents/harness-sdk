@@ -1,0 +1,433 @@
+<div align="center">
+  <div>
+    <a href="https://strandsagents.com">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="https://strandsagents.com/latest/assets/wordmark-github-dark.svg">
+        <img src="https://strandsagents.com/latest/assets/wordmark-github-light.svg" alt="Strands" width="320">
+      </picture>
+    </a>
+  </div>
+
+  <h1>
+    Strands Agents - TypeScript SDK
+  </h1>
+
+  <h2>
+    A model-driven approach to building AI agents in TypeScript/JavaScript.
+  </h2>
+
+  <div align="center">
+    <a href="https://github.com/strands-agents/harness-sdk/graphs/commit-activity"><img alt="GitHub commit activity" src="https://img.shields.io/github/commit-activity/m/strands-agents/harness-sdk"/></a>
+    <a href="https://github.com/strands-agents/harness-sdk/issues"><img alt="GitHub open issues" src="https://img.shields.io/github/issues/strands-agents/harness-sdk"/></a>
+    <a href="https://github.com/strands-agents/harness-sdk/pulls"><img alt="GitHub open pull requests" src="https://img.shields.io/github/issues-pr/strands-agents/harness-sdk"/></a>
+    <a href="https://github.com/strands-agents/harness-sdk/blob/main/LICENSE.APACHE"><img alt="License" src="https://img.shields.io/github/license/strands-agents/harness-sdk"/></a>
+    <a href="https://www.npmjs.com/package/@strands-agents/sdk"><img alt="NPM Version" src="https://img.shields.io/npm/v/@strands-agents/sdk"/></a>
+    <a href="https://discord.gg/strands"><img alt="Strands Discord" src="https://img.shields.io/badge/Discord-Strands-5865F2?logo=discord&logoColor=white"/></a>
+  </div>
+
+  <p>
+    <a href="https://strandsagents.com/">Documentation</a>
+    ◆ <a href="https://github.com/strands-agents/samples">Samples</a>
+    ◆ <a href="https://github.com/strands-agents/harness-sdk/tree/main/strands-cli">CLI</a>
+    ◆ <a href="https://github.com/strands-agents/harness-sdk/tree/main/strands-mcp">MCP Server</a>
+    <br>
+    Harness (<a href="https://github.com/strands-agents/harness-sdk/tree/main/harness-py">Python</a>, <a href="https://github.com/strands-agents/harness-sdk/tree/main/harness-ts">TypeScript</a>)
+    ◆ SDK (<a href="https://github.com/strands-agents/harness-sdk/tree/main/strands-py">Python</a>, <a href="https://github.com/strands-agents/harness-sdk/tree/main/strands-ts">TypeScript</a>)
+    ◆ <a href="https://github.com/strands-agents/box">Box</a>
+    ◆ <a href="https://github.com/strands-agents/shell">Shell</a>
+    ◆ <a href="https://github.com/strands-agents/evals">Evals</a>
+    ◆ <a href="https://github.com/strands-labs">Labs</a>
+  </p>
+</div>
+
+---
+
+## Overview
+
+Strands Agents is a simple yet powerful SDK that takes a model-driven approach to building and running AI agents. The TypeScript SDK brings key features from the Python Strands framework to Node.js environments, enabling type-safe agent development for everything from simple assistants to complex workflows.
+
+### Key Features
+
+- **🪶 Lightweight & Flexible**: Simple agent loop that works seamlessly in Node.js and browser environments
+- **🔒 Type-Safe Tools**: Define tools easily using Zod schemas for robust input validation and type inference
+- **📋 Structured Output**: Get type-safe, validated responses from LLMs using Zod schemas with automatic retry on validation errors
+- **🔌 Model Agnostic**: First-class support for Amazon Bedrock and OpenAI, with extensible architecture for custom providers
+- **🔗 Built-in MCP**: Native support for Model Context Protocol (MCP) clients, enabling access to external tools and servers
+- **⚡ Streaming Support**: Real-time response streaming for better user experience
+- **🎣 Extensible Hooks**: Lifecycle hooks for monitoring and customizing agent behavior
+- **💬 Conversation Management**: Flexible strategies for managing conversation history and context windows
+- **🤝 Multi-Agent Orchestration**: Graph and Swarm patterns for coordinating multiple agents
+
+---
+
+## Quick Start
+
+### Installation
+
+Ensure you have **[Node.js 22+](https://nodejs.org/)** installed, then:
+
+```bash
+npm install @strands-agents/sdk
+```
+
+### Basic Usage
+
+```typescript
+import { Agent } from '@strands-agents/sdk'
+import { httpRequest } from '@strands-agents/sdk/vended-tools/http-request'
+
+// Create agent (uses default Amazon Bedrock provider)
+const agent = new Agent({ tools: [httpRequest] })
+
+// Invoke
+await agent.invoke('Tell me about the Strands harness features: https://strandsagents.com/docs/user-guide/harness/index.md')
+```
+
+> **Note**: For the default Amazon Bedrock model provider, you'll need AWS credentials configured and model access enabled for Claude Sonnet 4.6 in your region.
+
+---
+
+## Core Concepts
+
+### Agents
+
+The `Agent` class is the central orchestrator that manages the interaction loop between users, models, and tools.
+
+```typescript
+import { Agent } from '@strands-agents/sdk'
+
+const agent = new Agent({
+  systemPrompt: 'You are a helpful assistant.',
+})
+```
+
+### Model Providers
+
+Switch between model providers easily:
+
+**Amazon Bedrock (Default)**
+
+```typescript
+import { Agent, BedrockModel } from '@strands-agents/sdk'
+
+const model = new BedrockModel({
+  region: 'us-east-1',
+  modelId: 'global.anthropic.claude-sonnet-4-6',
+  maxTokens: 4096,
+  temperature: 0.7,
+})
+
+const agent = new Agent({ model })
+```
+
+**OpenAI**
+
+```typescript
+import { Agent } from '@strands-agents/sdk'
+import { OpenAIModel } from '@strands-agents/sdk/models/openai'
+
+// Automatically uses process.env.OPENAI_API_KEY and defaults to gpt-5.4
+const model = new OpenAIModel({ api: 'chat' })
+
+const agent = new Agent({ model })
+```
+
+### Streaming Responses
+
+Access responses as they are generated:
+
+```typescript
+const agent = new Agent()
+
+console.log('Agent response stream:')
+for await (const event of agent.stream('Tell me a story about a brave toaster.')) {
+  console.log('[Event]', event.type)
+}
+```
+
+### Tools
+
+Tools enable agents to interact with external systems and perform actions. Create type-safe tools using Zod schemas:
+
+```typescript
+import { Agent, tool } from '@strands-agents/sdk'
+import { z } from 'zod'
+
+const weatherTool = tool({
+  name: 'get_weather',
+  description: 'Get the current weather for a specific location.',
+  inputSchema: z.object({
+    location: z.string().describe('The city and state, e.g., San Francisco, CA'),
+  }),
+  callback: (input) => {
+    // input is fully typed based on the Zod schema
+    return `The weather in ${input.location} is 72°F and sunny.`
+  },
+})
+
+const agent = new Agent({
+  tools: [weatherTool],
+})
+
+await agent.invoke('What is the weather in San Francisco?')
+```
+
+### Vended tools
+
+The SDK ships pre-built tools for common agent tasks. Import each one from its own subpath under `@strands-agents/sdk/vended-tools`:
+
+```typescript
+import { Agent } from '@strands-agents/sdk'
+import { fileEditor } from '@strands-agents/sdk/vended-tools/file-editor'
+import { httpRequest } from '@strands-agents/sdk/vended-tools/http-request'
+import { makeShell } from '@strands-agents/sdk/vended-tools/shell'
+
+const agent = new Agent({
+  tools: [fileEditor, httpRequest, makeShell()],
+})
+
+await agent.invoke('Fetch https://strandsagents.com and save a one-paragraph summary to /tmp/summary.md')
+```
+
+| Tool | Exports | Description |
+| --- | --- | --- |
+| Shell | `makeShell` | Run shell commands |
+| Bash | `bash` | Run commands in a persistent bash session on the host (Node.js only) |
+| Edit | `edit`, `makeEdit` | Replace an exact, unique string in a text file |
+| Write | `write`, `makeWrite` | Create or overwrite a text file with the full provided content |
+| File editor *(deprecated)* | `fileEditor`, `makeFileEditor` | View, create, and edit files. Use `edit` instead |
+| Read | `read`, `makeRead` | Read a file as numbered text, or an image/document as a media block |
+| HTTP request | `httpRequest` | Make HTTP requests to external APIs |
+| Web fetch | `webFetch`, `makeWebFetch` | Fetch a web page for the model to read. Requires the `turndown` package |
+| Notebook | `notebook`, `makeNotebook` | Keep persistent text notes |
+| Python REPL | `pythonRepl`, `makePythonRepl` | Run Python code |
+| Sleep | `sleep`, `makeSleep` | Pause for a bounded, cancellable duration |
+| Handoff to user | `handoffToUser`, `makeHandoffToUser` | Pause the agent loop and ask the user for input |
+| Stop | `stop`, `makeStop` | End the agent loop when the task is done. Experimental: import from `@strands-agents/sdk/experimental/vended-tools/stop` |
+| Subagent | `subagent`, `makeSubagent` | Delegate a self-contained task to a child agent |
+| Swarm | `swarm`, `makeSwarm` | Run a team of agents that hand off work to each other |
+| MCP router | `makeMcpRouter` | Connect to MCP servers on an allowlist you set |
+| A2A client | `makeA2AClient` | Discover and message remote A2A agents. Requires the `@a2a-js/sdk` package |
+
+Use the `make*` factories to customize a tool, for example to bind a sandbox or change its name. The shell, `edit`, `fileEditor`, and `pythonRepl` run on the host unless you pass a `sandbox` to `Agent`. See [Vended tools](https://strandsagents.com/docs/user-guide/sdk/tools/vended-tools/) for details on each tool.
+
+### Structured Output
+
+Get type-safe, validated responses from LLMs by defining the expected output structure with Zod schemas. The agent automatically validates the LLM's response and retries on validation errors:
+
+```typescript
+import { Agent } from '@strands-agents/sdk'
+import { z } from 'zod'
+
+const PersonSchema = z.object({
+  name: z.string().describe('Name of the person'),
+  age: z.number().describe('Age of the person'),
+  occupation: z.string().describe('Occupation of the person'),
+})
+
+// Configure structured output at the agent level
+const agent = new Agent({
+  structuredOutputSchema: PersonSchema,
+})
+
+const result = await agent.invoke('John Smith is a 30 year-old software engineer')
+
+// result.structuredOutput is fully typed based on the schema
+console.log(result.structuredOutput.name) // "John Smith"
+console.log(result.structuredOutput.age) // 30
+```
+
+**Error handling**: The agent automatically retries with validation feedback when the LLM provides invalid output. If validation ultimately fails, a `StructuredOutputError` is thrown:
+
+```typescript
+import { StructuredOutputError } from '@strands-agents/sdk'
+
+try {
+  const result = await agent.invoke('Extract person info...')
+  console.log(result.structuredOutput)
+} catch (error) {
+  if (error instanceof StructuredOutputError) {
+    console.error('Validation failed:', error.message)
+  }
+}
+```
+
+### MCP Integration
+
+Seamlessly integrate Model Context Protocol (MCP) servers:
+
+```typescript
+import { Agent, McpClient } from '@strands-agents/sdk'
+import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
+
+// Create a client for a local MCP server
+const documentationTools = new McpClient({
+  transport: new StdioClientTransport({
+    command: 'uvx',
+    args: ['awslabs.aws-documentation-mcp-server@latest'],
+  }),
+})
+
+const agent = new Agent({
+  systemPrompt: 'You are a helpful assistant using MCP tools.',
+  tools: [documentationTools], // Pass the MCP client directly as a tool source
+})
+
+await agent.invoke('Use a random tool from the MCP server.')
+
+await documentationTools.disconnect()
+```
+
+Enable automatic task execution on the same `McpClient` for modern SEP-2663 and legacy task servers:
+
+```typescript
+await using taskTools = new McpClient({
+  url: 'https://example.com/mcp',
+  tasksConfig: { pollTimeout: 300_000 },
+})
+const agent = new Agent({ tools: [taskTools] })
+await agent.invoke("Run the server's task tool.")
+```
+
+`callTool()` returns the final tool result. For explicit SEP-2663 task control on a server
+that advertises the tasks extension, submit once with `submitTool()` and manage the
+handle yourself:
+
+```typescript
+const [tool] = await taskTools.listTools()
+const submitted = await taskTools.submitTool(tool!, { value: 'input' })
+if (submitted.resultType === 'task') {
+  let state = await taskTools.getTask(submitted.taskId)
+  if (state.status === 'input_required') {
+    const [key] = Object.keys(state.inputRequests)
+    await taskTools.updateTask(submitted.taskId, {
+      [key!]: { action: 'accept', content: { value: 'approved' } },
+    })
+    state = await taskTools.getTask(submitted.taskId)
+  }
+  if (state.status === 'working') await taskTools.cancelTask(submitted.taskId)
+}
+```
+
+To bound total wall-clock time, set `tasksConfig.pollTimeout`; a call's `options.timeoutMs`
+overrides that value. The field names and defaults match the Python SDK's `TasksConfig`
+(`ttl` remains as a deprecated alias of `requestTimeout`):
+
+| Setting          | Scope                                                                                                   | Default    |
+| ---------------- | ------------------------------------------------------------------------------------------------------- | ---------- |
+| `pollTimeout`    | Entire automatic operation, including polling and input callbacks                                       | 300,000 ms |
+| `requestTimeout` | Each task lifecycle request                                                                             | 60,000 ms  |
+| `pollInterval`   | Polling delay when a legacy (2025-11-25) server omits its interval; SEP-2663 servers supply the cadence | 1,000 ms   |
+
+The first limit reached ends the wait. Matching progress resets the request timer
+only; the overall deadline never moves. For example, with `requestTimeout: 10_000`
+and `pollTimeout: 120_000`, progress can keep a request alive beyond 10 seconds,
+but the whole operation cannot exceed 120 seconds.
+
+### Multi-Agent Orchestration
+
+Coordinate multiple agents using built-in orchestration patterns.
+
+**Graph** — You define a deterministic execution plan. Agents run as nodes in a directed graph, with edges controlling execution order. Parallel execution is supported, and downstream nodes run once all dependencies complete.
+
+```typescript
+import { Agent, BedrockModel, Graph } from '@strands-agents/sdk'
+
+const model = new BedrockModel({ maxTokens: 1024 })
+
+const researcher = new Agent({
+  model,
+  id: 'researcher',
+  systemPrompt: 'Research the topic and provide key facts.',
+})
+
+const writer = new Agent({
+  model,
+  id: 'writer',
+  systemPrompt: 'Rewrite the research into a polished paragraph.',
+})
+
+const graph = new Graph({
+  nodes: [researcher, writer],
+  edges: [['researcher', 'writer']],
+})
+
+const result = await graph.invoke('What is the largest ocean?')
+```
+
+**Swarm** — The agents decide the routing. Each agent chooses whether to hand off to another agent or produce a final response, making the execution path dynamic and model-driven.
+
+```typescript
+import { Agent, BedrockModel, Swarm } from '@strands-agents/sdk'
+
+const model = new BedrockModel({ maxTokens: 1024 })
+
+const researcher = new Agent({
+  model,
+  id: 'researcher',
+  description: 'Researches a topic and gathers key facts.',
+  systemPrompt: 'Research the answer, then hand off to the writer.',
+})
+
+const writer = new Agent({
+  model,
+  id: 'writer',
+  description: 'Writes a polished final answer.',
+  systemPrompt: 'Write the final answer. Do not hand off.',
+})
+
+const swarm = new Swarm({
+  nodes: [researcher, writer],
+  start: 'researcher',
+  maxSteps: 4,
+})
+
+const result = await swarm.invoke('What is the largest ocean?')
+```
+
+Both patterns support streaming via `.stream()` for real-time access to handoff and node execution events. See the [examples](./examples/) directory for complete working samples.
+
+---
+
+## Documentation
+
+For detailed guidance, tutorials, and concept overviews, please visit:
+
+- **[Official Documentation](https://strandsagents.com/)**: Comprehensive guides and tutorials
+- **[API Reference](https://strandsagents.com/docs/api/typescript/)**: Complete API documentation
+- **[Examples](./examples/)**: Sample applications
+  - **[First Agent](./examples/first-agent/)**: Basic Node.js agent
+  - **[MCP](./examples/mcp/)**: MCP integration example
+  - **[Browser Agent](./examples/browser-agent/)**: Browser-based agent with DOM manipulation
+
+- **[Contributing Guide](https://github.com/strands-agents/harness-sdk/blob/main/CONTRIBUTING.md)**: Development setup and guidelines
+
+---
+
+## Contributing ❤️
+
+We welcome contributions! See our [Contributing Guide](https://github.com/strands-agents/harness-sdk/blob/main/CONTRIBUTING.md) for details on:
+
+- Development setup and environment
+- Testing and code quality standards
+- Pull request process
+- Code of Conduct
+- Security issue reporting
+
+---
+
+## Stay in touch with the team
+
+Come meet the Strands team and other users on [**Discord**](https://discord.com/invite/strands)
+
+---
+
+## License
+
+This project is licensed under the Apache License 2.0 - see the [LICENSE](https://github.com/strands-agents/harness-sdk/blob/main/LICENSE.APACHE) file for details.
+
+---
+
+## Security
+
+See [CONTRIBUTING](https://github.com/strands-agents/harness-sdk/blob/main/CONTRIBUTING.md#security-issue-notifications) for more information on reporting security issues.

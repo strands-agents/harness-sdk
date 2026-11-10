@@ -1,0 +1,20 @@
+{
+  "name": "test-snippets",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@anthropic-ai/bedrock-sdk": "^1.1.1",
+    "@opentelemetry/sdk-trace-node": "^2.6.1",
+    "@strands-agents/sdk": "file:../../strands-ts",
+    "express": "^5.1.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.5",
+    "@types/node": "^24.10.1",
+    "typescript": "^5.9.3"
+  }
+}

@@ -1,0 +1,12 @@
+name: strands-dynamodb-storage
+description: Amazon DynamoDB Storage backend for Strands agents, covering sessions, agent memory, and semantic search over DynamoDB vector indexes, with optional S3 offload for large values.
+integrationType: storage
+maintainedBy: aws
+languages:
+  python:
+    package: strands-dynamodb-storage
+  typescript:
+    package: strands-dynamodb-storage
+github: https://github.com/aws/strands-dynamodb-storage
+featured: true
+addedDate: 2026-08-14

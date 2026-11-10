@@ -1,0 +1,9 @@
+name: strands-token-telemetry
+description: Emits Strands agent token usage as CloudWatch EMF metrics for cost visibility and capacity planning.
+integrationType: observability
+maintainedBy: partner
+languages:
+  python:
+    package: strands-token-telemetry
+github: https://github.com/flockcover/strands-token-telemetry
+addedDate: 2026-02-20

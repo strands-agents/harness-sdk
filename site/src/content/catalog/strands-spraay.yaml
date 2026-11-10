@@ -1,0 +1,9 @@
+name: strands-spraay
+description: Spraay Protocol batch payment tool for Strands Agents to send ETH or ERC-20 tokens to up to 200 recipients in a single Base transaction with ~80% gas savings.
+integrationType: tool
+languages:
+  python:
+    package: strands-agents-spraay
+github: https://github.com/plagtech/strands-agents-spraay
+docsPage: docs/integrations/tools/strands-spraay
+addedDate: 2026-05-14

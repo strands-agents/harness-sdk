@@ -1,0 +1,1534 @@
+"""Tests for the HumanInTheLoop vended intervention handler."""
+
+import logging
+from collections.abc import AsyncGenerator
+from typing import Any
+from unittest.mock import MagicMock
+
+import pytest
+from pydantic import BaseModel
+
+from strands import Agent
+from strands.agent.invocation_context import _create_invocation_context
+from strands.decisions import (
+    DecisionInput,
+    DecisionMetadata,
+    DecisionModel,
+    DecisionResult,
+    LLMDecisionModel,
+    Question,
+    Uncertain,
+)
+from strands.models.model import Model
+from strands.tools import tool
+from strands.types._snapshot import SNAPSHOT_SCHEMA_VERSION, Snapshot
+from strands.types.content import Messages
+from strands.vended_interventions.hitl import HumanInTheLoop
+from strands.vended_interventions.hitl.classifier import (
+    _DEFAULT_RISK_QUESTION,
+    ClassifierResult,
+    _create_decision_model_risk_classifier,
+)
+from tests.fixtures.mocked_model_provider import MockedModelProvider
+
+
+def tool_use_message(name: str, tool_use_id: str = "tool-1", tool_input: dict | None = None) -> dict:
+    return {
+        "role": "assistant",
+        "content": [{"toolUse": {"toolUseId": tool_use_id, "name": name, "input": tool_input or {}}}],
+    }
+
+
+def text_message(text: str) -> dict:
+    return {"role": "assistant", "content": [{"text": text}]}
+
+
+class TestDefaultInterruptResume:
+    def test_pauses_agent_with_interrupt_on_any_tool_call(self):
+        executed = []
+
+        @tool(name="any_tool")
+        def any_tool() -> str:
+            executed.append(True)
+            return "result"
+
+        model = MockedModelProvider([tool_use_message("any_tool", tool_input={"x": 1}), text_message("Done")])
+        agent = Agent(model=model, tools=[any_tool], interventions=[HumanInTheLoop()])
+
+        result = agent("Do something")
+
+        assert result.stop_reason == "interrupt"
+        assert result.interrupts is not None
+        assert len(result.interrupts) == 1
+        assert result.interrupts[0].name == "strands:human-in-the-loop"
+        assert "any_tool" in result.interrupts[0].reason
+        assert executed == []
+
+    def test_resume_with_approval_executes_tool(self):
+        executed = []
+
+        @tool(name="any_tool")
+        def any_tool() -> str:
+            executed.append(True)
+            return "result"
+
+        model = MockedModelProvider([tool_use_message("any_tool"), text_message("Done")])
+        agent = Agent(model=model, tools=[any_tool], interventions=[HumanInTheLoop()])
+
+        result = agent("Do something")
+        assert result.stop_reason == "interrupt"
+
+        interrupt_id = result.interrupts[0].id
+        result = agent([{"interruptResponse": {"interruptId": interrupt_id, "response": "yes"}}])
+
+        assert result.stop_reason == "end_turn"
+        assert executed == [True]
+
+    def test_resume_with_rejection_cancels_tool(self):
+        executed = []
+
+        @tool(name="any_tool")
+        def any_tool() -> str:
+            executed.append(True)
+            return "result"
+
+        model = MockedModelProvider([tool_use_message("any_tool"), text_message("Understood")])
+        agent = Agent(model=model, tools=[any_tool], interventions=[HumanInTheLoop()])
+
+        result = agent("Do something")
+        assert result.stop_reason == "interrupt"
+
+        interrupt_id = result.interrupts[0].id
+        result = agent([{"interruptResponse": {"interruptId": interrupt_id, "response": "no"}}])
+
+        assert result.stop_reason == "end_turn"
+        assert executed == []
+
+
+class TestInlineAskMode:
+    def test_allows_tool_execution_when_approved(self):
+        executed = []
+
+        @tool(name="my_tool")
+        def my_tool() -> str:
+            executed.append(True)
+            return "executed"
+
+        model = MockedModelProvider([tool_use_message("my_tool"), text_message("Done")])
+        agent = Agent(model=model, tools=[my_tool], interventions=[HumanInTheLoop(ask=lambda prompt: "yes")])
+
+        result = agent("Run tool")
+
+        assert result.stop_reason == "end_turn"
+        assert executed == [True]
+
+    def test_denies_tool_execution_when_rejected(self):
+        executed = []
+
+        @tool(name="my_tool")
+        def my_tool() -> str:
+            executed.append(True)
+            return "executed"
+
+        model = MockedModelProvider([tool_use_message("my_tool"), text_message("Understood")])
+        agent = Agent(model=model, tools=[my_tool], interventions=[HumanInTheLoop(ask=lambda prompt: "no")])
+
+        result = agent("Run tool")
+
+        assert result.stop_reason == "end_turn"
+        assert executed == []
+
+    def test_ask_returning_none_denies_instead_of_pausing(self):
+        # A configured inline ask returning None must fail closed (deny), not fall back to interrupt/resume.
+        executed = []
+
+        @tool(name="my_tool")
+        def my_tool() -> str:
+            executed.append(True)
+            return "executed"
+
+        model = MockedModelProvider([tool_use_message("my_tool"), text_message("Understood")])
+        agent = Agent(model=model, tools=[my_tool], interventions=[HumanInTheLoop(ask=lambda prompt: None)])
+
+        result = agent("Run tool")
+
+        assert result.stop_reason == "end_turn"
+        assert executed == []
+
+    @pytest.mark.parametrize(
+        ("answer", "expected_result"),
+        [
+            ("n", 'DENIED: Tool "my_tool" denied: the human rejected the call.'),
+            (None, 'DENIED: Tool "my_tool" denied: approval callback returned no response.'),
+        ],
+        ids=["rejected", "no_answer"],
+    )
+    def test_inline_denial_tells_the_model_why(self, answer, expected_result):
+        @tool(name="my_tool")
+        def my_tool() -> str:
+            return "executed"
+
+        model = MockedModelProvider([tool_use_message("my_tool"), text_message("Understood")])
+        agent = Agent(model=model, tools=[my_tool], interventions=[HumanInTheLoop(ask=lambda prompt: answer)])
+
+        agent("Run tool")
+
+        tool_results = [
+            block["toolResult"] for message in agent.messages for block in message["content"] if "toolResult" in block
+        ]
+        assert tool_results[0]["content"][0]["text"] == expected_result
+
+    def test_async_ask_returning_none_denies_instead_of_pausing(self):
+        # Same fail-closed contract as the sync case, on the awaited async-ask branch.
+        executed = []
+
+        @tool(name="my_tool")
+        def my_tool() -> str:
+            executed.append(True)
+            return "executed"
+
+        async def ask(prompt: str):
+            return None
+
+        model = MockedModelProvider([tool_use_message("my_tool"), text_message("Understood")])
+        agent = Agent(model=model, tools=[my_tool], interventions=[HumanInTheLoop(ask=ask)])
+
+        result = agent("Run tool")
+
+        assert result.stop_reason == "end_turn"
+        assert executed == []
+
+    def test_supports_async_ask_function(self):
+        executed = []
+
+        @tool(name="my_tool")
+        def my_tool() -> str:
+            executed.append(True)
+            return "executed"
+
+        async def ask(prompt: str) -> str:
+            return "yes"
+
+        model = MockedModelProvider([tool_use_message("my_tool"), text_message("Done")])
+        agent = Agent(model=model, tools=[my_tool], interventions=[HumanInTheLoop(ask=ask)])
+
+        result = agent("Run tool")
+
+        assert result.stop_reason == "end_turn"
+        assert executed == [True]
+
+
+class TestAllowedTools:
+    def test_bare_string_allowed_tools_raises(self):
+        # str is iterable, so a bare string would be shredded into a per-char set and mis-gate; reject it.
+        with pytest.raises(ValueError, match="must be a list"):
+            HumanInTheLoop(allowed_tools="read_file")
+
+    def test_does_not_prompt_for_tools_in_allowed_tools(self):
+        executed = []
+
+        @tool(name="read_file")
+        def read_file() -> str:
+            executed.append(True)
+            return "content"
+
+        model = MockedModelProvider([tool_use_message("read_file"), text_message("Done")])
+        agent = Agent(
+            model=model,
+            tools=[read_file],
+            interventions=[HumanInTheLoop(allowed_tools=["read_file"], ask=lambda prompt: "no")],
+        )
+
+        result = agent("Read it")
+
+        assert result.stop_reason == "end_turn"
+        assert executed == [True]
+
+    def test_prompts_for_tools_not_in_allowed_tools(self):
+        executed = []
+
+        @tool(name="delete_file")
+        def delete_file() -> str:
+            executed.append(True)
+            return "deleted"
+
+        model = MockedModelProvider([tool_use_message("delete_file"), text_message("Done")])
+        agent = Agent(
+            model=model,
+            tools=[delete_file],
+            interventions=[HumanInTheLoop(allowed_tools=["read_file"], ask=lambda prompt: "no")],
+        )
+
+        agent("Delete it")
+
+        assert executed == []
+
+    def test_allows_all_tools_except_negated_ones(self):
+        exec_log = []
+
+        @tool(name="read_file")
+        def read_file() -> str:
+            exec_log.append("read")
+            return "content"
+
+        @tool(name="delete_file")
+        def delete_file() -> str:
+            exec_log.append("delete")
+            return "deleted"
+
+        model = MockedModelProvider(
+            [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"toolUse": {"toolUseId": "tool-1", "name": "read_file", "input": {}}},
+                        {"toolUse": {"toolUseId": "tool-2", "name": "delete_file", "input": {}}},
+                    ],
+                },
+                text_message("Done"),
+            ]
+        )
+        agent = Agent(
+            model=model,
+            tools=[read_file, delete_file],
+            interventions=[HumanInTheLoop(allowed_tools=["*", "!delete_file"], ask=lambda prompt: "no")],
+        )
+
+        agent("Do both")
+
+        assert "read" in exec_log
+        assert "delete" not in exec_log
+
+    def test_allows_all_tools_with_wildcard(self):
+        executed = []
+
+        @tool(name="dangerous_tool")
+        def dangerous_tool() -> str:
+            executed.append(True)
+            return "ran"
+
+        model = MockedModelProvider([tool_use_message("dangerous_tool"), text_message("Done")])
+        agent = Agent(
+            model=model,
+            tools=[dangerous_tool],
+            interventions=[HumanInTheLoop(allowed_tools=["*"], ask=lambda prompt: "no")],
+        )
+
+        result = agent("Do it")
+
+        assert result.stop_reason == "end_turn"
+        assert executed == [True]
+
+
+class TestAskCallback:
+    def test_passes_tool_name_and_input_in_prompt(self):
+        prompts = []
+
+        @tool(name="send_email")
+        def send_email(to: str) -> str:
+            return "sent"
+
+        def ask(prompt: str) -> str:
+            prompts.append(prompt)
+            return "yes"
+
+        model = MockedModelProvider(
+            [tool_use_message("send_email", tool_input={"to": "bob@example.com"}), text_message("Done")]
+        )
+        agent = Agent(model=model, tools=[send_email], interventions=[HumanInTheLoop(ask=ask)])
+
+        agent("Send email")
+
+        assert "send_email" in prompts[0]
+        assert "bob@example.com" in prompts[0]
+
+    def test_supports_custom_evaluate_function(self):
+        executed = []
+
+        @tool(name="my_tool")
+        def my_tool() -> str:
+            executed.append(True)
+            return "executed"
+
+        model = MockedModelProvider([tool_use_message("my_tool"), text_message("Done")])
+        agent = Agent(
+            model=model,
+            tools=[my_tool],
+            interventions=[
+                HumanInTheLoop(
+                    ask=lambda prompt: "magic-word",
+                    evaluate=lambda response: response == "magic-word",
+                )
+            ],
+        )
+
+        result = agent("Go")
+
+        assert result.stop_reason == "end_turn"
+        assert executed == [True]
+
+
+class TestTrustMode:
+    def test_trusts_tool_for_session_when_response_is_t(self):
+        ask_count = []
+
+        @tool(name="my_tool")
+        def my_tool() -> str:
+            return "executed"
+
+        def ask(prompt: str) -> str:
+            ask_count.append(1)
+            return "t"
+
+        model = MockedModelProvider(
+            [
+                tool_use_message("my_tool", "tool-1"),
+                tool_use_message("my_tool", "tool-2"),
+                text_message("Done"),
+            ]
+        )
+        agent = Agent(model=model, tools=[my_tool], interventions=[HumanInTheLoop(enable_trust=True, ask=ask)])
+
+        agent("Run tool twice")
+
+        assert len(ask_count) == 1
+
+    def test_does_not_trust_when_enable_trust_is_false(self):
+        ask_count = []
+
+        @tool(name="my_tool")
+        def my_tool() -> str:
+            return "executed"
+
+        def ask(prompt: str) -> str:
+            ask_count.append(1)
+            return "t"
+
+        model = MockedModelProvider(
+            [
+                tool_use_message("my_tool", "tool-1"),
+                tool_use_message("my_tool", "tool-2"),
+                text_message("Done"),
+            ]
+        )
+        agent = Agent(model=model, tools=[my_tool], interventions=[HumanInTheLoop(enable_trust=False, ask=ask)])
+
+        agent("Run tool twice")
+
+        # 't' isn't approval when trust is disabled: denied both times, ask called both times (no memory).
+        assert len(ask_count) == 2
+
+    def test_t_response_also_approves_current_tool_call(self):
+        executed = []
+
+        @tool(name="my_tool")
+        def my_tool() -> str:
+            executed.append(True)
+            return "executed"
+
+        model = MockedModelProvider([tool_use_message("my_tool"), text_message("Done")])
+        agent = Agent(
+            model=model,
+            tools=[my_tool],
+            interventions=[HumanInTheLoop(enable_trust=True, ask=lambda prompt: "t")],
+        )
+
+        result = agent("Run tool")
+
+        assert result.stop_reason == "end_turn"
+        assert executed == [True]
+
+    @pytest.mark.parametrize("trust_response", ["trust", "T", "TRUST"])
+    def test_trusts_with_alternate_trust_responses(self, trust_response):
+        ask_count = []
+
+        @tool(name="my_tool")
+        def my_tool() -> str:
+            return "executed"
+
+        def ask(prompt: str) -> str:
+            ask_count.append(1)
+            return trust_response
+
+        model = MockedModelProvider(
+            [
+                tool_use_message("my_tool", "tool-1"),
+                tool_use_message("my_tool", "tool-2"),
+                text_message("Done"),
+            ]
+        )
+        agent = Agent(model=model, tools=[my_tool], interventions=[HumanInTheLoop(enable_trust=True, ask=ask)])
+
+        agent("Run tool twice")
+
+        assert len(ask_count) == 1
+
+    def test_supports_custom_evaluate_trust_function(self):
+        ask_count = []
+
+        @tool(name="my_tool")
+        def my_tool() -> str:
+            return "executed"
+
+        def ask(prompt: str) -> str:
+            ask_count.append(1)
+            return "approve-and-remember"
+
+        model = MockedModelProvider(
+            [
+                tool_use_message("my_tool", "tool-1"),
+                tool_use_message("my_tool", "tool-2"),
+                text_message("Done"),
+            ]
+        )
+        agent = Agent(
+            model=model,
+            tools=[my_tool],
+            interventions=[
+                HumanInTheLoop(
+                    enable_trust=True,
+                    evaluate_trust=lambda r: r == "approve-and-remember",
+                    ask=ask,
+                )
+            ],
+        )
+
+        agent("Run tool twice")
+
+        assert len(ask_count) == 1
+
+    def test_negated_tools_cannot_be_trusted(self):
+        ask_count = []
+        executed = []
+
+        @tool(name="danger_tool")
+        def danger_tool() -> str:
+            executed.append(True)
+            return "ran"
+
+        def ask(prompt: str) -> str:
+            ask_count.append(1)
+            return "t"
+
+        model = MockedModelProvider(
+            [
+                tool_use_message("danger_tool", "tool-1"),
+                tool_use_message("danger_tool", "tool-2"),
+                text_message("Done"),
+            ]
+        )
+        agent = Agent(
+            model=model,
+            tools=[danger_tool],
+            interventions=[
+                HumanInTheLoop(allowed_tools=["*", "!danger_tool"], enable_trust=True, ask=ask),
+            ],
+        )
+
+        agent("Run danger twice")
+
+        assert len(ask_count) == 2
+        assert executed == []
+
+    def test_trust_via_interrupt_resume_mode(self):
+        """Trust responses work in interrupt/resume mode (no ask)."""
+        executed = []
+
+        @tool(name="my_tool")
+        def my_tool() -> str:
+            executed.append(True)
+            return "executed"
+
+        model = MockedModelProvider(
+            [
+                tool_use_message("my_tool", "tool-1"),
+                tool_use_message("my_tool", "tool-2"),
+                text_message("Done"),
+            ]
+        )
+        agent = Agent(model=model, tools=[my_tool], interventions=[HumanInTheLoop(enable_trust=True)])
+
+        result = agent("Run tool twice")
+        assert result.stop_reason == "interrupt"
+        # Resume with a trust response: approves the current call AND trusts the tool
+        interrupt_id = result.interrupts[0].id
+        result = agent([{"interruptResponse": {"interruptId": interrupt_id, "response": "t"}}])
+        # Second call to my_tool is trusted: no new interrupt raised
+        assert result.stop_reason == "end_turn"
+        assert executed == [True, True]
+        assert agent.state.get("hitl:trusted_tools") == ["my_tool"]
+
+    def test_ignores_trusted_tools_in_agent_state_when_enable_trust_is_false(self):
+        ask_count = []
+        executed = []
+
+        @tool(name="my_tool")
+        def my_tool() -> str:
+            executed.append(True)
+            return "executed"
+
+        def ask(prompt: str) -> str:
+            ask_count.append(1)
+            return "n"
+
+        model = MockedModelProvider([tool_use_message("my_tool", "tool-1"), text_message("Done")])
+        agent = Agent(
+            model=model,
+            tools=[my_tool],
+            state={"hitl:trusted_tools": ["my_tool"]},
+            interventions=[HumanInTheLoop(ask=ask)],
+        )
+
+        agent("Run tool")
+
+        assert len(ask_count) == 1
+        assert executed == []
+
+    @pytest.mark.parametrize(
+        "trusted_tools",
+        ["my_tool", 42, {"my_tool": True}, ["my_tool", 1]],
+        ids=["string", "number", "object", "list_with_non_string_entries"],
+    )
+    def test_ignores_malformed_trusted_tools_value(self, trusted_tools):
+        ask_count = []
+        executed = []
+
+        @tool(name="my_tool")
+        def my_tool() -> str:
+            executed.append(True)
+            return "executed"
+
+        def ask(prompt: str) -> str:
+            ask_count.append(1)
+            return "n"
+
+        model = MockedModelProvider([tool_use_message("my_tool", "tool-1"), text_message("Done")])
+        agent = Agent(
+            model=model,
+            tools=[my_tool],
+            state={"hitl:trusted_tools": trusted_tools},
+            interventions=[HumanInTheLoop(enable_trust=True, ask=ask)],
+        )
+
+        agent("Run tool")
+
+        assert len(ask_count) == 1
+        assert executed == []
+
+    def test_replaces_malformed_trusted_tools_value_when_tool_is_trusted(self):
+        @tool(name="my_tool")
+        def my_tool() -> str:
+            return "executed"
+
+        model = MockedModelProvider([tool_use_message("my_tool", "tool-1"), text_message("Done")])
+        agent = Agent(
+            model=model,
+            tools=[my_tool],
+            state={"hitl:trusted_tools": {"my_tool": True}},
+            interventions=[HumanInTheLoop(enable_trust=True, ask=lambda prompt: "t")],
+        )
+
+        agent("Run tool")
+
+        assert agent.state.get("hitl:trusted_tools") == ["my_tool"]
+
+
+class TestRestoredInterruptResponses:
+    @staticmethod
+    def _interrupt_id_for_tool_call() -> str:
+        """Raise a real interrupt for the ``tool-1`` call so the restored entry uses the id the SDK assigns."""
+
+        @tool(name="my_tool")
+        def my_tool() -> str:
+            return "executed"
+
+        model = MockedModelProvider([tool_use_message("my_tool", "tool-1"), text_message("Done")])
+        agent = Agent(model=model, tools=[my_tool], interventions=[HumanInTheLoop()])
+        return agent("Run tool").interrupts[0].id
+
+    @classmethod
+    def _restore_interrupt_response(cls, agent: Agent, response: str) -> None:
+        interrupt_id = cls._interrupt_id_for_tool_call()
+        agent.load_snapshot(
+            Snapshot(
+                scope="agent",
+                schema_version=SNAPSHOT_SCHEMA_VERSION,
+                data={
+                    "interrupt_state": {
+                        "interrupts": {
+                            interrupt_id: {
+                                "id": interrupt_id,
+                                "name": "strands:human-in-the-loop",
+                                "reason": None,
+                                "response": response,
+                            }
+                        },
+                        "context": {},
+                        "activated": False,
+                    }
+                },
+                app_data={},
+            )
+        )
+
+    def test_uses_live_ask_answer_over_restored_answer(self):
+        ask_count = []
+        executed = []
+
+        @tool(name="my_tool")
+        def my_tool() -> str:
+            executed.append(True)
+            return "executed"
+
+        def ask(prompt: str) -> str:
+            ask_count.append(1)
+            return "n"
+
+        model = MockedModelProvider([tool_use_message("my_tool", "tool-1"), text_message("Done")])
+        agent = Agent(model=model, tools=[my_tool], interventions=[HumanInTheLoop(ask=ask)])
+        self._restore_interrupt_response(agent, "y")
+
+        agent("Run tool")
+
+        assert len(ask_count) == 1
+        assert executed == []
+
+    def test_applies_restored_answer_when_no_ask_callback_is_configured(self):
+        executed = []
+
+        @tool(name="my_tool")
+        def my_tool() -> str:
+            executed.append(True)
+            return "executed"
+
+        model = MockedModelProvider([tool_use_message("my_tool", "tool-1"), text_message("Done")])
+        agent = Agent(model=model, tools=[my_tool], interventions=[HumanInTheLoop()])
+        self._restore_interrupt_response(agent, "y")
+
+        result = agent("Run tool")
+
+        assert result.stop_reason == "end_turn"
+        assert executed == [True]
+
+
+class TestStdioMode:
+    def test_stdio_ask_prompts_via_input(self, monkeypatch):
+        prompts = []
+        executed = []
+
+        @tool(name="my_tool")
+        def my_tool() -> str:
+            executed.append(True)
+            return "executed"
+
+        def fake_input(prompt: str) -> str:
+            prompts.append(prompt)
+            return "y"
+
+        monkeypatch.setattr("builtins.input", fake_input)
+
+        model = MockedModelProvider([tool_use_message("my_tool"), text_message("Done")])
+        agent = Agent(model=model, tools=[my_tool], interventions=[HumanInTheLoop(ask="stdio")])
+
+        result = agent("Run tool")
+
+        assert result.stop_reason == "end_turn"
+        assert executed == [True]
+        assert len(prompts) == 1
+        assert "my_tool" in prompts[0]
+        assert "(y/n)" in prompts[0]
+
+    def test_stdio_ask_includes_trust_option_when_enabled(self, monkeypatch):
+        prompts = []
+        executed = []
+
+        @tool(name="my_tool")
+        def my_tool() -> str:
+            executed.append(True)
+            return "executed"
+
+        def fake_input(prompt: str) -> str:
+            prompts.append(prompt)
+            return "n"
+
+        monkeypatch.setattr("builtins.input", fake_input)
+
+        model = MockedModelProvider([tool_use_message("my_tool"), text_message("Done")])
+        agent = Agent(model=model, tools=[my_tool], interventions=[HumanInTheLoop(enable_trust=True, ask="stdio")])
+
+        agent("Run tool")
+
+        assert "(y/n/t)" in prompts[0]
+        # "n" must actually deny: the tool should never run in stdio mode.
+        assert executed == []
+
+
+class TestPublicExports:
+    """Public API exports of the HITL package."""
+
+    def test_public_exports(self):
+        import strands.vended_interventions as vended
+        import strands.vended_interventions.hitl as hitl
+
+        assert vended.__all__ == ["CedarAuthorization", "HumanInTheLoop"]
+        assert hitl.__all__ == ["HumanInTheLoop", "HumanInTheLoopClassifier", "LLMClassifierConfig"]
+        assert vended.HumanInTheLoop is hitl.HumanInTheLoop
+        assert hitl.HumanInTheLoop.name == "strands:human-in-the-loop"
+
+    def test_callback_protocols_are_defined_but_not_exported(self):
+        """The typed callable contracts exist (for hints + runtime checks) but are not public API.
+
+        Removing the *exports* (per review) is distinct from removing the *types*:
+        the Protocols remain importable from the module and runtime-checkable, they
+        are just absent from both ``__all__`` lists so customers don't import them.
+        """
+        import strands.vended_interventions as vended
+        import strands.vended_interventions.hitl as hitl
+        from strands.vended_interventions.hitl.hitl import AskCallback, EvaluateCallback
+
+        # Defined and runtime-checkable (still usable as type hints / isinstance checks).
+        assert isinstance(AskCallback, type)
+        assert isinstance(EvaluateCallback, type)
+
+        def ask(prompt, **kwargs):
+            return "y"
+
+        def evaluate(response, **kwargs):
+            return True
+
+        assert isinstance(ask, AskCallback)
+        assert isinstance(evaluate, EvaluateCallback)
+
+        # But NOT exported from either namespace.
+        assert "AskCallback" not in vended.__all__
+        assert "EvaluateCallback" not in vended.__all__
+        assert "AskCallback" not in hitl.__all__
+        assert "EvaluateCallback" not in hitl.__all__
+
+    def test_custom_evaluate_accepting_kwargs_is_used(self):
+        executed = []
+
+        @tool(name="my_tool")
+        def my_tool() -> str:
+            executed.append(True)
+            return "ok"
+
+        # A custom evaluate callback may accept **kwargs for forward compatibility.
+        def approve_on_emoji(response, **kwargs) -> bool:
+            return response == "👍"
+
+        model = MockedModelProvider([tool_use_message("my_tool"), text_message("Done")])
+        agent = Agent(model=model, tools=[my_tool], interventions=[HumanInTheLoop(evaluate=approve_on_emoji)])
+
+        result = agent("Run tool")
+        assert result.stop_reason == "interrupt"
+
+        interrupt_id = result.interrupts[0].id
+        resumed = agent([{"interruptResponse": {"interruptId": interrupt_id, "response": "👍"}}])
+        assert resumed.stop_reason == "end_turn"
+        assert executed == [True]
+
+
+class TestCustomInterventionHandler:
+    """A custom handler may override before_tool_call as async and be awaited at runtime.
+
+    The registry awaits coroutine overrides, so an ``async def`` handler runs
+    end-to-end. Widening the base class so async overrides also type-check
+    without a per-file ``# type: ignore`` is tracked in harness-sdk#2800.
+    """
+
+    def test_async_handler_returning_proceed(self):
+        from strands.interventions.actions import Proceed
+        from strands.interventions.handler import InterventionHandler
+
+        executed = []
+
+        @tool(name="ok_tool")
+        def ok_tool() -> str:
+            executed.append(True)
+            return "ran"
+
+        class AsyncAllow(InterventionHandler):
+            name = "test:async-allow"
+
+            async def before_tool_call(self, event, **kwargs):
+                return Proceed()
+
+        model = MockedModelProvider([tool_use_message("ok_tool"), text_message("Done")])
+        agent = Agent(model=model, tools=[ok_tool], interventions=[AsyncAllow()])
+
+        result = agent("Run tool")
+        assert result.stop_reason == "end_turn"
+        assert executed == [True]
+
+
+class TestClassifierMode:
+    """Tests for the classifier option that enables LLM-driven risk classification."""
+
+    def test_classifier_true_interrupts_when_risky(self):
+        from unittest.mock import MagicMock
+
+        from strands.vended_interventions.hitl.classifier import ClassifierResult
+
+        executed = []
+
+        @tool(name="delete_file")
+        def delete_file() -> str:
+            executed.append(True)
+            return "deleted"
+
+        agent_model = MockedModelProvider(
+            [tool_use_message("delete_file", tool_input={"path": "/data"}), text_message("Done")]
+        )
+
+        mock_classifier = MagicMock(
+            return_value=ClassifierResult(requires_human_in_the_loop=True, reason="destructive operation")
+        )
+
+        agent = Agent(
+            model=agent_model,
+            tools=[delete_file],
+            interventions=[HumanInTheLoop(classifier=mock_classifier)],
+        )
+
+        result = agent("Delete the file")
+
+        assert result.stop_reason == "interrupt"
+        assert executed == []
+        assert "destructive operation" in result.interrupts[0].reason
+
+    def test_classifier_allows_tool_when_not_risky(self):
+        from unittest.mock import MagicMock
+
+        from strands.vended_interventions.hitl.classifier import ClassifierResult
+
+        executed = []
+
+        @tool(name="read_file")
+        def read_file() -> str:
+            executed.append(True)
+            return "content"
+
+        agent_model = MockedModelProvider(
+            [tool_use_message("read_file", tool_input={"path": "/tmp/x"}), text_message("Done")]
+        )
+
+        mock_classifier = MagicMock(
+            return_value=ClassifierResult(requires_human_in_the_loop=False, reason="read-only operation")
+        )
+
+        agent = Agent(
+            model=agent_model,
+            tools=[read_file],
+            interventions=[HumanInTheLoop(classifier=mock_classifier)],
+        )
+
+        result = agent("Read the file")
+
+        assert result.stop_reason == "end_turn"
+        assert executed == [True]
+
+    def test_allowed_tools_bypasses_classifier(self):
+        from unittest.mock import MagicMock
+
+        from strands.vended_interventions.hitl.classifier import ClassifierResult
+
+        executed = []
+
+        @tool(name="read_file")
+        def read_file() -> str:
+            executed.append(True)
+            return "content"
+
+        agent_model = MockedModelProvider([tool_use_message("read_file"), text_message("Done")])
+
+        mock_classifier = MagicMock(
+            return_value=ClassifierResult(requires_human_in_the_loop=True, reason="should not be called")
+        )
+
+        agent = Agent(
+            model=agent_model,
+            tools=[read_file],
+            interventions=[HumanInTheLoop(allowed_tools=["read_file"], classifier=mock_classifier)],
+        )
+
+        result = agent("Read")
+
+        assert result.stop_reason == "end_turn"
+        assert executed == [True]
+        mock_classifier.assert_not_called()
+
+    def test_custom_classifier_function(self):
+        from strands.vended_interventions.hitl.classifier import ClassifierResult
+
+        executed = []
+
+        @tool(name="deploy")
+        def deploy() -> str:
+            executed.append(True)
+            return "deployed"
+
+        agent_model = MockedModelProvider(
+            [tool_use_message("deploy", tool_input={"env": "prod"}), text_message("Done")]
+        )
+
+        def my_classifier(event, **kwargs):
+            return ClassifierResult(
+                requires_human_in_the_loop=event.tool_use["name"] == "deploy",
+                reason="deployment requires approval",
+            )
+
+        agent = Agent(
+            model=agent_model,
+            tools=[deploy],
+            interventions=[HumanInTheLoop(classifier=my_classifier)],
+        )
+
+        result = agent("Deploy")
+
+        assert result.stop_reason == "interrupt"
+        assert executed == []
+
+    def test_classifier_reason_appears_in_prompt(self):
+        from unittest.mock import MagicMock
+
+        from strands.vended_interventions.hitl.classifier import ClassifierResult
+
+        prompts = []
+
+        @tool(name="send_email")
+        def send_email() -> str:
+            return "sent"
+
+        agent_model = MockedModelProvider(
+            [tool_use_message("send_email", tool_input={"to": "all@co.com"}), text_message("Done")]
+        )
+
+        mock_classifier = MagicMock(
+            return_value=ClassifierResult(requires_human_in_the_loop=True, reason="external communication")
+        )
+
+        def capture_ask(prompt, **kwargs):
+            prompts.append(prompt)
+            return "no"
+
+        agent = Agent(
+            model=agent_model,
+            tools=[send_email],
+            interventions=[HumanInTheLoop(classifier=mock_classifier, ask=capture_ask)],
+        )
+
+        agent("Send email")
+
+        assert "external communication" in prompts[0]
+        assert "send_email" in prompts[0]
+
+    def test_classifier_config_resolves_to_built_in(self):
+        from unittest.mock import MagicMock, patch
+
+        from strands.vended_interventions.hitl.classifier import ClassifierResult, LLMClassifierConfig
+
+        mock_fn = MagicMock(return_value=ClassifierResult(requires_human_in_the_loop=False))
+
+        with patch(
+            "strands.vended_interventions.hitl.hitl._create_llm_risk_classifier", return_value=mock_fn
+        ) as mock_create:
+            config = LLMClassifierConfig(system_prompt="custom prompt")
+            HumanInTheLoop(classifier=config)
+
+            mock_create.assert_called_once_with(config)
+
+    def test_async_custom_classifier(self):
+        from strands.vended_interventions.hitl.classifier import ClassifierResult
+
+        executed = []
+
+        @tool(name="deploy")
+        def deploy() -> str:
+            executed.append(True)
+            return "deployed"
+
+        agent_model = MockedModelProvider(
+            [tool_use_message("deploy", tool_input={"env": "prod"}), text_message("Done")]
+        )
+
+        async def my_classifier(event, **kwargs):
+            return ClassifierResult(
+                requires_human_in_the_loop=True,
+                reason="async classifier says no",
+            )
+
+        agent = Agent(
+            model=agent_model,
+            tools=[deploy],
+            interventions=[HumanInTheLoop(classifier=my_classifier)],
+        )
+
+        result = agent("Deploy")
+
+        assert result.stop_reason == "interrupt"
+        assert executed == []
+
+    def test_classifier_error_fails_closed(self):
+        executed = []
+
+        @tool(name="my_tool")
+        def my_tool() -> str:
+            executed.append(True)
+            return "ran"
+
+        def broken_classifier(event, **kwargs):
+            raise RuntimeError("model down")
+
+        agent_model = MockedModelProvider([tool_use_message("my_tool"), text_message("Done")])
+        agent = Agent(
+            model=agent_model,
+            tools=[my_tool],
+            interventions=[HumanInTheLoop(classifier=broken_classifier)],
+        )
+
+        result = agent("Go")
+
+        assert result.stop_reason == "interrupt"
+        assert executed == []
+
+    def test_malformed_classifier_result_fails_closed(self):
+        from types import SimpleNamespace
+
+        executed = []
+
+        @tool(name="my_tool")
+        def my_tool() -> str:
+            executed.append(True)
+            return "ran"
+
+        def bad_classifier(event, **kwargs):
+            return SimpleNamespace(requires_human_in_the_loop=None)
+
+        agent_model = MockedModelProvider([tool_use_message("my_tool"), text_message("Done")])
+        agent = Agent(
+            model=agent_model,
+            tools=[my_tool],
+            interventions=[HumanInTheLoop(classifier=bad_classifier)],
+        )
+
+        result = agent("Go")
+
+        assert result.stop_reason == "interrupt"
+        assert executed == []
+
+    @pytest.mark.parametrize("bad_value", [None, 0, "", [], "no"])
+    def test_non_boolean_classifier_decision_fails_closed(self, bad_value, caplog):
+        from strands.vended_interventions.hitl.classifier import ClassifierResult
+
+        executed = []
+
+        @tool(name="my_tool")
+        def my_tool() -> str:
+            executed.append(True)
+            return "ran"
+
+        def bad_classifier(event, **kwargs):
+            return ClassifierResult(requires_human_in_the_loop=bad_value)
+
+        agent_model = MockedModelProvider([tool_use_message("my_tool"), text_message("Done")])
+        agent = Agent(
+            model=agent_model,
+            tools=[my_tool],
+            interventions=[HumanInTheLoop(classifier=bad_classifier)],
+        )
+
+        with caplog.at_level(logging.WARNING):
+            result = agent("Go")
+
+        assert result.stop_reason == "interrupt"
+        assert executed == []
+        assert "non-boolean decision" in caplog.text
+
+    def test_classifier_not_called_on_resume(self):
+        from strands.vended_interventions.hitl.classifier import ClassifierResult
+
+        executed = []
+        call_count = []
+
+        @tool(name="my_tool")
+        def my_tool() -> str:
+            executed.append(True)
+            return "ran"
+
+        def counting_classifier(event, **kwargs):
+            call_count.append(1)
+            return ClassifierResult(requires_human_in_the_loop=True, reason="risky")
+
+        agent_model = MockedModelProvider([tool_use_message("my_tool"), text_message("Done")])
+        agent = Agent(
+            model=agent_model,
+            tools=[my_tool],
+            interventions=[HumanInTheLoop(classifier=counting_classifier)],
+        )
+
+        result = agent("Go")
+        assert result.stop_reason == "interrupt"
+        assert len(call_count) == 1
+
+        interrupt_id = result.interrupts[0].id
+        result = agent([{"interruptResponse": {"interruptId": interrupt_id, "response": "y"}}])
+        assert result.stop_reason == "end_turn"
+        assert executed == [True]
+        # Classifier was only called once (not again on resume)
+        assert len(call_count) == 1
+
+    def test_wildcard_with_classifier_warns(self, caplog):
+        from strands.vended_interventions.hitl.classifier import ClassifierResult
+
+        def my_classifier(event, **kwargs):
+            return ClassifierResult(requires_human_in_the_loop=True)
+
+        with caplog.at_level(logging.WARNING):
+            HumanInTheLoop(allowed_tools=["*"], classifier=my_classifier)
+
+        assert "classifier has no effect" in caplog.text
+
+
+class TestBuiltInClassifier:
+    """Tests for the _create_llm_risk_classifier function body."""
+
+    @pytest.mark.asyncio
+    async def test_creates_inner_agent_and_returns_decision(self):
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from strands.vended_interventions.hitl.classifier import (
+            ClassifierResult,
+            _create_llm_risk_classifier,
+            _RiskDecision,
+        )
+
+        classifier = _create_llm_risk_classifier()
+
+        mock_result = MagicMock()
+        mock_result.structured_output = _RiskDecision(requires_approval=True, reason="destructive")
+
+        event = MagicMock()
+        event.invocation_context = None
+        event.tool_use = {"name": "delete_file", "input": {"path": "/data"}}
+        event.agent.model = MagicMock()
+
+        with patch("strands.agent.Agent") as mock_agent_cls:
+            mock_agent = MagicMock()
+            mock_agent.invoke_async = AsyncMock(return_value=mock_result)
+            mock_agent_cls.return_value = mock_agent
+
+            result = await classifier(event)
+
+        assert isinstance(result, ClassifierResult)
+        assert result.requires_human_in_the_loop is True
+        assert result.reason == "destructive"
+        mock_agent_cls.assert_called_once()
+        mock_agent.invoke_async.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_raises_when_no_model_available(self):
+        from unittest.mock import MagicMock
+
+        from strands.vended_interventions.hitl.classifier import _create_llm_risk_classifier
+
+        classifier = _create_llm_risk_classifier()
+
+        event = MagicMock()
+        event.invocation_context = None
+        event.tool_use = {"name": "tool", "input": {}}
+        event.agent.aux_model = None
+
+        with pytest.raises(ValueError, match="no model"):
+            await classifier(event)
+
+    @pytest.mark.asyncio
+    async def test_raises_when_structured_output_is_none(self):
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from strands.vended_interventions.hitl.classifier import _create_llm_risk_classifier
+
+        classifier = _create_llm_risk_classifier()
+
+        mock_result = MagicMock()
+        mock_result.structured_output = None
+        mock_result.stop_reason = "end_turn"
+
+        event = MagicMock()
+        event.invocation_context = None
+        event.tool_use = {"name": "tool", "input": {}}
+        event.agent.model = MagicMock()
+
+        with patch("strands.agent.Agent") as mock_agent_cls:
+            mock_agent = MagicMock()
+            mock_agent.invoke_async = AsyncMock(return_value=mock_result)
+            mock_agent_cls.return_value = mock_agent
+
+            with pytest.raises(ValueError, match="no structured output"):
+                await classifier(event)
+
+    @pytest.mark.asyncio
+    async def test_uses_configured_model_over_agent_model(self):
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from strands.vended_interventions.hitl.classifier import (
+            LLMClassifierConfig,
+            _create_llm_risk_classifier,
+            _RiskDecision,
+        )
+
+        configured_model = MagicMock(name="configured_model")
+        agent_model = MagicMock(name="agent_model")
+        classifier = _create_llm_risk_classifier(LLMClassifierConfig(model=configured_model))
+
+        mock_result = MagicMock()
+        mock_result.structured_output = _RiskDecision(requires_approval=False, reason="safe")
+
+        event = MagicMock()
+        event.invocation_context = None
+        event.tool_use = {"name": "read", "input": {}}
+        event.agent.model = agent_model
+
+        with patch("strands.agent.Agent") as mock_agent_cls:
+            mock_agent = MagicMock()
+            mock_agent.invoke_async = AsyncMock(return_value=mock_result)
+            mock_agent_cls.return_value = mock_agent
+
+            await classifier(event)
+
+        call_kwargs = mock_agent_cls.call_args[1]
+        assert call_kwargs["model"] is configured_model
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_agent_aux_model(self):
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from strands.vended_interventions.hitl.classifier import _create_llm_risk_classifier, _RiskDecision
+
+        classifier = _create_llm_risk_classifier()
+
+        mock_result = MagicMock()
+        mock_result.structured_output = _RiskDecision(requires_approval=False, reason="safe")
+
+        event = MagicMock()
+        event.invocation_context = None
+        event.tool_use = {"name": "read", "input": {}}
+        event.agent.model = MagicMock(name="agent_model")
+        event.agent.aux_model = MagicMock(name="aux_model")
+
+        with patch("strands.agent.Agent") as mock_agent_cls:
+            mock_agent = MagicMock()
+            mock_agent.invoke_async = AsyncMock(return_value=mock_result)
+            mock_agent_cls.return_value = mock_agent
+
+            await classifier(event)
+
+        assert mock_agent_cls.call_args[1]["model"] is event.agent.aux_model
+
+    @pytest.mark.asyncio
+    async def test_classifier_joins_the_request_the_tool_call_belongs_to(self):
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from strands.agent.invocation_context import _reached_limit
+        from strands.vended_interventions.hitl.classifier import _create_llm_risk_classifier, _RiskDecision
+
+        classifier = _create_llm_risk_classifier()
+
+        mock_result = MagicMock()
+        mock_result.structured_output = _RiskDecision(requires_approval=False, reason="safe")
+
+        request = _create_invocation_context({"turns": 1})
+        request._usage["turns_taken"] = 1
+        event = MagicMock()
+        event.invocation_context = request
+        event.tool_use = {"name": "read", "input": {}}
+        event.agent.model = MagicMock()
+
+        with patch("strands.agent.Agent") as mock_agent_cls:
+            mock_agent = MagicMock()
+            mock_agent.invoke_async = AsyncMock(return_value=mock_result)
+            mock_agent_cls.return_value = mock_agent
+
+            await classifier(event)
+
+        handed = mock_agent.invoke_async.call_args.kwargs["invocation_context"]
+        handed._record_usage({"inputTokens": 1, "outputTokens": 2, "totalTokens": 3})
+        assert _reached_limit(handed) is None
+        assert request.usage == {"turns_taken": 1, "inputTokens": 1, "outputTokens": 2, "totalTokens": 3}
+
+    @pytest.mark.asyncio
+    async def test_uses_custom_system_prompt(self):
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from strands.vended_interventions.hitl.classifier import (
+            LLMClassifierConfig,
+            _create_llm_risk_classifier,
+            _RiskDecision,
+        )
+
+        custom_prompt = "Only approve writes."
+        classifier = _create_llm_risk_classifier(LLMClassifierConfig(system_prompt=custom_prompt))
+
+        mock_result = MagicMock()
+        mock_result.structured_output = _RiskDecision(requires_approval=False, reason="ok")
+
+        event = MagicMock()
+        event.invocation_context = None
+        event.tool_use = {"name": "read", "input": {}}
+        event.agent.model = MagicMock()
+
+        with patch("strands.agent.Agent") as mock_agent_cls:
+            mock_agent = MagicMock()
+            mock_agent.invoke_async = AsyncMock(return_value=mock_result)
+            mock_agent_cls.return_value = mock_agent
+
+            await classifier(event)
+
+        call_kwargs = mock_agent_cls.call_args[1]
+        assert call_kwargs["system_prompt"] == custom_prompt
+
+
+class StubDecisionModel(DecisionModel):
+    """A decision model that records each ask and returns a canned answer (or raises)."""
+
+    def __init__(self, answer: Any = None, *, error: Exception | None = None) -> None:
+        self.answer = answer
+        self.error = error
+        self.calls: list[tuple[DecisionInput, dict[str, Question]]] = []
+
+    async def _ask(self, state: DecisionInput, questions: dict[str, Question], **kwargs: Any) -> DecisionResult:
+        self.calls.append((state, questions))
+        if self.error is not None:
+            raise self.error
+        return DecisionResult(
+            answers={"requires_approval": self.answer},
+            metadata=DecisionMetadata(latency_ms=0),
+            usage={"inputTokens": 4, "outputTokens": 1, "totalTokens": 5},
+        )
+
+
+class AnswerReplayModel(Model):
+    """A model whose ``structured_output`` replays one ``requires_approval`` answer."""
+
+    def __init__(self, answer: str) -> None:
+        self.answer = answer
+
+    def get_config(self) -> Any:
+        return {}
+
+    def update_config(self, **model_config: Any) -> None:
+        pass
+
+    async def structured_output(
+        self, output_model: type[BaseModel], prompt: Messages, system_prompt: str | None = None, **kwargs: Any
+    ) -> AsyncGenerator[dict[str, Any], None]:
+        yield {"output": output_model(requires_approval={"answer": self.answer})}
+
+    async def stream(self, *args: Any, **kwargs: Any) -> AsyncGenerator[Any, None]:
+        raise NotImplementedError
+        yield  # pragma: no cover
+
+
+def run_with_decision_model(decision_model: DecisionModel, **hitl_kwargs: Any) -> tuple[Any, list[bool]]:
+    executed: list[bool] = []
+
+    @tool(name="delete_file")
+    def delete_file(path: str) -> str:
+        executed.append(True)
+        return "deleted"
+
+    agent = Agent(
+        model=MockedModelProvider(
+            [tool_use_message("delete_file", tool_input={"path": "/data"}), text_message("Done")]
+        ),
+        tools=[delete_file],
+        interventions=[HumanInTheLoop(classifier=decision_model, **hitl_kwargs)],
+    )
+    return agent("Delete the file"), executed
+
+
+class TestDecisionModelClassifier:
+    """Tests for passing a ``DecisionModel`` as the classifier."""
+
+    def test_requires_approval_when_answer_is_true(self):
+        result, executed = run_with_decision_model(StubDecisionModel(True))
+
+        assert result.stop_reason == "interrupt"
+        assert executed == []
+
+    def test_runs_tool_when_answer_is_false(self):
+        result, executed = run_with_decision_model(StubDecisionModel(False))
+
+        assert result.stop_reason == "end_turn"
+        assert executed == [True]
+
+    def test_uncertain_requires_approval_with_its_reason_in_the_prompt(self):
+        result, executed = run_with_decision_model(StubDecisionModel(Uncertain("no context")))
+
+        assert result.stop_reason == "interrupt"
+        assert executed == []
+        assert result.interrupts[0].reason == 'Approve "delete_file" — no context?\n  Input: {"path": "/data"}'
+
+    def test_definite_answer_carries_no_reason(self):
+        result, _ = run_with_decision_model(StubDecisionModel(True))
+
+        assert result.interrupts[0].reason == 'Approve "delete_file"?\n  Input: {"path": "/data"}'
+
+    def test_asks_about_the_tool_call_with_the_default_question(self):
+        decision_model = StubDecisionModel(False)
+
+        run_with_decision_model(decision_model)
+
+        assert decision_model.calls == [
+            (
+                'Tool: delete_file\nInput: {\n  "path": "/data"\n}',
+                {"requires_approval": {"question": _DEFAULT_RISK_QUESTION, "choices": "boolean"}},
+            )
+        ]
+
+    def test_error_requires_approval(self):
+        result, executed = run_with_decision_model(StubDecisionModel(error=RuntimeError("model down")))
+
+        assert result.stop_reason == "interrupt"
+        assert executed == []
+
+    @pytest.mark.parametrize("answer", ["False", None])
+    def test_non_boolean_answer_requires_approval_and_warns(self, answer, caplog):
+        with caplog.at_level(logging.WARNING):
+            result, executed = run_with_decision_model(StubDecisionModel(answer))
+
+        assert result.stop_reason == "interrupt"
+        assert executed == []
+        assert "non-boolean answer" in caplog.text
+
+    def test_allowed_tools_bypasses_the_decision_model(self):
+        decision_model = StubDecisionModel(True)
+
+        result, executed = run_with_decision_model(decision_model, allowed_tools=["delete_file"])
+
+        assert result.stop_reason == "end_turn"
+        assert executed == [True]
+        assert decision_model.calls == []
+
+    @pytest.mark.asyncio
+    async def test_adds_decision_usage_to_the_request_the_tool_call_belongs_to(self):
+        classifier = _create_decision_model_risk_classifier(StubDecisionModel(False))
+        request = _create_invocation_context()
+        event = MagicMock()
+        event.invocation_context = request
+        event.tool_use = {"name": "read", "input": {}}
+
+        result = await classifier(event)
+
+        assert result == ClassifierResult(requires_human_in_the_loop=False)
+        assert request.usage == {"turns_taken": 0, "inputTokens": 4, "outputTokens": 1, "totalTokens": 5}
+
+    def test_rejects_a_non_callable_classifier(self):
+        with pytest.raises(TypeError, match="got str"):
+            HumanInTheLoop(classifier="yes")
+
+    def test_runs_through_a_real_llm_decision_model(self):
+        result, executed = run_with_decision_model(LLMDecisionModel(model=AnswerReplayModel("false")))
+
+        assert result.stop_reason == "end_turn"
+        assert executed == [True]

@@ -1,0 +1,50 @@
+---
+title: AgentCore evaluations
+description: 'Evaluate Strands agents with Amazon Bedrock AgentCore Evaluations: managed evaluators, online and on-demand evaluation, and CloudWatch dashboards.'
+tags: [agentcore, aws, bedrock, observability]
+---
+
+Amazon Bedrock AgentCore Evaluations is AWS's managed service for evaluating
+agents. It scores agent traces with built-in and custom LLM-as-a-judge
+evaluators, evaluates production traffic continuously or past sessions on
+demand, and renders the results in the CloudWatch GenAI Observability
+dashboard. Strands is a supported framework: an agent instrumented with the
+Strands Harness SDK's OpenTelemetry tracing emits traces that AgentCore Evaluations can
+score directly, with no evaluation code in your application.
+
+Choose between the two based on where you want evaluation to run:
+
+- **AgentCore Evaluations** when you want managed, continuous evaluation of
+  deployed agents, with results in a hosted dashboard.
+- **Strands Evals SDK** when you want evaluation in code: local experiments,
+  CI gates, custom evaluators, simulators, and chaos testing.
+
+The AWS documentation covers setup end to end:
+
+- [Amazon Bedrock AgentCore Evaluations](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/evaluations.html):
+  what the service provides and how it works.
+- [Supported agent frameworks](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/supported-frameworks.html):
+  instrumentation requirements for Strands and other frameworks.
+- [Built-in evaluators](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/built-in-evaluators-overview.html):
+  the managed evaluator catalog.
+- [Online evaluation](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/online-evaluations.html)
+  and [on-demand evaluation](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/on-demand-evaluations.html):
+  continuous scoring of live traffic and evaluation of past sessions.
+
+## Sending SDK results to the dashboard
+
+Results produced by the Strands Evals SDK itself can land in the same
+dashboard. When the `AGENT_OBSERVABILITY_ENABLED` environment variable is
+`true`, `Experiment` writes each evaluation result to CloudWatch Logs, using
+the `EVALUATION_RESULTS_LOG_GROUP` environment variable as the destination log
+group. Run your evaluation script with ADOT auto-instrumentation configured
+for Bedrock AgentCore, as described in
+[Add observability to your Amazon Bedrock AgentCore resources](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/observability-configure.html),
+and the scores appear in the GenAI Observability dashboard alongside your
+agent traces.
+
+## Related documentation
+
+- [Evaluating remote traces](trace_providers.md): score existing CloudWatch
+  traces with SDK evaluators
+- [Quickstart](../quickstart.md): run your first SDK evaluation

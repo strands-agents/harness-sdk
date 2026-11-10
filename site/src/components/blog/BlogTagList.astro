@@ -1,0 +1,43 @@
+---
+import { tagToSlug } from '../../util/blog'
+import { pathWithBase } from '../../util/links'
+
+interface Props {
+  tags: string[]
+}
+
+const { tags } = Astro.props
+---
+
+{tags.length > 0 && (
+  <div class="tag-list">
+    {tags.map((tag) => (
+      <a href={pathWithBase(`/blog/tags/${tagToSlug(tag)}/`)} class="tag-chip">{tag}</a>
+    ))}
+  </div>
+)}
+
+<style>
+  .tag-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  .tag-chip {
+    font-family: var(--sl-font);
+    font-size: 0.8rem;
+    padding: 0.25rem 0.75rem;
+    border-radius: 9999px;
+    background: rgba(0, 204, 95, 0.1);
+    color: #00cc5f;
+    border: 1px solid rgba(0, 204, 95, 0.2);
+    text-decoration: none;
+    transition: background 0.2s ease, border-color 0.2s ease;
+  }
+
+  .tag-chip:hover {
+    background: rgba(0, 204, 95, 0.2);
+    border-color: rgba(0, 204, 95, 0.4);
+  }
+</style>

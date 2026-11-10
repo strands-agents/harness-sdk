@@ -1,0 +1,342 @@
+---
+title: "Introducing Strands Agent SOPs – Natural Language Workflows for AI Agents"
+date: 2025-11-20
+description: "Agent SOPs are a standardized markdown format for defining AI agent workflows in natural language that balances flexibility and control."
+authors:
+  - james-hood
+  - nicholas-clegg
+tags:
+  - Open Source
+  - Agent SOPs
+canonicalUrl: "https://aws.amazon.com/blogs/opensource/introducing-strands-agent-sops-natural-language-workflows-for-ai-agents/"
+draft: false
+---
+
+Modern AI can write code, compose symphonies, and solve complex reasoning problems. So why is it still so hard to get them to reliably do what you want?
+
+Building reliable AI agents that consistently perform complex tasks remains challenging. While modern language models excel at reasoning and problem-solving, translating that capability into predictable workflows often requires extensive state machines to orchestrate agent behavior. A code-defined workflow gives maximum control over the behavior of an agent, but changing the system requires writing hundreds of lines of code to account for a new behavior. This represents one extreme of the control-flexibility spectrum for developing agents.
+
+At the other end of this spectrum, [Model-Driven agents](https://aws.amazon.com/blogs/opensource/strands-agents-and-the-model-driven-approach/) do away with code-defined behavior entirely, performing their own orchestration instead. In place of thousands of lines of code defining workflows, we give the agent autonomy to decide its own path to solving a problem. Model-Driven agents are resilient to unexpected inputs—their non-deterministic nature enables flexible adaptation to any situation. However, this flexibility comes at a cost: it is difficult to steer the agent in a reliable manner to consistently accomplish a goal.
+
+What if there was a way to get the best of both worlds?
+
+Enter Agent SOPs (Standard Operating Procedures): a standardized markdown format for defining AI agent workflows in natural language that acts as a powerful middle-ground between flexibility and control. These natural language instruction sets transform complex processes into reusable, shareable workflows that work across different AI systems and teams. By combining structured guidance with the flexibility that makes AI agents powerful, Agent SOPs enable teams to encode proven workflows into reusable templates and apply them consistently wherever intelligent automation is needed. This concept, which emerged from innovation within Amazon's internal builder community, has rapidly spread across the company as teams discover its potential to steer agent behavior.
+
+## From Internal Innovation to Open Source
+
+At Amazon, we have a thriving community of tens of thousands of builders who actively experiment with and innovate on the use of AI in their daily work. This community spans AWS service teams, Amazon retail operations, logistics, and research groups, united by a culture of rapid experimentation and knowledge sharing around AI-powered development tools.
+
+When agentic AI coding assistants first became available internally, our builders immediately began pushing the boundaries of what was possible. Teams started leveraging them to automate everything from code reviews and documentation generation to incident response and system monitoring. But as adoption scaled, we ran into multiple problems:
+
+**Inconsistent behavior** was perhaps the most frustrating challenge. The same agent that performed flawlessly during development produced wildly different results when handling real-world scenarios. Without structured guidance, agents made different decisions about tool usage, task prioritization, and output formatting, leading to unpredictable outcomes that undermined confidence and frustrated users.
+
+**Prompt engineering complexity** created another barrier to adoption. Crafting effective prompts for sophisticated workflows required deep expertise in both the domain and language model behavior. Teams spent weeks perfecting prompts for complex tasks, only to discover their instructions didn't transfer well to different models or use cases. Developers became hesitant to update prompts because they couldn't predict how changes would affect output, leading to long delays as (human) evaluations were performed before any modifications could be made.
+
+The breakthrough came when we realized we needed something that hit a "determin-ish-tic" sweet spot: structured enough to ensure consistent outcomes, but flexible enough to leverage the intelligence that makes AI agents valuable. That insight led our community to develop Agent SOPs, a standardized markdown format for defining AI agent workflows that balances reliability with adaptability.
+
+Our community rapidly adopted the concept because it solved real problems that every team was facing. Teams discovered they could generate an initial automation in minutes without any prompt engineering expertise, creating workflows that were immediately useful, understandable, and easily shareable. The structured approach dramatically reduced the trial-and-error process of prompt development while preserving the intelligence that made AI automation valuable. Teams could iterate on specific behaviors of an SOP with higher confidence of not breaking existing functionality, making improvements faster and more predictable.
+
+Today, Amazon teams use thousands of SOPs across a variety of different use cases, from code reviews and documentation generation to incident response and system monitoring. The consistent format made it easy to share successful approaches between teams while adapting them for different contexts and requirements. What started as a simple solution to prompt engineering problems became a powerful way to democratize AI expertise across our entire organization.
+
+Now we're making Agent SOPs available as open source because we believe this approach can benefit the broader AI development community. By sharing both the concept and practical examples, we hope to accelerate the adoption of reliable AI workflows across the industry.
+
+## What Are Agent SOPs?
+
+Agent SOPs use a standardized markdown format with key features that enable repeatable and understandable behavior from AI agents:
+
+
+1. **Structured steps with [RFC 2119](https://datatracker.ietf.org/doc/html/rfc2119) constraints** – Each workflow step uses [RFC 2119](https://datatracker.ietf.org/doc/html/rfc2119) keywords like MUST, SHOULD, and MAY to provide precise control over agent behavior without rigid scripting, ensuring reliable execution while preserving the agent's reasoning ability.
+2. **Parameterized inputs** – Rather than hardcoding specific values, SOPs accept parameters that customize behavior for different projects, teams, or requirements. This transforms single-use prompts into flexible templates that can be applied broadly while maintaining consistency.
+3. **Easy authoring through AI assistance** – Teams can create new SOPs in minutes. Coding agents can read the SOP format specification and generate new workflows based on natural language descriptions, making the creation process accessible to anyone regardless of prompt engineering expertise.
+4. **Progress tracking and resumability** – Agent SOPs can instruct agents to document their progress as they work, making it easy to understand what's happening and resume if something breaks. This transparency was crucial for debugging prompts and building developer trust in AI automation.
+
+The format is simple but highly versatile, working anywhere natural language instructions are accepted. Agent frameworks like Strands can embed SOPs as system prompts, development tools like Kiro and Cursor can use them for structured workflows, and AI models like Claude and GPT-4 can execute them directly. While different models may vary in their ability to follow instructions precisely, the standardized format provides a consistent foundation for workflow automation.
+
+## Walkthrough: Running the Codebase Summary SOP
+
+Let's walk through how Agent SOPs work in practice by running the *codebase-summary* SOP. In this example, we will use Kiro CLI, but you can try this walkthrough in any AI agent that supports Model Context Protocol (MCP) servers.
+
+First, install the `strands-agents-sops` Python package:
+
+```bash
+pip install strands-agents-sops
+```
+
+Next, update your MCP server configuration to include the `strands-agents-sops` MCP server:
+
+```json
+{
+  "mcpServers" : {
+    "strands-agents-sops" : {
+      "command" : "strands-agents-sops",
+      "args" : []
+    }
+  }
+}
+```
+
+This MCP server makes SOPs available as MCP prompts that can be invoked by your AI assistant. In Kiro CLI, we can confirm that the pre-packaged Agent SOPs are now available via the `/prompts` command:
+
+```text
+[strands-agents-sop] > /prompts
+
+
+Usage: You can use a prompt by typing '@<prompt name> [...args]'
+
+
+Prompt                               Description                              Arguments (* = required)
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+strands-agents-sop (MCP):
+- code-assist                        This sop guides the implementation of... user_input
+- code-task-generator                This sop generates structured code ta... user_input
+- codebase-summary                   This sop analyzes a codebase and gene... user_input
+- pdd                                This sop guides you through the proce... user_input
+```
+
+Next, we invoke the codebase-summary SOP:
+
+```text
+@codebase-summary
+```
+
+Kiro CLI reads the SOP and asks for required and optional parameters:
+
+```text
+> I'll help you run the codebase summary SOP. Let me gather the required parameters first.
+
+Please provide the following parameters for the codebase analysis:
+
+Required Parameters:
+• **codebase_path**: Path to the codebase to analyze (default: current directory)
+
+Optional Parameters:
+• **output_dir**: Directory where documentation will be stored (default: ".sop/summary")
+• **consolidate**: Whether to create a consolidated documentation file (default: false)
+• **consolidate_target**: Target file for consolidation like "AGENTS.md", "README.md", "CONTRIBUTING.md" (default: "AGENTS.md")
+• **consolidate_prompt**: Description of how to structure the consolidated content
+• **check_consistency**: Whether to check for inconsistencies across documents (default: true)
+• **check_completeness**: Whether to identify areas lacking sufficient detail (default: true)
+• **update_mode**: Whether to update existing documentation based on recent commits (default: false)
+
+You can provide these parameters in any of these ways:
+• Direct input in your response
+• File path containing the configuration
+• Just specify what you want to change from defaults
+
+What parameters would you like to use for this codebase analysis?
+```
+
+We provide the requested parameters in natural language. In this example, we'll run this SOP on the strands-agents-sop python source code:
+
+```text
+[strands-agents-sop] > codebase_path: ~/github/agent-sop/python
+consolidate: true
+consolidate_target: README.md
+```
+
+The agent then follows the SOP's structured steps, starting with setting up the directory structure. You can see that the agent validates the codebase path exists, because the SOP constraints specify that the agent MUST validate the path exists before proceeding:
+
+```text
+## Step 1: Setup and Directory Structure
+
+...
+
+> ✅ Validated codebase path exists and is accessible
+✅ Created directory .summary/
+✅ Full analysis will be performed (not in update mode)
+```
+
+The SOP's steps and constraints guide the agent through systematic analysis of the codebase, analyzing the codebase structure, generating documentation files, reviewing and consolidating the documentation into a README.md file, and ending with providing a summary:
+
+```text
+## Step 6: Summary and Next Steps
+
+## Summary
+
+✅ Documentation generation complete!
+
+### What Was Accomplished
+
+• **Analyzed** Python package with 4 core modules and 5 SOP files
+• **Generated** comprehensive documentation ecosystem in .summary/ directory:
+  • index.md: Knowledge base index with AI assistant instructions
+  • codebase_info.md: Project overview and structure
+  • architecture.md: System design and patterns
+  • components.md: Module responsibilities and functionality
+  • interfaces.md: APIs, CLI, and integration points
+  • data_models.md: SOP format and data structures
+  • workflows.md: Build process and operational procedures
+  • dependencies.md: External requirements and usage
+  • review_notes.md: Quality assessment and recommendations
+• **Consolidated** all information into user-friendly README.md
+• **Identified** system as modular CLI tool with MCP server capabilities
+
+### Key Findings
+
+• **Architecture**: Clean modular design with dynamic SOP loading
+• **Integration**: Multiple interfaces (Python imports, MCP protocol, CLI, Anthropic skills)
+• **Content Management**: File-based SOP storage with build-time synchronization
+• **Dependencies**: Minimal external requirements (only MCP library)
+• **Extensibility**: Easy to add new SOPs without code changes
+
+<summary continues...>
+```
+
+Using this SOP, by invoking a single prompt, our agent was able to produce comprehensive codebase documentation without additional human interaction. The SOP's constraints ensured consistent structure and completeness while the agent's intelligence adapted the content to the specific codebase characteristics.
+
+## SOP Chaining: Building Complete Development Workflows
+
+SOP Chaining enables agents to execute complex, multi-phase workflows by connecting focused SOPs into intelligent sequences. The initial SOP repository includes a complete development workflow chain that demonstrates SOPs working together to take you from understanding an existing codebase to implementing new features:
+
+1. **codebase-summary** analyzes codebases and generates comprehensive documentation that helps both humans and AI agents understand system architecture, components, and workflows. This SOP typically serves as the foundation, providing context for subsequent automation.
+2. **pdd implements** "prompt-driven development" methodology (an internal predecessor to Kiro's spec-driven development), taking the user from a rough idea through systematic research, requirements clarification, solution design, and implementation planning. Use this after understanding your codebase to tackle complex feature planning.
+3. **code-task-generator** breaks down high-level requirements into actionable development tasks, showing how SOPs can handle creative and analytical work that requires understanding context and making informed decisions about scope and priority. Use this as a standalone tool or in conjunction with the output of the pdd SOP.
+4. **code-assist** implements a test-driven development workflow that guides agents through feature implementation using structured exploration, planning, coding, and commit phases. This SOP shows how to balance automated execution with human oversight.
+
+SOP Chaining works through artifact handoffs: **codebase-summary** creates documentation files that **pdd** references when designing features, **pdd** produces specifications that **code-task-generator** uses to create task lists, and **code-assist** implements those tasks with full awareness of previously established architecture and requirements. Each SOP condenses its discoveries into focused outputs that become streamlined inputs for the next step.
+
+This chaining approach enables workflows far beyond what a single agent could handle. Rather than overwhelming one agent with an entire development cycle—causing it to lose focus and deviate from expected behavior—you can decompose complex problems into manageable pieces. When developing Agent SOPs, this modular approach lets you build and test each component independently, then chain them together into sophisticated workflows. The sequential structure eliminates redundant work (no repeated codebase analysis or information gathering) while maintaining the intelligent adaptation that makes agents valuable, ultimately enabling automation at a scale that would be difficult with monolithic approaches.
+
+## Agent SOP Integrations
+
+Agent SOPs are not tied to a specific agentic product and work in many environments:
+
+### Strands Agents
+
+Agent SOPs can be used as the system prompts for your Strands agents. Simply install the PyPI package, then import an SOP as an agent's system prompt. Here is an example of a code-assist CLI agent:
+
+```python
+from strands import Agent
+from strands.vended_tools import file_editor, shell
+from strands_agents_sops import code_assist
+
+agent = Agent(
+  system_prompt=code_assist,
+  tools=[file_editor, shell]
+)
+
+agent("Start code-assist sop")
+
+while(True):
+  agent(input("\nInput: "))
+```
+
+After executing this Python script, you may see an output that looks something like this:
+
+```text
+I'll help you implement a code task using the test-driven development workflow. Let me gather the required parameters to get started.
+
+Please provide the following information:
+
+**Required:**
+- **task_description**: What would you like to implement? (You can provide a detailed specification, requirements, acceptance criteria, or even a rough idea that we'll refine together. You can also provide a file path or URL if the description is in a document)
+
+**Optional:**
+- **additional_context**: Any supplementary information that would help with understanding the implementation context (can also be a file path or URL)
+- **documentation_dir**: Directory for planning documents (default: ".sop/planning")
+- **repo_root**: Root directory of the repository (default: current working directory)
+- **task_name**: A short, descriptive name for the task (I'll generate one if not provided)
+- **mode**: Interaction mode:
+  - "interactive" (default): I'll collaborate with you and ask for confirmation at each step
+  - "auto": I'll execute autonomously after setup with no further interaction required
+
+Please provide these details so we can begin the implementation process.
+```
+
+Building on the codebase-summary example from earlier, you can create a Strands agent that automatically keeps your documentation current:
+
+```python
+from strands import Agent
+from strands.vended_tools import file_editor, shell
+from strands_agents_sops import codebase_summary
+
+doc_agent = Agent(
+ system_prompt=codebase_summary,
+ tools=[file_editor, shell]
+)
+
+# Run in update mode to refresh docs based on recent commits
+doc_agent("Run codebase-summary with update_mode: true")
+```
+
+This enables continuous documentation maintenance without manual intervention, automatically updating your codebase summary as new changes are made.
+
+### Claude Skills
+
+Agent SOPs are fully compatible with Claude's [Skills system](https://support.claude.com/en/articles/12512176-what-are-skills), allowing you to teach Claude specialized workflows that can be reused across conversations and projects.
+
+Each Agent SOP can be automatically converted to Anthropic's Skills format:
+
+```bash
+# Generate Skills format from SOPs
+strands-agents-sops skills
+
+# Or specify custom output directory
+strands-agents-sops skills --output-dir my-skills
+```
+
+This creates individual skill directories:
+
+```text
+skills/
+├── code-assist/
+│   └── SKILL.md
+├── codebase-summary/
+│   └── SKILL.md
+├── code-task-generator/
+│   └── SKILL.md
+└── pdd/
+    └── SKILL.md
+```
+
+You can then follow [Anthropic's documentation](https://platform.claude.com/docs/en/agents-and-tools/agent-skills/overview) to start using these SOPs as skills.
+
+### Additional Product Integrations
+
+Agent SOPs work across a wide variety of AI development environments. While different LLMs may vary in their instruction-following capabilities, the standardized format provides consistent results across platforms. Here are additional ways teams are using Agent SOPs:
+
+**Kiro IDE steering files and hooks** – SOPs can be integrated into Kiro IDE's workflow system to provide structured guidance for specific development tasks.
+
+**Custom commands in Claude Code and Cursor** – SOPs make great custom commands to invoke specific SOPs for common development workflows.
+
+**Python modules** – Programmatic access enables integration into custom applications and larger automation systems.
+
+## Authoring Agent SOPs
+
+One of the most powerful aspects of Agent SOPs is how easy it is to create them through conversational authoring. We provide an Agent SOP format rule that steers AI models to capture your natural workflow description and transform it into the standardized format. Let's walk through authoring a simple SOP for processing meeting notes to illustrate.
+
+Depending on which AI application you use, you can install the Agent SOP format as a steering file or rule. However, for the purposes of this walkthrough, let's have Kiro CLI read the Agent SOP rule directly:
+
+```text
+[strands-agents-sop] > Run `strands-agents-sops rule`
+...
+> The command executed successfully and displayed the Agent SOP format specification.
+...
+```
+
+Now that Kiro CLI understands the Agent SOP format, we simply describe what we want in natural language to our AI assistant:
+
+```text
+[strands-agents-sop] > I want to create an Agent SOP that takes meeting notes and generates action items, decisions made, and follow-up tasks with assigned owners and deadlines.
+```
+
+The AI assistant, having access to the SOP format specification, generates a first draft Agent SOP in seconds. It creates appropriate parameters, structures the workflow into logical steps, and adds RFC 2119 constraints to make the SOP reliable and repeatable.
+
+Since it's written in natural language, the Agent SOP is easy to read. We can try running it in a separate session and come back and chat with our agent to iterate on improving the SOP. For example, we could refine this SOP to use a specific folder structure, logging action items in both a meeting notes folder and a follow ups folder, and adding decisions made to a project-specific decision log.
+
+This same approach works for any workflow you want to automate. Simply describe the process in natural language, and let AI assistance handle the technical details of SOP creation. Note, if you want your SOP to use specific MCP tools, you will need to have those MCP servers loaded while authoring the SOP.
+
+## Conclusion
+
+Agent SOPs resolve the fundamental tension between reliability and flexibility that has limited AI automation adoption. By combining structured guidance with intelligent reasoning, they enable teams to capture expertise quickly and apply it consistently across different AI systems and contexts. The semi-deterministic sweet spot that made Agent SOPs successful at Amazon is now available for customers everywhere to build more reliable and capable AI systems.
+
+**Ready to get started?**
+
+
+* Visit the [Agent SOPs GitHub repository](https://github.com/strands-agents/agent-sop) for complete documentation and examples
+* Install the package: `pip install strands-agents-sops`
+* Start the MCP server: `strands-agents-sops`
+* Try the codebase-summary SOP on your next project
+* Chain SOPs together for sophisticated development workflows
+
+We're excited to see how customers use Agent SOPs to solve their unique automation challenges and what innovative workflows emerge from the broader community.
