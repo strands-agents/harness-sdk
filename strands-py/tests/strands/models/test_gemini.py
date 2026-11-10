@@ -1437,6 +1437,31 @@ async def test_structured_output(gemini_client, model, messages, model_id, weath
     gemini_client.aio.models.generate_content.assert_called_with(**exp_request)
 
 
+@pytest.mark.asyncio
+async def test_structured_output_throttled_exception(gemini_client, model, messages, weather_output):
+    """Regression test for https://github.com/strands-agents/harness-sdk/issues/5980.
+
+    structured_output() must map Gemini 429s to ModelThrottledException, matching stream().
+    """
+    gemini_client.aio.models.generate_content.side_effect = genai.errors.ClientError(
+        429, {"error": {"status": "RESOURCE_EXHAUSTED", "message": "Resource exhausted. Please try again later."}}
+    )
+
+    with pytest.raises(ModelThrottledException, match="Resource exhausted. Please try again later."):
+        await anext(model.structured_output(type(weather_output), messages))
+
+
+@pytest.mark.asyncio
+async def test_structured_output_throttled_exception_by_status(gemini_client, model, messages, weather_output):
+    """structured_output() maps RESOURCE_EXHAUSTED and UNAVAILABLE status to ModelThrottledException."""
+    gemini_client.aio.models.generate_content.side_effect = genai.errors.ClientError(
+        400, {"error": {"status": "RESOURCE_EXHAUSTED", "message": "Resource exhausted."}}
+    )
+
+    with pytest.raises(ModelThrottledException, match="Resource exhausted."):
+        await anext(model.structured_output(type(weather_output), messages))
+
+
 def test_gemini_tools_validation_rejects_function_declarations(model_id):
     tool_with_function_declarations = genai.types.Tool(
         function_declarations=[
