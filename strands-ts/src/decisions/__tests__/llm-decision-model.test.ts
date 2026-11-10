@@ -354,7 +354,7 @@ describe('LLMDecisionModel', () => {
       )
     })
 
-    // Claude Haiku 4.5 returns { candidate: 'c1' } rather than { candidate: { answer: 'c1' } }.
+    // Claude Haiku 4.5 returns { candidate: 'c1' } rather than { candidate: { answer: 'c1' } } (#4949).
     it.each([
       ['without uncertainty', false],
       ['with uncertainty', true],
@@ -365,7 +365,17 @@ describe('LLMDecisionModel', () => {
         candidate: { question: 'Which?', choices: ['c0', 'c1'], uncertainty },
       })
 
-      expect(result.answers.candidate).toBe('c1')
+      expect(result.answers).toStrictEqual({ candidate: 'c1' })
+    })
+
+    it('accepts a bare boolean answer', async () => {
+      const decision = new LLMDecisionModel({ model: toolUseModel({ isFruit: 'true' }, { raw: true }) })
+
+      const result = await decision.ask('x', {
+        isFruit: { question: 'Fruit?', choices: 'boolean', uncertainty: false },
+      })
+
+      expect(result.answers).toStrictEqual({ isFruit: true })
     })
 
     it('reads a bare uncertain answer as Uncertain without a reason', async () => {
@@ -373,8 +383,7 @@ describe('LLMDecisionModel', () => {
 
       const result = await decision.ask('x', { color: { question: 'c?', choices: ['red', 'green'] } })
 
-      expect(result.answers.color).toBeInstanceOf(Uncertain)
-      expect((result.answers.color as Uncertain).reason).toBeUndefined()
+      expect(result.answers).toStrictEqual({ color: new Uncertain() })
     })
 
     it('still rejects a bare answer outside the allowed options', async () => {
