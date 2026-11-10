@@ -10,7 +10,6 @@ import { createAuxiliaryInvocationContext, type InvocationContext } from '../age
 import type { LocalAgent } from '../types/agent.js'
 import { AfterModelCallEvent, BeforeModelCallEvent, MessageAddedEvent } from '../hooks/events.js'
 import { ContextWindowOverflowError } from '../errors.js'
-import { ModelProxy } from '../models/model-proxy.js'
 import { InMemoryStorage } from '../storage/in-memory-storage.js'
 import { EPHEMERAL } from '../storage/storage.js'
 import type { Storage } from '../storage/storage.js'
@@ -18,6 +17,7 @@ import { logger } from '../logging/logger.js'
 import type { ContextManagerConfig, ContextStrategy, ContextState } from './types.js'
 import { EmergencyTruncateStrategy, Offload } from './strategies/offload/index.js'
 import { resolveStrategies } from './presets.js'
+import { countRequestTokens } from './request-tokens.js'
 import { Stash } from './stash.js'
 import { createRetrievalTool, RETRIEVAL_TOOL_NAME } from './retrieval-tool.js'
 import { ToolUseBlock, type Message } from '../types/messages.js'
@@ -211,14 +211,7 @@ export class ContextManager implements Plugin {
     invocationContext?: InvocationContext
   ): Promise<boolean> {
     const messages = agent.messages
-    const model = new ModelProxy(agent.model)
-    // The system prompt and tool specs occupy the same window as the messages, so a count that leaves them out reads
-    // lower than the `projectedInputTokens` the first gate used. Same inputs keeps every gate in a pass on one measure.
-    const countOptions = {
-      ...(agent.systemPrompt !== undefined && { systemPrompt: agent.systemPrompt }),
-      toolSpecs: agent.toolRegistry.list().map((tool) => tool.toolSpec),
-    }
-    const inputTokens = precomputedInputTokens ?? (await model.countTokens(messages, countOptions))
+    const inputTokens = precomputedInputTokens ?? (await countRequestTokens(agent, messages))
     const auxiliaryInvocationContext = createAuxiliaryInvocationContext(invocationContext)
 
     const strategyContext: ContextState = {
@@ -237,7 +230,7 @@ export class ContextManager implements Plugin {
         const acted = await strategy.apply(strategyContext)
         if (acted) {
           anyActed = true
-          strategyContext.utilization = agent.model.estimateUtilization(await model.countTokens(messages, countOptions))
+          strategyContext.utilization = agent.model.estimateUtilization(await countRequestTokens(agent, messages))
           logger.debug(`strategy=<${strategy.name}>, agentId=<${agent.id}> | strategy applied`)
         }
       } catch (error) {

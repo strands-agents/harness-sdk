@@ -604,5 +604,35 @@ describe('ContextManager', () => {
 
       expect(countOptions).toStrictEqual([{ toolSpecs: [] }])
     })
+
+    it('counts the system prompt and tool specs in the emergency truncate gate', async () => {
+      const toolRegistry = new ToolRegistry()
+      toolRegistry.add(makeStubTool('lookup'))
+      const countOptions: (CountTokensOptions | undefined)[] = []
+
+      // Only the emergency truncate appended by the constructor runs, and only its own gate counts.
+      const cm = new ContextManager({ strategies: [{ name: 'noop', apply: async () => false }], stash: false })
+      const agent = makeMockAgent({
+        messages: [
+          new Message({ role: 'user', content: [new TextBlock('a')] }),
+          new Message({ role: 'assistant', content: [new TextBlock('b')] }),
+          new Message({ role: 'user', content: [new TextBlock('c')] }),
+          new Message({ role: 'assistant', content: [new TextBlock('d')] }),
+        ],
+        systemPrompt: 'be helpful',
+        toolRegistry,
+        countTokens: async (_messages, options) => {
+          countOptions.push(options)
+          return 100
+        },
+      })
+      await cm.initAgent(agent)
+
+      await invokeTrackedHook(agent, makeBeforeEvent(agent, 100))
+
+      expect(countOptions).toStrictEqual([
+        { systemPrompt: 'be helpful', toolSpecs: [toolRegistry.list()[0]!.toolSpec] },
+      ])
+    })
   })
 })

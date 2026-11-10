@@ -10,7 +10,6 @@
 import { logger } from '../../../logging/logger.js'
 import { warnOnce } from '../../../logging/warn-once.js'
 import { MessageAddedEvent } from '../../../hooks/events.js'
-import { ModelProxy } from '../../../models/model-proxy.js'
 import { InjectedBlock, Message, TextBlock, type OffloadMethod, ToolResultBlock } from '../../../types/messages.js'
 import type { ContentBlock, OffloadedBlock } from '../../../types/messages.js'
 import type { InvocationContext } from '../../../agent/invocation-context.js'
@@ -20,6 +19,7 @@ import type { Stash } from '../../stash.js'
 import { RETRIEVAL_TOOL_NAME } from '../../retrieval-tool.js'
 import { carriedTokens, formatElided, isOffloaded, offloadPlaceholder } from '../../placeholder.js'
 import { collectRemovableWithPair, placeholderFor, removeMessages, repairAlternation } from '../../message-trimming.js'
+import { countRequestTokens } from '../../request-tokens.js'
 import { isPinned } from '../../../conversation-manager/compression/pin-message.js'
 import { ResolvedConditions, type OffloadConditions } from './conditions.js'
 import { buildToolNameMap, isMediaBlock, isProtocolBlock, OffloadTargetMatcher, type OffloadTarget } from './target.js'
@@ -270,7 +270,7 @@ export class EmergencyTruncateStrategy implements ContextStrategy {
     const { messages, agent } = context
     if (messages.length <= 3) return false
     if (!context.overflow) {
-      const tokens = await new ModelProxy(agent.model).countTokens(messages)
+      const tokens = await countRequestTokens(agent, messages)
       if (agent.model.estimateUtilization(tokens) < 1.0) return false
     }
 
