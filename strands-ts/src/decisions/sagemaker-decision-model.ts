@@ -43,7 +43,7 @@ export interface SageMakerDecisionModelOptions {
  * ```typescript
  * import { SageMakerDecisionModel } from '@strands-agents/sdk/decisions/sagemaker'
  *
- * const decisions = new SageMakerDecisionModel({ endpointName: 'my-decider-endpoint' })
+ * const decisions = new SageMakerDecisionModel({ endpointName: 'my-decider-endpoint', region: 'us-east-1' })
  * const result = await decisions.ask('A customer needs a refund today.', {
  *   urgent: { question: 'Is this urgent?', choices: 'boolean' },
  * })
