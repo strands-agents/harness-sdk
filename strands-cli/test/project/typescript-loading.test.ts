@@ -1,11 +1,13 @@
 import { execFile } from 'node:child_process'
 import { createServer, type ServerResponse } from 'node:http'
+import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { URL } from 'node:url'
 import { promisify } from 'node:util'
 import { ImageBlock, Message } from '@strands-agents/sdk'
+import { strToU8, zipSync } from 'fflate'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { parseArgs } from '../../src/cli/arguments.js'
@@ -525,6 +527,73 @@ agent.model = new LocalModel()
     }
     return text
   }
+
+  // https://github.com/strands-agents/harness-sdk/actions/runs/42844610170/job/129928784311
+  it('lets archive installation finish before starting the source-loading deadline', async () => {
+    const archive = join(root, 'agent.zip')
+    const installing = join(root, 'installing')
+    const release = join(root, 'release')
+    await writeFile(
+      archive,
+      zipSync({
+        'agent.ts': strToU8(source()),
+        'value.ts': strToU8("export const value = 'installed'\n"),
+        'package.json': strToU8(
+          JSON.stringify({ private: true, type: 'module', scripts: { postinstall: 'node install.cjs' } })
+        ),
+        'install.cjs': strToU8(`
+const fs = require('node:fs')
+fs.writeFileSync(${JSON.stringify(installing)}, '')
+const deadline = Date.now() + 30000
+const timer = setInterval(() => {
+  if (fs.existsSync(${JSON.stringify(release)})) {
+    fs.mkdirSync('node_modules', { recursive: true })
+    clearInterval(timer)
+  } else if (Date.now() > deadline) process.exit(1)
+}, 25)
+`),
+      })
+    )
+    const cancellation = new AbortController()
+    let settled = false
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const opening = TypescriptBackend.open(
+      {
+        project: importAgentProject(archive),
+        args: parseArgs([]),
+        cwd: root,
+        initialWorkspace: root,
+        peerEndpointId: 'agent-1',
+        mcpPaths: [],
+        mcpStrictPaths: [],
+      },
+      CliConfigStore.memory({}, { mcpDiscovery: false, skillDiscovery: false, agentMessaging: false }),
+      new AgentMessaging(),
+      cancellation.signal
+    )
+      .then((result) => {
+        backends.push(result.backend)
+        return result
+      })
+      .finally(() => {
+        settled = true
+      })
+    void opening.catch(() => {})
+    try {
+      await vi.waitFor(() => expect(existsSync(installing)).toBe(true), { timeout: 15000 })
+      await vi.advanceTimersByTimeAsync(60_001)
+      expect(settled).toBe(false)
+      vi.useRealTimers()
+      await writeFile(release, '')
+      const { backend } = await opening
+      expect(await answer(backend, 'ready')).toContain('installed;ready')
+    } finally {
+      vi.useRealTimers()
+      await writeFile(release, '')
+      cancellation.abort()
+      await opening.catch(() => {})
+    }
+  }, 30000)
 
   it('replaces complete source generations and preserves binary messages without loading them in the parent', async () => {
     await writeFile(join(root, 'value.ts'), "export const value = 'v0'\n")
