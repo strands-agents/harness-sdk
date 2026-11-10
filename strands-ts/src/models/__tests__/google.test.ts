@@ -1246,8 +1246,8 @@ describe('GoogleModel', () => {
       const contents = formatMessages(messages)
 
       const resultPart = contents[1]!.parts![0]! as { functionResponse: { response: unknown; parts?: unknown[] } }
-      // Image goes to separate parts, not into response.output
-      expect(resultPart.functionResponse.response).toEqual({ output: [] })
+      // Image goes to separate parts; response.output keeps a $ref to it
+      expect(resultPart.functionResponse.response).toEqual({ output: [{ $ref: 'image.png' }] })
       expect(resultPart.functionResponse.parts).toEqual([
         { inlineData: { data: 'iVBORw==', mimeType: 'image/png', displayName: 'image.png' } },
       ])
@@ -1271,12 +1271,13 @@ describe('GoogleModel', () => {
       const contents = formatMessages(messages)
 
       const resultPart = contents[1]!.parts![0]! as {
-        functionResponse: { parts?: Array<{ inlineData: { displayName: string } }> }
+        functionResponse: { response: unknown; parts?: Array<{ inlineData: { displayName: string } }> }
       }
       const displayNames = resultPart.functionResponse.parts!.map((p) => p.inlineData.displayName)
       // Gemini rejects duplicate part names within one function_response.parts.
       expect(new Set(displayNames).size).toBe(displayNames.length)
       expect(displayNames).toEqual(['image.png', 'image-1.png'])
+      expect(resultPart.functionResponse.response).toEqual({ output: [{ $ref: 'image.png' }, { $ref: 'image-1.png' }] })
     })
 
     it('disambiguates displayName for documents sharing a name in one tool result', () => {
@@ -1320,7 +1321,7 @@ describe('GoogleModel', () => {
       const contents = formatMessages(messages)
 
       const resultPart = contents[1]!.parts![0]! as { functionResponse: { response: unknown; parts?: unknown[] } }
-      expect(resultPart.functionResponse.response).toEqual({ output: [] })
+      expect(resultPart.functionResponse.response).toEqual({ output: [{ $ref: 'report.pdf' }] })
       expect(resultPart.functionResponse.parts).toEqual([
         { inlineData: { data: 'JVBERg==', mimeType: 'application/pdf', displayName: 'report.pdf' } },
       ])
@@ -1341,7 +1342,7 @@ describe('GoogleModel', () => {
       const contents = formatMessages(messages)
 
       const resultPart = contents[1]!.parts![0]! as { functionResponse: { response: unknown; parts?: unknown[] } }
-      expect(resultPart.functionResponse.response).toEqual({ output: [] })
+      expect(resultPart.functionResponse.response).toEqual({ output: [{ $ref: 'notes.txt' }] })
       expect(resultPart.functionResponse.parts).toEqual([
         { inlineData: { data: 'SGVsbG8=', mimeType: 'text/plain', displayName: 'notes.txt' } },
       ])
@@ -1389,7 +1390,9 @@ describe('GoogleModel', () => {
       const contents = formatMessages(messages)
 
       const resultPart = contents[1]!.parts![0]! as { functionResponse: { response: unknown; parts?: unknown[] } }
-      expect(resultPart.functionResponse.response).toEqual({ output: [{ text: 'Analysis complete' }] })
+      expect(resultPart.functionResponse.response).toEqual({
+        output: [{ text: 'Analysis complete' }, { $ref: 'image.jpeg' }],
+      })
       expect(resultPart.functionResponse.parts).toEqual([
         { inlineData: { data: 'AQI=', mimeType: 'image/jpeg', displayName: 'image.jpeg' } },
       ])
