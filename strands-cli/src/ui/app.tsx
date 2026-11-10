@@ -28,6 +28,7 @@ export interface McpTrustRequest {
 export function McpTrustPrompt({ request }: { request: McpTrustRequest }): ReactElement {
   const { accent } = useTheme()
   useInput((character, key) => {
+    if (key.ctrl || key.meta) return
     const answer = character.toLowerCase()
     if (answer === 'y') request.resolve(true)
     else if (answer === 'n' || key.escape || key.return) request.resolve(false)

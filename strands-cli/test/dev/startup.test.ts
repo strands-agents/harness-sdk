@@ -101,6 +101,46 @@ describe('dev startup screen', () => {
     }
   })
 
+  it('shouldKeepEveryOpenFailureLineReadableWithTheCopyHintOnAnEightyByTwentyFourScreen', async () => {
+    const input = ttyInput()
+    const output = ttyOutput(80, 24)
+    const frame = captureFrame(output)
+    const open = vi.fn().mockRejectedValue(new Error('Model dependency could not be copied'))
+    const running = runInkChat(
+      async (): Promise<never> => {
+        throw new Error('Unexpected agent startup')
+      },
+      {
+        input,
+        output,
+        errorOutput: output,
+        intro: false,
+        config: CliConfigStore.memory({}, { animations: false }),
+        renderApp: render as RenderApp,
+        prepare: async (screen) => {
+          await chooseHarness({ cli: { name: 'Saved CLI' }, harnesses: [] }, screen, open)
+          return false
+        },
+      }
+    )
+    try {
+      await vi.waitFor(() => expect(frame().join('\n')).toContain('Select a harness'))
+      input.write('\r')
+      await vi.waitFor(() => expect(frame().join('\n')).toContain('Ctrl+Y copy error'))
+
+      const text = frame()
+        .map((line) => line.replace(/[│╭╮╰╯─]/gu, '').trim())
+        .join(' ')
+        .replace(/\s+/gu, ' ')
+      expect(text).toContain('Workspace could not open.')
+      expect(text).toContain('Reason: Model dependency could not be copied')
+      expect(text).toContain('Next: Fix the reported source or configuration, then retry this workspace.')
+    } finally {
+      input.write('\u0003')
+      await running
+    }
+  })
+
   it('shouldCancelPreparationWithoutStartingAnAgentWhenControlCIsPressed', async () => {
     const input = ttyInput()
     const output = ttyOutput(120, 35)

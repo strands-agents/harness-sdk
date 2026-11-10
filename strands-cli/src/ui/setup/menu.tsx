@@ -148,6 +148,12 @@ export function OpeningMenu({
               {escapeHint}
             </Text>
           </Box>
+          {error ? (
+            <Text dimColor wrap="truncate-end">
+              {' · '}
+              {error.copyHint}
+            </Text>
+          ) : null}
         </Box>
         {availableUpdate ? (
           <Box width={gridWidth} marginLeft={left} marginTop={1}>
@@ -158,11 +164,8 @@ export function OpeningMenu({
           </Box>
         ) : null}
         {error ? (
-          <Box width={gridWidth} marginLeft={left} marginTop={1} flexDirection="column">
+          <Box width={gridWidth} marginLeft={left} marginTop={1}>
             <Text color="red">{error.text}</Text>
-            <Text dimColor wrap="truncate-end">
-              {error.copyHint}
-            </Text>
           </Box>
         ) : null}
       </Box>

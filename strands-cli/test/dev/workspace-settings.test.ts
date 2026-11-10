@@ -9,7 +9,8 @@ import { bindExistingAgent } from '../../src/dev/create.js'
 import * as initial from '../../src/dev/initialize.js'
 import { prepareWorkspaceChange } from '../../src/dev/manage.js'
 import { HarnessPicker } from '../../src/dev/picker.js'
-import { WorkspaceReplacementConfirmation } from '../../src/dev/settings.js'
+import { WorkspaceReplacementConfirmation, confirmWorkspaceReplacement } from '../../src/dev/settings.js'
+import { runInkChat } from '../../src/ui/run.js'
 import * as preparation from '../../src/project/preparation.js'
 import { ChatController } from '../../src/ui/chat/controller.js'
 import { idleBackend } from '../fixtures/chat-backend.js'
@@ -162,7 +163,7 @@ describe('workspace Settings', () => {
     input.write('DEL')
     await vi.waitFor(() => expect(frame().join('\n')).toContain('confirm: DEL▏'))
     input.write('\r')
-    await vi.waitFor(() => expect(frame().join('\n')).toContain('Ctrl+Y copy error'))
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('Enter confirm · Ctrl+Y copy error · Esc back'))
 
     input.write('\u0019')
 
@@ -170,6 +171,44 @@ describe('workspace Settings', () => {
     expect(copy.mock.calls[0]![0]).toBe('Type DELETE exactly to confirm, or press Esc to select a different agent.')
     expect(frame().join('\n')).toContain('confirm: DEL▏')
     copy.mockRestore()
+  })
+
+  it('shouldKeepTheWholeConfirmationErrorReadableOnAnEightyByTwentyFourScreen', async () => {
+    const input = ttyInput()
+    const output = ttyOutput(80, 24)
+    const frame = captureFrame(output)
+    const running = runInkChat(
+      async (): Promise<never> => {
+        throw new Error('Unexpected agent startup')
+      },
+      {
+        input,
+        output,
+        errorOutput: output,
+        intro: false,
+        config: CliConfigStore.memory({}, { animations: false }),
+        renderApp: render as NonNullable<NonNullable<Parameters<typeof runInkChat>[1]>['renderApp']>,
+        prepare: async (screen) => {
+          await confirmWorkspaceReplacement(info.root, 'Other agent · /agents/other/agent.ts', screen)
+          return false
+        },
+      }
+    )
+    try {
+      await vi.waitFor(() => expect(frame().join('\n')).toContain('This is a DELETE operation.'))
+      input.write('\r')
+      await vi.waitFor(() => expect(frame().join('\n')).toContain('Ctrl+Y copy error'))
+
+      const text = frame()
+        .map((line) => line.replace(/[│╭╮╰╯─]/gu, '').trim())
+        .join(' ')
+        .replace(/\s+/gu, ' ')
+      expect(text).toContain('Type DELETE exactly to confirm, or press Esc to select a different agent.')
+      expect(text).toContain('Enter confirm · Ctrl+Y copy error · Esc back')
+    } finally {
+      input.write('\u001b')
+      await running
+    }
   })
 
   it('shouldGoBackWithoutConfirmingWhenEscapeIsPressed', async () => {

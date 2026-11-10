@@ -78,7 +78,7 @@ import { SetupSettingsPanel, type SetupSettingsChoiceTarget } from './form.js'
 import { EffortSlider } from '../panels/models.js'
 import { ProviderList, PanelSection } from '../panels/shared.js'
 import { availableCliUpdate } from '../../cli/update.js'
-import { useCopyableError } from '../clipboard.js'
+import { isCopyShortcut, useCopyableError } from '../clipboard.js'
 
 type SetupAction = 'back' | 'next' | 'escape' | 'settings' | `browse:${number}`
 type ProviderSetupSection = 'providers' | 'models' | 'options' | 'actions'
@@ -219,7 +219,6 @@ function SetupWizardContent({
   const [editing, setEditing] = useState<{ field: EditableField; value: string; cursor?: number }>()
   const [pathCompletionIndex, setPathCompletionIndex] = useState(-1)
   const [error, setError] = useState<string>()
-  const errorCopyHint = useCopyableError(error)
   const [availableUpdate, setAvailableUpdate] = useState<string>()
   const [saving, setSaving] = useState(false)
   const [choosingDirectory, setChoosingDirectory] = useState(false)
@@ -349,7 +348,7 @@ function SetupWizardContent({
     gridWidth: openingGridWidth,
   } = openingGridLayout(lockupWidth)
   // The opening error sits one row below the grid and wraps to the grid's width.
-  const openingErrorHeight = error ? wrapLines(error, Math.max(1, openingGridWidth)).length + 2 : 0
+  const openingErrorHeight = error ? wrapLines(error, Math.max(1, openingGridWidth)).length + 1 : 0
   // The Esc hint takes one row below the grid plus its gap.
   const openingContentHeight = height - brandHeight - navigationHeight - openingErrorHeight - 2
   const openingTopGap =
@@ -535,6 +534,15 @@ function SetupWizardContent({
   const providerReady = isProviderSetup && setupReadyProviders.includes(quickstartProvider)
   const showProviderConfiguration = isProviderSetup && !providerReady
   const modelPanelVisible = splitQuickstart && providerReady
+  const catalogError =
+    modelPanelVisible &&
+    providerModels.provider === quickstartProvider &&
+    !providerModels.loading &&
+    !providerModels.available &&
+    providerModels.error
+      ? `Model catalog unavailable: ${providerModels.error}`
+      : undefined
+  const errorCopyHint = useCopyableError(error ?? catalogError)
   const availableBubbleHeight = Math.max(
     1,
     height - brandHeight - progressHeight - (hasExternalActions ? actionHeight + actionGap : 0) - navigationHeight
@@ -2403,6 +2411,7 @@ function SetupWizardContent({
           return
         }
       }
+      if (isCopyShortcut(input, key)) return
       if (key.tab) {
         leaveEdit()
       } else if (key.return) {
@@ -3131,6 +3140,7 @@ function SetupWizardContent({
                                   <Text color={palette.warning}>
                                     Model catalog unavailable
                                     {providerModels.error ? ` · ${providerModels.error}` : ''}
+                                    {catalogError && !error ? <Text dimColor> · {errorCopyHint}</Text> : null}
                                   </Text>
                                 ) : visibleProviderModels.length === 0 ? (
                                   <Text dimColor>

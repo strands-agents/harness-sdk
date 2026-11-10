@@ -75,14 +75,13 @@ export const ProjectSetupPanel = ({ plan, failure, onAction }: ProjectSetupPanel
         <Text wrap="truncate-middle">Failed command: {redactPreparationOutput(failure.command)}</Text>
       ) : null}
       {failure.logPath ? <Text wrap="truncate-middle">Log: {failure.logPath}</Text> : null}
-      <Text dimColor>{copyHint}</Text>
       {details ? (
         <Box height={Math.max(2, Math.min(8, rows - 20))} overflow="hidden">
           <Text>{failure.details}</Text>
         </Box>
       ) : null}
       <Text dimColor>
-        {`Enter / r retry · v validate after manual setup · d ${details ? 'hide details' : 'details'} · b back`}
+        {`Enter / r retry · v validate after manual setup · d ${details ? 'hide details' : 'details'} · ${copyHint} · b back`}
       </Text>
     </Box>
   )

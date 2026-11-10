@@ -46,13 +46,8 @@ export const WorkspaceReplacementConfirmation = ({
       <Text>Agent projects outside this folder will not be deleted. A new chat starts after replacement.</Text>
       <Text>Replacement: {sanitizeTerminalText(replacement)}</Text>
       <Text>Type DELETE to confirm: {approval}▏</Text>
-      {error ? (
-        <Box flexDirection="column">
-          <Text color="red">{error}</Text>
-          <Text dimColor>{errorCopyHint}</Text>
-        </Box>
-      ) : null}
-      <Text dimColor>Enter confirm · Esc back</Text>
+      {error ? <Text color="red">{error}</Text> : null}
+      <Text dimColor>{['Enter confirm', errorCopyHint, 'Esc back'].filter(Boolean).join(' · ')}</Text>
     </Box>
   )
 }

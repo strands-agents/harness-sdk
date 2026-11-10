@@ -187,7 +187,7 @@ export const HarnessPicker = ({ cli, harnesses, warning, workspace, onSelect }: 
   const { heading, context } = screens[step]
   const hint = busy
     ? 'Preparing workspace… · Esc cancel'
-    : `${screens[step].hint} · Esc ${step === 'folder' ? 'back' : 'cancel'}`
+    : [screens[step].hint, failureCopyHint, `Esc ${step === 'folder' ? 'back' : 'cancel'}`].filter(Boolean).join(' · ')
   return (
     <Box flexDirection="column">
       <Box marginBottom={1} justifyContent="space-between">
@@ -282,12 +282,7 @@ export const HarnessPicker = ({ cli, harnesses, warning, workspace, onSelect }: 
           </Box>
         </>
       )}
-      {failure ? (
-        <>
-          <Text color={errorColor}>{failure}</Text>
-          <Text dimColor>{failureCopyHint}</Text>
-        </>
-      ) : null}
+      {failure ? <Text color={errorColor}>{failure}</Text> : null}
       <Box marginTop={1}>
         <Text dimColor>{hint}</Text>
       </Box>
