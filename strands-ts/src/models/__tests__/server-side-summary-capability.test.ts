@@ -8,6 +8,9 @@ import { VercelModel } from '../vercel.js'
 import type { Model } from '../model.js'
 import type { ModelInfo } from '../model-info.js'
 import { TestModelProvider } from '../../__fixtures__/model-test-helpers.js'
+import { Agent } from '../../agent/agent.js'
+import { Offload } from '../../context-manager/strategies/offload/index.js'
+import { Message, SummaryBlock, TextBlock } from '../../types/messages.js'
 
 const MODEL_ID = 'claude-sonnet-5-5'
 
@@ -53,5 +56,48 @@ describe('models without server-side summary', () => {
     expect(makeModel().modelInfo.capabilities?.serverSideSummary).toBe(false)
     const override: ModelInfo = { capabilities: { serverSideSummary: true } }
     expect(makeModel(override).modelInfo.capabilities?.serverSideSummary).toBe(true)
+  })
+})
+
+describe('a custom provider with server-side summary on', () => {
+  // TS turns the capability off for a custom Model subclass, so the override stands in for Python's listed id.
+  it('stores its summary as text', async () => {
+    const requests: Message[][] = []
+    const model = new TestModelProvider(async function* () {
+      yield { type: 'modelMessageStartEvent', role: 'assistant' }
+      yield { type: 'modelContentBlockStartEvent' }
+      yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: 'a summary' } }
+      yield { type: 'modelContentBlockStopEvent' }
+      yield { type: 'modelMessageStopEvent', stopReason: 'endTurn' }
+    })
+    model.updateConfig({ modelId: MODEL_ID, modelInfo: { capabilities: { serverSideSummary: true } } })
+    const stream = model.stream.bind(model)
+    vi.spyOn(model, 'stream').mockImplementation((messages, options) => {
+      requests.push(messages)
+      return stream(messages, options)
+    })
+    expect(model.modelInfo.capabilities?.serverSideSummary).toBe(true)
+    const messages = [
+      new Message({ role: 'user', content: [new TextBlock('task')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('old1')] }),
+      new Message({ role: 'user', content: [new TextBlock('old2')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('old3')] }),
+      new Message({ role: 'user', content: [new TextBlock('recent')] }),
+    ]
+    const tokens = await model.countTokens(messages.slice(1, 4))
+    const agent = new Agent({ model, messages, printer: false })
+    const strategy = Offload.summarize('*').when({ utilization: 0.8, preserveRecent: 1 })
+
+    expect(await strategy.apply({ messages: agent.messages, agent, utilization: 0.9 })).toBe(true)
+    await agent.invoke('next')
+
+    const marker = `[Summarized: 3 messages, ~${tokens.toLocaleString('en-US')} tokens]\n\na summary`
+    expect(agent.messages.slice(0, 3).map(({ role, content }) => ({ role, content }))).toEqual([
+      { role: 'user', content: [new TextBlock('task')] },
+      { role: 'assistant', content: [new TextBlock(marker)] },
+      { role: 'user', content: [new TextBlock('recent')] },
+    ])
+    const sentBlocks = requests.flatMap((request) => request.flatMap((message) => message.content))
+    expect(sentBlocks.some((block) => block instanceof SummaryBlock)).toBe(false)
   })
 })

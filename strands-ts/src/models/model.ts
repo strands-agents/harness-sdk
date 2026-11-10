@@ -5,7 +5,6 @@ import {
   ReasoningBlock,
   type Role,
   type StopReason,
-  type SummaryBlock,
   type SystemPrompt,
   TextBlock,
   ToolUseBlock,
@@ -26,12 +25,13 @@ import {
   ModelRedactionEvent,
   type ModelStreamEvent,
 } from './streaming.js'
-import { MaxTokensError, ModelError, NotImplementedError, normalizeError } from '../errors.js'
+import { MaxTokensError, ModelError, normalizeError } from '../errors.js'
 import type { Redaction } from '../hooks/events.js'
 import { logger } from '../logging/logger.js'
 import { DEFAULT_CONTEXT_WINDOW_LIMIT } from './defaults.js'
 import { lookupModelInfo, mergeModelInfo, type ModelInfo } from './model-info.js'
 import { warnOnce } from '../logging/warn-once.js'
+import { summarizeWithStream, type SummarizeResult } from './summarize.js'
 
 /**
  * Fills `contextWindowLimit` on a config object when not explicitly set. Explicit values pass
@@ -309,24 +309,35 @@ export interface CountTokensOptions {
 }
 
 /**
- * Options for a server-side summary.
+ * Options for {@link Model.summarize}.
  */
 export interface SummarizeOptions {
   /**
-   * The live conversation's system prompt, not the summarizer's.
+   * The request's system prompt.
    */
   systemPrompt?: SystemPrompt
 
   /**
-   * The live conversation's tool specifications.
+   * The request's tool specifications.
    */
   toolSpecs?: ToolSpec[]
 
   /**
-   * Summarization instructions replacing the provider's own prompt. The summarize strategy passes its
-   * `systemPrompt` config here.
+   * Summarization instructions replacing the default ones, which `undefined` or `''` keeps. The base
+   * implementation's instruction not to act on the request or call tools is always sent.
    */
   instructions?: string
+
+  /**
+   * Signal that aborts the call.
+   */
+  cancelSignal?: AbortSignal
+
+  /**
+   * Metadata of the invoking agent, as passed to `stream()`. A provider may consult it to derive a prompt-cache
+   * routing key, so a replay can share the agent's cache.
+   */
+  agentMetadata?: AgentMetadata
 }
 
 /**
@@ -457,20 +468,28 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
   }
 
   /**
-   * Summarizes the conversation's opening `messages` server-side.
+   * Summarizes `messages`.
    *
-   * The summarize strategy calls this instead of its client-side summary when
-   * `modelInfo.capabilities.serverSideSummary` is `true`, with the messages from message 0 through the last
-   * one it summarizes. Providers with server-side summaries override it. When this throws, the strategy
-   * summarizes client-side instead.
+   * `messages` is a request as the caller would send it to `stream()`, along with its tool specs and system
+   * prompt. The base implementation sends that request closed by an instruction not to act on it or call tools,
+   * followed by `instructions` (or default ones), and otherwise as given, so a caller that replays its own
+   * conversation can share its prompt cache. The summary is the reply's text, including a reply cut off at the
+   * output limit or a stop sequence. A reply that ends for another reason, such as a tool call, a cancellation or a
+   * guardrail, or that holds no text, gives an empty result.
    *
-   * @param _messages - The opening messages to summarize, from message 0, left unmodified
-   * @param _options - The live system prompt and tools, and summarization instructions
-   * @returns A summary block that takes the summarized messages' place
-   * @throws NotImplementedError - When the model has no server-side summary
+   * Every summary is a `summaryBlock`. The base implementation leaves its `provider` unset. A provider that reports
+   * `modelInfo.capabilities.serverSideSummary` as `true` overrides this method to summarize server-side and sets
+   * `provider` to its own name, using the base implementation when the capability is off or the server-side
+   * summary fails, as `AnthropicModel` does. A summary with a `provider` can stand in for the messages it
+   * summarized only when they start at the conversation's first message; a caller that summarizes anything else
+   * uses only its text.
+   *
+   * @param messages - The request to summarize, left unmodified
+   * @param options - The request's system prompt and tools, summarization instructions, cancel signal and agent metadata
+   * @returns The summary and the token usage of the calls made for it
    */
-  async summarize(_messages: Message[], _options?: SummarizeOptions): Promise<SummaryBlock> {
-    throw new NotImplementedError(`model=<${this.constructor.name}> | model has no server-side summary`)
+  async summarize(messages: Message[], options?: SummarizeOptions): Promise<SummarizeResult> {
+    return summarizeWithStream(this, messages, options)
   }
 
   /**
