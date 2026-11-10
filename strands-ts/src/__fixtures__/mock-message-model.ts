@@ -293,6 +293,7 @@ export class MockMessageModel extends Model<BaseModelConfig> {
       case 'jsonBlock':
       case 'injectedBlock':
       case 'summaryBlock':
+      case 'unknownBlock':
         // These blocks don't generate events in mock - just skip them
         break
 
