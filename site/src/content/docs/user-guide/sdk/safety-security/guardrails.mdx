@@ -5,6 +5,7 @@ tags: [safety, interventions, bedrock, aws]
 sourceLinks:
   - path: strands-ts/src/interventions/handler.ts
   - path: strands-ts/src/interventions/actions.ts
+  - path: strands-ts/src/interventions/registry.ts
   - path: strands-ts/src/vended-interventions/cedar/cedar.ts
   - path: strands-ts/src/models/bedrock.ts
 ---
@@ -16,7 +17,8 @@ one kind of failure cheaply, using [interventions](../agents/interventions/index
 [hooks](../agents/hooks.mdx), and a model-provider guardrail.
 
 The examples are TypeScript and use the intervention actions `proceed`, `deny`,
-`guide`, `confirm`, and `transform`. The same actions exist in the Python SDK.
+`guide`, `confirm`, and `transform`. The same actions exist in the Python SDK. Each
+code block carries its own imports and definitions, so you can copy one on its own.
 
 | Layer | Catches | Runs on |
 |-------|---------|---------|
@@ -27,15 +29,19 @@ The examples are TypeScript and use the intervention actions `proceed`, `deny`,
 | Tenant policy | Calls the tenant or role is not allowed | Before tool call |
 | Retrieval boundary | Retrieved text used as instructions | After tool call |
 
-Handlers evaluate in registration order and a `deny` stops the rest, so register the
-cheap deterministic checks first. The classifier is the one network call in the stack,
-so it gets a time budget and a fallback.
+Ordering applies within one lifecycle stage. Handlers that implement `beforeToolCall`
+run in registration order, and a `deny` from one skips the rest of them, so register
+the cheap deterministic checks before the ones that pause or cost money. The
+classifier runs on `beforeModelCall`, before the model has proposed any tool call, so
+the tool-call rules neither precede it nor short-circuit it. It is the one network call
+in the stack, so it gets a time budget and a fallback.
 
 ## Validate tool input with a schema
 
 Put every constraint you can express as a type in the tool's input schema. The parse
 error returns to the model as an error tool result, and the model corrects the call
-before your code runs:
+before your code runs. Then canonicalize anything the tool touches on disk, in the
+tool, immediately before acting:
 
 <Tabs>
 <Tab label="TypeScript">
@@ -49,8 +55,10 @@ before your code runs:
 </Tabs>
 
 The schema is the one layer the model reads directly, in the tool specification, so it
-steers the model toward valid calls as well as rejecting invalid ones. The layers below
-draw tighter lines per tenant and per role.
+steers the model toward valid calls as well as rejecting invalid ones. It validates
+shape, not location. A prefix check on the string passes `/tmp/agent-scratch/../etc`,
+and a symlink inside the directory points wherever it likes, so the string is never the
+filesystem boundary. The resolved path is, and only the tool can resolve it.
 
 ## Enforce deterministic rules
 
@@ -76,18 +84,7 @@ involved, which makes them the one layer you can unit test exhaustively.
 
 Abuse, prompt injection, and off-topic requests cannot be enumerated as rules. Hand the
 text to a classifier instead: Amazon Bedrock Guardrails, OpenAI's moderation endpoint,
-or a model you host. Wrap it behind one interface so the handler does not care which:
-
-<Tabs>
-<Tab label="TypeScript">
-
-```typescript
---8<-- "user-guide/sdk/safety-security/guardrails_imports.ts:classifier_interface_imports"
-
---8<-- "user-guide/sdk/safety-security/guardrails.ts:classifier_interface"
-```
-</Tab>
-</Tabs>
+or a model you host. Wrap it behind one interface so the handler does not care which.
 
 A classifier is a network call on every turn, so give it a budget and decide now what
 happens when it misses. The handler screens the latest user message before each model
@@ -97,9 +94,11 @@ call, aborts the classifier at the budget, and applies the fallback you configur
 <Tab label="TypeScript">
 
 ```typescript
---8<-- "user-guide/sdk/safety-security/guardrails_imports.ts:classifier_screen_imports"
+--8<-- "user-guide/sdk/safety-security/guardrails_imports.ts:classifier_imports"
 
---8<-- "user-guide/sdk/safety-security/guardrails.ts:classifier_screen"
+--8<-- "user-guide/sdk/safety-security/guardrails.ts:classifier"
+
+--8<-- "user-guide/sdk/safety-security/guardrails.ts:classifier_use"
 ```
 </Tab>
 </Tabs>
@@ -136,33 +135,30 @@ guardrail covers the response, where an intervention can only guide or transform
 
 To route large or irreversible actions past a person without slowing routine ones,
 return `confirm` from a handler. The agent pauses before the tool runs and resumes with
-the answer:
+the answer. Above the threshold the invocation stops with the `interrupt` stop reason.
+Show the prompt to an approver, then resume with their answer:
 
 <Tabs>
 <Tab label="TypeScript">
 
 ```typescript
---8<-- "user-guide/sdk/safety-security/guardrails_imports.ts:confirm_high_impact_imports"
+--8<-- "user-guide/sdk/safety-security/guardrails_imports.ts:confirm_imports"
+
+--8<-- "user-guide/sdk/safety-security/guardrails.ts:schema_validation"
 
 --8<-- "user-guide/sdk/safety-security/guardrails.ts:confirm_high_impact"
-```
-</Tab>
-</Tabs>
 
-The line is drawn on the input, not the tool. Above the threshold the invocation stops
-with the `interrupt` stop reason. Show the prompt to an approver, then resume with
-their answer:
-
-<Tabs>
-<Tab label="TypeScript">
-
-```typescript
---8<-- "user-guide/sdk/safety-security/guardrails_imports.ts:confirm_resume_imports"
+--8<-- "user-guide/sdk/safety-security/guardrails.ts:approver_stub"
 
 --8<-- "user-guide/sdk/safety-security/guardrails.ts:confirm_resume"
 ```
 </Tab>
 </Tabs>
+
+The line is drawn on the input, not the tool. Interventions see that input before the
+schema does, so a handler that indexes into it without narrowing throws on a malformed
+call, and under the default `onError` of `'throw'` that error surfaces instead of the
+schema's correctable one. Check the shape first and return an action.
 
 In a stateless deployment the approval arrives on another process, so pair this with a
 [session manager](../agents/session-management.mdx) to persist the paused state. For
@@ -182,6 +178,8 @@ rules is a policy edit and a version bump, not a deploy:
 ```typescript
 --8<-- "user-guide/sdk/safety-security/guardrails_imports.ts:tenant_policy_imports"
 
+--8<-- "user-guide/sdk/safety-security/guardrails.ts:tenant_policy_type"
+
 --8<-- "user-guide/sdk/safety-security/guardrails.ts:tenant_policy"
 ```
 </Tab>
@@ -194,7 +192,11 @@ With no identity the resolver returns `undefined` and every tool call is denied.
 schema validation and hot reloading are on the
 [Cedar authorization](../agents/interventions/cedar-authorization.mdx) page.
 
-Record every decision with the policy version that produced it:
+Record each decision where it is made. A hook that runs after the intervention pipeline
+and reads `event.cancel` cannot do this: an earlier rule may have denied the call
+before Cedar ran, and a pending confirmation raises an interrupt without setting
+`cancel`, so the hook would log a denial against the wrong layer or an approval that
+does not exist yet. Wrap the handler instead and log the action it returns:
 
 <Tabs>
 <Tab label="TypeScript">
@@ -202,15 +204,25 @@ Record every decision with the policy version that produced it:
 ```typescript
 --8<-- "user-guide/sdk/safety-security/guardrails_imports.ts:audit_record_imports"
 
+--8<-- "user-guide/sdk/safety-security/guardrails.ts:tenant_policy_type"
+
 --8<-- "user-guide/sdk/safety-security/guardrails.ts:audit_record"
 ```
 </Tab>
 </Tabs>
 
-The hook registers just after the intervention pipeline, so it sees the final decision:
-a cancelled event carries the denial reason as a string. Write the records somewhere
-append-only. The question you will be asked is "which policy version allowed this call,
-and who was the principal", and this is the record that answers it.
+Each record names its source. Wrapped around the Cedar handler it logs `allowed` and
+`denied` with the policy version that produced them. Wrapped around a confirmation
+handler it logs `pending` when the call stops for a person and `approved` or `denied`
+when the answer comes back, because the answer passes through the action's `evaluate`
+function on resume. Resuming runs the `beforeToolCall` stage again, so a Cedar record
+appears on both sides of the approval.
+
+These are decisions, not executions. A Cedar `allowed` can still be denied by a later
+handler or wait on an approver. If you need a record that the tool ran, log it from
+`afterToolCall`, where `event.result.status` says how the call ended. Write the records
+somewhere append-only. The question you will be asked is "which policy version allowed
+this call, and who was the principal", and this is the record that answers it.
 
 ## Keep retrieved text from escalating permissions
 
@@ -234,15 +246,19 @@ reads it:
 </Tab>
 </Tabs>
 
-Never let a tool result set `invocationState`, append to the system prompt, or register
-a tool. Each of those turns retrieved text into an instruction with authority. For
-history you load from a source you do not control, see
+Escape the text and the attribute. Retrieved content that contains its own closing tag
+would otherwise end the untrusted block early and leave whatever follows it looking
+like your text. The block is framing, not enforcement: it tells the model how to read
+what follows, and a model can be talked out of that. Authorization and confirmation
+remain the boundary. Never let a tool result set `invocationState`, append to the
+system prompt, or register a tool. Each of those turns retrieved text into an
+instruction with authority. For history you load from a source you do not control, see
 [trusted message history](./trusted-message-history.mdx).
 
 ## Compose the layers
 
-Build the agent per request with the tenant's policy, and register the handlers in the
-order the table at the top prescribes:
+Build the agent per request with the tenant's policy, and register the `beforeToolCall`
+handlers in the order the table at the top prescribes:
 
 <Tabs>
 <Tab label="TypeScript">
@@ -255,9 +271,12 @@ order the table at the top prescribes:
 </Tab>
 </Tabs>
 
-Each handler needs a unique name; the agent refuses duplicates at construction. The
-audit plugin is a hook, not an intervention, because it observes decisions rather than
-making them.
+This block composes the classes defined above, so it is the one on this page that does
+not stand alone. The [full source file][guardrails-source] does. Each handler needs a
+unique name, and the agent refuses duplicates at construction. Wrap only the handlers
+whose decisions you need on record. The classifier screens on `beforeModelCall` and the
+retrieval boundary transforms on `afterToolCall`, so their position in the list is not
+an ordering choice.
 
 ## Related topics
 
@@ -267,7 +286,7 @@ making them.
   validation and hot reload
 - [Human in the loop](../agents/interventions/human-in-the-loop.mdx): the vended
   confirmation handler with allow lists and trust
-- [Hooks](../agents/hooks.mdx): the event system under interventions and the audit plugin
+- [Hooks](../agents/hooks.mdx): the event system under interventions
 - [Trusted message history](./trusted-message-history.mdx): history you did not produce
   is untrusted too
 - [Prompt engineering](./prompt-engineering.mdx): system prompts that hold up against
@@ -276,3 +295,4 @@ making them.
   examples
 
 [bedrock-guardrails]: https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails.html
+[guardrails-source]: https://github.com/strands-agents/harness-sdk/blob/main/site/src/content/docs/user-guide/sdk/safety-security/guardrails.ts
