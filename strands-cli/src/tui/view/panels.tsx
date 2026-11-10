@@ -1,7 +1,14 @@
 import type { ReactElement } from 'react'
 import type { DOMElement } from 'ink'
 
-import type { ChatContextUsage, ChatPanel, ChatPanelRow, ChatSettings } from '../chat/controller.js'
+import type {
+  ChatContextUsage,
+  ChatPanel,
+  ChatPanelRow,
+  ChatPermissionPanel,
+  ChatSettings,
+} from '../chat/controller.js'
+import { COMPOSER_PANEL_HEIGHT } from '../terminal/composer.js'
 import {
   agentGridCapacity,
   agentGridColumns,
@@ -19,11 +26,13 @@ import {
   wrapLines,
 } from './presentation.js'
 import { AgentsPanel } from './agents-panel.js'
+import { EffortPanel } from './effort-panel.js'
 import { ExportPanel } from './export-panel.js'
 import { ModelPicker } from './model-panel.js'
 import { RenamePanel } from './rename-panel.js'
 import { SessionsPanel } from './sessions-panel.js'
 import { PanelItemHeader, PanelOverlay, PanelTitle } from './panel-components.js'
+import { PanelHelpFooter } from './help-footer.js'
 import { SettingsControl, SettingsPanel } from './settings-panel.js'
 import { BlinkingCursor } from './text-input.js'
 import { Box, Text, useTheme } from './theme.js'
@@ -56,6 +65,7 @@ export function ResourcePanel({
   viewportStart,
   terminalWidth,
   terminalHeight,
+  composer,
   query,
   filter,
   modelPanelFocus,
@@ -65,8 +75,6 @@ export function ResourcePanel({
   hoveredRow,
   pressedControl,
   hoveredControl,
-  pressedSlider,
-  hoveredSlider,
   detailScroll,
   rows: allRows,
   onPanelElement,
@@ -83,6 +91,8 @@ export function ResourcePanel({
   viewportStart: number
   terminalWidth: number
   terminalHeight: number
+  /** Content box of the prompt editor when the panel renders inside it. */
+  composer?: { width: number; height: number }
   query: string
   filter: string
   modelPanelFocus: ModelPanelFocus
@@ -92,8 +102,6 @@ export function ResourcePanel({
   hoveredRow?: number
   pressedControl?: string
   hoveredControl?: string
-  pressedSlider: boolean
-  hoveredSlider?: boolean
   detailScroll: number
   rows: readonly ChatPanelRow[]
   onPanelElement?: (element: DOMElement | null) => void
@@ -127,7 +135,7 @@ export function ResourcePanel({
                     : panel.kind === 'permission' || panel.kind === 'error'
                       ? 68
                       : 84
-  const width = Math.max(1, Math.min(preferredWidth, terminalWidth - 4))
+  const width = composer?.width ?? Math.max(1, Math.min(preferredWidth, terminalWidth - 4))
   const color = panel.kind === 'error' ? 'red' : accent
 
   if (panel.kind === 'error' && allRows.length === 1 && allRows[0]!.value === undefined) {
@@ -185,6 +193,50 @@ export function ResourcePanel({
     )
   }
 
+  if (panel.kind === 'effort') {
+    return (
+      <EffortPanel
+        slider={panel.slider}
+        {...(panel.body ? { body: panel.body } : {})}
+        width={width}
+        {...(onPanelElement ? { onElement: onPanelElement } : {})}
+        {...(onSliderElement ? { onSliderElement } : {})}
+      />
+    )
+  }
+  if (panel.kind === 'models') {
+    const height = composer?.height ?? COMPOSER_PANEL_HEIGHT
+    const capacity = panelRowCapacity(panel.kind, height, terminalWidth, allRows)
+    const start = Math.max(0, Math.min(viewportStart, allRows.length - capacity))
+    const rows = allRows.slice(start, start + capacity)
+    const modelId = allRows[hoveredRow ?? selected]?.value
+    return (
+      <Box ref={onPanelElement} width={width} height={height} overflow="hidden" flexDirection="column">
+        <ModelPicker
+          panel={panel}
+          rows={rows}
+          selected={selected}
+          start={start}
+          width={width}
+          // The help footer takes the last row.
+          height={Math.max(1, height - 1)}
+          allRows={allRows}
+          query={query}
+          filter={filter}
+          focus={modelPanelFocus}
+          animate={settings.animations}
+          {...(pressedRow !== undefined ? { pressedRow } : {})}
+          {...(hoveredRow !== undefined ? { hoveredRow } : {})}
+          {...(onRowElement ? { onRowElement } : {})}
+          {...(pressedFilter ? { pressedFilter } : {})}
+          {...(hoveredFilter ? { hoveredFilter } : {})}
+          {...(onFilterElement ? { onFilterElement } : {})}
+          {...(onSearchElement ? { onSearchElement } : {})}
+        />
+        <PanelHelpFooter width={width} {...(modelId ? { modelId } : {})} />
+      </Box>
+    )
+  }
   const capacity =
     panel.kind === 'agents'
       ? agentGridCapacity(terminalWidth, terminalHeight)
@@ -206,29 +258,6 @@ export function ResourcePanel({
   const compactList = ['help', 'skills', 'mcp', 'tasks', 'permissions', 'tools'].includes(panel.kind)
   const wrapLongContent = panel.kind === 'error' || allRows.length === 0
   const errorHeight = panel.kind === 'error' ? compactErrorPanelHeight(rows, width, terminalHeight) : undefined
-  if (panel.kind === 'models') {
-    return (
-      <ModelPicker
-        {...rowProps}
-        allRows={allRows}
-        height={terminalHeight}
-        query={query}
-        filter={filter}
-        focus={modelPanelFocus}
-        animateCursor={settings.animations}
-        {...(pressedFilter ? { pressedFilter } : {})}
-        {...(hoveredFilter ? { hoveredFilter } : {})}
-        pressedSlider={pressedSlider}
-        {...(hoveredSlider !== undefined ? { hoveredSlider } : {})}
-        {...(pressedControl ? { pressedControl } : {})}
-        {...(hoveredControl ? { hoveredControl } : {})}
-        {...(onFilterElement ? { onFilterElement } : {})}
-        {...(onControlElement ? { onControlElement } : {})}
-        {...(onSearchElement ? { onSearchElement } : {})}
-        {...(onSliderElement ? { onSliderElement } : {})}
-      />
-    )
-  }
   if (panel.kind === 'context') {
     const used = context.projectedTokens ?? context.currentTokens
     return (
@@ -495,7 +524,7 @@ function PermissionPreview({
   terminalHeight,
   scroll,
 }: {
-  panel: ChatPanel
+  panel: ChatPermissionPanel
   width: number
   terminalHeight: number
   scroll: number

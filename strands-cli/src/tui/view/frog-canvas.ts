@@ -1,4 +1,4 @@
-import type { FrogTheme } from '../chat/types.js'
+import type { FrogTheme, ResolvedColorMode } from '../chat/types.js'
 
 const ESC = '\u001b['
 
@@ -30,7 +30,7 @@ type Rgb = readonly [number, number, number]
 type FrogPalette = Record<Color, Rgb>
 
 export interface FrogRenderOptions {
-  colorMode?: 'light' | 'dark'
+  colorMode?: ResolvedColorMode
   frogColor?: string
   customBase?: Exclude<FrogTheme, 'custom'>
 }
@@ -176,6 +176,7 @@ export class Canvas implements PixelSink {
   private readonly _foregroundCodes: readonly string[]
   private readonly _backgroundCodes: readonly string[]
   readonly theme: Exclude<FrogTheme, 'custom'>
+  readonly colorMode: ResolvedColorMode
 
   constructor(
     readonly width: number,
@@ -188,6 +189,7 @@ export class Canvas implements PixelSink {
     const cells = width * height
     this._partyOffset = Math.floor(partyElapsedMs / 80)
     this.theme = _party ? 'green' : theme === 'custom' ? (options.customBase ?? 'green') : theme
+    this.colorMode = options.colorMode ?? 'dark'
     const palette = frogPalette(this.theme, _party ? { colorMode: options.colorMode ?? 'dark' } : options)
     this._foregroundCodes = colorCodes(palette, 38)
     this._backgroundCodes = colorCodes(palette, 48)

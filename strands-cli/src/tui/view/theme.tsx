@@ -1,20 +1,25 @@
-import { createContext, useContext, useMemo, type ComponentProps, type ReactElement, type ReactNode } from 'react'
+import {
+  createContext,
+  useContext,
+  useMemo,
+  useSyncExternalStore,
+  type ComponentProps,
+  type ReactElement,
+  type ReactNode,
+} from 'react'
 import { Box as InkBox, Text as InkText } from 'ink'
 
 import {
   DEFAULT_CHAT_SETTINGS,
-  type ChatSettings,
   type FrogTheme,
   type ResolvedColorMode,
+  type ThemeSettings,
   type ThemeColors,
 } from '../chat/types.js'
-import { detectColorMode } from './theme-detection.js'
+import { currentColorMode, subscribeColorMode } from './theme-detection.js'
 import { useFadeAnsi, useFadeColor } from './fade-in.js'
 
-export { detectColorMode } from './theme-detection.js'
-
-export type Theme = ThemeColors & { mode: ResolvedColorMode; canvas: string | undefined }
-type ThemeSettings = Pick<ChatSettings, 'frogTheme' | 'colorMode' | 'customTheme'>
+export type Theme = ThemeColors & { mode: ResolvedColorMode }
 
 const BASE_COLORS = {
   dark: {
@@ -68,15 +73,15 @@ const FROG_COLORS = {
 } satisfies Record<Exclude<FrogTheme, 'custom'>, Record<ResolvedColorMode, string>>
 
 export function getTheme(settings: ThemeSettings, detectedMode?: ResolvedColorMode): Theme {
-  const mode = settings.colorMode === 'auto' ? (detectedMode ?? detectColorMode()) : settings.colorMode
+  const mode = detectedMode ?? currentColorMode()
   const base = settings.frogTheme === 'custom' ? settings.customTheme.base : settings.frogTheme
+  const custom = settings.frogTheme === 'custom' ? settings.customTheme[mode] : undefined
   return {
     ...BASE_COLORS[mode],
     accent: ACCENTS[base][mode],
     frog: FROG_COLORS[base][mode],
-    ...(settings.frogTheme === 'custom' ? settings.customTheme[mode] : {}),
-    // Preset palette backgrounds support controls and previews; the terminal owns the canvas.
-    canvas: settings.frogTheme === 'custom' ? settings.customTheme[mode].background : undefined,
+    ...(custom?.accent ? { accent: custom.accent } : {}),
+    ...(custom?.frog ? { frog: custom.frog } : {}),
     mode,
   }
 }
@@ -94,11 +99,9 @@ export function ThemeProvider({
   detectedMode?: ResolvedColorMode
   children: ReactNode
 }): ReactElement {
-  const mode = detectedMode ?? detectColorMode()
-  const theme = useMemo(
-    () => getTheme(settings, mode),
-    [settings.frogTheme, settings.colorMode, settings.customTheme, mode]
-  )
+  const terminalMode = useSyncExternalStore(subscribeColorMode, currentColorMode, currentColorMode)
+  const mode = detectedMode ?? terminalMode
+  const theme = useMemo(() => getTheme(settings, mode), [settings.frogTheme, settings.customTheme, mode])
   return <ThemeContext value={theme}>{children}</ThemeContext>
 }
 

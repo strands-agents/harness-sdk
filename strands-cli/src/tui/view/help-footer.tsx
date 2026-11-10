@@ -1,21 +1,29 @@
 import { createContext, Fragment, useContext, type ReactElement } from 'react'
 import { Box, type DOMElement } from 'ink'
-import type { ChatPanel, ChatSnapshot } from '../chat/types.js'
+import type { ChatPanel, ChatPanelRow, ChatSnapshot } from '../chat/types.js'
 import type { MetadataTarget } from './interaction.js'
 import { contextColor, metadataPlacements } from './presentation.js'
 import { Text, useTheme } from './theme.js'
 
 export const PanelHelpContext = createContext<ChatPanel | undefined>(undefined)
 
+export function panelModelId(panel: ChatPanel | undefined, row?: ChatPanelRow): string | undefined {
+  if (panel?.kind !== 'models') return undefined
+  return row?.value || panel.body?.split('\n', 2)[1] || undefined
+}
+
 export function PanelHelpFooter({
   width,
   centered = false,
+  modelId,
 }: {
   width: number
   centered?: boolean
+  modelId?: string
 }): ReactElement | null {
   const panel = useContext(PanelHelpContext)
   if (!panel) return null
+  const displayedModelId = width >= 80 ? (modelId ?? panelModelId(panel)) : undefined
   const permission = panel.kind === 'permission'
   const detail = panel.kind === 'detail'
   const actionable = panel.rows.some((row) => row.value !== undefined)
@@ -26,7 +34,9 @@ export function PanelHelpFooter({
       : panel.kind === 'rename'
         ? 'Enter save · Ctrl+U clear · Esc cancel'
         : panel.kind === 'effort'
-          ? '←→ change · Enter done · Esc close'
+          ? width < 53
+            ? '←→ · Enter done · Esc close'
+            : '←→ change · Enter done · Esc close'
           : !actionable
             ? 'Esc close'
             : panel.kind === 'settings'
@@ -34,7 +44,9 @@ export function PanelHelpFooter({
                 ? '↑↓ move · ←→ change · Esc back'
                 : '↑↓ · ←→ change · Tab category · Esc back'
               : panel.kind === 'models'
-                ? 'Tab · Enter choose · Esc back'
+                ? width < 53
+                  ? 'Ctrl+Y · Tab · / · ↑↓ · Enter · Esc'
+                  : 'Ctrl+Y copy ID · Tab section · / search in models · ↑↓ · Enter choose · Esc back'
                 : panel.kind === 'tools' || panel.kind === 'permissions'
                   ? '↑↓ · Enter toggle · Esc save'
                   : panel.kind === 'skills'
@@ -43,10 +55,25 @@ export function PanelHelpFooter({
                       ? 'Tab category · Enter · Esc back'
                       : '↑↓ · Enter open · Esc back'
   return (
-    <Box width={Math.max(1, width)} height={1} flexShrink={0} justifyContent={centered ? 'center' : 'flex-start'}>
-      <Text dimColor wrap="truncate-end">
-        {keys}
-      </Text>
+    <Box
+      width={Math.max(1, width)}
+      height={1}
+      flexShrink={0}
+      justifyContent={displayedModelId ? 'space-between' : centered ? 'center' : 'flex-start'}
+      overflow="hidden"
+    >
+      {displayedModelId ? (
+        <Box flexShrink={1} marginRight={1} overflow="hidden">
+          <Text dimColor wrap="truncate-end">
+            {displayedModelId}
+          </Text>
+        </Box>
+      ) : null}
+      <Box flexShrink={displayedModelId ? 0 : 1} overflow="hidden">
+        <Text dimColor wrap="truncate-end">
+          {keys}
+        </Text>
+      </Box>
     </Box>
   )
 }

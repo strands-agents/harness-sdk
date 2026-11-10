@@ -91,10 +91,9 @@ export const CAPABILITY_DESCRIPTION_MAX_LENGTH = 44
 const noop = (): void => {}
 
 export function appearanceSettings(settings: ChatSettings): AppearanceSettings {
-  const { frogTheme, colorMode, customTheme, transcriptSpacing, animations, showReasoning, toolOutput } = settings
+  const { frogTheme, customTheme, transcriptSpacing, animations, showReasoning, toolOutput } = settings
   return {
     frogTheme,
-    colorMode,
     customTheme: globalThis.structuredClone(customTheme),
     transcriptSpacing,
     animations,

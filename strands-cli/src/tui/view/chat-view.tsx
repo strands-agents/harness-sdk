@@ -11,9 +11,13 @@ import {
 import { composerMaxRows, promptEditorHeight } from '../terminal/composer.js'
 import type { ScreenSelectionSegment } from '../terminal/mouse-input.js'
 import { VOICE_METER_WIDTH, voiceMeterFill } from '../voice/session.js'
-import type { MetadataTarget, ModelPanelFocus } from './interaction.js'
-import { PromptEditor } from './prompt-editor.js'
-import { EffortPanel } from './effort-panel.js'
+import {
+  composerPanelHeight,
+  MAX_VISIBLE_BACKGROUND_TASKS,
+  type MetadataTarget,
+  type ModelPanelFocus,
+} from './interaction.js'
+import { PromptEditor, promptContentSize } from './prompt-editor.js'
 import { ResourcePanel } from './panels.js'
 import { CommandPalette } from './command-palette.js'
 import { FROG_ANIMATION_HEIGHT, FrogEasterEgg, type FrogVariant } from './frog-easter-egg.js'
@@ -24,8 +28,6 @@ import { useSpinner } from './use-spinner.js'
 import { Box, Text, ThemeProvider, useTheme } from './theme.js'
 import { ComposerFooter, PanelHelpContext } from './help-footer.js'
 import { FadeIn } from './fade-in.js'
-
-const MAX_VISIBLE_BACKGROUND_TASKS = 4
 
 export type QueuedPromptAction = 'edit' | 'up' | 'down' | 'steer'
 export type QueuedPromptTarget = `${string}:${QueuedPromptAction}`
@@ -67,8 +69,6 @@ function ChatViewContent({
   hoveredPanelRow,
   pressedPanelControl,
   hoveredPanelControl,
-  pressedPanelSlider = false,
-  hoveredPanelSlider,
   pressedSuggestion,
   hoveredSuggestion,
   pressedQueuedPrompt,
@@ -88,6 +88,7 @@ function ChatViewContent({
   frogBrandAnimationId,
   introStartedAt,
   panelRows,
+  composerHeight,
   frog,
   onFrogComplete,
   selection,
@@ -123,8 +124,6 @@ function ChatViewContent({
   hoveredPanelRow?: number
   pressedPanelControl?: string
   hoveredPanelControl?: string
-  pressedPanelSlider?: boolean
-  hoveredPanelSlider?: boolean
   pressedSuggestion?: number
   hoveredSuggestion?: number
   pressedQueuedPrompt?: QueuedPromptTarget
@@ -144,6 +143,7 @@ function ChatViewContent({
   frogBrandAnimationId?: number
   introStartedAt?: number
   panelRows?: ChatPanel['rows']
+  composerHeight?: number
   frog?: { id: number; variant: FrogVariant }
   onFrogComplete?: (id: number) => void
   selection?: readonly ScreenSelectionSegment[]
@@ -151,14 +151,17 @@ function ChatViewContent({
   clipboardNotice?: { status: 'success'; characterCount: number } | { status: 'error' }
   party?: boolean
 }): ReactElement {
-  const { surface, background, canvas } = useTheme()
+  const { background } = useTheme()
   const resolvedCommandAssistance =
     commandAssistance ??
     (suggestions === undefined ? commandAssistanceForInput(input, actionableCommandToken) : undefined)
   const resolvedSuggestions = suggestions ?? resolvedCommandAssistance?.completions ?? []
   const hasActivity =
     snapshot.completedTurns.length > 0 || snapshot.activeTurn !== undefined || snapshot.notices.length > 0
-  const effortSlider = snapshot.panel?.kind === 'effort' ? snapshot.panel.slider : undefined
+  const composerPanel =
+    snapshot.panel?.kind === 'models' || snapshot.panel?.kind === 'effort' ? snapshot.panel : undefined
+  const composerPanelOutlined =
+    composerPanel?.kind === 'effort' || (composerPanel?.kind === 'models' && composerPanel.loading === true)
   const showCommandPicker = resolvedCommandAssistance !== undefined && !snapshot.panel && !snapshot.activeTurn
   const showQueueStatus = snapshot.queuedPrompts.length > 0 || snapshot.status === 'interrupting'
   const showVoiceStatus = snapshot.voice !== undefined && snapshot.voice.status !== 'off'
@@ -179,23 +182,22 @@ function ChatViewContent({
     ? Math.min(suggestionCapacity, resolvedSuggestions.length) +
       Number(resolvedCommandAssistance.signature !== undefined) +
       Number(resolvedCommandAssistance.message !== undefined) +
-      1
+      2
     : 0
   const editorMaxRows = composerMaxRows(terminalHeight, composerStatusRows + suggestionRows)
   const editorMaxHeight = Math.max(party ? 3 : 1, terminalHeight - composerStatusRows - suggestionRows - 2)
-  const commandDeckHeight =
-    composerStatusRows +
-    suggestionRows +
-    promptEditorHeight(
-      input,
-      cursor,
-      editorWidth,
-      editorMaxRows,
-      Boolean(!effortSlider && (snapshot.composerStatus || snapshot.panel)),
-      party,
-      editorMaxHeight
-    ) +
-    2
+  const editorHeight = composerPanel
+    ? (composerHeight ?? composerPanelHeight(snapshot, terminalHeight, party))
+    : promptEditorHeight(
+        input,
+        cursor,
+        editorWidth,
+        editorMaxRows,
+        Boolean(snapshot.composerStatus || snapshot.panel),
+        party,
+        editorMaxHeight
+      )
+  const commandDeckHeight = composerStatusRows + suggestionRows + editorHeight + 2
   // A stable header element keeps the memoized transcript from re-rendering on spinner ticks.
   const { settings } = snapshot
   const frogBrandElapsedMs = useBrandAnimation(frogBrandAnimationId, settings.animations)
@@ -229,6 +231,41 @@ function ChatViewContent({
       party,
     ]
   )
+  const panelView = snapshot.panel ? (
+    <PanelHelpContext value={snapshot.panel}>
+      <ResourcePanel
+        panel={snapshot.panel}
+        context={snapshot.context}
+        settings={snapshot.settings}
+        selected={panelSelection}
+        viewportStart={panelViewportStart}
+        terminalWidth={terminalWidth}
+        terminalHeight={terminalHeight}
+        {...(composerPanel
+          ? {
+              composer: promptContentSize(editorWidth, editorHeight, composerPanelOutlined),
+            }
+          : {})}
+        query={panelQuery}
+        filter={panelFilter}
+        modelPanelFocus={modelPanelFocus}
+        detailScroll={detailScroll}
+        rows={panelRows ?? snapshot.panel.rows}
+        {...(pressedPanelFilter ? { pressedFilter: pressedPanelFilter } : {})}
+        {...(hoveredPanelFilter !== undefined ? { hoveredFilter: hoveredPanelFilter } : {})}
+        {...(pressedPanelRow !== undefined ? { pressedRow: pressedPanelRow } : {})}
+        {...(hoveredPanelRow !== undefined ? { hoveredRow: hoveredPanelRow } : {})}
+        {...(pressedPanelControl ? { pressedControl: pressedPanelControl } : {})}
+        {...(hoveredPanelControl ? { hoveredControl: hoveredPanelControl } : {})}
+        {...(onPanelElement ? { onPanelElement } : {})}
+        {...(onPanelRowElement ? { onRowElement: onPanelRowElement } : {})}
+        {...(onPanelControlElement ? { onControlElement: onPanelControlElement } : {})}
+        {...(onPanelFilterElement ? { onFilterElement: onPanelFilterElement } : {})}
+        {...(onPanelSearchElement ? { onSearchElement: onPanelSearchElement } : {})}
+        {...(onPanelSliderElement ? { onSliderElement: onPanelSliderElement } : {})}
+      />
+    </PanelHelpContext>
+  ) : null
   return (
     <Box
       flexDirection="column"
@@ -237,7 +274,6 @@ function ChatViewContent({
       paddingX={1}
       overflow="hidden"
       position="relative"
-      backgroundColor={canvas}
     >
       <Box flexDirection="column" flexGrow={1} overflowY="hidden">
         {hasActivity ? (
@@ -258,7 +294,7 @@ function ChatViewContent({
         )}
       </Box>
       <FadeIn animate={settings.animations} background={background}>
-        <Box width="100%" flexShrink={0} flexDirection="column" backgroundColor={surface}>
+        <Box width="100%" flexShrink={0} flexDirection="column">
           {showQueueStatus ? (
             <QueuedPromptSummary
               prompts={snapshot.queuedPrompts}
@@ -294,23 +330,17 @@ function ChatViewContent({
             cursor={cursor}
             animateCursor={settings.animations}
             width={editorWidth}
+            height={editorHeight}
             maxRows={editorMaxRows}
             maxHeight={editorMaxHeight}
             {...(actionableCommandToken ? { actionableCommandToken } : {})}
             {...(snapshot.composerStatus ? { busyStatus: `${composerSpinner} ${snapshot.composerStatus}` } : {})}
-            {...(snapshot.panel ? { panelStatus: panelEditorStatus(snapshot.panel) } : {})}
+            {...(snapshot.panel && !composerPanel ? { panelStatus: panelEditorStatus(snapshot.panel) } : {})}
             party={party}
             partyFrame={partyFrame}
+            transparent={composerPanel?.kind === 'models' && !composerPanelOutlined}
           >
-            {effortSlider && snapshot.panel ? (
-              <EffortPanel
-                panel={snapshot.panel}
-                slider={effortSlider}
-                width={Math.max(1, editorWidth - 2 - (party ? 2 : 0))}
-                {...(onPanelElement ? { onElement: onPanelElement } : {})}
-                {...(onPanelSliderElement ? { onSliderElement: onPanelSliderElement } : {})}
-              />
-            ) : null}
+            {composerPanel ? panelView : null}
           </PromptEditor>
         </Box>
         <ComposerFooter
@@ -323,38 +353,9 @@ function ChatViewContent({
           {...(onActionElement ? { onActionElement } : {})}
         />
       </FadeIn>
-      {snapshot.panel && !effortSlider ? (
+      {snapshot.panel && !composerPanel ? (
         <FadeIn key={snapshot.panel.kind} animate={settings.animations} background={background}>
-          <PanelHelpContext value={snapshot.panel}>
-            <ResourcePanel
-              panel={snapshot.panel}
-              context={snapshot.context}
-              settings={snapshot.settings}
-              selected={panelSelection}
-              viewportStart={panelViewportStart}
-              terminalWidth={terminalWidth}
-              terminalHeight={terminalHeight}
-              query={panelQuery}
-              filter={panelFilter}
-              modelPanelFocus={modelPanelFocus}
-              detailScroll={detailScroll}
-              rows={panelRows ?? snapshot.panel.rows}
-              {...(pressedPanelFilter ? { pressedFilter: pressedPanelFilter } : {})}
-              {...(hoveredPanelFilter !== undefined ? { hoveredFilter: hoveredPanelFilter } : {})}
-              {...(pressedPanelRow !== undefined ? { pressedRow: pressedPanelRow } : {})}
-              {...(hoveredPanelRow !== undefined ? { hoveredRow: hoveredPanelRow } : {})}
-              {...(pressedPanelControl ? { pressedControl: pressedPanelControl } : {})}
-              {...(hoveredPanelControl ? { hoveredControl: hoveredPanelControl } : {})}
-              pressedSlider={pressedPanelSlider}
-              {...(hoveredPanelSlider !== undefined ? { hoveredSlider: hoveredPanelSlider } : {})}
-              {...(onPanelElement ? { onPanelElement } : {})}
-              {...(onPanelRowElement ? { onRowElement: onPanelRowElement } : {})}
-              {...(onPanelControlElement ? { onControlElement: onPanelControlElement } : {})}
-              {...(onPanelFilterElement ? { onFilterElement: onPanelFilterElement } : {})}
-              {...(onPanelSearchElement ? { onSearchElement: onPanelSearchElement } : {})}
-              {...(onPanelSliderElement ? { onSliderElement: onPanelSliderElement } : {})}
-            />
-          </PanelHelpContext>
+          {panelView}
         </FadeIn>
       ) : null}
       {frog && onFrogComplete ? (
