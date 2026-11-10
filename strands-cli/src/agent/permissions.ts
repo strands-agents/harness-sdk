@@ -261,8 +261,16 @@ export class CedarPermissions extends InterventionHandler {
     }
 
     const diff = toolName === 'strands_config' ? this._configurationPreview?.() : await buildFileChangePreview(event)
-    const decision = await requestToolPermission(this._broker, toolName, input, this._workspace, diff, event.agent)
-    return applyPermissionDecision(this._config, toolName, decision)
+    const signal = event.agent.cancelSignal
+    const cancel = (): void => this._broker.cancelAll(event.agent)
+    signal.addEventListener('abort', cancel, { once: true })
+    try {
+      const pending = requestToolPermission(this._broker, toolName, input, this._workspace, diff, event.agent)
+      if (signal.aborted) cancel()
+      return applyPermissionDecision(this._config, toolName, await pending)
+    } finally {
+      signal.removeEventListener('abort', cancel)
+    }
   }
 
   permissionStatus(): CliConfigSnapshot {

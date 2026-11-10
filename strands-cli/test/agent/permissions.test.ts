@@ -1,6 +1,6 @@
 import { symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { BeforeToolCallEvent, JSONValue } from '@strands-agents/sdk'
+import { Agent, type BeforeToolCallEvent, type JSONValue } from '@strands-agents/sdk'
 import { describe, expect, it, vi } from 'vitest'
 
 import { temporaryDirectory } from '../fixtures/tempdir.js'
@@ -10,25 +10,54 @@ import { CliConfigStore } from '../../src/config/store.js'
 import { createDiffPreview } from '../../src/agent/file-changes.js'
 import { formatPermissionPanelBody } from '../../src/ui/chat/panel-state.js'
 import { sanitizeTerminalText } from '../../src/terminal/text.js'
+import { StrandsChatBackend } from '../../src/agent/backend.js'
+import { AgentModelRuntime } from '../../src/model/runtime.js'
 
 describe('CedarPermissions', () => {
-  it('cancels one agent without denying another agent’s pending permission', async () => {
+  // https://github.com/strands-agents/harness-sdk/pull/5194#discussion_r4526853968
+  it.each([false, true])('cancels only the backend’s own permissions (shared: %s)', async (shared) => {
     const broker = new ToolPermissionBroker()
-    const child = {}
-    const parent = {}
+    const agent = new Agent({ printer: false })
+    const other = {}
+    const backend = new StrandsChatBackend(new AgentModelRuntime(agent), {
+      permissions: { broker, policy: new CedarPermissions({ broker, cwd: process.cwd() }), shared },
+    })
     let active: string | undefined
     broker.subscribe((request) => {
       active = request?.id
     })
-    const first = broker.request('shell', {}, { agent: child })
-    const second = broker.request('write', {}, { agent: parent })
-    const third = broker.request('shell', {}, { agent: child })
-    broker.cancelAll(child)
+    const first = broker.request('shell', {}, { agent })
+    const second = broker.request('write', {}, { agent: other })
+    const third = broker.request('shell', {}, { agent })
+    backend.cancel()
     await expect(first).resolves.toEqual({ type: 'deny' })
     await expect(third).resolves.toEqual({ type: 'deny' })
+    expect(active).toBeDefined()
     expect(broker.respond(active!, 'allow-once')).toBe(true)
     await expect(second).resolves.toEqual({ type: 'allow-once' })
     broker.dispose()
+    await backend.dispose()
+  })
+
+  it.each([false, true])('releases a cancelled SDK agent’s approval (already aborted: %s)', async (aborted) => {
+    const broker = new ToolPermissionBroker()
+    const permissions = new CedarPermissions({ broker, cwd: process.cwd() })
+    const event = toolEvent('shell', { command: 'pwd' })
+    const cancellation = new AbortController()
+    Object.defineProperty(event.agent, 'cancelSignal', { value: cancellation.signal })
+    if (aborted) cancellation.abort()
+    const prompted = vi.fn()
+    broker.subscribe(prompted)
+    const decision = permissions.beforeToolCall(event)
+    try {
+      await vi.waitFor(() => expect(prompted).toHaveBeenCalled())
+      cancellation.abort()
+      await vi.waitFor(() => expect(prompted).toHaveBeenLastCalledWith(undefined))
+      await expect(decision).resolves.toMatchObject({ type: 'deny' })
+    } finally {
+      broker.dispose()
+      await decision
+    }
   })
 
   it('saves the new mode before releasing a pending tool approval', async () => {
@@ -397,6 +426,7 @@ function toolEvent(name: string, input: JSONValue, readText?: (path: string) => 
     toolUse: { name, input, toolUseId: `${name}-1` },
     invocationState: {},
     agent: {
+      cancelSignal: new AbortController().signal,
       appState: {
         get: (key: string): unknown => state.get(key),
         set: (key: string, value: unknown): void => {

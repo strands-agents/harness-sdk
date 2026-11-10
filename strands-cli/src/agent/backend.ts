@@ -479,7 +479,7 @@ export class StrandsChatBackend implements ChatBackend {
 
   cancel(): void {
     this._shell.cancel()
-    this._permissions?.cancelAll(this._sharedPermissions ? this._runtime.agent : undefined)
+    this._permissions?.cancelAll(this._runtime.agent)
     this._runtime.cancel()
   }
 
