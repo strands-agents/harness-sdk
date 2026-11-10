@@ -3,10 +3,18 @@ import type { DOMElement } from 'ink'
 
 import type { ChatPanelRow } from '../chat/controller.js'
 import type { ChatSettings, FrogTheme } from '../chat/types.js'
-import { DEFAULT_CHAT_SETTINGS } from '../settings.js'
+import { DEFAULT_CHAT_SETTINGS, FROG_THEME_NOTES } from '../settings.js'
 import { panelControlTarget, settingsLayout, settingsThemeLayout } from './interaction.js'
 import { PanelItemHeader, PanelOverlay, PanelTitle, type PanelRowsProps } from './panel-components.js'
 import { Box, getTheme, Text, useTheme, type Theme } from './theme.js'
+
+const LETTER_COLORS: Partial<Record<FrogTheme, Record<Theme['mode'], readonly string[]>>> = {
+  custom: {
+    dark: ['#ff6b82', '#ffb454', '#ffe066', '#68f58a', '#5ad3f4', '#79aaff', '#c49bff'],
+    light: ['#b42332', '#934600', '#766000', '#166534', '#006581', '#234e96', '#7036a8'],
+  },
+  knicks: { dark: ['#4aa3f0', '#f58426'], light: ['#0061a8', '#934f17'] },
+}
 
 export function SettingsPanel({
   panel,
@@ -96,6 +104,7 @@ export function SettingsPanel({
             const selectedRow = index === selected
             const rowPressed = index === pressedRow
             const themeRow = settings && row.value === 'frogTheme'
+            const themeNote = themeRow && appearance ? FROG_THEME_NOTES[appearance.frogTheme] : undefined
             const {
               columns: themeColumns,
               optionWidth: themeOptionWidth,
@@ -170,6 +179,13 @@ export function SettingsPanel({
                       >
                         {row.label}
                       </Text>
+                      {themeNote ? (
+                        <Box marginLeft={2} flexGrow={1} flexBasis={0}>
+                          <Text dimColor wrap="truncate-end">
+                            {themeNote}
+                          </Text>
+                        </Box>
+                      ) : null}
                     </Box>
                   ) : (
                     <PanelItemHeader
@@ -335,7 +351,7 @@ export function SettingsControl({
         const label = spacious
           ? option.label.padStart((optionWidth - 3 + option.label.length) / 2).padEnd(optionWidth - 3)
           : option.label
-        const customTheme = setting === 'frogTheme' && option.value === 'custom'
+        const letterColors = setting === 'frogTheme' ? LETTER_COLORS[option.value as FrogTheme]?.[mode] : undefined
         return (
           <Box
             key={option.value}
@@ -344,7 +360,7 @@ export function SettingsControl({
             {...(spacious ? { width: optionWidth, paddingRight: 1, backgroundColor: panel } : {})}
           >
             <Text
-              inverse={!spacious && option.active === true && !customTheme}
+              inverse={!spacious && option.active === true && !letterColors}
               {...(spacious ? { backgroundColor: hovered ? hoverBackground(background, mode) : background } : {})}
               {...(spacious && option.active
                 ? { color: panel }
@@ -357,8 +373,8 @@ export function SettingsControl({
               bold={spacious && option.active === true}
             >
               {' '}
-              {customTheme && option.active ? '◆ ' : null}
-              {customTheme ? <RainbowLabel label={option.label} /> : label}{' '}
+              {letterColors && option.active ? '◆ ' : null}
+              {letterColors ? <LetterColorLabel label={option.label} colors={letterColors} /> : label}{' '}
             </Text>
           </Box>
         )
@@ -412,8 +428,8 @@ function ThemeChoices({
           },
           current.mode
         )
-        const customTheme = option.value === 'custom'
-        const background = option.active && !customTheme ? preview.accent : current.selection
+        const letterColors = LETTER_COLORS[option.value as FrogTheme]?.[current.mode]
+        const background = option.active && !letterColors ? preview.accent : current.selection
         return (
           <Box key={option.value} width={optionWidth} height={optionHeight} paddingRight={1}>
             <Box
@@ -426,8 +442,8 @@ function ThemeChoices({
               backgroundColor={hovered || pressed ? hoverBackground(background, preview.mode) : background}
             >
               <Text color={option.active ? preview.panel : preview.accent} bold>
-                {customTheme && option.active ? <Text color={current.accent}>◆ </Text> : null}
-                {customTheme ? <RainbowLabel label={option.label} /> : option.label}
+                {letterColors && option.active ? <Text color={current.accent}>◆ </Text> : null}
+                {letterColors ? <LetterColorLabel label={option.label} colors={letterColors} /> : option.label}
               </Text>
             </Box>
           </Box>
@@ -437,12 +453,7 @@ function ThemeChoices({
   )
 }
 
-function RainbowLabel({ label }: { label: string }): ReactElement {
-  const { mode } = useTheme()
-  const colors =
-    mode === 'dark'
-      ? ['#ff6b82', '#ffb454', '#ffe066', '#68f58a', '#5ad3f4', '#79aaff', '#c49bff']
-      : ['#b42332', '#934600', '#766000', '#166534', '#006581', '#234e96', '#7036a8']
+function LetterColorLabel({ label, colors }: { label: string; colors: readonly string[] }): ReactElement {
   return (
     <Text>
       {[...label].map((character, index) => (

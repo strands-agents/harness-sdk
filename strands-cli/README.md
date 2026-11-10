@@ -213,7 +213,8 @@ models on `bedrock-mantle`, Anthropic). On a model without native search the Too
 `/settings` offers **Auto**, **Light**, and **Dark** color modes. Auto uses the terminal's
 `COLORFGBG` background hint when available and otherwise defaults to dark.
 Choose **Theme** to preview Classic, Minimal, Homeland, Merlin, Kikker, Cyborg, Spectre,
-or Custom. Arrow keys and clicks preview; Enter applies; Esc cancels.
+Solar, Knicks, or Custom. Arrow keys and clicks preview; Enter applies; Esc cancels.
+The Knicks theme is in the list because the Strands team is in New York.
 Custom supports separate light and dark colors, a base theme, and per-variant reset.
 Saved Magma selections migrate to Classic.
 The welcome banner shrinks with the terminal, keeping the composer visible.

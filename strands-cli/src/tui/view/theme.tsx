@@ -54,6 +54,7 @@ const ACCENTS = {
   circuit: { light: '#234e96', dark: '#79aaff' },
   spectre: { light: '#a71935', dark: '#ff6b82' },
   solar: { light: '#805400', dark: '#ffd166' },
+  knicks: { light: '#0061a8', dark: '#4aa3f0' },
 } satisfies Record<Exclude<FrogTheme, 'custom'>, Record<ResolvedColorMode, string>>
 
 const FROG_COLORS = {
@@ -65,6 +66,7 @@ const FROG_COLORS = {
   circuit: { light: '#7a7f86', dark: '#aeb6bf' },
   spectre: { light: '#111317', dark: '#181b21' },
   solar: { light: '#b77900', dark: '#ffd166' },
+  knicks: { light: '#004b7f', dark: '#006bb6' },
 } satisfies Record<Exclude<FrogTheme, 'custom'>, Record<ResolvedColorMode, string>>
 
 export function getTheme(settings: ThemeSettings, detectedMode?: ResolvedColorMode): Theme {
