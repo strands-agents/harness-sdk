@@ -1255,6 +1255,21 @@ describe('summarize', () => {
     warnSpy.mockRestore()
   })
 
+  it('returns an empty summary when the stream throws after a cancel', async () => {
+    const controller = new AbortController()
+    const model = new TestModelProvider(async function* () {
+      yield { type: 'modelMessageStartEvent', role: 'assistant' }
+      controller.abort()
+      throw new DOMException('aborted', 'AbortError')
+    })
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+
+    const result = await model.summarize(hi(), { cancelSignal: controller.signal })
+
+    expect(result.content).toEqual([])
+    warnSpy.mockRestore()
+  })
+
   it.each<StopReason>(['maxTokens', 'stopSequence'])(
     'keeps a reply that stopped at a limit: %s',
     async (stopReason) => {

@@ -49,7 +49,6 @@ export {
   StructuredOutputError,
   ToolNotFoundError,
   DefaultNotConfiguredError,
-  NotImplementedError,
   StorageError,
 } from './errors.js'
 
