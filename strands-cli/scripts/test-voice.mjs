@@ -26,5 +26,5 @@ const result = spawnSync(
   ],
   { stdio: 'inherit' }
 )
-if (result.error) throw result.error
+if (result.error) process.stderr.write(`${result.error.message}\n`)
 process.exitCode = result.status ?? 1
