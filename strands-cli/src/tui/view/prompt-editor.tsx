@@ -1,4 +1,5 @@
-import type { ReactElement, ReactNode } from 'react'
+import { useLayoutEffect, useRef, useState, type ReactElement, type ReactNode } from 'react'
+import { measureElement, useCursor, type DOMElement } from 'ink'
 import stringWidth from 'string-width'
 
 import {
@@ -61,9 +62,18 @@ export function PromptEditor({
   children?: ReactNode
 }): ReactElement {
   const theme = useTheme()
+  const cursorRow = useRef<DOMElement>(null)
+  const [cursorAnchor, setCursorAnchor] = useState<{ x: number; y: number }>()
+  const { setCursorPosition } = useCursor()
+  useLayoutEffect(() => {
+    if (!cursorRow.current) return
+    const { x, y } = measureElement(cursorRow.current)
+    setCursorAnchor((previous) => (previous?.x === x && previous.y === y ? previous : { x, y }))
+  })
   const status = busyStatus ?? panelStatus
   const height = promptEditorHeight(input, cursor, width, maxRows, Boolean(status && !children), party, maxHeight)
   if (children || status) {
+    setCursorPosition(undefined)
     return (
       <PromptSurface width={width} height={height} party={party} partyFrame={partyFrame}>
         {children ?? <Text {...(busyStatus ? { color: theme.accent } : { dimColor: true })}>{status}</Text>}
@@ -77,14 +87,22 @@ export function PromptEditor({
   const rows = promptViewport(
     input,
     cursor,
-    width - prefixWidth - PROMPT_PADDING_WIDTH,
+    width - prefixWidth - PROMPT_PADDING_WIDTH - (party ? 2 : 0),
     Math.max(1, Math.min(Math.max(MIN_PROMPT_ROWS, maxRows), height - (party ? 2 : 0)))
+  )
+  setCursorPosition(
+    cursorAnchor
+      ? {
+          x: cursorAnchor.x + prefixWidth + stringWidth(rows.find((row) => row.current !== undefined)?.before ?? ''),
+          y: cursorAnchor.y,
+        }
+      : undefined
   )
   return (
     <PromptSurface width={width} height={height} party={party} partyFrame={partyFrame}>
       {input ? (
         rows.map((row, index) => (
-          <Box key={index} height={1} flexShrink={0}>
+          <Box key={index} ref={row.current === undefined ? undefined : cursorRow} height={1} flexShrink={0}>
             <Text color={shellMode ? 'red' : theme.accent} bold>
               {index === 0 ? promptPrefix : continuationPrefix}
             </Text>
@@ -96,7 +114,7 @@ export function PromptEditor({
           </Box>
         ))
       ) : (
-        <Box height={1} flexShrink={0}>
+        <Box ref={cursorRow} height={1} flexShrink={0}>
           <Text wrap="truncate-end">
             <BlinkingCursor animate={animateCursor} />
             <Text dimColor>{promptPlaceholder(width - prefixWidth - PROMPT_PADDING_WIDTH - 1 - (party ? 2 : 0))}</Text>
