@@ -1068,6 +1068,20 @@ describe('subagent delegate (built child)', () => {
     expect((child.model.getConfig().params as { tools: unknown }).tools).toEqual([{ type: 'web_search' }])
   })
 
+  it("doesn't give a narrowed delegate AgentCore search when the parent has the caller's web_search", async () => {
+    const mine = tool({
+      name: 'web_search',
+      description: 'Search.',
+      inputSchema: z.object({ query: z.string() }),
+      callback: ({ query }) => query,
+    })
+    const parent = await createHarness({ tools: [mine] })
+    const spec = new AgentSpec('x')
+    spec.tools = ['read']
+    expect(toolNames(await buildChildFrom(parent, spec))).not.toContain('web_search')
+    expect((await buildChildFrom(parent, new AgentSpec('x'))).tools.find((t) => t.name === 'web_search')).toBe(mine)
+  })
+
   it('gives a narrowed delegate of a default bedrock parent AgentCore web search', async () => {
     const spec = new AgentSpec('x')
     spec.tools = ['read']

@@ -556,6 +556,12 @@ def test_web_search_default_on_bedrock_yields_to_a_passed_web_search_tool(caplog
     assert any("A web_search tool was passed" in r.getMessage() for r in caplog.records)
     with pytest.raises(ValueError, match="'web_search'"):
         create_harness(builtin_tools=["read", "web_search"], tools=[my_search])
+    from strands_harness.tools import AgentSpec
+
+    builder = agent.tool_registry.registry["subagent"]._builder
+    narrowed = builder(AgentSpec(task="x", tools=["read"]))
+    assert "web_search" not in narrowed.tool_names
+    assert builder(AgentSpec(task="x")).tool_registry.registry["web_search"] is my_search
 
 
 def test_web_search_default_on_bedrock_yields_to_an_mcp_web_search_tool():

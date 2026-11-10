@@ -722,7 +722,6 @@ def build_default_subagent(
     # Only named tools can join the selectable set; the SDK also accepts unnamed forms (lists, dicts).
     consumer_by_name = {t.tool_name: t for t in (parent_config.get("tools") or []) if hasattr(t, "tool_name")}
     mcp_clients_by_name = _mcp_clients_by_name(parent_config.get("tools") or [])
-    parent_builtin: dict[str, Any] = dict(parent_config["builtin_tools"])
 
     def builder(spec: AgentSpec) -> Agent:
         child_config = dict(parent_config)
@@ -738,7 +737,8 @@ def build_default_subagent(
             # its own model) and carries over as-is.
             child_config["builtin_tools"] = {
                 name: setting if name == "web_search" or name in spec.tools else False
-                for name, setting in parent_builtin.items()
+                # Read at build time: create_harness may turn web_search off after this builder exists.
+                for name, setting in parent_config["builtin_tools"].items()
             }
             child_config["tools"] = [consumer_by_name[t] for t in spec.tools if t in consumer_by_name]
         if spec.model is not None:
@@ -762,7 +762,11 @@ def build_default_subagent(
         return build_agent(**child_config)
 
     # web_search is resolved per model, not selectable; subagent stays in, bounded by the depth guard.
-    builtin_names = [name for name, setting in parent_builtin.items() if setting is not False and name != "web_search"]
+    builtin_names = [
+        name
+        for name, setting in parent_config["builtin_tools"].items()
+        if setting is not False and name != "web_search"
+    ]
     inherited_tools = [*builtin_names, *consumer_by_name]
     return make_subagent(
         builder=builder,

@@ -313,9 +313,10 @@ def create_harness(
             ``web_search`` turns on the model provider's native web search (OpenAI, Anthropic, Google,
             GPT-5, GPT-6, and Daybreak models on bedrock-mantle). On Bedrock it is a tool backed by
             Amazon Bedrock AgentCore web search in the model's region (a ``BedrockModel`` instance's
-            too; needs the ``bedrock-agentcore:InvokeWebSearch`` IAM permission), and a ``web_search``
-            tool you pass replaces it. Elsewhere (other Mantle models, other ``Model`` instances) it
-            is off, and naming it there raises. ``{"web_search": "exa"}``
+            too; signed by the default AWS credential chain, which needs the
+            ``bedrock-agentcore:InvokeWebSearch`` IAM permission), and a ``web_search`` tool you pass
+            replaces it (e.g. ``make_agentcore_web_search(boto_session=...)``). Elsewhere (other
+            Mantle models, other ``Model`` instances) it is off, and naming it there raises. ``{"web_search": "exa"}``
             instead gives the model a ``web_search`` tool backed by Exa's hosted search on any model,
             a third party that receives the queries (keyless; ``EXA_API_KEY`` lifts its rate limit).
             ``programmatic_tool_caller`` lets the model orchestrate its other tools by writing Python
@@ -555,6 +556,7 @@ def create_harness(
     if default_agentcore is not None:
         if any(name.replace("-", "_") == "web_search" for name in agent.tool_registry.registry):
             logger.info("A web_search tool was passed, so the built-in AgentCore web_search is not added.")
+            enabled_tools["web_search"] = False  # parent_config shares this dict, so delegates don't re-add it
         else:
             agent.tool_registry.register_tool(default_agentcore)
     return agent

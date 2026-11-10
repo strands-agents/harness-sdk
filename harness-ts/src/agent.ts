@@ -401,6 +401,16 @@ export async function createHarness(options: HarnessAgentOptions = {}): Promise<
       : []),
   ]
 
+  if (webSearch === 'agentcore' && !webSearchExplicit(builtinTools)) {
+    // A caller's own web_search replaces the default; naming web_search in builtinTools still collides.
+    // MCP tool names are only known once the agent connects, so those need `web_search: false`.
+    const theirs = ([...consumer, ...pluginTools(consumerPluginsOption ?? [])] as unknown[]).flat(Infinity)
+    if (theirs.some((t) => t instanceof Tool && t.name.replaceAll('-', '_') === 'web_search')) {
+      logger.info('A web_search tool was passed, so the built-in AgentCore web_search is not added.')
+      // Forwarded off below, so a delegate that leaves the caller's tool out doesn't get AgentCore back.
+      webSearch = undefined
+    }
+  }
   // The config a `subagent` child is rebuilt from (see buildDefaultSubagent). Sessions are forced
   // off so a throwaway delegate never persists its own session state.
   const memoryInstance = memory instanceof MemoryManager || agentConfig.memoryManager !== undefined
@@ -430,15 +440,6 @@ export async function createHarness(options: HarnessAgentOptions = {}): Promise<
   }
 
   const builtinToolsByName = await buildBuiltinTools(createHarness, parentConfig, resolvedBuiltins)
-  if (webSearch === 'agentcore' && !webSearchExplicit(builtinTools)) {
-    // A caller's own web_search replaces the default; naming web_search in builtinTools still collides.
-    // MCP tool names are only known once the agent connects, so those need `web_search: false`.
-    const theirs = ([...consumer, ...pluginTools(consumerPluginsOption ?? [])] as unknown[]).flat(Infinity)
-    if (theirs.some((t) => t instanceof Tool && t.name.replaceAll('-', '_') === 'web_search')) {
-      logger.info('A web_search tool was passed, so the built-in AgentCore web_search is not added.')
-      webSearch = undefined
-    }
-  }
   if (webSearch === 'agentcore') {
     const region = await bedrockRegion(resolvedModel)
     builtinToolsByName.web_search = makeAgentCoreWebSearch(region !== undefined ? { region } : {})
