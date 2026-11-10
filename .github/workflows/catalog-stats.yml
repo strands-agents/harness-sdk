@@ -1,0 +1,54 @@
+name: "Catalog: Refresh Stats"
+
+on:
+  schedule:
+    - cron: '23 6 * * 1'   # weekly, Monday morning UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  refresh:
+    # Upstream only: the bot fork mirrors main and lacks the bot token secret.
+    if: github.repository == 'strands-agents/harness-sdk'
+    runs-on: strands-agents_ubuntu-latest_4-core
+    concurrency:
+      group: catalog-stats
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+      - run: npm ci --prefix site
+
+      # Keep the bot fork current before cutting a PR branch from it
+      # (same rationale as changelog-sync.yml).
+      - name: Sync bot fork with upstream
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.CHANGELOG_BOT_TOKEN }}
+        run: gh api repos/strands-agent/harness-sdk/merge-upstream -f branch=main
+
+      - name: Refresh catalog stats
+        working-directory: site
+        env:
+          GITHUB_TOKEN: ${{ secrets.CHANGELOG_BOT_TOKEN }}
+        run: npm run catalog:stats
+
+      - name: Open stats PR
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          token: ${{ secrets.CHANGELOG_BOT_TOKEN }}
+          push-to-fork: strands-agent/harness-sdk
+          add-paths: site/src/data/catalog-stats.json
+          branch: catalog/stats-refresh
+          title: "chore(site): refresh catalog stats"
+          commit-message: "chore(site): refresh catalog stats"
+          body: |
+            Automated weekly refresh of community catalog popularity stats
+            (GitHub stars, PyPI/npm downloads). No entry data is modified.
+          delete-branch: true

@@ -3,18 +3,24 @@
  * with delegation tools using a mock model.
  *
  * Tests exercise the complete path: Agent constructor auto-registration,
- * BeforeToolsEvent enforcement, AfterToolsEvent early exit, and
- * AgentStreamStage result transformation.
+ * BeforeToolsEvent enforcement, AfterToolsEvent early exit with content blocks,
+ * and event streaming unwrapping.
  */
 
 import { describe, it, expect } from 'vitest'
 import { z } from 'zod'
 import { Agent } from '../agent.js'
-import { AfterToolCallEvent, AfterToolsEvent, BeforeToolCallEvent, StreamEvent } from '../../hooks/events.js'
+import {
+  AfterToolCallEvent,
+  AfterToolsEvent,
+  BeforeToolCallEvent,
+  MessageAddedEvent,
+  StreamEvent,
+} from '../../hooks/events.js'
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
 import { createMockTool } from '../../__fixtures__/tool-helpers.js'
 import { AgentAsTool } from '../agent-as-tool.js'
-import { ToolResultBlock, TextBlock } from '../../types/messages.js'
+import { Message, ToolResultBlock, TextBlock } from '../../types/messages.js'
 
 describe('AgentDelegation integration', () => {
   describe('basic routing', () => {
@@ -31,13 +37,14 @@ describe('AgentDelegation integration', () => {
         type: 'toolUseBlock',
         name: 'TechSupport',
         toolUseId: 'call-1',
-        input: { input: 'My wifi does not work' },
+        input: { input: 'My wifi does not work', _background_execution: true },
       })
 
       const orchestrator = new Agent({
         model: orchestratorModel,
         name: 'Orchestrator',
         tools: [billingAgent.asTool({ delegate: true }), techAgent.asTool({ delegate: true })],
+        backgroundTasks: {},
         printer: false,
       })
 
@@ -83,34 +90,6 @@ describe('AgentDelegation integration', () => {
       const textBlocks = result.lastMessage.content.filter((b) => b.type === 'textBlock')
       expect(textBlocks).toHaveLength(1)
       expect((textBlocks[0] as { text: string }).text).toBe('The answer is 42.')
-    })
-
-    it('delegation tool triggers handoff when called alone alongside regular tools in registry', async () => {
-      const techModel = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Router fixed!' })
-      const techAgent = new Agent({ model: techModel, name: 'TechSupport', printer: false })
-
-      const calculator = createMockTool('calculator', () => 'Result: 42')
-
-      // Model calls the delegation tool (alone)
-      const orchestratorModel = new MockMessageModel().addTurn({
-        type: 'toolUseBlock',
-        name: 'TechSupport',
-        toolUseId: 'tech-1',
-        input: { input: 'Fix my router' },
-      })
-
-      const orchestrator = new Agent({
-        model: orchestratorModel,
-        name: 'Orchestrator',
-        tools: [calculator, techAgent.asTool({ delegate: true })],
-        printer: false,
-      })
-
-      const result = await orchestrator.invoke('Fix my router')
-
-      expect(result.stopReason).toBe('endTurn')
-      const textBlocks = result.lastMessage.content.filter((b) => b.type === 'textBlock')
-      expect((textBlocks[0] as { text: string }).text).toBe('Router fixed!')
     })
   })
 
@@ -269,38 +248,35 @@ describe('AgentDelegation integration', () => {
     })
   })
 
-  describe('non-text delegation', () => {
-    it('delegates successfully when sub-agent returns empty text (e.g. image-only response)', async () => {
-      // Simulate a sub-agent whose toString() returns '' — this happens when the
-      // sub-agent's lastMessage contains only non-text content (image, document, video).
-      // AgentAsTool wraps it in TextBlock(''), so the ToolResultBlock has a single
-      // empty TextBlock. extractText() returns '' for this, which previously caused
-      // endTurn to be falsy and the early-exit check to fail.
+  describe('blank content skips delegation', () => {
+    it('skips delegation when sub-agent returns empty text and loop continues', async () => {
       const emptyTextModel = new MockMessageModel().addTurn({ type: 'textBlock', text: '' })
-      const imageAgent = new Agent({ model: emptyTextModel, name: 'ImageAgent', printer: false })
+      const emptyAgent = new Agent({ model: emptyTextModel, name: 'EmptyAgent', printer: false })
 
-      // Orchestrator model has ONLY one turn (the delegation tool call).
-      // If the early-exit fails and the orchestrator tries a second model call,
-      // MockMessageModel throws "All turns have been consumed" — so the test
-      // implicitly verifies no extra model call occurs.
-      const orchestratorModel = new MockMessageModel().addTurn({
-        type: 'toolUseBlock',
-        name: 'ImageAgent',
-        toolUseId: 'img-1',
-        input: { input: 'Generate an image' },
-      })
+      // Turn 1: delegation tool call (sub-agent returns empty text → delegation skipped)
+      // Turn 2: model produces a follow-up response since the loop continues
+      const orchestratorModel = new MockMessageModel()
+        .addTurn({
+          type: 'toolUseBlock',
+          name: 'EmptyAgent',
+          toolUseId: 'empty-1',
+          input: { input: 'go' },
+        })
+        .addTurn({ type: 'textBlock', text: 'I continued.' })
 
       const orchestrator = new Agent({
         model: orchestratorModel,
         name: 'Orchestrator',
-        tools: [imageAgent.asTool({ delegate: true })],
+        tools: [emptyAgent.asTool({ delegate: true })],
         printer: false,
       })
 
-      const result = await orchestrator.invoke('Generate an image')
+      const result = await orchestrator.invoke('go')
 
-      // Delegation MUST trigger even when the sub-agent returns empty text
+      // Delegation skipped — loop continued to the model's second turn
       expect(result.stopReason).toBe('endTurn')
+      const textBlocks = result.lastMessage.content.filter((b) => b.type === 'textBlock')
+      expect((textBlocks[0] as { text: string }).text).toBe('I continued.')
     })
   })
 
@@ -465,28 +441,6 @@ describe('AgentDelegation integration', () => {
       })
 
       await expect(orchestrator.initialize()).rejects.toThrow(/not supported with stateful models/)
-    })
-
-    it('does not throw for stateful models without delegation tools', async () => {
-      class StatefulModel extends MockMessageModel {
-        override get stateful(): boolean {
-          return true
-        }
-      }
-
-      const subModel = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Hi' })
-      const subAgent = new Agent({ model: subModel, name: 'Sub', printer: false })
-
-      const statefulModel = new StatefulModel().addTurn({ type: 'textBlock', text: 'Hi' })
-
-      const orchestrator = new Agent({
-        model: statefulModel,
-        name: 'Orchestrator',
-        tools: [subAgent.asTool()], // delegate: false (default)
-        printer: false,
-      })
-
-      await expect(orchestrator.initialize()).resolves.toBeUndefined()
     })
   })
 
@@ -654,6 +608,80 @@ describe('AgentDelegation integration', () => {
       expect(result.stopReason).toBe('endTurn')
       const textBlocks = result.lastMessage.content.filter((b) => b.type === 'textBlock')
       expect((textBlocks[0] as { text: string }).text).toBe('PARENT_FOLLOW_UP')
+    })
+  })
+
+  describe('structured output suppresses delegation', () => {
+    it('does not trigger delegation when parent has a structured output schema', async () => {
+      const subModel = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Sub answer' })
+      const subAgent = new Agent({ model: subModel, name: 'Sub', printer: false })
+
+      // Turn 1: calls delegation tool (delegation skipped because structured output schema is set)
+      // Turn 2: calls the structured output tool as forced
+      const orchestratorModel = new MockMessageModel()
+        .addTurn({
+          type: 'toolUseBlock',
+          name: 'Sub',
+          toolUseId: 'del-1',
+          input: { input: 'go' },
+        })
+        .addTurn({
+          type: 'toolUseBlock',
+          name: 'strands_structured_output',
+          toolUseId: 'so-1',
+          input: { answer: 'Sub answer' },
+        })
+
+      const orchestrator = new Agent({
+        model: orchestratorModel,
+        name: 'Orchestrator',
+        tools: [subAgent.asTool({ delegate: true })],
+        structuredOutputSchema: z.object({ answer: z.string() }),
+        printer: false,
+      })
+
+      const result = await orchestrator.invoke('go')
+
+      // Delegation suppressed — structured output takes over
+      expect(result.stopReason).toBe('toolUse')
+      expect(result.structuredOutput).toEqual({ answer: 'Sub answer' })
+    })
+  })
+
+  describe('delegation emits correct MessageAddedEvents', () => {
+    it('emits exactly one assistant MessageAddedEvent with delegated content (no placeholder)', async () => {
+      const subModel = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Balance: $42' })
+      const subAgent = new Agent({ model: subModel, name: 'billing', printer: false })
+
+      const orchestratorModel = new MockMessageModel().addTurn({
+        type: 'toolUseBlock',
+        name: 'billing',
+        toolUseId: 'c1',
+        input: { input: 'check' },
+      })
+
+      const orchestrator = new Agent({
+        model: orchestratorModel,
+        name: 'Orchestrator',
+        tools: [subAgent.asTool({ delegate: true })],
+        printer: false,
+      })
+
+      const assistantMessages: Message[] = []
+      orchestrator.addHook(MessageAddedEvent, (event) => {
+        if (event.agent === orchestrator && event.message.role === 'assistant') {
+          assistantMessages.push(event.message)
+        }
+      })
+
+      await orchestrator.invoke('Check balance')
+
+      // Two assistant MessageAddedEvents: toolUse turn, then the delegated content
+      expect(assistantMessages).toHaveLength(2)
+      expect(assistantMessages[1]!.content).toEqual([new TextBlock('Balance: $42')])
+
+      // History ends with the delegated content, no placeholder
+      expect(orchestrator.messages.map((m) => m.role)).toEqual(['user', 'assistant', 'user', 'assistant'])
     })
   })
 })

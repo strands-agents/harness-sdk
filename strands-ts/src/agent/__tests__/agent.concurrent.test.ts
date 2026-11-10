@@ -25,7 +25,7 @@ import type { ToolSpec } from '../../tools/types.js'
  *
  * `started` resolves as soon as the agent enters the tool's `stream()`, so
  * tests can await "both tools in flight" without polling. The tool also
- * honors `ctx.agent.cancelSignal`: aborting the signal resolves the gate and
+ * honors `ctx.cancelSignal`: aborting the signal resolves the gate and
  * marks `observations.cancelled = true`.
  */
 class GatedTool extends Tool {
@@ -60,7 +60,7 @@ class GatedTool extends Tool {
 
     await new Promise<void>((resolve) => {
       void this._releaser.then(resolve)
-      ctx.agent.cancelSignal.addEventListener(
+      ctx.cancelSignal.addEventListener(
         'abort',
         () => {
           this.observations.cancelled = true

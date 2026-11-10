@@ -16,7 +16,8 @@ The hooks system enables extensible agent functionality through strongly-typed e
 
 ## Paired Events
 
-- For every `Before` event there is a corresponding `After` event, even if an exception occurs
+- For every `Before` event there is a corresponding `After` event during tool execution, even if an exception occurs
+- If a `Before` event hook raises an exception or triggers an interrupt that short-circuits before execution begins, the corresponding `After` event does not fire
 - `After` events invoke callbacks in reverse registration order (for proper cleanup)
 
 ## Writable Properties

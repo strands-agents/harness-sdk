@@ -132,6 +132,21 @@ describe('S3Storage', () => {
       })
     })
 
+    describe('S3SnapshotStorage_When_InvalidScope_Then_RejectsKey', () => {
+      it('rejects a scope containing path traversal', async () => {
+        const location = {
+          sessionId: 'test-session',
+          scope: '../../../../outside',
+          scopeId: SCOPE_ID,
+        } as unknown as SnapshotLocation
+
+        await expect(
+          storage.saveSnapshot({ location, snapshotId: '1', isLatest: true, snapshot: createTestSnapshot() })
+        ).rejects.toThrow("Invalid scope '../../../../outside': must be 'agent' or 'multiAgent'")
+        expect(mockS3Client.send).not.toHaveBeenCalled()
+      })
+    })
+
     describe('S3SnapshotStorage_When_MultiAgentScope_Then_SavesCorrectly', () => {
       it('saves multi-agent snapshot to correct S3 key', async () => {
         const location: SnapshotLocation = { sessionId: 'multi-session', scope: 'multiAgent', scopeId: 'graph-1' }

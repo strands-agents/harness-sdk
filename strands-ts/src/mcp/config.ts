@@ -2,6 +2,18 @@ import type { McpClientConfig, McpClientCredentials, McpClientOptions, TasksConf
 import { createDefaultSlot } from '../default-slot.js'
 
 /**
+ * Tool filters in a serializable form, for an MCP server config entry. Because a config file cannot
+ * carry a `RegExp`, each pattern is a string compiled to a regex, matched from the start of the
+ * server-side tool name.
+ */
+export interface SerializableMcpToolFilters {
+  /** When present, only tools whose names match one of these patterns are exposed. */
+  allowed?: string[]
+  /** Tools whose names match one of these patterns are excluded, even when also allowed. */
+  rejected?: string[]
+}
+
+/**
  * Configuration for a single MCP server entry in a config file or object.
  *
  * Provide either `command` (stdio transport) or `url` (streamable-http/SSE), not both.
@@ -24,12 +36,27 @@ export interface McpServerConfig {
   transport?: 'stdio' | 'sse' | 'streamable-http'
   /** Client credentials for OAuth machine-to-machine auth (streamable-http only). */
   auth?: McpClientCredentials
+  /** Prefix for agent-facing tool names (supports `${VAR}` or `${env:VAR}` interpolation). */
+  prefix?: string
+  /** Filters applied to tool names (patterns support `${VAR}` or `${env:VAR}` interpolation). */
+  toolFilters?: SerializableMcpToolFilters
   /** When true, this server is skipped during loadServers. */
   disabled?: boolean
-  /** When true, config or connection failures skip this server instead of throwing. */
+  /** When true, skip config/connection failures and overlong prefixed names during tool listing with warnings. */
   continueOnError?: boolean
-  /** Task-augmented tool execution configuration (experimental). */
+  /** Configuration for automatic execution of legacy (2025-11-25) MCP task tools. Experimental: subject to change. */
   tasksConfig?: TasksConfig
+}
+
+/** Options controlling how `McpClient.loadServers` translates config entries into clients. */
+export interface McpLoadServersOptions {
+  /**
+   * When true, servers without an explicit `prefix` use their config key as the tool name prefix,
+   * so same-named tools from different servers no longer collide. Characters outside `[A-Za-z0-9_-]`
+   * in the key (e.g. the dot in `awslabs.foo`) are replaced with `_`. Takes precedence over a
+   * default `prefix`; a server can still opt out with `prefix: ''`.
+   */
+  prefixWithServerName?: boolean
 }
 
 /**
@@ -43,7 +70,8 @@ export interface McpServerConfig {
  */
 export type McpServerLoader = (
   config: string | Record<string, McpServerConfig>,
-  defaults?: McpClientOptions
+  defaults?: McpClientOptions,
+  options?: McpLoadServersOptions
 ) => Promise<McpClientConfig[]>
 
 /**

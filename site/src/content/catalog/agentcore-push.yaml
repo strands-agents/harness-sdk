@@ -1,0 +1,8 @@
+name: agentcore-push
+description: CLI tool for deploying a single-file Strands Agent to Amazon Bedrock AgentCore Runtime with minimal configuration.
+integrationType: tool
+languages:
+  python:
+    package: agentcore-push
+github: https://github.com/minorun365/agentcore-push
+addedDate: 2026-05-14

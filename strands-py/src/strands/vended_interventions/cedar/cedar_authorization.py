@@ -118,7 +118,13 @@ class CedarAuthorization(InterventionHandler):
             principal: Static principal identity.
             principal_resolver: Dynamic principal resolver from invocation_state.
             context_enricher: Callback to inject extra fields into context.session.
-            on_error: Error handling mode for user callback exceptions.
+            on_error: What to do when ``principal_resolver`` or ``context_enricher`` raises:
+                ``'throw'`` (default) re-raises, ``'deny'`` denies the tool call (fail-closed,
+                recommended alternative to the default).
+
+                **Warning:** ``'proceed'`` is fail-open. When a callback raises, the tool call runs
+                without any Cedar authorization check. Never use it when the agent relies on Cedar
+                to enforce access.
         """
         if principal and principal_resolver:
             raise ValueError("Provide either `principal` or `principal_resolver`, not both")

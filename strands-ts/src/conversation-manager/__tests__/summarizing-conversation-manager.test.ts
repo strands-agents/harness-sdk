@@ -1,10 +1,12 @@
 import { describe, it, expect, vi } from 'vitest'
+import { TestModelProvider } from '../../__fixtures__/model-test-helpers.js'
 import { SummarizingConversationManager } from '../summarizing-conversation-manager.js'
 import { ContextWindowOverflowError, Message, TextBlock, ToolUseBlock, ToolResultBlock } from '../../index.js'
 import { AfterModelCallEvent, BeforeModelCallEvent } from '../../hooks/events.js'
 import { createMockAgent, invokeTrackedHook } from '../../__fixtures__/agent-helpers.js'
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
-import type { Model, BaseModelConfig } from '../../models/model.js'
+import { InvocationContextImpl } from '../../agent/invocation-context.js'
+import type { Model } from '../../models/model.js'
 
 function textMsg(role: 'user' | 'assistant', text: string): Message {
   return new Message({ role, content: [new TextBlock(text)] })
@@ -33,7 +35,7 @@ describe('SummarizingConversationManager', () => {
       })
       const messages = makeMessages(20)
       const lastTwo = messages.slice(-2)
-      const mockAgent = createMockAgent({ messages })
+      const mockAgent = createMockAgent({ messages, extra: { auxModel: model as unknown as Model } })
 
       const result = await manager.reduce({
         agent: mockAgent,
@@ -58,7 +60,7 @@ describe('SummarizingConversationManager', () => {
       model.addTurn({ type: 'textBlock', text: 'Summary of conversation' })
 
       const manager = new SummarizingConversationManager({ summaryRatio: 0.5, preserveRecentMessages: 2 })
-      const mockAgent = createMockAgent({ messages: makeMessages(20) })
+      const mockAgent = createMockAgent({ messages: makeMessages(20), extra: { auxModel: model as unknown as Model } })
 
       await manager.reduce({
         agent: mockAgent,
@@ -70,11 +72,11 @@ describe('SummarizingConversationManager', () => {
       expect(mockAgent.messages[0]!.trackingId).toBeTruthy()
     })
 
-    it('uses the config model over the reduce model when provided', async () => {
+    it('uses the config model over agent.auxModel when provided', async () => {
       const configModel = new MockMessageModel()
       configModel.addTurn({ type: 'textBlock', text: 'Config model summary' })
-      const reduceModel = new MockMessageModel()
-      reduceModel.addTurn({ type: 'textBlock', text: 'Reduce model summary' })
+      const auxModel = new MockMessageModel()
+      auxModel.addTurn({ type: 'textBlock', text: 'Aux model summary' })
 
       const manager = new SummarizingConversationManager({
         model: configModel as unknown as Model,
@@ -82,11 +84,11 @@ describe('SummarizingConversationManager', () => {
         preserveRecentMessages: 2,
       })
       const messages = makeMessages(20)
-      const mockAgent = createMockAgent({ messages })
+      const mockAgent = createMockAgent({ messages, extra: { auxModel: auxModel as unknown as Model } })
 
       await manager.reduce({
         agent: mockAgent,
-        model: reduceModel as unknown as Model,
+        model: {} as Model,
         error: new ContextWindowOverflowError('overflow'),
       })
 
@@ -96,29 +98,28 @@ describe('SummarizingConversationManager', () => {
       })
     })
 
-    it('uses the config model when no reduce model is provided', async () => {
-      const configModel = new MockMessageModel()
-      configModel.addTurn({ type: 'textBlock', text: 'Config model summary' })
+    it('summarizes with agent.auxModel, not the triggering model, when no config model is set', async () => {
+      const auxModel = new MockMessageModel()
+      auxModel.addTurn({ type: 'textBlock', text: 'Aux model summary' })
+      const triggeringModel = new MockMessageModel()
+      triggeringModel.addTurn({ type: 'textBlock', text: 'Triggering model summary' })
 
-      const manager = new SummarizingConversationManager({
-        model: configModel as unknown as Model,
-        summaryRatio: 0.5,
-        preserveRecentMessages: 2,
-      })
+      const manager = new SummarizingConversationManager({ summaryRatio: 0.5, preserveRecentMessages: 2 })
       const messages = makeMessages(20)
-      const mockAgent = createMockAgent({ messages })
+      const mockAgent = createMockAgent({ messages, extra: { auxModel: auxModel as unknown as Model } })
 
       const result = await manager.reduce({
         agent: mockAgent,
-        model: {} as Model,
+        model: triggeringModel as unknown as Model,
         error: new ContextWindowOverflowError('overflow'),
       })
 
       expect(result).toBe(true)
       expect(mockAgent.messages[0]!.content[0]!).toEqual({
         type: 'textBlock',
-        text: 'Config model summary',
+        text: 'Aux model summary',
       })
+      expect(triggeringModel.callCount).toBe(0)
     })
 
     it('returns false when there are not enough messages to summarize', async () => {
@@ -127,7 +128,7 @@ describe('SummarizingConversationManager', () => {
         preserveRecentMessages: 10,
       })
       const messages = makeMessages(8)
-      const mockAgent = createMockAgent({ messages })
+      const mockAgent = createMockAgent({ messages, extra: { auxModel: model as unknown as Model } })
 
       const result = await manager.reduce({
         agent: mockAgent,
@@ -148,7 +149,7 @@ describe('SummarizingConversationManager', () => {
         preserveRecentMessages: 2,
       })
       const overflowError = new ContextWindowOverflowError('overflow')
-      const mockAgent = createMockAgent({ messages: makeMessages(20) })
+      const mockAgent = createMockAgent({ messages: makeMessages(20), extra: { auxModel: model as unknown as Model } })
 
       const thrown = await manager
         .reduce({ agent: mockAgent, model: model as unknown as Model, error: overflowError })
@@ -171,7 +172,7 @@ describe('SummarizingConversationManager', () => {
         preserveRecentMessages: 2,
       })
       const overflowError = new ContextWindowOverflowError('overflow')
-      const mockAgent = createMockAgent({ messages: makeMessages(20) })
+      const mockAgent = createMockAgent({ messages: makeMessages(20), extra: { auxModel: model as unknown as Model } })
 
       const thrown = await manager
         .reduce({ agent: mockAgent, model: model as unknown as Model, error: overflowError })
@@ -194,7 +195,7 @@ describe('SummarizingConversationManager', () => {
       })
       const messages = makeMessages(10)
       const expectedSlice = messages.slice(0, 5)
-      const mockAgent = createMockAgent({ messages })
+      const mockAgent = createMockAgent({ messages, extra: { auxModel: model as unknown as Model } })
 
       await manager.reduce({
         agent: mockAgent,
@@ -223,7 +224,7 @@ describe('SummarizingConversationManager', () => {
         preserveRecentMessages: 18,
       })
       const messages = makeMessages(20)
-      const mockAgent = createMockAgent({ messages })
+      const mockAgent = createMockAgent({ messages, extra: { auxModel: model as unknown as Model } })
 
       const result = await manager.reduce({
         agent: mockAgent,
@@ -235,6 +236,30 @@ describe('SummarizingConversationManager', () => {
       // 20 * 0.8 = 16, but min(16, 20-18) = 2, so only 2 summarized
       // 1 summary + 18 remaining = 19
       expect(mockAgent.messages).toHaveLength(19)
+    })
+  })
+
+  describe('request limits', () => {
+    it('adds the summarization usage to the request total even when the request limit is used up', async () => {
+      const model = new MockMessageModel().addTurn(
+        { type: 'textBlock', text: 'Summary of conversation' },
+        { usage: { inputTokens: 4, outputTokens: 5, totalTokens: 9 } }
+      )
+      const manager = new SummarizingConversationManager({ summaryRatio: 0.5, preserveRecentMessages: 2 })
+      const mockAgent = createMockAgent({ messages: makeMessages(20), extra: { auxModel: model as unknown as Model } })
+      const invocationContext = new InvocationContextImpl({ turns: 1 })
+      invocationContext.usage.turnsTaken = 5
+
+      const result = await manager.reduce({
+        agent: mockAgent,
+        model: model as unknown as Model,
+        error: new ContextWindowOverflowError('overflow'),
+        invocationContext,
+      })
+
+      expect(result).toBe(true)
+      expect(mockAgent.messages[0]!.content).toEqual([{ type: 'textBlock', text: 'Summary of conversation' }])
+      expect(invocationContext.usage).toEqual({ turnsTaken: 5, inputTokens: 4, outputTokens: 5, totalTokens: 9 })
     })
   })
 
@@ -263,7 +288,7 @@ describe('SummarizingConversationManager', () => {
         textMsg('assistant', 'Response after tool'),
         ...makeMessages(8),
       ]
-      const mockAgent = createMockAgent({ messages })
+      const mockAgent = createMockAgent({ messages, extra: { auxModel: model as unknown as Model } })
 
       const result = await manager.reduce({
         agent: mockAgent,
@@ -294,7 +319,7 @@ describe('SummarizingConversationManager', () => {
             ],
           })
       )
-      const mockAgent = createMockAgent({ messages })
+      const mockAgent = createMockAgent({ messages, extra: { auxModel: model as unknown as Model } })
 
       await expect(
         manager.reduce({
@@ -318,7 +343,7 @@ describe('SummarizingConversationManager', () => {
         preserveRecentMessages: 2,
       })
       const messages = makeMessages(20)
-      const agent = createMockAgent({ messages })
+      const agent = createMockAgent({ messages, extra: { model: model as unknown as Model } })
 
       const pluginAgent = createMockAgent()
       manager.initAgent(pluginAgent)
@@ -349,7 +374,8 @@ describe('SummarizingConversationManager', () => {
       })
       const messages = makeMessages(20)
       const mockAgent = createMockAgent({ messages })
-      const mockModel = { getConfig: () => ({ contextWindowLimit: 1000 }) as BaseModelConfig } as any
+      const mockModel = new TestModelProvider() as any
+      mockModel.updateConfig({ contextWindowLimit: 1000 })
 
       manager.initAgent(mockAgent)
 
@@ -380,7 +406,8 @@ describe('SummarizingConversationManager', () => {
       })
       const messages = makeMessages(20)
       const mockAgent = createMockAgent({ messages })
-      const mockModel = { getConfig: () => ({ contextWindowLimit: 1000 }) as BaseModelConfig } as any
+      const mockModel = new TestModelProvider() as any
+      mockModel.updateConfig({ contextWindowLimit: 1000 })
 
       manager.initAgent(mockAgent)
 
@@ -407,7 +434,8 @@ describe('SummarizingConversationManager', () => {
       })
       const messages = makeMessages(20)
       const mockAgent = createMockAgent({ messages })
-      const mockModel = { getConfig: () => ({ contextWindowLimit: 1000 }) as BaseModelConfig } as any
+      const mockModel = new TestModelProvider() as any
+      mockModel.updateConfig({ contextWindowLimit: 1000 })
 
       manager.initAgent(mockAgent)
 
@@ -444,6 +472,7 @@ describe('SummarizingConversationManager', () => {
           textMsg('user', 'recent-1'),
           textMsg('assistant', 'recent-2'),
         ],
+        extra: { auxModel: model as unknown as Model },
       })
 
       await manager.reduce({ agent, model: model as unknown as Model })
@@ -462,7 +491,7 @@ describe('SummarizingConversationManager', () => {
         pinFirst: 10,
       })
 
-      const agent = createMockAgent({ messages: makeMessages(6) })
+      const agent = createMockAgent({ messages: makeMessages(6), extra: { auxModel: model as unknown as Model } })
       const result = await manager.reduce({ agent, model: model as unknown as Model })
       expect(result).toBe(false)
     })
@@ -486,7 +515,7 @@ describe('SummarizingConversationManager', () => {
         textMsg('assistant', 'recent-2'),
       ]
       pinMessage(messages, 1)
-      const agent = createMockAgent({ messages })
+      const agent = createMockAgent({ messages, extra: { auxModel: model as unknown as Model } })
 
       await manager.reduce({ agent, model: model as unknown as Model })
 

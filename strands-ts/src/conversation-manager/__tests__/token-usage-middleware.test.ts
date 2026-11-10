@@ -5,16 +5,18 @@ import type { InvokeModelContext } from '../../middleware/stages.js'
 import type { Model } from '../../models/model.js'
 import { Agent } from '../../agent/agent.js'
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
+import { withDefaultLocale } from '../../__fixtures__/locale-helpers.js'
 
 function createMockModel(contextWindowLimit?: number): Model {
-  return {
-    getConfig: () => ({ contextWindowLimit }),
-  } as unknown as Model
+  const model = new MockMessageModel()
+  if (contextWindowLimit !== undefined) model.updateConfig({ contextWindowLimit })
+  return model
 }
 
 function createContext(overrides: Partial<InvokeModelContext> = {}): InvokeModelContext {
   return {
     agent: {} as InvokeModelContext['agent'],
+    model: createMockModel(200_000),
     messages: [new Message({ role: 'user', content: [new TextBlock('hello')] })],
     toolSpecs: [],
     invocationState: {},
@@ -24,7 +26,7 @@ function createContext(overrides: Partial<InvokeModelContext> = {}): InvokeModel
 
 describe('createTokenUsageMiddleware', () => {
   it('returns context unchanged when projectedInputTokens is not set', async () => {
-    const middleware = createTokenUsageMiddleware(createMockModel(200_000))
+    const middleware = createTokenUsageMiddleware()
     const context = createContext()
 
     const result = await middleware(context)
@@ -33,7 +35,7 @@ describe('createTokenUsageMiddleware', () => {
   })
 
   it('returns context unchanged when messages are empty', async () => {
-    const middleware = createTokenUsageMiddleware(createMockModel(200_000))
+    const middleware = createTokenUsageMiddleware()
     const context = createContext({
       messages: [],
       projectedInputTokens: 50_000,
@@ -45,7 +47,7 @@ describe('createTokenUsageMiddleware', () => {
   })
 
   it('appends context status to last message content', async () => {
-    const middleware = createTokenUsageMiddleware(createMockModel(200_000))
+    const middleware = createTokenUsageMiddleware()
     const context = createContext({
       projectedInputTokens: 50_000,
     })
@@ -62,8 +64,62 @@ describe('createTokenUsageMiddleware', () => {
     expect(statusBlock.text).toContain('</context-status>')
   })
 
+  it('uses the effective context model limit', async () => {
+    const middleware = createTokenUsageMiddleware()
+    const context = createContext({
+      model: createMockModel(10_000),
+      projectedInputTokens: 8_000,
+    })
+
+    const result = await middleware(context)
+
+    const statusBlock = result.messages[0]!.content[1] as TextBlock
+    expect(statusBlock.text).toContain('8,000 / 10,000 tokens (80.0%)')
+    expect(statusBlock.text).toContain('<remaining>~2,000 tokens</remaining>')
+  })
+
+  it('reports the status line as one per-call block', async () => {
+    // The live token count makes this per-call, so a cache point must stay ahead of it.
+    const middleware = createTokenUsageMiddleware()
+    const context = createContext({ projectedInputTokens: 50_000 })
+
+    const result = await middleware(context)
+
+    expect(result.dynamicTrailingBlocks).toBe(1)
+  })
+
+  it('reports no per-call trailing blocks when the status line lands in an assistant message', async () => {
+    // The status text lands in whatever message is last. On an assistant-terminated history it is
+    // already outside the cached prefix, so reporting it would evict durable content. Reachable via invoke()
+    // with no prompt, and restored sessions.
+    const middleware = createTokenUsageMiddleware()
+    const context = createContext({
+      messages: [
+        new Message({ role: 'user', content: [new TextBlock('durable ask')] }),
+        new Message({ role: 'assistant', content: [new TextBlock('reply')] }),
+      ],
+      projectedInputTokens: 50_000,
+    })
+
+    const result = await middleware(context)
+
+    const lastMessage = result.messages[result.messages.length - 1]!
+    expect(lastMessage.role).toBe('assistant')
+    expect((lastMessage.content[lastMessage.content.length - 1] as TextBlock).text).toContain('<context-status>')
+    expect(result.dynamicTrailingBlocks ?? 0).toBe(0)
+  })
+
+  it('reports no per-call trailing blocks when no status line is appended', async () => {
+    const middleware = createTokenUsageMiddleware()
+    const context = createContext()
+
+    const result = await middleware(context)
+
+    expect(result.dynamicTrailingBlocks ?? 0).toBe(0)
+  })
+
   it('does not mutate the original messages array', async () => {
-    const middleware = createTokenUsageMiddleware(createMockModel(200_000))
+    const middleware = createTokenUsageMiddleware()
     const originalMessage = new Message({ role: 'user', content: [new TextBlock('hello')] })
     const context = createContext({
       messages: [originalMessage],
@@ -77,8 +133,9 @@ describe('createTokenUsageMiddleware', () => {
   })
 
   it('uses DEFAULT_CONTEXT_WINDOW_LIMIT when model config has no limit', async () => {
-    const middleware = createTokenUsageMiddleware(createMockModel(undefined))
+    const middleware = createTokenUsageMiddleware()
     const context = createContext({
+      model: createMockModel(undefined),
       projectedInputTokens: 100_000,
     })
 
@@ -90,8 +147,20 @@ describe('createTokenUsageMiddleware', () => {
     expect(statusBlock.text).toContain('200,000')
   })
 
+  // https://github.com/strands-agents/harness-sdk/issues/4681
+  it('formats token counts the same regardless of the host locale', async () => {
+    const middleware = createTokenUsageMiddleware()
+    const context = createContext({ projectedInputTokens: 100_000 })
+
+    const result = await withDefaultLocale('en-IN', () => middleware(context))
+
+    const statusBlock = (result.messages[0]! as Message).content[1] as TextBlock
+    expect(statusBlock.text).toContain('<used>100,000 / 200,000 tokens (50.0%)</used>')
+    expect(statusBlock.text).toContain('<remaining>~100,000 tokens</remaining>')
+  })
+
   it('preserves message metadata', async () => {
-    const middleware = createTokenUsageMiddleware(createMockModel(200_000))
+    const middleware = createTokenUsageMiddleware()
     const metadata = { usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } }
     const context = createContext({
       messages: [new Message({ role: 'user', content: [new TextBlock('hello')], metadata })],
@@ -104,8 +173,9 @@ describe('createTokenUsageMiddleware', () => {
   })
 
   it('reports correct remaining tokens', async () => {
-    const middleware = createTokenUsageMiddleware(createMockModel(100_000))
+    const middleware = createTokenUsageMiddleware()
     const context = createContext({
+      model: createMockModel(100_000),
       projectedInputTokens: 80_000,
     })
 

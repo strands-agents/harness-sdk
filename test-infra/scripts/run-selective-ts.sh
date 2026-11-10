@@ -88,7 +88,6 @@ STRUCTURAL_PATTERNS=(
   '^strands-ts/vitest\.config\.ts$'            # vitest config (projects, aliases)
   '^strands-ts/test/integ/__fixtures__/'       # shared integ setup/fixtures
   '^strands-ts/test/integ/__resources__/'      # binary assets imported via Vite `?url` (not traced in reverse)
-  '^strandly/'                                 # workspace member CI triggers on but the graph cannot trace
   '^test-infra/scripts/run-selective-ts\.sh$'  # this orchestration script
   '^\.github/workflows/typescript-'            # TypeScript CI workflows
 )

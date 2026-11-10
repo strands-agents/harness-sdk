@@ -1,5 +1,6 @@
 """Utilities for handling streaming responses from language models."""
 
+import copy
 import json
 import logging
 import threading
@@ -8,6 +9,10 @@ import warnings
 from collections.abc import AsyncGenerator, AsyncIterable
 from typing import TYPE_CHECKING, Any
 
+from pydantic import BaseModel
+
+from ..agent.agent_metadata import AgentMetadata
+from ..agent.invocation_context import InvocationContext
 from ..models.model import Model
 from ..tools import InvalidToolUseNameException
 from ..tools.tools import validate_tool_use_name
@@ -58,6 +63,10 @@ def _normalize_messages(messages: Messages) -> Messages:
     removed_blank_message_content_text = False
     replaced_blank_message_content_text = False
     replaced_tool_names = False
+
+    # Deep copy up front so downstream normalization can mutate freely without
+    # affecting the caller's message history.
+    messages = copy.deepcopy(messages)
 
     for message in messages:
         # only modify assistant messages
@@ -294,10 +303,20 @@ def handle_content_block_stop(state: dict[str, Any]) -> dict[str, Any]:
         if "input" not in current_tool_use:
             current_tool_use["input"] = ""
 
-        try:
-            current_tool_use["input"] = json.loads(current_tool_use["input"])
-        except ValueError:
+        # Handle empty or whitespace-only input (common for zero-argument tools)
+        raw_input = current_tool_use["input"]
+        if isinstance(raw_input, str) and not raw_input.strip():
             current_tool_use["input"] = {}
+        else:
+            try:
+                current_tool_use["input"] = json.loads(raw_input)
+            except ValueError:
+                logger.warning(
+                    "tool_name=<%s>, raw_input=<%s> | failed to parse tool input json, defaulting to empty dict",
+                    current_tool_use.get("name", "unknown"),
+                    raw_input[:200] if isinstance(raw_input, str) else "",
+                )
+                current_tool_use["input"] = {}
 
         tool_use_id = current_tool_use.get("toolUseId", "")
         tool_use_name = current_tool_use.get("name", "")
@@ -323,7 +342,8 @@ def handle_content_block_stop(state: dict[str, Any]) -> dict[str, Any]:
         content.append({"toolUse": tool_use})
         state["current_tool_use"] = {}
 
-    elif text:
+    # Text, reasoning, and redacted blocks accumulate independently of the tool-use branch.
+    if text:
         if citations_content:
             citations_block: CitationsContentBlock = {"citations": citations_content, "content": [{"text": text}]}
             content.append({"citationsContent": citations_block})
@@ -332,7 +352,7 @@ def handle_content_block_stop(state: dict[str, Any]) -> dict[str, Any]:
             content.append({"text": text})
         state["text"] = ""
 
-    elif reasoning_text or "signature" in state:
+    if reasoning_text or "signature" in state:
         content_block: ContentBlock = {
             "reasoningContent": {
                 "reasoningText": {
@@ -347,7 +367,7 @@ def handle_content_block_stop(state: dict[str, Any]) -> dict[str, Any]:
 
         content.append(content_block)
         state["reasoningText"] = ""
-    elif redacted_content:
+    if redacted_content:
         content.append({"reasoningContent": {"redactedContent": redacted_content}})
         state["redactedContent"] = b""
 
@@ -417,7 +437,7 @@ async def process_stream(
     chunks: AsyncIterable[StreamEvent],
     start_time: float | None = None,
     cancel_signal: threading.Event | None = None,
-    agent: "Agent | None" = None,
+    invocation_context: InvocationContext | None = None,
 ) -> AsyncGenerator[TypedEvent, None]:
     """Processes the response stream from the API, constructing the final message and extracting usage metrics.
 
@@ -425,7 +445,8 @@ async def process_stream(
         chunks: The chunks of the response stream from the model.
         start_time: Time when the model request is initiated
         cancel_signal: Optional threading.Event to check for cancellation during streaming.
-        agent: Optional agent instance to invoke ModelStreamChunkEvent hooks.
+        invocation_context: The request the call's usage adds to once the stream ends. A cancelled stream adds the
+            usage reported before it stopped; a stream that raises adds nothing.
 
     Yields:
         The reason for stopping, the constructed message, and the usage metrics.
@@ -434,6 +455,7 @@ async def process_stream(
     from ..hooks.events import ModelStreamChunkEvent as ModelStreamChunkHookEvent
 
     stop_reason: StopReason = "end_turn"
+    saw_message_stop = False
     first_byte_time = None
 
     state: dict[str, Any] = {
@@ -452,6 +474,7 @@ async def process_stream(
         # Check for cancellation during stream processing
         if cancel_signal and cancel_signal.is_set():
             logger.debug("cancellation detected during stream processing")
+            _record_usage(invocation_context, usage)
             # Return cancelled stop reason with cancellation message
             # The incomplete message in state["message"] is discarded and never added to agent.messages
             yield ModelStopReason(
@@ -481,6 +504,7 @@ async def process_stream(
         elif "contentBlockStop" in chunk:
             state = handle_content_block_stop(state)
         elif "messageStop" in chunk:
+            saw_message_stop = True
             stop_reason = handle_message_stop(chunk["messageStop"], state["message"].get("content", []))
         elif "metadata" in chunk:
             time_to_first_byte_ms = (
@@ -490,7 +514,26 @@ async def process_stream(
         elif "redactContent" in chunk:
             handle_redact_content(chunk["redactContent"], state)
 
+    # A provider that aborts in flight ends the stream without messageStop; the in-loop check
+    # above cannot see it, so report the cancellation here rather than a truncated end_turn.
+    if not saw_message_stop and cancel_signal and cancel_signal.is_set():
+        _record_usage(invocation_context, usage)
+        yield ModelStopReason(
+            stop_reason="cancelled",
+            message={"role": "assistant", "content": [{"text": "Cancelled by user"}]},
+            usage=usage,
+            metrics=metrics,
+        )
+        return
+
+    _record_usage(invocation_context, usage)
     yield ModelStopReason(stop_reason=stop_reason, message=state["message"], usage=usage, metrics=metrics)
+
+
+def _record_usage(invocation_context: InvocationContext | None, usage: Usage) -> None:
+    """Add a finished model call's usage to the request it ran in, if any."""
+    if invocation_context is not None:
+        invocation_context._record_usage(usage)
 
 
 async def stream_messages(
@@ -503,8 +546,11 @@ async def stream_messages(
     system_prompt_content: list[SystemContentBlock] | None = None,
     invocation_state: dict[str, Any] | None = None,
     model_state: dict[str, Any] | None = None,
+    dynamic_trailing_blocks: int = 0,
     cancel_signal: threading.Event | None = None,
-    agent: "Agent | None" = None,
+    agent_metadata: AgentMetadata | None = None,
+    structured_output_model: type[BaseModel] | None = None,
+    invocation_context: InvocationContext | None = None,
     **kwargs: Any,
 ) -> AsyncGenerator[TypedEvent, None]:
     """Streams messages to the model and processes the response.
@@ -519,8 +565,14 @@ async def stream_messages(
             system prompt data.
         invocation_state: Caller-provided state/context that was passed to the agent when it was invoked.
         model_state: Runtime state for model providers (e.g., server-side response ids).
-        cancel_signal: Optional threading.Event to check for cancellation during streaming.
-        agent: Optional agent instance to invoke ModelStreamChunkEvent hooks.
+        dynamic_trailing_blocks: How many trailing blocks of the last user message are rebuilt on every
+            call, so a provider placing cache points keeps its own ahead of them.
+        cancel_signal: Optional threading.Event to check for cancellation during streaming. Also
+            forwarded to the model so a provider can abort an in-flight request.
+        agent_metadata: Metadata of the invoking agent, forwarded to the model.
+        structured_output_model: Output model this call must produce, forwarded to the model so the provider can
+            choose how to enforce it.
+        invocation_context: The request the call's usage adds to once the stream ends.
         **kwargs: Additional keyword arguments for future extensibility.
 
     Yields:
@@ -532,7 +584,22 @@ async def stream_messages(
     # Whitelist only role and content before sending to the model provider.
     # This ensures metadata (and any future non-model fields) never leak to providers.
     messages = [Message(role=msg["role"], content=msg["content"]) for msg in messages]
+    has_summary = any("summary" in block for message in messages for block in message["content"])
+    if has_summary and model.model_info.capabilities.server_side_summary is not True:
+        # Only a provider with server-side summaries reads a summary block; others get its text.
+        for message in messages:
+            message["content"] = [
+                ContentBlock(text=block["summary"]["text"]) if "summary" in block else block
+                for block in message["content"]
+            ]
     start_time = time.time()
+
+    # Omitted when unset, so an ordinary call's arguments are unchanged.
+    optional_kwargs: dict[str, Any] = {}
+    if dynamic_trailing_blocks:
+        optional_kwargs["dynamic_trailing_blocks"] = dynamic_trailing_blocks
+    if structured_output_model:
+        optional_kwargs["structured_output_model"] = structured_output_model
 
     chunks = model.stream(
         messages,
@@ -542,7 +609,10 @@ async def stream_messages(
         system_prompt_content=system_prompt_content,
         invocation_state=invocation_state,
         model_state=model_state,
+        cancel_signal=cancel_signal,
+        agent_metadata=agent_metadata,
+        **optional_kwargs,
     )
 
-    async for event in process_stream(chunks, start_time, cancel_signal, agent=agent):
+    async for event in process_stream(chunks, start_time, cancel_signal, invocation_context):
         yield event

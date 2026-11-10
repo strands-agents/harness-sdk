@@ -2,15 +2,13 @@ from __future__ import annotations
 
 import math
 import re
+import threading
+from collections import Counter
 from dataclasses import dataclass
-from typing import Dict, List, Tuple
+from typing import Dict, List, Set, Tuple
 
-# Enhanced tokenization patterns
 _TOKEN = re.compile(r"[A-Za-z0-9_]+")
 _MD_HEADER = re.compile(r"^#{1,6}\s+(.+)$", re.MULTILINE)
-_MD_CODE_BLOCK = re.compile(r"```[\w]*\n([\s\S]*?)```")
-_MD_INLINE_CODE = re.compile(r"`([^`]+)`")
-_MD_LINK_TEXT = re.compile(r"\[([^\]]+)\]\([^)]+\)")
 
 
 @dataclass(slots=True)
@@ -30,25 +28,49 @@ class Doc:
     index_title: str  # Searchable title text including variants
 
 
-# Title boost constants
-_TITLE_BOOST_EMPTY = 8  # boost for unfetched content
-_TITLE_BOOST_SHORT = 5  # boost for short pages (<800 chars)
-_TITLE_BOOST_LONG = 3  # boost for longer pages
-_SHORT_PAGE_THRESHOLD = 800  # character threshold for short pages
+_K1 = 1.2
+# Each field saturates on its own, so a long body adds a bounded amount per query term.
+_FIELD_WEIGHTS = {"title": 4.0, "headings": 1.0, "body": 1.0}
+# Light title normalization keeps an llms.txt description from costing a page its title match.
+_FIELD_B = {"title": 0.3, "headings": 0.75, "body": 0.75}
+
+FieldCounts = Dict[str, Counter[str]]
+
+
+def _tokenize(text: str) -> List[str]:
+    return _TOKEN.findall(text.lower())
+
+
+def _field_counts(index_title: str, content: str) -> FieldCounts:
+    """Count the tokens of each scored field: the index title, Markdown headings, and the full body."""
+    return {
+        "title": Counter(_tokenize(index_title)),
+        "headings": Counter(_tokenize(" ".join(_MD_HEADER.findall(content)))),
+        "body": Counter(_tokenize(content)),
+    }
+
+
+def _tokens(fields: FieldCounts) -> Set[str]:
+    return set().union(*fields.values())
 
 
 class IndexSearch:
-    """Lightweight inverted index with TF-IDF scoring and Markdown awareness.
+    """Lightweight inverted index with field-weighted BM25 scoring.
 
-    This class provides document indexing and search functionality optimized for
-    technical documentation. It uses TF-IDF scoring with special handling for
-    Markdown structure elements like headers, code blocks, and links.
+    Each document has three fields: its index title (title variants, URL path words, and description), its
+    Markdown headings, and its body. Token counts per field are computed once when a document is added or its
+    content is updated; search reads only those counts.
 
-    Features:
-        - Indexes searchable titles (not display titles) for synonym support
-        - Adaptive title boosting based on content length
-        - Enhanced scoring for Markdown elements (headers, code, links)
-        - Lightweight implementation without external dependencies
+    Note:
+        This class is an internal implementation detail of strands-mcp-server.
+        It is NOT part of the public API and may change without notice.
+        Do not import or depend on it from external code.
+
+    Thread Safety:
+        All public methods (add, update_content, search) are thread-safe.
+        A single lock guards all shared state, so mutations are atomic
+        read-modify-write operations and searches see a consistent index
+        (e.g., background prefetch daemon + foreground ensure_page).
 
     Attributes:
         docs: List of indexed documents
@@ -58,62 +80,123 @@ class IndexSearch:
 
     def __init__(self) -> None:
         """Initialize an empty search index."""
+        self._lock = threading.Lock()
         self.docs: List[Doc] = []
         self.doc_frequency: Dict[str, int] = {}  # document frequency
         self.doc_indices: Dict[str, List[int]] = {}  # token -> doc indices
+        self.uri_to_idx: Dict[str, int] = {}  # uri -> doc index for updates
+        self.doc_fields: Dict[int, FieldCounts] = {}  # idx -> field -> token counts
+        self.doc_lengths: Dict[int, Dict[str, int]] = {}  # idx -> field -> token count
+        self._field_length_sum = dict.fromkeys(_FIELD_WEIGHTS, 0)
+        self._field_doc_count = dict.fromkeys(_FIELD_WEIGHTS, 0)  # docs with a non-empty field
+
+    def _bump_df(self, tok: str) -> None:
+        """Increment the document frequency for a token (read-modify-write).
+
+        Isolated into its own method so concurrency tests can monkeypatch it to
+        force the deterministic interleaving that exposes the lost-update race the
+        index lock guards against. Must be called with ``self._lock`` held.
+        """
+        self.doc_frequency[tok] = self.doc_frequency.get(tok, 0) + 1
+
+    def _store_fields(self, idx: int, fields: FieldCounts) -> None:
+        """Commit a document's field counts and keep the per-field length totals in step.
+
+        Must be called with ``self._lock`` held.
+        """
+        lengths = {name: counts.total() for name, counts in fields.items()}
+        for name, length in self.doc_lengths.get(idx, {}).items():
+            self._field_length_sum[name] -= length
+            self._field_doc_count[name] -= length > 0
+        for name, length in lengths.items():
+            self._field_length_sum[name] += length
+            self._field_doc_count[name] += length > 0
+        self.doc_fields[idx] = fields
+        self.doc_lengths[idx] = lengths
 
     def add(self, doc: Doc) -> None:
         """Add a document to the search index.
 
+        Thread-safe: acquires lock for the entire add operation.
+
         Args:
             doc: Document to add to the index
-
-        Note:
-            Extracts and weights different content types:
-            - Titles: Highest weight for search relevance
-            - Headers: High weight for structural importance
-            - Code blocks: Medium weight for technical content
-            - Link text: Medium weight for navigation context
-            - Body text: Base weight for general content
         """
-        idx = len(self.docs)
-        self.docs.append(doc)
-        seen: set[str] = set()
-
-        # Extract MD-specific content with different weights
-        content = doc.content.lower()
-        title_text = doc.index_title.lower()
-
-        # Extract headers (high importance)
-        headers = " ".join(_MD_HEADER.findall(doc.content))
-
-        # Extract code content (medium importance for tech docs)
-        code_blocks = " ".join(_MD_CODE_BLOCK.findall(doc.content))
-        inline_code = " ".join(_MD_INLINE_CODE.findall(doc.content))
-
-        # Extract link text (medium importance)
-        link_text = " ".join(_MD_LINK_TEXT.findall(doc.content))
-
-        # Build weighted haystack: title gets highest weight
-        haystack_parts = [
-            title_text,  # Will get title boost in search
-            headers.lower(),
-            link_text.lower(),
-            code_blocks.lower(),
-            inline_code.lower(),
-            content,
-        ]
-
-        haystack = " ".join(part for part in haystack_parts if part)
-
-        for tok in _TOKEN.findall(haystack):
-            if tok not in seen:
+        fields = _field_counts(doc.index_title, doc.content)
+        with self._lock:
+            idx = len(self.docs)
+            self.docs.append(doc)
+            self.uri_to_idx[doc.uri] = idx
+            for tok in _tokens(fields):
                 self.doc_indices.setdefault(tok, []).append(idx)
-                self.doc_frequency[tok] = self.doc_frequency.get(tok, 0) + 1
-                seen.add(tok)
+                self._bump_df(tok)
+            self._store_fields(idx, fields)
+
+    def update_content(self, uri: str, new_content: str) -> bool:
+        """Update content for an existing document and reindex.
+
+        Called when document content is hydrated after initial title-only indexing.
+        Idempotent - calling with the same content multiple times is safe.
+
+        Thread-safe: acquires lock for the entire update operation.
+        """
+        with self._lock:
+            idx = self.uri_to_idx.get(uri)
+            if idx is None:
+                return False
+
+            doc = self.docs[idx]
+
+            # Skip if content unchanged (idempotent)
+            if doc.content == new_content:
+                return True
+
+            old_tokens = _tokens(self.doc_fields[idx])
+            new_fields = _field_counts(doc.index_title, new_content)
+            new_tokens = _tokens(new_fields)
+
+            for tok in old_tokens - new_tokens:
+                if tok in self.doc_frequency:
+                    self.doc_frequency[tok] -= 1
+                    if self.doc_frequency[tok] <= 0:
+                        del self.doc_frequency[tok]
+                if tok in self.doc_indices:
+                    try:
+                        self.doc_indices[tok].remove(idx)
+                    except ValueError:
+                        pass
+                    if not self.doc_indices[tok]:
+                        del self.doc_indices[tok]
+
+            for tok in new_tokens - old_tokens:
+                self.doc_indices.setdefault(tok, []).append(idx)
+                self._bump_df(tok)
+
+            # Commit fields and content last: if anything above raised, doc.content is
+            # unchanged and the idempotence guard allows a retry
+            self._store_fields(idx, new_fields)
+            doc.content = new_content
+
+            return True
+
+    def _term_score(self, idx: int, tok: str, avg_lengths: Dict[str, float]) -> float:
+        """Sum the weighted BM25 term-frequency component of ``tok`` over a document's fields."""
+        score = 0.0
+        for name, counts in self.doc_fields[idx].items():
+            tf = counts[tok]
+            if tf:
+                b = _FIELD_B[name]
+                norm = 1 - b + b * self.doc_lengths[idx][name] / avg_lengths[name]
+                score += _FIELD_WEIGHTS[name] * tf * (_K1 + 1) / (tf + _K1 * norm)
+        return score
 
     def search(self, query: str, k: int = 8) -> List[Tuple[float, Doc]]:
         """Search the index and return ranked results.
+
+        Scores are field-weighted BM25: unbounded, non-negative, and comparable only
+        within one result set.
+
+        Thread-safe: holds the lock while scoring so ranking sees a consistent index.
 
         Args:
             query: Search query string
@@ -121,85 +204,18 @@ class IndexSearch:
 
         Returns:
             List of (score, document) tuples sorted by relevance (highest first)
-
-        Note:
-            Uses TF-IDF scoring with Markdown-aware enhancements:
-            - Title matches receive adaptive boosting
-            - Header matches get 4x weight
-            - Code and link matches get 2x weight
-            - Empty content gets higher title boost for better ranking
         """
-
-        def _title_boost_for(doc: Doc) -> int:
-            """Calculate title boost factor based on document content length.
-
-            Args:
-                doc: Document to calculate boost for
-
-            Returns:
-                Boost multiplier for title matches
-            """
-            n = len(doc.content)
-            if n == 0:  # not fetched yet
-                return _TITLE_BOOST_EMPTY
-            if n < _SHORT_PAGE_THRESHOLD:  # short page
-                return _TITLE_BOOST_SHORT
-            return _TITLE_BOOST_LONG
-
-        def _calculate_md_score(doc: Doc, token: str) -> float:
-            """Calculate enhanced relevance score for Markdown content.
-
-            Args:
-                doc: Document to score
-                token: Search token to score against
-
-            Returns:
-                Weighted relevance score considering Markdown structure
-
-            Note:
-                Applies different weights to content types:
-                - Title matches: Variable boost (8x/5x/3x based on content length)
-                - Header matches: 4x weight
-                - Code matches: 2x weight
-                - Link text matches: 2x weight
-                - Body text: 1x weight (base)
-            """
-            content_lower = doc.content.lower()
-            title_lower = doc.index_title.lower()
-
-            # Base content frequency
-            content_tf = content_lower.count(token)
-
-            # Title matches (highest weight)
-            title_tf = title_lower.count(token) * _title_boost_for(doc)
-
-            # Header matches (high weight)
-            header_tf = 0
-            for header in _MD_HEADER.findall(doc.content):
-                header_tf += header.lower().count(token) * 4
-
-            # Code block matches (medium weight for tech docs)
-            code_tf = 0
-            for code in _MD_CODE_BLOCK.findall(doc.content):
-                code_tf += code.lower().count(token) * 2
-
-            # Link text matches (medium weight)
-            link_tf = 0
-            for link in _MD_LINK_TEXT.findall(doc.content):
-                link_tf += link.lower().count(token) * 2
-
-            return float(content_tf + title_tf + header_tf + code_tf + link_tf)
-
-        q_tokens = [t.lower() for t in _TOKEN.findall(query)]
+        q_tokens = _tokenize(query)
         scores: Dict[int, float] = {}
-        N = max(len(self.docs), 1)
-
-        for qt in q_tokens:
-            for idx in self.doc_indices.get(qt, []):
-                d = self.docs[idx]
-                tf = _calculate_md_score(d, qt)
-                idf = math.log((N + 1) / (1 + self.doc_frequency.get(qt, 0))) + 1.0
-                scores[idx] = scores.get(idx, 0.0) + tf * idf
-
-        ranked = sorted(((score, self.docs[i]) for i, score in scores.items()), key=lambda x: x[0], reverse=True)
+        with self._lock:
+            n_docs = len(self.docs)
+            avg_lengths = {
+                name: self._field_length_sum[name] / max(self._field_doc_count[name], 1) for name in _FIELD_WEIGHTS
+            }
+            for qt in q_tokens:
+                df = self.doc_frequency.get(qt, 0)
+                idf = math.log(1 + (n_docs - df + 0.5) / (df + 0.5))
+                for idx in set(self.doc_indices.get(qt, [])):
+                    scores[idx] = scores.get(idx, 0.0) + idf * self._term_score(idx, qt, avg_lengths)
+            ranked = sorted(((score, self.docs[i]) for i, score in scores.items()), key=lambda x: x[0], reverse=True)
         return ranked[:k]

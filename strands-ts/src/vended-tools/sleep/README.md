@@ -2,7 +2,7 @@
 
 Pauses agent execution for a bounded, cooperative duration.
 
-The tool takes a `duration` in seconds. It attaches a one-shot listener to `context.agent.cancelSignal`, so cancelling the agent aborts the sleep immediately rather than waiting for the full duration. A configurable maximum (default: 60 s) rejects oversized requests before the sleep starts, and negative, `NaN`, `Infinity`, and non-numeric inputs are rejected at the tool boundary.
+The tool takes a `duration` in seconds. It listens to `context.cancelSignal`, so cancellation aborts the sleep immediately rather than waiting for the full duration. A configurable maximum (default: 60 s) rejects oversized requests before the sleep starts, and negative, `NaN`, `Infinity`, and non-numeric inputs are rejected at the tool boundary.
 
 ## Usage
 

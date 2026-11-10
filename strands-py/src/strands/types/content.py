@@ -7,13 +7,14 @@ SDK. These types are modeled after the Bedrock API.
 """
 
 import uuid
+from dataclasses import dataclass
 from typing import Any, Literal
 
 from typing_extensions import NotRequired, TypedDict
 
 from .citations import CitationsContentBlock
 from .event_loop import Metrics, Usage
-from .media import DocumentContent, ImageContent, VideoContent
+from .media import AudioContent, DocumentContent, ImageContent, VideoContent
 from .tools import ToolResult, ToolUse
 
 
@@ -76,15 +77,31 @@ class CachePoint(TypedDict):
     ttl: NotRequired[str]
 
 
+class SummaryBlock(TypedDict, total=False):
+    """A summary of earlier conversation history that takes the summarized messages' place.
+
+    Attributes:
+        provider: Name of the provider that wrote the summary server-side, for example "anthropic".
+        signature: Signature the provider returned with the summary, sent back unchanged.
+        text: The summary text.
+    """
+
+    provider: str | None
+    signature: str | None
+    text: str
+
+
 class ContentBlock(TypedDict, total=False):
     """A block of content for a message that you pass to, or receive from, a model.
 
     Attributes:
+        audio: Audio to include in the message.
         cachePoint: A cache point configuration to optimize conversation history.
         document: A document to include in the message.
         guardContent: Contains the content to assess with the guardrail.
         image: Image to include in the message.
         reasoningContent: Contains content regarding the reasoning that is carried out by the model.
+        summary: A summary of earlier conversation history.
         text: Text to include in the message.
         toolResult: The result for a tool request that a model makes.
         toolUse: Information about a tool use request from a model.
@@ -92,16 +109,37 @@ class ContentBlock(TypedDict, total=False):
         citationsContent: Contains the citations for a document.
     """
 
+    audio: AudioContent
     cachePoint: CachePoint
     document: DocumentContent
     guardContent: GuardContent
     image: ImageContent
     reasoningContent: ReasoningContentBlock
+    summary: SummaryBlock
     text: str
     toolResult: ToolResult
     toolUse: ToolUse
     video: VideoContent
     citationsContent: CitationsContentBlock
+
+
+class _TextBlockData(TypedDict):
+    text: str
+
+
+@dataclass
+class TextBlock:
+    """Text content for a message.
+
+    Attributes:
+        text: Text to send.
+    """
+
+    text: str
+
+    def to_dict(self) -> _TextBlockData:
+        """Return the dictionary form of this block."""
+        return {"text": self.text}
 
 
 class SystemContentBlock(TypedDict, total=False):

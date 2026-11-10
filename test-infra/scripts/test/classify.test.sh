@@ -53,7 +53,6 @@ expect_branch structural "nested integ tsconfig" "strands-ts/test/integ/tsconfig
 expect_branch structural "vitest config" "strands-ts/vitest.config.ts"
 expect_branch structural "shared integ fixture" "strands-ts/test/integ/__fixtures__/_setup-global.ts"
 expect_branch structural "binary integ resource" "strands-ts/test/integ/__resources__/yellow.png"
-expect_branch structural "strandly member" "strandly/src/cli.ts"
 expect_branch structural "the orchestration script itself" "test-infra/scripts/run-selective-ts.sh"
 expect_branch structural "typescript CI workflow" ".github/workflows/typescript-ts-test.yml"
 expect_branch structural "structural mixed with source" "README.md" "strands-ts/src/agent/agent.ts" "package.json"

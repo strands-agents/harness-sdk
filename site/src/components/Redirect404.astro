@@ -72,9 +72,12 @@ const redirectFromMap = await buildRedirectFromMap()
     const currentPath = window.location.pathname.replace(/\/+$/, '')
     if (destPath.replace(/\/+$/, '') === currentPath) return false
 
-    // Preserve query params when redirecting to an internal path
+    // Preserve query params and the hash fragment when redirecting to an
+    // internal path (fragments never reach the server, so only this
+    // client-side hop can carry a deep link like #section through a rename)
     const destUrl = new URL(destPath, window.location.origin)
     new URLSearchParams(window.location.search).forEach((v, k) => destUrl.searchParams.set(k, v))
+    destUrl.hash = window.location.hash
 
     console.log(`[Redirect404] Redirecting ${window.location.href} → ${destUrl.href}`)
     window.location.replace(destUrl.href)

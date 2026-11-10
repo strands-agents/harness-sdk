@@ -22,7 +22,7 @@ import type { ToolExecutionInput, ToolExecutorOptions } from './executor.js'
  */
 export class SequentialToolExecutor extends ToolExecutor {
   /**
-   * Executes tool calls in source order, honoring `agent.cancelSignal` between
+   * Executes tool calls in source order, honoring the execution cancellation signal between
    * calls to short-circuit tools that have not started.
    *
    * @param options - Agent dependencies used to execute tools
@@ -48,7 +48,7 @@ export class SequentialToolExecutor extends ToolExecutor {
         continue
       }
 
-      if (options.agent.cancelSignal.aborted) {
+      if (options.cancelSignal.aborted) {
         const cancelBlock = new ToolResultBlock({
           toolUseId: toolUseBlock.toolUseId,
           status: 'error',
@@ -56,7 +56,12 @@ export class SequentialToolExecutor extends ToolExecutor {
         })
         toolResultBlocks.push(cancelBlock)
         resultsByToolUseId.set(toolUseBlock.toolUseId, cancelBlock)
-        yield new ToolResultEvent({ agent: options.agent, result: cancelBlock, invocationState })
+        yield new ToolResultEvent({
+          agent: options.agent,
+          invocationContext: options.invocationContext,
+          result: cancelBlock,
+          invocationState,
+        })
         continue
       }
 
@@ -64,7 +69,12 @@ export class SequentialToolExecutor extends ToolExecutor {
         const toolResultBlock = yield* this.executeTool(options, toolUseBlock, invocationState)
         toolResultBlocks.push(toolResultBlock)
         resultsByToolUseId.set(toolUseBlock.toolUseId, toolResultBlock)
-        yield new ToolResultEvent({ agent: options.agent, result: toolResultBlock, invocationState })
+        yield new ToolResultEvent({
+          agent: options.agent,
+          invocationContext: options.invocationContext,
+          result: toolResultBlock,
+          invocationState,
+        })
       } catch (error) {
         if (error instanceof InterruptError) {
           this._storePendingToolExecution(options, assistantMessage, resultsByToolUseId)

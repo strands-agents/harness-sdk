@@ -101,6 +101,7 @@ http_request = make_http_request()
 
 # ---- Internals ----
 
+
 def _resolve_timeout(
     model_timeout: float | None,
     client: httpx.AsyncClient | None,
@@ -188,9 +189,7 @@ async def _perform_request(
 
             if response.status_code >= 400:
                 await response.aclose()
-                raise HttpRequestError(
-                    f"HTTP {response.status_code} {response.reason_phrase}: {method} {url}"
-                )
+                raise HttpRequestError(f"HTTP {response.status_code} {response.reason_phrase}: {method} {url}")
 
             body_text = await _read_body(response, cancel_signal)
         finally:

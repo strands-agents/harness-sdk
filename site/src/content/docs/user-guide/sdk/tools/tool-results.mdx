@@ -1,0 +1,154 @@
+---
+title: Tool result format
+description: "The structure a Strands tool returns to the agent: the ToolResult schema, its content types, and how plain return values are converted into it."
+tags: [tool-authoring]
+sourceLinks:
+  - path: strands-py/src/strands/types/tools.py
+  - path: strands-py/src/strands/tools/decorator.py
+  - path: strands-ts/src/types/messages.ts
+  - path: strands-ts/src/tools/tool-factory.ts
+---
+
+A tool returns a result that the agent adds to the conversation and sends back to
+the model. When a [custom tool](custom-tools.md) returns a plain value, the SDK
+wraps it in this structure automatically. Construct the structure yourself when a
+tool needs to return typed content, mixed content blocks, or an explicit error
+status. This page documents that structure, the content types it carries, and the
+conversion rules the SDK applies to return values.
+
+## Tool Result Structure
+
+<Tabs>
+<Tab label="Python">
+
+The [`ToolResult`](@api/python/strands.types.tools#ToolResult) dictionary has three fields:
+
+```python
+{
+    "toolUseId": str,       # ID of the tool use request. Matches the incoming request.
+    "status": str,          # Either "success" or "error"
+    "content": list[dict],  # Content items, each in one of the supported formats
+}
+```
+
+The `toolUseId` is optional in a value returned from a decorated function: the
+[`@tool`](@api/python/strands.tools.decorator#tool) decorator fills it in from the
+originating request.
+</Tab>
+<Tab label="TypeScript">
+
+The `ToolResultBlock` schema:
+
+```typescript
+{
+  type: 'toolResultBlock'
+  toolUseId: string
+  status: 'success' | 'error'
+  content: Array<ToolResultContent>
+  error?: Error
+}
+```
+</Tab>
+</Tabs>
+
+## Content Types
+
+The `content` field is a list of content blocks. Each block carries one type of
+output:
+
+- `text`: a string of text output
+- `json`: any JSON-serializable data structure
+
+Both SDKs also accept `image` and `document` blocks; TypeScript additionally
+accepts `video`. A single result can mix block types, for example a text summary
+alongside a JSON payload.
+
+## Response Examples
+
+<Tabs>
+<Tab label="Python">
+
+A success response carries a `"success"` status and one or more content blocks:
+
+```python
+{
+    "toolUseId": "tool-123",
+    "status": "success",
+    "content": [
+        {"text": "Operation completed successfully"},
+        {"json": {"results": [1, 2, 3], "total": 3}}
+    ]
+}
+```
+
+An error response carries an `"error"` status and describes what failed:
+
+```python
+{
+    "toolUseId": "tool-123",
+    "status": "error",
+    "content": [
+        {"text": "Error: Unable to process request due to invalid parameters"}
+    ]
+}
+```
+</Tab>
+<Tab label="TypeScript">
+
+A success response carries a `'success'` status and one or more content blocks:
+
+```typescript
+{
+    "type": "toolResultBlock",
+    "toolUseId": "tooluse_xq6vYsQ-QcGZOPcIx0yM3A",
+    "status": "success",
+    "content": [
+        {
+            "type": "jsonBlock",
+            "json": {
+                "result": "The letter 'r' appears 3 time(s) in 'strawberry'"
+            }
+        }
+    ]
+}
+```
+
+An error response carries an `'error'` status and an optional [`Error`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Error):
+
+```typescript
+{
+    "type": "toolResultBlock",
+    "toolUseId": "tooluse_rFoPosVKQ7WfYRfw_min8Q",
+    "status": "error",
+    "content": [
+        {
+            "type": "textBlock",
+            "text": "Error: Test error"
+        }
+    ],
+    "error": Error
+}
+```
+</Tab>
+</Tabs>
+
+## How Return Values Become Tool Results
+
+<Tabs>
+<Tab label="Python">
+
+The [`@tool`](@api/python/strands.tools.decorator#tool) decorator converts a
+function's return value into a [`ToolResult`](@api/python/strands.types.tools#ToolResult):
+
+1. A string or other simple value is wrapped as `{"text": str(result)}`.
+2. A dictionary that already has the [`ToolResult`](@api/python/strands.types.tools#ToolResult) structure is used directly.
+3. A raised exception is converted to an error response.
+</Tab>
+<Tab label="TypeScript">
+
+The `tool()` function converts a callback's return value into a `ToolResultBlock`:
+
+1. A value of type `string | number | boolean | null | { [key: string]: JSONValue } | JSONValue[]` is converted to a `ToolResultBlock`.
+2. A thrown exception is caught and converted to an error response.
+</Tab>
+</Tabs>

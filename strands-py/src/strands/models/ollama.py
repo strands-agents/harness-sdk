@@ -6,6 +6,7 @@
 import json
 import logging
 import uuid
+from collections import Counter
 from collections.abc import AsyncGenerator
 from typing import Any, TypeVar, cast
 
@@ -17,8 +18,15 @@ from ..types.content import ContentBlock, Messages
 from ..types.exceptions import ContextWindowOverflowException
 from ..types.streaming import StopReason, StreamEvent
 from ..types.tools import ToolChoice, ToolSpec
-from ._validation import _has_location_source, validate_config_keys, warn_on_tool_choice_not_supported
-from .model import BaseModelConfig, Model
+from ._model_info import SERVER_SIDE_SUMMARY_OFF, ModelInfo
+from ._validation import (
+    _has_location_source,
+    _log_skipped_blocks,
+    validate_config_keys,
+    warn_on_cache_config_not_supported,
+    warn_on_tool_choice_not_supported,
+)
+from .model import BaseModelConfig, CacheConfig, Model
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +55,7 @@ class OllamaModel(Model):
 
         Attributes:
             additional_args: Any additional arguments to include in the request.
+            cache_config: Prompt caching settings. Ollama honors no cache fields, so any set field is ignored.
             keep_alive: Controls how long the model will stay loaded into memory following the request (default: "5m").
             max_tokens: Maximum number of tokens to generate in the response.
             model_id: Ollama model ID (e.g., "llama3", "mistral", "phi3").
@@ -57,7 +66,8 @@ class OllamaModel(Model):
         """
 
         additional_args: dict[str, Any] | None
-        keep_alive: str | None
+        cache_config: CacheConfig | None
+        keep_alive: float | str | None
         max_tokens: int | None
         model_id: str
         options: dict[str, Any] | None
@@ -95,6 +105,15 @@ class OllamaModel(Model):
         """
         validate_config_keys(model_config, self.OllamaConfig)
         self.config.update(model_config)
+
+    @property
+    @override
+    def model_info(self) -> ModelInfo:
+        """Reports server-side summary as off, which a ``model_info`` override still wins over.
+
+        Ollama has no server-side summary, including for Claude models served through it.
+        """
+        return ModelInfo.merge(super().model_info, SERVER_SIDE_SUMMARY_OFF, self.get_config().get("model_info"))
 
     @override
     def get_config(self) -> OllamaConfig:
@@ -170,14 +189,16 @@ class OllamaModel(Model):
         system_message = [{"role": "system", "content": system_prompt}] if system_prompt else []
 
         formatted_messages = []
+        skipped: Counter[str] = Counter()
         for message in messages:
             for content in message["content"]:
                 # Check for location sources and skip with warning
                 if _has_location_source(content):
-                    logger.warning("Location sources are not supported by Ollama | skipping content block")
+                    skipped["Location sources are not supported by Ollama | skipping content block"] += 1
                     continue
                 formatted_messages.extend(self._format_request_message_contents(message["role"], content))
 
+        _log_skipped_blocks(logger, skipped)
         return system_message + formatted_messages
 
     def format_request(
@@ -197,7 +218,7 @@ class OllamaModel(Model):
             TypeError: If a message contains a content block type that cannot be converted to an Ollama-compatible
                 format.
         """
-        return {
+        request = {
             "messages": self._format_request_messages(messages, system_prompt),
             "model": self.config["model_id"],
             "options": {
@@ -225,13 +246,16 @@ class OllamaModel(Model):
                 }
                 for tool_spec in tool_specs or []
             ],
-            **({"keep_alive": self.config["keep_alive"]} if self.config.get("keep_alive") else {}),
+            **({"keep_alive": self.config["keep_alive"]} if self.config.get("keep_alive") is not None else {}),
             **(
                 self.config["additional_args"]
                 if "additional_args" in self.config and self.config["additional_args"] is not None
                 else {}
             ),
         }
+        # Ollama applies no CacheConfig fields; warn that any set field is ignored.
+        warn_on_cache_config_not_supported(self.config.get("cache_config"), "Ollama", supported=set(), stacklevel=3)
+        return request
 
     def format_chunk(self, event: dict[str, Any]) -> StreamEvent:
         """Format the Ollama response events into standardized message chunks.

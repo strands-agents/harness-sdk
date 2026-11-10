@@ -6,7 +6,7 @@ import pytest
 
 from strands import Agent
 from strands._context_manager.modes.agentic.agentic_context import create_token_usage_middleware
-from strands._middleware.stages import InvokeModelContext
+from strands.middleware.stages import InvokeModelContext
 from strands.types.content import Message
 from tests.fixtures.mocked_model_provider import MockedModelProvider
 
@@ -188,3 +188,51 @@ class TestTokenUsageMiddlewareIntegration:
         for messages in seen_messages:
             for block in messages[-1]["content"]:
                 assert "<context-status>" not in block.get("text", "")
+
+
+@pytest.mark.asyncio
+async def test_status_line_is_reported_as_per_call_content():
+    """The status line carries a live token count, so it is rebuilt on every call.
+
+    Reporting it keeps a provider's cache point ahead of it; otherwise the cache point lands after
+    a block that changes every turn and no request ever reads a cache entry.
+    """
+    middleware = create_token_usage_middleware()
+    context = make_context(projected_input_tokens=50_000)
+
+    result = await middleware(context)
+
+    assert result.dynamic_trailing_blocks == 1
+
+
+@pytest.mark.asyncio
+async def test_reports_nothing_when_the_status_line_lands_in_an_assistant_message():
+    """The status text is appended to the last message whatever its role, but only a boundary on the
+    last user message is meaningful. On an assistant-terminated history the text is already outside the
+    cached prefix, so reporting trailing blocks would move a provider's cache point off the end of the last user
+    message and evict durable content. Reachable via ``agent()`` with no prompt and restored sessions.
+    """
+    middleware = create_token_usage_middleware()
+    context = make_context(
+        messages=[
+            {"role": "user", "content": [{"text": "durable ask"}]},
+            {"role": "assistant", "content": [{"text": "reply"}]},
+        ],
+        projected_input_tokens=50_000,
+    )
+
+    result = await middleware(context)
+
+    assert result.messages[-1]["role"] == "assistant"
+    assert "<context-status>" in result.messages[-1]["content"][-1]["text"]
+    assert result.dynamic_trailing_blocks == 0
+
+
+@pytest.mark.asyncio
+async def test_reports_nothing_when_projection_is_unavailable():
+    middleware = create_token_usage_middleware()
+    context = make_context()
+
+    result = await middleware(context)
+
+    assert result.dynamic_trailing_blocks == 0

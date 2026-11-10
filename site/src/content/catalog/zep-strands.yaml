@@ -1,0 +1,9 @@
+name: zep-strands
+description: Long-term memory for Strands agents backed by Zep's temporal knowledge graph, with context injection, server-side extraction, and graph search.
+integrationType: memory-store
+languages:
+  python:
+    package: zep-strands
+github: https://github.com/getzep/zep
+docsUrl: https://help.getzep.com/strands-memory/
+addedDate: 2026-08-10

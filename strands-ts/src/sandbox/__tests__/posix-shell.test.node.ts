@@ -2,7 +2,12 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import fs from 'fs'
 import { TestSandbox } from '../../__fixtures__/test-sandbox.node.js'
 import { buildShellEnvPrefix } from '../posix-shell.js'
-import { SandboxPathNotFoundError } from '../errors.js'
+import {
+  SandboxIsADirectoryError,
+  SandboxPathNotFoundError,
+  SandboxPermissionError,
+  SandboxTimeoutError,
+} from '../errors.js'
 import { streamProcess } from '../stream-process.js'
 import type { ExecutionResult, StreamChunk } from '../types.js'
 
@@ -178,8 +183,82 @@ describe.skipIf(process.platform === 'win32')('PosixShellSandbox', () => {
       expect(text).toBe(content)
     })
 
-    it('throws on nonexistent file', async () => {
-      await expect(sandbox.readFile('nope.txt')).rejects.toThrow()
+    it('throws SandboxPathNotFoundError on nonexistent file', async () => {
+      const error = await sandbox.readFile('nope.txt').catch((e: unknown) => e)
+      expect(error).toBeInstanceOf(SandboxPathNotFoundError)
+      expect(error).toMatchObject({ message: 'Path not found: nope.txt', code: 'ENOENT' })
+    })
+
+    it('throws SandboxIsADirectoryError, not SandboxPathNotFoundError, on a directory', async () => {
+      fs.mkdirSync(`${TEST_DIR}/subdir`)
+      const error = await sandbox.readFile('subdir').catch((e: unknown) => e)
+      expect(error).not.toBeInstanceOf(SandboxPathNotFoundError)
+      expect(error).toStrictEqual(new SandboxIsADirectoryError('subdir'))
+    })
+
+    it.skipIf(process.getuid?.() === 0)(
+      'throws SandboxPermissionError, not SandboxPathNotFoundError, for a file under an unsearchable directory',
+      async () => {
+        fs.mkdirSync(`${TEST_DIR}/locked`)
+        fs.writeFileSync(`${TEST_DIR}/locked/secret.txt`, 'x')
+        fs.chmodSync(`${TEST_DIR}/locked`, 0o600)
+        try {
+          const error = await sandbox.readFile('locked/secret.txt').catch((e: unknown) => e)
+          expect(error).not.toBeInstanceOf(SandboxPathNotFoundError)
+          expect(error).toStrictEqual(new SandboxPermissionError('locked/secret.txt'))
+        } finally {
+          fs.chmodSync(`${TEST_DIR}/locked`, 0o700)
+        }
+      }
+    )
+
+    it.skipIf(process.getuid?.() === 0)(
+      'throws SandboxPermissionError for a file under an unsearchable ancestor',
+      async () => {
+        fs.mkdirSync(`${TEST_DIR}/locked/inner`, { recursive: true })
+        fs.writeFileSync(`${TEST_DIR}/locked/inner/secret.txt`, 'x')
+        fs.chmodSync(`${TEST_DIR}/locked`, 0o600)
+        try {
+          await expect(sandbox.readFile('locked/inner/secret.txt')).rejects.toStrictEqual(
+            new SandboxPermissionError('locked/inner/secret.txt')
+          )
+        } finally {
+          fs.chmodSync(`${TEST_DIR}/locked`, 0o700)
+        }
+      }
+    )
+
+    it('throws SandboxPathNotFoundError when an ancestor is missing or a file', async () => {
+      fs.writeFileSync(`${TEST_DIR}/file.txt`, 'x')
+      for (const path of ['missing/a/b.txt', 'file.txt/b.txt', `${TEST_DIR}/missing/b.txt`]) {
+        await expect(sandbox.readFile(path)).rejects.toBeInstanceOf(SandboxPathNotFoundError)
+      }
+    })
+
+    it.skipIf(process.getuid?.() === 0)('throws SandboxPermissionError for an unreadable file', async () => {
+      fs.writeFileSync(`${TEST_DIR}/secret.txt`, 'x')
+      fs.chmodSync(`${TEST_DIR}/secret.txt`, 0o200)
+      try {
+        const error = await sandbox.readFile('secret.txt').catch((e: unknown) => e)
+        expect(error).toStrictEqual(new SandboxPermissionError('secret.txt'))
+      } finally {
+        fs.chmodSync(`${TEST_DIR}/secret.txt`, 0o600)
+      }
+    })
+
+    it('does not report a failed cd as a missing file', async () => {
+      fs.writeFileSync(`${TEST_DIR}/real.txt`, 'x')
+      const badCwd = new TestSandbox(`${TEST_DIR}/missing-workdir`)
+      await expect(badCwd.readFile(`${TEST_DIR}/real.txt`)).rejects.not.toBeInstanceOf(SandboxPathNotFoundError)
+    })
+
+    // Contract: on POSIX, `\` in a path is a legal filename character, not a
+    // separator. Containment logic in tools above the sandbox relies on this.
+    it('treats a backslash in a filename as a literal character', async () => {
+      await sandbox.writeText('weird\\name.txt', 'ok')
+      expect(await sandbox.readText('weird\\name.txt')).toBe('ok')
+      const entries = await sandbox.listFiles('.')
+      expect(entries.some((entry) => entry.name === 'weird\\name.txt')).toBe(true)
     })
   })
 
@@ -252,6 +331,13 @@ describe.skipIf(process.platform === 'win32')('PosixShellSandbox', () => {
       await expect(sandbox.execute('sleep 60', { timeout: 0.2 })).rejects.toThrow('timed out')
       const elapsed = Date.now() - start
       expect(elapsed).toBeLessThan(2000)
+    })
+
+    it('reports the output captured before the kill on timeout', async () => {
+      const error = await sandbox.execute('echo partial; echo warn >&2; sleep 5', { timeout: 0.3 }).catch((e) => e)
+      expect(error).toBeInstanceOf(SandboxTimeoutError)
+      expect(error.stdout).toBe('partial\n')
+      expect(error.stderr).toBe('warn\n')
     })
 
     it('does not timeout fast commands', async () => {
@@ -327,6 +413,28 @@ describe.skipIf(process.platform === 'win32')('PosixShellSandbox', () => {
       // sh -c 'kill -9 $$' sends SIGKILL to itself → exit code 128 + 9 = 137
       const result = await sandbox.execute("sh -c 'kill -9 $$'")
       expect(result.exitCode).toBe(137)
+    })
+
+    it('decodes multibyte UTF-8 sequences split across chunk boundaries', async () => {
+      // Regression guard for #4156. A UTF-8 character straddling a pipe read
+      // boundary must not be decoded as two invalid halves. The helper writes
+      // 'café☕' as two Buffers split mid-'é' (byte 4 of 5), so a per-chunk decode
+      // would yield U+FFFD replacements.
+      const script =
+        "const b=Buffer.from('café☕','utf8');" +
+        'process.stdout.write(b.subarray(0,4));' +
+        'setTimeout(()=>process.stdout.write(b.subarray(4)),20)'
+      const chunks: (StreamChunk | ExecutionResult)[] = []
+      for await (const chunk of streamProcess('node', ['-e', script])) {
+        chunks.push(chunk)
+      }
+      const result = chunks.find((c): c is ExecutionResult => c.type === 'executionResult')
+      expect(result?.stdout).toBe('café☕')
+      const streamed = chunks
+        .filter((c): c is StreamChunk => c.type === 'streamChunk' && c.streamType === 'stdout')
+        .map((c) => c.data)
+        .join('')
+      expect(streamed).toBe('café☕')
     })
 
     it('returns enoentMessage when spawned binary does not exist', async () => {

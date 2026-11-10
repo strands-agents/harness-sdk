@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { DockerSandbox } from '../docker.js'
 import { streamProcess } from '../stream-process.js'
 import type { ExecutionResult } from '../types.js'
-import { SANDBOX_BASH_DESCRIPTION } from '../../vended-tools/bash/types.js'
+import { SANDBOX_SHELL_DESCRIPTION } from '../../vended-tools/shell/types.js'
 
 const OK: ExecutionResult = { type: 'executionResult', exitCode: 0, stdout: '', stderr: '', outputFiles: [] }
 
@@ -97,14 +97,14 @@ describe('DockerSandbox', () => {
   describe('getTools', () => {
     it('vends the sandbox-routed fileEditor and bash tools', () => {
       const tools = new DockerSandbox({ container: 'my-container' }).getTools()
-      expect(tools.map((t) => t.name)).toStrictEqual(['sandbox_file_editor', 'sandbox_bash'])
+      expect(tools.map((t) => t.name)).toStrictEqual(['sandbox_file_editor', 'sandbox_shell'])
     })
 
     it('vends bash with the sandbox description', () => {
       const tools = new DockerSandbox({ container: 'my-container' }).getTools()
-      const bashTool = tools.find((t) => t.name === 'sandbox_bash')!
-      expect(bashTool.description).toContain(SANDBOX_BASH_DESCRIPTION)
-      expect(bashTool.description).toContain('my-container')
+      const shellTool = tools.find((t) => t.name === 'sandbox_shell')!
+      expect(shellTool.description).toContain(SANDBOX_SHELL_DESCRIPTION)
+      expect(shellTool.description).toContain('my-container')
     })
   })
 })

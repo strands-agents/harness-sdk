@@ -1,0 +1,120 @@
+---
+title: "Lesson 5: Control your agent with hooks"
+description: "Hooks fire at the same event points as callbacks (before/after tool calls, before/after model calls, cycle boundaries) but they can modify or cancel what's about to happen."
+redirectFrom:
+  - docs/community/learning/lesson5-control-your-agent-with-hooks
+---
+
+import CourseNotice from '../../../components/CourseNotice.astro'
+
+<CourseNotice title="Before you follow along">
+
+This video is a snapshot in time. Some APIs and examples have changed since
+recording. Follow the code on this page, and look for "Changed since recording"
+notices below.
+
+</CourseNotice>
+
+<YouTube id="Zamh36RWKz8" title="Lesson 5: Control your agent with hooks" />
+*[Watch on YouTube](https://www.youtube.com/watch?v=Zamh36RWKz8&list=PLDzwjhH-4yhU&index=5)*
+
+*Code for this lesson: [`samples/05-hooks`](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/05-hooks)*
+
+## Rules that don't depend on the model
+
+Hooks inject code at lifecycle events (before/after tool calls, before/after the agent loop) without changing the agent's logic. Unlike tools, which the model decides to use, hooks fire automatically every time regardless of what the model reasons. The hook applies a programmed check at the event where you register it.
+
+A runaway loop could call the same tool dozens of times. A model might attempt a destructive operation without asking. The hooks below block the specific tool calls they check; other tools need their own checks.
+
+## Hook architecture
+
+- Subclass `HookProvider` to define hooks
+- Register callbacks for lifecycle events in `register_hooks()`
+- Multiple hooks can listen to the same event (stackable)
+- `event.interrupt()` pauses the loop for human input
+- `event.cancel_tool` blocks tool execution and feeds a message back to the model explaining why
+
+## Example: human approval for deletions
+
+```python
+from strands import Agent, tool
+from strands.hooks import BeforeToolCallEvent, HookProvider, HookRegistry
+
+class DeleteApprovalHook(HookProvider):
+    """Intercepts delete operations for human approval."""
+
+    def register_hooks(self, registry: HookRegistry) -> None:
+        registry.add_callback(BeforeToolCallEvent, self.check_delete)
+
+    def check_delete(self, event: BeforeToolCallEvent) -> None:
+        if event.tool_use["name"] != "delete_file":
+            return
+
+        approval = event.interrupt(
+            "delete-approval",
+            reason={"path": event.tool_use["input"]["path"]}
+        )
+
+        if approval.lower() != "y":
+            event.cancel_tool = "User denied file deletion"
+
+agent = Agent(
+    tools=[list_files, read_file, write_file, delete_file],
+    hooks=[DeleteApprovalHook()],
+)
+```
+
+📂 [approval_interrupt.py](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/05-hooks/approval_interrupt.py)
+
+`event.interrupt()` pauses agent execution and returns control to the caller. That's what makes approval workflows possible: the agent doesn't proceed until a human answers.
+
+## Example: rate limiting tool calls
+
+```python
+from strands import Agent
+from strands.hooks import BeforeInvocationEvent, BeforeToolCallEvent, HookProvider, HookRegistry
+from rate_limiter import get_weather
+
+class LimitToolCounts(HookProvider):
+    def __init__(self, max_calls: int = 3):
+        self.max_calls = max_calls
+        self.counts: dict[str, int] = {}
+
+    def register_hooks(self, registry: HookRegistry) -> None:
+        registry.add_callback(BeforeInvocationEvent, self.reset)
+        registry.add_callback(BeforeToolCallEvent, self.check)
+
+    def reset(self, event: BeforeInvocationEvent) -> None:
+        self.counts = {}
+
+    def check(self, event: BeforeToolCallEvent) -> None:
+        name = event.tool_use["name"]
+        self.counts[name] = self.counts.get(name, 0) + 1
+        if self.counts[name] > self.max_calls:
+            event.cancel_tool = (
+                f"'{name}' hit the {self.max_calls}-call limit. "
+                "Do NOT call this tool again."
+            )
+
+agent = Agent(tools=[get_weather], hooks=[LimitToolCounts(max_calls=3)])
+```
+
+📂 [rate_limiter.py](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/05-hooks/rate_limiter.py)
+
+Notice the counter resets on `BeforeInvocationEvent`. Rate limits are per request, not for the agent's lifetime. And because `cancel_tool` sends a message back to the model, the model receives feedback about why the call was blocked. The hook continues to block
+excess calls even if the model retries.
+
+## When to use hooks
+
+- Rate limit tool usage to prevent runaway loops
+- Require human approval before destructive operations
+- Log every tool call for audit trails
+- Validate tool inputs and outputs against business rules
+- Enforce access control on sensitive tools
+
+Hooks don't touch tools or prompts. They're a separate, reusable layer you can drop onto any agent.
+
+## Resources
+
+- 📖 [Hooks](/docs/user-guide/sdk/agents/hooks/)
+- 📖 [Lifecycle Controls](/docs/user-guide/sdk/agents/lifecycle-controls/)

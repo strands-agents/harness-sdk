@@ -168,6 +168,27 @@ updates:
           - 'patch'
       # Major production updates aren't matched by any group, so they get individual
       # PRs — gated by the 30-day semver-major cooldown above for manual review.
+  # Pinned analyzers for the PR complexity labeler. Isolated from the SDK
+  # workspaces on purpose: they run against untrusted PR code, so they are
+  # installed from their own lockfile rather than a contributor-editable one.
+  - package-ecosystem: 'npm'
+    directory: '/.github/scripts/pr-metrics/tools'
+    schedule:
+      interval: 'weekly'
+    open-pull-requests-limit: 100
+    labels:
+      - 'dependencies'
+    commit-message:
+      prefix: 'ci'
+    cooldown:
+      default-days: 5
+      semver-major-days: 30
+      semver-minor-days: 7
+      semver-patch-days: 3
+    groups:
+      pr-metrics-tools:
+        patterns:
+          - '*'
   # GitHub Actions workflow pins. Low volume, so no grouping; the cooldown still
   # holds majors back for review before the bump PR opens.
   - package-ecosystem: 'github-actions'

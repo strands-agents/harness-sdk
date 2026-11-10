@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 
 from pydantic import BaseModel, Field
 
+from .....agent.invocation_context import InvocationContext, _create_auxiliary_invocation_context
 from .....models import Model
 from .....types.tools import ToolUse
 from ...context_providers.ledger_provider import LedgerProvider
@@ -49,7 +50,8 @@ class LLMSteeringHandler(SteeringHandler):
         Args:
             system_prompt: System prompt defining steering guidance rules
             prompt_mapper: Custom prompt mapper for evaluation prompts
-            model: Optional model override for steering evaluation
+            model: Model for steering evaluation. Resolution order: this ``model`` >
+                ``agent.aux_model`` > ``agent.model``.
             context_providers: List of context providers for populating steering context.
                 Defaults to [LedgerProvider()] if None. Pass an empty list to disable
                 context providers.
@@ -62,12 +64,21 @@ class LLMSteeringHandler(SteeringHandler):
         self.prompt_mapper = prompt_mapper or DefaultPromptMapper()
         self.model = model
 
-    async def steer_before_tool(self, *, agent: Agent, tool_use: ToolUse, **kwargs: Any) -> ToolSteeringAction:
+    async def steer_before_tool(
+        self,
+        *,
+        agent: Agent,
+        tool_use: ToolUse,
+        invocation_context: InvocationContext | None = None,
+        **kwargs: Any,
+    ) -> ToolSteeringAction:
         """Provide contextual guidance for tool usage.
 
         Args:
             agent: The agent instance
             tool_use: The tool use object with name and arguments
+            invocation_context: The request this tool call belongs to; the steering call's usage
+                adds to it.
             **kwargs: Additional keyword arguments for steering evaluation
 
         Returns:
@@ -79,11 +90,18 @@ class LLMSteeringHandler(SteeringHandler):
         # Create isolated agent for steering evaluation (no shared conversation state)
         from .....agent import Agent
 
-        steering_agent = Agent(system_prompt=self.system_prompt, model=self.model or agent.model, callback_handler=None)
+        steering_agent = Agent(
+            system_prompt=self.system_prompt, model=self.model or agent.aux_model, callback_handler=None
+        )
 
         # Get LLM decision
         llm_result: _LLMSteering = cast(
-            _LLMSteering, steering_agent(prompt, structured_output_model=_LLMSteering).structured_output
+            _LLMSteering,
+            steering_agent(
+                prompt,
+                structured_output_model=_LLMSteering,
+                invocation_context=_create_auxiliary_invocation_context(invocation_context),
+            ).structured_output,
         )
 
         # Convert LLM decision to steering action

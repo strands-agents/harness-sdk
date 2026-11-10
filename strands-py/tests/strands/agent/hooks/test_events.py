@@ -7,10 +7,12 @@ from strands.hooks import (
     AfterInvocationEvent,
     AfterModelCallEvent,
     AfterToolCallEvent,
+    AfterToolsEvent,
     AgentInitializedEvent,
     BeforeInvocationEvent,
     BeforeModelCallEvent,
     BeforeToolCallEvent,
+    BeforeToolsEvent,
     MessageAddedEvent,
 )
 from strands.types.content import Message, Messages
@@ -75,6 +77,26 @@ def end_request_event(agent):
 
 
 @pytest.fixture
+def before_tools_event(agent, tool_use, tool_invocation_state):
+    message: Message = {"role": "assistant", "content": [{"toolUse": tool_use}]}
+    return BeforeToolsEvent(
+        agent=agent,
+        message=message,
+        invocation_state=tool_invocation_state,
+    )
+
+
+@pytest.fixture
+def after_tools_event(agent, tool_result, tool_invocation_state):
+    message: Message = {"role": "user", "content": [{"toolResult": tool_result}]}
+    return AfterToolsEvent(
+        agent=agent,
+        message=message,
+        invocation_state=tool_invocation_state,
+    )
+
+
+@pytest.fixture
 def before_tool_event(agent, tool, tool_use, tool_invocation_state):
     return BeforeToolCallEvent(
         agent=agent,
@@ -100,6 +122,8 @@ def test_event_should_reverse_callbacks(
     start_request_event,
     messaged_added_event,
     end_request_event,
+    before_tools_event,
+    after_tools_event,
     before_tool_event,
     after_tool_event,
 ):
@@ -112,8 +136,57 @@ def test_event_should_reverse_callbacks(
     assert start_request_event.should_reverse_callbacks == False  # noqa: E712
     assert end_request_event.should_reverse_callbacks == True  # noqa: E712
 
+    assert before_tools_event.should_reverse_callbacks == False  # noqa: E712
+    assert after_tools_event.should_reverse_callbacks == True  # noqa: E712
     assert before_tool_event.should_reverse_callbacks == False  # noqa: E712
     assert after_tool_event.should_reverse_callbacks == True  # noqa: E712
+
+
+def test_before_tools_event_fields_default_and_writability(before_tools_event, agent, tool_use, tool_invocation_state):
+    tru_event = before_tools_event
+    exp_event = BeforeToolsEvent(
+        agent=agent,
+        message={"role": "assistant", "content": [{"toolUse": tool_use}]},
+        invocation_state=tool_invocation_state,
+    )
+    assert tru_event == exp_event
+    assert tru_event.cancel is False
+
+    tru_event.cancel = True
+    assert tru_event.cancel is True
+    tru_event.cancel = "tools not allowed"
+    assert tru_event.cancel == "tools not allowed"
+
+    with pytest.raises(AttributeError, match="Property agent is not writable"):
+        tru_event.agent = Mock()
+    with pytest.raises(AttributeError, match="Property message is not writable"):
+        tru_event.message = {"role": "assistant", "content": []}
+    with pytest.raises(AttributeError, match="Property invocation_state is not writable"):
+        tru_event.invocation_state = {}
+
+
+def test_before_tools_event_interrupt_id(before_tools_event):
+    tru_interrupt_id = before_tools_event._interrupt_id("test_name")
+    exp_interrupt_id = "v1:before_tools:78714d6c-613c-5cf4-bf25-7037569941f9"
+    assert tru_interrupt_id == exp_interrupt_id
+
+
+def test_after_tools_event_fields_default_and_writability(after_tools_event, agent, tool_result, tool_invocation_state):
+    tru_event = after_tools_event
+    exp_event = AfterToolsEvent(
+        agent=agent,
+        message={"role": "user", "content": [{"toolResult": tool_result}]},
+        invocation_state=tool_invocation_state,
+    )
+    assert tru_event == exp_event
+    assert tru_event.end_turn is False
+
+    with pytest.raises(AttributeError, match="Property agent is not writable"):
+        tru_event.agent = Mock()
+    with pytest.raises(AttributeError, match="Property message is not writable"):
+        tru_event.message = {"role": "user", "content": []}
+    with pytest.raises(AttributeError, match="Property invocation_state is not writable"):
+        tru_event.invocation_state = {}
 
 
 def test_message_added_event_cannot_write_properties(messaged_added_event):

@@ -12,7 +12,7 @@ jobs:
     name: pip-audit
     permissions:
       contents: read
-    runs-on: ubuntu-latest
+    runs-on: strands-agents_ubuntu-latest_4-core
     defaults:
       run:
         working-directory: strands-mcp
@@ -25,7 +25,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@v7.1.0
         with:
           python-version: '3.10'
           cache: 'pip'
@@ -44,7 +44,10 @@ jobs:
           # Resolve the package's full dependency closure into a temporary
           # venv, then audit it. Auditing the project metadata directly skips
           # transitive deps; this mirrors what an end user actually installs.
-          python -m venv /tmp/audit-env
-          /tmp/audit-env/bin/pip install --upgrade pip
-          /tmp/audit-env/bin/pip install .
+          # Create the target without pip/setuptools bootstrap tooling, then
+          # use the runner's pip to install into it. This keeps the audit
+          # focused on declared runtime dependencies; if the project ever
+          # declares setuptools, pip will install it and it will be audited.
+          python -m venv --without-pip /tmp/audit-env
+          python -m pip --python /tmp/audit-env install .
           pip-audit --path /tmp/audit-env/lib/python*/site-packages

@@ -1,0 +1,8 @@
+name: strands-cosmos
+description: NVIDIA Cosmos multimodal model provider for Strands Agents, jointly understanding and generating text, images, video, audio, and action.
+integrationType: model-provider
+languages:
+  python:
+    package: strands-cosmos
+github: https://github.com/cagataycali/strands-cosmos
+addedDate: 2026-03-09

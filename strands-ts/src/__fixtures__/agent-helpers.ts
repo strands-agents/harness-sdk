@@ -76,6 +76,9 @@ export function createMockAgent(data?: MockAgentData): MockAgent {
     get sandbox(): Sandbox {
       return defaultSandbox.get()
     },
+    get sessionId(): string {
+      return 'test-ses'
+    },
     addHook: <T extends HookableEvent>(eventType: HookableEventConstructor<T>, callback: HookCallback<T>) => {
       trackedHooks.push({
         eventType: eventType as HookableEventConstructor<HookableEvent>,
@@ -86,6 +89,7 @@ export function createMockAgent(data?: MockAgentData): MockAgent {
     // No-op so plugins that register middleware in initAgent (e.g. MemoryManager injection) work
     // out of the box. Tests that inspect registrations override this via `extra.addMiddleware`.
     addMiddleware: () => () => {},
+    auxModel: data?.extra?.auxModel ?? data?.extra?.model,
     ...data?.extra,
     trackedHooks,
   } as unknown as MockAgent
@@ -110,11 +114,13 @@ export function textMessage(role: Role, text: string): Message {
  * @param event - The event instance to dispatch
  */
 export async function invokeTrackedHook<T extends HookableEvent>(agent: MockAgent, event: T): Promise<void> {
-  const hook = agent.trackedHooks.find((h) => h.eventType === event.constructor)
-  if (!hook) {
+  const hooks = agent.trackedHooks.filter((h) => h.eventType === event.constructor)
+  if (hooks.length === 0) {
     throw new Error(`No hook registered for event type: ${event.constructor.name}`)
   }
-  await hook.callback(event)
+  for (const hook of hooks) {
+    await hook.callback(event)
+  }
 }
 
 /**

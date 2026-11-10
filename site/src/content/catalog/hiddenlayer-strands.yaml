@@ -1,0 +1,9 @@
+name: hiddenlayer-strands
+description: HiddenLayer AI security integration for Strands Agents that detects and blocks threats such as prompt injection and model abuse in real time.
+integrationType: intervention
+maintainedBy: partner
+languages:
+  python:
+    package: hiddenlayer-strands
+github: https://github.com/hiddenlayerai/hiddenlayer-strands
+addedDate: 2025-12-01

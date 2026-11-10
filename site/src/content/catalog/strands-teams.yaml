@@ -1,0 +1,9 @@
+name: strands-teams
+description: Microsoft Teams notification tool for Strands Agents that sends rich Adaptive Card messages and formatted status updates to Teams channels and chats.
+integrationType: tool
+languages:
+  python:
+    package: strands-teams
+github: https://github.com/eraykeskinmac/strands-teams
+docsPage: docs/integrations/tools/strands-teams
+addedDate: 2025-12-05

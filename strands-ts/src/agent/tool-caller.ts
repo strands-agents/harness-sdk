@@ -227,6 +227,7 @@ export class ToolCaller {
       toolUse,
       agent: this._agent,
       invocationState: {},
+      cancelSignal: this._agent.cancelSignal,
       interrupt: (): never => {
         throw new Error('Interrupts are not supported in direct tool calls')
       },

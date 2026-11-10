@@ -18,12 +18,21 @@ import warnings
 from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
 from a2a.server.tasks import TaskUpdater
-from a2a.types import DataPart, FilePart, InternalError, Part, TaskState, TextPart, UnsupportedOperationError
+from a2a.types import (
+    DataPart,
+    FilePart,
+    InternalError,
+    InvalidParamsError,
+    Part,
+    TaskState,
+    TextPart,
+    UnsupportedOperationError,
+)
 from a2a.utils import new_agent_text_message, new_task
 from a2a.utils.errors import ServerError
 
@@ -32,6 +41,7 @@ from ...agent.agent import AgentResult as SAAgentResult
 from ...session.session_manager import SessionManager
 from ...types._snapshot import Snapshot
 from ...types.content import ContentBlock
+from ...types.interrupt import InterruptResponse, InterruptResponseContent
 from ...types.media import (
     DocumentContent,
     DocumentSource,
@@ -45,6 +55,39 @@ logger = logging.getLogger(__name__)
 
 # A factory that builds a fresh Agent for a given A2A context_id.
 AgentFactory = Callable[[str], SAAgent]
+
+# Key identifying a DataPart that carries a Strands interrupt response. The A2A payload mirrors the
+# `InterruptResponseContent` type verbatim so the wire contract and the SDK type cannot drift.
+INTERRUPT_RESPONSE_KEY = "interruptResponse"
+
+# Key under which an `input_required` status message advertises the interrupts awaiting an answer.
+# Each entry carries the `interruptId` that the matching interrupt response must echo back.
+INTERRUPTS_KEY = "interrupts"
+
+# What this executor invokes the agent with: fresh conversational content, or interrupt responses
+# resuming a task parked in `input_required`. Deliberately narrower than the public `AgentInput`,
+# which also admits `str`, `Messages`, and `None` — an A2A message only ever converts to these two.
+# Each arm stays homogeneous because `_InterruptState.resume()` rejects a prompt whose contents are
+# not all interrupt responses.
+_AgentPrompt = list[ContentBlock] | list[InterruptResponseContent]
+
+
+def _is_interrupt_resume(prompt: _AgentPrompt) -> bool:
+    """Whether a prompt carries interrupt responses rather than conversational content."""
+    return bool(prompt) and INTERRUPT_RESPONSE_KEY in prompt[0]
+
+
+def _jsonable(value: Any) -> Any:
+    """Return a value unchanged when it can cross the JSON-RPC boundary, else its string form.
+
+    An interrupt reason is arbitrary user data. A value the transport cannot encode would otherwise
+    surface only while serializing the response, long after the interrupt details are assembled.
+    """
+    try:
+        json.dumps(value)
+    except (TypeError, ValueError):
+        return str(value)
+    return value
 
 
 @dataclass
@@ -194,7 +237,7 @@ class StrandsA2AExecutor(AgentExecutor):
     async def _run_with_context_agent(
         self,
         context_id: str,
-        content_blocks: list[ContentBlock],
+        prompt: _AgentPrompt,
         invocation_state: dict[str, Any],
         updater: TaskUpdater,
         stream_state: _StreamState | None,
@@ -202,12 +245,12 @@ class StrandsA2AExecutor(AgentExecutor):
         """Factory mode: run against this context's dedicated agent, serialized only per context."""
         agent, lock = await self._acquire_context_agent(context_id)
         async with lock:
-            await self._stream_agent(agent, content_blocks, invocation_state, updater, stream_state)
+            await self._stream_agent(agent, prompt, invocation_state, updater, stream_state)
 
     async def _run_with_shared_agent(
         self,
         context_id: str,
-        content_blocks: list[ContentBlock],
+        prompt: _AgentPrompt,
         invocation_state: dict[str, Any],
         updater: TaskUpdater,
         stream_state: _StreamState | None,
@@ -216,7 +259,7 @@ class StrandsA2AExecutor(AgentExecutor):
         async with self._contexts_lock:
             self._restore_state(self.agent, self._snapshots.get(context_id, self._template_snapshot))  # type: ignore[arg-type]
             try:
-                await self._stream_agent(self.agent, content_blocks, invocation_state, updater, stream_state)  # type: ignore[arg-type]
+                await self._stream_agent(self.agent, prompt, invocation_state, updater, stream_state)  # type: ignore[arg-type]
             finally:
                 # Persist updated history (even on error), evict, then reset the agent for the next caller.
                 self._snapshots[context_id] = self._capture_state(self.agent)  # type: ignore[arg-type]
@@ -227,15 +270,32 @@ class StrandsA2AExecutor(AgentExecutor):
     async def _stream_agent(
         self,
         agent: SAAgent,
-        content_blocks: list[ContentBlock],
+        prompt: _AgentPrompt,
         invocation_state: dict[str, Any],
         updater: TaskUpdater,
         stream_state: _StreamState | None,
     ) -> None:
-        """Stream one agent invocation and translate its events to A2A updates."""
+        """Stream one agent invocation and translate its events to A2A updates.
+
+        Raises:
+            ServerError: If the input does not match the agent's interrupt state — interrupt
+                responses that name no parked interrupt, or fresh content for a parked task. Both
+                fail before the agent runs, so a parked interrupt survives a rejected resume.
+        """
+        # Binding is checked here rather than at extraction: the agent, and with it the interrupt
+        # state this request must match, is only resolved once the context's snapshot is restored.
+        if _is_interrupt_resume(prompt):
+            self._validate_interrupt_resume(agent, cast(list[InterruptResponseContent], prompt))
+        elif agent._interrupt_state.activated:
+            raise ServerError(
+                error=InvalidParamsError(
+                    message="Task is awaiting an interrupt response and cannot accept a new message"
+                )
+            ) from None
+
         try:
             result: SAAgentResult | None = None
-            async for event in agent.stream_async(content_blocks, invocation_state=invocation_state):
+            async for event in agent.stream_async(prompt, invocation_state=invocation_state):
                 if "result" in event:
                     result = event["result"]
                 else:
@@ -322,17 +382,21 @@ class StrandsA2AExecutor(AgentExecutor):
             updater: The task updater for managing task state and sending updates.
 
         Raises:
-            ServerError: If input conversion fails (missing or empty content).
+            ServerError: If input conversion fails (missing or empty content), or if the message
+                carries malformed interrupt responses.
         """
-        # Convert A2A message parts to Strands ContentBlocks
-        if context.message and hasattr(context.message, "parts"):
-            content_blocks = self._convert_a2a_parts_to_content_blocks(context.message.parts)
-            if not content_blocks:
+        if not (context.message and hasattr(context.message, "parts")):
+            raise ServerError(error=InternalError(message="Request message is missing or has no parts")) from None
+
+        # Interrupt responses resume a parked task, so they are recognized before the generic
+        # conversion below would flatten them into text.
+        prompt: _AgentPrompt | None = self._extract_interrupt_responses(context.message.parts)
+        if prompt is None:
+            prompt = self._convert_a2a_parts_to_content_blocks(context.message.parts)
+            if not prompt:
                 raise ServerError(
                     error=InternalError(message="No valid content found in request message parts")
                 ) from None
-        else:
-            raise ServerError(error=InternalError(message="Request message is missing or has no parts")) from None
 
         if not self.enable_a2a_compliant_streaming:
             warnings.warn(
@@ -356,9 +420,9 @@ class StrandsA2AExecutor(AgentExecutor):
             raise ServerError(error=InternalError(message="Request is missing a context_id")) from None
 
         if self._agent_factory is not None:
-            await self._run_with_context_agent(context_id, content_blocks, invocation_state, updater, stream_state)
+            await self._run_with_context_agent(context_id, prompt, invocation_state, updater, stream_state)
         else:
-            await self._run_with_shared_agent(context_id, content_blocks, invocation_state, updater, stream_state)
+            await self._run_with_shared_agent(context_id, prompt, invocation_state, updater, stream_state)
 
     async def _handle_interrupt_result(self, result: SAAgentResult, updater: TaskUpdater) -> None:
         """Handle an agent result that contains interrupts.
@@ -367,17 +431,25 @@ class StrandsA2AExecutor(AgentExecutor):
         the A2A `input_required` state. The interrupt details are communicated to
         the client via the status message.
 
+        The details are carried twice: a TextPart describing what is needed, and a DataPart holding
+        each interrupt's id. Only the id lets a client address its response back to the interrupt
+        that raised it, and an id is generated server-side so it cannot be inferred from the prose.
+
         Args:
             result: The agent result containing interrupts.
             updater: The task updater for managing task state.
         """
         # Build a descriptive message about what input is needed
         interrupt_descriptions = []
+        pending_interrupts: list[dict[str, Any]] = []
         for interrupt in result.interrupts or []:
             desc = f"- {interrupt.name}"
             if interrupt.reason:
                 desc += f": {interrupt.reason}"
             interrupt_descriptions.append(desc)
+            pending_interrupts.append(
+                {"interruptId": interrupt.id, "name": interrupt.name, "reason": _jsonable(interrupt.reason)}
+            )
 
         if interrupt_descriptions:
             input_message = "Agent requires input:\n" + "\n".join(interrupt_descriptions)
@@ -386,7 +458,12 @@ class StrandsA2AExecutor(AgentExecutor):
             # Still transition to input_required — the agent signaled it needs input.
             input_message = "Agent requires additional input to continue"
 
-        await updater.requires_input(message=updater.new_agent_message(parts=[Part(root=TextPart(text=input_message))]))
+        # The TextPart stays first so clients that only read prose are unaffected.
+        parts = [Part(root=TextPart(text=input_message))]
+        if pending_interrupts:
+            parts.append(Part(root=DataPart(data={INTERRUPTS_KEY: pending_interrupts})))
+
+        await updater.requires_input(message=updater.new_agent_message(parts=parts))
 
     async def _handle_streaming_event(
         self, event: dict[str, Any], updater: TaskUpdater, stream_state: _StreamState | None
@@ -582,6 +659,119 @@ class StrandsA2AExecutor(AgentExecutor):
         if "." in file_name:
             return file_name.rsplit(".", 1)[0]
         return file_name
+
+    def _extract_interrupt_responses(self, parts: list[Part]) -> list[InterruptResponseContent] | None:
+        """Extract Strands interrupt responses from inbound A2A message parts.
+
+        A client resumes a task parked in ``input_required`` by sending a DataPart shaped like the
+        Strands ``InterruptResponseContent`` type::
+
+            {"kind": "data", "data": {"interruptResponse": {"interruptId": "<id>", "response": <any>}}}
+
+        Recognition is deliberately narrow: only the explicit shape above is treated as a resume, so
+        an ordinary DataPart still reaches the generic content-block path unchanged.
+
+        Args:
+            parts: List of A2A Part objects from the inbound message.
+
+        Returns:
+            The interrupt responses carried by ``parts``, or None when none are present and the
+            caller should fall back to generic content-block conversion.
+
+        Raises:
+            ServerError: If an interrupt response is malformed, carries a null response, repeats an
+                interrupt id, or is accompanied by unrelated content in the same message.
+        """
+        responses: list[InterruptResponseContent] = []
+        seen_ids: set[str] = set()
+        unrelated_parts = 0
+
+        for part in parts:
+            part_root = part.root
+            data = part_root.data if isinstance(part_root, DataPart) else None
+            if not isinstance(data, dict) or INTERRUPT_RESPONSE_KEY not in data:
+                unrelated_parts += 1
+                continue
+
+            response = data[INTERRUPT_RESPONSE_KEY]
+            if not isinstance(response, dict):
+                raise ServerError(
+                    error=InvalidParamsError(
+                        message=f"'{INTERRUPT_RESPONSE_KEY}' must be an object with 'interruptId' and 'response'"
+                    )
+                ) from None
+
+            interrupt_id = response.get("interruptId")
+            if not isinstance(interrupt_id, str) or not interrupt_id:
+                raise ServerError(
+                    error=InvalidParamsError(message="Interrupt response is missing a non-empty 'interruptId'")
+                ) from None
+
+            # `Interrupt.response` of None means "not yet answered", so a null answer would leave
+            # the interrupt unsatisfied and re-raise it — the client would see an identical
+            # input_required and no error. Falsy answers such as False are fine.
+            if response.get("response") is None:
+                raise ServerError(
+                    error=InvalidParamsError(
+                        message=f"Interrupt response for '{interrupt_id}' must provide a non-null 'response'"
+                    )
+                ) from None
+
+            # Two answers for one interrupt are ambiguous; reject rather than silently choosing one.
+            if interrupt_id in seen_ids:
+                raise ServerError(
+                    error=InvalidParamsError(message=f"Duplicate interrupt response for '{interrupt_id}'")
+                ) from None
+
+            seen_ids.add(interrupt_id)
+            responses.append(
+                InterruptResponseContent(
+                    interruptResponse=InterruptResponse(interruptId=interrupt_id, response=response["response"])
+                )
+            )
+
+        if not responses:
+            return None
+
+        # The agent resumes from interrupt responses alone; delivering both would mean dropping the
+        # conversational content, which is exactly the silent behavior the resume path must avoid.
+        if unrelated_parts:
+            raise ServerError(
+                error=InvalidParamsError(
+                    message="A message carrying interrupt responses must not contain other content parts"
+                )
+            ) from None
+
+        logger.debug("interrupt_ids=<%s> | extracted interrupt responses from request", sorted(seen_ids))
+        return responses
+
+    def _validate_interrupt_resume(self, agent: SAAgent, responses: list[InterruptResponseContent]) -> None:
+        """Verify interrupt responses bind to interrupts actually parked on this context's agent.
+
+        Args:
+            agent: The agent serving this context, with its interrupt state already restored.
+            responses: Interrupt responses extracted from the inbound message.
+
+        Raises:
+            ServerError: If the agent holds no parked interrupts, or a response names an interrupt
+                the agent is not waiting on.
+        """
+        interrupt_state = agent._interrupt_state
+
+        if not interrupt_state.activated:
+            raise ServerError(
+                error=InvalidParamsError(message="Received interrupt responses but no interrupt is pending")
+            ) from None
+
+        unknown_ids = sorted(
+            content["interruptResponse"]["interruptId"]
+            for content in responses
+            if content["interruptResponse"]["interruptId"] not in interrupt_state.interrupts
+        )
+        if unknown_ids:
+            raise ServerError(
+                error=InvalidParamsError(message=f"No pending interrupt matches id(s): {', '.join(unknown_ids)}")
+            ) from None
 
     def _convert_a2a_parts_to_content_blocks(self, parts: list[Part]) -> list[ContentBlock]:
         """Convert A2A message parts to Strands ContentBlocks.

@@ -1,0 +1,215 @@
+---
+title: "Lesson 9: Persistent memory with session managers"
+description: "Without persistence, every conversation starts from zero. The agent has no memory of prior interactions, no accumulated knowledge about the user, no awareness of decisions made yesterday. Session managers handle the storage and retrieval of conversation state so continuity works automatically."
+redirectFrom:
+  - docs/community/learning/lesson9-persistent-memory-with-session-managers
+---
+
+import CourseNotice from '../../../components/CourseNotice.astro'
+
+<CourseNotice title="Before you follow along">
+
+This video is a snapshot in time. Some APIs and examples have changed since
+recording. Follow the code on this page, and look for "Changed since recording"
+notices below.
+
+</CourseNotice>
+
+<YouTube id="HqGIYRXo6WE" title="Lesson 9: Persistent memory with session managers" />
+*[Watch on YouTube](https://www.youtube.com/watch?v=HqGIYRXo6WE&list=PLDzwjhH-4yhU&index=9)*
+
+*Code for this lesson: [`samples/09-persistent-memory`](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/09-persistent-memory)*
+
+## Persisting conversation history
+
+Session managers persist conversation history and agent state across runs. Without them, everything resets when the process stops. They're implemented as hook providers, so persistence is just another harness behavior layered in through hooks.
+
+## File session manager (record-based)
+
+Run these examples from `samples/09-persistent-memory`.
+
+The record-based approach persists each message individually. It's still supported for existing sessions and available for existing record-based Graph/Swarm sessions.
+
+```python
+from strands import Agent
+from strands.session.file_session_manager import FileSessionManager
+
+from customer_service_tools import lookup_customer, get_order_history, process_refund
+
+SYSTEM_PROMPT = "Help customers with their orders using the available tools."
+
+session_manager = FileSessionManager(
+    session_id="customer-session-001",
+    storage_dir="./sessions",
+)
+
+agent = Agent(
+    tools=[lookup_customer, get_order_history, process_refund],
+    system_prompt=SYSTEM_PROMPT,
+    context_manager="auto",
+    session_manager=session_manager,
+)
+```
+
+📂 [file_session_manager.py](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/09-persistent-memory/file_session_manager.py)
+
+## S3 session manager (record-based)
+
+Same record-based approach, backed by S3 instead of local disk:
+
+```python
+from strands import Agent
+from strands.session.s3_session_manager import S3SessionManager
+
+session_manager = S3SessionManager(
+    session_id="customer-session-001",
+    bucket="my-agent-sessions",
+    prefix="customer-service/",
+    region_name="us-east-1",
+)
+
+agent = Agent(session_manager=session_manager)
+```
+
+📂 [s3_session_manager.py](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/09-persistent-memory/s3_session_manager.py)
+
+## Snapshot session manager
+
+<CourseNotice title="" variant="addition">
+
+The `FileSessionManager` and `S3SessionManager` examples shown in the video are
+still valid. `SnapshotSessionManager` is an optional alternative for saving and
+restoring a conversation. You do not need to switch to follow this lesson.
+
+See the [session management docs](/docs/user-guide/sdk/agents/session-management/) for setup and examples.
+
+</CourseNotice>
+
+`SnapshotSessionManager` saves the session state together, instead of saving each
+message as a separate record.
+
+```python
+from strands import Agent
+from strands.session import SnapshotSessionManager
+from strands.storage import LocalFileStorage
+
+from customer_service_tools import lookup_customer, get_order_history, process_refund
+
+SYSTEM_PROMPT = "Help customers with their orders using the available tools."
+
+session_manager = SnapshotSessionManager(
+    session_id="customer-session-001",
+    storage=LocalFileStorage("./sessions"),
+)
+
+agent = Agent(
+    tools=[lookup_customer, get_order_history, process_refund],
+    system_prompt=SYSTEM_PROMPT,
+    context_manager="auto",
+    session_manager=session_manager,
+)
+```
+
+Persistence happens automatically: agent state is saved after each invocation by default. Use `save_latest_on="message"` to save after every message instead.
+
+For production, swap `LocalFileStorage` for `S3Storage`:
+
+```python
+from strands.storage import S3Storage
+
+session_manager = SnapshotSessionManager(
+    session_id="customer-session-001",
+    storage=S3Storage(bucket="my-agent-sessions", prefix="production/"),
+)
+```
+
+📂 [snapshot_session_manager.py](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/09-persistent-memory/snapshot_session_manager.py)
+
+## When to use which
+
+| Manager | Best For |
+|---|---|
+| `SnapshotSessionManager` | Save and restore a single agent, Graph/Swarm, or Bidi session. |
+| `FileSessionManager` | Existing record-based sessions; retains their storage format. |
+| `S3SessionManager` | Same as File but with S3 for cross-machine access. |
+
+## Sessions, memory, and storage
+
+<CourseNotice title="" variant="addition">
+
+Memory stores let an agent use saved information, such as customer preferences,
+in future conversations. `MemoryManager` connects the agent to those stores so it
+can retrieve that information. You can add this alongside your session manager;
+it does not replace the examples in this lesson.
+
+See the [memory docs](/docs/user-guide/sdk/memory/overview/) for an introduction, or
+[configure how your agent reads and writes memories](/docs/user-guide/sdk/memory/managing-memory/).
+
+</CourseNotice>
+
+Session managers are one of three related pieces, and it helps to keep them straight:
+
+- **Session manager**: persists the conversation so the agent can resume where it left off. Scoped to one session.
+- **Memory manager**: durable knowledge that carries across sessions (user preferences, facts, decisions) without replaying old conversations. Backed by one or more **memory stores**.
+- **Storage**: the byte-level backend underneath both. `LocalFileStorage`, `S3Storage`, and community backends implement the same `Storage` interface, so a session manager, a memory store, and the context manager's stash can all share one backend.
+
+Memory is opt-in and separate from sessions. Attach a `MemoryManager` with a store and the agent gets recall (a tool to search what it knows) and injection (relevant memories folded into the prompt automatically):
+
+```python
+from strands import Agent
+from strands.memory import MemoryManager
+from strands.vended_memory_stores.test_memory_store import TestMemoryStore
+
+# Zero-setup store for prototyping; swap for a production store later
+store = TestMemoryStore(name="customer-service")
+
+agent = Agent(
+    session_manager=session_manager,           # this conversation
+    memory_manager=MemoryManager(stores=[store]),  # knowledge across conversations
+)
+```
+
+## Production storage: DynamoDB
+
+Because sessions, memory, and offloaded context all sit on the `Storage` interface, one production backend can serve all of them. [Strands DynamoDB Storage](https://github.com/aws/strands-dynamodb-storage) is an AWS-maintained backend that fits agent workloads well: serverless, single-digit-millisecond reads, native TTL so stale sessions expire themselves, and vector search on the same table for semantic memory.
+
+Install `strands-dynamodb-storage` separately and provision its table.
+Set it once at the agent level and every subsystem that persists bytes inherits it under its own namespace:
+
+```python
+from strands import Agent
+from strands.session import SnapshotSessionManager
+from strands_dynamodb_storage import DynamoDBStorage
+
+storage = DynamoDBStorage("agent-storage", region_name="us-east-1")
+
+agent = Agent(
+    tools=[lookup_customer, get_order_history, process_refund],
+    system_prompt=SYSTEM_PROMPT,
+    context_manager="auto",
+    storage=storage,                                  # shared backend
+    session_manager=SnapshotSessionManager("customer-session-001"),  # inherits storage
+)
+```
+
+You own the table (a string `pk` partition key and string `sk` sort key is all it needs), for basic byte storage. Optional S3 offload and vector search need additional resources
+and permissions; see the backend's setup instructions.
+
+## More backends
+
+The integrations catalog lists additional session managers, memory stores, and storage backends. They implement the same interfaces, so you can swap them in without changing agent code.
+
+| Integration | What It Is |
+| --- | --- |
+| [Strands DynamoDB Storage](https://github.com/aws/strands-dynamodb-storage) | `Storage` backend on Amazon DynamoDB, with TTL, S3 offload, and vector search |
+| [AgentCore Memory](/docs/integrations/session-managers/agentcore-memory/) | Session manager backed by Amazon Bedrock AgentCore Memory, with long-term recall |
+| [Valkey Session Manager](/docs/integrations/session-managers/strands-valkey-session-manager/) | Session manager on Valkey (Redis-compatible) for fast distributed storage |
+| [Memory stores](/docs/integrations/memory-stores/overview/) | Community-built `MemoryStore` backends for the `MemoryManager` |
+| [Storage backends](/docs/integrations/storage/overview/) | Community-built `Storage` implementations |
+
+## Resources
+
+- 📖 [Session Management](/docs/user-guide/sdk/agents/session-management/)
+- 📖 [Memory](/docs/user-guide/sdk/memory/overview/)
+- 📖 [Storage](/docs/user-guide/sdk/storage/)
+- 📖 [Control what your agent remembers](/docs/user-guide/sdk/memory/managing-memory/)

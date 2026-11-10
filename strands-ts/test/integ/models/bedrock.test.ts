@@ -7,6 +7,8 @@ import {
   TextBlock,
   FunctionTool,
   CachePointBlock,
+  AudioBlock,
+  DocumentBlock,
   ImageBlock,
 } from '@strands-agents/sdk'
 import type { SystemContentBlock, ModelRedactionEvent } from '@strands-agents/sdk'
@@ -15,6 +17,8 @@ import { collectIterator } from '$/sdk/__fixtures__/model-test-helpers.js'
 import { bedrock } from '../__fixtures__/model-providers.js'
 import { loadFixture } from '../__fixtures__/test-helpers.js'
 import yellowPngUrl from '../__resources__/yellow.png?url'
+import letterPdfUrl from '../__resources__/letter.pdf?url'
+import pineappleMp3Url from '../__resources__/pineapple.mp3?url'
 import {
   BedrockClient,
   CreateGuardrailCommand,
@@ -22,6 +26,9 @@ import {
   ListGuardrailsCommand,
 } from '@aws-sdk/client-bedrock'
 import { inject } from 'vitest'
+
+const CACHING_MODEL_ID = 'us.anthropic.claude-sonnet-4-5-20250929-v1:0'
+const AUDIO_UNSUPPORTED_MESSAGE = 'Model does not support audio modality'
 
 describe.skipIf(bedrock.skip)('BedrockModel Integration Tests', () => {
   describe('Streaming', () => {
@@ -46,7 +53,7 @@ describe.skipIf(bedrock.skip)('BedrockModel Integration Tests', () => {
 
       it.concurrent('uses system prompt cache on subsequent requests', async () => {
         const provider = bedrock.createModel({
-          modelId: 'global.anthropic.claude-sonnet-4-5-20250929-v1:0',
+          modelId: CACHING_MODEL_ID,
           maxTokens: 100,
         })
         const largeContext = `Context information: ${'hello '.repeat(2000)} [test-${Date.now()}-${Math.random()}]`
@@ -77,7 +84,7 @@ describe.skipIf(bedrock.skip)('BedrockModel Integration Tests', () => {
 
       it.concurrent('uses message cache points on subsequent requests', async () => {
         const provider = bedrock.createModel({
-          modelId: 'global.anthropic.claude-sonnet-4-5-20250929-v1:0',
+          modelId: CACHING_MODEL_ID,
           maxTokens: 100,
         })
         const largeContext = `Context information: ${'hello '.repeat(2000)} [test-${Date.now()}-${Math.random()}]`
@@ -99,9 +106,126 @@ describe.skipIf(bedrock.skip)('BedrockModel Integration Tests', () => {
         expect(metadata2?.usage?.cacheReadInputTokens).toBeGreaterThan(0)
       })
 
+      it.concurrent('keeps per-call content behind a cache point out of the cached prefix', async () => {
+        const provider = bedrock.createModel({
+          modelId: CACHING_MODEL_ID,
+          maxTokens: 100,
+          cacheConfig: { strategy: 'auto' },
+        })
+        const prefix = `Dossier ${Date.now()}-${Math.random()}. ${'The subject prefers concise answers. '.repeat(400)}`
+        const tail = (): string => `Addendum ${Date.now()}-${Math.random()}. ${'Disregard this filler. '.repeat(400)}`
+
+        const first = await collectIterator(
+          provider.stream([
+            new Message({
+              role: 'user',
+              content: [new TextBlock(prefix), new CachePointBlock({ cacheType: 'default' }), new TextBlock(tail())],
+            }),
+          ])
+        )
+        const usage1 = first.find((event) => event.type === 'modelMetadataEvent')?.usage
+        expect(usage1?.cacheWriteInputTokens).toBeGreaterThan(0)
+        expect(usage1?.inputTokens).toBeGreaterThan(1000)
+
+        const second = await collectIterator(
+          provider.stream([
+            new Message({
+              role: 'user',
+              content: [new TextBlock(prefix), new CachePointBlock({ cacheType: 'default' }), new TextBlock(tail())],
+            }),
+          ])
+        )
+        const usage2 = second.find((event) => event.type === 'modelMetadataEvent')?.usage
+        expect(usage2?.cacheReadInputTokens).toBeGreaterThan(0)
+      })
+
+      it.concurrent('accepts a leading cache point by replacing it with automatic placement', async () => {
+        const provider = bedrock.createModel({
+          modelId: CACHING_MODEL_ID,
+          maxTokens: 100,
+          cacheConfig: { strategy: 'auto' },
+        })
+        const prefix = `Dossier ${Date.now()}-${Math.random()}. ${'The subject prefers concise answers. '.repeat(400)}`
+
+        const events = await collectIterator(
+          provider.stream([
+            new Message({
+              role: 'user',
+              content: [new CachePointBlock({ cacheType: 'default' }), new TextBlock(prefix)],
+            }),
+          ])
+        )
+        const usage = events.find((event) => event.type === 'modelMetadataEvent')?.usage
+        expect(usage?.cacheWriteInputTokens).toBeGreaterThan(0)
+      })
+
+      it.concurrent('normalizes a caller TTL so it cannot conflict with the tools TTL', async () => {
+        const provider = bedrock.createModel({
+          modelId: CACHING_MODEL_ID,
+          maxTokens: 100,
+          cacheConfig: { strategy: 'auto', toolsTTL: '5m' },
+        })
+        const prefix = `Dossier ${Date.now()}-${Math.random()}. ${'The subject prefers concise answers. '.repeat(400)}`
+        const toolSpecs = [
+          {
+            name: 'currentTime',
+            description: 'Get the current time.',
+            inputSchema: { type: 'object' as const, properties: {} },
+          },
+        ]
+
+        const events = await collectIterator(
+          provider.stream(
+            [
+              new Message({
+                role: 'user',
+                content: [
+                  new TextBlock(prefix),
+                  new CachePointBlock({ cacheType: 'default', ttl: '1h' }),
+                  new TextBlock('Reply OK.'),
+                ],
+              }),
+            ],
+            { toolSpecs }
+          )
+        )
+        const usage = events.find((event) => event.type === 'modelMetadataEvent')?.usage
+        expect(usage?.cacheWriteInputTokens).toBeGreaterThan(0)
+      })
+
+      it.concurrent.each(['csv', 'pdf'] as const)(
+        'accepts a cache point after a %s document',
+        async (documentFormat) => {
+          const provider = bedrock.createModel({
+            modelId: CACHING_MODEL_ID,
+            maxTokens: 100,
+            cacheConfig: { strategy: 'auto' },
+          })
+          const prefix = `Dossier ${Date.now()}-${Math.random()}. ${'The subject prefers concise answers. '.repeat(400)}`
+          const bytes =
+            documentFormat === 'pdf' ? await loadFixture(letterPdfUrl) : new TextEncoder().encode('a,b\n1,2\n')
+          const document = new DocumentBlock({ format: documentFormat, name: 'attachment', source: { bytes } })
+
+          const events = await collectIterator(
+            provider.stream([
+              new Message({
+                role: 'user',
+                content: [
+                  new TextBlock(prefix),
+                  document,
+                  new CachePointBlock({ cacheType: 'default' }),
+                  new TextBlock('Summarize.'),
+                ],
+              }),
+            ])
+          )
+          expect(events.find((event) => event.type === 'modelMetadataEvent')).toBeDefined()
+        }
+      )
+
       it.concurrent('uses cacheConfig to automatically inject cache points in tools and messages', async () => {
         const provider = bedrock.createModel({
-          modelId: 'global.anthropic.claude-sonnet-4-5-20250929-v1:0',
+          modelId: CACHING_MODEL_ID,
           maxTokens: 100,
           cacheConfig: { strategy: 'auto' },
         })
@@ -405,7 +529,7 @@ describe.skipIf(bedrock.skip)('BedrockModel Integration Tests', () => {
     }, 60000)
 
     describe('Input Intervention', () => {
-      it.each(['enabled', 'enabled_full'] as const)(
+      it.each(['disabled', 'enabled', 'enabled_full'] as const)(
         'blocks input and redacts message with trace=%s',
         async (guardrailTrace) => {
           const model = bedrock.createModel({
@@ -438,6 +562,158 @@ describe.skipIf(bedrock.skip)('BedrockModel Integration Tests', () => {
           const firstBlock = agent.messages[0]?.content[0]
           if (firstBlock?.type === 'textBlock') {
             expect(firstBlock.text).toBe('Redacted.')
+          }
+        },
+        30000
+      )
+    })
+
+    describe('Masking (ANONYMIZE)', () => {
+      // Guards against a regression where the SDK treats stopReason=guardrailIntervened as proof of a
+      // block. Bedrock reports the same stop reason for masking, and the trace is the only signal
+      // that disambiguates the two (BLOCKED vs ANONYMIZED). When masking fires, the masked message
+      // must be preserved as-is; SDK-level redaction must not clobber it.
+      const MASK_GUARDRAIL_NAME = 'test-guardrail-mask-hello'
+      // Pattern and placeholder name share no substring, so a test can tell from the message text
+      // alone whether the original leaked through or Bedrock's mask ran.
+      const MASK_PATTERN = 'Hello'
+      const MASK_NAME = 'SECRETMARK'
+      let MASK_GUARDRAIL_ID: string | undefined
+
+      async function setupMaskGuardrail(): Promise<string> {
+        const credentials = inject('provider-bedrock')?.credentials
+        if (!credentials) throw new Error('No Bedrock credentials provided')
+        const client = new BedrockClient({ region: 'us-east-1', credentials })
+
+        let guardrailId = await getGuardrailId(client, MASK_GUARDRAIL_NAME)
+        if (!guardrailId) {
+          const response = await client.send(
+            new CreateGuardrailCommand({
+              name: MASK_GUARDRAIL_NAME,
+              description: 'Testing masking guardrail',
+              sensitiveInformationPolicyConfig: {
+                regexesConfig: [
+                  {
+                    name: MASK_NAME,
+                    pattern: MASK_PATTERN,
+                    action: 'ANONYMIZE',
+                    inputAction: 'ANONYMIZE',
+                    outputAction: 'ANONYMIZE',
+                    inputEnabled: true,
+                    outputEnabled: true,
+                  },
+                ],
+              },
+              blockedInputMessaging: BLOCKED_INPUT,
+              blockedOutputsMessaging: BLOCKED_OUTPUT,
+            })
+          )
+          guardrailId = response.guardrailId
+          if (!guardrailId) throw new Error('Failed to create masking guardrail: no ID returned')
+          await waitForGuardrailActive(client, guardrailId)
+        }
+        return guardrailId
+      }
+
+      beforeAll(async () => {
+        MASK_GUARDRAIL_ID = await setupMaskGuardrail()
+      }, 60000)
+
+      it.each([
+        ['enabled', true],
+        ['enabled_full', true],
+        ['enabled', false],
+        ['enabled_full', false],
+      ] as const)(
+        'preserves input-masked content with trace=%s streaming=%s',
+        async (guardrailTrace, streaming) => {
+          // Input masking alone doesn't stop generation, so Bedrock reports endTurn here — not
+          // guardrailIntervened. Bedrock also doesn't rewrite the client's local copy of the
+          // user message on input masking; the mask affects only what the model sees. This test
+          // is a smoke check: the SDK's redaction placeholder must never leak into any message.
+          const model = bedrock.createModel({
+            region: 'us-east-1',
+            stream: streaming,
+            guardrailConfig: {
+              guardrailIdentifier: MASK_GUARDRAIL_ID!,
+              guardrailVersion: 'DRAFT',
+              trace: guardrailTrace,
+              redaction: {
+                input: true,
+                inputMessage: 'SHOULD-NOT-APPEAR',
+              },
+            },
+          })
+
+          const agent = new Agent({
+            model,
+            systemPrompt: 'You are a helpful assistant.',
+            printer: false,
+          })
+
+          await agent.invoke(`${MASK_PATTERN} tell me a joke.`)
+
+          const firstBlock = agent.messages[0]?.content[0]
+          expect(firstBlock?.type).toBe('textBlock')
+          if (firstBlock?.type === 'textBlock') {
+            expect(firstBlock.text).not.toContain('SHOULD-NOT-APPEAR')
+            expect(firstBlock.text.includes(MASK_PATTERN) || firstBlock.text.includes(MASK_NAME)).toBe(true)
+          }
+        },
+        30000
+      )
+
+      it.each([
+        ['enabled', true],
+        ['enabled_full', true],
+        ['enabled', false],
+        ['enabled_full', false],
+      ] as const)(
+        'preserves output-masked content with trace=%s streaming=%s',
+        async (guardrailTrace, streaming) => {
+          // "Say Hel lo" carries a deliberate space so it doesn't match the input mask; the
+          // model's likely reply "Hello" then triggers the output mask instead. The SDK must
+          // persist that masked assistant text rather than clobbering it.
+          const model = bedrock.createModel({
+            region: 'us-east-1',
+            stream: streaming,
+            guardrailConfig: {
+              guardrailIdentifier: MASK_GUARDRAIL_ID!,
+              guardrailVersion: 'DRAFT',
+              trace: guardrailTrace,
+              redaction: {
+                input: true,
+                inputMessage: 'SHOULD-NOT-APPEAR-INPUT',
+                output: true,
+                outputMessage: 'SHOULD-NOT-APPEAR-OUTPUT',
+              },
+            },
+          })
+
+          const agent = new Agent({
+            model,
+            systemPrompt: 'When asked to say the word, reply with just that word.',
+            printer: false,
+          })
+
+          const result = await agent.invoke('Say Hel lo')
+
+          expect(result.stopReason).toBe('guardrailIntervened')
+          let assistantText = ''
+          for (const block of agent.messages[1]?.content ?? []) {
+            if (block?.type === 'textBlock') assistantText += block.text
+          }
+          expect(assistantText).not.toContain('SHOULD-NOT-APPEAR-INPUT')
+          expect(assistantText).not.toContain('SHOULD-NOT-APPEAR-OUTPUT')
+          expect(assistantText).toContain(MASK_NAME)
+          // No SDK redaction placeholder should appear anywhere across the conversation either.
+          for (const message of agent.messages) {
+            for (const block of message.content ?? []) {
+              if (block?.type === 'textBlock') {
+                expect(block.text).not.toContain('SHOULD-NOT-APPEAR-INPUT')
+                expect(block.text).not.toContain('SHOULD-NOT-APPEAR-OUTPUT')
+              }
+            }
           }
         },
         30000
@@ -766,5 +1042,33 @@ describe.skipIf(bedrock.skip)('BedrockModel Integration Tests', () => {
       const withTools = await model.countTokens(messages, { toolSpecs, systemPrompt: 'Be helpful.' })
       expect(withTools).toBeGreaterThan(without)
     })
+  })
+
+  describe('Media Support', () => {
+    it('transcribes spoken audio', async (ctx) => {
+      const audioBytes = await loadFixture(pineappleMp3Url)
+      const model = bedrock.createModel({
+        modelId: 'mistral.voxtral-small-24b-2507',
+        region: 'us-east-1',
+        temperature: 0,
+        maxTokens: 20,
+      })
+      const agent = new Agent({ model, printer: false })
+
+      const response = await agent
+        .invoke([
+          new TextBlock('Transcribe the final word spoken in the audio. Output only that word.'),
+          new AudioBlock({ format: 'mp3', source: { bytes: audioBytes } }),
+        ])
+        .catch((error: unknown) => {
+          // A service-side Bedrock rejection, not an SDK defect; the test resumes once Bedrock serves audio again.
+          if (error instanceof Error && error.message.includes(AUDIO_UNSUPPORTED_MESSAGE)) {
+            ctx.skip(`Bedrock rejected audio input: ${error.message}`)
+          }
+          throw error
+        })
+
+      expect(response.toString().toLowerCase()).toContain('pineapple')
+    }, 30000)
   })
 })

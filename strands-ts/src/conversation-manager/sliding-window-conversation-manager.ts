@@ -233,7 +233,26 @@ export class SlidingWindowConversationManager extends ConversationManager {
     // Try to trim messages when tool result cannot be truncated anymore
     // If the number of messages is less than the window_size, then we default to 2, otherwise, trim to window size
     const startIndex = messages.length <= this._windowSize ? 2 : messages.length - this._windowSize
-    const trimIndex = findValidTrimPoint(messages, startIndex)
+    let trimIndex = findValidTrimPoint(messages, startIndex)
+    let fallbackUserIndex: number | undefined
+
+    if (trimIndex === messages.length && this._windowSize > 0) {
+      const toolPairTrimIndex = this._findToolPairTrimPoint(messages, startIndex)
+      if (toolPairTrimIndex !== undefined) {
+        fallbackUserIndex = this._findToolPairUserAnchor(messages, toolPairTrimIndex)
+        if (fallbackUserIndex !== undefined) {
+          logger.debug(
+            `window_size=<${this._windowSize}>, trim_index=<${toolPairTrimIndex}>, user_anchor_index=<${fallbackUserIndex}> | no plain user trim point, falling back to complete tool pair`
+          )
+          trimIndex = toolPairTrimIndex
+        } else {
+          logger.debug(
+            `window_size=<${this._windowSize}>, trim_index=<${toolPairTrimIndex}> | complete tool pair found but no valid user anchor, declining fallback`
+          )
+          return false
+        }
+      }
+    }
 
     // If no valid trim point was found, return false and let the caller handle it.
     // When windowSize is 0, trimIndex === messages.length is expected (remove all), so allow it through.
@@ -247,7 +266,7 @@ export class SlidingWindowConversationManager extends ConversationManager {
     // Collect non-pinned indices in [0, trimIndex) to remove
     const indicesToRemove: number[] = []
     for (let i = 0; i < trimIndex; i++) {
-      if (isPinned(messages, i)) continue
+      if (i === fallbackUserIndex || isPinned(messages, i)) continue
       indicesToRemove.push(i)
     }
 
@@ -434,6 +453,92 @@ export class SlidingWindowConversationManager extends ConversationManager {
     })
 
     return true
+  }
+
+  /**
+   * Find the first complete tool use/result pair at or after the starting index.
+   *
+   * @param messages - The conversation message history.
+   * @param startIndex - The index to begin searching from.
+   * @returns The assistant message index that starts the pair, or undefined if none exists.
+   */
+  private _findToolPairTrimPoint(messages: Message[], startIndex: number): number | undefined {
+    for (let index = startIndex; index < messages.length; index++) {
+      const message = messages[index]
+      if (!message) break
+      const nextMessage = messages[index + 1]
+      const hasToolUse = message.role === 'assistant' && message.content.some((block) => block.type === 'toolUseBlock')
+      const hasFollowingToolResult =
+        nextMessage?.role === 'user' && nextMessage.content.some((block) => block.type === 'toolResultBlock')
+
+      if (hasToolUse && hasFollowingToolResult) {
+        return index
+      }
+    }
+
+    return undefined
+  }
+
+  /**
+   * Find a user message that can remain immediately before a fallback tool pair.
+   *
+   * Pinned messages must already form a user-first alternating prefix that ends
+   * with a user message. Without a pinned prefix, the most recent plain user
+   * message before the tool pair is retained as the conversation anchor.
+   *
+   * This deliberately differs from Python's `_find_tool_pair_trim_point`, which
+   * trims directly to the assistant tool-use boundary. TypeScript retains a
+   * validated user anchor to preserve a user-first, legally alternating history
+   * for providers that require it (see #2085 and #2087).
+   *
+   * @param messages - The conversation message history.
+   * @param toolPairIndex - The assistant message index that starts the fallback pair.
+   * @returns The user message index to preserve, or undefined when fallback would produce an invalid prefix.
+   */
+  private _findToolPairUserAnchor(messages: Message[], toolPairIndex: number): number | undefined {
+    const pinnedIndices: number[] = []
+    for (let index = 0; index < toolPairIndex; index++) {
+      if (isPinned(messages, index)) {
+        pinnedIndices.push(index)
+      }
+    }
+
+    if (pinnedIndices.length > 0) {
+      const pinnedMessages = pinnedIndices.map((index) => messages[index]!)
+      if (
+        pinnedMessages[0]?.role !== 'user' ||
+        pinnedMessages[0].content.some((block) => block.type === 'toolResultBlock')
+      ) {
+        return undefined
+      }
+
+      for (let index = 1; index < pinnedMessages.length; index++) {
+        if (pinnedMessages[index]!.role === pinnedMessages[index - 1]!.role) {
+          return undefined
+        }
+      }
+
+      const lastPinnedIndex = pinnedIndices[pinnedIndices.length - 1]!
+      const lastPinnedMessage = messages[lastPinnedIndex]!
+      if (
+        lastPinnedMessage.role !== 'user' ||
+        lastPinnedMessage.content.some((block) => block.type === 'toolUseBlock')
+      ) {
+        return undefined
+      }
+      return lastPinnedIndex
+    }
+
+    for (let index = toolPairIndex - 1; index >= 0; index--) {
+      const message = messages[index]
+      if (!message || message.role !== 'user') continue
+      const hasToolContent = message.content.some(
+        (block) => block.type === 'toolUseBlock' || block.type === 'toolResultBlock'
+      )
+      if (!hasToolContent) return index
+    }
+
+    return undefined
   }
 
   /**

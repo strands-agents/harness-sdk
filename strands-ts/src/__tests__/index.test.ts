@@ -5,6 +5,7 @@ describe('index', () => {
   describe('when importing from main entry point', () => {
     it('exports error classes', () => {
       expect(SDK.ContextWindowOverflowError).toBeDefined()
+      expect(SDK.InterruptError).toBeDefined()
     })
 
     it('exports BedrockModel', () => {
@@ -34,6 +35,13 @@ describe('index', () => {
       expect(SDK).not.toHaveProperty('ToolExecutor')
     })
 
+    it('exports model routing values', () => {
+      expect(SDK.ClassifierStrategy).toBeDefined()
+      expect(SDK.FallbackStrategy).toBeDefined()
+      expect(SDK.ModelRouter).toBeDefined()
+      expect(SDK.RoutingCandidate).toBeDefined()
+    })
+
     it('exports all required types', () => {
       // This test ensures all type exports compile correctly
       // If any exports are missing, TypeScript will error
@@ -42,9 +50,11 @@ describe('index', () => {
         contextError: typeof SDK.ContextWindowOverflowError
         // Model provider
         provider: typeof SDK.BedrockModel
+        backgroundTasksConfig: SDK.BackgroundTasksConfig
       } = {
         contextError: SDK.ContextWindowOverflowError,
         provider: SDK.BedrockModel,
+        backgroundTasksConfig: { waitForCompletion: false, maxConcurrency: 2, timeout: 5_000 },
       }
       expect(_typeCheck).toBeDefined()
     })

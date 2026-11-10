@@ -1,5 +1,10 @@
 """Sandbox-routed file editor tool.
 
+.. deprecated::
+    This tool is deprecated in favor of the focused ``read``, ``write``, and
+    ``edit`` vended tools (see :mod:`strands.vended_tools.edit`). It will be
+    removed in a future release.
+
 Provides
 ``view`` (with line ranges), ``create``, ``str_replace``, and ``insert``
 operations, all routed through a :class:`~strands.sandbox.base.Sandbox`: either
@@ -12,7 +17,10 @@ from __future__ import annotations
 
 import posixpath
 import re
+import warnings
 from typing import TYPE_CHECKING, Literal
+
+from typing_extensions import deprecated
 
 from ...sandbox.errors import SandboxPathNotFoundError
 from ...tools.decorator import tool
@@ -32,6 +40,18 @@ DEFAULT_FILE_EDITOR_DESCRIPTION = (
 )
 
 
+# `@deprecated` gives PEP 702 static checkers (mypy, pyright) a deprecation
+# signal; the matching `warnings.warn` in the body is the explicit runtime
+# notice called for in strands-py/AGENTS.md's logging guidance. Python's default
+# warning filter dedupes identical (message, category, caller line) pairs, so
+# a single call site surfaces one warning in practice.
+# PEP 702 only honors `@deprecated` when the argument is a string literal, so
+# the message is spelled out rather than referencing a shared constant.
+@deprecated(
+    "file_editor is deprecated and will be removed in a future release. "
+    "Use the focused edit vended tool instead (strands.vended_tools.edit), "
+    "paired with the read and write tools."
+)
 def make_file_editor(
     *,
     sandbox: Sandbox | None = None,
@@ -54,6 +74,13 @@ def make_file_editor(
     Returns:
         A decorated tool that performs file operations through the sandbox.
     """
+    warnings.warn(
+        "file_editor is deprecated and will be removed in a future release. "
+        "Use the focused edit vended tool instead (strands.vended_tools.edit), "
+        "paired with the read and write tools.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
 
     @tool(name=name, description=description, context="tool_context")
     async def file_editor_tool(
@@ -95,7 +122,13 @@ def make_file_editor(
     return file_editor_tool
 
 
-file_editor = make_file_editor()
+# The module-level default instance is an internal self-construction, not a
+# user call; suppress the deprecation warning here so ``import
+# strands.vended_tools`` is quiet. The warning still fires when a consumer
+# calls ``make_file_editor`` themselves.
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore", DeprecationWarning)
+    file_editor = make_file_editor()
 """Default sandbox-routed file editor tool. Reads the sandbox from the agent's context at call time."""
 
 
@@ -175,25 +208,26 @@ def _build_str_replace_result(
     Raises:
         ValueError: If ``old_str`` does not appear exactly once.
     """
-    file_content = original_content.replace("\t", "        ")
-    expanded_old = old_str.replace("\t", "        ")
-    expanded_new = new_str.replace("\t", "        ") if new_str else ""
+    if not old_str:
+        raise ValueError("No replacement was performed, old_str must not be empty.")
 
-    occurrences = file_content.count(expanded_old)
+    replacement = new_str or ""
+
+    occurrences = original_content.count(old_str)
     if occurrences == 0:
         raise ValueError(f"No replacement was performed, old_str `{old_str}` did not appear verbatim in {file_path}.")
     if occurrences > 1:
-        lines = file_content.split("\n")
-        line_numbers = [i + 1 for i, line in enumerate(lines) if expanded_old in line]
+        lines = original_content.split("\n")
+        line_numbers = [i + 1 for i, line in enumerate(lines) if old_str in line]
         raise ValueError(
             f"No replacement was performed. Multiple occurrences of old_str `{old_str}` in lines "
             f"{line_numbers}. Please ensure it is unique"
         )
 
-    new_content = file_content.replace(expanded_old, expanded_new, 1)
-    replacement_line = len(file_content[: file_content.index(expanded_old)].split("\n")) - 1
-    inserted_lines = len(expanded_new.split("\n"))
-    original_lines = len(expanded_old.split("\n"))
+    new_content = original_content.replace(old_str, replacement, 1)
+    replacement_line = len(original_content[: original_content.index(old_str)].split("\n")) - 1
+    inserted_lines = len(replacement.split("\n"))
+    original_lines = len(old_str.split("\n"))
     line_difference = inserted_lines - original_lines
 
     new_lines = new_content.split("\n")
@@ -218,10 +252,7 @@ def _build_insert_result(original_content: str, insert_line: int, new_str: str) 
     Raises:
         ValueError: If ``insert_line`` is out of bounds.
     """
-    file_text = original_content.replace("\t", "        ")
-    expanded_new = new_str.replace("\t", "        ")
-
-    file_text_lines = file_text.split("\n")
+    file_text_lines = original_content.split("\n")
     n_lines = len(file_text_lines)
 
     if insert_line < 0 or insert_line > n_lines:
@@ -230,10 +261,10 @@ def _build_insert_result(original_content: str, insert_line: int, new_str: str) 
             f"of the file: [0, {n_lines}]"
         )
 
-    new_str_lines = expanded_new.split("\n")
+    new_str_lines = new_str.split("\n")
     new_file_text_lines = (
         new_str_lines
-        if file_text == ""
+        if original_content == ""
         else [*file_text_lines[:insert_line], *new_str_lines, *file_text_lines[insert_line:]]
     )
 

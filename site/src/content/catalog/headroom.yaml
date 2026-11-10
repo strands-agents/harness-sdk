@@ -1,0 +1,10 @@
+name: headroom-ai
+description: Framework-agnostic context compression library that cuts LLM token usage 60–95% on JSON and 15–20% on code, with Strands support built in.
+integrationType: plugin
+maintainedBy: partner
+languages:
+  python:
+    package: headroom-ai[strands]
+github: https://github.com/chopratejas/headroom
+docsUrl: https://headroom-docs.vercel.app/docs/strands
+addedDate: 2026-02-02

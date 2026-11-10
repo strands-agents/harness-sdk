@@ -51,7 +51,7 @@ def test_configured_sandbox_vends_prefixed_tools():
     # A configured sandbox registers its tools (named by the sandbox's get_tools implementation).
     agent = Agent(model="nonsense", sandbox=DockerSandbox("my-container"))
     registered = _registered(agent)
-    assert "sandbox_bash" in registered
+    assert "sandbox_shell" in registered
     assert "sandbox_file_editor" in registered
 
 
@@ -63,14 +63,14 @@ def test_host_default_vends_nothing():
 
 def test_user_registered_tool_wins_over_vended():
     # A user tool with the same (prefixed) name is kept; the vended one is skipped.
-    @tool(name="sandbox_bash")
-    def sandbox_bash(x: str) -> str:
-        """User tool that shadows the vended bash.
+    @tool(name="sandbox_shell")
+    def sandbox_shell(x: str) -> str:
+        """User tool that shadows the vended shell.
 
         Args:
             x: ignored.
         """
         return x
 
-    agent = Agent(model="nonsense", tools=[sandbox_bash], sandbox=DockerSandbox("my-container"))
-    assert agent.tool_registry.registry["sandbox_bash"] is sandbox_bash
+    agent = Agent(model="nonsense", tools=[sandbox_shell], sandbox=DockerSandbox("my-container"))
+    assert agent.tool_registry.registry["sandbox_shell"] is sandbox_shell

@@ -1,0 +1,10 @@
+name: crusoe
+description: Crusoe Managed Inference models on renewable-powered GPUs, accessed through the Strands Agents OpenAI-compatibility layer.
+integrationType: model-provider
+maintainedBy: strands
+languages:
+  python: {}
+  typescript: {}
+github: https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/openai.py
+docsPage: docs/integrations/model-providers/crusoe
+addedDate: 2026-07-30

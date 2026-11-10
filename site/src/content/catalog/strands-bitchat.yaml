@@ -1,0 +1,8 @@
+name: strands-bitchat
+description: Decentralized P2P encrypted chat tool for Strands Agents using Bluetooth LE mesh networking and the Noise protocol for agent-to-agent communication.
+integrationType: tool
+languages:
+  python:
+    package: strands-bitchat
+github: https://github.com/cagataycali/strands-bitchat
+addedDate: 2025-08-18

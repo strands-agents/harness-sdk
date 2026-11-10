@@ -280,6 +280,70 @@ describe('Middleware interrupts', () => {
       expect(finalResult.stopReason).toBe('endTurn')
     })
 
+    it('clears interrupt state after resuming to a non-tool completion so the agent is reusable', async () => {
+      const model = new MockMessageModel()
+        .addTurn({ type: 'textBlock', text: 'Resumed' })
+        .addTurn({ type: 'textBlock', text: 'Fresh' })
+
+      let interrupted = false
+      const agent = new Agent({ model, printer: false })
+      agent.addMiddleware(AgentStreamStage, async function* (context, next) {
+        if (!interrupted) {
+          interrupted = true
+          context.interrupt({ name: 'gate' })
+        }
+        return yield* next(context)
+      })
+
+      const { result: interruptResult } = await collectGenerator(agent.stream('Test'))
+      expect(interruptResult.stopReason).toBe('interrupt')
+
+      // Resume to a plain end-of-turn (no tool cycle to clear interrupt state).
+      const { result: resumedResult } = await collectGenerator(
+        agent.stream([
+          new InterruptResponseContent({ interruptId: interruptResult.interrupts![0]!.id, response: 'go' }),
+        ])
+      )
+      expect(resumedResult.stopReason).toBe('endTurn')
+
+      // A subsequent fresh invocation must not be rejected as "still interrupted".
+      const freshResult = await agent.invoke('Fresh call')
+      expect(freshResult.stopReason).toBe('endTurn')
+    })
+
+    it('re-reads the resumed response after next() even when a tool ran in the pass', async () => {
+      const model = new MockMessageModel()
+        .addTurn({ type: 'toolUseBlock', name: 'calc', toolUseId: 'tool-1', input: {} })
+        .addTurn({ type: 'textBlock', text: 'done' })
+      const tool = createMockTool('calc', () => 'ok')
+      const agent = new Agent({ model, tools: [tool], printer: false })
+
+      const reads: Array<[string, unknown]> = []
+      agent.addMiddleware(AgentStreamStage, async function* (context, next) {
+        const pre = context.interrupt<string>({ name: 'gate' })
+        reads.push(['pre', pre.response])
+        const result = yield* next(context)
+        const post = context.interrupt<string>({ name: 'gate' })
+        reads.push(['post', post.response])
+        return result
+      })
+
+      const { result: interruptResult } = await collectGenerator(agent.stream('go'))
+      expect(interruptResult.stopReason).toBe('interrupt')
+
+      const { result: finalResult } = await collectGenerator(
+        agent.stream([
+          new InterruptResponseContent({ interruptId: interruptResult.interrupts![0]!.id, response: 'go' }),
+        ])
+      )
+
+      expect(finalResult.stopReason).toBe('endTurn')
+      expect(reads).toEqual([
+        ['pre', 'go'],
+        ['post', 'go'],
+      ])
+    })
+
     it('interrupt ID uses agentStream namespace', async () => {
       const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Hello' })
       const agent = new Agent({ model, printer: false })

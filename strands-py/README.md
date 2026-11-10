@@ -1,7 +1,10 @@
 <div align="center">
   <div>
     <a href="https://strandsagents.com">
-      <img src="https://strandsagents.com/latest/assets/logo-github.svg" alt="Strands Agents" width="55px" height="105px">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="https://strandsagents.com/latest/assets/wordmark-github-dark.svg">
+        <img src="https://strandsagents.com/latest/assets/wordmark-github-light.svg" alt="Strands" width="320">
+      </picture>
     </a>
   </div>
 
@@ -26,9 +29,15 @@
   <p>
     <a href="https://strandsagents.com/">Documentation</a>
     ◆ <a href="https://github.com/strands-agents/samples">Samples</a>
-    ◆ <a href="https://github.com/strands-agents/tools">Tools</a>
-    ◆ <a href="https://github.com/strands-agents/agent-builder">Agent Builder</a>
+    ◆ <a href="https://github.com/strands-agents/harness-sdk/tree/main/strands-cli">CLI</a>
     ◆ <a href="https://github.com/strands-agents/harness-sdk/tree/main/strands-mcp">MCP Server</a>
+    <br>
+    Harness (<a href="https://github.com/strands-agents/harness-sdk/tree/main/harness-py">Python</a>, <a href="https://github.com/strands-agents/harness-sdk/tree/main/harness-ts">TypeScript</a>)
+    ◆ SDK (<a href="https://github.com/strands-agents/harness-sdk/tree/main/strands-py">Python</a>, <a href="https://github.com/strands-agents/harness-sdk/tree/main/strands-ts">TypeScript</a>)
+    ◆ <a href="https://github.com/strands-agents/box">Box</a>
+    ◆ <a href="https://github.com/strands-agents/shell">Shell</a>
+    ◆ <a href="https://github.com/strands-agents/evals">Evals</a>
+    ◆ <a href="https://github.com/strands-labs">Labs</a>
   </p>
 </div>
 
@@ -45,14 +54,15 @@ Strands Agents is a simple yet powerful SDK that takes a model-driven approach t
 
 ```bash
 # Install Strands Agents
-pip install strands-agents strands-agents-tools
+pip install strands-agents
 ```
 
 ```python
 from strands import Agent
-from strands_tools import calculator
-agent = Agent(tools=[calculator])
-agent("What is the square root of 1764")
+from strands.vended_tools import http_request
+
+agent = Agent(tools=[http_request])
+agent("Tell me about the Strands harness features: https://strandsagents.com/docs/user-guide/harness/index.md")
 ```
 
 > **Note**: For the default Amazon Bedrock model provider, you'll need AWS credentials configured and model access enabled for Claude 4 Sonnet in the us-west-2 region. See the [Quickstart Guide](https://strandsagents.com/) for details on configuring other model providers.
@@ -66,8 +76,8 @@ Ensure you have Python 3.10+ installed, then:
 python -m venv .venv
 source .venv/bin/activate  # On Windows use: .venv\Scripts\activate
 
-# Install Strands and tools
-pip install strands-agents strands-agents-tools
+# Install Strands
+pip install strands-agents
 ```
 
 ## Features at a Glance
@@ -104,7 +114,7 @@ response = agent("Use any tools you find in the tools directory")
 
 ### MCP Support
 
-Seamlessly integrate Model Context Protocol (MCP) servers:
+Connect to Model Context Protocol (MCP) servers:
 
 ```python
 from strands import Agent
@@ -119,6 +129,8 @@ with aws_docs_client:
    agent = Agent(tools=aws_docs_client.list_tools_sync())
    response = agent("Tell me about Amazon Bedrock and how to use it with Python")
 ```
+
+The SDK works with both major versions of the `mcp` package through a built-in compatibility layer, so most code that uses `MCPClient` runs unchanged on either version. A fresh install resolves to mcp 2.x, and pinning `mcp<2` keeps you on 1.x. See [docs/MCP_VERSIONS.md](./docs/MCP_VERSIONS.md) for support status, the behavior differences on 2.x, and migration notes.
 
 ### Multiple Model Providers
 
@@ -185,117 +197,76 @@ Built-in providers:
 
 Custom providers can be implemented using [Custom Providers](https://strandsagents.com/docs/user-guide/concepts/model-providers/custom_model_provider/)
 
-### Example tools
+### Vended tools
 
-Strands offers an optional strands-agents-tools package with pre-built tools for quick experimentation:
+The SDK ships pre-built tools for common agent tasks. Import them from `strands.vended_tools`:
 
 ```python
 from strands import Agent
-from strands_tools import calculator
-agent = Agent(tools=[calculator])
-agent("What is the square root of 1764")
+from strands.vended_tools import file_editor, http_request, shell
+
+agent = Agent(tools=[file_editor, http_request, shell])
+agent("Fetch https://strandsagents.com and save a one-paragraph summary to /tmp/summary.md")
 ```
 
-It's also available on GitHub via [strands-agents/tools](https://github.com/strands-agents/tools).
+| Tool | Exports | Description |
+| --- | --- | --- |
+| Shell | `shell`, `make_shell` | Run shell commands |
+| File editor | `file_editor`, `make_file_editor` | View, create, and edit files |
+| HTTP request | `http_request`, `make_http_request` | Make HTTP requests to external APIs |
+| Web fetch | `web_fetch`, `make_web_fetch` | Fetch a web page for the model to read. Requires the `web-fetch` extra |
+| Notebook | `notebook`, `make_notebook` | Keep persistent text notes |
+| Python REPL | `python_repl`, `make_python_repl` | Run Python code |
+| Sleep | `sleep`, `make_sleep` | Pause for a bounded, cancellable duration |
+| Handoff to user | `handoff_to_user`, `make_handoff_to_user` | Pause the agent loop and ask the user for input |
+| Stop | `stop`, `make_stop` | End the agent loop when the task is done |
+| Subagent | `subagent`, `make_subagent` | Delegate a self-contained task to a child agent |
+| Swarm | `swarm`, `make_swarm` | Run a team of agents that hand off work to each other |
+| MCP router | `make_mcp_router` | Connect to MCP servers on an allowlist you set |
+| A2A client | `make_a2a_client` | Discover and message remote A2A agents. Requires the `a2a` extra |
+
+Use the `make_*` factories to customize a tool, for example to bind a sandbox or change its name. `shell`, `file_editor`, and `python_repl` run on the host unless you pass a `sandbox` to `Agent`. See [Vended tools](https://strandsagents.com/docs/user-guide/sdk/tools/vended-tools/) for details on each tool.
 
 ### Bidirectional Streaming
 
-> **⚠️ Experimental Feature**: Bidirectional streaming is currently in experimental status. APIs may change in future releases as we refine the feature based on user feedback and evolving model capabilities.
+Build voice agents that talk with users in real time. A `BidiAgent` holds a persistent connection to a speech model, streams audio both ways, runs tools mid-conversation, and stops speaking when the user interrupts.
 
-Build real-time voice and audio conversations with persistent streaming connections. Unlike traditional request-response patterns, bidirectional streaming maintains long-running conversations where users can interrupt, provide continuous input, and receive real-time audio responses. Get started with your first BidiAgent by following the [Quickstart](https://strandsagents.com/docs/user-guide/concepts/bidirectional-streaming/quickstart/) guide. 
-
-**Supported Model Providers:**
-- Amazon Nova Sonic (v1, v2)
-- Google Gemini Live
-- OpenAI Realtime API
-
-**Installation:**
+Install the extra for your provider. Local audio also needs the PortAudio system library:
 
 ```bash
-# Server-side only (no audio I/O dependencies)
-pip install strands-agents[bidi]
+# Amazon Bedrock Nova Sonic (Python 3.12+)
+pip install "strands-agents[bidi,bidi-io,bidi-pyaudio]"
 
-# With audio I/O support (includes PyAudio dependency)
-pip install strands-agents[bidi,bidi-io]
+# Google Gemini Live
+pip install "strands-agents[bidi-google,bidi-io,bidi-pyaudio]"
+
+# OpenAI Realtime API
+pip install "strands-agents[bidi-openai,bidi-io,bidi-pyaudio]"
 ```
 
-> **Note**: Amazon Nova Sonic requires Python 3.12+ due to its experimental AWS SDK dependency.
-
-**Quick Example:**
+This agent listens on your microphone, answers through your speakers, and prints transcripts to the terminal:
 
 ```python
 import asyncio
-from strands.experimental.bidi import BidiAgent
-from strands.experimental.bidi.models import BidiNovaSonicModel
-from strands.experimental.bidi.io import BidiAudioIO, BidiTextIO
-from strands_tools import calculator, stop
+
+from strands.bidi.agent import BidiAgent
+from strands.bidi.io import AudioIO
+from strands.bidi.models import BedrockNovaSonicModel
+
 
 async def main():
-    # Create bidirectional agent with Nova Sonic v2
-    model = BidiNovaSonicModel()
-    agent = BidiAgent(model=model, tools=[calculator, stop])
+    model = BedrockNovaSonicModel(model_id="amazon.nova-2-5-sonic")
+    agent = BidiAgent(model=model)
+    audio_io = AudioIO()
 
-    # Setup audio and text I/O (requires bidi-io extra)
-    audio_io = BidiAudioIO()
-    text_io = BidiTextIO()
+    await agent.run(inputs=[audio_io.input()], outputs=[audio_io.output()])
 
-    # Run with real-time audio streaming
-    # stop tool allows user to verbally stop agent execution
-    await agent.run(
-        inputs=[audio_io.input()],
-        outputs=[audio_io.output(), text_io.output()]
-    )
 
 if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-> **Note**: `BidiAudioIO` and `BidiTextIO` require the `bidi-io` extra. For server-side deployments where audio I/O is handled by clients (browsers, mobile apps), install only `strands-agents[bidi]` and implement custom input/output handlers using the `BidiInput` and `BidiOutput` protocols.
-
-**Configuration Options:**
-
-```python
-from strands.experimental.bidi.models import BidiNovaSonicModel
-
-# Configure audio settings and turn detection (v2 only)
-model = BidiNovaSonicModel(
-    provider_config={
-        "audio": {
-            "input_rate": 16000,
-            "output_rate": 16000,
-            "voice": "matthew"
-        },
-        "turn_detection": {
-            "endpointingSensitivity": "MEDIUM"  # HIGH, MEDIUM, or LOW
-        },
-        "inference": {
-            "max_tokens": 2048,
-            "temperature": 0.7
-        }
-    }
-)
-
-# Configure I/O devices
-audio_io = BidiAudioIO(
-    input_device_index=0,  # Specific microphone
-    output_device_index=1,  # Specific speaker
-    input_buffer_size=10,
-    output_buffer_size=10
-)
-
-# Text input mode (type messages instead of speaking)
-text_io = BidiTextIO()
-await agent.run(
-    inputs=[text_io.input()],  # Use text input
-    outputs=[audio_io.output(), text_io.output()]
-)
-
-# Multi-modal: Both audio and text input
-await agent.run(
-    inputs=[audio_io.input(), text_io.input()],  # Speak OR type
-    outputs=[audio_io.output(), text_io.output()]
-)
-```
+`run()` keeps the conversation open until you press Ctrl+C or a tool calls `agent.cancel()`. See the [bidirectional streaming quickstart](https://strandsagents.com/docs/user-guide/sdk/bidi/quickstart/) for model configuration, custom I/O, and more.
 
 ## Documentation
 

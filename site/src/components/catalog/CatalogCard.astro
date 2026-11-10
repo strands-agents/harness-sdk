@@ -1,0 +1,168 @@
+---
+/**
+ * A single integration card in the catalog grid. All filterable facets are
+ * exposed as data-* attributes; the page script (integrations.astro) toggles
+ * visibility, so the card itself stays a pure server-rendered component.
+ *
+ * The whole card is clickable via the stretched-link pattern: the title
+ * anchor's ::after covers the card, and the secondary GitHub/registry links
+ * sit above it with a raised z-index so they stay independently clickable.
+ * Each entry's tile shows its integration-type glyph in a neutral accent
+ * tint, so the tile signals the type at a glance without external logos.
+ */
+import type { CatalogCardModel } from '../../util/catalog'
+import { pathWithBase } from '../../util/links'
+import { AWS_ICON, DOWNLOAD_ICON, GITHUB_ICON, NPM_ICON, PYPI_ICON, STAR_ICON } from './icons'
+import { AWS_MARK_VIEWBOX, MAINTAINED_BY_FLAGS, MAINTAINED_BY_TITLES, TYPE_ICONS, TYPE_LABELS, VERIFIED_ICON } from './types'
+
+interface Props {
+  card: CatalogCardModel
+}
+
+const { card } = Astro.props
+
+const numberFormat = new Intl.NumberFormat('en', { notation: 'compact' })
+
+// Footer links render brand marks instead of text; the registry label picks
+// the icon ('PyPI' → Python snakes, 'npm' → npm block logo).
+const REGISTRY_ICONS: Record<'PyPI' | 'npm', readonly string[]> = { PyPI: PYPI_ICON, npm: NPM_ICON }
+
+// Internal docs hrefs need the deploy base path; external URLs must not get it.
+const href = card.external ? card.href : pathWithBase(card.href)
+---
+
+<article
+  class:list={['cat-card', { 'cat-card--featured': card.featured, 'cat-card--builtin': card.maintainedBy === 'strands' }]}
+  data-type={card.integrationType}
+  data-langs={card.languages.join(' ')}
+  data-badges={[...card.badges, ...(card.featured ? ['featured'] : [])].join(' ')}
+  data-maintained={card.maintainedBy}
+  data-sdk={card.sdk}
+  data-search={`${card.name} ${card.description} by ${card.maintainer}`.toLowerCase()}
+>
+  <div class="cat-card-header">
+    <span class="cat-tile" aria-hidden="true">
+      <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true">
+        <path fill="currentColor" d={TYPE_ICONS[card.integrationType]} />
+      </svg>
+    </span>
+    <div class="cat-card-head">
+      {/* data-cat-entry marks internal docs links for the docs-drawer script
+          (integrations.astro), which intercepts the click and opens the page
+          in a slide-over iframe. Without JS the link navigates normally. */}
+      <a
+        class="cat-card-title"
+        href={href}
+        target={card.external ? '_blank' : undefined}
+        rel={card.external ? 'noopener' : undefined}
+        data-cat-entry={card.external ? undefined : card.id}
+        title={card.name}
+      >
+        {card.name}
+        {card.external && <span class="cat-external" aria-hidden="true">↗</span>}
+      </a>
+      <span class="cat-card-stats">
+        {
+          card.stars !== undefined && (
+            <span class="cat-stat" title="GitHub stars">
+              <svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true">
+                <path fill="currentColor" d={STAR_ICON} />
+              </svg>
+              {numberFormat.format(card.stars)}
+            </span>
+          )
+        }
+        {
+          card.downloads !== undefined && (
+            <span class="cat-stat" title="Downloads per month">
+              <svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true">
+                <path fill="currentColor" d={DOWNLOAD_ICON} />
+              </svg>
+              {numberFormat.format(card.downloads)}
+            </span>
+          )
+        }
+      </span>
+      </div>
+    </div>
+    {/* Flags sit on their own full-width row below the header: every
+        non-community card has at least one. Featured / New / Verified /
+        maintainer chips share one anatomy across cards. */}
+    {(card.featured ||
+      card.badges.includes('new') ||
+      card.badges.includes('verified') ||
+      card.maintainedBy !== 'community') && (
+      <div class="cat-card-flags">
+        {card.featured && (
+          <span class="cat-flag cat-flag--featured" title="Featured by the Strands team">
+            Featured
+          </span>
+        )}
+        {card.badges.includes('new') && <span class="cat-flag cat-flag--new">New</span>}
+        {card.badges.includes('verified') && (
+          <span class="cat-flag cat-flag--verified" title="Verified by the Strands team">
+            <svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true">
+              <path fill="currentColor" d={VERIFIED_ICON} />
+            </svg>
+            Verified
+          </span>
+        )}
+        {card.maintainedBy !== 'community' && (
+          <span
+            class:list={['cat-flag', `cat-flag--${card.maintainedBy}`]}
+            title={MAINTAINED_BY_TITLES[card.maintainedBy]}
+            aria-label={MAINTAINED_BY_FLAGS[card.maintainedBy]}
+          >
+            {card.maintainedBy === 'aws' ? (
+              <svg width="31" height="19" viewBox={AWS_MARK_VIEWBOX} aria-hidden="true">
+                <path fill="currentColor" d={AWS_ICON} />
+              </svg>
+            ) : (
+              MAINTAINED_BY_FLAGS[card.maintainedBy]
+            )}
+          </span>
+        )}
+      </div>
+    )}
+    <p class="cat-card-desc">{card.description}</p>
+    <div class="cat-card-foot">
+      <span class="cat-facts">
+        <span class="cat-type">{TYPE_LABELS[card.integrationType]}</span>
+        <span class="cat-langs">
+          {card.languages.map((l) => (l === 'python' ? 'Python' : 'TypeScript')).join(' · ')} · by {card.maintainer}
+        </span>
+      </span>
+      <span class="cat-links">
+        <a
+          class="cat-link"
+          href={card.github}
+          target="_blank"
+          rel="noopener"
+          aria-label={`${card.name} on GitHub (opens in a new tab)`}
+          title="GitHub"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true">
+            {GITHUB_ICON.map((d) => (
+              <path fill="currentColor" d={d} />
+            ))}
+          </svg>
+        </a>
+        {card.registryLinks.map((link) => (
+          <a
+            class="cat-link"
+            href={link.href}
+            target="_blank"
+            rel="noopener"
+            aria-label={`${card.name} on ${link.label} (opens in a new tab)`}
+            title={link.label}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true">
+              {REGISTRY_ICONS[link.label].map((d) => (
+                <path fill="currentColor" d={d} />
+              ))}
+            </svg>
+          </a>
+        ))}
+      </span>
+    </div>
+</article>

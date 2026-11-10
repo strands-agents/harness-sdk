@@ -12,8 +12,10 @@ import type {
   CachePointBlock,
   GuardContentBlock,
   JsonBlock,
+  InjectedBlock,
+  SummaryBlock,
 } from '../types/messages.js'
-import type { ImageBlock, VideoBlock, DocumentBlock } from '../types/media.js'
+import type { AudioBlock, ImageBlock, VideoBlock, DocumentBlock } from '../types/media.js'
 import type { CitationsBlock } from '../types/citations.js'
 
 /**
@@ -40,10 +42,13 @@ export type PlainContentBlock =
   | NoJSON<CachePointBlock>
   | NoJSON<GuardContentBlock>
   | NoJSON<JsonBlock>
+  | NoJSON<AudioBlock>
   | NoJSON<ImageBlock>
   | NoJSON<VideoBlock>
   | NoJSON<DocumentBlock>
   | NoJSON<CitationsBlock>
+  | NoJSON<InjectedBlock>
+  | NoJSON<SummaryBlock>
 
 /**
  * Plain system content block without toJSON method.

@@ -1,7 +1,7 @@
 /**
  * Media and document content types for multimodal AI interactions.
  *
- * This module provides types for handling images, videos, and documents
+ * This module provides types for handling audio, images, videos, and documents
  * with support for multiple sources (bytes, S3, URLs, files).
  */
 
@@ -9,8 +9,8 @@ import type { Serialized, MaybeSerializedInput, JSONSerializable } from './json.
 import { omitUndefined } from './json.js'
 import { TextBlock, type TextBlockData } from './messages.js'
 
-export type { ImageFormat, VideoFormat, DocumentFormat, MediaFormat } from '../mime.js'
-import type { ImageFormat, VideoFormat, DocumentFormat } from '../mime.js'
+export type { AudioFormat, ImageFormat, VideoFormat, DocumentFormat, MediaFormat } from '../mime.js'
+import type { AudioFormat, ImageFormat, VideoFormat, DocumentFormat } from '../mime.js'
 
 /**
  * Cross-platform base64 encoding function that works in both browser and Node.js environments.
@@ -131,6 +131,106 @@ export class S3Location implements S3LocationData, JSONSerializable<S3LocationDa
    */
   static fromJSON(data: S3LocationData): S3Location {
     return new S3Location(data)
+  }
+}
+
+/**
+ * Source for an audio block (Data version).
+ */
+export type AudioSourceData = { bytes: Uint8Array } | { location: S3LocationData }
+
+/**
+ * Source for an audio block (Class version).
+ */
+export type AudioSource =
+  { type: 'audioSourceBytes'; bytes: Uint8Array } | { type: 'audioSourceS3Location'; location: S3Location }
+
+/**
+ * Data for an audio block.
+ */
+export interface AudioBlockData {
+  /** Audio format. */
+  format: AudioFormat
+
+  /** Audio source. */
+  source: AudioSourceData
+}
+
+/**
+ * Audio content block.
+ */
+export class AudioBlock implements AudioBlockData, JSONSerializable<{ audio: Serialized<AudioBlockData> }> {
+  /** Discriminator for audio content. */
+  readonly type = 'audioBlock' as const
+
+  /** Audio format. */
+  readonly format: AudioFormat
+
+  /** Audio source. */
+  readonly source: AudioSource
+
+  constructor(data: AudioBlockData) {
+    this.format = data.format
+    this.source = this._convertSource(data.source)
+  }
+
+  private _convertSource(source: AudioSourceData): AudioSource {
+    if ('bytes' in source) {
+      return {
+        type: 'audioSourceBytes',
+        bytes: source.bytes,
+      }
+    }
+    if ('location' in source) {
+      return {
+        type: 'audioSourceS3Location',
+        location: new S3Location(source.location),
+      }
+    }
+    throw new Error('Invalid audio source')
+  }
+
+  /**
+   * Serializes the AudioBlock to a JSON-compatible ContentBlockData object.
+   * Called automatically by JSON.stringify().
+   * Uint8Array bytes are encoded as a base64 string.
+   *
+   * @returns Wrapped audio block data
+   */
+  toJSON(): { audio: Serialized<AudioBlockData> } {
+    const source: Serialized<AudioSourceData> =
+      this.source.type === 'audioSourceBytes'
+        ? { bytes: encodeBase64(this.source.bytes) }
+        : { location: this.source.location.toJSON() }
+
+    return {
+      audio: {
+        format: this.format,
+        source,
+      },
+    }
+  }
+
+  /**
+   * Creates an AudioBlock instance from its wrapped data format.
+   * Base64-encoded bytes are decoded back to Uint8Array.
+   *
+   * @param data - Wrapped AudioBlockData to deserialize
+   * @returns AudioBlock instance
+   */
+  static fromJSON(data: { audio: MaybeSerializedInput<AudioBlockData> }): AudioBlock {
+    const audio = data.audio
+    const source: AudioSourceData =
+      'bytes' in audio.source
+        ? {
+            bytes: typeof audio.source.bytes === 'string' ? decodeBase64(audio.source.bytes) : audio.source.bytes,
+          }
+        : { location: audio.source.location }
+
+    return new AudioBlock({
+      format: audio.format,
+      source,
+    })
   }
 }
 

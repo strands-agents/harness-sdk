@@ -14,6 +14,7 @@ import json
 import logging
 import mimetypes
 import time
+from collections import Counter
 from collections.abc import AsyncGenerator
 from typing import (
     Any,
@@ -26,15 +27,59 @@ from pydantic import BaseModel
 from typing_extensions import Unpack, override
 
 from ..types.content import ContentBlock, Messages, SystemContentBlock
+from ..types.event_loop import Usage
 from ..types.exceptions import ContextWindowOverflowException, ModelThrottledException
 from ..types.streaming import StreamEvent
 from ..types.tools import ToolChoice, ToolSpec
-from ._validation import _has_location_source, validate_config_keys, warn_on_tool_choice_not_supported
-from .model import BaseModelConfig, Model
+from ._model_info import SERVER_SIDE_SUMMARY_OFF, ModelInfo
+from ._validation import (
+    _has_location_source,
+    _log_skipped_blocks,
+    validate_config_keys,
+    warn_on_cache_config_not_supported,
+    warn_on_tool_choice_not_supported,
+)
+from .model import BaseModelConfig, CacheConfig, Model
 
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T", bound=BaseModel)
+
+
+def _apply_cache_config(request: dict[str, Any], cache_config: CacheConfig | None) -> None:
+    """Pin llama.cpp's server-side prompt caching on from a CacheConfig.
+
+    llama.cpp uses the shared prompt prefix server-side by default; setting ``cache_prompt`` keeps
+    caching on. It has no per-field cache controls, so every other CacheConfig field is ignored.
+
+    Args:
+        request: The llama.cpp request dict to mutate.
+        cache_config: The provider's configured cache settings, if any.
+    """
+    if cache_config is None:
+        return
+    if "cache_prompt" not in request:
+        request["cache_prompt"] = True
+    warn_on_cache_config_not_supported(cache_config, "llama.cpp", supported=set())
+
+
+def _format_usage(data: Any) -> Usage:
+    """Build a Usage from a llama.cpp usage payload.
+
+    Args:
+        data: The usage payload from the server's final stream chunk.
+
+    Returns:
+        The standardized token usage.
+    """
+    usage: Usage = {
+        "inputTokens": data.prompt_tokens,
+        "outputTokens": data.completion_tokens,
+        "totalTokens": data.total_tokens,
+    }
+    if cached_tokens := getattr(data, "cached_tokens", 0):
+        usage["cacheReadInputTokens"] = cached_tokens
+    return usage
 
 
 class LlamaCppModel(Model):
@@ -128,11 +173,16 @@ class LlamaCppModel(Model):
             use_native_token_count: Whether to use the native llama.cpp /tokenize endpoint.
                 When True, count_tokens() calls the server's tokenize endpoint for accurate counts.
                 When False (default), skips the API call and uses the local estimator.
+            cache_config: Prompt-caching configuration. llama.cpp reuses the shared prompt prefix
+                server-side by default. A CacheConfig pins ``cache_prompt: true`` on each request. An
+                explicit ``params["cache_prompt"]`` takes precedence. llama.cpp has no per-field cache
+                controls, so every other CacheConfig field is ignored.
         """
 
         model_id: str
         params: dict[str, Any] | None
         use_native_token_count: bool
+        cache_config: CacheConfig | None
 
     def __init__(
         self,
@@ -186,6 +236,15 @@ class LlamaCppModel(Model):
         validate_config_keys(model_config, self.LlamaCppConfig)
         self.config.update(model_config)
 
+    @property
+    @override
+    def model_info(self) -> ModelInfo:
+        """Reports server-side summary as off, which a ``model_info`` override still wins over.
+
+        The llama.cpp server has no server-side summary, including for Claude models served through it.
+        """
+        return ModelInfo.merge(super().model_info, SERVER_SIDE_SUMMARY_OFF, self.get_config().get("model_info"))
+
     @override
     def get_config(self) -> LlamaCppConfig:
         """Get the llama.cpp model configuration.
@@ -230,11 +289,11 @@ class LlamaCppModel(Model):
                 "type": "image_url",
             }
 
-        # Handle audio content (not in standard ContentBlock but supported by llama.cpp)
+        # Handle audio content.
         if "audio" in content:
-            audio_content = cast(dict[str, Any], content)
-            audio_data = base64.b64encode(audio_content["audio"]["source"]["bytes"]).decode("utf-8")
-            audio_format = audio_content["audio"].get("format", "wav")
+            audio_content = content["audio"]
+            audio_data = base64.b64encode(audio_content["source"]["bytes"]).decode("utf-8")
+            audio_format = audio_content.get("format", "wav")
             return {
                 "type": "input_audio",
                 "input_audio": {"data": audio_data, "format": audio_format},
@@ -294,6 +353,7 @@ class LlamaCppModel(Model):
             Formatted messages array compatible with llama.cpp.
         """
         formatted_messages: list[dict[str, Any]] = []
+        skipped: Counter[str] = Counter()
 
         # Add system prompt if provided
         if system_prompt:
@@ -308,7 +368,7 @@ class LlamaCppModel(Model):
                 if any(block_type in content for block_type in ["toolResult", "toolUse"]):
                     continue
                 if _has_location_source(content):
-                    logger.warning("Location sources are not supported by llama.cpp | skipping content block")
+                    skipped["Location sources are not supported by llama.cpp | skipping content block"] += 1
                     continue
                 filtered_contents.append(content)
 
@@ -335,14 +395,17 @@ class LlamaCppModel(Model):
                 if "toolResult" in content
             ]
 
+            # Tool results must immediately follow tool calls, before any injected user text.
+            formatted_messages.extend(formatted_tool_messages)
+
             formatted_message = {
                 "role": message["role"],
                 "content": formatted_contents,
                 **({} if not formatted_tool_calls else {"tool_calls": formatted_tool_calls}),
             }
             formatted_messages.append(formatted_message)
-            formatted_messages.extend(formatted_tool_messages)
 
+        _log_skipped_blocks(logger, skipped)
         return [message for message in formatted_messages if message["content"] or "tool_calls" in message]
 
     def _format_request(
@@ -437,6 +500,7 @@ class LlamaCppModel(Model):
                 if param in llamacpp_specific_params:
                     request[param] = value
 
+        _apply_cache_config(request, cast(CacheConfig | None, self.config.get("cache_config")))
         return request
 
     def _format_chunk(self, event: dict[str, Any]) -> StreamEvent:
@@ -493,11 +557,7 @@ class LlamaCppModel(Model):
             case "metadata":
                 return {
                     "metadata": {
-                        "usage": {
-                            "inputTokens": event["data"].prompt_tokens,
-                            "outputTokens": event["data"].completion_tokens,
-                            "totalTokens": event["data"].total_tokens,
-                        },
+                        "usage": _format_usage(event["data"]),
                         "metrics": {
                             "latencyMs": event.get("latency_ms", 0),
                         },
@@ -655,10 +715,14 @@ class LlamaCppModel(Model):
                             tool_calls[index] = []
                         tool_calls[index].append(tool_call)
 
-                # Check for finish reason
+                # Capture the finish reason but do NOT break here: current
+                # llama.cpp server ordering is
+                #   finish -> usage -> [DONE]
+                # so a `break` would drop the trailing usage payload and the
+                # resulting `metadata` chunk would never reach the caller.
+                # Mirrors the OpenAI provider's drain-after-finish behavior.
                 if choice.get("finish_reason"):
                     finish_reason = choice.get("finish_reason")
-                    break
 
             yield self._format_chunk({"chunk_type": "content_stop"})
 
@@ -720,6 +784,8 @@ class LlamaCppModel(Model):
             if usage_data:
                 # Calculate latency
                 latency_ms = int((time.perf_counter() - start_time) * 1000)
+                # cached_tokens is the length of the prompt prefix llama.cpp reused from its KV cache.
+                cached_tokens = (usage_data.get("prompt_tokens_details") or {}).get("cached_tokens", 0)
                 yield self._format_chunk(
                     {
                         "chunk_type": "metadata",
@@ -730,6 +796,7 @@ class LlamaCppModel(Model):
                                 "prompt_tokens": usage_data.get("prompt_tokens", 0),
                                 "completion_tokens": usage_data.get("completion_tokens", 0),
                                 "total_tokens": usage_data.get("total_tokens", 0),
+                                "cached_tokens": cached_tokens,
                             },
                         )(),
                         "latency_ms": latency_ms,

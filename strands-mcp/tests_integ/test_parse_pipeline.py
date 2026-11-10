@@ -1,5 +1,7 @@
 """Integration tests for the fetch and parse pipeline."""
 
+from urllib.parse import urlparse
+
 import pytest
 
 from strands_mcp_server.config import doc_config
@@ -25,15 +27,18 @@ class TestLlmsTxtParsing:
             pytest.skip(f"Could not fetch llms.txt: {exc}")
 
         assert len(links) >= 10, f"Expected at least 10 links, got {len(links)}"
-        for title, url in links[:5]:
+        for title, url, _description in links[:5]:
             assert title, "Title should not be empty"
-            assert url.startswith("https://strandsagents.com"), f"URL should be on strandsagents.com: {url}"
+            parsed_url = urlparse(url)
+            assert parsed_url.scheme == "https", f"URL should use HTTPS: {url}"
+            assert parsed_url.hostname == "strandsagents.com", f"URL should be on strandsagents.com: {url}"
+        assert any(description for _, _, description in links), "Expected llms.txt entries with descriptions"
 
     def test_url_titles_populated_after_init(self, live_cache, url_titles):
         """After cache init, URL titles should be populated from llms.txt."""
         assert len(url_titles) >= 10
         for url, title in list(url_titles.items())[:5]:
-            assert "strandsagents.com" in url
+            assert urlparse(url).hostname == "strandsagents.com"
             assert title
 
 

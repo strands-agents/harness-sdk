@@ -10,7 +10,7 @@ from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Union
+from typing import TYPE_CHECKING, Any, Union
 
 from .._async import run_async
 from ..agent import AgentResult
@@ -20,6 +20,9 @@ from ..types.event_loop import Metrics, Usage
 from ..types.multiagent import MultiAgentInput
 from ..types.traces import AttributeValue
 
+if TYPE_CHECKING:
+    from ..agent.invocation_context import InvocationContext
+
 logger = logging.getLogger(__name__)
 
 
@@ -28,6 +31,7 @@ class Status(Enum):
 
     Attributes:
         PENDING: Task has not started execution yet.
+        DISPATCHED: Node has been dispatched but execution has not started yet.
         EXECUTING: Task is currently running.
         COMPLETED: Task finished successfully.
         FAILED: Task encountered an error and could not complete.
@@ -35,6 +39,7 @@ class Status(Enum):
     """
 
     PENDING = "pending"
+    DISPATCHED = "dispatched"
     EXECUTING = "executing"
     COMPLETED = "completed"
     FAILED = "failed"
@@ -57,6 +62,19 @@ class NodeResult:
     accumulated_metrics: Metrics = field(default_factory=lambda: Metrics(latencyMs=0))
     execution_count: int = 0
     interrupts: list[Interrupt] = field(default_factory=list)
+
+    def __str__(self) -> str:
+        """Return a human-readable string representation of the node result.
+
+        Delegates to the inner result's string representation:
+        - AgentResult: Uses AgentResult.__str__ (extracts text content)
+        - MultiAgentResult: Uses MultiAgentResult.__str__ (recursive)
+        - Exception: Uses the exception's string representation
+
+        Returns:
+            String representation of the node's result.
+        """
+        return str(self.result)
 
     def get_agent_results(self) -> list[AgentResult]:
         """Get all AgentResult objects from this node, flattened if nested."""
@@ -128,7 +146,12 @@ class NodeResult:
 
 @dataclass
 class MultiAgentResult:
-    """Result from multi-agent execution with accumulated metrics."""
+    """Result from multi-agent execution with accumulated metrics.
+
+    Attributes:
+        invocation_context: The request this run belonged to; its ``usage`` covers the whole request,
+            including nodes and any enclosing call.
+    """
 
     status: Status = Status.PENDING
     results: dict[str, NodeResult] = field(default_factory=lambda: {})
@@ -137,6 +160,31 @@ class MultiAgentResult:
     execution_count: int = 0
     execution_time: int = 0
     interrupts: list[Interrupt] = field(default_factory=list)
+    invocation_context: "InvocationContext | None" = field(default=None, repr=False, compare=False)
+
+    def __str__(self) -> str:
+        """Return a human-readable string representation of the multi-agent result.
+
+        Priority order:
+        1. Interrupts (if present) → stringified list of interrupt dicts
+        2. Node results → each node's string output, prefixed with node name
+
+        Returns:
+            String representation based on the priority order above.
+        """
+        if self.interrupts:
+            return str([interrupt.to_dict() for interrupt in self.interrupts])
+
+        parts = []
+        for node_name, node_result in self.results.items():
+            # Remove only the single trailing newline that AgentResult.__str__ appends
+            # as a framework separator, preserving all user-owned whitespace (leading
+            # indentation, internal markdown hard-break spaces, payload trailing newlines).
+            node_str = str(node_result).removesuffix("\n")
+            if node_str:
+                parts.append(f"{node_name}: {node_str}")
+
+        return "\n".join(parts)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "MultiAgentResult":
@@ -196,6 +244,12 @@ class MultiAgentBase(ABC):
     def __init__(self) -> None:
         """Initialize base multi-agent state."""
         self._invocation_start_time = None
+
+    def _clear_interrupts(self) -> None:
+        """Drop pending interrupts so the next invocation starts fresh instead of expecting responses."""
+        interrupt_state = getattr(self, "_interrupt_state", None)
+        if interrupt_state is not None:
+            interrupt_state.deactivate()
 
     def _execution_time_with_active_interval(self, committed_time: int) -> int:
         """Committed execution time (ms) plus the active invocation's in-flight interval.
@@ -348,3 +402,11 @@ def _parse_usage(usage_data: dict[str, Any]) -> Usage:
 def _parse_metrics(metrics_data: dict[str, Any]) -> Metrics:
     """Parse Metrics from dict data."""
     return Metrics(latencyMs=metrics_data.get("latencyMs", 0))
+
+
+def _accumulate_cache_usage(target: Usage, source: Usage) -> None:
+    """Add source's optional cache token counters into target."""
+    if "cacheReadInputTokens" in source:
+        target["cacheReadInputTokens"] = target.get("cacheReadInputTokens", 0) + source["cacheReadInputTokens"]
+    if "cacheWriteInputTokens" in source:
+        target["cacheWriteInputTokens"] = target.get("cacheWriteInputTokens", 0) + source["cacheWriteInputTokens"]

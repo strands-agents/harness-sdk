@@ -1,8 +1,19 @@
-import { describe, expect, it, vi, beforeEach, type MockInstance } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi, beforeEach, type MockInstance } from 'vitest'
+import { context, propagation } from '@opentelemetry/api'
+import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-hooks'
 import { Agent } from '../agent.js'
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
 import { createMockTool } from '../../__fixtures__/tool-helpers.js'
-import { TextBlock, ToolUseBlock, ToolResultBlock, MaxTokensError, StructuredOutputError } from '../../index.js'
+import {
+  TextBlock,
+  ToolUseBlock,
+  ToolResultBlock,
+  MaxTokensError,
+  StructuredOutputError,
+  Message,
+} from '../../index.js'
+import { AfterInvocationEvent, AfterToolsEvent, BeforeToolsEvent } from '../../hooks/events.js'
+import type { Tool } from '../../tools/tool.js'
 import { InvokeModelStage } from '../../middleware/stages.js'
 import { Tracer } from '../../telemetry/tracer.js'
 import { z } from 'zod'
@@ -195,6 +206,136 @@ describe('Agent tracer integration', () => {
   })
 
   describe('agent loop span lifecycle', () => {
+    // Guards https://github.com/strands-agents/harness-sdk/issues/3800: breaking out of the
+    // public stream closes the generator mid-cycle and must still end the loop span
+    // and record the meter cycle.
+    it('ends the loop span once when the public stream iterator is closed mid-cycle', async () => {
+      vi.useFakeTimers()
+      vi.setSystemTime(0)
+
+      try {
+        const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Done' })
+        const agent = new Agent({ model })
+        const tracer = getLatestTracer()
+
+        for await (const event of agent.stream('Hi')) {
+          if (event.type === 'messageAddedEvent') {
+            vi.setSystemTime(60)
+            break
+          }
+        }
+
+        // The first messageAddedEvent is the user-message append, so the break
+        // lands before the model call.
+        expect(tracer.startModelInvokeSpan).not.toHaveBeenCalled()
+        expect(tracer.startAgentLoopSpan).toHaveBeenCalledTimes(1)
+        expect(tracer.endAgentLoopSpan).toHaveBeenCalledTimes(1)
+        expect(tracer.endAgentLoopSpan).toHaveBeenCalledWith({ mock: 'loopSpan' })
+        expect(agent.metrics.totalDuration).toBe(60)
+        expect(agent.metrics.latestAgentInvocation?.cycles).toEqual([expect.objectContaining({ duration: 60 })])
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    // Guards https://github.com/strands-agents/harness-sdk/issues/3800: the issue's
+    // reported scenario is cancel() plus break while the model is streaming.
+    it('ends the loop span once when the consumer cancels and breaks during model streaming', async () => {
+      const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Done' })
+      const agent = new Agent({ model })
+      const tracer = getLatestTracer()
+
+      for await (const event of agent.stream('Hi')) {
+        if (event.type === 'modelStreamUpdateEvent') {
+          agent.cancel()
+          break
+        }
+      }
+
+      expect(tracer.startAgentLoopSpan).toHaveBeenCalledTimes(1)
+      expect(tracer.endAgentLoopSpan).toHaveBeenCalledTimes(1)
+      expect(tracer.endAgentLoopSpan).toHaveBeenCalledWith({ mock: 'loopSpan' })
+    })
+
+    it('closes cycle telemetry for every started cycle when the consumer breaks during tool execution', async () => {
+      const model = new MockMessageModel()
+        .addTurn({ type: 'toolUseBlock', name: 'testTool', toolUseId: 'tool-1', input: {} })
+        .addTurn({ type: 'textBlock', text: 'Done' })
+      const tool = createMockTool(
+        'testTool',
+        () =>
+          new ToolResultBlock({
+            toolUseId: 'tool-1',
+            status: 'success',
+            content: [new TextBlock('Result')],
+          })
+      )
+      const agent = new Agent({ model, tools: [tool] })
+      const tracer = getLatestTracer()
+
+      for await (const event of agent.stream('Hi')) {
+        if (event.type === 'toolResultEvent') break
+      }
+
+      // _streamCore's drain loop resumes the agent loop after the break, so the
+      // invocation runs to completion; every started cycle must also close.
+      expect(tracer.startAgentLoopSpan).toHaveBeenCalledTimes(2)
+      expect(tracer.endAgentLoopSpan).toHaveBeenCalledTimes(2)
+    })
+
+    it('closes cycle telemetry once when an error is thrown after the cycle already closed', async () => {
+      vi.useFakeTimers()
+      vi.setSystemTime(0)
+
+      try {
+        const model = new MockMessageModel().addTurn({
+          type: 'toolUseBlock',
+          name: 'testTool',
+          toolUseId: 'tool-1',
+          input: {},
+        })
+        const tool = createMockTool(
+          'testTool',
+          () =>
+            new ToolResultBlock({
+              toolUseId: 'tool-1',
+              status: 'success',
+              content: [new TextBlock('Result')],
+            })
+        )
+        const agent = new Agent({ model, tools: [tool] })
+        const tracer = getLatestTracer()
+
+        agent.addHook(BeforeToolsEvent, () => {
+          vi.setSystemTime(60)
+        })
+        agent.addHook(AfterToolsEvent, (event: AfterToolsEvent) => {
+          event.endTurn = true
+        })
+
+        // Cycle telemetry closes after tool execution; the endTurn message append
+        // then throws, exercising the error-after-clean-close path.
+        const push = agent.messages.push.bind(agent.messages)
+        vi.spyOn(agent.messages, 'push').mockImplementation((...items: Message[]): number => {
+          const isEndTurnMessage = items.some((message) =>
+            message.content.some((block) => block.type === 'textBlock' && block.text.includes('Turn ended early'))
+          )
+          if (isEndTurnMessage) {
+            throw new Error('append failed after cycle close')
+          }
+          return push(...items)
+        })
+
+        await expect(agent.invoke('Hi')).rejects.toThrow('append failed after cycle close')
+
+        expect(tracer.endAgentLoopSpan).toHaveBeenCalledTimes(1)
+        expect(tracer.endAgentLoopSpan).toHaveBeenCalledWith({ mock: 'loopSpan' })
+        expect(agent.metrics.totalDuration).toBe(60)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
     it('starts and ends loop span for each cycle', async () => {
       const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Done' })
       const agent = new Agent({ model })
@@ -241,6 +382,7 @@ describe('Agent tracer integration', () => {
 
       await expect(agent.invoke('Hi')).rejects.toThrow(MaxTokensError)
 
+      expect(tracer.endAgentLoopSpan).toHaveBeenCalledTimes(1)
       expect(tracer.endAgentLoopSpan).toHaveBeenCalledWith(
         { mock: 'loopSpan' },
         expect.objectContaining({ error: expect.any(MaxTokensError) })
@@ -270,6 +412,20 @@ describe('Agent tracer integration', () => {
   })
 
   describe('model invoke span lifecycle', () => {
+    it('ends the model invoke span once when the consumer breaks mid-model-response', async () => {
+      const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Hello' })
+      const agent = new Agent({ model })
+      const tracer = getLatestTracer()
+
+      for await (const event of agent.stream('Hi')) {
+        if (event.type === 'modelStreamUpdateEvent') break
+      }
+
+      expect(tracer.startModelInvokeSpan).toHaveBeenCalledTimes(1)
+      expect(tracer.endModelInvokeSpan).toHaveBeenCalledTimes(1)
+      expect(tracer.endModelInvokeSpan).toHaveBeenCalledWith({ mock: 'modelSpan' })
+    })
+
     it('starts and ends model span on successful model call', async () => {
       const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Hello' })
       const agent = new Agent({ model })
@@ -296,6 +452,7 @@ describe('Agent tracer integration', () => {
 
       await expect(agent.invoke('Hi')).rejects.toThrow()
 
+      expect(tracer.endModelInvokeSpan).toHaveBeenCalledTimes(1)
       expect(tracer.endModelInvokeSpan).toHaveBeenCalledWith(
         { mock: 'modelSpan' },
         expect.objectContaining({ error: expect.any(Error) })
@@ -326,13 +483,16 @@ describe('Agent tracer integration', () => {
       expect(tracer.endModelInvokeSpan).toHaveBeenCalledTimes(2)
     })
 
-    it('model span records post-middleware messages when InvokeModelStage middleware transforms input', async () => {
-      const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Hello' })
+    it('model span records post-middleware context when InvokeModelStage middleware transforms input', async () => {
+      const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Default response' })
+      const selectedModel = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Selected response' })
+      selectedModel.updateConfig({ modelId: 'selected-model' })
       const agent = new Agent({ model, systemPrompt: 'Original prompt' })
       const tracer = getLatestTracer()
 
       agent.addMiddleware(InvokeModelStage.Input, async (context) => ({
         ...context,
+        model: selectedModel,
         systemPrompt: 'Transformed prompt',
       }))
 
@@ -340,6 +500,7 @@ describe('Agent tracer integration', () => {
 
       expect(tracer.startModelInvokeSpan).toHaveBeenCalledWith(
         expect.objectContaining({
+          modelId: 'selected-model',
           systemPrompt: 'Transformed prompt',
         })
       )
@@ -779,6 +940,129 @@ describe('Agent tracer integration', () => {
         { mock: 'loopSpan' },
         expect.objectContaining({ error: expect.any(MaxTokensError) })
       )
+    })
+  })
+  describe('baggage propagation', () => {
+    const contextManager = new AsyncLocalStorageContextManager()
+
+    beforeAll(() => {
+      context.setGlobalContextManager(contextManager.enable())
+    })
+
+    afterAll(() => {
+      context.disable()
+    })
+
+    const tenant = (): string | undefined => propagation.getActiveBaggage()?.getEntry('tenant.id')?.value
+
+    // Tool that awaits `body` before returning an empty success result.
+    function asyncTool(name: string, body: () => Promise<void>): Tool {
+      return createMockTool(name, (ctx) =>
+        // eslint-disable-next-line require-yield
+        (async function* () {
+          await body()
+          return new ToolResultBlock({ toolUseId: ctx.toolUse.toolUseId, status: 'success', content: [] })
+        })()
+      )
+    }
+
+    // Agent that calls `tool` once and then ends its turn.
+    function toolAgent(tool: Tool, baggageAttributes?: Record<string, string>): Agent {
+      const model = new MockMessageModel()
+        .addTurn({ type: 'toolUseBlock', name: tool.name, toolUseId: 't1', input: {} })
+        .addTurn({ type: 'textBlock', text: 'done' })
+      return new Agent({ model, tools: [tool], printer: false, ...(baggageAttributes && { baggageAttributes }) })
+    }
+
+    it('defaults to an empty map and leaves the active baggage untouched', async () => {
+      let seen: string | undefined = 'unset'
+      const agent = toolAgent(createMockTool('probe', () => void (seen = tenant())))
+
+      await agent.invoke('Hi')
+
+      expect(agent.baggageAttributes).toStrictEqual({})
+      expect(seen).toBeUndefined()
+    })
+
+    it('is current inside tools and when the agent span starts, merged with ambient baggage', async () => {
+      let seen: Record<string, string | undefined> = {}
+      let atSpanStart: string | undefined
+      const agent = toolAgent(
+        createMockTool('probe', () => {
+          const baggage = propagation.getActiveBaggage()
+          seen = { tenant: baggage?.getEntry('tenant.id')?.value, ambient: baggage?.getEntry('ambient')?.value }
+        }),
+        { 'tenant.id': 'acme' }
+      )
+      // BaggageSpanProcessor copies the baggage active at span start onto the span.
+      getLatestTracer().startAgentSpan.mockImplementation(() => {
+        atSpanStart = tenant()
+        return { mock: 'agentSpan' }
+      })
+      const ambient = propagation.setBaggage(context.active(), propagation.createBaggage({ ambient: { value: 'up' } }))
+
+      await context.with(ambient, () => agent.invoke('Hi'))
+
+      expect(seen).toStrictEqual({ tenant: 'acme', ambient: 'up' })
+      expect(atSpanStart).toBe('acme')
+      expect(tenant()).toBeUndefined()
+    })
+
+    it('isolates baggage between interleaved concurrent agents', async () => {
+      const seen: Record<string, (string | undefined)[]> = { a: [], b: [] }
+      // Each tool samples baggage before and after yielding to the other agent.
+      const sampler = (name: 'a' | 'b'): Tool =>
+        asyncTool(`tool_${name}`, async () => {
+          seen[name]!.push(tenant())
+          await new Promise((resolve) => setTimeout(resolve, 5))
+          seen[name]!.push(tenant())
+        })
+
+      await Promise.all([
+        toolAgent(sampler('a'), { 'tenant.id': 'acme' }).invoke('Hi'),
+        toolAgent(sampler('b'), { 'tenant.id': 'globex' }).invoke('Hi'),
+      ])
+
+      expect(seen).toStrictEqual({ a: ['acme', 'acme'], b: ['globex', 'globex'] })
+    })
+
+    it('lets a nested agent override baggage for its scope and restores the outer value after', async () => {
+      const seen: (string | undefined)[] = []
+      const inner = toolAgent(
+        createMockTool('inner_probe', () => void seen.push(tenant())),
+        { 'tenant.id': 'inner-corp' }
+      )
+      const outer = toolAgent(
+        asyncTool('outer_probe', async () => {
+          seen.push(tenant())
+          await inner.invoke('Hi')
+          seen.push(tenant())
+        }),
+        { 'tenant.id': 'outer-corp' }
+      )
+
+      await outer.invoke('Hi')
+
+      expect(seen).toStrictEqual(['outer-corp', 'inner-corp', 'outer-corp'])
+    })
+
+    it.each([
+      ['consumer throws', (stream: AsyncGenerator) => stream.throw(new Error('boom')).catch(() => {})],
+      ['consumer breaks early', (stream: AsyncGenerator) => stream.return(undefined)],
+    ])('keeps baggage current for invocation cleanup when the %s', async (_, stop) => {
+      let seen: string | undefined
+      const agent = toolAgent(
+        createMockTool('probe', () => {}),
+        { 'tenant.id': 'acme' }
+      )
+      agent.addHook(AfterInvocationEvent, () => void (seen = tenant()))
+
+      // Stop inside the model call so the invocation's cleanup (and AfterInvocationEvent) runs.
+      const stream = agent.stream('Hi')
+      while ((await stream.next()).value?.type !== 'beforeModelCallEvent');
+      await stop(stream)
+
+      expect(seen).toBe('acme')
     })
   })
 })

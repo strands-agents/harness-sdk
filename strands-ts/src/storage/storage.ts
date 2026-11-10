@@ -9,6 +9,15 @@ import { StorageError } from '../errors.js'
 export const NAMESPACED: unique symbol = Symbol.for('strands.storage.namespaced')
 
 /**
+ * Symbol marking storage backends whose data does not survive process restarts.
+ * Propagated through {@link "namespace"} so namespaced views of ephemeral storage
+ * remain detectable.
+ *
+ * @internal
+ */
+export const EPHEMERAL: unique symbol = Symbol.for('strands.storage.ephemeral')
+
+/**
  * Validates and normalizes a storage key for path-based backends: collapses
  * runs of `/`, strips leading and trailing `/`, and rejects empty keys and
  * any `..` segment.
@@ -22,6 +31,9 @@ export const NAMESPACED: unique symbol = Symbol.for('strands.storage.namespaced'
  * @throws {@link StorageError} if the key is empty or contains a `..` segment
  */
 export function normalizeKey(key: string): string {
+  if (key.includes('\\')) {
+    throw new StorageError(`Invalid storage key '${key}': backslashes are not allowed`)
+  }
   const segments = key.split('/').filter(Boolean)
   if (segments.length === 0) {
     throw new StorageError('Storage key must not be empty')
@@ -44,6 +56,9 @@ export function normalizeKey(key: string): string {
  * @throws {@link StorageError} if the prefix contains a `..` segment
  */
 export function normalizePrefix(prefix: string): string {
+  if (prefix.includes('\\')) {
+    throw new StorageError(`Invalid storage prefix '${prefix}': backslashes are not allowed`)
+  }
   const parts = prefix.split('/')
   const segments = parts.filter(Boolean)
   if (segments.includes('..')) {
@@ -52,6 +67,20 @@ export function normalizePrefix(prefix: string): string {
   const joined = segments.join('/')
   const normalized = parts[parts.length - 1] === '' && joined ? joined + '/' : joined
   return normalized
+}
+
+/** A single result from a {@link Storage.search} call. */
+export interface StorageSearchResult {
+  /** Storage key of the matched item. */
+  key: string
+  /**
+   * Relevance score, normalized so that higher values indicate greater relevance.
+   * Backends using distance-based scoring (e.g. vector distance) must invert to
+   * similarity before returning results.
+   */
+  score: number
+  /** Stored bytes, present only when the backend includes them. */
+  data?: Uint8Array
 }
 
 /**
@@ -68,10 +97,15 @@ export function normalizePrefix(prefix: string): string {
  * widen it to accept a richer query object (e.g. a DynamoDB partition/sort-key
  * filter) while still accepting a plain string for SDK-internal callers.
  *
+ * The `SearchQuery` type parameter controls what `search` accepts. It defaults to
+ * `string` (a natural-language query), which every backend interprets in its own way
+ * (keyword scan, vector similarity, full-text index). Implementations may widen it to
+ * accept a richer query object (e.g. a pre-computed embedding vector with filters).
+ *
  * Implement this to add a custom backend; the SDK ships {@link InMemoryStorage},
  * {@link LocalFileStorage}, and {@link S3Storage}.
  */
-export interface Storage<ListQuery = string> {
+export interface Storage<ListQuery = string, SearchQuery = string> {
   /**
    * Stores `data` under `key`, overwriting any existing value.
    *
@@ -124,6 +158,23 @@ export interface Storage<ListQuery = string> {
    * @returns A Storage view scoped to the given prefix
    */
   namespace?(prefix: string): Storage
+
+  /**
+   * Searches stored content by query.
+   *
+   * When `SearchQuery` is `string` (the default), the query is a natural-language string
+   * and how it is interpreted is backend-specific: keyword/lexical scan, full-text index,
+   * or vector similarity (the backend embeds the query internally).
+   *
+   * Implementations may accept richer query objects (e.g. a pre-computed embedding vector
+   * with metadata filters) while still accepting a plain string for SDK-internal callers.
+   *
+   * Optional — when absent, consumers fall back to client-side search.
+   *
+   * @param query - A string query or backend-specific query object
+   * @returns Matched keys with relevance scores, ranked best-first
+   */
+  search?(query: SearchQuery): Promise<StorageSearchResult[]>
 }
 
 /**
@@ -150,5 +201,32 @@ export function namespace(storage: Storage, prefix: string): Storage {
     namespace: (sub) => namespace(storage, `${p}${sub}`),
     [NAMESPACED]: true,
   }
+  if (EPHEMERAL in storage) {
+    ;(view as unknown as Record<symbol, boolean>)[EPHEMERAL] = true
+  }
+  if (storage.search) {
+    view.search = (query: string): Promise<StorageSearchResult[]> =>
+      storage.search!(query).then((results) =>
+        results
+          .filter((result) => result.key.startsWith(p))
+          .map((result) => ({ ...result, key: result.key.slice(p.length) }))
+      )
+  }
   return view
+}
+
+/**
+ * Returns a namespaced view of `storage` under `prefix`, unless the storage is already namespaced.
+ *
+ * Consolidates the common pattern: if already marked with {@link NAMESPACED}, return as-is;
+ * otherwise delegate to the storage's own `namespace()` method or the standalone `namespace` helper.
+ *
+ * @param storage - The storage to scope
+ * @param prefix - Prefix to apply
+ * @returns A namespaced Storage view (or the original if already namespaced)
+ */
+export function resolveNamespace(storage: Storage, prefix: string): Storage {
+  if (NAMESPACED in storage) return storage
+  if (storage.namespace) return storage.namespace(prefix)
+  return namespace(storage, prefix)
 }

@@ -1,15 +1,57 @@
 """Type definitions for MCP integration."""
 
+from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
-from mcp.client.streamable_http import GetSessionIdCallback
 from mcp.shared.memory import MessageStream
 from mcp.shared.message import SessionMessage
-from typing_extensions import NotRequired
+from typing_extensions import NotRequired, Protocol, TypedDict
 
 from ...types.tools import ToolResult
+from ._compat import GetSessionIdCallback
+
+if TYPE_CHECKING:
+    from .mcp_agent_tool import MCPAgentTool
+
+
+class ToolsChangedCallback(Protocol):
+    """Called after the server announces a tool list change and the client refreshes it.
+
+    Implemented by a plain function as well — the `**kwargs` tail lets the calling
+    convention grow new keyword arguments without breaking existing callbacks.
+    """
+
+    def __call__(self, previous_names: list[str], refreshed_tools: list["MCPAgentTool"], **kwargs: Any) -> None:
+        """Handle a refresh, given the previous tool names and the refreshed tool instances."""
+        ...
+
+
+ToolsChanged = Callable[[list[str], "list[MCPAgentTool]"], None] | ToolsChangedCallback
+"""A tools-changed handler: the `**kwargs`-ready protocol or a plain two-argument callable."""
+
+
+class MCPClientCredentials(TypedDict):
+    """OAuth client credentials for machine-to-machine authentication.
+
+    Used with the `MCPClient` `auth` parameter, or the `auth` key of a server entry in a
+    `load_servers` config, to authenticate against a streamable HTTP MCP server with the
+    OAuth client_credentials grant.
+
+    Attributes:
+        client_id: The OAuth client ID.
+        client_secret: The OAuth client secret.
+        scopes: OAuth scopes to request, joined with spaces. Advisory only: if the server
+            advertises its own scopes (via the `WWW-Authenticate` header or its
+            protected-resource / authorization-server metadata), the server's list is used
+            instead and this value is ignored.
+    """
+
+    client_id: str
+    client_secret: str
+    scopes: NotRequired[list[str]]
+
 
 """
 MCPTransport defines the interface for MCP transport implementations. This abstracts

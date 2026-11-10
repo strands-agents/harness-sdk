@@ -1,15 +1,17 @@
 ---
-title: Strands Shell MCP Server
+title: Run the MCP server
 description: Expose Strands Shell to any MCP-compatible agent over stdio, with four sandboxed tools and optional nested MCP servers surfaced as Lua modules.
 sidebar:
-  label: "MCP Server"
+  label: "Run the MCP server"
 ---
 
 The built-in MCP server exposes a sandboxed shell over JSON-RPC on stdio, so any framework that speaks the [Model Context Protocol](https://modelcontextprotocol.io/) can use it without a line of binding code. This is the integration path when you aren't embedding the Python or Node.js API directly.
 
 ## Start the server
 
-Run the server with the `--mcp` flag. With no config, it starts a bare in-memory sandbox: no host files, no network, no credentials.
+Run the server with the `--mcp` flag. With no config, it starts a bare in-memory
+sandbox without host files or credentials and uses the
+[default network policy](configuration.md#network-access).
 
 ```bash
 uvx strands-shell --mcp
