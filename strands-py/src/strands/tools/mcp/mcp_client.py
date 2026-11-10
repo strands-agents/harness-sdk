@@ -1873,8 +1873,12 @@ class MCPClient(ToolProvider):
         asyncio._set_running_loop(None)
         self._background_thread_event_loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self._background_thread_event_loop)
-        self._background_thread_event_loop.run_until_complete(self._async_background_thread())
-        # The loop no longer runs, so calls still waiting on it would never complete.
+        loop = self._background_thread_event_loop
+        loop.run_until_complete(self._async_background_thread())
+        # Let calls woken by the closed session finish here; fail the rest, which would otherwise never complete.
+        pending = asyncio.all_tasks(loop)
+        if pending:
+            loop.run_until_complete(asyncio.wait(pending, timeout=2))
         for future in list(self._inflight_calls):
             _fail_pending_call(future)
         self._log_debug_with_thread("background task event loop finished")
@@ -2072,12 +2076,10 @@ class MCPClient(ToolProvider):
     ) -> futures.Future[T]:
         # save a reference to this so that even if it's reset we have the original
         close_future = self._close_future
+        # Read once: a concurrent stop() may reset the field after this check.
+        loop = self._background_thread_event_loop
 
-        if (
-            self._background_thread_session is None
-            or self._background_thread_event_loop is None
-            or close_future is None
-        ):
+        if self._background_thread_session is None or loop is None or close_future is None:
             raise MCPClientInitializationError("the client session was not initialized")
 
         async def run_async() -> T:
@@ -2142,7 +2144,6 @@ class MCPClient(ToolProvider):
                     cancel_event.cancel()
                     await asyncio.gather(cancel_event, return_exceptions=True)
 
-        loop = self._background_thread_event_loop
         call = run_async()
         try:
             invoke_future = asyncio.run_coroutine_threadsafe(coro=call, loop=loop)

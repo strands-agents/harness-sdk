@@ -1,6 +1,7 @@
 """Unit tests for MCPClient ``auto_reconnect``: rebuilding a dropped session around a tool call."""
 
 import asyncio
+import gc
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -425,7 +426,7 @@ def test_tool_error_mentioning_session_is_not_treated_as_lost_session(mock_trans
     assert mock_transport["transport_callable"].call_count == 1
 
 
-def test_in_flight_call_survives_another_callers_reconnect(mock_transport, mock_session):
+def test_in_flight_call_survives_another_callers_reconnect(mock_transport, mock_session, caplog):
     """A call still running when another caller rebuilds the session fails over to the new one instead of hanging."""
     in_flight = threading.Event()
 
@@ -450,6 +451,9 @@ def test_in_flight_call_survives_another_callers_reconnect(mock_transport, mock_
     assert results == [_success("tu-reconnect"), _success("tu-slow")]
     assert mock_transport["transport_callable"].call_count == 2
     client.stop(None, None, None)
+    gc.collect()
+    # The old loop finished its tasks before stopping, so none was destroyed while pending.
+    assert [record for record in caplog.records if record.name == "asyncio"] == []
 
 
 def test_call_scheduled_on_a_stopped_loop_fails_instead_of_hanging(mock_transport, mock_session):
