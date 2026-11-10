@@ -1391,3 +1391,75 @@ def test_summarization_agent_path_joins_the_request():
     manager.reduce_context(agent, e=ContextWindowOverflowException("overflow"), invocation_context=handed)
 
     assert summary_agent.call_args.kwargs == {"invocation_context": handed}
+
+
+def test_generate_summary_with_agent_preserves_messages_list_immutability():
+    """Verify that _generate_summary_with_agent copies messages and does not mutate caller's list."""
+    summary_agent = MagicMock()
+    summary_agent.tool_names = []
+    summary_agent.messages = []
+
+    def mock_call(prompt, **kwargs):
+        summary_agent.messages.append({"role": "user", "content": [{"text": prompt}]})
+        summary_agent.messages.append({"role": "assistant", "content": [{"text": "Summary"}]})
+        result = Mock()
+        result.message = {"role": "assistant", "content": [{"text": "Summary"}]}
+        return result
+
+    summary_agent.side_effect = mock_call
+
+    manager = SummarizingConversationManager(summarization_agent=summary_agent)
+    original_messages = [
+        {"role": "user", "content": [{"text": "Message 1"}]},
+        {"role": "assistant", "content": [{"text": "Response 1"}]},
+    ]
+    messages_copy = list(original_messages)
+
+    manager._generate_summary_with_agent(original_messages)
+
+    assert original_messages == messages_copy
+
+
+def test_summarizing_conversation_manager_removed_message_count_with_summarization_agent():
+    """Verify removed_message_count calculation when a dedicated summarization_agent mutates its messages."""
+    summary_agent = MagicMock()
+    summary_agent.tool_names = []
+    summary_agent.messages = []
+
+    def mock_call(prompt, **kwargs):
+        summary_agent.messages.append({"role": "user", "content": [{"text": prompt}]})
+        summary_agent.messages.append({"role": "assistant", "content": [{"text": "Summary"}]})
+        result = Mock()
+        result.message = {"role": "assistant", "content": [{"text": "Summary"}]}
+        return result
+
+    summary_agent.side_effect = mock_call
+
+    manager = SummarizingConversationManager(
+        summary_ratio=0.5,
+        preserve_recent_messages=2,
+        summarization_agent=summary_agent,
+    )
+
+    test_messages = [
+        {"role": "user", "content": [{"text": f"Message {i}"}]}
+        if i % 2 == 0
+        else {"role": "assistant", "content": [{"text": f"Response {i}"}]}
+        for i in range(10)
+    ]
+    agent = MagicMock()
+    agent.messages = test_messages
+
+    assert manager.removed_message_count == 0
+
+    manager.reduce_context(agent, e=ContextWindowOverflowException("overflow"))
+
+    # summary_ratio=0.5 of 10 messages = 5 messages summarized
+    assert manager.removed_message_count == 5
+    assert len(agent.messages) == 6
+
+    manager.reduce_context(agent, e=ContextWindowOverflowException("overflow"))
+    # Second reduction: int(6 * 0.5) = 3 messages to summarize.
+    # 5 (previously removed) + 3 (newly removed) - 1 (previous summary) = 7
+    assert manager.removed_message_count == 7
+    assert len(agent.messages) == 4
