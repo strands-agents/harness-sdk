@@ -11,6 +11,8 @@ sourceLinks:
   - path: strands-ts/src/decisions/llm-decision-model.ts
   - path: strands-py/src/strands/decisions/typesafe_decision_model.py
   - path: strands-ts/src/decisions/typesafe-decision-model.ts
+  - path: strands-py/src/strands/decisions/decisions_api_decision_model.py
+  - path: strands-ts/src/decisions/decisions-api-decision-model.ts
 addedDate: 2026-06-03
 ---
 
@@ -128,7 +130,8 @@ a small decision model that picks between options instead of generating text, so
 responds faster and costs less per tool call than the LLM judge. It answers one yes/no
 question per tool call, judged against the same risk criteria as the built-in
 classifier. An uncertain answer requires approval. `TypeSafeDecisionModel` calls
-TypeSafe's hosted Jev model. To use another one, such as a local
+TypeSafe's hosted Jev model, and `DecisionsAPIDecisionModel` calls decisionapi.net. To
+use another one, such as a local
 [Strands Decider](https://github.com/strands-labs/strands-decider) server, subclass
 `DecisionModel`.
 
