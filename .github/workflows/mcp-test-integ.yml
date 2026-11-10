@@ -6,8 +6,6 @@ on:
       ref:
         required: true
         type: string
-  schedule:
-    - cron: '23 7 * * *'
   workflow_dispatch:
 
 permissions:
