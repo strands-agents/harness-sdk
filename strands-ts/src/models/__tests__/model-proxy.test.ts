@@ -11,6 +11,7 @@ import {
   SummaryBlock,
   TextBlock,
   ToolResultBlock,
+  UnknownBlock,
   type ContentBlock,
 } from '../../types/messages.js'
 
@@ -112,6 +113,46 @@ describe('ModelProxy', () => {
         ...direct.result,
         message: { ...direct.result.message, trackingId: anyTrackingId },
       })
+    })
+  })
+
+  describe('unknown blocks', () => {
+    it('gives a tool result whose content is all unknown a placeholder text', async () => {
+      const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'ok' })
+      const streamSpy = vi.spyOn(model, 'stream')
+      const unknown = new UnknownBlock({ toolReference: { name: 'shell' } })
+      const kept = new ToolResultBlock({
+        toolUseId: 't-2',
+        status: 'success',
+        content: [new TextBlock('done'), unknown],
+      })
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [new ToolResultBlock({ toolUseId: 't-1', status: 'success', content: [unknown, unknown] }), kept],
+          trackingId: 'msg-1',
+        }),
+      ]
+
+      await drain(new ModelProxy(model).streamAggregated(messages))
+
+      expect(streamSpy.mock.calls[0]![0]).toEqual([
+        new Message({
+          role: 'user',
+          content: [
+            new ToolResultBlock({
+              toolUseId: 't-1',
+              status: 'success',
+              content: [new TextBlock('[unsupported content omitted]')],
+            }),
+            kept,
+          ],
+          trackingId: 'msg-1',
+        }),
+      ])
+      expect(messages[0]!.content[0]).toEqual(
+        new ToolResultBlock({ toolUseId: 't-1', status: 'success', content: [unknown, unknown] })
+      )
     })
   })
 
