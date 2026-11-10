@@ -19,6 +19,7 @@ from ..types.streaming import StreamEvent
 from ..types.tools import ToolChoice, ToolSpec
 from ._defaults import DEFAULT_CONTEXT_WINDOW_LIMIT
 from ._model_info import ModelInfo, ModelLimits, lookup_model_info
+from ._summarize import SummarizeResult, _summarize_with_stream
 
 if TYPE_CHECKING:
     from ..agent.agent import Agent
@@ -408,30 +409,51 @@ class Model(abc.ABC):
         system_prompt: str | None = None,
         system_prompt_content: list[SystemContentBlock] | None = None,
         instructions: str | None = None,
+        cancel_signal: threading.Event | None = None,
+        agent_metadata: "AgentMetadata | None" = None,
         **kwargs: Any,
-    ) -> ContentBlock:
-        """Summarize the conversation's opening ``messages`` server-side.
+    ) -> SummarizeResult:
+        """Summarize ``messages``.
 
-        The summarize strategy calls this instead of its client-side summary when
-        ``model_info.capabilities.server_side_summary`` is True, with the messages from message 0 through the
-        last one it summarizes. Providers with server-side summaries override it. When this raises, the strategy
-        summarizes client-side instead.
+        ``messages`` is a request as the caller would send it to :meth:`stream`, along with its ``tool_specs`` and
+        system prompt. The base implementation sends that request closed by an instruction not to act on it or call
+        tools, followed by ``instructions`` (or default ones), and otherwise as given, so a caller that replays its
+        own conversation can share its prompt cache. The summary is the reply's text, including a reply cut off at the
+        output limit or a stop sequence. A reply that ends for another reason, such as a tool call, a cancellation or
+        a guardrail, or that holds no text, gives an empty result.
+
+        Every summary is a ``summary`` block. The base implementation sets its ``provider`` to ``None``. A provider that
+        reports ``model_info.capabilities.server_side_summary`` as True overrides this method to summarize
+        server-side and sets ``provider`` to its own name, using the base implementation when the capability is off
+        or the server-side summary fails, as ``AnthropicModel`` does. A summary with a ``provider`` can stand in for
+        the messages it summarized only when they start at the conversation's first message; a caller that
+        summarizes anything else uses only its text.
 
         Args:
-            messages: The opening messages to summarize, from message 0, left unmodified.
-            tool_specs: The live conversation's tool specifications.
-            system_prompt: The live conversation's plain string system prompt.
-            system_prompt_content: The live conversation's structured system prompt.
-            instructions: Summarization instructions replacing the provider's own prompt.
+            messages: The request to summarize, left unmodified.
+            tool_specs: The request's tool specifications.
+            system_prompt: The request's plain string system prompt. Ignored if system_prompt_content is provided.
+            system_prompt_content: The request's structured system prompt. Takes priority over system_prompt.
+            instructions: Summarization instructions replacing the default ones, which ``None`` or ``""`` keeps. The
+                base implementation's instruction not to act on the request or call tools is always sent.
+            cancel_signal: Event that aborts the call.
+            agent_metadata: Stable identity of the invoking agent, as passed to :meth:`stream`. A provider may consult
+                it to derive a prompt-cache routing key, so a replay can share the agent's cache.
             **kwargs: Additional keyword arguments for future extensibility.
 
         Returns:
-            A ``summary`` block that takes the summarized messages' place.
-
-        Raises:
-            NotImplementedError: If the model has no server-side summary.
+            The summary and the token usage of the calls made for it.
         """
-        raise NotImplementedError(f"model=<{type(self).__name__}> | model has no server-side summary")
+        return await _summarize_with_stream(
+            self,
+            messages,
+            tool_specs=tool_specs,
+            system_prompt=system_prompt,
+            system_prompt_content=system_prompt_content,
+            instructions=instructions,
+            cancel_signal=cancel_signal,
+            agent_metadata=agent_metadata,
+        )
 
     def estimate_utilization(self, input_tokens: int) -> float:
         """Estimate the fraction of the model's context window consumed by the given input token count.

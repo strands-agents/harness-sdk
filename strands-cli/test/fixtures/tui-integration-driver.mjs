@@ -56,7 +56,7 @@ async function main() {
   const statePath = windows ? join(tmpdir(), `strands-tui-input-${randomUUID()}.json`) : undefined
   const terminal = windows
     ? (await import('node-pty')).default.spawn(
-        process.env.PYTHON ?? 'python',
+        process.env.PYTHON ?? 'python.exe',
         [fileURLToPath(new URL('./tui-integration-terminal.py', import.meta.url)), statePath, command, ...args],
         {
           name: 'xterm-256color',
