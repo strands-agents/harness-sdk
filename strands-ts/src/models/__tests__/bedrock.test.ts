@@ -11,7 +11,14 @@ import { isNode } from '../../__fixtures__/environment.js'
 import { BedrockModel } from '../bedrock.js'
 import type { BedrockModelOptions } from '../bedrock.js'
 import { ContextWindowOverflowError, ModelThrottledError } from '../../errors.js'
-import { Message, ReasoningBlock, ToolUseBlock, ToolResultBlock, JsonBlock } from '../../types/messages.js'
+import {
+  Message,
+  ReasoningBlock,
+  ToolUseBlock,
+  ToolResultBlock,
+  JsonBlock,
+  UnknownBlock,
+} from '../../types/messages.js'
 import type { SystemContentBlock } from '../../types/messages.js'
 import { TextBlock, GuardContentBlock, CachePointBlock, InjectedBlock } from '../../types/messages.js'
 import { AudioBlock, ImageBlock, VideoBlock, DocumentBlock } from '../../types/media.js'
@@ -881,6 +888,44 @@ describe('BedrockModel', () => {
         toolConfig: BEDROCK_NOOP_TOOL_CONFIG,
         modelId: expect.any(String),
       })
+    })
+
+    it('skips unknown blocks', async () => {
+      const provider = new BedrockModel()
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [new TextBlock('Hello'), new UnknownBlock({ futureBlock: { value: 1 } })],
+        }),
+      ]
+
+      await collectIterator(provider.stream(messages))
+
+      expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+        inferenceConfig: { maxTokens: 128_000 },
+        modelId: expect.any(String),
+        messages: [{ role: 'user', content: [{ text: 'Hello' }] }],
+      })
+    })
+
+    it('skips unknown content in a tool result', async () => {
+      const provider = new BedrockModel()
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [
+            new ToolResultBlock({
+              toolUseId: 'id-1',
+              status: 'success',
+              content: [new TextBlock('loaded'), new UnknownBlock({ toolReference: { name: 'shell' } })],
+            }),
+          ],
+        }),
+      ]
+      await collectIterator(provider.stream(messages))
+      expect(mockConverseStreamCommand.mock.lastCall?.[0]?.messages?.[0]?.content).toEqual([
+        { toolResult: { toolUseId: 'id-1', content: [{ text: 'loaded' }], status: 'success' } },
+      ])
     })
 
     it('injects noop tool config when messages have tool blocks but no toolSpecs', async () => {
