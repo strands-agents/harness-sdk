@@ -1,0 +1,44 @@
+---
+import { pathWithBase } from '../util/links'
+import type { FaqBlock } from '../config/faq'
+
+interface Props {
+  blocks: FaqBlock[]
+}
+
+const { blocks } = Astro.props
+---
+
+{
+  blocks.map((block) =>
+    block.kind === 'paragraph' ? (
+      <p>
+        {block.content.map((part) =>
+          typeof part === 'string' ? (
+            part
+          ) : part.kind === 'code' ? (
+            <code>{part.text}</code>
+          ) : (
+            <a href={pathWithBase(part.href)}>{part.text}</a>
+          )
+        )}
+      </p>
+    ) : (
+      <ul>
+        {block.items.map((item) => (
+          <li>
+            {item.map((part) =>
+              typeof part === 'string' ? (
+                part
+              ) : part.kind === 'code' ? (
+                <code>{part.text}</code>
+              ) : (
+                <a href={pathWithBase(part.href)}>{part.text}</a>
+              )
+            )}
+          </li>
+        ))}
+      </ul>
+    )
+  )
+}

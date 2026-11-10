@@ -5,7 +5,7 @@ sidebar:
   label: Overview
 ---
 
-import { CardGrid, LinkButton, LinkCard } from '@astrojs/starlight/components'
+import { CardGrid, LinkCard } from '@astrojs/starlight/components'
 
 :::note[New to Strands?]
 Start with **[Strands harness](../harness/)** for a fully assembled, state-of-the-art agent harness. It's built on the Strands Harness SDK with opinionated, benchmarked defaults for the system prompt, tools, memory, sessions, and context management, and every default is overridable.
@@ -114,64 +114,3 @@ Building a feature? Each build guide above takes one task end to end. When you n
 look up how a piece works, the **Components** section is the reference underneath the
 guides: the agent loop, models, state, sessions, hooks, plugins, interventions, and
 voice.
-
-## Frequently asked questions
-
-These five questions cover choices that often come up when building an agent.
-
-<Tabs>
-<Tab label="Models">
-
-**Can I keep my current model when I move to Strands?**
-
-You can keep the model when its provider supports the capabilities your agent
-needs. The agent loop is separate from the
-[model provider](./model-providers/), so you can change providers without
-restructuring the agent. You still need to adapt tools, state handling, and
-multi-agent behavior to the Strands APIs.
-
-</Tab>
-<Tab label="Languages">
-
-**Should I use Python or TypeScript?**
-
-Use the SDK that matches your application's runtime. Both support the core agent
-loop, tools, streaming, structured output, sessions, and the main multi-agent
-patterns. Support for features and providers varies; bidirectional agents are
-currently Python-only. Start with the [Python quickstart](./quickstart/python/) or
-[TypeScript quickstart](./quickstart/typescript/).
-
-</Tab>
-<Tab label="Tools">
-
-**Should I build a custom tool or use an MCP tool?**
-
-Use a [custom tool](./tools/custom-tools/) for application code registered
-directly with an agent. Use an [MCP tool](./tools/mcp-tools/) when the tool is
-discovered and called through an MCP server. An agent can use both types
-together.
-
-</Tab>
-<Tab label="Multi-agent">
-
-**Which multi-agent pattern fits my application?**
-
-Choose based on who should control the execution path. Agents as tools keep a
-coordinator in control; A2A connects deployed services; graphs define allowed
-paths; swarms let agents choose handoffs; workflows put fixed dependencies in
-code. [Compare the patterns](./multi-agent/multi-agent-patterns/).
-
-</Tab>
-<Tab label="State">
-
-**How do sessions, memory, and context management work together?**
-
-[Sessions](./agents/session-management/) restore conversation and agent state.
-[Memory](./memory/overview/) carries selected knowledge across sessions.
-[Context management](./context-management) controls what stays in the active
-model window. Applications often use all three.
-
-</Tab>
-</Tabs>
-
-<LinkButton href="./faq/" variant="secondary">Read all FAQs</LinkButton>

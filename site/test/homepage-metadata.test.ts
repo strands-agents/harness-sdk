@@ -87,12 +87,22 @@ describe('homepage machine-readable metadata', () => {
     if (posts.length > 1) expect(communityLink?.getAttribute('href')).not.toBe(bannerLink?.getAttribute('href'))
   })
 
+  it('shows five FAQ previews and links to the standalone FAQ page', () => {
+    const section = homepage.querySelector('.home-faq')
+    const items = section?.querySelectorAll('.home-faq__item') ?? []
+    const link = section?.querySelector('.home-faq__cta')
+
+    expect(items).toHaveLength(5)
+    expect(link?.getAttribute('href')).toBe(configuredPathWithBase('/faq/'))
+  })
+
   it('publishes a concise Markdown homepage with official resources', () => {
     const markdown = readFileSync(new URL('../dist/index.md', import.meta.url), 'utf8')
 
     expect(markdown).toContain('# Strands Agents')
     expect(markdown).toContain('/docs/user-guide/sdk/quickstart/overview/index.md')
     expect(markdown).toContain('/examples/')
+    expect(markdown).toContain('/faq/index.md')
     expect(markdown).toContain('https://pypi.org/project/strands-agents/')
     expect(markdown).toContain('https://www.npmjs.com/package/@strands-agents/sdk')
     expect(markdown).toContain('https://github.com/strands-agents/harness-sdk')

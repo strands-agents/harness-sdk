@@ -11,7 +11,8 @@ import { sortEntries, toCardModel } from '../src/util/catalog'
 import { releaseSlug } from '../src/util/changelog'
 import { relatedUserGuideFor } from '../src/util/related-docs'
 import { languageLabel } from '../src/util/source-links'
-import { baseSchemas, integrationsSchema, productId, productSchema } from '../src/util/structured-data'
+import { baseSchemas, faqPageSchema, integrationsSchema, productId, productSchema } from '../src/util/structured-data'
+import { faqAnswerText, faqItems } from '../src/config/faq'
 
 type JsonLdNode = Record<string, unknown>
 
@@ -48,6 +49,9 @@ const PROPERTIES: Record<string, string[]> = {
   SoftwareSourceCode: [...CREATIVE_WORK, 'codeRepository', 'programmingLanguage'],
   BreadcrumbList: [...THING, 'itemListElement', 'numberOfItems'],
   ItemList: [...THING, 'itemListElement', 'numberOfItems'],
+  FAQPage: [...CREATIVE_WORK, 'mainEntity'],
+  Question: [...CREATIVE_WORK, 'acceptedAnswer'],
+  Answer: [...CREATIVE_WORK, 'text'],
   ListItem: [...THING, 'position', 'item'],
   Offer: [...THING, 'price', 'priceCurrency'],
   Person: THING,
@@ -282,6 +286,18 @@ describe('structured data per page type', () => {
 
     expect(ofType(page('/integrations/'), 'ItemList')).toEqual([
       integrationsSchema(cards, routeUrl('/integrations/'), site),
+    ])
+  })
+
+  it('publishes every curated question on /faq/', () => {
+    expect(ofType(page('/faq/'), 'FAQPage')).toEqual([
+      faqPageSchema(
+        faqItems.map((item) => ({
+          question: item.question,
+          answer: faqAnswerText(item.answer),
+        })),
+        routeUrl('/faq/')
+      ),
     ])
   })
 
