@@ -6,18 +6,26 @@ import { ContextWindowOverflowError } from '../../errors.js'
 import { Message, TextBlock, ToolResultBlock, ToolUseBlock, OffloadedBlock } from '../../types/messages.js'
 import type { Agent } from '../../agent/agent.js'
 import { InMemoryStorage } from '../../storage/in-memory-storage.js'
+import { ToolRegistry } from '../../registry/tool-registry.js'
+import { ToolStreamEvent } from '../../tools/tool.js'
+import type { CountTokensOptions } from '../../models/model.js'
+import type { Tool, ToolStreamGenerator } from '../../tools/tool.js'
 
 function makeMockAgent(overrides?: {
   id?: string
   messages?: Message[]
-  countTokens?: (msgs: Message[]) => Promise<number>
+  systemPrompt?: string
+  toolRegistry?: ToolRegistry
+  countTokens?: (msgs: Message[], options?: CountTokensOptions) => Promise<number>
   estimateUtilization?: (tokens: number) => number
 }) {
   const messages = overrides?.messages ?? []
   const agent = createMockAgent({
     messages,
+    ...(overrides?.toolRegistry && { toolRegistry: overrides.toolRegistry }),
     extra: {
       id: overrides?.id ?? 'test-agent',
+      ...(overrides?.systemPrompt !== undefined && { systemPrompt: overrides.systemPrompt }),
       model: {
         getConfig: () => ({}),
         countTokens: overrides?.countTokens ?? (async () => 0),
@@ -26,6 +34,18 @@ function makeMockAgent(overrides?: {
     } as Partial<Agent>,
   })
   return agent
+}
+
+function makeStubTool(name: string): Tool {
+  return {
+    name,
+    description: `stub ${name}`,
+    toolSpec: { name, description: `stub ${name}`, inputSchema: { type: 'object', properties: {} } },
+    stream: async function* (): ToolStreamGenerator {
+      yield new ToolStreamEvent({ data: `stub ${name}` })
+      return new ToolResultBlock({ toolUseId: '', status: 'success', content: [] })
+    },
+  }
 }
 
 function makeOverflowEvent(agent: ReturnType<typeof makeMockAgent>) {
@@ -529,6 +549,60 @@ describe('ContextManager', () => {
       await invokeTrackedHook(agent, event)
 
       expect(receivedUtilization).toBe(0.5)
+    })
+  })
+
+  describe('token counting', () => {
+    it('counts the system prompt and tool specs alongside the messages', async () => {
+      const toolRegistry = new ToolRegistry()
+      toolRegistry.add(makeStubTool('lookup'))
+      const countOptions: (CountTokensOptions | undefined)[] = []
+
+      let applied = false
+      const strategy = {
+        name: 'acts-once',
+        apply: async () => {
+          if (applied) return false
+          applied = true
+          return true
+        },
+      }
+      const cm = new ContextManager({ strategies: [strategy], stash: false })
+      const agent = makeMockAgent({
+        messages: [new Message({ role: 'user', content: [new TextBlock('hello')] })],
+        systemPrompt: 'be helpful',
+        toolRegistry,
+        countTokens: async (_messages, options) => {
+          countOptions.push(options)
+          return 100
+        },
+      })
+      await cm.initAgent(agent)
+
+      // No projectedInputTokens, so the initial gate counts too — both counts must see the same inputs.
+      await invokeTrackedHook(agent, makeBeforeEvent(agent))
+
+      expect(countOptions).toStrictEqual([
+        { systemPrompt: 'be helpful', toolSpecs: [toolRegistry.list()[0]!.toolSpec] },
+        { systemPrompt: 'be helpful', toolSpecs: [toolRegistry.list()[0]!.toolSpec] },
+      ])
+    })
+
+    it('omits the system prompt when the agent has none', async () => {
+      const countOptions: (CountTokensOptions | undefined)[] = []
+      const cm = new ContextManager({ strategies: [{ name: 'noop', apply: async () => false }], stash: false })
+      const agent = makeMockAgent({
+        messages: [new Message({ role: 'user', content: [new TextBlock('hello')] })],
+        countTokens: async (_messages, options) => {
+          countOptions.push(options)
+          return 100
+        },
+      })
+      await cm.initAgent(agent)
+
+      await invokeTrackedHook(agent, makeBeforeEvent(agent))
+
+      expect(countOptions).toStrictEqual([{ toolSpecs: [] }])
     })
   })
 })

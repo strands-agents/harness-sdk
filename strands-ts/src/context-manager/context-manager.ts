@@ -211,7 +211,14 @@ export class ContextManager implements Plugin {
     invocationContext?: InvocationContext
   ): Promise<boolean> {
     const messages = agent.messages
-    const inputTokens = precomputedInputTokens ?? (await new ModelProxy(agent.model).countTokens(messages))
+    const model = new ModelProxy(agent.model)
+    // The system prompt and tool specs occupy the same window as the messages, so a count that leaves them out reads
+    // lower than the `projectedInputTokens` the first gate used. Same inputs keeps every gate in a pass on one measure.
+    const countOptions = {
+      ...(agent.systemPrompt !== undefined && { systemPrompt: agent.systemPrompt }),
+      toolSpecs: agent.toolRegistry.list().map((tool) => tool.toolSpec),
+    }
+    const inputTokens = precomputedInputTokens ?? (await model.countTokens(messages, countOptions))
     const auxiliaryInvocationContext = createAuxiliaryInvocationContext(invocationContext)
 
     const strategyContext: ContextState = {
@@ -230,9 +237,7 @@ export class ContextManager implements Plugin {
         const acted = await strategy.apply(strategyContext)
         if (acted) {
           anyActed = true
-          strategyContext.utilization = agent.model.estimateUtilization(
-            await new ModelProxy(agent.model).countTokens(messages)
-          )
+          strategyContext.utilization = agent.model.estimateUtilization(await model.countTokens(messages, countOptions))
           logger.debug(`strategy=<${strategy.name}>, agentId=<${agent.id}> | strategy applied`)
         }
       } catch (error) {
