@@ -1,4 +1,4 @@
-import { readFile, writeFile } from 'node:fs/promises'
+import { readFile, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
@@ -35,7 +35,7 @@ describe('project preparation execution', () => {
     expect(await readFile(project.entrypoint, 'utf8')).toBe(source)
     await expect(readFile(join(project.root, 'package-lock.json'))).rejects.toMatchObject({ code: 'ENOENT' })
     expect(progress.mock.calls.map(([value]) => value.stage)).toEqual(['dependencies', 'build'])
-    expect(await readFile(log, 'utf8')).toContain('npm run build')
+    expect(await readFile(log, 'utf8')).toContain('npm --global=false run build')
   }, 30000)
 
   it('shouldKeepFailedBuildDetailsAndRedactCredentialsInItsLog', async () => {
@@ -53,11 +53,36 @@ describe('project preparation execution', () => {
 
     expect(failure?.failure.stage).toBe('build')
     expect(failure?.failure.action).toContain('Retry')
-    expect(failure?.failure.command).toBe('npm run build')
+    expect(failure?.failure.command).toBe('npm --global=false run build')
     expect(failure?.failure.details).not.toContain('sensitive-value-12345')
     expect(await readFile(failure!.failure.logPath!, 'utf8')).toContain('[redacted]')
     expect(await readFile(failure!.failure.logPath!, 'utf8')).not.toContain('sensitive-value-12345')
   }, 30000)
+
+  it('shouldKeepNpmInstallationLocalWhenGlobalDefaultsAreInherited', async () => {
+    const project = await fixture("require('node:fs').writeFileSync('built.txt', 'local')")
+    const outside = await temporaryDirectory()
+    vi.stubEnv('npm_config_global', 'true')
+    vi.stubEnv('npm_config_prefix', outside)
+    vi.stubEnv('NPM_CONFIG_LOCATION', 'global')
+    await writeFile(join(project.root, '.npmrc'), `global=true\nprefix=${outside}\n`)
+
+    await executePreparation(await planProjectPreparation(project))
+
+    expect(await readdir(outside)).toEqual([])
+    expect(await readFile(join(project.root, 'built.txt'), 'utf8')).toBe('local')
+  }, 30000)
+
+  it('shouldRedactTheDisplayedCommandWhenACommandContainsCredentials', () => {
+    const failure = preparationFailure(new Error('download failed'), {
+      stage: 'dependencies',
+      command: 'pip install https://user:review-secret@example.test/pkg.whl',
+      logPath: '/tmp/setup.log',
+    })
+
+    expect(failure.command).not.toContain('review-secret')
+    expect(failure.command).toContain('[redacted]')
+  })
 
   it('shouldRejectAStalePreviewBeforeRunningCommands', async () => {
     const project = await fixture('')

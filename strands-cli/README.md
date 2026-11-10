@@ -108,11 +108,39 @@ Selecting an existing agent records its project path without copying or regenera
 Base CLI uses the saved source project when one exists. Otherwise, dev installs a persistent project from the saved profile.
 Local model modules and static imports are packaged without changing the saved profile. Credentials remain external.
 
-Dev checks the selected Python project's `.venv` before starting its worker. A working environment is reused without installation.
-If `strands_harness` is missing, dev creates or repairs the project environment and installs the declared dependencies with the matching harness release series.
+### Prepare and validate the selected project
+
+Discovery identifies source files without executing them. Labels show `Needs setup`, `Manual setup`, or `Check setup`; discovery does not prove that an agent runs.
+After selection, the setup panel shows the project root, entrypoint, runtime, and commands before execution.
+Install and build commands can execute project code. Enter approves preparation. `v` skips installation and validates the existing project environment.
+
+| Project                                   | Automatic preparation                                                                                                           |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Standalone npm project                    | `npm ci` with a lockfile, otherwise `npm install` without saving or creating a lockfile. Then the declared `build` script.      |
+| Python with `requirements.txt`            | Install requirements into the project `.venv`.                                                                                  |
+| Installable Python `pyproject.toml`       | Install the local package in editable mode, including its declared dependencies. This also runs when `requirements.txt` exists. |
+| Python with `uv.lock`                     | `uv sync --locked --inexact`, using the project environment without rewriting the lockfile.                                     |
+| Other package managers or Node workspaces | Show manual setup guidance, then validate the prepared environment.                                                             |
+
+A `pyproject.toml` that contains only tool settings is not treated as an installable package.
+For packages such as `src/refund_desk`, the local package must be installed, not only `strands-harness`.
+Dev never guesses a registry package name from a missing import.
 Python 3.10 or newer is required. `PYTHON` can select the interpreter used to create a new environment.
-Installation never targets global Python. Destination overrides and pip configuration files are ignored during this repair; environment-based index and certificate settings remain available.
-A linked environment can be reused if it works, but dev will not install into it.
+Installation stays in the project environment. Destination overrides cannot redirect npm or pip into global locations.
+
+After preparation, the CLI loads the entrypoint in the same runtime used by chat. Validation makes no model request.
+Dependencies and resources loaded only during a later tool call can still fail at runtime.
+The initial candidate copy uses the same declared preparation path. Validation-only mode skips its dependency installation too.
+
+### When setup fails
+
+The TUI stays open and shows the failed stage, relevant error, suggested next action, and private log path.
+Enter or `r` retries. `v` validates after manual setup. `d` shows details. `b` returns to selection.
+Changed manifests require another command preview before retry. Dev does not reset source or silently rewrite lockfiles.
+Logs live under the selected project's `.strands/state/setup/`. Known credential values and authenticated URL credentials are redacted.
+
+If a runtime or package manager is unsupported, prepare the project with its own tooling and then validate it in dev.
+If an import is missing, check the selected root and declared dependencies. For Python src-layout projects, check package metadata and editable installation.
 
 ### Workspace binding
 

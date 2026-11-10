@@ -69,7 +69,10 @@ const selectWorkspace = async (
   const open = async (choice: HarnessChoice, signal: AbortSignal): Promise<DevWorkspace> => {
     signal.throwIfAborted()
     if (choice.kind === 'discovered')
-      return openExplicitHarness(choice.harness.entrypoint, destination ?? join(cwd, 'strands-dev'))
+      return openExplicitHarness(
+        choice.harness.entrypoint,
+        destination ?? join(forceSelection ? choice.harness.root : cwd, 'strands-dev')
+      )
     if (choice.kind === 'cli') {
       const previous = await readDevWorkspace(join(cwd, 'strands-dev', 'base-cli'))
       if (previous && !destination) return initializeWorkspaceBinding(previous, join(cwd, 'strands-dev'))

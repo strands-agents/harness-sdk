@@ -47,16 +47,20 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
         const prepared = await prepareDevRun(args, { deferPreparation: true })
         if (prepared) {
           const { planProjectPreparation, describePreparationCommand } = await import('../project/preparation-plan.js')
-          const { executePreparation } = await import('../project/preparation.js')
+          const { executePreparation, redactPreparationOutput } = await import('../project/preparation.js')
           const plan = await planProjectPreparation({
             root: prepared.workspace.root,
             entrypoint: prepared.workspace.entrypoint,
             language: prepared.workspace.config.language,
           })
           process.stderr.write(
-            `Project root: ${plan.project.root}\nRuntime: ${plan.runtime}\n${plan.commands.map(describePreparationCommand).join('\n')}\n${plan.guidance ?? ''}\n`
+            `Project root: ${plan.project.root}\nRuntime: ${plan.runtime}\n${plan.commands.map((step) => redactPreparationOutput(describePreparationCommand(step))).join('\n')}\n${plan.guidance ?? ''}\n`
           )
           await executePreparation(plan)
+          const { ensureInitialCandidate } = await import('../dev/initialize.js')
+          await ensureInitialCandidate(prepared.workspace, undefined, async (candidate) => {
+            await executePreparation(await planProjectPreparation(candidate))
+          })
           prepared.args.dev = { ...prepared.args.dev!, prepared: true }
         }
         if (!prepared || prepared.args.dev?.init) return
@@ -286,7 +290,17 @@ async function runInteractive(
                   entrypoint: prepared.workspace.entrypoint,
                   language: prepared.workspace.config.language,
                 },
-                screen
+                screen,
+                async (install): Promise<void> => {
+                  screen.show(undefined, 'Preparing initial candidate copy…')
+                  const { ensureInitialCandidate } = await import('../dev/initialize.js')
+                  const { planProjectPreparation } = await import('../project/preparation-plan.js')
+                  const { executePreparation } = await import('../project/preparation.js')
+                  await ensureInitialCandidate(prepared.workspace, screen.signal, async (candidate): Promise<void> => {
+                    if (install)
+                      await executePreparation(await planProjectPreparation(candidate), { signal: screen.signal })
+                  })
+                }
               )
               if (result === 'cancel') return false
               if (result === 'back') {
@@ -294,7 +308,6 @@ async function runInteractive(
                 continue
               }
               args = { ...prepared.args, dev: { ...prepared.args.dev!, prepared: true } }
-              if (args.dev?.init) return false
               initialWorkspace = prepared.workspace.root
               process.chdir(initialWorkspace)
               return true
@@ -402,6 +415,7 @@ async function runInteractive(
         intro: config.snapshot().settings.animations,
         setup: !args.dev && (args.setup || (!args.agent && !config.snapshot().agentProject && config.needsSetup())),
         ...(prepare ? { prepare } : {}),
+        ...(args.dev?.init ? { exitAfterInitialization: true } : {}),
         ...(setupSession
           ? {
               recoverStartup: async (error: unknown, screen: StartupScreen): Promise<'retry' | 'back' | 'exit'> => {

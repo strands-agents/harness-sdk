@@ -26,10 +26,11 @@ describe('project preparation plans', () => {
 
     expect(plan.manager).toBe('pip')
     expect(plan.runtime).toContain('>=3.11')
+    expect(plan.commands.flatMap(({ args }) => args)).not.toContain('--no-deps')
     expect(plan.commands.map(({ args }) => args)).toEqual(
       expect.arrayContaining([
         expect.arrayContaining(['-r', 'requirements.txt']),
-        expect.arrayContaining(['--editable', '.', '--no-deps']),
+        expect.arrayContaining(['--editable', '.']),
       ])
     )
   })
@@ -40,7 +41,7 @@ describe('project preparation plans', () => {
     await writeFile(join(selected.root, 'uv.lock'), 'version = 1\n')
 
     expect((await planProjectPreparation(selected)).commands).toEqual([
-      { command: 'uv', args: ['sync', '--locked'], stage: 'dependencies' },
+      { command: 'uv', args: ['sync', '--locked', '--inexact'], stage: 'dependencies' },
     ])
     expect(await readFile(join(selected.root, 'uv.lock'), 'utf8')).toBe('version = 1\n')
   })
@@ -90,7 +91,7 @@ describe('project preparation plans', () => {
 
     expect(plan.commands[0]?.args[0]).toBe(locked ? 'ci' : 'install')
     expect(plan.commands[0]?.args).toContain('--ignore-scripts')
-    expect(plan.commands[1]).toEqual({ command: 'npm', args: ['run', 'build'], stage: 'build' })
+    expect(plan.commands[1]).toEqual({ command: 'npm', args: ['--global=false', 'run', 'build'], stage: 'build' })
     if (!locked) expect(plan.commands[0]?.args).toContain('--package-lock=false')
   })
 

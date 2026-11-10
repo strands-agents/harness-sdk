@@ -5,7 +5,7 @@ import { join, relative, resolve, sep } from 'node:path'
 
 import { containsPath } from '../paths.js'
 import { exportSourceProject } from '../project/export.js'
-import { importAgentProject } from '../project/import.js'
+import { importAgentProject, type ImportedAgentProject } from '../project/import.js'
 import { installAgentProject } from '../project/install.js'
 import type { DevWorkspace } from './workspace.js'
 
@@ -67,7 +67,11 @@ const exportBaseline = async (workspace: DevWorkspace, destination: string): Pro
   )
 }
 
-export const createCandidate = async (workspace: DevWorkspace, signal?: AbortSignal): Promise<Candidate> => {
+export const createCandidate = async (
+  workspace: DevWorkspace,
+  signal?: AbortSignal,
+  prepare?: (project: ImportedAgentProject) => Promise<void>
+): Promise<Candidate> => {
   signal?.throwIfAborted()
   const control = resolve(workspace.directory ?? workspace.root)
   const temporary = join(control, 'tmp')
@@ -87,6 +91,7 @@ export const createCandidate = async (workspace: DevWorkspace, signal?: AbortSig
       destination: join(destination, 'agent'),
       name: workspace.config.name,
       privatePaths: [],
+      ...(prepare ? { prepare } : {}),
       ...(signal ? { signal } : {}),
     })
     const entrypoint = relative(project.root, project.entrypoint).split(sep).join('/')

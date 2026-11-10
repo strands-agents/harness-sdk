@@ -192,7 +192,6 @@ describe('prepareDevRun', () => {
         cliPath: 'in-memory',
         cliWorkspace: join(cwd, 'strands-dev'),
         harnesses: [{ ...harness, preparationStatus: 'Needs setup' }],
-
       },
       screen,
       expect.any(Function)

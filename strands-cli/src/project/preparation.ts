@@ -65,7 +65,7 @@ export const preparationFailure = (error: unknown, progress?: PreparationProgres
     stage,
     summary: `Project ${stage} failed`,
     action,
-    ...(progress ? { command: progress.command, logPath: progress.logPath } : {}),
+    ...(progress ? { command: redactPreparationOutput(progress.command), logPath: progress.logPath } : {}),
     details: detail.slice(-8000),
   }
 }
@@ -142,13 +142,52 @@ export const executePreparation = async (
   }
   const execute = async (stage: PreparationStage, command: string, args: string[], timeout = 180000): Promise<void> => {
     signal?.throwIfAborted()
-    progress = { stage, command: describePreparationCommand({ stage, command, args }), logPath }
+    progress = {
+      stage,
+      command: redactPreparationOutput(describePreparationCommand({ stage, command, args })),
+      logPath,
+    }
     options.progress?.(progress)
     await record(progress.command)
     const invocation = command === 'npm' ? npmInvocation(args) : { command, args }
     const python = plan.project.language === 'python'
     const env = python ? pythonInstallEnvironment(process.env) : { ...process.env }
+    if (command === 'npm') {
+      for (const key of Object.keys(env)) {
+        if (/^npm_config_(global|prefix|location|workspace|workspaces)$/iu.test(key)) Reflect.deleteProperty(env, key)
+      }
+      env.npm_config_global = 'false'
+      env.npm_config_location = 'project'
+      env.npm_config_prefix = plan.project.root
+    }
     if (command === 'uv') {
+      const environment = join(plan.project.root, '.venv')
+      try {
+        const entry = await lstat(environment)
+        if (!entry.isDirectory() || entry.isSymbolicLink() || (await realpath(environment)) !== environment)
+          throw new Error(`Refusing to sync a linked Python environment: ${environment}`)
+      } catch (error) {
+        if (!isRecord(error) || error.code !== 'ENOENT') throw error
+      }
+      for (const key of [
+        'UV_PROJECT_ENVIRONMENT',
+        'UV_WORKING_DIR',
+        'UV_PROJECT',
+        'UV_NO_SYNC',
+        'UV_NO_LOCK',
+        'UV_FROZEN',
+        'UV_LOCKED',
+        'UV_UPGRADE',
+        'UV_NO_PROJECT',
+        'UV_CONFIG_FILE',
+        'UV_NO_CONFIG',
+        'UV_PYTHON',
+        'UV_PYTHON_INSTALL_DIR',
+        'VIRTUAL_ENV',
+      ])
+        Reflect.deleteProperty(env, key)
+      env.UV_NO_CONFIG = '1'
+
       env.UV_PROJECT_ENVIRONMENT = join(plan.project.root, '.venv')
       delete env.VIRTUAL_ENV
       delete env.UV_WORKING_DIR
@@ -210,6 +249,13 @@ export const executePreparation = async (
           validateEnvironment: true,
           run: ({ command, args, timeout }) => execute('runtime', command, args, timeout),
         })
+        if (plan.pythonRequirement) {
+          await execute('runtime', step.command, [
+            '-c',
+            'import sys; from packaging.specifiers import SpecifierSet; sys.exit(0 if SpecifierSet(sys.argv[1]).contains(".".join(map(str, sys.version_info[:3]))) else 43)',
+            plan.pythonRequirement,
+          ])
+        }
       } else {
         await execute(step.stage, step.command, step.args)
       }

@@ -5,6 +5,7 @@ import { bindWorkspace } from './binding.js'
 import { createCandidate, type Candidate } from './candidates.js'
 import { boundDevWorkspace, type DevWorkspace } from './workspace.js'
 import { isRecord } from '../values.js'
+import type { ImportedAgentProject } from '../project/import.js'
 
 export const initializeWorkspaceBinding = async (workspace: DevWorkspace, directory: string): Promise<DevWorkspace> => {
   const target = resolve(workspace.directory ?? directory)
@@ -63,7 +64,11 @@ const initialCandidate = async (workspace: DevWorkspace): Promise<string | undef
   }
 }
 
-export const ensureInitialCandidate = async (workspace: DevWorkspace, signal?: AbortSignal): Promise<string> => {
+export const ensureInitialCandidate = async (
+  workspace: DevWorkspace,
+  signal?: AbortSignal,
+  prepare?: (project: ImportedAgentProject) => Promise<void>
+): Promise<string> => {
   if (!workspace.directory) throw new Error('Initialize the workspace binding before creating its initial copy.')
   signal?.throwIfAborted()
   const existing = await initialCandidate(workspace)
@@ -83,7 +88,7 @@ export const ensureInitialCandidate = async (workspace: DevWorkspace, signal?: A
   try {
     const ready = await initialCandidate(workspace)
     if (ready) return ready
-    candidate = await createCandidate(workspace, signal)
+    candidate = await createCandidate(workspace, signal, prepare)
     signal?.throwIfAborted()
     const marker = join(workspace.directory, 'tmp', 'initial.json')
     const staged = join(lock, 'initial.json')

@@ -11,6 +11,7 @@ import {
 } from '../project/preparation-plan.js'
 import {
   executePreparation,
+  redactPreparationOutput,
   recordEntrypointFailure,
   preparationFailure,
   ProjectPreparationError,
@@ -61,19 +62,22 @@ export const ProjectSetupPanel = ({ plan, failure, onAction }: ProjectSetupPanel
               ?.slice(0, 240)}
           </Text>
           <Text>{failure.action}</Text>
-          {failure.command ? <Text wrap="truncate-middle">Failed command: {failure.command}</Text> : null}
+          {failure.command ? (
+            <Text wrap="truncate-middle">Failed command: {redactPreparationOutput(failure.command)}</Text>
+          ) : null}
           {failure.logPath ? <Text wrap="truncate-middle">Log: {failure.logPath}</Text> : null}
         </>
       ) : (
         <>
           {plan?.commands.map((step, index) => (
             <Text key={index} wrap="truncate-middle">
-              {index + 1}. {describePreparationCommand(step)}
+              {index + 1}. {redactPreparationOutput(describePreparationCommand(step))}
             </Text>
           ))}
           {plan?.guidance ? <Text>{plan.guidance}</Text> : null}
           <Text dimColor>
-            Install and build commands can execute project code. Source and lockfiles will not be reset.
+            Install and build commands can execute project code. The initial candidate copy uses the same setup. Source
+            and lockfiles will not be reset.
           </Text>
         </>
       )}
@@ -111,7 +115,11 @@ const ask = async (screen: StartupScreen, props: Omit<ProjectSetupPanelProps, 'o
 }
 
 export interface ProjectSetupSession {
-  prepare(project: ImportedAgentProject, screen: StartupScreen): Promise<'ready' | 'back' | 'cancel'>
+  prepare(
+    project: ImportedAgentProject,
+    screen: StartupScreen,
+    afterPreparation?: (install: boolean) => Promise<void>
+  ): Promise<'ready' | 'back' | 'cancel'>
   recover(error: unknown, screen: StartupScreen): Promise<'retry' | 'back' | 'exit'>
 }
 
@@ -139,12 +147,14 @@ export const projectSetupSession = (): ProjectSetupSession => {
   const failure = (error: unknown): PreparationFailure =>
     error instanceof ProjectPreparationError ? error.failure : preparationFailure(error, progress)
   return {
-    prepare: async (project, screen): Promise<'ready' | 'back' | 'cancel'> => {
+    prepare: async (project, screen, afterPreparation): Promise<'ready' | 'back' | 'cancel'> => {
       progress = undefined
       let lastError: unknown
       for (;;) {
         try {
-          plan = await planProjectPreparation(project)
+          const updated = await planProjectPreparation(project)
+          if (!plan || plan.fingerprint !== updated.fingerprint) lastError = undefined
+          plan = updated
         } catch (error) {
           plan = undefined
           lastError = error
@@ -157,7 +167,15 @@ export const projectSetupSession = (): ProjectSetupSession => {
         if (!plan) continue
         validateOnly = action === 'validate' || plan.manager === 'manual'
         try {
+          const current = await planProjectPreparation(project)
+          if (current.fingerprint !== plan.fingerprint) {
+            plan = current
+            lastError = undefined
+            continue
+          }
           await run(screen)
+          await afterPreparation?.(!validateOnly)
+          screen.show(undefined, 'Checking entrypoint in the selected runtime…')
           return 'ready'
         } catch (error) {
           if (screen.signal.aborted) return 'cancel'
@@ -166,7 +184,17 @@ export const projectSetupSession = (): ProjectSetupSession => {
       }
     },
     recover: async (error, screen): Promise<'retry' | 'back' | 'exit'> => {
-      let failureRecord = plan ? await recordEntrypointFailure(plan.project, error) : failure(error)
+      let failureRecord = failure(error)
+      if (plan) {
+        try {
+          failureRecord = await recordEntrypointFailure(plan.project, error)
+        } catch (logError) {
+          failureRecord = {
+            ...failureRecord,
+            details: `${failureRecord.details}\nCould not save the setup log: ${sanitizeTerminalText(logError instanceof Error ? logError.message : String(logError))}`,
+          }
+        }
+      }
       for (;;) {
         const action = await ask(screen, { ...(plan ? { plan } : {}), failure: failureRecord })
         if (action === 'cancel') return 'exit'

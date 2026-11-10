@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { lstat, readFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { parse as parseToml } from 'smol-toml'
 import { satisfies } from 'semver'
 
@@ -16,6 +16,7 @@ export interface PreparationCommand {
 export interface ProjectPreparationPlan {
   project: ImportedAgentProject
   runtime: string
+  pythonRequirement?: string
   manager: 'npm' | 'pip' | 'uv' | 'manual'
   commands: PreparationCommand[]
   fingerprint: string
@@ -103,11 +104,12 @@ const nodePlan = (
       '--no-audit',
       '--no-fund',
       '--ignore-scripts',
+      '--global=false',
       ...(locked ? [] : ['--package-lock=false', '--no-save']),
     ]),
   ]
   if (isRecord(manifest.scripts) && typeof manifest.scripts.build === 'string')
-    commands.push(command('build', 'npm', ['run', 'build']))
+    commands.push(command('build', 'npm', ['--global=false', 'run', 'build']))
   return { project, runtime: `Node ${process.versions.node}`, manager: 'npm', commands }
 }
 
@@ -134,7 +136,12 @@ const pythonPlan = (
   if (inputs.has('uv.lock')) {
     if (!raw || !projectConfig)
       throw new Error('uv.lock requires pyproject.toml with [project]. Select the project root that owns both files.')
-    return { project, runtime, manager: 'uv', commands: [command('dependencies', 'uv', ['sync', '--locked'])] }
+    return {
+      project,
+      runtime,
+      manager: 'uv',
+      commands: [command('dependencies', 'uv', ['sync', '--locked', '--inexact'])],
+    }
   }
   const commands: PreparationCommand[] = [command('runtime', python, ['Prepare a local Python runtime'])]
   const requirements = inputs.has('requirements.txt')
@@ -153,16 +160,7 @@ const pythonPlan = (
   const installable = isRecord(manifest['build-system'])
   if (installable) {
     commands.push(
-      command('dependencies', python, [
-        '-I',
-        '-m',
-        'pip',
-        'install',
-        '--disable-pip-version-check',
-        '--editable',
-        '.',
-        ...(requirements ? ['--no-deps'] : []),
-      ])
+      command('dependencies', python, ['-I', '-m', 'pip', 'install', '--disable-pip-version-check', '--editable', '.'])
     )
   } else if (projectConfig && Array.isArray(projectConfig.dependencies) && !requirements) {
     const dependencies = projectConfig.dependencies
@@ -186,7 +184,14 @@ const pythonPlan = (
       : !installable && projectConfig
         ? 'This pyproject.toml has no build-system, so the local package will not be installed. If imports refer to a package under src/, configure a build backend or prepare it manually.'
         : undefined
-  return { project, runtime, manager: 'pip', commands, ...(guidance ? { guidance } : {}) }
+  return {
+    project,
+    runtime,
+    manager: 'pip',
+    commands,
+    ...(typeof version === 'string' ? { pythonRequirement: version } : {}),
+    ...(guidance ? { guidance } : {}),
+  }
 }
 
 export const planProjectPreparation = async (project: ImportedAgentProject): Promise<ProjectPreparationPlan> => {
@@ -194,9 +199,29 @@ export const planProjectPreparation = async (project: ImportedAgentProject): Pro
   const fingerprint = createHash('sha256')
     .update(JSON.stringify([...inputs]))
     .digest('hex')
-  const plan = project.language === 'python' ? pythonPlan(project, inputs) : nodePlan(project, inputs)
+  let plan = project.language === 'python' ? pythonPlan(project, inputs) : nodePlan(project, inputs)
+  if (plan.manager === 'npm') {
+    for (let parent = dirname(project.root); dirname(parent) !== parent; parent = dirname(parent)) {
+      try {
+        const value: unknown = JSON.parse(await readFile(join(parent, 'package.json'), 'utf8'))
+        if (isRecord(value) && value.workspaces) {
+          plan = {
+            ...plan,
+            manager: 'manual',
+            commands: [],
+            guidance: `This package belongs to a Node workspace at ${parent}. Run its declared package-manager install and build there, then validate this entrypoint.`,
+          }
+          break
+        }
+      } catch (error) {
+        if (!isRecord(error) || error.code !== 'ENOENT') throw error
+      }
+    }
+  }
   return { ...plan, fingerprint }
 }
 
-export const describePreparationCommand = ({ command: executable, args }: PreparationCommand): string =>
-  [executable, ...args].map((value) => (/[\s"']/u.test(value) ? JSON.stringify(value) : value)).join(' ')
+export const describePreparationCommand = ({ stage, command: executable, args }: PreparationCommand): string =>
+  stage === 'runtime' && args[0] === 'Prepare a local Python runtime'
+    ? `Prepare project .venv and the Strands harness runtime (Python 3.10 or newer)`
+    : [executable, ...args].map((value) => (/[\s"']/u.test(value) ? JSON.stringify(value) : value)).join(' ')

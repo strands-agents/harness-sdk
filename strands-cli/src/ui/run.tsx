@@ -26,6 +26,7 @@ export interface StartupScreen {
 }
 
 interface RunInkChatOptions {
+  exitAfterInitialization?: boolean
   prepare?: (screen: StartupScreen) => Promise<boolean>
   recoverStartup?: (error: unknown, screen: StartupScreen) => Promise<'retry' | 'back' | 'exit'>
   firstRequest?: string
@@ -439,6 +440,7 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
     if (!controller) {
       throw new Error('Controller initialization did not return a controller.')
     }
+    if (options.exitAfterInitialization) return 0
     startTasks.push(controller.start(options.firstRequest))
     await instance!.waitUntilExit()
     return pendingExitCode ?? controller?.getSnapshot().exitCode ?? 0

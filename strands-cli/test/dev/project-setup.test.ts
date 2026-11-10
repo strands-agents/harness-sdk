@@ -1,7 +1,7 @@
 import { createElement } from 'react'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ProjectSetupPanel, projectSetupSession } from '../../src/dev/project-setup.js'
 import { runInkChat } from '../../src/ui/run.js'
 import { CliConfigStore } from '../../src/config/store.js'
@@ -9,6 +9,9 @@ import { ChatController } from '../../src/ui/chat/controller.js'
 import { idleBackend } from '../fixtures/chat-backend.js'
 import { captureFrame, render, ttyInput, ttyOutput } from '../fixtures/terminal.js'
 import { temporaryDirectory } from '../fixtures/tempdir.js'
+import * as preparation from '../../src/project/preparation.js'
+
+afterEach(() => vi.restoreAllMocks())
 
 type RenderApp = NonNullable<NonNullable<Parameters<typeof runInkChat>[1]>['renderApp']>
 
@@ -78,6 +81,51 @@ describe('project setup guidance', () => {
       input.write('b')
       controller.close()
       await controller.dispose()
+    }
+  })
+
+  it('shouldShowChangedCommandsBeforeRetryingAFailedPreparation', async () => {
+    const root = await temporaryDirectory()
+    const entrypoint = join(root, 'agent.ts')
+    const manifest = join(root, 'package.json')
+    await writeFile(entrypoint, 'export const agent = {}')
+    await writeFile(manifest, '{}')
+    const input = ttyInput()
+    const output = ttyOutput(140, 40)
+    const frame = captureFrame(output)
+    const setup = projectSetupSession()
+    const execute = vi
+      .spyOn(preparation, 'executePreparation')
+      .mockRejectedValueOnce(new Error('Install failed'))
+      .mockResolvedValue('/tmp/setup.log')
+    const running = runInkChat(
+      async (): Promise<never> => {
+        throw new Error('must not start')
+      },
+      {
+        input,
+        output,
+        errorOutput: output,
+        intro: false,
+        config: CliConfigStore.memory({}, { animations: false }),
+        renderApp: render as RenderApp,
+        prepare: async (screen) => {
+          await setup.prepare({ root, entrypoint, language: 'typescript' }, screen)
+          return false
+        },
+      }
+    )
+    try {
+      await vi.waitFor(() => expect(frame().join('\n')).toContain('Prepare selected project'))
+      input.write('\r')
+      await vi.waitFor(() => expect(frame().join('\n')).toContain('Install failed'))
+      await writeFile(manifest, '{"scripts":{"build":"echo changed"}}')
+      input.write('r')
+      await vi.waitFor(() => expect(frame().join('\n')).toContain('npm --global=false run build'))
+      expect(execute).toHaveBeenCalledTimes(1)
+    } finally {
+      input.write('b')
+      await running
     }
   })
 
