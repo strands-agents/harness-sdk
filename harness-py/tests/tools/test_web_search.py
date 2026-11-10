@@ -215,3 +215,60 @@ def test_exa_call_keeps_result_when_teardown_fails(fake_mcp):
 
     fake_mcp.stop = stop
     assert len(web_search_module._exa_call("q", 2, "k")) == 2
+
+
+@pytest.fixture
+def agentcore(monkeypatch):
+    """A real ``bedrock-agentcore`` client behind a botocore Stubber, handed to the AgentCore backend."""
+    import boto3
+    from botocore.stub import Stubber
+
+    client = boto3.client(
+        "bedrock-agentcore", region_name="us-east-1", aws_access_key_id="x", aws_secret_access_key="x"
+    )
+    regions = []
+
+    class Session:
+        def client(self, service, region_name):
+            assert service == "bedrock-agentcore"
+            regions.append(region_name)
+            return client
+
+    monkeypatch.setattr(web_search_module.boto3, "Session", Session)
+    with Stubber(client) as stubber:
+        stubber.regions = regions
+        yield stubber
+
+
+async def test_agentcore_web_search_calls_invoke_web_search_and_formats(agentcore):
+    agentcore.add_response(
+        "invoke_web_search",
+        {
+            "results": [
+                {"title": "Strands", "url": "https://strandsagents.com", "text": "Build   agents\nfast. " + "x" * 600},
+                {"url": "https://untitled.example", "text": "no title"},
+            ]
+        },
+        {"webSearchId": "web-search.v1", "searchQuery": "strands agents", "maxResults": 10},
+    )
+    tool = web_search_module.make_agentcore_web_search("us-west-2")
+    out = await tool._tool_func(query="strands agents", max_results=50)
+    assert agentcore.regions == ["us-west-2"]
+    lines = out.splitlines()
+    assert lines[:2] == ["Sources:", "1. Strands — https://strandsagents.com"]
+    assert lines[2].startswith("   Build agents fast. xxx") and len(lines[2]) == 3 + web_search_module._SNIPPET_CHARS
+    assert lines[3:] == ["2. https://untitled.example — https://untitled.example", "   no title"]
+    agentcore.assert_no_pending_responses()
+
+
+async def test_agentcore_web_search_access_denied_names_the_permission(agentcore):
+    agentcore.add_client_error("invoke_web_search", "AccessDeniedException", "the request is not authorized")
+    out = await web_search_module.make_agentcore_web_search("us-west-2")._tool_func(query="q")
+    assert out.startswith("web_search failed: ")
+    assert "bedrock-agentcore:InvokeWebSearch on arn:aws:bedrock-agentcore:us-west-2:aws:tool/web-search.v1" in out
+
+
+async def test_agentcore_web_search_passes_other_errors_through(agentcore):
+    agentcore.add_client_error("invoke_web_search", "ThrottlingException", "slow down")
+    out = await web_search_module.make_agentcore_web_search("us-west-2")._tool_func(query="q")
+    assert out.startswith("web_search failed: ") and "slow down" in out and "InvokeWebSearch on" not in out

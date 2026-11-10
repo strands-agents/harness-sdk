@@ -517,11 +517,24 @@ def test_web_search_enabled_on_supported_provider_from_default():
     assert agent.model.config["params"]["tools"] == [{"type": "web_search"}]
 
 
-def test_web_search_default_on_bedrock_logs_info_not_warning_and_builds(caplog):
+def test_web_search_on_bedrock_is_the_agentcore_tool_in_the_model_region(monkeypatch):
+    regions = []
+    real = agent_module.make_agentcore_web_search
+    monkeypatch.setattr(
+        agent_module, "make_agentcore_web_search", lambda region: regions.append(region) or real(region)
+    )
+    agent = create_harness()
+    assert "web_search" in agent.tool_names
+    assert regions == [agent.model.client.meta.region_name]
+    explicit = create_harness(model="bedrock/us.amazon.nova-2-lite-v1:0", builtin_tools=["read", "web_search"])
+    assert "web_search" in explicit.tool_names
+
+
+def test_web_search_default_without_a_backend_logs_info_not_warning_and_builds(caplog):
     import logging
 
     with caplog.at_level(logging.INFO, logger="strands_harness.agent"):
-        agent = create_harness()
+        agent = create_harness(model="ollama/llama3")
     assert "web_search" not in agent.tool_names
     notes = [r for r in caplog.records if "has no built-in web search" in r.getMessage()]
     assert notes and all(r.levelno == logging.INFO for r in notes)
@@ -530,9 +543,9 @@ def test_web_search_default_on_bedrock_logs_info_not_warning_and_builds(caplog):
 
 def test_web_search_explicit_on_unsupported_provider_raises():
     with pytest.raises(ValueError, match="has no built-in web search"):
-        create_harness(builtin_tools=["read", "web_search"])
+        create_harness(model="ollama/llama3", builtin_tools=["read", "web_search"])
     with pytest.raises(ValueError, match="has no built-in web search"):
-        create_harness(builtin_tools={"web_search": True})
+        create_harness(model=BedrockModel(model_id="x"), builtin_tools={"web_search": True})
 
 
 def test_web_search_exa_fallback_builds_the_tool_and_warns_about_the_third_party(caplog):
@@ -1434,3 +1447,19 @@ def test_subagent_child_inherits_exa_fallback():
     parent = create_harness(builtin_tools={"web_search": "exa"})
     child = parent.tool_registry.registry["subagent"]._builder(AgentSpec(task="x", tools=["read"]))
     assert "web_search" in child.tool_names
+
+
+def test_exa_wins_over_agentcore_on_bedrock():
+    from strands_harness.tools import exa_web_search
+
+    agent = create_harness(builtin_tools={"web_search": "exa"})
+    assert agent.tool_registry.registry["web_search"] is exa_web_search
+
+
+def test_subagent_child_on_bedrock_gets_agentcore_web_search():
+    from strands_harness.tools import AgentSpec, exa_web_search
+
+    parent = create_harness()
+    child = parent.tool_registry.registry["subagent"]._builder(AgentSpec(task="x", tools=["read"]))
+    assert "web_search" in child.tool_names
+    assert child.tool_registry.registry["web_search"] is not exa_web_search

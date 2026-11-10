@@ -1,6 +1,7 @@
 import pytest
 from strands.models import BedrockModel, CacheConfig, Model, ModelRouter
 
+from strands_harness import defaults
 from strands_harness.defaults import DEFAULT_EFFORT
 from strands_harness.models import (
     _claude_extended_thinking,
@@ -544,12 +545,18 @@ def test_supports_web_search_by_provider():
     assert supports_web_search("bedrock-mantle/openai.gpt-6.1-sol") is True
     assert supports_web_search("bedrock-mantle/openai.gpt-oss-120b") is False
     assert supports_web_search("bedrock-mantle/qwen.qwen3-32b-v1:0") is False
-    assert supports_web_search("bedrock/global.anthropic.claude-opus-4-8") is False
+    # Bedrock Converse has no native search; the harness serves AgentCore web search as a tool.
+    assert supports_web_search("bedrock/global.anthropic.claude-opus-4-8") is True
+    assert supports_web_search("global.anthropic.claude-opus-4-8") is True
     assert supports_web_search("anthropic/claude-opus-4-8") is True
+    assert supports_web_search("ollama/llama3") is False
 
 
-def test_supports_web_search_none_uses_default_provider():
+def test_supports_web_search_none_uses_default_provider(monkeypatch):
+    monkeypatch.setattr(defaults, "DEFAULT_MODEL", "ollama/llama3")
     assert supports_web_search(None) is False
+    monkeypatch.setattr(defaults, "DEFAULT_MODEL", "openai/gpt-5.6-sol")
+    assert supports_web_search(None) is True
 
 
 def test_supports_web_search_model_instance_is_false():

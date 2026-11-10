@@ -31,6 +31,8 @@ classifiers = [
 # dependency because the tool is on by default. Pinned exactly while Monty is pre-1.0 and its API moves.
 dependencies = [
     "strands-agents[otel]>=1.64.0,<2.0.0",
+    # The first release with bedrock-agentcore InvokeWebSearch, which backs web_search on Bedrock.
+    "boto3>=1.43.127",
     "pydantic-monty==0.0.23",
     "pydantic>=2.5,<3",
 ]

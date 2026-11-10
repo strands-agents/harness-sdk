@@ -19,7 +19,7 @@ import logging
 import os
 import re
 from collections.abc import Callable
-from typing import Any, NamedTuple
+from typing import Any, Literal, NamedTuple
 
 from strands.models import Model, ModelRouter
 
@@ -327,7 +327,8 @@ class Provider(NamedTuple):
     ``web_search`` is enabled through model config on the providers whose SDK exposes a
     non-clobbering seam for it (OpenAI Responses ``params.tools`` for OpenAI and bedrock-mantle,
     Gemini ``gemini_tools``, Anthropic-direct ``anthropic_tools``); ``_has_web_search`` narrows
-    bedrock-mantle to its GPT-5, GPT-6, and Daybreak models. Bedrock Converse has no mechanism.
+    bedrock-mantle to its GPT-5, GPT-6, and Daybreak models. Bedrock Converse has no mechanism, so
+    the harness serves AgentCore web search there as a tool instead (``_web_search_kind``).
 
     ``caching`` marks providers where prompt caching is in effect when requested, whether or not
     the harness configures anything: Bedrock, Anthropic direct, OpenAI, and bedrock-mantle (the harness
@@ -414,15 +415,26 @@ def _has_web_search(provider_name: str, name: str) -> bool:
     return provider_name != "bedrock-mantle" or name.startswith(_BEDROCK_GPT_PREFIXES)
 
 
-def supports_web_search(model: Model | ModelRouter | str | None) -> bool:
-    """Whether native web search can be enabled for ``model``.
+def _web_search_kind(model: Model | ModelRouter | str | None) -> Literal["native", "agentcore"] | None:
+    """How ``web_search`` is served for ``model`` without the Exa opt-in: the provider's native
+    search, AgentCore web search on Bedrock (a harness tool, as Converse has no native search), or
+    ``None``. A ``Model`` or ``ModelRouter`` instance has an unknown provider, so it gets ``None``."""
+    if isinstance(model, (Model, ModelRouter)):
+        return None
+    provider_name, name = _split_provider(model or defaults.DEFAULT_MODEL)
+    if provider_name == "bedrock":
+        return "agentcore"
+    return "native" if _has_web_search(provider_name, name) else None
 
-    A ``Model`` or ``ModelRouter`` instance has an unknown provider, so this is ``False``; the
+
+def supports_web_search(model: Model | ModelRouter | str | None) -> bool:
+    """Whether ``web_search`` works for ``model`` without the Exa opt-in.
+
+    True where the provider has native web search, and on Bedrock, where AgentCore web search serves
+    it. A ``Model`` or ``ModelRouter`` instance has an unknown provider, so this is ``False``; the
     caller configures search on the instance directly. ``None`` resolves to the default model.
     """
-    if isinstance(model, (Model, ModelRouter)):
-        return False
-    return _has_web_search(*_split_provider(model or defaults.DEFAULT_MODEL))
+    return _web_search_kind(model) is not None
 
 
 def supports_thinking(model: Model | str | None) -> bool:

@@ -18,9 +18,12 @@ from collections.abc import Awaitable, Callable
 from datetime import timedelta
 from typing import Any, TypedDict
 
+import boto3
+from botocore.exceptions import ClientError
 from strands.tools.decorator import tool
 from strands.tools.mcp import MCPClient
 
+_AGENTCORE_WEB_SEARCH_ID = "web-search.v1"
 _EXA_MCP_URL = "https://mcp.exa.ai/mcp"
 _EXA_TOOL = "web_search_exa"
 _TIMEOUT = timedelta(seconds=30)
@@ -96,6 +99,40 @@ def _exa_backend(api_key: str | None = None) -> SearchBackend:
             raise WebSearchError(f"{exc} (Exa's keyless tier is rate limited; set EXA_API_KEY to lift it.)") from exc
 
     return search
+
+
+def _agentcore_backend(region: str) -> SearchBackend:
+    """Search backend over Amazon Bedrock AgentCore's ``InvokeWebSearch`` API in ``region``, authorized by IAM."""
+    client = boto3.Session().client("bedrock-agentcore", region_name=region)
+
+    def call(query: str, max_results: int) -> list[SearchResult]:
+        try:
+            response = client.invoke_web_search(
+                webSearchId=_AGENTCORE_WEB_SEARCH_ID, searchQuery=query, maxResults=max_results
+            )
+        except ClientError as exc:
+            if exc.response.get("Error", {}).get("Code") != "AccessDeniedException":
+                raise
+            resource = f"arn:aws:bedrock-agentcore:{region}:aws:tool/{_AGENTCORE_WEB_SEARCH_ID}"
+            raise WebSearchError(f"{exc} (the caller needs bedrock-agentcore:InvokeWebSearch on {resource})") from exc
+        return [
+            {
+                "title": result.get("title") or result.get("url", ""),
+                "url": result.get("url", ""),
+                "snippet": " ".join(result["text"].split())[:_SNIPPET_CHARS],
+            }
+            for result in response["results"]
+        ]
+
+    async def search(query: str, max_results: int) -> list[SearchResult]:
+        return await asyncio.to_thread(call, query, max_results)
+
+    return search
+
+
+def make_agentcore_web_search(region: str) -> Any:
+    """Build a ``web_search`` tool over Amazon Bedrock AgentCore web search in ``region``."""
+    return _search_tool(_agentcore_backend(region))
 
 
 def make_exa_web_search() -> Any:
