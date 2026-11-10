@@ -528,8 +528,12 @@ describe('batch summary replays the agent request', () => {
       { role: 'assistant', content: [toolUse] },
       { role: 'user', content: [toolResult, INSTRUCTIONS] },
     ])
-    expect(options?.toolSpecs).toEqual([AGENT_TOOL])
-    expect(options?.systemPrompt).toBe(AGENT_PROMPT)
+    expect(options).toEqual({
+      toolSpecs: [AGENT_TOOL],
+      systemPrompt: AGENT_PROMPT,
+      cancelSignal: agent.cancelSignal,
+      agentMetadata: agent.agentMetadata,
+    })
   })
 
   it('sends the history prefix with the agent prompt and tools', async () => {

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest'
+import { afterEach, describe, it, expect, vi } from 'vitest'
 import {
   Message,
   TextBlock,
@@ -1134,6 +1134,10 @@ class RecordingModel extends TestModelProvider {
 }
 
 describe('summarize', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
   const history = (): Message[] => [
     new Message({ role: 'user', content: [new TextBlock('task')] }),
     new Message({
@@ -1233,7 +1237,6 @@ describe('summarize', () => {
       expect(warnSpy).toHaveBeenCalledWith(
         expect.stringContaining(`stop_reason=<${stopReason}> | summary reply did not finish`)
       )
-      warnSpy.mockRestore()
     }
   )
 
@@ -1247,12 +1250,11 @@ describe('summarize', () => {
       yield { type: 'modelContentBlockStopEvent' }
       yield { type: 'modelMessageStopEvent', stopReason: 'endTurn' }
     })
-    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    vi.spyOn(logger, 'warn').mockImplementation(() => {})
 
     const result = await model.summarize(hi(), { cancelSignal: controller.signal })
 
-    expect(result.content).toEqual([])
-    warnSpy.mockRestore()
+    expect(result).toEqual({ content: [], usage: zeroUsage })
   })
 
   it('sends no request when cancelled before the call', async () => {
@@ -1274,12 +1276,11 @@ describe('summarize', () => {
       controller.abort()
       throw new DOMException('aborted', 'AbortError')
     })
-    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    vi.spyOn(logger, 'warn').mockImplementation(() => {})
 
     const result = await model.summarize(hi(), { cancelSignal: controller.signal })
 
-    expect(result.content).toEqual([])
-    warnSpy.mockRestore()
+    expect(result).toEqual({ content: [], usage: zeroUsage })
   })
 
   it.each<StopReason>(['maxTokens', 'stopSequence'])(
@@ -1308,7 +1309,7 @@ describe('summarize', () => {
 
     const result = await model.summarize(hi())
 
-    expect(result.usage).toEqual(usage)
+    expect(result).toEqual({ content: [new SummaryBlock({ text: 'the summary' })], usage })
   })
 
   it('forwards the cancel signal', async () => {
