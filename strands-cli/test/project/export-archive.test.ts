@@ -214,9 +214,9 @@ it.each(['missing.py', '../outside.py', 'notes.txt'] as const)(
 // https://github.com/strands-agents/harness-sdk/pull/5194#discussion_r4483785396
 it.each([
   ['typescript', 'default', false],
-  ['python', 'default', false],
+  ['python', 'default', true],
   ['python', 'relative', true],
-  ['python', 'external', false],
+  ['python', 'external', true],
   ['python', 'internal', true],
   ['python', 'aliased-internal', true],
 ] as const)(
