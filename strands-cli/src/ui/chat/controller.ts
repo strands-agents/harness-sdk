@@ -1989,7 +1989,11 @@ export class ChatController implements ChatControllerApi {
       this._sessionCache = undefined
       this._refreshRuntime()
       if (this.name !== this._backend.name && this._sessions?.current) {
-        await this._sessions.renameAgent?.(this.name)
+        try {
+          await this._sessions.renameAgent?.(this.name)
+        } catch (error) {
+          this._addNotice('error', `Conversation cleared; agent name could not be saved: ${errorMessage(error)}`)
+        }
       }
       this._panel = undefined
       this._panelStack.length = 0

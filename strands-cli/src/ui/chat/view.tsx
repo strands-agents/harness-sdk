@@ -605,6 +605,7 @@ function ChatViewContent({
                 total={activeBackgroundTasks.length}
                 focused={focusedBackgroundTask !== undefined}
                 hovered={hoveredBackgroundTask === true}
+                hint={input.startsWith('/') ? 'click view' : input ? 'Tab view' : '↓ view'}
                 {...(onBackgroundTaskElement ? { onElement: onBackgroundTaskElement } : {})}
               />
             ) : null}
@@ -726,6 +727,7 @@ function BackgroundTaskStatus({
   total,
   focused,
   hovered,
+  hint,
   onElement,
 }: {
   task: ChatTask
@@ -733,6 +735,7 @@ function BackgroundTaskStatus({
   total: number
   focused: boolean
   hovered: boolean
+  hint: string
   onElement?: (element: DOMElement | null) => void
 }): ReactElement {
   const { accent, warning, selection } = useTheme()
@@ -756,7 +759,7 @@ function BackgroundTaskStatus({
         </Text>
       </Box>
       <Box marginLeft={1} flexShrink={0}>
-        <Text dimColor>{focused ? '←→ Enter Esc' : '↓ view'}</Text>
+        <Text dimColor>{focused ? '←→ Enter Esc' : hint}</Text>
       </Box>
     </Box>
   )

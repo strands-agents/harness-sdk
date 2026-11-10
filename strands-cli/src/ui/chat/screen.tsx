@@ -1944,7 +1944,9 @@ export function ChatApp({
         key.tab &&
         (focusedQueuedPrompt ||
           focusedBackgroundTask ||
-          (suggestions.length === 0 && (queuedPromptElements.size > 0 || backgroundTasks.length > 0)))
+          (suggestions.length === 0 &&
+            !currentEditor.input.startsWith('/') &&
+            (queuedPromptElements.size > 0 || backgroundTasks.length > 0)))
       ) {
         const targets: (QueuedPromptTarget | 'background' | undefined)[] = [
           undefined,

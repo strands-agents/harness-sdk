@@ -53,13 +53,21 @@ describe('/rename', () => {
     }
   })
 
-  it('persists independent agent and session names without applying a failed rename', async () => {
+  // https://github.com/strands-agents/harness-sdk/pull/5194#discussion_r4525136903
+  it('persists independent agent and session names and reports metadata write failures', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'strands-rename-'))
     const host = { sessionId: 'saved-session', sessionDirectory: directory }
     const sessions = new FileSessionRuntime(host, directory, {
       workspace: directory,
     })
-    const primary = new ChatController(idleBackend(), { sessions })
+    const backend = idleBackend({
+      info: () => ({ sessionId: host.sessionId }),
+      async clear() {
+        host.sessionId = 'fresh-session'
+        await mkdir(join(directory, host.sessionId, 'cli-session.json'), { recursive: true })
+      },
+    })
+    const primary = new ChatController(backend, { sessions })
     const manager = new ConversationManager(primary, { fork: async () => primary })
 
     try {
@@ -89,6 +97,22 @@ describe('/rename', () => {
       await manager.submit('/rename Unsaved name')
       expect(manager.getSnapshot().runtime.agent).toBe('Reviewer')
       expect(manager.getSnapshot().panel).toMatchObject({ kind: 'error', title: 'agent rename failed' })
+
+      await manager.submit('Previous turn')
+      expect(manager.getSnapshot().completedTurns).toHaveLength(1)
+      await manager.submit('/clear')
+      expect(manager.getSnapshot()).toMatchObject({
+        runtime: { agent: 'Reviewer', session: 'fresh-session' },
+        completedTurns: [],
+        notices: [
+          { status: 'error', text: expect.stringContaining('Conversation cleared; agent name could not be saved:') },
+        ],
+      })
+      expect(manager.getSnapshot().runtime.sessionName).toBeUndefined()
+      expect(manager.getSnapshot().panel).toBeUndefined()
+      expect(manager.getSnapshot().composerStatus).toBeUndefined()
+      await manager.submit('New turn')
+      expect(manager.getSnapshot().completedTurns).toHaveLength(1)
     } finally {
       await manager.dispose()
       await rm(directory, { recursive: true, force: true })
