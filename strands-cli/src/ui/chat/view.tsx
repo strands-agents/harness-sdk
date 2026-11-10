@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useSyncExternalStore, type ReactElement } from 'react'
 import type { DOMElement } from 'ink'
+import { isRecord } from '../../values.js'
 
 import type { ChatAttachmentSummary, ChatConfigurationLanguage, ChatTask } from '../../agent/types.js'
 import type { ChatMcpStartup, ChatPanel, ChatSnapshot, ChatVoiceStore } from './controller.js'
@@ -279,7 +280,11 @@ function ChatViewContent({
   const expandedCommandDeckHeight = composerStatusRows + suggestionRows + editorHeight + 2
   // The dock stays up after a configuration turn ends, until the next prompt starts a turn.
   const configurationTurn = (snapshot.activeTurn ?? snapshot.completedTurns.at(-1))?.entries.some(
-    (entry) => entry.type === 'tool' && isConfigurationTool(entry.name)
+    (entry) =>
+      entry.type === 'tool' &&
+      isConfigurationTool(entry.name) &&
+      isRecord(entry.input) &&
+      (entry.input.action === 'update' || entry.input.action === 'apply')
   )
   const configurationPanel = snapshot.panel?.kind === 'config' ? snapshot.panel : undefined
   const liveConfiguration = snapshot.configuration ?? configurationPanel?.configuration

@@ -212,7 +212,7 @@ describe('ChatView', () => {
     expect(sanitizeTerminalText(frame)).toContain('+    changed')
   })
 
-  it('docks the live configuration while strands_config is active on a wide terminal', () => {
+  it.each(['inspect', 'models', 'update', 'apply'])('only docks config changes for strands_config %s', (action) => {
     const prompt = 'Update the config and reflow the transcript into the space left of the dock, then BESIDE_THE_DOCK'
     const activeTurn = {
       id: 'turn-1',
@@ -224,7 +224,7 @@ describe('ChatView', () => {
           type: 'tool' as const,
           toolUseId: 'config-1',
           name: 'strands_config',
-          input: { action: 'models' as const, query: 'opus' },
+          input: { action, query: 'opus' },
           status: 'running' as const,
         },
       ],
@@ -251,7 +251,13 @@ describe('ChatView', () => {
       terminalHeight: 30,
     })
 
-    expect(wide).toContain('Strands Config models: opus')
+    expect(wide).toContain('Strands Config')
+    const editing = action === 'update' || action === 'apply'
+    if (!editing) {
+      expect(wide).not.toContain('await createHarness')
+      expect(wide).not.toContain('TypeScript')
+      return
+    }
     expect(wide).toContain('await createHarness')
     expect(undocked).toContain('BESIDE_THE_DOCK')
     expect(wide).toContain('BESIDE_THE_DOCK')
