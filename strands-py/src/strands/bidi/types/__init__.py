@@ -39,8 +39,8 @@ from .events import (
     BidiTranscriptStartEvent,
     BidiTranscriptStopEvent,
     BidiUsageEvent,
-    ModalityUsage,
     Role,
+    TokenDetails,
 )
 from .io import InputStream, OutputStream
 from .media import AudioDelta
@@ -84,7 +84,7 @@ __all__ = [
     "BidiUserContentBlock",
     "BidiUserContentBlockData",
     "InputStream",
-    "ModalityUsage",
     "OutputStream",
     "Role",
+    "TokenDetails",
 ]

@@ -43,6 +43,11 @@ const redirectCases: Array<{ description: string; input: string; expected: strin
     input: 'docs/examples/python/multi_agent_example',
     expected: 'examples',
   },
+  {
+    description: 'Strands Decider root redirects to inference guide',
+    input: 'docs/labs/strands-decider',
+    expected: 'docs/labs/strands-decider/inference',
+  },
   // Vanity URLs → external
   { description: '/discord redirects to Discord invite', input: 'discord', expected: 'https://discord.gg/strands' },
   // No redirect
@@ -186,6 +191,12 @@ const urlCases: Array<{ description: string; path: string; expected: string | nu
     description: 'renamed page without trailing slash',
     path: '/latest/documentation/docs/user-guide/concepts/tools/python-tools',
     expected: 'docs/user-guide/sdk/tools/custom-tools',
+  },
+  {
+    description: 'external redirect does not inherit the source trailing slash',
+    path: '/latest/documentation/docs/examples/cdk/deploy_to_apprunner/',
+    expected:
+      'https://github.com/strands-agents/harness-sdk/blob/main/site/docs/examples/cdk/deploy_to_apprunner/README.md',
   },
   // we don't rewrite these because they're subject to change quite a bit
   {

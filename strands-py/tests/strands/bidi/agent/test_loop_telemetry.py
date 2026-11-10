@@ -405,7 +405,7 @@ async def test_barge_in_event_recorded_on_session_span(loop, agent, agenerator, 
 async def test_usage_accumulation(loop, agent, agenerator, otel_setup):
     """Usage events accumulate tokens on the loop and session span."""
     events = [
-        BidiUsageEvent(input_tokens=100, output_tokens=50, total_tokens=150, cache_read_input_tokens=20),
+        BidiUsageEvent(input_tokens=100, output_tokens=50, total_tokens=150, input_token_details={"cache_read": 20}),
         BidiUsageEvent(input_tokens=200, output_tokens=75, total_tokens=275),
     ]
     agent.model.receive = unittest.mock.Mock(return_value=agenerator(events))

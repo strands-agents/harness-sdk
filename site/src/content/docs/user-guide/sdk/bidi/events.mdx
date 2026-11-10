@@ -13,6 +13,10 @@ sourceLinks:
   - path: strands-py/src/strands/types/_events.py
 redirectFrom:
   - docs/user-guide/sdk/bidirectional-streaming/events
+  - docs/user-guide/sdk/bidi/barge-in
+  - docs/user-guide/sdk/bidirectional-streaming/barge-in
+  - docs/user-guide/sdk/bidirectional-streaming/interruption
+  - docs/user-guide/concepts/bidirectional-streaming/interruption
 ---
 
 import BidiEventOrdering from '@components/BidiEventOrdering.astro';
@@ -23,7 +27,7 @@ Your application consumes these events to play audio, display text, and track on
 
 ## Consume events
 
-Read events with `agent.receive()` after starting the agent. To forward events to output streams, use [`agent.run()`](io.md), which manages the agent lifecycle and sends each event to every configured output stream.
+Read events with `agent.receive()` after starting the agent. To forward events to output streams, use [`agent.run()`](io.mdx), which manages the agent lifecycle and sends each event to every configured output stream.
 
 Use `isinstance()` to access typed properties, or check the `type` string and read dictionary fields. The example below demonstrates both styles by sending a text prompt and printing completed transcripts until the first model response ends:
 
@@ -79,7 +83,9 @@ asyncio.run(main())
 
 ## Event families
 
-Model adapters emit connection starts, response boundaries, content streams, barge-in signals, and tool requests. The agent adds completed blocks, tool results, restart notifications, and connection stops.
+Model adapters emit connection starts, response boundaries, content streams, barge-in
+signals, tool requests, and usage reports. The agent adds completed blocks, tool results,
+restart notifications, and connection stops.
 
 Provider support and configuration determine which events appear. See the [event API reference](@api/python/strands.bidi.types) for complete class definitions and fields.
 
@@ -115,7 +121,7 @@ Use audio events to play the assistant's speech. Events for one audio stream sha
 | [`BidiAudioDeltaEvent`](@api/python/strands.bidi.types#strands.bidi.types.BidiAudioDeltaEvent) | The next audio chunk is in `audio`, encoded as base64. |
 | [`BidiAudioStopEvent`](@api/python/strands.bidi.types#strands.bidi.types.BidiAudioStopEvent) | The audio stream ends. |
 
-Each delta also includes the audio `format`, `sample_rate`, and `channels`. Buffered audio may still be playing when `BidiAudioStopEvent` arrives. See [`AudioIO`](io.md#audio-io) for playback handling.
+Each delta also includes the audio `format`, `sample_rate`, and `channels`. Buffered audio may still be playing when `BidiAudioStopEvent` arrives. See [`AudioIO`](io.mdx#audio-io) for playback handling.
 
 ### Transcripts
 
@@ -165,11 +171,27 @@ Use tool events to track requests, intermediate output, and completed results.
 
 [`BidiBargeInEvent`](@api/python/strands.bidi.types#strands.bidi.types.BidiBargeInEvent) signals an interruption to model output, whether audio, text, or other content. It carries no fields beyond `type`. See [Barge-in](#barge-in-1) for responding to interrupted output.
 
+### Usage
+
+Use [`BidiUsageEvent`](@api/python/strands.bidi.types#strands.bidi.types.BidiUsageEvent)
+to track token usage during a conversation. Each event reports additional
+`input_tokens`, `output_tokens`, and `total_tokens`; sum these counts to track
+conversation totals.
+
+Optional `input_token_details` and `output_token_details` provide breakdowns by
+modality, cache, or reasoning, depending on the provider. See
+[Tracking token usage](observability.mdx#tracking-token-usage) for an example.
+
 ## Event ordering
 
 Follow these ordering rules when consuming events or implementing a custom model. The diagram illustrates an audio response with an assistant transcript and a separate user transcript.
 
 <BidiEventOrdering />
+
+:::note[Nova Sonic usage timing]
+[Amazon Bedrock Nova Sonic](models/bedrock.mdx) currently reports usage independently
+of response boundaries. Its usage events can arrive before, during, or after a response.
+:::
 
 User transcripts have their own lifecycle and can start or finish before, during, or after an assistant response. Aligned rows do not imply timing, and a transcript start does not mark the exact moment speech began. Process assistant audio and tool requests without waiting for a completed user transcript.
 
@@ -177,8 +199,12 @@ User transcripts have their own lifecycle and can start or finish before, during
 2. **Response starts.** `BidiResponseStartEvent` precedes the response's assistant content and tool requests. Match response start and stop by `response_id`.
 3. **Content streams.** Each stream emits a start, zero or more deltas, and a stop. Text, reasoning, and other streams can interleave with the audio and transcripts shown, and streams can finish in a different order from their starts. Track each stream by its `content_id`, unique within the connection. A response can contain multiple streams and tool groups.
 4. **Completed blocks follow.** The agent emits each completed block after its content stop, such as `BidiTextBlockEvent` after `BidiTextStopEvent`. Custom models supply start, delta, and stop events; the agent assembles the block. Audio has no completed block event.
-5. **Response stops.** `BidiResponseStopEvent` follows all assistant content stops and completed blocks in that response. User transcripts and background tool results are independent of this boundary.
-6. **Connection stops.** `BidiConnectionStopEvent` signals the end of the conversation; the event iterator then ends.
+5. **Usage is reported.** `BidiUsageEvent` provides token counts before response stop.
+6. **Response stops.** `BidiResponseStopEvent` follows all assistant content stops and
+   completed blocks in that response. User transcripts and background tool results are
+   independent of this boundary.
+7. **Connection stops.** `BidiConnectionStopEvent` signals the end of the conversation; the
+   event iterator then ends.
 
 Use deltas for live updates. A completed block contains the full text for its stream, so replace the displayed partial text when it arrives. See [Messages](#messages) for how this content becomes conversation history.
 
@@ -204,7 +230,7 @@ Use `BidiBargeInEvent` to stop presenting the current model output while the con
 
 <BidiEventOrdering scenario="barge-in" />
 
-Clear buffered audio as soon as the event arrives so playback stops promptly. [`AudioIO.output()`](io.md#audio-io) does this automatically; a custom output stream must clear its own playback queue.
+Clear buffered audio as soon as the event arrives so playback stops promptly. [`AudioIO.output()`](io.mdx#audio-io) does this automatically; a custom output stream must clear its own playback queue.
 
 ### Connection restarts
 

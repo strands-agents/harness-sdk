@@ -406,7 +406,7 @@ class _FakeAgent:
         self.model = model
         self.aux_model = model
         self.hooks: list[tuple[Any, Any, float]] = []
-        self._middleware_registry = MagicMock()
+        self.add_middleware = MagicMock()
 
     def add_hook(self, callback: Any, event_type: Any = None, *, order: float = HookOrder.DEFAULT) -> None:
         self.hooks.append((callback, event_type, order))

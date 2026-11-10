@@ -6,6 +6,7 @@
 import json
 import logging
 import uuid
+from collections import Counter
 from collections.abc import AsyncGenerator
 from typing import Any, TypeVar, cast
 
@@ -17,8 +18,10 @@ from ..types.content import ContentBlock, Messages
 from ..types.exceptions import ContextWindowOverflowException
 from ..types.streaming import StopReason, StreamEvent
 from ..types.tools import ToolChoice, ToolSpec
+from ._model_info import SERVER_SIDE_SUMMARY_OFF, ModelInfo
 from ._validation import (
     _has_location_source,
+    _log_skipped_blocks,
     validate_config_keys,
     warn_on_cache_config_not_supported,
     warn_on_tool_choice_not_supported,
@@ -103,6 +106,15 @@ class OllamaModel(Model):
         validate_config_keys(model_config, self.OllamaConfig)
         self.config.update(model_config)
 
+    @property
+    @override
+    def model_info(self) -> ModelInfo:
+        """Reports server-side summary as off, which a ``model_info`` override still wins over.
+
+        Ollama has no server-side summary, including for Claude models served through it.
+        """
+        return ModelInfo.merge(super().model_info, SERVER_SIDE_SUMMARY_OFF, self.get_config().get("model_info"))
+
     @override
     def get_config(self) -> OllamaConfig:
         """Get the Ollama model configuration.
@@ -177,14 +189,16 @@ class OllamaModel(Model):
         system_message = [{"role": "system", "content": system_prompt}] if system_prompt else []
 
         formatted_messages = []
+        skipped: Counter[str] = Counter()
         for message in messages:
             for content in message["content"]:
                 # Check for location sources and skip with warning
                 if _has_location_source(content):
-                    logger.warning("Location sources are not supported by Ollama | skipping content block")
+                    skipped["Location sources are not supported by Ollama | skipping content block"] += 1
                     continue
                 formatted_messages.extend(self._format_request_message_contents(message["role"], content))
 
+        _log_skipped_blocks(logger, skipped)
         return system_message + formatted_messages
 
     def format_request(

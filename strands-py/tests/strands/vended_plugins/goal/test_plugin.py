@@ -5,10 +5,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from strands.agent.invocation_context import _create_invocation_context
 from strands.hooks.events import AfterInvocationEvent, BeforeInvocationEvent, BeforeModelCallEvent
 from strands.types._snapshot import Snapshot
 from strands.vended_plugins.goal import GoalAttempt, GoalLoop, GoalResult, JudgeConfig, ValidationOutcome
 from strands.vended_plugins.goal.judge import JUDGE_SYSTEM_PROMPT, JudgeOutcome, build_judge_prompt
+from tests.fixtures.mocked_model_provider import MockedModelProvider
 
 # --- Helpers ---
 
@@ -734,3 +736,75 @@ async def test_nl_judge_fresh_agent_per_validation():
         await hooks["after"][0](AfterInvocationEvent(agent=agent))
 
     assert call_count == 2
+
+
+# --- Request limits ---
+
+
+class TestRequestLimits:
+    @pytest.mark.asyncio
+    async def test_keeps_the_attempt_and_stops_when_the_request_limit_is_reached(self):
+        agent = _make_mock_agent()
+        validator = MagicMock(return_value={"passed": False, "feedback": "try again"})
+        plugin = GoalLoop(goal=lambda response, host: validator(), max_attempts=3)
+        hooks = _setup_plugin_with_hooks(plugin, agent)
+        request = _create_invocation_context({"turns": 1})
+
+        hooks["before"][0](BeforeInvocationEvent(agent=agent))
+        agent.messages.append({"role": "assistant", "content": [{"text": "first answer"}]})
+        request._take_turn()
+        await hooks["after"][0](AfterInvocationEvent(agent=agent, invocation_context=request))
+
+        assert plugin.last_result(agent) == GoalResult(
+            passed=False,
+            stop_reason="limit",
+            attempts=[GoalAttempt(attempt=1, passed=False, feedback="try again")],
+        )
+        assert validator.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_ends_on_the_limit_without_grading_an_earlier_reply(self):
+        agent = _make_mock_agent()
+        judge_model = MockedModelProvider([{"role": "assistant", "content": [{"text": "never judged"}]}])
+        plugin = GoalLoop(goal="be concise", max_attempts=3, judge=JudgeConfig(model=judge_model))
+        hooks = _setup_plugin_with_hooks(plugin, agent)
+        spent_request = _create_invocation_context({"turns": 1})
+        spent_request._take_turn()
+
+        hooks["before"][0](BeforeInvocationEvent(agent=agent))
+        await hooks["after"][0](AfterInvocationEvent(agent=agent, invocation_context=spent_request))
+
+        assert plugin.last_result(agent) == GoalResult(passed=False, stop_reason="limit", attempts=[])
+        assert judge_model.index == 0
+
+    @pytest.mark.asyncio
+    async def test_ends_on_the_limit_when_it_is_spent_before_a_fresh_agent_answers(self):
+        agent = _make_mock_agent()
+        agent.messages = [{"role": "user", "content": [{"text": "go"}]}]
+        validator = MagicMock(return_value=True)
+        plugin = GoalLoop(goal=lambda response, host: validator(), max_attempts=3)
+        hooks = _setup_plugin_with_hooks(plugin, agent)
+        spent_request = _create_invocation_context({"turns": 1})
+        spent_request._take_turn()
+
+        hooks["before"][0](BeforeInvocationEvent(agent=agent))
+        await hooks["after"][0](AfterInvocationEvent(agent=agent, invocation_context=spent_request))
+
+        assert plugin.last_result(agent) == GoalResult(passed=False, stop_reason="limit", attempts=[])
+        validator.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_adds_the_judge_usage_to_the_requests_usage_total(self):
+        agent = _make_mock_agent()
+        judge_model = MockedModelProvider(
+            [{"role": "assistant", "content": [{"text": "judged"}]}],
+            usages=[{"inputTokens": 40, "outputTokens": 5, "totalTokens": 45}],
+        )
+        plugin = GoalLoop(goal="be concise", max_attempts=1, judge=JudgeConfig(model=judge_model))
+        hooks = _setup_plugin_with_hooks(plugin, agent)
+        request = _create_invocation_context({"turns": 5})
+
+        hooks["before"][0](BeforeInvocationEvent(agent=agent))
+        await hooks["after"][0](AfterInvocationEvent(agent=agent, invocation_context=request))
+
+        assert request.usage == {"turns_taken": 0, "inputTokens": 40, "outputTokens": 5, "totalTokens": 45}

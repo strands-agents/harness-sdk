@@ -5,6 +5,7 @@ import { AfterModelCallEvent, BeforeModelCallEvent } from '../../hooks/events.js
 import { ContextWindowOverflowError } from '../../errors.js'
 import { Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../types/messages.js'
 import type { Agent } from '../../agent/agent.js'
+import { InMemoryStorage } from '../../storage/in-memory-storage.js'
 
 function makeMockAgent(overrides?: {
   id?: string
@@ -92,6 +93,52 @@ describe('ContextManager', () => {
     })
   })
 
+  describe('stash root', () => {
+    it('uses an explicitly configured scoped stash storage as the exact root', async () => {
+      const storage = new InMemoryStorage()
+      const cm = new ContextManager({ stash: { storage: storage.namespace('team') } })
+      await cm.initAgent(makeMockAgent())
+      await cm.stash!.store('tool-1', 0, new TextEncoder().encode('{}'))
+
+      expect(await storage.list('')).toStrictEqual(['team/tool-1_0'])
+    })
+
+    it('keeps the per-agent root under a scoped agent storage', async () => {
+      const storage = new InMemoryStorage()
+      const agent = createMockAgent({
+        extra: { id: 'test-agent', storage: storage.namespace('tenant') } as Partial<Agent>,
+      })
+      const cm = new ContextManager()
+      await cm.initAgent(agent)
+      await cm.stash!.store('tool-1', 0, new TextEncoder().encode('{}'))
+
+      expect(await storage.list('')).toStrictEqual(['tenant/context/test-ses/scopes/agent/test-agent/tool-1_0'])
+    })
+  })
+
+  describe('seeded messages', () => {
+    it('does not overwrite a stashed original with a seeded preview', async () => {
+      const storage = new InMemoryStorage()
+      const view = storage.namespace('team')
+      await view.write('tu-1_0', new TextEncoder().encode(JSON.stringify({ text: 'original full result' })))
+      const preview = new Message({
+        role: 'user',
+        content: [
+          new ToolResultBlock({
+            toolUseId: 'tu-1',
+            status: 'success',
+            content: [new TextBlock('[Truncated: 1 block, ~7,500 tokens] preview\n\n[Stashed] [ref: tu-1_0]')],
+          }),
+        ],
+      })
+      const cm = new ContextManager({ stash: { storage: view } })
+
+      await cm.initAgent(makeMockAgent({ messages: [preview] }))
+
+      expect(await cm.stash!.retrieve('tu-1_0')).toStrictEqual({ data: { text: 'original full result' } })
+    })
+  })
+
   describe('overflow path', () => {
     it('runs strategies on ContextWindowOverflowError and sets retry', async () => {
       let strategyCalled = false
@@ -167,6 +214,28 @@ describe('ContextManager', () => {
       await invokeTrackedHook(agent, event)
 
       expect(messages.length).toBeLessThan(originalLength)
+      expect(event.retry).toBe(true)
+    })
+
+    it('truncates when a strategy throws', async () => {
+      const messages = Array.from(
+        { length: 10 },
+        (_, i) => new Message({ role: i % 2 === 0 ? 'user' : 'assistant', content: [new TextBlock(`msg ${i}`)] })
+      )
+      const strategy = {
+        name: 'failing',
+        apply: async (): Promise<boolean> => {
+          throw new Error('summarizer rejected')
+        },
+      }
+      const cm = new ContextManager({ strategies: [strategy] })
+      const agent = makeMockAgent({ messages, countTokens: async () => 10000, estimateUtilization: () => 1.5 })
+      await cm.initAgent(agent)
+
+      const event = makeOverflowEvent(agent)
+      await invokeTrackedHook(agent, event)
+
+      expect(messages.length).toBeLessThan(10)
       expect(event.retry).toBe(true)
     })
 

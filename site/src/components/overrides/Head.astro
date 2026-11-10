@@ -7,10 +7,11 @@
 import { getCollection } from 'astro:content'
 import SiteScripts from '../SiteScripts.astro'
 import Analytics from '../Analytics.astro'
-import { baseSchemas } from '../../util/structured-data'
-import { getDocsIds } from '../../util/docs-ids'
+import { articleSchema, baseSchemas, buildBreadcrumbItems, productSchema, serializeJsonLd } from '../../util/structured-data'
+import { currentProduct } from '../../util/current-product'
+import { getDocsIds, getSampleGuideRouteIds } from '../../util/docs-ids'
 import { relatedUserGuideFor } from '../../util/related-docs'
-import { resolveLanguage, sourceLinkUrl } from '../../util/source-links'
+import { languageLabel, resolveLanguage, sourceLinkUrl } from '../../util/source-links'
 import type { SourceLink } from '../../content.config'
 
 const { head } = Astro.locals.starlightRoute
@@ -20,117 +21,64 @@ const route = Astro.locals.starlightRoute
 const base = import.meta.env.BASE_URL || '/'
 const faviconHref = base.endsWith('/') ? `${base}favicon.svg` : `${base}/favicon.svg`
 
-// Raw markdown twin served by src/pages/[...slug]/index.md.ts — one endpoint per docs
-// collection entry, at `/{entry.id}/index.md`. Only advertise it for routes backed by a
-// docs entry (blog/changelog pages flow through Starlight with synthetic entries).
-const docIds = await getDocsIds()
+// Raw markdown twins are available for generated sample guides and non-preview docs.
+const [docIds, sampleGuideRouteIds] = await Promise.all([getDocsIds(), getSampleGuideRouteIds()])
 const baseNoSlash = base.replace(/\/$/, '')
-const markdownHref = docIds.has(route.entry.id) ? `${baseNoSlash}/${route.entry.id}/index.md` : null
+const hasMarkdownTwin =
+  sampleGuideRouteIds.has(route.entry.id) ||
+  (docIds.has(route.entry.id) && route.entry.data.externalDocs?.status !== 'preview')
+const markdownHref = hasMarkdownTwin ? `${baseNoSlash}/${route.entry.id}/index.md` : null
 
-// Build breadcrumb list from URL path
+// Build breadcrumb list from the canonical route id rather than the deployed URL,
+// which may contain a preview base path.
 const siteUrl = Astro.site?.origin || 'https://strandsagents.com'
-const pathSegments = Astro.url.pathname.replace(/^\/|\/$/g, '').split('/').filter(Boolean)
-const breadcrumbLabels: Record<string, string> = {
-  'docs': 'Docs',
-  'user-guide': 'User Guide',
-  'concepts': 'Concepts',
-  'agents': 'Agents',
-  'tools': 'Tools',
-  'multi-agent': 'Multi-Agent',
-  'model-providers': 'Model Providers',
-  'streaming': 'Streaming',
-  'bidi': 'Voice',
-  'deploy': 'Deploy',
-  'safety-security': 'Safety & Security',
-  'observability-evaluation': 'Observability',
-  'evals-sdk': 'Evals SDK',
-  'examples': 'Examples',
-  'community': 'Community',
-  'labs': 'Labs',
-  'contribute': 'Contribute',
-  'api': 'API Reference',
-  'plugins': 'Plugins',
-  'quickstart': 'Quickstart',
-  'experimental': 'Experimental',
-  'python': 'Python',
-  'typescript': 'TypeScript',
-  'integrations': 'Integrations',
-  'session-managers': 'Session Managers',
-  'contributing': 'Contributing',
-}
+const breadcrumbItems = buildBreadcrumbItems(route.entry.id, route.entry.data.title, siteUrl, docIds, baseNoSlash)
 
-const breadcrumbItems = pathSegments.map((segment, i) => {
-  const path = '/' + pathSegments.slice(0, i + 1).join('/') + '/'
-  const isLast = i === pathSegments.length - 1
-  const name = isLast
-    ? (route.entry.data.title || segment)
-    : (breadcrumbLabels[segment] || segment.replace(/-/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase()))
-  return {
-    "@type": "ListItem" as const,
-    position: i + 1,
-    name,
-    ...(isLast ? {} : { item: siteUrl + path })
-  }
-})
-
-// TechArticle node for docs pages with tags or sourceLinks. Reaches HTML-only
-// crawlers that don't follow the llms.txt convention.
-//
-// Schema reference for the fields used below:
-//   TechArticle:        https://schema.org/TechArticle
-//   keywords:           https://schema.org/keywords
-//   relatedLink:        https://schema.org/relatedLink
-//   isBasedOn:          https://schema.org/isBasedOn
-//   SoftwareSourceCode: https://schema.org/SoftwareSourceCode
-//   programmingLanguage: https://schema.org/programmingLanguage
+// Docs collection pages get an article node; other routes (blog, changelog,
+// integrations, samples) pass their own nodes through Astro.locals.structuredData.
 const entry = route.entry
-// Non-docs routes (blog authors/tags pages, etc.) flow through Starlight too
-// but their synthetic entry.data has no `tags` field — guard with ??.
-const tags = entry.data.tags ?? []
-const sourceLinks = entry.data.sourceLinks ?? []
-let techArticle: Record<string, unknown> | null = null
-if (tags.length > 0 || sourceLinks.length > 0) {
-  const related = tags.length > 0
-    ? relatedUserGuideFor(entry, await getCollection('docs'))
-    : []
-  techArticle = {
-    "@type": "TechArticle",
-    "headline": entry.data.title,
-    "url": siteUrl + Astro.url.pathname,
-    ...(tags.length > 0 ? { "keywords": tags.join(', ') } : {}),
-    ...(entry.data.description ? { "description": entry.data.description } : {}),
-    ...(related.length > 0
-      ? { "relatedLink": related.map((r) => siteUrl + '/' + r.slug + '/') }
-      : {}),
-    ...(sourceLinks.length > 0
-      ? {
-          "isBasedOn": sourceLinks.map((s: SourceLink) => ({
-            "@type": "SoftwareSourceCode",
-            "programmingLanguage": resolveLanguage(s),
-            "codeRepository": `https://github.com/strands-agents/${s.repo}`,
-            "url": sourceLinkUrl(s),
-          })),
-        }
-      : {}),
-  }
+const isDocsPage = docIds.has(entry.id) && entry.id !== '404'
+const product = isDocsPage ? currentProduct(Astro.url.pathname) : undefined
+let article: Record<string, unknown> | null = null
+if (isDocsPage) {
+  const tags = entry.data.tags ?? []
+  const sourceLinks = entry.data.sourceLinks ?? []
+  const related = tags.length > 0 ? relatedUserGuideFor(entry, await getCollection('docs')) : []
+  article = articleSchema(
+    {
+      type: entry.id.startsWith('docs/api/') ? 'APIReference' : 'TechArticle',
+      title: entry.data.title,
+      description: entry.data.description,
+      url: siteUrl + Astro.url.pathname,
+      dateModified: route.lastUpdated,
+      keywords: tags,
+      relatedLinks: related.map((r) => siteUrl + '/' + r.slug + '/'),
+      sources: sourceLinks.map((s: SourceLink) => ({
+        programmingLanguage: languageLabel(resolveLanguage(s)),
+        codeRepository: `https://github.com/strands-agents/${s.repo}`,
+        url: sourceLinkUrl(s),
+      })),
+      product,
+    },
+    siteUrl
+  )
 }
 
 const structuredData = {
   "@context": "https://schema.org",
   "@graph": [
     ...baseSchemas(siteUrl),
-    {
-      "@type": "BreadcrumbList",
-      "itemListElement": breadcrumbItems
-    },
-    ...(techArticle ? [techArticle] : []),
+    ...(product ? [productSchema(product, siteUrl)] : []),
+    ...(breadcrumbItems.length > 1 ? [{ "@type": "BreadcrumbList", "itemListElement": breadcrumbItems }] : []),
+    ...(article ? [article] : []),
+    ...(Astro.locals.structuredData ?? []),
   ]
 }
 ---
 
 {head.map(({ tag: Tag, attrs, content }) => <Tag {...attrs} set:html={content} />)}
 
-<!-- Favicon: an SVG that adapts to light/dark mode via prefers-color-scheme. -->
+<!-- Favicon: green frog on a black tile so it stays legible on light backgrounds. -->
 <link rel="icon" type="image/svg+xml" href={faviconHref} />
 
 <!-- Raw markdown twin of this page, for LLMs and tooling -->
@@ -143,7 +91,7 @@ const structuredData = {
 <Analytics />
 
 <!-- Structured Data -->
-<script type="application/ld+json" set:html={JSON.stringify(structuredData)} />
+<script type="application/ld+json" set:html={serializeJsonLd(structuredData)} />
 
 <!-- Embed mode: with `?embed` in the URL the page renders chromeless (no site
      header/sidebar/TOC/footers) for the /integrations docs drawer iframe. The

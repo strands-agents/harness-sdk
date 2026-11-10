@@ -68,6 +68,17 @@ describe('retrieval tool', () => {
     expect(result).toContain('Error: reference not found')
   })
 
+  it.each([{}, { pattern: 'row-4321' }])('returns error for an offload placeholder with input %j', async (extra) => {
+    const { stash, refPromise } = makeStashWithTextBlock(
+      '[Truncated: 1 block, ~10,973 tokens]\n\nrow-1\n\n[Stashed] [ref: tool-1_0]'
+    )
+    const ref = await refPromise
+    const retrievalTool = createRetrievalTool(stash)
+
+    const result = await invoke(retrievalTool, { reference: ref, ...extra })
+    expect(result).toBe(`Error: original content for reference ${ref} is no longer available`)
+  })
+
   it('restores image content as an ImageBlock instead of raw JSON', async () => {
     const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
     const imageData = { image: { format: 'png', source: { bytes: 'iVBORw0KGgo=' } } }

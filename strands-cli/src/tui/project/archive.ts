@@ -18,6 +18,7 @@ import { promisify } from 'node:util'
 import { unzipSync } from 'fflate'
 
 import { userDirectory } from '../config.js'
+import { npmInvocation } from '../npm.js'
 
 const MAX_PROJECT_BYTES = 50 * 1024 * 1024
 const MAX_ARCHIVE_BYTES = 64 * 1024 * 1024
@@ -180,7 +181,8 @@ async function installDependencies(root: string, language: 'typescript' | 'pytho
   const options = { cwd: root, timeout: 180_000, maxBuffer: 8 * 1024 * 1024 }
   try {
     if (nodeDependencies) {
-      await run(process.platform === 'win32' ? 'npm.cmd' : 'npm', [npmCommand, '--no-audit', '--no-fund'], options)
+      const npm = npmInvocation([npmCommand, '--no-audit', '--no-fund'])
+      await run(npm.command, npm.args, options)
     }
     if (pythonDependencies) {
       try {

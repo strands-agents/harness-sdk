@@ -93,18 +93,19 @@ class ConnectionConfig(TypedDict, total=False):
     keeps reactive-only behavior: no proactive timer, restart only after the provider reports
     a timeout.
 
-    All fields are optional. The proactive timer arms only when ``restart_after_s`` is declared.
+    All fields are optional. The proactive timer arms only when ``restart_after_s`` is positive
+    and automatic restarts are enabled.
 
     Attributes:
         restart_after_s: Seconds after a connection is established at which to proactively
             restart. Set it at least ~10s below the provider's own connection limit:
             the restart may wait briefly for the current turn to finish (aligning the swap to a
             turn boundary), and that wait plus the swap must complete before the provider's limit.
-        auto_reconnect: Whether the loop restarts the connection automatically (default True).
+        auto_restart: Whether the loop restarts the connection automatically (default True).
     """
 
     restart_after_s: int
-    auto_reconnect: bool
+    auto_restart: bool
 
 
 class ModelConfig(TypedDict, total=False):
@@ -156,9 +157,9 @@ def _validate_audio_config(config: AudioConfig) -> None:
     validate_config_keys(config["output"], AudioStreamConfig)
 
 
-def _merge_config(config: dict[str, Any], overrides: dict[str, Any]) -> dict[str, Any]:
+def _merge_config(config: Mapping[str, Any], overrides: Mapping[str, Any]) -> dict[str, Any]:
     """Recursively merge configs without modifying either input."""
-    merged = copy.deepcopy(config)
+    merged = copy.deepcopy(dict(config))
     for key, value in overrides.items():
         if isinstance(value, dict):
             existing = merged.get(key)

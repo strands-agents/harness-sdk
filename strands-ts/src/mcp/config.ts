@@ -44,12 +44,7 @@ export interface McpServerConfig {
   disabled?: boolean
   /** When true, skip config/connection failures and overlong prefixed names during tool listing with warnings. */
   continueOnError?: boolean
-  /**
-   * Task-augmented tool execution configuration (experimental).
-   *
-   * Temporarily unavailable while task support is rebuilt on the MCP tasks extension
-   * (https://github.com/strands-agents/harness-sdk/issues/1659). When set, tool calls throw.
-   */
+  /** Configuration for automatic execution of legacy (2025-11-25) MCP task tools. Experimental: subject to change. */
   tasksConfig?: TasksConfig
 }
 

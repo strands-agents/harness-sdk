@@ -3,6 +3,7 @@ import { GoalLoop } from '../plugin.js'
 import type { GoalAttempt, GoalResult, ValidationOutcome } from '../plugin.js'
 import { buildJudgePrompt, JUDGE_OUTCOME_SCHEMA } from '../judge.js'
 import { Agent } from '../../../agent/agent.js'
+import { InvocationContextImpl } from '../../../agent/invocation-context.js'
 import { AfterInvocationEvent } from '../../../hooks/events.js'
 import { MockMessageModel } from '../../../__fixtures__/mock-message-model.js'
 import { JsonBlock, Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../../types/messages.js'
@@ -694,6 +695,22 @@ describe('GoalLoop natural-language judge', () => {
     })
   })
 
+  it('judges via the host agent auxModel when no judge model is configured', async () => {
+    const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'rainbows are pretty' })
+    const auxModel = new MockMessageModel().addTurn(...buildJudgeTurn(true))
+    const modelStreamSpy = vi.spyOn(model, 'stream')
+    const auxStreamSpy = vi.spyOn(auxModel, 'stream')
+
+    const plugin = new GoalLoop({ name: 'nl-aux-model', goal: 'be concise', maxAttempts: 3 })
+    const agent = new Agent({ model, auxModel, plugins: [plugin], printer: false })
+
+    await agent.invoke('explain rainbows')
+
+    expect(plugin.lastResult(agent)?.passed).toBe(true)
+    expect(modelStreamSpy).toHaveBeenCalledTimes(1)
+    expect(auxStreamSpy).toHaveBeenCalledTimes(1)
+  })
+
   it('feeds judge feedback back to the host agent', async () => {
     const model = new MockMessageModel()
       .addTurn({ type: 'textBlock', text: 'first try (long)' })
@@ -837,6 +854,97 @@ describe('GoalLoop natural-language judge', () => {
     // Stream call order: host turn (no judge system prompt), then judge turn
     // (carrying the override).
     expect(systemPrompts).toContain('CUSTOM_JUDGE_RUBRIC_MARKER')
+  })
+
+  describe('request limits', () => {
+    it('keeps the attempt and stops when the request limit is reached', async () => {
+      const validator = vi.fn(() => ({ passed: false, feedback: 'try again' }))
+      const goal = new GoalLoop({ goal: validator, preserveContext: false })
+      const agent = new Agent({
+        model: new MockMessageModel()
+          .addTurn({ type: 'textBlock', text: 'first answer' })
+          .addTurn({ type: 'textBlock', text: 'second answer' }),
+        plugins: [goal],
+        printer: false,
+      })
+
+      const result = await agent.invoke('write it', { limits: { turns: 1 } })
+
+      expect(goal.lastResult(agent)).toEqual({
+        passed: false,
+        stopReason: 'limit',
+        attempts: [{ attempt: 1, passed: false, feedback: 'try again' }],
+      })
+      expect(validator).toHaveBeenCalledTimes(1)
+      expect(result.toString()).toBe('first answer')
+      expect(agent.messages.map((message) => message.role)).toEqual(['user', 'assistant'])
+    })
+
+    it('ends on the limit without grading an earlier reply when the pass stops before answering', async () => {
+      const [judgeTurn] = buildJudgeTurn(true)
+      const judgeModel = new MockMessageModel().addTurn(judgeTurn)
+      const plugin = new GoalLoop({ name: 'nl-spent-on-entry', goal: 'be concise', judge: { model: judgeModel } })
+      const agent = new Agent({
+        model: new MockMessageModel(),
+        messages: [
+          new Message({ role: 'user', content: [new TextBlock('explain rainbows')] }),
+          new Message({ role: 'assistant', content: [new TextBlock('rainbows are pretty')] }),
+        ],
+        plugins: [plugin],
+        printer: false,
+      })
+      const spentRequest = new InvocationContextImpl({ turns: 1 })
+      spentRequest.usage.turnsTaken = 1
+
+      const result = await agent.invoke('go', { invocationContext: spentRequest })
+
+      expect({ stopReason: result.stopReason, text: result.toString() }).toEqual({ stopReason: 'limitTurns', text: '' })
+      expect(plugin.lastResult(agent)).toEqual({ passed: false, stopReason: 'limit', attempts: [] })
+      expect(judgeModel.callCount).toBe(0)
+    })
+
+    it('ends on the limit when it is spent before a fresh agent answers', async () => {
+      const validator = vi.fn(() => true)
+      const goal = new GoalLoop({ goal: validator })
+      const agent = new Agent({ model: new MockMessageModel(), plugins: [goal], printer: false })
+      const spentRequest = new InvocationContextImpl({ turns: 1 })
+      spentRequest.usage.turnsTaken = 1
+
+      await agent.invoke('go', { invocationContext: spentRequest })
+
+      expect(goal.lastResult(agent)).toEqual({ passed: false, stopReason: 'limit', attempts: [] })
+      expect(validator).not.toHaveBeenCalled()
+    })
+
+    it("adds the judge usage to the request's usage total", async () => {
+      const [judgeTurn] = buildJudgeTurn(true)
+      const judgeModel = new MockMessageModel().addTurn(judgeTurn, {
+        usage: { inputTokens: 40, outputTokens: 5, totalTokens: 45 },
+      })
+      const plugin = new GoalLoop({ name: 'nl-request-usage', goal: 'be concise', judge: { model: judgeModel } })
+      const agent = new Agent({
+        model: new MockMessageModel().addTurn(
+          { type: 'textBlock', text: 'rainbows are refracted light' },
+          { usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } }
+        ),
+        plugins: [plugin],
+        printer: false,
+      })
+
+      const result = await agent.invoke('explain rainbows', { limits: { turns: 5 } })
+
+      expect(plugin.lastResult(agent)).toEqual({
+        passed: true,
+        stopReason: 'satisfied',
+        attempts: [{ attempt: 1, passed: true }],
+      })
+      expect(result.invocationContext?.usage).toEqual({
+        turnsTaken: 1,
+        inputTokens: 41,
+        outputTokens: 6,
+        totalTokens: 47,
+      })
+    })
   })
 })
 

@@ -426,6 +426,14 @@ describe('createHarness', () => {
     expect(toolNames(agent)).toContain('web_search')
   })
 
+  it('enables Anthropic native web search from the default set', async () => {
+    const agent = await createHarness({ model: 'anthropic/claude-opus-4-8' })
+    expect(toolNames(agent)).not.toContain('web_search')
+    expect(agent.model.getConfig().anthropicTools).toEqual([
+      { type: 'web_search_20260318', name: 'web_search', allowed_callers: ['direct'] },
+    ])
+  })
+
   it('only offers Bedrock Web Search on GPT-5 and GPT-6 Mantle models', async () => {
     const info = vi.fn()
     configureLogging({ debug: () => {}, info, warn: () => {}, error: () => {} })
@@ -454,6 +462,24 @@ describe('createHarness', () => {
   it('enables caching by default on anthropic direct', async () => {
     const agent = await createHarness({ model: 'anthropic/claude-opus-4-8' })
     expect(agent.model.getConfig().cacheConfig).toEqual({ strategy: 'auto' })
+  })
+
+  it.each(
+    ['openai/gpt-5.6-sol', 'bedrock-mantle/openai.gpt-6-luna'].flatMap((model) =>
+      ([undefined, 'auto', true, false, null] as const).map((caching) => ({ model, caching }))
+    )
+  )('configures $model caching=$caching', async ({ model, caching }) => {
+    const agent = await createHarness({
+      model,
+      ...(caching !== undefined && { caching }),
+      session: false,
+      memory: false,
+      skills: false,
+      builtinTools: [],
+    })
+    expect(agent.model.getConfig().cacheConfig).toEqual(
+      caching === false || caching === null ? undefined : { strategy: 'auto' }
+    )
   })
 
   it('builds silently with default caching on a Model instance', async () => {

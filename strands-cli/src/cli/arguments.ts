@@ -256,7 +256,10 @@ function applyConfigAssignment(config: Record<string, unknown>, assignment: stri
 }
 
 function commaSeparated(value: string): string[] {
-  return value.split(',').filter(Boolean)
+  return value
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean)
 }
 
 function modelSpecifier(value: string, option: string): string {

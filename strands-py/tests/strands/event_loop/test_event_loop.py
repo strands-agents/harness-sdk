@@ -10,9 +10,10 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 import strands
-import strands._middleware
+import strands.middleware._registry
 import strands.telemetry
 from strands import Agent
+from strands.agent.invocation_context import _create_invocation_context
 from strands.event_loop._retry import ModelRetryStrategy
 from strands.experimental.checkpoint import Checkpoint
 from strands.hooks import (
@@ -26,7 +27,7 @@ from strands.hooks import (
     MessageAddedEvent,
 )
 from strands.interrupt import Interrupt, PendingToolExecution, _InterruptState
-from strands.telemetry.metrics import EventLoopMetrics
+from strands.telemetry.metrics import EventLoopMetrics, Trace
 from strands.telemetry.tracer import Tracer
 from strands.tools.executors import ConcurrentToolExecutor, SequentialToolExecutor
 from strands.tools.registry import ToolRegistry
@@ -163,9 +164,11 @@ def agent(model, system_prompt, messages, tool_registry, thread_pool, hook_regis
     mock._cancel_signal = threading.Event()
     mock._background_tasks = None
     mock._observe_cancellation = mock._cancel_signal.is_set
+    mock._deferred_cancel = False
+    mock._cancel_message = None
     mock._model_state = {}
     mock._system_prompt_content = None
-    mock._middleware_registry = strands._middleware.MiddlewareRegistry()
+    mock._middleware_registry = strands.middleware._registry.MiddlewareRegistry()
     mock._checkpointing = False
     mock._checkpoint = None
     mock._checkpoint_cycle_index = 0
@@ -175,6 +178,7 @@ def agent(model, system_prompt, messages, tool_registry, thread_pool, hook_regis
     # Bind the real _append_messages chokepoint so appends assign tracking ids
     # and fire MessageAddedEvent exactly as production does.
     mock._append_messages = Agent._append_messages.__get__(mock, Agent)
+    mock.cancel = Agent.cancel.__get__(mock, Agent)
 
     return mock
 
@@ -185,6 +189,23 @@ def mock_tracer():
     tracer.start_event_loop_cycle_span.return_value = MagicMock()
     tracer.start_model_invoke_span.return_value = MagicMock()
     return tracer
+
+
+@pytest.mark.asyncio
+async def test_event_loop_cycle_limit_stop_with_empty_history_yields_empty_assistant_message(agent, model, alist):
+    agent.messages.clear()
+    invocation_context = _create_invocation_context({"turns": 1})
+    invocation_context._usage["turns_taken"] = 1
+
+    stream = strands.event_loop.event_loop.event_loop_cycle(
+        agent=agent, invocation_state={}, invocation_context=invocation_context
+    )
+    events = await alist(stream)
+
+    stop_reason, message, _, _, _, _, _ = events[-1]["stop"]
+    assert stop_reason == "limit_turns"
+    assert message == {"role": "assistant", "content": []}
+    model.stream.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -213,6 +234,62 @@ async def test_event_loop_cycle_text_response(
     exp_request_state = {}
 
     assert tru_stop_reason == exp_stop_reason and tru_message == exp_message and tru_request_state == exp_request_state
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("pass_positionally", [False, True], ids=["keyword", "positional"])
+async def test_event_loop_cycle_accepts_the_deprecated_limits_argument(
+    agent, model, agenerator, alist, pass_positionally
+):
+    model.stream.return_value = agenerator(
+        [
+            {"contentBlockDelta": {"delta": {"text": "test text"}}},
+            {"contentBlockStop": {}},
+        ]
+    )
+    limits = {"turns": 1}
+
+    with pytest.warns(DeprecationWarning, match="limits=.*deprecated"):
+        stream = (
+            strands.event_loop.event_loop.event_loop_cycle(agent, {}, None, limits)
+            if pass_positionally
+            else strands.event_loop.event_loop.event_loop_cycle(agent=agent, invocation_state={}, limits=limits)
+        )
+        events = await alist(stream)
+
+    assert events[-1]["stop"][0] == "end_turn"
+
+
+@pytest.mark.asyncio
+async def test_recurse_event_loop_accepts_the_deprecated_limits_argument(agent, model, agenerator, alist):
+    model.stream.return_value = agenerator(
+        [
+            {"contentBlockDelta": {"delta": {"text": "test text"}}},
+            {"contentBlockStop": {}},
+        ]
+    )
+
+    with pytest.warns(DeprecationWarning, match="limits=.*deprecated"):
+        events = await alist(
+            strands.event_loop.event_loop.recurse_event_loop(
+                agent, {"event_loop_cycle_trace": Trace("cycle")}, None, {"turns": 1}
+            )
+        )
+
+    assert events[-1]["stop"][0] == "end_turn"
+
+
+def test_deprecated_limits_bind_the_cycle_on_top_of_the_request():
+    request = _create_invocation_context({"turns": 5})
+
+    with pytest.warns(DeprecationWarning):
+        cycle_context = strands.event_loop.event_loop._resolve_cycle_invocation_context(request, {"turns": 1})
+
+    assert (cycle_context._take_turn(), cycle_context._take_turn(), request.usage["turns_taken"]) == (
+        None,
+        "limit_turns",
+        1,
+    )
 
 
 @pytest.mark.asyncio
@@ -456,13 +533,8 @@ async def test_event_loop_cycle_tool_result_no_tool_handler(
 
 
 @pytest.mark.asyncio
-async def test_event_loop_cycle_stop(
-    agent,
-    model,
-    tool,
-    agenerator,
-    alist,
-):
+async def test_event_loop_cycle_deferred_cancel_stops_after_tools(agent, model, tool, agenerator, alist):
+    """cancel(after_current_tools=True) lets the batch finish, then stops with the message as the final turn."""
     model.stream.side_effect = [
         agenerator(
             [
@@ -476,37 +548,100 @@ async def test_event_loop_cycle_stop(
                         },
                     },
                 },
+                {"contentBlockDelta": {"delta": {"toolUse": {"input": '{"random_string": "hello"}'}}}},
                 {"contentBlockStop": {}},
                 {"messageStop": {"stopReason": "tool_use"}},
             ]
         ),
     ]
+    executor = agent.tool_executor
+    executor._execute = MagicMock(wraps=executor._execute)
 
-    stream = strands.event_loop.event_loop.event_loop_cycle(
-        agent=agent,
-        invocation_state={"request_state": {"stop_event_loop": True}},
-    )
+    def request_stop(event):
+        agent.cancel(message="all done", after_current_tools=True)
+
+    agent.hooks.add_callback(BeforeToolCallEvent, request_stop)
+
+    stream = strands.event_loop.event_loop.event_loop_cycle(agent=agent, invocation_state={})
     events = await alist(stream)
-    tru_stop_reason, tru_message, _, tru_request_state, _, _, _ = events[-1]["stop"]
+    tru_stop_reason, tru_message, _, _, _, _, _ = events[-1]["stop"]
 
-    exp_stop_reason = "tool_use"
-    exp_message = {
-        "role": "assistant",
-        "content": [
-            {
-                "toolUse": {
-                    "input": {},
-                    "name": "tool_for_testing",
-                    "toolUseId": "t1",
-                }
-            }
-        ],
-        "metadata": ANY,
-        "tracking_id": ANY,
-    }
-    exp_request_state = {"stop_event_loop": True}
+    executor._execute.assert_called_once()
+    assert model.stream.call_count == 1
+    assert tru_stop_reason == "cancelled"
+    assert tru_message["content"] == [{"text": "all done"}]
+    assert agent.messages[-1]["content"] == [{"text": "all done"}]
+    assert agent.messages[-2]["content"][0]["toolResult"]["status"] == "success"
 
-    assert tru_stop_reason == exp_stop_reason and tru_message == exp_message and tru_request_state == exp_request_state
+
+@pytest.mark.asyncio
+async def test_event_loop_cycle_legacy_stop_event_loop_flag_still_halts_with_warning(
+    agent, model, tool_stream, agenerator, alist
+):
+    """Pre-0019 stop tool wrote request_state['stop_event_loop']; honor it with a DeprecationWarning."""
+    model.stream.side_effect = [agenerator(tool_stream)]
+    invocation_state: dict = {"request_state": {"stop_event_loop": True}}
+
+    with pytest.warns(DeprecationWarning, match="stop_event_loop"):
+        events = await alist(
+            strands.event_loop.event_loop.event_loop_cycle(agent=agent, invocation_state=invocation_state)
+        )
+
+    tru_stop_reason, _, _, request_state, _, _, _ = events[-1]["stop"]
+    assert tru_stop_reason != "cancelled"
+    assert request_state["stop_event_loop"] is True
+    assert model.stream.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_event_loop_cycle_deferred_cancel_without_message_keeps_model_message(
+    agent, model, tool_stream, agenerator, alist
+):
+    model.stream.side_effect = [agenerator(tool_stream)]
+    agent.cancel(after_current_tools=True)
+
+    events = await alist(strands.event_loop.event_loop.event_loop_cycle(agent=agent, invocation_state={}))
+    tru_stop_reason, tru_message, _, _, _, _, _ = events[-1]["stop"]
+
+    assert tru_stop_reason == "cancelled"
+    assert "toolUse" in tru_message["content"][0]
+    assert "toolResult" in agent.messages[-1]["content"][0]
+
+
+@pytest.mark.asyncio
+async def test_event_loop_cycle_deferred_cancel_on_plain_text_turn_is_a_noop(agent, model, agenerator, alist):
+    """cancel(after_current_tools=True) with no tools in the turn is a no-op; natural stop_reason wins."""
+
+    def set_deferred_cancel(event):
+        agent.cancel(message="ignored", after_current_tools=True)
+
+    agent.hooks.add_callback(AfterModelCallEvent, set_deferred_cancel)
+    model.stream.return_value = agenerator(
+        [
+            {"contentBlockDelta": {"delta": {"text": "hi"}}},
+            {"contentBlockStop": {}},
+            {"messageStop": {"stopReason": "end_turn"}},
+        ]
+    )
+
+    events = await alist(strands.event_loop.event_loop.event_loop_cycle(agent=agent, invocation_state={}))
+    tru_stop_reason, tru_message, _, _, _, _, _ = events[-1]["stop"]
+
+    assert tru_stop_reason == "end_turn"
+    assert tru_message["content"] == [{"text": "hi"}]
+
+
+@pytest.mark.asyncio
+async def test_event_loop_cycle_cancel_message_replaces_streaming_cancel_text(agent, model, agenerator, alist):
+    agent.cancel(message="stopped by caller")
+    model.stream.return_value = agenerator([{"contentBlockDelta": {"delta": {"text": "partial"}}}])
+
+    events = await alist(strands.event_loop.event_loop.event_loop_cycle(agent=agent, invocation_state={}))
+    tru_stop_reason, tru_message, _, _, _, _, _ = events[-1]["stop"]
+
+    assert tru_stop_reason == "cancelled"
+    assert tru_message["content"] == [{"text": "stopped by caller"}]
+    assert agent.messages[-1]["content"] == [{"text": "stopped by caller"}]
 
 
 @pytest.mark.asyncio
@@ -931,10 +1066,12 @@ async def test_request_state_initialization(alist):
     mock_agent._interrupt_state.activated = False
     mock_agent._cancel_signal = threading.Event()
     mock_agent._observe_cancellation = mock_agent._cancel_signal.is_set
+    mock_agent._deferred_cancel = False
+    mock_agent._cancel_message = None
     mock_agent._system_prompt_content = None
     mock_agent.system_prompt = None
     mock_agent._model_state = {}
-    mock_agent._middleware_registry = strands._middleware.MiddlewareRegistry()
+    mock_agent._middleware_registry = strands.middleware._registry.MiddlewareRegistry()
     mock_agent.messages = []
     mock_agent.tool_registry.get_all_tool_specs.return_value = []
     mock_agent.event_loop_metrics.start_cycle.return_value = (0, MagicMock())
@@ -1328,6 +1465,9 @@ async def test_event_loop_cycle_interrupts_preserved_when_after_tools_hook_raise
     agent.hooks.add_callback(AfterToolsEvent, raise_in_after_tools)
     model.stream.side_effect = [agenerator(tool_stream)]
 
+    # A key the loop does not own, e.g. an agent-as-tool's parked sub-agent turn.
+    agent._interrupt_state.context["sub_agent_interrupted_turns"] = {"tool-1": {"scope": "agent"}}
+
     with pytest.raises(EventLoopException, match="after tools hook failed"):
         await alist(strands.event_loop.event_loop.event_loop_cycle(agent, invocation_state={}))
 
@@ -1337,6 +1477,7 @@ async def test_event_loop_cycle_interrupts_preserved_when_after_tools_hook_raise
         assistant_message=agent.messages[-1],
         completed_tool_results=[],
     )
+    assert agent._interrupt_state.context["sub_agent_interrupted_turns"] == {"tool-1": {"scope": "agent"}}
 
 
 @pytest.mark.asyncio
@@ -1638,13 +1779,9 @@ async def test_event_loop_cycle_before_tools_cancel_includes_invalid_tool(agent,
         event.cancel = "Batch cancelled"
 
     agent.hooks.add_callback(BeforeToolsEvent, cancel_batch)
+    agent.cancel(after_current_tools=True)
 
-    events = await alist(
-        strands.event_loop.event_loop.event_loop_cycle(
-            agent,
-            invocation_state={"request_state": {"stop_event_loop": True}},
-        )
-    )
+    events = await alist(strands.event_loop.event_loop.event_loop_cycle(agent, invocation_state={}))
 
     tru_results = [event.tool_result for event in events if event.get("type") == "tool_result"]
     exp_results = [{"toolUseId": "bad", "status": "error", "content": [{"text": "Batch cancelled"}]}]
@@ -1672,14 +1809,10 @@ async def test_event_loop_cycle_before_tools_interrupt_invalid_tool_result_not_d
     interrupt = interrupts[0]
     agent._interrupt_state.resume([{"interruptResponse": {"interruptId": interrupt.id, "response": "approved"}}])
 
-    resumed_events = await alist(
-        strands.event_loop.event_loop.event_loop_cycle(
-            agent,
-            invocation_state={"request_state": {"stop_event_loop": True}},
-        )
-    )
+    agent.cancel(after_current_tools=True)
+    resumed_events = await alist(strands.event_loop.event_loop.event_loop_cycle(agent, invocation_state={}))
 
-    assert resumed_events[-1]["stop"][0] == "tool_use"
+    assert resumed_events[-1]["stop"][0] == "cancelled"
     assert interrupt_response == "approved"
     result_ids = [content["toolResult"]["toolUseId"] for content in agent.messages[-1]["content"]]
     assert result_ids == ["bad"]
@@ -1711,14 +1844,10 @@ async def test_event_loop_cycle_per_tool_interrupt_with_invalid_tool_no_duplicat
     # Resume: t1 should execute, t2's result should not be duplicated.
     agent._interrupt_state.resume([{"interruptResponse": {"interruptId": interrupt.id, "response": "approved"}}])
 
-    resumed_events = await alist(
-        strands.event_loop.event_loop.event_loop_cycle(
-            agent,
-            invocation_state={"request_state": {"stop_event_loop": True}},
-        )
-    )
+    agent.cancel(after_current_tools=True)
+    resumed_events = await alist(strands.event_loop.event_loop.event_loop_cycle(agent, invocation_state={}))
 
-    assert resumed_events[-1]["stop"][0] == "tool_use"
+    assert resumed_events[-1]["stop"][0] == "cancelled"
     result_ids = [content["toolResult"]["toolUseId"] for content in agent.messages[-1]["content"]]
     assert result_ids.count("t2") == 1, f"t2 duplicated: {result_ids}"
     assert "t1" in result_ids
@@ -2006,6 +2135,47 @@ async def test_event_loop_cycle_interrupt_resume(agent, model, tool, tool_times_
         "interrupts": {},
     }
     assert tru_state == exp_state
+
+
+@pytest.mark.asyncio
+async def test_event_loop_cycle_ignores_pending_tool_execution_when_interrupt_state_not_activated(
+    agent, model, tool_registry, agenerator, alist
+):
+    tool_calls = []
+
+    @strands.tool
+    def record_tool() -> str:
+        tool_calls.append("record_tool")
+        return "recorded"
+
+    tool_registry.register_tool(record_tool)
+
+    agent._interrupt_state.pending_tool_execution = PendingToolExecution(
+        assistant_message={
+            "role": "assistant",
+            "content": [{"toolUse": {"toolUseId": "t1", "name": "record_tool", "input": {}}}],
+        },
+        completed_tool_results=[],
+    )
+
+    model.stream.return_value = agenerator(
+        [
+            {"contentBlockDelta": {"delta": {"text": "test text"}}},
+            {"contentBlockStop": {}},
+        ]
+    )
+
+    stream = strands.event_loop.event_loop.event_loop_cycle(agent=agent, invocation_state={})
+    events = await alist(stream)
+    tru_stop_reason, tru_message, _, _, _, _, _ = events[-1]["stop"]
+
+    exp_stop_reason = "end_turn"
+    exp_message = {"role": "assistant", "content": [{"text": "test text"}], "metadata": ANY, "tracking_id": ANY}
+    assert tru_stop_reason == exp_stop_reason and tru_message == exp_message
+
+    tru_tool_calls = tool_calls
+    exp_tool_calls = []
+    assert tru_tool_calls == exp_tool_calls
 
 
 @pytest.mark.asyncio

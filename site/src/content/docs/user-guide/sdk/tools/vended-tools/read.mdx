@@ -1,0 +1,43 @@
+---
+title: Read
+description: "Use the read vended tool to let a Strands agent read a file as numbered text lines, with paging for large files, or as an image or document media block."
+tags: [tool-authoring]
+sourceLinks:
+  - path: strands-ts/src/vended-tools/read/read.ts
+  - path: strands-py/src/strands/vended_tools/read/read.py
+---
+
+Reads a file through the agent's sandbox. Text files return `cat -n` style numbered lines so the model can cite `path:line`, with `offset` and `limit` for paging through large files. Images (png/jpg/jpeg/gif/webp) and binary documents (pdf/doc/docx/xls/xlsx) return as media content blocks when the model accepts media; otherwise `make_read(media=False)` / `makeRead({ media: false })` returns a short text placeholder describing the file.
+
+_Supported in: Python, TypeScript (Node.js)._
+
+:::caution[Security Warning]
+This tool reads files at arbitrary absolute paths with the full permissions of the process. Only use with trusted input and consider running in a [sandboxed environment](../../sandbox/index.mdx) for production.
+:::
+
+**Example:**
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands import Agent
+from strands.vended_tools import read
+
+agent = Agent(tools=[read])
+agent("Read /etc/hosts and summarize what it maps.")
+```
+
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/tools/vended-tools/read_imports.ts:read_import"
+
+--8<-- "user-guide/sdk/tools/vended-tools/read.ts:read_example"
+```
+
+</Tab>
+</Tabs>
+
+[Full API reference](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/vended-tools/read/README.md)

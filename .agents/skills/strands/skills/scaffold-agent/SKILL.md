@@ -5,6 +5,13 @@ description: Scaffold a new Strands agent or add Strands to an existing Python o
 
 # Scaffold a Strands agent
 
-Read [the shared Strands skill](../../SKILL.md) and [the scaffold guide](../../references/scaffold-agent.md) completely, then create the smallest runnable agent that matches the project's language, package manager, model provider, and existing conventions.
+Read [the shared Strands skill](../../SKILL.md) and
+[the scaffold guide](../../references/scaffold-agent.md) completely. If the project
+uses FastAPI, Express, or Next.js, also read the matching framework reference before
+writing code.
 
-Do not add tools, persistence, deployment, or infrastructure unless the requested first behavior needs them. Run the entrypoint when credentials are available; otherwise validate imports, types, and configuration without making a billable model call.
+Create the smallest runnable agent that matches the project's language, package
+manager, model provider, and existing conventions. Do not add tools, persistence,
+deployment, or infrastructure unless the requested first behavior needs them. Run the
+entrypoint when credentials are available; otherwise validate imports, types, and
+configuration without making a billable model call.

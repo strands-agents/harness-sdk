@@ -35,7 +35,6 @@ class MockBidiModel(BidiModel):
 
     def __init__(self, config=None, model_id="mock-model"):
         self._config = config or {"audio": {"input_rate": 16000, "output_rate": 24000, "channels": 1}}
-        self.usage_is_cumulative = False
         self._config["model_id"] = model_id
         self._connection_id = None
         self._started = False
@@ -269,9 +268,10 @@ def test_bidi_agent_init_with_unsupported_model():
         BidiAgent(model=object())
 
 
-def test_bidi_agent_init_rejects_unknown_arguments(mock_model):
-    with pytest.raises(TypeError, match="unexpected keyword argument 'unknown_option'"):
-        BidiAgent(model=mock_model, unknown_option=object())
+@pytest.mark.parametrize("argument", ["tool_executor", "unknown_option"])
+def test_bidi_agent_init_rejects_unknown_arguments(mock_model, argument):
+    with pytest.raises(TypeError, match=f"unexpected keyword argument '{argument}'"):
+        BidiAgent(model=mock_model, **{argument: object()})
 
 
 def test_bidi_agent_session_id_without_session_manager(mock_model):
@@ -334,6 +334,20 @@ def test_cancel_sets_signal(mock_model):
     assert signal.is_set()
 
 
+def test_cancel_stores_message_last_write_wins(mock_model):
+    """cancel(message=...) sets _cancel_message; a later message overwrites, a no-arg call leaves it alone."""
+    agent = BidiAgent(model=mock_model)
+
+    agent.cancel(message="first")
+    assert agent._cancel_message == "first"
+
+    agent.cancel(message="second")
+    assert agent._cancel_message == "second"
+
+    agent.cancel()
+    assert agent._cancel_message == "second"
+
+
 @pytest.mark.asyncio
 async def test_run_cancel_cleans_up_and_allows_reuse(mock_model):
     @tool(context=True)
@@ -391,7 +405,7 @@ def test_bidi_agent_init_with_default_model(options):
     agent = BidiAgent(**options)
 
     assert isinstance(agent.model, BedrockNovaSonicModel)
-    assert agent.model.model_id == "amazon.nova-2-sonic-v1:0"
+    assert agent.model.model_id == "amazon.nova-2-5-sonic"
 
 
 @pytest.mark.skipif(sys.version_info < (3, 12), reason="BedrockNovaSonicModel is only supported for Python 3.12+")
@@ -422,6 +436,12 @@ async def test_bidi_agent_start_stop_lifecycle(agent):
     with pytest.raises(RuntimeError, match="agent already started"):
         await agent.start()
 
+    with pytest.raises(RuntimeError, match="agent already started"):
+        async with agent:
+            pytest.fail("Already-started agent should reject context entry")
+    assert agent._started
+    assert agent.model._connection_id == connection_id
+
     # Stop agent
     await agent.stop()
     assert not agent._started
@@ -435,6 +455,31 @@ async def test_bidi_agent_start_stop_lifecycle(agent):
     await agent.start()
     assert agent._started
     assert agent.model._connection_id != connection_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error_type", [RuntimeError, asyncio.CancelledError], ids=["error", "cancellation"])
+async def test_aenter_cleans_up_failed_start(agent, error_type):
+    error = error_type("startup failed")
+    start_model = agent.model.start
+
+    async def failing_start(**kwargs):
+        await start_model(**kwargs)
+        raise error
+
+    with unittest.mock.patch.object(agent.model, "start", side_effect=failing_start):
+        with pytest.raises(error_type) as exc_info:
+            async with agent:
+                pytest.fail("Failed startup should not enter the context body")
+
+    assert exc_info.value is error
+    assert not agent._started
+    assert not agent.model._started
+    assert agent.model._connection_id is None
+
+    async with agent:
+        assert agent.model._started
+    assert not agent.model._started
 
 
 @pytest.mark.asyncio

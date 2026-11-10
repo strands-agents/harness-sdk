@@ -9,6 +9,7 @@ import logging
 import warnings
 from typing import TYPE_CHECKING, Literal
 
+from ..agent.invocation_context import _create_auxiliary_invocation_context
 from ..hooks.events import AfterModelCallEvent, BeforeModelCallEvent, MessageAddedEvent
 from ..plugins.plugin import Plugin
 from ..storage.in_memory_storage import InMemoryStorage
@@ -24,6 +25,7 @@ from .types import ContextManagerConfig, ContextState, ContextStrategy, StashCon
 if TYPE_CHECKING:
     from ..agent.agent import Agent
     from ..agent.conversation_manager import ConversationManager
+    from ..agent.invocation_context import InvocationContext
     from ..storage.storage import Storage
 
 logger = logging.getLogger(__name__)
@@ -193,7 +195,13 @@ class ContextManager(Plugin):
         if not self._stash_disabled:
             storage = self._stash_explicit_storage or getattr(agent, "storage", None) or InMemoryStorage()
             self._stash_is_durable = getattr(storage, "_ephemeral", None) is not _EPHEMERAL
-            self._stash = Stash(storage, agent.session_id, agent.agent_id)
+            # Only explicit stash storage may be a shared root; agent.storage is shared with other subsystems.
+            self._stash = Stash(
+                storage,
+                agent.session_id,
+                agent.agent_id,
+                custom_stash_namespace=self._stash_explicit_storage is not None,
+            )
 
         if self._stash is not None:
             stash = self._stash
@@ -218,7 +226,9 @@ class ContextManager(Plugin):
                     init(agent)
 
         async def _on_before_model_call(event: BeforeModelCallEvent) -> None:
-            await self._run_strategies(event.agent, event.projected_input_tokens)
+            await self._run_strategies(
+                event.agent, event.projected_input_tokens, invocation_context=event.invocation_context
+            )
 
         agent.hooks.add_callback(BeforeModelCallEvent, _on_before_model_call)
 
@@ -236,7 +246,7 @@ class ContextManager(Plugin):
                 overflow_retries = 0
                 return
 
-            acted = await self._run_strategies(event.agent, overflow=True)
+            acted = await self._run_strategies(event.agent, overflow=True, invocation_context=event.invocation_context)
             if not acted:
                 logger.warning("agent_id=<%s> | no strategy made progress, skipping retry", event.agent.agent_id)
                 return
@@ -269,6 +279,7 @@ class ContextManager(Plugin):
         precomputed_input_tokens: int | None = None,
         *,
         overflow: bool = False,
+        invocation_context: InvocationContext | None = None,
     ) -> bool:
         """Run the strategy pipeline, recomputing utilization after each acting strategy."""
         await self._backfill_stash(agent)
@@ -288,6 +299,7 @@ class ContextManager(Plugin):
             utilization=agent.model.estimate_utilization(input_tokens),
             overflow=overflow,
             stash=self._stash,
+            invocation_context=_create_auxiliary_invocation_context(invocation_context),
         )
 
         any_acted = False

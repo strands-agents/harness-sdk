@@ -5,6 +5,7 @@ import shape from '../assets/next-steps/shape.svg?raw';
 import shapeMobile from '../assets/next-steps/shape-mobile.svg?raw';
 import InstallCommand from './InstallCommand.astro';
 import { pathWithBase } from '../util/links';
+import { LEGAL_LINKS } from '../config/footer';
 
 interface Props {
   // Render the green curved transition above the footer. On by default so every
@@ -19,7 +20,7 @@ const columns = [
   {
     title: 'Get Started',
     links: [
-      { label: 'Quickstart', href: pathWithBase('/docs/user-guide/sdk/quickstart/python/') },
+      { label: 'Quickstart', href: pathWithBase('/docs/user-guide/harness/quickstart/') },
       { label: 'Migrate', href: pathWithBase('/docs/user-guide/migrate/choosing-an-agent-foundation/') },
       { label: 'Tutorials', href: pathWithBase('/examples/') },
       { label: 'Guides', href: pathWithBase('/docs/user-guide/sdk/') },
@@ -64,16 +65,6 @@ const columns = [
       { label: 'Blog', href: pathWithBase('/blog/') },
     ],
   },
-];
-
-const legal = [
-  { label: 'Privacy', href: 'https://aws.amazon.com/privacy/' },
-  { label: 'Site terms', href: 'https://aws.amazon.com/terms/' },
-  { label: 'License', href: 'https://github.com/strands-agents/harness-sdk/blob/main/LICENSE.APACHE' },
-  { label: 'Cookies', href: 'https://aws.amazon.com/legal/cookies/' },
-  // Shortbread's click handler (SiteScripts.astro) opens the cookie
-  // customization dialog for the element with this id.
-  { label: 'Preferences', href: '#', id: 'cookie-preferences' },
 ];
 ---
 
@@ -134,7 +125,7 @@ const legal = [
     <div class="footer__bottom">
       <div class="footer__aws" role="img" aria-label="AWS" set:html={awsLogo} />
       <ul class="footer__legal" role="list">
-        {legal.map((item) => (
+        {LEGAL_LINKS.map((item) => (
           <li>
             <a
               href={item.href}
@@ -418,13 +409,17 @@ const legal = [
       gap: 16px 24px;
     }
 
+    /* Line heights keep each tap target at least 24px tall. */
     .footer__link,
     .footer__pref {
       font-size: 16px;
+      line-height: 1.5;
     }
 
     .footer__legal-link {
+      display: inline-block;
       font-size: 13px;
+      line-height: 24px;
     }
   }
 </style>

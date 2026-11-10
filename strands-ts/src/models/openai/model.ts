@@ -12,6 +12,7 @@ import OpenAI, { APIUserAbortError } from 'openai'
 import type { ResponseStreamEvent } from 'openai/resources/responses/responses'
 import { Model, resolveConfigMetadata } from '../model.js'
 import type { StreamOptions } from '../model.js'
+import { mergeModelInfo, type ModelInfo } from '../model-info.js'
 import type { Message } from '../../types/messages.js'
 import type { ModelStreamEvent, Usage } from '../streaming.js'
 import { ContextWindowOverflowError, ModelThrottledError } from '../../errors.js'
@@ -69,6 +70,22 @@ export class OpenAIModel extends Model<OpenAIModelConfig> {
   private readonly _api: OpenAIApi
   private _config: OpenAIModelConfig
   private _client: OpenAI
+  /**
+   * Base URL the current Mantle client points at, or `undefined` when the Mantle
+   * pathway is not in use. Mutable: `updateConfig` moves it when a new `modelId`
+   * resolves to the other base path.
+   */
+  private _mantleBaseUrl?: string
+  /**
+   * State retained so `updateConfig` can rebuild the Mantle client on a base-path
+   * change. `_mantleApiKey` is the setter built at construction and is deliberately
+   * reused rather than re-created: {@link createMantleApiKeySetter} memoizes its
+   * token provider in a closure, so a fresh setter would drop the warm provider and
+   * re-import `@aws/bedrock-token-generator` on the next request.
+   */
+  private _mantleRegion?: string
+  private _mantleClientConfig?: OpenAIModelOptions['clientConfig']
+  private _mantleApiKey?: () => Promise<string>
 
   constructor(options: OpenAIModelOptions) {
     super()
@@ -101,7 +118,12 @@ export class OpenAIModel extends Model<OpenAIModelConfig> {
       this._client = client
     } else if (bedrockMantleConfig) {
       const modelId = modelConfig.modelId ?? MODEL_DEFAULTS.openai.modelId
-      this._client = buildMantleClient(bedrockMantleConfig, apiKey, clientConfig, modelId)
+      const mantle = buildMantleClient(bedrockMantleConfig, apiKey, clientConfig, modelId)
+      this._client = mantle.client
+      this._mantleBaseUrl = mantle.baseURL
+      this._mantleRegion = mantle.region
+      this._mantleClientConfig = clientConfig
+      this._mantleApiKey = mantle.apiKey
     } else {
       const hasEnvKey =
         typeof process !== 'undefined' && typeof process.env !== 'undefined' && process.env.OPENAI_API_KEY
@@ -126,13 +148,13 @@ export class OpenAIModel extends Model<OpenAIModelConfig> {
   }
 
   /**
-   * Whether this model manages conversation state server-side.
-   *
-   * `true` only for `api: 'responses'` with `stateful === true`. Chat Completions
-   * is always stateless, and Responses defaults to stateless.
+   * Adds whether this model manages conversation state server-side: `true` only for
+   * `api: 'responses'` with `stateful === true`. Chat Completions is always stateless, and
+   * Responses defaults to stateless.
    */
-  override get stateful(): boolean {
-    return this._api === 'responses' && this._config.stateful === true
+  override get modelInfo(): ModelInfo {
+    const stateful = this._api === 'responses' && this._config.stateful === true
+    return mergeModelInfo(super.modelInfo, { capabilities: { stateful } }, this._config.modelInfo)
   }
 
   /**
@@ -142,6 +164,11 @@ export class OpenAIModel extends Model<OpenAIModelConfig> {
    * they are stripped with a warning. Changing either at runtime would
    * invalidate the invariants the agent builds on top of `stateful` (message
    * history management, `previous_response_id` chaining).
+   *
+   * Under `bedrockMantleConfig`, a `modelId` that resolves to the other Mantle
+   * base path rebuilds the underlying client against the new base URL, so the
+   * next request is routed correctly instead of hitting the previous path.
+   * A swap within the same base path keeps the existing client.
    */
   updateConfig(modelConfig: OpenAIModelConfig & { api?: OpenAIApi }): void {
     const { api, stateful, ...rest } = modelConfig
@@ -152,6 +179,24 @@ export class OpenAIModel extends Model<OpenAIModelConfig> {
       logger.warn(
         `stateful=<${stateful}> | 'stateful' is construction-only and cannot be changed via updateConfig — ignoring`
       )
+    }
+
+    if (this._mantleBaseUrl !== undefined && rest.modelId !== undefined) {
+      const nextBaseUrl = bedrockMantleBaseUrl(this._mantleRegion!, rest.modelId)
+      // Only cross-boundary swaps need a new client; within one base path the
+      // existing connection is still correct and worth keeping alive.
+      if (nextBaseUrl !== this._mantleBaseUrl) {
+        logger.debug(
+          `modelId=<${rest.modelId}> | rerouting the Bedrock Mantle client from ` +
+            `<${this._mantleBaseUrl}> to <${nextBaseUrl}>`
+        )
+        this._client = new OpenAI({
+          ...this._mantleClientConfig,
+          baseURL: nextBaseUrl,
+          apiKey: this._mantleApiKey,
+        })
+        this._mantleBaseUrl = nextBaseUrl
+      }
     }
 
     if (this._api === 'responses') {
@@ -165,6 +210,11 @@ export class OpenAIModel extends Model<OpenAIModelConfig> {
 
   getConfig(): OpenAIModelConfig {
     return resolveConfigMetadata(this._config, this._config.modelId ?? MODEL_DEFAULTS.openai.modelId)
+  }
+
+  /** The configured model ID, else the default one that gets sent. */
+  override get modelId(): string {
+    return this._config.modelId ?? MODEL_DEFAULTS.openai.modelId
   }
 
   async *stream(messages: Message[], options?: StreamOptions): AsyncIterable<ModelStreamEvent> {
@@ -196,29 +246,32 @@ export class OpenAIModel extends Model<OpenAIModelConfig> {
       } | null = null
 
       for await (const chunk of stream) {
-        if (!chunk.choices || chunk.choices.length === 0) {
-          if (chunk.usage) {
-            bufferedUsage = {
-              type: 'modelMetadataEvent',
-              usage: {
-                inputTokens: chunk.usage.prompt_tokens ?? 0,
-                outputTokens: chunk.usage.completion_tokens ?? 0,
-                totalTokens: chunk.usage.total_tokens ?? 0,
-              },
-            }
-            // Match the Responses path's present-and-positive guard so the two OpenAI paths agree.
-            const cached = chunk.usage.prompt_tokens_details?.cached_tokens
-            if (typeof cached === 'number' && cached > 0) {
-              bufferedUsage.usage.cacheReadInputTokens = cached
-            }
-            // GPT-5.6 reports cache writes here; the openai package's PromptTokensDetails
-            // does not type the field yet, so read it through a narrow cast.
-            const cacheWrite = (chunk.usage.prompt_tokens_details as { cache_write_tokens?: number } | undefined)
-              ?.cache_write_tokens
-            if (typeof cacheWrite === 'number' && cacheWrite > 0) {
-              bufferedUsage.usage.cacheWriteInputTokens = cacheWrite
-            }
+        // OpenAI sends usage on a trailing choice-less chunk, but some compatible providers
+        // (e.g. OpenRouter) attach it to the chunk that carries finish_reason.
+        if (chunk.usage) {
+          bufferedUsage = {
+            type: 'modelMetadataEvent',
+            usage: {
+              inputTokens: chunk.usage.prompt_tokens ?? 0,
+              outputTokens: chunk.usage.completion_tokens ?? 0,
+              totalTokens: chunk.usage.total_tokens ?? 0,
+            },
           }
+          // Match the Responses path's present-and-positive guard so the two OpenAI paths agree.
+          const cached = chunk.usage.prompt_tokens_details?.cached_tokens
+          if (typeof cached === 'number' && cached > 0) {
+            bufferedUsage.usage.cacheReadInputTokens = cached
+          }
+          // GPT-5.6 reports cache writes here; the openai package's PromptTokensDetails
+          // does not type the field yet, so read it through a narrow cast.
+          const cacheWrite = (chunk.usage.prompt_tokens_details as { cache_write_tokens?: number } | undefined)
+            ?.cache_write_tokens
+          if (typeof cacheWrite === 'number' && cacheWrite > 0) {
+            bufferedUsage.usage.cacheWriteInputTokens = cacheWrite
+          }
+        }
+
+        if (!chunk.choices || chunk.choices.length === 0) {
           continue
         }
 
@@ -246,13 +299,20 @@ export class OpenAIModel extends Model<OpenAIModelConfig> {
 
   private async *_streamResponses(messages: Message[], options?: StreamOptions): AsyncIterable<ModelStreamEvent> {
     try {
-      const request = formatResponsesRequest(this._config as OpenAIResponsesConfig, messages, options, this.stateful)
+      const stateful = this.stateful
+      const request = formatResponsesRequest(
+        this._config as OpenAIResponsesConfig,
+        messages,
+        options,
+        stateful,
+        this.modelInfo
+      )
       const stream = await this._client.responses.create(request, { signal: options?.cancelSignal })
 
       const state = createResponsesStreamState()
 
       for await (const event of stream as AsyncIterable<ResponseStreamEvent>) {
-        for (const sdkEvent of mapResponsesEventToSDK(event, state, this.stateful, options?.modelState)) {
+        for (const sdkEvent of mapResponsesEventToSDK(event, state, stateful, options?.modelState)) {
           yield sdkEvent
         }
       }
@@ -292,7 +352,7 @@ function buildMantleClient(
   apiKey: OpenAIModelOptions['apiKey'],
   clientConfig: OpenAIModelOptions['clientConfig'],
   modelId: string
-): OpenAI {
+): { client: OpenAI; baseURL: string; region: string; apiKey: () => Promise<string> } {
   if (apiKey !== undefined) {
     throw new Error(
       "'apiKey' cannot be combined with 'bedrockMantleConfig'; the API key is derived from the Mantle config automatically."
@@ -311,10 +371,20 @@ function buildMantleClient(
 
   // Resolve the region eagerly so missing-region configuration fails fast.
   const region = resolveMantleRegion(bedrockMantleConfig)
+  const baseURL = bedrockMantleBaseUrl(region, modelId)
+  // Built once and handed back so `updateConfig` can reuse it across reroutes:
+  // the setter memoizes its token provider, and it already mints a fresh bearer
+  // token per request, so there is nothing to refresh by rebuilding it.
+  const mantleApiKey = createMantleApiKeySetter(bedrockMantleConfig, region)
 
-  return new OpenAI({
-    ...clientConfig,
-    baseURL: bedrockMantleBaseUrl(region, modelId),
-    apiKey: createMantleApiKeySetter(bedrockMantleConfig, region),
-  })
+  return {
+    client: new OpenAI({
+      ...clientConfig,
+      baseURL,
+      apiKey: mantleApiKey,
+    }),
+    baseURL,
+    region,
+    apiKey: mantleApiKey,
+  }
 }

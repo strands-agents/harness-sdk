@@ -224,7 +224,7 @@ body:has(.cat-page) {
   color: var(--cat-accent-text);
 }
 .cat-external {
-  font-size: 0.7rem;
+  font-size: 0.75rem;
   color: var(--sl-color-gray-3);
 }
 
@@ -299,7 +299,7 @@ body:has(.cat-page) {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 0.3rem 0.7rem;
+  gap: 0.3rem 0.6rem;
   min-width: 0;
 }
 .cat-type {
@@ -319,7 +319,7 @@ body:has(.cat-page) {
 .cat-links {
   display: inline-flex;
   align-items: center;
-  gap: 0.55rem;
+  gap: 0.65rem;
   flex-shrink: 0;
   white-space: nowrap;
 }
@@ -335,6 +335,12 @@ body:has(.cat-page) {
 }
 .cat-link svg {
   display: block;
+}
+/* 24px hit area around the 14px mark. */
+.cat-link::before {
+  content: '';
+  position: absolute;
+  inset: -5px;
 }
 .cat-link:hover {
   color: var(--cat-accent-text);
@@ -359,8 +365,43 @@ body:has(.cat-page) {
   margin-bottom: 0.7rem;
 }
 
-/* The search input and its results now live in the left sidebar (see
-   Sidebar.astro); the old on-page search-trigger + modal palette are gone. */
+/* Search and type filters live in the left sidebar (see Sidebar.astro), which
+   is hidden below 50rem; this bar stands in for it there. */
+.cat-mobile-filters {
+  display: none;
+}
+@media (max-width: 49.9375rem) {
+  .cat-mobile-filters {
+    position: sticky;
+    top: var(--sl-nav-height);
+    z-index: 2;
+    display: flex;
+    gap: 0.5rem;
+    margin: 0 calc(-1 * var(--sl-content-pad-x)) 0.9rem;
+    padding: 0.6rem var(--sl-content-pad-x);
+    background: var(--sl-color-bg);
+    border-bottom: 1px solid var(--sl-color-gray-5);
+  }
+}
+.cat-mobile-search,
+.cat-mobile-type {
+  min-width: 0;
+  height: 2.75rem;
+  padding: 0 0.75rem;
+  border: 1px solid var(--sl-color-gray-5);
+  border-radius: var(--cat-radius-control);
+  background: var(--sl-color-bg);
+  color: var(--sl-color-white);
+  font: inherit;
+  /* Below 16px iOS zooms the page on focus. */
+  font-size: 1rem;
+}
+.cat-mobile-search {
+  flex: 1 1 auto;
+}
+.cat-mobile-type {
+  flex: 0 1 9.5rem;
+}
 
 /* Segmented control groups (mirrors .cl-lang / .cl-sdk). */
 .cat-seg {

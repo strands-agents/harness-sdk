@@ -60,7 +60,7 @@ from strands.types.tools import ToolResultBlock
 @pytest.fixture
 def model_id():
     """Nova Sonic model identifier."""
-    return "amazon.nova-2-sonic-v1:0"
+    return "amazon.nova-2-5-sonic"
 
 
 @pytest.fixture
@@ -113,11 +113,11 @@ async def test_model_initialization(model_id, boto_session):
 
 
 def test_get_config_returns_reference(boto_session):
-    model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0", boto_session=boto_session)
+    model = BedrockNovaSonicModel(model_id="amazon.nova-2-5-sonic", boto_session=boto_session)
 
     config = model.get_config()
     exp_config = {
-        "model_id": "amazon.nova-2-sonic-v1:0",
+        "model_id": "amazon.nova-2-5-sonic",
         "params": {},
         "connection": {"restart_after_s": 420},
     }
@@ -161,21 +161,21 @@ def test_update_config_rejects_invalid_model_id(boto_session, invalid_model_id):
     ],
 )
 def test_update_config_warns_invalid_keys(boto_session, model_config, invalid_key):
-    model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0", boto_session=boto_session)
+    model = BedrockNovaSonicModel(model_id="amazon.nova-2-5-sonic", boto_session=boto_session)
 
     with pytest.warns(UserWarning, match=invalid_key):
         model.update_config(**model_config)
 
 
-@pytest.mark.parametrize("connection", [{"restart_after_s": 30}, {"auto_reconnect": False}, {}])
+@pytest.mark.parametrize("connection", [{"restart_after_s": 30}, {"auto_restart": False}, {}])
 def test_update_config_replaces_connection(boto_session, connection):
-    model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0", boto_session=boto_session)
+    model = BedrockNovaSonicModel(model_id="amazon.nova-2-5-sonic", boto_session=boto_session)
 
     model.update_config(connection=connection)
 
     tru_config = model.get_config()
     exp_config = {
-        "model_id": "amazon.nova-2-sonic-v1:0",
+        "model_id": "amazon.nova-2-5-sonic",
         "params": {},
         "connection": connection,
     }
@@ -422,7 +422,7 @@ async def test_crt_response_reports_cancelled_read_failure():
     ],
 )
 def test_get_audio_config(boto_session, audio, input_rate, output_rate):
-    model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0", boto_session=boto_session, audio=audio)
+    model = BedrockNovaSonicModel(model_id="amazon.nova-2-5-sonic", boto_session=boto_session, audio=audio)
 
     tru_config = model.get_audio_config()
     exp_config = {
@@ -436,14 +436,14 @@ def test_get_audio_config(boto_session, audio, input_rate, output_rate):
 @pytest.mark.parametrize("direction", ["input", "output"])
 def test__init__requires_audio_sample_rate(boto_session, direction):
     with pytest.raises(KeyError, match="sample_rate"):
-        BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0", boto_session=boto_session, audio={direction: {}})
+        BedrockNovaSonicModel(model_id="amazon.nova-2-5-sonic", boto_session=boto_session, audio={direction: {}})
 
 
 @pytest.mark.parametrize("direction", ["input", "output"])
 def test__init__rejects_unsupported_audio_sample_rate(boto_session, direction):
     with pytest.raises(ValueError, match="Unsupported sample rate"):
         BedrockNovaSonicModel(
-            model_id="amazon.nova-2-sonic-v1:0", boto_session=boto_session, audio={direction: {"sample_rate": 48000}}
+            model_id="amazon.nova-2-5-sonic", boto_session=boto_session, audio={direction: {"sample_rate": 48000}}
         )
 
 
@@ -457,7 +457,7 @@ def test__init__rejects_unsupported_audio_sample_rate(boto_session, direction):
 )
 def test__init__warns_on_unknown_audio_keys(boto_session, audio, invalid_key):
     with pytest.warns(UserWarning, match=invalid_key):
-        model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0", boto_session=boto_session, audio=audio)
+        model = BedrockNovaSonicModel(model_id="amazon.nova-2-5-sonic", boto_session=boto_session, audio=audio)
 
     tru_config = model.get_audio_config()
     exp_config = {
@@ -476,7 +476,7 @@ def test__init__warns_on_unknown_audio_keys(boto_session, audio, invalid_key):
 )
 def test__get_prompt_start_event_audio_output_config(boto_session, options, rate, voice):
     """Prompt start uses the resolved audio output configuration."""
-    model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0", boto_session=boto_session, **options)
+    model = BedrockNovaSonicModel(model_id="amazon.nova-2-5-sonic", boto_session=boto_session, **options)
 
     prompt_start = json.loads(model._get_prompt_start_event([]))["event"]["promptStart"]
     tru_config = prompt_start["audioOutputConfiguration"]
@@ -945,9 +945,8 @@ async def test_completion_end_is_not_a_turn_boundary(nova_model):
 
 @pytest.mark.asyncio
 async def test_connection_config_declared(nova_model):
-    """Nova declares its restart deadline and cumulative usage semantics."""
+    """Nova declares its restart deadline."""
     assert nova_model.get_connection_config()["restart_after_s"] == 420
-    assert nova_model.usage_is_cumulative is True
 
 
 @pytest.mark.asyncio
@@ -956,15 +955,13 @@ async def test_connection_config_overrides_merge_over_defaults(model_id, boto_se
     model = BedrockNovaSonicModel(
         model_id=model_id,
         boto_session=boto_session,
-        connection={"auto_reconnect": False},
+        connection={"auto_restart": False},
     )
 
     # Overridden field takes the caller's value.
-    assert model.get_connection_config()["auto_reconnect"] is False
+    assert model.get_connection_config()["auto_restart"] is False
     # Untouched default is preserved.
     assert model.get_connection_config()["restart_after_s"] == 420
-    # usage_is_cumulative is a separate provider trait, unaffected by connection overrides.
-    assert model.usage_is_cumulative is True
 
 
 @pytest.mark.asyncio
@@ -1273,24 +1270,38 @@ async def test_event_conversion(nova_model):
     exp_events = [BidiToolUseBlocksEvent([{"toolUseId": "tool-123", "name": "get_weather", "input": tool_input}])]
     assert tru_events == exp_events
 
-    # Test usage metrics (now returns BidiUsageEvent)
+    # Usage reports the new speech/text counts, independently of cumulative totals.
     nova_event = {
         "usageEvent": {
             "totalTokens": 100,
             "totalInputTokens": 40,
             "totalOutputTokens": 60,
-            "details": {"total": {"output": {"speechTokens": 30}}},
+            "details": {
+                "delta": {
+                    "input": {"speechTokens": 0, "textTokens": 10},
+                    "output": {"speechTokens": 6, "textTokens": 4},
+                },
+                "total": {
+                    "input": {"speechTokens": 0, "textTokens": 40},
+                    "output": {"speechTokens": 30, "textTokens": 30},
+                },
+            },
         }
     }
-    result = nova_model._convert_nova_event(
+    tru_events = nova_model._convert_nova_event(
         nova_event,
         response_state,
-    )[0]
-    assert isinstance(result, BidiUsageEvent)
-    assert result.get("type") == "bidi_usage"
-    assert result.get("totalTokens") == 100
-    assert result.get("inputTokens") == 40
-    assert result.get("outputTokens") == 60
+    )
+    exp_events = [
+        BidiUsageEvent(
+            input_tokens=10,
+            output_tokens=10,
+            total_tokens=20,
+            input_token_details={"audio": 0, "text": 10},
+            output_token_details={"audio": 6, "text": 4},
+        )
+    ]
+    assert tru_events == exp_events
 
     # Test content start tracks role and emits BidiResponseStartEvent
     # TEXT type contentStart (matches API spec)
@@ -1515,7 +1526,7 @@ def test_audio_stream_preserves_content_id(nova_model, interrupted):
     ],
 )
 def test__convert_nova_event_audio_format(boto_session, audio, rate):
-    model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0", boto_session=boto_session, audio=audio)
+    model = BedrockNovaSonicModel(model_id="amazon.nova-2-5-sonic", boto_session=boto_session, audio=audio)
     audio_base64 = base64.b64encode(b"audio data").decode()
 
     tru_events = model._convert_nova_event(
@@ -1527,29 +1538,29 @@ def test__convert_nova_event_audio_format(boto_session, audio, rate):
     assert tru_events == exp_events
 
 
-# Nova Sonic v2 Support Tests
+# Nova Sonic 2.5 Support Tests
 
 
 @pytest.mark.asyncio
-async def test_nova_sonic_v2_instantiation(boto_session, mock_client):
-    """Test direct instantiation with Nova Sonic v2 model ID."""
+async def test_nova_sonic_v2_5_instantiation(boto_session, mock_client):
+    """Test direct instantiation with Nova Sonic 2.5 model ID."""
     _ = mock_client  # Ensure mock is active
 
     # Test default creation
-    model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0", boto_session=boto_session)
-    assert model.model_id == "amazon.nova-2-sonic-v1:0"
+    model = BedrockNovaSonicModel(model_id="amazon.nova-2-5-sonic", boto_session=boto_session)
+    assert model.model_id == "amazon.nova-2-5-sonic"
     assert model.region == "us-east-1"
 
     # Test with custom config
     model_custom = BedrockNovaSonicModel(
-        model_id="amazon.nova-2-sonic-v1:0",
+        model_id="amazon.nova-2-5-sonic",
         boto_session=boto_session,
         audio={"input": {"sample_rate": 24000}},
         voice="ruth",
         params={"inferenceConfiguration": {"temperature": 0.8}},
     )
 
-    assert model_custom.model_id == "amazon.nova-2-sonic-v1:0"
+    assert model_custom.model_id == "amazon.nova-2-5-sonic"
     assert model_custom.get_audio_config()["input"]["sample_rate"] == 24000
     assert (
         json.loads(model_custom._get_connection_start_event())["event"]["sessionStart"]["inferenceConfiguration"][
@@ -1559,7 +1570,7 @@ async def test_nova_sonic_v2_instantiation(boto_session, mock_client):
     )
 
 
-@pytest.mark.parametrize("model_id", ["amazon.nova-2-sonic-v1:0", "custom-model"])
+@pytest.mark.parametrize("model_id", ["amazon.nova-2-5-sonic", "custom-model"])
 def test__init__uses_explicit_model_id(boto_session, model_id):
     model = BedrockNovaSonicModel(model_id=model_id, boto_session=boto_session)
 
@@ -1573,7 +1584,7 @@ def test_params_passed_to_session_start(boto_session):
         "turnDetectionConfiguration": {"endpointingSensitivity": "MEDIUM"},
     }
     model = BedrockNovaSonicModel(
-        model_id="amazon.nova-2-sonic-v1:0",
+        model_id="amazon.nova-2-5-sonic",
         params=params,
         boto_session=boto_session,
     )
@@ -1586,7 +1597,7 @@ def test_params_passed_to_session_start(boto_session):
 @pytest.mark.parametrize("params", [{"inferenceConfiguration": {"topP": 0.9}}, {}, None])
 def test_update_config_replaces_params(boto_session, params):
     model = BedrockNovaSonicModel(
-        model_id="amazon.nova-2-sonic-v1:0",
+        model_id="amazon.nova-2-5-sonic",
         boto_session=boto_session,
         params={"inferenceConfiguration": {"temperature": 0.8}},
     )

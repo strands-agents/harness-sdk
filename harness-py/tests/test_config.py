@@ -505,13 +505,19 @@ def test_config_does_not_add_flat_siblings_to_the_import_path(tmp_path):
     assert sys.path == original_path
 
 
+# Expectations are joined onto the resolved project root the way the config loader does, so they
+# also hold on Windows, where ``Path("/project").resolve()`` carries the current drive and a
+# drive-less ``/policies/...`` is anchored to that drive rather than left alone.
+_PROJECT_ROOT = Path("/project").resolve()
+
+
 @pytest.mark.parametrize(
     ("value", "expected"),
     [
-        ("./policy.cedar", "/project/policy.cedar"),
-        ("policies/policy.cedar", "/project/policies/policy.cedar"),
-        ("  ./policy.cedar  ", "/project/policy.cedar"),
-        ("/policies/policy.cedar", "/policies/policy.cedar"),
+        ("./policy.cedar", str(_PROJECT_ROOT / "policy.cedar")),
+        ("policies/policy.cedar", str(_PROJECT_ROOT / "policies/policy.cedar")),
+        ("  ./policy.cedar  ", str(_PROJECT_ROOT / "policy.cedar")),
+        ("/policies/policy.cedar", str(_PROJECT_ROOT / "/policies/policy.cedar")),
         ("~/policy.cedar", str(Path.home() / "policy.cedar")),
         ("ask", "ask"),
         ("  Require approval for writes.  ", "  Require approval for writes.  "),

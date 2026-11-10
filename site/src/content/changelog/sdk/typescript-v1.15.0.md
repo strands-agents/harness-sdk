@@ -7,7 +7,6 @@ date: 2026-08-27
 releaseUrl: https://github.com/strands-agents/harness-sdk/releases/tag/typescript/v1.15.0
 packageUrl: https://www.npmjs.com/package/@strands-agents/sdk/v/1.15.0
 entries:
-  - { type: other, breaking: false, scope: null, areas: [community], title: "refresh dependencies and isolate test results", pr: 3900, prUrl: "https://github.com/strands-agents/harness-sdk/pull/3900", commit: "4ba5106", commitUrl: "https://github.com/strands-agents/harness-sdk/commit/4ba5106", author: yonib05 }
   - { type: other, breaking: false, scope: null, areas: [community], title: "bump dorny/paths-filter from 3.0.2 to 4.0.3", pr: 3907, prUrl: "https://github.com/strands-agents/harness-sdk/pull/3907", commit: "5ace6ad", commitUrl: "https://github.com/strands-agents/harness-sdk/commit/5ace6ad", author: "dependabot[bot]" }
   - { type: fix, breaking: false, scope: null, areas: [model], title: "count Gemini tool-use tokens as input and thinking tokens as output", pr: 3892, prUrl: "https://github.com/strands-agents/harness-sdk/pull/3892", commit: "aac15db", commitUrl: "https://github.com/strands-agents/harness-sdk/commit/aac15db", author: opieter-aws }
   - { type: other, breaking: false, scope: typescript, areas: [community], title: "bump the production-minor group across 1 directory with 2 updates", pr: 3880, prUrl: "https://github.com/strands-agents/harness-sdk/pull/3880", commit: "44b4dff", commitUrl: "https://github.com/strands-agents/harness-sdk/commit/44b4dff", author: "dependabot[bot]" }

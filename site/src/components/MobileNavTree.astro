@@ -12,6 +12,10 @@ interface Props {
 }
 
 const { items, depth = 0 } = Astro.props;
+
+const currentPath = Astro.url.pathname.replace(/\/?$/, '/');
+const containsCurrent = (item: ProductNavItem): boolean =>
+  item.type === 'link' ? item.href === currentPath : item.items.some(containsCurrent);
 ---
 
 <ul class="mnav" role="list">
@@ -21,6 +25,7 @@ const { items, depth = 0 } = Astro.props;
         <a
           href={item.href}
           class="mnav__link"
+          aria-current={item.href === currentPath ? 'page' : undefined}
           {...(item.external ? { target: '_blank', rel: 'noopener' } : {})}
         >
           {item.label}
@@ -33,7 +38,7 @@ const { items, depth = 0 } = Astro.props;
       </li>
     ) : (
       <li>
-        <details class="mnav__group">
+        <details class="mnav__group" open={containsCurrent(item)}>
           <summary class="mnav__link mnav__summary">{item.label}</summary>
           <Astro.self items={item.items} depth={depth + 1} />
         </details>
@@ -64,7 +69,7 @@ const { items, depth = 0 } = Astro.props;
     display: block;
     font-family: 'Space Grotesk', system-ui, sans-serif;
     font-weight: 600;
-    font-size: 11px;
+    font-size: 12px;
     letter-spacing: 0.08em;
     text-transform: uppercase;
     color: var(--nav-fg);
@@ -81,12 +86,17 @@ const { items, depth = 0 } = Astro.props;
     font-weight: 400;
     font-size: 13px;
     line-height: 1.3;
-    color: var(--strands-grey-400);
+    color: var(--sl-color-gray-3);
     text-decoration: none;
   }
 
   .mnav__link:hover {
     color: var(--nav-fg);
+  }
+
+  .mnav__link[aria-current='page'] {
+    color: var(--accent-green);
+    font-weight: 700;
   }
 
   .mnav__summary {

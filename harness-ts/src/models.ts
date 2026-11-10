@@ -7,10 +7,11 @@
  * one value regardless of provider.
  *
  * Prompt caching is requested via `caching` and reaches the provider one of two ways: the harness
- * configures Bedrock and Anthropic direct (cache points covering messages and tools), while OpenAI,
- * Google, bedrock-mantle, and litellm cache automatically server-side (Gemini on models 2.5 and
- * newer; litellm through its OpenAI-compatible backend). Only a pre-built `Model` or `ModelRouter`
- * instance can't be honored (its provider is unknown), so a warning is logged.
+ * passes an SDK cache config to Bedrock and Anthropic direct (cache points plus cached tool
+ * definitions) and to OpenAI and bedrock-mantle (a per-session cache key, plus cache points on
+ * models that take them), while Google and litellm cache automatically server-side (Gemini on
+ * models 2.5 and newer; litellm through its OpenAI-compatible backend). Only a pre-built `Model`
+ * or `ModelRouter` instance can't be honored (its provider is unknown), so a warning is logged.
  *
  * Providers are imported dynamically so a consumer only needs the peer dependency for the
  * provider they actually use (`@anthropic-ai/sdk`, `openai`, or `@google/genai`); Bedrock
@@ -23,6 +24,15 @@ import { warnOnce } from './logging.js'
 import type { Effort } from './types/agent.js'
 
 const ANTHROPIC_MAX_TOKENS = 32_000
+// Claude calls the search directly (not from code execution), so results come back as citations
+// and the tool works on every Claude model, not only those with programmatic tool calling. The
+// type is a dated version; the current ones are listed at
+// https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool
+const ANTHROPIC_WEB_SEARCH = {
+  type: 'web_search_20260318' as const,
+  name: 'web_search' as const,
+  allowed_callers: ['direct' as const],
+}
 
 // Claude's real max_tokens ceiling by tier, verified live against Bedrock Converse. Applied on
 // Bedrock and Anthropic-direct only — other Bedrock-hosted model families aren't known to need
@@ -30,7 +40,7 @@ const ANTHROPIC_MAX_TOKENS = 32_000
 const CLAUDE_MAX_TOKENS: Readonly<Record<string, number>> = {
   'claude-opus-': 128_000,
   'claude-sonnet-': 128_000,
-  'claude-haiku-': 64_000,
+  'claude-haiku-': 128_000,
   'claude-fable-': 128_000,
 }
 
@@ -39,6 +49,8 @@ const CLAUDE_MAX_TOKENS_BY_VERSION: ReadonlyArray<readonly [string, number]> = [
   ['claude-opus-4.5', 64_000],
   ['claude-sonnet-4-5', 64_000],
   ['claude-sonnet-4.5', 64_000],
+  ['claude-haiku-4-5', 64_000],
+  ['claude-haiku-4.5', 64_000],
 ]
 
 function claudeMaxTokens(modelId: string): number | undefined {
@@ -70,6 +82,7 @@ const CUSTOM_ENDPOINT_VARS: Record<string, string | undefined> = {
 }
 
 const BEDROCK_REGION_PREFIXES = ['global.', 'apac.', 'us.', 'eu.', 'au.', 'jp.'] as const
+const BEDROCK_GPT_PREFIXES = ['openai.gpt-5.', 'openai.gpt-daybreak-', 'openai.gpt-6-', 'openai.gpt-6.'] as const
 
 // Reasoning levels each provider's API accepts. `'off'` is the harness's spelling of a provider's
 // "none" where it has one (OpenAI, Bedrock GPT and Qwen) and omits the reasoning field elsewhere.
@@ -78,13 +91,29 @@ const BEDROCK_REGION_PREFIXES = ['global.', 'apac.', 'us.', 'eu.', 'au.', 'jp.']
 const ANTHROPIC_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
 const OPENAI_LEVELS = ['minimal', 'low', 'medium', 'high', 'xhigh', 'none'] as const
 const BEDROCK_GPT_LEVELS = ['none', 'low', 'medium', 'high', 'xhigh', 'max'] as const
+// Converse rejects max on GPT-5.4/5.5 and none on GPT-6 Astra/6.1 Sol.
+const BEDROCK_GPT_NO_MAX_LEVELS = ['none', 'low', 'medium', 'high', 'xhigh'] as const
+const BEDROCK_GPT_NO_NONE_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
 const BEDROCK_GPT_OSS_LEVELS = ['low', 'medium', 'high'] as const
 const BEDROCK_QWEN_LEVELS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const
 const BEDROCK_XAI_LEVELS = ['low', 'medium', 'high', 'xhigh'] as const
-const GOOGLE_LEVELS = ['minimal', 'low', 'medium', 'high'] as const
+const GOOGLE_LEVELS = ['low', 'medium', 'high'] as const
+const GOOGLE_MINIMAL_LEVELS = ['minimal', 'low', 'medium', 'high'] as const
+// Per-model levels: https://ai.google.dev/gemini-api/docs/thinking#controlling-thinking for Gemini;
+// Gemma 4 on Mantle only reasons at `high`.
+const MODEL_LEVELS: Record<string, [string, readonly string[]][]> = {
+  google: [
+    ['gemini-3.1-flash-lite-image', ['minimal', 'high']],
+    ['gemini-3.6-flash', GOOGLE_MINIMAL_LEVELS],
+    ['gemini-3.5-flash', GOOGLE_MINIMAL_LEVELS],
+    ['gemini-3-flash-preview', GOOGLE_MINIMAL_LEVELS],
+    ['gemini-robotics-er-2-preview', GOOGLE_MINIMAL_LEVELS],
+  ],
+  'bedrock-mantle': [['google.gemma-4-', ['none', 'high']]],
+}
 const NO_THINKING_LEVELS: readonly string[] = []
 
-const ADAPTIVE_THINKING_SINCE: Record<string, [number, number]> = { opus: [4, 6], sonnet: [4, 6] }
+const ADAPTIVE_THINKING_SINCE: Record<string, [number, number]> = { opus: [4, 6], sonnet: [4, 6], haiku: [5, 5] }
 const EXTENDED_THINKING_SINCE: Record<string, [number, number]> = { opus: [4, 5], sonnet: [4, 5], haiku: [4, 5] }
 const CLAUDE_ID =
   /claude-(?:(\d{1,2})(?:[-.](\d{1,2}))?-)?(opus|sonnet|haiku|fable|mythos)(?:[-.](\d{1,2}))?(?:[-.](\d{1,2}))?(?!\d)/
@@ -145,12 +174,22 @@ function bedrockFamily(modelId: string): string {
   return unprefixed ? modelId.slice(unprefixed.length) : modelId
 }
 
+function isBedrockGpt(family: string): boolean {
+  return BEDROCK_GPT_PREFIXES.some((prefix) => family.startsWith(prefix))
+}
+
 function bedrockLevels(modelId: string): readonly string[] {
   const family = bedrockFamily(modelId)
   if (family.startsWith('anthropic.')) {
     return claudeThinkingMode(family) !== null ? ANTHROPIC_LEVELS : NO_THINKING_LEVELS
   }
-  if (family.startsWith('openai.gpt-5.6-') || family === 'openai.gpt-6-astra') {
+  if (family.startsWith('openai.gpt-5.4') || family.startsWith('openai.gpt-5.5')) {
+    return BEDROCK_GPT_NO_MAX_LEVELS
+  }
+  if (family.startsWith('openai.gpt-6-astra') || family.startsWith('openai.gpt-6.1-sol')) {
+    return BEDROCK_GPT_NO_NONE_LEVELS
+  }
+  if (isBedrockGpt(family)) {
     return BEDROCK_GPT_LEVELS
   }
   if (family.startsWith('openai.gpt-oss-')) {
@@ -179,7 +218,7 @@ function bedrockThinking(modelId: string, effort: string | null): JSONValue | un
   if (family.startsWith('anthropic.')) {
     return claudeThinkingBlock(family, effort, claudeMaxTokens(modelId) ?? ANTHROPIC_MAX_TOKENS) as JSONValue
   }
-  if (family.startsWith('openai.gpt-5.6-') || family === 'openai.gpt-6-astra') {
+  if (isBedrockGpt(family)) {
     return { reasoning: { effort } }
   }
   if (family.startsWith('openai.gpt-oss-')) {
@@ -211,12 +250,7 @@ async function bedrock(modelId: string, effort: string | null, _webSearch: boole
   })
 }
 
-async function anthropic(
-  modelId: string,
-  effort: string | null,
-  _webSearch: boolean,
-  caching: boolean
-): Promise<Model> {
+async function anthropic(modelId: string, effort: string | null, webSearch: boolean, caching: boolean): Promise<Model> {
   const { AnthropicModel } = await import('@strands-agents/sdk/models/anthropic')
 
   const cacheConfig = caching ? { strategy: 'auto' as const } : undefined
@@ -226,11 +260,11 @@ async function anthropic(
     maxTokens,
     ...(cacheConfig ? { cacheConfig } : {}),
     ...(effort === null ? {} : { params: claudeThinkingBlock(modelId, effort, maxTokens) }),
+    ...(webSearch ? { anthropicTools: [ANTHROPIC_WEB_SEARCH] } : {}),
   })
 }
 
-// `_caching` is unused: OpenAI caches server-side with no opt-in.
-async function openai(modelId: string, effort: string | null, webSearch: boolean, _caching: boolean): Promise<Model> {
+async function openai(modelId: string, effort: string | null, webSearch: boolean, caching: boolean): Promise<Model> {
   const { OpenAIModel } = await import('@strands-agents/sdk/models/openai')
   const params: Record<string, unknown> = {}
   if (effort !== null) {
@@ -240,15 +274,21 @@ async function openai(modelId: string, effort: string | null, webSearch: boolean
   if (webSearch) {
     params.tools = [{ type: 'web_search' }]
   }
-  return new OpenAIModel(Object.keys(params).length === 0 ? { modelId } : { modelId, params })
+  // The SDK derives a per-session `prompt_cache_key` from the cache config and, on models whose model
+  // info takes cache points (GPT-5.6 and later), places them on durable content so per-turn reminders
+  // stay out of the cached prefix.
+  return new OpenAIModel({
+    modelId,
+    ...(caching ? { cacheConfig: { strategy: 'auto' as const } } : {}),
+    ...(Object.keys(params).length === 0 ? {} : { params }),
+  })
 }
 
-// `_caching` is unused: Mantle caches server-side automatically.
 async function bedrockMantle(
   modelId: string,
   effort: string | null,
   webSearch: boolean,
-  _caching: boolean
+  caching: boolean
 ): Promise<Model> {
   const { OpenAIModel } = await import('@strands-agents/sdk/models/openai')
   const params: Record<string, unknown> = {}
@@ -258,11 +298,18 @@ async function bedrockMantle(
   if (webSearch) {
     params.tools = [{ type: 'web_search', external_web_access: true }]
   }
+  // Same cache config as `openai`: without explicit cache points, Mantle reads little or nothing
+  // from cache across the turns of a conversation.
   return new OpenAIModel({
     modelId,
     bedrockMantleConfig: {},
+    ...(caching ? { cacheConfig: { strategy: 'auto' as const } } : {}),
     ...(Object.keys(params).length === 0 ? {} : { params }),
   })
+}
+
+function modelLevels(providerName: string, modelId: string, fallback: readonly string[]): readonly string[] {
+  return MODEL_LEVELS[providerName]?.find(([prefix]) => modelId.startsWith(prefix))?.[1] ?? fallback
 }
 
 // `_caching` is unused: Gemini caches implicitly server-side (models 2.5 and newer).
@@ -314,15 +361,13 @@ interface Provider {
   levels: readonly string[]
   // Native web search is enabled through model config on the providers whose SDK exposes a
   // non-clobbering seam for it (OpenAI Responses `params.tools` for OpenAI and bedrock-mantle, Gemini
-  // `builtInTools`); `hasWebSearch` narrows bedrock-mantle to its GPT-5/GPT-6 models. Bedrock Converse has no
-  // mechanism. Anthropic-direct gets `anthropicTools` in @strands-agents/sdk 1.19.0; on 1.18.0 a
-  // `params.tools` entry would still overwrite the function tools, so it stays `false` until then
-  // (Python already enables it through `anthropic_tools`).
+  // `builtInTools`, Anthropic-direct `anthropicTools`); `hasWebSearch` narrows bedrock-mantle to its
+  // GPT-5, GPT-6, and Daybreak models. Bedrock Converse has no mechanism.
   webSearch: boolean
   // Whether prompt caching is in effect when requested, whether or not the harness configures anything:
-  // Bedrock and Anthropic direct (the harness sets cache points and tool caching) plus OpenAI, Google,
-  // bedrock-mantle, and litellm (automatic server-side). Only a pre-built `Model` instance can't
-  // be honored (its provider is unknown), so the factory warns there.
+  // Bedrock, Anthropic direct, OpenAI, and bedrock-mantle (the harness passes an SDK cache config)
+  // plus Google and litellm (automatic server-side). Only a pre-built `Model` instance can't be
+  // honored (its provider is unknown), so the factory warns there.
   caching: boolean
 }
 
@@ -335,7 +380,7 @@ const PROVIDERS: Record<string, Provider> = {
     webSearch: true,
     caching: true,
   },
-  anthropic: { build: anthropic, recommended: 'high', levels: ANTHROPIC_LEVELS, webSearch: false, caching: true },
+  anthropic: { build: anthropic, recommended: 'high', levels: ANTHROPIC_LEVELS, webSearch: true, caching: true },
   openai: { build: openai, recommended: 'high', levels: OPENAI_LEVELS, webSearch: true, caching: true },
   google: { build: gemini, recommended: 'high', levels: GOOGLE_LEVELS, webSearch: true, caching: true },
   ollama: { build: ollama, recommended: null, levels: NO_THINKING_LEVELS, webSearch: false, caching: false },
@@ -354,7 +399,7 @@ function resolveEffort(
   effort: Effort,
   recommended: string | null,
   levels: readonly string[],
-  subject = 'this provider'
+  subject: string
 ): string | null {
   if (effort === 'off') {
     return levels.includes('none') ? 'none' : null
@@ -462,17 +507,18 @@ export async function resolveModel(
     )
   }
 
-  const claudeDirectWithoutAdaptive = providerName === 'anthropic' && claudeThinkingMode(name) === null
+  let { levels, recommended } = provider
+  if (providerName === 'anthropic' && claudeThinkingMode(name) === null) {
+    levels = NO_THINKING_LEVELS
+    recommended = null
+  } else {
+    levels = modelLevels(providerName, name, levels)
+  }
   return provider.build(
     name,
     providerName === 'bedrock'
       ? bedrockEffort(name, effort)
-      : resolveEffort(
-          effort,
-          claudeDirectWithoutAdaptive ? null : provider.recommended,
-          claudeDirectWithoutAdaptive ? NO_THINKING_LEVELS : provider.levels,
-          claudeDirectWithoutAdaptive ? `model ${name}` : 'this provider'
-        ),
+      : resolveEffort(effort, recommended, levels, `model ${name}`),
     nativeSearch,
     caching && provider.caching && !unsupportedCaching
   )
@@ -549,8 +595,8 @@ function hasWebSearch(providerName: string, name: string): boolean {
   if (provider === undefined || !provider.webSearch) {
     return false
   }
-  // Bedrock Web Search is only served for Mantle's GPT-5/GPT-6 models; other families reject the tool (HTTP 400).
-  return providerName !== 'bedrock-mantle' || name.startsWith('openai.gpt-5.') || name.startsWith('openai.gpt-6-')
+  // Only Mantle's GPT-5, GPT-6, and Daybreak models serve Bedrock Web Search; others reject the tool (HTTP 400).
+  return providerName !== 'bedrock-mantle' || isBedrockGpt(name)
 }
 
 /**

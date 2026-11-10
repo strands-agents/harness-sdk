@@ -36,21 +36,25 @@ export function setTerminalMouseMotion(enabled: boolean, output: TerminalOutput 
   output.write(enabled ? ENABLE_MOUSE_MOTION : ENABLE_MOUSE_CLICKS)
 }
 
-export function copyTerminalText(text: string, output: TerminalOutput = process.stdout): Promise<boolean> {
+export async function copyTerminalText(text: string, output: TerminalOutput = process.stdout): Promise<boolean> {
   if (!text) {
-    return Promise.resolve(false)
+    return false
   }
-  output.write(`\u001b]52;c;${Buffer.from(text).toString('base64')}\u001b\\`)
-  if (process.platform !== 'darwin' || !output.isTTY) {
-    return Promise.resolve(true)
+  try {
+    output.write(`\u001b]52;c;${Buffer.from(text).toString('base64')}\u001b\\`)
+    if (process.platform !== 'darwin' || !output.isTTY) {
+      return true
+    }
+    return await new Promise<boolean>((resolve) => {
+      const clipboard = spawn('pbcopy', { stdio: ['pipe', 'ignore', 'ignore'] })
+      clipboard.once('error', () => resolve(false))
+      clipboard.once('close', (code) => resolve(code === 0))
+      clipboard.stdin.once('error', () => resolve(false))
+      clipboard.stdin.end(text)
+    })
+  } catch {
+    return false
   }
-  return new Promise((resolve) => {
-    const clipboard = spawn('pbcopy', { stdio: ['pipe', 'ignore', 'ignore'] })
-    clipboard.once('error', () => resolve(false))
-    clipboard.once('close', (code) => resolve(code === 0))
-    clipboard.stdin.once('error', () => resolve(false))
-    clipboard.stdin.end(text)
-  })
 }
 
 export function createInkOutputs(

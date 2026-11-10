@@ -1,3 +1,4 @@
+import collections
 import logging
 import unittest.mock
 
@@ -15,6 +16,7 @@ def gemini_client():
     with unittest.mock.patch.object(strands.models.gemini.genai, "Client") as mock_client_cls:
         mock_client = mock_client_cls.return_value
         mock_client.aio = unittest.mock.AsyncMock()
+        mock_client.vertexai = False
         yield mock_client
 
 
@@ -219,6 +221,38 @@ async def test_stream_request_with_image(gemini_client, model, model_id):
     gemini_client.aio.models.generate_content_stream.assert_called_with(**exp_request)
 
 
+@pytest.mark.parametrize(
+    ("video_format", "mime_type"),
+    [
+        ("flv", "video/x-flv"),
+        ("mkv", "video/x-matroska"),
+        ("mov", "video/quicktime"),
+        ("mpeg", "video/mpeg"),
+        ("mpg", "video/mpeg"),
+        ("mp4", "video/mp4"),
+        ("three_gp", "video/3gpp"),
+        ("webm", "video/webm"),
+        ("wmv", "video/x-ms-wmv"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_stream_request_with_video(video_format, mime_type, gemini_client, model, model_id):
+    messages = [
+        {
+            "role": "user",
+            "content": [{"video": {"format": video_format, "source": {"bytes": b"video"}}}],
+        },
+    ]
+    await anext(model.stream(messages))
+
+    exp_request = {
+        "config": {},
+        "contents": [{"parts": [{"inline_data": {"data": "dmlkZW8=", "mime_type": mime_type}}], "role": "user"}],
+        "model": model_id,
+    }
+    gemini_client.aio.models.generate_content_stream.assert_called_with(**exp_request)
+
+
 @pytest.mark.asyncio
 async def test_stream_request_with_reasoning(gemini_client, model, model_id):
     messages = [
@@ -382,6 +416,7 @@ async def test_stream_request_with_tool_results(gemini_client, model, model_id):
                                     "source": {"bytes": b"base64encodedimage"},
                                 },
                             },
+                            {"document": {"format": "pdf", "name": "report", "source": {"bytes": b"pdf"}}},
                         ],
                     }
                 }
@@ -403,14 +438,26 @@ async def test_stream_request_with_tool_results(gemini_client, model, model_id):
                                 "output": [
                                     {"text": "see image"},
                                     {"json": ["see image"]},
-                                    {
-                                        "inline_data": {
-                                            "data": "YmFzZTY0ZW5jb2RlZGltYWdl",
-                                            "mime_type": "image/jpeg",
-                                        },
-                                    },
+                                    {"$ref": "image.jpg"},
+                                    {"$ref": "report"},
                                 ],
                             },
+                            "parts": [
+                                {
+                                    "inline_data": {
+                                        "data": "YmFzZTY0ZW5jb2RlZGltYWdl",
+                                        "display_name": "image.jpg",
+                                        "mime_type": "image/jpeg",
+                                    },
+                                },
+                                {
+                                    "inline_data": {
+                                        "data": "cGRm",
+                                        "display_name": "report",
+                                        "mime_type": "application/pdf",
+                                    },
+                                },
+                            ],
                         },
                     },
                 ],
@@ -485,6 +532,40 @@ async def test_stream_request_with_tool_results_preserving_name(gemini_client, m
     gemini_client.aio.models.generate_content_stream.assert_called_with(**exp_request)
 
 
+def test_format_request_suffixes_duplicate_tool_result_display_names(model):
+    png = {"image": {"format": "png", "source": {"bytes": b"png"}}}
+    report = {"document": {"format": "pdf", "name": "report", "source": {"bytes": b"pdf"}}}
+    report_1 = {"document": {"format": "pdf", "name": "report-1", "source": {"bytes": b"pdf"}}}
+    unnamed_notes = {"document": {"format": "txt", "source": {"bytes": b"txt"}}}
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "toolResult": {
+                        "toolUseId": "c1",
+                        "status": "success",
+                        "content": [png, png, png, report, report_1, report],
+                    }
+                },
+                {"toolResult": {"toolUseId": "c2", "status": "success", "content": [png, unnamed_notes]}},
+            ],
+        }
+    ]
+
+    request = model._format_request(messages, None, None, None)
+
+    tru_display_names = [
+        [part["inline_data"]["display_name"] for part in content_part["function_response"]["parts"]]
+        for content_part in request["contents"][0]["parts"]
+    ]
+    exp_display_names = [
+        ["image.png", "image-1.png", "image-2.png", "report", "report-1", "report-2"],
+        ["image.png", "document.txt"],
+    ]
+    assert tru_display_names == exp_display_names
+
+
 @pytest.mark.asyncio
 async def test_stream_request_with_empty_content(gemini_client, model, model_id):
     messages = [
@@ -503,12 +584,19 @@ async def test_stream_request_with_empty_content(gemini_client, model, model_id)
     gemini_client.aio.models.generate_content_stream.assert_called_with(**exp_request)
 
 
+@pytest.mark.parametrize(
+    "content",
+    [
+        {"unsupported": {}},
+        {"toolResult": {"toolUseId": "c1", "status": "success", "content": [{"unsupported": {}}]}},
+    ],
+)
 @pytest.mark.asyncio
-async def test_stream_request_with_unsupported_type(model):
+async def test_stream_request_with_unsupported_type(content, model):
     messages = [
         {
             "role": "user",
-            "content": [{"unsupported": {}}],
+            "content": [content],
         },
     ]
 
@@ -860,7 +948,7 @@ async def test_stream_response_reasoning_signature_survives_aggregation(
     assert tru_reasoning_text == exp_reasoning_text
 
     # Feeding the aggregated message back must reproduce the original signature bytes.
-    tru_part = model._format_request_content_part(message["content"][0], {})
+    tru_part = model._format_request_content_part(message["content"][0], {}, collections.Counter())
     assert tru_part.thought_signature == b"abc"
 
 
@@ -905,7 +993,7 @@ async def test_stream_response_reasoning_signature_on_empty_text_part_survives(
     assert tru_reasoning == exp_reasoning
 
     # Feeding the aggregated message back must reproduce the original signature bytes.
-    tru_part = model._format_request_content_part(message["content"][0], {})
+    tru_part = model._format_request_content_part(message["content"][0], {}, collections.Counter())
     assert tru_part.thought_signature == b"abc"
 
 
@@ -953,8 +1041,122 @@ async def test_stream_response_signature_after_text_opens_reasoning_block(
     assert tru_content == exp_content
 
     # Feeding the aggregated message back must reproduce the original signature bytes.
-    tru_part = model._format_request_content_part(message["content"][1], {})
+    tru_part = model._format_request_content_part(message["content"][1], {}, collections.Counter())
     assert tru_part.thought_signature == b"abc"
+
+
+@pytest.mark.asyncio
+async def test_stream_response_signature_on_text_part_keeps_text_contiguous(
+    gemini_client, model, messages, agenerator, alist
+):
+    """Test that a signature riding on a text part mid-answer does not split the answer text.
+
+    Gemini can sign an early text part and keep streaming text after it, so the whole answer must
+    still aggregate into one text block, with the signature in its own reasoning block.
+    """
+    gemini_client.aio.models.generate_content_stream.return_value = agenerator(
+        [
+            genai.types.GenerateContentResponse(
+                candidates=[
+                    genai.types.Candidate(
+                        content=genai.types.Content(
+                            parts=[genai.types.Part(text="The time is 12:00", thought_signature=b"abc")],
+                        ),
+                    ),
+                ],
+            ),
+            genai.types.GenerateContentResponse(
+                candidates=[
+                    genai.types.Candidate(
+                        content=genai.types.Content(
+                            parts=[genai.types.Part(text=" and it is sunny.")],
+                        ),
+                        finish_reason="STOP",
+                    ),
+                ],
+                usage_metadata=genai.types.GenerateContentResponseUsageMetadata(
+                    prompt_token_count=1,
+                    total_token_count=3,
+                ),
+            ),
+        ]
+    )
+
+    stream = strands.event_loop.streaming.process_stream(model.stream(messages))
+    events = await alist(stream)
+    message = events[-1]["stop"][1]
+
+    tru_content = message["content"]
+    exp_content = [
+        {"text": "The time is 12:00 and it is sunny."},
+        {"reasoningContent": {"reasoningText": {"text": "", "signature": "YWJj"}}},
+    ]
+    assert tru_content == exp_content
+
+    # Feeding the aggregated message back must reproduce the original signature bytes.
+    tru_part = model._format_request_content_part(message["content"][1], {}, collections.Counter())
+    assert tru_part.thought_signature == b"abc"
+
+
+@pytest.mark.asyncio
+async def test_stream_response_every_signature_inside_text_block_survives(
+    gemini_client, model, messages, agenerator, alist
+):
+    """Test that each signature arriving inside one text block keeps its own reasoning block.
+
+    An early signed text part can be followed by a trailing signature-only part, so holding the
+    signatures until the text block ends must not drop any of them from the round-trip.
+    """
+    gemini_client.aio.models.generate_content_stream.return_value = agenerator(
+        [
+            genai.types.GenerateContentResponse(
+                candidates=[
+                    genai.types.Candidate(
+                        content=genai.types.Content(
+                            parts=[genai.types.Part(text="The time is 12:00", thought_signature=b"sig1")],
+                        ),
+                    ),
+                ],
+            ),
+            genai.types.GenerateContentResponse(
+                candidates=[
+                    genai.types.Candidate(
+                        content=genai.types.Content(
+                            parts=[
+                                genai.types.Part(text=" and it is sunny."),
+                                genai.types.Part(thought=True, thought_signature=b"sig2"),
+                            ],
+                        ),
+                        finish_reason="STOP",
+                    ),
+                ],
+                usage_metadata=genai.types.GenerateContentResponseUsageMetadata(
+                    prompt_token_count=1,
+                    total_token_count=3,
+                ),
+            ),
+        ]
+    )
+
+    stream = strands.event_loop.streaming.process_stream(model.stream(messages))
+    events = await alist(stream)
+    message = events[-1]["stop"][1]
+
+    tru_content = message["content"]
+    exp_content = [
+        {"text": "The time is 12:00 and it is sunny."},
+        {"reasoningContent": {"reasoningText": {"text": "", "signature": "c2lnMQ=="}}},
+        {"reasoningContent": {"reasoningText": {"text": "", "signature": "c2lnMg=="}}},
+    ]
+    assert tru_content == exp_content
+
+    # Feeding the aggregated message back must reproduce each original signature's bytes.
+    tru_signatures = [
+        model._format_request_content_part(block, {}, collections.Counter()).thought_signature
+        for block in tru_content[1:]
+    ]
+    exp_signatures = [b"sig1", b"sig2"]
+    assert tru_signatures == exp_signatures
 
 
 @pytest.mark.asyncio
@@ -994,7 +1196,7 @@ async def test_stream_response_signature_only_part_opens_reasoning_block(
     assert tru_content == exp_content
 
     # Feeding the aggregated message back must reproduce the original signature bytes.
-    tru_part = model._format_request_content_part(message["content"][0], {})
+    tru_part = model._format_request_content_part(message["content"][0], {}, collections.Counter())
     assert tru_part.thought_signature == b"abc"
 
 
@@ -1177,6 +1379,22 @@ async def test_stream_response_throttled_exception(gemini_client, model, message
 
 
 @pytest.mark.asyncio
+async def test_stream_response_throttled_exception_non_json_body(gemini_client, model, messages):
+    """Regression test for https://github.com/strands-agents/harness-sdk/issues/4523.
+
+    For a 429 with a non-JSON body, google-genai sets status to the HTTP reason phrase; the 429
+    code alone must be enough to classify it as throttling.
+    """
+    body = '{"error": {"code": 429, "status": "RESOURCE_EXHAUSTED"}}'
+    gemini_client.aio.models.generate_content_stream.side_effect = genai.errors.ClientError(
+        429, {"message": body, "status": "Too Many Requests"}
+    )
+
+    with pytest.raises(ModelThrottledException, match="RESOURCE_EXHAUSTED"):
+        await anext(model.stream(messages))
+
+
+@pytest.mark.asyncio
 async def test_stream_response_context_overflow_exception(gemini_client, model, messages):
     gemini_client.aio.models.generate_content_stream.side_effect = genai.errors.ClientError(
         400,
@@ -1294,7 +1512,120 @@ async def test_stream_request_with_gemini_tools_and_function_tools(gemini_client
                     ]
                 },
                 {"code_execution": {}},
-            ]
+            ],
+            "tool_config": {"include_server_side_tool_invocations": True},
+        },
+        "contents": [{"parts": [{"text": "test"}], "role": "user"}],
+        "model": model_id,
+    }
+    gemini_client.aio.models.generate_content_stream.assert_called_with(**exp_request)
+
+
+@pytest.mark.asyncio
+async def test_stream_gemini_tools_sets_server_side_flag_with_tool_choice(gemini_client, messages, tool_spec, model_id):
+    google_search_tool = genai.types.Tool(google_search=genai.types.GoogleSearch())
+    model = GeminiModel(model_id=model_id, gemini_tools=[google_search_tool])
+
+    await anext(model.stream(messages, tool_specs=[tool_spec], tool_choice={"auto": {}}))
+
+    exp_request = {
+        "config": {
+            "tools": [
+                {
+                    "function_declarations": [
+                        {
+                            "description": tool_spec["description"],
+                            "name": tool_spec["name"],
+                            "parameters_json_schema": tool_spec["inputSchema"]["json"],
+                        }
+                    ]
+                },
+                {"google_search": {}},
+            ],
+            "tool_config": {
+                "function_calling_config": {"mode": "AUTO"},
+                "include_server_side_tool_invocations": True,
+            },
+        },
+        "contents": [{"parts": [{"text": "test"}], "role": "user"}],
+        "model": model_id,
+    }
+    gemini_client.aio.models.generate_content_stream.assert_called_with(**exp_request)
+
+
+@pytest.mark.asyncio
+async def test_stream_gemini_tools_flag_skipped_on_vertex_ai(gemini_client, messages, tool_spec, model_id):
+    """Vertex AI does not support include_server_side_tool_invocations, so the flag is omitted."""
+    gemini_client.vertexai = True
+    google_search_tool = genai.types.Tool(google_search=genai.types.GoogleSearch())
+    model = GeminiModel(model_id=model_id, gemini_tools=[google_search_tool])
+
+    await anext(model.stream(messages, tool_specs=[tool_spec]))
+
+    exp_request = {
+        "config": {
+            "tools": [
+                {
+                    "function_declarations": [
+                        {
+                            "description": tool_spec["description"],
+                            "name": tool_spec["name"],
+                            "parameters_json_schema": tool_spec["inputSchema"]["json"],
+                        }
+                    ]
+                },
+                {"google_search": {}},
+            ],
+        },
+        "contents": [{"parts": [{"text": "test"}], "role": "user"}],
+        "model": model_id,
+    }
+    gemini_client.aio.models.generate_content_stream.assert_called_with(**exp_request)
+
+
+@pytest.mark.parametrize(
+    ("params_tool_config", "exp_tool_config"),
+    [
+        (
+            {"function_calling_config": {"mode": "NONE"}},
+            {"function_calling_config": {"mode": "NONE"}, "include_server_side_tool_invocations": True},
+        ),
+        (
+            {"function_calling_config": {"mode": "NONE"}, "include_server_side_tool_invocations": False},
+            {"function_calling_config": {"mode": "NONE"}, "include_server_side_tool_invocations": False},
+        ),
+    ],
+    ids=["merges-flag", "preserves-explicit-false"],
+)
+@pytest.mark.asyncio
+async def test_stream_gemini_tools_flag_with_params_tool_config(
+    gemini_client, messages, tool_spec, model_id, params_tool_config, exp_tool_config
+):
+    """The flag is merged into a dict tool_config, but an explicit value is preserved."""
+    google_search_tool = genai.types.Tool(google_search=genai.types.GoogleSearch())
+    model = GeminiModel(
+        model_id=model_id,
+        gemini_tools=[google_search_tool],
+        params={"tool_config": params_tool_config},
+    )
+
+    await anext(model.stream(messages, tool_specs=[tool_spec]))
+
+    exp_request = {
+        "config": {
+            "tools": [
+                {
+                    "function_declarations": [
+                        {
+                            "description": tool_spec["description"],
+                            "name": tool_spec["name"],
+                            "parameters_json_schema": tool_spec["inputSchema"]["json"],
+                        }
+                    ]
+                },
+                {"google_search": {}},
+            ],
+            "tool_config": exp_tool_config,
         },
         "contents": [{"parts": [{"text": "test"}], "role": "user"}],
         "model": model_id,
@@ -1634,6 +1965,27 @@ def test_format_request_filters_location_source_document(model, caplog):
     assert "Location sources are not supported by Gemini" in caplog.text
 
 
+def test_format_request_skips_tool_result_location_source_and_video(model, caplog):
+    caplog.set_level(logging.WARNING, logger="strands.models.gemini")
+    s3_image = {"image": {"format": "png", "source": {"location": {"type": "s3", "uri": "s3://bucket/key.png"}}}}
+    video = {"video": {"format": "mp4", "source": {"bytes": b"mp4"}}}
+    tool_result = {"toolUseId": "c1", "status": "success", "content": [{"text": "clip"}, s3_image, video]}
+    messages = [{"role": "user", "content": [{"toolResult": tool_result}]} for _ in range(2)]
+
+    request = model._format_request(messages, None, None, None)
+
+    tru_parts = request["contents"][0]["parts"]
+    exp_parts = [{"function_response": {"id": "c1", "name": "c1", "response": {"output": [{"text": "clip"}]}}}]
+    assert tru_parts == exp_parts
+
+    tru_logged = [record.getMessage() for record in caplog.records]
+    exp_logged = [
+        "count=<2> | Location sources in tool results are not supported by Gemini | skipping content block",
+        "count=<2> | Video content in tool results is not supported by Gemini | skipping content block",
+    ]
+    assert tru_logged == exp_logged
+
+
 class TestCountTokens:
     """Tests for GeminiModel.count_tokens native token counting."""
 
@@ -1756,7 +2108,20 @@ class TestCountTokens:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("finish_reason,stop_reason", [("STOP", "end_turn"), ("SAFETY", "guardrail_intervened")])
+@pytest.mark.parametrize(
+    "finish_reason,stop_reason",
+    [
+        ("STOP", "end_turn"),
+        ("SAFETY", "guardrail_intervened"),
+        ("BLOCKLIST", "content_filtered"),
+        ("PROHIBITED_CONTENT", "content_filtered"),
+        ("SPII", "content_filtered"),
+        ("IMAGE_SAFETY", "content_filtered"),
+        ("IMAGE_PROHIBITED_CONTENT", "content_filtered"),
+        ("RECITATION", "content_filtered"),
+        ("IMAGE_RECITATION", "content_filtered"),
+    ],
+)
 async def test_stream_response_without_usage_metadata(
     gemini_client, model, messages, agenerator, alist, finish_reason, stop_reason
 ):
@@ -1798,3 +2163,19 @@ async def test_stream_response_empty_usage_metadata_is_preserved(gemini_client, 
             "metrics": {"latencyMs": 0},
         }
     }
+
+
+def test_format_request_logs_skipped_blocks_once_per_request(model, caplog):
+    caplog.set_level(logging.WARNING, logger="strands.models.gemini")
+    s3_image = {"image": {"format": "png", "source": {"location": {"type": "s3", "uri": "s3://bucket/key.png"}}}}
+    messages = []
+    for turn in range(3):
+        messages.append({"role": "user", "content": [{"text": "look"}, s3_image, {"cachePoint": {"type": "default"}}]})
+        messages.append({"role": "assistant", "content": [{"text": f"answer {turn}"}]})
+
+    model._format_request(messages, None, None, None)
+
+    messages_logged = [record.getMessage() for record in caplog.records]
+    assert len(messages_logged) == 2
+    assert "count=<3> | Location sources are not supported by Gemini" in messages_logged[0]
+    assert "count=<3> | cachePoint content block is not supported by Gemini" in messages_logged[1]

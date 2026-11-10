@@ -16,7 +16,7 @@ from strands.bidi.agent._restart_timer import _RestartTimer, resolve_deadline_s
 def test_resolve_deadline_none_when_not_declared():
     """No declared restart_after_s means no proactive timer; restart stays reactive-only."""
     assert resolve_deadline_s({}) is None
-    assert resolve_deadline_s({"auto_reconnect": True}) is None
+    assert resolve_deadline_s({"auto_restart": True}) is None
 
 
 def test_resolve_deadline_is_restart_after_s():

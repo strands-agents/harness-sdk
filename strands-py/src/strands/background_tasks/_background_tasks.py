@@ -11,12 +11,12 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, TypeGuard
 
-from .._middleware.stages import InvokeModelContext, InvokeModelStage
 from ..agent import _continuation
 from ..agent._agent_as_tool import _AgentAsTool
 from ..agent.agent import _CANCEL_POLL_INTERVAL
 from ..hooks import AfterInvocationEvent, AgentInitializedEvent, BeforeModelCallEvent, HookOrder
 from ..interrupt import Interrupt, InterruptException
+from ..middleware.stages import InvokeModelContext, InvokeModelStage
 from ..models._validation import validate_config_keys
 from ..plugins import Plugin
 from ..tools.decorator import tool
@@ -31,6 +31,7 @@ from .in_process._manager import InProcessTaskManager, _MiddlewareInterrupt
 
 if TYPE_CHECKING:
     from ..agent import Agent
+    from ..agent.invocation_context import InvocationContext
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +117,7 @@ class _BackgroundTasks(Plugin):
             manager_options["timeout"] = self._config["timeout"]
         self._manager = InProcessTaskManager(agent, execute_tool, on_task_updated=self._store_task, **manager_options)
 
-        agent._middleware_registry.add_middleware(InvokeModelStage.Input, self._transform_tool_specs)
+        agent.add_middleware(InvokeModelStage.Input, self._transform_tool_specs)
         agent.add_hook(self._before_model_call, BeforeModelCallEvent)
         agent.add_hook(self._after_invocation, AfterInvocationEvent)
         agent.add_hook(lambda event: self.load_state(), AgentInitializedEvent, order=HookOrder.SDK_LAST)
@@ -198,12 +199,19 @@ class _BackgroundTasks(Plugin):
         invocation_state: dict[str, Any],
         pass_id: str,
         tool_instance: AgentTool,
+        invocation_context: InvocationContext | None = None,
     ) -> ToolResult:
-        """Admit one background tool call and return its dispatch acknowledgement."""
+        """Admit one background tool call and return its dispatch acknowledgement.
+
+        The task keeps ``invocation_context``, the request that submitted it, even if it starts
+        after that request returned.
+        """
         if self._agent.cancel_signal.is_set():
             return _tool_error(tool_use, "Tool execution cancelled")
         try:
-            task = await self._manager.submit(tool_use, invocation_state, pass_id, tool_instance)
+            task = await self._manager.submit(
+                tool_use, invocation_state, pass_id, tool_instance, invocation_context=invocation_context
+            )
         except Exception as error:
             logger.warning("error=<%s> | background task admission failed", error)
             return _tool_error(tool_use, "Background task admission failed")
