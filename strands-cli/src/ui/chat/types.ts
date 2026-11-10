@@ -185,6 +185,7 @@ export interface ChatRuntimeInfo {
   configuration?: readonly { label: string; value: string }[]
   devWorkspace?: { root: string; entrypoint: string; origin: string }
   sourceWatching?: boolean
+  reloadStatus?: string
 }
 
 export interface ChatVoiceStore {
@@ -272,6 +273,8 @@ export interface ChatControllerApi {
   captureConversations?(): Promise<ChatConversations>
   pauseVoiceInput?(): () => void
   showError?(title: string, message: string): void
+  markReloaded?(paths: readonly string[]): void
+  clearReloadStatus?(): void
   setSettings?(settings: Partial<ChatSettings>): Promise<boolean>
   toggleVoiceMute?(): boolean
   actionableCommandToken(input: string): string | undefined

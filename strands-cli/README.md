@@ -184,7 +184,8 @@ The top-level `agent/` exists only when dev creates a new persistent project. Ex
 A binding cannot point into its own `tmp/`. Dev never changes the global CLI default during creation or startup.
 
 The dev session always runs the bound persistent agent. Editing its configuration changes that agent, not a temporary copy.
-Runtime state stays separate from candidate source. The existing watcher reloads the bound project when its source changes.
+Runtime state stays separate from candidate source. The existing watcher reloads the bound project when its source changes. After a successful reload, the status shows `↻ agent.ts reloaded · session kept` (or the Python filename).
+Reload waits for active work to finish. A failed replacement keeps the previous agent and conversation active without showing a success message.
 Legacy `.strands/config.json` agents remain in place. Startup creates a `.config` binding and initial copy without moving or rewriting their source.
 For the old `strands-dev/base-cli/` layout, selecting Base CLI creates the control files in `strands-dev/` and binds the existing agent.
 

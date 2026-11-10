@@ -44,7 +44,7 @@ interface ConversationManagerOptions {
   voice?: VoiceInput
   project?: ImportedAgentProject
   projectPrivatePaths?: readonly string[] | null
-  reloadProject?(conversationId: string): void
+  reloadProject?(conversationId: string, paths: readonly string[]): void
 }
 
 export class ConversationManager implements ChatControllerApi {
@@ -66,6 +66,7 @@ export class ConversationManager implements ChatControllerApi {
   private _nextPanel = 1
   private _opening: 'fork' | 'resume' | undefined
   private _projectReloadPending = false
+  private readonly _changedPaths = new Set<string>()
   private _sourceWatching = false
   private _closed = false
   private _disposed = false
@@ -115,7 +116,9 @@ export class ConversationManager implements ChatControllerApi {
       project && options.reloadProject && options.projectPrivatePaths !== null
         ? watchAgentProject(
             project,
-            () => {
+            (paths = []) => {
+              this.clearReloadStatus()
+              for (const path of paths) this._changedPaths.add(path)
               for (const { controller } of this._conversations.values()) {
                 controller.refreshConfiguration()
               }
@@ -124,6 +127,7 @@ export class ConversationManager implements ChatControllerApi {
             },
             (error) => {
               this._sourceWatching = false
+              this.clearReloadStatus()
               this._openError('live reload unavailable', project.root, errorMessage(error))
             },
             options.projectPrivatePaths
@@ -183,6 +187,14 @@ export class ConversationManager implements ChatControllerApi {
 
   pauseVoiceInput(): () => void {
     return this._voice.pauseInput()
+  }
+
+  clearReloadStatus(): void {
+    for (const { controller } of this._conversations.values()) controller.clearReloadStatus()
+  }
+
+  markReloaded(paths: readonly string[]): void {
+    this._active.controller.markReloaded(paths)
   }
 
   showError(title: string, message: string): void {
@@ -529,7 +541,9 @@ export class ConversationManager implements ChatControllerApi {
       return
     }
     this._projectReloadPending = false
-    this._reloadProject(this._activeId)
+    const paths = [...this._changedPaths]
+    this._changedPaths.clear()
+    this._reloadProject(this._activeId, paths)
   }
 
   private _switchConversation(id: string): boolean {

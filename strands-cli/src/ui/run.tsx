@@ -159,6 +159,7 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
     resolveSetup(exitCode)
     if (exitCode === 0 && changed && controller && controllerFactory && instance && !replacementTask) {
       const previousController = controller
+      previousController.clearReloadStatus?.()
       const resumeVoiceInput = previousController.pauseVoiceInput?.()
       controller = undefined
       reloading = reloadingController(previousController, closeForExit)
@@ -166,6 +167,7 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
       replacementTask = (async (): Promise<void> => {
         const conversations = await previousController.captureConversations?.()
         const replacement = await initializeController(launch, conversations)
+        if (launch?.reloadedFiles && conversations) replacement.markReloaded?.(launch.reloadedFiles)
         await Promise.allSettled([previousController.dispose()])
         if (pendingExitCode !== undefined) {
           replacement.close(pendingExitCode)

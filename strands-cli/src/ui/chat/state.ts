@@ -29,6 +29,7 @@ export function cloneRuntime(runtime: ChatRuntimeInfo): ChatRuntimeInfo {
     session: sanitizeTerminalText(runtime.session),
     ...(runtime.sessionName !== undefined ? { sessionName: sanitizeTerminalText(runtime.sessionName) } : {}),
     cwd: runtime.cwd,
+    ...(runtime.reloadStatus ? { reloadStatus: sanitizeTerminalText(runtime.reloadStatus) } : {}),
     ...(runtime.devWorkspace
       ? {
           devWorkspace: {

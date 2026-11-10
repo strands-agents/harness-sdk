@@ -10,12 +10,13 @@ const RELOAD_DEBOUNCE_MS = 200
 
 export function watchAgentProject(
   project: ImportedAgentProject,
-  onChange: () => void,
+  onChange: (paths: readonly string[]) => void,
   onError: (error: Error) => void,
   privatePaths: readonly string[] = []
 ): () => void {
   let watcher: FSWatcher
   let timer: ReturnType<typeof setTimeout> | undefined
+  const changedPaths = new Set<string>()
   const ignoredPaths = privatePaths.map((path) => resolve(project.root, path))
   try {
     watcher = watch(project.root, { recursive: true, persistent: false }, (_event, filename) => {
@@ -27,8 +28,13 @@ export function watchAgentProject(
       ) {
         return
       }
+      changedPaths.add(path ?? 'agent source')
       clearTimeout(timer)
-      timer = setTimeout(onChange, RELOAD_DEBOUNCE_MS)
+      timer = setTimeout(() => {
+        const paths = [...changedPaths].sort()
+        changedPaths.clear()
+        onChange(paths)
+      }, RELOAD_DEBOUNCE_MS)
     })
   } catch (error) {
     onError(error instanceof Error ? error : new Error(String(error)))

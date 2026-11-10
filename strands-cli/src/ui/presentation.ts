@@ -310,7 +310,8 @@ export function metadataPlacements(
   const pathText = truncateText(
     sanitizeTerminalText(
       snapshot.runtime.devWorkspace
-        ? `dev · ${snapshot.runtime.agent} · ${snapshot.runtime.sourceWatching ? 'watching files' : 'watch off'}`
+        ? (snapshot.runtime.reloadStatus ??
+            `dev · ${snapshot.runtime.agent} · ${snapshot.runtime.sourceWatching ? 'watching files' : 'watch off'}`)
         : snapshot.runtime.cwd
     ),
     Math.max(0, pathMaximumEnd - pathMinimumStart),

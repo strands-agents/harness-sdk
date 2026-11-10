@@ -347,8 +347,10 @@ describe('runInkChat', () => {
     })
     try {
       await vi.waitFor(() => expect(rendered).toContain('Fork history'))
+      previous.markReloaded(['earlier.ts'])
       requestSetup({
         conversationId: 'agent-1',
+        reloadedFiles: ['agent.ts'],
         ...(kind === 'profile' ? { profile: configuration.profile } : { configuration, agentProject }),
         onFailure,
       })
@@ -409,10 +411,12 @@ describe('runInkChat', () => {
       if (fails) {
         expect(await readFile(configPath, 'utf8')).toBe(saved)
         expect(onFailure).toHaveBeenCalledExactlyOnceWith(replacementError)
+        expect(previous.getSnapshot().runtime.reloadStatus).toBeUndefined()
         expect(rendered).toContain('error: Failed to apply setup: Replacement failed')
         expect(rendered).not.toContain(replacementError)
       } else {
         expect(onFailure).not.toHaveBeenCalled()
+        expect(replacement?.getSnapshot().runtime.reloadStatus).toBe('↻ agent.ts reloaded · session kept')
       }
     } finally {
       release()

@@ -11,6 +11,28 @@ const devWorkspace = { root: '/workspace', entrypoint: '/workspace/agent.ts', or
 afterEach(() => vi.restoreAllMocks())
 
 describe('dev session identity', () => {
+  it.each([
+    [['src/agent.ts'], 'agent.ts'],
+    [['agent.py'], 'agent.py'],
+    [['a/agent.ts', 'b/agent.ts'], '2 files'],
+    [[], 'agent source'],
+  ] as const)('shouldDescribeTheSuccessfulReloadFor%s', async (paths, label) => {
+    const controller = new ChatController(idleBackend(), { runtime: { devWorkspace } })
+    try {
+      controller.markReloaded(paths)
+      const status = `↻ ${label} reloaded · session kept`
+      expect(controller.getSnapshot().runtime.reloadStatus).toBe(status)
+      expect(controller.getSnapshot().notices.at(-1)?.text).toBe(status)
+      expect(
+        metadataPlacements(controller.getSnapshot(), 220)
+          .map(({ text }) => text)
+          .join(' ')
+      ).toContain(status)
+    } finally {
+      await controller.dispose()
+    }
+  })
+
   it('shouldIdentifyWorkspaceSettingsWhenADevControllerStarts', async () => {
     const controller = new ChatController(idleBackend({ name: 'Local harness' }), { runtime: { devWorkspace } })
     try {
@@ -58,9 +80,12 @@ describe('dev session identity', () => {
     try {
       expect(manager.getSnapshot().runtime.sourceWatching).toBe(true)
 
+      manager.markReloaded(['agent.ts'])
+      expect(manager.getSnapshot().runtime.reloadStatus).toContain('session kept')
       fail(new Error('watch failed'))
 
       expect(manager.getSnapshot().runtime.sourceWatching).toBe(false)
+      expect(manager.getSnapshot().runtime.reloadStatus).toBeUndefined()
     } finally {
       await manager.dispose()
     }

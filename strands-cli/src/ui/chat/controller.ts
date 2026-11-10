@@ -327,6 +327,21 @@ export class ChatController implements ChatControllerApi {
     }
   }
 
+  clearReloadStatus(): void {
+    if (this._runtime.reloadStatus === undefined) return
+    delete this._runtime.reloadStatus
+    this._emit()
+  }
+
+  markReloaded(paths: readonly string[]): void {
+    const changed = [...new Set(paths)]
+    const label = changed.length > 1 ? `${changed.length} files` : changed[0]?.split(/[\\/]/u).at(-1) || 'agent source'
+    const status = `↻ ${sanitizeTerminalText(label)} reloaded · session kept`
+    this._runtime.reloadStatus = status
+    this._addNotice('success', status)
+    this._emit()
+  }
+
   showError(title: string, message: string): void {
     this._openError(title, '', message)
   }

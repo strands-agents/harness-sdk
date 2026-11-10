@@ -27,6 +27,7 @@ import { EXA_WEB_SEARCH_WARNING, builtinToolChoices, withBuiltinToolChoice } fro
 import { type ChatBuiltinToolsRuntime, type ChatDiffPreview } from './types.js'
 
 export type SetupChange = {
+  reloadedFiles?: readonly string[]
   conversationId?: string
   onFailure?: (message: string) => Promise<void>
 } & (

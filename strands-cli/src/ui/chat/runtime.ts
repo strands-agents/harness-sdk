@@ -247,7 +247,8 @@ export async function createTypescriptChat(
                   : []),
               ].map((path) => resolve(backend.cwd, path))
             }),
-        reloadProject: (conversationId): void => requestSetup({ agentProject: project.entrypoint, conversationId }),
+        reloadProject: (conversationId, paths): void =>
+          requestSetup({ agentProject: project.entrypoint, conversationId, reloadedFiles: paths }),
       }
     )
   } catch (error) {
@@ -389,7 +390,8 @@ export async function createPythonChat(
                   ? [devWorkspace.directory]
                   : []),
               ],
-        reloadProject: (conversationId): void => requestSetup({ agentProject: project.entrypoint, conversationId }),
+        reloadProject: (conversationId, paths): void =>
+          requestSetup({ agentProject: project.entrypoint, conversationId, reloadedFiles: paths }),
       }
     )
   } catch (error) {
@@ -679,8 +681,8 @@ export async function createInteractiveChat(
                       (agentPrivatePaths(runtime.agent) ?? []).map((path) => resolve(initialWorkspace, path))
                     ),
                   ],
-              reloadProject: (conversationId: string): void =>
-                options.requestSetup?.({ agentProject: project.entrypoint, conversationId }),
+              reloadProject: (conversationId: string, paths: readonly string[]): void =>
+                options.requestSetup?.({ agentProject: project.entrypoint, conversationId, reloadedFiles: paths }),
             }
           : {}),
       }
