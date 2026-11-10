@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { Agent, InvokeModelStage, tool } from '@strands-agents/sdk'
 import type { Model } from '@strands-agents/sdk'
 import { z } from 'zod'
-import { anthropic } from '../__fixtures__/model-providers.js'
+import { anthropic, bedrock } from '../__fixtures__/model-providers.js'
 
 describe.each([
   {
@@ -10,6 +10,13 @@ describe.each([
     provider: anthropic,
     createModel: (): Model => anthropic.createModel({ modelId: 'claude-haiku-4-5', maxTokens: 1024 }),
     delivery: 'native',
+  },
+  {
+    name: 'Bedrock Converse',
+    provider: bedrock,
+    createModel: (): Model =>
+      bedrock.createModel({ modelId: 'us.anthropic.claude-haiku-4-5-20251001-v1:0', maxTokens: 1024 }),
+    delivery: 'stubs',
   },
 ])('dynamic tool loading on $name', ({ provider, createModel, delivery }) => {
   it.skipIf(provider.skip)(
