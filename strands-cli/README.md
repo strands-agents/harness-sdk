@@ -111,8 +111,11 @@ Local model modules and static imports are packaged without changing the saved p
 ### Prepare and validate the selected project
 
 Discovery identifies source files without executing them. Labels show `Needs setup`, `Manual setup`, or `Check setup`; discovery does not prove that an agent runs.
-After selection, the setup panel shows the project root, entrypoint, runtime, and commands before execution.
-Install and build commands can execute project code. Enter approves preparation. `v` skips installation and validates the existing project environment.
+After selection, dev prepares the project automatically. There is no preparation confirmation screen.
+Selecting a project permits its declared install and build commands to run. These commands can execute project code.
+Successful preparation is cached locally. Unchanged dependencies and build inputs reuse the existing environment and outputs.
+Source changes can trigger a build without reinstalling dependencies. Missing environments, changed manifests, or changed setup files invalidate the relevant cache.
+Dev still loads the selected entrypoint on every launch, so cached setup does not hide import errors.
 
 | Project                                   | Automatic preparation                                                                                                           |
 | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
@@ -130,13 +133,13 @@ Installation stays in the project environment. Destination overrides cannot redi
 
 After preparation, the CLI loads the entrypoint in the same runtime used by chat. Validation makes no model request.
 Dependencies and resources loaded only during a later tool call can still fail at runtime.
-The initial candidate copy uses the same declared preparation path. Validation-only mode skips its dependency installation too.
+The initial candidate copy uses the same declared preparation path. After a failure, validation-only mode skips dependency installation.
 
 ### When setup fails
 
 The TUI stays open and shows the failed stage, relevant error, suggested next action, and private log path.
 Enter or `r` retries. `v` validates after manual setup. `d` shows details. `b` returns to selection.
-Changed manifests require another command preview before retry. Dev does not reset source or silently rewrite lockfiles.
+Retry re-reads the project manifests and forces setup when repair is needed. Dev does not reset source or silently rewrite lockfiles.
 Logs live under the selected project's `.strands/state/setup/`. Known credential values and authenticated URL credentials are redacted.
 
 If a runtime or package manager is unsupported, prepare the project with its own tooling and then validate it in dev.

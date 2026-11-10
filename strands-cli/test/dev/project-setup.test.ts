@@ -16,7 +16,21 @@ afterEach(() => vi.restoreAllMocks())
 type RenderApp = NonNullable<NonNullable<Parameters<typeof runInkChat>[1]>['renderApp']>
 
 describe('project setup guidance', () => {
-  it('shouldShowRootRuntimeCommandsAndTrustNoticeBeforePreparing', async () => {
+  it('shouldPrepareAutomaticallyWithoutAskingForConfirmation', async () => {
+    const root = await temporaryDirectory()
+    const entrypoint = join(root, 'agent.ts')
+    await writeFile(entrypoint, 'export const agent = {}')
+    await writeFile(join(root, 'package.json'), '{}')
+    const execute = vi.spyOn(preparation, 'executePreparation').mockResolvedValue('/tmp/setup.log')
+    const screen = { signal: new AbortController().signal, show: vi.fn() }
+
+    expect(await projectSetupSession().prepare({ root, entrypoint, language: 'typescript' }, screen)).toBe('ready')
+
+    expect(execute).toHaveBeenCalledOnce()
+    expect(screen.show.mock.calls.every(([content]) => content === undefined)).toBe(true)
+  })
+
+  it('shouldShowActionableDetailsOnlyWhenSetupFails', async () => {
     const input = ttyInput()
     const output = ttyOutput(140, 40)
     const frame = captureFrame(output)
@@ -28,16 +42,24 @@ describe('project setup guidance', () => {
           runtime: 'Node 22',
           manager: 'npm',
           fingerprint: 'x',
-          commands: [{ stage: 'build', command: 'npm', args: ['run', 'build'] }],
+          commands: [],
+        },
+        failure: {
+          stage: 'build',
+          summary: 'Project build failed',
+          action: 'Fix the project, then Retry.',
+          command: 'npm run build',
+          logPath: '/tmp/setup.log',
+          details: 'Build failed',
         },
         onAction: action,
       }),
       { stdin: input, stdout: output }
     )
-    await vi.waitFor(() => expect(frame().join('\n')).toContain('npm run build'))
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('Project build failed'))
     expect(frame().join('\n')).toContain('Root: /project')
     expect(frame().join('\n')).toContain('Runtime: Node 22')
-    expect(frame().join('\n')).toContain('execute project code')
+    expect(frame().join('\n')).toContain('Log: /tmp/setup.log')
     input.write('v')
     await vi.waitFor(() => expect(action).toHaveBeenCalledWith('validate'))
   })
@@ -50,6 +72,7 @@ describe('project setup guidance', () => {
     await writeFile(join(root, 'agent.py'), 'invalid source fixture')
     const project = { root, entrypoint: join(root, 'agent.py'), language: 'python' as const }
     const setup = projectSetupSession()
+    vi.spyOn(preparation, 'executePreparation').mockResolvedValue('/tmp/setup.log')
     const controller = new ChatController(idleBackend())
     const factory = vi
       .fn()
@@ -66,9 +89,6 @@ describe('project setup guidance', () => {
       recoverStartup: setup.recover,
     })
     try {
-      await vi.waitFor(() => expect(frame().join('\n')).toContain('Prepare selected project'))
-      expect(factory).not.toHaveBeenCalled()
-      input.write('v')
       await vi.waitFor(() => expect(frame().join('\n')).toContain('refund_desk'))
       expect(frame().join('\n')).toContain('editable install')
       input.write('d')
@@ -84,7 +104,7 @@ describe('project setup guidance', () => {
     }
   })
 
-  it('shouldShowChangedCommandsBeforeRetryingAFailedPreparation', async () => {
+  it('shouldRetryWithUpdatedCommandsWithoutAnotherConfirmation', async () => {
     const root = await temporaryDirectory()
     const entrypoint = join(root, 'agent.ts')
     const manifest = join(root, 'package.json')
@@ -116,13 +136,16 @@ describe('project setup guidance', () => {
       }
     )
     try {
-      await vi.waitFor(() => expect(frame().join('\n')).toContain('Prepare selected project'))
-      input.write('\r')
       await vi.waitFor(() => expect(frame().join('\n')).toContain('Install failed'))
       await writeFile(manifest, '{"scripts":{"build":"echo changed"}}')
       input.write('r')
-      await vi.waitFor(() => expect(frame().join('\n')).toContain('npm --global=false run build'))
-      expect(execute).toHaveBeenCalledTimes(1)
+      await running
+      expect(execute).toHaveBeenCalledTimes(2)
+      expect(execute.mock.calls[1]?.[0].commands).toContainEqual({
+        stage: 'build',
+        command: 'npm',
+        args: ['--global=false', 'run', 'build'],
+      })
     } finally {
       input.write('b')
       await running

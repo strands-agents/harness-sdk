@@ -4,11 +4,7 @@ import { Box, useInput } from 'ink'
 import { Text, useTheme } from '../ui/theme.js'
 import type { StartupScreen } from '../ui/run.js'
 import { useTerminalSize } from '../ui/terminal-size.js'
-import {
-  describePreparationCommand,
-  planProjectPreparation,
-  type ProjectPreparationPlan,
-} from '../project/preparation-plan.js'
+import { planProjectPreparation, type ProjectPreparationPlan } from '../project/preparation-plan.js'
 import {
   executePreparation,
   redactPreparationOutput,
@@ -21,16 +17,16 @@ import {
 import type { ImportedAgentProject } from '../project/import.js'
 import { sanitizeTerminalText } from '../terminal/text.js'
 
-export type SetupAction = 'prepare' | 'validate' | 'back' | 'cancel' | 'retry'
+export type SetupAction = 'validate' | 'back' | 'cancel' | 'retry'
 
 interface ProjectSetupPanelProps {
   plan?: ProjectPreparationPlan
-  failure?: PreparationFailure
+  failure: PreparationFailure
   onAction(action: SetupAction): void
 }
 
 export const ProjectSetupPanel = ({ plan, failure, onAction }: ProjectSetupPanelProps): ReactElement => {
-  const { accent, error } = useTheme()
+  const { error } = useTheme()
   const { rows } = useTerminalSize()
   const [details, setDetails] = useState(false)
   useInput((input, key) => {
@@ -38,13 +34,12 @@ export const ProjectSetupPanel = ({ plan, failure, onAction }: ProjectSetupPanel
     if (key.escape || input.toLowerCase() === 'b') return onAction('back')
     if (input.toLowerCase() === 'd') return setDetails((visible) => !visible)
     if (input.toLowerCase() === 'v') return onAction('validate')
-    if (key.return || input.toLowerCase() === 'r')
-      return onAction(failure ? 'retry' : plan?.manager === 'manual' ? 'validate' : 'prepare')
+    if (key.return || input.toLowerCase() === 'r') return onAction('retry')
   })
   return (
     <Box flexDirection="column">
-      <Text bold color={failure ? error : accent}>
-        {failure ? failure.summary : 'Prepare selected project'}
+      <Text bold color={error}>
+        {failure.summary}
       </Text>
       {plan ? (
         <>
@@ -53,43 +48,24 @@ export const ProjectSetupPanel = ({ plan, failure, onAction }: ProjectSetupPanel
           <Text wrap="truncate-middle">Runtime: {sanitizeTerminalText(plan.runtime)}</Text>
         </>
       ) : null}
-      {failure ? (
-        <>
-          <Text color={error}>
-            {failure.details
-              .split('\n')
-              .find((line) => line.trim())
-              ?.slice(0, 240)}
-          </Text>
-          <Text>{failure.action}</Text>
-          {failure.command ? (
-            <Text wrap="truncate-middle">Failed command: {redactPreparationOutput(failure.command)}</Text>
-          ) : null}
-          {failure.logPath ? <Text wrap="truncate-middle">Log: {failure.logPath}</Text> : null}
-        </>
-      ) : (
-        <>
-          {plan?.commands.map((step, index) => (
-            <Text key={index} wrap="truncate-middle">
-              {index + 1}. {redactPreparationOutput(describePreparationCommand(step))}
-            </Text>
-          ))}
-          {plan?.guidance ? <Text>{plan.guidance}</Text> : null}
-          <Text dimColor>
-            Install and build commands can execute project code. The initial candidate copy uses the same setup. Source
-            and lockfiles will not be reset.
-          </Text>
-        </>
-      )}
-      {details && failure ? (
+      <Text color={error}>
+        {failure.details
+          .split('\n')
+          .find((line) => line.trim())
+          ?.slice(0, 240)}
+      </Text>
+      <Text>{failure.action}</Text>
+      {failure.command ? (
+        <Text wrap="truncate-middle">Failed command: {redactPreparationOutput(failure.command)}</Text>
+      ) : null}
+      {failure.logPath ? <Text wrap="truncate-middle">Log: {failure.logPath}</Text> : null}
+      {details ? (
         <Box height={Math.max(2, Math.min(8, rows - 20))} overflow="hidden">
           <Text>{failure.details}</Text>
         </Box>
       ) : null}
       <Text dimColor>
-        {failure
-          ? `Enter / r retry · v validate after manual setup · d ${details ? 'hide details' : 'details'} · b back`
-          : 'Enter prepare · v validate existing environment · b back'}
+        {`Enter / r retry · v validate after manual setup · d ${details ? 'hide details' : 'details'} · b back`}
       </Text>
     </Box>
   )
@@ -126,60 +102,43 @@ export interface ProjectSetupSession {
 export const projectSetupSession = (): ProjectSetupSession => {
   let plan: ProjectPreparationPlan | undefined
   let progress: PreparationProgress | undefined
-  let validateOnly = false
-  const run = async (screen: StartupScreen): Promise<void> => {
-    if (!plan) throw new Error('No project is selected.')
-    if (!validateOnly) {
-      const logPath = await executePreparation(plan, {
-        signal: screen.signal,
-        progress: (value) => {
-          progress = value
-          screen.show(
-            undefined,
-            `${value.stage === 'build' ? 'Building project' : value.stage === 'runtime' ? 'Preparing runtime' : 'Installing dependencies'}…`
-          )
-        },
-      })
-      progress = { stage: 'entrypoint', command: `Load ${plan.project.entrypoint}`, logPath }
-    }
-    screen.show(undefined, 'Checking entrypoint in the selected runtime…')
-  }
   const failure = (error: unknown): PreparationFailure =>
     error instanceof ProjectPreparationError ? error.failure : preparationFailure(error, progress)
+  const run = async (screen: StartupScreen, force = false): Promise<void> => {
+    if (!plan) throw new Error('No project is selected.')
+    const logPath = await executePreparation(plan, {
+      signal: screen.signal,
+      force,
+      progress: (value) => {
+        progress = value
+        screen.show(
+          undefined,
+          `${value.stage === 'build' ? 'Building project' : value.stage === 'runtime' ? 'Preparing runtime' : 'Installing dependencies'}…`
+        )
+      },
+    })
+    progress = { stage: 'entrypoint', command: `Load ${plan.project.entrypoint}`, logPath }
+    screen.show(undefined, 'Checking entrypoint in the selected runtime…')
+  }
   return {
     prepare: async (project, screen, afterPreparation): Promise<'ready' | 'back' | 'cancel'> => {
       progress = undefined
-      let lastError: unknown
+      let force = false
+      let validateOnly = false
       for (;;) {
         try {
-          const updated = await planProjectPreparation(project)
-          if (!plan || plan.fingerprint !== updated.fingerprint) lastError = undefined
-          plan = updated
-        } catch (error) {
-          plan = undefined
-          lastError = error
-        }
-        const action = await ask(screen, {
-          ...(plan ? { plan } : {}),
-          ...(lastError ? { failure: failure(lastError) } : {}),
-        })
-        if (action === 'back' || action === 'cancel') return action
-        if (!plan) continue
-        validateOnly = action === 'validate' || plan.manager === 'manual'
-        try {
-          const current = await planProjectPreparation(project)
-          if (current.fingerprint !== plan.fingerprint) {
-            plan = current
-            lastError = undefined
-            continue
-          }
-          await run(screen)
+          plan = await planProjectPreparation(project)
+          if (!validateOnly) await run(screen, force)
+          else screen.show(undefined, 'Checking entrypoint in the selected runtime…')
           await afterPreparation?.(!validateOnly)
           screen.show(undefined, 'Checking entrypoint in the selected runtime…')
           return 'ready'
         } catch (error) {
           if (screen.signal.aborted) return 'cancel'
-          lastError = error
+          const action = await ask(screen, { ...(plan ? { plan } : {}), failure: failure(error) })
+          if (action === 'back' || action === 'cancel') return action
+          validateOnly = action === 'validate'
+          force = true
         }
       }
     },
@@ -199,19 +158,10 @@ export const projectSetupSession = (): ProjectSetupSession => {
         const action = await ask(screen, { ...(plan ? { plan } : {}), failure: failureRecord })
         if (action === 'cancel') return 'exit'
         if (action === 'back') return 'back'
-        validateOnly = action === 'validate' || plan?.manager === 'manual'
         try {
-          if (plan) {
-            const current = await planProjectPreparation(plan.project)
-            if (current.fingerprint !== plan.fingerprint) {
-              plan = current
-              const approved = await ask(screen, { plan })
-              if (approved === 'back') return 'back'
-              if (approved === 'cancel') return 'exit'
-              validateOnly = approved === 'validate' || plan.manager === 'manual'
-            }
-          }
-          await run(screen)
+          if (plan) plan = await planProjectPreparation(plan.project)
+          if (action !== 'validate') await run(screen, true)
+          else screen.show(undefined, 'Checking entrypoint in the selected runtime…')
           return 'retry'
         } catch (next) {
           if (screen.signal.aborted) return 'exit'

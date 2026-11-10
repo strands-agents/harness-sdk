@@ -15,6 +15,7 @@ import { terminateProcessTree } from '../terminal/process-tree.js'
 import { sanitizeTerminalText } from '../terminal/text.js'
 import { isRecord } from '../values.js'
 import type { ImportedAgentProject } from './import.js'
+import { cachedPreparation, preparationCacheState, savePreparationCache } from './preparation-cache.js'
 
 export interface PreparationProgress {
   stage: PreparationStage
@@ -111,14 +112,19 @@ export const recordEntrypointFailure = async (
 
 export const executePreparation = async (
   plan: ProjectPreparationPlan,
-  options: { signal?: AbortSignal; progress?: (progress: PreparationProgress) => void; runtimeOnly?: boolean } = {}
+  options: {
+    signal?: AbortSignal
+    progress?: (progress: PreparationProgress) => void
+    runtimeOnly?: boolean
+    force?: boolean
+  } = {}
 ): Promise<string> => {
   const { signal } = options
   signal?.throwIfAborted()
   const current = await planProjectPreparation(plan.project)
   if (current.fingerprint !== plan.fingerprint)
     throw new ProjectPreparationError(
-      new Error('Project manifests changed after the preview. Return to setup and inspect the new commands.')
+      new Error('Project manifests changed during preparation. Retry to use the latest project settings.')
     )
   const logPath = await privateLogs(plan.project.root)
   const lock = join(dirname(logPath), 'prepare.lock')
@@ -136,6 +142,7 @@ export const executePreparation = async (
     await rm(lock, { recursive: true, force: true })
     throw error
   })
+  const cachePath = join(dirname(logPath), 'prepared.json')
   let progress: PreparationProgress | undefined
   const record = async (message: string): Promise<void> => {
     await log.writeFile(`${redactPreparationOutput(message)}\n`)
@@ -239,8 +246,13 @@ export const executePreparation = async (
     })
   }
   try {
+    const initialState = await preparationCacheState(plan)
+    const cached = options.force
+      ? { dependencies: false, build: false }
+      : await cachedPreparation(cachePath, initialState)
     if (plan.manager === 'manual') return logPath
     for (const step of plan.commands) {
+      if (step.stage === 'build' ? cached.build : cached.dependencies) continue
       if (options.runtimeOnly && step.stage !== 'runtime') continue
       if (step.stage === 'runtime' && plan.project.language === 'python') {
         await preparePythonRuntime(plan.project.root, {
@@ -265,6 +277,9 @@ export const executePreparation = async (
       throw new Error(
         'A setup command changed a manifest or lockfile. Inspect the changes before continuing; dev did not restore or overwrite them.'
       )
+    if (!options.runtimeOnly) await savePreparationCache(cachePath, await preparationCacheState(plan), logPath)
+    if (cached.dependencies && cached.build)
+      await record('Reused unchanged project preparation; entrypoint validation still runs.')
     return logPath
   } catch (error) {
     await record(error instanceof Error ? error.message : String(error))

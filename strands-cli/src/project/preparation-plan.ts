@@ -36,6 +36,11 @@ const INPUTS = [
   'uv.lock',
   'poetry.lock',
   'Pipfile.lock',
+  '.npmrc',
+  '.python-version',
+  'setup.py',
+  'setup.cfg',
+  'uv.toml',
 ]
 const MAX_MANIFEST_BYTES = 4 * 1024 * 1024
 
