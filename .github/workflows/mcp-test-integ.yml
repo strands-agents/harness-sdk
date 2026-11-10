@@ -1,0 +1,43 @@
+name: "MCP: Integration Tests"
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        required: true
+        type: string
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mcp-integ-${{ inputs.ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-integ:
+    name: Public documentation
+    runs-on: strands-agents_ubuntu-latest_4-core
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: strands-mcp
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v7.1.0
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install --no-cache-dir hatch
+
+      - name: Run integration tests
+        run: hatch run test-integ

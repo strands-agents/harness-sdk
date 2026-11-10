@@ -2,8 +2,6 @@
 
 from urllib.parse import urlparse
 
-import pytest
-
 from strands_mcp_server.config import doc_config
 from strands_mcp_server.utils import doc_fetcher
 from strands_mcp_server.utils.text_processor import (
@@ -21,10 +19,7 @@ class TestLlmsTxtParsing:
 
     def test_llms_txt_returns_links(self):
         """The llms.txt file should return valid documentation links."""
-        try:
-            links = doc_fetcher.parse_llms_txt(doc_config.llm_texts_url[0])
-        except Exception as exc:
-            pytest.skip(f"Could not fetch llms.txt: {exc}")
+        links = doc_fetcher.parse_llms_txt(doc_config.llm_texts_url[0])
 
         assert len(links) >= 10, f"Expected at least 10 links, got {len(links)}"
         for title, url, _description in links[:5]:
