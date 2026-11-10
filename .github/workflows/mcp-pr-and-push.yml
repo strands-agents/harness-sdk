@@ -1,0 +1,25 @@
+name: "MCP: Pull Request and Push"
+
+on:
+  workflow_call:
+  push:
+    branches: [ main ]
+    paths:
+      - 'strands-mcp/**'
+      - '.github/workflows/mcp-*'
+  workflow_dispatch:
+
+jobs:
+  call-test-lint:
+    uses: ./.github/workflows/mcp-test-lint.yml
+    permissions:
+      contents: read
+    with:
+      ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+  call-test-package-build:
+    uses: ./.github/workflows/mcp-test-package-build.yml
+    permissions:
+      contents: read
+    with:
+      ref: ${{ github.event.pull_request.head.sha || github.sha }}

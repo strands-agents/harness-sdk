@@ -20,9 +20,5 @@
     "noEmit": true
   },
   "include": ["../src/content/docs/**/*.ts"],
-  "exclude": [
-    "node_modules",
-    "../src/content/docs/examples/cdk/**",
-    "../src/content/docs/examples/typescript/deploy_to_bedrock_agentcore/**"
-  ]
+  "exclude": ["node_modules"]
 }

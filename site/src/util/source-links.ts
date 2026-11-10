@@ -43,13 +43,18 @@ export function resolveLanguage(link: SourceLink): string {
   if (inferred) return inferred
   throw new Error(
     `sourceLink "${link.path}" has an unrecognized file extension; ` +
-      `add it to EXTENSION_TO_LANGUAGE or set "language" explicitly on the link.`,
+      `add it to EXTENSION_TO_LANGUAGE or set "language" explicitly on the link.`
   )
 }
 
 /** Human-readable label for a language code (capitalized fallback if unknown). */
 export function languageLabel(language: string): string {
   return LANGUAGE_LABELS[language.toLowerCase()] ?? language.charAt(0).toUpperCase() + language.slice(1)
+}
+
+/** Canonical language code for a known display label. */
+export function languageCodeForLabel(label: string): string | undefined {
+  return Object.entries(LANGUAGE_LABELS).find(([, knownLabel]) => knownLabel === label)?.[0]
 }
 
 /** Full GitHub blob URL for a source link. */

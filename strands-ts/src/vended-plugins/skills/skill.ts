@@ -170,9 +170,7 @@ function buildSkillFromFrontmatter(
 ): Skill {
   // Parse allowed-tools (space-delimited string or YAML list)
   const allowedToolsRaw = (frontmatter['allowed-tools'] ?? frontmatter['allowed_tools']) as
-    | string
-    | unknown[]
-    | undefined
+    string | unknown[] | undefined
   let allowedTools: string[] | undefined
   if (typeof allowedToolsRaw === 'string' && allowedToolsRaw.trim()) {
     allowedTools = allowedToolsRaw.trim().split(/\s+/)

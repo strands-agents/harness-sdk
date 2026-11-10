@@ -1,19 +1,27 @@
 import { Message, TextBlock, type MessageData } from '../../types/messages.js'
 import type { Model } from '../../models/model.js'
+import { ModelProxy } from '../../models/model-proxy.js'
 import type { JSONValue } from '../../types/json.js'
 import { logger } from '../../logging/logger.js'
+import { normalizeError } from '../../errors.js'
 import type { ExtractionResult, Extractor, ExtractorContext } from './types.js'
 
-/** Default instruction guiding the model to emit discrete, durable facts as a JSON array. */
+/** Default guidance on what counts as a fact; a custom `systemPrompt` replaces it. */
 const DEFAULT_SYSTEM_PROMPT = `You extract durable facts worth remembering across future conversations from a transcript.
 
-Return ONLY a JSON array of objects, each: {"content": string}. Each object is one discrete, self-contained fact (a preference, decision, or stable detail about the user or task). Do not include transient chit-chat, questions, or anything already obvious. If there is nothing worth remembering, return [].`
+Each entry is one discrete, self-contained fact (a preference, decision, or stable detail about the user or task). Do not include transient chit-chat, questions, or anything already obvious.`
+
+/** The response shape the parser requires, appended after every system prompt so a custom prompt cannot drop it. */
+const OUTPUT_FORMAT = `Return ONLY a JSON array of objects, each: {"content": string}. If there is nothing worth remembering, return [].`
 
 /** Options for {@link ModelExtractor}. */
 export interface ModelExtractorOptions {
-  /** Model used to extract facts. Defaults to the agent's own model; set a cheaper one to cut cost. */
+  /** Model used to extract facts. Resolution order: `this model > agent.auxModel > agent.model`. */
   model?: Model
-  /** System prompt steering what counts as a fact. Defaults to a general fact-extraction prompt. */
+  /**
+   * System prompt steering what counts as a fact. Defaults to a general fact-extraction prompt. The JSON
+   * output format the extractor parses is always appended after it.
+   */
   systemPrompt?: string
 }
 
@@ -40,7 +48,7 @@ export class ModelExtractor implements Extractor {
     if (options.model !== undefined) {
       this._model = options.model
     }
-    this._systemPrompt = options.systemPrompt ?? DEFAULT_SYSTEM_PROMPT
+    this._systemPrompt = `${options.systemPrompt ?? DEFAULT_SYSTEM_PROMPT}\n\n${OUTPUT_FORMAT}`
   }
 
   async extract(messages: MessageData[], context?: ExtractorContext): Promise<ExtractionResult[]> {
@@ -62,19 +70,47 @@ export class ModelExtractor implements Extractor {
       }),
     ]
 
-    const stream = model.streamAggregated(promptMessages, { systemPrompt: this._systemPrompt })
-    // Manual .next() loop: streamAggregated returns its result as the generator return value
-    // (done:true), which for-await-of discards.
-    let result: Awaited<ReturnType<typeof stream.next>> | undefined
-    for (;;) {
-      result = await stream.next()
-      if (result.done) break
-    }
-    if (!result?.done || !result.value) {
-      throw new Error('ModelExtractor: model returned no response')
+    const span =
+      context?.tracer?.startModelInvokeSpan({
+        messages: promptMessages,
+        ...(model.modelId !== undefined && { modelId: model.modelId }),
+        systemPrompt: this._systemPrompt,
+      }) ?? null
+
+    let result: Awaited<ReturnType<ReturnType<typeof model.streamAggregated>['next']>> | undefined
+    try {
+      const proxy = new ModelProxy(model)
+      const stream = proxy.streamAggregated(
+        promptMessages,
+        { systemPrompt: this._systemPrompt },
+        context?.invocationContext
+      )
+      // Manual .next() loop: streamAggregated returns its result as the generator return value
+      // (done:true), which for-await-of discards.
+      for (;;) {
+        result = await stream.next()
+        if (result.done) break
+      }
+    } catch (error) {
+      context?.tracer?.endModelInvokeSpan(span, { error: normalizeError(error) })
+      throw error
     }
 
-    const text = result.value.message.content
+    if (!result?.done || !result.value) {
+      const noResponseError = new Error('ModelExtractor: model returned no response')
+      context?.tracer?.endModelInvokeSpan(span, { error: noResponseError })
+      throw noResponseError
+    }
+
+    const { message, stopReason, metadata } = result.value
+    context?.tracer?.endModelInvokeSpan(span, {
+      output: message,
+      stopReason,
+      ...(metadata?.usage !== undefined && { usage: metadata.usage }),
+      ...(metadata?.metrics !== undefined && { metrics: metadata.metrics }),
+    })
+
+    const text = message.content
       .map((block) => ('text' in block ? block.text : ''))
       .join('')
       .trim()

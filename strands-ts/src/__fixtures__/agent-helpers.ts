@@ -16,6 +16,7 @@ import { defaultSandbox } from '../sandbox/default.js'
 import type { Sandbox } from '../sandbox/base.js'
 import type { HookableEvent, StreamEvent } from '../hooks/events.js'
 import type { HookableEventConstructor, HookCallback } from '../hooks/types.js'
+import { AgentMetrics } from '../telemetry/meter.js'
 import { expectLoopMetrics, type LoopMetricsMatcher } from './metrics-helpers.js'
 
 /**
@@ -69,10 +70,14 @@ export function createMockAgent(data?: MockAgentData): MockAgent {
     modelState: new StateStore(),
     toolRegistry: data?.toolRegistry ?? new ToolRegistry(),
     cancelSignal: new AbortController().signal,
+    metrics: data?.extra?.metrics ?? new AgentMetrics(),
     // Mirror the real Agent.sandbox getter: resolve the environment default lazily.
     // An explicit `extra.sandbox` below overrides this accessor.
     get sandbox(): Sandbox {
       return defaultSandbox.get()
+    },
+    get sessionId(): string {
+      return 'test-ses'
     },
     addHook: <T extends HookableEvent>(eventType: HookableEventConstructor<T>, callback: HookCallback<T>) => {
       trackedHooks.push({
@@ -84,6 +89,7 @@ export function createMockAgent(data?: MockAgentData): MockAgent {
     // No-op so plugins that register middleware in initAgent (e.g. MemoryManager injection) work
     // out of the box. Tests that inspect registrations override this via `extra.addMiddleware`.
     addMiddleware: () => () => {},
+    auxModel: data?.extra?.auxModel ?? data?.extra?.model,
     ...data?.extra,
     trackedHooks,
   } as unknown as MockAgent
@@ -108,11 +114,13 @@ export function textMessage(role: Role, text: string): Message {
  * @param event - The event instance to dispatch
  */
 export async function invokeTrackedHook<T extends HookableEvent>(agent: MockAgent, event: T): Promise<void> {
-  const hook = agent.trackedHooks.find((h) => h.eventType === event.constructor)
-  if (!hook) {
+  const hooks = agent.trackedHooks.filter((h) => h.eventType === event.constructor)
+  if (hooks.length === 0) {
     throw new Error(`No hook registered for event type: ${event.constructor.name}`)
   }
-  await hook.callback(event)
+  for (const hook of hooks) {
+    await hook.callback(event)
+  }
 }
 
 /**

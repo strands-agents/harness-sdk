@@ -6,12 +6,13 @@ from typing import TYPE_CHECKING, Any
 from typing_extensions import override
 
 from ...telemetry.metrics import Trace
-from ...types._events import ToolInterruptEvent, TypedEvent
+from ...types._events import ToolInterruptEvent, ToolResultEvent, TypedEvent
 from ...types.tools import ToolResult, ToolUse
 from ._executor import ToolExecutor
 
 if TYPE_CHECKING:  # pragma: no cover
     from ...agent import Agent
+    from ...agent.invocation_context import InvocationContext
     from ..structured_output._structured_output_context import StructuredOutputContext
 
 
@@ -28,6 +29,7 @@ class SequentialToolExecutor(ToolExecutor):
         cycle_span: Any,
         invocation_state: dict[str, Any],
         structured_output_context: "StructuredOutputContext | None" = None,
+        invocation_context: "InvocationContext | None" = None,
     ) -> AsyncGenerator[TypedEvent, None]:
         """Execute tools sequentially.
 
@@ -41,6 +43,8 @@ class SequentialToolExecutor(ToolExecutor):
             cycle_span: Span object for tracing the cycle.
             invocation_state: Context for the tool invocation.
             structured_output_context: Context for structured output handling.
+            invocation_context: The request the tool calls belong to, handed to each tool's
+                ``ToolContext``.
 
         Yields:
             Events from the tool execution stream.
@@ -48,8 +52,25 @@ class SequentialToolExecutor(ToolExecutor):
         interrupted = False
 
         for tool_use in tool_uses:
+            if agent._observe_cancellation():
+                cancel_result: ToolResult = {
+                    "toolUseId": str(tool_use.get("toolUseId")),
+                    "status": "error",
+                    "content": [{"text": "Tool execution cancelled"}],
+                }
+                tool_results.append(cancel_result)
+                yield ToolResultEvent(cancel_result)
+                continue
+
             events = ToolExecutor._stream_with_trace(
-                agent, tool_use, tool_results, cycle_trace, cycle_span, invocation_state, structured_output_context
+                agent,
+                tool_use,
+                tool_results,
+                cycle_trace,
+                cycle_span,
+                invocation_state,
+                structured_output_context,
+                invocation_context=invocation_context,
             )
             async for event in events:
                 if isinstance(event, ToolInterruptEvent):

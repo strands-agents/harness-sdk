@@ -1,0 +1,88 @@
+---
+title: Add Your Integration
+description: 'How to list your integration on the Strands Agents integrations page, from package requirements to submitting an entry.'
+sidebar:
+  label: "Add Your Integration"
+---
+
+Built something useful for Strands Agents? Add it to the [integrations page](/integrations/) so
+other developers can discover it. A listing is one small YAML file — an on-site
+documentation page is optional.
+
+## What we list
+
+Reusable packages published to PyPI or npm that extend Strands Agents: model providers,
+tools, session managers, memory stores, storage backends, plugins, observability backends,
+integrations, agent extensions, and interventions. Vendor integrations documented by a dev
+guide (with no installable Strands package) also qualify — see the `docsUrl` field below.
+
+**Out of scope:** example agents, demos, and applications *built with* Strands. The
+catalog lists building blocks you add to your own agent, not finished agents or one-off
+projects.
+
+:::tip[Starting from scratch?]
+The [extension template](https://github.com/strands-agents/extension-template) gives you a
+ready-made project structure with testing, linting, and publishing already set up.
+:::
+
+## Add your entry
+
+1. Fork [strands-agents/harness-sdk](https://github.com/strands-agents/harness-sdk)
+2. Add one file: `site/src/content/catalog/<your-package>.yaml`
+3. Open a PR with the **Integration submission** template: append
+`?template=catalog-submission.md` to the compare URL, e.g.
+`https://github.com/strands-agents/harness-sdk/compare/main...<your-fork>:<your-branch>?template=catalog-submission.md`
+
+Your entry:
+
+```yaml
+name: your-package-name
+description: One sentence describing what it does
+integrationType: tool        # tool | model-provider | session-manager | memory-store | storage | integration | plugin | observability | agent-extension | intervention
+languages:
+  python:                    # include the languages you publish for
+    package: your-package-name
+  typescript:
+    package: "@your-scope/your-package"
+github: https://github.com/your-org/your-repo
+docsUrl: https://your-docs-site.example.com/strands   # optional — see below
+addedDate: 2026-07-31        # the date you open the PR
+```
+
+| Field | Required | Notes |
+|-------|----------|-------|
+| `name` | ✅ | Display name in the catalog |
+| `description` | ✅ | One sentence, ~160 characters max — the card clamps longer text |
+| `integrationType` | ✅ | One of the ten types above |
+| `languages` | ✅ | At least one of `python` / `typescript`, each with the `package` name as published on PyPI / npm (use `pkg[extra]` for an extras-qualified install, e.g. `temporalio[strands-agents]`). For a vendor-guide integration with no Strands-specific package, leave the block empty (`python: {}`) and set `docsUrl` to your guide. |
+| `github` | ✅ | Public repository URL, starting with `https://github.com/` |
+| `addedDate` | ✅ | Date of submission (drives the "New" badge) |
+| `docsUrl` | Recommended | Link to your own docs page about the Strands integration — your card's primary link. Must start with `https://`. |
+| `docsPage` | Legacy | On-site docs page reference — existing entries only; new submissions link their own docs via `docsUrl` |
+| `maintainedBy` | Optional | Who stands behind the integration, shown and filtered on the catalog. Defaults to `community` (maintained by an individual developer). Set `partner` only if you represent the company behind the integration and the entry's `github` org is that company's official org — a maintainer verifies this before merging. `strands` and `aws` are granted by the Strands team. |
+
+The maintainer shown on your card and the PyPI/npm links are derived automatically — the
+maintainer from your `github` URL's owner, the registry links from your `package` names.
+Don't declare `maintainer` or `registry` fields; the build rejects them.
+
+Leave `featured` and `badges` unset — the Strands team grants those, and CI flags
+submissions that set them for maintainer review.
+
+The site build validates your file against the schema, so a malformed entry fails CI with
+a clear error.
+
+## Link your own documentation
+
+Host your integration's documentation on your own site or repo and point your entry's
+`docsUrl` at it — that's where your card sends visitors. Your docs stay current because
+you own them; pages copied into this site tend to go stale as your package evolves.
+Without a `docsUrl`, the card links to your GitHub repo, which works fine too.
+
+New submissions should not add documentation pages under `site/src/content/docs/`.
+Existing on-site pages (referenced via `docsPage`) remain supported for entries that
+already have them.
+
+## Questions?
+
+Ask in [Discord](https://discord.gg/strands) or open an issue at
+[strands-agents/harness-sdk](https://github.com/strands-agents/harness-sdk/issues).

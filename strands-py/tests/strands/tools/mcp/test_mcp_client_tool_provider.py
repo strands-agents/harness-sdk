@@ -70,6 +70,31 @@ def test_init_with_tool_filters_and_prefix(mock_transport):
     assert client._tool_provider_started is False
 
 
+def test_continue_on_error_and_connection_failed_accessors(mock_transport):
+    """The public accessors reflect the configured flag and the sticky failed state."""
+    default_client = MCPClient(mock_transport)
+    assert default_client.continue_on_error is False
+    assert default_client.connection_failed is False
+
+    lenient_client = MCPClient(mock_transport, continue_on_error=True)
+    assert lenient_client.continue_on_error is True
+    assert lenient_client.connection_failed is False
+
+    lenient_client._connection_failed = True
+    assert lenient_client.connection_failed is True
+
+
+@pytest.mark.asyncio
+async def test_connection_failed_accessor_reflects_swallowed_failure(mock_transport):
+    """connection_failed flips to True after load_tools swallows a start failure."""
+    client = MCPClient(mock_transport, continue_on_error=True)
+
+    with patch.object(client, "start", side_effect=Exception("Client start failed")):
+        await client.load_tools()
+
+    assert client.connection_failed is True
+
+
 @pytest.mark.asyncio
 async def test_load_tools_starts_client_when_not_started(mock_transport, mock_agent_tool):
     """Test that load_tools starts the client when not already started."""
@@ -111,6 +136,68 @@ async def test_load_tools_raises_exception_on_client_start_failure(mock_transpor
 
         with pytest.raises(ToolProviderException, match="Failed to start MCP client: Client start failed"):
             await client.load_tools()
+
+
+@pytest.mark.asyncio
+async def test_load_tools_returns_empty_when_continue_on_error_and_start_fails(mock_transport):
+    """With continue_on_error, a start failure yields no tools instead of raising."""
+    client = MCPClient(mock_transport, continue_on_error=True)
+
+    with patch.object(client, "start") as mock_start:
+        mock_start.side_effect = Exception("Client start failed")
+
+        tools = await client.load_tools()
+
+    assert tools == []
+
+
+@pytest.mark.asyncio
+async def test_continue_on_error_isolates_connection_failure_from_sibling_clients(mock_transport, mock_agent_tool):
+    """A client whose connection fails yields no tools while a sibling client still loads its own.
+
+    Covers the "other servers stay usable" guarantee at connection time (not just config resolution):
+    one server's failed start() does not affect a separate, healthy client.
+    """
+    failing = MCPClient(mock_transport, continue_on_error=True)
+    healthy = MCPClient(mock_transport)
+
+    with (
+        patch.object(failing, "start", side_effect=Exception("connection refused")),
+        patch.object(healthy, "start"),
+        patch.object(healthy, "list_tools_sync", return_value=PaginatedList([mock_agent_tool])),
+    ):
+        assert await failing.load_tools() == []
+        healthy_tools = await healthy.load_tools()
+
+    assert len(healthy_tools) == 1
+    assert healthy_tools[0] is mock_agent_tool
+
+
+@pytest.mark.asyncio
+async def test_load_tools_logs_warning_when_continue_on_error_swallows_failure(mock_transport, caplog):
+    client = MCPClient(mock_transport, continue_on_error=True)
+
+    with patch.object(client, "start") as mock_start:
+        mock_start.side_effect = Exception("Client start failed")
+        with caplog.at_level("WARNING", logger="strands.tools.mcp.mcp_client"):
+            await client.load_tools()
+
+    assert "MCP server failed to start" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_load_tools_does_not_retry_start_after_continue_on_error_failure(mock_transport):
+    """A swallowed failure is not retried: a second load_tools call doesn't re-run start()."""
+    client = MCPClient(mock_transport, continue_on_error=True)
+
+    with patch.object(client, "start") as mock_start:
+        mock_start.side_effect = Exception("Client start failed")
+
+        await client.load_tools()  # first call swallows the failure
+        tools = await client.load_tools()  # second must short-circuit, not retry start()
+
+        assert tools == []
+        mock_start.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -334,6 +421,52 @@ def test_remove_consumer_cleanup_failure(mock_transport):
 
         with pytest.raises(ToolProviderException, match="Failed to cleanup MCP client: Cleanup failed"):
             client.remove_consumer("consumer1")
+
+
+def test_remove_consumer_with_cleanup_after_continue_on_error_failure(mock_transport):
+    """A swallowed start failure still triggers cleanup on the last consumer so the sticky flag resets."""
+    client = MCPClient(mock_transport, continue_on_error=True)
+    client._consumers.add("consumer1")
+    client._connection_failed = True  # swallowed failure leaves _tool_provider_started False
+
+    with patch.object(client, "stop") as mock_stop:
+        client.remove_consumer("consumer1")
+
+        # stop() runs despite _tool_provider_started being False, because a failed client needs teardown too
+        mock_stop.assert_called_once_with(None, None, None)
+
+
+@pytest.mark.asyncio
+async def test_load_tools_reconnects_for_new_consumer_after_continue_on_error_failure(mock_transport):
+    """A failed client that loses all consumers resets and reconnects for the next consumer.
+
+    Guarantees the failure is sticky only within a connection lifecycle, not for the object's life:
+    successful and failed clients both reset on zero consumers so a recovered server is usable again.
+    """
+    client = MCPClient(mock_transport, continue_on_error=True)
+
+    with patch.object(client, "start") as mock_start, patch.object(client, "list_tools_sync") as mock_list_tools:
+        # First consumer: server is down, failure is swallowed
+        mock_start.side_effect = Exception("Client start failed")
+        client.add_consumer("consumer1")
+        assert await client.load_tools() == []
+        assert client._connection_failed is True
+
+        # Last consumer leaves: real stop() resets _connection_failed (and other reuse state)
+        client.remove_consumer("consumer1")
+        assert client._connection_failed is False
+        assert client._tool_provider_started is False
+
+        # New consumer: server has recovered, start() now succeeds and tools load
+        tool = create_mock_tool(tool_name="recovered_tool")
+        mock_start.side_effect = None
+        mock_list_tools.return_value = PaginatedList([tool])
+        client.add_consumer("consumer2")
+        tools = await client.load_tools()
+
+        assert len(tools) == 1
+        assert tools[0].tool_name == "recovered_tool"
+        assert mock_start.call_count == 2
 
 
 def test_mcp_client_reuse_across_multiple_agents(mock_transport):

@@ -17,7 +17,7 @@ import pytest
 
 from strands.sandbox.ssh import SshSandbox
 from strands.sandbox.types import ExecutionResult
-from strands.vended_tools.bash.types import SANDBOX_BASH_DESCRIPTION
+from strands.vended_tools.shell.types import SANDBOX_SHELL_DESCRIPTION
 
 # Leading SSH flags shared by every invocation, with default host-key checking.
 BASE = ["-o", "StrictHostKeyChecking=accept-new", "-o", "BatchMode=yes", "-p", "22"]
@@ -187,13 +187,13 @@ async def test_rejects_invalid_env_var_names(mock_stream_process):
         await SshSandbox("h", working_dir="/w").execute("cmd", env={"FOO=bar BAZ": "val"})
 
 
-def test_get_tools_vends_file_editor_and_bash():
+def test_get_tools_vends_file_editor_and_shell():
     tools = SshSandbox("myhost", working_dir="/workspace").get_tools()
-    assert [t.tool_name for t in tools] == ["sandbox_file_editor", "sandbox_bash"]
+    assert [t.tool_name for t in tools] == ["sandbox_file_editor", "sandbox_shell"]
 
 
-def test_get_tools_bash_description_names_host():
+def test_get_tools_shell_description_names_host():
     tools = SshSandbox("myhost", working_dir="/workspace").get_tools()
-    bash_tool = next(t for t in tools if t.tool_name == "sandbox_bash")
-    assert SANDBOX_BASH_DESCRIPTION in bash_tool.tool_spec["description"]
-    assert "myhost" in bash_tool.tool_spec["description"]
+    shell_tool = next(t for t in tools if t.tool_name == "sandbox_shell")
+    assert SANDBOX_SHELL_DESCRIPTION in shell_tool.tool_spec["description"]
+    assert "myhost" in shell_tool.tool_spec["description"]

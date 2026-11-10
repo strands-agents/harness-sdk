@@ -142,6 +142,16 @@ class CheckpointException(Exception):
     pass
 
 
+class StorageError(Exception):
+    """Raised when a storage operation fails.
+
+    Wraps backend-specific errors (filesystem, S3, network) with a uniform type
+    that consumers can catch without knowing which backend is in use.
+    """
+
+    pass
+
+
 class AggregateMemoryError(Exception):
     """Raised when one or more memory store operations fail.
 

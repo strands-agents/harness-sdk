@@ -1,9 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import Anthropic from '@anthropic-ai/sdk'
+import { VERSION as SDK_VERSION } from '@anthropic-ai/sdk/version'
 import { isNode } from '../../__fixtures__/environment.js'
 import { AnthropicModel } from '../anthropic.js'
-import { ContextWindowOverflowError, ModelThrottledError } from '../../errors.js'
-import { collectIterator } from '../../__fixtures__/model-test-helpers.js'
+import { ModelProxy } from '../model-proxy.js'
+import { ContextWindowOverflowError, ModelError, ModelThrottledError, NotImplementedError } from '../../errors.js'
+import { collectGenerator, collectIterator } from '../../__fixtures__/model-test-helpers.js'
 import {
   Message,
   TextBlock,
@@ -12,9 +14,17 @@ import {
   ToolResultBlock,
   JsonBlock,
   ReasoningBlock,
+  InjectedBlock,
+  SummaryBlock,
 } from '../../types/messages.js'
 import { ImageBlock, DocumentBlock, VideoBlock } from '../../types/media.js'
 import { warnOnce } from '../../logging/warn-once.js'
+import { logger } from '../../logging/logger.js'
+import { CitationsBlock } from '../../types/citations.js'
+import { z } from 'zod'
+import { clearStructuredOutputSupport, toNativeOutputSchema } from '../native-output.js'
+import { zodSchemaToJsonSchema } from '../../tools/zod-utils.js'
+import type { StreamOptions } from '../model.js'
 
 /**
  * Helper to create a mock Anthropic client with streaming support
@@ -67,7 +77,7 @@ describe('AnthropicModel', () => {
       const provider = new AnthropicModel({ apiKey: 'sk-ant-test' })
       const config = provider.getConfig()
       expect(config.modelId).toBe('claude-sonnet-4-6')
-      expect(config.maxTokens).toBe(64_000)
+      expect(config.maxTokens).toBe(128_000) // claude-sonnet-4-6 output ceiling from the shared model info
     })
 
     it('uses provided model ID', () => {
@@ -122,6 +132,14 @@ describe('AnthropicModel', () => {
       )
     })
 
+    it('does not warn when maxTokens is pinned through modelInfo', () => {
+      new AnthropicModel({ apiKey: 'sk-ant-test', modelInfo: { limits: { maxOutputTokens: 2_000 } } })
+      expect(warnOnce).not.toHaveBeenCalledWith(
+        expect.objectContaining({ warn: expect.any(Function) }),
+        expect.stringContaining('using default maxTokens')
+      )
+    })
+
     it('warns when modelId is not explicitly set', () => {
       new AnthropicModel({ apiKey: 'sk-ant-test' })
       expect(warnOnce).toHaveBeenCalledWith(
@@ -139,10 +157,10 @@ describe('AnthropicModel', () => {
     })
 
     it('auto-populates contextWindowLimit from model ID lookup', () => {
-      const provider = new AnthropicModel({ apiKey: 'sk-test', modelId: 'claude-sonnet-4-20250514' })
+      const provider = new AnthropicModel({ apiKey: 'sk-test', modelId: 'claude-sonnet-4-6' })
       expect(provider.getConfig()).toStrictEqual({
-        modelId: 'claude-sonnet-4-20250514',
-        maxTokens: 64_000,
+        modelId: 'claude-sonnet-4-6',
+        maxTokens: 128_000,
         contextWindowLimit: 1_000_000,
       })
     })
@@ -151,7 +169,7 @@ describe('AnthropicModel', () => {
       const provider = new AnthropicModel({ apiKey: 'sk-test' })
       expect(provider.getConfig()).toStrictEqual({
         modelId: 'claude-sonnet-4-6',
-        maxTokens: 64_000,
+        maxTokens: 128_000,
         contextWindowLimit: 1_000_000,
       })
     })
@@ -159,12 +177,12 @@ describe('AnthropicModel', () => {
     it('does not override explicit contextWindowLimit', () => {
       const provider = new AnthropicModel({
         apiKey: 'sk-test',
-        modelId: 'claude-sonnet-4-20250514',
+        modelId: 'claude-sonnet-4-6',
         contextWindowLimit: 100_000,
       })
       expect(provider.getConfig()).toStrictEqual({
-        modelId: 'claude-sonnet-4-20250514',
-        maxTokens: 64_000,
+        modelId: 'claude-sonnet-4-6',
+        maxTokens: 128_000,
         contextWindowLimit: 100_000,
       })
     })
@@ -175,6 +193,66 @@ describe('AnthropicModel', () => {
         modelId: 'unknown-model',
         maxTokens: 64_000,
       })
+    })
+  })
+
+  describe('info', () => {
+    it('reads cache points from the shared model info', () => {
+      const model = new AnthropicModel({ apiKey: 'sk-ant-test', modelId: 'claude-sonnet-4-6' })
+      expect(model.modelInfo.capabilities?.promptCaching).toBe('cachePoints')
+    })
+
+    it.each([
+      ['claude-opus-5-5', true],
+      ['claude-opus-5-5-20260401', true],
+      ['claude-sonnet-5', false],
+      ['claude-sonnet-4-6', false],
+    ])('reports temporary messages from the shared model info for %s: %s', (modelId, expected) => {
+      const model = new AnthropicModel({ apiKey: 'sk-ant-test', modelId })
+      expect(model.modelInfo.capabilities?.temporaryMessages).toBe(expected)
+    })
+
+    it('lets the modelInfo config turn temporary messages off', () => {
+      const model = new AnthropicModel({
+        apiKey: 'sk-ant-test',
+        modelId: 'claude-opus-5-5',
+        modelInfo: { capabilities: { temporaryMessages: false } },
+      })
+      expect(model.modelInfo.capabilities?.temporaryMessages).toBe(false)
+    })
+
+    it('re-resolves the default maxTokens when modelId changes', () => {
+      const model = new AnthropicModel({ apiKey: 'sk-ant-test', modelId: 'claude-sonnet-4-6' })
+      expect(model.getConfig().maxTokens).toBe(128_000)
+
+      model.updateConfig({ modelId: 'claude-opus-4-1' })
+
+      expect(model.getConfig().maxTokens).toBe(32_000)
+      expect(model.modelInfo.limits?.maxOutputTokens).toBe(32_000)
+    })
+
+    it('defaults maxTokens to an info override of the output ceiling', () => {
+      const model = new AnthropicModel({
+        apiKey: 'sk-ant-test',
+        modelId: 'claude-sonnet-4-6',
+        modelInfo: { limits: { maxOutputTokens: 8_000 } },
+      })
+
+      expect(model.getConfig().maxTokens).toBe(8_000)
+      expect(model.modelInfo.limits?.maxOutputTokens).toBe(8_000)
+    })
+
+    it('defaults maxTokens to the model output ceiling from the shared model info', () => {
+      expect(
+        new AnthropicModel({ apiKey: 'sk-ant-test', modelId: 'claude-opus-4-1-20250805' }).getConfig().maxTokens
+      ).toBe(32_000)
+      expect(new AnthropicModel({ apiKey: 'sk-ant-test', modelId: 'claude-unknown-9' }).getConfig().maxTokens).toBe(
+        64_000
+      )
+      expect(
+        new AnthropicModel({ apiKey: 'sk-ant-test', modelId: 'claude-opus-5-5', maxTokens: 4_096 }).getConfig()
+          .maxTokens
+      ).toBe(4_096)
     })
   })
 
@@ -192,15 +270,15 @@ describe('AnthropicModel', () => {
       const provider = new AnthropicModel({ apiKey: 'sk-test' })
       expect(provider.getConfig().contextWindowLimit).toBe(1_000_000) // claude-sonnet-4-6 default
 
-      provider.updateConfig({ modelId: 'claude-sonnet-4-20250514' })
-      expect(provider.getConfig().contextWindowLimit).toBe(1_000_000) // claude-sonnet-4-20250514 value
+      provider.updateConfig({ modelId: 'claude-sonnet-4-5-20250929' })
+      expect(provider.getConfig().contextWindowLimit).toBe(200_000) // claude-sonnet-4-5-20250929 value
     })
 
     it('preserves explicit contextWindowLimit when modelId changes', () => {
       const provider = new AnthropicModel({ apiKey: 'sk-test', contextWindowLimit: 50_000 })
       expect(provider.getConfig().contextWindowLimit).toBe(50_000)
 
-      provider.updateConfig({ modelId: 'claude-sonnet-4-20250514' })
+      provider.updateConfig({ modelId: 'claude-sonnet-4-6' })
       expect(provider.getConfig().contextWindowLimit).toBe(50_000) // preserved
     })
   })
@@ -234,6 +312,37 @@ describe('AnthropicModel', () => {
         usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
       })
       expect(events[5]).toEqual({ type: 'modelMessageStopEvent', stopReason: 'endTurn' })
+    })
+
+    it('reports a total that includes cache reads and writes', async () => {
+      // Anthropic reports input_tokens net of the cache, so the four counters sum to the total (#3546).
+      const mockClient = createMockClient(async function* () {
+        yield {
+          type: 'message_start',
+          message: {
+            role: 'assistant',
+            usage: { input_tokens: 5, cache_read_input_tokens: 100, cache_creation_input_tokens: 50 },
+          },
+        }
+        yield { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 7 } }
+        yield { type: 'message_stop' }
+      })
+
+      const provider = new AnthropicModel({ client: mockClient })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+
+      const events = await collectIterator(provider.stream(messages))
+
+      expect(events[1]).toEqual({
+        type: 'modelMetadataEvent',
+        usage: {
+          inputTokens: 5,
+          outputTokens: 7,
+          totalTokens: 162,
+          cacheReadInputTokens: 100,
+          cacheWriteInputTokens: 50,
+        },
+      })
     })
 
     it('handles tool use events', async () => {
@@ -271,13 +380,10 @@ describe('AnthropicModel', () => {
       expect(events).toContainEqual({ type: 'modelMessageStopEvent', stopReason: 'toolUse' })
     })
 
-    it.each([
-      ['pause_turn', 'pauseTurn'],
-      ['refusal', 'refusal'],
-    ])('maps anthropic stop reason "%s" to "%s"', async (anthropicReason, expected) => {
+    it('maps anthropic stop reason "refusal" to "refusal"', async () => {
       const mockClient = createMockClient(async function* () {
         yield { type: 'message_start', message: { role: 'assistant', usage: { input_tokens: 1 } } }
-        yield { type: 'message_delta', delta: { stop_reason: anthropicReason }, usage: { output_tokens: 1 } }
+        yield { type: 'message_delta', delta: { stop_reason: 'refusal' }, usage: { output_tokens: 1 } }
         yield { type: 'message_stop' }
       })
 
@@ -286,7 +392,7 @@ describe('AnthropicModel', () => {
 
       const events = await collectIterator(provider.stream(messages))
 
-      expect(events).toContainEqual({ type: 'modelMessageStopEvent', stopReason: expected })
+      expect(events).toContainEqual({ type: 'modelMessageStopEvent', stopReason: 'refusal' })
     })
 
     it('handles thinking/reasoning events', async () => {
@@ -342,8 +448,60 @@ describe('AnthropicModel', () => {
 
       expect(events).toContainEqual({
         type: 'modelContentBlockDeltaEvent',
-        delta: { type: 'reasoningContentDelta', redactedContent: 'data' },
+        delta: { type: 'reasoningContentDelta', redactedContent: new Uint8Array([117, 171, 90]) },
       })
+    })
+
+    // Regression for #4587: redacted thinking data arrives as a base64 string and must
+    // reach the next request as that verbatim string across any toJSON/fromJSON round-trip
+    // (Message.clone(), session save/restore).
+    it('preserves redacted thinking data through stream, serialization, and request round-trips', async () => {
+      const redactedData = 'EmwKAgIBc2VjcmV0LWRhdGE='
+      const decodedBytes = new Uint8Array([18, 108, 10, 2, 2, 1, 115, 101, 99, 114, 101, 116, 45, 100, 97, 116, 97])
+
+      const mockClient = createMockClient(async function* () {
+        yield { type: 'message_start', message: { role: 'assistant', usage: { input_tokens: 10 } } }
+        yield {
+          type: 'content_block_start',
+          index: 0,
+          content_block: { type: 'redacted_thinking', data: redactedData },
+        }
+        yield { type: 'content_block_stop', index: 0 }
+        yield { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 5 } }
+        yield { type: 'message_stop' }
+      })
+
+      const provider = new AnthropicModel({ client: mockClient })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+
+      const aggregated = (await collectGenerator(provider.streamAggregated(messages))).result
+      const streamedBlock = aggregated.message.content[0] as ReasoningBlock
+
+      // The streamed block holds the decoded bytes its declared type promises
+      expect(streamedBlock.type).toBe('reasoningBlock')
+      expect(streamedBlock.redactedContent).toEqual(decodedBytes)
+
+      // Session save/restore (toJSON/fromJSON) must not alter the value
+      const restored = Message.fromJSON(JSON.parse(JSON.stringify(aggregated.message)))
+      const restoredBlock = restored.content[0] as ReasoningBlock
+      expect(restoredBlock.redactedContent).toEqual(decodedBytes)
+
+      // Sending the restored block back must carry the verbatim base64 string
+      const captured: { request: any } = { request: null }
+      const captureClient = {
+        messages: {
+          stream: vi.fn((req: any) => {
+            captured.request = req
+            return (async function* () {
+              yield { type: 'ping' }
+            })()
+          }),
+        },
+      } as unknown as Anthropic
+      const sendBack = new AnthropicModel({ client: captureClient })
+      await collectIterator(sendBack.stream([restored]))
+
+      expect(captured.request.messages[0].content).toEqual([{ type: 'redacted_thinking', data: redactedData }])
     })
 
     it('handles text payload directly in content_block_start (optimization)', async () => {
@@ -428,6 +586,296 @@ describe('AnthropicModel', () => {
     })
   })
 
+  describe('stale thinking recovery', () => {
+    const bindingMessage =
+      '400 messages.1.content.0: Invalid `signature` in `thinking` block. The block is bound to a different conversation.'
+    const bindingError = Object.assign(new Error(bindingMessage), { status: 400 })
+    const dropBlockThinking = { type: 'adaptive', block_binding: { prefix_mismatch_behavior: 'drop_block' } }
+    const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+
+    const createRejectingOnceClient = (error: Error = bindingError, retryError?: Error) => {
+      let calls = 0
+      const stream = vi.fn(() =>
+        (async function* () {
+          calls += 1
+          if (calls === 1) throw error
+          if (retryError) throw retryError
+          yield { type: 'message_start', message: { role: 'assistant', usage: {} } }
+        })()
+      )
+      return { stream, client: { messages: { stream } } as unknown as Anthropic }
+    }
+
+    it('retries once with drop_block and keeps it on for later requests', async () => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      const { stream, client } = createRejectingOnceClient()
+      const provider = new AnthropicModel({
+        client,
+        modelId: 'm1',
+        betas: ['other-beta'],
+        params: { thinking: { type: 'adaptive' } },
+      })
+
+      const events = await collectIterator(provider.stream(messages))
+
+      expect(events[0]).toStrictEqual({ type: 'modelMessageStartEvent', role: 'assistant' })
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('retrying with drop_block'))
+      const expectedOptions = { headers: { 'anthropic-beta': 'other-beta,thinking-binding-controls-2026-08-01' } }
+      expect(stream.mock.calls.map((call: unknown[]) => [(call[0] as any).thinking, call[1]])).toStrictEqual([
+        [{ type: 'adaptive' }, { headers: { 'anthropic-beta': 'other-beta' } }],
+        [dropBlockThinking, expectedOptions],
+      ])
+
+      await collectIterator(provider.stream(messages))
+
+      expect(stream).toHaveBeenCalledTimes(3)
+      expect(stream).toHaveBeenLastCalledWith(expect.objectContaining({ thinking: dropBlockThinking }), expectedOptions)
+      warnSpy.mockRestore()
+    })
+
+    it.each([
+      { name: 'a record', defaultHeaders: { 'anthropic-beta': 'client-beta' }, betas: 'client-beta,' },
+      { name: 'a record with a list value', defaultHeaders: { 'Anthropic-Beta': ['a', 'b'] }, betas: 'a,b,' },
+      {
+        name: 'a Headers instance',
+        defaultHeaders: new Headers({ 'anthropic-beta': 'client-beta' }),
+        betas: 'client-beta,',
+      },
+      { name: 'header tuples', defaultHeaders: [['anthropic-beta', 'client-beta']], betas: 'client-beta,' },
+      { name: 'an undefined value', defaultHeaders: { 'anthropic-beta': undefined }, betas: '' },
+      { name: 'a null value', defaultHeaders: { 'anthropic-beta': null }, betas: '' },
+    ])('keeps betas from client default headers given as $name on the retry', async ({ defaultHeaders, betas }) => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      const { stream, client } = createRejectingOnceClient()
+      vi.mocked(Anthropic).mockImplementationOnce(function () {
+        return client
+      })
+      const provider = new AnthropicModel({
+        apiKey: 'sk-test',
+        clientConfig: { defaultHeaders },
+        modelId: 'm1',
+        params: { thinking: { type: 'adaptive' } },
+      })
+
+      await collectIterator(provider.stream(messages))
+
+      expect(stream).toHaveBeenLastCalledWith(expect.objectContaining({ thinking: dropBlockThinking }), {
+        headers: { 'anthropic-beta': `${betas}thinking-binding-controls-2026-08-01` },
+      })
+      warnSpy.mockRestore()
+    })
+
+    it.each([
+      {
+        name: 'a throttle',
+        retryError: Object.assign(new Error('Rate limit exceeded'), { status: 429 }),
+        expected: ModelThrottledError,
+      },
+      {
+        name: 'a context window overflow',
+        retryError: Object.assign(new Error('prompt is too long'), { status: 400 }),
+        expected: ContextWindowOverflowError,
+      },
+    ])('maps $name on the retry to its SDK error', async ({ retryError, expected }) => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      const { stream, client } = createRejectingOnceClient(bindingError, retryError)
+      const provider = new AnthropicModel({ client, modelId: 'm1', params: { thinking: { type: 'adaptive' } } })
+
+      await expect(collectIterator(provider.stream(messages))).rejects.toThrow(expected)
+      expect(stream).toHaveBeenCalledTimes(2)
+      warnSpy.mockRestore()
+    })
+
+    it('re-throws a second binding error without retrying again', async () => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      const { stream, client } = createRejectingOnceClient(bindingError, bindingError)
+      const provider = new AnthropicModel({ client, modelId: 'm1', params: { thinking: { type: 'adaptive' } } })
+
+      await expect(collectIterator(provider.stream(messages))).rejects.toThrow('bound to a different conversation')
+      expect(stream).toHaveBeenCalledTimes(2)
+      warnSpy.mockRestore()
+    })
+
+    it.each([
+      {
+        name: 'a caller-set block_binding',
+        params: { thinking: { type: 'adaptive', block_binding: { prefix_mismatch_behavior: 'error' } } },
+      },
+      { name: 'no thinking config', params: undefined },
+    ])('re-throws the binding error with $name', async ({ params }) => {
+      const { stream, client } = createRejectingOnceClient()
+      const provider = new AnthropicModel({ client, modelId: 'm1', ...(params && { params }) })
+
+      await expect(collectIterator(provider.stream(messages))).rejects.toThrow('bound to a different conversation')
+      expect(stream).toHaveBeenCalledOnce()
+    })
+
+    it('re-throws the binding message on a non-400 error', async () => {
+      const { stream, client } = createRejectingOnceClient(Object.assign(new Error(bindingMessage), { status: 500 }))
+      const provider = new AnthropicModel({ client, modelId: 'm1', params: { thinking: { type: 'adaptive' } } })
+
+      await expect(collectIterator(provider.stream(messages))).rejects.toThrow('bound to a different conversation')
+      expect(stream).toHaveBeenCalledOnce()
+    })
+
+    it('stops dropping stale thinking after the model changes', async () => {
+      const { stream, client } = createRejectingOnceClient()
+      const provider = new AnthropicModel({ client, modelId: 'm1', params: { thinking: { type: 'adaptive' } } })
+      await collectIterator(provider.stream(messages))
+
+      provider.updateConfig({ modelId: 'm2' })
+      await collectIterator(provider.stream(messages))
+
+      expect(stream).toHaveBeenLastCalledWith(expect.objectContaining({ thinking: { type: 'adaptive' } }))
+    })
+  })
+
+  describe('structured output enforcement', () => {
+    /** Builds a 400 the way the SDK does: the message is the JSON-encoded body. */
+    const badRequest = (message: string): Error => {
+      const body = { type: 'error', error: { type: 'invalid_request_error', message } }
+      return Object.assign(new Error(`400 ${JSON.stringify(body)}`), { status: 400, error: body })
+    }
+    const forcedRejection = badRequest('tool_choice: type "tool" and "any" are not supported for this model.')
+    const nativeRejection = badRequest('output_config.format: Extra inputs are not permitted')
+    const bindingError = Object.assign(
+      new Error(
+        '400 messages.1.content.0: Invalid `signature` in `thinking` block. The block is bound to a different conversation.'
+      ),
+      { status: 400 }
+    )
+    const schema = z.object({ name: z.string(), age: z.number() })
+    const messages = [new Message({ role: 'user', content: [new TextBlock('Generate a person')] })]
+    const structuredOutputOptions: StreamOptions = {
+      toolSpecs: [
+        { name: 'strands_structured_output', description: 'Output', inputSchema: zodSchemaToJsonSchema(schema) },
+      ],
+      toolChoice: { tool: { name: 'strands_structured_output' } },
+      structuredOutputSchema: schema,
+    }
+
+    /** Creates a client whose stream rejects with each error in turn, then succeeds. */
+    const createRejectingClient = (...errors: Error[]) => {
+      const stream = vi.fn((_request: Anthropic.MessageStreamParams) =>
+        (async function* () {
+          const error = errors.shift()
+          if (error) throw error
+          yield { type: 'message_start', message: { role: 'assistant', usage: {} } }
+        })()
+      )
+      return { stream, client: { messages: { stream } } as unknown as Anthropic }
+    }
+
+    /** The structured output mechanism a sent Messages request uses. */
+    const mechanismOf = (request: Anthropic.MessageStreamParams): string => {
+      if (request.tool_choice?.type === 'tool') return 'forced'
+      return request.output_config?.format ? 'native' : 'auto'
+    }
+
+    const sentRequests = (
+      stream: ReturnType<typeof createRejectingClient>['stream']
+    ): Anthropic.MessageStreamParams[] => stream.mock.calls.map(([request]) => request)
+    const sentMechanisms = (stream: ReturnType<typeof createRejectingClient>['stream']): string[] =>
+      sentRequests(stream).map(mechanismOf)
+
+    beforeEach(() => {
+      clearStructuredOutputSupport()
+    })
+
+    it.each([
+      { name: 'no rejection', rejections: [], expected: ['forced'] },
+      { name: 'a forced tool choice rejection', rejections: [forcedRejection], expected: ['forced', 'native'] },
+      {
+        name: 'forced and native rejections',
+        rejections: [forcedRejection, nativeRejection],
+        expected: ['forced', 'native', 'auto'],
+      },
+    ])('falls back to the next mechanism after $name and remembers it', async ({ rejections, expected }) => {
+      const { stream, client } = createRejectingClient(...rejections)
+      const provider = new AnthropicModel({ client, modelId: 'm1' })
+
+      await collectIterator(provider.stream(messages, structuredOutputOptions))
+
+      expect(sentMechanisms(stream)).toStrictEqual(expected)
+
+      stream.mockClear()
+      await collectIterator(provider.stream(messages, structuredOutputOptions))
+
+      expect(sentMechanisms(stream)).toStrictEqual([expected[expected.length - 1]])
+    })
+
+    it('sends native output with tool_choice none, keeping the tools and other output_config settings', async () => {
+      const { stream, client } = createRejectingClient()
+      const provider = new AnthropicModel({ client, modelId: 'm1', params: { output_config: { effort: 'high' } } })
+
+      await collectIterator(provider.stream(messages, { ...structuredOutputOptions, toolChoice: { auto: {} } }))
+
+      const [request] = sentRequests(stream)
+      expect(request?.tool_choice).toStrictEqual({ type: 'none' })
+      expect(request?.output_config).toStrictEqual({
+        effort: 'high',
+        format: { type: 'json_schema', schema: toNativeOutputSchema(zodSchemaToJsonSchema(schema)) },
+      })
+      expect(request?.tools?.map((tool) => ('name' in tool ? tool.name : undefined))).toStrictEqual([
+        'strands_structured_output',
+      ])
+    })
+
+    it('uses auto tool choice for a schema native output cannot represent', async () => {
+      const { stream, client } = createRejectingClient(forcedRejection)
+      const provider = new AnthropicModel({ client, modelId: 'm1' })
+      const recordSchema = z.object({ scores: z.record(z.string(), z.number()) })
+
+      await collectIterator(
+        provider.stream(messages, { ...structuredOutputOptions, structuredOutputSchema: recordSchema })
+      )
+
+      expect(sentMechanisms(stream)).toStrictEqual(['forced', 'auto'])
+      expect(sentRequests(stream)[1]?.tool_choice).toStrictEqual({ type: 'auto' })
+    })
+
+    it('retries with drop_block before trying the next mechanism', async () => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      const { stream, client } = createRejectingClient(bindingError, forcedRejection)
+      const provider = new AnthropicModel({ client, modelId: 'm1', params: { thinking: { type: 'adaptive' } } })
+
+      await collectIterator(provider.stream(messages, structuredOutputOptions))
+
+      expect(
+        sentRequests(stream).map((request) => [mechanismOf(request), 'block_binding' in (request.thinking ?? {})])
+      ).toStrictEqual([
+        ['forced', false],
+        ['forced', true],
+        ['native', true],
+      ])
+      warnSpy.mockRestore()
+    })
+
+    it.each([
+      {
+        name: 'a forced tool choice rejection without a structured output schema',
+        error: forcedRejection,
+        options: { toolChoice: structuredOutputOptions.toolChoice! },
+      },
+      {
+        name: 'an unrelated 400',
+        error: badRequest('something else'),
+        options: structuredOutputOptions,
+      },
+      {
+        name: 'a forced tool choice message on a non-400 error',
+        error: Object.assign(badRequest('tool_choice: type "tool" and "any" are not supported'), { status: 500 }),
+        options: structuredOutputOptions,
+      },
+    ])('re-throws $name without retrying', async ({ error, options }) => {
+      const { stream, client } = createRejectingClient(error)
+      const provider = new AnthropicModel({ client, modelId: 'm1' })
+
+      await expect(collectIterator(provider.stream(messages, options))).rejects.toThrow(error.message)
+      expect(stream).toHaveBeenCalledOnce()
+    })
+  })
+
   describe('request formatting', () => {
     // Helper to capture request arguments
     const setupCapture = () => {
@@ -463,6 +911,25 @@ describe('AnthropicModel', () => {
         messages: [{ role: 'user', content: [{ type: 'text', text: 'Hello' }] }],
         stream: true,
       })
+    })
+
+    it('never sends the durable message id to the provider', async () => {
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ modelId: 'claude-3-opus', maxTokens: 1000, client: mockClient })
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [new TextBlock('Hello')],
+          trackingId: 'durable-1',
+          metadata: { usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } },
+        }),
+      ]
+
+      await collectIterator(provider.stream(messages))
+
+      // The request the provider receives carries only role and content — never trackingId or metadata.
+      expect(captured.request.messages).toEqual([{ role: 'user', content: [{ type: 'text', text: 'Hello' }] }])
+      expect('trackingId' in captured.request.messages[0]).toBe(false)
     })
 
     it('formats tools correctly', async () => {
@@ -600,6 +1067,31 @@ describe('AnthropicModel', () => {
         expect(content.source.data).toBe('SGVsbG8=')
       })
 
+      // Guards against https://github.com/strands-agents/harness-sdk/issues/3791: anthropic accepts
+      // url image sources natively, so url-source images must be delivered rather than dropped.
+      it('formats url-source images as anthropic url sources', async () => {
+        const { captured, mockClient } = setupCapture()
+        const provider = new AnthropicModel({ client: mockClient })
+        const messages = [
+          new Message({
+            role: 'user',
+            content: [
+              new ImageBlock({
+                format: 'png',
+                source: { url: 'https://example.com/image.png' },
+              }),
+            ],
+          }),
+        ]
+
+        await collectIterator(provider.stream(messages))
+
+        expect(captured.request.messages[0].content[0]).toEqual({
+          type: 'image',
+          source: { type: 'url', url: 'https://example.com/image.png' },
+        })
+      })
+
       it('formats PDFs correctly', async () => {
         const { captured, mockClient } = setupCapture()
         const provider = new AnthropicModel({ client: mockClient })
@@ -625,6 +1117,98 @@ describe('AnthropicModel', () => {
         expect(content.title).toBe('doc.pdf')
       })
 
+      // Guards against https://github.com/strands-agents/harness-sdk/issues/3785: documents the
+      // provider cannot deliver must fail loudly, not be silently omitted from the request.
+      it('throws for a document format with no Anthropic mapping', async () => {
+        const { mockClient } = setupCapture()
+        const provider = new AnthropicModel({ client: mockClient })
+        const messages = [
+          new Message({
+            role: 'user',
+            content: [
+              new DocumentBlock({
+                name: 'report',
+                format: 'docx',
+                source: { bytes: new Uint8Array([1, 2, 3]) },
+              }),
+            ],
+          }),
+        ]
+
+        await expect(collectIterator(provider.stream(messages))).rejects.toThrow(
+          'Unsupported document format or source for Anthropic: format=docx, source=documentSourceBytes'
+        )
+      })
+
+      it('throws for a supported document format with an unsupported source', async () => {
+        const { mockClient } = setupCapture()
+        const provider = new AnthropicModel({ client: mockClient })
+        const messages = [
+          new Message({
+            role: 'user',
+            content: [
+              new DocumentBlock({
+                name: 'doc.pdf',
+                format: 'pdf',
+                source: { text: 'not deliverable as a pdf' },
+              }),
+            ],
+          }),
+        ]
+
+        await expect(collectIterator(provider.stream(messages))).rejects.toThrow(
+          'Unsupported document format or source for Anthropic: format=pdf, source=documentSourceText'
+        )
+      })
+
+      it('throws for a document with a content block source', async () => {
+        const { mockClient } = setupCapture()
+        const provider = new AnthropicModel({ client: mockClient })
+        const messages = [
+          new Message({
+            role: 'user',
+            content: [
+              new DocumentBlock({
+                name: 'notes',
+                format: 'txt',
+                source: { content: [{ text: 'inline content' }] },
+              }),
+            ],
+          }),
+        ]
+
+        await expect(collectIterator(provider.stream(messages))).rejects.toThrow(
+          'Unsupported document format or source for Anthropic: format=txt, source=documentSourceContentBlock'
+        )
+      })
+
+      it('throws for an undeliverable document nested in a tool result', async () => {
+        const { mockClient } = setupCapture()
+        const provider = new AnthropicModel({ client: mockClient })
+        const messages = [
+          new Message({
+            role: 'user',
+            content: [
+              new ToolResultBlock({
+                toolUseId: 't1',
+                status: 'success',
+                content: [
+                  new DocumentBlock({
+                    name: 'report',
+                    format: 'docx',
+                    source: { bytes: new Uint8Array([1, 2, 3]) },
+                  }),
+                ],
+              }),
+            ],
+          }),
+        ]
+
+        await expect(collectIterator(provider.stream(messages))).rejects.toThrow(
+          'Unsupported document format or source for Anthropic: format=docx, source=documentSourceBytes'
+        )
+      })
+
       it('logs warning for unsupported GuardContentBlock in user message', async () => {
         const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {}) // Spy on console.warn (via logger)
         const { captured, mockClient } = setupCapture()
@@ -642,8 +1226,7 @@ describe('AnthropicModel', () => {
 
         await collectIterator(provider.stream(messages))
 
-        // Should result in empty content if blocked
-        expect(captured.request.messages[0].content).toHaveLength(0)
+        expect(captured.request.messages).toHaveLength(0)
         warnSpy.mockRestore()
       })
     })
@@ -788,6 +1371,109 @@ describe('AnthropicModel', () => {
       })
     })
 
+    describe('injected blocks', () => {
+      const injected = (text: string) => new InjectedBlock({ text, source: 'test' })
+      const turnScoped = (text: string) => ({
+        role: 'system',
+        content: [{ type: 'text', text }],
+        clear_at: 'next_user_message',
+      })
+
+      it('sends each user message its injected text as a turn-scoped system message after it', async () => {
+        const { captured, mockClient } = setupCapture()
+        const provider = new AnthropicModel({
+          client: mockClient,
+          modelId: 'claude-opus-5-5',
+          betas: ['interleaved-thinking-2025-05-14'],
+          cacheConfig: {},
+        })
+        const messages = [
+          new Message({ role: 'user', content: [new TextBlock('first'), injected('one')] }),
+          new Message({ role: 'assistant', content: [new TextBlock('ok')] }),
+          new Message({ role: 'user', content: [new TextBlock('second'), injected('two'), injected('three')] }),
+        ]
+
+        await collectIterator(provider.stream(messages))
+
+        expect(captured.request.messages).toEqual([
+          { role: 'user', content: [{ type: 'text', text: 'first' }] },
+          turnScoped('one'),
+          { role: 'assistant', content: [{ type: 'text', text: 'ok' }] },
+          { role: 'user', content: [{ type: 'text', text: 'second', cache_control: { type: 'ephemeral' } }] },
+          {
+            role: 'system',
+            content: [
+              { type: 'text', text: 'two' },
+              { type: 'text', text: 'three' },
+            ],
+            clear_at: 'next_user_message',
+          },
+        ])
+        expect(captured.options).toEqual({
+          headers: { 'anthropic-beta': 'interleaved-thinking-2025-05-14,mid-conversation-system-clear-at-2026-08-21' },
+        })
+      })
+
+      it('leaves out the system message of a user message followed directly by another', async () => {
+        const { captured, mockClient } = setupCapture()
+        const provider = new AnthropicModel({ client: mockClient, modelId: 'claude-opus-5-5' })
+        const messages = [
+          new Message({ role: 'user', content: [new TextBlock('first'), injected('one')] }),
+          new Message({ role: 'user', content: [new TextBlock('second'), injected('two')] }),
+        ]
+
+        await collectIterator(provider.stream(messages))
+
+        expect(captured.request.messages).toEqual([
+          { role: 'user', content: [{ type: 'text', text: 'first' }] },
+          { role: 'user', content: [{ type: 'text', text: 'second' }] },
+          turnScoped('two'),
+        ])
+      })
+
+      it('sends no injected text and no beta to a model without temporary messages', async () => {
+        const { captured, mockClient } = setupCapture()
+        const provider = new AnthropicModel({ client: mockClient, modelId: 'claude-sonnet-4-6' })
+        const messages = [new Message({ role: 'user', content: [new TextBlock('first'), injected('one')] })]
+
+        await collectIterator(provider.stream(messages))
+
+        expect(captured.request.messages).toEqual([{ role: 'user', content: [{ type: 'text', text: 'first' }] }])
+        expect(captured.options).toBeUndefined()
+      })
+
+      it('leaves cleared injected blocks out of the token estimate', async () => {
+        const proxy = new ModelProxy(new AnthropicModel({ apiKey: 'sk-ant-test', modelId: 'claude-opus-5-5' }))
+        const conversation = (first: Message): Message[] => [
+          first,
+          new Message({ role: 'assistant', content: [new TextBlock('ok')] }),
+          new Message({ role: 'user', content: [new TextBlock('second'), injected('two')] }),
+        ]
+        const withEarlier = conversation(
+          new Message({ role: 'user', content: [new TextBlock('first'), injected('x'.repeat(400))] })
+        )
+        const withoutEarlier = conversation(new Message({ role: 'user', content: [new TextBlock('first')] }))
+
+        expect(await proxy.countTokens(withEarlier)).toBe(await proxy.countTokens(withoutEarlier))
+      })
+
+      it('counts the system message natively, with the beta', async () => {
+        const countTokens = vi.fn(async () => ({ input_tokens: 9 }))
+        const client = { messages: { stream: vi.fn(), countTokens } } as unknown as Anthropic
+        const provider = new AnthropicModel({ client, modelId: 'claude-opus-5-5', useNativeTokenCount: true })
+        const messages = [new Message({ role: 'user', content: [new TextBlock('first'), injected('one')] })]
+
+        expect(await provider.countTokens(messages)).toBe(9)
+        expect(countTokens).toHaveBeenCalledWith(
+          {
+            model: 'claude-opus-5-5',
+            messages: [{ role: 'user', content: [{ type: 'text', text: 'first' }] }, turnScoped('one')],
+          },
+          { headers: { 'anthropic-beta': 'mid-conversation-system-clear-at-2026-08-21' } }
+        )
+      })
+    })
+
     describe('Beta headers', () => {
       it('does not pass per-request options when betas is unset', async () => {
         const { captured, mockClient } = setupCapture()
@@ -869,6 +1555,16 @@ describe('AnthropicModel', () => {
       expect(mockCountTokens).toHaveBeenCalledOnce()
     })
 
+    it('should fall back to the heuristic when the client has no countTokens', async () => {
+      const model = new AnthropicModel({
+        client: { messages: { stream: vi.fn() } },
+        modelId: 'claude-sonnet-4-6',
+        useNativeTokenCount: true,
+      })
+
+      expect(await model.countTokens(messages)).toBe(2)
+    })
+
     it('should include system prompt in request', async () => {
       const mockCountTokens = vi.fn(async () => ({ input_tokens: 55 }))
       const client = createCountTokensClient(mockCountTokens)
@@ -948,5 +1644,1916 @@ describe('AnthropicModel', () => {
       expect(mockCountTokens).not.toHaveBeenCalled()
       expect(result).toBe(2) // heuristic: Math.ceil('hello'.length / 4)
     })
+  })
+
+  /**
+   * Prompt caching via `cacheConfig`.
+   *
+   * Anthropic accepts at most 4 cache breakpoints per request and `ephemeral` is the only cache type.
+   * @see https://docs.claude.com/en/docs/build-with-claude/prompt-caching
+   */
+  describe('prompt caching', () => {
+    const MAX_BREAKPOINTS = 4
+
+    const setupCapture = (): { captured: { request: any }; mockClient: Anthropic } => {
+      const captured: { request: any } = { request: null }
+      const mockClient = {
+        messages: {
+          stream: vi.fn((req) => {
+            captured.request = req
+            return (async function* () {})()
+          }),
+        },
+      } as any
+      return { captured, mockClient }
+    }
+
+    /** Every cache_control in a formatted request, across tools, system and messages. */
+    const breakpoints = (request: any): unknown[] => {
+      const found: unknown[] = []
+      for (const tool of request.tools ?? []) {
+        if (tool.cache_control) found.push(['tools', tool.name, tool.cache_control])
+      }
+      if (Array.isArray(request.system)) {
+        for (const block of request.system) {
+          if (block.cache_control) found.push(['system', block.type, block.cache_control])
+        }
+      }
+      request.messages.forEach((message: any, messageIndex: number) => {
+        for (const block of message.content) {
+          if (block.cache_control) found.push(['messages', messageIndex, block.cache_control])
+        }
+      })
+      return found
+    }
+
+    const toolSpecs = [
+      { name: 't1', description: 'tool one', inputSchema: { type: 'object' as const } },
+      { name: 't2', description: 'tool two', inputSchema: { type: 'object' as const } },
+    ]
+
+    const userMessage = (text: string): Message => new Message({ role: 'user', content: [new TextBlock(text)] })
+
+    it('is off when unset', async () => {
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient })
+
+      await collectIterator(provider.stream([userMessage('Hi')], { toolSpecs }))
+
+      expect(breakpoints(captured.request)).toEqual([])
+    })
+
+    it('is off under auto when the modelInfo override says caching is unsupported', async () => {
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({
+        client: mockClient,
+        cacheConfig: { ttl: '1h' },
+        modelInfo: { capabilities: { promptCaching: 'unsupported' } },
+      })
+
+      await collectIterator(provider.stream([userMessage('Hi')], { toolSpecs }))
+
+      expect(breakpoints(captured.request)).toEqual([])
+    })
+
+    it('caches regardless of the override when the anthropic strategy is explicit', async () => {
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({
+        client: mockClient,
+        cacheConfig: { strategy: 'anthropic', ttl: '1h' },
+        modelInfo: { capabilities: { promptCaching: 'unsupported' } },
+      })
+
+      await collectIterator(provider.stream([userMessage('Hi')], { toolSpecs }))
+
+      expect(breakpoints(captured.request)).not.toEqual([])
+    })
+
+    it('adds a breakpoint to the last user message', async () => {
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { strategy: 'auto' } })
+
+      await collectIterator(provider.stream([userMessage('one'), userMessage('two')]))
+
+      expect(breakpoints(captured.request)).toEqual([['messages', 1, { type: 'ephemeral' }]])
+    })
+
+    it('caches every section when no strategy is given', async () => {
+      // strategy defaults to 'auto', so a config that omits it still enables caching.
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient, cacheConfig: {} })
+
+      await collectIterator(provider.stream([userMessage('Hi')], { toolSpecs }))
+
+      expect(breakpoints(captured.request)).toEqual([
+        ['tools', 't2', { type: 'ephemeral' }],
+        ['messages', 0, { type: 'ephemeral' }],
+      ])
+    })
+
+    it('treats auto and anthropic strategies the same', async () => {
+      // The Anthropic API caches on every active Claude model, so auto has no model-support check to
+      // apply and the two strategies produce the same request.
+      const auto = setupCapture()
+      await collectIterator(
+        new AnthropicModel({ client: auto.mockClient, cacheConfig: { strategy: 'auto' } }).stream([userMessage('Hi')], {
+          toolSpecs,
+        })
+      )
+
+      const explicit = setupCapture()
+      await collectIterator(
+        new AnthropicModel({ client: explicit.mockClient, cacheConfig: { strategy: 'anthropic' } }).stream(
+          [userMessage('Hi')],
+          { toolSpecs }
+        )
+      )
+
+      expect(auto.captured.request).toEqual(explicit.captured.request)
+    })
+
+    it('ignores cacheKey: it does not change the request shape', async () => {
+      // Anthropic does not consume cacheKey, so it must not reach the request.
+      const withoutKey = setupCapture()
+      await collectIterator(
+        new AnthropicModel({ client: withoutKey.mockClient, cacheConfig: {} }).stream([userMessage('Hi')], {
+          toolSpecs,
+        })
+      )
+
+      const withKey = setupCapture()
+      await collectIterator(
+        new AnthropicModel({ client: withKey.mockClient, cacheConfig: { cacheKey: 'tenant-42' } }).stream(
+          [userMessage('Hi')],
+          { toolSpecs }
+        )
+      )
+
+      expect(withKey.captured.request).toEqual(withoutKey.captured.request)
+    })
+
+    it('carries cacheConfig ttl onto cache_control', async () => {
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { strategy: 'auto', ttl: '1h' } })
+
+      await collectIterator(provider.stream([userMessage('Hi')]))
+
+      expect(breakpoints(captured.request)).toEqual([['messages', 0, { type: 'ephemeral', ttl: '1h' }]])
+    })
+
+    it('caches only the last tool definition', async () => {
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { messagesTTL: false } })
+
+      await collectIterator(provider.stream([userMessage('Hi')], { toolSpecs }))
+
+      expect(breakpoints(captured.request)).toEqual([['tools', 't2', { type: 'ephemeral' }]])
+      expect(captured.request.tools[0].cache_control).toBeUndefined()
+    })
+
+    it('carries a toolsTTL onto cache_control', async () => {
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({
+        client: mockClient,
+        cacheConfig: { toolsTTL: '1h', messagesTTL: false },
+      })
+
+      await collectIterator(provider.stream([userMessage('Hi')], { toolSpecs }))
+
+      expect(breakpoints(captured.request)).toEqual([['tools', 't2', { type: 'ephemeral', ttl: '1h' }]])
+    })
+
+    it('lets a per-section ttl override the shared ttl', async () => {
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({
+        client: mockClient,
+        cacheConfig: { ttl: '5m', toolsTTL: '1h' },
+      })
+
+      await collectIterator(provider.stream([userMessage('Hi')], { toolSpecs }))
+
+      expect(breakpoints(captured.request)).toEqual([
+        ['tools', 't2', { type: 'ephemeral', ttl: '1h' }],
+        ['messages', 0, { type: 'ephemeral', ttl: '5m' }],
+      ])
+    })
+
+    it('normalizes a Bedrock cache point type to ephemeral', async () => {
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient })
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [new TextBlock('hi'), new CachePointBlock({ cacheType: 'default' })],
+        }),
+      ]
+
+      await collectIterator(provider.stream(messages))
+
+      expect(breakpoints(captured.request)).toEqual([['messages', 0, { type: 'ephemeral' }]])
+    })
+
+    it('is a no-op for the tools section when there are no tools', async () => {
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { messagesTTL: false } })
+
+      await collectIterator(provider.stream([userMessage('Hi')]))
+
+      expect(captured.request.tools).toBeUndefined()
+      expect(breakpoints(captured.request)).toEqual([])
+    })
+
+    it('caches only the conversation when toolsTTL is false', async () => {
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { toolsTTL: false } })
+
+      await collectIterator(provider.stream([userMessage('Hi')], { toolSpecs }))
+
+      expect(breakpoints(captured.request)).toEqual([['messages', 0, { type: 'ephemeral' }]])
+    })
+
+    it('produces two breakpoints when both sections are on', async () => {
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({
+        client: mockClient,
+        cacheConfig: { strategy: 'auto' },
+      })
+
+      await collectIterator(provider.stream([userMessage('Hi')], { toolSpecs }))
+
+      const found = breakpoints(captured.request)
+      expect(found).toEqual([
+        ['tools', 't2', { type: 'ephemeral' }],
+        ['messages', 0, { type: 'ephemeral' }],
+      ])
+      expect(found.length).toBeLessThanOrEqual(MAX_BREAKPOINTS)
+    })
+
+    it('emits nothing when every section is disabled', async () => {
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({
+        client: mockClient,
+        cacheConfig: { toolsTTL: false, messagesTTL: false },
+      })
+
+      await collectIterator(provider.stream([userMessage('Hi')], { toolSpecs }))
+
+      expect(breakpoints(captured.request)).toEqual([])
+    })
+
+    it('does not accumulate breakpoints across turns', async () => {
+      // A cache point per turn would blow the 4-breakpoint limit on the 5th turn. This history already
+      // carries one per turn, as it would if each turn appended one; exactly one must survive.
+      const messages: Message[] = []
+      for (let turn = 0; turn < 25; turn++) {
+        messages.push(
+          new Message({
+            role: 'user',
+            content: [new TextBlock(`question ${turn}`), new CachePointBlock({ cacheType: 'default' })],
+          })
+        )
+        messages.push(
+          new Message({
+            role: 'user',
+            content: [
+              new ToolResultBlock({
+                toolUseId: `t${turn}`,
+                status: 'success',
+                content: [new TextBlock(`result ${turn}`)],
+              }),
+              new CachePointBlock({ cacheType: 'default' }),
+            ],
+          })
+        )
+      }
+
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({
+        client: mockClient,
+        cacheConfig: { strategy: 'auto' },
+      })
+
+      await collectIterator(provider.stream(messages, { toolSpecs }))
+
+      const found = breakpoints(captured.request)
+      expect(found.length).toBeLessThanOrEqual(MAX_BREAKPOINTS)
+      const messageBreakpoints = found.filter((bp) => (bp as unknown[])[0] === 'messages')
+      expect(messageBreakpoints).toEqual([['messages', messages.length - 1, { type: 'ephemeral' }]])
+    })
+
+    it('strips a cache point in an earlier message', async () => {
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { strategy: 'auto' } })
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [new TextBlock('one'), new CachePointBlock({ cacheType: 'default' })],
+        }),
+        new Message({ role: 'assistant', content: [new TextBlock('two')] }),
+        userMessage('three'),
+      ]
+
+      await collectIterator(provider.stream(messages))
+
+      expect(breakpoints(captured.request)).toEqual([['messages', 2, { type: 'ephemeral' }]])
+      // The stripped cache point leaves the text block behind untouched.
+      expect(captured.request.messages[0].content).toEqual([{ type: 'text', text: 'one' }])
+    })
+
+    it('places the breakpoint after the last cacheable block', async () => {
+      // Anthropic rejects cache_control on a reasoning block, so the cache point skips back past it.
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { strategy: 'auto' } })
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [new TextBlock('question'), new ReasoningBlock({ text: 'thinking', signature: 'sig' })],
+        }),
+      ]
+
+      await collectIterator(provider.stream(messages))
+
+      expect(breakpoints(captured.request)).toEqual([['messages', 0, { type: 'ephemeral' }]])
+      expect(captured.request.messages[0].content[0]).toEqual({
+        type: 'text',
+        text: 'question',
+        cache_control: { type: 'ephemeral' },
+      })
+      expect(captured.request.messages[0].content[1].cache_control).toBeUndefined()
+    })
+
+    it('skips a history with no cacheable user content', async () => {
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { strategy: 'auto' } })
+      const messages = [new Message({ role: 'assistant', content: [new TextBlock('hello')] })]
+
+      await collectIterator(provider.stream(messages))
+
+      expect(breakpoints(captured.request)).toEqual([])
+    })
+
+    it('strips hand-placed cache points even when there is nothing to cache', async () => {
+      // cacheConfig owns message breakpoints whenever it is set, not only when it found a block to
+      // mark. strands-py strips unconditionally, so failing to do so here diverges the two SDKs.
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { strategy: 'auto' } })
+      const messages = [
+        new Message({
+          role: 'assistant',
+          content: [new TextBlock('hello'), new CachePointBlock({ cacheType: 'default' })],
+        }),
+      ]
+
+      await collectIterator(provider.stream(messages))
+
+      expect(breakpoints(captured.request)).toEqual([])
+    })
+
+    it('honors the ttl on a hand-placed cache point', async () => {
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient })
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [new TextBlock('one'), new CachePointBlock({ cacheType: 'default', ttl: '1h' })],
+        }),
+      ]
+
+      await collectIterator(provider.stream(messages))
+
+      expect(breakpoints(captured.request)).toEqual([['messages', 0, { type: 'ephemeral', ttl: '1h' }]])
+    })
+
+    it('honors the ttl on a system prompt cache point', async () => {
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient })
+      const systemPrompt = [new TextBlock('Heavy context'), new CachePointBlock({ cacheType: 'default', ttl: '1h' })]
+
+      await collectIterator(provider.stream([userMessage('Hi')], { systemPrompt }))
+
+      expect(captured.request.system[0].cache_control).toEqual({ type: 'ephemeral', ttl: '1h' })
+    })
+
+    it('caches a string system prompt by promoting it to a block', async () => {
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { strategy: 'auto' } })
+
+      await collectIterator(provider.stream([userMessage('Hi')], { systemPrompt: 'static prompt' }))
+
+      expect(captured.request.system).toEqual([
+        { type: 'text', text: 'static prompt', cache_control: { type: 'ephemeral' } },
+      ])
+    })
+
+    it('auto-injects a system cache point on the last block of an array prompt', async () => {
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { strategy: 'auto' } })
+      const systemPrompt = [new TextBlock('Heavy context'), new TextBlock('More context')]
+
+      await collectIterator(provider.stream([userMessage('Hi')], { systemPrompt }))
+
+      // The default messages section also caches the last user message, so both points are present.
+      expect(breakpoints(captured.request)).toEqual([
+        ['system', 'text', { type: 'ephemeral' }],
+        ['messages', 0, { type: 'ephemeral' }],
+      ])
+      expect(captured.request.system[0].cache_control).toBeUndefined()
+      expect(captured.request.system[1].cache_control).toEqual({ type: 'ephemeral' })
+    })
+
+    it('carries systemPromptTTL into the auto-injected system cache point', async () => {
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({
+        client: mockClient,
+        cacheConfig: { strategy: 'auto', systemPromptTTL: '1h' },
+      })
+
+      await collectIterator(provider.stream([userMessage('Hi')], { systemPrompt: 'static prompt' }))
+
+      expect(captured.request.system[0].cache_control).toEqual({ type: 'ephemeral', ttl: '1h' })
+    })
+
+    it('does not auto-inject a system cache point when systemPromptTTL is false', async () => {
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({
+        client: mockClient,
+        cacheConfig: { strategy: 'auto', systemPromptTTL: false },
+      })
+
+      await collectIterator(provider.stream([userMessage('Hi')], { systemPrompt: 'static prompt' }))
+
+      expect(captured.request.system).toBe('static prompt')
+    })
+
+    it('does not double a hand-placed system cache point', async () => {
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { strategy: 'auto' } })
+      const systemPrompt = [
+        new TextBlock('Heavy context'),
+        new CachePointBlock({ cacheType: 'default' }),
+        new TextBlock('Light context'),
+      ]
+
+      await collectIterator(provider.stream([userMessage('Hi')], { systemPrompt }))
+
+      // The hand-placed point on the first block is honored; the last block is not also cached. The
+      // default messages section still caches the last user message.
+      expect(breakpoints(captured.request)).toEqual([
+        ['system', 'text', { type: 'ephemeral' }],
+        ['messages', 0, { type: 'ephemeral' }],
+      ])
+      expect(captured.request.system[0].cache_control).toEqual({ type: 'ephemeral' })
+      expect(captured.request.system[1].cache_control).toBeUndefined()
+    })
+
+    it('keeps the breakpoint when the last cacheable block is dropped in translation', async () => {
+      // An image with a location source is an accepted cache carrier by block type but is dropped when
+      // the request is formatted. Choosing the target before formatting used to leave the request with
+      // no cache_control at all, so enabling caching removed the caching that worked without it.
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { strategy: 'auto' } })
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [
+            new TextBlock('long prefix'),
+            new ImageBlock({ format: 'png', source: { location: { type: 's3', uri: 's3://bucket/a.png' } } }),
+          ],
+        }),
+      ]
+
+      await collectIterator(provider.stream(messages))
+
+      expect(breakpoints(captured.request)).toEqual([['messages', 0, { type: 'ephemeral' }]])
+      expect(captured.request.messages[0].content[0]).toEqual({
+        type: 'text',
+        text: 'long prefix',
+        cache_control: { type: 'ephemeral' },
+      })
+    })
+
+    it('never places a breakpoint on a reasoning block', async () => {
+      // The only formattable block left is a thinking block, which the API rejects a breakpoint on.
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { strategy: 'auto' } })
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [
+            new ReasoningBlock({ text: 'thinking', signature: 'sig' }),
+            new ImageBlock({ format: 'png', source: { location: { type: 's3', uri: 's3://bucket/a.png' } } }),
+          ],
+        }),
+      ]
+
+      await collectIterator(provider.stream(messages))
+
+      expect(breakpoints(captured.request)).toEqual([])
+    })
+
+    it('does not fall back to an earlier turn when the newest one has nothing cacheable', async () => {
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { strategy: 'auto' } })
+      const messages = [
+        userMessage('turn one'),
+        new Message({ role: 'assistant', content: [new TextBlock('reply')] }),
+        new Message({ role: 'user', content: [new ReasoningBlock({ text: 'thinking', signature: 'sig' })] }),
+      ]
+
+      await collectIterator(provider.stream(messages))
+
+      // Caching a prefix that has stopped growing would pin every later turn to a stale entry.
+      expect(breakpoints(captured.request)).toEqual([])
+    })
+
+    it('places the breakpoint on the last of several cacheable blocks', async () => {
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { strategy: 'auto' } })
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [
+            new TextBlock('first'),
+            new ToolResultBlock({ toolUseId: 'x', content: [new TextBlock('second')], status: 'success' }),
+          ],
+        }),
+      ]
+
+      await collectIterator(provider.stream(messages))
+
+      expect(breakpoints(captured.request)).toEqual([['messages', 0, { type: 'ephemeral' }]])
+      expect(captured.request.messages[0].content[0].cache_control).toBeUndefined()
+      expect(captured.request.messages[0].content[1].type).toBe('tool_result')
+      expect(captured.request.messages[0].content[1].cache_control).toEqual({ type: 'ephemeral' })
+    })
+
+    it('treats an empty ttl as unset rather than shipping it', async () => {
+      // The API validates TTLs against an enum and rejects ''.
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({
+        client: mockClient,
+        cacheConfig: { ttl: '', toolsTTL: '' },
+      })
+
+      await collectIterator(provider.stream([userMessage('Hi')], { toolSpecs }))
+
+      expect(breakpoints(captured.request)).toEqual([
+        ['tools', 't2', { type: 'ephemeral' }],
+        ['messages', 0, { type: 'ephemeral' }],
+      ])
+    })
+
+    it('treats an empty ttl on a hand-placed cache point as unset', async () => {
+      // A placed point's own ttl takes precedence, so an empty one must fall through to the config.
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { strategy: 'auto', ttl: '1h' } })
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [
+            new TextBlock('prefix'),
+            new CachePointBlock({ cacheType: 'default', ttl: '' }),
+            new TextBlock('volatile'),
+          ],
+        }),
+      ]
+
+      await collectIterator(provider.stream(messages))
+
+      expect(breakpoints(captured.request)).toEqual([['messages', 0, { type: 'ephemeral', ttl: '1h' }]])
+    })
+
+    it('disables caching for an unknown strategy', async () => {
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({
+        client: mockClient,
+        cacheConfig: { strategy: 'sometimes' as never },
+      })
+
+      await collectIterator(provider.stream([userMessage('Hi')]))
+
+      expect(breakpoints(captured.request)).toEqual([])
+    })
+
+    it('honors a cache point in the last user message', async () => {
+      // A caller marks where their reusable prefix ends. Moving that boundary past the per-call block puts
+      // content that differs on every request inside the cached prefix, so every request writes a new
+      // entry and none ever reads one - worse than not caching, since a write costs more than an
+      // uncached token. The mirror of this test is test_honors_a_cache_point_in_the_last_user_message in
+      // strands-py/tests/strands/models/test_anthropic.py.
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { strategy: 'auto' } })
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [
+            new TextBlock('stable prefix'),
+            new CachePointBlock({ cacheType: 'default' }),
+            new TextBlock('volatile per-call content'),
+          ],
+        }),
+      ]
+
+      await collectIterator(provider.stream(messages))
+
+      const content = captured.request.messages[0].content as Anthropic.ContentBlockParam[]
+      expect(breakpoints(captured.request)).toEqual([['messages', 0, { type: 'ephemeral' }]])
+      expect(content).toHaveLength(2)
+      expect(content[0]).toHaveProperty('cache_control', { type: 'ephemeral' })
+      expect(content[1]).not.toHaveProperty('cache_control')
+      // Nothing was discarded, so the strip warning must stay silent.
+      expect(warnSpy).not.toHaveBeenCalledWith(expect.stringContaining('stripped extra cache points'))
+      warnSpy.mockRestore()
+    })
+
+    it('strips extra cache points in the last user message', async () => {
+      // One boundary per message: the first marks the prefix, the rest spend the shared budget for nothing.
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { strategy: 'auto' } })
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [
+            new TextBlock('a'),
+            new CachePointBlock({ cacheType: 'default' }),
+            new TextBlock('b'),
+            new CachePointBlock({ cacheType: 'default' }),
+            new TextBlock('c'),
+            new CachePointBlock({ cacheType: 'default' }),
+          ],
+        }),
+      ]
+
+      await collectIterator(provider.stream(messages))
+
+      const content = captured.request.messages[0].content as Anthropic.ContentBlockParam[]
+      expect(breakpoints(captured.request)).toEqual([['messages', 0, { type: 'ephemeral' }]])
+      expect(content[0]).toHaveProperty('cache_control', { type: 'ephemeral' })
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('count=<2>'))
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('stripped extra cache points'))
+      warnSpy.mockRestore()
+    })
+
+    it('warns when it strips cache points outside the honored one', async () => {
+      // Discarding a point the caller placed can cost them caching, so it must not be silent.
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { strategy: 'auto' } })
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [new TextBlock('stable'), new CachePointBlock({ cacheType: 'default' })],
+        }),
+        new Message({ role: 'assistant', content: [new TextBlock('reply')] }),
+        new Message({
+          role: 'user',
+          content: [new TextBlock('newest'), new CachePointBlock({ cacheType: 'default' })],
+        }),
+      ]
+
+      await collectIterator(provider.stream(messages))
+
+      expect(breakpoints(captured.request)).toEqual([['messages', 2, { type: 'ephemeral' }]])
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('count=<1>'))
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('stripped extra cache points'))
+      warnSpy.mockRestore()
+    })
+
+    it('does not warn about stripping when the caller placed no cache points', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const { mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { strategy: 'auto' } })
+
+      await collectIterator(provider.stream([userMessage('no hand-placed points here')]))
+
+      expect(warnSpy).not.toHaveBeenCalledWith(expect.stringContaining('stripped extra cache points'))
+      warnSpy.mockRestore()
+    })
+
+    it('gives an honored cache point the configured ttl', async () => {
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { strategy: 'auto', ttl: '1h' } })
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [new TextBlock('stable'), new CachePointBlock({ cacheType: 'default' }), new TextBlock('volatile')],
+        }),
+      ]
+
+      await collectIterator(provider.stream(messages))
+
+      expect(breakpoints(captured.request)).toEqual([['messages', 0, { type: 'ephemeral', ttl: '1h' }]])
+    })
+
+    it('lets a hand-placed ttl win over the configured one', async () => {
+      // The ttl written on the point is the more specific instruction.
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { strategy: 'auto', ttl: '1h' } })
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [
+            new TextBlock('stable'),
+            new CachePointBlock({ cacheType: 'default', ttl: '5m' }),
+            new TextBlock('volatile'),
+          ],
+        }),
+      ]
+
+      await collectIterator(provider.stream(messages))
+
+      expect(breakpoints(captured.request)).toEqual([['messages', 0, { type: 'ephemeral', ttl: '5m' }]])
+    })
+
+    it('honors a cache point on the nearest acceptable block ahead of it', async () => {
+      // Honoring scans back from the point, never forward: a boundary is where the prefix ends.
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { strategy: 'auto' } })
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [
+            new TextBlock('stable'),
+            new ReasoningBlock({ text: 'r', signature: 's' }),
+            new CachePointBlock({ cacheType: 'default' }),
+            new TextBlock('volatile'),
+          ],
+        }),
+      ]
+
+      await collectIterator(provider.stream(messages))
+
+      const content = captured.request.messages[0].content as Anthropic.ContentBlockParam[]
+      expect(breakpoints(captured.request)).toEqual([['messages', 0, { type: 'ephemeral' }]])
+      expect(content[0]).toHaveProperty('cache_control', { type: 'ephemeral' })
+      expect(content[1]).not.toHaveProperty('cache_control')
+      expect(content[2]).not.toHaveProperty('cache_control')
+    })
+
+    it('falls back to automatic placement for a leading cache point', async () => {
+      // With nothing ahead of it there is no prefix to cache, so the boundary cannot be honored and the
+      // request carries what it would have without the point. The mirror of this test is
+      // test_leading_cache_point_falls_back_to_automatic_placement in
+      // strands-py/tests/strands/models/test_anthropic.py.
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { strategy: 'auto' } })
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [new CachePointBlock({ cacheType: 'default' }), new TextBlock('one')],
+        }),
+      ]
+
+      await collectIterator(provider.stream(messages))
+
+      expect(breakpoints(captured.request)).toEqual([['messages', 0, { type: 'ephemeral' }]])
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('falling back to automatic placement'))
+      warnSpy.mockRestore()
+    })
+
+    it('falls back to automatic placement when everything ahead is dropped in translation', async () => {
+      // An image with a location source is an accepted carrier by block type but never reaches the API.
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { strategy: 'auto' } })
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [
+            new ImageBlock({ format: 'png', source: { location: { type: 's3', uri: 's3://bucket/a.png' } } }),
+            new CachePointBlock({ cacheType: 'default' }),
+            new TextBlock('volatile'),
+          ],
+        }),
+      ]
+
+      await collectIterator(provider.stream(messages))
+
+      expect(captured.request.messages[0].content).toEqual([
+        { type: 'text', text: 'volatile', cache_control: { type: 'ephemeral' } },
+      ])
+    })
+
+    it('falls back to automatic placement when only a reasoning block is ahead of the point', async () => {
+      // The API rejects cache_control on a thinking block, so it cannot carry an honored boundary.
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { strategy: 'auto' } })
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [
+            new ReasoningBlock({ text: 'r', signature: 's' }),
+            new CachePointBlock({ cacheType: 'default' }),
+            new TextBlock('volatile'),
+          ],
+        }),
+      ]
+
+      await collectIterator(provider.stream(messages))
+
+      const content = captured.request.messages[0].content as Anthropic.ContentBlockParam[]
+      expect(breakpoints(captured.request)).toEqual([['messages', 0, { type: 'ephemeral' }]])
+      expect(content[0]).not.toHaveProperty('cache_control')
+      expect(content[1]).toHaveProperty('cache_control', { type: 'ephemeral' })
+    })
+
+    it('does not treat a cache-point-only last user message as the target', async () => {
+      // A message of nothing but cache points carries no content to cache, so the newest turn that does
+      // owns the breakpoint. The mirror of this test is
+      // test_a_cache_point_only_last_user_message_is_not_the_target in
+      // strands-py/tests/strands/models/test_anthropic.py.
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { strategy: 'auto' } })
+      const messages = [
+        userMessage('stable'),
+        new Message({ role: 'user', content: [new CachePointBlock({ cacheType: 'default' })] }),
+      ]
+
+      await collectIterator(provider.stream(messages))
+
+      expect(breakpoints(captured.request)).toEqual([['messages', 0, { type: 'ephemeral' }]])
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('count=<1>'))
+      warnSpy.mockRestore()
+    })
+
+    it('never emits more than one message breakpoint when it honors a point', async () => {
+      // An honored point replaces automatic placement, it does not add to it.
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { strategy: 'auto' } })
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [
+            new TextBlock('a'),
+            new CachePointBlock({ cacheType: 'default' }),
+            new TextBlock('b'),
+            new TextBlock('c'),
+          ],
+        }),
+      ]
+
+      await collectIterator(provider.stream(messages))
+
+      expect(breakpoints(captured.request)).toHaveLength(1)
+    })
+
+    it('honors a hand-placed cache point when cacheConfig is unset', async () => {
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient })
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [
+            new TextBlock('stable prefix'),
+            new CachePointBlock({ cacheType: 'default' }),
+            new TextBlock('volatile per-call content'),
+          ],
+        }),
+      ]
+
+      await collectIterator(provider.stream(messages))
+
+      const content = captured.request.messages[0].content as Anthropic.ContentBlockParam[]
+      expect(content[0]).toHaveProperty('cache_control', { type: 'ephemeral' })
+      expect(content[1]).not.toHaveProperty('cache_control')
+    })
+
+    it("does not mutate the caller's messages", async () => {
+      const { mockClient } = setupCapture()
+      const provider = new AnthropicModel({
+        client: mockClient,
+        cacheConfig: { strategy: 'auto' },
+      })
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [new TextBlock('hello'), new CachePointBlock({ cacheType: 'default' })],
+        }),
+      ]
+      const before = JSON.stringify(messages)
+
+      await collectIterator(provider.stream(messages, { toolSpecs }))
+
+      expect(JSON.stringify(messages)).toBe(before)
+    })
+
+    it('attaches a hand-placed cache point to the nearest block that accepts one', async () => {
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient })
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [
+            new TextBlock('question'),
+            new ReasoningBlock({ text: 'thinking', signature: 'sig' }),
+            new CachePointBlock({ cacheType: 'default' }),
+          ],
+        }),
+      ]
+
+      await collectIterator(provider.stream(messages))
+
+      expect(captured.request.messages[0].content[0].cache_control).toEqual({ type: 'ephemeral' })
+      expect(captured.request.messages[0].content[1].cache_control).toBeUndefined()
+    })
+
+    it('pins the media request body shared with strands-py', async () => {
+      // The mirror of this test is test_cross_sdk_media_request_parity in
+      // strands-py/tests/strands/models/test_anthropic.py. Update both together or the SDKs will drift.
+      // Text-only parity cannot catch a breakpoint lost while translating a media block, which is
+      // exactly what regressed here.
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { strategy: 'auto' } })
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [
+            new TextBlock('prefix'),
+            new ImageBlock({ format: 'png', source: { bytes: new Uint8Array([1, 2, 3]) } }),
+            // Dropped in translation: the breakpoint must fall back to the image above, not vanish.
+            new ImageBlock({ format: 'png', source: { location: { type: 's3', uri: 's3://bucket/a.png' } } }),
+          ],
+        }),
+      ]
+
+      await collectIterator(provider.stream(messages))
+
+      expect(captured.request.messages).toEqual([
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'prefix' },
+            {
+              type: 'image',
+              source: { type: 'base64', media_type: 'image/png', data: 'AQID' },
+              cache_control: { type: 'ephemeral' },
+            },
+          ],
+        },
+      ])
+    })
+
+    it('pins the request body shared with strands-py', async () => {
+      // The mirror of this test is test_cross_sdk_request_parity in
+      // strands-py/tests/strands/models/test_anthropic.py. Update both together or the SDKs will drift.
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({
+        client: mockClient,
+        cacheConfig: { strategy: 'auto', ttl: '1h' },
+      })
+      const messages = [
+        userMessage('hello'),
+        new Message({ role: 'assistant', content: [new TextBlock('hi')] }),
+        userMessage('again'),
+      ]
+
+      await collectIterator(provider.stream(messages, { toolSpecs }))
+
+      expect(captured.request.tools).toEqual([
+        { name: 't1', description: 'tool one', input_schema: { type: 'object' } },
+        {
+          name: 't2',
+          description: 'tool two',
+          input_schema: { type: 'object' },
+          cache_control: { type: 'ephemeral', ttl: '1h' },
+        },
+      ])
+      expect(captured.request.messages).toEqual([
+        { role: 'user', content: [{ type: 'text', text: 'hello' }] },
+        { role: 'assistant', content: [{ type: 'text', text: 'hi' }] },
+        {
+          role: 'user',
+          content: [{ type: 'text', text: 'again', cache_control: { type: 'ephemeral', ttl: '1h' } }],
+        },
+      ])
+    })
+
+    it('keeps the cache point ahead of per-call trailing content', async () => {
+      // The reusable prefix ends where per-call content begins, so the cache point precedes it.
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { strategy: 'auto' } })
+      const message = new Message({
+        role: 'user',
+        content: [new TextBlock('durable ask'), new TextBlock('per-call')],
+      })
+
+      await collectIterator(provider.stream([message], { dynamicTrailingBlocks: 1 }))
+
+      expect(captured.request.messages[0].content).toEqual([
+        { type: 'text', text: 'durable ask', cache_control: { type: 'ephemeral' } },
+        { type: 'text', text: 'per-call' },
+      ])
+    })
+
+    it('keeps the cache point ahead of a multi-block per-call tail', async () => {
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { strategy: 'auto' } })
+      const message = new Message({
+        role: 'user',
+        content: [new TextBlock('durable ask'), new TextBlock('injected'), new TextBlock('status')],
+      })
+
+      await collectIterator(provider.stream([message], { dynamicTrailingBlocks: 2 }))
+
+      expect(breakpoints(captured.request)).toEqual([['messages', 0, { type: 'ephemeral' }]])
+      expect(captured.request.messages[0].content[0].cache_control).toEqual({ type: 'ephemeral' })
+      expect(captured.request.messages[0].content[1].cache_control).toBeUndefined()
+      expect(captured.request.messages[0].content[2].cache_control).toBeUndefined()
+    })
+
+    it('skips the cache point when nothing durable precedes the per-call tail', async () => {
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { strategy: 'auto' } })
+
+      await collectIterator(provider.stream([userMessage('per-call only')], { dynamicTrailingBlocks: 1 }))
+
+      expect(breakpoints(captured.request)).toEqual([])
+    })
+
+    it('carries the configured ttl onto the per-call-tail cache point', async () => {
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { strategy: 'auto', ttl: '1h' } })
+      const message = new Message({
+        role: 'user',
+        content: [new TextBlock('durable ask'), new TextBlock('per-call')],
+      })
+
+      await collectIterator(provider.stream([message], { dynamicTrailingBlocks: 1 }))
+
+      expect(breakpoints(captured.request)).toEqual([['messages', 0, { type: 'ephemeral', ttl: '1h' }]])
+    })
+
+    it('emits no cache point for a per-call tail without cacheConfig', async () => {
+      // A per-call tail says where a cache point would go, never that one should exist.
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient })
+      const message = new Message({
+        role: 'user',
+        content: [new TextBlock('durable ask'), new TextBlock('per-call')],
+      })
+
+      await collectIterator(provider.stream([message], { dynamicTrailingBlocks: 1 }))
+
+      expect(breakpoints(captured.request)).toEqual([])
+    })
+  })
+
+  describe('API version compatibility', () => {
+    const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+    const pdf = new DocumentBlock({ name: 'doc.pdf', format: 'pdf', source: { bytes: new Uint8Array([1, 2, 3]) } })
+    const helloRequest = {
+      model: 'm1',
+      max_tokens: 64000,
+      stream: true,
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'Hello' }] }],
+    }
+
+    /** Captures the request the next client built from `clientConfig` sends. */
+    const captureBuiltClient = () => {
+      const captured: { request: any } = { request: null }
+      vi.mocked(Anthropic).mockImplementationOnce(function () {
+        return {
+          messages: {
+            stream: vi.fn((req) => {
+              captured.request = req
+              return (async function* () {})()
+            }),
+          },
+        }
+      })
+      return captured
+    }
+
+    /** Like `captureBuiltClient`, but builds a real SDK client so its `ANTHROPIC_CUSTOM_HEADERS` handling applies. */
+    const captureRealClient = async () => {
+      const { default: RealAnthropic } = await vi.importActual<typeof import('@anthropic-ai/sdk')>('@anthropic-ai/sdk')
+      const captured: { request: any } = { request: null }
+      vi.mocked(Anthropic).mockImplementationOnce(function (options) {
+        const client = new RealAnthropic(options)
+        client.messages.stream = vi.fn((req) => {
+          captured.request = req
+          return (async function* () {})()
+        }) as unknown as typeof client.messages.stream
+        return client
+      })
+      return captured
+    }
+
+    it.runIf(isNode)('rejects temperature when ANTHROPIC_CUSTOM_HEADERS pins the current API version', async () => {
+      vi.stubEnv('ANTHROPIC_CUSTOM_HEADERS', 'anthropic-version: 2026-10-21')
+      const captured = await captureRealClient()
+      const provider = new AnthropicModel({ apiKey: 'sk-test', modelId: 'm1', temperature: 0.2 })
+
+      await expect(collectIterator(provider.stream(messages))).rejects.toThrow(
+        'temperature is not supported by Anthropic API version 2026-10-21, pinned by the ANTHROPIC_CUSTOM_HEADERS environment variable'
+      )
+      expect(captured.request).toBeNull()
+    })
+
+    it('leaves the check to the API for an injected client', async () => {
+      const stream = vi.fn(() => (async function* () {})())
+      const provider = new AnthropicModel({
+        client: { messages: { stream } } as unknown as Anthropic,
+        temperature: 0.2,
+      })
+
+      await collectIterator(provider.stream(messages))
+
+      expect(stream).toHaveBeenCalledWith(expect.objectContaining({ temperature: 0.2 }))
+    })
+
+    it('rejects temperature when the current API version is pinned', async () => {
+      captureBuiltClient()
+      const provider = new AnthropicModel({
+        apiKey: 'sk-test',
+        modelId: 'm1',
+        temperature: 0.2,
+        clientConfig: { defaultHeaders: { 'anthropic-version': '2026-10-21' } },
+      })
+
+      await expect(collectIterator(provider.stream(messages))).rejects.toThrow(
+        "temperature is not supported by Anthropic API version 2026-10-21, pinned by clientConfig.defaultHeaders['anthropic-version']"
+      )
+    })
+
+    describe.skipIf(SDK_VERSION.startsWith('0.'))('on @anthropic-ai/sdk 1.x', () => {
+      it.each([
+        { name: 'temperature', config: { temperature: 0.2 }, params: 'temperature is' },
+        { name: 'topP', config: { topP: 0.9 }, params: 'top_p is' },
+        { name: 'params.top_k', config: { params: { top_k: 3 } }, params: 'top_k is' },
+        {
+          name: 'several params',
+          config: { temperature: 0.2, params: { top_p: 0.9 } },
+          params: 'temperature, top_p are',
+        },
+      ])('rejects $name before sending the request', async ({ config, params }) => {
+        const captured = captureBuiltClient()
+        const provider = new AnthropicModel({ apiKey: 'sk-test', modelId: 'm1', ...config })
+
+        await expect(collectIterator(provider.stream(messages))).rejects.toThrow(
+          `${params} not supported by Anthropic API version 2026-10-21, the default for @anthropic-ai/sdk ${SDK_VERSION}`
+        )
+        await expect(collectIterator(provider.stream(messages))).rejects.toThrow("'anthropic-version': '2023-06-01'")
+        expect(captured.request).toBeNull()
+      })
+
+      it.each([
+        { name: 'an object', defaultHeaders: { 'Anthropic-Version': '2023-06-01' } },
+        { name: 'header tuples', defaultHeaders: [['anthropic-version', '2023-06-01']] },
+        { name: 'a Headers instance', defaultHeaders: new Headers({ 'anthropic-version': '2023-06-01' }) },
+      ])('sends temperature when the previous API version is pinned as $name', async ({ defaultHeaders }) => {
+        const captured = captureBuiltClient()
+        const provider = new AnthropicModel({
+          apiKey: 'sk-test',
+          modelId: 'm1',
+          temperature: 0.2,
+          clientConfig: { defaultHeaders },
+        })
+
+        await collectIterator(provider.stream(messages))
+
+        expect(captured.request).toStrictEqual({ ...helloRequest, temperature: 0.2 })
+      })
+
+      it.runIf(isNode)(
+        'lets a clientConfig pin win over a differently cased ANTHROPIC_CUSTOM_HEADERS pin',
+        async () => {
+          vi.stubEnv('ANTHROPIC_CUSTOM_HEADERS', 'Anthropic-Version: 2026-10-21')
+          const captured = await captureRealClient()
+          const provider = new AnthropicModel({
+            apiKey: 'sk-test',
+            modelId: 'm1',
+            temperature: 0.2,
+            clientConfig: { defaultHeaders: { 'anthropic-version': '2023-06-01' } },
+          })
+
+          await collectIterator(provider.stream(messages))
+
+          expect(captured.request).toStrictEqual({ ...helloRequest, temperature: 0.2 })
+        }
+      )
+
+      it.runIf(isNode)('sends temperature when ANTHROPIC_CUSTOM_HEADERS pins the previous API version', async () => {
+        vi.stubEnv('ANTHROPIC_CUSTOM_HEADERS', 'anthropic-version: 2023-06-01')
+        const captured = await captureRealClient()
+        const provider = new AnthropicModel({ apiKey: 'sk-test', modelId: 'm1', temperature: 0.2 })
+
+        await collectIterator(provider.stream(messages))
+
+        expect(captured.request).toStrictEqual({ ...helloRequest, temperature: 0.2 })
+      })
+
+      it('skips PDF documents in assistant messages', async () => {
+        const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+        const captured = captureBuiltClient()
+        const provider = new AnthropicModel({ apiKey: 'sk-test', modelId: 'm1' })
+        const conversation = [
+          new Message({ role: 'user', content: [new TextBlock('Summarize'), pdf] }),
+          new Message({ role: 'assistant', content: [new TextBlock('Here it is'), pdf] }),
+        ]
+
+        await collectIterator(provider.stream(conversation))
+
+        expect(captured.request.messages[0].content.map((block: { type: string }) => block.type)).toEqual([
+          'text',
+          'document',
+        ])
+        expect(captured.request.messages[1].content.map((block: { type: string }) => block.type)).toEqual(['text'])
+        expect(warnSpy).toHaveBeenCalledWith(
+          expect.stringContaining('document blocks are not accepted in assistant messages')
+        )
+        warnSpy.mockRestore()
+      })
+    })
+
+    // Runs in CI's job against the lowest supported @anthropic-ai/sdk. Browser mode can't re-mock VERSION per test.
+    describe.runIf(SDK_VERSION.startsWith('0.'))('on @anthropic-ai/sdk 0.x', () => {
+      it('sends sampling params', async () => {
+        const captured = captureBuiltClient()
+        const provider = new AnthropicModel({
+          apiKey: 'sk-test',
+          modelId: 'm1',
+          temperature: 0.2,
+          params: { top_k: 3 },
+        })
+
+        await collectIterator(provider.stream(messages))
+
+        expect(captured.request).toStrictEqual({ ...helloRequest, temperature: 0.2, top_k: 3 })
+      })
+
+      it('keeps PDF documents in assistant messages', async () => {
+        const captured = captureBuiltClient()
+        const provider = new AnthropicModel({ apiKey: 'sk-test', modelId: 'm1' })
+
+        await collectIterator(provider.stream([new Message({ role: 'assistant', content: [pdf] })]))
+
+        expect(captured.request).toStrictEqual({
+          ...helloRequest,
+          messages: [
+            {
+              role: 'assistant',
+              content: [
+                {
+                  type: 'document',
+                  title: 'doc.pdf',
+                  source: { type: 'base64', media_type: 'application/pdf', data: 'AQID' },
+                },
+              ],
+            },
+          ],
+        })
+      })
+    })
+  })
+
+  describe('anthropicTools', () => {
+    const WEB_SEARCH_TOOL = { type: 'web_search_20260318' as const, name: 'web_search' as const, max_uses: 3 }
+    const FUNCTION_TOOL_SPEC = {
+      name: 'calc',
+      description: 'calculate',
+      inputSchema: { type: 'object' as const, properties: {} },
+    }
+    const FUNCTION_TOOL = { name: 'calc', description: 'calculate', input_schema: { type: 'object', properties: {} } }
+
+    const setupCapture = () => {
+      const captured: { request: any } = { request: null }
+      const mockClient = {
+        messages: {
+          stream: vi.fn((req) => {
+            captured.request = req
+            return (async function* () {})()
+          }),
+        },
+      } as any
+      return { captured, mockClient }
+    }
+
+    async function* webSearchStream(): AsyncGenerator<unknown> {
+      yield { type: 'message_start', message: { role: 'assistant', usage: { input_tokens: 10 } } }
+      yield {
+        type: 'content_block_start',
+        index: 0,
+        content_block: { type: 'server_tool_use', id: 'srvtoolu_1', name: 'web_search', input: {} },
+      }
+      yield { type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: '{' } }
+      yield { type: 'content_block_stop', index: 0 }
+      yield {
+        type: 'content_block_start',
+        index: 1,
+        content_block: { type: 'web_search_tool_result', tool_use_id: 'srvtoolu_1', content: [] },
+      }
+      yield { type: 'content_block_stop', index: 1 }
+      yield { type: 'content_block_start', index: 2, content_block: { type: 'text', text: '' } }
+      yield { type: 'content_block_delta', index: 2, delta: { type: 'text_delta', text: 'Agents are autonomous.' } }
+      yield {
+        type: 'content_block_delta',
+        index: 2,
+        delta: {
+          type: 'citations_delta',
+          citation: {
+            type: 'web_search_result_location',
+            url: 'https://docs.example.com/agents',
+            title: 'Agents guide',
+            cited_text: 'Agents are autonomous programs.',
+          },
+        },
+      }
+      yield { type: 'content_block_stop', index: 2 }
+      yield { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 5 } }
+      yield { type: 'message_stop' }
+    }
+
+    it('appends anthropicTools alongside function tools', async () => {
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient, anthropicTools: [WEB_SEARCH_TOOL] })
+
+      await collectIterator(
+        provider.stream([new Message({ role: 'user', content: [new TextBlock('Hi')] })], {
+          toolSpecs: [FUNCTION_TOOL_SPEC],
+        })
+      )
+
+      expect(captured.request.tools).toEqual([FUNCTION_TOOL, WEB_SEARCH_TOOL])
+    })
+
+    it('appends params.tools alongside function tools', async () => {
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient, params: { tools: [WEB_SEARCH_TOOL] } })
+
+      await collectIterator(
+        provider.stream([new Message({ role: 'user', content: [new TextBlock('Hi')] })], {
+          toolSpecs: [FUNCTION_TOOL_SPEC],
+        })
+      )
+
+      expect(captured.request.tools).toEqual([FUNCTION_TOOL, WEB_SEARCH_TOOL])
+    })
+
+    it('caches on the last server tool without mutating the configured tools', async () => {
+      const { captured, mockClient } = setupCapture()
+      const anthropicTools = [{ ...WEB_SEARCH_TOOL }]
+      const provider = new AnthropicModel({ client: mockClient, anthropicTools, cacheConfig: { toolsTTL: true } })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+
+      await collectIterator(provider.stream(messages, { toolSpecs: [FUNCTION_TOOL_SPEC] }))
+
+      expect(captured.request.tools).toEqual([
+        FUNCTION_TOOL,
+        { ...WEB_SEARCH_TOOL, cache_control: { type: 'ephemeral' } },
+      ])
+      expect(anthropicTools).toEqual([WEB_SEARCH_TOOL])
+
+      provider.updateConfig({ cacheConfig: { toolsTTL: false } })
+      await collectIterator(provider.stream(messages, { toolSpecs: [FUNCTION_TOOL_SPEC] }))
+
+      expect(captured.request.tools).toEqual([FUNCTION_TOOL, WEB_SEARCH_TOOL])
+    })
+
+    it.each([{ any: {} }, { tool: { name: 'calc' } }])(
+      'omits server tools when a tool is forced with %j',
+      async (toolChoice) => {
+        const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+        const { captured, mockClient } = setupCapture()
+        const provider = new AnthropicModel({
+          client: mockClient,
+          anthropicTools: [WEB_SEARCH_TOOL],
+          params: { tools: [WEB_SEARCH_TOOL] },
+        })
+
+        await collectIterator(
+          provider.stream([new Message({ role: 'user', content: [new TextBlock('Hi')] })], {
+            toolSpecs: [FUNCTION_TOOL_SPEC],
+            toolChoice,
+          })
+        )
+
+        expect(captured.request.tools).toEqual([FUNCTION_TOOL])
+        expect(captured.request.tool_choice.type).toBe(Object.keys(toolChoice)[0])
+        expect(warnSpy).toHaveBeenCalledWith(
+          expect.stringContaining('server_tools=<web_search,web_search> | forced tool call, omitting server tools')
+        )
+        warnSpy.mockRestore()
+      }
+    )
+
+    it('names a toolset by its type when a forced turn omits it', async () => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      const { mockClient } = setupCapture()
+      const toolset = { type: 'browser_toolset_20260801' } as unknown as Anthropic.ToolUnion
+      const provider = new AnthropicModel({ client: mockClient, anthropicTools: [toolset] })
+
+      await collectIterator(
+        provider.stream([new Message({ role: 'user', content: [new TextBlock('Hi')] })], {
+          toolSpecs: [FUNCTION_TOOL_SPEC],
+          toolChoice: { any: {} },
+        })
+      )
+
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('server_tools=<browser_toolset_20260801>'))
+      warnSpy.mockRestore()
+    })
+
+    it('does not let params.tools reach a forced turn that has no function tools', async () => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient, params: { tools: [WEB_SEARCH_TOOL] } })
+
+      await collectIterator(
+        provider.stream([new Message({ role: 'user', content: [new TextBlock('Hi')] })], { toolChoice: { any: {} } })
+      )
+
+      expect(captured.request).not.toHaveProperty('tools')
+      expect(captured.request).not.toHaveProperty('tool_choice')
+      warnSpy.mockRestore()
+    })
+
+    it('applies toolChoice when only server tools are configured', async () => {
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient, anthropicTools: [WEB_SEARCH_TOOL] })
+
+      await collectIterator(
+        provider.stream([new Message({ role: 'user', content: [new TextBlock('Hi')] })], { toolChoice: { auto: {} } })
+      )
+
+      expect(captured.request.tools).toEqual([WEB_SEARCH_TOOL])
+      expect(captured.request.tool_choice).toEqual({ type: 'auto' })
+    })
+
+    it('rejects function tool definitions in anthropicTools', () => {
+      const functionTool = { name: 'f', input_schema: { type: 'object' as const } }
+
+      expect(() => new AnthropicModel({ anthropicTools: [functionTool] })).toThrow(
+        'anthropicTools should not contain function tool definitions'
+      )
+      expect(() =>
+        new AnthropicModel({ apiKey: 'sk-ant-test' }).updateConfig({ anthropicTools: [functionTool] })
+      ).toThrow('anthropicTools should not contain function tool definitions')
+    })
+
+    it('skips server-side tool blocks and aggregates web search citations with their text', async () => {
+      const provider = new AnthropicModel({ client: createMockClient(webSearchStream) })
+
+      const { result, items: events } = await collectGenerator(
+        provider.streamAggregated([new Message({ role: 'user', content: [new TextBlock('Hi')] })])
+      )
+
+      expect(
+        events.map((event) => (event.type === 'modelContentBlockDeltaEvent' ? `delta:${event.delta.type}` : event.type))
+      ).toEqual([
+        'modelMessageStartEvent',
+        'modelContentBlockStartEvent',
+        'delta:textDelta',
+        'delta:citationsDelta',
+        'modelContentBlockStopEvent',
+        'citationsBlock',
+        'modelMetadataEvent',
+        'modelMessageStopEvent',
+      ])
+      expect(result.stopReason).toBe('endTurn')
+      expect(result.message.content).toEqual([
+        new CitationsBlock({
+          citations: [
+            {
+              location: { type: 'web', url: 'https://docs.example.com/agents', domain: 'docs.example.com' },
+              source: 'https://docs.example.com/agents',
+              sourceContent: [{ text: 'Agents are autonomous programs.' }],
+              title: 'Agents guide',
+            },
+          ],
+          content: [{ text: 'Agents are autonomous.' }],
+        }),
+      ])
+    })
+
+    const pausedContent = [{ type: 'server_tool_use', id: 'srvtoolu_1', name: 'web_search', input: {} }]
+
+    async function* pausedStream(): AsyncGenerator<unknown> {
+      yield { type: 'message_start', message: { role: 'assistant', usage: { input_tokens: 10 } } }
+      yield { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } }
+      yield { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'Searching. ' } }
+      yield { type: 'content_block_stop', index: 0 }
+      yield { type: 'content_block_start', index: 1, content_block: pausedContent[0] }
+      yield { type: 'content_block_stop', index: 1 }
+      yield { type: 'message_delta', delta: { stop_reason: 'pause_turn' }, usage: { output_tokens: 5 } }
+      yield { type: 'message_stop' }
+    }
+
+    const withFinalMessage = (events: AsyncGenerator<unknown>) =>
+      Object.assign(events, { finalMessage: async () => ({ content: pausedContent }) })
+
+    it('resumes a paused server-side tool turn and surfaces it as one stream', async () => {
+      const stream = vi
+        .fn()
+        .mockImplementationOnce(() => withFinalMessage(pausedStream()))
+        .mockImplementationOnce(() => webSearchStream())
+      const client = { messages: { stream } } as unknown as Anthropic
+      const provider = new AnthropicModel({ client, anthropicTools: [WEB_SEARCH_TOOL] })
+
+      const { result, items: events } = await collectGenerator(
+        provider.streamAggregated([new Message({ role: 'user', content: [new TextBlock('Hi')] })], {
+          toolSpecs: [FUNCTION_TOOL_SPEC],
+        })
+      )
+
+      expect(events.map((event) => event.type).filter((type) => !type.startsWith('modelContentBlock'))).toEqual([
+        'modelMessageStartEvent',
+        'textBlock',
+        'citationsBlock',
+        'modelMetadataEvent',
+        'modelMessageStopEvent',
+      ])
+      expect(result.stopReason).toBe('endTurn')
+      expect(result.message.content[0]).toEqual(new TextBlock('Searching. '))
+      expect(result.message.content[1]).toBeInstanceOf(CitationsBlock)
+      expect(result.metadata?.usage).toEqual({ inputTokens: 20, outputTokens: 10, totalTokens: 30 })
+
+      expect(stream).toHaveBeenCalledTimes(2)
+      const first = stream.mock.calls[0]?.[0]
+      const second = stream.mock.calls[1]?.[0]
+      expect(second.messages).toEqual([...first.messages, { role: 'assistant', content: pausedContent }])
+      expect(second.tools).toEqual(first.tools)
+      expect(first.tools).toEqual([FUNCTION_TOOL, WEB_SEARCH_TOOL])
+    })
+
+    it('throws once a paused turn exceeds the continuation limit', async () => {
+      const stream = vi.fn(() => withFinalMessage(pausedStream()))
+      const client = { messages: { stream } } as unknown as Anthropic
+
+      await expect(
+        collectIterator(
+          new AnthropicModel({ client }).stream([new Message({ role: 'user', content: [new TextBlock('Hi')] })])
+        )
+      ).rejects.toThrow(new ModelError('server-side tool turn did not complete after 10 continuations'))
+
+      expect(stream).toHaveBeenCalledTimes(11)
+    })
+
+    it('treats message_delta usage as cumulative within a response and sums across continuations', async () => {
+      const paused = async function* (): AsyncGenerator<unknown> {
+        yield { type: 'message_start', message: { role: 'assistant', usage: { input_tokens: 10 } } }
+        yield { type: 'content_block_start', index: 0, content_block: pausedContent[0] }
+        yield { type: 'content_block_stop', index: 0 }
+        yield { type: 'message_delta', delta: {}, usage: { output_tokens: 3 } }
+        yield { type: 'message_delta', delta: { stop_reason: 'pause_turn' }, usage: { output_tokens: 5 } }
+        yield { type: 'message_stop' }
+      }
+      const resumed = async function* (): AsyncGenerator<unknown> {
+        yield { type: 'message_start', message: { role: 'assistant', usage: { input_tokens: 20 } } }
+        yield { type: 'message_delta', delta: {}, usage: { output_tokens: 4 } }
+        yield { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 7 } }
+        yield { type: 'message_stop' }
+      }
+      const stream = vi
+        .fn()
+        .mockImplementationOnce(() => withFinalMessage(paused()))
+        .mockImplementationOnce(() => resumed())
+      const client = { messages: { stream } } as unknown as Anthropic
+
+      const events = await collectIterator(
+        new AnthropicModel({ client }).stream([new Message({ role: 'user', content: [new TextBlock('Hi')] })])
+      )
+
+      expect(events).toContainEqual({
+        type: 'modelMetadataEvent',
+        usage: { inputTokens: 30, outputTokens: 12, totalTokens: 42 },
+      })
+    })
+
+    it('reports the cumulative usage from message_delta and keeps message_start values it omits', async () => {
+      const client = createMockClient(async function* () {
+        yield {
+          type: 'message_start',
+          message: {
+            role: 'assistant',
+            usage: {
+              input_tokens: 2230,
+              output_tokens: 25,
+              cache_read_input_tokens: 100,
+              cache_creation_input_tokens: 7,
+            },
+          },
+        }
+        yield {
+          type: 'message_delta',
+          delta: { stop_reason: 'end_turn' },
+          usage: {
+            input_tokens: 11768,
+            output_tokens: 115,
+            cache_read_input_tokens: null,
+            cache_creation_input_tokens: null,
+          },
+        }
+        yield { type: 'message_stop' }
+      })
+
+      const events = await collectIterator(
+        new AnthropicModel({ client }).stream([new Message({ role: 'user', content: [new TextBlock('Hi')] })])
+      )
+
+      expect(events).toContainEqual({
+        type: 'modelMetadataEvent',
+        usage: {
+          inputTokens: 11768,
+          outputTokens: 115,
+          totalTokens: 11990,
+          cacheReadInputTokens: 100,
+          cacheWriteInputTokens: 7,
+        },
+      })
+    })
+
+    it('does not synthesize a stop event when the stream ends without message_stop', async () => {
+      const client = createMockClient(async function* () {
+        yield { type: 'message_start', message: { role: 'assistant', usage: { input_tokens: 1 } } }
+        yield { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } }
+        yield { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'half of the' } }
+      })
+      const provider = new AnthropicModel({ client })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+
+      const events = await collectIterator(provider.stream(messages))
+
+      expect(events.map((event) => event.type)).toEqual([
+        'modelMessageStartEvent',
+        'modelContentBlockStartEvent',
+        'modelContentBlockDeltaEvent',
+      ])
+      await expect(collectGenerator(provider.streamAggregated(messages))).rejects.toThrow(
+        'Stream ended without completing a message'
+      )
+    })
+
+    it.each([
+      [
+        {
+          type: 'search_result_location',
+          search_result_index: 1,
+          start_block_index: 2,
+          end_block_index: 3,
+          source: 's',
+        },
+        { type: 'searchResult', searchResultIndex: 1, start: 2, end: 3 },
+      ],
+      [
+        { type: 'char_location', document_index: 0, start_char_index: 1, end_char_index: 2 },
+        { type: 'documentChar', documentIndex: 0, start: 1, end: 2 },
+      ],
+      [
+        { type: 'page_location', document_index: 0, start_page_number: 1, end_page_number: 2 },
+        { type: 'documentPage', documentIndex: 0, start: 1, end: 2 },
+      ],
+      [
+        { type: 'content_block_location', document_index: 0, start_block_index: 1, end_block_index: 2 },
+        { type: 'documentChunk', documentIndex: 0, start: 1, end: 2 },
+      ],
+    ])('maps %s citations', async (citation, location) => {
+      async function* citationStream(): AsyncGenerator<unknown> {
+        yield { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } }
+        yield { type: 'content_block_delta', index: 0, delta: { type: 'citations_delta', citation } }
+        yield { type: 'content_block_stop', index: 0 }
+      }
+      const provider = new AnthropicModel({ client: createMockClient(citationStream) })
+
+      const events = await collectIterator(
+        provider.stream([new Message({ role: 'user', content: [new TextBlock('Hi')] })])
+      )
+
+      const deltas = events.filter((event) => event.type === 'modelContentBlockDeltaEvent')
+      expect(deltas).toHaveLength(1)
+      expect((deltas[0] as any).delta.citations[0].location).toEqual(location)
+    })
+
+    it('logs an error when a server-side tool fails', async () => {
+      const warnSpy = vi.spyOn(logger, 'warn')
+      async function* errorStream(): AsyncGenerator<unknown> {
+        yield {
+          type: 'content_block_start',
+          index: 0,
+          content_block: {
+            type: 'web_search_tool_result',
+            tool_use_id: 'srvtoolu_1',
+            content: { type: 'web_search_tool_result_error', error_code: 'max_uses_exceeded' },
+          },
+        }
+        yield { type: 'content_block_stop', index: 0 }
+        yield { type: 'message_stop' }
+      }
+      const provider = new AnthropicModel({ client: createMockClient(errorStream) })
+
+      await collectIterator(provider.stream([new Message({ role: 'user', content: [new TextBlock('Hi')] })]))
+
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('error_code=<max_uses_exceeded>'))
+      warnSpy.mockRestore()
+    })
+
+    it('formats a citations block back into the request as text', async () => {
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient })
+      const cited = new CitationsBlock({
+        citations: [
+          { location: { type: 'web', url: 'https://x' }, source: 'https://x', sourceContent: [], title: 'x' },
+        ],
+        content: [{ text: 'Agents are ' }, { text: 'autonomous.' }],
+      })
+
+      await collectIterator(
+        provider.stream([
+          new Message({ role: 'user', content: [new TextBlock('Hi')] }),
+          new Message({ role: 'assistant', content: [cited] }),
+        ])
+      )
+
+      expect(captured.request.messages[1]).toEqual({
+        role: 'assistant',
+        content: [{ type: 'text', text: 'Agents are autonomous.' }],
+      })
+    })
+  })
+})
+
+describe('AnthropicModel server-side summary', () => {
+  const storedCompaction = (text = 'summary', signature = 'sig'): SummaryBlock =>
+    new SummaryBlock({ provider: 'anthropic', signature, text })
+
+  const compactionClient = (response: Record<string, unknown>) => {
+    const captured: { request: any; options: any } = { request: null, options: null }
+    const client = {
+      messages: {
+        stream: vi.fn((req, opts) => {
+          captured.request = req
+          captured.options = opts
+          return (async function* () {})()
+        }),
+      },
+      beta: {
+        messages: {
+          stream: vi.fn((req, opts) => {
+            captured.request = req
+            captured.options = opts
+            return { finalMessage: async () => response }
+          }),
+        },
+      },
+    } as unknown as Anthropic
+    return { captured, client }
+  }
+
+  const compactionModel = (client: Anthropic) =>
+    new AnthropicModel({ client, modelId: 'claude-sonnet-5-5', maxTokens: 1, stopSequences: ['STOP'] })
+
+  it('sends a compaction request and returns the summary block', async () => {
+    const { captured, client } = compactionClient({
+      stop_reason: 'compaction',
+      content: [{ type: 'compaction', content: 'the summary', signature: 's1' }],
+    })
+    const messages = [
+      new Message({ role: 'user', content: [new TextBlock('hi')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('yo')] }),
+    ]
+
+    const toolSpec = { name: 'read', description: 'Read a file', inputSchema: { type: 'object' as const } }
+    const model = compactionModel(client)
+    model.updateConfig({ params: { context_management: { edits: [] } } })
+
+    const block = await model.summarize(messages, {
+      systemPrompt: 'sys',
+      toolSpecs: [toolSpec],
+      instructions: 'keep ids',
+    })
+
+    expect(captured.request).toEqual({
+      model: 'claude-sonnet-5-5',
+      max_tokens: 1,
+      stream: true,
+      system: 'sys',
+      tools: [{ name: 'read', description: 'Read a file', input_schema: { type: 'object' } }],
+      messages: [
+        { role: 'user', content: [{ type: 'text', text: 'hi' }] },
+        { role: 'assistant', content: [{ type: 'text', text: 'yo' }] },
+      ],
+      compaction: { type: 'summarize', instructions: 'keep ids' },
+    })
+    expect(captured.options).toEqual({ headers: { 'anthropic-beta': 'compact-2026-09-04' } })
+    expect(block).toEqual(storedCompaction('the summary', 's1'))
+  })
+
+  it.each([
+    { name: 'a 429', error: Object.assign(new Error('rate limited'), { status: 429 }), type: ModelThrottledError },
+    {
+      name: 'a context overflow',
+      error: new Error('prompt is too long: 300000 tokens'),
+      type: ContextWindowOverflowError,
+    },
+  ])('maps $name from the compaction request like stream()', async ({ error, type }) => {
+    const client = {
+      messages: { stream: vi.fn() },
+      beta: { messages: { stream: vi.fn(() => ({ finalMessage: async () => Promise.reject(error) })) } },
+    } as unknown as Anthropic
+
+    await expect(
+      compactionModel(client).summarize([new Message({ role: 'user', content: [new TextBlock('hi')] })])
+    ).rejects.toThrow(type)
+  })
+
+  it('throws NotImplementedError for a client without the beta messages API', async () => {
+    const client = { messages: { stream: vi.fn() } } as unknown as Anthropic
+
+    await expect(
+      compactionModel(client).summarize([new Message({ role: 'user', content: [new TextBlock('hi')] })])
+    ).rejects.toThrow(NotImplementedError)
+  })
+
+  it('throws without a compaction block', async () => {
+    const { client } = compactionClient({ stop_reason: 'end_turn', content: [{ type: 'text', text: 'x' }] })
+
+    await expect(
+      compactionModel(client).summarize([new Message({ role: 'user', content: [new TextBlock('hi')] })])
+    ).rejects.toThrow('compaction returned no summary')
+  })
+
+  it('sends messages from the last compaction block', async () => {
+    const { captured, client } = compactionClient({})
+    const messages = [
+      new Message({ role: 'user', content: [new TextBlock('first')] }),
+      new Message({ role: 'assistant', content: [storedCompaction('old')] }),
+      new Message({ role: 'user', content: [new TextBlock('more')] }),
+      new Message({ role: 'assistant', content: [storedCompaction('new', 's2'), new TextBlock('after')] }),
+      new Message({ role: 'user', content: [new TextBlock('next')] }),
+    ]
+
+    await collectIterator(compactionModel(client).stream(messages))
+
+    expect(captured.request.messages).toEqual([
+      {
+        role: 'assistant',
+        content: [
+          { type: 'compaction', content: 'new', signature: 's2' },
+          { type: 'text', text: 'after' },
+        ],
+      },
+      { role: 'user', content: [{ type: 'text', text: 'next' }] },
+    ])
+    expect(captured.options).toEqual({ headers: { 'anthropic-beta': 'compact-2026-09-04' } })
+  })
+
+  it('counts tokens from the last compaction block', async () => {
+    const countTokens = vi.fn(async () => ({ input_tokens: 7 }))
+    const client = { messages: { countTokens } } as unknown as Anthropic
+    const model = new AnthropicModel({ client, modelId: 'claude-sonnet-5-5', maxTokens: 1, useNativeTokenCount: true })
+    const messages = [
+      new Message({ role: 'user', content: [new TextBlock('first '.repeat(500))] }),
+      new Message({ role: 'assistant', content: [storedCompaction('new', 's2')] }),
+      new Message({ role: 'user', content: [new TextBlock('next')] }),
+    ]
+
+    expect(await model.countTokens(messages)).toBe(7)
+
+    const [params, options] = countTokens.mock.calls[0] as unknown as [any, any]
+    expect(params.messages).toEqual([
+      { role: 'assistant', content: [{ type: 'compaction', content: 'new', signature: 's2' }] },
+      { role: 'user', content: [{ type: 'text', text: 'next' }] },
+    ])
+    expect(options).toEqual({ headers: { 'anthropic-beta': 'compact-2026-09-04' } })
+
+    const estimating = new AnthropicModel({ client, modelId: 'claude-sonnet-5-5', maxTokens: 1 })
+    expect(await estimating.countTokens(messages)).toBe(await estimating.countTokens(messages.slice(1)))
+  })
+
+  it.each([
+    'claude-haiku-5-5',
+    'claude-sonnet-5-5',
+    'claude-opus-5-5',
+    'claude-fable-5-1',
+    'claude-sonnet-5-5-20260401',
+  ])('turns server-side summary on by default for listed model %s', (modelId) => {
+    const model = new AnthropicModel({ apiKey: 'sk-ant-test', modelId, maxTokens: 1 })
+
+    expect(model.modelInfo.capabilities?.serverSideSummary).toBe(true)
+  })
+
+  it.each(['claude-sonnet-4-5', 'm1'])('turns server-side summary off for other model %s', (modelId) => {
+    const model = new AnthropicModel({ apiKey: 'sk-ant-test', modelId, maxTokens: 1 })
+
+    expect(model.modelInfo.capabilities?.serverSideSummary).toBe(false)
+  })
+
+  it('sends the compaction text without the capability', async () => {
+    const { captured, client } = compactionClient({})
+    const model = compactionModel(client)
+    model.updateConfig({ modelInfo: { capabilities: { serverSideSummary: false } } })
+    const messages = [
+      new Message({ role: 'user', content: [new TextBlock('first')] }),
+      new Message({ role: 'assistant', content: [storedCompaction('old')] }),
+    ]
+
+    await collectIterator(model.stream(messages))
+
+    expect(model.modelInfo.capabilities?.serverSideSummary).toBe(false)
+    expect(captured.request.messages[1].content).toEqual([{ type: 'text', text: 'old' }])
+    expect(captured.options).toBeUndefined()
   })
 })

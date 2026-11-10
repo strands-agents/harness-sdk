@@ -4,20 +4,22 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Literal
 
-from .._middleware.stages import InvokeModelStage
+from opentelemetry import trace as trace_api
+
 from ..hooks.events import MessageAddedEvent
 from ..injection._message_injection import _create_injection_middleware, _is_user_turn
 from ..injection._xml import _escape_xml_attr, _escape_xml_text
+from ..middleware.stages import InvokeModelStage
 from ..plugins.plugin import Plugin
+from ..telemetry.tracer import get_tracer
 from ..tools.decorator import tool
 from ..types.exceptions import AggregateMemoryError
 from ..types.tools import AgentTool
 from .extraction.coordinator import ExtractionCoordinator, _ExtractionBinding
 from .extraction.resolve_extraction_config import _resolve_extraction_config
-from .extraction.types import ExtractionTriggerContext
+from .extraction.types import ExtractionTriggerContext, _FireExtraction
 from .types import (
     InjectionFormatContext,
     InjectionQueryContext,
@@ -34,6 +36,7 @@ from .types import (
 
 if TYPE_CHECKING:
     from ..agent.agent import Agent
+    from ..agent.invocation_context import InvocationContext
     from ..types.content import Messages
 
 logger = logging.getLogger(__name__)
@@ -262,6 +265,34 @@ class MemoryManager(Plugin):
         """
         return list(self._memory_tools)
 
+    def _resolve_named_stores(self, requested: list[str], *, require_writable: bool = False) -> list[MemoryStore]:
+        """Resolve requested store names to configured store instances.
+
+        De-duplicates ``requested`` (preserving first-seen order) and looks each
+        name up among the configured stores.
+
+        Args:
+            requested: Store names to resolve.
+            require_writable: When set, a resolved read-only store is rejected.
+
+        Raises:
+            ValueError: If a name is not configured, or is read-only when
+                ``require_writable`` is set.
+        """
+        resolved_stores: list[MemoryStore] = []
+        seen: set[str] = set()
+        for name in requested:
+            if name in seen:
+                continue
+            seen.add(name)
+            found = next((store for store in self._stores if store.name == name), None)
+            if found is None:
+                raise ValueError(f"MemoryManager: store '{name}' not found")
+            if require_writable and not found.writable:
+                raise ValueError(f"MemoryManager: store '{name}' is read-only")
+            resolved_stores.append(found)
+        return resolved_stores
+
     async def search(self, query: str, options: MemorySearchOptions | None = None) -> list[MemoryEntry]:
         """Search stores for entries matching the query.
 
@@ -282,57 +313,68 @@ class MemoryManager(Plugin):
             requested_stores,
         )
 
-        if requested_stores is not None:
-            target_stores: list[MemoryStore] = []
-            seen: set[str] = set()
-            for name in requested_stores:
-                if name in seen:
-                    continue
-                seen.add(name)
-                found = next((store for store in self._stores if store.name == name), None)
-                if found is None:
-                    raise ValueError(f"MemoryManager: store '{name}' not found")
-                target_stores.append(found)
-        else:
-            target_stores = self._stores
+        tracer = get_tracer()
+        span_store_names = requested_stores if requested_stores is not None else [store.name for store in self._stores]
+        span = tracer.start_memory_search_span(query, span_store_names, max_search_results=caller_max)
 
-        settled = await asyncio.gather(
-            *(
-                store.search(
-                    query,
-                    MemorySearchOptions(
-                        max_search_results=(
-                            caller_max
-                            if caller_max is not None
-                            else store.max_search_results
-                            if store.max_search_results is not None
-                            else DEFAULT_MAX_SEARCH_RESULTS
+        try:
+            with trace_api.use_span(span, end_on_exit=False):
+                if requested_stores is not None:
+                    target_stores = self._resolve_named_stores(requested_stores)
+                else:
+                    target_stores = self._stores
+
+                settled = await asyncio.gather(
+                    *(
+                        store.search(
+                            query,
+                            MemorySearchOptions(
+                                max_search_results=(
+                                    caller_max
+                                    if caller_max is not None
+                                    else store.max_search_results
+                                    if store.max_search_results is not None
+                                    else DEFAULT_MAX_SEARCH_RESULTS
+                                )
+                            ),
                         )
+                        for store in target_stores
                     ),
+                    return_exceptions=True,
                 )
-                for store in target_stores
-            ),
-            return_exceptions=True,
-        )
+        except Exception as error:
+            tracer.end_memory_search_span(span, error=error)
+            raise
 
         results: list[MemoryEntry] = []
+        store_failure_count = 0
         for store, outcome in zip(target_stores, settled, strict=True):
             if isinstance(outcome, BaseException):
                 logger.warning("store=<%s>, reason=<%s> | store search failed", store.name, outcome)
+                store_failure_count += 1
                 continue
             for entry in outcome:
                 results.append(MemoryEntry(content=entry.content, store_name=store.name, metadata=entry.metadata))
 
+        tracer.end_memory_search_span(span, entries=results, store_failure_count=store_failure_count)
+
         logger.debug("results=<%s> | search complete", len(results))
         return results
 
-    async def add(self, content: str, options: MemoryAddOptions | None = None) -> None:
+    async def add(self, content: str, options: MemoryAddOptions | None = None, *, _detached: bool = False) -> None:
         """Add content to writable stores.
 
         Unscoped: targets all configured writable stores. Target stores are
         validated first, then writes are awaited concurrently; per-store failures
         are logged and surfaced as an
         :class:`~strands.types.exceptions.AggregateMemoryError`.
+
+        Args:
+            content: The content to write.
+            options: Optional add options (target stores, metadata).
+            _detached: Internal. When the write runs detached from the call that
+                scheduled it (the fire-and-forget add tool path), start the span as
+                a trace root rather than parenting to a possibly-ended span.
 
         Raises:
             ValueError: If a named store is not found or is read-only, or if no
@@ -342,29 +384,29 @@ class MemoryManager(Plugin):
         requested_stores = options.get("stores") if options is not None else None
         metadata = options.get("metadata") if options is not None else None
 
-        if requested_stores is not None:
-            writable_stores: list[MemoryStore] = []
-            seen: set[str] = set()
-            for name in requested_stores:
-                if name in seen:
-                    continue
-                seen.add(name)
-                found = next((store for store in self._stores if store.name == name), None)
-                if found is None:
-                    raise ValueError(f"MemoryManager: store '{name}' not found")
-                if not found.writable:
-                    raise ValueError(f"MemoryManager: store '{name}' is read-only")
-                writable_stores.append(found)
-        else:
-            writable_stores = self._add_stores
-
-        if len(writable_stores) == 0:
-            raise ValueError("MemoryManager: no writable store matched")
-
-        settled = await asyncio.gather(
-            *(store.add(content, metadata) for store in writable_stores),
-            return_exceptions=True,
+        tracer = get_tracer()
+        span_store_names = (
+            requested_stores if requested_stores is not None else [store.name for store in self._add_stores]
         )
+        span = tracer.start_memory_add_span(content, span_store_names, force_root=_detached)
+
+        try:
+            with trace_api.use_span(span, end_on_exit=False):
+                if requested_stores is not None:
+                    writable_stores = self._resolve_named_stores(requested_stores, require_writable=True)
+                else:
+                    writable_stores = self._add_stores
+
+                if len(writable_stores) == 0:
+                    raise ValueError("MemoryManager: no writable store matched")
+
+                settled = await asyncio.gather(
+                    *(store.add(content, metadata) for store in writable_stores),
+                    return_exceptions=True,
+                )
+        except Exception as error:
+            tracer.end_memory_add_span(span, error=error)
+            raise
 
         failed_names: list[str] = []
         reasons: list[BaseException] = []
@@ -375,10 +417,14 @@ class MemoryManager(Plugin):
                 reasons.append(outcome)
 
         if failed_names:
-            raise AggregateMemoryError(
+            aggregate_error = AggregateMemoryError(
                 f"MemoryManager: store writes failed: {', '.join(failed_names)}",
                 reasons,
             )
+            tracer.end_memory_add_span(span, store_failure_count=len(failed_names), error=aggregate_error)
+            raise aggregate_error
+
+        tracer.end_memory_add_span(span)
 
     def _resolve_tool_targets(self, scoped_names: list[str], requested: list[str] | None) -> list[str]:
         """Resolve the store names a tool callback should target.
@@ -526,7 +572,7 @@ class MemoryManager(Plugin):
     async def _add_swallow(self, content: str, targets: list[str]) -> None:
         """Run a programmatic ``add`` and swallow any failure (the add tool's fire-and-forget mode)."""
         try:
-            await self.add(content, MemoryAddOptions(stores=targets))
+            await self.add(content, MemoryAddOptions(stores=targets), _detached=True)
         except Exception:  # noqa: BLE001 - failures are logged in ``add``; swallow here.
             pass
 
@@ -569,7 +615,7 @@ class MemoryManager(Plugin):
         if len(self._extraction_stores) == 0:
             return
 
-        coordinator = ExtractionCoordinator(self._extraction_stores, agent.model)
+        coordinator = ExtractionCoordinator(self._extraction_stores, agent.aux_model)
         self._coordinator = coordinator
 
         # Buffer every message so extraction has its own copy to save from.
@@ -590,7 +636,7 @@ class MemoryManager(Plugin):
         if config is False:
             return
 
-        agent._middleware_registry.add_middleware(
+        agent.add_middleware(
             InvokeModelStage.Input,
             _create_injection_middleware(
                 lambda context: self._provide_memory_context(context.messages, config),
@@ -614,25 +660,46 @@ class MemoryManager(Plugin):
         Returns:
             The injected text, or ``None`` when there is nothing to inject.
         """
-        query = self._resolve_injection_query(messages, config)
-        if query is None or not query.strip():
-            return None
-
         max_entries = config.get("max_entries")
         max_results = max_entries if max_entries is not None else DEFAULT_MAX_ENTRIES
-        # search caps each store at max_results; the slice caps the concatenation across stores.
-        entries = (await self.search(query, MemorySearchOptions(max_search_results=max_results)))[:max_results]
-        if len(entries) == 0:
-            return None
+
+        tracer = get_tracer()
+        span = tracer.start_memory_inject_span(max_entries=max_results)
+
+        def _end(injected: bool, entry_count: int = 0, format_error: bool = False) -> None:
+            """End the inject span on every path (skip, fail-open, and success)."""
+            tracer.end_memory_inject_span(span, injected=injected, entry_count=entry_count, format_error=format_error)
 
         try:
-            custom_format = config.get("format")
-            if custom_format is not None:
-                return custom_format(InjectionFormatContext(entries=entries))
-            return self._default_injection_format(entries)
-        except Exception as error:  # noqa: BLE001 - fail open: a bad formatter must not abort the model call.
-            logger.warning("reason=<%s> | injection format raised | skipping injection", error)
-            return None
+            with trace_api.use_span(span, end_on_exit=False):
+                query = self._resolve_injection_query(messages, config)
+                if query is None or not query.strip():
+                    _end(injected=False)
+                    return None
+
+                # search caps each store at max_results; the slice caps the concatenation across stores.
+                entries = (await self.search(query, MemorySearchOptions(max_search_results=max_results)))[:max_results]
+                if len(entries) == 0:
+                    _end(injected=False)
+                    return None
+
+                try:
+                    custom_format = config.get("format")
+                    if custom_format is not None:
+                        rendered = custom_format(InjectionFormatContext(entries=entries))
+                    else:
+                        rendered = self._default_injection_format(entries)
+                except Exception as error:  # noqa: BLE001 - fail open: a bad formatter must not abort the model call.
+                    logger.warning("reason=<%s> | injection format raised | skipping injection", error)
+                    _end(injected=False, format_error=True)
+                    return None
+
+                _end(injected=True, entry_count=len(entries))
+                return rendered
+        except Exception:
+            # search (or anything else here) raising must not leak the span; end it and re-raise.
+            _end(injected=False)
+            raise
 
     def _resolve_injection_query(self, messages: Messages, config: MemoryInjectionConfig) -> str | None:
         """Derive the injection search query.
@@ -689,11 +756,11 @@ class MemoryManager(Plugin):
         return f"<memory>\n{joined}\n</memory>"
 
     @staticmethod
-    def _make_fire(coordinator: ExtractionCoordinator, store: MemoryStore) -> Callable[[], None]:
-        """Build a zero-arg ``fire`` callback bound to a specific store."""
+    def _make_fire(coordinator: ExtractionCoordinator, store: MemoryStore) -> _FireExtraction:
+        """Build a ``fire`` callback bound to a specific store."""
 
-        def fire() -> None:
-            coordinator.schedule(store)
+        def fire(invocation_context: InvocationContext | None = None) -> None:
+            coordinator.schedule(store, invocation_context)
 
         return fire
 

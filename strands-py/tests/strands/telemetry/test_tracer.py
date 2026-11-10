@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import os
@@ -6,10 +7,12 @@ from unittest import mock
 
 import pytest
 from opentelemetry.trace import (
+    SpanContext,
     SpanKind,
     StatusCode,  # type: ignore
 )
 
+from strands.memory.types import MemoryEntry
 from strands.telemetry.tracer import JSONEncoder, Tracer, get_tracer, serialize
 from strands.types.content import ContentBlock
 from strands.types.interrupt import InterruptResponseContent
@@ -79,7 +82,9 @@ def test_start_span(mock_tracer):
 
         span = tracer._start_span("test_span", attributes={"key": "value"})
 
-        mock_tracer.start_span.assert_called_once_with(name="test_span", context=None, kind=SpanKind.INTERNAL)
+        mock_tracer.start_span.assert_called_once_with(
+            name="test_span", context=None, kind=SpanKind.INTERNAL, links=None
+        )
         # Check that set_attributes was called with the provided attributes
         mock_span.set_attributes.assert_called_once_with({"key": "value"})
         assert span is not None
@@ -150,6 +155,43 @@ def test_end_span_with_error_prefers_explicit_message(mock_span):
 
     mock_span.set_status.assert_called_once_with(StatusCode.ERROR, "Explicit error message")
     mock_span.record_exception.assert_called_once_with(error)
+    mock_span.end.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    "cancellation",
+    [asyncio.CancelledError(), KeyboardInterrupt(), SystemExit()],
+)
+def test_end_span_with_cancellation(mock_span, cancellation):
+    """Cancelled spans end with UNSET status and a cancellation type attribute."""
+    tracer = Tracer()
+
+    tracer.end_span_with_cancellation(mock_span, cancellation)
+
+    mock_span.set_attribute.assert_any_call("strands.cancellation.type", type(cancellation).__name__)
+    mock_span.set_status.assert_not_called()
+    mock_span.record_exception.assert_not_called()
+    mock_span.end.assert_called_once()
+
+
+def test_end_span_with_cancellation_not_recording(mock_span):
+    """No-op when the span is not recording."""
+    mock_span.is_recording.return_value = False
+    tracer = Tracer()
+
+    tracer.end_span_with_cancellation(mock_span, asyncio.CancelledError())
+
+    mock_span.set_attribute.assert_not_called()
+    mock_span.end.assert_not_called()
+
+
+def test_end_span_with_cancellation_attribute_error(mock_span):
+    """Span is still ended even when set_attribute raises."""
+    mock_span.set_attribute.side_effect = RuntimeError("oops")
+    tracer = Tracer()
+
+    tracer.end_span_with_cancellation(mock_span, asyncio.CancelledError())
+
     mock_span.end.assert_called_once()
 
 
@@ -449,6 +491,7 @@ def test_start_tool_call_span_latest_conventions(mock_tracer, monkeypatch):
                 "gen_ai.tool.call.id": "123",
             }
         )
+        mock_span.set_attribute.assert_any_call("gen_ai.tool.call.arguments", serialize(tool["input"]))
         mock_span.add_event.assert_called_with(
             "gen_ai.client.inference.operation.details",
             attributes={
@@ -493,7 +536,6 @@ def test_start_swarm_call_span_with_string_task(mock_tracer):
             {
                 "gen_ai.operation.name": "invoke_swarm",
                 "gen_ai.system": "strands-agents",
-                "gen_ai.agent.name": "swarm",
                 "workflow_id": "wf-789",
                 "priority": "high",
             }
@@ -522,7 +564,6 @@ def test_start_swarm_span_with_contentblock_task(mock_tracer):
             {
                 "gen_ai.operation.name": "invoke_swarm",
                 "gen_ai.system": "strands-agents",
-                "gen_ai.agent.name": "swarm",
             }
         )
         mock_span.add_event.assert_any_call(
@@ -580,7 +621,6 @@ def test_start_swarm_span_with_contentblock_task_latest_conventions(mock_tracer,
             {
                 "gen_ai.operation.name": "invoke_swarm",
                 "gen_ai.provider.name": "strands-agents",
-                "gen_ai.agent.name": "swarm",
             }
         )
         mock_span.add_event.assert_any_call(
@@ -684,7 +724,12 @@ def test_end_tool_call_span_latest_conventions(mock_span, monkeypatch):
 
     tracer.end_tool_call_span(mock_span, tool_result)
 
-    mock_span.set_attributes.assert_called_once_with({"gen_ai.tool.status": "success"})
+    mock_span.set_attributes.assert_called_once_with(
+        {
+            "gen_ai.tool.status": "success",
+            "gen_ai.tool.call.result": serialize(tool_result.get("content")),
+        }
+    )
     mock_span.add_event.assert_called_with(
         "gen_ai.client.inference.operation.details",
         attributes={
@@ -705,6 +750,19 @@ def test_end_tool_call_span_latest_conventions(mock_span, monkeypatch):
         },
     )
     mock_span.set_status.assert_called_once_with(StatusCode.OK)
+    mock_span.end.assert_called_once()
+
+
+def test_end_tool_call_span_latest_conventions_error_omits_result(mock_span, monkeypatch):
+    """The gen_ai.tool.call.result attribute is scoped to successful executions and omitted on error status."""
+    monkeypatch.setenv("OTEL_SEMCONV_STABILITY_OPT_IN", "gen_ai_latest_experimental")
+    tracer = Tracer()
+    tool_result = {"toolUseId": "abc", "status": "error", "content": [{"text": "tool exploded"}]}
+
+    tracer.end_tool_call_span(mock_span, tool_result)
+
+    mock_span.set_attributes.assert_called_once_with({"gen_ai.tool.status": "error"})
+    mock_span.set_status.assert_called_once_with(StatusCode.ERROR, "tool exploded")
     mock_span.end.assert_called_once()
 
 
@@ -845,7 +903,7 @@ def test_end_event_loop_cycle_span_latest_conventions(mock_span, monkeypatch):
     mock_span.add_event.assert_called_with(
         "gen_ai.client.inference.operation.details",
         attributes={
-            "gen_ai.output.messages": serialize(
+            "gen_ai.input.messages": serialize(
                 [
                     {
                         "role": "assistant",
@@ -878,6 +936,7 @@ def test_start_agent_span(mock_tracer):
         model_id = "test-model"
         tools = [{"name": "weather_tool"}]
         custom_attrs = {"custom_attr": "value"}
+        system_prompt = "You are a helpful assistant"
 
         span = tracer.start_agent_span(
             custom_trace_attributes=custom_attrs,
@@ -885,6 +944,7 @@ def test_start_agent_span(mock_tracer):
             messages=[{"content": content, "role": "user"}],
             model_id=model_id,
             tools=tools,
+            system_prompt=system_prompt,
         )
 
         mock_tracer.start_span.assert_called_once()
@@ -900,6 +960,9 @@ def test_start_agent_span(mock_tracer):
                 "gen_ai.agent.tools": json.dumps(tools),
                 "custom_attr": "value",
             }
+        )
+        mock_span.add_event.assert_any_call(
+            "gen_ai.system.message", attributes={"content": serialize([{"text": system_prompt}])}
         )
         mock_span.add_event.assert_any_call("gen_ai.user.message", attributes={"content": json.dumps(content)})
         assert span is not None
@@ -919,6 +982,7 @@ def test_start_agent_span_latest_conventions(mock_tracer, monkeypatch):
         model_id = "test-model"
         tools = [{"name": "weather_tool"}]
         custom_attrs = {"custom_attr": "value"}
+        system_prompt = "You are a helpful assistant"
 
         span = tracer.start_agent_span(
             custom_trace_attributes=custom_attrs,
@@ -926,6 +990,7 @@ def test_start_agent_span_latest_conventions(mock_tracer, monkeypatch):
             messages=[{"content": content, "role": "user"}],
             model_id=model_id,
             tools=tools,
+            system_prompt=system_prompt,
         )
 
         mock_tracer.start_span.assert_called_once()
@@ -939,6 +1004,7 @@ def test_start_agent_span_latest_conventions(mock_tracer, monkeypatch):
                 "gen_ai.request.model": model_id,
                 "gen_ai.agent.tools": json.dumps(tools),
                 "custom_attr": "value",
+                "gen_ai.system_instructions": serialize([{"type": "text", "content": system_prompt}]),
             }
         )
         mock_span.add_event.assert_any_call(
@@ -950,6 +1016,34 @@ def test_start_agent_span_latest_conventions(mock_tracer, monkeypatch):
             },
         )
         assert span is not None
+
+
+def test_start_agent_span_records_system_instructions(mock_tracer, monkeypatch):
+    """Test that agent system prompts use the semantic-convention attribute."""
+    with mock.patch("strands.telemetry.tracer.trace_api.get_tracer", return_value=mock_tracer):
+        monkeypatch.setenv("OTEL_SEMCONV_STABILITY_OPT_IN", "gen_ai_latest_experimental")
+        tracer = Tracer()
+        tracer.tracer = mock_tracer
+
+        mock_span = mock.MagicMock()
+        mock_tracer.start_span.return_value = mock_span
+
+        system_prompt_content = [{"text": "Be helpful"}, {"cachePoint": {"type": "default"}}]
+        tracer.start_agent_span(
+            messages=[],
+            agent_name="TestAgent",
+            system_prompt="ignored string",
+            system_prompt_content=system_prompt_content,
+        )
+
+        set_attrs_call = mock_span.set_attributes.call_args_list[0][0][0]
+        assert set_attrs_call["gen_ai.system_instructions"] == serialize(
+            [
+                {"type": "text", "content": "Be helpful"},
+                {"type": "cachePoint", "content": {"type": "default"}},
+            ]
+        )
+        assert "system_prompt" not in set_attrs_call
 
 
 def test_end_agent_span(mock_span):
@@ -974,6 +1068,8 @@ def test_end_agent_span(mock_span):
             "gen_ai.usage.completion_tokens": 100,
             "gen_ai.usage.output_tokens": 100,
             "gen_ai.usage.total_tokens": 150,
+            "gen_ai.usage.cache_read.input_tokens": 0,
+            "gen_ai.usage.cache_creation.input_tokens": 0,
             "gen_ai.usage.cache_read_input_tokens": 0,
             "gen_ai.usage.cache_write_input_tokens": 0,
         }
@@ -1010,6 +1106,8 @@ def test_end_agent_span_with_langfuse_observation_type(mock_span, monkeypatch):
             "gen_ai.usage.completion_tokens": 100,
             "gen_ai.usage.output_tokens": 100,
             "gen_ai.usage.total_tokens": 150,
+            "gen_ai.usage.cache_read.input_tokens": 0,
+            "gen_ai.usage.cache_creation.input_tokens": 0,
             "gen_ai.usage.cache_read_input_tokens": 0,
             "gen_ai.usage.cache_write_input_tokens": 0,
         }
@@ -1038,6 +1136,7 @@ def test_end_agent_span_latest_conventions(mock_span, monkeypatch):
 
     tracer.end_agent_span(mock_span, mock_response)
 
+    # Opted into the latest conventions: semconv cache names only, deprecated aliases suppressed.
     mock_span.set_attributes.assert_called_once_with(
         {
             "gen_ai.usage.prompt_tokens": 50,
@@ -1045,8 +1144,8 @@ def test_end_agent_span_latest_conventions(mock_span, monkeypatch):
             "gen_ai.usage.completion_tokens": 100,
             "gen_ai.usage.output_tokens": 100,
             "gen_ai.usage.total_tokens": 150,
-            "gen_ai.usage.cache_read_input_tokens": 0,
-            "gen_ai.usage.cache_write_input_tokens": 0,
+            "gen_ai.usage.cache_read.input_tokens": 0,
+            "gen_ai.usage.cache_creation.input_tokens": 0,
         }
     )
     mock_span.add_event.assert_called_with(
@@ -1141,7 +1240,49 @@ def test_end_model_invoke_span_with_cache_metrics(mock_span):
             "gen_ai.usage.completion_tokens": 20,
             "gen_ai.usage.output_tokens": 20,
             "gen_ai.usage.total_tokens": 30,
+            "gen_ai.usage.cache_read.input_tokens": 5,
+            "gen_ai.usage.cache_creation.input_tokens": 3,
             "gen_ai.usage.cache_read_input_tokens": 5,
+            "gen_ai.usage.cache_write_input_tokens": 3,
+            "gen_ai.server.request.duration": 10,
+            "gen_ai.server.time_to_first_token": 5,
+        }
+    )
+    mock_span.set_status.assert_called_once_with(StatusCode.OK)
+    mock_span.end.assert_called_once()
+
+
+def test_end_model_invoke_span_counts_disjoint_cache_tokens(mock_span):
+    """Regression for #3546: input_tokens is the total prompt when cache is additional to inputTokens.
+
+    On disjoint providers (Bedrock/Anthropic) inputTokens + outputTokens != totalTokens, so the cache
+    reads/writes are additional and count toward the prompt the model processed. gen_ai.usage.input_tokens
+    (and its prompt_tokens alias) report 38, not the bare inputTokens of 10.
+    """
+    tracer = Tracer()
+    message = {"role": "assistant", "content": [{"text": "Response"}]}
+    usage = Usage(
+        inputTokens=10,
+        outputTokens=20,
+        totalTokens=58,
+        cacheReadInputTokens=25,
+        cacheWriteInputTokens=3,
+    )
+    stop_reason: StopReason = "end_turn"
+    metrics = Metrics(latencyMs=10, timeToFirstByteMs=5)
+
+    tracer.end_model_invoke_span(mock_span, message, usage, metrics, stop_reason)
+
+    mock_span.set_attributes.assert_called_once_with(
+        {
+            "gen_ai.usage.prompt_tokens": 38,
+            "gen_ai.usage.input_tokens": 38,
+            "gen_ai.usage.completion_tokens": 20,
+            "gen_ai.usage.output_tokens": 20,
+            "gen_ai.usage.total_tokens": 58,
+            "gen_ai.usage.cache_read.input_tokens": 25,
+            "gen_ai.usage.cache_creation.input_tokens": 3,
+            "gen_ai.usage.cache_read_input_tokens": 25,
             "gen_ai.usage.cache_write_input_tokens": 3,
             "gen_ai.server.request.duration": 10,
             "gen_ai.server.time_to_first_token": 5,
@@ -1179,12 +1320,91 @@ def test_end_agent_span_with_cache_metrics(mock_span):
             "gen_ai.usage.completion_tokens": 100,
             "gen_ai.usage.output_tokens": 100,
             "gen_ai.usage.total_tokens": 150,
+            "gen_ai.usage.cache_read.input_tokens": 25,
+            "gen_ai.usage.cache_creation.input_tokens": 10,
             "gen_ai.usage.cache_read_input_tokens": 25,
             "gen_ai.usage.cache_write_input_tokens": 10,
         }
     )
     mock_span.set_status.assert_called_once_with(StatusCode.OK)
     mock_span.end.assert_called_once()
+
+
+def test_end_agent_span_counts_disjoint_cache_tokens(mock_span):
+    """Regression for #3546: input_tokens is the total prompt when cache is additional to inputTokens.
+
+    On disjoint providers (Bedrock/Anthropic) inputTokens + outputTokens != totalTokens, so the cache
+    reads/writes are additional and count toward the prompt the model processed. gen_ai.usage.input_tokens
+    (and its prompt_tokens alias) report 85, not the bare inputTokens of 50.
+    """
+    tracer = Tracer()
+
+    mock_metrics = mock.MagicMock()
+    mock_metrics.accumulated_usage = {
+        "inputTokens": 50,
+        "outputTokens": 100,
+        "totalTokens": 185,
+        "cacheReadInputTokens": 25,
+        "cacheWriteInputTokens": 10,
+    }
+
+    mock_response = mock.MagicMock()
+    mock_response.metrics = mock_metrics
+    mock_response.stop_reason = "end_turn"
+    mock_response.__str__ = mock.MagicMock(return_value="Agent response")
+
+    tracer.end_agent_span(mock_span, mock_response)
+
+    mock_span.set_attributes.assert_called_once_with(
+        {
+            "gen_ai.usage.prompt_tokens": 85,
+            "gen_ai.usage.input_tokens": 85,
+            "gen_ai.usage.completion_tokens": 100,
+            "gen_ai.usage.output_tokens": 100,
+            "gen_ai.usage.total_tokens": 185,
+            "gen_ai.usage.cache_read.input_tokens": 25,
+            "gen_ai.usage.cache_creation.input_tokens": 10,
+            "gen_ai.usage.cache_read_input_tokens": 25,
+            "gen_ai.usage.cache_write_input_tokens": 10,
+        }
+    )
+    mock_span.set_status.assert_called_once_with(StatusCode.OK)
+    mock_span.end.assert_called_once()
+
+
+def test_end_model_invoke_span_dual_emits_semconv_and_deprecated_cache_names(mock_span):
+    """Cache usage is emitted under both the semconv names and the deprecated pre-semconv aliases.
+
+    Regression for https://github.com/strands-agents/harness-sdk/issues/3754.
+    """
+    tracer = Tracer()
+    message = {"role": "assistant", "content": [{"text": "Response"}]}
+    usage = Usage(inputTokens=10, outputTokens=4, totalTokens=14, cacheReadInputTokens=5848)
+    metrics = Metrics(latencyMs=0, timeToFirstByteMs=0)
+
+    tracer.end_model_invoke_span(mock_span, message, usage, metrics, "end_turn")
+
+    emitted = mock_span.set_attributes.call_args[0][0]
+    assert emitted["gen_ai.usage.cache_read.input_tokens"] == 5848
+    # deprecated alias kept so existing consumers keep resolving, value-identical to the semconv name
+    assert emitted["gen_ai.usage.cache_read_input_tokens"] == 5848
+
+
+def test_end_model_invoke_span_latest_conventions_suppresses_deprecated_cache_names(mock_span, monkeypatch):
+    """Opting into the latest conventions emits the semconv cache names only, without the deprecated aliases."""
+    monkeypatch.setenv("OTEL_SEMCONV_STABILITY_OPT_IN", "gen_ai_latest_experimental")
+    tracer = Tracer()
+    message = {"role": "assistant", "content": [{"text": "Response"}]}
+    usage = Usage(inputTokens=10, outputTokens=4, totalTokens=14, cacheReadInputTokens=5848, cacheWriteInputTokens=3)
+    metrics = Metrics(latencyMs=0, timeToFirstByteMs=0)
+
+    tracer.end_model_invoke_span(mock_span, message, usage, metrics, "end_turn")
+
+    emitted = mock_span.set_attributes.call_args[0][0]
+    assert emitted["gen_ai.usage.cache_read.input_tokens"] == 5848
+    assert emitted["gen_ai.usage.cache_creation.input_tokens"] == 3
+    assert "gen_ai.usage.cache_read_input_tokens" not in emitted
+    assert "gen_ai.usage.cache_write_input_tokens" not in emitted
 
 
 def test_get_tracer_singleton():
@@ -1704,7 +1924,7 @@ def test_start_agent_span_includes_tool_definitions_when_enabled(monkeypatch):
 
 
 def test_end_model_invoke_span_langfuse_adds_attributes(mock_span, monkeypatch):
-    """Test that end_model_invoke_span adds attributes via set_attributes for Langfuse."""
+    """Test that end_model_invoke_span records content on span attributes, not an event, for Langfuse."""
     monkeypatch.setenv("OTEL_SEMCONV_STABILITY_OPT_IN", "gen_ai_latest_experimental")
     monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "https://us.cloud.langfuse.com")
 
@@ -1740,10 +1960,9 @@ def test_end_model_invoke_span_langfuse_adds_attributes(mock_span, monkeypatch):
         }
     )
 
-    mock_span.add_event.assert_called_with(
-        "gen_ai.client.inference.operation.details",
-        attributes={"gen_ai.output.messages": expected_output},
-    )
+    # Content is recorded once as a span attribute; the deprecated content event is not duplicated.
+    content_event_names = [call.args[0] for call in mock_span.add_event.call_args_list]
+    assert "gen_ai.client.inference.operation.details" not in content_event_names
 
 
 def test_end_model_invoke_span_non_langfuse_no_extra_attributes(mock_span, monkeypatch):
@@ -1780,6 +1999,269 @@ def test_end_model_invoke_span_non_langfuse_no_extra_attributes(mock_span, monke
         "gen_ai.client.inference.operation.details",
         attributes={"gen_ai.output.messages": expected_output},
     )
+
+
+def test_start_memory_search_span(mock_tracer):
+    """Test starting a memory search span records the query as an event, not an attribute."""
+    with mock.patch("strands.telemetry.tracer.trace_api.get_tracer", return_value=mock_tracer):
+        tracer = Tracer()
+        tracer.tracer = mock_tracer
+
+        mock_span = mock.MagicMock()
+        mock_tracer.start_span.return_value = mock_span
+
+        span = tracer.start_memory_search_span("dark mode preference", ["personal", "team"], max_search_results=5)
+
+        assert mock_tracer.start_span.call_args[1]["name"] == "memory.search"
+        mock_span.set_attributes.assert_called_once_with(
+            {
+                "gen_ai.operation.name": "memory.search",
+                "gen_ai.system": "strands-agents",
+                "memory.store.names": serialize(["personal", "team"]),
+                "memory.store.count": 2,
+                "memory.max_search_results": 5,
+            }
+        )
+        mock_span.add_event.assert_called_once_with("memory.query", attributes={"content": "dark mode preference"})
+        assert span is not None
+
+
+def test_start_memory_span_merges_custom_attributes_and_drops_non_scalar_kwargs(mock_tracer):
+    """custom_trace_attributes and scalar kwargs are merged; non-scalar kwargs are dropped."""
+    with mock.patch("strands.telemetry.tracer.trace_api.get_tracer", return_value=mock_tracer):
+        tracer = Tracer()
+        tracer.tracer = mock_tracer
+        mock_span = mock.MagicMock()
+        mock_tracer.start_span.return_value = mock_span
+
+        tracer.start_memory_search_span(
+            "q",
+            ["personal"],
+            custom_trace_attributes={"session_id": "abc"},
+            scalar_kwarg=7,
+            dropped_kwarg={"not": "scalar"},
+        )
+
+        attributes = mock_span.set_attributes.call_args[0][0]
+        assert attributes["session_id"] == "abc"
+        assert attributes["scalar_kwarg"] == 7
+        assert "dropped_kwarg" not in attributes
+
+
+def test_end_memory_search_span(mock_span):
+    """Test ending a memory search span records result/failure counts and the entries event."""
+    tracer = Tracer()
+    entry = MemoryEntry(content="user prefers dark mode", store_name="personal", metadata={"score": 0.9})
+
+    tracer.end_memory_search_span(mock_span, entries=[entry], store_failure_count=1)
+
+    mock_span.add_event.assert_called_once_with(
+        "memory.results",
+        attributes={
+            "content": serialize(
+                [{"content": "user prefers dark mode", "store_name": "personal", "metadata": {"score": 0.9}}]
+            )
+        },
+    )
+    mock_span.set_attributes.assert_called_once_with({"memory.result.count": 1, "memory.store.failure_count": 1})
+    mock_span.set_status.assert_called_once_with(StatusCode.OK)
+    mock_span.end.assert_called_once()
+
+
+def test_end_memory_search_span_with_error(mock_span):
+    """Test ending a memory search span with an error sets error status and skips the results event."""
+    tracer = Tracer()
+    error = ValueError("store 'missing' not found")
+
+    tracer.end_memory_search_span(mock_span, error=error)
+
+    mock_span.add_event.assert_not_called()
+    mock_span.set_status.assert_called_once_with(StatusCode.ERROR, str(error))
+    mock_span.record_exception.assert_called_once_with(error)
+    mock_span.end.assert_called_once()
+
+
+def test_start_memory_add_span(mock_tracer):
+    """Test starting a memory add span records content as an event."""
+    with mock.patch("strands.telemetry.tracer.trace_api.get_tracer", return_value=mock_tracer):
+        tracer = Tracer()
+        tracer.tracer = mock_tracer
+
+        mock_span = mock.MagicMock()
+        mock_tracer.start_span.return_value = mock_span
+
+        tracer.start_memory_add_span("remember dark mode", ["personal"])
+
+        assert mock_tracer.start_span.call_args[1]["name"] == "memory.add"
+        mock_span.set_attributes.assert_called_once_with(
+            {
+                "gen_ai.operation.name": "memory.add",
+                "gen_ai.system": "strands-agents",
+                "memory.store.names": serialize(["personal"]),
+                "memory.store.count": 1,
+            }
+        )
+        mock_span.add_event.assert_called_once_with("memory.content", attributes={"content": "remember dark mode"})
+
+
+def test_start_memory_add_span_force_root(mock_tracer):
+    """Test that a forced-root add span detaches from any current span."""
+    with mock.patch("strands.telemetry.tracer.trace_api.get_tracer", return_value=mock_tracer):
+        tracer = Tracer()
+        tracer.tracer = mock_tracer
+
+        current_span = mock.MagicMock()
+        current_span.is_recording.return_value = True
+        with mock.patch("strands.telemetry.tracer.trace_api.get_current_span", return_value=current_span):
+            tracer.start_memory_add_span("content", ["personal"], force_root=True)
+
+        # An empty Context (no parent) is passed when force_root is set.
+        passed_context = mock_tracer.start_span.call_args[1]["context"]
+        assert passed_context is not None
+        assert len(passed_context) == 0
+
+
+def test_end_memory_add_span_with_error(mock_span):
+    """Test ending a memory add span with an error sets error status and failure count."""
+    tracer = Tracer()
+    error = Exception("write failed")
+
+    tracer.end_memory_add_span(mock_span, store_failure_count=2, error=error)
+
+    mock_span.set_attributes.assert_called_once_with({"memory.store.failure_count": 2})
+    mock_span.set_status.assert_called_once_with(StatusCode.ERROR, str(error))
+    mock_span.record_exception.assert_called_once_with(error)
+
+
+def test_memory_inject_span(mock_tracer):
+    """Test starting and ending a memory inject span on the happy path."""
+    with mock.patch("strands.telemetry.tracer.trace_api.get_tracer", return_value=mock_tracer):
+        tracer = Tracer()
+        tracer.tracer = mock_tracer
+
+        mock_span = mock.MagicMock()
+        mock_tracer.start_span.return_value = mock_span
+
+        span = tracer.start_memory_inject_span(max_entries=5)
+        assert mock_tracer.start_span.call_args[1]["name"] == "memory.inject"
+        mock_span.set_attributes.assert_called_once_with(
+            {
+                "gen_ai.operation.name": "memory.inject",
+                "gen_ai.system": "strands-agents",
+                "memory.max_entries": 5,
+            }
+        )
+
+        tracer.end_memory_inject_span(span, injected=True, entry_count=3)
+        mock_span.set_attributes.assert_any_call({"memory.injected": True, "memory.entry.count": 3})
+        mock_span.set_status.assert_called_once_with(StatusCode.OK)
+
+
+def test_start_memory_inject_span_without_max_entries(mock_tracer):
+    """Test that max_entries is omitted from attributes when not provided."""
+    with mock.patch("strands.telemetry.tracer.trace_api.get_tracer", return_value=mock_tracer):
+        tracer = Tracer()
+        tracer.tracer = mock_tracer
+
+        mock_span = mock.MagicMock()
+        mock_tracer.start_span.return_value = mock_span
+
+        tracer.start_memory_inject_span()
+
+        assert mock_tracer.start_span.call_args[1]["name"] == "memory.inject"
+        mock_span.set_attributes.assert_called_once_with(
+            {
+                "gen_ai.operation.name": "memory.inject",
+                "gen_ai.system": "strands-agents",
+            }
+        )
+
+
+def test_end_memory_inject_span_format_error(mock_span):
+    """Test that a format error ends the inject span OK (fail-open) with a flag, not an error."""
+    tracer = Tracer()
+
+    tracer.end_memory_inject_span(mock_span, injected=False, format_error=True)
+
+    mock_span.set_attributes.assert_called_once_with(
+        {"memory.injected": False, "memory.entry.count": 0, "memory.inject.format_error": True}
+    )
+    mock_span.set_status.assert_called_once_with(StatusCode.OK)
+    mock_span.record_exception.assert_not_called()
+
+
+def test_start_memory_extract_span_is_root(mock_tracer):
+    """Test that an extract span is always a root span, even when a current span is active."""
+    with mock.patch("strands.telemetry.tracer.trace_api.get_tracer", return_value=mock_tracer):
+        tracer = Tracer()
+        tracer.tracer = mock_tracer
+
+        current_span = mock.MagicMock()
+        current_span.is_recording.return_value = True
+        with mock.patch("strands.telemetry.tracer.trace_api.get_current_span", return_value=current_span):
+            tracer.start_memory_extract_span("personal", message_count=2, filtered_count=1, extractor="ModelExtractor")
+
+        assert mock_tracer.start_span.call_args[1]["name"] == "memory.extract"
+        # An empty Context (no parent) detaches from the active current span.
+        passed_context = mock_tracer.start_span.call_args[1]["context"]
+        assert passed_context is not None
+        assert len(passed_context) == 0
+        # No agent span context was provided, so no links are attached.
+        assert mock_tracer.start_span.call_args[1]["links"] is None
+        mock_tracer.start_span.return_value.set_attributes.assert_called_once_with(
+            {
+                "gen_ai.operation.name": "memory.extract",
+                "gen_ai.system": "strands-agents",
+                "memory.store.name": "personal",
+                "memory.message.count": 2,
+                "memory.message.filtered_count": 1,
+                "memory.extractor": "ModelExtractor",
+            }
+        )
+
+
+def test_start_memory_extract_span_links_agent_span(mock_tracer):
+    """Test that a valid agent span context is attached as a link on the extract span."""
+    with mock.patch("strands.telemetry.tracer.trace_api.get_tracer", return_value=mock_tracer):
+        tracer = Tracer()
+        tracer.tracer = mock_tracer
+
+        agent_context = SpanContext(trace_id=1, span_id=2, is_remote=False)
+        tracer.start_memory_extract_span("personal", message_count=1, agent_span_context=agent_context)
+
+        links = mock_tracer.start_span.call_args[1]["links"]
+        assert links is not None
+        assert len(links) == 1
+        assert links[0].context is agent_context
+
+        # The detached root has no OTel parent, so the scheduling run's ids are also recorded as
+        # plain attributes for backends that don't render span links.
+        attributes = mock_tracer.start_span.return_value.set_attributes.call_args[0][0]
+        assert attributes["memory.parent.trace_id"] == "00000000000000000000000000000001"
+        assert attributes["memory.parent.span_id"] == "0000000000000002"
+
+
+def test_end_memory_extract_span_with_error(mock_span):
+    """Test ending an extract span with an error records it (failures are swallowed by the coordinator)."""
+    tracer = Tracer()
+    error = Exception("save failed")
+
+    tracer.end_memory_extract_span(mock_span, error=error)
+
+    mock_span.set_status.assert_called_once_with(StatusCode.ERROR, str(error))
+    mock_span.record_exception.assert_called_once_with(error)
+    mock_span.end.assert_called_once()
+
+
+def test_end_memory_extract_span_records_entry_count(mock_span):
+    """Test ending an extract span on success sets the entry count and OK status."""
+    tracer = Tracer()
+
+    tracer.end_memory_extract_span(mock_span, entry_count=3)
+
+    mock_span.set_attributes.assert_called_once_with({"memory.entry.count": 3})
+    mock_span.set_status.assert_called_once_with(StatusCode.OK)
+    mock_span.end.assert_called_once()
 
 
 class TestIsLangfuse:
@@ -1827,3 +2309,412 @@ class TestIsLangfuse:
         monkeypatch.delenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", raising=False)
         tracer = Tracer()
         assert tracer.is_langfuse is False
+
+
+class TestSpanAttributeRedaction:
+    """Tests for GDPR-compliant redaction of sensitive span attributes."""
+
+    def _user_message(self):
+        return [{"role": "user", "content": [{"text": "secret user input"}]}]
+
+    def _assistant_message(self):
+        return {"role": "assistant", "content": [{"text": "secret model output"}]}
+
+    def test_redaction_disabled_by_default(self, mock_tracer, monkeypatch):
+        """No env var set: sensitive content is emitted verbatim (backward compatible)."""
+        monkeypatch.delenv("OTEL_SEMCONV_STABILITY_OPT_IN", raising=False)
+        with mock.patch("strands.telemetry.tracer.trace_api.get_tracer", return_value=mock_tracer):
+            tracer = Tracer()
+            tracer.tracer = mock_tracer
+            mock_span = mock.MagicMock()
+            mock_tracer.start_span.return_value = mock_span
+
+            tracer.start_model_invoke_span(messages=self._user_message(), model_id="m")
+
+            mock_span.add_event.assert_any_call(
+                "gen_ai.user.message",
+                attributes={"content": json.dumps([{"text": "secret user input"}])},
+            )
+
+    def test_redaction_disabled_when_other_tokens_present(self, mock_tracer, monkeypatch):
+        """Other opt-in tokens must not accidentally enable redaction."""
+        monkeypatch.setenv("OTEL_SEMCONV_STABILITY_OPT_IN", "gen_ai_latest_experimental,gen_ai_tool_definitions")
+        with mock.patch("strands.telemetry.tracer.trace_api.get_tracer", return_value=mock_tracer):
+            tracer = Tracer()
+            tracer.tracer = mock_tracer
+            mock_span = mock.MagicMock()
+            mock_tracer.start_span.return_value = mock_span
+
+            tracer.start_model_invoke_span(messages=self._user_message(), model_id="m")
+
+            input_messages = serialize([{"role": "user", "parts": [{"type": "text", "content": "secret user input"}]}])
+            mock_span.add_event.assert_any_call(
+                "gen_ai.client.inference.operation.details",
+                attributes={"gen_ai.input.messages": input_messages},
+            )
+
+    def test_empty_unredacted_list_redacts_everything(self, mock_tracer, monkeypatch):
+        """gen_ai_unredacted_attributes= (empty) redacts all sensitive attributes."""
+        monkeypatch.setenv("OTEL_SEMCONV_STABILITY_OPT_IN", "gen_ai_unredacted_attributes=")
+        with mock.patch("strands.telemetry.tracer.trace_api.get_tracer", return_value=mock_tracer):
+            tracer = Tracer()
+            tracer.tracer = mock_tracer
+            mock_span = mock.MagicMock()
+            mock_tracer.start_span.return_value = mock_span
+
+            tracer.start_model_invoke_span(messages=self._user_message(), model_id="m", system_prompt="secret system")
+            tracer.end_model_invoke_span(
+                mock_span,
+                self._assistant_message(),
+                Usage(inputTokens=1, outputTokens=2, totalTokens=3),
+                Metrics(latencyMs=0, timeToFirstByteMs=0),
+                "end_turn",
+            )
+
+            mock_span.add_event.assert_any_call("gen_ai.system.message", attributes={"content": "[REDACTED]"})
+            mock_span.add_event.assert_any_call("gen_ai.user.message", attributes={"content": "[REDACTED]"})
+            mock_span.add_event.assert_any_call(
+                "gen_ai.choice",
+                attributes={"finish_reason": "end_turn", "message": "[REDACTED]"},
+            )
+
+    def test_explicit_allowlist_with_semicolon(self, mock_tracer, monkeypatch):
+        """Allowlisted attributes pass through; others redact."""
+        monkeypatch.setenv(
+            "OTEL_SEMCONV_STABILITY_OPT_IN",
+            "gen_ai_latest_experimental,gen_ai_unredacted_attributes=gen_ai.input.messages;gen_ai.system_instructions",
+        )
+        with mock.patch("strands.telemetry.tracer.trace_api.get_tracer", return_value=mock_tracer):
+            tracer = Tracer()
+            tracer.tracer = mock_tracer
+            mock_span = mock.MagicMock()
+            mock_tracer.start_span.return_value = mock_span
+
+            tracer.start_model_invoke_span(messages=self._user_message(), model_id="m", system_prompt="visible system")
+            tracer.end_model_invoke_span(
+                mock_span,
+                self._assistant_message(),
+                Usage(inputTokens=1, outputTokens=2, totalTokens=3),
+                Metrics(latencyMs=0, timeToFirstByteMs=0),
+                "end_turn",
+            )
+
+            visible_input = serialize([{"role": "user", "parts": [{"type": "text", "content": "secret user input"}]}])
+            visible_system = serialize([{"type": "text", "content": "visible system"}])
+            mock_span.add_event.assert_any_call(
+                "gen_ai.client.inference.operation.details",
+                attributes={"gen_ai.system_instructions": visible_system},
+            )
+            mock_span.add_event.assert_any_call(
+                "gen_ai.client.inference.operation.details",
+                attributes={"gen_ai.input.messages": visible_input},
+            )
+            mock_span.add_event.assert_any_call(
+                "gen_ai.client.inference.operation.details",
+                attributes={"gen_ai.output.messages": "[REDACTED]"},
+            )
+
+    def test_glob_match_for_output_messages(self, mock_tracer, monkeypatch):
+        """A trailing `*` glob matches by prefix."""
+        monkeypatch.setenv(
+            "OTEL_SEMCONV_STABILITY_OPT_IN",
+            "gen_ai_latest_experimental,gen_ai_unredacted_attributes=gen_ai.output.*",
+        )
+        with mock.patch("strands.telemetry.tracer.trace_api.get_tracer", return_value=mock_tracer):
+            tracer = Tracer()
+            tracer.tracer = mock_tracer
+            mock_span = mock.MagicMock()
+            mock_tracer.start_span.return_value = mock_span
+
+            tracer.start_model_invoke_span(messages=self._user_message(), model_id="m")
+            tracer.end_model_invoke_span(
+                mock_span,
+                self._assistant_message(),
+                Usage(inputTokens=1, outputTokens=2, totalTokens=3),
+                Metrics(latencyMs=0, timeToFirstByteMs=0),
+                "end_turn",
+            )
+
+            visible_output = serialize(
+                [
+                    {
+                        "role": "assistant",
+                        "parts": [{"type": "text", "content": "secret model output"}],
+                        "finish_reason": "end_turn",
+                    }
+                ]
+            )
+            mock_span.add_event.assert_any_call(
+                "gen_ai.client.inference.operation.details",
+                attributes={"gen_ai.input.messages": "[REDACTED]"},
+            )
+            mock_span.add_event.assert_any_call(
+                "gen_ai.client.inference.operation.details",
+                attributes={"gen_ai.output.messages": visible_output},
+            )
+
+    def test_redaction_preserves_tool_metadata(self, mock_tracer, monkeypatch):
+        """Tool name, ID, and status are preserved; only payload content is redacted."""
+        monkeypatch.setenv("OTEL_SEMCONV_STABILITY_OPT_IN", "gen_ai_unredacted_attributes=")
+        with mock.patch("strands.telemetry.tracer.trace_api.get_tracer", return_value=mock_tracer):
+            tracer = Tracer()
+            tracer.tracer = mock_tracer
+            mock_span = mock.MagicMock()
+            mock_tracer.start_span.return_value = mock_span
+
+            tool = {"name": "calculator", "toolUseId": "abc", "input": {"expression": "2+2"}}
+            tracer.start_tool_call_span(tool)
+            tracer.end_tool_call_span(
+                mock_span,
+                {"toolUseId": "abc", "status": "success", "content": [{"text": "4"}]},
+            )
+
+            start_attrs = mock_span.set_attributes.call_args_list[0][0][0]
+            assert start_attrs["gen_ai.tool.name"] == "calculator"
+            assert start_attrs["gen_ai.tool.call.id"] == "abc"
+
+            mock_span.add_event.assert_any_call(
+                "gen_ai.tool.message",
+                attributes={"role": "tool", "content": "[REDACTED]", "id": "abc"},
+            )
+            mock_span.add_event.assert_any_call(
+                "gen_ai.choice",
+                attributes={"message": "[REDACTED]", "id": "abc"},
+            )
+
+    def test_parser_handles_kv_and_bare_tokens(self, monkeypatch):
+        """Parser keeps bare flags working alongside the new key=value token."""
+        monkeypatch.setenv(
+            "OTEL_SEMCONV_STABILITY_OPT_IN",
+            " gen_ai_latest_experimental ,gen_ai_unredacted_attributes=gen_ai.input.messages ,gen_ai_tool_definitions",
+        )
+        tracer = Tracer()
+        assert tracer.use_latest_genai_conventions is True
+        assert tracer._include_tool_definitions is True
+        assert tracer._redaction_enabled is True
+        assert "gen_ai.input.messages" in tracer._unredacted_exact
+
+    def test_assistant_message_uses_output_key_for_redaction(self, mock_tracer, monkeypatch):
+        """Assistant messages in legacy `_add_event_messages` use the output-messages policy."""
+        monkeypatch.setenv(
+            "OTEL_SEMCONV_STABILITY_OPT_IN",
+            "gen_ai_unredacted_attributes=gen_ai.output.*",
+        )
+        with mock.patch("strands.telemetry.tracer.trace_api.get_tracer", return_value=mock_tracer):
+            tracer = Tracer()
+            tracer.tracer = mock_tracer
+            mock_span = mock.MagicMock()
+            mock_span.is_recording.return_value = True
+
+            messages = [
+                {"role": "user", "content": [{"text": "user query"}]},
+                {"role": "assistant", "content": [{"text": "assistant reply"}]},
+            ]
+            tracer._add_event_messages(mock_span, messages)
+
+            mock_span.add_event.assert_any_call("gen_ai.user.message", attributes={"content": "[REDACTED]"})
+            mock_span.add_event.assert_any_call(
+                "gen_ai.assistant.message",
+                attributes={"content": serialize([{"text": "assistant reply"}])},
+            )
+
+    def test_system_instructions_redacted_in_latest_conventions(self, mock_tracer, monkeypatch):
+        """gen_ai.system_instructions must be redacted under an empty allowlist (latest conventions)."""
+        monkeypatch.setenv(
+            "OTEL_SEMCONV_STABILITY_OPT_IN",
+            "gen_ai_latest_experimental,gen_ai_unredacted_attributes=",
+        )
+        with mock.patch("strands.telemetry.tracer.trace_api.get_tracer", return_value=mock_tracer):
+            tracer = Tracer()
+            tracer.tracer = mock_tracer
+            mock_span = mock.MagicMock()
+            mock_span.is_recording.return_value = True
+            mock_tracer.start_span.return_value = mock_span
+
+            tracer.start_model_invoke_span(
+                messages=[{"role": "user", "content": [{"text": "hi"}]}],
+                model_id="m",
+                system_prompt="confidential system prompt",
+            )
+
+            mock_span.add_event.assert_any_call(
+                "gen_ai.client.inference.operation.details",
+                attributes={"gen_ai.system_instructions": "[REDACTED]"},
+            )
+
+    def test_agent_system_instructions_redacted(self, mock_tracer, monkeypatch):
+        """Agent system instructions follow the configured redaction policy."""
+        monkeypatch.setenv(
+            "OTEL_SEMCONV_STABILITY_OPT_IN",
+            "gen_ai_latest_experimental,gen_ai_unredacted_attributes=",
+        )
+        with mock.patch("strands.telemetry.tracer.trace_api.get_tracer", return_value=mock_tracer):
+            tracer = Tracer()
+            tracer.tracer = mock_tracer
+            mock_span = mock.MagicMock()
+            mock_tracer.start_span.return_value = mock_span
+
+            tracer.start_agent_span(
+                messages=[],
+                agent_name="TestAgent",
+                system_prompt="confidential system prompt",
+            )
+
+            set_attrs_call = mock_span.set_attributes.call_args_list[0][0][0]
+            assert set_attrs_call["gen_ai.system_instructions"] == "[REDACTED]"
+            assert "system_prompt" not in set_attrs_call
+
+    def test_model_id_and_operation_never_redacted(self, mock_tracer, monkeypatch):
+        """Structural span attributes (model id, tool name, operation) are never replaced."""
+        monkeypatch.setenv("OTEL_SEMCONV_STABILITY_OPT_IN", "gen_ai_unredacted_attributes=")
+        with mock.patch("strands.telemetry.tracer.trace_api.get_tracer", return_value=mock_tracer):
+            tracer = Tracer()
+            tracer.tracer = mock_tracer
+            mock_span = mock.MagicMock()
+            mock_tracer.start_span.return_value = mock_span
+
+            tracer.start_model_invoke_span(
+                messages=[{"role": "user", "content": [{"text": "hi"}]}],
+                model_id="anthropic.claude-v3",
+            )
+
+            set_attrs_call = mock_span.set_attributes.call_args_list[0][0][0]
+            assert set_attrs_call["gen_ai.request.model"] == "anthropic.claude-v3"
+            assert set_attrs_call["gen_ai.operation.name"] == "chat"
+            assert "[REDACTED]" not in set_attrs_call.values()
+
+    def test_glob_only_trailing_star(self, monkeypatch):
+        """Only trailing `*` is treated as a glob; other entries are exact-match."""
+        monkeypatch.setenv(
+            "OTEL_SEMCONV_STABILITY_OPT_IN",
+            "gen_ai_unredacted_attributes=gen_ai.output.*;gen_ai.exact.name",
+        )
+        tracer = Tracer()
+        assert tracer._is_attribute_unredacted("gen_ai.output.messages")
+        assert tracer._is_attribute_unredacted("gen_ai.output.anything.else")
+        assert tracer._is_attribute_unredacted("gen_ai.exact.name")
+        assert not tracer._is_attribute_unredacted("gen_ai.input.messages")
+
+    def test_tool_result_cycle_span_uses_input_messages_key(self, mock_tracer, monkeypatch):
+        """tool_result_message in end_event_loop_cycle_span emits under gen_ai.input.messages, not output.messages."""
+        monkeypatch.setenv(
+            "OTEL_SEMCONV_STABILITY_OPT_IN",
+            "gen_ai_latest_experimental,gen_ai_unredacted_attributes=gen_ai.input.messages",
+        )
+        with mock.patch("strands.telemetry.tracer.trace_api.get_tracer", return_value=mock_tracer):
+            tracer = Tracer()
+            tracer.tracer = mock_tracer
+            mock_span = mock.MagicMock()
+            mock_span.is_recording.return_value = True
+
+            message = {"role": "assistant", "content": [{"text": "calling tool"}]}
+            tool_result_message = {"role": "tool", "content": [{"text": "tool output"}]}
+
+            tracer.end_event_loop_cycle_span(mock_span, message, tool_result_message)
+
+            expected_payload = serialize(
+                [
+                    {
+                        "role": "tool",
+                        "parts": tracer._map_content_blocks_to_otel_parts([{"text": "tool output"}]),
+                    }
+                ]
+            )
+            mock_span.add_event.assert_any_call(
+                "gen_ai.client.inference.operation.details",
+                attributes={"gen_ai.input.messages": expected_payload},
+            )
+            all_attr_keys = set()
+            for call in mock_span.add_event.call_args_list:
+                attrs = call.kwargs.get("attributes") or (call.args[1] if len(call.args) > 1 else {})
+                all_attr_keys.update(attrs.keys())
+            assert "gen_ai.output.messages" not in all_attr_keys, (
+                "tool_result_message must not be emitted under gen_ai.output.messages"
+            )
+
+    def test_legacy_tool_result_redacts_under_input_messages_policy(self, mock_tracer, monkeypatch):
+        """Legacy gen_ai.choice path: tool.result field redacted under gen_ai.input.messages policy."""
+        monkeypatch.setenv("OTEL_SEMCONV_STABILITY_OPT_IN", "gen_ai_unredacted_attributes=")
+        with mock.patch("strands.telemetry.tracer.trace_api.get_tracer", return_value=mock_tracer):
+            tracer = Tracer()
+            tracer.tracer = mock_tracer
+            mock_span = mock.MagicMock()
+            mock_span.is_recording.return_value = True
+            message = {"role": "assistant", "content": [{"text": "visible"}]}
+            tool_result_message = {"role": "tool", "content": [{"text": "secret result"}]}
+            tracer.end_event_loop_cycle_span(mock_span, message, tool_result_message)
+            call_kwargs = {
+                k: v
+                for call in mock_span.add_event.call_args_list
+                for k, v in (call.kwargs.get("attributes") or {}).items()
+            }
+            assert call_kwargs.get("tool.result") == "[REDACTED]"
+
+
+class TestSpanAttributesOnly:
+    """Tests for the gen_ai_span_attributes_only opt-in.
+
+    With the opt-in set, the latest-convention message content is recorded as span attributes
+    rather than a deprecated span event, for backends that cannot read span events.
+    """
+
+    def _user_message(self):
+        return [{"role": "user", "content": [{"text": "hello"}]}]
+
+    def test_flag_parsed_from_env(self, mock_tracer, monkeypatch):
+        """The opt-in token is parsed off OTEL_SEMCONV_STABILITY_OPT_IN."""
+        monkeypatch.setenv("OTEL_SEMCONV_STABILITY_OPT_IN", "gen_ai_latest_experimental,gen_ai_span_attributes_only")
+        with mock.patch("strands.telemetry.tracer.trace_api.get_tracer", return_value=mock_tracer):
+            tracer = Tracer()
+            assert tracer._span_attributes_only is True
+
+    def test_flag_defaults_off(self, mock_tracer, monkeypatch):
+        """Absent the token, the flag is off and output stays event-based."""
+        monkeypatch.delenv("OTEL_SEMCONV_STABILITY_OPT_IN", raising=False)
+        with mock.patch("strands.telemetry.tracer.trace_api.get_tracer", return_value=mock_tracer):
+            tracer = Tracer()
+            assert tracer._span_attributes_only is False
+
+    def test_content_written_to_span_attributes_not_events(self, mock_tracer, monkeypatch):
+        """Message content is stamped on the span and no content event is emitted."""
+        monkeypatch.setenv("OTEL_SEMCONV_STABILITY_OPT_IN", "gen_ai_latest_experimental,gen_ai_span_attributes_only")
+        with mock.patch("strands.telemetry.tracer.trace_api.get_tracer", return_value=mock_tracer):
+            tracer = Tracer()
+            tracer.tracer = mock_tracer
+            mock_span = mock.MagicMock()
+            mock_tracer.start_span.return_value = mock_span
+
+            tracer.start_model_invoke_span(messages=self._user_message(), model_id="m")
+
+            input_messages = serialize([{"role": "user", "parts": [{"type": "text", "content": "hello"}]}])
+            mock_span.set_attributes.assert_any_call({"gen_ai.input.messages": input_messages})
+            event_names = [call.args[0] for call in mock_span.add_event.call_args_list]
+            assert "gen_ai.client.inference.operation.details" not in event_names
+
+    def test_no_effect_without_latest_conventions(self, mock_tracer, monkeypatch):
+        """The flag only applies to latest conventions; legacy per-message events are unchanged."""
+        monkeypatch.setenv("OTEL_SEMCONV_STABILITY_OPT_IN", "gen_ai_span_attributes_only")
+        with mock.patch("strands.telemetry.tracer.trace_api.get_tracer", return_value=mock_tracer):
+            tracer = Tracer()
+            tracer.tracer = mock_tracer
+            mock_span = mock.MagicMock()
+            mock_tracer.start_span.return_value = mock_span
+
+            tracer.start_model_invoke_span(messages=self._user_message(), model_id="m")
+
+            mock_span.add_event.assert_any_call(
+                "gen_ai.user.message",
+                attributes={"content": json.dumps([{"text": "hello"}])},
+            )
+
+    def test_empty_attributes_records_nothing(self, mock_tracer, monkeypatch):
+        """With no attributes, neither a span attribute nor an event is recorded."""
+        monkeypatch.setenv("OTEL_SEMCONV_STABILITY_OPT_IN", "gen_ai_span_attributes_only")
+        with mock.patch("strands.telemetry.tracer.trace_api.get_tracer", return_value=mock_tracer):
+            tracer = Tracer()
+            mock_span = mock.MagicMock()
+
+            tracer._add_event(mock_span, "gen_ai.user.message", event_attributes=None, to_span_attributes=True)
+
+            mock_span.set_attributes.assert_not_called()
+            mock_span.add_event.assert_not_called()

@@ -1,7 +1,7 @@
 import pytest
 from pydantic import BaseModel
 
-from strands.hooks import BeforeToolCallEvent
+from strands.hooks import AfterToolCallEvent, BeforeToolCallEvent
 from strands.interrupt import Interrupt
 from strands.tools.decorator import tool
 from strands.tools.executors import SequentialToolExecutor
@@ -73,6 +73,34 @@ async def test_sequential_executor_execute(
     tru_results = tool_results
     exp_results = [exp_events[0].tool_result, exp_events[1].tool_result]
     assert tru_results == exp_results
+
+
+@pytest.mark.asyncio
+async def test_sequential_executor_cancellation_skips_remaining_tools(
+    executor, agent, tool_results, cycle_trace, cycle_span, invocation_state, alist, weather_tool
+):
+    """Test cancellation after one tool prevents later tools from running."""
+
+    def cancel_after_first_tool(event):
+        if isinstance(event, AfterToolCallEvent) and event.tool_use["toolUseId"] == "1":
+            agent._cancel_signal.set()
+
+    agent.hooks.add_callback(AfterToolCallEvent, cancel_after_first_tool)
+    tool_uses = [
+        {"name": "weather_tool", "toolUseId": "1", "input": {}},
+        {"name": "temperature_tool", "toolUseId": "2", "input": {}},
+    ]
+
+    tru_events = await alist(
+        executor._execute(agent, tool_uses, tool_results, cycle_trace, cycle_span, invocation_state)
+    )
+
+    exp_events = [
+        ToolResultEvent({"toolUseId": "1", "status": "success", "content": [{"text": "sunny"}]}),
+        ToolResultEvent({"toolUseId": "2", "status": "error", "content": [{"text": "Tool execution cancelled"}]}),
+    ]
+    assert tru_events == exp_events
+    assert tool_results == [event.tool_result for event in exp_events]
 
 
 @pytest.mark.asyncio

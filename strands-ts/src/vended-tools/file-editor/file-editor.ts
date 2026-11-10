@@ -63,8 +63,17 @@ export interface MakeFileEditorOptions {
  * Create a file editor tool. If a sandbox is passed, it's bound at creation time.
  * Otherwise, the tool reads from `context.agent.sandbox` at call time.
  * Used by sandbox implementations in `getTools()` and by users who want a customized file editor.
+ *
+ * @deprecated fileEditor is deprecated and will be removed in a future release. Use the focused
+ * `edit` vended tool instead (`@strands-agents/sdk/vended-tools/edit`).
  */
 export function makeFileEditor(options?: MakeFileEditorOptions): ReturnType<typeof tool>
+/**
+ * Create a file editor tool bound to a sandbox at creation time.
+ *
+ * @deprecated fileEditor is deprecated and will be removed in a future release. Use the focused
+ * `edit` vended tool instead (`@strands-agents/sdk/vended-tools/edit`).
+ */
 export function makeFileEditor(sandbox: Sandbox | undefined, options?: MakeFileEditorOptions): ReturnType<typeof tool>
 export function makeFileEditor(
   sandboxOrOptions?: Sandbox | MakeFileEditorOptions,
@@ -100,6 +109,9 @@ export function makeFileEditor(
 
 /**
  * Default file editor tool. Reads the sandbox from the agent's context at call time.
+ *
+ * @deprecated fileEditor is deprecated and will be removed in a future release. Use the focused
+ * `edit` vended tool instead (`@strands-agents/sdk/vended-tools/edit`).
  */
 export const fileEditor = makeFileEditor()
 
@@ -169,28 +181,30 @@ function buildStrReplaceResult(
   newStr: string | undefined,
   filePath: string
 ): { newContent: string; snippet: string; startLine: number } {
-  const fileContent = originalContent.replace(/\t/g, '        ')
-  const expandedOldStr = oldStr.replace(/\t/g, '        ')
-  const expandedNewStr = newStr ? newStr.replace(/\t/g, '        ') : ''
+  if (oldStr.length === 0) {
+    throw new Error(`No replacement was performed, old_str must not be empty.`)
+  }
 
-  const occurrences = (fileContent.match(new RegExp(escapeRegExp(expandedOldStr), 'g')) || []).length
-  if (occurrences === 0) {
+  const replacement = newStr ?? ''
+  const occurrences = findOccurrences(originalContent, oldStr)
+
+  if (occurrences.length === 0) {
     throw new Error(`No replacement was performed, old_str \`${oldStr}\` did not appear verbatim in ${filePath}.`)
   }
-  if (occurrences > 1) {
-    const lines = fileContent.split('\n')
-    const lineNumbers = lines
-      .map((line, index) => (line.includes(expandedOldStr) ? index + 1 : -1))
-      .filter((num) => num !== -1)
+  if (occurrences.length > 1) {
+    const lineNumbers = occurrences.map((occurrence) => occurrence.line)
     throw new Error(
       `No replacement was performed. Multiple occurrences of old_str \`${oldStr}\` in lines ${JSON.stringify(lineNumbers)}. Please ensure it is unique`
     )
   }
 
-  const newContent = fileContent.replace(expandedOldStr, () => expandedNewStr)
-  const replacementLine = fileContent.substring(0, fileContent.indexOf(expandedOldStr)).split('\n').length - 1
-  const insertedLines = expandedNewStr.split('\n').length
-  const originalLines = expandedOldStr.split('\n').length
+  const matchIndex = occurrences[0]!.offset
+  const newContent =
+    originalContent.slice(0, matchIndex) + replacement + originalContent.slice(matchIndex + oldStr.length)
+
+  const replacementLine = originalContent.substring(0, matchIndex).split('\n').length - 1
+  const insertedLines = replacement.split('\n').length
+  const originalLines = oldStr.split('\n').length
   const lineDifference = insertedLines - originalLines
 
   const newLines = newContent.split('\n')
@@ -211,11 +225,8 @@ function buildInsertResult(
   insertLine: number,
   newStr: string
 ): { newContent: string; snippet: string; startLine: number } {
-  const fileText = originalContent.replace(/\t/g, '        ')
-  const expandedNewStr = newStr.replace(/\t/g, '        ')
-
-  const fileTextLines = fileText.split('\n')
-  const nLines = fileTextLines.length
+  const fileLines = originalContent.split('\n')
+  const nLines = fileLines.length
 
   if (insertLine < 0 || insertLine > nLines) {
     throw new Error(
@@ -223,18 +234,33 @@ function buildInsertResult(
     )
   }
 
-  const newStrLines = expandedNewStr.split('\n')
-  const newFileTextLines =
-    fileText === ''
+  const newStrLines = newStr.split('\n')
+  const newFileLines =
+    originalContent === ''
       ? newStrLines
-      : [...fileTextLines.slice(0, insertLine), ...newStrLines, ...fileTextLines.slice(insertLine)]
+      : [...fileLines.slice(0, insertLine), ...newStrLines, ...fileLines.slice(insertLine)]
 
-  const newContent = newFileTextLines.join('\n')
+  const newContent = newFileLines.join('\n')
   const snippetStartLine = Math.max(0, insertLine - SNIPPET_LINES)
-  const snippetEndLine = Math.min(newFileTextLines.length, insertLine + newStrLines.length + SNIPPET_LINES)
-  const snippet = newFileTextLines.slice(snippetStartLine, snippetEndLine).join('\n')
+  const snippetEndLine = Math.min(newFileLines.length, insertLine + newStrLines.length + SNIPPET_LINES)
+  const snippet = newFileLines.slice(snippetStartLine, snippetEndLine).join('\n')
 
   return { newContent, snippet, startLine: snippetStartLine }
+}
+
+/**
+ * Finds all non-overlapping occurrences of `needle` in `haystack`,
+ * returning each match's byte offset and 1-based line number.
+ */
+function findOccurrences(haystack: string, needle: string): Array<{ offset: number; line: number }> {
+  const results: Array<{ offset: number; line: number }> = []
+  let position = 0
+  while ((position = haystack.indexOf(needle, position)) !== -1) {
+    const line = haystack.substring(0, position).split('\n').length
+    results.push({ offset: position, line })
+    position += needle.length
+  }
+  return results
 }
 
 /**
@@ -251,13 +277,6 @@ function makeOutput(fileContent: string, fileDescriptor: string, initLine: numbe
   })
 
   return `Here's the result of running \`cat -n\` on ${fileDescriptor}:\n${numberedLines.join('\n')}\n`
-}
-
-/**
- * Escapes special regex characters in a string.
- */
-function escapeRegExp(string: string): string {
-  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
 // ---- Sandbox-routed I/O helpers ----

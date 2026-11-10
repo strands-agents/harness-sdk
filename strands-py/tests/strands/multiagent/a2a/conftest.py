@@ -8,6 +8,7 @@ from a2a.server.events import EventQueue
 
 from strands.agent.agent import Agent as SAAgent
 from strands.agent.agent_result import AgentResult as SAAgentResult
+from strands.interrupt import _InterruptState
 from strands.types._snapshot import Snapshot
 
 
@@ -38,6 +39,10 @@ def mock_strands_agent():
     agent._model_state = {}
     agent.take_snapshot = MagicMock(return_value=Snapshot(scope="agent", schema_version="1.0", data={}, app_data={}))
     agent.load_snapshot = MagicMock()
+
+    # A real Agent always carries interrupt state; the executor reads it to decide whether a
+    # request resumes a parked interrupt. Default is deactivated, matching a fresh agent.
+    agent._interrupt_state = _InterruptState()
 
     return agent
 

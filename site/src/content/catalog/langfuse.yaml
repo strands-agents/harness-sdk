@@ -1,0 +1,9 @@
+name: langfuse
+description: Langfuse LLM observability for Strands agents — traces, metrics, and evaluations via the SDK's built-in OpenTelemetry export (strands-agents[otel]).
+integrationType: observability
+maintainedBy: partner
+languages:
+  python: {}
+github: https://github.com/langfuse/langfuse
+docsUrl: https://langfuse.com/integrations/frameworks/strands-agents
+addedDate: 2025-05-16

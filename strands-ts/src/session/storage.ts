@@ -16,12 +16,7 @@ export type SnapshotLocation = {
  * SessionStorage configuration for pluggable storage backends.
  * Allows users to configure snapshot and transcript storage independently.
  *
- * @example
- * ```typescript
- * const storage: SessionStorage = {
- *   snapshot: new S3Storage({ bucket: 'my-bucket' })
- * }
- * ```
+ * @deprecated Prefer passing a unified `Storage` directly to `SessionManagerConfig.storage`.
  */
 export type SessionStorage = {
   snapshot: SnapshotStorage
@@ -31,6 +26,8 @@ export type SessionStorage = {
 /**
  * Interface for snapshot persistence.
  * Implementations provide storage backends (S3, filesystem, etc.).
+ *
+ * @deprecated Prefer passing a unified `Storage` to `SessionManagerConfig.storage` instead of implementing this directly.
  *
  * File layout convention:
  * ```

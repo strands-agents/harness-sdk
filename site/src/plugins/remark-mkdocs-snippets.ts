@@ -9,7 +9,7 @@
  *   ...code...
  *   // --8<-- [end:section_name]
  *
- * See ARCHITECTURE.md for usage details.
+ * See SITE-ARCHITECTURE.md for usage details.
  */
 
 import { visit } from 'unist-util-visit'

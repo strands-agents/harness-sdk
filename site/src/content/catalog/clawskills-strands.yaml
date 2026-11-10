@@ -1,0 +1,8 @@
+name: "clawskills-strands"
+description: "Converts OpenClaw skill markdown files into directly executable Strands Agents tools, eliminating the read-then-exec pattern."
+integrationType: integration
+languages:
+  typescript:
+    package: "clawskills-strands"
+github: https://github.com/Vivek0712/clawskills-strands
+addedDate: 2026-02-06

@@ -1,5 +1,5 @@
 ---
-title: Strands Shell Quickstart
+title: Strands Shell quickstart
 description: Install Strands Shell and run your first sandboxed command through the MCP server, the Python API, or the Node.js API in just a few minutes.
 sidebar:
   label: "Quickstart"
@@ -31,7 +31,10 @@ Add this to your MCP client configuration:
 }
 ```
 
-This starts a bare in-memory sandbox without access to files, network, or credentials. To grant access, write a [TOML config file](configuration.md#toml-configuration) and pass it before the `--mcp` flag:
+This starts a bare in-memory sandbox without access to host files or credentials and
+uses the [default network policy](configuration.md#network-access). To grant additional
+access, write a [TOML config file](configuration.md#toml-configuration) and pass it
+before the `--mcp` flag:
 
 ```json
 {
@@ -98,9 +101,14 @@ print(data.decode())
 entries = shell.list_files("/workspace")
 for entry in entries:
     print(entry.name)
+
+shell.remove_file("/workspace/note.txt")
 ```
 
-`read_file` and `write_file` work in bytes. A missing path raises `strands_shell.FileNotFoundError`, which also subclasses the built-in `FileNotFoundError`, so existing error-handling code catches it without a translation shim.
+`read_file` and `write_file` work in bytes; `remove_file` deletes a file from the
+sandbox. A missing path raises `strands_shell.FileNotFoundError`, which also subclasses
+the built-in `FileNotFoundError`, so existing error-handling code catches it without a
+translation shim.
 
 ## Node.js
 
@@ -148,11 +156,19 @@ const entries = await shell.listFiles('/workspace')
 for (const entry of entries) {
   console.log(entry.name)
 }
+
+await shell.removeFile('/workspace/note.txt')
 ```
+
+`removeFile` deletes a file from the sandbox and rejects with `NotFoundError` when the
+path is missing, the same as `readFile`.
 
 ## What you built
 
-You created a sandbox with exactly one directory visible to it and ran a command that couldn't reach anything else: not your home directory, not your credentials, not the network. That's the whole model. You add capability by adding binds, credentials, and allowed URLs, and the agent gets nothing you didn't grant.
+You created a sandbox with exactly one host directory visible to it and ran a
+command without exposing your home directory or credentials. Network access follows
+the [default policy](configuration.md#network-access). You add capability by adding
+binds, credentials, and allowed URLs.
 
 ## Next steps
 

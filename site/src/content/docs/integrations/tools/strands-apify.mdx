@@ -1,0 +1,73 @@
+---
+project:
+  pypi: https://pypi.org/project/strands-apify/
+  github: https://github.com/apify/strands-apify
+  maintainer: apify
+service:
+  name: apify
+  link: https://apify.com/
+title: strands-apify
+community: true
+description: "Web scraping for social media, search engines, e-commerce, and more via Apify Actors"
+integrationType: tool
+languages: Python
+sidebar:
+  label: "apify"
+---
+
+
+[strands-apify](https://github.com/apify/strands-apify) gives your Strands agent web scraping, search, crawling, e-commerce, and social media capabilities through the [Apify platform](https://apify.com/) and its library of thousands of pre-built Actors. For the full tool reference and model provider setup, see the [Strands Agents on Apify docs](https://docs.apify.com/platform/integrations/strands-agents).
+
+## Prerequisites
+
+- An [Apify account](https://apify.com/) (free tier available)
+- [Apify API token](https://console.apify.com/account/integrations) from Apify Console > Integrations
+
+## Installation
+
+```bash
+pip install strands-apify
+```
+
+## Usage
+
+```python
+from strands import Agent
+from strands_apify import APIFY_CORE_TOOLS
+
+agent = Agent(tools=APIFY_CORE_TOOLS)
+agent("Scrape https://docs.apify.com and summarize the page")
+```
+
+Pick individual tools for a more focused agent:
+
+```python
+from strands import Agent
+from strands_apify import apify_google_search_scraper
+
+agent = Agent(tools=[apify_google_search_scraper])
+agent("Find the top-rated Italian restaurants in Prague")
+```
+
+## Key Features
+
+- **18 pre-built tools** for scraping, search, social media, and e-commerce
+- **Focused tool sets** (`APIFY_CORE_TOOLS`, `APIFY_SEARCH_TOOLS`, `APIFY_SOCIAL_TOOLS`) sized for reliable LLM tool selection; `APIFY_ALL_TOOLS` bundles everything but can overwhelm tool choice
+- **Apify Store access** to run any of thousands of Actors with a single generic tool
+- **Dataset integration** to fetch and process Actor results directly
+- **URL to markdown** conversion for any webpage
+
+## Configuration
+
+```bash
+APIFY_TOKEN=your_apify_api_token          # Required
+STRANDS_APIFY_QUIET=1                     # Optional: suppress rich panels in interactive shells
+```
+
+## Resources
+
+- [PyPI package](https://pypi.org/project/strands-apify/)
+- [GitHub repository](https://github.com/apify/strands-apify)
+- [Full tool reference and examples](https://docs.apify.com/platform/integrations/strands-agents)
+- [Apify Store](https://apify.com/store)
+- [Apify API reference](https://docs.apify.com/api/v2)

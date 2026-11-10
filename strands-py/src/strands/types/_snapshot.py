@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Literal, TypedDict
+from typing import Any, Literal
 
 from .exceptions import SnapshotException
 
@@ -17,7 +17,8 @@ SnapshotField = Literal[
     "model_state",
 ]
 SnapshotPreset = Literal["session"]
-Scope = Literal["agent"]
+# Persisted scope values match the shared TypeScript on-disk format.
+Scope = Literal["agent", "multiAgent"]
 
 ALL_SNAPSHOT_FIELDS: tuple[SnapshotField, ...] = (
     "messages",
@@ -28,7 +29,7 @@ ALL_SNAPSHOT_FIELDS: tuple[SnapshotField, ...] = (
     "model_state",
 )
 
-VALID_SCOPES: tuple[Scope, ...] = ("agent",)
+VALID_SCOPES: tuple[Scope, ...] = ("agent", "multiAgent")
 
 SNAPSHOT_SCHEMA_VERSION = "1.0"
 
@@ -36,14 +37,11 @@ SNAPSHOT_PRESETS: dict[str, tuple[SnapshotField, ...]] = {
     "session": ("messages", "state", "conversation_manager_state", "interrupt_state", "model_state"),
 }
 
+BIDI_SNAPSHOT_FIELDS: tuple[SnapshotField, ...] = ("messages", "state", "system_prompt")
 
-class TakeSnapshotOptions(TypedDict, total=False):
-    """Internal options for take_snapshot. Not exported publicly."""
-
-    preset: SnapshotPreset
-    include: list[SnapshotField]
-    exclude: list[SnapshotField]
-    app_data: dict[str, Any]
+BIDI_SNAPSHOT_PRESETS: dict[str, tuple[SnapshotField, ...]] = {
+    "session": ("messages", "state"),
+}
 
 
 @dataclass

@@ -1,0 +1,105 @@
+---
+project:
+  pypi: https://pypi.org/project/strands-dakera/
+  github: https://github.com/dakera-ai/strands-dakera
+  maintainer: dakera-ai
+service:
+  name: Dakera
+  link: https://dakera.ai/
+title: strands-dakera
+community: true
+description: Persistent, decay-weighted MemoryStore for agents — self-hosted, with a full-CRUD tool
+integrationType: memory-store
+languages: Python
+sidebar:
+  label: "dakera"
+---
+
+
+[strands-dakera](https://github.com/dakera-ai/strands-dakera) gives agents persistent memory that survives across sessions, backed by a self-hosted [Dakera](https://github.com/dakera-ai/dakera-deploy) server. Unlike a fixed-TTL store, Dakera ranks recalled memories by **importance × recency × semantic relevance**, so the most contextually useful memories surface first.
+
+It offers two integration points against the same server:
+
+- **`DakeraMemoryStore`** — a [`MemoryStore`](../../user-guide/sdk/memory/overview.md) that plugs into the agent loop via a `MemoryManager` (Strands ≥ 1.45), with automatic memory injection and extraction.
+- **`dakera_memory`** — a tool the model calls explicitly for full CRUD (`store` / `retrieve` / `get` / `update` / `delete`).
+
+## Installation
+
+```bash
+pip install "strands-dakera>=0.2.0"   # DakeraMemoryStore requires >=0.2.0 (Strands >=1.45)
+```
+
+Run a Dakera server locally (once):
+
+```bash
+git clone https://github.com/dakera-ai/dakera-deploy && cd dakera-deploy && docker compose up -d
+```
+
+## Memory store
+
+Wire Dakera into the agent loop with a `MemoryManager`. The manager searches the store to recall context (injected into the prompt automatically) and, when `writable`, writes new memories — either directly or by extracting facts from the conversation every few turns.
+
+```python
+from strands import Agent
+from strands.memory import MemoryManager
+from strands_dakera import DakeraMemoryStore
+
+store = DakeraMemoryStore(agent_id="alex", writable=True, extraction=True)
+agent = Agent(memory_manager=MemoryManager(stores=[store]))
+
+# Recall and writes happen automatically — no explicit tool call required.
+agent("Remember that I prefer dark-mode dashboards and async standups.")
+agent("How do I like to work?")  # recalls the stored preferences
+```
+
+`DakeraMemoryStore` implements `search` (decay-weighted recall) and `add` (a client-side write sink), so enabling `extraction` uses the manager's client-side `ModelExtractor`. Common arguments: `agent_id` (required), `name`, `writable`, `extraction`, `max_search_results`, `importance`, `memory_type`, and `base_url` / `api_key`.
+
+## Tool
+
+Prefer an explicitly model-invoked tool? Register `dakera_memory` instead (or alongside the store):
+
+```python
+from strands import Agent
+from strands_dakera import dakera_memory
+
+agent = Agent(tools=[dakera_memory])
+
+# Store a memory with an importance weight
+agent.tool.dakera_memory(
+    action="store",
+    agent_id="alex",
+    content="Alex prefers dark-mode dashboards and async standups.",
+    importance=0.8,
+    metadata={"category": "preferences"},
+)
+
+# Decay-weighted semantic recall
+agent.tool.dakera_memory(
+    action="retrieve",
+    agent_id="alex",
+    query="how does alex like to work?",
+    top_k=5,
+)
+```
+
+## Key Features
+
+- **Decay-weighted recall**: results ranked by a decay-aware importance signal, not just vector distance
+- **Importance-typed storage**: `importance` (0.0–1.0) and `memory_type` (episodic / semantic / procedural / working)
+- **Two integration points**: a `MemoryStore` for the agent loop and a full-CRUD tool, sharing one server
+- **Self-hosted**: runs against your own Dakera server — no cloud key required
+- **Safe by default**: mutative tool actions prompt for confirmation unless `BYPASS_TOOL_CONSENT=true`
+
+## Configuration
+
+```bash
+DAKERA_BASE_URL=http://localhost:3000   # Dakera server URL (default)
+DAKERA_API_KEY=dk-your-key              # Optional API key
+```
+
+## References
+
+- [PyPI Package](https://pypi.org/project/strands-dakera/)
+- [GitHub Repository](https://github.com/dakera-ai/strands-dakera)
+- [Dakera Server (self-host)](https://github.com/dakera-ai/dakera-deploy)
+- [Dakera](https://dakera.ai/)

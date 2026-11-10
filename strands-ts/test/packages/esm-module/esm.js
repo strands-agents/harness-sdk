@@ -3,8 +3,9 @@
  * This script runs in a pure Node.js ES module environment.
  */
 
-import { Agent, BedrockModel, tool, Tool } from '@strands-agents/sdk'
+import { Agent, BedrockModel, ModelRouter, tool, Tool } from '@strands-agents/sdk'
 
+import { ModelRouter as ModelRouterFromSubpath } from '@strands-agents/sdk/models/routing'
 import { notebook } from '@strands-agents/sdk/vended-tools/notebook'
 import { fileEditor } from '@strands-agents/sdk/vended-tools/file-editor'
 import { httpRequest } from '@strands-agents/sdk/vended-tools/http-request'
@@ -124,6 +125,9 @@ for (const tool of Object.values(tools)) {
 // Verify model subpath exports resolve correctly
 if (BedrockFromSubpath !== BedrockModel) {
   throw new Error('BedrockModel from subpath should match main export')
+}
+if (ModelRouterFromSubpath !== ModelRouter) {
+  throw new Error('ModelRouter from subpath should match main export')
 }
 console.log('✓ Model subpath exports verified')
 

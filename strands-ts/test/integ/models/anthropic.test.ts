@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { Message, ImageBlock, TextBlock, CachePointBlock } from '@strands-agents/sdk'
+import { z } from 'zod'
+import { Agent, Message, ImageBlock, TextBlock, CachePointBlock, tool } from '@strands-agents/sdk'
 import type { SystemContentBlock } from '@strands-agents/sdk'
 import { collectIterator } from '$/sdk/__fixtures__/model-test-helpers.js'
 import { loadFixture } from '../__fixtures__/test-helpers.js'
+import { ContextInjector } from '$/sdk/vended-plugins/context-injector/index.js'
 import { anthropic } from '../__fixtures__/model-providers.js'
-
 import yellowPngUrl from '../__resources__/yellow.png?url'
 
 describe.skipIf(anthropic.skip)('AnthropicModel Integration Tests', () => {
@@ -25,6 +26,27 @@ describe.skipIf(anthropic.skip)('AnthropicModel Integration Tests', () => {
 
       const messageStopEvent = events.find((e) => e.type === 'modelMessageStopEvent')
       expect(messageStopEvent?.stopReason).toBe('maxTokens')
+    })
+
+    it.concurrent('sends temperature when the previous API version is pinned', async () => {
+      const provider = anthropic.createModel({
+        modelId: 'claude-haiku-4-5',
+        maxTokens: 20,
+        temperature: 0.2,
+        clientConfig: { defaultHeaders: { 'anthropic-version': '2023-06-01' } },
+      })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Say hi.')] })]
+
+      const events = await collectIterator(provider.stream(messages))
+
+      expect(events.some((e) => e.type === 'modelMessageStopEvent')).toBe(true)
+    })
+
+    it.concurrent('rejects temperature locally on the current API version', async () => {
+      const provider = anthropic.createModel({ modelId: 'claude-haiku-4-5', maxTokens: 20, temperature: 0.2 })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Say hi.')] })]
+
+      await expect(collectIterator(provider.stream(messages))).rejects.toThrow(/temperature is not supported/)
     })
   })
 
@@ -89,6 +111,47 @@ describe.skipIf(anthropic.skip)('AnthropicModel Integration Tests', () => {
       if (readTokens !== undefined) {
         expect(readTokens).toBeGreaterThanOrEqual(0)
       }
+    })
+
+    it('cacheConfig auto placement earns a read on the second turn', async () => {
+      const provider = anthropic.createModel({ maxTokens: 100, cacheConfig: { strategy: 'auto' } })
+      const prefix = `Dossier ${Date.now()}-${Math.random()}. ${'The subject prefers concise answers. '.repeat(400)}`
+      const messages = [new Message({ role: 'user', content: [new TextBlock(prefix)] })]
+
+      const first = await collectIterator(provider.stream(messages))
+      const usage1 = first.find((event) => event.type === 'modelMetadataEvent')?.usage
+      expect(usage1?.cacheWriteInputTokens).toBeGreaterThan(0)
+
+      const second = await collectIterator(provider.stream(messages))
+      const usage2 = second.find((event) => event.type === 'modelMetadataEvent')?.usage
+      expect(usage2?.cacheReadInputTokens).toBeGreaterThan(0)
+    })
+
+    it('cacheConfig toolsTTL earns a read on the second turn', async () => {
+      const provider = anthropic.createModel({
+        maxTokens: 100,
+        cacheConfig: { strategy: 'auto', toolsTTL: '5m', messagesTTL: false },
+      })
+      const toolSpecs = [
+        {
+          name: 'lookupReference',
+          description: `Look up a reference entry ${Date.now()}-${Math.random()}. ${'The catalog is stable across requests. '.repeat(400)}`,
+          inputSchema: { type: 'object' as const, properties: { topic: { type: 'string' as const } } },
+        },
+      ]
+      const messages = (text: string): Message[] => [new Message({ role: 'user', content: [new TextBlock(text)] })]
+
+      const first = await collectIterator(
+        provider.stream(messages('Reply ALPHA. Do not call any tool.'), { toolSpecs })
+      )
+      const usage1 = first.find((event) => event.type === 'modelMetadataEvent')?.usage
+      expect(usage1?.cacheWriteInputTokens).toBeGreaterThan(0)
+
+      const second = await collectIterator(
+        provider.stream(messages('Reply BETA. Do not call any tool.'), { toolSpecs })
+      )
+      const usage2 = second.find((event) => event.type === 'modelMetadataEvent')?.usage
+      expect(usage2?.cacheReadInputTokens).toBeGreaterThan(0)
     })
   })
 
@@ -157,6 +220,72 @@ describe.skipIf(anthropic.skip)('AnthropicModel Integration Tests', () => {
         const firstThinking = thinkingEvents[0] as any
         expect(firstThinking.delta.text).toBeDefined()
       }
+    })
+  })
+
+  describe('Built-in Tools', () => {
+    it('web_search runs alongside function tools and its citations round-trip', async () => {
+      const weather = tool({
+        name: 'tool_weather',
+        description: 'Get the current weather.',
+        inputSchema: z.object({}),
+        callback: () => 'sunny',
+      })
+      const model = anthropic.createModel({
+        maxTokens: 1024,
+        // "direct" so citations are attached; the dynamic-filtering default runs the search inside code execution
+        anthropicTools: [{ type: 'web_search_20260318', name: 'web_search', max_uses: 2, allowed_callers: ['direct'] }],
+      })
+      const agent = new Agent({ model, tools: [weather], printer: false })
+
+      const first = await agent.invoke(
+        'Call tool_weather, then use web_search to find the current Python release. Answer in one sentence.'
+      )
+      expect(first.stopReason).toBe('endTurn')
+      const toolUses = agent.messages.flatMap((m) => m.content).filter((b) => b.type === 'toolUseBlock')
+      expect(toolUses.map((b) => b.name)).toContain('tool_weather')
+      const citationsBlock = first.lastMessage.content.find((b) => b.type === 'citationsBlock')
+      expect(citationsBlock).toBeDefined()
+      expect(citationsBlock?.citations[0]?.location).toMatchObject({ type: 'web', url: expect.stringMatching(/^http/) })
+
+      const second = await agent.invoke('Reply DONE.')
+      expect(String(second)).toContain('DONE')
+    })
+  })
+
+  describe('Context injection', () => {
+    it('keeps preserved thinking valid and the cache warm while injected text changes every call', async () => {
+      const lookup = tool({
+        name: 'lookup_inventory',
+        description: 'Look up how many units of an item are in stock.',
+        inputSchema: z.object({ item: z.string() }),
+        callback: ({ item }) => ({ widgets: '17', gadgets: '4' })[item] ?? '0',
+      })
+      // Any edit to history before a replayed thinking block fails the request instead of dropping the block.
+      const model = anthropic.createModel({
+        modelId: 'claude-opus-5-5',
+        maxTokens: 4096,
+        betas: ['thinking-binding-controls-2026-08-01'],
+        params: { thinking: { type: 'adaptive', block_binding: { prefix_mismatch_behavior: 'error' } } },
+        cacheConfig: { strategy: 'anthropic' },
+      })
+      let calls = 0
+      const agent = new Agent({
+        model,
+        tools: [lookup],
+        printer: false,
+        // Long enough to pass the minimum cacheable prefix.
+        systemPrompt: `You are an inventory assistant ${Date.now()}.\n${'Report stock counts exactly as the tool returns them. '.repeat(400)}`,
+        plugins: [new ContextInjector({ trigger: 'everyTurn', renderContent: async () => `<call>${++calls}</call>` })],
+      })
+
+      await agent.invoke('Look up widgets, then gadgets, one at a time, and say which has more stock.')
+      const result = await agent.invoke('Look up widgets again and confirm the count.')
+
+      expect(result.stopReason).toBe('endTurn')
+      expect(calls).toBeGreaterThanOrEqual(4)
+      const usage = agent.messages.filter((message) => message.role === 'assistant').at(-1)?.metadata?.usage
+      expect(usage?.cacheReadInputTokens).toBeGreaterThan(0)
     })
   })
 

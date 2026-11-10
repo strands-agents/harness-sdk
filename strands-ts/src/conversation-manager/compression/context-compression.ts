@@ -1,5 +1,7 @@
 import { Message, TextBlock } from '../../types/messages.js'
 import type { Model } from '../../models/model.js'
+import { ModelProxy } from '../../models/model-proxy.js'
+import type { InvocationContext } from '../../agent/invocation-context.js'
 
 export const DEFAULT_SUMMARIZATION_PROMPT = `You are a conversation summarizer. Provide a concise summary of the conversation \
 history.
@@ -119,13 +121,18 @@ export function findValidTrimPoint(messages: Message[], startIndex: number): num
 /**
  * Generate a summary of the provided messages by calling the model.
  *
+ * @param messagesToSummarize - The conversation slice to compress
+ * @param model - Model used to produce the summary
+ * @param systemPrompt - Optional override for the summarization system prompt
+ * @param invocationContext - The request the summary call's usage adds to
  * @returns A user-role message containing the model-generated summary
- * @throws If the model fails to produce a response
+ * @throws If the model fails to produce a response, or its reply carries no text
  */
 export async function generateSummary(
   messagesToSummarize: Message[],
   model: Model,
-  systemPrompt?: string
+  systemPrompt?: string,
+  invocationContext?: InvocationContext
 ): Promise<Message> {
   const summarizationMessages = [
     ...messagesToSummarize,
@@ -135,9 +142,11 @@ export async function generateSummary(
     }),
   ]
 
-  const stream = model.streamAggregated(summarizationMessages, {
-    systemPrompt: systemPrompt ?? DEFAULT_SUMMARIZATION_PROMPT,
-  })
+  const stream = new ModelProxy(model).streamAggregated(
+    summarizationMessages,
+    { systemPrompt: systemPrompt ?? DEFAULT_SUMMARIZATION_PROMPT },
+    invocationContext
+  )
 
   let result: Awaited<ReturnType<typeof stream.next>> | undefined
   for (;;) {
@@ -149,10 +158,36 @@ export async function generateSummary(
     throw new Error('Failed to generate summary: no response from model')
   }
 
-  return new Message({
-    role: 'user',
-    content: result.value.message.content,
-  })
+  return asUserSummary(result.value.message)
+}
+
+/**
+ * Re-role a model reply as the user-role summary message kept in history.
+ *
+ * Only the reply's text is kept: providers reject reasoning and tool-use blocks in user
+ * messages (Bedrock: "User messages cannot contain reasoning content").
+ *
+ * @param message - The summarizer's reply
+ * @returns A user-role message holding the reply's text blocks
+ * @throws If the reply carries no text
+ * @internal
+ */
+export function asUserSummary(message: Message): Message {
+  const textBlocks: TextBlock[] = []
+  for (const block of message.content) {
+    if (block.type === 'textBlock') {
+      textBlocks.push(new TextBlock(block.text))
+    } else if (block.type === 'citationsBlock') {
+      // A cited reply carries its text nested inside the citations block; URL citations may carry none.
+      for (const cited of block.content) {
+        if (cited.text) textBlocks.push(new TextBlock(cited.text))
+      }
+    }
+  }
+  if (textBlocks.length === 0) {
+    throw new Error('Failed to generate summary: model response contained no text')
+  }
+  return new Message({ role: 'user', content: textBlocks })
 }
 
 export type MessageTypeFilter = 'tools' | 'messages' | 'all'

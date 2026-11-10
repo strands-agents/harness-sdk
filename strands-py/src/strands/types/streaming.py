@@ -5,7 +5,7 @@ These types are modeled after the Bedrock API.
 - Bedrock docs: https://docs.aws.amazon.com/bedrock/latest/APIReference/API_Types_Amazon_Bedrock_Runtime.html
 """
 
-from typing_extensions import TypedDict
+from typing_extensions import NotRequired, TypedDict
 
 from .citations import CitationLocation
 from .content import ContentBlockStart, Role
@@ -51,9 +51,15 @@ class ContentBlockDeltaToolUse(TypedDict):
 
     Attributes:
         input: The tool input fragment being streamed.
+        toolUseId: Optional tool use identifier. Some providers emit this in the delta
+            instead of contentBlockStart.
+        name: Optional tool name. Some providers emit this in the delta instead of
+            contentBlockStart.
     """
 
     input: str
+    toolUseId: NotRequired[str]
+    name: NotRequired[str]
 
 
 class CitationSourceContentDelta(TypedDict, total=False):

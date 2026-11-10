@@ -1,12 +1,13 @@
 ---
 import { Aside } from '@astrojs/starlight/components';
+import { pathWithBase } from '../util/links';
 ---
 
 <Aside type="tip" title="Community Contribution">
   This is a community-maintained package that is not owned or supported by the Strands team. Validate and review
   the package before using it in your project.
 
-  Have your own integration? <a href="https://github.com/strands-agents/harness-sdk/issues/new?assignees=&labels=enhancement&projects=&template=content_addition.yml&title=%5BContent+Addition%5D%3A+">
-    We'd love to add it here too!
+  Have your own integration? <a href={pathWithBase('/docs/integrations/get-featured/')}>
+    Add it to the integrations page!
   </a>
 </Aside>

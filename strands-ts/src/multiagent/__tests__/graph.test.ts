@@ -1,11 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
 import { Agent } from '../../agent/agent.js'
+import { AgentPrinter } from '../../agent/printer.js'
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
 import { MockSnapshotStorage } from '../../__fixtures__/mock-storage-provider.js'
 import { collectGenerator } from '../../__fixtures__/model-test-helpers.js'
 import { createCancellableAgent } from '../../__fixtures__/agent-helpers.js'
 import { AfterNodeCallEvent, BeforeNodeCallEvent, MultiAgentInitializedEvent } from '../events.js'
-import { TextBlock, type ContentBlockData } from '../../types/messages.js'
+import { ReasoningBlock, TextBlock, type ContentBlockData } from '../../types/messages.js'
 import { Status, MultiAgentState } from '../state.js'
 import { AgentNode, MultiAgentNode } from '../nodes.js'
 import { Graph } from '../graph.js'
@@ -378,6 +379,31 @@ describe('Graph', () => {
       expect(input.map((b) => b.text)).toStrictEqual(['task-input', '[node: a]', 'from-a'])
     })
 
+    it('does not pass dependency reasoning blocks to downstream nodes', async () => {
+      const agentA = new Agent({
+        model: new MockMessageModel().addTurn([
+          new ReasoningBlock({ text: 'private reasoning' }),
+          new TextBlock('from-a'),
+        ]),
+        printer: false,
+        id: 'a',
+      })
+      const agentB = makeAgent('b')
+      const streamSpy = vi.spyOn(agentB, 'stream')
+
+      const graph = new Graph({
+        nodes: [agentA, agentB],
+        edges: [['a', 'b']],
+      })
+
+      await graph.invoke('task-input')
+
+      expect(streamSpy).toHaveBeenCalled()
+      const input = streamSpy.mock.calls[0]![0] as TextBlock[]
+      expect(input.map((b) => b.text)).toStrictEqual(['task-input', '[node: a]', 'from-a'])
+      expect(input.map((b) => b.type)).toStrictEqual(['textBlock', 'textBlock', 'textBlock'])
+    })
+
     it('converts ContentBlockData[] input to ContentBlock instances for downstream nodes', async () => {
       const agentB = makeAgent('b')
       const streamSpy = vi.spyOn(agentB, 'stream')
@@ -689,6 +715,106 @@ describe('Graph', () => {
       expect(cancelEvent).toEqual(
         expect.objectContaining({ nodeId: 'a', state: expect.any(MultiAgentState), message: 'node not ready' })
       )
+    })
+
+    it('does not buffer agent printer output for sequential graphs', async () => {
+      const a = makeAgent('a', 'a-reply')
+      const b = makeAgent('b', 'b-reply')
+      const printerA = new AgentPrinter(() => {})
+      const printerB = new AgentPrinter(() => {})
+      ;(a as unknown as { _printer: AgentPrinter })._printer = printerA
+      ;(b as unknown as { _printer: AgentPrinter })._printer = printerB
+
+      const graph = new Graph({
+        nodes: [a, b],
+        edges: [['a', 'b']],
+      })
+
+      const seenA: unknown[] = []
+      const seenB: unknown[] = []
+      const gen = graph.stream('go')
+      for await (const event of gen) {
+        if (event.type === 'nodeStreamUpdateEvent') {
+          if (event.nodeId === 'a') seenA.push((a as unknown as { _printer: AgentPrinter })._printer)
+          if (event.nodeId === 'b') seenB.push((b as unknown as { _printer: AgentPrinter })._printer)
+        }
+      }
+
+      expect(seenA.length).toBeGreaterThan(0)
+      expect(seenB.length).toBeGreaterThan(0)
+      expect(seenA.every((p) => p === printerA)).toBe(true)
+      expect(seenB.every((p) => p === printerB)).toBe(true)
+    })
+
+    it('buffers agent printer output when topology allows parallel execution', async () => {
+      const a = makeAgent('a', 'a-reply')
+      const b = makeAgent('b', 'b-reply')
+      const printerA = new AgentPrinter(() => {})
+      const printerB = new AgentPrinter(() => {})
+      ;(a as unknown as { _printer: AgentPrinter })._printer = printerA
+      ;(b as unknown as { _printer: AgentPrinter })._printer = printerB
+
+      // Two sources with no edges between them — both can run concurrently.
+      const graph = new Graph({
+        nodes: [a, b],
+        edges: [],
+      })
+
+      const seenA: unknown[] = []
+      const seenB: unknown[] = []
+      const gen = graph.stream('go')
+      for await (const event of gen) {
+        if (event.type === 'nodeStreamUpdateEvent') {
+          if (event.nodeId === 'a') seenA.push((a as unknown as { _printer: AgentPrinter })._printer)
+          if (event.nodeId === 'b') seenB.push((b as unknown as { _printer: AgentPrinter })._printer)
+        }
+      }
+
+      expect(seenA.some((p) => p !== printerA)).toBe(true)
+      expect(seenB.some((p) => p !== printerB)).toBe(true)
+      expect((a as unknown as { _printer: AgentPrinter })._printer).toBe(printerA)
+      expect((b as unknown as { _printer: AgentPrinter })._printer).toBe(printerB)
+    })
+
+    it('does not interleave output from parallel nodes on a shared writer', async () => {
+      // Fan-out graph (A -> B, A -> C). B and C run in parallel after A completes.
+      // Each emits several TextBlocks so their printer writes are naturally
+      // interleavable; the buffering behavior guarantees each node's writes
+      // land as a contiguous run on the shared writer.
+      const a = makeAgent('a', 'a-reply')
+      const b = new Agent({
+        model: new MockMessageModel().addTurn(['b-1 ', 'b-2 ', 'b-3'].map((text) => new TextBlock(text))),
+        printer: false,
+        id: 'b',
+      })
+      const c = new Agent({
+        model: new MockMessageModel().addTurn(['c-1 ', 'c-2 ', 'c-3'].map((text) => new TextBlock(text))),
+        printer: false,
+        id: 'c',
+      })
+
+      const writes: string[] = []
+      ;(b as unknown as { _printer: AgentPrinter })._printer = new AgentPrinter((text) => writes.push('b:' + text))
+      ;(c as unknown as { _printer: AgentPrinter })._printer = new AgentPrinter((text) => writes.push('c:' + text))
+
+      const graph = new Graph({
+        nodes: [a, b, c],
+        edges: [
+          ['a', 'b'],
+          ['a', 'c'],
+        ],
+      })
+
+      await graph.invoke('go')
+
+      // Each node's writes form one contiguous slice — no other node's writes appear between them.
+      const bIndices = writes.map((w, i) => (w.startsWith('b:') ? i : -1)).filter((i) => i !== -1)
+      const cIndices = writes.map((w, i) => (w.startsWith('c:') ? i : -1)).filter((i) => i !== -1)
+      expect(bIndices.length).toBeGreaterThan(0)
+      expect(cIndices.length).toBeGreaterThan(0)
+      const isContiguous = (indices: number[]): boolean => indices.every((v, i) => i === 0 || v === indices[i - 1]! + 1)
+      expect(isContiguous(bIndices)).toBe(true)
+      expect(isContiguous(cIndices)).toBe(true)
     })
 
     it('cleans up running nodes when consumer breaks mid-stream', async () => {

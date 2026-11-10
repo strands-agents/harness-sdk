@@ -1,0 +1,9 @@
+name: strands-arise
+description: Self-evolving tool synthesis for Strands Agents that enables agents to define, test, and register their own tools at runtime.
+integrationType: agent-extension
+languages:
+  python:
+    package: strands-arise
+github: https://github.com/abekek/strands-arise
+docsUrl: https://arise-ai.dev
+addedDate: 2026-03-29

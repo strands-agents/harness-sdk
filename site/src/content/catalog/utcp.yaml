@@ -1,0 +1,10 @@
+name: utcp
+description: Universal Tool Calling Protocol adapter enabling tool discovery and invocation across HTTP, WebSocket, and other transports without wrapper servers.
+integrationType: tool
+maintainedBy: partner
+languages:
+  python:
+    package: strands-utcp
+github: https://github.com/universal-tool-calling-protocol/python-utcp
+docsPage: docs/integrations/tools/utcp
+addedDate: 2025-10-08

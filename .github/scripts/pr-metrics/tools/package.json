@@ -1,0 +1,9 @@
+{
+  "name": "pr-metrics-tools",
+  "private": true,
+  "description": "Pinned analyzers for the PR complexity labeler. Installed from the base revision so a PR cannot substitute its own analyzer.",
+  "type": "module",
+  "dependencies": {
+    "eslint-plugin-complexijs": "0.1.0"
+  }
+}

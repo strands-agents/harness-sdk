@@ -1,12 +1,20 @@
 """Pytest fixtures for bidirectional streaming integration tests."""
 
 import logging
+import sys
 
 import pytest
 
 from .generators.audio import AudioGenerator
 
 logger = logging.getLogger(__name__)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def require_python_312():
+    """Require the Python version supported by all Bidi integration tests."""
+    if sys.version_info < (3, 12):
+        pytest.skip("Bidi integration tests require Python 3.12+")
 
 
 @pytest.fixture(scope="session")

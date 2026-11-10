@@ -1,0 +1,24 @@
+---
+sdk: harness
+language: python
+version: "0.3.2"
+tag: harness-python/v0.3.2
+date: 2026-10-22
+releaseUrl: https://github.com/strands-agents/harness-sdk/releases/tag/harness-python/v0.3.2
+packageUrl: https://pypi.org/project/strands-harness/0.3.2/
+entries:
+  - { type: fix, breaking: false, scope: harness, areas: [tool], title: "make the file tools work on Windows and run Windows CI for harness-ts, harness-py and strands-cli", pr: 4978, prUrl: "https://github.com/strands-agents/harness-sdk/pull/4978", commit: "4ab2303", commitUrl: "https://github.com/strands-agents/harness-sdk/commit/4ab2303", author: strandly-the-agent }
+  - { type: fix, breaking: false, scope: harness, areas: [model], title: "enable Bedrock Mantle web search for GPT-6.1 Sol", pr: 5188, prUrl: "https://github.com/strands-agents/harness-sdk/pull/5188", commit: "26700e6", commitUrl: "https://github.com/strands-agents/harness-sdk/commit/26700e6", author: Katsuhito04 }
+  - { type: feat, breaking: false, scope: changelog, areas: [community], title: "add harness, CLI, and box release streams", pr: 5192, prUrl: "https://github.com/strands-agents/harness-sdk/pull/5192", commit: "e67dda5", commitUrl: "https://github.com/strands-agents/harness-sdk/commit/e67dda5", author: yonib05 }
+  - { type: docs, breaking: false, scope: changelog, areas: [], title: "backfill harness, CLI, and box releases", pr: 5193, prUrl: "https://github.com/strands-agents/harness-sdk/pull/5193", commit: "8a59681", commitUrl: "https://github.com/strands-agents/harness-sdk/commit/8a59681", author: yonib05 }
+  - { type: docs, breaking: false, scope: designs, areas: [tool], title: "add 0021 cache-friendly tool management", pr: 5161, prUrl: "https://github.com/strands-agents/harness-sdk/pull/5161", commit: "823eabf", commitUrl: "https://github.com/strands-agents/harness-sdk/commit/823eabf", author: JackYPCOnline }
+  - { type: feat, breaking: false, scope: skills, areas: [], title: "add docs-verifier skill", pr: 5268, prUrl: "https://github.com/strands-agents/harness-sdk/pull/5268", commit: "0a99337", commitUrl: "https://github.com/strands-agents/harness-sdk/commit/0a99337", author: lizradway }
+  - { type: fix, breaking: false, scope: harness, areas: [context], title: "inject memory on user turns only, matching the SDK default", pr: 5298, prUrl: "https://github.com/strands-agents/harness-sdk/pull/5298", commit: "2602fb1", commitUrl: "https://github.com/strands-agents/harness-sdk/commit/2602fb1", author: strandly-the-agent }
+  - { type: fix, breaking: false, scope: harness, areas: [model, tool], title: "sniff image bytes in read so a non-image or mislabeled file is not sent as an image", pr: 5311, prUrl: "https://github.com/strands-agents/harness-sdk/pull/5311", commit: "7ce6c7d", commitUrl: "https://github.com/strands-agents/harness-sdk/commit/7ce6c7d", author: strandly-the-agent }
+  - { type: other, breaking: false, scope: null, areas: [community], title: "bump re-actors/alls-green from 1.2.2 to 1.3.0", pr: 3963, prUrl: "https://github.com/strands-agents/harness-sdk/pull/3963", commit: "ee5e568", commitUrl: "https://github.com/strands-agents/harness-sdk/commit/ee5e568", author: "dependabot[bot]" }
+  - { type: other, breaking: false, scope: catalog, areas: [community], title: "apply area-catalog label to PRs touching catalog entries", pr: 5334, prUrl: "https://github.com/strands-agents/harness-sdk/pull/5334", commit: "ee033b9", commitUrl: "https://github.com/strands-agents/harness-sdk/commit/ee033b9", author: yonib05 }
+  - { type: other, breaking: false, scope: null, areas: [community], title: "bump actions/upload-artifact from 7.0.1 to 7.0.2", pr: 5099, prUrl: "https://github.com/strands-agents/harness-sdk/pull/5099", commit: "e9a8d1f", commitUrl: "https://github.com/strands-agents/harness-sdk/commit/e9a8d1f", author: "dependabot[bot]" }
+  - { type: other, breaking: false, scope: null, areas: [community], title: "bump actions/download-artifact from 8.0.1 to 8.0.2", pr: 5097, prUrl: "https://github.com/strands-agents/harness-sdk/pull/5097", commit: "1386ddc", commitUrl: "https://github.com/strands-agents/harness-sdk/commit/1386ddc", author: "dependabot[bot]" }
+  - { type: other, breaking: false, scope: null, areas: [community], title: "bump astral-sh/setup-uv from 10.0.1 to 10.3.0", pr: 5098, prUrl: "https://github.com/strands-agents/harness-sdk/pull/5098", commit: "24f806a", commitUrl: "https://github.com/strands-agents/harness-sdk/commit/24f806a", author: "dependabot[bot]" }
+  - { type: fix, breaking: false, scope: harness, areas: [tool, server], title: "run web_fetch's curl through PowerShell when the sandbox speaks it", pr: 5328, prUrl: "https://github.com/strands-agents/harness-sdk/pull/5328", commit: "cd941fe", commitUrl: "https://github.com/strands-agents/harness-sdk/commit/cd941fe", author: strandly-the-agent }
+---

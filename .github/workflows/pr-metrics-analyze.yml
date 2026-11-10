@@ -1,0 +1,117 @@
+name: PR Metrics (Analyze)
+
+# Computes size and cognitive-complexity metrics for a PR and uploads them as an
+# artifact. A companion workflow (pr-metrics-label.yml) applies the labels.
+#
+# SECURITY: this workflow runs against untrusted PR code, so it holds no
+# permissions and has no access to secrets. It cannot apply a label itself. The
+# split exists because labeling needs a write-scoped token, and a write-scoped
+# token must never be within reach of contributor-controlled code.
+#
+# Analysis tooling is installed from the BASE revision, never the PR's, so a PR
+# cannot substitute its own analyzer. Dependencies install with --ignore-scripts,
+# and the PR's source is only ever parsed, never imported or executed.
+
+on:
+  pull_request:
+    branches: [main]
+
+# Superseded pushes are cancelled so a slow earlier run cannot finish last and
+# label the PR from a stale commit.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  analyze:
+    name: Analyze
+    runs-on: strands-agents_ubuntu-latest_4-core
+    timeout-minutes: 10
+    steps:
+      # The base revision supplies the analysis scripts and pinned tool
+      # versions. PR code is checked out separately, below.
+      - name: Checkout base revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          sparse-checkout: .github/scripts/pr-metrics
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+          path: tooling
+
+      - name: Checkout PR revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          # Needed to compute the merge base against the target branch.
+          fetch-depth: 0
+          persist-credentials: false
+          path: pr
+
+      - name: Setup Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      # A PR branched before this workflow landed has no analyzer in its base
+      # revision. That is not an error: skip analysis rather than failing a
+      # contributor's PR for a tool their branch predates.
+      - name: Check for analysis tooling in base revision
+        id: tooling
+        run: |
+          if [ -d tooling/.github/scripts/pr-metrics/tools ]; then
+            echo 'available=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'available=false' >> "$GITHUB_OUTPUT"
+            echo 'Base revision predates the PR metrics tooling; skipping.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Install analysis tooling
+        if: steps.tooling.outputs.available == 'true'
+        working-directory: tooling/.github/scripts/pr-metrics/tools
+        run: |
+          set -euo pipefail
+          pip install --no-cache-dir -r requirements.txt
+          npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Analyze
+        if: steps.tooling.outputs.available == 'true'
+        working-directory: pr
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          # Resolve analyzers from the base revision's install, not the PR's.
+          PR_METRICS_TOOLS_DIR: ${{ github.workspace }}/tooling/.github/scripts/pr-metrics/tools
+        run: |
+          set -euo pipefail
+          node "$GITHUB_WORKSPACE/tooling/.github/scripts/pr-metrics/run-analysis.mjs" \
+            --base "$BASE_SHA" \
+            --json "$RUNNER_TEMP/pr-metrics.json" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # The label workflow reads this PR number but verifies it against the
+      # triggering run's head SHA before use, so a PR cannot forge another
+      # PR's number here.
+      - name: Record PR number
+        if: steps.tooling.outputs.available == 'true'
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: printf '%s' "$PR_NUMBER" > "$RUNNER_TEMP/pr-number.txt"
+
+      - name: Upload metrics
+        if: steps.tooling.outputs.available == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pr-metrics
+          path: |
+            ${{ runner.temp }}/pr-metrics.json
+            ${{ runner.temp }}/pr-number.txt
+          if-no-files-found: error
+          retention-days: 1

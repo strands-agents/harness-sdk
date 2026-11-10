@@ -1,0 +1,303 @@
+:root {
+  --changelog-danger: #d73a4a;
+  /* Accent for TEXT/links and the green-filled badge. Defaults to the theme
+     accent (passes WCAG AA on the dark background), but in light mode the
+     bright brand green (#00cc5f) only hits 2.1:1 on white — below AA — so we
+     darken it to a compliant green. Decorative accent uses (dots, rails, tints)
+     keep --sl-color-accent since contrast rules don't apply to them. */
+  --cl-accent-text: var(--sl-color-accent);
+  /* Local tokens for values repeated with shared intent (not a full scale —
+     deliberately-distinct sizes/radii are left inline). */
+  --cl-text-meta: 0.75rem;   /* secondary metadata: counts, links, authors, tags */
+  --cl-radius-control: 8px;  /* interactive controls: chips, search, buttons */
+  --cl-radius-pill: 999px;   /* fully-round: dots, tags, badges */
+}
+[data-theme='light'] {
+  --changelog-danger: #b60205;
+  --cl-accent-text: #067a39; /* 5.45:1 on white — WCAG AA */
+}
+
+/* Starlight's splash template wraps our slot in .sl-container (max-width 1080px)
+   and .sl-markdown-content. Both cap the page far short of full width, so opt
+   out here. This stylesheet only loads on /changelog, so the override is scoped
+   to this page in practice. */
+.sl-markdown-content :where(.cl-page) { max-width: none; }
+.content-panel .sl-container { max-width: none; }
+
+.cl-page {
+  max-width: 1600px;
+  margin: 0 auto;
+  padding: 2rem 1.5rem 4rem;
+  font-family: var(--sl-font);
+}
+/* The content panel already pads the page on phones. */
+@media (max-width: 49.9375rem) { .cl-page { padding-inline: 0; } }
+
+.cl-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 1.25rem;
+}
+.cl-title { font-size: clamp(2rem, 4vw, 2.75rem); font-weight: 700; color: var(--sl-color-white); margin: 0; }
+.cl-subtitle { color: var(--sl-color-gray-3); font-size: 1rem; margin: 0.4rem 0 0; }
+.cl-subtitle a { color: var(--cl-accent-text); }
+
+/* Reset Starlight's .sl-markdown-content spacing/typography on our subtree.
+   The page renders inside .sl-markdown-content, which adds top margins to
+   headings/lists and can deform the inline-flex toggle. */
+.cl-page :where(h1, h2, h3, h4, p, div, button, ul, li) { margin-top: 0; }
+.cl-page :where(svg) { margin: 0; }
+
+/* Controls stack: SDK toggle on top, language toggle beneath, right-aligned. */
+.cl-controls { display: flex; flex-direction: column; align-items: flex-end; gap: 0.6rem; }
+.cl-control-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem; }
+.cl-control-label { font-size: 0.75rem; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--sl-color-gray-3); font-weight: 700; min-width: 4.5rem; text-align: right; }
+
+/* SDK segmented toggle */
+.cl-sdk { display: inline-flex; align-items: stretch; flex: 0 0 auto; border: 1px solid var(--sl-color-gray-5); border-radius: 10px; overflow: hidden; }
+.cl-sdk button { display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.5rem 0.95rem;
+  background: transparent; color: var(--sl-color-gray-2); font: inherit; line-height: 1.2; font-size: 0.9rem; font-weight: 600;
+  border: 0; cursor: pointer; white-space: nowrap; }
+.cl-sdk button + button { border-left: 1px solid var(--sl-color-gray-5); }
+.cl-sdk button[aria-pressed='true'] { background: color-mix(in srgb, var(--sl-color-accent) 14%, transparent); color: var(--cl-accent-text); }
+.cl-sdk .cl-langs { display: inline-flex; align-items: center; gap: 0.3rem; opacity: 0.85; }
+.cl-icon { display: inline-block; vertical-align: middle; flex-shrink: 0; }
+
+/* Local language toggle (mirrors the global header switcher) */
+.cl-lang { display: inline-flex; align-items: stretch; flex: 0 0 auto; border: 1px solid var(--sl-color-gray-5); border-radius: var(--cl-radius-control); overflow: hidden; }
+.cl-lang button { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.35rem 0.8rem;
+  background: transparent; color: var(--sl-color-gray-3); font: inherit; line-height: 1.2; font-size: 0.82rem; font-weight: 600;
+  border: 0; cursor: pointer; white-space: nowrap; }
+.cl-lang button + button { border-left: 1px solid var(--sl-color-gray-5); }
+.cl-lang button[aria-pressed='true'] { background: color-mix(in srgb, var(--sl-color-accent) 14%, transparent); color: var(--cl-accent-text); }
+
+/* layout: rail + feed */
+.cl-body { display: flex; border: 1px solid var(--sl-color-hairline); border-radius: 12px; overflow: hidden; }
+.cl-rail { width: 200px; flex-shrink: 0; border-right: 1px solid var(--sl-color-hairline); padding: 1.25rem 0.85rem; }
+.cl-feed { flex: 1; padding: 1.25rem 0; display: flex; justify-content: center; }
+/* Fill the feed column (no narrow reading cap) so the wide layout is actually
+   used; generous right padding keeps titles/area tags off the card border. */
+.cl-feed-inner { width: 100%; max-width: none; padding: 0 3rem; }
+/* The release feed is a semantic list; strip list chrome (markers/indent). */
+.cl-feed-list { list-style: none; margin: 0; padding: 0; }
+.cl-version-item { margin: 0; }
+
+.cl-search { width: 100%; padding: 0.5rem 0.7rem; font-size: 0.9rem; border-radius: var(--cl-radius-control);
+  border: 1px solid var(--sl-color-gray-5); background: var(--sl-color-bg); color: var(--sl-color-white); margin-bottom: 1.1rem; }
+.cl-rail-label { font-size: var(--cl-text-meta); letter-spacing: 0.09em; text-transform: uppercase; color: var(--sl-color-gray-3); font-weight: 700; margin-bottom: 0.55rem; }
+
+/* area chips (semantic list) */
+.cl-areas { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.1rem; }
+.cl-area-item { margin: 0; display: flex; }
+.cl-area { display: flex; align-items: center; gap: 0.5rem; width: 100%; box-sizing: border-box;
+  font-size: 0.8rem; line-height: 1.2; padding: 0.28rem 0.5rem; border-radius: var(--cl-radius-control); border: 1px solid transparent;
+  color: var(--sl-color-gray-2); background: transparent; cursor: pointer; text-align: left; }
+.cl-area:hover { background: color-mix(in srgb, var(--sl-color-gray-5) 40%, transparent); }
+.cl-area .cl-count { margin-left: auto; color: var(--sl-color-gray-3); font-size: var(--cl-text-meta); font-variant-numeric: tabular-nums; }
+.cl-area[aria-pressed='true'] { border-color: var(--cl-accent-text); color: var(--cl-accent-text);
+  background: color-mix(in srgb, var(--sl-color-accent) 8%, transparent); }
+
+/* version block + timeline */
+.cl-version { display: flex; gap: 1.1rem;
+  /* Perf: skip layout/paint for off-screen versions; the intrinsic-size hint
+     keeps the scrollbar stable. DOM stays complete, so filtering, anchors,
+     and find-in-page all keep working. */
+  content-visibility: auto; contain-intrinsic-size: auto 600px;
+  /* Anchored version lands clear of the site header. */
+  scroll-margin-top: 5.5rem; }
+/* Fixed width (not min-width): the "Latest" badge must not widen this column,
+   or the rail dot/line jogs right and the scroll line looks discontinuous
+   between the latest release and the rest. The badge wraps below the number. */
+.cl-version-meta { width: 104px; flex-shrink: 0; text-align: right; }
+.cl-version-num { color: var(--sl-color-white); font-weight: 700; font-size: 1.3rem; margin: 0;
+  position: relative; display: flex; align-items: center; justify-content: flex-end; gap: 0.3rem; flex-wrap: wrap; }
+/* "Latest" badge — marks the newest release of the active stream. */
+.cl-latest { font-size: 0.75rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+  padding: 0.1rem 0.4rem; border-radius: var(--cl-radius-pill);
+  /* Fixed dark green in both themes: the dark-mode accent (#00cc60) gives
+     white text only 2.14:1. #067a39 clears AA (5.45:1) against white. */
+  background: #067a39; color: #fff; }
+/* The version number links to its per-release page on the combined index;
+   inherits the heading color, accent + underline on hover. On the detail page
+   it's plain text (.cl-version-numtext). */
+.cl-version-link { color: inherit; text-decoration: none; }
+.cl-version-link:hover, .cl-version-link:focus-visible { color: var(--cl-accent-text); text-decoration: underline; text-underline-offset: 3px; }
+.cl-version-date { color: var(--sl-color-gray-3); font-size: 0.8rem; margin-top: 2px; }
+.cl-version-links { display: flex; flex-direction: column; gap: 0.25rem; margin-top: 0.5rem; align-items: flex-end; }
+.cl-version-links a { display: inline-flex; align-items: center; gap: 0.25rem; font-size: 0.75rem; color: var(--sl-color-gray-3); text-decoration: none; }
+.cl-version-links a:hover { color: var(--cl-accent-text); }
+.cl-rail-line { display: flex; flex-direction: column; align-items: center; padding-top: 0.3rem; }
+/* Scroll-spy rail: the version currently in view (.cl-current, set by an
+   IntersectionObserver) lights up green; everything else stays muted. */
+.cl-dot { width: 9px; height: 9px; border-radius: var(--cl-radius-pill); background: var(--sl-color-gray-4);
+  border: 2px solid var(--sl-color-bg); transition: background 0.25s ease, box-shadow 0.25s ease; }
+.cl-version.cl-current .cl-dot { background: var(--sl-color-accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--sl-color-accent) 40%, transparent); }
+.cl-line { flex: 1; width: 2px; background: var(--sl-color-hairline); transition: background 0.25s ease; }
+.cl-version.cl-current .cl-line { background: color-mix(in srgb, var(--sl-color-accent) 35%, transparent); }
+.cl-version-body { flex: 1; padding-bottom: 2.5rem; }
+
+.cl-highlights { background: color-mix(in srgb, var(--sl-color-accent) 7%, transparent);
+  border: 1px solid color-mix(in srgb, var(--sl-color-accent) 22%, transparent); border-radius: 9px;
+  padding: 0.75rem 1rem; margin: 0.5rem 0 0.85rem; }
+.cl-highlights .cl-rail-label { color: var(--cl-accent-text); margin: 0; }
+.cl-highlights p { margin: 0.35rem 0 0; font-size: 1rem; line-height: 1.55; color: var(--sl-color-gray-1); }
+.cl-highlights code { font-size: 0.85em; }
+
+/* Optional curated markdown body (longer-form notes) below the entry groups. */
+.cl-version-notes { font-size: 0.95rem; color: var(--sl-color-gray-1); }
+.cl-version-notes:not(:empty) { margin-top: 1rem; }
+.cl-version-notes :where(h1, h2, h3, h4) { font-size: 1rem; margin: 1rem 0 0.4rem; color: var(--sl-color-white); }
+.cl-version-notes :where(p, ul, ol) { margin: 0.4rem 0; }
+/* Links inside running prose are underlined so they're distinguishable by more
+   than color (WCAG link-in-text-block). */
+.cl-version-notes a { color: var(--cl-accent-text); text-decoration: underline; text-underline-offset: 2px; }
+.cl-version-notes code { font-size: 0.85em; }
+
+.cl-group { font-size: 1rem; font-weight: 700; letter-spacing: 0.02em; color: var(--sl-color-white);
+  margin: 1.4rem 0 0.5rem; display: flex; align-items: center; gap: 0.5rem; }
+.cl-version-body > .cl-group:first-child { margin-top: 0.4rem; }
+.cl-group .cl-n { color: var(--sl-color-gray-3); font-weight: 600; font-size: 0.8rem; }
+.cl-group.fixes { color: var(--sl-color-gray-1); border-top: 1px solid var(--sl-color-gray-5); padding-top: 1.1rem; }
+
+/* Each group's entries are a semantic list; strip list chrome. */
+.cl-entries { list-style: none; margin: 0; padding: 0; }
+.cl-entry { font-size: 0.95rem; color: var(--sl-color-gray-1); padding: 0.45rem 0; display: flex; gap: 0.5rem; align-items: baseline; flex-wrap: wrap; }
+/* Entry separators: gray-5 is theme-aware (#333 dark / #d0d7de light), clearly
+   visible in dark mode where the hairline token all but disappears. */
+.cl-entry + .cl-entry { border-top: 1px solid var(--sl-color-gray-5); }
+/* min() guard: a hard 140px floor can overflow the narrow mobile drawer/feed. */
+.cl-entry-title { flex: 1; min-width: min(140px, 100%); }
+.cl-entry a { color: var(--cl-accent-text); text-decoration: none; }
+/* Linked titles keep body color (a page of accent-colored titles is unreadable);
+   hover reveals the affordance. */
+a.cl-entry-title { color: var(--sl-color-gray-1); }
+a.cl-entry-title:hover { color: var(--cl-accent-text); text-decoration: underline; text-underline-offset: 3px; }
+.cl-atag { font-size: var(--cl-text-meta); padding: 0.1rem 0.5rem; border-radius: var(--cl-radius-pill); border: 1px solid var(--sl-color-gray-5); color: var(--sl-color-gray-3); white-space: nowrap; }
+.cl-break { font-size: 0.75rem; font-weight: 700; color: var(--changelog-danger);
+  border: 1px solid color-mix(in srgb, var(--changelog-danger) 45%, transparent); border-radius: 4px;
+  padding: 0 0.25rem; text-transform: uppercase; letter-spacing: 0.03em; }
+
+/* collapsed overflow sections (long releases, chores/docs/tests) */
+.cl-more { margin: 0.2rem 0 0.4rem; }
+.cl-more > summary { cursor: pointer; font-size: 0.8rem; color: var(--sl-color-gray-3); padding: 0.3rem 0; list-style-position: inside; }
+.cl-more > summary:hover { color: var(--cl-accent-text); }
+.cl-more.cl-other { border-top: 1px solid var(--sl-color-gray-5); padding-top: 0.5rem; margin-top: 0.9rem; }
+
+/* fallback when a release has no parsed entries (e.g. upstream notes omitted) */
+.cl-no-entries { color: var(--sl-color-gray-3); font-size: 0.9rem; margin: 0.5rem 0; }
+.cl-no-entries a { color: var(--cl-accent-text); text-decoration: underline; text-underline-offset: 2px; }
+
+/* first-time contributor celebration (sits right under highlights) */
+.cl-new-contributors { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;
+  margin: 0.5rem 0 0.75rem; padding: 0.5rem 0.75rem; border-radius: 9px; line-height: 1;
+  background: color-mix(in srgb, var(--sl-color-accent) 5%, transparent);
+  border: 1px dashed color-mix(in srgb, var(--sl-color-accent) 30%, transparent); }
+.cl-nc-label { font-size: 0.78rem; font-weight: 700; color: var(--sl-color-gray-2); white-space: nowrap; line-height: 1.4; }
+.cl-nc-list { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+.cl-nc { display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.82rem; line-height: 1.4;
+  color: var(--sl-color-gray-2); text-decoration: none; }
+.cl-nc:hover { color: var(--cl-accent-text); }
+.cl-nc img { display: block; border-radius: var(--cl-radius-pill); flex-shrink: 0; }
+
+/* per-release detail page: narrower reading column, no timeline rail (a single
+   release has nothing to scroll-spy), meta reads left-aligned above the body. */
+.cl-detail { max-width: 880px; }
+.cl-detail .cl-version { flex-direction: column; gap: 0.5rem; }
+.cl-detail .cl-version-meta { width: auto; text-align: left; }
+.cl-detail .cl-version-num { justify-content: flex-start; }
+.cl-detail .cl-version-links { align-items: flex-start; }
+.cl-detail .cl-rail-line { display: none; }
+.cl-back { display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.85rem;
+  color: var(--sl-color-gray-3); text-decoration: none; margin-bottom: 1.25rem; }
+.cl-back:hover { color: var(--cl-accent-text); }
+/* prev/next within the same stream */
+.cl-pager { display: flex; justify-content: space-between; gap: 1rem; margin-top: 2rem;
+  padding-top: 1.5rem; border-top: 1px solid var(--sl-color-gray-5); }
+.cl-pager-link { display: inline-flex; flex-direction: column; gap: 0.15rem; text-decoration: none;
+  padding: 0.6rem 0.9rem; border-radius: var(--cl-radius-control); border: 1px solid var(--sl-color-gray-5); }
+.cl-pager-next { text-align: right; }
+.cl-pager-link:hover { border-color: var(--cl-accent-text); }
+.cl-pager-dir { font-size: 0.75rem; color: var(--sl-color-gray-3); text-transform: uppercase; letter-spacing: 0.05em; }
+.cl-pager-ver { font-size: 0.95rem; font-weight: 600; color: var(--sl-color-white); }
+
+/* visually-hidden live region announcing filter result changes to AT */
+.cl-sr-status { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+
+/* empty state (e.g. evals + typescript) */
+.cl-empty { color: var(--sl-color-gray-3); font-size: 0.85rem; padding: 2rem 0; text-align: center; }
+.cl-note { color: var(--sl-color-gray-3); font-size: var(--cl-text-meta); margin-bottom: 1rem; }
+
+/* mobile drawer */
+.cl-filter-btn, .cl-mobile-bar, .cl-rail-close { display: none; }
+@media (max-width: 800px) {
+  .cl-body { display: block; }
+  .cl-rail {
+    /* Start below the sticky site header so the search bar isn't hidden by it. */
+    position: fixed; top: var(--sl-nav-height, 3.5rem); left: 0; bottom: 0; width: 260px; z-index: 60; margin: 0;
+    background: var(--sl-color-bg-nav); border-right: 1px solid var(--sl-color-hairline);
+    transform: translateX(-100%); visibility: hidden; transition: transform 0.2s ease, visibility 0s 0.2s; overflow: auto;
+  }
+  .cl-rail[data-open] { transform: translateX(0); visibility: visible; transition: transform 0.2s ease; }
+  .cl-rail-close { display: block; margin: -0.5rem -0.35rem 0.5rem auto; min-height: 2.75rem; padding: 0 0.75rem;
+    font-size: 0.9rem; font-weight: 600; color: var(--cl-accent-text); background: transparent; border: 0; cursor: pointer; }
+  /* Below 16px iOS zooms the page on focus. */
+  .cl-search { font-size: 1rem; }
+  .cl-scrim { display: none; position: fixed; inset: var(--sl-nav-height, 3.5rem) 0 0 0; background: rgba(0,0,0,0.5); z-index: 55; }
+  .cl-scrim[data-open] { display: block; }
+  html[data-header-hidden] :is(.cl-rail, .cl-scrim) { top: 0; }
+  .cl-mobile-bar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem; }
+  .cl-filter-btn { display: inline-flex; align-items: center; gap: 0.4rem; font-size: var(--cl-text-meta);
+    padding: 0.4rem 0.7rem; border-radius: var(--cl-radius-control); border: 1px solid var(--sl-color-gray-5);
+    color: var(--sl-color-white); background: transparent; cursor: pointer; }
+  .cl-filter-btn .cl-badge { background: var(--sl-color-accent); color: var(--sl-color-text-invert);
+    font-weight: 700; border-radius: var(--cl-radius-pill); font-size: 0.75rem; padding: 0 0.3rem; }
+  /* Keep entry text off the card border so it doesn't look cramped. */
+  .cl-feed-inner { padding: 0 1.1rem; }
+  /* Stack title over controls so the SDK/language toggles don't run off the
+     right edge on narrow screens. */
+  .cl-head { flex-direction: column; align-items: stretch; }
+  .cl-controls { align-items: flex-start; }
+  .cl-control-label { min-width: 0; text-align: left; }
+  /* Stack the version block: the right-aligned meta column starves entry titles
+     into one-word-per-line wraps on narrow screens. Single column gives titles
+     the full width; meta reads left-aligned above the body. */
+  .cl-version { flex-direction: column; gap: 0.5rem; contain-intrinsic-size: auto 1000px; }
+  .cl-version-meta { width: auto; text-align: left; }
+  .cl-version-num { justify-content: flex-start; }
+  .cl-version-links { align-items: flex-start; }
+  .cl-rail-line { display: none; }
+}
+
+/* witty "Evals isn't on TypeScript yet" panel */
+.cl-novel { text-align: center; max-width: 30rem; margin: 3rem auto; padding: 2rem 1.5rem; }
+.cl-novel-emoji { font-size: 2.75rem; line-height: 1; margin-bottom: 0.75rem; }
+.cl-novel-title { font-size: clamp(1.25rem, 3vw, 1.6rem); font-weight: 700; color: var(--sl-color-white); margin: 0 0 0.75rem; }
+.cl-novel-body { color: var(--sl-color-gray-2); font-size: 0.95rem; line-height: 1.55; margin: 0 0 0.75rem; }
+.cl-novel-body code { font-size: 0.85em; }
+.cl-novel-actions { display: flex; flex-direction: column; align-items: center; gap: 0.6rem; margin-top: 1.25rem; }
+.cl-novel-btn { display: inline-block; padding: 0.5rem 1.1rem; border-radius: var(--cl-radius-control); font-size: 0.85rem; font-weight: 600;
+  background: var(--sl-color-accent); color: var(--sl-color-text-invert); text-decoration: none;
+  border: 1px solid var(--sl-color-accent); }
+.cl-novel-btn:hover { background: color-mix(in srgb, var(--sl-color-accent) 85%, black); }
+.cl-novel-link { background: transparent; border: 0; color: var(--sl-color-gray-3); font: inherit; font-size: 0.8rem; cursor: pointer; text-decoration: underline; }
+.cl-novel-link:hover { color: var(--cl-accent-text); }
+
+/* Hidden by filtering. Each selector is class+[hidden] (specificity 0,2,0),
+   which outranks the plain-class display rules (e.g. .cl-area { display:flex }
+   at 0,1,0) — so no !important is needed. .cl-area-item / .cl-version-item
+   also carry their own display, hence listed here too. */
+.cl-version[hidden], .cl-version-item[hidden], .cl-entry[hidden], .cl-group[hidden],
+.cl-area[hidden], .cl-area-item[hidden], .cl-empty[hidden], .cl-novel[hidden],
+.cl-badge[hidden], .cl-more[hidden], .cl-lang button[hidden], .cl-control-row[hidden] { display: none; }
+
+/* Respect reduced-motion: drop the cosmetic transitions (rail color, drawer
+   slide). Functional state changes still apply instantly. */
+@media (prefers-reduced-motion: reduce) {
+  .cl-dot, .cl-line, .cl-rail { transition: none; }
+}

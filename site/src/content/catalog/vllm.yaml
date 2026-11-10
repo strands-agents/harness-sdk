@@ -1,0 +1,9 @@
+name: vllm
+description: vLLM open-source inference server as a Strands Agents model provider with Token-In/Token-Out capture for RL training.
+integrationType: model-provider
+languages:
+  python:
+    package: strands-vllm
+github: https://github.com/agents-community/strands-vllm
+docsPage: docs/integrations/model-providers/vllm
+addedDate: 2026-01-23

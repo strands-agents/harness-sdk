@@ -1,27 +1,20 @@
 """Storage backends for offloaded tool result content.
 
-This module defines the Storage protocol and provides three built-in
-implementations: file-based, in-memory, and S3 storage. Each content block
-from a tool result is stored individually with its content type preserved.
+.. deprecated::
+    The storage classes in this module (``InMemoryStorage``, ``FileStorage``,
+    ``S3Storage``) are deprecated. Use the unified storage backends from
+    :mod:`strands.storage` instead::
+
+        from strands.storage import InMemoryStorage, LocalFileStorage, S3Storage
 
 Example:
     ```python
-    from strands.vended_plugins.context_offloader import (
-        FileStorage,
-        InMemoryStorage,
-        S3Storage,
-    )
+    from strands.storage import InMemoryStorage, LocalFileStorage, S3Storage
 
-    # File-based storage
-    storage = FileStorage(artifact_dir="./artifacts")
-    ref = storage.store("tool_123_0", b"large output content...", "text/plain")
-    content, content_type = storage.retrieve(ref)
-
-    # In-memory storage (useful for testing and serverless)
+    # Unified storage backends
+    storage = LocalFileStorage("./artifacts")
     storage = InMemoryStorage()
-
-    # S3 storage
-    storage = S3Storage(bucket="my-bucket", prefix="artifacts/")
+    storage = S3Storage("my-bucket", prefix="artifacts/")
     ```
 """
 
@@ -63,6 +56,9 @@ def _sanitize_id(raw_id: str) -> str:
 @runtime_checkable
 class Storage(Protocol):
     """Backend for storing and retrieving offloaded content blocks.
+
+    .. deprecated::
+        Use :class:`strands.storage.Storage` instead.
 
     Each content block from a tool result is stored individually with its
     content type preserved. The SDK ships three built-in implementations:
@@ -107,6 +103,9 @@ class Storage(Protocol):
 
 class FileStorage:
     """Store offloaded content as files, on the host filesystem or through a sandbox.
+
+    .. deprecated::
+        Use :class:`strands.storage.LocalFileStorage` instead.
 
     Files are written to the configured artifact directory with unique names.
     File extensions are derived from the content type. A ``.metadata.json``
@@ -172,12 +171,43 @@ class FileStorage:
         """Join a filename onto the artifact dir, preserving its string form."""
         return f"{str(self._artifact_dir).rstrip('/')}/{filename}"
 
-    async def store(self, key: str, content: bytes, content_type: str = "text/plain") -> str:
-        """Store content as a file and return the path as reference.
+    def _resolve_reference(self, reference: str) -> str:
+        """Normalize a reference to a known filename in ``_content_types``.
 
-        The returned path preserves the form of ``artifact_dir`` passed to
-        the constructor: a relative ``artifact_dir`` yields a relative
-        reference, an absolute one yields an absolute reference.
+        Accepts full paths, bare filenames (with extension), and filename
+        stems (without extension). Validates against path traversal.
+
+        Args:
+            reference: Full path, bare filename, or filename stem.
+
+        Returns:
+            The resolved filename (basename with extension).
+
+        Raises:
+            KeyError: If the reference cannot be resolved or fails validation.
+        """
+        if ".." in reference:
+            raise KeyError(f"Reference not found: {reference}")
+
+        ref_path = Path(reference)
+        if len(ref_path.parts) > 1:
+            if ref_path.parent.resolve() != self._artifact_dir.resolve():
+                raise KeyError(f"Reference not found: {reference}")
+            candidate = ref_path.name
+        else:
+            candidate = reference
+
+        if candidate in self._content_types:
+            return candidate
+
+        matches = [key for key in self._content_types if Path(key).stem == candidate]
+        if len(matches) == 1:
+            return matches[0]
+
+        raise KeyError(f"Reference not found: {reference}")
+
+    async def store(self, key: str, content: bytes, content_type: str = "text/plain") -> str:
+        """Store content as a file and return a portable filename as reference.
 
         Args:
             key: A unique key for this content block.
@@ -185,7 +215,7 @@ class FileStorage:
             content_type: MIME type of the content.
 
         Returns:
-            The file path (e.g., ``./artifacts/1234_1_key.txt``).
+            The bare filename (e.g., ``1234_1_key.txt``).
         """
         sanitized_key = _sanitize_id(key)
         timestamp_ms = int(time.time() * 1000)
@@ -201,7 +231,7 @@ class FileStorage:
             await self._sandbox.write_text(self._artifact_path(self._METADATA_FILE), json.dumps(self._content_types))
             file_path = self._artifact_path(filename)
             await self._sandbox.write_file(file_path, content)
-            return file_path
+            return filename
 
         self._artifact_dir.mkdir(parents=True, exist_ok=True)
         with self._lock:
@@ -212,16 +242,41 @@ class FileStorage:
 
         host_path = self._artifact_dir / filename
         host_path.write_bytes(content)
-        return str(host_path)
+        return filename
+
+    def _resolve_from_path(self, reference: str) -> str:
+        """Validate a reference as a path within the artifact directory.
+
+        Used as a fallback when ``_resolve_reference`` fails (metadata
+        missing or corrupt). Only accepts full paths or bare filenames —
+        stem matching requires metadata.
+
+        Args:
+            reference: A full path or bare filename.
+
+        Returns:
+            The validated filename (basename).
+
+        Raises:
+            KeyError: If the path is outside the artifact directory.
+        """
+        if ".." in reference:
+            raise KeyError(f"Reference not found: {reference}")
+        ref_path = Path(reference)
+        if len(ref_path.parts) > 1:
+            if ref_path.parent.resolve() != self._artifact_dir.resolve():
+                raise KeyError(f"Reference not found: {reference}")
+            return ref_path.name
+        return reference
 
     async def retrieve(self, reference: str) -> tuple[bytes, str]:
         """Retrieve content from a stored file.
 
-        Accepts both full paths (as returned by ``store()``) and bare
-        filenames for backward compatibility.
+        Accepts bare filenames (as returned by ``store()``), full paths
+        (for older references), and filename stems for backward compatibility.
 
         Args:
-            reference: The file path or filename returned by store().
+            reference: The file path, filename, or stem returned by store().
 
         Returns:
             A tuple of (content bytes, content type).
@@ -231,26 +286,25 @@ class FileStorage:
         """
         if self._sandbox is not None:
             await self._ensure_sandbox_metadata()
-            prefix = f"{str(self._artifact_dir).rstrip('/')}/"
-            if not reference.startswith(prefix) or ".." in reference:
-                raise KeyError(f"Reference not found: {reference}")
-            filename = reference.split("/")[-1]
             try:
-                content = await self._sandbox.read_file(reference)
-            except Exception as e:
-                raise KeyError(f"Reference not found: {reference}") from e
+                filename = self._resolve_reference(reference)
+            except KeyError:
+                filename = self._resolve_from_path(reference)
+            full_path = self._artifact_path(filename)
+            try:
+                content = await self._sandbox.read_file(full_path)
+            except Exception as exc:
+                raise KeyError(f"Reference not found: {reference}") from exc
             return content, self._content_types.get(filename, "application/octet-stream")
 
-        resolved_dir = self._artifact_dir.resolve()
-        ref_path = Path(reference)
-        file_path = ref_path.resolve() if len(ref_path.parts) > 1 else (self._artifact_dir / reference).resolve()
-        if not file_path.is_relative_to(resolved_dir):
-            file_path = (self._artifact_dir / reference).resolve()
-        if not file_path.is_relative_to(resolved_dir):
+        try:
+            filename = self._resolve_reference(reference)
+        except KeyError:
+            filename = self._resolve_from_path(reference)
+
+        file_path = (self._artifact_dir / filename).resolve()
+        if not file_path.is_relative_to(self._artifact_dir.resolve()) or not file_path.is_file():
             raise KeyError(f"Reference not found: {reference}")
-        if not file_path.is_file():
-            raise KeyError(f"Reference not found: {reference}")
-        filename = file_path.name
         content_type = self._content_types.get(filename, "application/octet-stream")
         return file_path.read_bytes(), content_type
 
@@ -286,6 +340,9 @@ class FileStorage:
 
 class InMemoryStorage:
     """Store offloaded content in memory.
+
+    .. deprecated::
+        Use :class:`strands.storage.InMemoryStorage` instead.
 
     Useful for testing and serverless environments where disk access
     is not available or not desired. Thread-safe.
@@ -421,6 +478,9 @@ class InMemoryStorage:
 class S3Storage:
     """Store offloaded content in Amazon S3.
 
+    .. deprecated::
+        Use :class:`strands.storage.S3Storage` instead.
+
     Objects are stored with unique keys under the configured prefix.
     Content type is preserved as S3 object metadata.
 
@@ -514,7 +574,10 @@ class S3Storage:
         """Retrieve content from an S3 object.
 
         Accepts both ``s3://`` URIs (as returned by ``store()``) and raw
-        S3 keys for backward compatibility.
+        S3 keys for backward compatibility. References are constrained to the
+        configured ``bucket`` and ``prefix``: a reference that resolves to a key
+        outside the prefix (or to a different bucket) is rejected, mirroring the
+        scope that ``store()`` enforces.
 
         Args:
             reference: The S3 URI or object key returned by store().
@@ -523,7 +586,8 @@ class S3Storage:
             A tuple of (content bytes, content type).
 
         Raises:
-            KeyError: If the object does not exist.
+            KeyError: If the object does not exist or the reference resolves
+                outside the configured bucket and prefix.
         """
         s3_key = reference
         if reference.startswith("s3://"):
@@ -531,6 +595,8 @@ class S3Storage:
             if not reference.startswith(expected_prefix):
                 raise KeyError(f"Reference not found: {reference}")
             s3_key = reference[len(expected_prefix) :]
+        if self._prefix and not s3_key.startswith(self._prefix):
+            raise KeyError(f"Reference not found: {reference}")
         try:
             response = self._client.get_object(Bucket=self._bucket, Key=s3_key)
             content: bytes = response["Body"].read()

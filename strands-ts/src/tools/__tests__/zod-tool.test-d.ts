@@ -103,7 +103,7 @@ describe('zod-tool type tests', () => {
       expectTypeOf(asyncComplexTool.invoke).returns.resolves.toEqualTypeOf<{
         id: string
         timestamp: number
-        metadata: { processed: true }
+        metadata: { processed: boolean }
       }>()
     })
   })
@@ -152,7 +152,7 @@ describe('zod-tool type tests', () => {
 
       expectTypeOf(generatorObjectTool.invoke).returns.resolves.toEqualTypeOf<{
         processed: number
-        success: true
+        success: boolean
       }>()
     })
   })
@@ -294,6 +294,28 @@ describe('zod-tool type tests', () => {
       })
 
       expectTypeOf(customTool.invoke).returns.resolves.toEqualTypeOf<CustomResult>()
+    })
+
+    it('should accept interface return types without index signatures', () => {
+      interface Product {
+        id: string
+        name: string
+        price: number
+      }
+
+      const catalogTool = tool({
+        name: 'catalogTool',
+        inputSchema: z.object({ category: z.string() }),
+        callback: (): { products: Product[]; totalProducts: number } => ({
+          products: [],
+          totalProducts: 0,
+        }),
+      })
+
+      expectTypeOf(catalogTool.invoke).returns.resolves.toEqualTypeOf<{
+        products: Product[]
+        totalProducts: number
+      }>()
     })
   })
 })

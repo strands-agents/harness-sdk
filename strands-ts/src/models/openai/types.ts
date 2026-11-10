@@ -5,7 +5,7 @@
 import type OpenAI from 'openai'
 import type { ApiKeySetter } from 'openai/client'
 import type { ClientOptions } from 'openai'
-import type { BaseModelConfig } from '../model.js'
+import type { BaseModelConfig, CacheConfig } from '../model.js'
 import type { BedrockMantleConfig } from './mantle.js'
 
 /**
@@ -52,6 +52,17 @@ interface OpenAIBaseConfig extends BaseModelConfig {
    * - Responses API: `model`, `input`, `stream`, `store`
    */
   params?: Record<string, unknown>
+
+  /**
+   * Prompt-caching configuration. On the Responses API, models whose `modelInfo` says they take cache
+   * points (GPT-5.6 and later) cache durable conversation prefixes before temporary context;
+   * `messagesTTL: false` disables that placement. There, a `'30m'`/`'12h'` `messagesTTL` sets each
+   * checkpoint's `ttl` and such a `ttl` sets `prompt_cache_options.ttl`. Older models and Chat
+   * Completions use implicit caching. `cacheKey` maps to `prompt_cache_key`, and retention
+   * literals map to `prompt_cache_retention`. Native caching fields in `params` take precedence.
+   * Checkpoints do not remove injected content retained by stateful server-side conversations.
+   */
+  cacheConfig?: CacheConfig
 }
 
 /**

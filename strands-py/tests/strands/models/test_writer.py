@@ -2,10 +2,14 @@ import logging
 import unittest.mock
 from typing import Any
 
+import pydantic
 import pytest
+import writerai
 
 import strands
+from strands.models.model import CacheConfig
 from strands.models.writer import WriterModel
+from strands.types.exceptions import ContextWindowOverflowException, ModelThrottledException
 
 
 @pytest.fixture
@@ -49,6 +53,14 @@ def messages():
 @pytest.fixture
 def system_prompt():
     return "System prompt"
+
+
+@pytest.fixture
+def test_output_model_cls():
+    class TestOutputModel(pydantic.BaseModel):
+        name: str
+
+    return TestOutputModel
 
 
 def test__init__(writer_client_cls, model_id, stream_options, client_args):
@@ -252,6 +264,46 @@ def test_format_request_with_tool_results(model, model_id, stream_options):
     assert request == exp_request
 
 
+@pytest.mark.parametrize("text_position", [None, "before", "after"])
+def test_format_request_messages_orders_tool_results_before_injected_text(model, text_position):
+    messages = [
+        {"role": "user", "content": [{"text": "What is 2+2?"}]},
+        {
+            "role": "assistant",
+            "content": [{"toolUse": {"toolUseId": "c1", "name": "calculator", "input": {"expression": "2+2"}}}],
+        },
+        {
+            "role": "user",
+            "content": [
+                *([{"text": "Injected context"}] if text_position == "before" else []),
+                {"toolResult": {"toolUseId": "c1", "status": "success", "content": [{"text": "4"}]}},
+                *([{"text": "Injected context"}] if text_position == "after" else []),
+            ],
+        },
+    ]
+
+    tru_messages = model._format_request_messages(messages)
+    exp_messages = [
+        {"role": "user", "content": [{"text": "What is 2+2?", "type": "text"}]},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "function": {"arguments": '{"expression": "2+2"}', "name": "calculator"},
+                    "id": "c1",
+                    "type": "function",
+                }
+            ],
+        },
+        {"role": "tool", "content": [{"text": "4", "type": "text"}], "tool_call_id": "c1"},
+    ]
+    if text_position:
+        exp_messages.append({"role": "user", "content": [{"text": "Injected context", "type": "text"}]})
+
+    assert tru_messages == exp_messages
+
+
 def test_format_request_with_image(model, model_id, stream_options):
     messages = [
         {
@@ -417,6 +469,34 @@ async def test_stream_empty(writer_client, model, model_id):
     writer_client.chat.chat.assert_called_once_with(**expected_request)
 
 
+@pytest.mark.parametrize(
+    ("finish_reason", "stop_reason"),
+    [
+        ("stop", "end_turn"),
+        ("tool_calls", "tool_use"),
+        ("length", "max_tokens"),
+        ("content_filter", "content_filtered"),
+    ],
+)
+def test_format_chunk_message_stop(model, finish_reason, stop_reason):
+    chunk = model.format_chunk({"chunk_type": "message_stop", "data": finish_reason})
+
+    assert chunk == {"messageStop": {"stopReason": stop_reason}}
+
+
+@pytest.mark.asyncio
+async def test_stream_content_filter(writer_client, model, alist):
+    mock_delta = unittest.mock.Mock(content="partial", tool_calls=None)
+    mock_event_1 = unittest.mock.Mock(choices=[unittest.mock.Mock(finish_reason="content_filter", delta=mock_delta)])
+    mock_event_2 = unittest.mock.Mock(usage=unittest.mock.Mock(prompt_tokens=1, completion_tokens=1, total_tokens=2))
+
+    writer_client.chat.chat.return_value = mock_streaming_response([mock_event_1, mock_event_2])
+
+    events = await alist(model.stream([{"role": "user", "content": [{"text": "hi"}]}], None, None))
+
+    assert {"messageStop": {"stopReason": "content_filtered"}} in events
+
+
 @pytest.mark.asyncio
 async def test_stream_with_empty_choices(writer_client, model, model_id, captured_warnings):
     mock_delta = unittest.mock.Mock(content="content", tool_calls=None)
@@ -566,3 +646,135 @@ def test_format_request_filters_location_source_document(model, caplog):
     assert len(user_content) == 1
     assert user_content[0]["type"] == "text"
     assert "Location sources are not supported by Writer" in caplog.text
+
+
+@pytest.mark.parametrize(
+    "overflow_message",
+    [
+        "This model's maximum context length is 32768 tokens",
+        "prompt is too long",
+        "too many tokens in request",
+    ],
+)
+@pytest.mark.asyncio
+async def test_stream_context_overflow_error(overflow_message, writer_client, model, alist):
+    error = writerai.BadRequestError(overflow_message, response=unittest.mock.Mock(), body=None)
+    writer_client.chat.chat = unittest.mock.AsyncMock(side_effect=error)
+
+    messages = [{"role": "user", "content": [{"text": "test"}]}]
+    with pytest.raises(ContextWindowOverflowException) as exc_info:
+        await alist(model.stream(messages))
+
+    assert overflow_message in str(exc_info.value)
+    assert exc_info.value.__cause__ == error
+
+
+@pytest.mark.asyncio
+async def test_stream_non_overflow_bad_request_propagates(writer_client, model, alist):
+    error = writerai.BadRequestError("invalid 'model' parameter", response=unittest.mock.Mock(), body=None)
+    writer_client.chat.chat = unittest.mock.AsyncMock(side_effect=error)
+
+    messages = [{"role": "user", "content": [{"text": "test"}]}]
+    with pytest.raises(writerai.BadRequestError, match="invalid 'model' parameter"):
+        await alist(model.stream(messages))
+
+
+@pytest.mark.asyncio
+async def test_stream_rate_limit_as_throttle(writer_client, model, alist):
+    error = writerai.RateLimitError("Rate limit exceeded", response=unittest.mock.Mock(), body=None)
+    writer_client.chat.chat = unittest.mock.AsyncMock(side_effect=error)
+
+    messages = [{"role": "user", "content": [{"text": "test"}]}]
+    with pytest.raises(ModelThrottledException, match="Rate limit exceeded") as exc_info:
+        await alist(model.stream(messages))
+
+    assert exc_info.value.__cause__ == error
+
+
+@pytest.mark.asyncio
+async def test_structured_output_context_overflow_error(writer_client, model, test_output_model_cls, alist):
+    error = writerai.BadRequestError(
+        "This model's maximum context length is 32768 tokens", response=unittest.mock.Mock(), body=None
+    )
+    writer_client.chat.chat = unittest.mock.AsyncMock(side_effect=error)
+
+    messages = [{"role": "user", "content": [{"text": "test"}]}]
+    with pytest.raises(ContextWindowOverflowException) as exc_info:
+        await alist(model.structured_output(test_output_model_cls, messages))
+
+    assert "maximum context length" in str(exc_info.value)
+    assert exc_info.value.__cause__ == error
+
+
+@pytest.mark.asyncio
+async def test_structured_output_non_overflow_bad_request_propagates(
+    writer_client, model, test_output_model_cls, alist
+):
+    error = writerai.BadRequestError("invalid 'model' parameter", response=unittest.mock.Mock(), body=None)
+    writer_client.chat.chat = unittest.mock.AsyncMock(side_effect=error)
+
+    messages = [{"role": "user", "content": [{"text": "test"}]}]
+    with pytest.raises(writerai.BadRequestError, match="invalid 'model' parameter"):
+        await alist(model.structured_output(test_output_model_cls, messages))
+
+
+def test_cache_config_round_trips(writer_client, model_id, captured_warnings):
+    """cache_config is a valid config field and survives get_config/update_config unchanged."""
+    _ = writer_client
+    cache_config = CacheConfig()
+    model = WriterModel(model_id=model_id, cache_config=cache_config)
+
+    assert model.get_config()["cache_config"] is cache_config
+
+    updated = CacheConfig()
+    model.update_config(cache_config=updated)
+    assert model.get_config()["cache_config"] is updated
+
+    assert not any("Invalid configuration parameters" in str(warning.message) for warning in captured_warnings)
+
+
+def test_cache_config_default_is_silent_and_not_routed(writer_client, model_id, messages, captured_warnings):
+    """A CacheConfig whose fields are all default warns about nothing and never reaches the request."""
+    _ = writer_client
+    model = WriterModel(model_id=model_id, cache_config=CacheConfig(strategy="auto"))
+
+    request = model.format_request(messages)
+
+    assert "cache_config" not in request
+    assert not any("have no effect" in str(warning.message) for warning in captured_warnings)
+
+
+@pytest.mark.parametrize(
+    ("cache_config", "field"),
+    [
+        (CacheConfig(strategy="anthropic"), "strategy"),
+        (CacheConfig(ttl="1h"), "ttl"),
+        (CacheConfig(system_prompt_ttl="1h"), "system_prompt_ttl"),
+        (CacheConfig(cache_key="tenant-42"), "cache_key"),
+        (CacheConfig(tools_ttl=True), "tools_ttl"),
+    ],
+)
+def test_cache_config_unsupported_field_warns_and_is_not_routed(writer_client, model_id, messages, cache_config, field):
+    """Writer honors no cache field: a non-default field warns (naming the provider) and never reaches the request."""
+    _ = writer_client
+    model = WriterModel(model_id=model_id, cache_config=cache_config)
+
+    with pytest.warns(UserWarning, match=rf"fields \['{field}'\] have no effect on Writer"):
+        request = model.format_request(messages)
+
+    assert "cache_config" not in request
+
+
+def test_format_request_logs_skipped_blocks_once_per_request(model, caplog):
+    caplog.set_level(logging.WARNING, logger="strands.models.writer")
+    s3_image = {"image": {"format": "png", "source": {"location": {"type": "s3", "uri": "s3://bucket/key.png"}}}}
+    messages = []
+    for turn in range(3):
+        messages.append({"role": "user", "content": [{"text": "look"}, s3_image]})
+        messages.append({"role": "assistant", "content": [{"text": f"answer {turn}"}]})
+
+    model.format_request(messages)
+
+    messages_logged = [record.getMessage() for record in caplog.records]
+    assert len(messages_logged) == 1
+    assert "count=<3> | Location sources are not supported by Writer" in messages_logged[0]

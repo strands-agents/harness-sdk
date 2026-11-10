@@ -1,9 +1,9 @@
 /**
- * Storage backends for offloaded tool result content.
+ * Legacy storage backends for offloaded tool result content.
  *
- * This module defines the {@link Storage} interface and provides three built-in
- * implementations: {@link InMemoryStorage}, {@link FileStorage}, and {@link S3Storage}.
- * Each content block from a tool result is stored individually with its content type preserved.
+ * @deprecated Use the unified `Storage` from `@strands-agents/sdk/storage` instead.
+ * This module's `Storage` interface and its implementations (`InMemoryStorage`,
+ * `FileStorage`, `S3Storage`) are retained for backwards compatibility only.
  */
 
 import type { Sandbox } from '../../sandbox/base.js'
@@ -13,8 +13,11 @@ import { logger } from '../../logging/logger.js'
  * Backend for storing and retrieving offloaded content blocks.
  *
  * Implement this interface to create custom storage backends (e.g., Redis, DynamoDB).
- * The SDK ships three built-in implementations: {@link InMemoryStorage},
- * {@link FileStorage}, and {@link S3Storage}.
+ * The SDK ships three built-in implementations: `InMemoryStorage`,
+ * `FileStorage`, and `S3Storage`.
+ *
+ * @deprecated Use the unified `Storage` from `@strands-agents/sdk/storage` interface instead.
+ * Pass it directly to `ContextOffloaderConfig.storage` — the plugin adapts it internally.
  */
 export interface Storage {
   /**
@@ -74,13 +77,15 @@ function stripTrailingSlashes(value: string): string {
  * Evicted entries are permanently deleted from memory. The agent will receive
  * an error if it attempts to retrieve evicted content.
  *
+ * @deprecated Pass a unified `Storage` from `@strands-agents/sdk/storage` (e.g.
+ * `InMemoryStorage` from `@strands-agents/sdk/storage`) to the ContextOffloader instead.
  * @param evictAfterTurns - Cycles of inactivity before eviction. Defaults to 20. `null` disables.
  */
 export class InMemoryStorage implements Storage {
   private _store = new Map<string, { content: Uint8Array; contentType: string; lastAccessedCycle: number }>()
   private _counter = 0
   private _currentCycle = 0
-  private readonly _evictAfterTurns: number | null
+  private _evictAfterTurns: number | null
   private _boundAgent: WeakRef<object> | null = null
 
   static readonly DEFAULT_EVICT_AFTER_TURNS = 20
@@ -111,10 +116,11 @@ export class InMemoryStorage implements Storage {
   }
 
   /**
-   * Claim this storage for a single agent. Throws if already bound to a different agent.
+   * Claim this storage for a single agent. Optionally override the eviction window
+   * when the user hasn't explicitly set one at construction time.
    * @internal
    */
-  _bind(agent: object): void {
+  _bind(agent: object, evictAfterCycles?: number | null): void {
     if (this._boundAgent === null) {
       this._boundAgent = new WeakRef(agent)
     } else if (this._boundAgent.deref() !== agent) {
@@ -122,6 +128,9 @@ export class InMemoryStorage implements Storage {
         'InMemoryStorage cannot be shared across multiple agents. ' +
           'Use a separate InMemoryStorage instance per agent.'
       )
+    }
+    if (evictAfterCycles !== undefined && this._evictAfterTurns === InMemoryStorage.DEFAULT_EVICT_AFTER_TURNS) {
+      this._evictAfterTurns = evictAfterCycles
     }
   }
 
@@ -157,11 +166,13 @@ export class InMemoryStorage implements Storage {
  *
  * Stores offloaded content as files on the host filesystem, or through a configured
  * {@link Sandbox}. File extensions are derived from the content type. A `.metadata.json`
- * sidecar file tracks content types across restarts. References are file paths preserving
- * the configured artifact directory form.
+ * sidecar file tracks content types across restarts. References are portable filenames.
  *
  * When used by {@link ContextOffloader} without an explicit sandbox, FileStorage is
  * bound to each agent's sandbox, which may be the default NotASandboxLocalEnvironment.
+ *
+ * @deprecated Pass a unified `Storage` from `@strands-agents/sdk/storage` (e.g.
+ * `LocalFileStorage` from `@strands-agents/sdk/storage`) to the ContextOffloader instead.
  */
 export interface FileStorageOptions {
   /** Directory path where artifact files will be stored. Defaults to `./artifacts`. */
@@ -170,6 +181,9 @@ export interface FileStorageOptions {
   sandbox?: Sandbox
 }
 
+/**
+ * @deprecated Use `LocalFileStorage` from `@strands-agents/sdk/storage` instead.
+ */
 export class FileStorage implements Storage {
   private static readonly METADATA_FILE = '.metadata.json'
   private readonly _artifactDir: string
@@ -264,6 +278,14 @@ export class FileStorage implements Storage {
     await sandbox.writeText(this._artifactPath(FileStorage.METADATA_FILE), JSON.stringify(this._contentTypes))
   }
 
+  private _knownFilename(candidate: string): string {
+    if (Object.hasOwn(this._contentTypes, candidate)) return candidate
+    const matches = Object.keys(this._contentTypes).filter(
+      (filename) => filename.slice(0, filename.lastIndexOf('.')) === candidate
+    )
+    return matches.length === 1 ? matches[0]! : candidate
+  }
+
   /** {@inheritdoc} */
   async store(key: string, content: Uint8Array, contentType: string = 'text/plain'): Promise<string> {
     if (this._sandbox) {
@@ -277,7 +299,7 @@ export class FileStorage implements Storage {
 
       await sandbox.writeFile(filePath, content)
 
-      return filePath
+      return filename
     }
 
     const fs = await this._ensureDir()
@@ -296,7 +318,7 @@ export class FileStorage implements Storage {
     const filePath = path.join(this._artifactDir, filename)
     await fs.writeFile(filePath, content)
 
-    return filePath
+    return filename
   }
 
   /** {@inheritdoc} */
@@ -304,14 +326,16 @@ export class FileStorage implements Storage {
     if (this._sandbox) {
       const sandbox = await this._ensureSandbox()
 
-      if (!reference.startsWith(`${this._artifactDir.replace(/\/+$/, '')}/`) || reference.includes('..')) {
+      const prefix = `${this._artifactDir.replace(/\/+$/, '')}/`
+      const candidate = reference.startsWith(prefix) ? reference.slice(prefix.length) : reference
+      // Accept only a bare filename: no empty string, no "." / ".." segments, no path separators.
+      if (!candidate || candidate === '.' || candidate === '..' || /[/\\]/.test(candidate)) {
         throw new Error(`Reference not found: ${reference}`)
       }
-
-      const filename = reference.split('/').pop()!
+      const filename = this._knownFilename(candidate)
 
       try {
-        const content = await sandbox.readFile(reference)
+        const content = await sandbox.readFile(this._artifactPath(filename))
         const contentType = this._contentTypes[filename] ?? 'application/octet-stream'
         return { content, contentType }
       } catch {
@@ -322,13 +346,15 @@ export class FileStorage implements Storage {
     const fs = await this._ensureDir()
     const path = await import('node:path')
 
-    const filePath = path.resolve(this._artifactDir, reference)
     const resolvedDir = path.resolve(this._artifactDir)
-    if (!filePath.startsWith(resolvedDir)) {
+    const candidatePath =
+      reference === path.basename(reference) ? path.join(resolvedDir, reference) : path.resolve(reference)
+    // Same policy on disk: no ".." segments, and the reference must resolve inside the artifact dir.
+    if (reference.split(/[/\\]/).includes('..') || path.dirname(candidatePath) !== resolvedDir) {
       throw new Error(`Reference not found: ${reference}`)
     }
-
-    const filename = path.basename(filePath)
+    const filename = this._knownFilename(path.basename(candidatePath))
+    const filePath = path.join(resolvedDir, filename)
 
     try {
       const content = await fs.readFile(filePath)
@@ -346,6 +372,8 @@ export class FileStorage implements Storage {
  * Stores offloaded content as S3 objects. Content type is preserved as S3 object metadata.
  * References are `s3://` URIs for direct access via AWS CLI or SDK.
  *
+ * @deprecated Pass a unified `Storage` from `@strands-agents/sdk/storage` (e.g.
+ * `S3Storage` from `@strands-agents/sdk/storage`) to the ContextOffloader instead.
  * @param bucket - S3 bucket name
  * @param options - Optional configuration (prefix, region, pre-configured S3Client)
  */
@@ -408,6 +436,11 @@ export class S3Storage implements Storage {
         throw new Error(`Reference not found: ${reference} (bucket mismatch)`)
       }
       s3Key = uriMatch[2]
+    }
+
+    // Constrain references to the configured prefix, mirroring the scope store() enforces.
+    if (this._prefix && !s3Key.startsWith(this._prefix)) {
+      throw new Error(`Reference not found: ${reference}`)
     }
 
     try {

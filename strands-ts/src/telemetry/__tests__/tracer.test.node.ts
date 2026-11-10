@@ -2,19 +2,31 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import type { Span, SpanAttributeValue } from '@opentelemetry/api'
 import { SpanStatusCode, trace, context } from '@opentelemetry/api'
 import { Tracer } from '../tracer.js'
-import { Message, TextBlock, ToolResultBlock, ToolUseBlock, CachePointBlock } from '../../types/messages.js'
+import {
+  Message,
+  TextBlock,
+  ToolResultBlock,
+  ToolUseBlock,
+  CachePointBlock,
+  InjectedBlock,
+  SummaryBlock,
+} from '../../types/messages.js'
 import { MockSpan, eventAttr } from '../../__fixtures__/mock-span.js'
 import { textMessage } from '../../__fixtures__/agent-helpers.js'
 
-// Partial mock: keep real SpanStatusCode etc., replace context and trace
-vi.mock('@opentelemetry/api', async (importOriginal) => ({
-  ...(await importOriginal()),
-  context: { active: vi.fn(() => ({})), with: vi.fn((_ctx: unknown, fn: () => unknown) => fn()) },
-  trace: {
-    getTracer: vi.fn(),
-    setSpan: vi.fn(),
-  },
-}))
+// Partial mock: keep real SpanStatusCode, isSpanContextValid, etc., replace context and trace
+vi.mock('@opentelemetry/api', async (importOriginal) => {
+  const actual = (await importOriginal()) as typeof import('@opentelemetry/api')
+  return {
+    ...actual,
+    context: { active: vi.fn(() => ({})), with: vi.fn((_ctx: unknown, fn: () => unknown) => fn()) },
+    trace: {
+      getTracer: vi.fn(),
+      setSpan: vi.fn(),
+      getActiveSpan: vi.fn(),
+    },
+  }
+})
 
 describe('Tracer', () => {
   let mockSpan: MockSpan
@@ -250,6 +262,27 @@ describe('Tracer', () => {
       expect(mockSpan.getAttributeValue('gen_ai.usage.completion_tokens')).toBe(200)
     })
 
+    // Accumulated usage folds cached tokens into input_tokens for disjoint-cache providers,
+    // matching the per-invocation span (OTel GenAI semconv).
+    it('includes cached tokens in accumulated input_tokens for disjoint-cache providers', () => {
+      const tracer = new Tracer()
+      const span = tracer.startAgentSpan({ messages: [textMessage('user', 'Hi')], agentName: 'agent' })
+
+      tracer.endAgentSpan(span, {
+        accumulatedUsage: {
+          inputTokens: 10,
+          outputTokens: 20,
+          totalTokens: 58,
+          cacheReadInputTokens: 25,
+          cacheWriteInputTokens: 3,
+        },
+      })
+
+      expect(mockSpan.getAttributeValue('gen_ai.usage.input_tokens')).toBe(38)
+      expect(mockSpan.getAttributeValue('gen_ai.usage.prompt_tokens')).toBe(38)
+      expect(mockSpan.getAttributeValue('gen_ai.usage.total_tokens')).toBe(58)
+    })
+
     it('adds response event with stable conventions', () => {
       const tracer = new Tracer()
       const span = tracer.startAgentSpan({ messages: [textMessage('user', 'Hi')], agentName: 'agent' })
@@ -309,6 +342,17 @@ describe('Tracer', () => {
 
       expect(mockSpan.getEvents('gen_ai.user.message')).toHaveLength(1)
     })
+
+    // Regression test for #4666: traceAttributes were missing from chat spans.
+    it('includes constructor-level trace attributes, overriding standard ones', () => {
+      const tracer = new Tracer({ 'session.id': 'sess-1', 'gen_ai.request.model': 'override' })
+
+      tracer.startModelInvokeSpan({ messages: [textMessage('user', 'Hello')], modelId: 'claude-3' })
+
+      const [, options] = getStartSpanCall()
+      expect(options.attributes['session.id']).toBe('sess-1')
+      expect(options.attributes['gen_ai.request.model']).toBe('override')
+    })
   })
 
   describe('endModelInvokeSpan', () => {
@@ -327,6 +371,45 @@ describe('Tracer', () => {
       expect(mockSpan.getAttributeValue('gen_ai.server.request.duration')).toBe(500)
     })
 
+    // input_tokens must include cached tokens per the OTel GenAI semconv; disjoint-cache
+    // providers (Bedrock Converse, Anthropic-direct) report them separately, so fold them in.
+    it('includes cached tokens in input_tokens for disjoint-cache providers', () => {
+      const tracer = new Tracer()
+      const span = tracer.startModelInvokeSpan({ messages: [textMessage('user', 'Hi')] })
+
+      tracer.endModelInvokeSpan(span, {
+        usage: {
+          inputTokens: 10,
+          outputTokens: 20,
+          totalTokens: 58,
+          cacheReadInputTokens: 25,
+          cacheWriteInputTokens: 3,
+        },
+      })
+
+      expect(mockSpan.getAttributeValue('gen_ai.usage.input_tokens')).toBe(38)
+      expect(mockSpan.getAttributeValue('gen_ai.usage.prompt_tokens')).toBe(38)
+      expect(mockSpan.getAttributeValue('gen_ai.usage.output_tokens')).toBe(20)
+      expect(mockSpan.getAttributeValue('gen_ai.usage.total_tokens')).toBe(58)
+      expect(mockSpan.getAttributeValue('gen_ai.usage.cache_read.input_tokens')).toBe(25)
+      expect(mockSpan.getAttributeValue('gen_ai.usage.cache_creation.input_tokens')).toBe(3)
+    })
+
+    // Subset-cache providers (OpenAI, Gemini) already count cache inside input_tokens;
+    // the fold-in must be a no-op so cached tokens are not counted twice.
+    it('does not double-count when the provider already includes cache in input_tokens', () => {
+      const tracer = new Tracer()
+      const span = tracer.startModelInvokeSpan({ messages: [textMessage('user', 'Hi')] })
+
+      tracer.endModelInvokeSpan(span, {
+        usage: { inputTokens: 100, outputTokens: 20, totalTokens: 120, cacheReadInputTokens: 30 },
+      })
+
+      expect(mockSpan.getAttributeValue('gen_ai.usage.input_tokens')).toBe(100)
+      expect(mockSpan.getAttributeValue('gen_ai.usage.prompt_tokens')).toBe(100)
+      expect(mockSpan.getAttributeValue('gen_ai.usage.cache_read.input_tokens')).toBe(30)
+    })
+
     it('sets cache token attributes when provided', () => {
       const tracer = new Tracer()
       const span = tracer.startModelInvokeSpan({ messages: [textMessage('user', 'Hi')] })
@@ -341,6 +424,9 @@ describe('Tracer', () => {
         },
       })
 
+      expect(mockSpan.getAttributeValue('gen_ai.usage.cache_read.input_tokens')).toBe(50)
+      expect(mockSpan.getAttributeValue('gen_ai.usage.cache_creation.input_tokens')).toBe(25)
+      // deprecated aliases kept so existing consumers keep resolving, value-identical to the semconv names
       expect(mockSpan.getAttributeValue('gen_ai.usage.cache_read_input_tokens')).toBe(50)
       expect(mockSpan.getAttributeValue('gen_ai.usage.cache_write_input_tokens')).toBe(25)
     })
@@ -353,7 +439,42 @@ describe('Tracer', () => {
         usage: { inputTokens: 10, outputTokens: 20, totalTokens: 30, cacheReadInputTokens: 0 },
       })
 
+      expect(mockSpan.getAttributeValue('gen_ai.usage.cache_read.input_tokens')).toBeUndefined()
       expect(mockSpan.getAttributeValue('gen_ai.usage.cache_read_input_tokens')).toBeUndefined()
+    })
+
+    // Regression for https://github.com/strands-agents/harness-sdk/issues/3754
+    it('dual-emits cache usage under both the semconv names and the deprecated aliases', () => {
+      const tracer = new Tracer()
+      const span = tracer.startModelInvokeSpan({ messages: [textMessage('user', 'Hi')] })
+
+      tracer.endModelInvokeSpan(span, {
+        usage: { inputTokens: 10, outputTokens: 4, totalTokens: 14, cacheReadInputTokens: 5848 },
+      })
+
+      expect(mockSpan.getAttributeValue('gen_ai.usage.cache_read.input_tokens')).toBe(5848)
+      expect(mockSpan.getAttributeValue('gen_ai.usage.cache_read_input_tokens')).toBe(5848)
+    })
+
+    it('suppresses the deprecated cache aliases when opted into the latest conventions', () => {
+      vi.stubEnv('OTEL_SEMCONV_STABILITY_OPT_IN', 'gen_ai_latest_experimental')
+      const tracer = new Tracer()
+      const span = tracer.startModelInvokeSpan({ messages: [textMessage('user', 'Hi')] })
+
+      tracer.endModelInvokeSpan(span, {
+        usage: {
+          inputTokens: 10,
+          outputTokens: 4,
+          totalTokens: 14,
+          cacheReadInputTokens: 5848,
+          cacheWriteInputTokens: 3,
+        },
+      })
+
+      expect(mockSpan.getAttributeValue('gen_ai.usage.cache_read.input_tokens')).toBe(5848)
+      expect(mockSpan.getAttributeValue('gen_ai.usage.cache_creation.input_tokens')).toBe(3)
+      expect(mockSpan.getAttributeValue('gen_ai.usage.cache_read_input_tokens')).toBeUndefined()
+      expect(mockSpan.getAttributeValue('gen_ai.usage.cache_write_input_tokens')).toBeUndefined()
     })
 
     it('skips latency attribute when zero', () => {
@@ -461,6 +582,19 @@ describe('Tracer', () => {
       })
     })
 
+    // Regression test for #4666: traceAttributes were missing from execute_tool spans.
+    it('includes constructor-level trace attributes', () => {
+      const tracer = new Tracer({ 'session.id': 'sess-1' })
+
+      tracer.startToolCallSpan({
+        tool: { name: 'calculator', toolUseId: 'call-1', input: { expr: '2+2' } },
+      })
+
+      const [, options] = getStartSpanCall()
+      expect(options.attributes['session.id']).toBe('sess-1')
+      expect(options.attributes['gen_ai.tool.name']).toBe('calculator')
+    })
+
     it('adds stable tool message event with serialized input', () => {
       const tracer = new Tracer()
 
@@ -492,6 +626,17 @@ describe('Tracer', () => {
           parts: [{ type: 'tool_call', name: 'search', id: 'call-2', arguments: { query: 'test' } }],
         },
       ])
+    })
+
+    it('sets latest convention tool call arguments attribute', () => {
+      vi.stubEnv('OTEL_SEMCONV_STABILITY_OPT_IN', 'gen_ai_latest_experimental')
+      const tracer = new Tracer()
+
+      tracer.startToolCallSpan({
+        tool: { name: 'search', toolUseId: 'call-2', input: { query: 'test' } },
+      })
+
+      expect(mockSpan.getAttributeValue('gen_ai.tool.call.arguments')).toBe('{"query":"test"}')
     })
   })
 
@@ -541,6 +686,47 @@ describe('Tracer', () => {
       expect(parsed[0].parts[0].id).toBe('call-1')
     })
 
+    it('sets latest convention tool call result attribute on success', () => {
+      vi.stubEnv('OTEL_SEMCONV_STABILITY_OPT_IN', 'gen_ai_latest_experimental')
+      const tracer = new Tracer()
+      const span = tracer.startToolCallSpan({
+        tool: { name: 'calc', toolUseId: 'call-1', input: {} },
+      })
+
+      const toolResult = new ToolResultBlock({
+        toolUseId: 'call-1',
+        status: 'success',
+        content: [new TextBlock('42')],
+      })
+
+      tracer.endToolCallSpan(span, { toolResult })
+
+      const resultAttr = mockSpan.getAttributeValue('gen_ai.tool.call.result')
+      expect(resultAttr).toBeDefined()
+      const parsed = JSON.parse(resultAttr as string)
+      expect(parsed).toHaveLength(1)
+      expect(parsed[0]).toMatchObject({ text: '42' })
+    })
+
+    it('omits latest convention tool call result attribute on error status', () => {
+      vi.stubEnv('OTEL_SEMCONV_STABILITY_OPT_IN', 'gen_ai_latest_experimental')
+      const tracer = new Tracer()
+      const span = tracer.startToolCallSpan({
+        tool: { name: 'calc', toolUseId: 'call-1', input: {} },
+      })
+
+      const toolResult = new ToolResultBlock({
+        toolUseId: 'call-1',
+        status: 'error',
+        content: [new TextBlock('tool exploded')],
+      })
+
+      tracer.endToolCallSpan(span, { toolResult })
+
+      expect(mockSpan.getAttributeValue('gen_ai.tool.call.result')).toBeUndefined()
+      expect(mockSpan.getAttributeValue('gen_ai.tool.status')).toBe('error')
+    })
+
     it('records error on tool failure', () => {
       const tracer = new Tracer()
       const span = tracer.startToolCallSpan({
@@ -571,6 +757,17 @@ describe('Tracer', () => {
 
       const [spanName, options] = getStartSpanCall()
       expect(spanName).toBe('execute_agent_loop_cycle')
+      expect(options.attributes['agent_loop.cycle_id']).toBe('cycle-42')
+    })
+
+    // Regression test for #4666: traceAttributes were missing from cycle spans.
+    it('includes constructor-level trace attributes', () => {
+      const tracer = new Tracer({ 'session.id': 'sess-1' })
+
+      tracer.startAgentLoopSpan({ cycleId: 'cycle-42', messages: [] })
+
+      const [, options] = getStartSpanCall()
+      expect(options.attributes['session.id']).toBe('sess-1')
       expect(options.attributes['agent_loop.cycle_id']).toBe('cycle-42')
     })
 
@@ -723,6 +920,36 @@ describe('Tracer', () => {
       const parsed = JSON.parse(eventAttr(detailEvents[0]!, 'gen_ai.input.messages'))
       expect(parsed[0].parts[0].type).toBe('tool_call_response')
       expect(parsed[0].parts[0].id).toBe('tu-1')
+    })
+
+    it('maps injected blocks to text parts in latest conventions', () => {
+      vi.stubEnv('OTEL_SEMCONV_STABILITY_OPT_IN', 'gen_ai_latest_experimental')
+      const tracer = new Tracer()
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [new TextBlock('Hi'), new InjectedBlock({ text: 'cwd: /repo', source: 'env' })],
+        }),
+      ]
+      tracer.startModelInvokeSpan({ messages })
+      const detailEvents = mockSpan.getEvents('gen_ai.client.inference.operation.details')
+      const parsed = JSON.parse(eventAttr(detailEvents[0]!, 'gen_ai.input.messages'))
+      expect(parsed[0].parts).toStrictEqual([
+        { type: 'text', content: 'Hi' },
+        { type: 'text', content: 'cwd: /repo' },
+      ])
+    })
+
+    it('maps summary blocks to text parts in latest conventions', () => {
+      vi.stubEnv('OTEL_SEMCONV_STABILITY_OPT_IN', 'gen_ai_latest_experimental')
+      const tracer = new Tracer()
+      const messages = [
+        new Message({ role: 'assistant', content: [new SummaryBlock({ provider: 'anthropic', text: 'compacted' })] }),
+      ]
+      tracer.startModelInvokeSpan({ messages })
+      const detailEvents = mockSpan.getEvents('gen_ai.client.inference.operation.details')
+      const parsed = JSON.parse(eventAttr(detailEvents[0]!, 'gen_ai.input.messages'))
+      expect(parsed[0].parts).toStrictEqual([{ type: 'text', content: 'compacted' }])
     })
 
     it('serializes text block content in stable convention events', () => {
@@ -887,6 +1114,81 @@ describe('Tracer', () => {
     })
   })
 
+  describe('span attributes only', () => {
+    // With the opt-in set, message content is recorded as span attributes rather than deprecated
+    // span events, for backends that cannot read events.
+    it('records latest-convention content as span attributes and skips the event when opted in', () => {
+      vi.stubEnv('OTEL_SEMCONV_STABILITY_OPT_IN', 'gen_ai_latest_experimental,gen_ai_span_attributes_only')
+      const tracer = new Tracer()
+
+      tracer.startModelInvokeSpan({ messages: [textMessage('user', 'Hi')] })
+
+      const inputMessages = JSON.stringify([{ role: 'user', parts: [{ type: 'text', content: 'Hi' }] }])
+      expect(mockSpan.calls.setAttributes).toContainEqual({
+        attributes: { 'gen_ai.input.messages': inputMessages },
+      })
+      expect(mockSpan.getEvents('gen_ai.client.inference.operation.details')).toHaveLength(0)
+    })
+
+    it('records latest-convention content as span attributes for Langfuse without opt-in', () => {
+      vi.stubEnv('OTEL_EXPORTER_OTLP_ENDPOINT', 'https://us.cloud.langfuse.com')
+      vi.stubEnv('OTEL_SEMCONV_STABILITY_OPT_IN', 'gen_ai_latest_experimental')
+      const tracer = new Tracer()
+
+      tracer.startModelInvokeSpan({ messages: [textMessage('user', 'Hi')] })
+
+      const inputMessages = JSON.stringify([{ role: 'user', parts: [{ type: 'text', content: 'Hi' }] }])
+      expect(mockSpan.calls.setAttributes).toContainEqual({
+        attributes: { 'gen_ai.input.messages': inputMessages },
+      })
+      expect(mockSpan.getEvents('gen_ai.client.inference.operation.details')).toHaveLength(0)
+    })
+
+    it('emits span events by default without the opt-in or Langfuse', () => {
+      vi.stubEnv('OTEL_EXPORTER_OTLP_ENDPOINT', '')
+      vi.stubEnv('OTEL_EXPORTER_OTLP_TRACES_ENDPOINT', '')
+      vi.stubEnv('LANGFUSE_BASE_URL', '')
+      vi.stubEnv('OTEL_SEMCONV_STABILITY_OPT_IN', 'gen_ai_latest_experimental')
+      const tracer = new Tracer()
+
+      tracer.startModelInvokeSpan({ messages: [textMessage('user', 'Hi')] })
+
+      expect(mockSpan.getEvents('gen_ai.client.inference.operation.details')).toHaveLength(1)
+    })
+
+    it('leaves legacy per-message events as events even when opted in', () => {
+      vi.stubEnv('OTEL_EXPORTER_OTLP_ENDPOINT', '')
+      vi.stubEnv('OTEL_EXPORTER_OTLP_TRACES_ENDPOINT', '')
+      vi.stubEnv('LANGFUSE_BASE_URL', '')
+      vi.stubEnv('OTEL_SEMCONV_STABILITY_OPT_IN', 'gen_ai_span_attributes_only')
+      const tracer = new Tracer()
+
+      tracer.startModelInvokeSpan({ messages: [textMessage('user', 'Hi')] })
+
+      expect(mockSpan.getEvents('gen_ai.user.message')).toHaveLength(1)
+    })
+
+    it('records the memory search query as a span attribute and skips the event when opted in', () => {
+      vi.stubEnv('OTEL_SEMCONV_STABILITY_OPT_IN', 'gen_ai_span_attributes_only')
+      const tracer = new Tracer()
+
+      tracer.startMemorySearchSpan({ query: 'dark mode preference', storeNames: ['personal'] })
+
+      expect(mockSpan.calls.setAttributes).toContainEqual({ attributes: { content: 'dark mode preference' } })
+      expect(mockSpan.getEvents('memory.query')).toHaveLength(0)
+    })
+
+    it('records the memory add content as a span attribute and skips the event when opted in', () => {
+      vi.stubEnv('OTEL_SEMCONV_STABILITY_OPT_IN', 'gen_ai_span_attributes_only')
+      const tracer = new Tracer()
+
+      tracer.startMemoryAddSpan({ content: 'remember dark mode', storeNames: ['personal'] })
+
+      expect(mockSpan.calls.setAttributes).toContainEqual({ attributes: { content: 'remember dark mode' } })
+      expect(mockSpan.getEvents('memory.content')).toHaveLength(0)
+    })
+  })
+
   describe('error resilience', () => {
     it.each([
       {
@@ -957,6 +1259,244 @@ describe('Tracer', () => {
       const [, options] = getStartSpanCall()
       expect(options.attributes['gen_ai.system']).toBeDefined()
       expect(options.attributes['gen_ai.provider.name']).toBeUndefined()
+    })
+  })
+
+  describe('memory spans', () => {
+    it('startMemorySearchSpan sets attributes and records the query as an event', () => {
+      const tracer = new Tracer()
+
+      tracer.startMemorySearchSpan({
+        query: 'dark mode preference',
+        storeNames: ['personal', 'team'],
+        maxSearchResults: 5,
+      })
+
+      const [spanName, options] = getStartSpanCall()
+      expect(spanName).toBe('memory.search')
+      expect(options.attributes).toMatchObject({
+        'gen_ai.operation.name': 'memory.search',
+        'memory.store.names': JSON.stringify(['personal', 'team']),
+        'memory.store.count': 2,
+        'memory.max_search_results': 5,
+      })
+      expect(eventAttr(mockSpan.getEvents('memory.query')[0]!, 'content')).toBe('dark mode preference')
+    })
+
+    it('endMemorySearchSpan records result/failure counts and the entries event', () => {
+      const tracer = new Tracer()
+      const span = tracer.startMemorySearchSpan({ query: 'q', storeNames: ['personal'] })
+
+      tracer.endMemorySearchSpan(span, {
+        entries: [{ content: 'likes dark mode', storeName: 'personal', metadata: { score: 0.9 } }],
+        storeFailureCount: 1,
+      })
+
+      expect(mockSpan.calls.setAttributes).toContainEqual({
+        attributes: {
+          'memory.result.count': 1,
+          'memory.store.failure_count': 1,
+          'gen_ai.event.end_time': expect.any(String),
+        },
+      })
+      expect(mockSpan.getEvents('memory.results')).toHaveLength(1)
+      expect(mockSpan.calls.setStatus).toContainEqual({ status: { code: SpanStatusCode.OK } })
+    })
+
+    it('endMemorySearchSpan records error and skips the results event', () => {
+      const tracer = new Tracer()
+      const span = tracer.startMemorySearchSpan({ query: 'q', storeNames: ['personal'] })
+      const error = new Error('store missing')
+
+      tracer.endMemorySearchSpan(span, { error })
+
+      expect(mockSpan.getEvents('memory.results')).toHaveLength(0)
+      expect(mockSpan.calls.setStatus).toContainEqual({
+        status: { code: SpanStatusCode.ERROR, message: 'store missing' },
+      })
+      expect(mockSpan.calls.recordException).toContainEqual({ exception: error, time: undefined })
+    })
+
+    it('startMemoryAddSpan records content as an event', () => {
+      const tracer = new Tracer()
+
+      tracer.startMemoryAddSpan({ content: 'remember dark mode', storeNames: ['personal'] })
+
+      const [spanName, options] = getStartSpanCall()
+      expect(spanName).toBe('memory.add')
+      expect(options.attributes).toMatchObject({
+        'gen_ai.operation.name': 'memory.add',
+        'memory.store.names': JSON.stringify(['personal']),
+        'memory.store.count': 1,
+      })
+      expect(eventAttr(mockSpan.getEvents('memory.content')[0]!, 'content')).toBe('remember dark mode')
+    })
+
+    it('endMemoryAddSpan records the store failure count and error', () => {
+      const tracer = new Tracer()
+      const span = tracer.startMemoryAddSpan({ content: 'x', storeNames: ['personal'] })
+      const error = new Error('write failed')
+
+      tracer.endMemoryAddSpan(span, { storeFailureCount: 2, error })
+
+      expect(mockSpan.calls.setStatus).toContainEqual({
+        status: { code: SpanStatusCode.ERROR, message: 'write failed' },
+      })
+      expect(mockSpan.calls.recordException).toContainEqual({ exception: error, time: undefined })
+    })
+
+    it('memory inject span: start sets max_entries, end records injected and entry count', () => {
+      const tracer = new Tracer()
+      const span = tracer.startMemoryInjectSpan({ maxEntries: 5 })
+
+      const [spanName, options] = getStartSpanCall()
+      expect(spanName).toBe('memory.inject')
+      expect(options.attributes['memory.max_entries']).toBe(5)
+
+      tracer.endMemoryInjectSpan(span, { injected: true, entryCount: 3 })
+      expect(mockSpan.calls.setAttributes).toContainEqual({
+        attributes: { 'memory.injected': true, 'memory.entry.count': 3, 'gen_ai.event.end_time': expect.any(String) },
+      })
+      expect(mockSpan.calls.setStatus).toContainEqual({ status: { code: SpanStatusCode.OK } })
+    })
+
+    it('endMemoryInjectSpan fails open on a format error (OK status, flag set)', () => {
+      const tracer = new Tracer()
+      const span = tracer.startMemoryInjectSpan({})
+
+      tracer.endMemoryInjectSpan(span, { injected: false, formatError: true })
+
+      expect(mockSpan.calls.setAttributes).toContainEqual({
+        attributes: {
+          'memory.injected': false,
+          'memory.entry.count': 0,
+          'memory.inject.format_error': true,
+          'gen_ai.event.end_time': expect.any(String),
+        },
+      })
+      expect(mockSpan.calls.setStatus).toContainEqual({ status: { code: SpanStatusCode.OK } })
+      expect(mockSpan.calls.recordException).toHaveLength(0)
+    })
+
+    it('startMemoryExtractSpan is a root span (forceRoot, no parent context)', () => {
+      const tracer = new Tracer()
+
+      tracer.startMemoryExtractSpan({
+        storeName: 'personal',
+        messageCount: 2,
+        filteredCount: 1,
+        extractor: 'ModelExtractor',
+      })
+
+      const [spanName, options] = getStartSpanCall()
+      expect(spanName).toBe('memory.extract')
+      expect(options.attributes).toMatchObject({
+        'gen_ai.operation.name': 'memory.extract',
+        'memory.store.name': 'personal',
+        'memory.message.count': 2,
+        'memory.message.filtered_count': 1,
+        'memory.extractor': 'ModelExtractor',
+      })
+      // forceRoot passes ROOT_CONTEXT (no active span) as the third startSpan arg.
+      const startCtx = mockStartSpan.mock.calls[0]![2]
+      expect(startCtx).toBeDefined()
+    })
+
+    it('startMemoryExtractSpan attaches a valid agent span context as a link', () => {
+      const tracer = new Tracer()
+      const agentSpanContext = {
+        traceId: 'abcdef01234567890abcdef012345678',
+        spanId: 'abcdef0123456789',
+        traceFlags: 1,
+      }
+
+      tracer.startMemoryExtractSpan({ storeName: 'personal', messageCount: 1, agentSpanContext })
+
+      const options = mockStartSpan.mock.calls[0]![1] as {
+        links?: { context: unknown }[]
+        attributes: Record<string, unknown>
+      }
+      expect(options.links).toHaveLength(1)
+      expect(options.links![0]!.context).toBe(agentSpanContext)
+      // The detached root has no OTel parent, so the scheduling run's ids are also recorded as
+      // plain attributes for backends that don't render span links.
+      expect(options.attributes).toMatchObject({
+        'memory.parent.trace_id': 'abcdef01234567890abcdef012345678',
+        'memory.parent.span_id': 'abcdef0123456789',
+      })
+    })
+
+    it('startMemoryExtractSpan skips the link and parent ids for an invalid agent span context', () => {
+      const tracer = new Tracer()
+      const invalid = { traceId: '00000000000000000000000000000000', spanId: '0000000000000000', traceFlags: 0 }
+
+      tracer.startMemoryExtractSpan({ storeName: 'personal', messageCount: 1, agentSpanContext: invalid })
+
+      const options = mockStartSpan.mock.calls[0]![1] as { links?: unknown; attributes: Record<string, unknown> }
+      expect(options.links).toBeUndefined()
+      expect(options.attributes).not.toHaveProperty('memory.parent.trace_id')
+      expect(options.attributes).not.toHaveProperty('memory.parent.span_id')
+    })
+
+    it('endMemoryExtractSpan records the entry count on success', () => {
+      const tracer = new Tracer()
+      const span = tracer.startMemoryExtractSpan({ storeName: 'personal', messageCount: 1 })
+
+      tracer.endMemoryExtractSpan(span, { entryCount: 3 })
+
+      expect(mockSpan.calls.setAttributes).toContainEqual({
+        attributes: { 'memory.entry.count': 3, 'gen_ai.event.end_time': expect.any(String) },
+      })
+      expect(mockSpan.calls.setStatus).toContainEqual({ status: { code: SpanStatusCode.OK } })
+    })
+
+    it('endMemoryExtractSpan records error (failures are swallowed by the coordinator)', () => {
+      const tracer = new Tracer()
+      const span = tracer.startMemoryExtractSpan({ storeName: 'personal', messageCount: 1 })
+      const error = new Error('save failed')
+
+      tracer.endMemoryExtractSpan(span, { error })
+
+      expect(mockSpan.calls.setStatus).toContainEqual({
+        status: { code: SpanStatusCode.ERROR, message: 'save failed' },
+      })
+      expect(mockSpan.calls.recordException).toContainEqual({ exception: error, time: undefined })
+    })
+
+    it('memory span methods handle a null span gracefully', () => {
+      const tracer = new Tracer()
+      expect(() => tracer.endMemorySearchSpan(null, { entries: [] })).not.toThrow()
+      expect(() => tracer.endMemoryAddSpan(null)).not.toThrow()
+      expect(() => tracer.endMemoryInjectSpan(null, { injected: false })).not.toThrow()
+      expect(() => tracer.endMemoryExtractSpan(null)).not.toThrow()
+    })
+  })
+
+  describe('currentSpanContext', () => {
+    it('returns undefined when no span is active', () => {
+      vi.mocked(trace.getActiveSpan).mockReturnValue(undefined)
+      expect(new Tracer().currentSpanContext()).toBeUndefined()
+    })
+
+    it('returns undefined for a non-recording active span', () => {
+      // A non-recording span (tracing disabled / sampled out) must not be captured for linking.
+      const span = { isRecording: () => false, spanContext: () => ({ traceId: 't', spanId: 's', traceFlags: 1 }) }
+      vi.mocked(trace.getActiveSpan).mockReturnValue(span as unknown as Span)
+      expect(new Tracer().currentSpanContext()).toBeUndefined()
+    })
+
+    it('returns undefined for a recording span with an invalid (all-zeros) context', () => {
+      const invalid = { traceId: '00000000000000000000000000000000', spanId: '0000000000000000', traceFlags: 0 }
+      const span = { isRecording: () => true, spanContext: () => invalid }
+      vi.mocked(trace.getActiveSpan).mockReturnValue(span as unknown as Span)
+      expect(new Tracer().currentSpanContext()).toBeUndefined()
+    })
+
+    it('returns the context for a recording span with a valid context', () => {
+      const valid = { traceId: 'abcdef01234567890abcdef012345678', spanId: 'abcdef0123456789', traceFlags: 1 }
+      const span = { isRecording: () => true, spanContext: () => valid }
+      vi.mocked(trace.getActiveSpan).mockReturnValue(span as unknown as Span)
+      expect(new Tracer().currentSpanContext()).toBe(valid)
     })
   })
 })

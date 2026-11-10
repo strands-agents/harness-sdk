@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 456" width="720" height="456">
+  <!-- Type: architecture (access paths). Story: the agent's direct file access is bounded by OS grants, while everything it sends through Box is decided by the policy engine before it reaches files or a remote service. Each arrow names the control on that path. -->
+  <defs>
+    <marker id="arrow" viewBox="0 0 8 6" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+      <path class="dg-head" d="M0,0 L8,3 L0,6 Z"/>
+    </marker>
+  </defs>
+
+  <!-- Zones -->
+  <rect class="dg-zone" x="16" y="16" width="688" height="352" rx="8"/>
+  <text class="dg-eyebrow" x="32" y="40">SURROUNDING OPERATING SYSTEM</text>
+  <rect class="dg-zone is-boundary" x="32" y="56" width="200" height="128" rx="8"/>
+  <text class="dg-eyebrow" x="48" y="76">AGENT'S SANDBOX</text>
+  <rect class="dg-zone" x="304" y="56" width="384" height="220" rx="8"/>
+  <text class="dg-eyebrow" x="320" y="76">TRUSTED BOX PROCESS</text>
+  <text class="dg-note" x="512" y="420" text-anchor="end">An allowed request doesn't contain the remote service</text>
+
+  <!-- Edges -->
+  <path class="dg-edge" d="M216,128 H318" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M454,164 V210" marker-end="url(#arrow)"/>
+  <path class="dg-edge is-dashed" d="M478,212 V166" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M132,156 V294" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M388,164 V316 Q388,324 380,324 H218" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M504,128 H648 Q656,128 656,136 V390" marker-end="url(#arrow)"/>
+
+  <!-- Edge labels: each names the control on that path -->
+  <rect class="dg-mask is-on-zone" x="240" y="108" width="56" height="12" rx="2"/>
+  <text class="dg-label" x="268" y="117" text-anchor="middle">REQUESTS</text>
+  <text class="dg-label" x="486" y="192">ASK / DECIDE</text>
+  <rect class="dg-mask is-on-zone" x="512" y="108" width="128" height="12" rx="2"/>
+  <text class="dg-label" x="576" y="117" text-anchor="middle">PERMITTED REQUESTS</text>
+  <text class="dg-label" x="140" y="244">DIRECT · OS GRANTS</text>
+  <rect class="dg-mask is-on-zone" x="235" y="304" width="128" height="12" rx="2"/>
+  <text class="dg-label" x="299" y="313" text-anchor="middle">PERMITTED FILE OPS</text>
+
+  <!-- Nodes -->
+  <rect class="dg-node" x="48" y="100" width="168" height="56" rx="6"/>
+  <text class="dg-name" x="132" y="125" text-anchor="middle">Agent process</text>
+  <text class="dg-sub" x="132" y="143" text-anchor="middle">and native children</text>
+
+  <rect class="dg-node" x="320" y="92" width="184" height="72" rx="6"/>
+  <text class="dg-name" x="412" y="117" text-anchor="middle">Request handlers</text>
+  <text class="dg-sub" x="412" y="135" text-anchor="middle">Strands Shell · Monty ·</text>
+  <text class="dg-sub" x="412" y="151" text-anchor="middle">Egress gateway</text>
+
+  <rect class="dg-node is-focal" x="428" y="212" width="128" height="48" rx="6"/>
+  <text class="dg-name is-focal-text" x="492" y="241" text-anchor="middle">Policy engine</text>
+
+  <rect class="dg-node is-input" x="48" y="296" width="168" height="56" rx="6"/>
+  <text class="dg-name" x="132" y="321" text-anchor="middle">Files</text>
+  <text class="dg-sub" x="132" y="339" text-anchor="middle">in the surrounding OS</text>
+
+  <rect class="dg-node is-input" x="528" y="392" width="160" height="48" rx="6"/>
+  <text class="dg-name" x="608" y="421" text-anchor="middle">Remote service</text>
+</svg>

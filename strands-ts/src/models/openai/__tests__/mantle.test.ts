@@ -3,11 +3,13 @@ import OpenAI from 'openai'
 import { isNode } from '../../../__fixtures__/environment.js'
 import { OpenAIModel } from '../index.js'
 
-vi.mock('openai', () => {
+vi.mock('openai', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('openai')>()
   const mockConstructor = vi.fn(function (this: unknown) {
     return {}
   })
   return {
+    ...actual,
     default: mockConstructor,
   }
 })
@@ -137,7 +139,7 @@ describe('OpenAIModel bedrockMantleConfig', () => {
       ).not.toThrow()
     })
 
-    it('works for api: "chat" as well as the default responses api', async () => {
+    it('mints a bearer token regardless of api mode', async () => {
       new OpenAIModel({
         api: 'chat',
         modelId: TEST_MODEL_ID,
@@ -145,6 +147,169 @@ describe('OpenAIModel bedrockMantleConfig', () => {
       })
       const apiKey = await lastApiKeySetter()()
       expect(apiKey).toBe(TEST_TOKEN)
+    })
+  })
+
+  // The Mantle base path is a property of the individual model, not of its vendor
+  // prefix or the API surface. Expectations here mirror a live probe of the
+  // `us-east-1` catalog (see the `mantle-routing` integ test).
+  describe('base path resolution by model family', () => {
+    const baseURLFor = (options: ConstructorParameters<typeof OpenAIModel>[0]): string => {
+      new OpenAIModel(options)
+      const calls = (OpenAI as unknown as { mock: { calls: unknown[][] } }).mock.calls
+      return (calls[calls.length - 1]![0] as { baseURL: string }).baseURL
+    }
+
+    it('uses /openai/v1 for gpt-5.* on the responses api', () => {
+      expect(baseURLFor({ modelId: 'openai.gpt-5.6-luna', bedrockMantleConfig: { region: 'us-west-2' } })).toBe(
+        'https://bedrock-mantle.us-west-2.api.aws/openai/v1'
+      )
+    })
+
+    it('uses /openai/v1 for gpt-5.* on the chat api', () => {
+      expect(
+        baseURLFor({ api: 'chat', modelId: 'openai.gpt-5.6-luna', bedrockMantleConfig: { region: 'us-west-2' } })
+      ).toBe('https://bedrock-mantle.us-west-2.api.aws/openai/v1')
+    })
+
+    it('uses /v1 for gpt-oss-* on the responses api', () => {
+      expect(baseURLFor({ modelId: 'openai.gpt-oss-120b', bedrockMantleConfig: { region: 'us-west-2' } })).toBe(
+        'https://bedrock-mantle.us-west-2.api.aws/v1'
+      )
+    })
+
+    it('uses /v1 for gpt-oss-* on the chat api', () => {
+      expect(
+        baseURLFor({ api: 'chat', modelId: 'openai.gpt-oss-120b', bedrockMantleConfig: { region: 'us-west-2' } })
+      ).toBe('https://bedrock-mantle.us-west-2.api.aws/v1')
+    })
+
+    it('matches only Bedrock-style ids: openai.gpt-5.* → /openai/v1, bare gpt-5.* → /v1', () => {
+      expect(baseURLFor({ modelId: 'gpt-5.4', bedrockMantleConfig: { region: 'us-west-2' } })).toBe(
+        'https://bedrock-mantle.us-west-2.api.aws/v1'
+      )
+    })
+
+    // Regression for #3654: Mantle rejects the wrong base path with HTTP 400
+    // `validation_error`. The affected ids use /openai/v1; controls below pin /v1.
+    it.each([
+      ['xai.grok-4.3', '/openai/v1'],
+      ['google.gemma-4-31b', '/openai/v1'],
+      ['google.gemma-4-26b-a4b', '/openai/v1'],
+      ['google.gemma-4-e2b', '/openai/v1'],
+      ['openai.gpt-5.6-terra', '/openai/v1'],
+      ['openai.gpt-5.6-cyber', '/openai/v1'],
+      ['openai.gpt-daybreak-blue-5.6-sol', '/openai/v1'],
+      ['openai.gpt-6-astra', '/openai/v1'],
+      ['openai.gpt-6.1-sol', '/openai/v1'],
+      // Gemma 3 is served from /v1 while Gemma 4 is not, so `google.` cannot be a prefix.
+      ['google.gemma-3-27b-it', '/v1'],
+      ['google.gemma-3-4b-it', '/v1'],
+      ['openai.gpt-oss-120b', '/v1'],
+      ['openai.gpt-oss-safeguard-20b', '/v1'],
+      ['qwen.qwen3-32b', '/v1'],
+      ['deepseek.v3.2', '/v1'],
+      ['mistral.ministral-3-8b-instruct', '/v1'],
+      ['zai.glm-5', '/v1'],
+      ['moonshotai.kimi-k2.5', '/v1'],
+      ['minimax.minimax-m2', '/v1'],
+      ['nvidia.nemotron-nano-9b-v2', '/v1'],
+      ['writer.palmyra-vision-7b', '/v1'],
+    ])('routes %s to %s on both api surfaces', (modelId, expected) => {
+      const url = `https://bedrock-mantle.us-west-2.api.aws${expected}`
+      expect(baseURLFor({ modelId, bedrockMantleConfig: { region: 'us-west-2' } })).toBe(url)
+      expect(baseURLFor({ api: 'chat', modelId, bedrockMantleConfig: { region: 'us-west-2' } })).toBe(url)
+    })
+
+    // Ids beyond the verified catalog: a known line routes by prefix, a new line falls to /v1.
+    it.each([
+      // Point releases within a verified line, beyond the verified catalog.
+      ['xai.grok-4.9', '/openai/v1'],
+      ['openai.gpt-5.9-unreleased', '/openai/v1'],
+      ['openai.gpt-6-nova', '/openai/v1'],
+      ['openai.gpt-6.1-sol', '/openai/v1'],
+      // New lines the prefixes deliberately do not cover.
+      ['xai.grok-5', '/v1'],
+      ['xai.grok-5-preview', '/v1'],
+      ['openai.gpt-6oss-20b', '/v1'],
+    ])('resolves unverified %s to %s', (modelId, expected) => {
+      expect(baseURLFor({ modelId, bedrockMantleConfig: { region: 'us-west-2' } })).toBe(
+        `https://bedrock-mantle.us-west-2.api.aws${expected}`
+      )
+    })
+
+    // #3667: a `modelId` swap across the base-path boundary rebuilds the Mantle
+    // client against the new base URL. The negative controls below pin the two
+    // ways that must NOT happen: within one base path, and off the Mantle path.
+    const clientCallCount = (): number => (OpenAI as unknown as { mock: { calls: unknown[][] } }).mock.calls.length
+    const lastClientArgs = (): { baseURL: string; apiKey: unknown } =>
+      (OpenAI as unknown as { mock: { calls: unknown[][] } }).mock.calls.at(-1)![0] as {
+        baseURL: string
+        apiKey: unknown
+      }
+
+    it('reroutes the Mantle base URL when updateConfig moves modelId across base paths', () => {
+      const model = new OpenAIModel({
+        modelId: 'openai.gpt-oss-120b',
+        bedrockMantleConfig: { region: 'us-west-2' },
+      })
+      expect(lastClientArgs().baseURL).toBe('https://bedrock-mantle.us-west-2.api.aws/v1')
+      const before = clientCallCount()
+
+      model.updateConfig({ modelId: 'xai.grok-4.3' })
+
+      expect(model.getConfig().modelId).toBe('xai.grok-4.3')
+      expect(clientCallCount()).toBe(before + 1)
+      expect(lastClientArgs().baseURL).toBe('https://bedrock-mantle.us-west-2.api.aws/openai/v1')
+    })
+
+    // The memoized token provider lives in the setter's closure, so the rebuilt
+    // client must be handed the *same* setter rather than a fresh one.
+    it('reuses the construction-time api key setter when rerouting', () => {
+      const model = new OpenAIModel({
+        modelId: 'openai.gpt-oss-120b',
+        bedrockMantleConfig: { region: 'us-west-2' },
+      })
+      const originalApiKey = lastClientArgs().apiKey
+
+      model.updateConfig({ modelId: 'xai.grok-4.3' })
+
+      expect(lastClientArgs().apiKey).toBe(originalApiKey)
+    })
+
+    it('keeps the existing client when the new modelId stays on the same base path', () => {
+      const model = new OpenAIModel({
+        modelId: 'openai.gpt-oss-120b',
+        bedrockMantleConfig: { region: 'us-west-2' },
+      })
+      const before = clientCallCount()
+
+      model.updateConfig({ modelId: 'qwen.qwen3-32b' })
+
+      expect(model.getConfig().modelId).toBe('qwen.qwen3-32b')
+      expect(clientCallCount()).toBe(before)
+      expect(lastClientArgs().baseURL).toBe('https://bedrock-mantle.us-west-2.api.aws/v1')
+    })
+
+    it('keeps the existing client when updateConfig leaves modelId alone', () => {
+      const model = new OpenAIModel({
+        modelId: 'openai.gpt-oss-120b',
+        bedrockMantleConfig: { region: 'us-west-2' },
+      })
+      const before = clientCallCount()
+
+      model.updateConfig({ params: { temperature: 0.5 } })
+
+      expect(clientCallCount()).toBe(before)
+    })
+
+    it('does not touch the client when bedrockMantleConfig is not used', () => {
+      const model = new OpenAIModel({ modelId: 'gpt-5.4', client: {} as OpenAI })
+      const before = clientCallCount()
+
+      model.updateConfig({ modelId: 'openai.gpt-oss-120b' })
+
+      expect(clientCallCount()).toBe(before)
     })
   })
 
@@ -225,6 +390,28 @@ describe('OpenAIModel bedrockMantleConfig', () => {
         new OpenAIModel({ modelId: TEST_MODEL_ID, bedrockMantleConfig: { region: 'us-east-1' } })
         await lastApiKeySetter()()
         expect(getTokenProviderMock).toHaveBeenCalledWith({ region: 'us-east-1' })
+      })
+    }
+
+    it.each(['x@attacker.com/', 'us-east-1\n', 'us-east-1/', 'US-EAST-1', 'useast1', 'us-east-١', 'us-éast-1'])(
+      'rejects a malformed region %j before building the endpoint URL',
+      (region) => {
+        expect(() => new OpenAIModel({ modelId: TEST_MODEL_ID, bedrockMantleConfig: { region } })).toThrow(
+          /invalid AWS region/
+        )
+        // Validation must precede token minting so no bearer token is ever sent toward the host.
+        expect(getTokenProviderMock).not.toHaveBeenCalled()
+      }
+    )
+
+    it.each(['us-east-1', 'ap-southeast-1', 'us-gov-east-1'])('accepts the well-formed region %j', (region) => {
+      expect(() => new OpenAIModel({ modelId: TEST_MODEL_ID, bedrockMantleConfig: { region } })).not.toThrow()
+    })
+
+    if (isNode) {
+      it('rejects a malformed region supplied via AWS_REGION', () => {
+        vi.stubEnv('AWS_REGION', 'x@attacker.com/')
+        expect(() => new OpenAIModel({ modelId: TEST_MODEL_ID, bedrockMantleConfig: {} })).toThrow(/invalid AWS region/)
       })
     }
   })

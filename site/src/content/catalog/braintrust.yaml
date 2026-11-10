@@ -1,0 +1,12 @@
+name: braintrust
+description: Braintrust tracing for Strands agents in Python and TypeScript — logs agent, model, and tool spans for monitoring, debugging, and evals.
+integrationType: observability
+maintainedBy: partner
+languages:
+  python:
+    package: braintrust
+  typescript:
+    package: braintrust
+github: https://github.com/braintrustdata/braintrust-sdk-python
+docsUrl: https://www.braintrust.dev/docs/integrations/sdk-integrations/strands-agent
+addedDate: 2026-10-01

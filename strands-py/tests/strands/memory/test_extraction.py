@@ -23,6 +23,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from strands.agent.invocation_context import _create_invocation_context, _reached_limit
 from strands.memory.extraction.coordinator import (
     BACKOFF_PROBE_INTERVAL,
     SAVE_FAILURES_BEFORE_BACKOFF,
@@ -36,6 +37,7 @@ from strands.memory.extraction.types import (
     ExtractionTrigger,
     MemoryMessageFilter,
 )
+from strands.memory.types import AddMessagesContext
 from strands.types.content import Message
 
 # A stub model. The coordinator only passes ``default_model`` through to an
@@ -145,6 +147,17 @@ def _added_metadata(call: Any) -> Any:
 
 def _extractor_context(call: Any) -> Any:
     """Pull the ``ExtractorContext`` argument from a recorded ``extract`` call."""
+    if len(call.args) > 1:
+        return call.args[1]
+    return call.kwargs.get("context")
+
+
+def _add_messages_context(call: Any) -> Any:
+    """Pull the ``AddMessagesContext`` argument from a recorded ``add_messages`` call.
+
+    Tolerates ``add_messages(messages, context)`` (positional) and
+    ``add_messages(messages, context=...)`` (keyword).
+    """
     if len(call.args) > 1:
         return call.args[1]
     return call.kwargs.get("context")
@@ -606,3 +619,148 @@ async def test_background_save_does_not_block_scheduling_and_flush_awaits_it():
     release.set()
     await flushed
     assert completed["v"] is True
+
+
+# --------------------------------------------------------------------------- #
+# add_messages context (per-message seqs)
+#
+# Ported from the "addMessages context (per-message seqs)" describe block in
+# strands-ts/src/memory/extraction/__tests__/extraction.test.ts. These assert the
+# coordinator hands ``add_messages`` an ``AddMessagesContext`` carrying the
+# per-message sequence numbers aligned with the filtered batch, so a store can
+# build an idempotency key that survives retries.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_add_messages_passes_sequence_numbers_aligned_with_the_filtered_batch():
+    store = _make_store("s", ExtractionConfig(trigger=_trigger()), sink="add_messages")
+    coordinator = _coordinator(store)
+
+    coordinator.record(_user_msg("first"))
+    coordinator.record(_user_msg("second"))
+    await _drive(coordinator, store)
+
+    store.add_messages.assert_called_once()
+    batch = store.add_messages.call_args.args[0]
+    ctx = _add_messages_context(store.add_messages.call_args)
+    # Assert the whole context so an unexpected field added to the envelope later is caught.
+    assert ctx == AddMessagesContext(sequence_numbers=[0, 1])
+    assert len(ctx.sequence_numbers) == len(batch)
+
+
+@pytest.mark.asyncio
+async def test_add_messages_keeps_a_message_seq_when_an_earlier_message_is_filtered_to_empty():
+    store = _make_store("s", ExtractionConfig(trigger=_trigger()), sink="add_messages")
+    coordinator = _coordinator(store)
+
+    # seq 0 (kept), seq 1 (tool-only, filtered to empty and dropped), seq 2 (kept).
+    coordinator.record(_user_msg("a"))
+    coordinator.record(_tool_use_msg())
+    coordinator.record(_user_msg("b"))
+    await _drive(coordinator, store)
+
+    batch = store.add_messages.call_args.args[0]
+    ctx = _add_messages_context(store.add_messages.call_args)
+    assert len(batch) == 2
+    # The dropped message leaves a gap: 1 is missing, survivors keep their own seqs.
+    assert ctx == AddMessagesContext(sequence_numbers=[0, 2])
+
+
+@pytest.mark.asyncio
+async def test_add_messages_re_fires_the_same_seqs_for_a_batch_whose_save_failed():
+    store = _make_store("s", ExtractionConfig(trigger=_trigger()), sink="add_messages")
+    store.add_messages.side_effect = [RuntimeError("backend down"), None]
+    coordinator = _coordinator(store)
+
+    coordinator.record(_user_msg("first"))
+    coordinator.record(_user_msg("second"))
+    await _drive(coordinator, store)  # fails, mark rolled back
+    await _drive(coordinator, store)  # retries the same batch
+
+    assert store.add_messages.call_count == 2
+    first = _add_messages_context(store.add_messages.call_args_list[0])
+    second = _add_messages_context(store.add_messages.call_args_list[1])
+    assert first == AddMessagesContext(sequence_numbers=[0, 1])
+    # The retry carries the identical context in order, not a fresh renumbering.
+    assert second == first
+
+
+@pytest.mark.asyncio
+async def test_add_messages_anchors_the_seq_to_the_message_not_the_batch_position():
+    store = _make_store("s", ExtractionConfig(trigger=_trigger()), sink="add_messages")
+    coordinator = _coordinator(store)
+
+    # First turn (seq 0) saves cleanly; second turn (seq 1) fails then retries.
+    coordinator.record(_user_msg("turn one"))
+    await _drive(coordinator, store)
+    store.add_messages.side_effect = [RuntimeError("backend down"), None]
+    coordinator.record(_user_msg("turn two"))
+    await _drive(coordinator, store)  # fails, rolled back
+    await _drive(coordinator, store)  # retries turn two
+
+    assert store.add_messages.call_count == 3
+    retried = _add_messages_context(store.add_messages.call_args_list[2])
+    # Retried batch carries the message's original seq (1), not a renumbered 0.
+    assert retried == AddMessagesContext(sequence_numbers=[1])
+
+
+@pytest.mark.asyncio
+async def test_add_messages_gives_each_store_index_aligned_seqs_from_the_shared_buffer():
+    a = _make_store("a", ExtractionConfig(trigger=_trigger()), sink="add_messages")
+    b = _make_store("b", ExtractionConfig(trigger=_trigger()), sink="add_messages")
+    coordinator = _coordinator(a, b)
+
+    coordinator.record(_user_msg("first"))
+    coordinator.record(_user_msg("second"))
+    await _drive(coordinator, a)
+    await _drive(coordinator, b)
+
+    ctx_a = _add_messages_context(a.add_messages.call_args)
+    ctx_b = _add_messages_context(b.add_messages.call_args)
+    assert ctx_a == AddMessagesContext(sequence_numbers=[0, 1])
+    assert ctx_b == AddMessagesContext(sequence_numbers=[0, 1])
+
+
+@pytest.mark.asyncio
+async def test_extractor_route_does_not_receive_add_messages_context():
+    extractor = _make_extractor([ExtractionResult(content="fact")])
+    store = _make_store("s", ExtractionConfig(trigger=_trigger(), extractor=extractor), sink="both")
+    coordinator = _coordinator(store)
+
+    coordinator.record(_user_msg("something happened"))
+    await _drive(coordinator, store)
+
+    # Extractor route writes via add; add_messages is never called, so no context is built for it.
+    store.add_messages.assert_not_called()
+    extractor.extract.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_extractor_gets_a_handle_that_joins_the_request_usage_without_its_limits():
+    extractor = _make_extractor([ExtractionResult(content="fact")])
+    store = _make_store("s", ExtractionConfig(trigger=_trigger(), extractor=extractor), sink="add")
+    coordinator = _coordinator(store)
+    coordinator.record(_user_msg("I prefer dark mode"))
+    request = _create_invocation_context({"turns": 1})
+    request._usage["turns_taken"] = 1
+
+    task = coordinator.process(store, None, request)
+    await task
+
+    handed = extractor.extract.call_args.args[1].invocation_context
+    handed._record_usage({"inputTokens": 1, "outputTokens": 2, "totalTokens": 3})
+    assert _reached_limit(handed) is None
+    assert request.usage == {"turns_taken": 1, "inputTokens": 1, "outputTokens": 2, "totalTokens": 3}
+
+
+@pytest.mark.asyncio
+async def test_extractor_gets_no_handle_outside_a_request():
+    extractor = _make_extractor([ExtractionResult(content="fact")])
+    store = _make_store("s", ExtractionConfig(trigger=_trigger(), extractor=extractor), sink="add")
+    coordinator = _coordinator(store)
+    coordinator.record(_user_msg("I prefer dark mode"))
+
+    await _drive(coordinator, store)
+
+    assert extractor.extract.call_args.args[1].invocation_context is None

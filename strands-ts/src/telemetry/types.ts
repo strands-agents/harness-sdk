@@ -2,11 +2,12 @@
  * Type definitions for OpenTelemetry telemetry support.
  */
 
-import type { AttributeValue } from '@opentelemetry/api'
+import type { AttributeValue, SpanContext } from '@opentelemetry/api'
 import type { Message, SystemPrompt, ToolResultBlock } from '../types/messages.js'
 import type { InvokeArgs } from '../types/agent.js'
 import type { ToolSpec, ToolUse } from '../tools/types.js'
 import type { Usage, Metrics } from '../models/streaming.js'
+import type { MemoryEntry } from '../memory/types.js'
 
 // Re-export for convenience
 export type { Usage, Metrics }
@@ -161,4 +162,96 @@ export interface EndNodeSpanOptions {
   usage?: Usage | undefined
   /** Error that caused the node execution to fail. */
   error?: Error | undefined
+}
+
+/**
+ * Options for starting a memory search span.
+ */
+export interface StartMemorySearchSpanOptions {
+  /** The search query, recorded verbatim as a span event. */
+  query: string
+  /** Names of the stores being searched. */
+  storeNames: string[]
+  /** Optional cap on results per store. */
+  maxSearchResults?: number
+}
+
+/**
+ * Options for ending a memory search span.
+ */
+export interface EndMemorySearchSpanOptions {
+  /** The retrieved memory entries, recorded as a span event. */
+  entries?: MemoryEntry[]
+  /** Number of stores whose search rejected (logged and skipped). */
+  storeFailureCount?: number
+  /** Error that caused the search to fail outright. */
+  error?: Error
+}
+
+/**
+ * Options for starting a memory add span.
+ */
+export interface StartMemoryAddSpanOptions {
+  /** The content being written, recorded verbatim as a span event. */
+  content: string
+  /** Names of the writable stores being targeted. */
+  storeNames: string[]
+  /** Start the span as a trace root, for detached fire-and-forget writes. */
+  forceRoot?: boolean
+}
+
+/**
+ * Options for ending a memory add span.
+ */
+export interface EndMemoryAddSpanOptions {
+  /** Number of targeted stores whose write failed. */
+  storeFailureCount?: number
+  /** Error that caused the add to fail. */
+  error?: Error
+}
+
+/**
+ * Options for starting a memory injection span.
+ */
+export interface StartMemoryInjectSpanOptions {
+  /** Optional cap on entries injected for this model call. */
+  maxEntries?: number
+}
+
+/**
+ * Options for ending a memory injection span.
+ */
+export interface EndMemoryInjectSpanOptions {
+  /** Whether memory context was injected for this model call. */
+  injected: boolean
+  /** Number of entries injected. */
+  entryCount?: number
+  /** Whether the format callback threw (injection skipped, fails open). */
+  formatError?: boolean
+}
+
+/**
+ * Options for starting a memory extraction span.
+ */
+export interface StartMemoryExtractSpanOptions {
+  /** Name of the store being saved to. */
+  storeName: string
+  /** Number of messages written, i.e. after the message filter ran. */
+  messageCount: number
+  /** Number of messages dropped by the message filter. */
+  filteredCount?: number
+  /** The extractor class name, or omitted for the addMessages path. */
+  extractor?: string
+  /** Span context of the agent run that scheduled this extraction, attached as a link. */
+  agentSpanContext?: SpanContext
+}
+
+/**
+ * Options for ending a memory extraction span.
+ */
+export interface EndMemoryExtractSpanOptions {
+  /** Number of entries written to the store. */
+  entryCount?: number
+  /** Error that caused the extraction to fail. */
+  error?: Error
 }

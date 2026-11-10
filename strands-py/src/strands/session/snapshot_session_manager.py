@@ -1,0 +1,790 @@
+"""Snapshot-based session manager.
+
+Persists an agent as a single versioned :class:`~strands.types._snapshot.Snapshot`
+blob on each lifecycle event:
+
+- A mutable ``snapshot_latest`` is overwritten on each save, for crash/restart resume.
+- Append-only immutable snapshots (time-ordered keys) are written when a ``snapshot_trigger``
+  fires, enabling checkpointing — restore to any prior state, not just the latest.
+
+The manager persists snapshots through the unified :class:`~strands.storage.storage.Storage`
+primitive (``write``/``read``/``delete``/``list`` over byte blobs). It owns the key layout,
+snapshot-id scheme, and serialization; the storage backend only moves bytes, so the same
+``Storage`` instance can back sessions, memory, and other subsystems.
+
+This is distinct from the older message-log session managers
+(:class:`~strands.session.repository_session_manager.RepositorySessionManager` and its
+subclasses), which persist each message individually. Snapshots capture the whole agent
+in one atomic blob and are the recommended path for new agents.
+"""
+
+import asyncio
+import json
+import logging
+import re
+from typing import TYPE_CHECKING, Any, Literal, Protocol, get_args, runtime_checkable
+
+from .._async import run_async
+from .._identifier import Identifier, is_uuid7
+from .._identifier import new_uuid7 as _new_snapshot_id
+from .._identifier import validate as validate_identifier
+from ..bidi.agent import BidiAgent
+from ..bidi.hooks import BidiAgentStopEvent, BidiBeforeConnectionRestartEvent
+from ..hooks.events import (
+    AfterInvocationEvent,
+    AfterMultiAgentInvocationEvent,
+    AfterNodeCallEvent,
+    AgentInitializedEvent,
+    BeforeMultiAgentInvocationEvent,
+    MessageAddedEvent,
+    MessageUpdatedEvent,
+    MultiAgentInitializedEvent,
+)
+from ..hooks.registry import HookOrder, HookRegistry
+from ..storage.local_file_storage import LocalFileStorage
+from ..storage.storage import _NAMESPACED, Storage, _NamespacedStorage
+from ..types._snapshot import Snapshot
+from ..types.agent import LocalAgent
+from ..types.content import Message
+from ..types.exceptions import SnapshotException
+from ..types.session import decode_bytes_values, encode_bytes_values
+from .session_manager import SessionManager
+
+if TYPE_CHECKING:
+    from .._context_manager.stash import Stash
+    from ..multiagent.base import MultiAgentBase
+
+logger = logging.getLogger(__name__)
+
+SaveLatestStrategy = Literal["message", "invocation", "trigger"]
+"""Controls how often an Agent's ``snapshot_latest`` is saved automatically.
+
+- ``"invocation"``: after every agent invocation completes (default; balances durability and I/O).
+- ``"message"``: after every message added, plus the invocation save above (most durable,
+  highest I/O).
+- ``"trigger"``: only when ``snapshot_trigger`` fires (or manually via ``save_snapshot``).
+
+Guardrail redactions are flushed immediately under every strategy, including ``"trigger"``,
+so pre-redaction content never sits at rest. This diverges from the TypeScript SDK, which
+does not flush redactions under ``"trigger"``; see :meth:`SnapshotSessionManager.redact_latest_message`.
+"""
+
+# Derived from the Literal above so the accepted runtime values cannot drift from the type.
+_SAVE_LATEST_STRATEGIES = get_args(SaveLatestStrategy)
+
+BidiAgentSaveLatestStrategy = Literal["message", "stop", "trigger"]
+"""Controls how often a BidiAgent's ``snapshot_latest`` is saved automatically.
+
+- ``"message"``: after every message addition or replacement, plus the stop/restart save below (default;
+  a streaming session has no invocation boundary, so a mid-session crash resumes at the last
+  completed transcript entry instead of losing the connection's whole history).
+- ``"stop"``: after the agent stops and before a connection restart (lower I/O; a crash loses
+  history since the last save).
+- ``"trigger"``: only when ``snapshot_trigger`` fires (or manually via ``save_snapshot``).
+
+A response completing is not a save point. Stop/restart saves and ``snapshot_trigger`` evaluation
+run on ``BidiAgentStopEvent`` and ``BidiBeforeConnectionRestartEvent``.
+"""
+
+_BIDI_AGENT_SAVE_LATEST_STRATEGIES = get_args(BidiAgentSaveLatestStrategy)
+
+MultiAgentSaveLatestStrategy = Literal["node", "invocation"]
+"""Controls how often an orchestrator's ``snapshot_latest`` is saved automatically.
+
+- ``"node"``: after every node completes (default; a mid-run crash resumes at the last node).
+- ``"invocation"``: only after the whole orchestrator invocation completes (lower I/O; a crash
+  loses the in-flight run). A large Graph on a remote store can opt down to this.
+
+Orchestrators are latest-only — no immutable history and no ``snapshot_trigger``.
+"""
+
+_MULTI_AGENT_SAVE_LATEST_STRATEGIES = get_args(MultiAgentSaveLatestStrategy)
+
+# Top-level storage namespace for all session data. The manager applies this namespace once
+# unless the caller passed an already-namespaced view, preventing a doubled
+# ``session/session/...`` prefix.
+_SESSIONS_NAMESPACE = "session"
+
+_SNAPSHOT_LATEST = "snapshot_latest.json"
+_IMMUTABLE_HISTORY = "immutable_history"
+_SNAPSHOT_REGEX = re.compile(r"snapshot_([\w-]+)\.json\Z")
+
+# Cap concurrent deletes so a session with many immutable checkpoints does not spawn thousands
+# of simultaneous blocking storage calls (e.g. S3's per-object delete via asyncio.to_thread).
+_DELETE_CONCURRENCY = 100
+
+# -- Key layout, relative to the "session" storage namespace applied in __init__ --
+#
+#   <session_id>/scopes/agent/<agent_id>/snapshots/
+#     snapshot_latest.json
+#     immutable_history/snapshot_<id>.json
+#
+# The namespaced storage view prepends ``session/``. These helpers are module-level so the
+# migration utility builds the same keys the manager reads.
+
+
+def _resolve_storage(storage: Storage) -> Storage:
+    """Namespace raw storage under ``"session"``; pass an already-namespaced view through.
+
+    A view already marked with ``_NAMESPACED`` is used as-is; otherwise raw storage is wrapped
+    under the ``"session"`` namespace. Manager keys are relative to the resolved storage.
+    """
+    if getattr(storage, "_namespaced", None) is _NAMESPACED:
+        return storage
+    return _NamespacedStorage(storage, _SESSIONS_NAMESPACE)
+
+
+def _validate_snapshot_id(snapshot_id: str) -> None:
+    """Validate that a string is an SDK-vended snapshot id (a UUIDv7).
+
+    Snapshot ids are opaque handles callers get from ``list_snapshot_ids`` and never construct.
+    The fixed shape also guards the immutable-history key against traversal.
+
+    Args:
+        snapshot_id: The string to validate.
+
+    Raises:
+        ValueError: If the string is not a valid snapshot id.
+    """
+    if not is_uuid7(snapshot_id):
+        raise ValueError(f"'{snapshot_id}' is not a valid snapshot id")
+
+
+def _session_prefix(session_id: str) -> str:
+    """Return the namespace-relative key prefix covering an entire session."""
+    session_id = validate_identifier(session_id, Identifier.SESSION)
+    return f"{session_id}/"
+
+
+def _snapshots_prefix(session_id: str, agent_id: str) -> str:
+    """Return the namespace-relative key prefix for an agent's snapshots directory."""
+    agent_id = validate_identifier(agent_id, Identifier.AGENT)
+    return f"{_session_prefix(session_id)}scopes/agent/{agent_id}/snapshots/"
+
+
+def _snapshot_key(session_id: str, agent_id: str, *, snapshot_id: str | None) -> str:
+    """Return the storage key for a snapshot; ``None`` targets ``snapshot_latest``."""
+    prefix = _snapshots_prefix(session_id, agent_id)
+    if snapshot_id is None:
+        return f"{prefix}{_SNAPSHOT_LATEST}"
+    _validate_snapshot_id(snapshot_id)
+    return f"{prefix}{_IMMUTABLE_HISTORY}/snapshot_{snapshot_id}.json"
+
+
+def _multi_agent_latest_key(session_id: str, orchestrator_id: str) -> str:
+    orchestrator_id = validate_identifier(orchestrator_id, Identifier.AGENT)
+    return f"{_session_prefix(session_id)}scopes/multiAgent/{orchestrator_id}/snapshots/{_SNAPSHOT_LATEST}"
+
+
+def _serialize_snapshot(snapshot: Snapshot) -> bytes:
+    """Serialize a snapshot to JSON bytes, base64-encoding any bytes content."""
+    return json.dumps(encode_bytes_values(snapshot.to_dict()), ensure_ascii=False).encode("utf-8")
+
+
+def _deserialize_snapshot(data: bytes) -> Snapshot:
+    """Deserialize JSON bytes into a snapshot, decoding any base64 bytes content.
+
+    Raises:
+        SnapshotException: If the bytes are not a valid, current-schema snapshot (malformed
+            JSON, wrong encoding, wrong shape, or an unsupported schema/scope).
+    """
+    try:
+        decoded = decode_bytes_values(json.loads(data))
+    except (ValueError, UnicodeDecodeError) as error:
+        raise SnapshotException(f"Failed to deserialize snapshot: {error}") from error
+    if not isinstance(decoded, dict):
+        raise SnapshotException(f"Snapshot is not an object: got {type(decoded).__name__}")
+    try:
+        return Snapshot.from_dict(decoded)
+    except (KeyError, TypeError, AttributeError) as error:
+        raise SnapshotException(f"Failed to deserialize snapshot: {error}") from error
+
+
+@runtime_checkable
+class SnapshotTrigger(Protocol):
+    """Decides whether to write an immutable checkpoint at a persistence boundary."""
+
+    def __call__(self, *, agent_data: LocalAgent, **kwargs: Any) -> bool:
+        """Return True to append an immutable snapshot for the given agent.
+
+        Args:
+            agent_data: The agent that just completed an invocation, or the BidiAgent that just
+                stopped or is about to restart its connection.
+            **kwargs: Additional keyword arguments for future extensibility.
+
+        Returns:
+            True to create an immutable checkpoint, False otherwise.
+        """
+        ...
+
+
+class SnapshotSessionManager(SessionManager[LocalAgent]):
+    """Persists agent snapshots to a :class:`~strands.storage.storage.Storage` across invocations.
+
+    On agent initialization the latest snapshot is restored automatically. On each
+    qualifying lifecycle event the agent is re-captured and ``snapshot_latest`` is
+    overwritten. When ``snapshot_trigger`` returns True after an invocation, an
+    additional immutable snapshot is appended for time-travel restore.
+
+    Single agents get immutable time-travel snapshots via ``snapshot_trigger``. Graph and Swarm
+    orchestrators are persisted latest-only: state is captured after each node (or each invocation,
+    per ``multi_agent_save_latest_on``) and restored lazily on their first invocation. A BidiAgent
+    is restored before its connection starts and captured after each message or stop and before
+    connection restarts (per ``bidi_agent_save_latest_on``).
+
+    Example:
+        ```python
+        from strands import Agent
+        from strands.session import SnapshotSessionManager
+        from strands.storage import LocalFileStorage
+
+        session = SnapshotSessionManager("my-session", storage=LocalFileStorage())
+        agent = Agent(session_manager=session)
+        ```
+    """
+
+    def __init__(
+        self,
+        session_id: str = "default-session",
+        *,
+        storage: Storage | None = None,
+        save_latest_on: SaveLatestStrategy = "invocation",
+        bidi_agent_save_latest_on: BidiAgentSaveLatestStrategy = "message",
+        multi_agent_save_latest_on: MultiAgentSaveLatestStrategy = "node",
+        snapshot_trigger: SnapshotTrigger | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Initialize the snapshot session manager.
+
+        Args:
+            session_id: Unique session identifier. Must not contain path separators.
+            storage: Unified storage backend that persists snapshot blobs. When None,
+                resolves from the agent-level ``storage`` during initialization; if no
+                agent-level storage is available, falls back to
+                :class:`~strands.storage.local_file_storage.LocalFileStorage`.
+            save_latest_on: For an Agent, when to overwrite ``snapshot_latest``.
+                See :data:`SaveLatestStrategy`.
+            bidi_agent_save_latest_on: For a BidiAgent, when to overwrite ``snapshot_latest``.
+                See :data:`BidiAgentSaveLatestStrategy`.
+            multi_agent_save_latest_on: For Graph/Swarm orchestrators, when to overwrite the
+                orchestrator's ``snapshot_latest``. See :data:`MultiAgentSaveLatestStrategy`.
+            snapshot_trigger: Optional callback invoked after each invocation, after a BidiAgent
+                stops, or before its connection restarts. When it returns True an immutable snapshot
+                is appended for checkpointing. An immutable snapshot can also be forced at any
+                point via :meth:`save_snapshot`.
+            **kwargs: Additional keyword arguments for future extensibility.
+
+        Raises:
+            ValueError: If ``session_id`` is empty, is a relative-path segment (``.`` or ``..``),
+                normalizes to empty, or contains a path separator; or if any ``*save_latest_on``
+                value is not a recognized strategy.
+        """
+        self.session_id = validate_identifier(session_id, Identifier.SESSION)
+        # validate_identifier permits "."/".."/whitespace, which either collapse the session
+        # prefix (silently writing to a shared/wrong key on which delete_session then no-ops)
+        # or explode deep in the storage layer. Reject anything that isn't a usable id here.
+        if not self.session_id.strip() or self.session_id in (".", ".."):
+            raise ValueError(f"session_id is not a valid session identifier: {session_id!r}")
+        if save_latest_on not in _SAVE_LATEST_STRATEGIES:
+            # Silently accepting an unknown value would register no save hooks — the session
+            # would persist nothing with no error.
+            raise ValueError(f"save_latest_on must be one of {_SAVE_LATEST_STRATEGIES}, got {save_latest_on!r}")
+        if bidi_agent_save_latest_on not in _BIDI_AGENT_SAVE_LATEST_STRATEGIES:
+            raise ValueError(
+                f"bidi_agent_save_latest_on must be one of {_BIDI_AGENT_SAVE_LATEST_STRATEGIES}, "
+                f"got {bidi_agent_save_latest_on!r}"
+            )
+        if multi_agent_save_latest_on not in _MULTI_AGENT_SAVE_LATEST_STRATEGIES:
+            raise ValueError(
+                f"multi_agent_save_latest_on must be one of {_MULTI_AGENT_SAVE_LATEST_STRATEGIES}, "
+                f"got {multi_agent_save_latest_on!r}"
+            )
+        self._raw_storage: Storage | None = storage
+        self._storage: Storage | None = _resolve_storage(storage) if storage is not None else None
+        self._save_latest_on: SaveLatestStrategy = save_latest_on
+        self._bidi_agent_save_latest_on: BidiAgentSaveLatestStrategy = bidi_agent_save_latest_on
+        self._multi_agent_save_latest_on: MultiAgentSaveLatestStrategy = multi_agent_save_latest_on
+        self._snapshot_trigger = snapshot_trigger
+        # Orchestrator ids restored this process, so restore runs once per orchestrator (lazily,
+        # on its first invocation) rather than on every invocation.
+        self._multi_agent_restored_ids: set[str] = set()
+        # Each orchestrator rebinds independently because synchronous invocations use fresh event loops.
+        self._multi_agent_save_locks: dict[str, tuple[asyncio.AbstractEventLoop, asyncio.Lock]] = {}
+        self._agent_stash: Stash | None = None
+
+    @property
+    def _resolved_storage(self) -> Storage:
+        """Return the resolved storage, raising if not yet initialized."""
+        if self._storage is None:
+            raise RuntimeError(
+                "SnapshotSessionManager requires a storage backend. "
+                "Provide storage in the constructor or set storage on the Agent."
+            )
+        return self._storage
+
+    def register_hooks(self, registry: HookRegistry, **kwargs: Any) -> None:
+        """Register lifecycle callbacks for snapshot persistence.
+
+        Overrides the base wiring: the message-log callbacks are replaced with
+        snapshot save/restore handlers.
+        """
+        # Restore must be synchronous — AgentInitializedEvent forbids async callbacks.
+        registry.add_callback(AgentInitializedEvent, lambda event: self.initialize(event.agent))
+
+        # The save paths run under invoke_callbacks_async, so register them as native
+        # async handlers and avoid the sync bridge. MessageAddedEvent is emitted by both agent
+        # kinds under separate strategies, so each message handler acts only on its own kind.
+        if self._save_latest_on == "message":
+            registry.add_callback(MessageAddedEvent, self._on_message_added)
+        registry.add_callback(AfterInvocationEvent, self._on_after_invocation)
+
+        if self._bidi_agent_save_latest_on == "message":
+            registry.add_callback([MessageAddedEvent, MessageUpdatedEvent], self._on_bidi_message_changed)
+        # SDK_LAST so user stop/before-restart hooks mutate state before the save captures it.
+        registry.add_callback(
+            [BidiAgentStopEvent, BidiBeforeConnectionRestartEvent],
+            self._on_bidi_stop_or_restart,
+            order=HookOrder.SDK_LAST,
+        )
+
+        # An orchestrator has no AgentInitializedEvent to lazily resolve storage from, so its hooks
+        # are wired at its own init event.
+        registry.add_callback(MultiAgentInitializedEvent, self._init_multi_agent)
+
+    def _init_multi_agent(self, event: MultiAgentInitializedEvent) -> None:
+        """Wire orchestrator snapshot persistence at init."""
+        orchestrator = event.source
+        if self._storage is None:
+            raise RuntimeError(
+                "SnapshotSessionManager requires a storage backend for multi-agent orchestrators. "
+                "Provide storage in the constructor."
+            )
+        orchestrator.add_hook(self._on_before_multi_agent_invocation, BeforeMultiAgentInvocationEvent)
+        if self._multi_agent_save_latest_on == "node":
+            orchestrator.add_hook(self._on_after_node_call, AfterNodeCallEvent)
+        orchestrator.add_hook(self._on_after_multi_agent_invocation, AfterMultiAgentInvocationEvent)
+
+    async def _on_before_multi_agent_invocation(self, event: BeforeMultiAgentInvocationEvent) -> None:
+        """Restore orchestrator state once, on its first invocation."""
+        orchestrator = event.source
+        if orchestrator.id in self._multi_agent_restored_ids:
+            return
+        await self._restore_multi_agent(orchestrator)
+        self._multi_agent_restored_ids.add(orchestrator.id)
+
+    async def _on_after_node_call(self, event: AfterNodeCallEvent) -> None:
+        """Save latest orchestrator snapshot after each node completes."""
+        await self._save_multi_agent_latest(event.source)
+
+    async def _on_after_multi_agent_invocation(self, event: AfterMultiAgentInvocationEvent) -> None:
+        """Save latest orchestrator snapshot after the invocation completes."""
+        await self._save_multi_agent_latest(event.source)
+
+    async def _restore_multi_agent(self, orchestrator: "MultiAgentBase") -> bool:
+        """Load an orchestrator's latest snapshot into it. Returns False if none exists."""
+        from ..multiagent._snapshot import load_snapshot
+
+        key = _multi_agent_latest_key(self.session_id, orchestrator.id)
+        data = await self._resolved_storage.read(key)
+        if data is None:
+            return False
+        load_snapshot(orchestrator, _deserialize_snapshot(data))
+        return True
+
+    def _get_multi_agent_save_lock(self, orchestrator_id: str) -> asyncio.Lock:
+        """Return the active event loop's save lock for an orchestrator.
+
+        An orchestrator must not run concurrently across loops because its execution state is shared.
+        """
+        running_loop = asyncio.get_running_loop()
+        entry = self._multi_agent_save_locks.get(orchestrator_id)
+        if entry is None or entry[0] is not running_loop:
+            entry = (running_loop, asyncio.Lock())
+            self._multi_agent_save_locks[orchestrator_id] = entry
+        return entry[1]
+
+    async def _save_multi_agent_latest(self, orchestrator: "MultiAgentBase") -> None:
+        """Capture the orchestrator and overwrite its ``snapshot_latest``."""
+        from ..multiagent._snapshot import take_snapshot
+
+        async with self._get_multi_agent_save_lock(orchestrator.id):
+            data = _serialize_snapshot(take_snapshot(orchestrator))
+            await self._resolved_storage.write(_multi_agent_latest_key(self.session_id, orchestrator.id), data)
+
+    # -- ABC methods (invoked synchronously by the Agent; bridge to async storage) --
+
+    def initialize(self, agent: LocalAgent, **kwargs: Any) -> None:
+        """Restore the agent from its latest snapshot, if one exists.
+
+        Storage is resolved on the first call and cached; a single manager instance should not be
+        shared across agents with differing storage backends.
+
+        Args:
+            agent: Agent to restore.
+            **kwargs: Additional keyword arguments for future extensibility.
+        """
+        if self._storage is None:
+            raw = agent.storage if agent.storage is not None else LocalFileStorage()
+            self._raw_storage = raw
+            self._storage = _resolve_storage(raw)
+        if agent.context_manager is not None:
+            self._agent_stash = agent.context_manager.stash
+        run_async(lambda: self._initialize_async(agent))
+
+    def sync_agent(self, agent: LocalAgent, **kwargs: Any) -> None:
+        """Capture the agent and overwrite ``snapshot_latest``.
+
+        Args:
+            agent: Agent to persist.
+            **kwargs: Additional keyword arguments for future extensibility.
+        """
+        run_async(lambda: self._save_latest(agent))
+
+    def redact_latest_message(self, redact_message: Message, agent: LocalAgent, **kwargs: Any) -> None:
+        """Persist immediately after a guardrail redaction, under every strategy.
+
+        The Agent has already applied the redaction to ``agent.messages[-1]`` before
+        calling this, so re-capturing the agent flushes pre-redaction content out of
+        the persisted latest snapshot. This flush happens regardless of ``save_latest_on``
+        (including ``"trigger"``) because the Agent invokes this method directly, not through
+        a hook the manager could decline to register — so pre-redaction content never sits at
+        rest. This diverges from the TypeScript SDK, which gates redaction persistence behind
+        an ``AfterModelCall`` hook it skips under ``"trigger"`` and therefore does not flush there.
+
+        Args:
+            redact_message: The redacted replacement message (already applied by the Agent).
+            agent: Agent whose latest message was redacted.
+            **kwargs: Additional keyword arguments for future extensibility.
+        """
+        run_async(lambda: self._save_latest(agent))
+
+    def append_message(self, message: Message, agent: LocalAgent, **kwargs: Any) -> None:
+        """No-op — snapshots capture the whole agent.
+
+        Per-message persistence under the ``"message"`` strategy is handled by the
+        ``MessageAddedEvent`` hook, not by this method.
+
+        Args:
+            message: The message that was appended (unused).
+            agent: The agent the message was appended to (unused).
+            **kwargs: Additional keyword arguments for future extensibility.
+        """
+
+    # -- Public time-travel API --
+
+    async def list_snapshot_ids(
+        self, agent: LocalAgent, *, limit: int | None = None, start_after: str | None = None
+    ) -> list[str]:
+        """List immutable snapshot ids for an agent, oldest first.
+
+        Args:
+            agent: Agent whose snapshots to list.
+            limit: Optional cap on the number of ids returned.
+            start_after: Exclusive cursor; a snapshot id from a prior page.
+
+        Returns:
+            Immutable snapshot ids in chronological order.
+
+        Raises:
+            ValueError: If ``start_after`` is not a valid snapshot id.
+        """
+        if limit is not None and limit <= 0:
+            return []
+        if start_after is not None:
+            _validate_snapshot_id(start_after)
+
+        history_prefix = f"{_snapshots_prefix(self.session_id, agent.agent_id)}{_IMMUTABLE_HISTORY}/"
+        keys = await self._resolved_storage.list(history_prefix)
+        ids = sorted(
+            snapshot_id
+            for key in keys
+            if (match := _SNAPSHOT_REGEX.search(key)) and is_uuid7(snapshot_id := match.group(1))
+        )
+        if start_after is not None:
+            ids = [snapshot_id for snapshot_id in ids if snapshot_id > start_after]
+        if limit is not None:
+            ids = ids[:limit]
+        return ids
+
+    async def restore_snapshot(self, agent: LocalAgent, *, snapshot_id: str | None = None) -> bool:
+        """Restore an agent from a stored snapshot.
+
+        Args:
+            agent: Agent to restore into. A BidiAgent must be stopped.
+            snapshot_id: The immutable snapshot id to restore (time travel). Omit to restore
+                ``snapshot_latest``, the same snapshot restore-on-init loads.
+
+        Returns:
+            True if the snapshot existed and was restored, False otherwise.
+
+        Raises:
+            ValueError: If ``snapshot_id`` is given and is not a valid snapshot id.
+            RuntimeError: If a BidiAgent is started.
+        """
+        return await self._restore(agent, snapshot_id=snapshot_id)
+
+    async def save_snapshot(self, agent: LocalAgent, *, is_latest: bool) -> str | None:
+        """Save a snapshot of the agent's current state on demand.
+
+        Use ``is_latest=False`` to force an immutable checkpoint at an arbitrary point (independent
+        of ``snapshot_trigger``), so it can later be restored with :meth:`restore_snapshot`; use
+        ``is_latest=True`` to overwrite ``snapshot_latest``.
+
+        Args:
+            agent: Agent whose state to capture.
+            is_latest: When True, overwrite ``snapshot_latest`` (a single mutable snapshot). When
+                False, append a new immutable snapshot under a fresh, time-ordered id.
+
+        Returns:
+            The new immutable snapshot id, ready to pass to :meth:`restore_snapshot`, or ``None``
+            when ``is_latest=True`` (``snapshot_latest`` is not addressed by id).
+        """
+        snapshot = self._capture(agent)
+        await self._include_stash_data(agent, snapshot)
+        data = _serialize_snapshot(snapshot)
+        snapshot_id = None if is_latest else _new_snapshot_id()
+        key = _snapshot_key(self.session_id, agent.agent_id, snapshot_id=snapshot_id)
+        await self._resolved_storage.write(key, data)
+        return snapshot_id
+
+    async def delete_session(self) -> None:
+        """Delete all snapshots and stash data for this session."""
+        storage = self._resolved_storage
+        keys = await storage.list(_session_prefix(self.session_id))
+        semaphore = asyncio.Semaphore(_DELETE_CONCURRENCY)
+
+        async def _delete(key: str) -> None:
+            async with semaphore:
+                await storage.delete(key)
+
+        await asyncio.gather(*(_delete(key) for key in keys))
+        await self._delete_stash_data()
+
+    # -- Async internals --
+
+    async def _initialize_async(self, agent: LocalAgent) -> None:
+        """Restore latest snapshot on init, warning on overwrite and handling stateful models."""
+        had_messages = len(agent.messages) > 0
+        restored = await self._restore(agent)
+
+        if restored and had_messages:
+            logger.warning(
+                "agent_id=<%s>, session_id=<%s> | agent had existing messages that were overwritten by session restore",
+                agent.agent_id,
+                self.session_id,
+            )
+
+        # Stateful models manage history server-side, so restored messages would drift
+        # from the server's view. Keep the restored model_state and drop the messages.
+        if restored and agent.model.stateful and len(agent.messages) > 0:
+            logger.warning(
+                "agent_id=<%s>, message_count=<%s> | discarding restored messages for stateful model",
+                agent.agent_id,
+                len(agent.messages),
+            )
+            agent.messages = []
+
+    async def _restore(self, agent: LocalAgent, *, snapshot_id: str | None = None) -> bool:
+        """Load a snapshot into the agent. Returns False if none exists."""
+        key = _snapshot_key(self.session_id, agent.agent_id, snapshot_id=snapshot_id)
+        data = await self._resolved_storage.read(key)
+        if data is None:
+            return False
+        snapshot = _deserialize_snapshot(data)
+        agent.load_snapshot(snapshot)
+        await self._restore_stash_data(agent, snapshot)
+        return True
+
+    async def _save_latest(self, agent: LocalAgent) -> None:
+        """Capture the agent and overwrite ``snapshot_latest``."""
+        await self.save_snapshot(agent, is_latest=True)
+
+    async def _save_immutable_and_latest(self, agent: LocalAgent) -> None:
+        """Capture once and write the immutable snapshot, then ``snapshot_latest``.
+
+        Ordered, not concurrent: writing the immutable checkpoint first means a partial failure
+        can leave an orphaned immutable snapshot (harmless — the next list simply includes it)
+        but never a ``snapshot_latest`` pointing at history that was never written.
+        """
+        snapshot = self._capture(agent)
+        await self._include_stash_data(agent, snapshot)
+        data = _serialize_snapshot(snapshot)
+        await self._resolved_storage.write(
+            _snapshot_key(self.session_id, agent.agent_id, snapshot_id=_new_snapshot_id()), data
+        )
+        await self._resolved_storage.write(_snapshot_key(self.session_id, agent.agent_id, snapshot_id=None), data)
+
+    async def _on_message_added(self, event: MessageAddedEvent[LocalAgent]) -> None:
+        """Save latest after each message under the Agent ``"message"`` strategy.
+
+        A BidiAgent emits the same event but follows ``bidi_agent_save_latest_on``.
+        """
+        if isinstance(event.agent, BidiAgent):
+            return
+        await self._save_latest(event.agent)
+
+    async def _on_bidi_message_changed(
+        self, event: MessageAddedEvent[LocalAgent] | MessageUpdatedEvent[LocalAgent]
+    ) -> None:
+        """Save latest after each message addition or replacement under the Bidi ``"message"`` strategy.
+
+        Replacements matter here: a BidiAgent appends a placeholder when a response starts and
+        replaces it with the completed transcript, so saving only on addition would persist the
+        placeholder. An Agent emits ``MessageAddedEvent`` too but follows ``save_latest_on``.
+        """
+        if not isinstance(event.agent, BidiAgent):
+            return
+        await self._save_latest(event.agent)
+
+    async def _on_after_invocation(self, event: AfterInvocationEvent) -> None:
+        """Save latest on invocation and fire the immutable-checkpoint trigger.
+
+        ``"message"`` also saves here, not just per message: the Agent runs
+        ``conversation_manager.apply_management`` (trimming/summarizing) after the last
+        ``MessageAddedEvent`` but before this event, so the per-message saves would otherwise
+        persist pre-management messages and a stale ``removed_message_count``.
+        """
+        await self._save_on_completion(event.agent, save_latest=self._save_latest_on != "trigger")
+
+    async def _on_bidi_stop_or_restart(self, event: BidiAgentStopEvent | BidiBeforeConnectionRestartEvent) -> None:
+        """Save latest and evaluate the checkpoint trigger after stopping or before restarting.
+
+        ``"message"`` also saves here so state mutated by stop/before-restart hooks is captured.
+        """
+        await self._save_on_completion(event.agent, save_latest=self._bidi_agent_save_latest_on != "trigger")
+
+    async def _save_on_completion(self, agent: LocalAgent, *, save_latest: bool) -> None:
+        """Apply the save decision shared by Agent invocations and BidiAgent stop/restart hooks.
+
+        When the trigger fires, the immutable+latest write subsumes the latest save, so the
+        agent is captured only once even when ``save_latest`` is True.
+
+        Args:
+            agent: The agent whose invocation completed, or the BidiAgent stopping or about to restart.
+            save_latest: Whether the caller's strategy saves ``snapshot_latest`` at this boundary.
+                A raising trigger saves regardless, so the latest state is still persisted.
+        """
+        triggered = False
+        trigger_failed = False
+        if self._snapshot_trigger is not None:
+            try:
+                triggered = self._snapshot_trigger(agent_data=agent)
+            except Exception:
+                # A caller's trigger raising must not discard the latest save.
+                trigger_failed = True
+                logger.exception(
+                    "agent_id=<%s>, session_id=<%s> | snapshot_trigger raised; skipping immutable checkpoint",
+                    agent.agent_id,
+                    self.session_id,
+                )
+        if triggered:
+            await self._save_immutable_and_latest(agent)
+        elif save_latest or trigger_failed:
+            await self._save_latest(agent)
+
+    def _capture(self, agent: LocalAgent) -> Snapshot:
+        """Capture a full session snapshot including the system prompt.
+
+        The shared ``"session"`` preset omits ``system_prompt`` (opt-in for callers like
+        the goal plugin); session persistence includes it so a rehydrated agent behaves
+        identically to the original.
+        """
+        return agent.take_snapshot(preset="session", include=["system_prompt"])
+
+    # -- Stash integration --
+
+    async def _include_stash_data(self, agent: LocalAgent, snapshot: Snapshot) -> None:
+        """Include context-manager stash data in a snapshot during save.
+
+        If the stash storage is durable, writes a lightweight external reference.
+        If ephemeral (e.g. InMemoryStorage), serializes all entries inline.
+
+        Raises on failure so the caller never persists a snapshot with missing stash data
+        while the agent messages still carry ``[ref: ...]`` placeholders.
+        """
+        context_manager = agent.context_manager
+        if context_manager is None or context_manager.stash is None:
+            return
+
+        if context_manager.stash_is_durable:
+            snapshot.data["stash"] = {
+                "location": "external",
+                "storage_type": context_manager.stash.storage_type_name,
+            }
+            return
+
+        entries = await context_manager.stash.take_snapshot()
+        if entries:
+            snapshot.data["stash"] = {
+                "location": "inline",
+                "entries": entries,
+            }
+
+    async def _restore_stash_data(self, agent: LocalAgent, snapshot: Snapshot) -> None:
+        """Restore context-manager stash data from a snapshot.
+
+        Storage errors are logged and swallowed so a stash failure never prevents session restore.
+        """
+        stash_data = snapshot.data.get("stash")
+        if stash_data is None:
+            return
+
+        context_manager = agent.context_manager
+        if context_manager is None or context_manager.stash is None:
+            return
+
+        try:
+            location = stash_data.get("location")
+            if location == "external":
+                snapshot_type = stash_data.get("storage_type", "")
+                if snapshot_type and snapshot_type != context_manager.stash.storage_type_name:
+                    logger.warning(
+                        "session_id=<%s>, snapshot_storage=<%s>, current_storage=<%s> | "
+                        "stash storage type changed since snapshot was created, stash data may be inaccessible",
+                        self.session_id,
+                        snapshot_type,
+                        context_manager.stash.storage_type_name,
+                    )
+                return
+
+            if location == "inline":
+                entries = stash_data.get("entries", {})
+                await context_manager.stash.load_snapshot(entries)
+        except Exception:
+            logger.warning(
+                "session_id=<%s> | failed to restore stash data from snapshot, continuing without stash",
+                self.session_id,
+            )
+
+    async def _delete_stash_data(self) -> None:
+        """Delete all stash data during session deletion.
+
+        When the manager was never initialized (no agent attached), falls back to
+        deleting the ``context/<session_id>/`` prefix directly on the base storage so
+        stash data is not orphaned. This assumes the stash shares the same storage backend
+        as the session manager; if the stash was configured with a separate storage, the
+        fallback will not find its data.
+
+        Storage errors are logged and swallowed so a stash failure never prevents session deletion.
+        """
+        try:
+            if self._agent_stash is not None:
+                await self._agent_stash.clear_session()
+            elif self._raw_storage is not None:
+                from .._context_manager.stash import STASH_PREFIX
+
+                prefix = f"{STASH_PREFIX}/{self.session_id}/"
+                keys = await self._raw_storage.list(prefix)
+                for key in keys:
+                    await self._raw_storage.delete(key)
+                if keys:
+                    logger.debug(
+                        "session_id=<%s>, keys=<%s> | deleted orphaned stash data via storage fallback",
+                        self.session_id,
+                        len(keys),
+                    )
+        except Exception:
+            logger.warning(
+                "session_id=<%s> | failed to delete stash data during session deletion",
+                self.session_id,
+            )

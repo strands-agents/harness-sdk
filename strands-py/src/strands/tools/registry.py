@@ -7,11 +7,9 @@ invocation capabilities.
 import inspect
 import logging
 import os
-import sys
 import uuid
 import warnings
 from collections.abc import Iterable, Sequence
-from importlib import import_module, util
 from os.path import expanduser
 from pathlib import Path
 from typing import Any, cast
@@ -23,7 +21,7 @@ from ..agent.base import AgentBase
 from ..tools.decorator import DecoratedFunctionTool
 from ..types.tools import AgentTool, ToolSpec
 from . import ToolProvider
-from .loader import load_tool_from_string, load_tools_from_module
+from .loader import _load_tool_module, load_tool_from_string, load_tools_from_module
 from .tools import _COMPOSITION_KEYWORDS, PythonAgentTool, normalize_schema, normalize_tool_spec
 
 logger = logging.getLogger(__name__)
@@ -55,7 +53,7 @@ class ToolRegistry:
                 1. Local file path to a module based tool: `./path/to/module/tool.py`
                 2. Module import path
 
-                    2.1. Path to a module based tool: `strands_tools.file_read`
+                    2.1. Path to a module based tool: `my_package.my_tool`
                     2.2. Path to a module with multiple AgentTool instances (@tool decorated):
                         `tests.fixtures.say_tool`
                     2.3. Path to a module and a specific function: `tests.fixtures.say_tool:say`
@@ -314,6 +312,17 @@ class ToolRegistry:
         elif tool_name in self.dynamic_tools:
             del self.dynamic_tools[tool_name]
 
+    def remove(self, tool_name: str) -> None:
+        """Remove a tool by its registered name, including any dynamic registration.
+
+        Does nothing if the tool does not exist.
+
+        Args:
+            tool_name: Name of the tool to remove.
+        """
+        self.registry.pop(tool_name, None)
+        self.dynamic_tools.pop(tool_name, None)
+
     def get_tools_dirs(self) -> list[Path]:
         """Get all tool directory paths.
 
@@ -389,26 +398,10 @@ class ToolRegistry:
 
             logger.debug("tool_name=<%s> | reloading tool", tool_name)
 
-            # Add tool directory to path temporarily
-            tool_dir = str(tool_path.parent)
-            sys.path.insert(0, tool_dir)
-            try:
-                # Load the module directly using spec
-                spec = util.spec_from_file_location(tool_name, str(tool_path))
-                if spec is None:
-                    raise ImportError(f"Could not load spec for {tool_name}")
-
-                module = util.module_from_spec(spec)
-                sys.modules[tool_name] = module
-
-                if spec.loader is None:
-                    raise ImportError(f"Could not load {tool_name}")
-
-                spec.loader.exec_module(module)
-
-            finally:
-                # Remove the temporary path
-                sys.path.remove(tool_dir)
+            # Load the module under a namespaced key so a tool file does not clobber an
+            # identically named entry in sys.modules (e.g. a tool named "json"), with the
+            # tool directory scoped onto sys.path only while the module executes.
+            module = _load_tool_module(tool_name, str(tool_path))
 
             # Look for function-based tools first
             try:
@@ -482,14 +475,10 @@ class ToolRegistry:
                 continue
 
             try:
-                # Add directory to path temporarily
-                tool_dir = str(tool_path.parent)
-                sys.path.insert(0, tool_dir)
-                try:
-                    module = import_module(tool_name)
-                finally:
-                    if tool_dir in sys.path:
-                        sys.path.remove(tool_dir)
+                # Load the module under a namespaced key so a tool file does not clobber an
+                # identically named entry in sys.modules (e.g. a tool named "json"), with the
+                # tool directory scoped onto sys.path only while the module executes.
+                module = _load_tool_module(tool_name, str(tool_path))
 
                 # Process Python tool
                 if tool_path.suffix == ".py":

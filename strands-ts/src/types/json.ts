@@ -71,18 +71,30 @@ export function deepCopy(value: unknown): JSONValue {
  * @throws JsonValidationError if value contains functions, symbols, or undefined values
  */
 export function deepCopyWithValidation(value: unknown, contextPath: string = 'value'): JSONValue {
-  const pathStack: string[] = []
+  const pathStack: { obj: object; path: string }[] = []
 
-  const replacer = (key: string, val: unknown): unknown => {
+  const replacer = function (this: object, key: string, val: unknown): unknown {
+    // `this` is the object currently being serialized, so any frame above it belongs to a finished subtree
+    while (pathStack.length > 0 && pathStack[pathStack.length - 1]?.obj !== this) {
+      pathStack.pop()
+    }
+    const parentFrame = pathStack[pathStack.length - 1]
+
     // Build current path
+    // The initial call carries an empty key with no frames on the stack; a real '' property
+    // key is visited while its parent object is on the stack and must stay part of the path.
+    const isRoot = key === '' && parentFrame === undefined
     let currentPath = contextPath
-    if (key !== '') {
-      // Check if parent is array (numeric key pattern)
-      const isArrayIndex = /^\d+$/.test(key)
-      if (isArrayIndex) {
-        currentPath = pathStack.length > 0 ? `${pathStack[pathStack.length - 1]}[${key}]` : `${contextPath}[${key}]`
+    if (!isRoot) {
+      const parentPath = parentFrame ? parentFrame.path : contextPath
+      if (key === '') {
+        // Dot notation would drop a real empty-string key, so keep it in brackets
+        currentPath = `${parentPath}['']`
+      } else if (Array.isArray(this) && /^\d+$/.test(key)) {
+        // Bracket notation only for real arrays, not for numeric-looking object keys
+        currentPath = `${parentPath}[${key}]`
       } else {
-        currentPath = pathStack.length > 0 ? `${pathStack[pathStack.length - 1]}.${key}` : `${contextPath}.${key}`
+        currentPath = `${parentPath}.${key}`
       }
     }
 
@@ -101,7 +113,7 @@ export function deepCopyWithValidation(value: unknown, contextPath: string = 'va
 
     // Track path for nested objects/arrays
     if (val !== null && typeof val === 'object') {
-      pathStack.push(currentPath)
+      pathStack.push({ obj: val, path: currentPath })
     }
 
     return val

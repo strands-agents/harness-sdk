@@ -1,0 +1,9 @@
+name: strands-perplexity
+description: Perplexity Search API tool for Strands Agents enabling real-time web search with citations, regional filtering, and multi-query support.
+integrationType: tool
+languages:
+  python:
+    package: strands-perplexity
+github: https://github.com/mkmeral/strands-perplexity
+docsPage: docs/integrations/tools/strands-perplexity
+addedDate: 2026-03-26

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { SshSandbox } from '../ssh.js'
 import { streamProcess } from '../stream-process.js'
-import { SANDBOX_BASH_DESCRIPTION } from '../../vended-tools/bash/types.js'
+import { SANDBOX_SHELL_DESCRIPTION } from '../../vended-tools/shell/types.js'
 
 vi.mock('../stream-process.js', () => ({
   streamProcess: vi.fn(async function* () {
@@ -313,14 +313,14 @@ describe('SshSandbox', () => {
   describe('getTools', () => {
     it('vends the sandbox-routed fileEditor and bash tools', () => {
       const tools = new SshSandbox({ host: 'myhost', workingDir: '/workspace' }).getTools()
-      expect(tools.map((t) => t.name)).toStrictEqual(['sandbox_file_editor', 'sandbox_bash'])
+      expect(tools.map((t) => t.name)).toStrictEqual(['sandbox_file_editor', 'sandbox_shell'])
     })
 
     it('vends bash with the sandbox description', () => {
       const tools = new SshSandbox({ host: 'myhost', workingDir: '/workspace' }).getTools()
-      const bashTool = tools.find((t) => t.name === 'sandbox_bash')!
-      expect(bashTool.description).toContain(SANDBOX_BASH_DESCRIPTION)
-      expect(bashTool.description).toContain('myhost')
+      const shellTool = tools.find((t) => t.name === 'sandbox_shell')!
+      expect(shellTool.description).toContain(SANDBOX_SHELL_DESCRIPTION)
+      expect(shellTool.description).toContain('myhost')
     })
   })
 })

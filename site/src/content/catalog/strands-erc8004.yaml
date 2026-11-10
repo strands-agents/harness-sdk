@@ -1,0 +1,8 @@
+name: strands-erc8004
+description: ERC-8004 Trustless Agents Protocol tools for Strands Agents enabling on-chain agent identity, reputation, and validation on any EVM chain.
+integrationType: tool
+languages:
+  python:
+    package: strands-erc8004
+github: https://github.com/cagataycali/strands-erc8004
+addedDate: 2026-02-10

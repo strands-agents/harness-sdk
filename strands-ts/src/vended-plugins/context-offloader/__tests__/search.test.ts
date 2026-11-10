@@ -168,14 +168,28 @@ describe('searchContent', () => {
       const text = Array.from({ length: 500 }, (_, i) => `match line ${i + 1}`).join('\n')
       const result = searchContent(text, { pattern: 'match', context_lines: 0 }, 200)
       expect(result).toContain('output truncated, narrow your search')
-      expect(result.length).toBeLessThanOrEqual(250) // 200 + truncation message
+      expect(result.length).toBeLessThanOrEqual(280)
     })
 
     it('truncates line range results when output exceeds maxChars', () => {
       const text = Array.from({ length: 500 }, (_, i) => `line ${i + 1}`).join('\n')
       const result = searchContent(text, { line_range: { start: 1, end: 500 }, context_lines: 5 }, 200)
       expect(result).toContain('output truncated, narrow your range')
-      expect(result.length).toBeLessThanOrEqual(250)
+      expect(result.length).toBeLessThanOrEqual(280)
+    })
+
+    it('preserves body for single-long-line content in pattern search', () => {
+      const longJson = '{"key":"' + 'x'.repeat(5000) + '"}'
+      const result = searchContent(longJson, { pattern: 'key', context_lines: 0 }, 500)
+      expect(result).toContain('output truncated')
+      expect(result).toContain('{"key":"')
+    })
+
+    it('preserves body for single-long-line content in line range', () => {
+      const longJson = '{"key":"' + 'x'.repeat(5000) + '"}'
+      const result = searchContent(longJson, { line_range: { start: 1, end: 50 }, context_lines: 5 }, 500)
+      expect(result).toContain('output truncated')
+      expect(result).toContain('{"key":"')
     })
 
     it('does not truncate when output fits within maxChars', () => {

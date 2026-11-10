@@ -1,11 +1,19 @@
+import copy
+import logging
 import os
 import unittest.mock
+from types import SimpleNamespace
 
+import httpx
 import openai
 import pydantic
 import pytest
+from openai.types.responses import Response, ResponseErrorEvent, ResponseFailedEvent
+from openai.types.responses.response_error import ResponseError
 
 import strands
+from strands.agent import AgentMetadata
+from strands.models import CacheConfig, ModelCapabilities, ModelInfo
 from strands.models.openai_responses import _MAX_MEDIA_SIZE_BYTES, OpenAIResponsesModel
 from strands.types.exceptions import ContextWindowOverflowException, ModelThrottledException
 
@@ -106,7 +114,7 @@ def test_update_config(model, model_id):
 @pytest.mark.parametrize(
     "content, exp_result",
     [
-        # Document
+        # Document content goes in file_data with a filename, never file_url (#3572)
         (
             {
                 "document": {
@@ -117,7 +125,37 @@ def test_update_config(model, model_id):
             },
             {
                 "type": "input_file",
-                "file_url": "data:application/pdf;base64,ZG9jdW1lbnQ=",
+                "filename": "test doc.pdf",
+                "file_data": "data:application/pdf;base64,ZG9jdW1lbnQ=",
+            },
+        ),
+        # A name that already ends with the format keeps a single extension
+        (
+            {
+                "document": {
+                    "format": "pdf",
+                    "name": "test doc.pdf",
+                    "source": {"bytes": b"document"},
+                },
+            },
+            {
+                "type": "input_file",
+                "filename": "test doc.pdf",
+                "file_data": "data:application/pdf;base64,ZG9jdW1lbnQ=",
+            },
+        ),
+        # Document without the optional name falls back to a default filename
+        (
+            {
+                "document": {
+                    "format": "pdf",
+                    "source": {"bytes": b"document"},
+                },
+            },
+            {
+                "type": "input_file",
+                "filename": "document.pdf",
+                "file_data": "data:application/pdf;base64,ZG9jdW1lbnQ=",
             },
         ),
         # Image
@@ -243,10 +281,17 @@ def test_format_request_tool_message_with_image():
 
 
 def test_format_request_tool_message_with_document():
-    """Test that tool results with documents return an array output."""
+    """Test that tool results with documents return an array output.
+
+    Document content must be sent as ``file_data`` + ``filename``, not ``file_url`` —
+    Azure OpenAI treats ``file_url`` as a URL to download and rejects a data URI.
+    A document without the optional ``name`` falls back to a default filename.
+    See: https://github.com/strands-agents/harness-sdk/issues/3572
+    """
     tool_result = {
         "content": [
             {"document": {"format": "pdf", "name": "test.pdf", "source": {"bytes": b"fake_pdf_data"}}},
+            {"document": {"format": "pdf", "source": {"bytes": b"fake_pdf_data"}}},
         ],
         "status": "success",
         "toolUseId": "c3",
@@ -258,9 +303,12 @@ def test_format_request_tool_message_with_document():
     assert tru_result["call_id"] == "c3"
     # When documents are present, output should be an array
     assert isinstance(tru_result["output"], list)
-    assert len(tru_result["output"]) == 1
+    assert len(tru_result["output"]) == 2
     assert tru_result["output"][0]["type"] == "input_file"
-    assert "file_url" in tru_result["output"][0]
+    assert tru_result["output"][0]["filename"] == "test.pdf"
+    assert "file_data" in tru_result["output"][0]
+    assert "file_url" not in tru_result["output"][0]
+    assert tru_result["output"][1]["filename"] == "document.pdf"
 
 
 def test_format_request_messages(system_prompt):
@@ -300,7 +348,7 @@ def test_format_request_messages(system_prompt):
         },
         {
             "role": "assistant",
-            "content": [{"type": "output_text", "text": "call tool"}],
+            "content": "call tool",
         },
         {
             "type": "function_call",
@@ -317,12 +365,14 @@ def test_format_request_messages(system_prompt):
     assert tru_result == exp_result
 
 
-def test_format_request_messages_assistant_text_uses_output_text():
-    """Assistant text content must use output_text, not input_text.
+def test_format_request_messages_assistant_text_uses_string_content():
+    """Assistant history must use the string EasyInputMessage form.
 
-    Regression test for multi-turn conversations failing because the OpenAI
-    Responses API rejects input_text in assistant messages.
-    See: https://github.com/strands-agents/harness-sdk/issues/1850
+    A bare ``{"role": "assistant", "content": [{"type": "output_text", ...}]}``
+    is not a valid Responses API input item (it is neither a string-content
+    EasyInputMessage nor a complete ResponseOutputMessage) and is rejected by
+    strict backends such as Bedrock Mantle.
+    See: https://github.com/strands-agents/harness-sdk/issues/3388
     """
     messages = [
         {
@@ -347,12 +397,89 @@ def test_format_request_messages_assistant_text_uses_output_text():
     }
     assert result[1] == {
         "role": "assistant",
-        "content": [{"type": "output_text", "text": "Hello!"}],
+        "content": "Hello!",
     }
     assert result[2] == {
         "role": "user",
         "content": [{"type": "input_text", "text": "Say goodbye"}],
     }
+
+
+def test_format_request_messages_assistant_multiple_text_blocks_join_with_newline():
+    """Multiple assistant text blocks collapse into one newline-joined string."""
+    messages = [
+        {
+            "content": [{"text": "First."}, {"text": "Second."}],
+            "role": "assistant",
+        },
+    ]
+
+    result = OpenAIResponsesModel._format_request_messages(messages)
+
+    assert result == [{"role": "assistant", "content": "First.\nSecond."}]
+
+
+def test_format_request_messages_assistant_non_text_content_dropped(caplog):
+    """Assistant media has no valid Responses input shape and is dropped with a warning."""
+    messages = [
+        {
+            "content": [
+                {"text": "Here is the image."},
+                {"image": {"format": "png", "source": {"bytes": b"fake-image-data"}}},
+            ],
+            "role": "assistant",
+        },
+    ]
+
+    with caplog.at_level(logging.WARNING, logger="strands.models.openai_responses"):
+        result = OpenAIResponsesModel._format_request_messages(messages)
+
+    assert result == [{"role": "assistant", "content": "Here is the image."}]
+    assert "content_type=<input_image>" in caplog.text
+
+
+def test_format_request_messages_skips_message_cache_point(caplog):
+    messages = [{"role": "user", "content": [{"text": "durable prefix"}, {"cachePoint": {"type": "default"}}]}]
+
+    with caplog.at_level(logging.WARNING, logger="strands.models.openai_responses"):
+        result = OpenAIResponsesModel._format_request_messages(messages)
+
+    assert result == [{"role": "user", "content": [{"type": "input_text", "text": "durable prefix"}]}]
+    assert "cachePoint content block is not supported by OpenAI Responses" in caplog.text
+
+
+def test_format_request_messages_assistant_only_non_text_content_dropped_entirely(caplog):
+    """An assistant turn with only non-text content collapses to nothing and is omitted."""
+    messages = [
+        {
+            "content": [{"image": {"format": "png", "source": {"bytes": b"fake-image-data"}}}],
+            "role": "assistant",
+        },
+    ]
+
+    with caplog.at_level(logging.WARNING, logger="strands.models.openai_responses"):
+        result = OpenAIResponsesModel._format_request_messages(messages)
+
+    assert result == []
+    assert "content_type=<input_image>" in caplog.text
+
+
+def test_format_request_messages_assistant_history_items_are_valid_input_items():
+    """Formatted assistant history validates against the OpenAI input item schema."""
+    import openai
+
+    messages = [
+        {"content": [{"text": "What is 2+2?"}], "role": "user"},
+        {"content": [{"text": "4"}], "role": "assistant"},
+        {"content": [{"text": "What about 3+3?"}], "role": "user"},
+    ]
+
+    result = OpenAIResponsesModel._format_request_messages(messages)
+
+    assistant_item = result[1]
+    easy_message_fields = set(openai.types.responses.EasyInputMessageParam.__annotations__)
+    assert set(assistant_item) <= easy_message_fields
+    assert isinstance(assistant_item["content"], str)
 
 
 def test_format_request_message_content_role_assistant():
@@ -399,6 +526,133 @@ def test_format_request(model, messages, tool_specs, system_prompt):
         "max_output_tokens": 100,
     }
     assert tru_request == exp_request
+
+
+def test_format_request_filters_location_source_document(model, caplog):
+    """Location-source documents are skipped with a warning instead of raising KeyError.
+
+    Guards against https://github.com/strands-agents/harness-sdk/issues/4016.
+    """
+    caplog.set_level(logging.WARNING, logger="strands.models.openai_responses")
+
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"text": "analyze this document"},
+                {
+                    "document": {
+                        "format": "pdf",
+                        "name": "report",
+                        "source": {"location": {"type": "s3", "s3Location": {"uri": "s3://bucket/report.pdf"}}},
+                    }
+                },
+            ],
+        },
+    ]
+
+    request = model._format_request(messages)
+
+    formatted_content = request["input"][0]["content"]
+    assert formatted_content == [{"type": "input_text", "text": "analyze this document"}]
+    assert "Location sources are not supported by OpenAI Responses" in caplog.text
+
+
+def test_cache_key_maps_to_prompt_cache_key(openai_client, model_id, messages):
+    _ = openai_client
+    model = OpenAIResponsesModel(model_id=model_id, cache_config=CacheConfig(cache_key="tenant-42"))
+
+    assert model._format_request(messages)["prompt_cache_key"] == "tenant-42"
+
+
+def test_cache_key_absent_when_unset(openai_client, model_id, messages):
+    _ = openai_client
+    model = OpenAIResponsesModel(model_id=model_id, cache_config=CacheConfig())
+
+    assert "prompt_cache_key" not in model._format_request(messages)
+
+
+def test_cache_key_derived_from_agent_metadata_session(openai_client, model_id, messages):
+    _ = openai_client
+    model = OpenAIResponsesModel(model_id=model_id, cache_config=CacheConfig())
+
+    request = model._format_request(messages, agent_metadata=AgentMetadata(session_id="s1"))
+
+    assert request["prompt_cache_key"] == "strands-s1"
+
+
+def test_configured_cache_key_wins_over_agent_metadata(openai_client, model_id, messages):
+    _ = openai_client
+    model = OpenAIResponsesModel(model_id=model_id, cache_config=CacheConfig(cache_key="tenant-42"))
+
+    request = model._format_request(messages, agent_metadata=AgentMetadata(session_id="s1"))
+
+    assert request["prompt_cache_key"] == "tenant-42"
+
+
+def test_false_cache_key_opts_out_of_agent_metadata(openai_client, model_id, messages):
+    _ = openai_client
+    model = OpenAIResponsesModel(model_id=model_id, cache_config=CacheConfig(cache_key=False))
+
+    request = model._format_request(messages, agent_metadata=AgentMetadata(session_id="s1"))
+
+    assert "prompt_cache_key" not in request
+
+
+def test_agent_metadata_without_session_yields_no_cache_key(openai_client, model_id, messages):
+    _ = openai_client
+    model = OpenAIResponsesModel(model_id=model_id, cache_config=CacheConfig())
+
+    request = model._format_request(messages, agent_metadata=AgentMetadata(session_id=None))
+
+    assert "prompt_cache_key" not in request
+
+
+@pytest.mark.asyncio
+async def test_stream_derives_prompt_cache_key_from_agent_session(openai_client, model_id, agenerator, alist):
+    """stream threads agent_metadata so the outbound request carries the derived routing key."""
+    model = OpenAIResponsesModel(model_id=model_id, cache_config=CacheConfig())
+    mock_complete_event = unittest.mock.Mock(
+        type="response.completed",
+        response=unittest.mock.Mock(
+            usage=unittest.mock.Mock(input_tokens=1, output_tokens=1, total_tokens=2, input_tokens_details=None)
+        ),
+    )
+    openai_client.responses.create = unittest.mock.AsyncMock(return_value=agenerator([mock_complete_event]))
+
+    messages = [{"role": "user", "content": [{"text": "test"}]}]
+    await alist(model.stream(messages, agent_metadata=AgentMetadata(session_id="s1")))
+
+    assert openai_client.responses.create.call_args.kwargs["prompt_cache_key"] == "strands-s1"
+
+
+def test_explicit_prompt_cache_key_in_params_wins(openai_client, model_id, messages):
+    _ = openai_client
+    model = OpenAIResponsesModel(
+        model_id=model_id,
+        params={"prompt_cache_key": "explicit"},
+        cache_config=CacheConfig(cache_key="from-config"),
+    )
+
+    assert model._format_request(messages)["prompt_cache_key"] == "explicit"
+
+
+@pytest.mark.parametrize("retention", ["24h", "in_memory"])
+def test_translatable_ttl_maps_to_prompt_cache_retention(openai_client, model_id, messages, retention):
+    _ = openai_client
+    model = OpenAIResponsesModel(model_id=model_id, cache_config=CacheConfig(cache_key="k", ttl=retention))
+
+    assert model._format_request(messages)["prompt_cache_retention"] == retention
+
+
+def test_untranslatable_ttl_is_ignored_and_warned(openai_client, model_id, messages):
+    _ = openai_client
+    model = OpenAIResponsesModel(model_id=model_id, cache_config=CacheConfig(cache_key="k", ttl="5m"))
+
+    with pytest.warns(UserWarning, match="not an openai retention value"):
+        request = model._format_request(messages)
+
+    assert "prompt_cache_retention" not in request
 
 
 @pytest.mark.parametrize(
@@ -544,55 +798,35 @@ def test_format_chunk_unknown_type(model):
         model._format_chunk(event)
 
 
-def test_format_chunk_metadata_with_cache_tokens(model):
-    """Test _format_chunk for metadata with cache tokens present."""
-    mock_usage = unittest.mock.Mock()
-    mock_usage.input_tokens = 100
-    mock_usage.output_tokens = 50
-    mock_usage.total_tokens = 150
-
-    mock_tokens_details = unittest.mock.Mock()
-    mock_tokens_details.cached_tokens = 25
-    mock_usage.input_tokens_details = mock_tokens_details
-
-    event = {"chunk_type": "metadata", "data": mock_usage}
-
-    assert model._format_chunk(event) == {
+@pytest.mark.parametrize(
+    ("tokens_details", "exp_cache"),
+    [
+        ({"cached_tokens": 25, "cache_write_tokens": 40}, {"cacheReadInputTokens": 25, "cacheWriteInputTokens": 40}),
+        ({"cached_tokens": 25, "cache_write_tokens": 0}, {"cacheReadInputTokens": 25, "cacheWriteInputTokens": 0}),
+        ({"cached_tokens": 0, "cache_write_tokens": 0}, {"cacheReadInputTokens": 0, "cacheWriteInputTokens": 0}),
+        ({"cached_tokens": 25}, {"cacheReadInputTokens": 25}),
+        ({"cached_tokens": 0}, {"cacheReadInputTokens": 0}),
+        ({"cache_write_tokens": 0}, {"cacheWriteInputTokens": 0}),
+        ({"cached_tokens": None, "cache_write_tokens": None}, {}),
+        ({"cached_tokens": "25", "cache_write_tokens": "10"}, {}),
+        ({}, {}),
+    ],
+)
+def test_format_chunk_metadata_with_cache_tokens(tokens_details, exp_cache, model):
+    usage = SimpleNamespace(
+        input_tokens=100,
+        output_tokens=50,
+        total_tokens=150,
+        input_tokens_details=SimpleNamespace(**tokens_details),
+    )
+    tru_chunk = model._format_chunk({"chunk_type": "metadata", "data": usage})
+    exp_chunk = {
         "metadata": {
-            "usage": {
-                "inputTokens": 100,
-                "outputTokens": 50,
-                "totalTokens": 150,
-                "cacheReadInputTokens": 25,
-            },
+            "usage": {"inputTokens": 100, "outputTokens": 50, "totalTokens": 150, **exp_cache},
             "metrics": {"latencyMs": 0},
         },
     }
-
-
-def test_format_chunk_metadata_with_zero_cached_tokens(model):
-    """Test _format_chunk for metadata when cached_tokens is 0."""
-    mock_usage = unittest.mock.Mock()
-    mock_usage.input_tokens = 100
-    mock_usage.output_tokens = 50
-    mock_usage.total_tokens = 150
-
-    mock_tokens_details = unittest.mock.Mock()
-    mock_tokens_details.cached_tokens = 0
-    mock_usage.input_tokens_details = mock_tokens_details
-
-    event = {"chunk_type": "metadata", "data": mock_usage}
-
-    assert model._format_chunk(event) == {
-        "metadata": {
-            "usage": {
-                "inputTokens": 100,
-                "outputTokens": 50,
-                "totalTokens": 150,
-            },
-            "metrics": {"latencyMs": 0},
-        },
-    }
+    assert tru_chunk == exp_chunk
 
 
 def test_format_chunk_metadata_without_token_details(model):
@@ -624,9 +858,7 @@ async def test_stream(openai_client, model_id, model, agenerator, alist):
     mock_complete_event = unittest.mock.Mock(
         type="response.completed",
         response=unittest.mock.Mock(
-            usage=unittest.mock.Mock(
-                input_tokens=10, output_tokens=5, total_tokens=15, input_tokens_details=None
-            )
+            usage=unittest.mock.Mock(input_tokens=10, output_tokens=5, total_tokens=15, input_tokens_details=None)
         ),
     )
 
@@ -737,9 +969,7 @@ async def test_stream_with_tool_calls(openai_client, model, agenerator, alist):
     mock_complete_event = unittest.mock.Mock(
         type="response.completed",
         response=unittest.mock.Mock(
-            usage=unittest.mock.Mock(
-                input_tokens=10, output_tokens=5, total_tokens=15, input_tokens_details=None
-            )
+            usage=unittest.mock.Mock(input_tokens=10, output_tokens=5, total_tokens=15, input_tokens_details=None)
         ),
     )
 
@@ -774,9 +1004,7 @@ async def test_stream_with_tool_calls_done_event(openai_client, model, agenerato
     mock_complete_event = unittest.mock.Mock(
         type="response.completed",
         response=unittest.mock.Mock(
-            usage=unittest.mock.Mock(
-                input_tokens=10, output_tokens=5, total_tokens=15, input_tokens_details=None
-            )
+            usage=unittest.mock.Mock(input_tokens=10, output_tokens=5, total_tokens=15, input_tokens_details=None)
         ),
     )
 
@@ -821,6 +1049,87 @@ async def test_stream_response_incomplete(openai_client, model, agenerator, alis
 
 
 @pytest.mark.asyncio
+async def test_stream_response_incomplete_with_truncated_tool_call(openai_client, model, agenerator, alist):
+    """Test that max_tokens takes precedence over tool_use when a function call is cut off."""
+    mock_item_added_event = unittest.mock.Mock(
+        type="response.output_item.added",
+        item=unittest.mock.Mock(type="function_call", call_id="call_1", name="write_file", id="fc_1"),
+    )
+    mock_args_event = unittest.mock.Mock(
+        type="response.function_call_arguments.delta", item_id="fc_1", delta='{"path": "notes.md", "content": "Lorem'
+    )
+    mock_incomplete_event = unittest.mock.Mock(
+        type="response.incomplete",
+        response=unittest.mock.Mock(
+            usage=unittest.mock.Mock(input_tokens=10, output_tokens=50, total_tokens=60, input_tokens_details=None),
+            incomplete_details=unittest.mock.Mock(reason="max_output_tokens"),
+        ),
+    )
+
+    openai_client.responses.create = unittest.mock.AsyncMock(
+        return_value=agenerator([mock_item_added_event, mock_args_event, mock_incomplete_event])
+    )
+
+    messages = [{"role": "user", "content": [{"text": "save my notes"}]}]
+    tru_events = await alist(model.stream(messages))
+
+    assert {"messageStop": {"stopReason": "max_tokens"}} in tru_events
+    assert {"messageStop": {"stopReason": "tool_use"}} not in tru_events
+
+
+@pytest.mark.asyncio
+async def test_stream_response_incomplete_content_filter(openai_client, model, agenerator, alist):
+    """Test that response.incomplete with reason content_filter surfaces as content_filtered."""
+    mock_text_event = unittest.mock.Mock(type="response.output_text.delta", delta="Partial resp")
+    mock_incomplete_event = unittest.mock.Mock(
+        type="response.incomplete",
+        response=unittest.mock.Mock(
+            usage=unittest.mock.Mock(input_tokens=10, output_tokens=5, total_tokens=15, input_tokens_details=None),
+            incomplete_details=unittest.mock.Mock(reason="content_filter"),
+        ),
+    )
+
+    openai_client.responses.create = unittest.mock.AsyncMock(
+        return_value=agenerator([mock_text_event, mock_incomplete_event])
+    )
+
+    messages = [{"role": "user", "content": [{"text": "hello"}]}]
+    tru_events = await alist(model.stream(messages))
+
+    assert {"messageStop": {"stopReason": "content_filtered"}} in tru_events
+    assert {"messageStop": {"stopReason": "end_turn"}} not in tru_events
+
+
+@pytest.mark.asyncio
+async def test_stream_response_incomplete_content_filter_with_tool_call(openai_client, model, agenerator, alist):
+    """Test that a function call cut off by the content filter is not reported as tool_use."""
+    mock_item_added_event = unittest.mock.Mock(
+        type="response.output_item.added",
+        item=unittest.mock.Mock(type="function_call", call_id="call_1", name="write_file", id="fc_1"),
+    )
+    mock_args_event = unittest.mock.Mock(
+        type="response.function_call_arguments.delta", item_id="fc_1", delta='{"path": "notes.md"}'
+    )
+    mock_incomplete_event = unittest.mock.Mock(
+        type="response.incomplete",
+        response=unittest.mock.Mock(
+            usage=unittest.mock.Mock(input_tokens=10, output_tokens=5, total_tokens=15, input_tokens_details=None),
+            incomplete_details=unittest.mock.Mock(reason="content_filter"),
+        ),
+    )
+
+    openai_client.responses.create = unittest.mock.AsyncMock(
+        return_value=agenerator([mock_item_added_event, mock_args_event, mock_incomplete_event])
+    )
+
+    messages = [{"role": "user", "content": [{"text": "save my notes"}]}]
+    tru_events = await alist(model.stream(messages))
+
+    assert {"messageStop": {"stopReason": "content_filtered"}} in tru_events
+    assert {"messageStop": {"stopReason": "tool_use"}} not in tru_events
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "event_type",
     [
@@ -835,9 +1144,7 @@ async def test_stream_reasoning_content(openai_client, model, agenerator, alist,
     mock_complete_event = unittest.mock.Mock(
         type="response.completed",
         response=unittest.mock.Mock(
-            usage=unittest.mock.Mock(
-                input_tokens=10, output_tokens=20, total_tokens=30, input_tokens_details=None
-            )
+            usage=unittest.mock.Mock(input_tokens=10, output_tokens=20, total_tokens=30, input_tokens_details=None)
         ),
     )
 
@@ -883,9 +1190,7 @@ async def test_stream_citation_annotations(openai_client, model, agenerator, ali
     mock_complete_event = unittest.mock.Mock(
         type="response.completed",
         response=unittest.mock.Mock(
-            usage=unittest.mock.Mock(
-                input_tokens=10, output_tokens=5, total_tokens=15, input_tokens_details=None
-            )
+            usage=unittest.mock.Mock(input_tokens=10, output_tokens=5, total_tokens=15, input_tokens_details=None)
         ),
     )
 
@@ -923,9 +1228,7 @@ async def test_stream_unsupported_annotation_type(openai_client, model, agenerat
     mock_complete_event = unittest.mock.Mock(
         type="response.completed",
         response=unittest.mock.Mock(
-            usage=unittest.mock.Mock(
-                input_tokens=10, output_tokens=5, total_tokens=15, input_tokens_details=None
-            )
+            usage=unittest.mock.Mock(input_tokens=10, output_tokens=5, total_tokens=15, input_tokens_details=None)
         ),
     )
 
@@ -986,6 +1289,92 @@ async def test_structured_output_forwards_request_params(openai_client, model_id
 
 
 @pytest.mark.asyncio
+async def test_stream_response_failed_raises_provider_error(openai_client, model, messages, agenerator):
+    error = ResponseError(message="The model failed while processing the request.", code="server_error")
+    failed_event = ResponseFailedEvent.model_construct(
+        type="response.failed", sequence_number=1, response=Response.model_construct(error=error)
+    )
+    openai_client.responses.create = unittest.mock.AsyncMock(return_value=agenerator([failed_event]))
+
+    with pytest.raises(RuntimeError, match="The model failed while processing the request") as exc_info:
+        async for _ in model.stream(messages):
+            pass
+
+    assert exc_info.value.code == "server_error"
+
+
+@pytest.mark.asyncio
+async def test_stream_response_failed_context_overflow(openai_client, model, messages, agenerator):
+    message = "prompt tokens (320666) exceed customer model maximum (278528) for model-id"
+    error = ResponseError(message=message, code="invalid_prompt")
+    failed_event = ResponseFailedEvent.model_construct(
+        type="response.failed", sequence_number=1, response=Response.model_construct(error=error)
+    )
+    openai_client.responses.create = unittest.mock.AsyncMock(return_value=agenerator([failed_event]))
+
+    with pytest.raises(ContextWindowOverflowException, match="exceed customer model maximum") as exc_info:
+        async for _ in model.stream(messages):
+            pass
+
+    assert exc_info.value.__cause__.code == "invalid_prompt"
+
+
+@pytest.mark.asyncio
+async def test_stream_response_failed_existing_context_pattern(openai_client, model, messages, agenerator):
+    error = ResponseError(message="This model's maximum context length is 4096 tokens.", code="invalid_prompt")
+    failed_event = ResponseFailedEvent.model_construct(
+        type="response.failed", sequence_number=1, response=Response.model_construct(error=error)
+    )
+    openai_client.responses.create = unittest.mock.AsyncMock(return_value=agenerator([failed_event]))
+
+    with pytest.raises(ContextWindowOverflowException, match="maximum context length"):
+        async for _ in model.stream(messages):
+            pass
+
+
+@pytest.mark.asyncio
+async def test_stream_response_failed_without_error_details(openai_client, model, messages, agenerator):
+    failed_event = ResponseFailedEvent.model_construct(
+        type="response.failed", sequence_number=1, response=Response.model_construct(error=None)
+    )
+    openai_client.responses.create = unittest.mock.AsyncMock(return_value=agenerator([failed_event]))
+
+    with pytest.raises(RuntimeError, match="OpenAI Responses API response failed"):
+        async for _ in model.stream(messages):
+            pass
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code", ["rate_limit_exceeded", None])
+async def test_stream_error_event_as_throttle(openai_client, model, messages, agenerator, code):
+    error_event = ResponseErrorEvent(
+        type="error", sequence_number=1, code=code, message="Rate limit exceeded while streaming."
+    )
+    openai_client.responses.create = unittest.mock.AsyncMock(return_value=agenerator([error_event]))
+
+    with pytest.raises(ModelThrottledException, match="Rate limit exceeded while streaming") as exc_info:
+        async for _ in model.stream(messages):
+            pass
+
+    assert exc_info.value.__cause__.code == code
+
+
+@pytest.mark.asyncio
+async def test_stream_throttle_precedes_context_overflow(openai_client, model, messages, agenerator):
+    error_event = ResponseErrorEvent(
+        type="error",
+        sequence_number=1,
+        code="rate_limit_exceeded",
+        message="prompt tokens exceed customer model maximum",
+    )
+    openai_client.responses.create = unittest.mock.AsyncMock(return_value=agenerator([error_event]))
+
+    with pytest.raises(ModelThrottledException, match="exceed customer model maximum"):
+        async for _ in model.stream(messages):
+            pass
+
+
+@pytest.mark.asyncio
 async def test_stream_context_overflow_exception(openai_client, model, messages):
     """Test that OpenAI context overflow errors are properly converted to ContextWindowOverflowException."""
     mock_error = openai.BadRequestError(
@@ -1023,6 +1412,20 @@ async def test_stream_context_overflow_exception_api_error_type(openai_client, m
 
     assert "maximum context length" in str(exc_info.value)
     assert exc_info.value.__cause__ == mock_error
+
+
+@pytest.mark.asyncio
+async def test_stream_http_429_as_throttle(openai_client, model, messages):
+    request = httpx.Request("POST", "https://api.openai.com/v1/responses")
+    response = httpx.Response(429, request=request)
+    error = openai.APIStatusError("opaque provider failure", response=response, body=None)
+    openai_client.responses.create.side_effect = error
+
+    with pytest.raises(ModelThrottledException, match="opaque provider failure") as exc_info:
+        async for _ in model.stream(messages):
+            pass
+
+    assert exc_info.value.__cause__ is error
 
 
 @pytest.mark.asyncio
@@ -1127,6 +1530,39 @@ async def test_structured_output_context_overflow_exception(openai_client, model
 
     assert "maximum context length" in str(exc_info.value)
     assert exc_info.value.__cause__ == mock_error
+
+
+@pytest.mark.asyncio
+async def test_structured_output_context_overflow_message(openai_client, model, messages, test_output_model_cls):
+    message = "prompt tokens exceed customer model maximum"
+    mock_error = openai.APIError(
+        message=message,
+        request=unittest.mock.MagicMock(),
+        body={"error": {"message": message}},
+    )
+    openai_client.responses.parse.side_effect = mock_error
+
+    with pytest.raises(ContextWindowOverflowException, match="exceed customer model maximum") as exc_info:
+        async for _ in model.structured_output(test_output_model_cls, messages):
+            pass
+
+    assert exc_info.value.__cause__ is mock_error
+
+
+@pytest.mark.asyncio
+async def test_structured_output_rate_limit_message(openai_client, model, messages, test_output_model_cls):
+    mock_error = openai.APIError(
+        message="Too many requests from provider",
+        request=unittest.mock.MagicMock(),
+        body={"error": {"message": "Too many requests from provider"}},
+    )
+    openai_client.responses.parse.side_effect = mock_error
+
+    with pytest.raises(ModelThrottledException, match="Too many requests") as exc_info:
+        async for _ in model.structured_output(test_output_model_cls, messages):
+            pass
+
+    assert exc_info.value.__cause__ is mock_error
 
 
 @pytest.mark.asyncio
@@ -1311,7 +1747,7 @@ def test_format_request_messages_with_citations_content():
     assistant_msg = [m for m in formatted if m.get("role") == "assistant"][0]
     assert assistant_msg == {
         "role": "assistant",
-        "content": [{"type": "output_text", "text": "The answer with citations."}],
+        "content": "The answer with citations.",
     }
 
 
@@ -1393,6 +1829,39 @@ def test_stateful(model_id, stateful):
     """Model.stateful reflects the stateful config option."""
     model = OpenAIResponsesModel(model_id=model_id, stateful=stateful)
     assert model.stateful is stateful
+    assert model.model_info.capabilities.stateful is stateful
+
+
+@pytest.mark.parametrize("stateful", [True, False])
+def test_stateful_model_info_override_wins_over_the_config_option(model_id, stateful):
+    model = OpenAIResponsesModel(
+        model_id=model_id,
+        stateful=not stateful,
+        model_info=ModelInfo(capabilities=ModelCapabilities(stateful=stateful)),
+    )
+
+    assert model.stateful is stateful
+
+
+@pytest.mark.asyncio
+async def test_stream_resolves_stateful_once_per_stream_not_once_per_event(openai_client, model_id, agenerator, alist):
+    """Resolving the record walks the config, so the stream must not re-read it per event."""
+    model = OpenAIResponsesModel(model_id=model_id, stateful=True)
+    mock_events = [
+        unittest.mock.Mock(type="response.created", response=unittest.mock.Mock(id="resp_abc")),
+        *[unittest.mock.Mock(type="response.output_text.delta", delta="x") for _ in range(50)],
+        unittest.mock.Mock(type="response.completed", response=unittest.mock.Mock(usage=None)),
+    ]
+    openai_client.responses.create = unittest.mock.AsyncMock(return_value=agenerator(mock_events))
+
+    with unittest.mock.patch.object(
+        OpenAIResponsesModel, "get_config", side_effect=model.config.copy
+    ) as mock_get_config:
+        await alist(
+            model.stream([{"role": "user", "content": [{"text": "hi"}]}], model_state={"response_id": "resp_0"})
+        )
+
+    assert mock_get_config.call_count == 1
 
 
 @pytest.mark.asyncio
@@ -1462,7 +1931,7 @@ def test_format_request_messages_excludes_reasoning_content(caplog):
 
     assert result == [
         {"role": "user", "content": [{"type": "input_text", "text": "Hello"}]},
-        {"role": "assistant", "content": [{"type": "output_text", "text": "The answer is 42"}]},
+        {"role": "assistant", "content": "The answer is 42"},
         {"role": "user", "content": [{"type": "input_text", "text": "Thanks"}]},
     ]
     assert "reasoningContent is not yet supported" in caplog.text
@@ -1618,6 +2087,63 @@ class TestOpenAIResponsesModelBedrockMantleConfig:
         assert resolved["api_key"] == "bedrock-api-key-deadbeef&Version=1"
         mock_provide_token.assert_called_once_with(region="us-east-1")
 
+    def test_bedrock_mantle_config_uses_openai_path_for_gpt5(self, openai_client, mock_provide_token):
+        """gpt-5.* models are routed through the /openai/v1 Mantle path."""
+        _ = openai_client
+        _ = mock_provide_token
+        model = OpenAIResponsesModel(model_id="openai.gpt-5.4", bedrock_mantle_config={"region": "us-east-1"})
+        resolved = model._resolve_client_args()
+        assert resolved["base_url"] == "https://bedrock-mantle.us-east-1.api.aws/openai/v1"
+
+    @pytest.mark.parametrize(
+        ("model_id", "expected_path"),
+        [
+            # Regression for #3654: Mantle rejects the wrong base path with HTTP 400
+            # validation_error. The affected ids use /openai/v1; controls below pin /v1.
+            ("xai.grok-4.3", "/openai/v1"),
+            ("google.gemma-4-31b", "/openai/v1"),
+            ("openai.gpt-5.6-terra", "/openai/v1"),
+            ("openai.gpt-6-astra", "/openai/v1"),
+            ("openai.gpt-6.1-sol", "/openai/v1"),
+            # Gemma 3 is served from /v1 while Gemma 4 is not, so `google.` cannot be a prefix.
+            ("google.gemma-3-27b-it", "/v1"),
+            ("openai.gpt-oss-120b", "/v1"),
+        ],
+    )
+    def test_bedrock_mantle_config_base_path_per_model(
+        self, model_id, expected_path, openai_client, mock_provide_token
+    ):
+        """Each Mantle model resolves to the base path it is actually served from."""
+        _ = openai_client
+        _ = mock_provide_token
+        model = OpenAIResponsesModel(model_id=model_id, bedrock_mantle_config={"region": "us-east-1"})
+
+        resolved = model._resolve_client_args()
+        assert resolved["base_url"] == f"https://bedrock-mantle.us-east-1.api.aws{expected_path}"
+
+    @pytest.mark.parametrize(
+        ("model_id", "expected_path"),
+        [
+            # Point releases within a verified line, beyond the verified catalog.
+            ("xai.grok-4.9", "/openai/v1"),
+            ("openai.gpt-5.9-unreleased", "/openai/v1"),
+            ("openai.gpt-6-nova", "/openai/v1"),
+            ("openai.gpt-6.1-sol", "/openai/v1"),
+            # New lines the prefixes deliberately do not cover.
+            ("xai.grok-5", "/v1"),
+            ("xai.grok-5-preview", "/v1"),
+            ("openai.gpt-6oss-20b", "/v1"),
+        ],
+    )
+    def test_bedrock_mantle_config_unverified_ids(self, model_id, expected_path, openai_client, mock_provide_token):
+        """Ids beyond the verified catalog, through the Responses model (shares _resolve_mantle_base_path)."""
+        _ = openai_client
+        _ = mock_provide_token
+        model = OpenAIResponsesModel(model_id=model_id, bedrock_mantle_config={"region": "us-east-1"})
+
+        resolved = model._resolve_client_args()
+        assert resolved["base_url"] == f"https://bedrock-mantle.us-east-1.api.aws{expected_path}"
+
     def test_bedrock_mantle_config_forwards_credentials_provider_and_expiry(self, openai_client, mock_provide_token):
         _ = openai_client
         from datetime import timedelta
@@ -1711,10 +2237,756 @@ class TestOpenAIResponsesModelBedrockMantleConfig:
         assert resolved["base_url"] == "https://bedrock-mantle.ap-southeast-2.api.aws/v1"
         mock_provide_token.assert_called_once_with(region="ap-southeast-2")
 
+    @pytest.mark.parametrize("region", ["x@attacker.com:443/#", "us-east-1\n", "us-east-1/"])
+    def test_bedrock_mantle_config_rejects_malformed_region(self, openai_client, mock_provide_token, region):
+        """A malformed region is rejected before a token is minted or a URL is built."""
+        _ = openai_client
+        model = OpenAIResponsesModel(model_id="openai.gpt-oss-120b", bedrock_mantle_config={"region": region})
+        with pytest.raises(ValueError, match="invalid AWS region"):
+            model._resolve_client_args()
+        # Validation must precede token minting so no bearer token is ever sent toward the host.
+        mock_provide_token.assert_not_called()
+
     def test_bedrock_mantle_config_wraps_token_failures_with_context(self, openai_client, mock_provide_token):
         """provide_token failures are wrapped in a RuntimeError with actionable context."""
         _ = openai_client
         mock_provide_token.side_effect = RuntimeError("no credentials in chain")
         model = OpenAIResponsesModel(model_id="openai.gpt-oss-120b", bedrock_mantle_config={"region": "us-east-1"})
-        with pytest.raises(RuntimeError, match="Bedrock Mantle bearer token.*us-east-1"):
+        with pytest.raises(RuntimeError, match="Amazon Bedrock bearer token.*us-east-1"):
             model._resolve_client_args()
+
+    @pytest.mark.parametrize(
+        "model_id",
+        [
+            # Cross-Region inference profile ids.
+            "global.openai.gpt-5.6-luna",
+            "us.openai.gpt-5.6-sol",
+            "us-gov.openai.gpt-5.6-terra",
+            # A foundation-model id resolves to the same fixed path.
+            "openai.gpt-oss-120b",
+        ],
+    )
+    def test_bedrock_mantle_config_endpoint_runtime_base_url(self, model_id, openai_client, mock_provide_token):
+        """endpoint='bedrock-runtime' resolves to the fixed /openai/v1 base path."""
+        _ = openai_client
+        model = OpenAIResponsesModel(
+            model_id=model_id,
+            bedrock_mantle_config={"endpoint": "bedrock-runtime", "region": "ap-northeast-1"},
+        )
+
+        resolved = model._resolve_client_args()
+
+        assert resolved["base_url"] == "https://bedrock-runtime.ap-northeast-1.amazonaws.com/openai/v1"
+        assert resolved["api_key"] == "bedrock-api-key-deadbeef&Version=1"
+        mock_provide_token.assert_called_once_with(region="ap-northeast-1")
+
+    @pytest.mark.parametrize(
+        ("model_id", "expected_url"),
+        [
+            ("openai.gpt-oss-120b", "https://bedrock-mantle.us-east-1.api.aws/v1"),
+            ("openai.gpt-5.6-luna", "https://bedrock-mantle.us-east-1.api.aws/openai/v1"),
+        ],
+    )
+    def test_bedrock_mantle_config_endpoint_mantle_is_the_default(
+        self, model_id, expected_url, openai_client, mock_provide_token
+    ):
+        """An explicit endpoint='bedrock-mantle' resolves exactly like omitting the key."""
+        _ = openai_client
+        _ = mock_provide_token
+        explicit = OpenAIResponsesModel(
+            model_id=model_id, bedrock_mantle_config={"endpoint": "bedrock-mantle", "region": "us-east-1"}
+        )
+        default = OpenAIResponsesModel(model_id=model_id, bedrock_mantle_config={"region": "us-east-1"})
+
+        assert explicit._resolve_client_args()["base_url"] == expected_url
+        assert default._resolve_client_args()["base_url"] == expected_url
+
+    @pytest.mark.parametrize("endpoint", ["bedrock-runtime ", "runtime", "Bedrock-Runtime", "", None])
+    def test_bedrock_mantle_config_endpoint_rejects_unknown_value(self, endpoint, openai_client, mock_provide_token):
+        """An unknown endpoint fails loudly, before a token is minted."""
+        _ = openai_client
+        model = OpenAIResponsesModel(
+            model_id="openai.gpt-oss-120b",
+            bedrock_mantle_config={"endpoint": endpoint, "region": "us-east-1"},
+        )
+
+        with pytest.raises(ValueError, match="Unknown Bedrock endpoint"):
+            model._resolve_client_args()
+        mock_provide_token.assert_not_called()
+
+    def test_bedrock_mantle_config_endpoint_runtime_merges_with_client_args(self, openai_client, mock_provide_token):
+        """endpoint='bedrock-runtime' composes with client_args the same way Mantle does."""
+        _ = openai_client
+        _ = mock_provide_token
+        model = OpenAIResponsesModel(
+            model_id="global.openai.gpt-5.6-luna",
+            client_args={"timeout": 42},
+            bedrock_mantle_config={"endpoint": "bedrock-runtime", "region": "us-west-2"},
+        )
+
+        resolved = model._resolve_client_args()
+
+        assert resolved["base_url"] == "https://bedrock-runtime.us-west-2.amazonaws.com/openai/v1"
+        assert resolved["timeout"] == 42
+
+    def test_bedrock_mantle_config_endpoint_runtime_requires_region(self, openai_client, mock_provide_token):
+        """A missing region is rejected on bedrock-runtime too, before a token is minted."""
+        _ = openai_client
+        with (
+            unittest.mock.patch("boto3.Session") as mock_session_cls,
+            unittest.mock.patch.dict(os.environ, {}, clear=True),
+        ):
+            mock_session_cls.return_value.region_name = None
+            model = OpenAIResponsesModel(
+                model_id="global.openai.gpt-5.6-luna", bedrock_mantle_config={"endpoint": "bedrock-runtime"}
+            )
+            # The Region lists differ per endpoint, so the message points at the right one.
+            with pytest.raises(ValueError, match="Could not resolve an AWS region.*endpoints-region-availability"):
+                model._resolve_client_args()
+        mock_provide_token.assert_not_called()
+
+
+def test_format_request_logs_skipped_blocks_once_per_request(model, caplog):
+    caplog.set_level(logging.WARNING, logger="strands.models.openai_responses")
+    s3_image = {"image": {"format": "png", "source": {"location": {"type": "s3", "uri": "s3://bucket/key.png"}}}}
+    messages = []
+    for turn in range(3):
+        messages.append({"role": "user", "content": [{"text": "look"}, s3_image, {"cachePoint": {"type": "default"}}]})
+        messages.append({"role": "assistant", "content": [{"text": f"answer {turn}"}]})
+
+    model._format_request(messages)
+
+    messages_logged = [record.getMessage() for record in caplog.records]
+    assert len(messages_logged) == 2
+    assert "count=<3> | Location sources are not supported by OpenAI Responses" in messages_logged[0]
+    assert "count=<3> | cachePoint content block is not supported by OpenAI Responses" in messages_logged[1]
+
+
+def test_format_request_logs_skipped_blocks_once_per_request_with_message_cache_checkpoints(caplog):
+    caplog.set_level(logging.WARNING, logger="strands.models.openai_responses")
+    model = OpenAIResponsesModel(model_id="gpt-5.6", cache_config=CacheConfig())
+    s3_image = {"image": {"format": "png", "source": {"location": {"type": "s3", "uri": "s3://bucket/key.png"}}}}
+    messages = []
+    for turn in range(3):
+        messages.append({"role": "user", "content": [{"text": "look"}, s3_image]})
+        messages.append({"role": "assistant", "content": [{"text": f"answer {turn}"}]})
+
+    request = model._format_request(messages)
+
+    assert request["prompt_cache_options"] == {"mode": "explicit"}
+    messages_logged = [record.getMessage() for record in caplog.records]
+    assert len(messages_logged) == 1
+    assert "count=<3> | Location sources are not supported by OpenAI Responses" in messages_logged[0]
+
+
+@pytest.mark.parametrize(
+    ("model_id", "prompt_caching", "enabled"),
+    [
+        # Listed with promptCaching "cachePoints".
+        ("gpt-5.6", None, True),
+        ("gpt-6.1-terra", None, True),
+        ("openai.gpt-6.1-sol", None, True),
+        # Listed without cache points, or not listed at all: no id-based inference.
+        ("gpt-5.5", None, False),
+        ("openai.gpt-6.1-terra", None, False),
+        ("gpt-7-nova", None, False),
+        # A model_info override wins over the data.
+        ("gpt-6-sol", "auto", False),
+        ("gpt-6-sol", "unsupported", False),
+        ("my-finetune", "cache_points", True),
+    ],
+)
+def test_message_cache_follows_model_info(model_id, prompt_caching, enabled, messages):
+    model_info = ModelInfo(capabilities=ModelCapabilities(prompt_caching=prompt_caching)) if prompt_caching else None
+    model = OpenAIResponsesModel(model_id=model_id, cache_config=CacheConfig(), model_info=model_info)
+    request = model._format_request(messages)
+
+    checkpoint = {"mode": "explicit"} if enabled else None
+    assert request["input"] == _text_input("test", checkpoint)
+    assert request.get("prompt_cache_options") == ({"mode": "explicit"} if enabled else None)
+
+
+@pytest.mark.parametrize("cache_config", [None, CacheConfig(messages_ttl=False)])
+def test_message_cache_opt_out_keeps_original_shape(cache_config, captured_warnings):
+    model = OpenAIResponsesModel(model_id="gpt-5.6", cache_config=cache_config)
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"toolResult": {"toolUseId": "c1", "status": "success", "content": [{"text": "result"}]}},
+                {"text": "temporary"},
+            ],
+        }
+    ]
+    request = model._format_request(messages, dynamic_trailing_blocks=1)
+
+    assert request["input"] == OpenAIResponsesModel._format_request_messages(messages)
+    assert "prompt_cache_options" not in request
+    # messages_ttl gates checkpoints on this model, so it is not reported as having no effect.
+    assert not captured_warnings
+
+
+@pytest.mark.parametrize("options", [{"mode": "implicit", "ttl": "30m"}, {"mode": "explicit"}, {"ttl": "30m"}])
+def test_message_cache_preserves_native_options(options, messages):
+    params = {"prompt_cache_options": options}
+    original = copy.deepcopy(params)
+    model = OpenAIResponsesModel(model_id="gpt-5.6", cache_config=CacheConfig(), params=params)
+
+    request = model._format_request(messages)
+
+    assert request["prompt_cache_options"] == {"mode": "explicit", **options}
+    assert params == original
+    assert model.config["params"] == original
+
+
+def _text_input(text, checkpoint=None):
+    """Expected input for a one-text user message, with ``checkpoint`` as its breakpoint when given."""
+    part = {"type": "input_text", "text": text}
+    if checkpoint is not None:
+        part["prompt_cache_breakpoint"] = checkpoint
+    return [{"role": "user", "content": [part]}]
+
+
+@pytest.mark.parametrize(
+    ("cache_config", "params", "checkpoint", "options"),
+    [
+        (CacheConfig(messages_ttl="12h"), {}, {"mode": "explicit", "ttl": "12h"}, {"mode": "explicit"}),
+        (CacheConfig(ttl="12h"), {}, {"mode": "explicit"}, {"mode": "explicit", "ttl": "12h"}),
+        (
+            CacheConfig(ttl="12h", messages_ttl="30m"),
+            {},
+            {"mode": "explicit", "ttl": "30m"},
+            {"mode": "explicit", "ttl": "12h"},
+        ),
+        # A caller-supplied lifetime wins over the configured one.
+        (
+            CacheConfig(ttl="12h"),
+            {"prompt_cache_options": {"ttl": "30m"}},
+            {"mode": "explicit"},
+            {"mode": "explicit", "ttl": "30m"},
+        ),
+    ],
+)
+def test_message_cache_maps_cache_lifetimes(cache_config, params, checkpoint, options, messages, captured_warnings):
+    model = OpenAIResponsesModel(model_id="gpt-5.6", cache_config=cache_config, params=params)
+    request = model._format_request(messages)
+
+    assert request["input"] == _text_input("test", checkpoint)
+    assert request["prompt_cache_options"] == options
+    assert "prompt_cache_retention" not in request
+    assert not captured_warnings
+
+
+def test_message_cache_lifetime_ttl_applies_without_checkpoints(messages, captured_warnings):
+    model = OpenAIResponsesModel(model_id="gpt-5.6", cache_config=CacheConfig(ttl="12h", messages_ttl=False))
+    request = model._format_request(messages)
+
+    assert request["input"] == _text_input("test")
+    assert request["prompt_cache_options"] == {"ttl": "12h"}
+    assert not captured_warnings
+
+
+def test_message_cache_ignores_and_warns_on_invalid_messages_ttl(messages):
+    model = OpenAIResponsesModel(model_id="gpt-5.6", cache_config=CacheConfig(messages_ttl="1h"))
+
+    with pytest.warns(UserWarning, match="not an openai cache lifetime"):
+        request = model._format_request(messages)
+
+    assert request["input"] == _text_input("test", {"mode": "explicit"})
+    assert request["prompt_cache_options"] == {"mode": "explicit"}
+
+
+def test_message_cache_keeps_retention_literal_ttl(messages, captured_warnings):
+    model = OpenAIResponsesModel(model_id="gpt-5.6", cache_config=CacheConfig(ttl="24h"))
+    request = model._format_request(messages)
+
+    assert request["prompt_cache_retention"] == "24h"
+    assert request["prompt_cache_options"] == {"mode": "explicit"}
+    assert not captured_warnings
+
+
+def test_cache_lifetime_ttl_is_ignored_and_warned_without_cache_points(messages):
+    model = OpenAIResponsesModel(model_id="gpt-5.5", cache_config=CacheConfig(ttl="12h", messages_ttl="12h"))
+
+    with pytest.warns(UserWarning, match="not an openai retention value") as record:
+        request = model._format_request(messages)
+
+    assert request["input"] == _text_input("test")
+    assert "prompt_cache_options" not in request
+    assert "prompt_cache_retention" not in request
+    # Without cache points, messages_ttl is reported as having no effect.
+    assert any("messages_ttl" in str(warning.message) for warning in record)
+
+
+@pytest.mark.parametrize(
+    "cache_config",
+    [
+        CacheConfig(),
+        # "anthropic" means SDK-placed cache points, the same mechanism as these checkpoints.
+        CacheConfig(strategy="anthropic"),
+        CacheConfig(messages_ttl=True),
+        CacheConfig(cache_key=False),
+    ],
+)
+def test_message_cache_places_checkpoints_without_warnings(cache_config, captured_warnings):
+    model = OpenAIResponsesModel(model_id="gpt-5.6", cache_config=cache_config)
+    request = model._format_request([{"role": "user", "content": [{"text": "durable"}]}])
+
+    assert request["prompt_cache_options"] == {"mode": "explicit"}
+    assert request["input"] == _text_input("durable", {"mode": "explicit"})
+    assert not captured_warnings
+
+
+def test_message_cache_excludes_multiple_temporary_blocks_without_mutation():
+    model = OpenAIResponsesModel(model_id="gpt-5.6", cache_config=CacheConfig())
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"text": "durable"},
+                {"text": "temporary one"},
+                {"text": "temporary two"},
+            ],
+        }
+    ]
+    original = copy.deepcopy(messages)
+    request = model._format_request(messages, dynamic_trailing_blocks=2)
+
+    assert request["input"] == [
+        {
+            "role": "user",
+            "content": [
+                {"type": "input_text", "text": "durable", "prompt_cache_breakpoint": {"mode": "explicit"}},
+                {"type": "input_text", "text": "temporary one"},
+                {"type": "input_text", "text": "temporary two"},
+            ],
+        }
+    ]
+    assert messages == original
+    assert model._format_request(messages, dynamic_trailing_blocks=2) == request
+
+
+def test_message_cache_retains_stable_prefix_after_user_turn_becomes_history():
+    model = OpenAIResponsesModel(model_id="gpt-5.6", cache_config=CacheConfig())
+    first = model._format_request(
+        [{"role": "user", "content": [{"text": "durable one"}, {"text": "temporary one"}]}],
+        dynamic_trailing_blocks=1,
+    )
+    second = model._format_request(
+        [
+            {"role": "user", "content": [{"text": "durable one"}]},
+            {"role": "assistant", "content": [{"text": "answer"}]},
+            {"role": "user", "content": [{"text": "durable two"}, {"text": "temporary two"}]},
+        ],
+        dynamic_trailing_blocks=1,
+    )
+
+    checkpoint = {"mode": "explicit"}
+    assert first["input"] == [
+        {
+            "role": "user",
+            "content": [
+                {"type": "input_text", "text": "durable one", "prompt_cache_breakpoint": checkpoint},
+                {"type": "input_text", "text": "temporary one"},
+            ],
+        }
+    ]
+    assert second["input"] == [
+        *_text_input("durable one", checkpoint),
+        {"role": "assistant", "content": "answer"},
+        {
+            "role": "user",
+            "content": [
+                {"type": "input_text", "text": "durable two", "prompt_cache_breakpoint": checkpoint},
+                {"type": "input_text", "text": "temporary two"},
+            ],
+        },
+    ]
+
+
+def test_message_cache_tool_result_prefix_survives_replay_with_multiple_tools():
+    model = OpenAIResponsesModel(model_id="gpt-5.6", cache_config=CacheConfig())
+    durable = [
+        {
+            "role": "user",
+            "content": [
+                {"toolResult": {"toolUseId": "c1", "status": "success", "content": [{"json": {"value": "一"}}]}},
+                {"text": "durable explanation"},
+                {"toolResult": {"toolUseId": "c2", "status": "success", "content": [{"text": "second result"}]}},
+            ],
+        }
+    ]
+    injected = copy.deepcopy(durable)
+    injected[0]["content"].extend([{"text": "temporary one"}, {"text": "temporary two"}])
+    original = copy.deepcopy(injected)
+    first = model._format_request(injected, dynamic_trailing_blocks=2)
+    second = model._format_request(
+        durable
+        + [
+            {"role": "assistant", "content": [{"text": "answer"}]},
+            {"role": "user", "content": [{"text": "next"}]},
+        ]
+    )
+
+    assert first["input"][:3] == second["input"][:3]
+    assert first["input"] == [
+        *_text_input("durable explanation"),
+        {
+            "type": "function_call_output",
+            "call_id": "c1",
+            "output": [{"type": "input_text", "text": '{"value": "一"}'}],
+        },
+        {
+            "type": "function_call_output",
+            "call_id": "c2",
+            "output": [
+                {"type": "input_text", "text": "second result", "prompt_cache_breakpoint": {"mode": "explicit"}}
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {"type": "input_text", "text": "temporary one"},
+                {"type": "input_text", "text": "temporary two"},
+            ],
+        },
+    ]
+    assert injected == original
+
+
+def test_message_cache_retains_all_historical_durable_endpoints():
+    model = OpenAIResponsesModel(model_id="gpt-5.6", cache_config=CacheConfig())
+    messages = []
+    for index in range(6):
+        messages.extend(
+            [
+                {"role": "user", "content": [{"text": f"user {index}"}]},
+                {"role": "assistant", "content": [{"text": f"assistant {index}"}]},
+            ]
+        )
+    earlier = model._format_request(messages[:6])
+    request = model._format_request(messages)
+
+    tru_checkpoints = [
+        item["content"][0]["text"]
+        for item in request["input"]
+        if item["role"] == "user" and "prompt_cache_breakpoint" in item["content"][0]
+    ]
+    exp_checkpoints = [f"user {index}" for index in range(6)]
+    assert tru_checkpoints == exp_checkpoints
+    assert request["input"][: len(earlier["input"])] == earlier["input"]
+
+
+@pytest.mark.parametrize("dynamic_trailing_blocks", [1, 5])
+def test_message_cache_temporary_only_turn_has_no_checkpoint(dynamic_trailing_blocks):
+    model = OpenAIResponsesModel(model_id="gpt-5.6", cache_config=CacheConfig())
+    request = model._format_request(
+        [{"role": "user", "content": [{"text": "temporary"}]}],
+        dynamic_trailing_blocks=dynamic_trailing_blocks,
+    )
+    assert request["input"] == [{"role": "user", "content": [{"type": "input_text", "text": "temporary"}]}]
+    # No checkpoint must not fall back to implicitly caching an entirely temporary request.
+    assert request["prompt_cache_options"] == {"mode": "explicit"}
+
+
+def test_message_cache_marks_trailing_durable_media_and_skips_cache_points(caplog):
+    model = OpenAIResponsesModel(model_id="gpt-5.6", cache_config=CacheConfig())
+    request = model._format_request(
+        [
+            {
+                "role": "user",
+                "content": [
+                    {"text": "durable"},
+                    {"cachePoint": {"type": "default"}},
+                    {"image": {"format": "png", "source": {"bytes": b"image"}}},
+                    {"text": "temporary"},
+                ],
+            }
+        ],
+        dynamic_trailing_blocks=1,
+    )
+
+    assert request["input"][0]["content"] == [
+        {"type": "input_text", "text": "durable"},
+        {
+            "type": "input_image",
+            "image_url": "data:image/png;base64,aW1hZ2U=",
+            "prompt_cache_breakpoint": {"mode": "explicit"},
+        },
+        {"type": "input_text", "text": "temporary"},
+    ]
+    assert "cachePoint content block is not supported" in caplog.text
+
+
+def test_message_cache_marks_media_only_tool_output_and_empty_history_has_no_checkpoints():
+    model = OpenAIResponsesModel(model_id="gpt-5.6", cache_config=CacheConfig())
+    request = model._format_request(
+        [
+            {"role": "assistant", "content": [{"text": "calling tool"}]},
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "toolResult": {
+                            "toolUseId": "c1",
+                            "status": "success",
+                            "content": [{"image": {"format": "png", "source": {"bytes": b"image"}}}],
+                        }
+                    },
+                    {"text": "temporary"},
+                ],
+            },
+        ],
+        dynamic_trailing_blocks=1,
+    )
+
+    assert request["prompt_cache_options"] == {"mode": "explicit"}
+    assert request["input"][1]["output"] == [
+        {
+            "type": "input_image",
+            "image_url": "data:image/png;base64,aW1hZ2U=",
+            "prompt_cache_breakpoint": {"mode": "explicit"},
+        }
+    ]
+    assert request["input"][2] == {"role": "user", "content": [{"type": "input_text", "text": "temporary"}]}
+    assert model._format_request([])["input"] == []
+
+
+def test_message_cache_preserves_stateful_response_chaining():
+    model = OpenAIResponsesModel(model_id="gpt-5.6", cache_config=CacheConfig(), stateful=True)
+    model_state = {"response_id": "previous"}
+    request = model._format_request(
+        [{"role": "user", "content": [{"text": "durable"}, {"text": "temporary"}]}],
+        model_state=model_state,
+        dynamic_trailing_blocks=1,
+    )
+
+    assert request["store"] is True
+    assert request["previous_response_id"] == "previous"
+    assert model_state == {"response_id": "previous"}
+    assert request["input"] == [
+        {
+            "role": "user",
+            "content": [
+                {"type": "input_text", "text": "durable", "prompt_cache_breakpoint": {"mode": "explicit"}},
+                {"type": "input_text", "text": "temporary"},
+            ],
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("block", "part"),
+    [
+        (
+            {"image": {"format": "png", "source": {"bytes": b"image"}}},
+            {"type": "input_image", "image_url": "data:image/png;base64,aW1hZ2U="},
+        ),
+        (
+            {"document": {"format": "pdf", "name": "doc", "source": {"bytes": b"pdf"}}},
+            {"type": "input_file", "filename": "doc.pdf", "file_data": "data:application/pdf;base64,cGRm"},
+        ),
+    ],
+)
+def test_message_cache_marks_durable_media_only_input(block, part):
+    model = OpenAIResponsesModel(model_id="gpt-5.6", cache_config=CacheConfig())
+    request = model._format_request([{"role": "user", "content": [block]}])
+
+    assert request["prompt_cache_options"] == {"mode": "explicit"}
+    assert request["input"] == [
+        {"role": "user", "content": [{**part, "prompt_cache_breakpoint": {"mode": "explicit"}}]}
+    ]
+
+
+def test_message_cache_without_input_parts_preserves_implicit_caching():
+    model = OpenAIResponsesModel(model_id="gpt-5.6", cache_config=CacheConfig())
+    messages = [{"role": "assistant", "content": [{"text": "hello"}]}]
+    request = model._format_request(messages)
+
+    assert "prompt_cache_options" not in request
+    assert "prompt_cache_breakpoint" not in str(request)
+    assert request["input"] == model._format_request_messages(messages)
+
+
+def test_message_cache_dynamic_tail_skips_unsupported_blocks(caplog):
+    model = OpenAIResponsesModel(model_id="gpt-5.6", cache_config=CacheConfig())
+    request = model._format_request(
+        [
+            {
+                "role": "user",
+                "content": [
+                    {"text": "durable"},
+                    {"text": "temporary"},
+                    {"cachePoint": {"type": "default"}},
+                    {"reasoningContent": {"reasoningText": {"text": "thinking"}}},
+                ],
+            }
+        ],
+        dynamic_trailing_blocks=3,
+    )
+
+    assert request["input"] == [
+        {
+            "role": "user",
+            "content": [
+                {"type": "input_text", "text": "durable", "prompt_cache_breakpoint": {"mode": "explicit"}},
+                {"type": "input_text", "text": "temporary"},
+            ],
+        }
+    ]
+    assert "cachePoint content block is not supported" in caplog.text
+    assert "reasoningContent is not yet supported" in caplog.text
+
+
+def test_message_cache_leaves_native_input_override_under_caller_control():
+    params = {"input": [{"role": "user", "content": "native input"}]}
+    model = OpenAIResponsesModel(model_id="gpt-5.6", cache_config=CacheConfig(), params=params)
+    request = model._format_request([{"role": "user", "content": [{"text": "not sent"}]}])
+
+    assert request["input"] == params["input"]
+    assert "prompt_cache_options" not in request
+    assert params == {"input": [{"role": "user", "content": "native input"}]}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("extra_body", "expected_extra_body"),
+    [
+        ({}, {"prompt_cache_options": {"mode": "explicit"}}),
+        ({"other": True}, {"prompt_cache_options": {"mode": "explicit"}, "other": True}),
+        ({"prompt_cache_options": {"mode": "implicit"}}, {"prompt_cache_options": {"mode": "implicit"}}),
+        ({"prompt_cache_options": {"ttl": "12h"}}, {"prompt_cache_options": {"mode": "explicit", "ttl": "12h"}}),
+    ],
+)
+async def test_message_cache_works_with_older_client_create_signature(
+    openai_client, alist, extra_body, expected_extra_body
+):
+    params = {"extra_body": extra_body}
+    original = copy.deepcopy(params)
+    calls = []
+
+    # Models the pre-prompt_cache_options signature: no catch-all kwargs accepting new fields.
+    async def create(*, model, input, stream, store, extra_body):
+        calls.append({"input": input, "extra_body": extra_body})
+
+        async def events():
+            yield SimpleNamespace(type="response.output_text.delta", delta="OK")
+
+        return events()
+
+    openai_client.responses.create.side_effect = create
+    model = OpenAIResponsesModel(model_id="gpt-5.6", cache_config=CacheConfig(), params=params)
+    await alist(
+        model.stream(
+            [{"role": "user", "content": [{"text": "durable"}, {"text": "temporary"}]}], dynamic_trailing_blocks=1
+        )
+    )
+
+    assert calls[0]["extra_body"] == expected_extra_body
+    assert calls[0]["input"] == [
+        {
+            "role": "user",
+            "content": [
+                {"type": "input_text", "text": "durable", "prompt_cache_breakpoint": {"mode": "explicit"}},
+                {"type": "input_text", "text": "temporary"},
+            ],
+        }
+    ]
+    assert model.config["params"] == original
+
+
+@pytest.mark.asyncio
+async def test_message_cache_structured_output_works_with_older_client_parse_signature(openai_client, alist):
+    calls = []
+
+    class Output(pydantic.BaseModel):
+        name: str
+
+    # Models the pre-prompt_cache_options signature: no catch-all kwargs accepting new fields.
+    async def parse(*, model, input, store, text_format, extra_body=None):
+        calls.append({"input": input, "extra_body": extra_body})
+        return SimpleNamespace(output_parsed=text_format(name="ok"))
+
+    openai_client.responses.parse.side_effect = parse
+    model = OpenAIResponsesModel(model_id="gpt-5.6", cache_config=CacheConfig())
+    events = await alist(model.structured_output(Output, [{"role": "user", "content": [{"text": "durable"}]}]))
+
+    assert events[-1]["output"].name == "ok"
+    assert calls[0]["extra_body"] == {"prompt_cache_options": {"mode": "explicit"}}
+    assert calls[0]["input"] == _text_input("durable", {"mode": "explicit"})
+
+
+@pytest.mark.parametrize(
+    ("content", "dynamic_trailing_blocks", "output"),
+    [
+        # Durable text outputs join into one checkpointed block.
+        (
+            [{"text": "one"}, {"json": {"n": 2}}],
+            0,
+            [{"type": "input_text", "text": 'one\n{"n": 2}', "prompt_cache_breakpoint": {"mode": "explicit"}}],
+        ),
+        # A temporary tool output uses the same array form, without a checkpoint.
+        ([{"text": "out"}], 1, [{"type": "input_text", "text": "out"}]),
+        # An empty output stays a string: an empty text block would be a meaningless checkpoint.
+        ([], 0, ""),
+    ],
+)
+def test_message_cache_tool_output_form(content, dynamic_trailing_blocks, output):
+    model = OpenAIResponsesModel(model_id="gpt-5.6", cache_config=CacheConfig())
+    result = {"toolUseId": "c1", "status": "success", "content": content}
+    blocks = [{"text": "durable"}, {"toolResult": result}] if dynamic_trailing_blocks else [{"toolResult": result}]
+    request = model._format_request(
+        [{"role": "user", "content": blocks}], dynamic_trailing_blocks=dynamic_trailing_blocks
+    )
+
+    assert request["input"][-1] == {"type": "function_call_output", "call_id": "c1", "output": output}
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "match"),
+    [
+        ({"client_args": {"api_key": "k"}}, "Only one of 'client' or 'client_args'"),
+        ({"bedrock_mantle_config": {"region": "us-east-1"}}, "'bedrock_mantle_config' cannot be combined"),
+    ],
+)
+def test_init_rejects_client_with_other_client_options(kwargs, match):
+    with pytest.raises(ValueError, match=match):
+        OpenAIResponsesModel(client=unittest.mock.AsyncMock(), model_id="gpt-4o", **kwargs)
+
+
+@pytest.mark.asyncio
+async def test_injected_client_serves_native_count_tokens():
+    client = unittest.mock.AsyncMock()
+    client.responses.input_tokens.count.return_value = unittest.mock.Mock(input_tokens=42)
+    model = OpenAIResponsesModel(client=client, model_id="gpt-4o", use_native_token_count=True)
+
+    with unittest.mock.patch.object(strands.models.openai_responses.openai, "AsyncOpenAI") as mock_client_cls:
+        result = await model.count_tokens(messages=[{"role": "user", "content": [{"text": "hello"}]}])
+
+    assert result == 42
+    mock_client_cls.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_injected_client_is_reused_and_not_closed(model_id, test_output_model_cls, agenerator, alist):
+    client = unittest.mock.AsyncMock()
+    client.responses.create = unittest.mock.AsyncMock(
+        side_effect=lambda **_: agenerator([unittest.mock.Mock(type="response.output_text.delta", delta="Hi")])
+    )
+    client.responses.parse = unittest.mock.AsyncMock(
+        return_value=unittest.mock.Mock(output_parsed=test_output_model_cls(name="John", age=30))
+    )
+    model = OpenAIResponsesModel(client=client, model_id=model_id)
+    messages = [{"role": "user", "content": [{"text": "test"}]}]
+
+    with unittest.mock.patch.object(strands.models.openai_responses.openai, "AsyncOpenAI") as mock_client_cls:
+        await alist(model.stream(messages))
+        await alist(model.stream(messages))
+        events = await alist(model.structured_output(test_output_model_cls, messages))
+
+    mock_client_cls.assert_not_called()
+    assert client.responses.create.await_count == 2
+    assert client.responses.create.await_args.kwargs["model"] == model_id
+    assert events[-1] == {"output": test_output_model_cls(name="John", age=30)}
+    client.close.assert_not_called()
+    client.__aexit__.assert_not_called()

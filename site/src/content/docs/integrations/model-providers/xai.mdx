@@ -1,0 +1,307 @@
+---
+project:
+  pypi: https://pypi.org/project/strands-xai/
+  github: https://github.com/Cerrix/strands-xai
+  maintainer: Cerrix
+service:
+  name: xAI
+  link: https://x.ai/
+title: xAI
+community: true
+description: 'Use xAI Grok models with Strands agents, including server-side tools for web search, X platform access, and code execution.'
+integrationType: model-provider
+languages: Python
+redirectFrom:
+  - docs/user-guide/concepts/model-providers/xai
+---
+
+[xAI](https://x.ai/) is an AI company that develops the Grok family of large language models with advanced reasoning capabilities. The [`strands-xai`](https://pypi.org/project/strands-xai/) package ([GitHub](https://github.com/Cerrix/strands-xai)) provides a community-maintained integration for the Strands Agents SDK, enabling seamless use of xAI's Grok models with powerful server-side tools including real-time X platform access, web search, and code execution.
+
+## Installation
+
+xAI integration is available as a separate community package:
+
+```bash
+pip install strands-agents strands-xai
+```
+
+## Usage
+
+After installing `strands-xai`, you can import and initialize the xAI provider.
+
+:::note[API Key Required]
+Ensure `XAI_API_KEY` is set in your environment, or pass it via `client_args={"api_key": "your-key"}`.
+:::
+
+```python
+from strands import Agent
+from strands_xai import xAIModel
+
+model = xAIModel(
+    client_args={"api_key": "xai-key"},  # or set XAI_API_KEY env var
+    model_id="grok-4.3",
+)
+
+agent = Agent(model=model)
+response = agent("What's trending on X right now?")
+print(response.message)
+```
+
+### With Strands Tools
+
+You can use regular Strands tools just like with any other model provider:
+
+```python
+from strands import Agent, tool
+from strands_xai import xAIModel
+
+@tool
+def calculate(expression: str) -> str:
+    """Evaluate a mathematical expression."""
+    try:
+        result = eval(expression)
+        return f"Result: {result}"
+    except Exception as e:
+        return f"Error: {e}"
+
+@tool
+def get_weather(city: str) -> str:
+    """Get the current weather for a city."""
+    return f"Weather in {city}: Sunny, 22°C"
+
+model = xAIModel(
+    client_args={"api_key": "xai-key"},
+    model_id="grok-4.3",
+)
+
+agent = Agent(model=model, tools=[calculate, get_weather])
+response = agent("What's 15 * 7 and what's the weather in Paris?")
+```
+
+## Configuration
+
+### Environment Variables
+
+```bash
+export XAI_API_KEY="your-api-key"
+```
+
+### Model Configuration
+
+The supported configurations are:
+
+| Parameter | Description | Example | Default |
+|-----------|-------------|---------|---------|
+| `model_id` | Grok model identifier (required) | `"grok-4.3"` | _required_ |
+| `client_args` | xAI client arguments | `{"api_key": "xai-key"}` | `{}` |
+| `params` | Model parameters dict | `{"temperature": 0.7}` | `{}` |
+| `xai_tools` | Server-side tools list | `[web_search(), x_search()]` | `[]` |
+| `reasoning_effort` | Reasoning level (**grok-4.3 only**): `"none"`, `"low"`, `"medium"`, `"high"` | `"high"` | `"low"` |
+| `use_encrypted_content` | Preserve reasoning / sub-agent state across turns (auto-enabled when `xai_tools` is set) | `True` | `False` |
+| `include` | Optional xAI features | `["inline_citations"]` | `[]` |
+| `agent_count` | Number of agents (4 or 16) for `grok-4.20-multi-agent` | `4` | `None` |
+
+:::note[reasoning_effort is grok-4.3 only]
+Only `grok-4.3` accepts `reasoning_effort`. Passing it to `grok-build-0.1` or the pinned `grok-4.20-0309-*` snapshots returns `INVALID_ARGUMENT` — those snapshots have their reasoning behavior baked in. On `grok-4.20-multi-agent`, use `agent_count` instead. Reasoning models also reject `presence_penalty`, `frequency_penalty`, and `stop` in `params`.
+:::
+
+**Model Parameters (in `params` dict):**
+- `temperature` - Sampling temperature (0.0-2.0)
+- `max_tokens` - Maximum tokens in response
+- `top_p` - Nucleus sampling parameter (0.0-1.0)
+- `frequency_penalty` - Frequency penalty (-2.0 to 2.0)
+- `presence_penalty` - Presence penalty (-2.0 to 2.0)
+
+**Available Models:**
+
+| Model | Context | Vision | Best for |
+|-------|---------|--------|----------|
+| `grok-4.3` | 1M | ✅ | Flagship — agentic tool calling, configurable reasoning |
+| `grok-build-0.1` | 256K | ✅ | Agentic coding, early access |
+| `grok-4.20-multi-agent` | 1M | ✅ | Multi-agent research — rolling alias |
+| `grok-4.20-multi-agent-0309` | 1M | ✅ | Multi-agent research — pinned snapshot |
+| `grok-4.20-0309-reasoning` | 1M | ✅ | Pinned 4.20 reasoning snapshot |
+| `grok-4.20-0309-non-reasoning` | 1M | ✅ | Pinned 4.20 inference snapshot |
+
+xAI uses a consistent alias convention: `<model>` resolves to the latest stable version, `<model>-latest` to the bleeding edge, and `<model>-<date>` to a pinned snapshot. Retired aliases (e.g. `grok-4*`, `grok-3*`, `grok-3-mini*`, `grok-code-fast-1`) now silently redirect to `grok-4.3` or `grok-build-0.1`. See the [xAI models documentation](https://docs.x.ai/docs/models) for the authoritative list and pricing.
+
+## Advanced Features
+
+### Server-Side Tools
+
+xAI models come with built-in server-side tools executed by xAI's infrastructure, providing unique capabilities:
+
+```python
+from strands_xai import xAIModel
+from strands import Agent
+from xai_sdk.tools import web_search, x_search, code_execution
+
+# Server-side tools are executed on xAI's servers
+model = xAIModel(
+    client_args={"api_key": "xai-key"},
+    model_id="grok-4.3",
+    xai_tools=[web_search(), x_search(), code_execution()],
+)
+
+agent = Agent(model=model)
+# Model can autonomously use web_search, x_search, and code_execution tools
+response = agent("Search X for recent AI developments and analyze the sentiment")
+```
+
+**Built-in Server-Side Tools:**
+- **`web_search()`** - Live web search across diverse data sources
+- **`x_search()`** - Real-time access to X platform posts, trends, and conversations
+- **`code_execution()`** - Python code execution for data analysis and computation
+- **`collections_search()`** - Search uploaded document collections (RAG)
+
+### Hybrid Tool Usage
+
+Combine xAI's server-side tools with your own Strands tools for maximum flexibility:
+
+```python
+from strands import Agent, tool
+from strands_xai import xAIModel
+from xai_sdk.tools import x_search
+
+@tool
+def get_weather(city: str) -> str:
+    """Get the current weather for a city."""
+    return f"Weather in {city}: Sunny, 22°C"
+
+model = xAIModel(
+    client_args={"api_key": "xai-key"},
+    model_id="grok-4.3",
+    xai_tools=[x_search()],  # Server-side X search
+)
+
+# Combine server-side and client-side tools
+agent = Agent(model=model, tools=[get_weather])
+response = agent("Search X for AI news and tell me the weather in Tokyo")
+```
+
+### Reasoning
+
+`grok-4.3` supports configurable reasoning depth via `reasoning_effort` (`"none"`, `"low"` (default), `"medium"`, `"high"`):
+
+```python
+model = xAIModel(
+    client_args={"api_key": "xai-key"},
+    model_id="grok-4.3",
+    reasoning_effort="high",
+)
+
+agent = Agent(model=model)
+response = agent("Find all prime numbers p such that p^2 + 2 is also prime. Prove your answer.")
+```
+
+Reasoning-capable models stream a **summarized** trace of the model's thinking (surfaced as Strands `reasoningContent.reasoningText` blocks) and report `reasoning_tokens` in usage metadata. The full chain-of-thought is not exposed — current Grok models return only this summary.
+
+### Encrypted Reasoning (Multi-Turn Context)
+
+To preserve reasoning and server-side tool state across turns, enable `use_encrypted_content`. This lets follow-up turns reference earlier encrypted context (for example, asking the model to list the source URLs it used in a previous answer):
+
+```python
+model = xAIModel(
+    client_args={"api_key": "xai-key"},
+    model_id="grok-4.3",
+    reasoning_effort="medium",
+    use_encrypted_content=True,  # Preserves reasoning across turns
+)
+
+agent = Agent(model=model)
+agent("Think through this problem: 2+2")
+agent("Now multiply that by 3")  # reasoning context preserved
+```
+
+:::note[Auto-enabled with server-side tools]
+`use_encrypted_content` is automatically enabled whenever `xai_tools` is set, so server-side tool state is preserved across turns without extra configuration.
+:::
+
+### Multi-Agent Research
+
+`grok-4.20-multi-agent` orchestrates multiple collaborating agents on research tasks. Set `agent_count` to 4 (focused) or 16 (comprehensive):
+
+```python
+from strands_xai import xAIModel
+from strands import Agent
+from xai_sdk.tools import web_search, x_search
+
+model = xAIModel(
+    client_args={"api_key": "xai-key"},
+    model_id="grok-4.20-multi-agent",
+    xai_tools=[web_search(), x_search()],
+    agent_count=4,  # or 16 for deeper research
+)
+
+agent = Agent(model=model)
+response = agent("Research the latest breakthroughs in quantum computing")
+```
+
+:::caution[Beta]
+The multi-agent API is in beta on xAI and may change. The multi-agent model does **not** support client-side tools or `max_tokens`, only the leader agent's output is returned (sub-agent state is preserved via the auto-enabled `use_encrypted_content`), and tokens for the leader **and** all sub-agents are billed — expect usage to scale with `agent_count`.
+:::
+
+### Inline Citations
+
+Enable inline source citations in responses with `include=["inline_citations"]`:
+
+```python
+from strands_xai import xAIModel
+from strands import Agent
+from xai_sdk.tools import web_search
+
+model = xAIModel(
+    client_args={"api_key": "xai-key"},
+    model_id="grok-4.3",
+    xai_tools=[web_search()],
+    include=["inline_citations"],
+)
+
+agent = Agent(model=model, system_prompt="Always cite your sources.")
+response = agent("What are the latest developments in AI?")
+# Output includes inline citations like [1], [2] with source URLs
+```
+
+### Vision (Image Understanding)
+
+Vision-capable models analyze images sent as content blocks:
+
+```python
+from strands_xai import xAIModel
+from strands import Agent
+
+model = xAIModel(
+    client_args={"api_key": "xai-key"},
+    model_id="grok-4.3",  # vision-capable
+)
+
+agent = Agent(model=model)
+
+with open("image.png", "rb") as f:
+    image_bytes = f.read()
+
+message = [
+    {"text": "What's in this image?"},
+    {"image": {"format": "png", "source": {"bytes": image_bytes}}},
+]
+
+response = agent(message)
+```
+
+## Observability / OpenTelemetry
+
+Strands instruments each model call and emits spans with correct token usage. The underlying `xai_sdk` also ships its own OpenTelemetry instrumentation, which emits a duplicate `chat.stream` span for the same call. That extra span reports token usage in xAI's raw form (output excludes reasoning, total includes it), which can make trace-level totals inconsistent in observability backends.
+
+When running `strands-xai` with any OpenTelemetry backend, disable `xai_sdk`'s own tracing so only Strands' spans are exported:
+
+```bash
+export XAI_SDK_DISABLE_TRACING=1
+```
+
+Set it in your environment **before** starting the process — `xai_sdk` binds its tracer at import time, so setting it from Python after import has no effect. With this set, traces contain a single clean span tree and token totals reconcile (`input + output == total`, with reasoning folded into output).
+
+## References
+
+- [strands-xai GitHub Repository](https://github.com/Cerrix/strands-xai)
+- [xAI API Documentation](https://docs.x.ai/)
+- [xAI Models and Pricing](https://docs.x.ai/docs/models)

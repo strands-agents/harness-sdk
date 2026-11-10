@@ -1,11 +1,15 @@
 ---
-title: Configuring Strands Shell
+title: Configure the sandbox
 description: Bind host directories, inject credentials per URL, set the network allowlist, and tune resource limits for Strands Shell, in code or from a TOML file.
 sidebar:
-  label: "Configuration"
+  label: "Configure the sandbox"
 ---
 
-A fresh shell can reach nothing. You open it up by declaring three things: which directories the agent sees, which credentials get injected on which requests, and which URLs the agent may reach. This guide covers each, plus resource limits and the TOML format that captures the whole policy in one file.
+A fresh shell starts without host files or credentials and uses the
+[default network policy](#network-access). You grant additional access by declaring
+which directories the agent sees, which credentials get injected on which requests,
+and which internal URLs the shell may reach. This guide covers each option, plus
+resource limits and the TOML format that captures the whole policy in one file.
 
 Every option is available both as a constructor argument and as a TOML key. Use the constructor when the policy is dynamic (per session, computed at runtime); use TOML when the policy is static and you want it under version control or shared with the [MCP server](mcp-server.md).
 

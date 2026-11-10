@@ -33,14 +33,9 @@
 #
 # NOTE: a clean run here does NOT guarantee CI is green. This runs your current
 # OS + interpreter/node only — it does not reproduce CI's version/OS matrices
-# (Python 3.10–3.14 × linux/win/mac; Node 20/22/24 × 3 OS) or the npm-pack
+# (Python 3.10–3.14 × linux/win/mac; Node 22/24 × 3 OS) or the npm-pack
 # out-of-tree smoke test. It clears the deterministic, single-platform
 # failures (lint, format, types, build, unit tests) so CI rarely bounces.
-#
-# Scope note: CI's `typescript` filter also covers strands-wasm/, strands-py-
-# wasm/, wit/, and strandly/ because CI runs `strandly check --py` (wasm) on
-# those. This script does NOT run that wasm check, so it deliberately does NOT
-# claim those paths — a change to them is left entirely to CI.
 set -uo pipefail
 
 # --- locate repo root -------------------------------------------------------
@@ -128,12 +123,7 @@ changed_files() {
 
 # --- path filters -----------------------------------------------------------
 # A file matches an area if it matches any of these glob prefixes. Returns 0
-# (match) / 1 (no match).
-#
-# python + docs match CI's filters exactly. typescript is NARROWER than CI's:
-# we drop strands-wasm/, strands-py-wasm/, wit/, strandly/, and wasm-* because
-# those are validated in CI by `strandly check --py`, which this script does
-# not run. Lighting up the area for them would falsely imply coverage.
+# (match) / 1 (no match). Each area mirrors CI's filter in ci.yml.
 matches_python() {
   case "$1" in
     strands-py/*|.github/workflows/python-*|.github/workflows/ci.yml) return 0 ;;
@@ -205,16 +195,26 @@ fi
 
 # --- runner helpers ---------------------------------------------------------
 FAILED_AREAS=()
+FAILED_STEPS=()
+FAILED_SNIPPETS=()
+# Output is buffered through a temp file so child processes never block on pipe
+# backpressure (see commit message). This means no streaming/color in interactive
+# use — acceptable since the only consumer is agents.
 run_step() {  # run_step "label" cmd args...
   local label="$1"; shift
   echo
   echo "  > ${label}"
-  if "$@"; then
-    return 0
-  else
+  local _outfile rc=0
+  _outfile="$(mktemp "${TMPDIR:-/tmp}/run-checks.XXXXXX")" || { "$@"; return; }
+  trap 'rm -f "${_outfile:-}"' RETURN
+  "$@" > "$_outfile" 2>&1 || rc=$?
+  cat "$_outfile"
+  if [[ $rc -ne 0 ]]; then
     echo "  FAILED: ${label}" >&2
-    return 1
+    FAILED_STEPS+=("${label}")
+    FAILED_SNIPPETS+=("$(tail -20 "$_outfile")")
   fi
+  [[ $rc -eq 0 ]]
 }
 
 # A fixer that errors is reported but does not fail the area; the checks that
@@ -425,5 +425,11 @@ if [[ ${#FAILED_AREAS[@]} -eq 0 ]]; then
   exit 0
 else
   echo "Failures in: ${FAILED_AREAS[*]}"
+  echo
+  for i in "${!FAILED_STEPS[@]}"; do
+    echo "--- FAILED: ${FAILED_STEPS[$i]} ---"
+    echo "${FAILED_SNIPPETS[$i]}"
+    echo
+  done
   exit 1
 fi

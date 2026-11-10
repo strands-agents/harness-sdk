@@ -15,13 +15,13 @@ The repo's CI (`.github/workflows/ci.yml`) detects which of three areas changed 
 
 ### 1. Run the bundled script
 
-From the repo root:
-
 ```bash
-bash .agents/skills/pre-push/run-checks.sh
+bash .agents/skills/pre-push/run-checks.sh 2>&1
 ```
 
-That path is relative to the repo root, but the script itself runs from anywhere in the repo — it locates the root with `git rev-parse --show-toplevel` before doing anything, so the area detection and checks are unaffected by your working directory. From a subdirectory, just point at the script absolutely:
+Non-zero exit means something failed. On failure, the script prints a summary at the end with every failed step and the last 20 lines of its error output — everything you need to start fixing is in the tail of the output. Ignore noise earlier in the output.
+
+The script runs from anywhere in the repo (it locates the root via `git rev-parse --show-toplevel`). From a subdirectory:
 
 ```bash
 bash "$(git rev-parse --show-toplevel)/.agents/skills/pre-push/run-checks.sh"
@@ -44,7 +44,7 @@ Useful flags:
 
 ### 2. Triage what phase 2 reports
 
-If phase 2 comes back green, you're done — report it and stop. If it's red, work the failures before calling the branch push-ready, splitting by whether the fix requires judgment:
+If the script exits 0, you're done — report it and stop. If it exits non-zero, work the `FAILED:` items before calling the branch push-ready, splitting by whether the fix requires judgment:
 
 - **Mechanical / unambiguous** — a missing type annotation, an unused import the linter flagged but didn't strip, a lockfile that needs committing. Just fix these and re-run the script.
 - **Anything ambiguous** — loop back to the developer with the failing output before changing anything. The clearest case is a **test failure**: it means either the change broke real behavior (fix the code) or the behavior change is intended and the test is stale (fix the test). Don't guess, and never rewrite a test just to make it pass — that silences the very check that caught the regression. Surface it and let the developer decide.
@@ -57,6 +57,13 @@ How that split applies to the specific things phase 2 reports:
 - **Missing tool** (`hatch`/`npm` not found) — the script says how to install. Report it; don't silently work around it.
 
 After fixing anything, re-run the script to confirm green.
+
+## Output format
+
+- **Starting a check:** `  > label`
+- **Inline failure:** `  FAILED: label` (printed inline as each check fails)
+- **End summary (on failure only):** after `============`, each failed step is listed as `--- FAILED: label ---` followed by the last 20 lines of its output. This summary has everything needed to diagnose and fix.
+- **Exit code:** non-zero if any check failed
 
 ## Rules
 

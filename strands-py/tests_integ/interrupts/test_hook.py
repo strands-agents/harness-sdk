@@ -107,6 +107,7 @@ def test_interrupt(agent):
                 },
             },
         ],
+        "tracking_id": ANY,
     }
     assert tru_tool_result_message == exp_tool_result_message
 
@@ -153,5 +154,6 @@ def test_interrupt_reject(agent):
                 },
             },
         ],
+        "tracking_id": ANY,
     }
     assert tru_tool_result_message == exp_tool_result_message

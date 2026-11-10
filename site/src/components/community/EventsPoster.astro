@@ -1,0 +1,251 @@
+---
+import type { LearnEvent } from '../../content.config'
+import { formatEventDate, toIsoDate } from '../../util/learn'
+import { pathWithBase } from '../../util/links'
+
+interface Props {
+  headliner: LearnEvent | undefined
+  others: LearnEvent[]
+}
+
+const { headliner, others } = Astro.props
+
+const eventHref = (event: LearnEvent): string | undefined =>
+  event.href ? (event.href.startsWith('http') ? event.href : pathWithBase(event.href)) : undefined
+
+const headlinerHref = headliner ? eventHref(headliner) : undefined
+---
+
+<aside>
+  <div class="poster">
+    {
+      headliner && (
+        <div id="poster-headliner" data-expires={toIsoDate(headliner.endDate ?? headliner.startDate)}>
+          {headlinerHref ? (
+            <a class="headliner-link" href={headlinerHref}>
+              <span class="kicker">Meet us in person</span>
+              <h3>{headliner.title}</h3>
+              <p class="sub">
+                {headliner.description ? `${headliner.description} · ` : ''}
+                {formatEventDate(headliner)} · {headliner.location}
+              </p>
+            </a>
+          ) : (
+            <>
+              <span class="kicker">Meet us in person</span>
+              <h3>{headliner.title}</h3>
+              <p class="sub">
+                {headliner.description ? `${headliner.description} · ` : ''}
+                {formatEventDate(headliner)} · {headliner.location}
+              </p>
+            </>
+          )}
+        </div>
+      )
+    }
+    {
+      others.length > 0 && (
+        <div class="list">
+          {others.map((event) => {
+            const href = eventHref(event)
+            const content = (
+              <>
+                <b>{formatEventDate(event)}</b>
+                <span>
+                  {event.title} · {event.location}
+                </span>
+              </>
+            )
+            return href ? (
+              <a class="row" data-expires={toIsoDate(event.endDate ?? event.startDate)} href={href}>
+                {content}
+              </a>
+            ) : (
+              <div class="row" data-expires={toIsoDate(event.endDate ?? event.startDate)}>
+                {content}
+              </div>
+            )
+          })}
+        </div>
+      )
+    }
+    <div id="poster-evergreen" hidden={headliner ? true : undefined}>
+      <span class="kicker">Join the community</span>
+      <h3>Community calls &amp; events</h3>
+      <p class="sub">Event announcements land on Discord first — talks, workshops, and community calls.</p>
+    </div>
+    <a class="cal" id="poster-cal" href="https://discord.gg/strands">
+      {headliner ? 'Event updates on Discord →' : 'Join the Discord →'}
+    </a>
+  </div>
+</aside>
+
+<style>
+  .poster {
+    background: #00cc5f;
+    color: #0a1f14;
+    border-radius: 18px;
+    padding: 2.125rem 2.125rem 1.625rem;
+    position: sticky;
+    top: calc(var(--sl-nav-height, 4rem) + 2rem);
+  }
+
+  :global([data-theme='light']) .poster {
+    background:
+      radial-gradient(ellipse at 50% 0%, rgba(0, 204, 95, 0.1) 0%, transparent 70%),
+      rgba(0, 204, 95, 0.03);
+    border: 1px solid rgba(0, 204, 95, 0.15);
+    color: var(--sl-color-gray-1);
+  }
+
+  :global([data-theme='light']) .poster .kicker {
+    color: #008542;
+  }
+
+  :global([data-theme='light']) .poster h3 {
+    color: var(--sl-color-white);
+  }
+
+  :global([data-theme='light']) .poster .sub {
+    color: var(--sl-color-gray-2);
+  }
+
+  :global([data-theme='light']) .poster .list {
+    border-top-color: rgba(0, 133, 66, 0.25);
+  }
+
+  :global([data-theme='light']) .poster .row {
+    border-bottom-color: rgba(0, 133, 66, 0.15);
+  }
+
+  :global([data-theme='light']) .poster .cal,
+  :global([data-theme='light']) .poster .cal:hover {
+    color: #008542;
+    border-color: #008542;
+  }
+
+  .kicker {
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: 0.75rem;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    font-weight: 700;
+  }
+
+  h3 {
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: 1.875rem;
+    letter-spacing: -0.02em;
+    margin: 0.75rem 0 0.25rem;
+    font-weight: 600;
+  }
+
+  .sub {
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: 0.9375rem;
+    color: #10432a;
+    margin: 0;
+  }
+
+  .headliner-link {
+    display: block;
+    color: inherit;
+    text-decoration: none;
+  }
+
+  .headliner-link:hover,
+  .headliner-link:hover h3,
+  .headliner-link:hover .sub {
+    color: #0a1f14;
+  }
+
+  .headliner-link:hover h3 {
+    text-decoration: underline;
+    text-decoration-color: #0a1f14;
+    text-underline-offset: 3px;
+  }
+
+  :global([data-theme='light']) .headliner-link:hover,
+  :global([data-theme='light']) .headliner-link:hover h3,
+  :global([data-theme='light']) .headliner-link:hover .sub {
+    color: var(--sl-color-gray-1);
+  }
+
+  :global([data-theme='light']) .headliner-link:hover h3 {
+    text-decoration-color: var(--sl-color-gray-1);
+  }
+
+  a.row {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  a.row:hover,
+  a.row:hover b,
+  a.row:hover span {
+    color: #0a1f14;
+  }
+
+  a.row:hover span {
+    text-decoration: underline;
+    text-decoration-color: #0a1f14;
+    text-underline-offset: 3px;
+  }
+
+  :global([data-theme='light']) a.row:hover,
+  :global([data-theme='light']) a.row:hover b,
+  :global([data-theme='light']) a.row:hover span {
+    color: var(--sl-color-gray-1);
+  }
+
+  :global([data-theme='light']) a.row:hover span {
+    text-decoration-color: var(--sl-color-gray-1);
+  }
+
+  .list {
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    margin-top: 1.5rem;
+    border-top: 1px solid #0f3322;
+    font-size: 0.875rem;
+  }
+
+  /* :global because Astro scoping doesn't apply to classes added by JS at runtime */
+  :global(.list--bare) {
+    border-top: none;
+    margin-top: 0;
+  }
+
+  .row {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 11px 0;
+    border-bottom: 1px solid #0f33224d;
+  }
+
+  .row b {
+    min-width: 60px;
+  }
+
+  .cal {
+    display: inline-block;
+    margin-top: 1rem;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-weight: 700;
+    font-size: 0.875rem;
+    color: #0a1f14;
+    text-decoration: none;
+    border-bottom: 2px solid #0a1f14;
+  }
+
+  .poster .cal:hover {
+    color: #0a1f14;
+    border-color: #0a1f14;
+  }
+
+  @media (max-width: 900px) {
+    .poster {
+      position: static;
+    }
+  }
+</style>

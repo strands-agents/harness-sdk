@@ -342,6 +342,7 @@ describe('AgentSkills', () => {
         toolUse: { name: 'skills', toolUseId: 'test-id', input: { skill_name: skillName } },
         agent: agent as any,
         invocationState: {},
+        cancelSignal: agent.cancelSignal,
         interrupt: () => {
           throw new Error('interrupt not available in mock context')
         },
@@ -426,6 +427,7 @@ describe('AgentSkills', () => {
         toolUse: { name: 'skills', toolUseId: 'id', input: { skill_name: 'resource-skill' } },
         agent: agent2 as any,
         invocationState: {},
+        cancelSignal: agent2.cancelSignal,
         interrupt: () => {
           throw new Error('interrupt not available in mock context')
         },
@@ -453,6 +455,7 @@ describe('AgentSkills', () => {
         toolUse: { name: 'skills', toolUseId: 'id', input: { skill_name: 'no-resources' } },
         agent: agent2 as any,
         invocationState: {},
+        cancelSignal: agent2.cancelSignal,
         interrupt: () => {
           throw new Error('interrupt not available in mock context')
         },
@@ -484,6 +487,7 @@ describe('AgentSkills', () => {
         toolUse: { name: 'skills', toolUseId: 'id', input: { skill_name: 'many-files' } },
         agent: agent2 as any,
         invocationState: {},
+        cancelSignal: agent2.cancelSignal,
         interrupt: () => {
           throw new Error('interrupt not available in mock context')
         },

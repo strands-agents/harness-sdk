@@ -1,0 +1,201 @@
+---
+import { render } from 'astro:content'
+import MarkdownIt from 'markdown-it'
+import type { ChangelogRelease } from '../../util/changelog'
+import { groupEntries, formatChangelogDate, releaseSlug } from '../../util/changelog'
+import { pathWithBase } from '../../util/links'
+import ChangelogEntry from './ChangelogEntry.astro'
+import { ICONS } from './icons.ts'
+
+// `detail` mode powers the per-release page (/changelog/<id>/): all entries
+// shown (no overflow collapsing), first-time contributors rendered, and the
+// version number self-links. On the combined index (detail=false) sections are
+// capped and the number links out to the detail page.
+interface Props { release: ChangelogRelease; detail?: boolean }
+const { release, detail = false } = Astro.props
+const d = release.data
+const { features, fixes, other } = groupEntries(d.entries)
+const langIcon = d.language ? ICONS[d.language] : undefined
+const isPackagePyPI = d.packageUrl.includes('pypi.org')
+
+// Readability: on the combined page show the first N entries of a section and
+// tuck the rest behind a native <details> expander so huge releases don't
+// dominate. The detail page shows everything (no cap).
+const SECTION_CAP = detail ? Infinity : 8
+const split = (list: typeof d.entries) => ({
+  visible: list.slice(0, SECTION_CAP),
+  overflow: list.slice(SECTION_CAP),
+})
+const feat = split(features)
+const fix = split(fixes)
+const hasEntries = d.entries.length > 0
+
+// Stable deep-link anchor, e.g. #harness-python-v1.43.0, #evals-v0.2.1
+const anchorId = [d.sdk, d.language, `v${d.version}`].filter(Boolean).join('-')
+
+// Canonical per-release page URL (e.g. /changelog/sdk/python-v1.43.0/).
+const detailUrl = pathWithBase(`/changelog/${releaseSlug(release)}/`)
+
+// Render the optional curated highlights string as inline markdown (code,
+// links, emphasis) so authors can use backticks etc.
+const md = new MarkdownIt({ html: false, linkify: true })
+const highlightsHtml = d.highlights ? md.renderInline(d.highlights.trim()) : ''
+
+// Render the optional curated markdown body (longer-form release notes).
+// Uses Astro's default markdown render — raw HTML in the body passes through,
+// so the body is trusted-by-PR-review (committed fixtures today; automation-
+// generated files still go through human PR review before merge). highlights
+// above is escaped (html:false); the body is not.
+// Only the detail page uses <Content />; the combined index uses the
+// pre-rendered (namespaced) HTML instead, so don't pay for render() per release
+// across the whole list — only render when this is a detail page.
+const Content = detail ? (await render(release)).Content : null
+
+// On the combined index, many release bodies reuse section headings ("What's
+// Changed", "Bug Fixes"), so their auto-generated heading ids collide into
+// invalid duplicate ids on the one page. There we emit the pre-rendered HTML
+// with each heading id (and same-document anchor href) prefixed by the release
+// anchor, making them unique. Detail pages render one body via <Content /> and
+// keep the clean, deep-linkable ids. body is trusted-by-PR-review (see above).
+// We read the pre-rendered HTML off the collection entry's internal `rendered`
+// field (undocumented Astro shape) to avoid a render() per release across the
+// whole list. Guard it: if a release HAS a curated body but this yields empty,
+// the internal shape changed and bodies would silently vanish — fail the build
+// loudly instead. Detail pages don't use this path (they render via <Content/>).
+const renderedHtml: string = (release as unknown as { rendered?: { html?: string } }).rendered?.html ?? ''
+if (!detail && release.body && release.body.trim() && !renderedHtml.trim()) {
+  throw new Error(
+    `changelog: release "${release.id}" has a curated body but rendered.html is empty — ` +
+    `Astro's internal entry.rendered shape likely changed; update ChangelogVersion.astro.`
+  )
+}
+// Whether the release carries a curated long-form body (markdown after the
+// frontmatter). Used so the "no itemized notes" fallback isn't shown when a
+// hand-written narrative is present (e.g. releases the parser couldn't itemize
+// but that have curated prose).
+const hasBody = renderedHtml.trim().length > 0
+// Namespace EVERY id (not just headings): GFM footnotes also emit
+// id="user-content-fn-1" / "user-content-fnref-1", which would otherwise
+// collide across releases on the combined index and reintroduce the duplicate-id
+// a11y/W3C issue this exists to prevent. Same-document anchor hrefs (#...) are
+// rewritten to match so footnote/heading links still resolve.
+const namespacedBody = detail
+  ? ''
+  : renderedHtml
+      .replace(/(\sid=")([^"]+)(")/g, (_m, pre, id, post) => `${pre}${anchorId}-${id}${post}`)
+      .replace(/(<a[^>]*\shref="#)([^"]+)(")/g, (_m, pre, id, post) => `${pre}${anchorId}-${id}${post}`)
+
+// The version number is an <h1> on the standalone detail page (the page's one
+// top-level heading) and an <h2> within the combined list (under the page h1).
+const VersionHeading = detail ? 'h1' : 'h2'
+---
+<article class="cl-version" id={anchorId} data-sdk={d.sdk} data-language={d.language ?? ''} aria-labelledby={`${anchorId}-h`}>
+  <div class="cl-version-meta">
+    {/* On a detail page the version is the page's primary heading (h1, one per
+        page for a11y/SEO); in the combined list it's an h2 under the page h1. */}
+    <VersionHeading class="cl-version-num" id={`${anchorId}-h`}>
+      {detail ? (
+        <span class="cl-version-numtext">v{d.version}</span>
+      ) : (
+        <a class="cl-version-link" href={detailUrl} aria-label={`View v${d.version} release page`}>v{d.version}</a>
+      )}
+      <span class="cl-latest" data-cl-latest hidden>Latest</span>
+    </VersionHeading>
+    <div class="cl-version-date">{formatChangelogDate(d.date)}</div>
+    <div class="cl-version-links">
+      <a href={d.releaseUrl} target="_blank" rel="noopener">GitHub release <span aria-hidden="true">↗</span></a>
+      {d.packageUrl !== d.releaseUrl && (
+        <a href={d.packageUrl} target="_blank" rel="noopener">
+          {langIcon && (
+            <svg class="cl-icon" width="11" height="11" viewBox="0 0 24 24" aria-hidden="true">
+              {langIcon.map((p) => <path fill="currentColor" d={p} />)}
+            </svg>
+          )}
+          {isPackagePyPI ? 'PyPI' : 'npm'} {d.version} <span aria-hidden="true">↗</span>
+        </a>
+      )}
+    </div>
+  </div>
+  <div class="cl-rail-line"><span class="cl-dot" /><span class="cl-line" /></div>
+  <div class="cl-version-body">
+    {d.highlights && (
+      <div class="cl-highlights">
+        <span class="cl-rail-label">★ Highlights</span>
+        <p set:html={highlightsHtml} />
+      </div>
+    )}
+    {/* First-time contributors live on the per-release detail page only — the
+        combined index is a scannable list and doesn't need them. */}
+    {detail && d.newContributors.length > 0 && (
+      <div class="cl-new-contributors">
+        <span class="cl-nc-label">🎉 First-time contributors</span>
+        <span class="cl-nc-list">
+          {d.newContributors.map((c) => (
+            <a class="cl-nc" href={`https://github.com/${c.login}`} target="_blank" rel="noopener" title={`@${c.login} — first contribution in #${c.pr}`}>
+              <img src={`https://github.com/${c.login}.png?size=40`} alt="" width="20" height="20" loading="lazy" />
+              @{c.login}
+            </a>
+          ))}
+        </span>
+      </div>
+    )}
+    {/* Curated narrative (highlights' long-form companion) reads first, above
+        the deterministic Features/Fixes/Other breakdown derived from PRs. */}
+    <div class="cl-version-notes">
+      {detail ? <Content /> : <Fragment set:html={namespacedBody} />}
+    </div>
+    {features.length > 0 && (
+      <>
+        <h3 class="cl-group">✦ Features <span class="cl-n">{features.length}</span></h3>
+        <ul class="cl-entries">
+          {feat.visible.map((e) => <ChangelogEntry entry={e} />)}
+        </ul>
+        {feat.overflow.length > 0 && (
+          <details class="cl-more">
+            <summary>Show {feat.overflow.length} more features</summary>
+            <ul class="cl-entries">
+              {feat.overflow.map((e) => <ChangelogEntry entry={e} />)}
+            </ul>
+          </details>
+        )}
+      </>
+    )}
+    {fixes.length > 0 && (
+      <>
+        <h3 class="cl-group fixes">⊘ Fixes <span class="cl-n">{fixes.length}</span></h3>
+        <ul class="cl-entries">
+          {fix.visible.map((e) => <ChangelogEntry entry={e} />)}
+        </ul>
+        {fix.overflow.length > 0 && (
+          <details class="cl-more">
+            <summary>Show {fix.overflow.length} more fixes</summary>
+            <ul class="cl-entries">
+              {fix.overflow.map((e) => <ChangelogEntry entry={e} />)}
+            </ul>
+          </details>
+        )}
+      </>
+    )}
+    {other.length > 0 && (detail ? (
+      <>
+        <h3 class="cl-group fixes">⋯ Other <span class="cl-n">{other.length}</span></h3>
+        <ul class="cl-entries">
+          {other.map((e) => <ChangelogEntry entry={e} />)}
+        </ul>
+      </>
+    ) : (
+      <details class="cl-more cl-other">
+        <summary>⋯ {other.length} more change{other.length === 1 ? '' : 's'} (chores, docs, tests)</summary>
+        <ul class="cl-entries">
+          {other.map((e) => <ChangelogEntry entry={e} />)}
+        </ul>
+      </details>
+    ))}
+    {!hasEntries && !d.highlights && !hasBody && (
+      <p class="cl-no-entries">
+        Itemized notes weren't generated for this release —
+        <a href={d.releaseUrl} target="_blank" rel="noopener">see the release on GitHub <span aria-hidden="true">↗</span></a>
+      </p>
+    )}
+  </div>
+</article>

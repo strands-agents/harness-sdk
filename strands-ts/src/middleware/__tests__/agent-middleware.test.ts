@@ -71,12 +71,30 @@ describe('Agent middleware integration — InvokeModelStage', () => {
       await agent.invoke('Test prompt')
 
       expect(receivedContext?.agent).toBe(agent)
+      expect(receivedContext?.model).toBe(model)
       expect(receivedContext).toMatchObject({
         systemPrompt: 'Be helpful',
         messages: expect.arrayContaining([expect.any(Message)]),
         toolSpecs: expect.arrayContaining([expect.objectContaining({ name: 'testTool' })]),
         invocationState: expect.anything(),
       })
+    })
+
+    it('middleware can select the model for one call', async () => {
+      const defaultModel = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Default response' })
+      const selectedModel = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Selected response' })
+      const defaultStreamSpy = vi.spyOn(defaultModel, 'stream')
+      const agent = new Agent({ model: defaultModel, printer: false })
+
+      agent.addMiddleware(InvokeModelStage.Input, async (context) => ({
+        ...context,
+        model: selectedModel,
+      }))
+
+      const result = await agent.invoke('Test prompt')
+
+      expect(result.lastMessage.content).toEqual([new TextBlock('Selected response')])
+      expect(defaultStreamSpy).not.toHaveBeenCalled()
     })
 
     it('middleware result is used as the model call result', async () => {
@@ -1483,6 +1501,23 @@ describe('Middleware phases (Input / Wrap / Output)', () => {
       expect(outputSeen).toBe(true)
     })
 
+    it('transformed result message is appended to agent.messages', async () => {
+      const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Original' })
+      const agent = new Agent({ model, printer: false })
+
+      agent.addMiddleware(InvokeModelStage.Output, async (result) => ({
+        result: {
+          ...result.result,
+          message: new Message({ role: 'assistant', content: [new TextBlock('Rewritten by middleware')] }),
+        },
+      }))
+
+      await agent.invoke('Test')
+
+      const assistantMessages = agent.messages.filter((m) => m.role === 'assistant')
+      expect(assistantMessages.at(-1)?.content).toEqual([new TextBlock('Rewritten by middleware')])
+    })
+
     it('runs after Wrap handlers (wraps them)', async () => {
       const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Hello' })
       const agent = new Agent({ model, printer: false })
@@ -1505,6 +1540,34 @@ describe('Middleware phases (Input / Wrap / Output)', () => {
 
       // Output wraps Wrap: output sees the result after wrap-after
       expect(order).toStrictEqual(['wrap-before', 'wrap-after', 'output'])
+    })
+
+    it('changing stopReason from tool_use to endTurn prevents tool dispatch', async () => {
+      const model = new MockMessageModel()
+        .addTurn({ type: 'toolUseBlock', name: 'shouldNotRun', toolUseId: 'tool-1', input: {} })
+        .addTurn({ type: 'textBlock', text: 'Should not reach here' })
+
+      let toolCalled = false
+      const tool = createMockTool('shouldNotRun', () => {
+        toolCalled = true
+        return new ToolResultBlock({
+          toolUseId: 'tool-1',
+          status: 'success' as const,
+          content: [new TextBlock('ran')],
+        })
+      })
+
+      const agent = new Agent({ model, tools: [tool], printer: false })
+
+      // Output rewrites the tool_use result into an endTurn result, short-circuiting the loop
+      agent.addMiddleware(InvokeModelStage.Output, async (result) => ({
+        result: { ...result.result, stopReason: 'endTurn' as const },
+      }))
+
+      const result = await agent.invoke('Use the tool')
+
+      expect(result.stopReason).toBe('endTurn')
+      expect(toolCalled).toBe(false)
     })
   })
 

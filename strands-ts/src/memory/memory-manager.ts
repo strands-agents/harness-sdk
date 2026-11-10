@@ -23,6 +23,8 @@ import { normalizeError } from '../errors.js'
 import { isUserTurn, createInjectionMiddleware } from '../injection/message-injection.js'
 import { escapeXmlText, escapeXmlAttr } from '../injection/xml.js'
 import { InvokeModelStage } from '../middleware/index.js'
+import { Tracer } from '../telemetry/tracer.js'
+import { context, trace } from '@opentelemetry/api'
 
 const SEARCH_TOOL_DESCRIPTION =
   'Search long-term memory for facts, preferences, or context from previous conversations. Use when you need background about the user or topic that may have been discussed before.'
@@ -97,6 +99,13 @@ export class MemoryManager implements Plugin {
   private _coordinator: ExtractionCoordinator | undefined
   /** Resolved injection config, or `false` when injection is disabled. */
   private readonly _injectionConfig: MemoryInjectionConfig | false
+  /**
+   * Tracer for memory operation spans, shared with the extraction coordinator. A per-instance
+   * Tracer is intentional: it wraps the same global OTel provider, and parent-child nesting is
+   * established via OTel context (context.active() / context.with()), not instance hierarchy — so a
+   * fresh instance routes spans to the same exporter and parents correctly without fragmenting traces.
+   */
+  private readonly _tracer = new Tracer()
 
   constructor(config: MemoryManagerConfig) {
     if (config.stores.length === 0) {
@@ -229,7 +238,7 @@ export class MemoryManager implements Plugin {
       return
     }
 
-    const coordinator = new ExtractionCoordinator(this._extractionStores, agent.model)
+    const coordinator = new ExtractionCoordinator(this._extractionStores, agent.auxModel, this._tracer)
     this._coordinator = coordinator
 
     // Buffer every message the agent adds, so extraction has its own copy to save from.
@@ -239,7 +248,7 @@ export class MemoryManager implements Plugin {
 
     for (const { store, config } of this._extractionStores) {
       for (const trigger of config.triggers) {
-        trigger.attach({ agent, fire: () => void coordinator.process(store) })
+        trigger.attach({ agent, fire: (invocationContext) => void coordinator.process(store, invocationContext) })
       }
     }
   }
@@ -279,22 +288,46 @@ export class MemoryManager implements Plugin {
     messages: MessageData[],
     config: MemoryInjectionConfig
   ): Promise<string | undefined> {
-    const query = this._resolveInjectionQuery(messages, config)
-    if (!query?.trim()) {
-      return undefined
+    const maxResults = config.maxEntries ?? DEFAULT_MAX_ENTRIES
+    const span = this._tracer.startMemoryInjectSpan({ maxEntries: maxResults })
+
+    // End the inject span on every path (skip, fail-open, success). Injection fails open, so a
+    // format failure ends OK with a flag; only callers above us treat a thrown search as an error.
+    const end = (injected: boolean, entryCount = 0, formatError = false): void => {
+      this._tracer.endMemoryInjectSpan(span, { injected, entryCount, formatError })
     }
 
-    const maxResults = config.maxEntries ?? DEFAULT_MAX_ENTRIES
-    const entries = (await this.search(query, { maxSearchResults: maxResults })).slice(0, maxResults)
-    if (entries.length === 0) {
-      return undefined
+    // Set the inject span active so the nested search span parents under it.
+    const run = async (): Promise<string | undefined> => {
+      const query = this._resolveInjectionQuery(messages, config)
+      if (!query?.trim()) {
+        end(false)
+        return undefined
+      }
+
+      const entries = (await this.search(query, { maxSearchResults: maxResults })).slice(0, maxResults)
+      if (entries.length === 0) {
+        end(false)
+        return undefined
+      }
+
+      try {
+        const rendered = config.format ? config.format({ entries }) : this._defaultInjectionFormat(entries)
+        end(true, entries.length)
+        return rendered
+      } catch (error) {
+        logger.warn(`reason=<${normalizeError(error).message}> | injection format threw; skipping injection`)
+        end(false, 0, true)
+        return undefined
+      }
     }
 
     try {
-      return config.format ? config.format({ entries }) : this._defaultInjectionFormat(entries)
+      return span ? await context.with(trace.setSpan(context.active(), span), run) : await run()
     } catch (error) {
-      logger.warn(`reason=<${normalizeError(error).message}> | injection format threw; skipping injection`)
-      return undefined
+      // search (or anything else here) throwing must not leak the span; end it and rethrow.
+      end(false)
+      throw error
     }
   }
 
@@ -420,26 +453,41 @@ export class MemoryManager implements Plugin {
       `query=<${query}>, max_search_results=<${options?.maxSearchResults}>, stores=<${options?.stores}> | searching stores`
     )
 
-    const targetStores =
-      options?.stores !== undefined
-        ? [...new Set(options.stores)].map((name) => {
-            const found = this._config.stores.find((s) => s.name === name)
-            if (!found) {
-              throw new Error(`MemoryManager: store '${name}' not found`)
-            }
-            return found
-          })
-        : this._config.stores
+    const spanStoreNames = options?.stores ?? this._config.stores.map((s) => s.name)
+    const span = this._tracer.startMemorySearchSpan({
+      query,
+      storeNames: spanStoreNames,
+      ...(options?.maxSearchResults !== undefined && { maxSearchResults: options.maxSearchResults }),
+    })
 
-    const settled = await Promise.allSettled(
-      targetStores.map((store) =>
-        store.search(query, {
-          maxSearchResults: options?.maxSearchResults ?? store.maxSearchResults ?? DEFAULT_MAX_SEARCH_RESULTS,
-        })
+    let targetStores: MemoryStore[]
+    let settled: PromiseSettledResult<MemoryEntry[]>[]
+    try {
+      targetStores =
+        options?.stores !== undefined
+          ? [...new Set(options.stores)].map((name) => {
+              const found = this._config.stores.find((s) => s.name === name)
+              if (!found) {
+                throw new Error(`MemoryManager: store '${name}' not found`)
+              }
+              return found
+            })
+          : this._config.stores
+
+      settled = await Promise.allSettled(
+        targetStores.map((store) =>
+          store.search(query, {
+            maxSearchResults: options?.maxSearchResults ?? store.maxSearchResults ?? DEFAULT_MAX_SEARCH_RESULTS,
+          })
+        )
       )
-    )
+    } catch (error) {
+      this._tracer.endMemorySearchSpan(span, { error: normalizeError(error) })
+      throw error
+    }
 
     const results: MemoryEntry[] = []
+    let storeFailureCount = 0
     for (let i = 0; i < settled.length; i++) {
       const settledResult = settled[i]!
       const storeName = targetStores[i]!.name
@@ -447,6 +495,7 @@ export class MemoryManager implements Plugin {
         logger.warn(
           `store=<${storeName}>, reason=<${normalizeError(settledResult.reason).message}> | store search failed`
         )
+        storeFailureCount++
         continue
       }
       for (const entry of settledResult.value) {
@@ -454,6 +503,7 @@ export class MemoryManager implements Plugin {
       }
     }
 
+    this._tracer.endMemorySearchSpan(span, { entries: results, storeFailureCount })
     logger.debug(`results=<${results.length}> | search complete`)
     return results
   }
@@ -469,30 +519,46 @@ export class MemoryManager implements Plugin {
    *
    * @param content - The text content to add
    * @param options - Optional metadata and store name filter
+   * @param detached - Internal. When the write runs detached from the call that scheduled it (the
+   *   fire-and-forget add tool path), start the span as a trace root rather than parenting to a
+   *   possibly-ended span.
+   * @internal
    */
-  async add(content: string, options?: MemoryAddOptions): Promise<void> {
+  async add(content: string, options?: MemoryAddOptions, detached = false): Promise<void> {
+    const spanStoreNames = options?.stores ?? this._addStores.map((s) => s.name)
+    const span = this._tracer.startMemoryAddSpan({
+      content,
+      storeNames: spanStoreNames,
+      ...(detached && { forceRoot: true }),
+    })
+
     let writableStores: MemoryStore[]
+    let settled: PromiseSettledResult<unknown>[]
+    try {
+      if (options?.stores !== undefined) {
+        writableStores = [...new Set(options.stores)].map((name) => {
+          const found = this._config.stores.find((s) => s.name === name)
+          if (!found) {
+            throw new Error(`MemoryManager: store '${name}' not found`)
+          }
+          if (!found.writable) {
+            throw new Error(`MemoryManager: store '${name}' is read-only`)
+          }
+          return found
+        })
+      } else {
+        writableStores = this._addStores
+      }
 
-    if (options?.stores !== undefined) {
-      writableStores = [...new Set(options.stores)].map((name) => {
-        const found = this._config.stores.find((s) => s.name === name)
-        if (!found) {
-          throw new Error(`MemoryManager: store '${name}' not found`)
-        }
-        if (!found.writable) {
-          throw new Error(`MemoryManager: store '${name}' is read-only`)
-        }
-        return found
-      })
-    } else {
-      writableStores = this._addStores
+      if (writableStores.length === 0) {
+        throw new Error('MemoryManager: no writable store matched')
+      }
+
+      settled = await Promise.allSettled(writableStores.map((store) => store.add!(content, options?.metadata)))
+    } catch (error) {
+      this._tracer.endMemoryAddSpan(span, { error: normalizeError(error) })
+      throw error
     }
-
-    if (writableStores.length === 0) {
-      throw new Error('MemoryManager: no writable store matched')
-    }
-
-    const settled = await Promise.allSettled(writableStores.map((store) => store.add!(content, options?.metadata)))
 
     const failures: { store: string; reason: unknown }[] = []
     for (let i = 0; i < settled.length; i++) {
@@ -506,11 +572,15 @@ export class MemoryManager implements Plugin {
       }
     }
     if (failures.length > 0) {
-      throw new AggregateError(
+      const aggregateError = new AggregateError(
         failures.map((failure) => failure.reason),
         `MemoryManager: store writes failed: ${failures.map((failure) => failure.store).join(', ')}`
       )
+      this._tracer.endMemoryAddSpan(span, { storeFailureCount: failures.length, error: aggregateError })
+      throw aggregateError
     }
+
+    this._tracer.endMemoryAddSpan(span)
   }
 
   /**
@@ -618,7 +688,7 @@ export class MemoryManager implements Plugin {
           // Fire-and-forget: dispatch the writes without awaiting so the agent loop isn't blocked.
           // add() logs per-store failures; swallow the rejection so it isn't an unhandled rejection.
           for (const content of input.entries) {
-            void this.add(content, { stores }).catch(() => {})
+            void this.add(content, { stores }, true).catch(() => {})
           }
           return { accepted: input.entries.length } as JSONValue
         }

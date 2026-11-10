@@ -15,7 +15,7 @@ permissions:
 jobs:
   label-area:
     name: "Label: Area"
-    runs-on: ubuntu-latest
+    runs-on: strands-agents_ubuntu-latest_4-core
     timeout-minutes: 2
     steps:
       - uses: actions/checkout@v7
@@ -30,7 +30,7 @@ jobs:
 
   label-type:
     name: "Label: Type"
-    runs-on: ubuntu-latest
+    runs-on: strands-agents_ubuntu-latest_4-core
     timeout-minutes: 2
     steps:
       - uses: actions/checkout@v7
@@ -45,7 +45,7 @@ jobs:
 
   label-language:
     name: "Label: Language"
-    runs-on: ubuntu-latest
+    runs-on: strands-agents_ubuntu-latest_4-core
     timeout-minutes: 2
     steps:
       - uses: actions/checkout@v7

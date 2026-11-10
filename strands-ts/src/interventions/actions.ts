@@ -23,11 +23,7 @@ export function defaultEvaluate(response: JSONValue): boolean {
 }
 
 export type LifecycleEvent =
-  | BeforeInvocationEvent
-  | BeforeToolCallEvent
-  | AfterToolCallEvent
-  | BeforeModelCallEvent
-  | AfterModelCallEvent
+  BeforeInvocationEvent | BeforeToolCallEvent | AfterToolCallEvent | BeforeModelCallEvent | AfterModelCallEvent
 
 /**
  * Allow the operation to continue unchanged.

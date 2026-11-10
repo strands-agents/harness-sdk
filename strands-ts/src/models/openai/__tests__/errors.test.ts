@@ -10,6 +10,7 @@ describe('classifyOpenAIError', () => {
     'Input is too long for requested model',
     'input length and `max_tokens` exceed context limit',
     'too many total text bytes',
+    'prompt tokens (320666) exceed customer model maximum (278528) for model-id',
   ])('classifies overflow phrase %p as contextOverflow', (phrase) => {
     expect(classifyOpenAIError(new Error(phrase))).toBe('contextOverflow')
   })

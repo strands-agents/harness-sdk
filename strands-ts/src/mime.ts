@@ -6,6 +6,23 @@
 
 export const IMAGE_FORMATS = ['png', 'jpg', 'jpeg', 'gif', 'webp'] as const
 
+export type AudioFormat =
+  | 'mp3'
+  | 'opus'
+  | 'wav'
+  | 'aac'
+  | 'flac'
+  | 'mp4'
+  | 'ogg'
+  | 'mkv'
+  | 'mka'
+  | 'x-aac'
+  | 'm4a'
+  | 'mpeg'
+  | 'mpga'
+  | 'pcm'
+  | 'webm'
+
 export type ImageFormat = (typeof IMAGE_FORMATS)[number]
 
 export type VideoFormat = 'mkv' | 'mov' | 'mp4' | 'webm' | 'flv' | 'mpeg' | 'mpg' | 'wmv' | '3gp'

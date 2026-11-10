@@ -8,7 +8,7 @@ import {
 import type { SnapshotStorage, SnapshotLocation } from './storage.js'
 import type { Snapshot, SnapshotManifest } from './types.js'
 import { SessionError } from '../errors.js'
-import { validateIdentifier, validateUuidV7 } from './validation.js'
+import { validateIdentifier, validateScope, validateUuidV7 } from './validation.js'
 
 const MANIFEST = 'manifest.json'
 const SNAPSHOT_LATEST = 'snapshot_latest.json'
@@ -34,6 +34,9 @@ export type S3StorageConfig = {
 /**
  * S3-based implementation of SnapshotStorage.
  * Persists session snapshots as JSON objects in an S3 bucket.
+ *
+ * @deprecated Pass a unified `Storage` (e.g. `S3Storage` from `@strands-agents/sdk/storage`)
+ * to `SessionManagerConfig.storage` instead. The session manager wraps it internally.
  *
  * Object key layout:
  * ```
@@ -70,6 +73,7 @@ export class S3Storage implements SnapshotStorage {
    */
   private _getKey(location: SnapshotLocation, path: string): string {
     validateIdentifier(location.sessionId)
+    validateScope(location.scope)
     validateIdentifier(location.scopeId)
     const base = this._prefix ? `${this._prefix}/` : ''
     return `${base}${location.sessionId}/scopes/${location.scope}/${location.scopeId}/snapshots/${path}`

@@ -26,8 +26,8 @@
  * ```
  */
 
-import { context, SpanStatusCode, SpanKind, trace } from '@opentelemetry/api'
-import type { Span, Tracer as OtelTracer, SpanOptions, AttributeValue } from '@opentelemetry/api'
+import { context, isSpanContextValid, ROOT_CONTEXT, SpanStatusCode, SpanKind, trace } from '@opentelemetry/api'
+import type { Span, Tracer as OtelTracer, SpanOptions, AttributeValue, Link, SpanContext } from '@opentelemetry/api'
 import { logger } from '../logging/index.js'
 import type {
   EndAgentSpanOptions,
@@ -42,6 +42,14 @@ import type {
   EndMultiAgentSpanOptions,
   StartNodeSpanOptions,
   EndNodeSpanOptions,
+  StartMemorySearchSpanOptions,
+  EndMemorySearchSpanOptions,
+  StartMemoryAddSpanOptions,
+  EndMemoryAddSpanOptions,
+  StartMemoryInjectSpanOptions,
+  EndMemoryInjectSpanOptions,
+  StartMemoryExtractSpanOptions,
+  EndMemoryExtractSpanOptions,
   Usage,
   Metrics,
 } from './types.js'
@@ -49,6 +57,7 @@ import type { ContentBlock, Message, SystemPrompt } from '../types/messages.js'
 import type { JSONSerializable } from '../types/json.js'
 import { jsonReplacer } from './json.js'
 import { getServiceName } from './utils.js'
+import { totalPromptTokens } from '../models/streaming.js'
 
 /**
  * JSON-serializable representation of LocalTrace.
@@ -205,6 +214,21 @@ export class Tracer {
    */
   private readonly _isLangfuse: boolean
 
+  /**
+   * Whether to record message content as span attributes instead of span events.
+   *
+   * True when the backend cannot read span events (Langfuse) or the opt-in is set via
+   * `OTEL_SEMCONV_STABILITY_OPT_IN=gen_ai_span_attributes_only`. Per OpenTelemetry the span-event
+   * recording API is deprecated, and non-timestamped span details such as the canonical
+   * `gen_ai.*.messages` attributes should be recorded as span attributes instead. This flag is
+   * passed by the aggregated content paths (latest-convention `gen_ai.*` messages and the
+   * `memory.query`/`memory.content` events); it never reaches the legacy per-message events
+   * (which reuse a `content` key and would collide as attributes).
+   *
+   * @see https://opentelemetry.io/blog/2026/deprecating-span-events/
+   */
+  private readonly _spanAttributesOnly: boolean
+
   /** In-memory execution trace state, collected independently of OTEL. */
   private readonly _traceState: AgentTraceState = { traces: [] }
 
@@ -225,6 +249,7 @@ export class Tracer {
     this._includeToolDefinitions = optInValues.has('gen_ai_tool_definitions')
 
     this._isLangfuse = Tracer._detectLangfuse()
+    this._spanAttributesOnly = this._isLangfuse || optInValues.has('gen_ai_span_attributes_only')
 
     // Get tracer from global API to ensure ground truth
     this._tracer = trace.getTracer(getServiceName())
@@ -346,7 +371,7 @@ export class Tracer {
 
       const span = this._startSpan({
         name: 'chat',
-        attributes,
+        attributes: { ...attributes, ...this._traceAttributes },
         spanKind: SpanKind.INTERNAL,
         ...(this._loopSpan && { parentSpan: this._loopSpan }),
       })
@@ -420,23 +445,32 @@ export class Tracer {
 
       const span = this._startSpan({
         name: `execute_tool ${tool.name}`,
-        attributes,
+        attributes: { ...attributes, ...this._traceAttributes },
         spanKind: SpanKind.INTERNAL,
         ...(this._loopSpan && { parentSpan: this._loopSpan }),
       })
 
       if (this._useLatestConventions) {
-        this._addEvent(span, 'gen_ai.client.inference.operation.details', {
-          'gen_ai.input.messages': JSON.stringify(
-            [
-              {
-                role: 'tool',
-                parts: [{ type: 'tool_call', name: tool.name, id: tool.toolUseId, arguments: tool.input }],
-              },
-            ],
-            jsonReplacer
-          ),
-        })
+        // The execute_tool span convention records tool inputs in the dedicated
+        // gen_ai.tool.call.arguments span attribute (Opt-In), which spec-compliant
+        // consumers read on tool spans.
+        span.setAttribute('gen_ai.tool.call.arguments', JSON.stringify(tool.input, jsonReplacer))
+        this._addEvent(
+          span,
+          'gen_ai.client.inference.operation.details',
+          {
+            'gen_ai.input.messages': JSON.stringify(
+              [
+                {
+                  role: 'tool',
+                  parts: [{ type: 'tool_call', name: tool.name, id: tool.toolUseId, arguments: tool.input }],
+                },
+              ],
+              jsonReplacer
+            ),
+          },
+          this._spanAttributesOnly
+        )
       } else {
         this._addEvent(span, 'gen_ai.tool.message', {
           role: 'tool',
@@ -477,17 +511,29 @@ export class Tracer {
         attributes['gen_ai.tool.status'] = statusStr
 
         if (this._useLatestConventions) {
-          this._addEvent(span, 'gen_ai.client.inference.operation.details', {
-            'gen_ai.output.messages': JSON.stringify(
-              [
-                {
-                  role: 'tool',
-                  parts: [{ type: 'tool_call_response', id: toolResult.toolUseId, response: toolResult.content }],
-                },
-              ],
-              jsonReplacer
-            ),
-          })
+          // The execute_tool span convention records tool outputs in the dedicated
+          // gen_ai.tool.call.result span attribute (Opt-In), which spec-compliant
+          // consumers read on tool spans. The spec scopes the attribute to successful
+          // executions; failures are captured in the span status instead.
+          if (statusStr !== 'error') {
+            attributes['gen_ai.tool.call.result'] = JSON.stringify(toolResult.content, jsonReplacer)
+          }
+          this._addEvent(
+            span,
+            'gen_ai.client.inference.operation.details',
+            {
+              'gen_ai.output.messages': JSON.stringify(
+                [
+                  {
+                    role: 'tool',
+                    parts: [{ type: 'tool_call_response', id: toolResult.toolUseId, response: toolResult.content }],
+                  },
+                ],
+                jsonReplacer
+              ),
+            },
+            this._spanAttributesOnly
+          )
         } else {
           this._addEvent(span, 'gen_ai.choice', {
             message: JSON.stringify(toolResult.content, jsonReplacer),
@@ -607,6 +653,238 @@ export class Tracer {
   }
 
   /**
+   * Start a memory search span.
+   *
+   * The query is recorded verbatim as a span event, consistent with how model and tool spans
+   * record their inputs. Memory payloads may contain user PII; suppress span content at the
+   * exporter or processor when that is a concern. Parents to the current active span.
+   *
+   * @param options - Options for starting the memory search span
+   */
+  startMemorySearchSpan(options: StartMemorySearchSpanOptions): Span | null {
+    try {
+      const attributes = this._getCommonAttributes('memory.search')
+      attributes['memory.store.names'] = JSON.stringify(options.storeNames, jsonReplacer)
+      attributes['memory.store.count'] = options.storeNames.length
+      if (options.maxSearchResults !== undefined) attributes['memory.max_search_results'] = options.maxSearchResults
+
+      const span = this._startSpan({ name: 'memory.search', attributes, spanKind: SpanKind.INTERNAL })
+      this._addEvent(span, 'memory.query', { content: options.query }, this._spanAttributesOnly)
+      return span
+    } catch (error) {
+      logger.warn(`error=<${error}> | failed to start memory search span`)
+      return null
+    }
+  }
+
+  /**
+   * End a memory search span with the retrieved entries.
+   *
+   * Per-store failures are logged and skipped by the manager, so a non-zero `storeFailureCount`
+   * still ends the span OK; only `error` marks it as failed.
+   *
+   * @param span - The span to end, or null if span creation failed
+   * @param options - Options for ending the memory search span
+   */
+  endMemorySearchSpan(span: Span | null, options: EndMemorySearchSpanOptions = {}): void {
+    if (!span) return
+    try {
+      const entries = options.entries ?? []
+      const attributes: Record<string, AttributeValue> = {
+        'memory.result.count': entries.length,
+        'memory.store.failure_count': options.storeFailureCount ?? 0,
+      }
+      if (!options.error) {
+        this._addEvent(
+          span,
+          'memory.results',
+          {
+            content: JSON.stringify(
+              entries.map((entry) => ({
+                content: entry.content,
+                storeName: entry.storeName,
+                metadata: entry.metadata,
+              })),
+              jsonReplacer
+            ),
+          },
+          this._spanAttributesOnly
+        )
+      }
+      this._endSpan(span, attributes, options.error)
+    } catch (err) {
+      logger.warn(`error=<${err}> | failed to end memory search span`)
+    }
+  }
+
+  /**
+   * Start a memory add span.
+   *
+   * The content is recorded verbatim as a span event, consistent with how model and tool spans
+   * record their inputs. Memory payloads may contain user PII; suppress span content at the
+   * exporter or processor when that is a concern.
+   *
+   * @param options - Options for starting the memory add span
+   */
+  startMemoryAddSpan(options: StartMemoryAddSpanOptions): Span | null {
+    try {
+      const attributes = this._getCommonAttributes('memory.add')
+      attributes['memory.store.names'] = JSON.stringify(options.storeNames, jsonReplacer)
+      attributes['memory.store.count'] = options.storeNames.length
+
+      const span = this._startSpan({
+        name: 'memory.add',
+        attributes,
+        spanKind: SpanKind.INTERNAL,
+        ...(options.forceRoot && { forceRoot: true }),
+      })
+      this._addEvent(span, 'memory.content', { content: options.content }, this._spanAttributesOnly)
+      return span
+    } catch (error) {
+      logger.warn(`error=<${error}> | failed to start memory add span`)
+      return null
+    }
+  }
+
+  /**
+   * End a memory add span.
+   *
+   * @param span - The span to end, or null if span creation failed
+   * @param options - Options for ending the memory add span
+   */
+  endMemoryAddSpan(span: Span | null, options: EndMemoryAddSpanOptions = {}): void {
+    if (!span) return
+    try {
+      const attributes: Record<string, AttributeValue> = {
+        'memory.store.failure_count': options.storeFailureCount ?? 0,
+      }
+      this._endSpan(span, attributes, options.error)
+    } catch (err) {
+      logger.warn(`error=<${err}> | failed to end memory add span`)
+    }
+  }
+
+  /**
+   * Start a memory context injection span.
+   *
+   * @param options - Options for starting the memory injection span
+   */
+  startMemoryInjectSpan(options: StartMemoryInjectSpanOptions = {}): Span | null {
+    try {
+      const attributes = this._getCommonAttributes('memory.inject')
+      if (options.maxEntries !== undefined) attributes['memory.max_entries'] = options.maxEntries
+
+      return this._startSpan({ name: 'memory.inject', attributes, spanKind: SpanKind.INTERNAL })
+    } catch (error) {
+      logger.warn(`error=<${error}> | failed to start memory inject span`)
+      return null
+    }
+  }
+
+  /**
+   * End a memory injection span.
+   *
+   * Injection fails open, so a format failure ends the span OK with a flag rather than an error
+   * status (the agent did not fail).
+   *
+   * @param span - The span to end, or null if span creation failed
+   * @param options - Options for ending the memory injection span
+   */
+  endMemoryInjectSpan(span: Span | null, options: EndMemoryInjectSpanOptions): void {
+    if (!span) return
+    try {
+      const attributes: Record<string, AttributeValue> = {
+        'memory.injected': options.injected,
+        'memory.entry.count': options.entryCount ?? 0,
+      }
+      if (options.formatError) attributes['memory.inject.format_error'] = true
+      this._endSpan(span, attributes)
+    } catch (err) {
+      logger.warn(`error=<${err}> | failed to end memory inject span`)
+    }
+  }
+
+  /**
+   * Start a memory extraction span as a trace root.
+   *
+   * Extraction runs detached from the agent invocation that scheduled it (the agent span has
+   * typically ended by the time the save runs), so the span is a trace root, optionally linked
+   * back to the agent span for causality.
+   *
+   * @param options - Options for starting the memory extraction span
+   */
+  startMemoryExtractSpan(options: StartMemoryExtractSpanOptions): Span | null {
+    try {
+      const attributes = this._getCommonAttributes('memory.extract')
+      attributes['memory.store.name'] = options.storeName
+      attributes['memory.message.count'] = options.messageCount
+      attributes['memory.message.filtered_count'] = options.filteredCount ?? 0
+      if (options.extractor !== undefined) attributes['memory.extractor'] = options.extractor
+
+      // The extract span is a detached root, so its OTel parent is empty. Record the scheduling
+      // agent run's ids as plain attributes (in addition to the link below) so backends that don't
+      // render span links can still trace the extraction back to the run that triggered it.
+      const validAgentSpanContext =
+        options.agentSpanContext && isSpanContextValid(options.agentSpanContext) ? options.agentSpanContext : undefined
+      if (validAgentSpanContext) {
+        attributes['memory.parent.trace_id'] = validAgentSpanContext.traceId
+        attributes['memory.parent.span_id'] = validAgentSpanContext.spanId
+      }
+
+      const links: Link[] | undefined = validAgentSpanContext ? [{ context: validAgentSpanContext }] : undefined
+
+      return this._startSpan({
+        name: 'memory.extract',
+        attributes,
+        spanKind: SpanKind.INTERNAL,
+        forceRoot: true,
+        ...(links && { links }),
+      })
+    } catch (error) {
+      logger.warn(`error=<${error}> | failed to start memory extract span`)
+      return null
+    }
+  }
+
+  /**
+   * End a memory extraction span.
+   *
+   * @param span - The span to end, or null if span creation failed
+   * @param options - Options for ending the memory extraction span
+   */
+  endMemoryExtractSpan(span: Span | null, options: EndMemoryExtractSpanOptions = {}): void {
+    if (!span) return
+    try {
+      const attributes: Record<string, AttributeValue> = {}
+      if (options.entryCount !== undefined) attributes['memory.entry.count'] = options.entryCount
+      this._endSpan(span, attributes, options.error)
+    } catch (err) {
+      logger.warn(`error=<${err}> | failed to end memory extract span`)
+    }
+  }
+
+  /**
+   * Capture the current active span's context for linking, if one is recording.
+   *
+   * Used to associate a detached extraction span with the agent run that scheduled it: the
+   * context is captured synchronously while the agent span is live, then attached as a link.
+   *
+   * @returns The active span's context, or undefined when no recording span with a valid context is active
+   * @internal
+   */
+  currentSpanContext(): SpanContext | undefined {
+    try {
+      const span = trace.getActiveSpan()
+      if (!span || !span.isRecording()) return undefined
+      const spanContext = span.spanContext()
+      return isSpanContextValid(spanContext) ? spanContext : undefined
+    } catch (err) {
+      logger.warn(`error=<${err}> | failed to capture current span context`)
+      return undefined
+    }
+  }
+
+  /**
    * Runs a callback with the given span set as the active OpenTelemetry context.
    * Downstream code (e.g., MCP clients) can read the span from context.active()
    * for distributed trace propagation. No-ops if span is null.
@@ -639,7 +917,7 @@ export class Tracer {
       const attributes: Record<string, AttributeValue> = { 'agent_loop.cycle_id': cycleId }
       const span = this._startSpan({
         name: 'execute_agent_loop_cycle',
-        attributes,
+        attributes: { ...attributes, ...this._traceAttributes },
         ...(this._agentSpan && { parentSpan: this._agentSpan }),
       })
       this._addEventMessages(span, messages)
@@ -681,6 +959,14 @@ export class Tracer {
     attributes?: Record<string, AttributeValue>
     spanKind?: SpanKind
     parentSpan?: Span
+    /**
+     * Start the span as a trace root, ignoring any current span. Use for work that runs
+     * detached from the span that scheduled it (e.g. background tasks whose parent span
+     * has already ended).
+     */
+    forceRoot?: boolean
+    /** Spans to link to without implying a parent-child timing relationship. */
+    links?: Link[]
   }): Span {
     const spanOptions: SpanOptions = {}
 
@@ -693,8 +979,14 @@ export class Tracer {
     }
 
     if (options.spanKind !== undefined) spanOptions.kind = options.spanKind
+    if (options.links) spanOptions.links = options.links
 
-    const ctx = options.parentSpan ? trace.setSpan(context.active(), options.parentSpan) : context.active()
+    // An empty root context detaches the span from any (possibly ended) current span.
+    const ctx = options.forceRoot
+      ? ROOT_CONTEXT
+      : options.parentSpan
+        ? trace.setSpan(context.active(), options.parentSpan)
+        : context.active()
     const span = this._tracer.startSpan(options.name, spanOptions, ctx)
 
     try {
@@ -731,8 +1023,17 @@ export class Tracer {
 
   /**
    * Add an event to a span.
+   *
+   * Per OpenTelemetry the span-event recording API is deprecated. When `toSpanAttributes` is set,
+   * the attributes are recorded directly on the span and the event is skipped, so the content is
+   * recorded once rather than duplicated across both; otherwise the event is emitted.
    */
-  private _addEvent(span: Span, eventName: string, eventAttributes?: Record<string, AttributeValue>): void {
+  private _addEvent(
+    span: Span,
+    eventName: string,
+    eventAttributes?: Record<string, AttributeValue>,
+    toSpanAttributes = false
+  ): void {
     try {
       if (!eventAttributes) {
         span.addEvent(eventName)
@@ -741,6 +1042,12 @@ export class Tracer {
       const otelAttributes: Record<string, AttributeValue | undefined> = {}
       for (const [key, value] of Object.entries(eventAttributes)) {
         if (value !== undefined && value !== null) otelAttributes[key] = value
+      }
+      // Some backends (e.g. Langfuse) don't surface span events, so record the attributes on the
+      // span instead of as an event.
+      if (toSpanAttributes) {
+        span.setAttributes(otelAttributes)
+        return
       }
       span.addEvent(eventName, otelAttributes)
     } catch (err) {
@@ -783,9 +1090,14 @@ export class Tracer {
           role: m.role,
           parts: Tracer._mapContentBlocksToOtelParts(m.content),
         }))
-        this._addEvent(span, 'gen_ai.client.inference.operation.details', {
-          'gen_ai.input.messages': JSON.stringify(inputMessages, jsonReplacer),
-        })
+        this._addEvent(
+          span,
+          'gen_ai.client.inference.operation.details',
+          {
+            'gen_ai.input.messages': JSON.stringify(inputMessages, jsonReplacer),
+          },
+          this._spanAttributesOnly
+        )
       } else {
         for (const message of messages) {
           this._addEvent(span, this._getEventNameForMessage(message), {
@@ -821,17 +1133,25 @@ export class Tracer {
    * attribute names for compatibility with different OTEL backends.
    */
   private _setUsageAttributes(attributes: Record<string, AttributeValue>, usage: Usage): void {
-    attributes['gen_ai.usage.prompt_tokens'] = usage.inputTokens
-    attributes['gen_ai.usage.input_tokens'] = usage.inputTokens
+    const promptTokens = totalPromptTokens(usage)
+    attributes['gen_ai.usage.prompt_tokens'] = promptTokens
+    attributes['gen_ai.usage.input_tokens'] = promptTokens
     attributes['gen_ai.usage.completion_tokens'] = usage.outputTokens
     attributes['gen_ai.usage.output_tokens'] = usage.outputTokens
     attributes['gen_ai.usage.total_tokens'] = usage.totalTokens
 
     if ((usage.cacheReadInputTokens ?? 0) > 0) {
-      attributes['gen_ai.usage.cache_read_input_tokens'] = usage.cacheReadInputTokens!
+      attributes['gen_ai.usage.cache_read.input_tokens'] = usage.cacheReadInputTokens!
+      // Deprecated pre-semconv name, dual-emitted unless opted into the latest conventions
+      if (!this._useLatestConventions) {
+        attributes['gen_ai.usage.cache_read_input_tokens'] = usage.cacheReadInputTokens!
+      }
     }
     if ((usage.cacheWriteInputTokens ?? 0) > 0) {
-      attributes['gen_ai.usage.cache_write_input_tokens'] = usage.cacheWriteInputTokens!
+      attributes['gen_ai.usage.cache_creation.input_tokens'] = usage.cacheWriteInputTokens!
+      if (!this._useLatestConventions) {
+        attributes['gen_ai.usage.cache_write_input_tokens'] = usage.cacheWriteInputTokens!
+      }
     }
   }
 
@@ -860,12 +1180,17 @@ export class Tracer {
       const messageText = textParts.join('\n')
 
       if (this._useLatestConventions) {
-        this._addEvent(span, 'gen_ai.client.inference.operation.details', {
-          'gen_ai.output.messages': JSON.stringify(
-            [{ role: 'assistant', parts: [{ type: 'text', content: messageText }], finish_reason: finishReason }],
-            jsonReplacer
-          ),
-        })
+        this._addEvent(
+          span,
+          'gen_ai.client.inference.operation.details',
+          {
+            'gen_ai.output.messages': JSON.stringify(
+              [{ role: 'assistant', parts: [{ type: 'text', content: messageText }], finish_reason: finishReason }],
+              jsonReplacer
+            ),
+          },
+          this._spanAttributesOnly
+        )
       } else {
         this._addEvent(span, 'gen_ai.choice', { message: messageText, finish_reason: finishReason })
       }
@@ -882,18 +1207,23 @@ export class Tracer {
       const finishReason = stopReason || 'unknown'
 
       if (this._useLatestConventions) {
-        this._addEvent(span, 'gen_ai.client.inference.operation.details', {
-          'gen_ai.output.messages': JSON.stringify(
-            [
-              {
-                role: message.role,
-                parts: Tracer._mapContentBlocksToOtelParts(message.content),
-                finish_reason: finishReason,
-              },
-            ],
-            jsonReplacer
-          ),
-        })
+        this._addEvent(
+          span,
+          'gen_ai.client.inference.operation.details',
+          {
+            'gen_ai.output.messages': JSON.stringify(
+              [
+                {
+                  role: message.role,
+                  parts: Tracer._mapContentBlocksToOtelParts(message.content),
+                  finish_reason: finishReason,
+                },
+              ],
+              jsonReplacer
+            ),
+          },
+          this._spanAttributesOnly
+        )
       } else {
         this._addEvent(span, 'gen_ai.choice', {
           finish_reason: finishReason,
@@ -948,9 +1278,14 @@ export class Tracer {
 
     if (this._useLatestConventions) {
       const parts = Tracer._mapSystemPromptToOtelParts(systemPrompt)
-      this._addEvent(span, 'gen_ai.client.inference.operation.details', {
-        'gen_ai.system_instructions': JSON.stringify(parts, jsonReplacer),
-      })
+      this._addEvent(
+        span,
+        'gen_ai.client.inference.operation.details',
+        {
+          'gen_ai.system_instructions': JSON.stringify(parts, jsonReplacer),
+        },
+        this._spanAttributesOnly
+      )
     } else {
       // Normalize string prompts to an array of text blocks for consistent format
       const blocks = typeof systemPrompt === 'string' ? [{ text: systemPrompt }] : systemPrompt
@@ -990,6 +1325,10 @@ export class Tracer {
     return contentBlocks.map((block) => {
       switch (block.type) {
         case 'textBlock':
+          return { type: 'text', content: block.text }
+        case 'injectedBlock':
+          return { type: 'text', content: block.injected.text }
+        case 'summaryBlock':
           return { type: 'text', content: block.text }
         case 'toolUseBlock':
           return { type: 'tool_call', name: block.name, id: block.toolUseId, arguments: block.input }

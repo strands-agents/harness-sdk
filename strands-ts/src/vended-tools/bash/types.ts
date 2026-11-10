@@ -1,10 +1,9 @@
 /**
- * Type definitions for the bash tool.
+ * Type definitions for the persistent bash tool.
+ *
+ * The sandbox-routed shell tool's types live in `../shell/types.js`; its error
+ * classes extend the ones here so pre-rename catch clauses keep matching.
  */
-
-export const SANDBOX_BASH_DESCRIPTION =
-  'Executes bash shell commands. Each call runs in a fresh shell; ' +
-  'state such as variables and the working directory does not persist across calls.'
 
 /**
  * Input parameters for execute operation.

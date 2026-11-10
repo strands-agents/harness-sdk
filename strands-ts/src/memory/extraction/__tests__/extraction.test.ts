@@ -8,6 +8,7 @@ import {
   type ExtractionBinding,
 } from '../coordinator.js'
 import { resolveExtractionConfig } from '../resolve-extraction-config.js'
+import { Tracer } from '../../../telemetry/tracer.js'
 import type { Model } from '../../../models/model.js'
 import type { ExtractionConfig, Extractor } from '../types.js'
 import type { MemoryStore, MemoryEntry, AddMessagesContext } from '../../types.js'
@@ -299,12 +300,13 @@ describe('MemoryManager extraction', () => {
       await fireInvocation(agent, mm)
 
       expect(store.addMessages).not.toHaveBeenCalled()
-      // The extractor receives (messages, context); the context is the extractor envelope only, with
-      // no sequenceNumbers. Assert the whole object so a future stray field is caught positively.
+      // The extractor receives (messages, context); the context is the extractor envelope only
+      // (defaultModel + tracer), with no sequenceNumbers — that field is for the addMessages route.
       expect(extractor.extract).toHaveBeenCalledTimes(1)
       const extractArgs = (extractor.extract as ReturnType<typeof vi.fn>).mock.calls[0]!
       expect(extractArgs).toHaveLength(2)
-      expect(extractArgs[1]).toEqual({ defaultModel: undefined })
+      expect(extractArgs[1]).not.toHaveProperty('sequenceNumbers')
+      expect(extractArgs[1]).toHaveProperty('defaultModel')
     })
   })
 
@@ -330,18 +332,21 @@ describe('MemoryManager extraction', () => {
       expect(store.addMessages).not.toHaveBeenCalled()
     })
 
-    it('passes the agent model as defaultModel to the extractor', async () => {
+    it('passes the agent auxModel as defaultModel to the extractor', async () => {
       const extractor: Extractor = { extract: vi.fn().mockResolvedValue([]) }
       const store = createExtractionStore('s', { trigger: [new InvocationTrigger()], extractor })
       const mm = new MemoryManager({ stores: [store] })
-      const fakeModel = { id: 'model' }
-      const agent = createMockAgent({ extra: { model: fakeModel } as never })
+      const fakeModel = { id: 'aux' }
+      const agent = createMockAgent({ extra: { model: { id: 'model' }, auxModel: fakeModel } as never })
       await mm.initAgent(agent)
 
       await addMessages(agent, userMsg('hi'))
       await fireInvocation(agent, mm)
 
-      expect(extractor.extract).toHaveBeenCalledWith(expect.any(Array), { defaultModel: fakeModel })
+      expect(extractor.extract).toHaveBeenCalledWith(
+        expect.any(Array),
+        expect.objectContaining({ defaultModel: fakeModel })
+      )
     })
 
     it('writes entries concurrently rather than serially', async () => {
@@ -501,7 +506,7 @@ describe('MemoryManager extraction', () => {
     } {
       const store = createExtractionStore('s', { trigger: [new InvocationTrigger()] }, 'addMessages')
       store.addMessages.mockRejectedValue(new Error('backend down'))
-      const coordinator = new ExtractionCoordinator([asExtractionStore(store)], {} as Model)
+      const coordinator = new ExtractionCoordinator([asExtractionStore(store)], {} as Model, new Tracer())
       return { coordinator, store }
     }
 
@@ -550,7 +555,11 @@ describe('MemoryManager extraction', () => {
       const bad = createExtractionStore('bad', { trigger: [new InvocationTrigger()] }, 'addMessages')
       bad.addMessages.mockRejectedValue(new Error('down'))
       const good = createExtractionStore('good', { trigger: [new InvocationTrigger()] }, 'addMessages')
-      const coordinator = new ExtractionCoordinator([asExtractionStore(bad), asExtractionStore(good)], {} as Model)
+      const coordinator = new ExtractionCoordinator(
+        [asExtractionStore(bad), asExtractionStore(good)],
+        {} as Model,
+        new Tracer()
+      )
 
       const PROBES = 2
       const requests = SAVE_FAILURES_BEFORE_BACKOFF + BACKOFF_PROBE_INTERVAL * PROBES
@@ -580,7 +589,7 @@ describe('MemoryManager extraction', () => {
     it('flush bypasses backoff and writes the backlog of a recovered store', async () => {
       const store = createExtractionStore('s', { trigger: [new InvocationTrigger()] }, 'addMessages')
       store.addMessages.mockRejectedValue(new Error('down'))
-      const coordinator = new ExtractionCoordinator([asExtractionStore(store)], {} as Model)
+      const coordinator = new ExtractionCoordinator([asExtractionStore(store)], {} as Model, new Tracer())
 
       // Drive the store into backoff.
       for (let i = 0; i < SAVE_FAILURES_BEFORE_BACKOFF; i++) {
@@ -609,7 +618,7 @@ describe('MemoryManager extraction', () => {
       // clear the prior failures. We prove that by showing backoff still engages at the threshold.
       const store = createExtractionStore('s', { trigger: [new InvocationTrigger()] }, 'addMessages')
       store.addMessages.mockRejectedValue(new Error('down'))
-      const coordinator = new ExtractionCoordinator([asExtractionStore(store)], {} as Model)
+      const coordinator = new ExtractionCoordinator([asExtractionStore(store)], {} as Model, new Tracer())
 
       // One short of backoff.
       for (let i = 0; i < SAVE_FAILURES_BEFORE_BACKOFF - 1; i++) {

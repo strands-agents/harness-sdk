@@ -15,9 +15,14 @@ are expected to fail with an ``ImportError`` until that implementation exists.
 from __future__ import annotations
 
 from typing import Any
+from unittest.mock import MagicMock, patch
 
 import pytest
 
+from strands.agent.invocation_context import (
+    _create_auxiliary_invocation_context,
+    _create_invocation_context,
+)
 from strands.memory.extraction.model_extractor import ModelExtractor
 from strands.memory.extraction.types import ExtractionResult, ExtractorContext
 from strands.types.content import Message
@@ -44,9 +49,11 @@ class _RecordingModel(MockedModelProvider):
     def __init__(self, agent_responses: Any) -> None:
         super().__init__(agent_responses)
         self.stream_calls = 0
+        self.system_prompts: list[str | None] = []
 
     async def stream(self, *args: Any, **kwargs: Any):  # type: ignore[override]
         self.stream_calls += 1
+        self.system_prompts.append(args[2] if len(args) > 2 else kwargs.get("system_prompt"))
         async for event in super().stream(*args, **kwargs):
             yield event
 
@@ -120,6 +127,36 @@ async def test_returns_empty_for_an_empty_message_batch_without_calling_the_mode
 
 
 @pytest.mark.asyncio
+async def test_appends_the_output_format_to_the_default_system_prompt():
+    model = _RecordingModel([_assistant_text("[]")])
+
+    await ModelExtractor(model=model).extract([_user_turn("x")])
+
+    system_prompt = model.system_prompts[0]
+    assert system_prompt is not None
+    assert system_prompt.startswith("You extract durable facts")
+    assert system_prompt.endswith(
+        'Return ONLY a JSON array of objects, each: {"content": string}. '
+        "If there is nothing worth remembering, return []."
+    )
+
+
+@pytest.mark.asyncio
+async def test_keeps_the_output_format_when_a_custom_system_prompt_replaces_the_default():
+    model = _RecordingModel([_assistant_text('[{"content": "Prefers aisle seats"}]')])
+    extractor = ModelExtractor(model=model, system_prompt="Extract user preferences.")
+
+    entries = await extractor.extract([_user_turn("I like aisle seats")])
+
+    system_prompt = model.system_prompts[0]
+    assert system_prompt is not None
+    assert system_prompt.startswith("Extract user preferences.\n\n")
+    assert "You extract durable facts" not in system_prompt
+    assert 'Return ONLY a JSON array of objects, each: {"content": string}.' in system_prompt
+    assert entries == [ExtractionResult(content="Prefers aisle seats")]
+
+
+@pytest.mark.asyncio
 async def test_falls_back_to_the_default_model_from_context_when_none_configured():
     model = MockedModelProvider([_assistant_text('[{"content": "fact"}]')])
     extractor = ModelExtractor()
@@ -135,3 +172,85 @@ async def test_raises_when_no_model_is_configured_and_no_default_is_provided():
 
     with pytest.raises(Exception, match="no model configured"):
         await extractor.extract([_user_turn("x")])
+
+
+@pytest.mark.asyncio
+async def test_wraps_the_model_call_in_a_model_invoke_span():
+    """The extraction model call is wrapped in start/end model-invoke spans with usage/metrics."""
+    model = MockedModelProvider([_assistant_text('[{"content": "fact"}]')])
+    extractor = ModelExtractor(model=model)
+
+    tracer = MagicMock()
+    with patch("strands.memory.extraction.model_extractor.get_tracer", return_value=tracer):
+        entries = await extractor.extract([_user_turn("x")])
+
+    assert entries == [ExtractionResult(content="fact")]
+    tracer.start_model_invoke_span.assert_called_once()
+    # The terminal stop tuple's usage/metrics/stop_reason are passed through on end.
+    end_call = tracer.end_model_invoke_span.call_args
+    span, message, usage, metrics, stop_reason = end_call.args
+    assert span is tracer.start_model_invoke_span.return_value
+    assert "inputTokens" in usage
+    assert "latencyMs" in metrics
+    tracer.end_span_with_error.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_ends_model_invoke_span_with_error_on_failure():
+    """A model failure ends the span via end_span_with_error and re-raises."""
+
+    class _BoomModel(MockedModelProvider):
+        async def stream(self, *args: Any, **kwargs: Any):  # type: ignore[override]
+            raise RuntimeError("model down")
+            yield  # pragma: no cover - make this an async generator
+
+    extractor = ModelExtractor(model=_BoomModel([]))
+
+    tracer = MagicMock()
+    with patch("strands.memory.extraction.model_extractor.get_tracer", return_value=tracer):
+        with pytest.raises(RuntimeError, match="model down"):
+            await extractor.extract([_user_turn("x")])
+
+    tracer.end_span_with_error.assert_called_once()
+    tracer.end_model_invoke_span.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_raises_and_ends_span_when_model_yields_no_stop_event():
+    """A stream that never emits a terminal stop event raises and ends the span with the error."""
+
+    async def _no_stop_stream(*_args: Any, **_kwargs: Any):
+        # An async generator that yields no events at all -> no ``stop`` -> no final message.
+        return
+        yield  # pragma: no cover - makes this an async generator
+
+    extractor = ModelExtractor(model=MockedModelProvider([_assistant_text("ignored")]))
+
+    tracer = MagicMock()
+    with (
+        patch("strands.memory.extraction.model_extractor.get_tracer", return_value=tracer),
+        patch("strands.event_loop.streaming.stream_messages", _no_stop_stream),
+    ):
+        with pytest.raises(RuntimeError, match="model returned no response"):
+            await extractor.extract([_user_turn("x")])
+
+    tracer.end_span_with_error.assert_called_once()
+    tracer.end_model_invoke_span.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_adds_the_extraction_usage_to_the_request_total_even_when_the_request_limit_is_used_up():
+    model = MockedModelProvider(
+        [_assistant_text('[{"content": "fact"}]')],
+        usages=[{"inputTokens": 4, "outputTokens": 5, "totalTokens": 9}],
+    )
+    extractor = ModelExtractor(model=model)
+    request = _create_invocation_context({"turns": 1})
+    request._usage["turns_taken"] = 1
+
+    entries = await extractor.extract(
+        [_user_turn("x")], ExtractorContext(invocation_context=_create_auxiliary_invocation_context(request))
+    )
+
+    assert entries == [ExtractionResult(content="fact")]
+    assert request.usage == {"turns_taken": 1, "inputTokens": 4, "outputTokens": 5, "totalTokens": 9}

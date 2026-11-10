@@ -22,7 +22,7 @@ jobs:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
   check-api:
-    runs-on: ubuntu-latest
+    runs-on: strands-agents_ubuntu-latest_4-core
     permissions:
       contents: read
     steps:
@@ -31,7 +31,7 @@ jobs:
       with:
         fetch-depth: 0
     - name: Setup uv
-      uses: astral-sh/setup-uv@v7
+      uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
     - name: Check API breaking changes
       run: |
         if ! uvx griffe check --search strands-py/src --format github strands --against "main"; then

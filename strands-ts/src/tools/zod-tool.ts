@@ -17,7 +17,7 @@ type ZodInferred<TInput> = TInput extends z.ZodType ? z.infer<TInput> : never
  * @typeParam TInput - Zod schema type for input validation
  * @typeParam TReturn - Return type of the callback function
  */
-export interface ZodToolConfig<TInput extends z.ZodType | undefined, TReturn extends JSONValue = JSONValue> {
+export interface ZodToolConfig<TInput extends z.ZodType | undefined, TReturn = JSONValue> {
   /** The name of the tool */
   name: string
 
@@ -33,6 +33,8 @@ export interface ZodToolConfig<TInput extends z.ZodType | undefined, TReturn ext
   /**
    * Callback function that implements the tool's functionality.
    *
+   * The return value must be JSON-serializable.
+   *
    * @param input - Validated input matching the Zod schema
    * @param context - Optional execution context
    * @returns The result (can be a value, Promise, or AsyncGenerator)
@@ -47,7 +49,7 @@ export interface ZodToolConfig<TInput extends z.ZodType | undefined, TReturn ext
  * Zod-based tool implementation.
  * Extends Tool abstract class and implements InvokableTool interface.
  */
-export class ZodTool<TInput extends z.ZodType | undefined, TReturn extends JSONValue = JSONValue>
+export class ZodTool<TInput extends z.ZodType | undefined, TReturn = JSONValue>
   extends Tool
   implements InvokableTool<ZodInferred<TInput>, TReturn>
 {
@@ -104,9 +106,7 @@ export class ZodTool<TInput extends z.ZodType | undefined, TReturn extends JSONV
         const validatedInput = this._inputSchema instanceof ZodVoid ? input : this._inputSchema.parse(input)
         // Execute user callback with validated input
         return callback(validatedInput as ZodInferred<TInput>, toolContext) as
-          | AsyncGenerator<JSONValue, JSONValue, never>
-          | Promise<JSONValue>
-          | JSONValue
+          AsyncGenerator<JSONValue, JSONValue, never> | Promise<JSONValue> | JSONValue
       },
     })
   }

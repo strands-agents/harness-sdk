@@ -17,8 +17,9 @@ from __future__ import annotations
 import inspect
 import json
 import logging
+import threading
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 import pytest
 from botocore.exceptions import ClientError
@@ -173,6 +174,8 @@ class TestConstructor:
         assert store.writable is False
         assert store.description is None
         assert store.max_search_results is None
+        assert store.min_score is None
+        assert store.max_score is None
 
     def test_keeps_name_and_scope_as_independent_fields(self, make_store):
         store, _runtime, _agent = make_store({"name": "explicit", "scope": "user-abc"})
@@ -198,6 +201,24 @@ class TestConstructor:
         with pytest.raises(ValueError, match="max_search_results must be at least 1"):
             make_store({"max_search_results": -5})
 
+    def test_carries_through_min_score(self, make_store):
+        store, _runtime, _agent = make_store({"min_score": 0.4})
+        assert store.min_score == 0.4
+        assert store.max_score is None
+
+    def test_carries_through_max_score(self, make_store):
+        store, _runtime, _agent = make_store({"max_score": 0.4})
+        assert store.max_score == 0.4
+        assert store.min_score is None
+
+    def test_throws_when_min_score_and_max_score_are_both_set(self, make_store):
+        with pytest.raises(ValueError, match="min_score and max_score are mutually exclusive"):
+            make_store({"min_score": 0.5, "max_score": 0.4})
+
+    def test_throws_when_a_zero_min_score_is_paired_with_max_score(self, make_store):
+        with pytest.raises(ValueError, match="min_score and max_score are mutually exclusive"):
+            make_store({"min_score": 0.0, "max_score": 0.4})
+
     def test_allows_writable_with_custom_data_source(self, make_custom_store):
         store, _agent = make_custom_store()
         assert store.writable is True
@@ -209,12 +230,92 @@ class TestConstructor:
     def test_constructs_a_default_runtime_client_when_none_injected(self):
         with patch("boto3.client") as client_fn:
             BedrockKnowledgeBaseStore(config=BedrockKnowledgeBaseConfig(knowledge_base_id="kb-1"), name="kb")
-            client_fn.assert_called_once_with("bedrock-agent-runtime")
+            client_fn.assert_called_once_with("bedrock-agent-runtime", region_name=None)
 
     def test_uses_the_injected_runtime_client_without_constructing_one(self, make_store):
         with patch("boto3.client") as client_fn:
             make_store()
             client_fn.assert_not_called()
+
+
+# --------------------------------------------------------------------------- #
+# Region resolution for default clients
+# --------------------------------------------------------------------------- #
+
+
+class TestRegionResolution:
+    """Default boto3 clients receive the configured region as a hint; otherwise boto3 resolves it.
+
+    Only an explicit ``region_name`` config is threaded into the store's default ``boto3.client``
+    calls. When it is absent, ``None`` is passed so boto3 resolves the region from its own chain.
+    """
+
+    def test_no_config_passes_none_so_boto_resolves(self, monkeypatch, tmp_path):
+        # A host with no region hint: no env vars and no AWS config file under HOME.
+        monkeypatch.delenv("AWS_REGION", raising=False)
+        monkeypatch.delenv("AWS_DEFAULT_REGION", raising=False)
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("AWS_CONFIG_FILE", str(tmp_path / "no-such-config"))
+        with patch("boto3.client") as client_fn:
+            store = BedrockKnowledgeBaseStore(config=BedrockKnowledgeBaseConfig(knowledge_base_id="kb-1"), name="kb")
+            assert store._region is None
+            client_fn.assert_called_once_with("bedrock-agent-runtime", region_name=None)
+
+    def test_explicit_region_name_is_threaded_into_runtime_client(self):
+        with patch("boto3.client") as client_fn:
+            store = BedrockKnowledgeBaseStore(
+                config=BedrockKnowledgeBaseConfig(knowledge_base_id="kb-1", region_name="eu-west-1"),
+                name="kb",
+            )
+            assert store._region == "eu-west-1"
+            client_fn.assert_called_once_with("bedrock-agent-runtime", region_name="eu-west-1")
+
+    def test_explicit_region_threads_into_default_lazy_clients(self):
+        with patch("boto3.client") as client_fn:
+            store = BedrockKnowledgeBaseStore(
+                config=BedrockKnowledgeBaseConfig(
+                    knowledge_base_id="kb-1",
+                    data_source_type="CUSTOM",
+                    data_source_id="ds-1",
+                    region_name="ap-southeast-2",
+                ),
+                name="kb",
+                writable=True,
+            )
+            # Eager runtime client is built at __init__.
+            assert client_fn.call_count == 1
+            store._get_agent_client()
+            store._get_s3_client()
+            calls = {call.args[0]: call.kwargs["region_name"] for call in client_fn.call_args_list}
+            assert calls == {
+                "bedrock-agent-runtime": "ap-southeast-2",
+                "bedrock-agent": "ap-southeast-2",
+                "s3": "ap-southeast-2",
+            }
+
+    def test_no_config_threads_none_into_default_lazy_clients(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("AWS_REGION", raising=False)
+        monkeypatch.delenv("AWS_DEFAULT_REGION", raising=False)
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("AWS_CONFIG_FILE", str(tmp_path / "no-such-config"))
+        with patch("boto3.client") as client_fn:
+            store = BedrockKnowledgeBaseStore(
+                config=BedrockKnowledgeBaseConfig(
+                    knowledge_base_id="kb-1",
+                    data_source_type="CUSTOM",
+                    data_source_id="ds-1",
+                ),
+                name="kb",
+                writable=True,
+            )
+            store._get_agent_client()
+            store._get_s3_client()
+            calls = {call.args[0]: call.kwargs["region_name"] for call in client_fn.call_args_list}
+            assert calls == {
+                "bedrock-agent-runtime": None,
+                "bedrock-agent": None,
+                "s3": None,
+            }
 
 
 # --------------------------------------------------------------------------- #
@@ -404,6 +505,125 @@ class TestSearch:
         await store.initialize()
         await store.initialize()
         assert agent.get_knowledge_base.call_count == 1
+
+
+# --------------------------------------------------------------------------- #
+# search -- score bounds
+# --------------------------------------------------------------------------- #
+
+
+def _scored(*scores: float | None) -> dict[str, Any]:
+    """A retrieve response of one result per score, each carrying its score as its content."""
+    results: list[dict[str, Any]] = []
+    for score in scores:
+        result: dict[str, Any] = {"content": {"text": str(score)}}
+        if score is not None:
+            result["score"] = score
+        results.append(result)
+    return {"retrievalResults": results}
+
+
+def _contents(entries: list[Any]) -> list[str]:
+    """The content of each entry, in order."""
+    return [entry.content for entry in entries]
+
+
+class TestScoreBounds:
+    @pytest.mark.asyncio
+    async def test_keeps_every_result_when_no_bound_is_set(self, make_store):
+        store, runtime, _agent = make_store()
+        runtime.retrieve.return_value = _scored(0.9, 0.5, 0.1)
+        assert _contents(await store.search("q")) == ["0.9", "0.5", "0.1"]
+
+    @pytest.mark.asyncio
+    async def test_min_score_keeps_results_at_or_above_the_floor(self, make_store):
+        store, runtime, _agent = make_store({"min_score": 0.5})
+        runtime.retrieve.return_value = _scored(0.9, 0.5, 0.49, 0.1, 0.0)
+        assert _contents(await store.search("q")) == ["0.9", "0.5"]
+
+    @pytest.mark.asyncio
+    async def test_max_score_keeps_results_at_or_below_the_ceiling(self, make_store):
+        # pgvector's `<=>` returns cosine distance, where 0 is the exact match.
+        store, runtime, _agent = make_store({"max_score": 0.4})
+        runtime.retrieve.return_value = _scored(0.02, 0.4, 0.41, 0.95)
+        assert _contents(await store.search("q")) == ["0.02", "0.4"]
+
+    @pytest.mark.asyncio
+    async def test_a_zero_max_score_is_not_treated_as_unset(self, make_store):
+        store, runtime, _agent = make_store({"max_score": 0.0})
+        runtime.retrieve.return_value = _scored(0.0, 0.1)
+        assert _contents(await store.search("q")) == ["0.0"]
+
+    @pytest.mark.asyncio
+    async def test_a_zero_min_score_is_not_treated_as_unset(self, make_store):
+        # Raw backend scores pass through unchanged, and cosine similarity spans [-1, 1], so a zero
+        # floor is a real config: it drops anti-correlated results.
+        store, runtime, _agent = make_store({"min_score": 0.0})
+        runtime.retrieve.return_value = _scored(0.7, 0.0, -0.3)
+        assert _contents(await store.search("q")) == ["0.7", "0.0"]
+
+    @pytest.mark.asyncio
+    async def test_keeps_a_later_result_after_dropping_an_earlier_one(self, make_store):
+        store, runtime, _agent = make_store({"min_score": 0.5})
+        runtime.retrieve.return_value = _scored(0.9, 0.1, 0.8)
+        assert _contents(await store.search("q")) == ["0.9", "0.8"]
+
+    @pytest.mark.asyncio
+    async def test_keeps_a_result_the_knowledge_base_did_not_score(self, make_store):
+        store, runtime, _agent = make_store({"min_score": 0.5})
+        runtime.retrieve.return_value = _scored(0.9, None, 0.1)
+        results = await store.search("q")
+        assert _contents(results) == ["0.9", "None"]
+        assert "_relevance_score" not in results[1].metadata
+
+    @pytest.mark.asyncio
+    async def test_returns_fewer_entries_than_max_search_results(self, make_store):
+        store, runtime, _agent = make_store({"min_score": 0.5, "max_search_results": 3})
+        runtime.retrieve.return_value = _scored(0.9, 0.2, 0.1)
+        results = await store.search("q")
+        assert runtime.retrieve.call_args.kwargs["retrievalConfiguration"]["vectorSearchConfiguration"] == {
+            "numberOfResults": 3
+        }
+        assert _contents(results) == ["0.9"]
+
+    @pytest.mark.asyncio
+    async def test_returns_nothing_when_no_result_clears_the_bound(self, make_store):
+        store, runtime, _agent = make_store({"min_score": 0.8})
+        runtime.retrieve.return_value = _scored(0.3, 0.1)
+        assert await store.search("q") == []
+
+    @pytest.mark.asyncio
+    async def test_a_kept_result_still_carries_its_score_as_metadata(self, make_store):
+        store, runtime, _agent = make_store({"min_score": 0.5})
+        runtime.retrieve.return_value = _scored(0.9)
+        results = await store.search("q")
+        assert results[0].metadata == {"_relevance_score": 0.9}
+
+    @pytest.mark.asyncio
+    async def test_logs_how_many_results_the_bound_kept(self, make_store, caplog):
+        store, runtime, _agent = make_store({"min_score": 0.5})
+        runtime.retrieve.return_value = _scored(0.9, 0.1)
+        with caplog.at_level(logging.DEBUG, logger="strands.vended_memory_stores.bedrock_knowledge_base.store"):
+            await store.search("q")
+        assert "retrieved=<2>, kept=<1> | score bound applied" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_logs_a_full_keep_when_the_knowledge_base_scores_nothing(self, make_store, caplog):
+        # A bound over unscored results drops nothing, which reads the same as a bound that was never
+        # configured. The count tells the two apart.
+        store, runtime, _agent = make_store({"min_score": 0.5})
+        runtime.retrieve.return_value = _scored(None, None)
+        with caplog.at_level(logging.DEBUG, logger="strands.vended_memory_stores.bedrock_knowledge_base.store"):
+            await store.search("q")
+        assert "retrieved=<2>, kept=<2> | score bound applied" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_a_zero_min_score_still_logs_the_bound(self, make_store, caplog):
+        store, runtime, _agent = make_store({"min_score": 0.0})
+        runtime.retrieve.return_value = _scored(0.7)
+        with caplog.at_level(logging.DEBUG, logger="strands.vended_memory_stores.bedrock_knowledge_base.store"):
+            await store.search("q")
+        assert "score bound applied" in caplog.text
 
 
 # --------------------------------------------------------------------------- #
@@ -912,8 +1132,9 @@ class _FakeAgent:
 
     def __init__(self, model: Any = None) -> None:
         self.model = model
+        self.aux_model = model
         self.hooks: list[tuple[Any, Any, float]] = []
-        self._middleware_registry = MagicMock()
+        self.add_middleware = MagicMock()
 
     def add_hook(self, callback: Any, event_type: Any = None, *, order: float = HookOrder.DEFAULT) -> None:
         self.hooks.append((callback, event_type, order))
@@ -955,3 +1176,78 @@ class TestExtractionViaMemoryManager:
         assert agent_client.ingest_knowledge_base_documents.call_count == 1
         document = agent_client.ingest_knowledge_base_documents.call_args.kwargs["documents"][0]
         assert document["content"]["custom"]["inlineContent"]["textContent"]["data"] == "user prefers dark mode"
+
+
+# --------------------------------------------------------------------------- #
+# The boto3 clients are synchronous, so every call has to leave the event loop
+# --------------------------------------------------------------------------- #
+
+
+def _record_threads(client_method: MagicMock) -> list[int]:
+    """Program ``client_method`` to record the thread it runs on, keeping the result it already returns."""
+    return_value = client_method.return_value
+    threads: list[int] = []
+
+    def _record(*_args: Any, **_kwargs: Any) -> Any:
+        threads.append(threading.get_ident())
+        return return_value
+
+    client_method.side_effect = _record
+    return threads
+
+
+class TestBlockingCallsRunOffTheEventLoop:
+    """Every AWS call the store makes is synchronous, so none of them may run on the loop's thread."""
+
+    @pytest.mark.asyncio
+    async def test_search_runs_retrieve_off_the_event_loop(self, make_store):
+        store, runtime, _agent = make_store(config_overrides={"knowledge_base_type": "VECTOR"})
+        loop_thread = threading.get_ident()
+        call_threads = _record_threads(runtime.retrieve)
+
+        await store.search("q")
+
+        tru_call_threads = call_threads
+        exp_call_threads = [ANY]
+        assert tru_call_threads == exp_call_threads
+        assert loop_thread not in tru_call_threads
+
+    @pytest.mark.asyncio
+    async def test_initialize_runs_type_detection_off_the_event_loop(self, make_store):
+        store, _runtime, agent = make_store()
+        loop_thread = threading.get_ident()
+        call_threads = _record_threads(agent.get_knowledge_base)
+
+        await store.initialize()
+
+        tru_call_threads = call_threads
+        exp_call_threads = [ANY]
+        assert tru_call_threads == exp_call_threads
+        assert loop_thread not in tru_call_threads
+
+    @pytest.mark.asyncio
+    async def test_add_runs_ingestion_off_the_event_loop(self, make_custom_store):
+        store, agent = make_custom_store()
+        loop_thread = threading.get_ident()
+        call_threads = _record_threads(agent.ingest_knowledge_base_documents)
+
+        await store.add("user prefers dark mode")
+
+        tru_call_threads = call_threads
+        exp_call_threads = [ANY]
+        assert tru_call_threads == exp_call_threads
+        assert loop_thread not in tru_call_threads
+
+    @pytest.mark.asyncio
+    async def test_add_s3_runs_object_uploads_off_the_event_loop(self, make_s3_store):
+        store, _agent, s3 = make_s3_store()
+        loop_thread = threading.get_ident()
+        call_threads = _record_threads(s3.put_object)
+
+        await store.add("user prefers dark mode", {"scope": "user"})
+
+        # The content object and its metadata sidecar are two separate uploads.
+        tru_call_threads = call_threads
+        exp_call_threads = [ANY, ANY]
+        assert tru_call_threads == exp_call_threads
+        assert loop_thread not in tru_call_threads

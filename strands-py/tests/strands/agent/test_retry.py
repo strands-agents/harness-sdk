@@ -326,3 +326,28 @@ async def test_model_retry_strategy_no_retry_when_no_exception_and_no_stop_respo
     # Should not retry and should reset state
     assert event.retry is False
     assert strategy._current_attempt == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "exception, expect_retry",
+    [
+        (TimeoutError("timed out"), True),
+        (ModelThrottledException("Throttled"), True),
+        (ValueError("unrelated"), False),
+    ],
+)
+async def test_model_retry_strategy_subclass_overrides_is_retryable(mock_sleep, exception, expect_retry):
+    """Test that subclassing and overriding is_retryable controls which exceptions are retried."""
+
+    class PermissiveRetryStrategy(ModelRetryStrategy):
+        def is_retryable(self, exception: Exception) -> bool:
+            return super().is_retryable(exception) or isinstance(exception, TimeoutError)
+
+    strategy = PermissiveRetryStrategy(max_attempts=3, initial_delay=2, max_delay=60)
+    mock_agent = Mock()
+
+    event = AfterModelCallEvent(agent=mock_agent, exception=exception)
+    await strategy._handle_after_model_call(event)
+
+    assert event.retry is expect_retry
