@@ -1,4 +1,4 @@
-"""Live check of the default ``web_search`` backend against Exa's hosted MCP server.
+"""Live checks of the ``web_search`` backends: Exa's hosted MCP server and AgentCore ``InvokeWebSearch``.
 
 The unit tests stub the transport, so a change on Exa's side (the MCP handshake, the text format of
 ``web_search_exa`` results) would otherwise surface only as a silent ``No results.`` for every user
@@ -6,6 +6,8 @@ on a model without native search. Keyless; ``EXA_API_KEY`` is picked up when pre
 """
 
 from __future__ import annotations
+
+import os
 
 import pytest
 
@@ -22,3 +24,12 @@ async def test_exa_backend_returns_parsed_results():
         raise
     assert results, "Exa returned no parseable results; check the wire format in tools/web_search.py"
     assert all(r["title"] and r["url"].startswith("http") for r in results)
+
+
+async def test_agentcore_backend_returns_parsed_results():
+    """``web_search`` on Bedrock: a live ``InvokeWebSearch`` call (needs ``bedrock-agentcore:InvokeWebSearch``)."""
+    from strands_harness.tools.web_search import _agentcore_backend as agentcore_backend
+
+    results = await agentcore_backend(os.environ.get("AWS_REGION", "us-east-1"))("Strands Agents SDK documentation", 3)
+    assert 0 < len(results) <= 3, "InvokeWebSearch returned no results; check webSearchId and the response shape"
+    assert all(r["url"].startswith("http") and r["snippet"] for r in results)
