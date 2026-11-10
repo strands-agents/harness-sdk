@@ -1,6 +1,7 @@
 import type { SageMakerRuntimeClient } from '@aws-sdk/client-sagemaker-runtime'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { isNode } from '../../__fixtures__/environment.js'
 import { ContextWindowOverflowError, ModelError, ModelThrottledError } from '../../errors.js'
 
 const mockSend = vi.fn()
@@ -225,5 +226,28 @@ describe('SageMakerDecisionModel', () => {
         )
       }
     )
+  })
+
+  // Node-only: in Vitest browser mode a mock factory that throws fails inside the mocker instead
+  // of failing the import, so a missing package can't be simulated there.
+  describe.skipIf(!isNode)('without @aws-sdk/client-sagemaker-runtime', () => {
+    afterEach(() => {
+      vi.doUnmock('@aws-sdk/client-sagemaker-runtime')
+      vi.resetModules()
+    })
+
+    it('rejects with install guidance and the import failure as cause', async () => {
+      vi.resetModules()
+      vi.doMock('@aws-sdk/client-sagemaker-runtime', () => {
+        throw new Error("Cannot find package '@aws-sdk/client-sagemaker-runtime'")
+      })
+      const { SageMakerDecisionModel: Uninstalled } = await import('../sagemaker-decision-model.js')
+
+      const error = await askError(new Uninstalled({ endpointName: ENDPOINT_NAME }))
+
+      expect(error).toBeInstanceOf(Error)
+      expect((error as Error).message).toMatch(/npm install '@aws-sdk\/client-sagemaker-runtime'/)
+      expect((error as Error).cause).toBeInstanceOf(Error)
+    })
   })
 })
