@@ -428,6 +428,15 @@ def test_rejects_a_non_model_argument():
         LLMDecisionModel(model=object())  # type: ignore[arg-type]
 
 
+def test_defaults_to_a_strict_bedrock_model():
+    from strands.models.bedrock import BedrockModel
+
+    model = LLMDecisionModel()._model
+
+    assert isinstance(model, BedrockModel)
+    assert model.get_config()["strict_tools"] is True
+
+
 @pytest.mark.asyncio
 async def test_routes_through_structured_output_with_the_built_answer_model():
     model = RecordingModel({"q": "true"})
