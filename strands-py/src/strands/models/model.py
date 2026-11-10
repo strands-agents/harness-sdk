@@ -57,6 +57,9 @@ def _count_content_block_tokens(
     if "text" in block:
         total += count_text(block["text"])
 
+    if "summary" in block:
+        total += count_text(block["summary"].get("text", ""))
+
     if "toolUse" in block:
         tool_use = block["toolUse"]
         total += count_text(tool_use.get("name", ""))
@@ -163,6 +166,11 @@ class CacheConfig:
             the same static system prefix hit the cache. A TTL string (e.g. "1h") sets this section's own
             duration and is honored as written; True derives the duration from ``ttl``; False disables it.
             A hand-placed system cache point is honored rather than doubled.
+        messages_ttl: Cache the conversation prefix, placing a cache point on durable user content. A TTL
+            string sets this section's own duration; True or None derives it from ``ttl``; False disables
+            the message cache point. Mirrors the TypeScript ``messagesTTL``. Read by ``BedrockModel``,
+            ``AnthropicModel`` and, on models that take cache points, ``OpenAIResponsesModel``, which
+            accepts only the OpenAI lifetimes ``"30m"`` and ``"12h"``.
         cache_key: Stable identity a prompt-cache-routing provider (OpenAI, LiteLLM, Mistral) uses as its
             cache key. Left unset, it is derived per request as ``strands-<session_id>`` if the agent has
             a session manager, so repeat runs of a session share a cache prefix with no key management.
@@ -180,6 +188,14 @@ class CacheConfig:
     system_prompt_ttl: bool | str = True
     cache_key: str | Literal[False] | None = None
     tools_ttl: bool | str | None = None
+    messages_ttl: bool | str | None = None
+
+
+def _messages_cache_ttl(cache_config: CacheConfig | None) -> str | None:
+    """TTL for the message cache point: a ``messages_ttl`` string, else ``cache_config.ttl``."""
+    if cache_config is None:
+        return None
+    return cache_config.messages_ttl if isinstance(cache_config.messages_ttl, str) else cache_config.ttl
 
 
 @dataclass
@@ -383,6 +399,39 @@ class Model(abc.ABC):
             Estimated total input tokens.
         """
         return _estimate_tokens_with_heuristic(messages, tool_specs, system_prompt, system_prompt_content)
+
+    async def summarize(
+        self,
+        messages: Messages,
+        *,
+        tool_specs: list[ToolSpec] | None = None,
+        system_prompt: str | None = None,
+        system_prompt_content: list[SystemContentBlock] | None = None,
+        instructions: str | None = None,
+        **kwargs: Any,
+    ) -> ContentBlock:
+        """Summarize the conversation's opening ``messages`` server-side.
+
+        The summarize strategy calls this instead of its client-side summary when
+        ``model_info.capabilities.server_side_summary`` is True, with the messages from message 0 through the
+        last one it summarizes. Providers with server-side summaries override it. When this raises, the strategy
+        summarizes client-side instead.
+
+        Args:
+            messages: The opening messages to summarize, from message 0, left unmodified.
+            tool_specs: The live conversation's tool specifications.
+            system_prompt: The live conversation's plain string system prompt.
+            system_prompt_content: The live conversation's structured system prompt.
+            instructions: Summarization instructions replacing the provider's own prompt.
+            **kwargs: Additional keyword arguments for future extensibility.
+
+        Returns:
+            A ``summary`` block that takes the summarized messages' place.
+
+        Raises:
+            NotImplementedError: If the model has no server-side summary.
+        """
+        raise NotImplementedError(f"model=<{type(self).__name__}> | model has no server-side summary")
 
     def estimate_utilization(self, input_tokens: int) -> float:
         """Estimate the fraction of the model's context window consumed by the given input token count.

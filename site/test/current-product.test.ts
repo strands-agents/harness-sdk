@@ -34,7 +34,7 @@ describe('product identity wiring', () => {
     expect(PRODUCT_RELEASE_STREAM).toEqual({
       Harness: 'harness',
       'Harness SDK': 'sdk',
-      Shell: null,
+      Shell: 'shell',
       Box: 'box',
       Evals: 'evals',
     })

@@ -8,6 +8,10 @@ import {
   CachePointBlock,
   GuardContentBlock,
   JsonBlock,
+  InjectedBlock,
+  SummaryBlock,
+  type SummaryBlockData,
+  contentBlockFromData,
   generateTrackingId,
   type MessageData,
   type SystemPromptData,
@@ -272,6 +276,28 @@ describe('CachePointBlock', () => {
   })
 })
 
+describe('SummaryBlock', () => {
+  test('roundtrips through toJSON and contentBlockFromData', () => {
+    const block = new SummaryBlock({ provider: 'anthropic', signature: 'sig', text: 'summary' })
+
+    expect(block.toJSON()).toEqual({ summary: { provider: 'anthropic', signature: 'sig', text: 'summary' } })
+    expect(contentBlockFromData(block.toJSON())).toEqual(block)
+  })
+
+  test('omits unset provider and signature in toJSON', () => {
+    expect(new SummaryBlock({ text: 'summary' }).toJSON()).toEqual({ summary: { text: 'summary' } })
+  })
+
+  test('drops a null signature written by the Python SDK', () => {
+    const data = { summary: { provider: 'anthropic', signature: null, text: 'summary' } }
+
+    const block = contentBlockFromData(data as unknown as { summary: SummaryBlockData }) as SummaryBlock
+
+    expect(block.signature).toBeUndefined()
+    expect(block.toJSON()).toEqual({ summary: { provider: 'anthropic', text: 'summary' } })
+  })
+})
+
 describe('JsonBlock', () => {
   test('creates json block', () => {
     const block = new JsonBlock({ json: { key: 'value' } })
@@ -279,6 +305,17 @@ describe('JsonBlock', () => {
     expect(block).toEqual({
       type: 'jsonBlock',
       json: { key: 'value' },
+    })
+  })
+})
+
+describe('InjectedBlock', () => {
+  test('creates injected block with text', () => {
+    const block = new InjectedBlock({ text: 'reminder', source: 'test' })
+
+    expect(block).toEqual({
+      type: 'injectedBlock',
+      injected: { text: 'reminder', source: 'test' },
     })
   })
 })
@@ -401,6 +438,30 @@ describe('Message.fromMessageData', () => {
     const message = Message.fromMessageData(messageData)
     expect(message.content).toHaveLength(1)
     expect(message.content[0]!.type).toBe('guardContentBlock')
+  })
+
+  it('converts injected block data to InjectedBlock', () => {
+    const messageData: MessageData = {
+      role: 'user',
+      content: [{ text: 'Refactor the tokenizer.' }, { injected: { text: 'reminder', source: 'test' } }],
+    }
+    const message = Message.fromMessageData(messageData)
+    expect(message.content).toEqual([
+      new TextBlock('Refactor the tokenizer.'),
+      new InjectedBlock({ text: 'reminder', source: 'test' }),
+    ])
+  })
+
+  it('keeps an InjectedBlock passed inside message data an InjectedBlock', () => {
+    const messageData: MessageData = {
+      role: 'user',
+      content: [new TextBlock('Refactor the tokenizer.'), new InjectedBlock({ text: 'reminder', source: 'test' })],
+    }
+    const message = Message.fromMessageData(messageData)
+    expect(message.content).toEqual([
+      new TextBlock('Refactor the tokenizer.'),
+      new InjectedBlock({ text: 'reminder', source: 'test' }),
+    ])
   })
 
   it('converts audio block data to AudioBlock', () => {
@@ -750,6 +811,7 @@ describe('toJSON/fromJSON round-trips', () => {
     ['ReasoningBlock with redactedContent',    () => new ReasoningBlock({ redactedContent: new Uint8Array([1, 2, 3]) })],
     ['CachePointBlock',                        () => new CachePointBlock({ cacheType: 'default' })],
     ['JsonBlock',                              () => new JsonBlock({ json: { key: 'value', nested: { a: 1 } } })],
+    ['InjectedBlock',                          () => new InjectedBlock({ text: 'reminder', source: 'test' })],
     ['GuardContentBlock with text',            () => new GuardContentBlock({ text: { text: 'Guard this', qualifiers: ['guard_content'] } })],
     ['GuardContentBlock with image',           () => new GuardContentBlock({ image: { format: 'png', source: { bytes: new Uint8Array([1, 2, 3]) } } })],
     ['AudioBlock',                             () => new AudioBlock({ format: 'mp3', source: { bytes: new Uint8Array([1, 2, 3]) } })],
@@ -806,6 +868,11 @@ describe('toJSON format', () => {
   it('JsonBlock returns unwrapped format', () => {
     const block = new JsonBlock({ json: { test: true } })
     expect(block.toJSON()).toStrictEqual({ json: { test: true } })
+  })
+
+  it('InjectedBlock returns wrapped format', () => {
+    const block = new InjectedBlock({ text: 'reminder', source: 'test' })
+    expect(block.toJSON()).toStrictEqual({ injected: { text: 'reminder', source: 'test' } })
   })
 
   it('ToolUseBlock omits undefined reasoningSignature', () => {

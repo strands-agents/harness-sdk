@@ -49,6 +49,7 @@ export {
   StructuredOutputError,
   ToolNotFoundError,
   DefaultNotConfiguredError,
+  NotImplementedError,
   StorageError,
 } from './errors.js'
 
@@ -73,11 +74,13 @@ export type {
   ReasoningBlockData,
   CachePointBlockData,
   GuardContentBlockData,
+  SummaryBlockData,
   GuardContentText,
   GuardContentImage,
   GuardQualifier,
   GuardImageFormat,
   GuardImageSource,
+  InjectedBlockData,
   ContentBlock,
   ContentBlockData,
   MessageData,
@@ -95,6 +98,8 @@ export {
   ReasoningBlock,
   CachePointBlock,
   GuardContentBlock,
+  InjectedBlock,
+  SummaryBlock,
   Message,
   JsonBlock,
   contentBlockFromData,
@@ -199,7 +204,13 @@ export {
 } from './models/streaming.js'
 
 // Model provider types
-export type { BaseModelConfig, CountTokensOptions, StreamOptions, CacheConfig } from './models/model.js'
+export type {
+  BaseModelConfig,
+  CountTokensOptions,
+  StreamOptions,
+  SummarizeOptions,
+  CacheConfig,
+} from './models/model.js'
 export type { ModelInfo, ModelCapabilities, ModelLimits, PromptCaching } from './models/model-info.js'
 
 export { Model } from './models/model.js'
@@ -216,6 +227,7 @@ export {
 export type {
   AnswerOf,
   AskOptions,
+  DecisionCallOptions,
   DecisionInput,
   DecisionResult,
   DecisionsAPIDecisionModelOptions,
@@ -390,7 +402,13 @@ export type { Storage } from './storage/storage.js'
 // Sandbox
 export { Sandbox, type ExecuteOptions } from './sandbox/base.js'
 export { PosixShellSandbox } from './sandbox/posix-shell.js'
-export { SandboxTimeoutError, SandboxAbortError, SandboxPathNotFoundError } from './sandbox/errors.js'
+export {
+  SandboxTimeoutError,
+  SandboxAbortError,
+  SandboxPathNotFoundError,
+  SandboxIsADirectoryError,
+  SandboxPermissionError,
+} from './sandbox/errors.js'
 export type { StreamType, StreamChunk, FileInfo, OutputFile, ExecutionResult } from './sandbox/types.js'
 
 // Middleware system

@@ -41,9 +41,18 @@ We're using [Astro](https://astro.build/) with the [Starlight](https://starlight
 ### 3. Generated Sample Guides (`scripts/samples/`, `src/pages/examples/`)
 
 The build imports the samples repository's `samples.json` catalog and guide content into `.build/samples/pages`.
+For curated manifests, the ordered top-level collections are the publication allowlist: uncollected samples remain
+available in the repository but do not generate website routes.
 
 - Set `SAMPLES_SOURCE_DIR` to a checkout of the samples repository.
 - Set `SAMPLES_REQUIRE_SOURCE=1` to fail when the source checkout is missing or has no samples. Without it, the build clears generated guides and renders the local setup message at `/examples/`.
+
+At the start of a manual production deploy, the workflow checks out
+`strands-agents/samples@main` once and records the resulting commit SHA. If the dispatcher selects
+`locked`, it instead checks out the same Samples revision used by docs CI. `samples:sync` reads
+only that immutable checkout for the rest of the build. The workflow summary and resulting
+`gh-pages` commit record the samples revision alongside the external documentation snapshot.
+Samples commits and merges do not trigger site rebuilds.
 
 The importer warns when a guide links to a missing file and fails when a guide references a missing image.
 
@@ -128,6 +137,120 @@ The collection base is `src/content` (not `src/content/docs`), so all doc slugs 
 [AgentResult](@api/python/strands.agent.agent_result#AgentResult)
 ```
 
+### 7. External Documentation Federation
+
+**What it does:** Imports versioned Markdown from product repositories into the Starlight
+content collection. The current integrations publish Box under `/docs/user-guide/box/` and
+Strands Decider under `/docs/labs/strands-decider/`.
+
+**Why:** Product documentation changes with its implementation. Keeping the source Markdown
+in the product repository lets one commit update behavior and documentation together. The
+site owns the route prefix, publication status, navigation placement, presentation, tracked ref,
+and committed baseline; the upstream manifest owns each page's route suffix.
+
+#### Upstream contract
+
+Each product publishes `docs/site-manifest.json` with `schemaVersion`, product metadata, and
+an ordered page list. Each page declares a unique lowercase kebab-case ID, a unique normalized
+Markdown source under `docs/`, a unique route suffix composed of lowercase kebab-case path
+components, title, description, and `nav: { group: string, order: positive integer }`.
+Group/order pairs must also be unique. The files are not evaluated as MDX, so braces and
+import/export-like prose remain literal text.
+
+Schema version 1 accepts source files anywhere under `docs/`. This broadens the `docs/user/`
+restriction without invalidating existing manifests. Within `docs/`, the manifest's explicit
+page list is the publication boundary; unlisted files are never imported.
+
+The manifest's optional `product.status` field is deprecated schema-v1 compatibility metadata.
+When present, it must be `preview` or `stable`, but it never gates publication. The site registry
+is the publication authority: its `publicationStatus` determines whether imported pages are
+preview or stable on this site. Preview pages render a documentation-preview caution and remain
+out of search and machine-readable publication surfaces. Stable imported pages are automatically
+included in `llms.txt`, `llms-full.txt`, search, and the sitemap; there is no separate
+machine-readable indexing switch. A lock-only update cannot promote pages.
+
+#### Site registry and lock
+
+`external-docs.config.json` owns the GitHub repository, tracked ref, manifest path, route
+prefix, sidebar label, and publication status. `external-docs.lock.json` maps product IDs to
+immutable baseline SHAs used by CI, local builds, and the production fallback.
+Ordinary CI and local site builds read the committed SHA, never the moving ref. At the start of a
+manual production deploy, `docs-deploy-github-pages.yml` defaults to resolving each tracked ref
+once and writes the result to the job's temporary lock file. The `content_snapshot` input applies
+the same choice to every upstream source: `latest` uses the tracked external documentation refs
+and Samples `main`, while `locked` uses the committed external documentation baseline and the
+Samples revision used by docs CI. The rest of the deploy generates and publishes from those
+immutable revisions, and any resulting `gh-pages` commit records them as one content snapshot.
+Upstream product commits do not trigger site rebuilds.
+
+The manually dispatched `docs-external-sync.yml` workflow remains available to validate a newer
+snapshot with the same `npm run cms:build` path as docs CI and open or update a draft lock-only PR.
+This refreshes the committed baseline used by CI; it is not required for production deployment.
+Automatic refreshes are intentionally disabled so upstream activity does not create recurring
+lock PRs. There is no fixed refresh cadence: maintainers run the workflow on demand before site
+changes that affect federation compatibility, or when they intentionally want CI and local builds
+to adopt a newer upstream baseline.
+The deprecated upstream status does not gate publication. This lets the site promote or preview a
+pinned snapshot without requiring a coordinated source-repository change. The workflow summary and
+PR body link to each upstream old-to-new commit comparison.
+
+#### Generated layout
+
+`npm run external-docs:generate` writes each product to:
+
+```text
+.build/external-docs/<product-id>/
+├── content/          # Generated .md pages
+└── navigation.json  # Generated groups and page links
+```
+
+Tracked content symlinks expose each product's generated content to Astro. Each
+`externalDocs: <product-id>` entry in `navigation.yml` expands that product's `navigation.json`;
+page lists do not need a second manually maintained copy. Static aliases serve the Box
+quickstart at `/docs/user-guide/box/` and Decider's inference guide at
+`/docs/labs/strands-decider/` until their manifests publish landing pages.
+
+The generator:
+
+- strips the upstream H1 because Starlight renders the manifest title;
+- adds Starlight frontmatter, an upstream edit link to the configured ref, and source
+  provenance;
+- rewrites links to other published manifest pages as page-relative site routes so they work
+  under production and preview base paths;
+- rewrites other relative links and same-repository `blob`, `tree`, and raw `main` URLs to the
+  pinned commit while keeping GitHub edit URLs on the configured editable ref;
+- treats unsupported `dw` and `cedar` code fences as plain text;
+- rejects unsafe paths, source symlinks, frontmatter, MDX-style components, executable
+  snippet includes, and unsafe raw HTML.
+
+#### Adding a product
+
+The importer core is reusable, but each product still requires explicit site wiring:
+
+1. Add the repository, tracked ref, manifest, route prefix, navigation label, and publication
+   status to
+   `external-docs.config.json`, plus its initial immutable revision to
+   `external-docs.lock.json`.
+2. Keep source files under `docs/`. The manifest page list explicitly selects which files the
+   site publishes.
+3. Add a content symlink for the generated product directory and include its Markdown path in
+   the `docs` collection glob in `src/content.config.ts`.
+4. Add one `externalDocs: <product-id>` placeholder at the intended location in
+   `src/config/navigation.yml`.
+5. Run the full CMS build and content-collection tests; the sidebar-slug validation catches a
+   generated route that the content collection failed to load.
+
+Preview pages set `pagefind: false` and `noindex, nofollow`. The sitemap and
+machine-readable documentation endpoints also omit them until the site's publication status
+changes to `stable`. Once stable, every page is included automatically.
+
+Build and development scripts generate external docs before Astro starts. To preview changes
+from a local product checkout instead of the lock, set its source environment variable:
+
+```bash
+EXTERNAL_DOCS_STRANDS_BOX_SOURCE=/path/to/box npm run dev
+```
+
 ## Configuration (`astro.config.mjs`)
 
 The main config ties everything together:
@@ -154,8 +277,11 @@ export default defineConfig({
     }),
     starlight({
       markdown: {
-        // Ensures Starlight's rehype plugins run on API docs symlinked from .build/api-docs
-        processedDirs: [path.resolve('.build/api-docs')],
+        // Process generated docs through Starlight after following their content symlinks.
+        processedDirs: [
+          path.resolve('.build/api-docs'),
+          path.resolve('.build/external-docs'),
+        ],
       },
       sidebar: sidebar,
       routeMiddleware: './src/route-middleware.ts',
@@ -174,12 +300,19 @@ export default defineConfig({
 
 Notable config details:
 - `themeCssSelector` on Expressive Code makes code block themes follow Starlight's `[data-theme]` attribute rather than the browser's `prefers-color-scheme`, keeping syntax highlighting in sync with the site's theme toggle.
-- `processedDirs` tells Starlight to run its rehype plugins (e.g. heading anchor links) on the real resolved paths of the API docs symlinks.
+- `processedDirs` tells Starlight to run its rehype plugins (e.g. heading anchor links) on the real resolved paths of generated documentation symlinks.
 - `AutoImport` makes the following components available in every MDX page without an explicit import: `Tabs` (AutoSyncTabs), `Tab` (Starlight's TabItem), `Syntax`, and `YouTube` (from `@astro-community/astro-embed-youtube`).
 
 ## Custom Frontmatter Fields
 
 The documentation extends Starlight's default schema with custom fields that automatically render contextual banners at the top of pages.
+
+### `externalDocs`
+
+Generated external pages record their product, repository, tracked ref, immutable revision,
+and source file. Authors do not set this field by hand. The verified site publication status is
+recorded in the generated frontmatter: `preview` renders the upstream caution, while `stable`
+keeps the provenance without the caution.
 
 ### `languages`
 
@@ -222,7 +355,8 @@ Renders a tip aside warning the feature may change in future versions.
 
 ### Rendering Order
 
-When multiple fields are set, banners render top to bottom: experimental → community → languages.
+When multiple fields are set, banners render top to bottom: experimental → external preview →
+community → languages. Community pages suppress the separate language banner.
 
 ### Sidebar Badges
 
@@ -307,10 +441,10 @@ Replaces the default anchor element to enable MkDocs-style relative linking. Res
 
 These override default Starlight components:
 
-- **`Head.astro`**: Adds Mermaid diagram support and loads `SiteScripts` (Shortbread + WebSDK).
+- **`Head.astro`**: Adds Mermaid diagram support, loads `SiteScripts` (Shortbread + WebSDK), and emits the page JSON-LD `@graph` built by `src/util/structured-data.ts`. Non-docs pages add their own nodes (blog post, changelog release, integrations list, sample guide) by setting `Astro.locals.structuredData` in frontmatter.
 - **`Header.astro`**: Custom header with navigation tabs and theme-aware logos (see [Header Navigation](#header-navigation) below).
 - **`Hero.astro`**: Suppresses the Starlight hero on `/blog/` paths. Blog pages pass a dummy `hero: { actions: [] }` to collapse Starlight's two-panel layout, and this override ensures that dummy hero has no visual output.
-- **`MarkdownContent.astro`**: Injects the custom frontmatter banners (experimental, community, languages) at the top of page content.
+- **`MarkdownContent.astro`**: Injects the custom frontmatter banners (experimental, external preview, community, languages) at the top of page content.
 - **`PageFrame.astro`**: Extends Starlight's default `PageFrame` to add a full-width site footer containing the `Copyright` component. The footer spans the content area (respecting sidebar offset) with `--sl-color-bg-nav` background to match the header.
 - **`Sidebar.astro`** and **`SidebarSublist.astro`**: Custom sidebar navigation that mimics MkDocs Material theme's `navigation.sections` behavior.
 
@@ -369,6 +503,7 @@ const rawNavLinks: NavLink[] = [
 Used by `MarkdownContent.astro` to render frontmatter banners:
 
 - `ExperimentalAside.astro`
+- `ExternalDocsPreviewAside.astro`
 - `CommunityContributionAside.astro`
 - `LanguageSupportAside.astro`
 
@@ -775,19 +910,21 @@ Our implementation renders documentation through Astro's container API, applies 
 
 ### Endpoints
 
-- `/llms.txt` - Index with links to docs, generated sample guides, blog posts, and changelog entries
+- `/llms.txt` - Index with every live doc plus generated sample guides, blog posts, and changelog entries
 - `/llms-full.txt` - Complete docs, generated sample guide, and blog content (excludes API reference)
 - `/{slug}/index.md` - Any doc page in raw markdown format
 - `/examples/{sample}/index.md` - Any generated sample guide in raw markdown format
+- `/integrations.json` - Integrations catalog feed built from the `catalog` collection, described by `/integrations.schema.json`
 
 ### Implementation Files
 
 | File | Purpose |
 |------|---------|
-| `src/pages/llms.txt.ts` | Generates index from sidebar structure |
+| `src/pages/llms.txt.ts` | Generates a sidebar-ordered index, then appends any remaining live docs |
 | `src/pages/llms-full.txt.ts` | Renders all docs inline |
 | `src/pages/[...slug]/index.md.ts` | Dynamic endpoint for individual pages |
 | `src/pages/examples/[...sample]/index.md.ts` | Dynamic endpoint for generated sample guides |
+| `src/pages/integrations.json.ts`, `src/pages/integrations.schema.json.ts` | Integrations feed and its JSON Schema (`src/util/catalog-feed.ts`) |
 | `src/util/render-to-markdown.ts` | Renders MDX entries via AstroContainer |
 | `src/util/html-to-markdown.ts` | HTML→Markdown conversion with custom rules |
 
@@ -874,11 +1011,20 @@ Helper functions used across all blog pages:
 | `tagToSlug(tag)` / `slugToTag(slug)` | Bidirectional tag↔URL conversion |
 | `formatDate(date)` | Human-readable date (e.g., "February 20, 2026") |
 
+### Homepage Banner
+
+`AnnouncementBanner.astro` compares the newest published blog post with the newest active entry in
+`src/content/announcements/`. The newer item appears in the banner. A same-day manual announcement wins as an explicit
+override, while an explicit `expires` date pins the manual announcement through that day. Manual announcements expire
+after 14 days by default, then the banner returns to the newest blog post. When the banner promotes the newest post, the
+homepage community panel features the next-most-recent post instead. During a manual campaign, the panel keeps the newest
+blog post visible.
+
 ### Layouts
 
 **`BlogLayout.astro`** — Base layout for all blog pages. Uses Starlight's `<StarlightPage>` component to get the full page shell (head, styles, theme, header) for free. Passes `hasSidebar={false}` and `template: 'splash'` to suppress sidebar and doc-page chrome. Passes `hero: { actions: [] }` to collapse Starlight's two-panel layout into a single content panel (suppressing the auto-generated `PageTitle`). Extra head tags (canonical URL, OG/Twitter meta, RSS autodiscovery) are injected via the `frontmatter.head` array. A named `<slot name="head" />` is forwarded for page-specific head content (e.g. JSON-LD). The `Hero` component override (`src/components/overrides/Hero.astro`) suppresses the hero on `/blog/` paths so the dummy hero value has no visual effect.
 
-**`BlogPostLayout.astro`** — Wraps `BlogLayout` with article-specific chrome: title, date, reading time, description, author byline, tags, cover image. Injects JSON-LD Article schema via the head slot. OG image URL: `/blog/og/{slug}.png`.
+**`BlogPostLayout.astro`** — Wraps `BlogLayout` with article-specific chrome: title, date, reading time, description, author byline, tags, cover image. Passes its `BlogPosting` node to the page JSON-LD graph through `Astro.locals.structuredData` (see `src/util/structured-data.ts`). OG image URL: `/blog/og/{slug}.png`.
 
 ### Components (`src/components/blog/`)
 

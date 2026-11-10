@@ -8,6 +8,7 @@ import { initLogging } from '../logging.js'
 import { runPlainChat, runTurn } from '../console.js'
 import { importAgentProject } from '../tui/project/import.js'
 import { rethrowWithProviderHint } from '../tui/provider/packages.js'
+import { initializeAgentDefinition } from '../tui/session/agent-definition.js'
 import { buildTelemetryPing, sendTelemetryPing, telemetryEnabled } from '../tui/telemetry.js'
 import { errorMessage } from '../tui/terminal/sanitize.js'
 import { confirmWorkspaceMcp, resolveMcpConfig } from '../tui/workspace/trust.js'
@@ -108,7 +109,6 @@ async function runAcp(args: ParsedArgs): Promise<void> {
     const invocation = await invocationAgentForRun(args, config)
     await runAcpServer(await withDiscoveredSkills(invocation.options, settings.skillDiscovery), {
       ...(invocation.buildAgent ? { buildAgent: invocation.buildAgent } : {}),
-      ...(invocation.project ? { sourceAgent: true } : {}),
       mcpPaths: mcp.paths,
       mcpStrictPaths: mcp.strictPaths,
       ...(mcp.expectedDigests ? { mcpDigests: mcp.expectedDigests } : {}),
@@ -144,7 +144,7 @@ async function runConsole(args: ParsedArgs, request: string | undefined, mode: '
       )
       return
     }
-    const invocation = await invocationAgentForRun(args, config, process.cwd(), project, true)
+    const invocation = await invocationAgentForRun(args, config, process.cwd(), project)
     const { settings } = config.snapshot()
     const options = await withDiscoveredSkills(invocation.options, settings.skillDiscovery)
     const mcp = await resolveMcpConfig(args.mcpConfig, {
@@ -160,6 +160,7 @@ async function runConsole(args: ParsedArgs, request: string | undefined, mode: '
       options.tools = [...(options.tools ?? []), ...loadedMcp.clients]
     }
     agent = await (invocation.buildAgent ?? createHarness)(options).catch(rethrowWithProviderHint)
+    await initializeAgentDefinition(agent)
     if (mode === 'print') {
       await runTurn(agent, request!)
     } else {

@@ -5,6 +5,7 @@ import {
   ReasoningBlock,
   type Role,
   type StopReason,
+  type SummaryBlock,
   type SystemPrompt,
   TextBlock,
   ToolUseBlock,
@@ -25,7 +26,7 @@ import {
   ModelRedactionEvent,
   type ModelStreamEvent,
 } from './streaming.js'
-import { MaxTokensError, ModelError, normalizeError } from '../errors.js'
+import { MaxTokensError, ModelError, NotImplementedError, normalizeError } from '../errors.js'
 import type { Redaction } from '../hooks/events.js'
 import { logger } from '../logging/logger.js'
 import { DEFAULT_CONTEXT_WINDOW_LIMIT } from './defaults.js'
@@ -308,6 +309,27 @@ export interface CountTokensOptions {
 }
 
 /**
+ * Options for a server-side summary.
+ */
+export interface SummarizeOptions {
+  /**
+   * The live conversation's system prompt, not the summarizer's.
+   */
+  systemPrompt?: SystemPrompt
+
+  /**
+   * The live conversation's tool specifications.
+   */
+  toolSpecs?: ToolSpec[]
+
+  /**
+   * Summarization instructions replacing the provider's own prompt. The summarize strategy passes its
+   * `systemPrompt` config here.
+   */
+  instructions?: string
+}
+
+/**
  * Result interface for the streamAggregated method.
  * Contains the complete message, stop reason, and optional metadata.
  */
@@ -384,9 +406,9 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
 
   /**
    * Everything the SDK knows about the configured model, resolved on each read. Layers, later
-   * ones winning: the shared model info for `modelId`, the `contextWindowLimit` config value, and
-   * the `modelInfo` config override. Each read returns a new record, so do not compare reads by
-   * reference.
+   * ones winning: the shared model info for `modelId`, `temporaryMessages` and `serverSideSummary` off (a
+   * provider that supports them turns them back on), the `contextWindowLimit` config value, and the
+   * `modelInfo` config override. Each read returns a new record, so do not compare reads by reference.
    *
    * A provider that knows better than the shared model info overrides this getter: put its facts over
    * `super.modelInfo`, then the user's `getConfig().modelInfo` over those so the override still wins:
@@ -397,7 +419,10 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
     const config = this.getConfig()
     return mergeModelInfo(
       lookupModelInfo(this.modelId ?? ''),
-      { limits: { contextWindow: config.contextWindowLimit } },
+      {
+        capabilities: { temporaryMessages: false, serverSideSummary: false },
+        limits: { contextWindow: config.contextWindowLimit },
+      },
       config.modelInfo
     )
   }
@@ -416,7 +441,8 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
    * Count tokens for the given input before sending to the model.
    *
    * Used for proactive context management (e.g., triggering compression at a threshold).
-   * The base implementation uses a character-based heuristic (chars/4 for text, chars/2 for JSON).
+   * The base implementation uses a character-based heuristic (chars/4 for text, chars/2 for JSON). It counts only the
+   * latest user message's injected blocks, the ones a model reads.
    *
    * Subclasses should override this method to use native token counting APIs
    * (e.g., Bedrock CountTokens, Anthropic countTokens, Gemini countTokens)
@@ -428,6 +454,23 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
    */
   async countTokens(messages: Message[], options?: CountTokensOptions): Promise<number> {
     return estimateTokensHeuristic(messages, options)
+  }
+
+  /**
+   * Summarizes the conversation's opening `messages` server-side.
+   *
+   * The summarize strategy calls this instead of its client-side summary when
+   * `modelInfo.capabilities.serverSideSummary` is `true`, with the messages from message 0 through the last
+   * one it summarizes. Providers with server-side summaries override it. When this throws, the strategy
+   * summarizes client-side instead.
+   *
+   * @param _messages - The opening messages to summarize, from message 0, left unmodified
+   * @param _options - The live system prompt and tools, and summarization instructions
+   * @returns A summary block that takes the summarized messages' place
+   * @throws NotImplementedError - When the model has no server-side summary
+   */
+  async summarize(_messages: Message[], _options?: SummarizeOptions): Promise<SummaryBlock> {
+    throw new NotImplementedError(`model=<${this.constructor.name}> | model has no server-side summary`)
   }
 
   /**
@@ -750,6 +793,12 @@ function estimateContentBlockTokens(block: ContentBlock): number {
         if ('text' in item) total += heuristicText(item.text)
       }
       break
+    case 'injectedBlock':
+      total += heuristicText(block.injected.text)
+      break
+    case 'summaryBlock':
+      total += heuristicText(block.text)
+      break
     default:
       break
   }
@@ -775,11 +824,7 @@ function estimateTokensHeuristic(messages: Message[], options?: CountTokensOptio
     }
   }
 
-  for (const message of messages) {
-    for (const block of message.content) {
-      total += estimateContentBlockTokens(block)
-    }
-  }
+  total += estimateMessageTokens(messages)
 
   if (options?.toolSpecs) {
     for (const spec of options.toolSpecs) {
@@ -788,6 +833,28 @@ function estimateTokensHeuristic(messages: Message[], options?: CountTokensOptio
   }
 
   return total
+}
+
+/** Counts the messages, with only the latest user message's injected blocks, the ones a model reads. */
+function estimateMessageTokens(messages: Message[]): number {
+  const latestUser = latestUserIndex(messages)
+  return messages
+    .flatMap((message, index) =>
+      index === latestUser ? message.content : message.content.filter((block) => block.type !== 'injectedBlock')
+    )
+    .reduce((total, block) => total + estimateContentBlockTokens(block), 0)
+}
+
+/**
+ * Index of the latest user message, or -1 when there is none.
+ *
+ * @internal
+ */
+export function latestUserIndex(messages: Message[]): number {
+  for (let index = messages.length - 1; index >= 0; index--) {
+    if (messages[index]!.role === 'user') return index
+  }
+  return -1
 }
 
 function heuristicText(text: string): number {

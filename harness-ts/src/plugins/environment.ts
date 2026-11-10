@@ -3,8 +3,8 @@
  *
  * Before each user turn an internal `ContextInjector` re-surfaces a small block: the platform and
  * current date (the date is why this is injected rather than baked into the system prompt — a value
- * that changes each turn would bust the cached system-prompt prefix, whereas an ephemeral injection
- * lands after it and leaves the cache warm), the working directory, the contents of the project's
+ * that changes each turn would bust the cached system-prompt prefix, whereas an injection lands
+ * after it and leaves the cache warm), the working directory, the contents of the project's
  * `AGENTS.md`, and links to other `AGENTS.md` / `README.md` files found a couple of levels down
  * (links, not contents, so the block stays small — the agent reads them on demand).
  *
@@ -18,6 +18,8 @@
 
 import { type LocalAgent, type Plugin, type Sandbox } from '@strands-agents/sdk'
 import { ContextInjector } from '@strands-agents/sdk/vended-plugins/context-injector'
+
+import { type SandboxShell, shellOf } from '../sandbox.js'
 
 const DEFAULT_NAME = 'strands:environment'
 
@@ -35,9 +37,13 @@ const SKIP_DIRS = new Set(['node_modules', 'dist', 'build', 'target', '__pycache
 // Filenames collected during discovery and surfaced as nearby links.
 const DISCOVERED_FILES = ['AGENTS.md', 'README.md']
 
+// Platform probe for a PowerShell sandbox: `$IsLinux`/`$IsMacOS` are unset ($null) on Windows PowerShell 5.1.
+const PWSH_PLATFORM_PROBE = "if ($IsLinux -or $IsMacOS) { uname -s } else { 'Windows' }"
+
 interface Gathered {
   platform: string | undefined
   cwd: string | undefined
+  shell: SandboxShell | undefined
   agentsMd: string | undefined
   otherAgents: string[]
   readmes: string[]
@@ -97,6 +103,9 @@ function render(g: Gathered): string {
   if (g.platform) {
     env.push(`Platform: ${g.platform}`)
   }
+  if (g.shell === 'powershell') {
+    env.push('Shell: PowerShell (the shell tool runs commands in it, not sh)')
+  }
   env.push(`Date: ${todayIso()}`)
   if (g.cwd) {
     env.push(`Working directory: ${g.cwd}`)
@@ -121,18 +130,20 @@ async function gather(agent: LocalAgent): Promise<Gathered> {
   } catch {
     // Defensive: normally a default local sandbox is present, but if the getter has none to fall
     // back to (e.g. a browser build), still surface the date block without probing the environment.
-    return { platform: undefined, cwd: undefined, agentsMd: undefined, otherAgents: [], readmes: [] }
+    return { platform: undefined, cwd: undefined, shell: undefined, agentsMd: undefined, otherAgents: [], readmes: [] }
   }
   // Platform and cwd are read from the sandbox (via `uname` and `$PWD`), not the host process, so they
   // describe where the agent actually runs — a Docker or SSH sandbox, not the machine hosting it.
-  const platform = await probe(sandbox, 'uname -s')
+  // `uname` does not exist in Windows PowerShell; pwsh 7 also runs on Linux and macOS, where it does.
+  const shell = await shellOf(sandbox).catch(() => undefined)
+  const platform = await probe(sandbox, shell === 'powershell' ? PWSH_PLATFORM_PROBE : 'uname -s')
   // `echo "$PWD"` prints a bare path in both sh and PowerShell; PowerShell's `pwd` prints a table.
   const cwd = await probe(sandbox, 'echo "$PWD"')
   const agentsMd = await readText(sandbox, 'AGENTS.md')
   const found = await discover(sandbox)
   // The working-directory AGENTS.md is shown in full above; keep only the nested ones as links.
   const otherAgents = (found.get('AGENTS.md') ?? []).filter((p) => p !== 'AGENTS.md')
-  return { platform, cwd, agentsMd, otherAgents, readmes: found.get('README.md') ?? [] }
+  return { platform, cwd, shell, agentsMd, otherAgents, readmes: found.get('README.md') ?? [] }
 }
 
 async function probe(sandbox: Sandbox, command: string): Promise<string | undefined> {
