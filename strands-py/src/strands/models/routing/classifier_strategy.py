@@ -360,6 +360,7 @@ _REQUEST_BLOCK_PROJECTIONS: Mapping[str, Callable[[object], str | None]] = {
     "reasoningContent": _not_request_bearing,
     "cachePoint": _not_request_bearing,
     "citationsContent": _not_request_bearing,
+    "summary": _not_request_bearing,
 }
 """Safe routing projection for every ``ContentBlock`` key.
 

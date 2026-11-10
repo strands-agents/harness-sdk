@@ -250,7 +250,7 @@ class RawProviderModel(RecordingModel):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("uncertainty", [False, None])
 async def test_accepts_an_answer_the_model_returned_without_its_wrapper_object(uncertainty):
-    # Claude Haiku 4.5 returns {"candidate": "c1"} rather than {"candidate": {"answer": "c1"}}.
+    # Claude Haiku 4.5 returns {"candidate": "c1"} rather than {"candidate": {"answer": "c1"}} (#4949).
     question: Question = {"question": "Which?", "choices": ["c0", "c1"]}
     if uncertainty is not None:
         question["uncertainty"] = uncertainty
@@ -259,6 +259,17 @@ async def test_accepts_an_answer_the_model_returned_without_its_wrapper_object(u
     result = await decision.ask("state", {"candidate": question})
 
     assert result.answers == {"candidate": "c1"}
+
+
+@pytest.mark.asyncio
+async def test_accepts_a_bare_boolean_answer():
+    decision = LLMDecisionModel(model=RawProviderModel({"is_fruit": "true"}))
+
+    result = await decision.ask(
+        "state", {"is_fruit": {"question": "Fruit?", "choices": "boolean", "uncertainty": False}}
+    )
+
+    assert result.answers == {"is_fruit": True}
 
 
 @pytest.mark.asyncio
