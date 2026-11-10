@@ -5,13 +5,13 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from strands._middleware.stages import InvokeModelContext
 from strands.injection._message_injection import (
     _create_injection_middleware,
     _fold_into_last_user_message,
     _is_user_turn,
     _resolve_trigger,
 )
+from strands.middleware.stages import InvokeModelContext
 
 
 def user(text: str) -> dict:
@@ -51,24 +51,25 @@ def invoke_ctx(messages: list[dict], agent: Any = None) -> InvokeModelContext:
         tool_specs=[],
         tool_choice=None,
         invocation_state={},
+        model=MagicMock(),
     )
 
 
 class TestFoldIntoLastUserMessage:
-    def test_prepends_text_ahead_of_user_content(self):
+    def test_appends_text_after_user_content(self):
         messages = [user("original task"), assistant("prior step"), user("next ask")]
-        result = _fold_into_last_user_message(messages, "INJECTED")
+        result, dynamic_trailing_blocks = _fold_into_last_user_message(messages, "INJECTED")
 
         assert result == [
             {"role": "user", "content": [{"text": "original task"}]},
             {"role": "assistant", "content": [{"text": "prior step"}]},
-            {"role": "user", "content": [{"text": "INJECTED"}, {"text": "next ask"}]},
+            {"role": "user", "content": [{"text": "next ask"}, {"text": "\n\nINJECTED"}]},
         ]
 
     def test_returns_new_list_and_does_not_mutate_input(self):
         original = user("ask")
         messages = [assistant("prior"), original]
-        result = _fold_into_last_user_message(messages, "INJECTED")
+        result, dynamic_trailing_blocks = _fold_into_last_user_message(messages, "INJECTED")
 
         assert result is not messages
         assert messages[1] is original
@@ -77,7 +78,8 @@ class TestFoldIntoLastUserMessage:
 
     def test_appends_after_tool_result_block(self):
         tr = tool_result()
-        result = _fold_into_last_user_message([user("task"), assistant("thinking"), tr], "INJECTED")
+        messages = [user("task"), assistant("thinking"), tr]
+        result, dynamic_trailing_blocks = _fold_into_last_user_message(messages, "INJECTED")
 
         # Providers require the tool result to be the first block, so the text is appended.
         assert result == [
@@ -86,24 +88,38 @@ class TestFoldIntoLastUserMessage:
             {"role": "user", "content": [tr["content"][0], {"text": "INJECTED"}]},
         ]
 
+    def test_appends_text_without_separator_when_the_message_has_no_text(self):
+        image = {"image": {"format": "png", "source": {"bytes": b"png"}}}
+        messages = [{"role": "user", "content": [image]}]
+        result, dynamic_trailing_blocks = _fold_into_last_user_message(messages, "INJECTED")
+
+        assert result == [{"role": "user", "content": [image, {"text": "INJECTED"}]}]
+
+    def test_keeps_separator_when_a_cache_point_follows_the_user_text(self):
+        cache_point = {"cachePoint": {"type": "default"}}
+        messages = [{"role": "user", "content": [{"text": "ask"}, cache_point]}]
+        result, dynamic_trailing_blocks = _fold_into_last_user_message(messages, "INJECTED")
+
+        assert result == [{"role": "user", "content": [{"text": "ask"}, cache_point, {"text": "\n\nINJECTED"}]}]
+
     def test_targets_most_recent_user_message(self):
         messages = [user("first"), assistant("a"), user("second")]
-        result = _fold_into_last_user_message(messages, "INJECTED")
+        result, dynamic_trailing_blocks = _fold_into_last_user_message(messages, "INJECTED")
 
         assert result == [
             {"role": "user", "content": [{"text": "first"}]},
             {"role": "assistant", "content": [{"text": "a"}]},
-            {"role": "user", "content": [{"text": "INJECTED"}, {"text": "second"}]},
+            {"role": "user", "content": [{"text": "second"}, {"text": "\n\nINJECTED"}]},
         ]
 
     def test_preserves_message_metadata(self):
         tagged = {"role": "user", "content": [{"text": "ask"}], "metadata": {"custom": {"keep": "me"}}}
-        result = _fold_into_last_user_message([tagged], "INJECTED")
+        result, dynamic_trailing_blocks = _fold_into_last_user_message([tagged], "INJECTED")
         assert result[0]["metadata"] == {"custom": {"keep": "me"}}
 
     def test_returns_input_unchanged_when_no_user_message(self):
         messages = [assistant("only assistant")]
-        result = _fold_into_last_user_message(messages, "INJECTED")
+        result, dynamic_trailing_blocks = _fold_into_last_user_message(messages, "INJECTED")
         assert result is messages
 
 
@@ -159,7 +175,7 @@ class TestCreateInjectionMiddleware:
 
         assert result.messages == [
             {"role": "assistant", "content": [{"text": "prior"}]},
-            {"role": "user", "content": [{"text": "INJECTED"}, {"text": "ask"}]},
+            {"role": "user", "content": [{"text": "ask"}, {"text": "\n\nINJECTED"}]},
         ]
 
     async def test_passes_conversation_to_render_content(self):
@@ -195,7 +211,7 @@ class TestCreateInjectionMiddleware:
         handler = _create_injection_middleware(render)
         result = await handler(invoke_ctx([user("ask")]))
 
-        assert result.messages == [{"role": "user", "content": [{"text": "INJECTED"}, {"text": "ask"}]}]
+        assert result.messages == [{"role": "user", "content": [{"text": "ask"}, {"text": "\n\nINJECTED"}]}]
 
     async def test_returns_context_unchanged_when_trigger_does_not_fire(self):
         render = MagicMock(return_value="x")
@@ -242,3 +258,47 @@ class TestCreateInjectionMiddleware:
         await handler(ctx)
 
         assert len(before["content"]) == 1  # original user message untouched
+
+
+@pytest.mark.asyncio
+class TestPerCallTrailingBlocksReporting:
+    """The boundary a provider needs is reported on the context, not written into the messages."""
+
+    async def test_reports_one_trailing_block_as_per_call(self):
+        handler = _create_injection_middleware(lambda context: "INJECTED")
+        result = await handler(invoke_ctx([user("ask")]))
+
+        assert result.dynamic_trailing_blocks == 1
+
+    async def test_accumulates_across_producers_on_one_call(self):
+        first = _create_injection_middleware(lambda context: "ONE")
+        second = _create_injection_middleware(lambda context: "TWO")
+
+        result = await second(await first(invoke_ctx([user("ask")])))
+
+        assert result.dynamic_trailing_blocks == 2
+
+    async def test_reports_nothing_when_injection_is_skipped(self):
+        handler = _create_injection_middleware(lambda context: None)
+        result = await handler(invoke_ctx([user("ask")]))
+
+        assert result.dynamic_trailing_blocks == 0
+
+    async def test_reports_nothing_when_the_fold_target_is_not_the_last_message(self):
+        handler = _create_injection_middleware(lambda context: "INJECTED", trigger="everyTurn")
+        result = await handler(invoke_ctx([user("ask"), assistant("reply")]))
+
+        assert result.dynamic_trailing_blocks == 0
+
+    async def test_emits_no_cache_point_into_the_messages(self):
+        # Most providers reject a cachePoint inside a message, so the framework never writes one.
+        handler = _create_injection_middleware(lambda context: "INJECTED")
+        result = await handler(invoke_ctx([user("ask")]))
+
+        assert not any("cachePoint" in block for message in result.messages for block in message["content"])
+
+    async def test_separates_injected_text_from_the_user_ask(self):
+        handler = _create_injection_middleware(lambda context: "INJECTED")
+        result = await handler(invoke_ctx([user("ask")]))
+
+        assert result.messages[0]["content"][-1] == {"text": "\n\nINJECTED"}

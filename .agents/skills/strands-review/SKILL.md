@@ -77,7 +77,7 @@ Analyze the overall structure and architecture of the changes.
 If the PR introduces or modifies public APIs, evaluate the API design from a customer perspective.
 
 **Constraints:**
-- You MUST check if the PR has `needs-api-review` or `completed-api-review` labels
+- You MUST check if the PR has `api/needs-review` or `api/review-complete` labels
 - You MUST verify the PR includes API documentation in the description:
   - Expected use cases for the new feature
   - Example code snippets demonstrating usage
@@ -90,7 +90,7 @@ If the PR introduces or modifies public APIs, evaluate the API design from a cus
   - What is customizable and what is not?
   - Is it the proper level of abstraction?
 - You MUST identify use cases that are not addressed and question why
-- You MUST flag if the PR requires API review but lacks the `needs-api-review` label for:
+- You MUST flag if the PR requires API review but lacks the `api/needs-review` label for:
   - New public classes or abstractions customers will use
   - New primitives or frequently-used functionality
   - Changes to existing public API contracts

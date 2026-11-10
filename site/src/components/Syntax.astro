@@ -1,4 +1,6 @@
 ---
+import { LANGUAGE_STORAGE_KEY } from '../util/language-preference'
+
 interface Props {
   py: string;
   ts: string;
@@ -29,12 +31,11 @@ const { py, ts, plain = false } = Astro.props;
   }
 </style>
 
-<script is:inline>
+<script is:inline define:vars={{ STORAGE_KEY: LANGUAGE_STORAGE_KEY }}>
   (function () {
     if (window.__strandsSyntaxSwitchInit) return;
     window.__strandsSyntaxSwitchInit = true;
 
-    var STORAGE_KEY = 'starlight-synced-tabs__jarkqt';
     var DEFAULT_LANG = 'TypeScript';
 
     function getLang() {

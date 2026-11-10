@@ -50,9 +50,23 @@ When the PR introduces or modifies public API surface, `team/PR.md` requires a *
 Apply these rules:
 
 - **Title**: Must follow Conventional Commits format: `<type>(<optional scope>): <subject>`. The subject must start with a lowercase letter. Valid types: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, `revert`, `design`. Example: `feat(agents): add streaming support for tool results`.
-- **Why**: Lead with the motivation. What broke, what was missing, what's the business/user need. This is the most important part.
-- **What**: Concise summary of the approach. Not a file-by-file changelog — the diff already shows that. Explain the design decision.
+- **Why**: Lead with the motivation. What broke, what was missing, what's the business/user need. This is the most important part, and usually the longest.
+- **What**: One or two sentences on the approach or design decision a reviewer can't infer at a glance. Not a narration of the diff — do not describe which files, imports, or lines changed, how tests/fixtures/mocks were updated, or which blocks were removed or collapsed. The diff shows all of that.
+- **Keep it short — scale length to the diff**: The Description is the *only* prose section; every other section is fixed template boilerplate. Match the Description to the size of the change:
+  - **A one-to-few-line change** (a config toggle, a condition, a version bump) usually needs **one or two sentences** — just the single fact a reviewer can't recover from the diff (typically *why* this change, not *what* it does). Do not expand it to three paragraphs. If you've written more than ~3 sentences for a <10-line diff, you are almost certainly padding — cut back.
+  - **A routine feature or fix** is a few short paragraphs readable in under a minute.
+  - Terse fragments beat padded sentences ("Python-only.", "No behavior change."). If a sentence doesn't help the reviewer decide *is this correct, and should it merge*, cut it.
 - **Risks / Callouts**: Anything the reviewer should scrutinize. Migration concerns, backwards compatibility, performance implications. Omit this section if there's genuinely nothing to flag.
+
+### 5. Self-Review Pass (read it as the reviewer)
+
+Before output, stop and reread *only the Description* as if you were the senior engineer receiving this PR, with the diff open beside you. Run this pass explicitly:
+
+1. **Name the core fact.** In one sentence, what is the single thing this PR's reader cannot recover by reading the diff itself? (Usually the *why*, or a non-obvious constraint/risk.) That sentence is the spine of the Description.
+2. **Delete anything that isn't load-bearing.** Go sentence by sentence and cut every one that: restates the diff (file/line/import edits, test/fixture/mock changes, "X collapses to one call"), re-explains what the code plainly shows, or reassures the reviewer of something they can confirm at a glance. If cutting a sentence loses no motivation and no invariant the reviewer needs, it was filler.
+3. **Check length against the diff.** Reread the length heuristic in step 4. If the diff is a handful of lines and your Description is more than ~2 sentences, delete until it isn't. A senior reviewer is annoyed by a five-paragraph essay attached to a one-line change — brevity is respect for their time, not a missing detail.
+
+The goal: a reviewer finishes the Description faster than they'd finish this sentence, and comes away knowing the one thing the diff couldn't tell them.
 
 ## Retrieving Information from GitHub
 
@@ -71,6 +85,7 @@ Always prefer `gh` over manual URL construction or web scraping. If `gh` is not 
 - Never invent changes that aren't in the diff.
 - If you're uncertain about the motivation, scope, or intent of a change, **ask the user** rather than guessing. A question is always better than a wrong description.
 - Never list every file changed — that's what the diff view is for.
+- Don't narrate test, fixture, or mock *changes* anywhere in the PR — not the Description, not the Testing section. CI verifies them and the diff shows them. In a Testing section, say what you ran and what it covers ("ran the event-loop unit suite, which exercises all three append paths"), not how a fixture or mock was wired.
 - If the diff is trivial (typo fix, dependency bump), keep the description proportionally short.
 - Follow the writing principles and anti-patterns defined in the PR guidelines file selected in step 3.
 - Don't hard-wrap prose to a fixed column width. Write each paragraph as one continuous line and let it soft-wrap — GitHub renders Markdown that way, and narrow hard wraps are awkward to read in the rendered view and painful to edit later. Hard line breaks are only for actual structure (list items, headings, code blocks, table rows).

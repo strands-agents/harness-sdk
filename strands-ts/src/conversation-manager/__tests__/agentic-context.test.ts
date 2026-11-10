@@ -23,13 +23,15 @@ function mockModel(summaryText = 'Summary of older messages') {
         .fn()
         .mockResolvedValueOnce({ done: false, value: undefined })
         .mockResolvedValueOnce({ done: true, value: { message } }),
-      [Symbol.asyncIterator]: vi.fn(),
+      [Symbol.asyncIterator]() {
+        return this
+      },
     })),
   }
 }
 
-function makeContext(messages: Message[], model?: any) {
-  return { agent: { messages, model: model ?? {} } } as any
+function makeContext(messages: Message[], model?: any, auxModel?: any) {
+  return { agent: { messages, model: model ?? {}, auxModel: auxModel ?? model ?? {} } } as any
 }
 
 describe('summarizeContextTool', () => {
@@ -52,6 +54,32 @@ describe('summarizeContextTool', () => {
     expect(result).toContain('message(s)')
     expect(messages.length).toBeLessThan(20)
     expect(messages[0]!.role).toBe('user')
+  })
+
+  it('summarizes with agent.auxModel', async () => {
+    const mainModel = mockModel('Main')
+    const auxModel = mockModel('Summary')
+    const messages = makeMessages(20)
+    const result = await summarizeContextTool.invoke(
+      { keepRecent: 10, summaryRatio: 0.5 },
+      makeContext(messages, mainModel, auxModel)
+    )
+    expect(result).toContain('Summarized')
+    expect(auxModel.streamAggregated).toHaveBeenCalledTimes(1)
+    expect(mainModel.streamAggregated).not.toHaveBeenCalled()
+  })
+
+  it('assigns a durable tracking id to the generated summary', async () => {
+    // The summary message is spliced straight into agent.messages, bypassing the append
+    // chokepoint, so summarizeContextTool must assign it a durable tracking id itself.
+    const model = mockModel('Summary')
+    const messages = makeMessages(20)
+
+    await summarizeContextTool.invoke({ keepRecent: 10, summaryRatio: 0.5 }, makeContext(messages, model))
+
+    const summaryMessage = messages.find((message) => (message.content[0] as TextBlock).text === 'Summary')!
+    expect(typeof summaryMessage.trackingId).toBe('string')
+    expect(summaryMessage.trackingId).toBeTruthy()
   })
 
   it('preserves pinned messages during summarization', async () => {
@@ -140,7 +168,9 @@ describe('summarizeContextTool', () => {
     const model = {
       streamAggregated: vi.fn(() => ({
         next: vi.fn().mockRejectedValueOnce(new Error('model error')),
-        [Symbol.asyncIterator]: vi.fn(),
+        [Symbol.asyncIterator]() {
+          return this
+        },
       })),
     }
     const messages = makeMessages(20)

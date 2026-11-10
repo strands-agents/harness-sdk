@@ -1,5 +1,4 @@
-import { defaultSandbox } from '$/sdk/sandbox/default.js'
-import { NotASandboxLocalEnvironment } from '$/sdk/sandbox/not-a-sandbox-local-environment.js'
+import { registerNodeDefaults } from '$/sdk/register-node-defaults.js'
 
-// Integration tests don't load index.node.ts; register the node default sandbox.
-defaultSandbox.set(new NotASandboxLocalEnvironment())
+// Integration tests do not import index.node.ts, so register the same Node defaults here.
+registerNodeDefaults()

@@ -1,5 +1,6 @@
 """Tests for AgentSessionManager."""
 
+import copy
 from unittest.mock import Mock
 
 import pytest
@@ -9,7 +10,10 @@ from strands.agent.conversation_manager.null_conversation_manager import NullCon
 from strands.agent.conversation_manager.sliding_window_conversation_manager import SlidingWindowConversationManager
 from strands.agent.conversation_manager.summarizing_conversation_manager import SummarizingConversationManager
 from strands.agent.state import AgentState
+from strands.bidi.agent import BidiAgent
+from strands.hooks import AfterInvocationEvent
 from strands.interrupt import _InterruptState
+from strands.session.file_session_manager import FileSessionManager
 from strands.session.repository_session_manager import RepositorySessionManager
 from strands.types.content import ContentBlock
 from strands.types.exceptions import SessionException
@@ -313,6 +317,10 @@ def test_fix_broken_tool_use_adds_missing_tool_results(existing_session_manager)
     assert fixed_messages[1]["content"][0]["toolResult"]["toolUseId"] == "orphaned-123"
     assert fixed_messages[1]["content"][0]["toolResult"]["status"] == "error"
     assert fixed_messages[1]["content"][0]["toolResult"]["content"][0]["text"] == "Tool was interrupted."
+    # The synthesized message is spliced into history outside the append chokepoint, so it must
+    # still carry a durable tracking id like any other message.
+    assert isinstance(fixed_messages[1].get("tracking_id"), str)
+    assert fixed_messages[1]["tracking_id"]
 
 
 def test_fix_broken_tool_use_extends_partial_tool_results(existing_session_manager):
@@ -368,6 +376,33 @@ def test_fix_broken_tool_use_extends_partial_tool_results(existing_session_manag
     missing_result = next(tr for tr in fixed_messages[1]["content"] if tr["toolResult"]["toolUseId"] == "missing-456")
     assert missing_result["toolResult"]["status"] == "error"
     assert missing_result["toolResult"]["content"][0]["text"] == "Tool was interrupted."
+
+
+def test_fix_broken_tool_use_removes_stale_tool_results(session_manager):
+    """Test that toolResults with IDs not matching any preceding toolUse are dropped (#2296)."""
+    messages = [
+        {
+            "role": "assistant",
+            "content": [
+                {"toolUse": {"toolUseId": "valid-123", "name": "test_tool", "input": {"input": "test"}}},
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {"toolResult": {"toolUseId": "stale-999", "status": "success", "content": [{"text": "stale"}]}},
+                {"toolResult": {"toolUseId": "valid-123", "status": "success", "content": [{"text": "result"}]}},
+            ],
+        },
+        {"role": "user", "content": [{"text": "Final message"}]},
+    ]
+
+    fixed_messages = session_manager._fix_broken_tool_use(messages)
+
+    assert len(fixed_messages) == 3
+    assert fixed_messages[1]["content"] == [
+        {"toolResult": {"toolUseId": "valid-123", "status": "success", "content": [{"text": "result"}]}}
+    ]
 
 
 def test_fix_broken_tool_use_handles_multiple_orphaned_tools(existing_session_manager):
@@ -427,11 +462,90 @@ def test_fix_broken_tool_use_ignores_last_message(session_manager):
             ],
         },
     ]
+    original = copy.deepcopy(messages)
 
     fixed_messages = session_manager._fix_broken_tool_use(messages)
 
     # Should remain unchanged since toolUse is in last message
-    assert fixed_messages == messages
+    assert fixed_messages == original
+
+
+def test_fix_broken_tool_use_ignores_single_orphaned_tool_use(session_manager):
+    """Test that a conversation with only a single orphaned toolUse is left untouched."""
+    messages = [
+        {
+            "role": "assistant",
+            "content": [
+                {"toolUse": {"toolUseId": "only-message-123", "name": "test_tool", "input": {"input": "test"}}}
+            ],
+        },
+    ]
+    original = copy.deepcopy(messages)
+
+    fixed_messages = session_manager._fix_broken_tool_use(messages)
+
+    assert fixed_messages == original
+
+
+def test_fix_broken_tool_use_consecutive_orphaned_tool_uses(session_manager):
+    """Consecutive non-trailing orphaned toolUse messages each receive a toolResult (issue #2028).
+
+    The trailing message is intentionally left for the agent class to handle at prompt-arrival
+    time, so this covers the mid-iteration skip caused by enumerate+insert against a live
+    ``len(messages)`` guard: with two orphans followed by a text message, the second orphan
+    used to end up as the new "last" index mid-loop and get skipped.
+    """
+    tru_messages = [
+        {
+            "role": "assistant",
+            "content": [{"toolUse": {"toolUseId": "first-123", "name": "test_tool", "input": {"input": "test1"}}}],
+        },
+        {
+            "role": "assistant",
+            "content": [{"toolUse": {"toolUseId": "second-456", "name": "test_tool", "input": {"input": "test2"}}}],
+        },
+        {"role": "user", "content": [{"text": "Next message"}]},
+    ]
+    exp_messages = [
+        tru_messages[0],
+        {
+            "role": "user",
+            "content": [
+                {
+                    "toolResult": {
+                        "toolUseId": "first-123",
+                        "status": "error",
+                        "content": [{"text": "Tool was interrupted."}],
+                    }
+                }
+            ],
+        },
+        tru_messages[1],
+        {
+            "role": "user",
+            "content": [
+                {
+                    "toolResult": {
+                        "toolUseId": "second-456",
+                        "status": "error",
+                        "content": [{"text": "Tool was interrupted."}],
+                    }
+                }
+            ],
+        },
+        tru_messages[2],
+    ]
+
+    tru_fixed = session_manager._fix_broken_tool_use(tru_messages)
+
+    # Each synthesized toolResult message is spliced in outside the append chokepoint, so it
+    # carries its own durable tracking id. Assert those are present, then fold the actual ids into
+    # the expected messages so the structural comparison still holds.
+    assert tru_fixed[1]["tracking_id"] and tru_fixed[3]["tracking_id"]
+    exp_messages[1]["tracking_id"] = tru_fixed[1]["tracking_id"]
+    exp_messages[3]["tracking_id"] = tru_fixed[3]["tracking_id"]
+
+    assert tru_fixed == exp_messages
 
 
 def test_fix_broken_tool_use_does_not_change_valid_message(session_manager):
@@ -451,11 +565,12 @@ def test_fix_broken_tool_use_does_not_change_valid_message(session_manager):
             ],
         },
     ]
+    expected = copy.deepcopy(messages)
 
     fixed_messages = session_manager._fix_broken_tool_use(messages)
 
     # Should remain unchanged since toolUse is in last message
-    assert fixed_messages == messages
+    assert fixed_messages == expected
 
 
 # ============================================================================
@@ -466,17 +581,16 @@ def test_fix_broken_tool_use_does_not_change_valid_message(session_manager):
 @pytest.fixture
 def mock_bidi_agent():
     """Create a mock BidiAgent for testing."""
-    agent = Mock()
+    agent = Mock(spec=BidiAgent)
     agent.agent_id = "bidi-agent-1"
     agent.messages = [{"role": "user", "content": [{"text": "Hello from bidi!"}]}]
     agent.state = AgentState({"key": "value"})
-    # BidiAgent doesn't have _interrupt_state yet
     return agent
 
 
-def test_initialize_bidi_agent_creates_new(session_manager, mock_bidi_agent):
+def test_initialize_with_bidi_creates_new(session_manager, mock_bidi_agent):
     """Test initializing a new BidiAgent creates session data."""
-    session_manager.initialize_bidi_agent(mock_bidi_agent)
+    session_manager.initialize(mock_bidi_agent)
 
     # Verify agent created in repository
     agent_data = session_manager.session_repository.read_agent("test-session", "bidi-agent-1")
@@ -491,7 +605,7 @@ def test_initialize_bidi_agent_creates_new(session_manager, mock_bidi_agent):
     assert messages[0].message["role"] == "user"
 
 
-def test_initialize_bidi_agent_restores_existing(existing_session_manager, mock_bidi_agent):
+def test_initialize_with_bidi_restores_existing(existing_session_manager, mock_bidi_agent):
     """Test initializing BidiAgent restores from existing session."""
     # Create existing session data
     session_agent = SessionAgent(
@@ -508,7 +622,7 @@ def test_initialize_bidi_agent_restores_existing(existing_session_manager, mock_
     existing_session_manager.session_repository.create_message("test-session", "bidi-agent-1", msg2)
 
     # Initialize agent
-    existing_session_manager.initialize_bidi_agent(mock_bidi_agent)
+    existing_session_manager.initialize(mock_bidi_agent)
 
     # Verify state restored
     assert mock_bidi_agent.state.get() == {"restored": "state"}
@@ -519,14 +633,14 @@ def test_initialize_bidi_agent_restores_existing(existing_session_manager, mock_
     assert mock_bidi_agent.messages[1]["role"] == "assistant"
 
 
-def test_append_bidi_message(session_manager, mock_bidi_agent):
+def test_append_message_with_bidi(session_manager, mock_bidi_agent):
     """Test appending messages to BidiAgent session."""
     # Initialize agent first
-    session_manager.initialize_bidi_agent(mock_bidi_agent)
+    session_manager.initialize(mock_bidi_agent)
 
     # Append new message
     new_message = {"role": "assistant", "content": [{"text": "Response"}]}
-    session_manager.append_bidi_message(new_message, mock_bidi_agent)
+    session_manager.append_message(new_message, mock_bidi_agent)
 
     # Verify message stored
     messages = session_manager.session_repository.list_messages("test-session", "bidi-agent-1")
@@ -534,25 +648,29 @@ def test_append_bidi_message(session_manager, mock_bidi_agent):
     assert messages[1].message["role"] == "assistant"
 
 
-def test_sync_bidi_agent(session_manager, mock_bidi_agent):
-    """Test syncing BidiAgent state to session."""
+def test_sync_agent_with_bidi(session_manager, mock_bidi_agent, monkeypatch):
+    """Test syncing BidiAgent writes state even when unchanged."""
     # Initialize agent
-    session_manager.initialize_bidi_agent(mock_bidi_agent)
+    session_manager.initialize(mock_bidi_agent)
+    update_agent = Mock(wraps=session_manager.session_repository.update_agent)
+    monkeypatch.setattr(session_manager.session_repository, "update_agent", update_agent)
 
     # Update agent state
     mock_bidi_agent.state = AgentState({"updated": "state"})
 
     # Sync agent
-    session_manager.sync_bidi_agent(mock_bidi_agent)
+    session_manager.sync_agent(mock_bidi_agent)
+    session_manager.sync_agent(mock_bidi_agent)
 
     # Verify state updated in repository
     agent_data = session_manager.session_repository.read_agent("test-session", "bidi-agent-1")
     assert agent_data.state == {"updated": "state"}
+    assert update_agent.call_count == 2
 
 
 def test_bidi_agent_no_conversation_manager(session_manager, mock_bidi_agent):
     """Test that BidiAgent session doesn't use conversation_manager."""
-    session_manager.initialize_bidi_agent(mock_bidi_agent)
+    session_manager.initialize(mock_bidi_agent)
 
     # Verify conversation_manager_state is empty
     agent_data = session_manager.session_repository.read_agent("test-session", "bidi-agent-1")
@@ -562,7 +680,7 @@ def test_bidi_agent_no_conversation_manager(session_manager, mock_bidi_agent):
 def test_bidi_agent_unique_id_constraint(session_manager, mock_bidi_agent):
     """Test that BidiAgent agent_id must be unique in session."""
     # Initialize first agent
-    session_manager.initialize_bidi_agent(mock_bidi_agent)
+    session_manager.initialize(mock_bidi_agent)
 
     # Try to initialize another agent with same ID
     agent2 = Mock()
@@ -571,7 +689,7 @@ def test_bidi_agent_unique_id_constraint(session_manager, mock_bidi_agent):
     agent2.state = AgentState({})
 
     with pytest.raises(SessionException, match="The `agent_id` of an agent must be unique in a session."):
-        session_manager.initialize_bidi_agent(agent2)
+        session_manager.initialize(agent2)
 
 
 def test_bidi_agent_messages_with_offset_zero(existing_session_manager, mock_bidi_agent):
@@ -590,10 +708,35 @@ def test_bidi_agent_messages_with_offset_zero(existing_session_manager, mock_bid
         existing_session_manager.session_repository.create_message("test-session", "bidi-agent-1", msg)
 
     # Initialize agent
-    existing_session_manager.initialize_bidi_agent(mock_bidi_agent)
+    existing_session_manager.initialize(mock_bidi_agent)
 
     # Verify all messages restored (offset=0, no removed_message_count)
     assert len(mock_bidi_agent.messages) == 5
+
+
+@pytest.mark.asyncio
+async def test_register_hooks_persists_messages_and_state(session_manager):
+    agent = Agent(agent_id="shared", session_manager=session_manager)
+    message = {"role": "user", "content": [{"text": "Hello"}], "tracking_id": "message-1"}
+    agent.state.set("saved", "state")
+    await agent._append_messages(message)
+
+    tru_state = session_manager.session_repository.read_agent("test-session", "shared").state
+    exp_state = {"saved": "state"}
+    assert tru_state == exp_state
+    tru_messages = [
+        (message.message_id, message.to_message())
+        for message in session_manager.session_repository.list_messages("test-session", "shared")
+    ]
+    exp_messages = [(0, message)]
+    assert tru_messages == exp_messages
+
+    agent.state.set("completed", True)
+    await agent.hooks.invoke_callbacks_async(AfterInvocationEvent(agent=agent))
+
+    tru_state = session_manager.session_repository.read_agent("test-session", "shared").state
+    exp_state = {"saved": "state", "completed": True}
+    assert tru_state == exp_state
 
 
 def test_fix_broken_tool_use_removes_orphaned_tool_result_at_start(session_manager):
@@ -632,11 +775,12 @@ def test_fix_broken_tool_use_does_not_affect_normal_conversations(session_manage
         {"role": "assistant", "content": [{"text": "Hi there!"}]},
         {"role": "user", "content": [{"text": "How are you?"}]},
     ]
+    expected = copy.deepcopy(messages)
 
     fixed_messages = session_manager._fix_broken_tool_use(messages)
 
     # Should remain unchanged
-    assert fixed_messages == messages
+    assert fixed_messages == expected
 
 
 # ============================================================================
@@ -965,8 +1109,8 @@ def test_initialize_calls_read_agent_for_existing_session(mock_repository):
     assert read_agent_calls[0] == ("existing-session", "test-agent")
 
 
-def test_initialize_bidi_agent_skips_read_agent_for_new_session(mock_repository):
-    """Test that initialize_bidi_agent() skips read_agent() call when _is_new_session is True."""
+def test_initialize_with_bidi_skips_read_agent_for_new_session(mock_repository):
+    """Test that initialize() skips read_agent() for bidi when _is_new_session is True."""
     # Create manager (new session)
     manager = RepositorySessionManager(session_id="new-session", session_repository=mock_repository)
     assert manager._is_new_session is True
@@ -988,14 +1132,14 @@ def test_initialize_bidi_agent_skips_read_agent_for_new_session(mock_repository)
     bidi_agent.state = AgentState({})
 
     # Initialize bidi agent
-    manager.initialize_bidi_agent(bidi_agent)
+    manager.initialize(bidi_agent)
 
     # read_agent should NOT be called for new session
     assert len(read_agent_calls) == 0
 
 
-def test_initialize_bidi_agent_calls_read_agent_for_existing_session(mock_repository):
-    """Test that initialize_bidi_agent() calls read_agent() when _is_new_session is False."""
+def test_initialize_with_bidi_calls_read_agent_for_existing_session(mock_repository):
+    """Test that initialize() calls read_agent() for bidi when _is_new_session is False."""
     # Create session first
     session = Session(session_id="existing-session", session_type=SessionType.AGENT)
     mock_repository.create_session(session)
@@ -1021,7 +1165,7 @@ def test_initialize_bidi_agent_calls_read_agent_for_existing_session(mock_reposi
     bidi_agent.state = AgentState({})
 
     # Initialize bidi agent
-    manager.initialize_bidi_agent(bidi_agent)
+    manager.initialize(bidi_agent)
 
     # read_agent should be called for existing session
     assert len(read_agent_calls) == 1
@@ -1087,3 +1231,137 @@ def test_initialize_multi_agent_calls_read_for_existing_session(mock_repository)
     # read_multi_agent should be called for existing session
     assert len(read_multi_agent_calls) == 1
     assert read_multi_agent_calls[0] == ("existing-session", "test-multi-agent")
+
+
+def test_fix_broken_tool_use_removes_orphaned_tool_result_mid_conversation(session_manager):
+    """Orphaned toolResult after a message that carries no toolUse is removed (issue #3651)."""
+    messages = [
+        {"role": "user", "content": [{"text": "Where do I live?"}]},
+        {"role": "assistant", "content": [{"text": "You live in Seattle, USA."}]},
+        {
+            "role": "user",
+            "content": [
+                {
+                    "toolResult": {
+                        "toolUseId": "orphaned-result-123",
+                        "status": "success",
+                        "content": [{"text": "Seattle, USA"}],
+                    }
+                }
+            ],
+        },
+        {"role": "assistant", "content": [{"text": "Anything else?"}]},
+    ]
+
+    fixed_messages = session_manager._fix_broken_tool_use(messages)
+
+    assert fixed_messages == [
+        {"role": "user", "content": [{"text": "Where do I live?"}]},
+        {"role": "assistant", "content": [{"text": "You live in Seattle, USA."}]},
+        {"role": "assistant", "content": [{"text": "Anything else?"}]},
+    ]
+
+
+def test_fix_broken_tool_use_keeps_non_tool_result_content_of_orphaned_message(session_manager):
+    """Only the orphaned toolResult blocks are dropped; other content in that message survives."""
+    messages = [
+        {"role": "assistant", "content": [{"text": "Summary of earlier conversation."}]},
+        {
+            "role": "user",
+            "content": [
+                {
+                    "toolResult": {
+                        "toolUseId": "orphaned-result-123",
+                        "status": "success",
+                        "content": [{"text": "Seattle, USA"}],
+                    }
+                },
+                {"text": "and what about Portland?"},
+            ],
+        },
+    ]
+
+    fixed_messages = session_manager._fix_broken_tool_use(messages)
+
+    assert fixed_messages == [
+        {"role": "assistant", "content": [{"text": "Summary of earlier conversation."}]},
+        {"role": "user", "content": [{"text": "and what about Portland?"}]},
+    ]
+
+
+def test_fix_broken_tool_use_removes_orphaned_tool_result_after_prepended_message(session_manager):
+    """A prepended summary message must not hide an orphaned toolResult at the window head."""
+    messages = [
+        {"role": "assistant", "content": [{"text": "Summary of earlier conversation."}]},
+        {
+            "role": "user",
+            "content": [
+                {
+                    "toolResult": {
+                        "toolUseId": "orphaned-result-123",
+                        "status": "success",
+                        "content": [{"text": "42"}],
+                    }
+                }
+            ],
+        },
+        {"role": "assistant", "content": [{"text": "done"}]},
+    ]
+
+    fixed_messages = session_manager._fix_broken_tool_use(messages)
+
+    assert fixed_messages == [
+        {"role": "assistant", "content": [{"text": "Summary of earlier conversation."}]},
+        {"role": "assistant", "content": [{"text": "done"}]},
+    ]
+
+
+def test_fix_broken_tool_use_keeps_paired_tool_result_after_a_text_turn(session_manager):
+    """A toolResult that does follow a toolUse is left alone."""
+    messages = [
+        {"role": "user", "content": [{"text": "What is the weather?"}]},
+        {"role": "assistant", "content": [{"toolUse": {"toolUseId": "abc", "name": "weather", "input": {}}}]},
+        {
+            "role": "user",
+            "content": [{"toolResult": {"toolUseId": "abc", "status": "success", "content": [{"text": "sunny"}]}}],
+        },
+        {"role": "assistant", "content": [{"text": "It is sunny."}]},
+    ]
+    expected = copy.deepcopy(messages)
+
+    fixed_messages = session_manager._fix_broken_tool_use(messages)
+
+    assert fixed_messages == expected
+
+
+def test_prune_held_records_drops_removed_messages(session_manager):
+    agent = Agent(agent_id="a", session_manager=session_manager)
+    m1 = {"role": "user", "content": [{"text": "one"}]}
+    m2 = {"role": "assistant", "content": [{"text": "two"}]}
+    session_manager.append_message(m1, agent)
+    session_manager.append_message(m2, agent)
+
+    # Drop m1 → pruned from held records
+    agent.messages = [m2]
+    session_manager._prune_held_records(agent)
+    assert len(session_manager._held_records["a"]) == 1
+
+
+def test_restore_after_redacting_alias_records_returns_redacted_conversation(tmp_path):
+    """A fresh restore over the same storage must see both copies redacted (the cross-process scenario)."""
+    sm = FileSessionManager(session_id="s", storage_dir=str(tmp_path))
+    agent = Agent(agent_id="a", conversation_manager=NullConversationManager(), session_manager=sm)
+    msg = {"role": "user", "content": [{"text": "secret"}]}
+    sm.append_message(msg, agent)  # record 0
+    sm.append_message(msg, agent)  # record 1 — same object
+
+    msg["content"] = [{"text": "[redacted]"}]
+    sm.redact_latest_message(msg, agent)
+
+    # Simulate a new process: fresh manager and agent over the same storage directory.
+    sm2 = FileSessionManager(session_id="s", storage_dir=str(tmp_path))
+    restored = Agent(agent_id="a", conversation_manager=NullConversationManager(), session_manager=sm2)
+
+    assert len(restored.messages) == 2
+    assert restored.messages[0]["content"] == [{"text": "[redacted]"}]
+    assert restored.messages[1]["content"] == [{"text": "[redacted]"}]

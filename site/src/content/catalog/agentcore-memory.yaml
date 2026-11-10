@@ -1,0 +1,10 @@
+name: agentcore-memory
+description: Amazon Bedrock AgentCore Memory session manager providing short-term conversation persistence and long-term memory strategies for Strands Agents.
+integrationType: session-manager
+maintainedBy: aws
+languages:
+  python:
+    package: bedrock-agentcore[strands-agents]
+github: https://github.com/aws/bedrock-agentcore-sdk-python
+docsPage: docs/integrations/session-managers/agentcore-memory
+addedDate: 2025-10-16

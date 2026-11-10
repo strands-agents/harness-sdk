@@ -36,6 +36,7 @@ On Windows, these symlinks require Developer Mode or `git config core.symlinks t
 │   ├── docs-writer/      # Draft or rewrite doc pages
 │   ├── docs-reviewer/    # Review drafts before PR submission
 │   ├── docs-audit/       # Assess published pages for quality
+│   ├── docs-verifier/    # Verify every claim and example against source
 │   └── docs-planner/     # Prioritize the docs backlog
 └── references/
     ├── voice-guide.md       # Five-layer voice stack
@@ -49,6 +50,7 @@ On Windows, these symlinks require Developer Mode or `git config core.symlinks t
 | `docs-writer`   | Draft or rewrite doc pages          | "write a doc", "draft a page", "rewrite the quickstart" |
 | `docs-reviewer` | Review drafts before PR submission  | "review this draft", "is this ready to ship" |
 | `docs-audit`    | Assess published pages for quality  | "audit this page", "check docs quality" |
+| `docs-verifier` | Verify every claim and example against source | "verify this page", "fact-check the docs" |
 | `docs-planner`  | Prioritize the docs backlog         | "plan docs work", "what docs need writing" |
 
 When authoring or reviewing documentation pages, follow the voice guide and the terminology lock. When verifying code examples in docs, follow the tiered procedure in `.agents/references/code-verification.md`.
@@ -59,13 +61,29 @@ When authoring or reviewing documentation pages, follow the voice guide and the 
 ├── AGENTS.md
 ├── CODE_OF_CONDUCT.md
 ├── CONTRIBUTING.md
+├── external-docs.config.json    # Upstream refs plus site-owned routes and navigation
+├── external-docs.lock.json      # Immutable upstream documentation revisions
 ├── SITE-ARCHITECTURE.md          # Detailed Astro/Starlight customizations
+├── .build/
+│   ├── api-docs/                 # Generated Python and TypeScript API reference
+│   ├── external-docs/
+│   │   ├── strands-box/          # Generated imported Box docs (not committed)
+│   │   └── strands-decider/      # Generated imported Decider docs (not committed)
+│   └── samples/pages/            # Generated sample guides (not committed)
 ├── src/                          # Astro source files
 │   ├── components/               # Custom Astro components
+│   │   ├── CourseNotice.astro    # Course recording and example update notices
+│   │   ├── community/            # Sections of the /community/ hub page (hero, courses, events, blog)
 │   │   ├── overrides/            # Starlight component overrides
+│   │   ├── samples/              # Native Starlight page wrapper for generated sample guides
 │   │   └── ...
 │   ├── config/                   # Site configuration
 │   ├── content/                  # Content collections
+│   │   ├── announcements/        # Homepage announcement banner entries (one YAML each, auto-expire after 14 days)
+│   │   ├── catalog/              # Community catalog entries (one YAML per integration, zod-validated)
+│   │   ├── changelog/            # Release notes by product, including shell/
+│   │   ├── courses/              # Course metadata (one YAML per course, zod-validated)
+│   │   ├── events/               # Community event entries (one YAML per event, zod-validated)
 │   │   └── docs/                 # Documentation content (Markdown/MDX)
 │   │       ├── api/
 │   │       │   ├── python/
@@ -73,13 +91,17 @@ When authoring or reviewing documentation pages, follow the voice guide and the 
 │   │       │   └── typescript/
 │   │       │       └── _generated/   # Symlink to .build/api-docs/typescript
 │   │       ├── assets/
-│   │       ├── community/
 │   │       ├── contribute/
 │   │       ├── examples/
+│   │       ├── integrations/
 │   │       ├── labs/
+│   │       │   └── strands-decider # Symlink to .build/external-docs/strands-decider/content
+│   │       ├── learning/         # Course lesson pages
 │   │       └── user-guide/
+│   │           └── box           # Symlink to .build/external-docs/strands-box/content
+│   ├── data/                     # Workflow-maintained catalog-stats.json (do not hand-edit)
 │   ├── layouts/                  # Custom layouts
-│   ├── pages/                    # Astro pages
+│   ├── pages/                    # Astro pages, including generated /examples routes
 │   ├── plugins/                  # Remark/Rehype plugins
 │   ├── styles/                   # Global styles
 │   └── util/                     # Utility functions
@@ -91,6 +113,9 @@ When authoring or reviewing documentation pages, follow the voice guide and the 
 ├── README.md
 ├── overrides/                    # Legacy MkDocs overrides (being migrated)
 ├── scripts/                      # Build and utility scripts
+│   ├── catalog/                  # Catalog stats refresh
+│   ├── external-docs/            # External Markdown import and lock updates
+│   └── samples/                  # Import samples metadata and guides at build time
 ├── test/                         # Test files
 └── test-snippets/                # TypeScript snippet test files
 ```
@@ -105,12 +130,15 @@ When authoring or reviewing documentation pages, follow the voice guide and the 
 #### Prerequisites
 
 - Python 3.10+
-- Node.js 20+, npm
+- Node.js 22+, npm
 
 #### Setup and Installation
 
+From the repository root:
+
 ```bash
-npm install
+cd site
+npm ci
 ```
 
 #### Building and Previewing
@@ -131,63 +159,34 @@ npm run dev
 
 1. **Create feature branch**: `git checkout -b agent-tasks/{ISSUE_NUMBER}`
 2. **Implement changes** following the patterns below
-3. **Run quality checks** before committing (pre-commit hooks will run automatically)
+3. **Run quality checks** before committing
 4. **Commit with conventional commits**: `feat:`, `fix:`, `refactor:`, `docs:`, etc.
 5. **Push to remote**: `git push origin agent-tasks/{ISSUE_NUMBER}`
 
 ### 3. Quality Gates
 
-Pre-commit hooks automatically run:
-- Unit tests (via npm test)
-- Format checking (via npm run format:check)
-- Type checking (via npm run typecheck)
+From `site/`:
 
-All checks must pass before commit is allowed.
+```bash
+npm run format        # apply formatting fixes
+npm run check         # check formatting, build, check types, and run tests
+```
+
+CI enforces these checks.
 
 ## Coding Patterns and Best Practices
 
 ### Code Style Guidelines (for Typescript)
 
-**Formatting** (enforced by Prettier):
-- No semicolons
-- Single quotes
-- Line length: 120 characters
-- Line length for doc snippet files under `src/content/docs/`: 90 characters
-- Tab width: 2 spaces
-- Trailing commas in ES5 style
-- Template literal contents in doc snippets must also stay under 90 characters per line. Prettier does not enforce this automatically.
+TypeScript formatting and import organization follow the same conventions as the TypeScript SDK; see [strands-ts/AGENTS.md](../strands-ts/AGENTS.md). Prettier enforces formatting (no semicolons, single quotes, 120-character lines, 2-space indent, ES5 trailing commas); order imports as external dependencies, then internal modules, then type-only imports.
 
-**Example**:
-```typescript
-export function example(name: string, options?: Options): Result {
-  const config = {
-    name,
-    enabled: true,
-    settings: {
-      timeout: 5000,
-      retries: 3,
-    },
-  }
+One site-specific exception: files under `src/content/docs/` are limited to 90 characters per line, including template literal contents (not enforced by Prettier). See [.agents/references/mdx-authoring.md](../.agents/references/mdx-authoring.md).
 
-  return processConfig(config)
-}
-```
+### Code Examples in Documentation Pages
 
-### Import Organization
+When adding or editing code examples in documentation pages, you MUST follow [.agents/references/mdx-authoring.md](../.agents/references/mdx-authoring.md). It is the authoritative reference for `<Tabs>`/`<Tab>` usage, `--8<--` snippet inclusion, snippet naming and scoping, callouts, frontmatter fields, line length, and validation commands.
 
-Organize imports in this order:
-```typescript
-// 1. External dependencies
-import { something } from 'external-package'
-
-// 2. Internal modules (using relative paths)
-import { Agent } from '../agent'
-import { Tool } from '../tools'
-
-// 3. Types (if separate)
-import type { Options, Config } from '../types'
-```
-
+For the underlying Astro/Starlight implementation (the snippets plugin, custom components, frontmatter banners), see [SITE-ARCHITECTURE.md](SITE-ARCHITECTURE.md).
 
 ## Agent-Specific Notes
 
@@ -195,7 +194,7 @@ import type { Options, Config } from '../types'
 
 1. **Read task requirements** carefully from the GitHub issue
 2. **Use existing patterns** as reference
-3. **Run all checks** before committing (pre-commit hooks will enforce this)
+3. **Run quality checks** before committing
 
 
 ### Integration with Other Files
@@ -213,220 +212,3 @@ import type { Options, Config } from '../types'
 - [Conventional Commits](https://www.conventionalcommits.org/)
 - [Strands Agents Documentation](https://strandsagents.com/)
 - [TypeScript SDK](../strands-ts/)
-
-# TypeScript Code Examples Guide
-
-This guide explains how to add TypeScript code examples alongside Python examples in the Strands Agents documentation.
-
-For detailed information about the Astro/Starlight CMS architecture, components, and customizations, see [SITE-ARCHITECTURE.md](SITE-ARCHITECTURE.md).
-
-## Overview
-
-The documentation supports showing both Python and TypeScript code examples side-by-side using:
-- **Astro `<Tabs>/<Tab>` components** for language switching (auto-imported, no import statement needed)
-- **Snippets** for external code file inclusion (still works via `src/plugins/remark-mkdocs-snippets.ts`)
-- **TypeScript type checking** for code validation
-
-### 1. Create TypeScript Code File
-
-Create a `.ts` file alongside your `.md` file with snippet markers:
-
-```typescript
-// docs/user-guide/concepts/agents/agent-loop.ts
-import { Agent } from '@strands-agents/sdk'
-import { notebook } from '@strands-agents/sdk/vended-tools/notebook'
-
-// --8<-- [start:initialization]
-// Initialize the agent with tools, model, and configuration
-const agent = new Agent({
-  tools: [notebook],
-  systemPrompt: 'You are a helpful assistant.',
-})
-// --8<-- [end:initialization]
-
-// --8<-- [start:processResult]
-// Process user input
-const result = await agent.invoke('Calculate 25 * 48')
-// --8<-- [end:processResult]
-```
-
-### 2. Use Tabbed Content in Markdown
-
-In your `.md` file, use `<Tabs>` and `<Tab>` components with snippet inclusion:
-
-```markdown
-<Tabs>
-  <Tab label="Python">
-    ```python
-    from strands import Agent
-    from strands_tools import calculator
-
-    # Initialize the agent with tools, model, and configuration
-    agent = Agent(
-        tools=[calculator],
-        system_prompt="You are a helpful assistant."
-    )
-    ```
-  </Tab>
-  <Tab label="TypeScript">
-    ```typescript
-    --8<-- "user-guide/concepts/agents/agent-loop.ts:initialization"
-    ```
-  </Tab>
-</Tabs>
-```
-
-**Note**: `<Tabs>` and `<Tab>` are auto-imported via `astro-auto-import`, so no import statement is needed. Tabs with matching labels automatically sync across the page.
-
-## Snippet Syntax
-
-### Basic Snippet Inclusion
-
-```markdown
---8<-- "path/to/file.ts:snippet_name"
-```
-
-### Snippet Markers in Code
-
-Use HTML-style comments to mark snippet boundaries:
-
-```typescript
-// --8<-- [start:snippet_name]
-// Your code here
-// --8<-- [end:snippet_name]
-```
-
-**Note**: Leading spaces are automatically removed from included snippets, so indentation within the source file doesn't affect the final output. However, if the snippet file name is indented in the markdown, the content will be indented to that level as well. See [the documentation](https://facelessuser.github.io/pymdown-extensions/extensions/snippets/#dedent-subsections) for more information.
-
-### Multiple Snippets in One File
-
-```typescript
-// --8<-- [start:initialization]
-const agent = new Agent({ /* ... */ })
-// --8<-- [end:initialization]
-
-// --8<-- [start:usage]
-const result = await agent.invoke('Hello')
-// --8<-- [end:usage]
-```
-
-## Type Checking Integration
-
-### Package.json Scripts
-
-```json
-{
-  "scripts": {
-    "test": "tsc --noEmit",
-    "format": "prettier --write docs 'src/content/docs/**/*.ts'",
-    "format:check": "prettier --check docs 'src/content/docs/**/*.ts'"
-  }
-}
-```
-
-## Best Practices
-
-### 1. File Organization
-
-```
-docs/
-├── user-guide/
-│   └── concepts/
-│       └── agents/
-│           ├── agent-loop.md      # Documentation
-│           └── agent-loop.ts      # TypeScript examples
-```
-
-### 2. Snippet Naming
-
-Use descriptive snippet names that match the context:
-
-```typescript
-// --8<-- [start:basic_agent_creation]
-// --8<-- [start:agent_with_tools]
-// --8<-- [start:streaming_example]
-```
-
-### 3. Variable Scoping for Snippets
-
-When multiple snippets in the same file use the same variable names, wrap snippets in functions to avoid TypeScript scoping conflicts. Place snippet markers **inside** the function so only the code is displayed in documentation:
-
-```typescript
-// ❌ Wrong: Snippet includes function definition
-// --8<-- [start:example]
-async function example() {
-  const result = await agent.invoke('Hello')
-  console.log(result)
-}
-// --8<-- [end:example]
-
-// ✅ Correct: Function is for scoping only, snippet is just the code
-async function example() {
-  // --8<-- [start:example]
-  const result = await agent.invoke('Hello')
-  console.log(result)
-  // --8<-- [end:example]
-}
-```
-
-**Why:**
-- TypeScript treats the entire file as a single scope with `isolatedModules: true`
-- Multiple snippets with the same variable names cause redeclaration errors
-- Functions provide scoping without cluttering the documentation with function definitions
-
-### 4. Code Validation
-
-- All TypeScript code should compile without errors
-- Use `npm run test` to validate TypeScript
-- Use `npm run format` to maintain consistent formatting
-
-### 5. Fallback for Unsupported Features
-
-For features not available in TypeScript, you can indicate this using custom frontmatter fields. See [SITE-ARCHITECTURE.md](SITE-ARCHITECTURE.md#custom-frontmatter-fields) for details on:
-- `languages` - Indicate a feature is only available in specific SDK languages
-- `community` - Mark pages as community-contributed
-- `experimental` - Mark features as experimental
-
-These render contextual banners at the top of pages automatically.
-
-## Agent/LLM Instructions
-
-When adding TypeScript examples to documentation:
-
-1. **Create the TypeScript file** with the same base name as the markdown file
-2. **Add snippet markers** around code sections you want to reference
-3. **Use descriptive snippet names** that clearly indicate the code's purpose
-4. **Validate TypeScript** by running `npm run typecheck:snippets` (for snippet files) and `npm run typecheck` (for other TypeScript)
-5. **Update markdown** to use `<Tabs>/<Tab>` components with snippet inclusion
-6. **Test locally** with `npm run dev` to ensure snippets render correctly at http://localhost:4321/
-
-### Example Workflow
-
-1. Edit `docs/path/to/example.ts`:
-   ```typescript
-   // --8<-- [start:new_feature]
-   const feature = new Feature({ config: 'value' })
-   // --8<-- [end:new_feature]
-   ```
-
-2. Update `docs/path/to/example.md`:
-   ```markdown
-   <Tabs>
-     <Tab label="TypeScript">
-       ```typescript
-       --8<-- "path/to/example.ts:new_feature"
-       ```
-     </Tab>
-   </Tabs>
-   ```
-
-3. Validate: `npm test`
-4. Preview: `npm run dev`
-
-## Benefits
-
-- **Type Safety**: TypeScript compiler catches errors
-- **DRY Principle**: Single source of truth for code examples
-- **Consistency**: Automatic formatting and validation
-- **Maintainability**: Changes to code automatically update documentation
-- **IDE Support**: Full TypeScript language server support for code examples

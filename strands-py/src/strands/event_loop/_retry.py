@@ -21,12 +21,15 @@ logger = logging.getLogger(__name__)
 class ModelRetryStrategy(HookProvider):
     """Default retry strategy for model throttling with exponential backoff.
 
-    Retries model calls on ModelThrottledException using exponential backoff.
+    Retries model calls on retryable exceptions using exponential backoff.
     Delay doubles after each attempt: initial_delay, initial_delay*2, initial_delay*4,
     etc., capped at max_delay. State resets after successful calls.
 
     With defaults (initial_delay=4, max_delay=240, max_attempts=6), delays are:
     4s → 8s → 16s → 32s → 64s (5 retries before giving up on the 6th attempt).
+
+    Subclass and override ``is_retryable`` to expand or narrow the set of
+    retryable exceptions without reimplementing the rest of the retry policy.
 
     Args:
         max_attempts: Total model attempts before re-raising the exception.
@@ -54,6 +57,17 @@ class ModelRetryStrategy(HookProvider):
         self._max_delay = max_delay
         self._current_attempt = 0
         self._backwards_compatible_event_to_yield: TypedEvent | None = None
+
+    def is_retryable(self, exception: Exception) -> bool:
+        """Whether the exception should be retried.
+
+        Args:
+            exception: The exception raised by the model call.
+
+        Returns:
+            True if the exception should trigger a retry, False otherwise.
+        """
+        return isinstance(exception, ModelThrottledException)
 
     def register_hooks(self, registry: HookRegistry, **kwargs: Any) -> None:
         """Register callbacks for AfterModelCallEvent and AfterInvocationEvent.
@@ -93,7 +107,7 @@ class ModelRetryStrategy(HookProvider):
         """Handle model call completion and determine if retry is needed.
 
         This callback is invoked after each model call. If the call failed with
-        a ModelThrottledException and we haven't exceeded max_attempts, it sets
+        a retryable exception and we haven't exceeded max_attempts, it sets
         event.retry to True and sleeps for the current delay before returning.
 
         On successful calls, it resets the retry state to prepare for future calls.
@@ -123,8 +137,7 @@ class ModelRetryStrategy(HookProvider):
             self._reset_retry_state()
             return
 
-        # Only retry on ModelThrottledException
-        if not isinstance(event.exception, ModelThrottledException):
+        if not self.is_retryable(event.exception):
             return
 
         # Increment attempt counter first
@@ -144,10 +157,11 @@ class ModelRetryStrategy(HookProvider):
         # Retry the model call
         logger.debug(
             "retry_delay_seconds=<%s>, max_attempts=<%s>, current_attempt=<%s> "
-            "| throttling exception encountered | delaying before next retry",
+            "| %s encountered | delaying before next retry",
             delay,
             self._max_attempts,
             self._current_attempt,
+            type(event.exception).__name__,
         )
 
         # Sleep for current delay

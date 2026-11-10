@@ -67,6 +67,8 @@ Thumbs.db
 *.backup
 **/mutants.out*/
 bin/
+# strands-cli ships a tracked bin entrypoint; keep it out of the bin/ rule above.
+!strands-cli/bin/
 
 # LLM
 .claude/settings.local.json
@@ -75,3 +77,10 @@ bin/
 .vitest*
 .local/
 
+.superpowers/
+site/docs/superpowers/
+.agent
+
+# Copied from shared/model-info.json by each SDK's build (strands-ts prepare/prebuild, strands-py hatch_build.py)
+strands-ts/src/models/model-info.json
+strands-py/src/strands/models/model_info.json

@@ -1,0 +1,9 @@
+name: cohere
+description: Cohere language models accessed through the Strands Agents OpenAI-compatibility layer, requiring only the strands-agents[openai] extra.
+integrationType: model-provider
+maintainedBy: strands
+languages:
+  python: {}
+github: https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/openai.py
+docsPage: docs/integrations/model-providers/cohere
+addedDate: 2025-07-09

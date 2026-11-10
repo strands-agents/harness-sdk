@@ -1,0 +1,10 @@
+name: OpenAI
+description: Run Strands agents on OpenAI models or any OpenAI-compatible API, with vision and structured output.
+integrationType: model-provider
+maintainedBy: strands
+languages:
+  python: {}
+  typescript: {}
+github: https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/openai.py
+docsPage: docs/user-guide/sdk/model-providers/openai
+addedDate: 2025-05-22

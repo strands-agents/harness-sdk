@@ -15,17 +15,17 @@ This example demonstrates:
 
 ## Key Tools
 
-- **file_read**: Read file contents with different modes
+- **file_editor**: Read file contents with different modes
   - View entire files
   - View specific line ranges
   - Search for patterns
   - Get file statistics
 
-- **file_write**: Create and modify files
+- **file_editor**: Create and modify files
   - Write text to files
   - Append to existing files
 
-- **editor**: Advanced file modifications
+- **file_editor**: Advanced file modifications
   - View files with syntax highlighting
   - Make targeted modifications
   - Find and replace text
@@ -64,7 +64,7 @@ In my_script.py, replace all instances of "old_function" with "new_function"
 import os
 
 from strands import Agent
-from strands_tools import file_read, file_write, editor
+from strands.vended_tools import file_editor
 
 # Define a focused system prompt for file operations
 FILE_SYSTEM_PROMPT = """You are a file operations specialist. You help users read, 
@@ -83,7 +83,7 @@ Always specify the full file path in your responses for clarity.
 # Create a file-focused agent with selected tools
 file_agent = Agent(
     system_prompt=FILE_SYSTEM_PROMPT,
-    tools=[file_read, file_write, editor],
+    tools=[file_editor],
 )
 
 

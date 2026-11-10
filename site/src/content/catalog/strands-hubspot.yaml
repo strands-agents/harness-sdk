@@ -1,0 +1,9 @@
+name: strands-hubspot
+description: Read-only HubSpot CRM tools for Strands Agents to search and retrieve contacts, deals, and company data without any risk of modifying CRM records.
+integrationType: tool
+languages:
+  python:
+    package: strands-hubspot
+github: https://github.com/eraykeskinmac/strands-hubspot
+docsPage: docs/integrations/tools/strands-hubspot
+addedDate: 2025-12-05

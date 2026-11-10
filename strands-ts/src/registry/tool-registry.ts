@@ -1,6 +1,9 @@
 import type { Tool } from '../tools/tool.js'
 import { ToolValidationError, ToolNotFoundError } from '../errors.js'
 
+/** @internal Maximum tool-name length accepted by the registry. */
+export const MAX_TOOL_NAME_LENGTH = 64
+
 /**
  * Registry for managing Tool instances with name-based CRUDL operations.
  */
@@ -131,8 +134,8 @@ export class ToolRegistry {
       throw new ToolValidationError('Tool name must be a string')
     }
 
-    if (tool.name.length < 1 || tool.name.length > 64) {
-      throw new ToolValidationError('Tool name must be between 1 and 64 characters')
+    if (tool.name.length < 1 || tool.name.length > MAX_TOOL_NAME_LENGTH) {
+      throw new ToolValidationError(`Tool name must be between 1 and ${MAX_TOOL_NAME_LENGTH} characters`)
     }
 
     const validNamePattern = /^[a-zA-Z0-9_-]+$/

@@ -1,5 +1,5 @@
 from strands import Agent, tool
-from strands_tools import calculator
+from strands.vended_tools import shell
 import json
 
 MATH_ASSISTANT_SYSTEM_PROMPT = """
@@ -43,10 +43,10 @@ def math_assistant(query: str) -> str:
     
     try:
         print("Routed to Math Assistant")
-        # Create the math agent with calculator capability
+        # Create the math agent with a shell for verifiable calculations.
         math_agent = Agent(
             system_prompt=MATH_ASSISTANT_SYSTEM_PROMPT,
-            tools=[calculator],
+            tools=[shell],
         )
         agent_response = math_agent(formatted_query)
         text_response = str(agent_response)

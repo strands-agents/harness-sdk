@@ -1,0 +1,37 @@
+---
+title: Community Interventions
+description: Community-built intervention handlers for authorization, guardrails, and steering.
+tags: [interventions]
+sidebar:
+  label: "Overview"
+---
+
+An **intervention handler** is a composable control layer that intercepts agent lifecycle
+events and returns typed decisions — proceed, deny, guide, confirm, or transform. Handlers
+are registered via the `interventions` option in agent configuration and evaluated in order,
+with short-circuiting on deny or guide actions. See
+[Interventions](../../user-guide/sdk/agents/interventions/) for the full concept and
+built-in handlers.
+
+The SDK ships reference handlers like
+[Cedar Authorization](../../user-guide/sdk/agents/interventions/cedar-authorization.md),
+[Steering](../../user-guide/sdk/agents/interventions/steering.md), and
+[Human-in-the-Loop](../../user-guide/sdk/agents/interventions/human-in-the-loop.md).
+The packages below are **community-built** intervention handlers you can install and attach
+to an agent.
+
+:::note[Community maintained]
+These packages are maintained by their authors, not the Strands team. Review packages
+before using them in production. Quality and support may vary.
+:::
+
+## Browse the integrations page
+
+See the [Interventions section of the integrations page](/integrations/?type=intervention)
+for the current list, with language support and links to each package.
+
+## Add your intervention handler
+
+Built an `InterventionHandler`? See the [Get Featured guide](../get-featured.md) to
+list it here, and the [Extensions guide](../../contribute/contributing/extensions.md) for
+how to build and publish a package.

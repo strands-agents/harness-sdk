@@ -29,7 +29,7 @@ Example Usage:
     ```
 """
 
-from .plugin import ContextOffloader
+from .plugin import ContextOffloader, ShouldOffload
 from .storage import (
     FileStorage,
     InMemoryStorage,
@@ -42,5 +42,6 @@ __all__ = [
     "FileStorage",
     "InMemoryStorage",
     "S3Storage",
+    "ShouldOffload",
     "Storage",
 ]

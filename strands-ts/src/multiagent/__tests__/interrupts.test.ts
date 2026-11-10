@@ -36,6 +36,29 @@ function interruptingTool(name: string, interruptName: string, resumeValue = 'ok
   })
 }
 
+interface StructuredOutputDecision {
+  agentId?: string
+  message: string
+}
+
+/** Creates a swarm agent that repeatedly returns one structured-output decision. */
+function createStructuredOutputAgent(
+  agentId: string,
+  decision: StructuredOutputDecision,
+  tools: ReturnType<typeof createMockTool>[] = []
+): Agent {
+  const model = new MockMessageModel().addTurn({
+    type: 'toolUseBlock',
+    name: 'strands_structured_output',
+    toolUseId: `structured-output-${agentId}`,
+    input: {
+      ...(decision.agentId && { agentId: decision.agentId }),
+      message: decision.message,
+    },
+  })
+  return new Agent({ model, tools, printer: false, id: agentId })
+}
+
 describe('Multi-agent interrupts: round-trip', () => {
   it('Graph: agent interrupts, resumes via top-level SessionManager', async () => {
     const storage = new MockSnapshotStorage()
@@ -132,6 +155,67 @@ describe('Multi-agent interrupts: round-trip', () => {
     const finalResult = await swarm2.invoke([response])
 
     expect(finalResult.status).toBe(Status.COMPLETED)
+  })
+
+  it('Swarm: repetitive handoff detection does not swallow a session-restored interrupt response', async () => {
+    const storage = new MockSnapshotStorage()
+    const tool = interruptingTool('confirmTool', 'confirm_b', 'resumed')
+    const agentA1 = createStructuredOutputAgent('a', { agentId: 'b', message: 'to b' })
+    const agentB1 = new Agent({
+      model: new MockMessageModel()
+        .addTurn({
+          type: 'toolUseBlock',
+          name: 'strands_structured_output',
+          toolUseId: 'handoff-b',
+          input: { agentId: 'a', message: 'to a' },
+        })
+        .addTurn({ type: 'toolUseBlock', name: 'confirmTool', toolUseId: 'tool-int', input: {} }),
+      tools: [tool],
+      printer: false,
+      id: 'b',
+    })
+    const agentC1 = createStructuredOutputAgent('c', { message: 'unused' })
+    const swarm1 = new Swarm({
+      id: 'my-swarm',
+      nodes: [agentA1, agentB1, agentC1],
+      start: 'a',
+      repetitiveHandoffDetectionWindow: 4,
+      repetitiveHandoffMinUniqueAgents: 3,
+      sessionManager: makeSessionManager(storage),
+    })
+
+    const interruptedResult = await swarm1.invoke('start')
+
+    expect(interruptedResult.status).toBe(Status.INTERRUPTED)
+    expect(interruptedResult.results.map((result) => [result.nodeId, result.status])).toEqual([
+      ['a', Status.COMPLETED],
+      ['b', Status.COMPLETED],
+      ['a', Status.COMPLETED],
+      ['b', Status.INTERRUPTED],
+    ])
+
+    const agentA2 = createStructuredOutputAgent('a', { agentId: 'b', message: 'to b' })
+    const agentB2 = createStructuredOutputAgent('b', { message: 'all done' }, [tool])
+    const agentC2 = createStructuredOutputAgent('c', { message: 'unused' })
+    const swarm2 = new Swarm({
+      id: 'my-swarm',
+      nodes: [agentA2, agentB2, agentC2],
+      start: 'a',
+      repetitiveHandoffDetectionWindow: 4,
+      repetitiveHandoffMinUniqueAgents: 3,
+      sessionManager: makeSessionManager(storage),
+    })
+    const response = new InterruptResponseContent({
+      interruptId: interruptedResult.interrupts![0]!.id,
+      response: 'yes',
+    })
+
+    const finalResult = await swarm2.invoke([response])
+
+    expect(finalResult.status).toBe(Status.COMPLETED)
+    expect(finalResult.error).toBeUndefined()
+    expect(finalResult.interrupts).toBeUndefined()
+    expect(finalResult.results.map((result) => result.nodeId)).toEqual(['a', 'b', 'a', 'b'])
   })
 
   it('Graph parallel: interrupt on one branch lets in-flight sibling finish', async () => {

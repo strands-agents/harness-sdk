@@ -45,7 +45,7 @@ import { Card, CardGrid } from '@astrojs/starlight/components';
 
 ## Snippet Inclusion
 
-Code lives in runnable source files; the MDX page references named regions of those files. **Imports go in a sibling `*_imports.ts` file**; the body lives in the main `.ts` file. The MDX block pulls both — imports first, then body — so a single rendered code block shows imports + usage.
+Code lives in runnable source files; the MDX page references named regions of those files. Snippet source files live alongside the page that includes them, with the same base name (`agent-loop.mdx` pulls from `agent-loop.ts`). **Imports go in a sibling `*_imports.ts` file**; the body lives in the main `.ts` file. The MDX block pulls both — imports first, then body — so a single rendered code block shows imports + usage.
 
 Snippet names use `snake_case` (build-time identifiers, not source code) and follow `<feature>_<variant>` for bodies, plus `_imports` suffix for the matching import set.
 
@@ -145,13 +145,16 @@ Optional fields (validated by Zod in `site/src/content.config.ts`):
 | `languages` | `string \| string[]` | Feature only available in specific SDK language(s) |
 | `community` | `boolean` | Marks page as community-contributed |
 | `experimental` | `boolean` | Marks feature as experimental |
-| `integrationType` | enum | `model-provider`, `tool`, `session-manager`, `integration`, `plugin`, `agent-extension` |
+| `externalDocs` | object | Generated provenance and publication status for imported docs; authors must not set it |
+| `integrationType` | enum | `model-provider`, `tool`, `session-manager`, `memory-store`, `storage`, `integration`, `plugin`, `observability`, `agent-extension`, `intervention` |
 | `category` | `string` | For TypeScript API doc grouping |
 | `redirectFrom` | `string[]` | Old slugs that should redirect here |
 | `tags` | `Tag[]` | From `site/src/config/tags.yml`; drives the build-time "Related pages" block |
 | `sourceLinks` | `{repo, path}[]` | Pointers to SDK implementation; rendered on headless surfaces (index.md, llms-full.txt) |
 
-These render contextual banners automatically (experimental → community → languages). Anything not in this table is silently stripped by Zod at build time, so don't invent fields like `contentType` or `lastReviewed` — add them to the schema first if they'd be useful.
+The relevant fields render contextual banners automatically (experimental → external preview → community → languages); community pages suppress the separate language banner. Anything not in this table is silently stripped by Zod at build time, so don't invent fields like `contentType` or `lastReviewed` — add them to the schema first if they'd be useful.
+
+Do not set `languages: [python, typescript]` — listing all supported languages is redundant. Omit the field when a feature is available in all languages.
 
 ## TypeScript Snippet Scoping
 
@@ -192,6 +195,16 @@ Link to generated API docs without fragile relative paths:
 ## Line Length
 
 90 characters maximum for files under `site/src/content/docs/`. Template literal contents in snippet files must also stay under 90 characters. Prettier does not enforce this automatically.
+
+## Validating Changes
+
+Run from `site/`:
+
+- `npm run typecheck:snippets` type-checks snippet files under `src/content/docs/`
+- `npm run typecheck` type-checks other TypeScript
+- `npm run format` applies Prettier formatting to doc snippet files
+- `npm test` runs the site's unit tests
+- `npm run dev` previews at http://localhost:4321/ to confirm snippets render
 
 ## Gotchas
 

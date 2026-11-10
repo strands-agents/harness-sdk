@@ -142,9 +142,12 @@ def normalize_schema(schema: dict[str, Any], *, _depth: int = 0) -> dict[str, An
 
     # Process properties recursively
     if "properties" in normalized:
-        properties = normalized["properties"]
-        for prop_name, prop_def in properties.items():
-            normalized["properties"][prop_name] = _normalize_property(prop_name, prop_def, _depth=_depth)
+        # Rebuilt rather than written in place: `schema.copy()` is shallow, so
+        # `normalized["properties"]` is still the caller's dictionary.
+        normalized["properties"] = {
+            prop_name: _normalize_property(prop_name, prop_def, _depth=_depth)
+            for prop_name, prop_def in normalized["properties"].items()
+        }
 
     return normalized
 
@@ -165,13 +168,15 @@ def normalize_tool_spec(tool_spec: ToolSpec) -> ToolSpec:
 
     # Handle inputSchema
     if "inputSchema" in normalized:
-        if isinstance(normalized["inputSchema"], dict):
-            if "json" in normalized["inputSchema"]:
-                # Schema is already in correct format, just normalize inner schema
-                normalized["inputSchema"]["json"] = normalize_schema(normalized["inputSchema"]["json"])
+        input_schema = normalized["inputSchema"]
+        if isinstance(input_schema, dict):
+            if "json" in input_schema:
+                # Schema is already in correct format, just normalize inner schema. The nested
+                # inputSchema dict is rebuilt, not written into, because `tool_spec.copy()` is shallow.
+                normalized["inputSchema"] = {**input_schema, "json": normalize_schema(input_schema["json"])}
             else:
                 # Convert direct schema to proper format
-                normalized["inputSchema"] = {"json": normalize_schema(normalized["inputSchema"])}
+                normalized["inputSchema"] = {"json": normalize_schema(input_schema)}
 
     return normalized
 

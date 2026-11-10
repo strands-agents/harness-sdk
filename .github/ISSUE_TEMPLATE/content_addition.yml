@@ -8,6 +8,10 @@ body:
     attributes:
       value: |
         Thanks for suggesting new content for our documentation!
+
+        **Adding a community integration?** Use the integrations submission flow instead —
+        one YAML file plus the Integration submission PR template. See the guide:
+        https://strandsagents.com/docs/integrations/get-featured/
   
   - type: textarea
     id: proposed-content

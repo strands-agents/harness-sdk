@@ -1,0 +1,9 @@
+name: strands-telegram-listener
+description: Real-time Telegram message listener for Strands Agents that monitors incoming messages and events, enabling agents to react and reply automatically.
+integrationType: tool
+languages:
+  python:
+    package: strands-telegram-listener
+github: https://github.com/eraykeskinmac/strands-telegram-listener
+docsPage: docs/integrations/tools/strands-telegram-listener
+addedDate: 2025-12-05

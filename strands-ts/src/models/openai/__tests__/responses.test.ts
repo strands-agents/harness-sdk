@@ -1,11 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import OpenAI from 'openai'
+import OpenAI, { APIUserAbortError } from 'openai'
 import { isNode } from '../../../__fixtures__/environment.js'
 import { OpenAIModel } from '../index.js'
-import { ContextWindowOverflowError, ModelThrottledError } from '../../../errors.js'
-import { collectIterator } from '../../../__fixtures__/model-test-helpers.js'
+import { ContextWindowOverflowError, MaxTokensError, ModelThrottledError } from '../../../errors.js'
+import { collectGenerator, collectIterator } from '../../../__fixtures__/model-test-helpers.js'
 import { Message, TextBlock, ToolUseBlock, ToolResultBlock } from '../../../types/messages.js'
 import { ImageBlock, DocumentBlock } from '../../../types/media.js'
+import { CitationsBlock } from '../../../types/citations.js'
 import { StateStore } from '../../../state-store.js'
 import { logger } from '../../../logging/logger.js'
 
@@ -25,11 +26,13 @@ function createMockClient(streamGenerator: () => AsyncGenerator<any>, capture: {
 }
 
 // Mock the OpenAI SDK
-vi.mock('openai', () => {
+vi.mock('openai', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('openai')>()
   const mockConstructor = vi.fn(function (this: any) {
     return {}
   })
   return {
+    ...actual,
     default: mockConstructor,
   }
 })
@@ -93,6 +96,14 @@ describe("OpenAIModel (api: 'responses')", () => {
       expect(model.stateful).toBe(true)
     })
 
+    it('is declared on info', () => {
+      const stateful = new OpenAIModel({ api: 'responses', client: {} as OpenAI, stateful: true })
+      const stateless = new OpenAIModel({ api: 'responses', client: {} as OpenAI })
+
+      expect(stateful.modelInfo.capabilities?.stateful).toBe(true)
+      expect(stateless.modelInfo.capabilities?.stateful).toBe(false)
+    })
+
     it('is construction-only and cannot be changed via updateConfig', () => {
       const model = new OpenAIModel({ api: 'responses', client: {} as OpenAI, stateful: false })
       const warnSpy = vi.spyOn(logger, 'warn')
@@ -146,6 +157,53 @@ describe("OpenAIModel (api: 'responses')", () => {
       new OpenAIModel({ api: 'responses', client: {} as OpenAI, params: { reasoning: { summary: 'auto' } } })
       expect(warnSpy).not.toHaveBeenCalled()
       warnSpy.mockRestore()
+    })
+  })
+
+  describe('cancellation', () => {
+    // Guards against provider work continuing after agent cancellation (#3915).
+    it('stops an in-flight responses producer when the signal aborts', async () => {
+      let producedTokens = 0
+      let producerStopped = false
+      let resolveFirstToken!: () => void
+      const firstTokenProduced = new Promise<void>((resolve) => {
+        resolveFirstToken = resolve
+      })
+      const create = vi.fn(async (_request: unknown, requestOptions?: unknown): Promise<AsyncGenerator<unknown>> => {
+        const signal = (requestOptions as { signal?: AbortSignal } | undefined)?.signal
+        return (async function* (): AsyncGenerator<unknown> {
+          yield { type: 'response.created', response: { id: 'response-1' } }
+          while (producedTokens < 20) {
+            if (signal?.aborted) {
+              producerStopped = true
+              return
+            }
+            producedTokens += 1
+            if (producedTokens === 1) {
+              resolveFirstToken()
+            }
+            yield { type: 'response.output_text.delta', delta: 'token ' }
+            await new Promise<void>((resolve) => globalThis.setTimeout(resolve, 1))
+          }
+          yield { type: 'response.completed', response: {} }
+        })()
+      })
+      const client = { responses: { create } } as unknown as OpenAI
+      const controller = new AbortController()
+      const model = new OpenAIModel({ api: 'responses', client })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+
+      const streamResult = collectIterator(model.stream(messages, { cancelSignal: controller.signal }))
+      await firstTokenProduced
+      const tokensAtCancel = producedTokens
+      controller.abort()
+      await expect(streamResult).rejects.toBeInstanceOf(APIUserAbortError)
+
+      expect(create).toHaveBeenCalledWith(expect.anything(), { signal: controller.signal })
+      expect({ producedTokens, producerStopped }).toEqual({
+        producedTokens: tokensAtCancel,
+        producerStopped: true,
+      })
     })
   })
 
@@ -239,6 +297,66 @@ describe("OpenAIModel (api: 'responses')", () => {
       expect(req.temperature).toBe(0.3)
       expect(req.max_output_tokens).toBe(512)
       expect(req.top_p).toBe(0.8)
+    })
+
+    it('maps cacheConfig.cacheKey to prompt_cache_key', async () => {
+      const req = await runOnce({ cacheConfig: { cacheKey: 'tenant-42' } })
+      expect(req.prompt_cache_key).toBe('tenant-42')
+    })
+
+    it('omits prompt_cache_key when cacheConfig is unset', async () => {
+      const req = await runOnce()
+      expect(req.prompt_cache_key).toBeUndefined()
+    })
+
+    it('lets an explicit prompt_cache_key in params win over cacheConfig', async () => {
+      const req = await runOnce({ params: { prompt_cache_key: 'explicit' }, cacheConfig: { cacheKey: 'from-config' } })
+      expect(req.prompt_cache_key).toBe('explicit')
+    })
+
+    it('derives prompt_cache_key from the agent metadata session when cacheKey is unset', async () => {
+      const req = await runOnce({ cacheConfig: {} }, [mkUserMessage()], { agentMetadata: { sessionId: 's1' } })
+      expect(req.prompt_cache_key).toBe('strands-s1')
+    })
+
+    it('lets a configured cacheKey win over the agent metadata session', async () => {
+      const req = await runOnce({ cacheConfig: { cacheKey: 'tenant-42' } }, [mkUserMessage()], {
+        agentMetadata: { sessionId: 's1' },
+      })
+      expect(req.prompt_cache_key).toBe('tenant-42')
+    })
+
+    it('treats a false cacheKey as an opt-out even with an agent metadata session', async () => {
+      const req = await runOnce({ cacheConfig: { cacheKey: false } }, [mkUserMessage()], {
+        agentMetadata: { sessionId: 's1' },
+      })
+      expect(req.prompt_cache_key).toBeUndefined()
+    })
+
+    it('omits prompt_cache_key when the agent metadata carries no session', async () => {
+      const req = await runOnce({ cacheConfig: {} }, [mkUserMessage()], { agentMetadata: {} })
+      expect(req.prompt_cache_key).toBeUndefined()
+    })
+
+    it.each(['24h', 'in_memory'])(
+      'maps retention-literal cacheConfig.ttl %s to prompt_cache_retention',
+      async (ttl) => {
+        const req = await runOnce({ cacheConfig: { ttl } })
+        expect(req.prompt_cache_retention).toBe(ttl)
+      }
+    )
+
+    it('ignores a non-retention cacheConfig.ttl and warns', async () => {
+      const warnSpy = vi.spyOn(logger, 'warn')
+      const req = await runOnce({ cacheConfig: { ttl: '5m' } })
+      expect(req.prompt_cache_retention).toBeUndefined()
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('not an openai retention value'))
+      warnSpy.mockRestore()
+    })
+
+    it('lets an explicit prompt_cache_retention in params win over cacheConfig', async () => {
+      const req = await runOnce({ params: { prompt_cache_retention: '24h' }, cacheConfig: { ttl: 'in_memory' } })
+      expect(req.prompt_cache_retention).toBe('24h')
     })
 
     it('passes through extra params fields to the request', async () => {
@@ -386,9 +504,107 @@ describe("OpenAIModel (api: 'responses')", () => {
       expect(typeof out.output).toBe('string')
       expect(out.output).toBe('pong')
     })
+
+    it('serializes assistant history as a string EasyInputMessage', async () => {
+      // A bare `{ role: 'assistant', content: [output_text] }` is not a valid
+      // Responses input item and is rejected by strict backends (Bedrock Mantle).
+      // See https://github.com/strands-agents/harness-sdk/issues/3388
+      const messages = [
+        new Message({ role: 'user', content: [new TextBlock('What is 2+2?')] }),
+        new Message({ role: 'assistant', content: [new TextBlock('4')] }),
+        new Message({ role: 'user', content: [new TextBlock('What about 3+3?')] }),
+      ]
+      const req = await runOnce({}, messages)
+      expect(req.input[1]).toEqual({ role: 'assistant', content: '4' })
+      expect(req.input[0]).toEqual({ role: 'user', content: [{ type: 'input_text', text: 'What is 2+2?' }] })
+      expect(req.input[2]).toEqual({ role: 'user', content: [{ type: 'input_text', text: 'What about 3+3?' }] })
+    })
+
+    it('joins multiple assistant text blocks with newlines', async () => {
+      const messages = [
+        new Message({ role: 'user', content: [new TextBlock('list two words')] }),
+        new Message({ role: 'assistant', content: [new TextBlock('First.'), new TextBlock('Second.')] }),
+        new Message({ role: 'user', content: [new TextBlock('thanks')] }),
+      ]
+      const req = await runOnce({}, messages)
+      expect(req.input[1]).toEqual({ role: 'assistant', content: 'First.\nSecond.' })
+    })
+
+    it('drops non-text assistant history content with a warning', async () => {
+      const warnSpy = vi.spyOn(logger, 'warn')
+      const messages = [
+        new Message({ role: 'user', content: [new TextBlock('draw something')] }),
+        new Message({
+          role: 'assistant',
+          content: [
+            new TextBlock('Here it is.'),
+            new ImageBlock({ format: 'png', source: { bytes: new Uint8Array([1, 2, 3]) } }),
+          ],
+        }),
+        new Message({ role: 'user', content: [new TextBlock('nice')] }),
+      ]
+      const req = await runOnce({}, messages)
+      expect(req.input[1]).toEqual({ role: 'assistant', content: 'Here it is.' })
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('no valid responses api input shape'))
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('content_type=<input_image>'))
+      warnSpy.mockRestore()
+    })
+
+    it('omits an assistant history turn whose content is entirely non-text', async () => {
+      const warnSpy = vi.spyOn(logger, 'warn')
+      const messages = [
+        new Message({ role: 'user', content: [new TextBlock('draw something')] }),
+        new Message({
+          role: 'assistant',
+          content: [new ImageBlock({ format: 'png', source: { bytes: new Uint8Array([1, 2, 3]) } })],
+        }),
+        new Message({ role: 'user', content: [new TextBlock('nice')] }),
+      ]
+      const req = await runOnce({}, messages)
+      expect(req.input.filter((i: any) => i.role === 'assistant')).toEqual([])
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('content_type=<input_image>'))
+      warnSpy.mockRestore()
+    })
+
+    it('serializes user-role citations content as input_text', async () => {
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [
+            new CitationsBlock({
+              citations: [
+                {
+                  location: { type: 'documentChar', documentIndex: 0, start: 0, end: 10 },
+                  source: 'doc-0',
+                  sourceContent: [{ text: 'source' }],
+                  title: 'Test',
+                },
+              ],
+              content: [{ text: 'quoted passage' }],
+            }),
+          ],
+        }),
+      ]
+      const req = await runOnce({}, messages)
+      expect(req.input[0]).toEqual({ role: 'user', content: [{ type: 'input_text', text: 'quoted passage' }] })
+    })
   })
 
   describe('stream event mapping', () => {
+    it('resolves stateful once per stream, not once per event', async () => {
+      const client = createMockClient(async function* () {
+        yield { type: 'response.created', response: { id: 'resp_abc' } }
+        for (let i = 0; i < 50; i++) yield { type: 'response.output_text.delta', delta: 'x' }
+        yield { type: 'response.completed', response: {} }
+      })
+      const model = new OpenAIModel({ api: 'responses', client, stateful: true })
+      const getConfig = vi.spyOn(model, 'getConfig')
+
+      await collectIterator(model.stream([new Message({ role: 'user', content: [new TextBlock('hi')] })]))
+
+      expect(getConfig.mock.calls.length).toBeLessThan(10)
+    })
+
     it('captures responseId on response.created when stateful', async () => {
       const modelState = new StateStore()
       const client = createMockClient(async function* () {
@@ -524,6 +740,73 @@ describe("OpenAIModel (api: 'responses')", () => {
       expect(metadata?.usage).toEqual({ inputTokens: 10, outputTokens: 5, totalTokens: 15 })
     })
 
+    it('maps response.incomplete with content_filter to stopReason=contentFiltered', async () => {
+      // #5740
+      const client = createMockClient(async function* () {
+        yield { type: 'response.created', response: { id: 'r' } }
+        yield { type: 'response.output_text.delta', delta: 'partial' }
+        yield { type: 'response.incomplete', response: { incomplete_details: { reason: 'content_filter' } } }
+      })
+      const model = new OpenAIModel({ api: 'responses', client })
+      const events = await collectIterator(model.stream([new Message({ role: 'user', content: [new TextBlock('x')] })]))
+      expect(events).toEqual([
+        { type: 'modelMessageStartEvent', role: 'assistant' },
+        { type: 'modelContentBlockStartEvent' },
+        { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: 'partial' } },
+        { type: 'modelContentBlockStopEvent' },
+        { type: 'modelMessageStopEvent', stopReason: 'contentFiltered' },
+      ])
+    })
+
+    describe('when a function call is in flight at response.incomplete', () => {
+      // #5740
+      const truncatedCall = (reason: string) =>
+        createMockClient(async function* () {
+          yield { type: 'response.created', response: { id: 'r' } }
+          yield {
+            type: 'response.output_item.added',
+            item: { type: 'function_call', id: 'item_1', call_id: 'call_1', name: 'write_file' },
+          }
+          yield {
+            type: 'response.function_call_arguments.delta',
+            item_id: 'item_1',
+            delta: '{"path": "notes.md", "content": "Lorem',
+          }
+          yield { type: 'response.incomplete', response: { incomplete_details: { reason } } }
+        })
+      const toolCallEvents = [
+        { type: 'modelMessageStartEvent', role: 'assistant' },
+        {
+          type: 'modelContentBlockStartEvent',
+          start: { type: 'toolUseStart', name: 'write_file', toolUseId: 'call_1' },
+        },
+        {
+          type: 'modelContentBlockDeltaEvent',
+          delta: { type: 'toolUseInputDelta', input: '{"path": "notes.md", "content": "Lorem' },
+        },
+        { type: 'modelContentBlockStopEvent' },
+      ]
+      const messages = [new Message({ role: 'user', content: [new TextBlock('x')] })]
+
+      it('reports maxTokens instead of toolUse for max_output_tokens', async () => {
+        const model = new OpenAIModel({ api: 'responses', client: truncatedCall('max_output_tokens') })
+        const events = await collectIterator(model.stream(messages))
+        expect(events).toEqual([...toolCallEvents, { type: 'modelMessageStopEvent', stopReason: 'maxTokens' }])
+      })
+
+      it('throws MaxTokensError from streamAggregated for max_output_tokens', async () => {
+        const model = new OpenAIModel({ api: 'responses', client: truncatedCall('max_output_tokens') })
+        await expect(collectGenerator(model.streamAggregated(messages))).rejects.toThrow(MaxTokensError)
+      })
+
+      it('keeps toolUse for content_filter', async () => {
+        // contentFiltered here would leave an orphaned toolUse in history; TS has no repair for that yet.
+        const model = new OpenAIModel({ api: 'responses', client: truncatedCall('content_filter') })
+        const events = await collectIterator(model.stream(messages))
+        expect(events).toEqual([...toolCallEvents, { type: 'modelMessageStopEvent', stopReason: 'toolUse' }])
+      })
+    })
+
     it('plumbs prompt-cache reads (input_tokens_details.cached_tokens) into cacheReadInputTokens', async () => {
       const client = createMockClient(async function* () {
         yield { type: 'response.created', response: { id: 'r' } }
@@ -571,6 +854,61 @@ describe("OpenAIModel (api: 'responses')", () => {
       const metadata = events.find((e: any) => e.type === 'modelMetadataEvent') as any
       expect(metadata?.usage).toEqual({ inputTokens: 1553, outputTokens: 42, totalTokens: 1595 })
       expect(metadata?.usage).not.toHaveProperty('cacheReadInputTokens')
+    })
+
+    it('plumbs prompt-cache writes (input_tokens_details.cache_write_tokens) into cacheWriteInputTokens', async () => {
+      const client = createMockClient(async function* () {
+        yield { type: 'response.created', response: { id: 'r' } }
+        yield { type: 'response.output_text.delta', delta: 'hi' }
+        yield {
+          type: 'response.completed',
+          response: {
+            usage: {
+              input_tokens: 1553,
+              output_tokens: 42,
+              total_tokens: 1595,
+              input_tokens_details: { cached_tokens: 873, cache_write_tokens: 40 },
+            },
+          },
+        }
+      })
+      const model = new OpenAIModel({ api: 'responses', client })
+      const events = await collectIterator(model.stream([new Message({ role: 'user', content: [new TextBlock('x')] })]))
+      const metadata = events.find((e: any) => e.type === 'modelMetadataEvent') as any
+      expect(metadata?.usage).toEqual({
+        inputTokens: 1553,
+        outputTokens: 42,
+        totalTokens: 1595,
+        cacheReadInputTokens: 873,
+        cacheWriteInputTokens: 40,
+      })
+    })
+
+    it('omits cacheWriteInputTokens when cache_write_tokens is 0 or absent', async () => {
+      const client = createMockClient(async function* () {
+        yield { type: 'response.created', response: { id: 'r' } }
+        yield {
+          type: 'response.completed',
+          response: {
+            usage: {
+              input_tokens: 1553,
+              output_tokens: 42,
+              total_tokens: 1595,
+              input_tokens_details: { cached_tokens: 873, cache_write_tokens: 0 },
+            },
+          },
+        }
+      })
+      const model = new OpenAIModel({ api: 'responses', client })
+      const events = await collectIterator(model.stream([new Message({ role: 'user', content: [new TextBlock('x')] })]))
+      const metadata = events.find((e: any) => e.type === 'modelMetadataEvent') as any
+      expect(metadata?.usage).toEqual({
+        inputTokens: 1553,
+        outputTokens: 42,
+        totalTokens: 1595,
+        cacheReadInputTokens: 873,
+      })
+      expect(metadata?.usage).not.toHaveProperty('cacheWriteInputTokens')
     })
 
     it('emits URL citation delta from response.output_text.annotation.added', async () => {
@@ -730,6 +1068,77 @@ describe("OpenAIModel (api: 'responses')", () => {
   })
 
   describe('error mapping', () => {
+    it('throws response.failed instead of finalizing an empty successful response', async () => {
+      const client = createMockClient(async function* () {
+        yield { type: 'response.created', response: { id: 'r' } }
+        yield {
+          type: 'response.failed',
+          response: {
+            error: {
+              code: 'server_error',
+              message: 'The model failed while processing the request.',
+            },
+          },
+        }
+      })
+      const model = new OpenAIModel({ api: 'responses', client })
+
+      await expect(
+        collectIterator(model.stream([new Message({ role: 'user', content: [new TextBlock('x')] })]))
+      ).rejects.toMatchObject({
+        message: 'The model failed while processing the request.',
+        code: 'server_error',
+      })
+    })
+
+    it('wraps a response.failed context limit as ContextWindowOverflowError', async () => {
+      const client = createMockClient(async function* () {
+        yield {
+          type: 'response.failed',
+          response: {
+            error: {
+              code: 'invalid_prompt',
+              message: 'prompt tokens (320666) exceed customer model maximum (278528) for model-id',
+            },
+          },
+        }
+      })
+      const model = new OpenAIModel({ api: 'responses', client })
+
+      await expect(
+        collectIterator(model.stream([new Message({ role: 'user', content: [new TextBlock('x')] })]))
+      ).rejects.toBeInstanceOf(ContextWindowOverflowError)
+    })
+
+    it('throws the fallback message when response.failed has no error details', async () => {
+      const client = createMockClient(async function* () {
+        yield {
+          type: 'response.failed',
+          response: { error: null },
+        }
+      })
+      const model = new OpenAIModel({ api: 'responses', client })
+
+      await expect(
+        collectIterator(model.stream([new Message({ role: 'user', content: [new TextBlock('x')] })]))
+      ).rejects.toThrow('OpenAI Responses API response failed')
+    })
+
+    it('maps a Responses error event through the existing error classifier', async () => {
+      const client = createMockClient(async function* () {
+        yield {
+          type: 'error',
+          code: 'rate_limit_exceeded',
+          message: 'Rate limit exceeded while streaming.',
+        }
+      })
+      const model = new OpenAIModel({ api: 'responses', client })
+
+      await expect(
+        collectIterator(model.stream([new Message({ role: 'user', content: [new TextBlock('x')] })]))
+      ).rejects.toBeInstanceOf(ModelThrottledError)
+    })
+
     it('wraps 429 as ModelThrottledError', async () => {
       const client: any = {
         responses: {

@@ -1,0 +1,10 @@
+name: OpenRouter
+description: OpenRouter's catalog of hundreds of models behind one API key, accessed through the Strands Agents OpenAI-compatibility layer.
+integrationType: model-provider
+maintainedBy: strands
+languages:
+  python: {}
+  typescript: {}
+github: https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/openai.py
+docsPage: docs/integrations/model-providers/openrouter
+addedDate: 2026-08-14

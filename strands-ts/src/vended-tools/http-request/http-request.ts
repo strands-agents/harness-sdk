@@ -44,9 +44,9 @@ export const httpRequest = tool({
   callback: async (input, context) => {
     const { method, url, headers, body, timeout = 30 } = input
 
-    // Abort on timeout or agent cancellation, whichever comes first
+    // Abort on timeout or tool-execution cancellation, whichever comes first
     const timeoutSignal = AbortSignal.timeout(timeout * 1000)
-    const signal = context ? AbortSignal.any([timeoutSignal, context.agent.cancelSignal]) : timeoutSignal
+    const signal = context ? AbortSignal.any([timeoutSignal, context.cancelSignal]) : timeoutSignal
 
     try {
       const fetchOptions: RequestInit = { method, signal }

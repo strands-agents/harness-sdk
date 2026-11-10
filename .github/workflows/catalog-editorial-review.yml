@@ -1,0 +1,513 @@
+name: "Catalog: Editorial Review Flag"
+
+# No paths filter: a push that removes every catalog change must still run so
+# the stale label/comment from an earlier push gets cleared. The script
+# early-exits cheaply when the PR touches no catalog files. The same job also
+# keeps the `area-catalog` label in sync with whether the PR touches the
+# catalog at all.
+on:
+  pull_request_target:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+# One run per PR: a rapid follow-up push cancels the in-flight run so two runs
+# can't interleave label/comment mutations. Cancellation isn't instantaneous,
+# so the script additionally re-checks the head SHA before mutating anything.
+concurrency:
+  group: catalog-editorial-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+# pull_request_target runs in the base-repo context so the job can label and
+# comment on fork PRs. It never checks out or executes PR head code — the
+# diff and file contents are read via the REST API only.
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  flag-editorial-fields:
+    name: Flag editorial catalog fields
+    runs-on: strands-agents_ubuntu-latest_4-core
+    steps:
+      # The review script parses entry YAML with js-yaml, which github-script
+      # doesn't bundle. Installed from the registry into the (empty) workspace
+      # — no checkout, so the "never checks out PR code" property holds — with
+      # scripts disabled and the version pinned.
+      - name: Install js-yaml for the review script
+        run: npm install --no-save --ignore-scripts --no-audit --no-fund js-yaml@4.1.0
+
+      - name: Flag featured/badges and unverified package provenance
+        uses: actions/github-script@v9
+        env:
+          EDITORIAL_LABEL: 'catalog: editorial-review'
+          # Deterministic "this PR touches the catalog" marker, independent of
+          # author role and of which fields changed.
+          AREA_LABEL: 'area-catalog'
+          # Roles that may grant featured/badges. Matches the collaborator
+          # permission model used by bot-pr-review-gate.yml.
+          MAINTAINER_ROLES: 'write,maintain,admin'
+        with:
+          script: |
+            // `featured` and `badges` on catalog entries are granted by the
+            // Strands team. When a PR from someone without write access adds,
+            // changes, or removes them, this job applies a label and a sticky
+            // comment so reviewers notice — it never fails, so it is an
+            // indicator, not a merge gate.
+            //
+            // The same sticky comment also carries a package-provenance
+            // section: for each `package:` in an entry a PR touches, the
+            // package's registry metadata (PyPI/npm — data-only fetches, no
+            // PR code is checked out or executed) must declare the same
+            // github owner/repo the entry links, or reviewers are told to
+            // verify ownership manually.
+            //
+            // Detection PARSES each changed entry's FULL content at the PR
+            // head and at the base (contents API, data-only) with js-yaml and
+            // compares the parsed values. Patch-line or text regexes are
+            // trivially evaded by YAML surface variation (flow style, `!!bool`
+            // tags, anchors, quoted/escaped keys); the parsed document is not.
+            // The diff (listFiles) is used only as a cheap pre-filter for
+            // which catalog files changed.
+
+            // Installed by the preceding step into the workspace root;
+            // github-script doesn't resolve bare specifiers from there.
+            const yaml = require(`${process.env.GITHUB_WORKSPACE}/node_modules/js-yaml`);
+
+            const pr = context.payload.pull_request;
+            const label = process.env.EDITORIAL_LABEL;
+            const areaLabel = process.env.AREA_LABEL;
+            const marker = '<!-- catalog-editorial-review -->';
+            const maintainerRoles = process.env.MAINTAINER_ROLES
+              .split(',').map(r => r.trim()).filter(Boolean);
+
+            // A cancelled-but-still-racing older run must not clobber the
+            // flags computed for a newer push: re-fetch the PR immediately
+            // before any label/comment mutation and bail if the head moved.
+            async function headStillCurrent() {
+              const { data } = await github.rest.pulls.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: pr.number,
+              });
+              if (data.head.sha === pr.head.sha) return true;
+              console.log(`run head=${pr.head.sha}, current head=${data.head.sha} | head moved — skipping mutations`);
+              return false;
+            }
+
+            async function findStickyComment() {
+              const comments = await github.paginate(github.rest.issues.listComments, {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+              });
+              return comments.find(c => c.body && c.body.includes(marker));
+            }
+
+            // addLabels 422s on a label the repo doesn't have, so every
+            // label is created on first use. A 422 from createLabel means a
+            // concurrent run created it first — the label exists, move on.
+            async function ensureLabel({ name, color, description }) {
+              try {
+                await github.rest.issues.getLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  name,
+                });
+                return;
+              } catch (error) {
+                if (error.status !== 404) throw error;
+              }
+              try {
+                await github.rest.issues.createLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  name,
+                  color,
+                  description,
+                });
+              } catch (error) {
+                if (error.status !== 422) throw error;
+              }
+            }
+
+            // Make the PR's label state match `shouldHave`. Removing a label
+            // the PR doesn't carry 404s — that is already the desired state.
+            // Any other failure is logged, never thrown: a label problem must
+            // not block the sticky comment, which is the primary signal.
+            async function syncLabel(name, shouldHave, meta) {
+              try {
+                if (shouldHave) {
+                  await ensureLabel({ name, ...meta });
+                  await github.rest.issues.addLabels({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    issue_number: pr.number,
+                    labels: [name],
+                  });
+                  return;
+                }
+                await github.rest.issues.removeLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: pr.number,
+                  name,
+                });
+              } catch (error) {
+                if (!shouldHave && error.status === 404) return;
+                console.log(`Syncing label "${name}" failed (${error.message}) — continuing.`);
+              }
+            }
+
+            const areaLabelMeta = {
+              color: '0e8a16',
+              // Keep in sync with .github/labelers/area.yml. GitHub caps
+              // label descriptions at 100 characters.
+              description: 'Integrations catalog: entries under site/src/content/catalog, submission process, catalog site pages',
+            };
+            const editorialLabelMeta = {
+              color: 'fbca04',
+              description: 'Editorial catalog fields changed by a non-maintainer',
+            };
+
+            // A previous push may have flagged this PR; clear the stale
+            // label and comment so reviewers aren't misled.
+            async function clearStaleFlag() {
+              if (!(await headStillCurrent())) return;
+              await syncLabel(label, false);
+              const stale = await findStickyComment();
+              if (stale) {
+                await github.rest.issues.updateComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: stale.id,
+                  body: [
+                    marker,
+                    '### Catalog review flags',
+                    '',
+                    '~~Resolved~~ — a later push removed the flagged changes, so this no longer applies.',
+                  ].join('\n'),
+                });
+              }
+            }
+
+            // --- Which catalog entries did the PR touch? -------------------
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pr.number,
+            });
+
+            const catalogFiles = files.filter(f =>
+              f.filename.startsWith('site/src/content/catalog/') && /\.ya?ml$/.test(f.filename));
+
+            // --- Area label: does the PR touch the catalog at all? --------
+            // `area-catalog` is the deterministic "touches the catalog"
+            // marker (the team dashboard consumes it to build the catalog
+            // editorial-review queue). It is distinct from EDITORIAL_LABEL,
+            // which flags specific editorial-field changes by non-maintainers
+            // — so it is applied here, before the author-role and
+            // editorial-state checks below, for every author. A rename out
+            // of the catalog counts too (previous_filename), so the label
+            // is set on any PR a catalog reviewer should see; it is removed
+            // when a later push drops every catalog change. Label failures
+            // are logged, never thrown — the editorial logic below must
+            // still run.
+            const inCatalog = p => typeof p === 'string' && p.startsWith('site/src/content/catalog/');
+            const touchesCatalog = files.some(f => inCatalog(f.filename) || inCatalog(f.previous_filename));
+            if (await headStillCurrent()) {
+              await syncLabel(areaLabel, touchesCatalog, areaLabelMeta);
+            }
+
+            if (catalogFiles.length === 0) {
+              console.log('PR touches no catalog files — clearing any stale flag.');
+              await clearStaleFlag();
+              return;
+            }
+
+            // Raw file text at a ref; '' when the file doesn't exist there
+            // (new file at base, deleted file at head).
+            async function fileText(path, ref) {
+              try {
+                const res = await github.rest.repos.getContent({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  path,
+                  ref,
+                  mediaType: { format: 'raw' },
+                });
+                return typeof res.data === 'string' ? res.data : '';
+              } catch (error) {
+                if (error.status === 404) return '';
+                throw error;
+              }
+            }
+
+            // Parse one version of an entry. null means the text is YAML that
+            // js-yaml rejects — callers must fail toward flagging, never away
+            // from it, so a submitter can't clear a flag by making the file
+            // unparseable (the build gate rejects it later, but the flag must
+            // not lie in the meantime). '' (file absent at that ref) parses
+            // to the empty entry.
+            function parseEntry(text) {
+              try {
+                const data = yaml.load(text);
+                return typeof data === 'object' && data !== null ? data : {};
+              } catch {
+                return null;
+              }
+            }
+
+            // Editorial state of a parsed entry. Working on the parsed
+            // document (not the text) means every surface spelling js-yaml
+            // accepts — flow style, `!!bool`/`!!seq` tags, anchors/aliases,
+            // quoted or escape-sequence keys — evaluates to the same state
+            // the site build will see. YAML 1.2 (Astro's content loader)
+            // parses yes/on as strings, which the schema's z.boolean()
+            // rejects at the build gate — only true booleans can reach main.
+            function editorialState(data) {
+              if (data === null) return { featured: true, badges: true, teamTier: true, partnerTier: true };
+              const tier = typeof data.maintainedBy === 'string' ? data.maintainedBy : 'community';
+              return {
+                featured: data.featured === true,
+                badges: Array.isArray(data.badges) && data.badges.length > 0,
+                // `strands` and `aws` are team-granted; `partner` needs a
+                // maintainer to verify the vendor relationship.
+                teamTier: tier === 'strands' || tier === 'aws',
+                partnerTier: tier === 'partner',
+              };
+            }
+
+            // Package/github data of a parsed entry, for the provenance
+            // check. Reading the full head content (not added diff lines)
+            // means a github-only edit re-triggers the check against the
+            // unchanged packages.
+            function extractEntryData(data) {
+              if (data === null) return { github: undefined, pkgs: [] };
+              const github = typeof data.github === 'string' ? data.github : undefined;
+              const pkgs = [];
+              for (const lang of ['python', 'typescript']) {
+                const pkg = data.languages?.[lang]?.package;
+                if (typeof pkg === 'string' && pkg) pkgs.push({ lang, pkg });
+              }
+              return { github, pkgs };
+            }
+
+            // Both directions are editorial: adding a grant a submitter
+            // isn't entitled to, and removing one a maintainer made — so an
+            // entry is flagged whenever its head state differs from its
+            // base state (a brand-new file compares against empty).
+            const flagged = [];
+            const partnerFlagged = [];
+            const changedPackages = [];
+            for (const file of catalogFiles) {
+              // A renamed file lives at previous_filename on the base ref;
+              // fetching the new path there would return '' and erase the
+              // base state (a featured removal via rename would never flag).
+              const basePath = file.previous_filename ?? file.filename;
+              const [headText, baseText] = await Promise.all([
+                fileText(file.filename, pr.head.sha),
+                fileText(basePath, pr.base.sha),
+              ]);
+              const headData = parseEntry(headText);
+              const head = editorialState(headData);
+              const base = editorialState(parseEntry(baseText));
+              if (
+                head.featured !== base.featured ||
+                head.badges !== base.badges ||
+                head.teamTier !== base.teamTier
+              ) {
+                flagged.push(file.filename);
+              }
+              if (head.partnerTier !== base.partnerTier) {
+                partnerFlagged.push(file.filename);
+              }
+              if (headText) {
+                const { github: entryGithub, pkgs } = extractEntryData(headData);
+                for (const p of pkgs) {
+                  changedPackages.push({ file: file.filename, github: entryGithub, ...p });
+                }
+              }
+            }
+
+            if (flagged.length === 0 && partnerFlagged.length === 0 && changedPackages.length === 0) {
+              console.log('No editorial changes or packages in touched entries — nothing to flag.');
+              await clearStaleFlag();
+              return;
+            }
+
+            // --- Is the author core team? ---------------------------------
+            // Collaborator permission is the proxy for "core team": checking
+            // org membership would need extra token scopes.
+            const author = pr.user.login;
+            let role = 'none';
+            try {
+              const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                username: author,
+              });
+              role = data.permission;
+            } catch (error) {
+              console.log(`Permission lookup for ${author} failed (${error.message}) — treating as non-maintainer.`);
+            }
+            if (maintainerRoles.includes(role)) {
+              console.log(`Author "${author}" has ${role} access — editorial fields and provenance are theirs to vouch for.`);
+              return;
+            }
+
+            // --- Package provenance: cross-check registry metadata ---------
+            // The registry links and maintainer shown on a catalog card
+            // derive from the entry's `package:` names and `github:` URL, so
+            // a submission could name a popular package it doesn't own.
+            // Three outcomes per package: MATCH (registry metadata declares
+            // the same owner/repo the entry links — silent), MISMATCH (it
+            // declares a different repo), UNVERIFIABLE (no repo metadata, or
+            // the registry fetch failed).
+            function parseGithubSlug(url) {
+              // owner/repo only, so tree/blob URLs compare equal to the repo.
+              const m = /github\.com[/:]([^/\s"']+)\/([^/\s"'#?]+)/i.exec(url || '');
+              return m ? `${m[1]}/${m[2].replace(/\.git$/i, '')}`.toLowerCase() : undefined;
+            }
+
+            async function fetchRepoSlugs(lang, pkg) {
+              if (lang === 'python') {
+                // Extras-qualified packages (`temporalio[strands-agents]`)
+                // live on PyPI under their base name.
+                const base = pkg.replace(/\[.*\]$/, '');
+                const res = await fetch(`https://pypi.org/pypi/${encodeURIComponent(base)}/json`);
+                if (!res.ok) throw new Error(`pypi status=${res.status}`);
+                const info = (await res.json()).info || {};
+                const urls = [...Object.values(info.project_urls || {}), info.home_page];
+                return urls.map(parseGithubSlug).filter(Boolean);
+              }
+              const res = await fetch(`https://registry.npmjs.org/${encodeURIComponent(pkg)}`);
+              if (!res.ok) throw new Error(`npm status=${res.status}`);
+              const data = await res.json();
+              const repoUrl = typeof data.repository === 'string' ? data.repository : data.repository?.url;
+              return [parseGithubSlug(repoUrl)].filter(Boolean);
+            }
+
+            const provenance = [];
+            for (const p of changedPackages) {
+              const entrySlug = parseGithubSlug(p.github);
+              let status, detail;
+              if (!entrySlug) {
+                status = 'UNVERIFIABLE';
+                detail = 'entry declares no github repo to compare against';
+              } else {
+                try {
+                  const slugs = await fetchRepoSlugs(p.lang, p.pkg);
+                  if (slugs.includes(entrySlug)) {
+                    status = 'MATCH';
+                  } else if (slugs.length > 0) {
+                    status = 'MISMATCH';
+                    detail = `registry declares \`${slugs[0]}\`, entry links \`${entrySlug}\``;
+                  } else {
+                    status = 'UNVERIFIABLE';
+                    detail = 'registry metadata declares no repository';
+                  }
+                } catch (error) {
+                  status = 'UNVERIFIABLE';
+                  detail = `registry lookup failed (${error.message})`;
+                }
+              }
+              console.log(`package=${p.pkg}, lang=${p.lang}, status=${status} | provenance check`);
+              if (status !== 'MATCH') provenance.push({ ...p, status, detail });
+            }
+
+            if (flagged.length === 0 && partnerFlagged.length === 0 && provenance.length === 0) {
+              console.log('Provenance verified and no editorial changes — nothing to flag.');
+              await clearStaleFlag();
+              return;
+            }
+
+            if (flagged.length > 0) {
+              console.log(`Editorial fields changed by non-maintainer "${author}" in: ${flagged.join(', ')}`);
+            }
+            if (partnerFlagged.length > 0) {
+              console.log(`Partner tier changed by non-maintainer "${author}" in: ${partnerFlagged.join(', ')}`);
+            }
+
+            if (!(await headStillCurrent())) return;
+
+            // --- Label ----------------------------------------------------
+            // The label marks editorial-field changes only; a provenance
+            // flag is comment-only. Synced in both directions: a previous
+            // push may have set the label for an editorial change this push
+            // removed. A label failure must not prevent the sticky comment
+            // below — the comment is the primary signal.
+            await syncLabel(label, flagged.length > 0 || partnerFlagged.length > 0, editorialLabelMeta);
+
+            // --- Sticky comment: update in place so pushes don't spam -----
+            const sections = [marker, '### Catalog review flags'];
+            if (flagged.length > 0) {
+              sections.push(
+                '',
+                '#### Editorial catalog fields detected',
+                '',
+                `This PR changes \`featured\`, \`badges\`, and/or a team-granted \`maintainedBy\` tier (\`strands\`/\`aws\`) on: ${flagged.map(f => `\`${f}\``).join(', ')}.`,
+                '',
+                'Those fields are granted by the Strands team, not set by submitters',
+                '(see the [submission guide](https://strandsagents.com/docs/integrations/get-featured/)).',
+                'Both granting and removing them needs maintainer confirmation — a',
+                'maintainer should either **confirm the change** or **ask the',
+                'submitter to revert it** before merging.'
+              );
+            }
+            if (partnerFlagged.length > 0) {
+              sections.push(
+                '',
+                '#### Partner maintainer tier claimed',
+                '',
+                `This PR adds or removes \`maintainedBy: partner\` on: ${partnerFlagged.map(f => `\`${f}\``).join(', ')}.`,
+                '',
+                'That tier means the integration is vended and supported by the company',
+                "behind it. Before merging, a maintainer must verify the entry's `github`",
+                'org is the official org of that company (and its packages are published',
+                'by them) — an integration published from a personal account stays',
+                '`community` regardless of what it integrates.'
+              );
+            }
+            if (provenance.length > 0) {
+              sections.push(
+                '',
+                '#### Package provenance not confirmed',
+                '',
+                'The registry links and maintainer shown on a catalog card derive from',
+                "the entry's `package` names and `github` URL, so each package's own",
+                'registry metadata should point back at the linked repo. For these it',
+                "doesn't:",
+                '',
+                '| Package | Entry | Status | Detail |',
+                '|---------|-------|--------|--------|',
+                ...provenance.map(p =>
+                  `| \`${p.pkg}\` (${p.lang ?? '?'}) | \`${p.file}\` | **${p.status}** | ${p.detail ?? ''} |`
+                ),
+                '',
+                '**MISMATCH** means the registry declares a different repository;',
+                '**UNVERIFIABLE** means it declares none (or the lookup failed).',
+                'A reviewer should verify the submitter actually owns each package',
+                '(e.g. via the repo, the registry page, or maintainer consent per the',
+                'PR checklist) before merging.'
+              );
+            }
+            sections.push('', '_This is a heads-up for reviewers — it does not block merging._');
+            const body = sections.join('\n');
+
+            const existing = await findStickyComment();
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+                body,
+              });
+            }

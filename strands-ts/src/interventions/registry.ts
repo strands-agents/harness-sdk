@@ -225,6 +225,11 @@ export class InterventionRegistry {
       try {
         action = await handler[method](event as never)
       } catch (error) {
+        // InterruptError is intentional control flow (pauses the agent),
+        // not a handler failure. Always propagate regardless of onError.
+        if (error instanceof InterruptError) {
+          throw error
+        }
         action = this._handleError(handler, method, error)
         if (!action) continue
       }

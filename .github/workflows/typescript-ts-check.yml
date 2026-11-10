@@ -12,7 +12,7 @@ jobs:
     name: Code Quality
     permissions:
       contents: read
-    runs-on: ubuntu-latest
+    runs-on: strands-agents_ubuntu-latest_4-core
 
     steps:
       - name: Checkout code
@@ -22,7 +22,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: 22
           package-manager-cache: false
@@ -44,3 +44,10 @@ jobs:
 
       - name: Verify browser bundle
         run: npm run check:browser-bundle
+
+      # The peer range starts at 0.109.1; the lockfile holds the latest 1.x. Last, since it swaps node_modules.
+      - name: Type-check and test against the lowest supported @anthropic-ai/sdk
+        run: |
+          npm install --no-save --ignore-scripts @anthropic-ai/sdk@0.109.1 -w strands-ts
+          npm run type-check
+          npm run test -w strands-ts -- src/models/__tests__/anthropic.test.ts

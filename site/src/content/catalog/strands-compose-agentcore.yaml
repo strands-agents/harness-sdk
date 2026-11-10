@@ -1,0 +1,8 @@
+name: strands-compose-agentcore
+description: Amazon Bedrock AgentCore deployment adapter for strands-compose that packages and deploys declarative Strands agent workflows to AgentCore Runtime.
+integrationType: integration
+languages:
+  python:
+    package: strands-compose-agentcore
+github: https://github.com/strands-compose/bedrock-agentcore
+addedDate: 2026-04-12

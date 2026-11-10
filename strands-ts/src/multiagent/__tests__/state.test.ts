@@ -9,6 +9,7 @@ import {
   loadStateSerializable,
 } from '../../types/serializable.js'
 import { Interrupt } from '../../interrupt.js'
+import { InvocationContextImpl } from '../../agent/invocation-context.js'
 import { InterruptResponseContent } from '../../types/interrupt.js'
 import { extractResumeResponses, groupInterruptResponsesByNode } from '../multiagent.js'
 
@@ -397,6 +398,22 @@ describe('MultiAgentResult', () => {
 })
 
 describe('MultiAgentState', () => {
+  describe('_bindInvocationContext', () => {
+    it('exposes the last bound request without enumerating or serializing it', () => {
+      const state = new MultiAgentState({ nodeIds: ['a'] })
+      const latest = new InvocationContextImpl()
+
+      state._bindInvocationContext(new InvocationContextImpl())
+      state._bindInvocationContext(latest)
+
+      expect(state.invocationContext).toBe(latest)
+      expect({
+        enumerated: Object.keys(state).includes('invocationContext'),
+        serialized: Object.keys(state[stateToJSONSymbol]() as Record<string, JSONValue>).includes('invocationContext'),
+      }).toEqual({ enumerated: false, serialized: false })
+    })
+  })
+
   describe('stateToJSONSymbol / loadStateFromJSONSymbol', () => {
     it('round-trips a fresh state with node IDs', () => {
       const original = new MultiAgentState({ nodeIds: ['a', 'b', 'c'] })

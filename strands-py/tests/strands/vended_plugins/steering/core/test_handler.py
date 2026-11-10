@@ -128,6 +128,19 @@ async def test_guide_action_flow():
 
 
 @pytest.mark.asyncio
+async def test_guide_action_flow_for_an_override_that_takes_no_keyword_arguments():
+    class LegacyGuideHandler(SteeringHandler):
+        async def steer_before_tool(self, *, agent, tool_use):
+            return Guide(reason="Test guidance")
+
+    event = BeforeToolCallEvent(agent=Mock(), selected_tool=None, tool_use={"name": "test_tool"}, invocation_state={})
+
+    await LegacyGuideHandler().provide_tool_steering_guidance(event)
+
+    assert event.cancel_tool == "Tool call cancelled. Test guidance You MUST follow this guidance immediately."
+
+
+@pytest.mark.asyncio
 async def test_interrupt_action_approved_flow():
     """Test complete flow with Interrupt action when approved."""
 

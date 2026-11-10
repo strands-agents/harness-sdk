@@ -3,7 +3,7 @@ import unittest.mock
 import pytest
 
 from strands import tool
-from strands.experimental.bidi.agent import BidiAgent
+from strands.bidi.agent import BidiAgent
 
 
 @pytest.fixture
@@ -40,6 +40,7 @@ def test_bidi_agent_tool_direct_call(agent):
                 },
             ],
             "role": "user",
+            "tracking_id": unittest.mock.ANY,
         },
         {
             "content": [
@@ -52,6 +53,7 @@ def test_bidi_agent_tool_direct_call(agent):
                 },
             ],
             "role": "assistant",
+            "tracking_id": unittest.mock.ANY,
         },
         {
             "content": [
@@ -64,10 +66,12 @@ def test_bidi_agent_tool_direct_call(agent):
                 },
             ],
             "role": "user",
+            "tracking_id": unittest.mock.ANY,
         },
         {
             "content": [{"text": "agent.tool.weather_tool was called."}],
             "role": "assistant",
+            "tracking_id": unittest.mock.ANY,
         },
     ]
     assert tru_messages == exp_messages

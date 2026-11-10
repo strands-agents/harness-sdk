@@ -1,0 +1,11 @@
+name: strands-github-storage
+description: GitHub-repository Storage backend for Strands — persists keys as versioned, diffable files in a repo you can browse in the GitHub UI.
+integrationType: storage
+languages:
+  python:
+    package: strands-github-storage
+  typescript:
+    package: strands-github-storage
+github: https://github.com/maisieyanz/strands-github-storage
+docsPage: docs/integrations/storage/github
+addedDate: 2026-08-10

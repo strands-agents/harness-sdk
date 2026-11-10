@@ -43,7 +43,7 @@ strands-ts/
 
 ### 1. Environment Setup
 
-See [CONTRIBUTING.md - TypeScript SDK](../CONTRIBUTING.md#typescript-sdk) for prerequisites (Node.js 20+, npm), installation, and verification commands.
+See [CONTRIBUTING.md - TypeScript SDK](../CONTRIBUTING.md#typescript-sdk) for prerequisites (Node.js 22+, npm), installation, and verification commands.
 
 ### 2. Making Changes
 
@@ -56,15 +56,7 @@ See [CONTRIBUTING.md - TypeScript SDK](../CONTRIBUTING.md#typescript-sdk) for pr
 
 ### 3. Pull Request Guidelines
 
-When creating pull requests, you **MUST** follow the guidelines in [PR.md](../team/PR.md) and use the [PR template](../.github/PULL_REQUEST_TEMPLATE.md). Key principles:
-
-- **Focus on WHY**: Explain motivation and user impact, not implementation details
-- **Document public API changes**: Show before/after code examples
-- **Be concise**: Use prose over bullet lists; avoid exhaustive checklists
-- **Target senior engineers**: Assume familiarity with the SDK
-- **Exclude implementation details**: Leave these to code comments and diffs
-
-See [PR.md](../team/PR.md) for the complete guidance and template.
+When creating pull requests, you **MUST** follow the guidelines in [PR.md](../team/PR.md) and use the [PR template](../.github/PULL_REQUEST_TEMPLATE.md).
 
 ### 4. Quality Gates
 
@@ -74,7 +66,7 @@ Pre-commit hooks run automatically and must all pass: build (`npm run build`), u
 
 ### 5. Testing Guidelines
 
-When writing tests, you **MUST** follow the guidelines in [docs/TESTING.md](./docs/TESTING.md): test organization and file location, batching strategy, object-assertion best practices, coverage requirements, and multi-environment (Node.js + browser) testing. Canonical paths: unit tests co-located under `src/**/__tests__/`, integration tests under `test/integ/`.
+When writing tests, you **MUST** follow the guidelines in [docs/TESTING.md](./docs/TESTING.md); see [Testing](#testing) below.
 
 ## Coding Patterns and Best Practices
 
@@ -137,7 +129,7 @@ Order imports: (1) external dependencies, (2) internal modules via relative path
 
 ### File Organization
 
-- **Unit tests co-located** under `__tests__/` beside the source (`src/module.ts` ↔ `src/__tests__/module.test.ts`); integration tests under `test/integ/`.
+- **Test file locations and naming** are defined in [docs/TESTING.md](./docs/TESTING.md) (see [Testing](#testing) below).
 - **Function ordering within a file** reads top-down, most general to most specific: main entry-point/exported functions at the top, private helpers below in order of use.
 - **Keep functions small and focused** — a single responsibility each.
 
@@ -181,7 +173,7 @@ The model provider is the most-repeated pattern in the SDK; `models/anthropic.ts
 
 - **`export class XModel extends Model<XModelConfig>`** with `private _config` and `private _client`.
 - **Two interfaces**: `interface XModelConfig extends BaseModelConfig` (the model knobs) and a superset `interface XModelOptions extends XModelConfig` adding client/credential fields (`apiKey`, `client`, `clientConfig`). The constructor takes `XModelOptions`, destructures the client fields, and spreads the rest into `_config`.
-- **Implement the base contract** from `models/model.ts`: `updateConfig(modelConfig)` (spread-merge into `_config`), `getConfig()` (return `resolveConfigMetadata(this._config, this._config.modelId ?? <default>)`), and `async *stream(...)`. `structuredOutput` is **not** part of the TS provider contract — TS does structured output via a tool + agent config (`tools/structured-output-tool.ts`, `AgentConfig.structuredOutputSchema`), not a provider method.
+- **Implement the base contract** from `models/model.ts`: `updateConfig(modelConfig)` (spread-merge into `_config`), `getConfig()` (return `resolveConfigMetadata(this._config, this._config.modelId ?? <default>)`), and `async *stream(...)`. Facts about a model belong in `shared/model-info.json`, which `Model.modelInfo` reads for every provider by `this.modelId` — so either store the default model id in `_config` or override `get modelId()` to return it, or an unconfigured model gets no shared facts. A provider that knows better than the shared file overrides `get modelInfo()` as `mergeModelInfo(super.modelInfo, { capabilities: { promptCaching: 'auto' } }, this._config.modelInfo)`: provider facts over the shared data, the user's override over both. Never read `this.stateful` inside it (it reads `modelInfo`). `structuredOutput` is **not** part of the TS provider contract — TS does structured output via a tool + agent config (`tools/structured-output-tool.ts`, `AgentConfig.structuredOutputSchema`), not a provider method.
 - **Keep conversion private** (`_formatRequest`, `_formatMessages`, `_formatContentBlock`). Default to a **flat `models/<name>.ts`**; only reach for a `models/<name>/` subdirectory with standalone adapter modules + `types.ts`/`errors.ts` when the provider spans **multiple API surfaces** (the reason `openai/` exists — chat vs responses).
 
 ```typescript
@@ -216,15 +208,11 @@ export class XModel extends Model<XModelConfig> {
 - **`stream` is an async generator** typed `async *stream(messages, options?): AsyncIterable<ModelStreamEvent>`, matching the abstract base exactly. Consume async iterables with `for await`.
 - **Providers emit raw `ModelStreamEvent`s and must not buffer the whole response.** The base `Model.streamAggregated` performs event accumulation on top of `stream`.
 - **The SDK is async-only — no sync facade.** `invoke()` returns a `Promise`; there is no blocking equivalent (unlike the Python SDK's `__call__`).
-- **Cancellation uses `AbortSignal`.** `agent.cancelSignal` is exposed, and callers may pass an external `cancelSignal` via `invoke`/`stream` options (merged with `AbortSignal.any`). When merging concurrent async generators, race `.next()` with `Promise.race` and close the rest with `Promise.allSettled(gen.return())` in `finally`; use `Promise.all`/`allSettled` for simple fan-out.
+- **Cancellation uses `AbortSignal`.** Tools receive the execution-scoped signal through `ToolContext.cancelSignal`, and tool middleware through `ExecuteToolContext.cancelSignal`; foreground and direct tool execution use `agent.cancelSignal`. Callers may pass an external `cancelSignal` via `invoke`/`stream` options (merged with `AbortSignal.any`). When merging concurrent async generators, race `.next()` with `Promise.race` and close the rest with `Promise.allSettled(gen.return())` in `finally`; use `Promise.all`/`allSettled` for simple fan-out.
 
 ## Testing
 
-When writing tests, you **MUST** follow [docs/TESTING.md](./docs/TESTING.md) — it is the authoritative reference. In short:
-
-- **Unit tests** co-located under `src/**/__tests__/`; **integration tests** under `test/integ/`.
-- **File naming** selects the environment: `*.test.ts` (Node + browser), `*.test.node.ts` (Node only), `*.test.browser.ts` (browser only).
-- Use the nested `describe` pattern; assert on whole objects with `toEqual`; reuse fixtures from `src/__fixtures__/` rather than hand-rolling mocks.
+When writing tests, you **MUST** follow [docs/TESTING.md](./docs/TESTING.md). It is the authoritative reference for test file location and naming (co-location, environment suffixes), the nested `describe` pattern, batching strategy, whole-object assertions, fixtures, coverage requirements, and multi-environment testing.
 
 ## Quick Rules
 
@@ -245,6 +233,7 @@ The un-lintable rules an agent most often misses — every one is **enforced by 
 - Put unit tests in a separate `tests/` directory (use `src/**/__tests__/`)
 - Annotate local variables with redundant explicit types (infer locals; annotate signatures)
 - Let a raw vendor error escape a provider boundary
+- Use `invocationState` for SDK-internal state — it is user-only (see the [root AGENTS.md](../AGENTS.md))
 
 ## Development Commands
 
@@ -272,7 +261,7 @@ npm run build         # Compile TypeScript
 
 ### Code Comments
 
-Comments explain WHAT/WHY and stay evergreen — the full rule (including how it applies to tests, and the deprecated/legacy nuance) is in the [root AGENTS.md](../AGENTS.md).
+Comments are to-the-point, state only what cannot be inferred from the code, and stay evergreen. The full rule (including how it applies to tests, and the deprecated/legacy nuance) is in the [root AGENTS.md](../AGENTS.md).
 
 ### Integration with Other Files
 

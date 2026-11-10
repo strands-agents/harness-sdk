@@ -177,6 +177,21 @@ describe('BedrockKnowledgeBaseStore', () => {
       )
     })
 
+    it('carries through minScore and maxScore', () => {
+      expect(makeStore({ minScore: 0.4 }).store.minScore).toBe(0.4)
+      expect(makeStore({ minScore: 0.4 }).store.maxScore).toBeUndefined()
+      expect(makeStore({ maxScore: 0.4 }).store.maxScore).toBe(0.4)
+      expect(makeStore({ maxScore: 0.4 }).store.minScore).toBeUndefined()
+    })
+
+    it('throws when minScore and maxScore are both set', () => {
+      expect(() => makeStore({ minScore: 0.5, maxScore: 0.4 })).toThrow('minScore and maxScore are mutually exclusive')
+    })
+
+    it('throws when a zero minScore is paired with maxScore', () => {
+      expect(() => makeStore({ minScore: 0, maxScore: 0.4 })).toThrow('minScore and maxScore are mutually exclusive')
+    })
+
     it('throws when maxSearchResults is less than 1', () => {
       expect(() => makeStore({ maxSearchResults: 0 })).toThrow('maxSearchResults must be at least 1')
       expect(() => makeStore({ maxSearchResults: -5 })).toThrow('maxSearchResults must be at least 1')
@@ -338,6 +353,72 @@ describe('BedrockKnowledgeBaseStore', () => {
       ])
     })
 
+    // Bedrock returns a stored integer as `3.0`, which `@aws-sdk/core` may preserve as a
+    // NumericValue `{ string, type: 'bigDecimal' }` in the untyped metadata document
+    // (aws/aws-sdk-js-v3#8246). Guards against #3692: the caller must read back the number
+    // they stored.
+    it('unwraps NumericValue metadata back into the number that was stored', async () => {
+      const { store, runtime } = makeStore()
+      runtime.send.mockResolvedValue({
+        retrievalResults: [
+          {
+            content: { text: 'fact' },
+            metadata: {
+              priority: 'high',
+              verified: true,
+              ratio: 2.5,
+              tags: ['a', 'b'],
+              version: { string: '3.0', type: 'bigDecimal' },
+              delta: { string: '-12.0', type: 'bigDecimal' },
+              zero: { string: '0.0', type: 'bigDecimal' },
+            },
+          },
+        ],
+      })
+
+      const [entry] = await store.search('q')
+      expect(entry?.metadata).toStrictEqual({
+        priority: 'high',
+        verified: true,
+        ratio: 2.5,
+        tags: ['a', 'b'],
+        version: 3,
+        delta: -12,
+        zero: 0,
+      })
+    })
+
+    it('passes through objects that are not parseable NumericValues rather than coercing them', async () => {
+      const { store, runtime } = makeStore()
+      const unparseable = { string: 'not-a-number', type: 'bigDecimal' }
+      // Number('Infinity') parses, so it needs an explicit guard: returning it
+      // would put a non-JSON value into metadata.
+      const infinite = { string: 'Infinity', type: 'bigDecimal' }
+      // Number('') and Number('  ') are 0, so a blank payload needs its own guard to stay untouched.
+      const blank = { string: '  ', type: 'bigDecimal' }
+      const unknownTag = { string: 'x', type: 'someFutureType' }
+      const notAWrapper = { string: 'no type field' }
+      const wrapperOfWrongTypes = { string: 3, type: 7 }
+      runtime.send.mockResolvedValue({
+        retrievalResults: [
+          {
+            content: { text: 'fact' },
+            metadata: { unparseable, infinite, blank, unknownTag, notAWrapper, wrapperOfWrongTypes },
+          },
+        ],
+      })
+
+      const [entry] = await store.search('q')
+      expect(entry?.metadata).toStrictEqual({
+        unparseable,
+        infinite,
+        blank,
+        unknownTag,
+        notAWrapper,
+        wrapperOfWrongTypes,
+      })
+    })
+
     it('defaults missing content to an empty string and omits absent metadata', async () => {
       const { store, runtime } = makeStore()
       runtime.send.mockResolvedValue({ retrievalResults: [{}] })
@@ -348,6 +429,91 @@ describe('BedrockKnowledgeBaseStore', () => {
 
     it('returns an empty array when the knowledge base yields no results', async () => {
       const { store } = makeStore()
+      await expect(store.search('q')).resolves.toStrictEqual([])
+    })
+  })
+
+  describe('score bounds', () => {
+    /** A retrieve response of one result per score, each carrying its score as its content. */
+    function scored(...scores: (number | undefined)[]): { retrievalResults: Record<string, unknown>[] } {
+      return {
+        retrievalResults: scores.map((score) => ({
+          content: { text: String(score) },
+          ...(score !== undefined && { score }),
+        })),
+      }
+    }
+
+    /** The content of each entry, in order. */
+    function contents(entries: { content: string }[]): string[] {
+      return entries.map((entry) => entry.content)
+    }
+
+    it('keeps every result when no bound is set', async () => {
+      const { store, runtime } = makeStore()
+      runtime.send.mockResolvedValue(scored(0.9, 0.5, 0.1))
+      expect(contents(await store.search('q'))).toStrictEqual(['0.9', '0.5', '0.1'])
+    })
+
+    it('keeps results at or above minScore', async () => {
+      const { store, runtime } = makeStore({ minScore: 0.5 })
+      runtime.send.mockResolvedValue(scored(0.9, 0.5, 0.49, 0.1))
+      expect(contents(await store.search('q'))).toStrictEqual(['0.9', '0.5'])
+    })
+
+    // The bound filters the same result list the metadata unwrap maps over, so a kept result still
+    // reads back as the number that was stored.
+    it('unwraps NumericValue metadata on a result the bound keeps', async () => {
+      const { store, runtime } = makeStore({ minScore: 0.5 })
+      runtime.send.mockResolvedValue({
+        retrievalResults: [
+          { content: { text: 'fact' }, score: 0.9, metadata: { version: { string: '3.0', type: 'bigDecimal' } } },
+        ],
+      })
+
+      const [entry] = await store.search('q')
+      expect(entry?.metadata?.version).toBe(3)
+    })
+
+    it('keeps results at or below maxScore', async () => {
+      // pgvector's `<=>` returns cosine distance, where 0 is the exact match.
+      const { store, runtime } = makeStore({ maxScore: 0.4 })
+      runtime.send.mockResolvedValue(scored(0.02, 0.4, 0.41, 0.95))
+      expect(contents(await store.search('q'))).toStrictEqual(['0.02', '0.4'])
+    })
+
+    it('does not treat a zero minScore as unset', async () => {
+      // Raw backend scores pass through unchanged, and cosine similarity spans [-1, 1], so a zero
+      // floor is a real config: it drops anti-correlated results.
+      const { store, runtime } = makeStore({ minScore: 0 })
+      runtime.send.mockResolvedValue(scored(0.7, 0, -0.3))
+      expect(contents(await store.search('q'))).toStrictEqual(['0.7', '0'])
+    })
+
+    it('does not treat a zero maxScore as unset', async () => {
+      const { store, runtime } = makeStore({ maxScore: 0 })
+      runtime.send.mockResolvedValue(scored(0, 0.1))
+      expect(contents(await store.search('q'))).toStrictEqual(['0'])
+    })
+
+    it('keeps a later result after dropping an earlier one', async () => {
+      const { store, runtime } = makeStore({ minScore: 0.5 })
+      runtime.send.mockResolvedValue(scored(0.9, 0.1, 0.8))
+      expect(contents(await store.search('q'))).toStrictEqual(['0.9', '0.8'])
+    })
+
+    it('keeps a result the knowledge base did not score', async () => {
+      const { store, runtime } = makeStore({ minScore: 0.5 })
+      runtime.send.mockResolvedValue(scored(0.9, undefined, 0.1))
+
+      const results = await store.search('q')
+      expect(contents(results)).toStrictEqual(['0.9', 'undefined'])
+      expect(results[1]?.metadata).not.toHaveProperty('_relevanceScore')
+    })
+
+    it('returns nothing when no result clears the bound', async () => {
+      const { store, runtime } = makeStore({ minScore: 0.8 })
+      runtime.send.mockResolvedValue(scored(0.3, 0.1))
       await expect(store.search('q')).resolves.toStrictEqual([])
     })
 

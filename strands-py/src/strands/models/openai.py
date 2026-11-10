@@ -7,6 +7,7 @@ import base64
 import json
 import logging
 import mimetypes
+from collections import Counter
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any, Protocol, TypeVar, cast
@@ -16,28 +17,23 @@ from openai.types.chat.parsed_chat_completion import ParsedChatCompletion
 from pydantic import BaseModel
 from typing_extensions import Unpack, override
 
+from ..agent.agent_metadata import AgentMetadata
 from ..types.content import ContentBlock, Messages, SystemContentBlock
 from ..types.event_loop import Usage
 from ..types.exceptions import ContextWindowOverflowException, ModelThrottledException
 from ..types.streaming import StreamEvent
 from ..types.tools import ToolChoice, ToolResult, ToolSpec, ToolUse
 from ._defaults import resolve_config_metadata
+from ._model_info import SERVER_SIDE_SUMMARY_OFF, ModelInfo
 from ._openai_bedrock import BedrockMantleConfig, resolve_bedrock_client_args
-from ._validation import _has_location_source, validate_config_keys
-from .model import BaseModelConfig, Model
+from ._openai_cache import apply_cache_config
+from ._openai_errors import classify_openai_error
+from ._validation import _has_location_source, _log_skipped_blocks, validate_config_keys
+from .model import BaseModelConfig, CacheConfig, Model
 
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T", bound=BaseModel)
-
-# Alternative context overflow error messages
-# These are commonly returned by OpenAI-compatible endpoints wrapping other providers
-# (e.g., Databricks serving Bedrock models)
-_CONTEXT_OVERFLOW_MESSAGES = [
-    "Input is too long for requested model",
-    "input length and `max_tokens` exceed context limit",
-    "too many total text bytes",
-]
 
 
 class Client(Protocol):
@@ -65,11 +61,16 @@ class OpenAIModel(Model):
                 For a complete list of supported parameters, see
                 https://platform.openai.com/docs/api-reference/chat/create.
             stream: Whether to use OpenAI chat completion streaming. Defaults to True.
+            cache_config: Prompt-caching configuration. OpenAI routes cache reads on
+                ``cache_key`` (mapped to ``prompt_cache_key``) and honors ``ttl`` only when it names
+                an OpenAI retention value; other fields have no effect. An explicit
+                ``prompt_cache_key``/``prompt_cache_retention`` in ``params`` takes precedence.
         """
 
         model_id: str
         params: dict[str, Any] | None
         stream: bool
+        cache_config: CacheConfig | None
 
     def __init__(
         self,
@@ -95,10 +96,12 @@ class OpenAIModel(Model):
                 May be combined with ``bedrock_mantle_config``; when both are set,
                 ``bedrock_mantle_config`` derives ``base_url`` and ``api_key`` (which must not
                 appear in ``client_args``).
-            bedrock_mantle_config: Route requests through Amazon Bedrock's Mantle
-                (OpenAI-compatible) endpoint. See :class:`BedrockMantleConfig` for accepted
-                keys. When set, a fresh bearer token is minted on every request. Cannot be
-                combined with a pre-built ``client``.
+            bedrock_mantle_config: Route requests through one of Amazon Bedrock's
+                OpenAI-compatible endpoints, ``bedrock-mantle`` (the default) or
+                ``bedrock-runtime`` via the config's ``endpoint`` key. See
+                :class:`BedrockMantleConfig` for accepted keys. When set, a fresh bearer
+                token is minted on every request. Cannot be combined with a pre-built
+                ``client``.
             **model_config: Configuration options for the OpenAI model.
 
         Raises:
@@ -133,7 +136,9 @@ class OpenAIModel(Model):
         Delegates to :func:`resolve_bedrock_client_args` when ``bedrock_mantle_config`` is set.
         """
         if self._bedrock_mantle_config is not None:
-            return resolve_bedrock_client_args(self._bedrock_mantle_config, self.client_args)
+            return resolve_bedrock_client_args(
+                self._bedrock_mantle_config, self.client_args, model_id=str(self.config.get("model_id", ""))
+            )
         return self.client_args
 
     @override
@@ -156,6 +161,15 @@ class OpenAIModel(Model):
         return cast(
             OpenAIModel.OpenAIConfig, resolve_config_metadata(self.config, str(self.config.get("model_id", "")))
         )
+
+    @property
+    @override
+    def model_info(self) -> ModelInfo:
+        """Reports server-side summary as off, which a ``model_info`` override still wins over.
+
+        The Chat Completions API has no server-side summary, including for Claude models served through it.
+        """
+        return ModelInfo.merge(super().model_info, SERVER_SIDE_SUMMARY_OFF, self.get_config().get("model_info"))
 
     @classmethod
     def format_request_message_content(cls, content: ContentBlock, **kwargs: Any) -> dict[str, Any]:
@@ -400,23 +414,26 @@ class OpenAIModel(Model):
             List of formatted messages.
         """
         formatted_messages = []
+        skipped: Counter[str] = Counter()
 
         for message in messages:
             contents = message["content"]
 
-            # Check for reasoningContent and warn user
-            if any("reasoningContent" in content for content in contents):
-                logger.warning(
-                    "reasoningContent is not supported in multi-turn conversations with the Chat Completions API."
-                )
-
             # Filter out content blocks that shouldn't be formatted
             filtered_contents = []
             for content in contents:
-                if any(block_type in content for block_type in ["toolResult", "toolUse", "reasoningContent"]):
+                if "reasoningContent" in content:
+                    skipped[
+                        "reasoningContent is not supported in multi-turn conversations with the Chat Completions API"
+                    ] += 1
+                    continue
+                if "toolResult" in content or "toolUse" in content:
                     continue
                 if _has_location_source(content):
-                    logger.warning("Location sources are not supported by OpenAI | skipping content block")
+                    skipped["Location sources are not supported by OpenAI | skipping content block"] += 1
+                    continue
+                if "cachePoint" in content:
+                    skipped["cachePoint content block is not supported by OpenAI | skipping"] += 1
                     continue
                 filtered_contents.append(content)
 
@@ -430,13 +447,6 @@ class OpenAIModel(Model):
                 if "toolResult" in content
             ]
 
-            formatted_message = {
-                "role": message["role"],
-                **({"content": formatted_contents} if formatted_contents else {}),
-                **({"tool_calls": formatted_tool_calls} if formatted_tool_calls else {}),
-            }
-            formatted_messages.append(formatted_message)
-
             # Process tool messages to extract images into separate user messages
             # OpenAI API requires images to be in user role messages only
             # All tool messages must be grouped together before any user messages with images
@@ -448,6 +458,15 @@ class OpenAIModel(Model):
                     user_messages_with_images.append(user_msg_with_images)
             formatted_messages.extend(user_messages_with_images)
 
+            # Tool results must immediately follow tool calls, before any injected user text.
+            formatted_message = {
+                "role": message["role"],
+                **({"content": formatted_contents} if formatted_contents else {}),
+                **({"tool_calls": formatted_tool_calls} if formatted_tool_calls else {}),
+            }
+            formatted_messages.append(formatted_message)
+
+        _log_skipped_blocks(logger, skipped)
         return formatted_messages
 
     @classmethod
@@ -483,6 +502,7 @@ class OpenAIModel(Model):
         tool_choice: ToolChoice | None = None,
         *,
         system_prompt_content: list[SystemContentBlock] | None = None,
+        agent_metadata: AgentMetadata | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Format an OpenAI compatible chat streaming request.
@@ -493,6 +513,7 @@ class OpenAIModel(Model):
             system_prompt: System prompt to provide context to the model.
             tool_choice: Selection strategy for tool invocation.
             system_prompt_content: System prompt content blocks to provide context to the model.
+            agent_metadata: Invoking agent's metadata.
             **kwargs: Additional keyword arguments for future extensibility.
 
         Returns:
@@ -529,6 +550,8 @@ class OpenAIModel(Model):
 
         if stream:
             request["stream_options"] = stream_options
+
+        apply_cache_config(request, cast(CacheConfig | None, self.config.get("cache_config")), agent_metadata)
 
         return request
 
@@ -585,6 +608,8 @@ class OpenAIModel(Model):
                         return {"messageStop": {"stopReason": "tool_use"}}
                     case "length":
                         return {"messageStop": {"stopReason": "max_tokens"}}
+                    case "content_filter":
+                        return {"messageStop": {"stopReason": "content_filtered"}}
                     case _:
                         return {"messageStop": {"stopReason": "end_turn"}}
 
@@ -596,8 +621,16 @@ class OpenAIModel(Model):
                 }
 
                 if tokens_details := getattr(event["data"], "prompt_tokens_details", None):
-                    if cached := getattr(tokens_details, "cached_tokens", None):
+                    cached = getattr(tokens_details, "cached_tokens", None)
+                    if isinstance(cached, int):
                         usage_data["cacheReadInputTokens"] = cached
+
+                    # Reported first-party from GPT-5.6, where cache writes are billed at 1.25x the
+                    # uncached input rate. Dropping it leaves cacheWriteInputTokens structurally absent,
+                    # so the write premium is invisible to any cost consumer.
+                    cache_write = getattr(tokens_details, "cache_write_tokens", None)
+                    if isinstance(cache_write, int):
+                        usage_data["cacheWriteInputTokens"] = cache_write
 
                 return {
                     "metadata": {
@@ -684,6 +717,7 @@ class OpenAIModel(Model):
         system_prompt: str | None = None,
         *,
         tool_choice: ToolChoice | None = None,
+        agent_metadata: AgentMetadata | None = None,
         **kwargs: Any,
     ) -> AsyncGenerator[StreamEvent, None]:
         """Stream conversation with the OpenAI model.
@@ -693,6 +727,7 @@ class OpenAIModel(Model):
             tool_specs: List of tool specifications to make available to the model.
             system_prompt: System prompt to provide context to the model.
             tool_choice: Selection strategy for tool invocation.
+            agent_metadata: Invoking agent's identity, used to derive a prompt-cache routing key.
             **kwargs: Additional keyword arguments for future extensibility.
 
         Yields:
@@ -703,7 +738,7 @@ class OpenAIModel(Model):
             ModelThrottledException: If the request is throttled by OpenAI (rate limits).
         """
         logger.debug("formatting request")
-        request = self.format_request(messages, tool_specs, system_prompt, tool_choice)
+        request = self.format_request(messages, tool_specs, system_prompt, tool_choice, agent_metadata=agent_metadata)
         logger.debug("formatted request=<%s>", request)
 
         logger.debug("invoking model")
@@ -714,95 +749,87 @@ class OpenAIModel(Model):
         async with self._get_client() as client:
             try:
                 response = await client.chat.completions.create(**request)
-            except openai.BadRequestError as e:
-                # Check if this is a context length exceeded error
-                if hasattr(e, "code") and e.code == "context_length_exceeded":
+
+                if not request["stream"]:
+                    for chunk in self._format_non_streaming_response(response):
+                        yield chunk
+                    return
+
+                logger.debug("got response from model")
+                yield self.format_chunk({"chunk_type": "message_start"})
+                tool_calls: dict[int, list[Any]] = {}
+                data_type = None
+                finish_reason = None  # Store finish_reason for later use
+                event = None  # Initialize for scope safety
+
+                async for event in response:
+                    # Defensive: skip events with empty or missing choices
+                    if not getattr(event, "choices", None):
+                        continue
+                    choice = event.choices[0]
+
+                    reasoning_content = getattr(choice.delta, "reasoning_content", None)
+                    if not isinstance(reasoning_content, str) or not reasoning_content:
+                        reasoning_content = getattr(choice.delta, "reasoning", None)
+
+                    if isinstance(reasoning_content, str) and reasoning_content:
+                        chunks, data_type = self._stream_switch_content("reasoning_content", data_type)
+                        for chunk in chunks:
+                            yield chunk
+                        yield self.format_chunk(
+                            {
+                                "chunk_type": "content_delta",
+                                "data_type": data_type,
+                                "data": reasoning_content,
+                            }
+                        )
+
+                    if choice.delta.content:
+                        chunks, data_type = self._stream_switch_content("text", data_type)
+                        for chunk in chunks:
+                            yield chunk
+                        yield self.format_chunk(
+                            {"chunk_type": "content_delta", "data_type": data_type, "data": choice.delta.content}
+                        )
+
+                    for tool_call in choice.delta.tool_calls or []:
+                        tool_calls.setdefault(tool_call.index, []).append(tool_call)
+
+                    if choice.finish_reason:
+                        finish_reason = choice.finish_reason  # Store for use outside loop
+                        if data_type:
+                            yield self.format_chunk({"chunk_type": "content_stop", "data_type": data_type})
+                        break
+
+                for tool_deltas in tool_calls.values():
+                    yield self.format_chunk(
+                        {"chunk_type": "content_start", "data_type": "tool", "data": tool_deltas[0]}
+                    )
+
+                    for tool_delta in tool_deltas:
+                        yield self.format_chunk(
+                            {"chunk_type": "content_delta", "data_type": "tool", "data": tool_delta}
+                        )
+
+                    yield self.format_chunk({"chunk_type": "content_stop", "data_type": "tool"})
+
+                yield self.format_chunk({"chunk_type": "message_stop", "data": finish_reason or "end_turn"})
+
+                # Skip remaining events as we don't have use for anything except the final usage payload
+                async for event in response:
+                    _ = event
+
+                if event and hasattr(event, "usage") and event.usage:
+                    yield self.format_chunk({"chunk_type": "metadata", "data": event.usage})
+            except openai.APIError as error:
+                error_kind = classify_openai_error(error)
+                if error_kind == "throttling":
+                    logger.warning("OpenAI threw rate limit error")
+                    raise ModelThrottledException(str(error)) from error
+                if error_kind == "context_overflow":
                     logger.warning("OpenAI threw context window overflow error")
-                    raise ContextWindowOverflowException(str(e)) from e
-                # Re-raise other BadRequestError exceptions
+                    raise ContextWindowOverflowException(str(error)) from error
                 raise
-            except openai.RateLimitError as e:
-                # All rate limit errors should be treated as throttling, not context overflow
-                # Rate limits (including TPM) require waiting/retrying, not context reduction
-                logger.warning("OpenAI threw rate limit error")
-                raise ModelThrottledException(str(e)) from e
-            except openai.APIError as e:
-                # Check for alternative context overflow error messages
-                error_message = str(e)
-                if any(overflow_msg in error_message for overflow_msg in _CONTEXT_OVERFLOW_MESSAGES):
-                    logger.warning("context window overflow error detected")
-                    raise ContextWindowOverflowException(error_message) from e
-                # Re-raise other APIError exceptions
-                raise
-
-            if not request["stream"]:
-                for chunk in self._format_non_streaming_response(response):
-                    yield chunk
-                return
-
-            logger.debug("got response from model")
-            yield self.format_chunk({"chunk_type": "message_start"})
-            tool_calls: dict[int, list[Any]] = {}
-            data_type = None
-            finish_reason = None  # Store finish_reason for later use
-            event = None  # Initialize for scope safety
-
-            async for event in response:
-                # Defensive: skip events with empty or missing choices
-                if not getattr(event, "choices", None):
-                    continue
-                choice = event.choices[0]
-
-                reasoning_content = getattr(choice.delta, "reasoning_content", None)
-                if not isinstance(reasoning_content, str) or not reasoning_content:
-                    reasoning_content = getattr(choice.delta, "reasoning", None)
-
-                if isinstance(reasoning_content, str) and reasoning_content:
-                    chunks, data_type = self._stream_switch_content("reasoning_content", data_type)
-                    for chunk in chunks:
-                        yield chunk
-                    yield self.format_chunk(
-                        {
-                            "chunk_type": "content_delta",
-                            "data_type": data_type,
-                            "data": reasoning_content,
-                        }
-                    )
-
-                if choice.delta.content:
-                    chunks, data_type = self._stream_switch_content("text", data_type)
-                    for chunk in chunks:
-                        yield chunk
-                    yield self.format_chunk(
-                        {"chunk_type": "content_delta", "data_type": data_type, "data": choice.delta.content}
-                    )
-
-                for tool_call in choice.delta.tool_calls or []:
-                    tool_calls.setdefault(tool_call.index, []).append(tool_call)
-
-                if choice.finish_reason:
-                    finish_reason = choice.finish_reason  # Store for use outside loop
-                    if data_type:
-                        yield self.format_chunk({"chunk_type": "content_stop", "data_type": data_type})
-                    break
-
-            for tool_deltas in tool_calls.values():
-                yield self.format_chunk({"chunk_type": "content_start", "data_type": "tool", "data": tool_deltas[0]})
-
-                for tool_delta in tool_deltas:
-                    yield self.format_chunk({"chunk_type": "content_delta", "data_type": "tool", "data": tool_delta})
-
-                yield self.format_chunk({"chunk_type": "content_stop", "data_type": "tool"})
-
-            yield self.format_chunk({"chunk_type": "message_stop", "data": finish_reason or "end_turn"})
-
-            # Skip remaining events as we don't have use for anything except the final usage payload
-            async for event in response:
-                _ = event
-
-            if event and hasattr(event, "usage") and event.usage:
-                yield self.format_chunk({"chunk_type": "metadata", "data": event.usage})
-
         logger.debug("finished streaming response from model")
 
     def _stream_switch_content(self, data_type: str, prev_data_type: str | None) -> tuple[list[StreamEvent], str]:
@@ -856,25 +883,14 @@ class OpenAIModel(Model):
                 response: ParsedChatCompletion = await client.beta.chat.completions.parse(
                     **request, response_format=output_model
                 )
-            except openai.BadRequestError as e:
-                # Check if this is a context length exceeded error
-                if hasattr(e, "code") and e.code == "context_length_exceeded":
+            except openai.APIError as error:
+                error_kind = classify_openai_error(error)
+                if error_kind == "throttling":
+                    logger.warning("OpenAI threw rate limit error")
+                    raise ModelThrottledException(str(error)) from error
+                if error_kind == "context_overflow":
                     logger.warning("OpenAI threw context window overflow error")
-                    raise ContextWindowOverflowException(str(e)) from e
-                # Re-raise other BadRequestError exceptions
-                raise
-            except openai.RateLimitError as e:
-                # All rate limit errors should be treated as throttling, not context overflow
-                # Rate limits (including TPM) require waiting/retrying, not context reduction
-                logger.warning("OpenAI threw rate limit error")
-                raise ModelThrottledException(str(e)) from e
-            except openai.APIError as e:
-                # Check for alternative context overflow error messages
-                error_message = str(e)
-                if any(overflow_msg in error_message for overflow_msg in _CONTEXT_OVERFLOW_MESSAGES):
-                    logger.warning("context window overflow error detected")
-                    raise ContextWindowOverflowException(error_message) from e
-                # Re-raise other APIError exceptions
+                    raise ContextWindowOverflowException(str(error)) from error
                 raise
 
         parsed: T | None = None

@@ -1,0 +1,135 @@
+---
+title: Chat with your Strands agent from Slack using Welt
+community: true
+description: Slack front end for Strands agents on Amazon Bedrock AgentCore — streaming replies, file exchange, and human-in-the-loop approvals in Slack threads
+integrationType: integration
+sidebar:
+  label: "Welt"
+project:
+  pypi: https://pypi.org/project/welt-io-strands/
+  npm: https://www.npmjs.com/package/@welt-io/strands
+  github: https://github.com/iwamot/welt
+  maintainer: iwamot
+service:
+  name: Slack
+  link: https://slack.com/
+---
+
+[Welt](https://github.com/iwamot/welt) is a self-hosted Slack front end for agents running on Amazon Bedrock AgentCore Runtime. Mention the agent in a channel or DM and it streams the reply into the thread; Slack uploads reach the agent as Converse file blocks, the files your tools produce are uploaded back into the thread, and a run that pauses for human input renders as Slack buttons and text fields — Strands interrupts become approval UIs your whole team can see and answer.
+
+Welt owns the Slack side of that entirely: bot tokens, event intake, thread history, streaming rendering, and file uploads. Your agent stays an ordinary AgentCore Runtime entrypoint — there is no base class to inherit, no server to embed, and nothing Welt-shaped in how you build the agent itself.
+
+## How the pieces fit
+
+Welt drives your agent over a small JSON wire contract:
+
+```
+Slack ⇄ Welt ⇄ AgentCore Runtime ⇄ your Strands agent
+```
+
+Each invocation carries one of two envelopes. A conversation turn arrives as `messages` — Converse-shaped, built by Welt from the Slack thread, by default the full history, so the agent needs no session state of its own. An answered approval question arrives instead as `interrupt_responses`, resuming a run that stopped earlier. Your entrypoint replies by yielding events, which the AgentCore SDK emits as SSE and Welt renders into the thread as they arrive.
+
+JSON is the reason an adapter exists at all. Inbound, file bytes travel base64-encoded because JSON cannot carry raw bytes. Outbound, raw `stream_async` events carry values that are not serializable in the first place — the Agent itself, UUIDs, traces — alongside far more than a Slack thread can show. Translating between the two is the adapter's whole job, and it comes to four functions:
+
+| Function | Direction | What it does |
+|---|---|---|
+| `decode_messages` | inbound | Restores the raw bytes of every image, document, and video block |
+| `decode_interrupt_responses` | inbound | Turns Welt's answers into the resume input Strands expects |
+| `renderable_events` | outbound | Reduces the event stream to what Welt renders, files included |
+| `interrupt_reason` | outbound | Builds the reason shape Welt renders as buttons and text fields |
+
+Both Strands Harness SDKs have an adapter: [`welt-io-strands`](https://github.com/iwamot/welt-io-strands) for Python, [`@welt-io/strands`](https://github.com/iwamot/welt-io-strands-ts) for TypeScript. The four functions are the same on both sides, in each language's naming.
+
+## Installation
+
+```bash
+pip install welt-io-strands
+```
+
+```bash
+npm install @welt-io/strands
+```
+
+## Usage
+
+The walkthrough below is Python. TypeScript works the same way with camelCase names, with two differences worth knowing up front: each event is yielded wrapped as `{data: event}`, since the AgentCore SDK reads the SSE payload from a yielded object's `data` field, and `renderableEvents` takes its options as a second argument. The [complete TypeScript entrypoint](https://github.com/iwamot/welt-io-strands-ts/tree/main/examples/agent) is deployable as-is.
+
+### Receiving a turn and streaming the reply
+
+A turn is decoded, handed to an ordinary `Agent`, and streamed back:
+
+```python
+# The tools whose files belong in the Slack thread.
+FILES_FROM = {"render_chart"}
+
+
+@app.entrypoint
+async def invoke(payload: dict):
+    agent = Agent(tools=[deploy, render_chart], callback_handler=None)
+    stream = agent.stream_async(decode_messages(payload["messages"]))
+    async for event in renderable_events(stream, agent=agent, files_from=FILES_FROM):
+        yield event
+```
+
+`renderable_events` keeps text chunks, tool-use indicators, files, and interrupts, and drops everything else — tool arguments that Strands re-sends on every delta, tool output text, empty chunks. `files_from` is how the agent says which of its files belong in the Slack thread: a tool that generates a chart for the user is named there, while a tool that reads a document *for the model* is left out and stays off the wire. Files the model itself returns are its reply, so they always go.
+
+### Asking a human mid-run
+
+Any tool can stop the run and put its question in the thread:
+
+```python
+@tool(context=True)
+def deploy(tool_context: ToolContext, target: str) -> str:
+    """Deploy after a human approves in the Slack thread."""
+    answer = tool_context.interrupt(
+        "deploy-approval",
+        reason=interrupt_reason(
+            f"Deploy {target} to production?",
+            [
+                {"value": "y", "label": "Deploy", "style": "primary"},
+                {"value": "n", "label": "Cancel"},
+            ],
+            input={"label": "Or type your answer"},
+        ),
+    )
+    return f"Deployed {target}." if answer == "y" else "Deployment cancelled."
+```
+
+Welt renders that reason as the message followed by two buttons and a free-text field; whichever answer comes first settles the question. A plain dict works here too — `ToolContext.interrupt` takes its `reason` as `Any` — but nothing would check it, and Welt answers a reason it cannot match with its default Approve / Deny buttons, silently. Building the reason through `interrupt_reason` is what turns a misspelled key into an error you see.
+
+Strands' ready-made [`HumanInTheLoop`](../../user-guide/sdk/agents/interventions/human-in-the-loop.md) intervention also works over Welt as-is.
+
+### Resuming once someone answers
+
+Welt returns the answers keyed by interrupt id, and resuming needs the same `Agent` object that stopped:
+
+```python
+if "interrupt_responses" in payload:
+    agent = _interrupted_agent
+    _interrupted_agent = None
+    if agent is None:  # the microVM was recycled while the buttons waited
+        raise RuntimeError("No interrupted agent to resume in this session.")
+    stream = agent.stream_async(
+        decode_interrupt_responses(payload["interrupt_responses"])
+    )
+```
+
+So the entrypoint stashes the agent whenever the stream ends with an `interrupt` event. One module-level slot is enough: AgentCore Runtime gives each session its own microVM, so the process never serves two conversations. Nothing is persisted either — the slot dies with the microVM, and raising on a recycled one is the honest answer, which Welt renders as a resume-failure notice in the thread.
+
+One more thing the interrupt round trip asks of your tools: the interrupted tool [re-executes](../../user-guide/sdk/interrupts.md) from the start on resume, so work done *before* the interrupt runs twice. Where that matters — drafting the text a human is approving, say — memoize it on the tool use id, which is the same on both passes.
+
+## Configuration
+
+The adapters have nothing to configure. Everything lives on the Welt side — Slack tokens, the agent ARN, and the feature toggles, including file input, which stays off until `FILE_INPUT_MODALITIES` names the modalities your model accepts. [Welt's README](https://github.com/iwamot/welt#readme) covers them. For local development, Welt runs against the AgentCore SDK's local server without deploying anything.
+
+Adapter and front end ship as a pair: while both are 0.x, an adapter 0.Y release supports Welt v0.Y, and from 1.0 on any release sharing a major version. Support is best effort, and other combinations come with no guarantee. The Strands Harness SDK versions each adapter is built against are stated in its README.
+
+## References
+
+- [Welt](https://github.com/iwamot/welt) — the Slack front end (Quick Start, feature docs)
+- [welt-io-strands](https://github.com/iwamot/welt-io-strands) — the Python adapter's repo and API docs
+- [welt-io-strands-ts](https://github.com/iwamot/welt-io-strands-ts) — the TypeScript adapter's repo and API docs
+- Example agents ([Python](https://github.com/iwamot/welt-io-strands/tree/main/examples/agent), [TypeScript](https://github.com/iwamot/welt-io-strands-ts/tree/main/examples/agent)) — complete and deployable, the source of the snippets above
+- [Wire contract](https://github.com/iwamot/welt/blob/main/docs/wire.md) — the JSON protocol the adapters implement
+- [Files](https://github.com/iwamot/welt/blob/main/docs/files.md) — how uploads reach the agent and generated files reach the thread
+- [Interrupts over Slack](https://github.com/iwamot/welt/blob/main/docs/interrupts.md) — how each reason shape renders

@@ -21,7 +21,7 @@ const OUTPUT_DIR = '.build/api-docs/typescript'
 
 interface FileInfo {
   path: string
-  category: string // 'classes', 'interfaces', 'type-aliases', 'functions', or 'index'
+  category: string // 'classes', 'interfaces', 'type-aliases', 'functions', 'variables', 'enumerations', or 'index'
   name: string
   namespace?: string // set for members under namespaces/<ns>/
 }
@@ -149,19 +149,19 @@ async function processFile(file: FileInfo): Promise<void> {
   // For namespace index pages, rewrite category-prefixed links to absolute slug paths
   //   e.g. interfaces/TracerConfig.md -> /api/typescript/telemetry:TracerConfig
   let linkedFixed = content
-    .replace(/\]\(\.\.\/(classes|interfaces|type-aliases|functions)\/([^)]+)\)/g, '](../$2)')
+    .replace(/\]\(\.\.\/(classes|interfaces|type-aliases|functions|variables|enumerations)\/([^)]+)\)/g, '](../$2)')
     .replace(/\]\(\.\.\/([^./][^)]+\.md(?:#[^)]*)?)\)/g, ']($1)')
 
   if (file.namespace) {
     // Rewrite category-prefixed links in namespace pages/members to relative paths
     linkedFixed = linkedFixed.replace(
-      /\]\((classes|interfaces|type-aliases|functions|namespaces)\/([^)]+?)\.md((?:#[^)]*)?)\)/g,
-      (_match, _cat, name, hash) => `](../${file.namespace}:${name}/${hash})`,
+      /\]\((classes|interfaces|type-aliases|functions|variables|enumerations|namespaces)\/([^)]+?)\.md((?:#[^)]*)?)\)/g,
+      (_match, _cat, name, hash) => `](../${file.namespace}:${name}/${hash})`
     )
     // Also rewrite bare Name.md links (after ../category/ was already stripped) to relative paths
     linkedFixed = linkedFixed.replace(
       /\]\(([A-Za-z][^)/]+?)\.md((?:#[^)]*)?)\)/g,
-      (_match, name, hash) => `](../${file.namespace}:${name}/${hash})`,
+      (_match, name, hash) => `](../${file.namespace}:${name}/${hash})`
     )
   }
 

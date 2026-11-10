@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { Agent } from '../agent.js'
 import {
   AfterToolCallEvent,
@@ -10,8 +10,13 @@ import {
 } from '../../hooks/index.js'
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
 import { MockPlugin } from '../../__fixtures__/mock-plugin.js'
+import { createMockTool } from '../../__fixtures__/tool-helpers.js'
+import { ExecuteToolStage } from '../../middleware/index.js'
+import { Tracer } from '../../telemetry/tracer.js'
 import { Message, TextBlock, ToolResultBlock } from '../../types/messages.js'
 import { Tool, ToolStreamEvent, type ToolContext, type ToolStreamGenerator } from '../../tools/tool.js'
+import { ConcurrentToolExecutor } from '../../tools/executors/concurrent.js'
+import { SequentialToolExecutor } from '../../tools/executors/sequential.js'
 import type { ToolSpec } from '../../tools/types.js'
 
 /**
@@ -20,7 +25,7 @@ import type { ToolSpec } from '../../tools/types.js'
  *
  * `started` resolves as soon as the agent enters the tool's `stream()`, so
  * tests can await "both tools in flight" without polling. The tool also
- * honors `ctx.agent.cancelSignal`: aborting the signal resolves the gate and
+ * honors `ctx.cancelSignal`: aborting the signal resolves the gate and
  * marks `observations.cancelled = true`.
  */
 class GatedTool extends Tool {
@@ -55,7 +60,7 @@ class GatedTool extends Tool {
 
     await new Promise<void>((resolve) => {
       void this._releaser.then(resolve)
-      ctx.agent.cancelSignal.addEventListener(
+      ctx.cancelSignal.addEventListener(
         'abort',
         () => {
           this.observations.cancelled = true
@@ -140,6 +145,59 @@ function twoToolTurn(): MockMessageModel {
 }
 
 describe('Agent concurrent tool execution', () => {
+  it('uses ConcurrentToolExecutor by default', () => {
+    const agent = new Agent()
+
+    expect(agent.toolExecutor).toBeInstanceOf(ConcurrentToolExecutor)
+  })
+
+  it('preserves a supplied tool executor instance', () => {
+    const toolExecutor = new SequentialToolExecutor()
+    const agent = new Agent({ toolExecutor })
+
+    expect(agent.toolExecutor).toBe(toolExecutor)
+  })
+
+  it('rejects an unknown tool executor string', () => {
+    expect(() => new Agent({ toolExecutor: 'unsupported' as never })).toThrow('Unknown toolExecutor: unsupported')
+  })
+
+  it('resolves a string shorthand assigned to toolExecutor', () => {
+    const agent = new Agent()
+
+    agent.toolExecutor = 'sequential'
+
+    expect(agent.toolExecutor).toBeInstanceOf(SequentialToolExecutor)
+  })
+
+  it('rejects an unknown string assigned to toolExecutor', () => {
+    const agent = new Agent()
+
+    expect(() => {
+      agent.toolExecutor = 'unsupported' as never
+    }).toThrow('Unknown toolExecutor: unsupported')
+  })
+
+  it('uses a reassigned tool executor for subsequent tool calls', async () => {
+    const toolA = new GatedTool('toolA')
+    const toolB = new GatedTool('toolB')
+    const agent = new Agent({
+      model: twoToolTurn(),
+      tools: [toolA, toolB],
+      printer: false,
+    })
+
+    agent.toolExecutor = new SequentialToolExecutor()
+
+    const invocation = agent.invoke('Go')
+    await toolA.started
+    expect(toolB.observations.started).toBe(false)
+    toolA.release()
+    await toolB.started
+    toolB.release()
+    await invocation
+  })
+
   it('runs tools concurrently by default', async () => {
     const toolA = new GatedTool('toolA')
     const toolB = new GatedTool('toolB')
@@ -163,13 +221,13 @@ describe('Agent concurrent tool execution', () => {
     expect(toolB.observations.completed).toBe(true)
   })
 
-  it('runs tools sequentially when toolExecutor is sequential', async () => {
+  it('runs tools sequentially with a SequentialToolExecutor instance', async () => {
     const toolA = new GatedTool('toolA')
     const toolB = new GatedTool('toolB')
     const agent = new Agent({
       model: twoToolTurn(),
       tools: [toolA, toolB],
-      toolExecutor: 'sequential',
+      toolExecutor: new SequentialToolExecutor(),
       printer: false,
     })
 
@@ -190,7 +248,7 @@ describe('Agent concurrent tool execution', () => {
     const agent = new Agent({
       model: twoToolTurn(),
       tools: [toolA, toolB],
-      toolExecutor: 'concurrent',
+      toolExecutor: new ConcurrentToolExecutor(),
       printer: false,
       plugins: [plugin],
     })
@@ -276,6 +334,39 @@ describe('Agent concurrent tool execution', () => {
 
     expect(beforeCalls.filter((n) => n === 'toolA')).toHaveLength(2)
     expect(beforeCalls.filter((n) => n === 'toolB')).toHaveLength(1)
+  })
+
+  it('uses replacement tool input while preserving the model-issued toolUseId', async () => {
+    let receivedToolUse: ToolContext['toolUse'] | undefined
+    const tool = createMockTool('captureTool', (context) => {
+      receivedToolUse = context.toolUse
+      return 'done'
+    })
+    const model = new MockMessageModel()
+      .addTurn({
+        type: 'toolUseBlock',
+        name: 'captureTool',
+        toolUseId: 'original-id',
+        input: { value: 'original' },
+      })
+      .addTurn({ type: 'textBlock', text: 'Done' })
+    const agent = new Agent({ model, tools: [tool], printer: false })
+
+    agent.addHook(BeforeToolCallEvent, (event) => {
+      event.toolUse = {
+        name: 'captureTool',
+        toolUseId: 'replacement-id',
+        input: { value: 'replacement' },
+      }
+    })
+
+    await agent.invoke('Go')
+
+    expect(receivedToolUse).toEqual({
+      name: 'captureTool',
+      toolUseId: 'original-id',
+      input: { value: 'replacement' },
+    })
   })
 
   it('cancels all tools when BeforeToolsEvent.cancel is set (concurrent mode)', async () => {
@@ -386,6 +477,54 @@ describe('Agent concurrent tool execution', () => {
     const [a, b] = results.sort((x, y) => x.toolUseId.localeCompare(y.toolUseId))
     expect(a!.status).toBe('error')
     expect(b!.status).toBe('success')
+  })
+
+  it('isolates unexpected middleware failures to the affected tool', async () => {
+    const model = new MockMessageModel()
+      .addTurn([
+        { type: 'toolUseBlock', name: 'tool', toolUseId: 'failed-tool', input: {} },
+        { type: 'toolUseBlock', name: 'tool', toolUseId: 'successful-tool', input: {} },
+      ])
+      .addTurn({ type: 'textBlock', text: 'Done' })
+    const tool = createMockTool('tool', (context) => `completed:${context.toolUse.toolUseId}`)
+    const agent = new Agent({
+      model,
+      tools: [tool],
+      toolExecutor: new ConcurrentToolExecutor(),
+      printer: false,
+    })
+
+    agent.addMiddleware(ExecuteToolStage, async function* (context, next) {
+      if (context.toolUse.toolUseId === 'failed-tool') {
+        throw new Error('middleware failed')
+      }
+      return yield* next(context)
+    })
+
+    let toolResultMessage: Message | undefined
+    agent.addHook(AfterToolsEvent, (event) => {
+      toolResultMessage = event.message
+    })
+
+    const result = await agent.invoke('Go')
+
+    expect(result.stopReason).toBe('endTurn')
+    expect(
+      toolResultMessage!.content.map((block) => ({
+        toolUseId: (block as ToolResultBlock).toolUseId,
+        status: (block as ToolResultBlock).status,
+        text: ((block as ToolResultBlock).content[0] as TextBlock).text,
+        error: (block as ToolResultBlock).error?.message,
+      }))
+    ).toEqual([
+      { toolUseId: 'failed-tool', status: 'error', text: 'middleware failed', error: 'middleware failed' },
+      {
+        toolUseId: 'successful-tool',
+        status: 'success',
+        text: 'completed:successful-tool',
+        error: undefined,
+      },
+    ])
   })
 
   it('handles a hallucinated tool name in a batch without affecting siblings', async () => {
@@ -560,5 +699,34 @@ describe('Agent concurrent tool execution', () => {
     expect(blocks.map((b) => b.toolUseId)).toEqual(['a', 'b'])
     expect(blocks.find((b) => b.toolUseId === 'a')!.status).toBe('success')
     expect(blocks.find((b) => b.toolUseId === 'b')!.status).toBe('error')
+  })
+
+  it('records span and metric telemetry when a tool interrupts', async () => {
+    const endToolCallSpan = vi.spyOn(Tracer.prototype, 'endToolCallSpan')
+    const model = new MockMessageModel().addTurn({
+      type: 'toolUseBlock',
+      name: 'approvalTool',
+      toolUseId: 'tool-1',
+      input: {},
+    })
+    const tool = createMockTool('approvalTool', (context) => {
+      context.interrupt({ name: 'approve', reason: 'Approve this tool call?' })
+    })
+    const agent = new Agent({ model, tools: [tool], printer: false })
+
+    const result = await agent.invoke('Go')
+
+    expect(result.stopReason).toBe('interrupt')
+    expect(endToolCallSpan.mock.calls).toEqual([[expect.anything(), {}]])
+    expect(agent.metrics.toolMetrics).toEqual({
+      approvalTool: {
+        callCount: 1,
+        successCount: 0,
+        errorCount: 1,
+        totalTime: expect.any(Number),
+      },
+    })
+
+    endToolCallSpan.mockRestore()
   })
 })

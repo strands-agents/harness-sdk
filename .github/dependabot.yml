@@ -34,14 +34,72 @@ updates:
       semver-minor-days: 7
       semver-patch-days: 3
     groups:
-      # All development dependencies in one PR.
+      # Dev tooling in one PR, matched by name because Dependabot does not
+      # classify PEP 621 pyproject dependencies as development vs production,
+      # so dependency-type grouping never matches for pip and every bump,
+      # including dev tooling like mypy, opens its own PR.
+      # Keep these patterns in sync with the dev/docs extras in
+      # strands-py/pyproject.toml — anything missed here silently falls into
+      # production-minor.
       development-dependencies:
-        dependency-type: 'development'
         applies-to: version-updates
-      # Production minor + patch bumps in one PR.
+        patterns:
+          - 'boto3-stubs'
+          - 'commitizen'
+          - 'hatch'
+          - 'moto'
+          - 'mypy'
+          - 'pre-commit'
+          - 'pytest*'
+          - 'ruff'
+          - 'sphinx*'
+          - 'tenacity'
+      # Everything else: minor + patch bumps in one PR. A dependency joins the
+      # first group it matches, so dev tooling above never lands here.
       production-minor:
-        dependency-type: 'production'
         applies-to: version-updates
+        patterns:
+          - '*'
+        update-types:
+          - 'minor'
+          - 'patch'
+      # Major production updates aren't matched by any group, so they get individual
+      # PRs — gated by the 30-day semver-major cooldown above for manual review.
+  # MCP server (strands-mcp). Same batching strategy as the Python SDK.
+  - package-ecosystem: 'pip'
+    directory: '/strands-mcp'
+    schedule:
+      interval: 'weekly'
+    open-pull-requests-limit: 100
+    labels:
+      - 'dependencies'
+      - 'python'
+    commit-message:
+      prefix: 'ci(mcp)'
+    versioning-strategy: increase-if-necessary
+    cooldown:
+      default-days: 5
+      semver-major-days: 30
+      semver-minor-days: 7
+      semver-patch-days: 3
+    groups:
+      # Dev tooling in one PR, matched by name (see the strands-py block for why
+      # pip needs name patterns instead of dependency-type). Keep in sync with
+      # the dev extras in strands-mcp/pyproject.toml.
+      development-dependencies:
+        applies-to: version-updates
+        patterns:
+          - 'commitizen'
+          - 'hatch'
+          - 'mypy'
+          - 'pre-commit'
+          - 'pytest*'
+          - 'ruff'
+      # Everything else: minor + patch bumps in one PR.
+      production-minor:
+        applies-to: version-updates
+        patterns:
+          - '*'
         update-types:
           - 'minor'
           - 'patch'
@@ -110,6 +168,27 @@ updates:
           - 'patch'
       # Major production updates aren't matched by any group, so they get individual
       # PRs — gated by the 30-day semver-major cooldown above for manual review.
+  # Pinned analyzers for the PR complexity labeler. Isolated from the SDK
+  # workspaces on purpose: they run against untrusted PR code, so they are
+  # installed from their own lockfile rather than a contributor-editable one.
+  - package-ecosystem: 'npm'
+    directory: '/.github/scripts/pr-metrics/tools'
+    schedule:
+      interval: 'weekly'
+    open-pull-requests-limit: 100
+    labels:
+      - 'dependencies'
+    commit-message:
+      prefix: 'ci'
+    cooldown:
+      default-days: 5
+      semver-major-days: 30
+      semver-minor-days: 7
+      semver-patch-days: 3
+    groups:
+      pr-metrics-tools:
+        patterns:
+          - '*'
   # GitHub Actions workflow pins. Low volume, so no grouping; the cooldown still
   # holds majors back for review before the bump PR opens.
   - package-ecosystem: 'github-actions'

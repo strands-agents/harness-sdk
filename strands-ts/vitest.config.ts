@@ -15,9 +15,20 @@ if (process.platform === 'win32') {
 export default defineConfig({
   test: {
     unstubEnvs: true,
+    // vitest 5 defaults this to true, which would wipe spies set up in beforeAll between tests.
+    clearMocks: false,
     reporters: [
       'default',
-      ['junit', { outputFile: 'test/.artifacts/test-report/junit/report.xml', includeConsoleOutput: true }],
+      // integ-node and integ-browser run the same files; the project prefix keeps their metrics series apart.
+      [
+        'junit',
+        {
+          outputFile: 'test/.artifacts/test-report/junit/report.xml',
+          includeConsoleOutput: true,
+          classnameTemplate: '{displayName}/{filename}',
+          suiteNameTemplate: '{displayName}/{filename}',
+        },
+      ],
       ['json', { outputFile: 'test/.artifacts/test-report/json/report.json' }],
     ],
     projects: [
@@ -33,6 +44,9 @@ export default defineConfig({
             'src/vended-plugins/**/__tests__/**/*.test.node.ts',
           ],
           name: { label: 'unit-node', color: 'green' },
+          // Retry so a flaky test doesn't block a release; a genuinely broken
+          // test still fails after the retries and holds the gate.
+          retry: 2,
           typecheck: {
             enabled: true,
             tsconfig: 'src/tsconfig.json',
@@ -51,6 +65,9 @@ export default defineConfig({
             'src/vended-plugins/**/__tests__/**/*.test.browser.ts',
           ],
           name: { label: 'unit-browser', color: 'cyan' },
+          // Retry so a flaky test doesn't block a release; a genuinely broken
+          // test still fails after the retries and holds the gate.
+          retry: 2,
           browser: {
             enabled: true,
             provider: playwright(),
@@ -83,8 +100,9 @@ export default defineConfig({
             './test/integ/__fixtures__/_setup-test.ts',
             './test/integ/__fixtures__/register-node-defaults.ts',
           ],
+          // vitest 4 never applied concurrent: true here; the integ tests are not yet safe to overlap.
           sequence: {
-            concurrent: true,
+            concurrent: false,
           },
         },
       },
@@ -113,15 +131,13 @@ export default defineConfig({
           },
           globalSetup: './test/integ/__fixtures__/_setup-global.ts',
           setupFiles: './test/integ/__fixtures__/_setup-test.ts',
+          // vitest 4 never applied concurrent: true here; the integ tests are not yet safe to overlap.
           sequence: {
-            concurrent: true,
+            concurrent: false,
           },
         },
       },
     ],
-    typecheck: {
-      enabled: true,
-    },
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'html'],

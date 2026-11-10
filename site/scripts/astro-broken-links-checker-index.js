@@ -12,9 +12,14 @@ import {join} from 'path';
 import fs from 'fs';
 import {checkLinksInHtml, normalizeHtmlFilePath} from './astro-broken-links-checker-check-links.js';
 import fastGlob from 'fast-glob';
+import pLimit from 'p-limit';
+
+// Each in-flight page holds its parsed DOM until its links are checked, so peak heap scales with this.
+const DEFAULT_PAGE_CONCURRENCY = 20;
 
 export default function astroBrokenLinksChecker(options = {}) {
   const logFilePath = options.logFilePath || 'broken-links.log';
+  const pageConcurrency = options.pageConcurrency || DEFAULT_PAGE_CONCURRENCY;
   const brokenLinksMap = new Map(); // Map of brokenLink -> Set of documents
   const checkedLinks = new Map();
 
@@ -43,7 +48,8 @@ export default function astroBrokenLinksChecker(options = {}) {
         logger.info(`Checking ${htmlFiles.length} html pages for broken links`);
         // start time
         const startTime = Date.now();
-        const checkHtmlPromises = htmlFiles.map(async (htmlFile) => {
+        const limit = pLimit(pageConcurrency);
+        const checkHtmlPromises = htmlFiles.map((htmlFile) => limit(async () => {
           const absoluteHtmlFilePath = join(distPath, htmlFile);
           const htmlContent = fs.readFileSync(absoluteHtmlFilePath, 'utf8');
           const baseUrl = normalizeHtmlFilePath(absoluteHtmlFilePath, distPath);
@@ -60,7 +66,7 @@ export default function astroBrokenLinksChecker(options = {}) {
             options.trailingSlash,
             options.basePath || '',
           );
-        });
+        }));
 
         await Promise.all(checkHtmlPromises);
         logBrokenLinks(brokenLinksMap, logFilePath, logger);

@@ -1,0 +1,9 @@
+name: xai
+description: xAI's Grok models for Strands Agents, with server-side tools for real-time X access, web search, and code execution.
+integrationType: model-provider
+languages:
+  python:
+    package: strands-xai
+github: https://github.com/Cerrix/strands-xai
+docsPage: docs/integrations/model-providers/xai
+addedDate: 2026-02-03
