@@ -190,16 +190,20 @@ describe('OffloadedBlock', () => {
   test('is a text block that carries what it stands in for and serializes it beside the text', () => {
     const block = new OffloadedBlock({ text: '[Dropped] [ref: tu-1]', method: 'drop', ref: 'tu-1' })
 
+    expect(block).toEqual({ type: 'textBlock', text: '[Dropped] [ref: tu-1]', method: 'drop', ref: 'tu-1' })
     expect(block).toBeInstanceOf(TextBlock)
-    expect(block.type).toBe('textBlock')
-    expect(block.toJSON()).toEqual({ text: '[Dropped] [ref: tu-1]', method: 'drop', ref: 'tu-1' })
-    expect(contentBlockFromData(block.toJSON())).toEqual(block)
+    expect(block.toJSON()).toEqual({
+      text: '[Dropped] [ref: tu-1]',
+      offloaded: { method: 'drop', ref: 'tu-1' },
+    })
+    expect(contentBlockFromData(block.toJSON())).toStrictEqual(block)
   })
 
   test('omits a ref and token count it was not given', () => {
     const block = new OffloadedBlock({ text: '[Dropped]', method: 'drop' })
 
-    expect(block.toJSON()).toEqual({ text: '[Dropped]', method: 'drop' })
+    expect(block).toEqual({ type: 'textBlock', text: '[Dropped]', method: 'drop' })
+    expect(block.toJSON()).toEqual({ text: '[Dropped]', offloaded: { method: 'drop' } })
   })
 
   test('a plain text block carries and serializes no offloaded field', () => {
@@ -228,19 +232,16 @@ describe('OffloadedBlock', () => {
     const data = JSON.parse(JSON.stringify(message)) as MessageData
 
     expect(data.content).toEqual([
-      { text: '[Dropped] [ref: msg-1_0]', method: 'drop', ref: 'msg-1_0' },
+      { text: '[Dropped] [ref: msg-1_0]', offloaded: { method: 'drop', ref: 'msg-1_0' } },
       {
         toolResult: {
           toolUseId: 'tu-1',
           status: 'success',
-          content: [{ text: 'row-1 [ref: tu-1]', method: 'truncate', ref: 'tu-1' }],
+          content: [{ text: 'row-1 [ref: tu-1]', offloaded: { method: 'truncate', ref: 'tu-1' } }],
         },
       },
     ])
-    const restored = Message.fromMessageData(data)
-    expect(restored).toEqual(message)
-    expect(isOffloaded(restored.content[0])).toBe(true)
-    expect(isOffloaded((restored.content[1] as ToolResultBlock).content[0])).toBe(true)
+    expect(Message.fromMessageData(data)).toStrictEqual(message)
   })
 })
 

@@ -217,8 +217,10 @@ messages; every other target means individual blocks. `contextUtilization`
 only controls when a strategy fires, and `preserveRecent` only controls what
 is protected.
 
-Each value is a whole number in the condition's own unit, or an `'N%'` share
-of the context window. Decimals throw, so write `'85%'` rather than `0.85`.
+Each value is a whole number in the condition's own unit (tokens, or messages for
+`preserveRecent`), or an `'N%'` share: of the context window for `blockThreshold`
+and `contextUtilization`, of the matching messages for `preserveRecent`. Decimals
+throw, so write `'85%'` rather than `0.85`.
 
 </Tab>
 </Tabs>

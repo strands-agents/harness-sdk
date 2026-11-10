@@ -280,7 +280,8 @@ export class TextBlock implements TextBlockData, JSONSerializable<TextBlockData>
 }
 
 /**
- * Data for an offloaded block.
+ * Data for an offloaded block, as its constructor takes it. Serialization groups everything but the text under an
+ * `offloaded` key, so these names stay free for {@link TextBlockData}.
  *
  * @experimental
  */
@@ -300,6 +301,16 @@ export interface OffloadedBlockData extends TextBlockData {
    * the token count could not measure it.
    */
   tokens?: number
+}
+
+/**
+ * The serialized form of an {@link OffloadedBlock}: the placeholder text, with what it stands in for beside it.
+ *
+ * One key holds the provenance so a text block's own data keeps the rest of the namespace, and so the presence of
+ * that key alone decides whether stored data is a placeholder.
+ */
+interface SerializedOffloadedBlock extends TextBlockData {
+  offloaded: Omit<OffloadedBlockData, 'text'>
 }
 
 /**
@@ -335,32 +346,34 @@ export class OffloadedBlock extends TextBlock implements OffloadedBlockData {
   }
 
   /**
-   * Serializes the OffloadedBlock to a JSON-compatible OffloadedBlockData object.
+   * Serializes the OffloadedBlock to a JSON-compatible object, with its provenance under `offloaded`.
    * Called automatically by JSON.stringify().
    */
-  override toJSON(): OffloadedBlockData {
+  override toJSON(): SerializedOffloadedBlock {
     return {
       text: this.text,
-      method: this.method,
-      ...(this.ref !== undefined && { ref: this.ref }),
-      ...(this.tokens !== undefined && { tokens: this.tokens }),
+      offloaded: {
+        method: this.method,
+        ...(this.ref !== undefined && { ref: this.ref }),
+        ...(this.tokens !== undefined && { tokens: this.tokens }),
+      },
     }
   }
 
   /**
-   * Creates an OffloadedBlock instance from OffloadedBlockData.
+   * Creates an OffloadedBlock instance from its serialized form.
    *
-   * @param data - OffloadedBlockData to deserialize
+   * @param data - Serialized placeholder to deserialize
    * @returns OffloadedBlock instance
    */
-  static override fromJSON(data: OffloadedBlockData): OffloadedBlock {
-    return new OffloadedBlock(data)
+  static override fromJSON(data: SerializedOffloadedBlock): OffloadedBlock {
+    return new OffloadedBlock({ text: data.text, ...data.offloaded })
   }
 }
 
-/** Whether text-block data records an offload, so it deserializes back to an {@link OffloadedBlock}. */
-function isOffloadedBlockData(data: TextBlockData): data is OffloadedBlockData {
-  return 'method' in data
+/** Whether stored text-block data records an offload, so it deserializes back to an {@link OffloadedBlock}. */
+function isSerializedOffloadedBlock(data: TextBlockData): data is SerializedOffloadedBlock {
+  return 'offloaded' in data
 }
 
 /**
@@ -595,7 +608,7 @@ export class ToolResultBlock implements JSONSerializable<{ toolResult: ToolResul
  * @throws Error if the content data type is unknown
  */
 export function toolResultContentFromData(data: ToolResultContentData): ToolResultContent {
-  if ('text' in data) return isOffloadedBlockData(data) ? OffloadedBlock.fromJSON(data) : TextBlock.fromJSON(data)
+  if ('text' in data) return isSerializedOffloadedBlock(data) ? OffloadedBlock.fromJSON(data) : TextBlock.fromJSON(data)
   if ('json' in data) return new JsonBlock(data)
   if ('image' in data) return ImageBlock.fromJSON(data as { image: ImageBlockData })
   if ('video' in data) return VideoBlock.fromJSON(data as { video: VideoBlockData })
@@ -1279,7 +1292,7 @@ export class InjectedBlock implements JSONSerializable<{ injected: InjectedBlock
  */
 export function contentBlockFromData(data: ContentBlockData): ContentBlock {
   if ('text' in data) {
-    return isOffloadedBlockData(data) ? OffloadedBlock.fromJSON(data) : TextBlock.fromJSON(data)
+    return isSerializedOffloadedBlock(data) ? OffloadedBlock.fromJSON(data) : TextBlock.fromJSON(data)
   } else if ('toolUse' in data) {
     return new ToolUseBlock(data.toolUse)
   } else if ('toolResult' in data) {
