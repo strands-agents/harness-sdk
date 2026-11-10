@@ -287,6 +287,10 @@ describe('setup presentation', () => {
         stdout: output,
         stderr: output,
       })
+      const press = async (key: string): Promise<void> => {
+        input.push(key)
+        await instance.waitUntilRenderFlush()
+      }
       const click = async (text: string): Promise<void> => {
         const lines = frame.split('\n')
         const row = lines.findIndex((line) => line.includes(text))
@@ -298,7 +302,7 @@ describe('setup presentation', () => {
       }
       try {
         await instance.waitUntilRenderFlush()
-        await click('Quickstart')
+        await press('\r')
         await vi.waitFor(() => expect(frame).toContain('Profile test model'))
         expect(vi.mocked(discoverProviderModels).mock.lastCall![1]!.AWS_BEARER_TOKEN_BEDROCK?.value).toBe('test-token')
         expect(config.configuredProviderEnvironment()).toEqual({})
@@ -306,7 +310,8 @@ describe('setup presentation', () => {
         for (const label of ['Bedrock', 'Mantle', 'Anthropic', 'OpenAI', 'Gemini', 'Ollama', 'LiteLLM']) {
           expect(frame).toContain(`● ${label}`)
         }
-        await click('AWS profile')
+        await press('\t')
+        await press('\r')
         expect(frame).toContain('› Default')
         const popupLines = frame.split('\n')
         const popupColumn = popupLines.find((line) => line.includes('› Default'))!.indexOf('› Default')
@@ -330,8 +335,10 @@ describe('setup presentation', () => {
           expect(vi.mocked(discoverAwsCredentials).mock.lastCall![0]!.AWS_PROFILE?.value).toBe('default')
         )
         expect(vi.mocked(discoverAwsCredentials).mock.lastCall![0]!.AWS_BEARER_TOKEN_BEDROCK).toBeUndefined()
-        await click('AWS profile')
-        await click('work')
+        await press('\r')
+        await press('\u001b[B')
+        await press('\u001b[B')
+        await press('\r')
         await vi.waitFor(() =>
           expect(discoverProviderModels).toHaveBeenLastCalledWith(
             provider,
@@ -535,6 +542,12 @@ describe('setup presentation', () => {
         await vi.waitFor(() => expect(frame).toContain('Default model'))
 
         await press('\t')
+        await press('\r')
+        expect(setupPanelText(frame, 'Providers')).toContain('Default')
+        await press('\u001b')
+        await vi.waitFor(() => expect(setupPanelText(frame, 'Providers')).not.toContain('Default'))
+
+        await press('\t')
         await press('\u001b[B')
         await press('\r')
         expect(alternate()).toContain('✓')
@@ -552,6 +565,11 @@ describe('setup presentation', () => {
         expect(alternate()).toContain('✓')
 
         await press('\u001b[Z')
+        await press('\r')
+        expect(setupPanelText(frame, 'Providers')).toContain('Default')
+        await press('\u001b[Z')
+        expect(setupPanelText(frame, 'Providers')).not.toContain('Default')
+        await press('\t')
         await press('\t')
         expect(discovery.mock.calls.at(-1)?.[0]).toBe('bedrock')
         await press('\t')

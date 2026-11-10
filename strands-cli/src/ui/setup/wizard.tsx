@@ -80,7 +80,7 @@ import { ProviderList, PanelSection } from '../panels/shared.js'
 import { availableCliUpdate } from '../../cli/update.js'
 
 type SetupAction = 'back' | 'next' | 'escape' | 'settings' | `browse:${number}`
-type ProviderSetupSection = 'providers' | 'models' | 'options' | 'actions'
+type ProviderSetupSection = 'providers' | 'profiles' | 'models' | 'options' | 'actions'
 type SetupSection =
   'form' | 'bulk' | 'items' | 'modes' | 'tools' | 'list' | 'import' | 'categories' | 'settings' | 'actions'
 
@@ -800,11 +800,8 @@ function SetupWizardContent({
   const quickstartSelectableRows =
     rows.length + (modelPanelVisible && providerModels.available ? filteredProviderModels.length : 0)
   const providerSectionRows: Record<Exclude<ProviderSetupSection, 'actions'>, number[]> = {
-    providers: [
-      ...providerRows.map((row) => rows.indexOf(row)),
-      ...(awsProfileRow ? [rows.indexOf(awsProfileRow)] : []),
-      ...(refreshRow ? [rows.indexOf(refreshRow)] : []),
-    ],
+    providers: [...providerRows.map((row) => rows.indexOf(row)), ...(refreshRow ? [rows.indexOf(refreshRow)] : [])],
+    profiles: awsProfileRow ? [rows.indexOf(awsProfileRow)] : [],
     models: providerReady
       ? Array.from(
           { length: Math.max(0, quickstartSelectableRows - quickstartModelOffset) },
@@ -819,6 +816,7 @@ function SetupWizardContent({
   }
   const providerSections: ProviderSetupSection[] = [
     'providers',
+    ...(awsProfileRow ? (['profiles'] as const) : []),
     ...(modelPanelVisible || providerSectionRows.models.length > 0 ? (['models'] as const) : []),
     ...(providerSectionRows.options.length > 0 ? (['options'] as const) : []),
     'actions',
@@ -830,9 +828,11 @@ function SetupWizardContent({
         ? 'models'
         : providerSectionRows.providers.includes(selection)
           ? 'providers'
-          : providerReady
-            ? 'options'
-            : 'models'
+          : providerSectionRows.profiles.includes(selection)
+            ? 'profiles'
+            : providerReady
+              ? 'options'
+              : 'models'
   const providerSelectionKey =
     focusedProviderSection === 'actions'
       ? focusedAction
@@ -2909,7 +2909,7 @@ function SetupWizardContent({
                 <Box flexGrow={1} flexDirection="row" overflow="hidden">
                   <PanelSection
                     width={quickstartProviderColumnWidth}
-                    focused={focusedProviderSection === 'providers'}
+                    focused={focusedProviderSection === 'providers' || focusedProviderSection === 'profiles'}
                     header={<Text dimColor>Providers</Text>}
                     meta={[
                       quickstartProviderViewportStart > 0 ? '↑' : '',
