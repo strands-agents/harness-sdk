@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it, vi, beforeEach, type MockInstance } from 'vitest'
-import { context, propagation } from '@opentelemetry/api'
+import { context, propagation, trace, type Span } from '@opentelemetry/api'
 import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-hooks'
 import { Agent } from '../agent.js'
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
@@ -16,6 +16,7 @@ import { AfterInvocationEvent, AfterToolsEvent, BeforeToolsEvent } from '../../h
 import type { Tool } from '../../tools/tool.js'
 import { InvokeModelStage } from '../../middleware/stages.js'
 import { Tracer } from '../../telemetry/tracer.js'
+import type { StreamOptions } from '../../models/model.js'
 import { z } from 'zod'
 
 interface MockTracerInstance {
@@ -1063,6 +1064,59 @@ describe('Agent tracer integration', () => {
       await stop(stream)
 
       expect(seen).toBe('acme')
+    })
+  })
+  describe('model span context', () => {
+    const contextManager = new AsyncLocalStorageContextManager()
+    const chatSpan = trace.wrapSpanContext({ traceId: '1'.repeat(32), spanId: '2'.repeat(16), traceFlags: 1 })
+
+    beforeAll(() => {
+      context.setGlobalContextManager(contextManager.enable())
+    })
+
+    afterAll(() => {
+      context.disable()
+    })
+
+    function probeAgent(seen: (Span | undefined)[], error?: Error): Agent {
+      const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Hello' })
+      const stream = model.stream.bind(model)
+      model.stream = async function* (messages: Message[], options?: StreamOptions) {
+        for await (const event of stream(messages, options)) {
+          seen.push(trace.getActiveSpan())
+          yield event
+          seen.push(trace.getActiveSpan())
+          await new Promise((resolve) => setTimeout(resolve, 0))
+          seen.push(trace.getActiveSpan())
+          if (error) throw error
+        }
+      }
+      const agent = new Agent({ model, printer: false })
+      const tracer = getLatestTracer()
+      tracer.startModelInvokeSpan.mockReturnValue(chatSpan)
+      tracer.withSpanContext.mockImplementation((span: Span | null, fn: () => unknown) =>
+        span ? context.with(trace.setSpan(context.active(), span), fn) : fn()
+      )
+      return agent
+    }
+
+    it('keeps the chat span active across every step of the model stream', async () => {
+      const seen: (Span | undefined)[] = []
+
+      await probeAgent(seen).invoke('Hi')
+
+      expect(seen.length).toBeGreaterThan(3)
+      expect(seen.every((span) => span === chatSpan)).toBe(true)
+      expect(trace.getActiveSpan()).toBeUndefined()
+    })
+
+    it('keeps the chat span active when the model stream throws', async () => {
+      const seen: (Span | undefined)[] = []
+
+      await expect(probeAgent(seen, new Error('boom')).invoke('Hi')).rejects.toThrow('boom')
+
+      expect(seen).toStrictEqual([chatSpan, chatSpan, chatSpan])
+      expect(trace.getActiveSpan()).toBeUndefined()
     })
   })
 })
