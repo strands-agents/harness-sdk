@@ -126,23 +126,13 @@ class SystemOneHttpError extends Error {
   }
 }
 
-/** @internal */
-export function askSystemOne<const Q extends Record<string, Question>>(
-  config: SystemOneProviderConfig,
-  state: DecisionInput,
-  questions: Q,
-  cancelSignal?: AbortSignal
-): Promise<DecisionResult<Q>> {
-  return askSystemOneWith(config, (body, signal) => sendHttp(config, body, signal), state, questions, cancelSignal)
-}
-
 /**
  * Maps a decision request to the System One wire format, sends it through `transport`,
  * and maps the response back to a {@link DecisionResult}.
  *
  * @internal
  */
-export async function askSystemOneWith<const Q extends Record<string, Question>>(
+export async function askSystemOne<const Q extends Record<string, Question>>(
   config: SystemOneRequestConfig,
   transport: SystemOneTransport,
   state: DecisionInput,
@@ -219,6 +209,15 @@ function toWireQuestions(questions: Record<string, Question>): Record<string, Wi
       return [id, { type: 'choice', instructions: question.question, criteria } satisfies WireChoiceQuestion]
     })
   )
+}
+
+/**
+ * The HTTP transport for hosted System One APIs: POSTs the request with the provider's API key.
+ *
+ * @internal
+ */
+export function httpTransport(config: SystemOneProviderConfig): SystemOneTransport {
+  return (body, cancelSignal) => sendHttp(config, body, cancelSignal)
 }
 
 async function sendHttp(config: SystemOneProviderConfig, body: string, cancelSignal?: AbortSignal): Promise<unknown> {

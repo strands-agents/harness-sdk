@@ -2,11 +2,7 @@ import type { SageMakerRuntimeClient, SageMakerRuntimeClientConfig } from '@aws-
 
 import { ContextWindowOverflowError, ModelError, ModelThrottledError, normalizeError } from '../errors.js'
 import { DecisionModel } from './decision-model.js'
-import {
-  askSystemOneWith,
-  resolveDefaultMinConfidence,
-  type SystemOneRequestConfig,
-} from './system-one-http-adapter.js'
+import { askSystemOne, resolveDefaultMinConfidence, type SystemOneRequestConfig } from './system-one-http-adapter.js'
 import type { DecisionCallOptions, DecisionInput, DecisionResult, Question } from './types.js'
 
 const SAGEMAKER_PROVIDER_NAME = 'sagemaker'
@@ -99,7 +95,7 @@ export class SageMakerDecisionModel extends DecisionModel {
     // Load the SDK and build the client before the shared adapter starts its latency timer, so
     // `metadata.latencyMs` measures the request alone, not that one-time setup.
     const runtime = await this._getRuntime()
-    return askSystemOneWith(
+    return askSystemOne(
       this._requestConfig,
       (body, cancelSignal) => this._invoke(runtime, body, cancelSignal),
       state,

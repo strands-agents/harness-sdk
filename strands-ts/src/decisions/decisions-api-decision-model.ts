@@ -1,6 +1,7 @@
 import { DecisionModel } from './decision-model.js'
 import {
   askSystemOne,
+  httpTransport,
   resolveSystemOneProviderConfig,
   type SystemOneProviderConfig,
 } from './system-one-http-adapter.js'
@@ -61,6 +62,12 @@ export class DecisionsAPIDecisionModel extends DecisionModel {
     questions: Q,
     options: DecisionCallOptions
   ): Promise<DecisionResult<Q>> {
-    return askSystemOne(this._providerConfig, state, questions, options.cancelSignal)
+    return askSystemOne(
+      this._providerConfig,
+      httpTransport(this._providerConfig),
+      state,
+      questions,
+      options.cancelSignal
+    )
   }
 }
