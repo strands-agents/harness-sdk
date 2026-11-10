@@ -3328,25 +3328,20 @@ _COMPACTION_USAGE = {
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("response", "exp_content"),
-    [
-        pytest.param(
-            {"stop_reason": "compaction", "content": [{"type": "compaction", "content": "the summary"}]},
-            [{"summary": {"provider": "anthropic", "signature": None, "text": "the summary"}}],
-            id="summary",
-        ),
-        pytest.param({"stop_reason": "end_turn", "content": []}, [], id="no_summary"),
-        pytest.param({"stop_reason": "end_turn", "content": [{"type": "text", "text": "x"}]}, [], id="text_only"),
-    ],
-)
-async def test_summarize_returns_the_compaction_usage(anthropic_client, response, exp_content):
+async def test_summarize_returns_the_compaction_usage(anthropic_client):
     model = _compaction_model(anthropic_client)
-    _mock_compaction_response(anthropic_client, {**response, "usage": _COMPACTION_USAGE})
+    _mock_compaction_response(
+        anthropic_client,
+        {
+            "stop_reason": "compaction",
+            "content": [{"type": "compaction", "content": "the summary"}],
+            "usage": _COMPACTION_USAGE,
+        },
+    )
 
     result = await model.summarize([{"role": "user", "content": [{"text": "hi"}]}])
 
-    assert result.content == exp_content
+    assert result.content == [{"summary": {"provider": "anthropic", "signature": None, "text": "the summary"}}]
     assert result.usage == {
         "inputTokens": 100,
         "outputTokens": 20,
@@ -3354,6 +3349,104 @@ async def test_summarize_returns_the_compaction_usage(anthropic_client, response
         "cacheReadInputTokens": 30,
         "cacheWriteInputTokens": 5,
     }
+
+
+@pytest.mark.asyncio
+async def test_summarize_counts_the_compaction_iterations_usage(anthropic_client):
+    model = _compaction_model(anthropic_client)
+    zero = {"input_tokens": 0, "output_tokens": 0, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}
+    _mock_compaction_response(
+        anthropic_client,
+        {
+            "stop_reason": "compaction",
+            "content": [{"type": "compaction", "content": "the summary"}],
+            "usage": {**zero, "iterations": [{**_COMPACTION_USAGE, "type": "compaction"}]},
+        },
+    )
+
+    result = await model.summarize([{"role": "user", "content": [{"text": "hi"}]}])
+
+    assert result.usage == {
+        "inputTokens": 100,
+        "outputTokens": 20,
+        "totalTokens": 155,
+        "cacheReadInputTokens": 30,
+        "cacheWriteInputTokens": 5,
+    }
+
+
+_BASE_RESULT = SummarizeResult(
+    content=[{"summary": {"provider": None, "text": "client-side"}}],
+    usage={"inputTokens": 10, "outputTokens": 5, "totalTokens": 15},
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "response",
+    [
+        pytest.param({"stop_reason": "end_turn", "content": []}, id="no_summary"),
+        pytest.param({"stop_reason": "end_turn", "content": [{"type": "text", "text": "x"}]}, id="text_only"),
+    ],
+)
+async def test_summarize_uses_the_base_implementation_without_a_compaction_block(anthropic_client, response):
+    model = _compaction_model(anthropic_client)
+    _mock_compaction_response(anthropic_client, {**response, "usage": _COMPACTION_USAGE})
+    messages = [{"role": "user", "content": [{"text": "hi"}]}]
+
+    with unittest.mock.patch.object(Model, "summarize", return_value=_BASE_RESULT) as base_summarize:
+        result = await model.summarize(messages, instructions="keep ids")
+
+    base_summarize.assert_awaited_once_with(
+        messages,
+        tool_specs=None,
+        system_prompt=None,
+        system_prompt_content=None,
+        instructions="keep ids",
+        cancel_signal=None,
+    )
+    assert result.content == _BASE_RESULT.content
+    assert result.usage == {
+        "inputTokens": 110,
+        "outputTokens": 25,
+        "totalTokens": 170,
+        "cacheReadInputTokens": 30,
+        "cacheWriteInputTokens": 5,
+    }
+
+
+@pytest.mark.asyncio
+async def test_summarize_uses_the_base_implementation_when_compaction_is_rejected(anthropic_client, caplog):
+    model = _compaction_model(anthropic_client)
+    rejection = anthropic.BadRequestError(
+        "does not support the compaction strategy",
+        response=unittest.mock.Mock(status_code=400),
+        body=None,
+    )
+    anthropic_client.beta.messages.stream.side_effect = rejection
+
+    with (
+        unittest.mock.patch.object(Model, "summarize", return_value=_BASE_RESULT),
+        caplog.at_level(logging.WARNING),
+    ):
+        result = await model.summarize([{"role": "user", "content": [{"text": "hi"}]}])
+
+    assert result == _BASE_RESULT
+    assert "compaction request rejected | summarizing client-side" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_summarize_raises_errors_other_than_a_rejection(anthropic_client):
+    model = _compaction_model(anthropic_client)
+    anthropic_client.beta.messages.stream.side_effect = RuntimeError("overloaded")
+
+    with (
+        unittest.mock.patch.object(Model, "summarize") as base_summarize,
+        pytest.raises(RuntimeError, match="overloaded"),
+    ):
+        await model.summarize([{"role": "user", "content": [{"text": "hi"}]}])
+
+    base_summarize.assert_not_called()
 
 
 @pytest.mark.asyncio

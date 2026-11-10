@@ -422,10 +422,10 @@ class Model(abc.ABC):
 
         Every summary is a ``summary`` block. The base implementation leaves its ``provider`` unset. A provider that
         reports ``model_info.capabilities.server_side_summary`` as True overrides this method to summarize
-        server-side and sets ``provider`` to its own name. The summarize strategy calls such an override only with
-        the conversation's opening messages, from message 0, and writes every other summary with the base
-        implementation. For a model without the capability, the strategy calls this method for every summary, so a
-        server-side override must use the base implementation then, as ``AnthropicModel`` does.
+        server-side and sets ``provider`` to its own name, using the base implementation when the capability is off
+        or the server-side summary fails, as ``AnthropicModel`` does. A summary with a ``provider`` can stand in for
+        the messages it summarized only when they start at the conversation's first message; a caller that
+        summarizes anything else uses only its text.
 
         Args:
             messages: The request to summarize, left unmodified.

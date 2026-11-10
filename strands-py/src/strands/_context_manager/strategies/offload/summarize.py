@@ -10,7 +10,7 @@ from typing_extensions import TypedDict
 
 from ....agent.conversation_manager.compression.pin_message import is_pinned
 from ....event_loop.streaming import _record_usage
-from ....models._summarize import SummarizeResult, _summarize_with_stream
+from ....models._summarize import SummarizeResult
 from ....types.content import ContentBlock, Message, Messages, split_system_prompt
 from ....types.tools import ToolResult, ToolResultContent
 from ...stash import _format_stash_refs
@@ -68,19 +68,15 @@ def _format_summarized(description: str, tokens: int, summary: str | None = None
     return header
 
 
-def _warn_client_side_fallback(model: Model, reason: str, *, exc_info: bool = False) -> None:
-    logger.warning(
-        "model=<%s>, reason=<%s> | server-side summary failed, falling back to client-side summary"
-        " | the client-side summary rewrites history, so thinking blocks kept after it will be dropped",
-        type(model).__name__,
-        reason,
-        exc_info=exc_info,
-    )
-
-
 def _record_summary_usage(invocation_context: InvocationContext | None, result: SummarizeResult) -> None:
     if result.usage is not None:
         _record_usage(invocation_context, result.usage)
+
+
+def _end_of(messages: list[Message], safe: list[Message]) -> int:
+    """Return the index just past the last of ``safe`` in ``messages``."""
+    safe_ids = {id(message) for message in safe}
+    return max(index for index, message in enumerate(messages) if id(message) in safe_ids) + 1
 
 
 def _pinned_before(messages: list[Message], end: int) -> list[Message]:
@@ -167,12 +163,47 @@ def _server_side_summary(result: SummarizeResult) -> ContentBlock | None:
     return summary if summary and summary["summary"].get("provider") else None
 
 
-async def _place_text_summary(messages: list[Message], end: int, summary: str, model: Model) -> None:
-    """Replace ``messages[1:end]`` with a client-side summary marker holding ``summary``."""
+async def _place_text_summary(messages: list[Message], end: int, summary: str, model: Model) -> bool:
+    """Replace ``messages[1:end]`` with a client-side summary marker holding ``summary``; False without a summary."""
+    if not summary:
+        logger.warning("model=<%s> | summary held no text | leaving the content unsummarized", type(model).__name__)
+        return False
+    logger.warning(
+        "model=<%s> | no server-side summary | the client-side summary rewrites history,"
+        " so thinking blocks kept after it will be dropped",
+        type(model).__name__,
+    )
     tokens = await model.count_tokens(messages[1:end])
     del messages[1:end]
     _insert_marker(messages, 1, _format_summarized(f"{end - 1} messages", tokens, summary))
     logger.debug("summarized=<%s>, tokens=<%s> | placed a text summary of the opening messages", end - 1, tokens)
+    return True
+
+
+def _server_side_end(context: ContextState, model: Model, safe: list[Message]) -> int | None:
+    """Return the end of the opening messages a server-side summary replaces, or None when it cannot replace them.
+
+    The agent's model replays the summary block, so both it and the summarizer must support it. Pinned messages
+    are not supported on this path, so a pin among the summarized messages hands the pass to the client-side summary.
+    """
+    if not (
+        model.model_info.capabilities.server_side_summary is True
+        and context.agent.model.model_info.capabilities.server_side_summary is True
+    ):
+        return None
+    end = _end_of(context.messages, safe)
+    if end <= 1:
+        return None
+    pinned = _pinned_before(context.messages, end)
+    if pinned:
+        logger.warning(
+            "model=<%s>, pinned=<%d> | server-side summary does not support pinned messages"
+            " | falling back to client-side summary",
+            type(model).__name__,
+            len(pinned),
+        )
+        return None
+    return end
 
 
 class SummarizeStrategy(BaseOffloadStrategy):
@@ -239,13 +270,9 @@ class SummarizeStrategy(BaseOffloadStrategy):
         if not safe:
             return False
 
-        # The agent's model replays the summary block, so both it and the summarizer must support it.
-        server_side = (
-            model.model_info.capabilities.server_side_summary is True
-            and context.agent.model.model_info.capabilities.server_side_summary is True
-        )
-        if server_side and await self._summarize_server_side(context, model, safe):
-            return True
+        end = _server_side_end(context, model, safe)
+        if end is not None:
+            return await self._summarize_server_side(context, model, safe, end)
 
         summary = await self._summarize_batch(context, model, safe)
         if not summary:
@@ -270,43 +297,26 @@ class SummarizeStrategy(BaseOffloadStrategy):
         since its signatures are bound to the model that wrote it.
         """
         messages = context.messages
-        safe_ids = {id(message) for message in safe}
-        end = max(index for index, message in enumerate(messages) if id(message) in safe_ids) + 1
+        end = _end_of(messages, safe)
         request = messages[:end] if model is context.agent.model else _without_reasoning(messages[:end])
         try:
-            return await self._summarize_client_side(
-                model, context.agent, request, context.invocation_context, replay=True
-            )
+            return await self._summarize_text(model, context.agent, request, context.invocation_context, replay=True)
         except Exception as error:
             logger.warning("messages=<%d>, error=<%s> | summarization failed", len(safe), error, exc_info=True)
             return ""
 
-    async def _summarize_server_side(self, context: ContextState, model: Model, safe: list[Message]) -> bool:
-        """Summarize message 0 through the last of ``safe`` server-side, keeping message 0 in place.
+    async def _summarize_server_side(self, context: ContextState, model: Model, safe: list[Message], end: int) -> bool:
+        """Summarize messages 0 through ``end - 1``, replacing messages 1 through ``end - 1`` with the summary.
 
-        A server-side summary can only stand in for the conversation's exact start, so every message up to the last
-        of ``safe`` is sent, even ones ``safe`` leaves out. The summary becomes an assistant message at index 1 and
-        leads any assistant content after it once alternation is repaired. A summary without a ``provider``, which the
-        base :meth:`Model.summarize` returns, is placed as a client-side summary marker instead. Pinned messages are not
-        supported on this path, so a pin among the summarized messages hands the pass to the client-side summary.
+        A server-side summary can only stand in for the conversation's exact start, so every message before ``end``
+        is sent, even ones ``safe`` leaves out. The summary becomes an assistant message at index 1 and leads any
+        assistant content after it once alternation is repaired. A summary without a ``provider``, which the model
+        returns when it summarized client-side, is placed as a client-side summary marker instead.
 
         Returns:
-            False when the server-side summary was skipped or failed, so the caller summarizes client-side instead.
+            False when the summary failed or held no text, leaving the history unchanged.
         """
         messages = context.messages
-        safe_ids = {id(message) for message in safe}
-        end = max(index for index, message in enumerate(messages) if id(message) in safe_ids) + 1
-        if end <= 1:
-            return False
-        pinned = _pinned_before(messages, end)
-        if pinned:
-            logger.warning(
-                "model=<%s>, pinned=<%d> | server-side summary does not support pinned messages"
-                " | falling back to client-side summary",
-                type(model).__name__,
-                len(pinned),
-            )
-            return False
         replaced = end - 1
         if replaced > len(safe):
             logger.warning(
@@ -315,32 +325,20 @@ class SummarizeStrategy(BaseOffloadStrategy):
                 replaced,
                 len(safe),
             )
-        result = await self._request_server_side_summary(model, context, messages[:end])
-        if result is None:
+        try:
+            result = await model.summarize(messages[:end], **self._summarize_kwargs(context.agent, replay=True))
+        except Exception as error:
+            logger.warning("messages=<%d>, error=<%s> | summarization failed", replaced, error, exc_info=True)
             return False
+        _record_summary_usage(context.invocation_context, result)
         summary = _server_side_summary(result)
         if summary is not None:
             messages[1:end] = [Message(role="assistant", content=[summary])]
             logger.debug("summarized=<%s> | summarized opening messages server-side", replaced)
-        else:
-            await _place_text_summary(messages, end, _summary_text(result), model)
+        elif not await _place_text_summary(messages, end, _summary_text(result), model):
+            return False
         _repair_alternation(messages)
         return True
-
-    async def _request_server_side_summary(
-        self, model: Model, context: ContextState, messages: list[Message]
-    ) -> SummarizeResult | None:
-        """Return the model's server-side summary of ``messages``, or None after warning that client-side takes over."""
-        try:
-            result = await model.summarize(messages, **self._summarize_kwargs(context.agent, replay=True))
-        except Exception as error:
-            _warn_client_side_fallback(model, repr(error), exc_info=not isinstance(error, NotImplementedError))
-            return None
-        _record_summary_usage(context.invocation_context, result)
-        if not _summary_text(result):
-            _warn_client_side_fallback(model, "no summary")
-            return None
-        return result
 
     async def _replace_block(
         self,
@@ -407,14 +405,14 @@ class SummarizeStrategy(BaseOffloadStrategy):
         """Summarize one block; a failure is logged and leaves the block unsummarized so the pass continues."""
         try:
             request = _block_request(block, agent.messages)
-            return await self._summarize_client_side(model, agent, request, invocation_context, replay=False)
+            return await self._summarize_text(model, agent, request, invocation_context, replay=False)
         except Exception as error:
             logger.warning(
                 "tracking_id=<%s>, error=<%s> | block summarization failed", message.get("tracking_id"), error
             )
             return ""
 
-    async def _summarize_client_side(
+    async def _summarize_text(
         self,
         model: Model,
         agent: Agent,
@@ -423,21 +421,13 @@ class SummarizeStrategy(BaseOffloadStrategy):
         *,
         replay: bool,
     ) -> str:
-        """Return the model's client-side summary of ``messages``, or "" when the reply held no text.
+        """Return the text of the model's summary of ``messages``, or "" when the reply held no text.
 
         With ``replay``, ``messages`` is a prefix of the agent's history and is sent with the agent's system prompt and
-        tools; otherwise it is a self-contained request. A model with server-side summaries summarizes only the
-        conversation's opening messages through its own ``summarize()``, so its other summaries use the base
-        implementation, as do those of an override that raises ``NotImplementedError``.
+        tools; otherwise it is a self-contained request. Only the summary's text is used, since a summary with a
+        ``provider`` can stand in only for the conversation's start.
         """
-        kwargs = self._summarize_kwargs(agent, replay=replay)
-        if model.model_info.capabilities.server_side_summary is True:
-            result = await _summarize_with_stream(model, messages, **kwargs)
-        else:
-            try:
-                result = await model.summarize(messages, **kwargs)
-            except NotImplementedError:
-                result = await _summarize_with_stream(model, messages, **kwargs)
+        result = await model.summarize(messages, **self._summarize_kwargs(agent, replay=replay))
         _record_summary_usage(invocation_context, result)
         text = _summary_text(result)
         if not text:

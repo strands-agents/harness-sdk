@@ -82,6 +82,26 @@ def _format_usage(usage: Mapping[str, Any]) -> Usage:
     return formatted
 
 
+_USAGE_COUNTERS = ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
+
+
+def _format_compaction_usage(usage: Mapping[str, Any]) -> Usage:
+    """Convert a compaction response's usage, which counts its tokens per iteration and zero at the top level."""
+    iterations = usage.get("iterations") or []
+    if not iterations:
+        return _format_usage(usage)
+    return _format_usage({key: sum(iteration.get(key) or 0 for iteration in iterations) for key in _USAGE_COUNTERS})
+
+
+def _sum_usage(first: Usage | None, second: Usage | None) -> Usage | None:
+    """Return the combined usage of two calls, or whichever one reported usage."""
+    if first is None or second is None:
+        return first or second
+    totals = cast(Mapping[str, int], first)
+    added = cast(Mapping[str, int], second)
+    return cast(Usage, {key: totals.get(key, 0) + added.get(key, 0) for key in totals.keys() | added.keys()})
+
+
 def _is_compaction(block: ContentBlock) -> bool:
     """Whether ``block`` holds a compaction block Anthropic returned."""
     return "summary" in block and block["summary"].get("provider") == "anthropic"
@@ -1335,38 +1355,62 @@ class AnthropicModel(Model):
         cancel_signal: threading.Event | None = None,
         **kwargs: Any,
     ) -> SummarizeResult:
-        """Summarize the conversation's opening ``messages`` with Anthropic on-demand compaction.
+        """Summarize ``messages`` with Anthropic on-demand compaction.
 
-        Sends the live system prompt and tools unchanged under beta ``compact-2026-09-04``, so the thinking kept
-        after the summary stays valid. The returned compaction block is stored as a ``summary`` block holding its
+        Sends the request unchanged under beta ``compact-2026-09-04``, so the thinking kept after a summary of the
+        live conversation stays valid. The returned compaction block is stored as a ``summary`` block holding its
         text and signature; later requests from a model with ``server_side_summary`` rebuild the compaction block
         from it and start from it, and requests without it send the summary text. Uses the base
-        :meth:`Model.summarize` when ``model_info.capabilities.server_side_summary`` is not True.
+        :meth:`Model.summarize` when ``model_info.capabilities.server_side_summary`` is not True, when the API
+        rejects the compaction request, or when the response holds no compaction block.
 
         Args:
-            messages: The opening messages to summarize, from message 0, left unmodified.
-            tool_specs: The live conversation's tool specifications.
-            system_prompt: The live conversation's plain string system prompt.
-            system_prompt_content: The live conversation's structured system prompt.
+            messages: The request to summarize, left unmodified.
+            tool_specs: The request's tool specifications.
+            system_prompt: The request's plain string system prompt.
+            system_prompt_content: The request's structured system prompt.
             instructions: Summarization instructions replacing the API's own prompt.
             cancel_signal: Event that aborts the base implementation's call.
             **kwargs: Additional keyword arguments for future extensibility.
 
         Returns:
-            The summary and the compaction call's usage; the summary is empty when the response holds no compaction
-            block.
+            The summary and the usage of every call made for it.
         """
+        base_kwargs: dict[str, Any] = {
+            "tool_specs": tool_specs,
+            "system_prompt": system_prompt,
+            "system_prompt_content": system_prompt_content,
+            "instructions": instructions,
+            "cancel_signal": cancel_signal,
+            **kwargs,
+        }
         if self.model_info.capabilities.server_side_summary is not True:
-            return await super().summarize(
-                messages,
-                tool_specs=tool_specs,
-                system_prompt=system_prompt,
-                system_prompt_content=system_prompt_content,
-                instructions=instructions,
-                cancel_signal=cancel_signal,
-                **kwargs,
-            )
+            return await super().summarize(messages, **base_kwargs)
 
+        try:
+            result = await self._compact(messages, tool_specs, system_prompt, system_prompt_content, instructions)
+        except anthropic.BadRequestError as error:
+            logger.warning(
+                "model_id=<%s>, error=<%s> | compaction request rejected | summarizing client-side",
+                self.config["model_id"],
+                error,
+            )
+            result = SummarizeResult()
+        if result.content:
+            return result
+
+        fallback = await super().summarize(messages, **base_kwargs)
+        return SummarizeResult(content=fallback.content, usage=_sum_usage(result.usage, fallback.usage))
+
+    async def _compact(
+        self,
+        messages: Messages,
+        tool_specs: list[ToolSpec] | None,
+        system_prompt: str | None,
+        system_prompt_content: list[SystemContentBlock] | None,
+        instructions: str | None,
+    ) -> SummarizeResult:
+        """Send ``messages`` as a compaction request; the result is empty when the response holds no compaction."""
         request = self.format_request(messages, tool_specs, system_prompt, system_prompt_content=system_prompt_content)
         # The API rejects these on a compaction request.
         request.pop("stop_sequences", None)
@@ -1378,12 +1422,12 @@ class AnthropicModel(Model):
         # The Bedrock/Vertex beta resources alias the first-party stream method, which mypy rejects as a self type.
         async with self.client.beta.messages.stream(**request) as stream:  # type: ignore[misc]
             response = cast(dict[str, Any], (await stream.get_final_message()).to_dict())
-        usage = _format_usage(response["usage"]) if response.get("usage") else None
+        usage = _format_compaction_usage(response["usage"]) if response.get("usage") else None
 
         block = next((block for block in response.get("content") or [] if block.get("type") == "compaction"), None)
         if response.get("stop_reason") != "compaction" or not block or not block.get("content"):
             logger.debug(
-                "model_id=<%s>, stop_reason=<%s> | compaction returned no summary",
+                "model_id=<%s>, stop_reason=<%s> | compaction returned no summary | summarizing client-side",
                 self.config["model_id"],
                 response.get("stop_reason"),
             )
