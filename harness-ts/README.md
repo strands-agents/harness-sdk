@@ -96,12 +96,12 @@ npm install @strands-agents/harness
 `@strands-agents/sdk` is a required peer dependency. npm 7+ and pnpm install it automatically; with
 other package managers, add `@strands-agents/sdk` alongside the harness.
 
-The default agent runs on Amazon Bedrock, which needs no extra dependency. To use another
-provider, install its peer dependency:
+The default agent runs on Amazon Bedrock, which needs no extra dependency (Claude on Bedrock uses
+`@anthropic-ai/sdk`, a required peer npm installs for you). To use another provider, install its
+peer dependency:
 
 ```bash
 npm install openai              # for openai/*
-npm install @anthropic-ai/sdk   # for anthropic/*
 npm install @google/genai       # for google/*
 ```
 
@@ -324,7 +324,7 @@ await createHarness({ builtinTools: { web_fetch: { model: 'anthropic/claude-haik
 `web_search` is the other one: it lets the agent look things up on the web mid-answer. Where the
 model provider has its own search (OpenAI, Google, Anthropic, and GPT-5, GPT-6, and Daybreak models on
 `bedrock-mantle` via Bedrock Web Search) the harness turns that on by default. In case of no
-native search (Amazon Bedrock Converse, other Mantle models, a `Model` instance) `web_search` is
+native search (Amazon Bedrock, other Mantle models, a `Model` instance) `web_search` is
 off by default. To enable web search for these providers, you can opt into Exa with
 `{ web_search: 'exa' }`. The model then gets a `web_search` tool backed by Exa's hosted search. It
 works keyless, but adding a `EXA_API_KEY` in the environment lifts the rate limit. You can

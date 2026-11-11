@@ -93,7 +93,8 @@ or wrong-language references fail instead of being ignored.
 pip install strands-harness
 ```
 
-The default agent runs on Amazon Bedrock. To use another provider, grab the matching extra:
+The default agent runs on Amazon Bedrock (Claude through Anthropic's Bedrock client, which the harness
+installs). To use another provider, grab the matching extra:
 
 ```bash
 pip install "strands-harness[openai]"      # or [anthropic], [gemini] (the `google` provider), [ollama], [litellm]
@@ -307,7 +308,7 @@ create_harness(builtin_tools={"web_fetch": {"model": "anthropic/claude-haiku-4-5
 `web_search` is the other one: it lets the agent look things up on the web mid-answer. Where the
 model provider has its own search (OpenAI, Google, Anthropic, and GPT-5, GPT-6, and Daybreak models on
 `bedrock-mantle` via Bedrock Web Search) the harness turns that on by default. In case of no
-native search (Amazon Bedrock Converse, other Mantle models, a `Model` instance) `web_search` is
+native search (Amazon Bedrock, other Mantle models, a `Model` instance) `web_search` is
 off by default. To enable web search for these providers, you can opt into Exa with
 `{"web_search": "exa"}`. The model then gets a `web_search` tool backed by Exa's hosted search. It
 works keyless, but adding a `EXA_API_KEY` in the environment lifts the rate limit. You can

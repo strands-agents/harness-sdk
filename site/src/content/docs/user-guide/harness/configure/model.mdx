@@ -20,7 +20,9 @@ You pick a model by passing `model`, which accepts three forms: a `provider/name
 string, a bare Bedrock model id, or a ready-made Strands `Model` instance. The
 `provider/` prefix has aliases for `bedrock`, `bedrock-mantle`, `anthropic`, `openai`,
 `google`, `ollama`, and `litellm`. A string with no provider prefix is treated as a bare
-Amazon Bedrock id.
+Amazon Bedrock id. On `bedrock`, Claude models run through the Anthropic Messages API with
+Anthropic's Bedrock client, so they get Anthropic API features that Converse doesn't expose;
+every other Bedrock model uses Converse.
 
 <Tabs>
   <Tab label="Strands harness">
