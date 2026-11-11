@@ -1,9 +1,11 @@
+import chalk from 'chalk'
 import { createElement } from 'react'
 import { Box } from 'ink'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { chooseHarness, HarnessPicker } from '../../src/dev/picker.js'
 import type { DiscoveredHarness } from '../../src/dev/search.js'
 import * as terminal from '../../src/terminal/terminal.js'
+import { sanitizeTerminalText } from '../../src/terminal/text.js'
 import { StartupContentRows } from '../../src/ui/startup.js'
 import { captureFrame, render, ttyInput, ttyOutput } from '../fixtures/terminal.js'
 
@@ -249,7 +251,7 @@ describe('HarnessPicker', () => {
   it.each([
     ['BaseCli', '', '/home/test/.strands/cli.toml'],
     ['FoundHarness', '\u001b[B', '/project/agent.py'],
-  ])('shouldShowTheSelectedAgentAboveTheFolderStepWhen%sIsChosen', async (_, move, path) => {
+  ])('shouldShowTheSelectedProjectAboveTheFolderStepWhen%sIsChosen', async (_, move, path) => {
     const { input, text } = withFolder()
     await vi.waitFor(() => expect(text()).toContain('Select a harness'))
     input.write(move)
@@ -258,12 +260,12 @@ describe('HarnessPicker', () => {
     await vi.waitFor(() => expect(text()).toContain('Choose a workspace folder'))
     const lines = text().split('\n')
     const row = (label: string): number => lines.findIndex((line) => line.includes(label))
-    expect(row('Agent selected')).toBeGreaterThanOrEqual(0)
-    expect(row(path)).toBe(row('Agent selected') + 1)
-    expect(row('Choose a workspace folder')).toBeGreaterThan(row(path))
+    expect(row('Selected a project')).toBeGreaterThanOrEqual(0)
+    expect(row(`Harness path: ${path}`)).toBe(row('Selected a project') + 1)
+    expect(row('Choose a workspace folder')).toBeGreaterThan(row(`Harness path: ${path}`))
   })
 
-  it('shouldLeaveOutTheSelectedAgentWhenANewHarnessNeedsAFolder', async () => {
+  it('shouldLeaveOutTheSelectedProjectWhenANewHarnessNeedsAFolder', async () => {
     const { input, text } = withFolder([])
     await vi.waitFor(() => expect(text()).toContain('Select a harness'))
     input.write('\u001b[B')
@@ -273,7 +275,40 @@ describe('HarnessPicker', () => {
     input.write('\r')
 
     await vi.waitFor(() => expect(text()).toContain('New project · new-harness'))
-    expect(text()).not.toContain('Agent selected')
+    expect(text()).not.toContain('Selected a project')
+  })
+
+  it('shouldColorTheHeadingAndContextGreenWhenTheFolderStepIsShown', async () => {
+    const level = chalk.level
+    chalk.level = 3
+    try {
+      const input = ttyInput()
+      const output = ttyOutput(100, 36)
+      const frame = captureFrame(output)
+      let headingRow = ''
+      output.on('data', (chunk: Buffer) => {
+        headingRow =
+          chunk
+            .toString()
+            .split('\n')
+            .find((line) => sanitizeTerminalText(line).includes('Choose a workspace folder')) ?? headingRow
+      })
+      render(
+        createElement(HarnessPicker, { harnesses: [harness], folderFor: () => '/work/strands-dev', onSelect: vi.fn() }),
+        { stdin: input, stdout: output }
+      )
+      await vi.waitFor(() => expect(frame().join('\n')).toContain('Select a harness'))
+      input.write('\r')
+
+      const green = '\u001b[38;2;104;245;138m'
+      await vi.waitFor(() => {
+        const headingStart = headingRow.indexOf('Choose a workspace folder')
+        expect(headingRow.lastIndexOf(green, headingStart)).toBeGreaterThanOrEqual(0)
+        expect(headingRow.lastIndexOf(green, headingRow.indexOf('Project harness'))).toBeGreaterThan(headingStart)
+      })
+    } finally {
+      chalk.level = level
+    }
   })
 
   it('shouldAskForTheFolderAfterTheNewHarnessForm', async () => {
@@ -551,7 +586,7 @@ describe('HarnessPicker', () => {
   it.each([
     [11, false],
     [12, true],
-  ])('shouldShowTheSelectedAgentOnlyWhenTheFolderStepFitsAt%sRows', async (rows, agentVisible) => {
+  ])('shouldShowTheSelectedProjectOnlyWhenTheFolderStepFitsAt%sRows', async (rows, agentVisible) => {
     const input = ttyInput()
     const output = ttyOutput(120, 50)
     const frame = captureFrame(output)
@@ -567,7 +602,7 @@ describe('HarnessPicker', () => {
     input.write('\r')
 
     await vi.waitFor(() => expect(frame().join('\n')).toContain('Choose a workspace folder'))
-    expect(frame().join('\n').includes('Agent selected')).toBe(agentVisible)
+    expect(frame().join('\n').includes('Selected a project')).toBe(agentVisible)
     expect(frame().length).toBeLessThanOrEqual(rows)
   })
 

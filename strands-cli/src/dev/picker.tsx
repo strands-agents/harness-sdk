@@ -342,18 +342,18 @@ export const HarnessPicker = ({
       {selectedAgent ? (
         <Box flexDirection="column" marginBottom={1}>
           <Text bold color={success}>
-            Agent selected
+            Selected a project
           </Text>
           <Text bold wrap="truncate-middle">
-            {selectedAgent}
+            Harness path: {selectedAgent}
           </Text>
         </Box>
       ) : null}
       <Box marginBottom={1} justifyContent="space-between">
-        <Text bold color={accent}>
+        <Text bold color={step === 'folder' ? success : accent}>
           {heading}
         </Text>
-        <Text dimColor>{context}</Text>
+        <Text {...(step === 'folder' ? { color: success } : { dimColor: true })}>{context}</Text>
       </Box>
       {notice ? (
         <Box marginBottom={1}>
