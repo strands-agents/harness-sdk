@@ -4,6 +4,7 @@ import pathlib
 import pytest
 from strands.models._model_info import lookup_model as sdk_lookup_model
 
+from strands_harness import models
 from strands_harness.models import EFFORT_LEVELS, _lookup_model
 
 _SHARED = pathlib.Path(__file__).parents[2] / "shared" / "model-info.json"
@@ -65,3 +66,21 @@ def test_the_id_matching_rule_matches_the_sdk(model_id):
     if sdk is not None:
         assert ours.get("limits", {}).get("maxOutputTokens") == sdk.limits.max_output_tokens
         assert ours.get("limits", {}).get("contextWindow") == sdk.limits.context_window
+
+
+def _provider_levels(model_id: str) -> tuple[str, ...]:
+    if "." in model_id.split("-")[0]:
+        return models._bedrock_levels(model_id)
+    if model_id.startswith("claude-"):
+        return models._model_levels("anthropic", model_id, models._ANTHROPIC_LEVELS)
+    if model_id.startswith("gemini-"):
+        return models._model_levels("google", model_id, models._GOOGLE_LEVELS)
+    return models._model_levels("openai", model_id, models._OPENAI_LEVELS)
+
+
+def test_every_default_effort_is_a_level_the_serving_provider_accepts():
+    data = json.loads(_SHARED.read_text(encoding="utf-8"))["models"]
+    for model_id, entry in data.items():
+        level = entry.get("capabilities", {}).get("defaultEffort")
+        if level is not None:
+            assert level in _provider_levels(model_id), model_id

@@ -15,8 +15,6 @@ Edit the file; each SDK copies it into its own package when it installs and buil
 
 Each consumer reads only the fields it uses and skips the rest, so a field one consumer needs (the harness's `capabilities.defaultEffort`) needs no change in the others.
 
-Each consumer reads only the fields it uses and skips the rest, so a field one consumer needs (the harness's `capabilities.defaultEffort`) needs no change in the others.
-
 ### Format
 
 Keys and multi-word values are camelCase, matching the TypeScript `ModelInfo` type (`cachePoints`); the Python loader re-cases both on read (`cache_points`). There is no version field: the shape is the SDK's `ModelInfo` type, each SDK's tests validate every entry strictly against it and the named harness-only fields, and a shape change updates the loaders in the same PR. `capabilities.stateful` is owned by the provider and is not read from this file. `capabilities.temporaryMessages` says which models accept temporary messages; only a provider that can send them acts on it.
