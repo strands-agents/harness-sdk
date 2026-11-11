@@ -11,6 +11,7 @@ import { createWorkspaceReplacement, type WorkspaceReplacement } from './replace
 import { baseHarnessProject, discoverLocalHarnesses, distinctHarnesses } from './selection.js'
 import { confirmWorkspaceReplacement } from './settings.js'
 import { readDevWorkspace, type DevWorkspace } from './workspace.js'
+import type { DiscoveredHarness } from './search.js'
 
 interface WorkspaceChangeOptions {
   args: ParsedArgs
@@ -75,19 +76,32 @@ const chooseReplacement = async (
 ): Promise<WorkspaceReplacement | undefined> => {
   const { args, savedConfig, launchDirectory, screen } = options
   const { directory } = workspace
-  screen.show(undefined, 'Discovering local harnesses…')
   const current = [workspace.entrypoint, ...(args.agent ? [args.agent] : [])]
   const cli = await baseCliOption(workspace, options, current)
   const linked = savedConfig.agentProject ? cli?.path : undefined
   const snapshot = linked ? { ...savedConfig, agentProject: linked } : savedConfig
-  const discovered = await discoverLocalHarnesses(launchDirectory, args.dev?.searchRoots ?? [], [
-    ...current,
-    ...(linked ? [linked] : []),
-  ])
   screen.signal.throwIfAborted()
+  const visible = outside(directory)
   const picker = {
     ...(cli ? { cli } : {}),
-    harnesses: discovered.filter(outside(directory)),
+    harnesses: [],
+    search: async (
+      found: (harness: DiscoveredHarness) => void,
+      signal: AbortSignal
+    ): Promise<readonly DiscoveredHarness[]> =>
+      (
+        await discoverLocalHarnesses(
+          launchDirectory,
+          args.dev?.searchRoots ?? [],
+          [...current, ...(linked ? [linked] : [])],
+          {
+            signal,
+            found: (harness): void => {
+              if (visible(harness)) found(harness)
+            },
+          }
+        )
+      ).filter(visible),
     warning: replacementWarning(workspace),
   }
   const { chooseHarness } = await import('./picker.js')

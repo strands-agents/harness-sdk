@@ -295,6 +295,7 @@ async function runInteractive(
                 : requestedArgs
               const prepared = await prepareDevRun(selectionArgs, {
                 config,
+                savedConfig,
                 screen,
                 deferPreparation: true,
                 forceSelection: selectAgain,
@@ -308,7 +309,7 @@ async function runInteractive(
                 },
                 screen,
                 async (install): Promise<void> => {
-                  screen.show(undefined, 'Preparing initial candidate copy…')
+                  screen.show(undefined, 'Initializing developer workspace…')
                   const { ensureInitialCandidate } = await import('../dev/initialize.js')
                   const { planProjectPreparation } = await import('../project/preparation-plan.js')
                   const { executePreparation } = await import('../project/preparation.js')

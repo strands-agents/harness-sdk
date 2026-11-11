@@ -9,6 +9,8 @@ import { temporaryDirectory } from '../fixtures/tempdir.js'
 import { idleBackend } from '../fixtures/chat-backend.js'
 import { ChatController } from '../../src/ui/chat/controller.js'
 import * as projectSetup from '../../src/dev/project-setup.js'
+import * as picker from '../../src/dev/picker.js'
+import * as search from '../../src/dev/search.js'
 import type { runInkChat } from '../../src/ui/run.js'
 
 const ui = vi.hoisted(() => ({ run: vi.fn(), typescript: vi.fn() }))
@@ -137,5 +139,48 @@ describe('dev ingress', () => {
     expect(process.exitCode).toBe(1)
     expect(output.mock.calls.flat().join('')).toContain('Run strands dev init')
     expect(ui.run).not.toHaveBeenCalled()
+  })
+
+  it('shouldOfferTheSavedBaseCliWhenTheUserGoesBackFromAFailedHarness', async () => {
+    const failed = await temporaryDirectory()
+    await writeFile(join(failed, 'package.json'), '{"type":"module"}')
+    await writeFile(join(failed, 'agent.ts'), 'export const agent = {}')
+    const harness = {
+      name: 'Failed',
+      entrypoint: join(failed, 'agent.ts'),
+      root: failed,
+      language: 'typescript' as const,
+    }
+    const configPath = join(await temporaryDirectory(), 'cli.toml')
+    await writeFile(configPath, '[profile]\nname = "Saved"\n')
+    vi.spyOn(CliConfigStore, 'load').mockResolvedValue(await CliConfigStore.load(configPath, { persist: false }))
+    vi.spyOn(projectSetup, 'projectSetupSession').mockReturnValue({
+      prepare: vi.fn().mockResolvedValue('back'),
+      recover: vi.fn().mockResolvedValue('exit'),
+    })
+    vi.spyOn(search, 'discoverHarnesses').mockResolvedValue({ harnesses: [harness], warnings: [] })
+    const choose = vi
+      .spyOn(picker, 'chooseHarness')
+      .mockImplementationOnce(async (_options, screen, open) => open({ kind: 'discovered', harness }, screen.signal))
+      .mockResolvedValueOnce(undefined)
+    ui.run.mockImplementation(async (_factory: unknown, options: Parameters<typeof runInkChat>[1]) => {
+      await options?.prepare?.({ signal: new AbortController().signal, show: vi.fn() })
+      return 0
+    })
+    const home = await temporaryDirectory()
+    vi.stubEnv('HOME', home)
+    vi.stubEnv('USERPROFILE', home)
+    terminal(true)
+    const cwd = process.cwd()
+    process.chdir(await temporaryDirectory())
+    try {
+      await main(['dev'])
+    } finally {
+      process.chdir(cwd)
+      vi.unstubAllEnvs()
+    }
+
+    expect(choose).toHaveBeenCalledTimes(2)
+    expect(choose.mock.calls[1]?.[0].cli).toEqual({ name: 'Saved', path: configPath })
   })
 })

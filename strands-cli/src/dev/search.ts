@@ -25,6 +25,11 @@ export interface HarnessDiscovery {
   warnings: string[]
 }
 
+export interface HarnessSearch {
+  signal?: AbortSignal
+  found?(harness: DiscoveredHarness): void
+}
+
 const SOURCE_EXTENSION = /\.(?:ts|mts|js|mjs|py)$/u
 const MAX_SOURCE_BYTES = 1024 * 1024
 const IGNORED_DIRECTORIES = new Set([
@@ -43,10 +48,20 @@ interface DiscoveryState {
   warnings: Set<string>
   visited: Set<string>
   vendored: Set<string>
+  search: HarnessSearch
 }
 
-export async function discoverHarnesses(roots: readonly string[]): Promise<HarnessDiscovery> {
-  const state: DiscoveryState = { harnesses: new Map(), warnings: new Set(), visited: new Set(), vendored: new Set() }
+export async function discoverHarnesses(
+  roots: readonly string[],
+  search: HarnessSearch = {}
+): Promise<HarnessDiscovery> {
+  const state: DiscoveryState = {
+    harnesses: new Map(),
+    warnings: new Set(),
+    visited: new Set(),
+    vendored: new Set(),
+    search,
+  }
   const paths = new Set<string>()
   for (const root of roots) {
     if (!root.trim()) warn(state, root, new Error('Discovery root must not be empty.'))
@@ -61,8 +76,14 @@ export async function discoverHarnesses(roots: readonly string[]): Promise<Harne
   }
 }
 
+const record = (state: DiscoveryState, harness: DiscoveredHarness): void => {
+  state.harnesses.set(harness.entrypoint, harness)
+  if (!insideWorkspaceFolder(harness.entrypoint)) state.search.found?.(harness)
+}
+
 async function visit(path: string, state: DiscoveryState, explicit = false): Promise<void> {
   if (
+    state.search.signal?.aborted ||
     hasIgnoredDirectory(path, IGNORED_DIRECTORIES) ||
     insideWorkspaceFolder(path) ||
     [...state.vendored].some((root) => containsPath(root, path))
@@ -91,7 +112,7 @@ async function scanDirectory(root: string, state: DiscoveryState): Promise<void>
   try {
     const workspace = await readDevWorkspace(root)
     if (workspace) {
-      state.harnesses.set(workspace.entrypoint, {
+      record(state, {
         name: workspace.config.name,
         entrypoint: workspace.entrypoint,
         root: workspace.root,
@@ -107,6 +128,7 @@ async function scanDirectory(root: string, state: DiscoveryState): Promise<void>
   for (const entry of (await readdir(root, { withFileTypes: true })).sort((left, right) =>
     comparePaths(left.name, right.name)
   )) {
+    if (state.search.signal?.aborted) return
     if (entry.isSymbolicLink()) continue
     if (entry.isDirectory() || SOURCE_EXTENSION.test(entry.name)) await visit(join(root, entry.name), state)
   }
@@ -121,7 +143,7 @@ async function scanSource(path: string, details: Stats, state: DiscoveryState): 
   await guardProjectMetadata(path)
   const { root } = importAgentProject(path)
   if (!containsPath(root, path)) throw new Error('Imported project root must contain its harness entrypoint.')
-  state.harnesses.set(path, { name: harness.name ?? basename(path), entrypoint: path, root, language })
+  record(state, { name: harness.name ?? basename(path), entrypoint: path, root, language })
 }
 
 function comparePaths(left: string, right: string): number {

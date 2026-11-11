@@ -8,7 +8,7 @@ import { containsPath, strandsUserPath } from '../../src/paths.js'
 import { CliConfigStore } from '../../src/config/store.js'
 import { bindWorkspace } from '../../src/dev/binding.js'
 import { bindExistingAgent } from '../../src/dev/create.js'
-import type { HarnessChoice } from '../../src/dev/picker.js'
+import type { FolderSuggestion, HarnessChoice } from '../../src/dev/picker.js'
 import { prepareDevRun } from '../../src/dev/prepare.js'
 import * as search from '../../src/dev/search.js'
 import type { DiscoveredHarness } from '../../src/dev/search.js'
@@ -193,9 +193,11 @@ describe('prepareDevRun', () => {
       harnesses: [{ ...harness, preparationStatus: 'Needs setup' }],
       warnings: ['Workspace config version must be 1.'],
     })
-    vi.spyOn(picker, 'chooseHarness').mockImplementation(async (_options, _screen, open) =>
-      open({ kind: 'discovered', harness }, _screen.signal)
-    )
+    const reported: DiscoveredHarness[] = []
+    vi.spyOn(picker, 'chooseHarness').mockImplementation(async (options, _screen, open) => {
+      await options.search?.((found) => reported.push(found), _screen.signal)
+      return open({ kind: 'discovered', harness }, _screen.signal)
+    })
     const screen = { signal: new AbortController().signal, show: vi.fn() }
 
     const prepared = await prepareDevRun(parseArgs(['dev', '--search-root', '../other']), { screen })
@@ -203,19 +205,24 @@ describe('prepareDevRun', () => {
     expect(picker.chooseHarness).toHaveBeenCalledWith(
       {
         cli: { name: 'Saved CLI', path: 'in-memory' },
-        harnesses: [{ ...harness, preparationStatus: 'Needs setup' }],
+        harnesses: [],
+        search: expect.any(Function),
         folderFor: expect.any(Function),
         newProject: join(cwd, 'strands-workspace'),
       },
       screen,
       expect.any(Function)
     )
+    expect(reported).toEqual([{ ...harness, preparationStatus: 'Needs setup' }])
     expect(prepared?.workspace.root).toBe(root)
     expect(prepared?.workspace.directory).toBe(join(root, 'strands-dev'))
     expect(JSON.stringify(vi.mocked(picker.chooseHarness).mock.calls ?? [])).not.toContain(
       'Workspace config version must be 1.'
     )
-    expect(search.discoverHarnesses).toHaveBeenCalledWith([cwd, join(cwd, '../other')])
+    expect(search.discoverHarnesses).toHaveBeenCalledWith(
+      [cwd, join(cwd, '../other')],
+      expect.objectContaining({ found: expect.any(Function) })
+    )
   })
 
   it('shouldNotWriteFilesWhenTheUserCancelsSelection', async () => {
@@ -296,7 +303,10 @@ describe('workspace path option', () => {
 
     await prepareDevRun(parseArgs(['dev', 'init', ...flags]), { screen, deferPreparation: true })
 
-    expect(vi.mocked(picker.chooseHarness).mock.calls[0]?.[0].folderFor?.({ kind: 'cli' })).toBe(expected(launch))
+    expect(vi.mocked(picker.chooseHarness).mock.calls[0]?.[0].folderFor?.({ kind: 'cli' })).toEqual({
+      path: expected(launch),
+      detected: false,
+    })
   })
 })
 
@@ -310,7 +320,9 @@ describe('default workspace placement', () => {
     vi.spyOn(picker, 'chooseHarness').mockResolvedValue(undefined)
     const screen = { signal: new AbortController().signal, show: vi.fn() }
     await prepareDevRun(parseArgs(['dev', ...flags]), { screen, deferPreparation: true })
-    return vi.mocked(picker.chooseHarness).mock.calls[0]![0]
+    const options = vi.mocked(picker.chooseHarness).mock.calls[0]![0]
+    await options.search?.(() => {}, new AbortController().signal)
+    return options
   }
   const found = (root: string): DiscoveredHarness => ({
     name: 'Found',
@@ -336,12 +348,12 @@ describe('default workspace placement', () => {
       { ...found(moved), workspace: elsewhere },
     ])
 
-    const folder = (root: string): string | undefined =>
+    const folder = (root: string): FolderSuggestion | undefined =>
       options.folderFor?.({ kind: 'discovered', harness: found(root) })
-    expect(folder(plain)).toBe(join(plain, 'strands-dev'))
-    expect(folder(taken)).toBe(join(taken, 'strands-dev-2'))
-    expect(folder(bound)).toBe(join(bound, 'strands-dev'))
-    expect(folder(moved)).toBe(join(moved, 'strands-dev'))
+    expect(folder(plain)).toEqual({ path: join(plain, 'strands-dev'), detected: false })
+    expect(folder(taken)).toEqual({ path: join(taken, 'strands-dev-2'), detected: false })
+    expect(folder(bound)).toEqual({ path: join(bound, 'strands-dev'), detected: true })
+    expect(folder(moved)).toEqual({ path: join(moved, 'strands-dev'), detected: false })
     expect(options.folderFor?.(createChoice)).toBeUndefined()
   })
 
@@ -350,10 +362,9 @@ describe('default workspace placement', () => {
 
     const options = await pickerOptions([found(root)], ['init', '--workspace', 'chosen'])
 
-    expect(options.folderFor?.({ kind: 'discovered', harness: found(root) })).toBe(
-      join(process.cwd(), 'chosen', 'strands-dev')
-    )
-    expect(options.folderFor?.(createChoice)).toBe(join(process.cwd(), 'chosen', 'strands-dev'))
+    const chosen = { path: join(process.cwd(), 'chosen', 'strands-dev'), detected: false }
+    expect(options.folderFor?.({ kind: 'discovered', harness: found(root) })).toEqual(chosen)
+    expect(options.folderFor?.(createChoice)).toEqual(chosen)
     expect(options.newProject).toBeUndefined()
   })
 
@@ -401,8 +412,9 @@ describe('default workspace placement', () => {
     await prepareDevRun(parseArgs(['dev']), { screen, deferPreparation: true })
 
     const options = vi.mocked(picker.chooseHarness).mock.calls[0]![0]
+    const harnesses = (await options.search?.(() => {}, new AbortController().signal)) ?? []
     const folders = Object.fromEntries(
-      options.harnesses.map((harness) => [harness.entrypoint, options.folderFor?.({ kind: 'discovered', harness })])
+      harnesses.map((harness) => [harness.entrypoint, options.folderFor?.({ kind: 'discovered', harness })?.path])
     )
     expect(folders).toEqual({
       [join(launch, 'arielnab/agent.py')]: join(launch, 'arielnab/strands-dev'),
@@ -426,7 +438,11 @@ describe('default workspace placement', () => {
     await prepareDevRun(parseArgs(['dev']), { screen, deferPreparation: true, forceSelection: true })
 
     const options = vi.mocked(picker.chooseHarness).mock.calls[0]![0]
-    expect(options.folderFor?.({ kind: 'discovered', harness: found(root) })).toBe(join(root, 'strands-dev-2'))
+    await options.search?.(() => {}, new AbortController().signal)
+    expect(options.folderFor?.({ kind: 'discovered', harness: found(root) })).toEqual({
+      path: join(root, 'strands-dev-2'),
+      detected: false,
+    })
   })
 
   it('shouldSkipAFolderOfAnotherAgentWhenAgentIsGivenWithoutAWorkspace', async () => {
@@ -685,9 +701,37 @@ describe('workspace folder selection', () => {
 
     await prepareDevRun(parseArgs(['dev']), { screen, deferPreparation: true, forceSelection: true })
 
-    expect(vi.mocked(picker.chooseHarness).mock.calls[0]?.[0].folderFor?.({ kind: 'cli' })).toBe(
-      strandsUserPath('strands-dev-3')
-    )
+    expect(vi.mocked(picker.chooseHarness).mock.calls[0]?.[0].folderFor?.({ kind: 'cli' })).toEqual({
+      path: strandsUserPath('strands-dev-3'),
+      detected: false,
+    })
+  })
+
+  it.each<[string, () => Promise<unknown>, boolean]>([
+    [
+      'its own workspace',
+      () => prepareDevRun(parseArgs(['dev', 'init', '--create', 'cli']), { deferPreparation: true }),
+      true,
+    ],
+    [
+      'the workspace of another agent',
+      async () => bindExistingAgent(strandsUserPath('strands-dev'), join(await fixture(), 'agent.ts')),
+      false,
+    ],
+  ])('shouldReportWhetherTheBaseCliFolderHolds%s', async (_case, arrange, detected) => {
+    vi.spyOn(CliConfigStore, 'load').mockResolvedValue(config())
+    vi.spyOn(process.stderr, 'write').mockReturnValue(true)
+    await arrange()
+    vi.spyOn(search, 'discoverHarnesses').mockResolvedValue({ harnesses: [], warnings: [] })
+    vi.spyOn(picker, 'chooseHarness').mockResolvedValue(undefined)
+    const screen = { signal: new AbortController().signal, show: vi.fn() }
+
+    await prepareDevRun(parseArgs(['dev']), { screen, deferPreparation: true })
+
+    expect(vi.mocked(picker.chooseHarness).mock.calls[0]?.[0].folderFor?.({ kind: 'cli' })).toEqual({
+      path: strandsUserPath('strands-dev'),
+      detected,
+    })
   })
 
   it.each([
@@ -705,5 +749,68 @@ describe('workspace folder selection', () => {
     await expect(readFile(join(folder, '.config'))).rejects.toMatchObject({
       code: expect.stringMatching(/ENOENT|ENOTDIR/),
     })
+  })
+})
+
+describe('selection after the user goes back', () => {
+  const failedHarness = async (): Promise<DiscoveredHarness> => {
+    const root = await fixture()
+    return { name: 'Failed', entrypoint: join(root, 'agent.ts'), root, language: 'typescript' }
+  }
+  const selectTwice = async (
+    store: CliConfigStore,
+    failed: DiscoveredHarness,
+    { first, second, flags = [] }: { first: HarnessChoice; second?: HarnessChoice; flags?: string[] }
+  ) => {
+    const savedConfig = store.snapshot()
+    vi.spyOn(search, 'discoverHarnesses').mockResolvedValue({ harnesses: [failed], warnings: [] })
+    vi.spyOn(picker, 'chooseHarness')
+      .mockImplementationOnce(async (_options, screen, open) => open(first, screen.signal))
+      .mockImplementationOnce(async (_options, screen, open) => (second ? open(second, screen.signal) : undefined))
+    const screen = { signal: new AbortController().signal, show: vi.fn() }
+    const args = parseArgs(['dev', ...flags])
+    await prepareDevRun(args, { config: store, savedConfig, screen, deferPreparation: true })
+    const prepared = await prepareDevRun(args, {
+      config: store,
+      savedConfig,
+      screen,
+      deferPreparation: true,
+      forceSelection: true,
+    })
+    const options = vi.mocked(picker.chooseHarness).mock.calls[1]![0]
+    const listed = (await options.search?.(() => {}, new AbortController().signal)) ?? []
+    return { prepared, cli: options.cli, listed: listed.map(({ entrypoint }) => entrypoint) }
+  }
+
+  it.each<[string, (failed: DiscoveredHarness) => HarnessChoice, string[]]>([
+    ['TheFailedHarness', (harness) => ({ kind: 'discovered', harness }), []],
+    [
+      'TheFailedHarnessInTheWorkspaceFolder',
+      (harness) => ({ kind: 'discovered', harness }),
+      ['init', '--workspace', 'chosen'],
+    ],
+    ['ANewHarness', () => ({ kind: 'create', language: 'typescript', name: 'fresh' }), []],
+  ])('shouldOfferTheSavedBaseCliAndListEveryHarnessAfter%s', async (_case, first, flags) => {
+    const failed = await failedHarness()
+
+    const { cli, listed } = await selectTwice(config(), failed, { first: first(failed), flags })
+
+    expect(cli).toEqual({ name: 'Saved CLI', path: 'in-memory' })
+    expect(listed).toEqual([failed.entrypoint])
+  })
+
+  it('shouldBindTheBaseCliToItsSavedProject', async () => {
+    const base = await fixture()
+    const store = config()
+    await store.useAgentProject(join(base, 'agent.ts'))
+    const failed = await failedHarness()
+
+    const { prepared } = await selectTwice(store, failed, {
+      first: { kind: 'discovered', harness: failed },
+      second: { kind: 'cli' },
+    })
+
+    expect(prepared?.workspace.root).toBe(base)
+    expect(prepared?.workspace.config.origin).toEqual({ kind: 'cli', source: join(base, 'agent.ts') })
   })
 })

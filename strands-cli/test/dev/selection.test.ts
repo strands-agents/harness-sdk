@@ -2,7 +2,7 @@ import { mkdir, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CliConfigStore } from '../../src/config/store.js'
-import { baseHarnessSelection, distinctHarnesses } from '../../src/dev/selection.js'
+import { baseHarnessSelection, discoverLocalHarnesses, distinctHarnesses } from '../../src/dev/selection.js'
 import { initializeDevWorkspace } from '../../src/dev/workspace.js'
 import { strandsUserPath } from '../../src/paths.js'
 import { temporaryDirectory } from '../fixtures/tempdir.js'
@@ -101,5 +101,33 @@ describe('base harness selection', () => {
     const second = await project(join(root, 'second'))
 
     expect(await distinctHarnesses([first, second], [])).toEqual([first, second])
+  })
+})
+
+describe('local harness search', () => {
+  const harnessProject = async (root: string): Promise<string> => {
+    await mkdir(root, { recursive: true })
+    await writeFile(join(root, 'package.json'), '{"type":"module"}')
+    await writeFile(
+      join(root, 'agent.ts'),
+      "import { createHarness } from '@strands-agents/harness'\nexport const agent = await createHarness({ name: 'Agent' })\n"
+    )
+    return join(root, 'agent.ts')
+  }
+
+  it('shouldReportOnlyKeptHarnessesWithTheirSetupStatusAsTheyAreFound', async () => {
+    const launch = await temporaryDirectory()
+    const kept = await harnessProject(join(launch, 'kept'))
+    const excluded = await harnessProject(join(launch, 'excluded'))
+    const reported: string[] = []
+
+    const result = await discoverLocalHarnesses(launch, [], [excluded], {
+      found: ({ entrypoint, preparationStatus }) => {
+        reported.push(`${entrypoint} ${preparationStatus}`)
+      },
+    })
+
+    expect(reported).toEqual([`${kept} Needs setup`])
+    expect(result.map(({ entrypoint }) => entrypoint)).toEqual([kept])
   })
 })

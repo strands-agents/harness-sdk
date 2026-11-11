@@ -99,15 +99,22 @@ It skips dependency folders, build output, private state, and copied harness lib
 It never lists an agent inside a `strands-dev/` or `strands-dev-N/` folder, for example the copies in `strands-dev/tmp/`.
 
 When the launch directory has no workspace, the picker asks for the workspace folder after you select an existing harness.
+When the suggested folder already contains the workspace of the selected harness, the heading is **Select a workspace**.
+The field shows the full path after `Detected workspace:`, for example `~/agents/support/strands-dev`. Enter opens that workspace.
+
+When that folder does not contain the workspace of the harness, the heading is **Create a workspace**.
 The folder field starts with the folder that contains the harness file. Dev creates `strands-dev/` in that folder.
 For example, `~/agents/support/agent.py` gives the field `~/agents/support` and the workspace `~/agents/support/strands-dev/`.
 The rule is the same when the file is in a source folder: `~/repo/src/agent.ts` gives `~/repo/src/strands-dev/`.
 When that `strands-dev/` contains a different agent, a note under the field names the next unused folder, for example `strands-dev-2/`.
 
-For the Base CLI, the field always starts with `~/.strands`, the folder of the CLI config. Its workspace is `~/.strands/strands-dev/`.
+For the Base CLI, the suggested workspace is `~/.strands/strands-dev/`, in the folder of the CLI config.
+When that folder does not contain the Base CLI workspace, the field starts with `~/.strands`.
 This rule also applies when the Base CLI has a saved project.
 
-You can edit the path before you continue. A relative path starts from the launch directory. Esc in the folder step goes back to the harness list.
+You can edit the path before you continue. When you change a detected path, the heading changes to **Create a workspace**.
+When the path that you type ends in `strands-dev` or `strands-dev-N`, the note names that folder.
+A relative path starts from the launch directory. Esc in the folder step goes back to the harness list.
 After you go back from a failed setup, the note names the next unused folder, for example `strands-dev-2/`.
 
 **Create a new harness** does not ask for a folder. Dev creates the project in `strands-workspace/` in the launch directory.

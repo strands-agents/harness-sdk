@@ -29,7 +29,8 @@ export const baseHarnessSelection = async (
   const project = baseHarnessProject(snapshot, cwd)
   const source = project?.entrypoint ?? snapshot.path
   const workspace = destination ? resolve(cwd, destination) : strandsUserPath(WORKSPACE_FOLDER)
-  const existing = await readDevWorkspace(workspace)
+  const bound = await readDevWorkspace(workspace)
+  const existing = bound?.config.origin.kind === 'cli' ? bound : undefined
   return {
     name: existing?.config.name ?? snapshot.profile.name,
     source,
@@ -72,12 +73,38 @@ const withPreparationStatus = async (harness: DiscoveredHarness): Promise<Discov
   }
 }
 
+export interface LocalHarnessSearch {
+  signal?: AbortSignal
+  found?(harness: DiscoveredHarness): void | Promise<void>
+}
+
+const byEntrypoint = (left: DiscoveredHarness, right: DiscoveredHarness): number =>
+  left.entrypoint < right.entrypoint ? -1 : left.entrypoint > right.entrypoint ? 1 : 0
+
 export const discoverLocalHarnesses = async (
   cwd: string,
   searchRoots: readonly string[],
-  excludedEntrypoints: readonly string[]
+  excludedEntrypoints: readonly string[],
+  search: LocalHarnessSearch = {}
 ): Promise<DiscoveredHarness[]> => {
-  const discovery = await discoverHarnesses([cwd, ...searchRoots.map((path) => resolve(cwd, expandHome(path)))])
-  const harnesses = await distinctHarnesses(discovery.harnesses, excludedEntrypoints)
-  return Promise.all(harnesses.map(withPreparationStatus))
+  const excluded = new Set(await Promise.all(excludedEntrypoints.map(canonicalPath)))
+  const kept = new Map<string, DiscoveredHarness>()
+  let reported = Promise.resolve()
+  const report = (harness: DiscoveredHarness): void => {
+    reported = reported.then(async () => {
+      const path = await canonicalPath(harness.entrypoint)
+      const previous = kept.get(path)
+      if (excluded.has(path) || (previous && (previous.workspace || !harness.workspace))) return
+      const prepared = await withPreparationStatus(harness)
+      kept.set(path, prepared)
+      await search.found?.(prepared)
+    })
+  }
+  const discovery = await discoverHarnesses([cwd, ...searchRoots.map((path) => resolve(cwd, expandHome(path)))], {
+    ...(search.signal ? { signal: search.signal } : {}),
+    found: report,
+  })
+  discovery.harnesses.forEach(report)
+  await reported
+  return [...kept.values()].sort(byEntrypoint)
 }
