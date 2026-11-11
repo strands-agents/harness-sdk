@@ -1,6 +1,7 @@
 import { readdir, readFile, stat } from 'node:fs/promises'
 import { basename, join, resolve } from 'node:path'
 
+import { errorMessage } from '../../terminal/text.js'
 import { isRecord } from '../../values.js'
 import { isTemporaryExperimentName } from './experiment.js'
 
@@ -72,6 +73,15 @@ export const resolveTemporaryExperiment = async (
 }
 
 export const temporaryCaseCount = async (path: string): Promise<number> => {
-  const experiment = JSON.parse(await readFile(path, 'utf8')) as { cases?: unknown[] }
-  return experiment.cases?.length ?? 0
+  let experiment: unknown
+  try {
+    experiment = JSON.parse(await readFile(path, 'utf8'))
+  } catch (error) {
+    throw new Error(
+      `${path} is not a usable Experiment file (${errorMessage(error)}). Fix the file, or make a new one with ` +
+        '/experiment <name> <what the agent does>, then try again.',
+      { cause: error }
+    )
+  }
+  return isRecord(experiment) && Array.isArray(experiment.cases) ? experiment.cases.length : 0
 }

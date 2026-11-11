@@ -19,7 +19,7 @@ const workspaceFixture = async (language: 'python' | 'typescript' = 'python'): P
   const root = await temporaryDirectory()
   const directory = join(root, 'strands-dev')
   await writeFileAt(temporaryVenvPython(join(root, '.venv')), 'fixture interpreter')
-  await writeFileAt(join(directory, 'tmp/experiments/support.json'))
+  await writeFileAt(join(directory, 'tmp/experiments/support.json'), JSON.stringify({ cases: [{ name: 'a' }] }))
   return {
     directory,
     root,
@@ -119,5 +119,27 @@ describe('TEMPORARY strands dev optimize command', () => {
     const lines = stdout.text().trim().split('\n')
     expect(lines[0]).toBe(`${passes.filter(Boolean).length} of 2 checks passed (overall score 0.50)`)
     expect(lines.at(-1)).toContain(last)
+  })
+
+  it('shouldKeepTheWorkspaceInTheNextStepWhenDevTestRunsOnAnotherWorkspace', async () => {
+    const workspace = await workspaceFixture()
+    const stdout = captured()
+    const spawnTests = vi.fn(async ({ args }: { args: string[] }) => {
+      await writeFileAt(args[args.indexOf('--output') + 1]!, JSON.stringify({ overall_score: 0, test_passes: [false] }))
+      return { code: 0, stdout: '', stderrTail: [] }
+    })
+
+    await runTemporaryDevCommand(
+      parseArgs(['dev', 'test', 'support', '--workspace', '/work/desk']),
+      { stdout: stdout.stream, stderr: captured().stream },
+      {
+        openWorkspace: async () => opened(workspace),
+        prepareProject: vi.fn(async () => {}),
+        run: run(workspace),
+        spawnTests,
+      }
+    )
+
+    expect(stdout.text()).toContain('Run strands dev optimize --workspace /work/desk support to improve')
   })
 })

@@ -129,7 +129,7 @@ describe('TEMPORARY /test', () => {
   })
 
   it.each([
-    { code: 2, step: 'Fix the flags after --, or the experiment file' },
+    { code: 2, step: 'Fix the cause above \\(it is in the agent file, the experiment file, or the flags after --\\)' },
     { code: 3, step: 'Fix the error above, then run the test again' },
   ])('shouldReportTheRunErrorAndTheNextStepWhenRunExitsWith$code', async ({ code, step }) => {
     const workspace = await workspaceFixture()
@@ -142,5 +142,30 @@ describe('TEMPORARY /test', () => {
     await expect(runTemporaryTest({ workspace }, { run: environmentRunner(workspace), spawnTests })).rejects.toThrow(
       new RegExp(`exit code ${code}: Unable to locate credentials\\n${step}`, 'u')
     )
+  })
+
+  it.each([
+    {
+      content: '{"cases": [',
+      message: /is not a usable Experiment file \(.+\)\. Fix the file, or make a new one with \/experiment/u,
+    },
+    { content: JSON.stringify({ cases: [], evaluators: [] }), message: /has no cases, so there is nothing to test/u },
+  ])('shouldExplainWhatToFixWhenTheExperimentFileCannotBeTested', async ({ content, message }) => {
+    const workspace = await workspaceFixture([])
+    await writeFileAt(join(workspace.directory!, 'tmp/experiments/support.json'), content)
+    const spawnTests = reporting([true], 1)
+
+    await expect(runTemporaryTest({ workspace }, { run: environmentRunner(workspace), spawnTests })).rejects.toThrow(
+      message
+    )
+    expect(spawnTests).not.toHaveBeenCalled()
+  })
+
+  it('shouldSayTheExperimentNeedsEvaluatorsWhenTheReportHasNoChecks', async () => {
+    const workspace = await workspaceFixture()
+
+    await expect(
+      runTemporaryTest({ workspace }, { run: environmentRunner(workspace), spawnTests: reporting([], 0) })
+    ).rejects.toThrow(/has no results\. Check that .+support\.json lists evaluators/u)
   })
 })

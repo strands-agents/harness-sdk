@@ -8,7 +8,10 @@ import {
   temporaryTestCommand,
 } from '../../../src/dev/temporary-evals-fork/command.js'
 import { temporaryVenvPython, type TemporaryCommandRequest } from '../../../src/dev/temporary-evals-fork/environment.js'
-import type { TemporaryEvalsProcess } from '../../../src/dev/temporary-evals-fork/evals-process.js'
+import type {
+  TemporaryEvalsProcess,
+  TemporaryEvalsSpawner,
+} from '../../../src/dev/temporary-evals-fork/evals-process.js'
 import type { DevWorkspace } from '../../../src/dev/workspace.js'
 import type { ImportedAgentProject } from '../../../src/project/import.js'
 import type { ChatNotice, DevChatCommandContext } from '../../../src/ui/chat/types.js'
@@ -28,7 +31,7 @@ const workspaceFixture = async (language: 'python' | 'typescript' = 'python'): P
   const root = await temporaryDirectory()
   const directory = join(root, 'strands-dev')
   await writeFileAt(temporaryVenvPython(join(root, '.venv')), 'fixture interpreter')
-  await writeFileAt(join(directory, 'tmp/experiments/support.json'))
+  await writeFileAt(join(directory, 'tmp/experiments/support.json'), JSON.stringify({ cases: [{ name: 'a' }] }))
   return {
     directory,
     root,
@@ -85,6 +88,94 @@ const finished = async (updates: Recorded[]): Promise<Recorded> => {
   return updates.at(-1)!
 }
 
+const blockingProcess = (write: (args: string[]) => Promise<void>) => {
+  let release: () => void = () => {}
+  const spawn = vi.fn(async ({ args, onLine }: TemporaryEvalsProcess) => {
+    onLine('candidate  0 baseline complete n=4 Contains 0.5')
+    await new Promise<void>((resolve) => {
+      release = resolve
+    })
+    await write(args)
+    return { code: 0, stdout: 'ships candidate 0: {}\n', stderrTail: [] }
+  })
+  return { spawn, release: (): void => release() }
+}
+
+const outputOf = (args: string[]): string => args[args.indexOf('--output') + 1]!
+
+const COMMANDS = [
+  {
+    name: 'optimize',
+    argument: '',
+    write: async (): Promise<void> => {},
+    make: (workspace: DevWorkspace, spawn: TemporaryEvalsSpawner) =>
+      temporaryOptimizeCommand(workspace, projectOf(workspace), {
+        run: dependenciesFor(workspace).run,
+        spawnOptimizer: spawn,
+      }),
+  },
+  {
+    name: 'test',
+    argument: 'support',
+    write: (args: string[]) => writeFileAt(outputOf(args), JSON.stringify({ overall_score: 1, test_passes: [true] })),
+    make: (workspace: DevWorkspace, spawn: TemporaryEvalsSpawner) =>
+      temporaryTestCommand(workspace, projectOf(workspace), { run: dependenciesFor(workspace).run, spawnTests: spawn }),
+  },
+  {
+    name: 'experiment',
+    argument: 'refunds Answers refund questions',
+    write: (args: string[]) => writeFileAt(outputOf(args), JSON.stringify({ cases: [{ name: 'a' }] })),
+    make: (workspace: DevWorkspace, spawn: TemporaryEvalsSpawner) =>
+      temporaryExperimentCommand(workspace, projectOf(workspace), {
+        run: dependenciesFor(workspace).run,
+        spawnGenerator: spawn,
+      }),
+  },
+]
+
+describe('TEMPORARY dev commands', () => {
+  it.each(COMMANDS)('shouldCompleteTheTextInsteadOfRunningWhen$nameIsPickedInTheSlashList', async ({ name, make }) => {
+    const workspace = await workspaceFixture()
+
+    expect(make(workspace, vi.fn()).spec.replacement).toBe(`/${name} `)
+  })
+
+  it.each(COMMANDS)('shouldRefuseASecondRunWhile/$nameRuns', async ({ argument, write, make }) => {
+    const workspace = await workspaceFixture()
+    const { spawn, release } = blockingProcess(write)
+    const command = make(workspace, spawn)
+    const first = contextFixture()
+    const second = contextFixture()
+
+    command.run(argument, first.context)
+    await vi.waitFor(() => expect(spawn).toHaveBeenCalled())
+    command.run(argument, second.context)
+    release()
+    await finished(first.updates)
+
+    expect(second.failures).toEqual([expect.stringContaining('Wait for it to finish, then try again.')])
+  })
+
+  it.each(COMMANDS)('shouldShowTheRunInTheNewChatWhen/$nameOutlivesTheFirstChat', async ({ argument, write, make }) => {
+    const workspace = await workspaceFixture()
+    const { spawn, release } = blockingProcess(write)
+    const firstChat = new AbortController()
+    const first = contextFixture(firstChat.signal)
+    const second = contextFixture()
+    make(workspace, spawn).run(argument, first.context)
+    await vi.waitFor(() => expect(spawn).toHaveBeenCalled())
+
+    firstChat.abort()
+    const seenByFirst = first.updates.length
+    make(workspace, spawn).attach!(second.context)
+    release()
+
+    expect(second.updates[0]?.text).toContain('candidate  0 baseline complete')
+    expect(await finished(second.updates)).toMatchObject({ status: 'success' })
+    expect(first.updates).toHaveLength(seenByFirst)
+  })
+})
+
 describe('TEMPORARY /optimize command', () => {
   it('shouldShowTheLatestProgressAndThenTheSummaryWhenTheOptimizationSucceeds', async () => {
     const workspace = await workspaceFixture()
@@ -117,19 +208,6 @@ describe('TEMPORARY /optimize command', () => {
     const { args } = spawnOptimizer.mock.calls[0]![0]
     expect(args[3]).toBe(join(workspace.directory!, 'tmp/experiments/support.json'))
     expect(args.slice(-2)).toEqual(['--tune', 'effort'])
-  })
-
-  it('shouldRefuseASecondOptimizationWhileOneRuns', async () => {
-    const workspace = await workspaceFixture()
-    const first = contextFixture()
-    const second = contextFixture()
-    const command = temporaryOptimizeCommand(workspace, projectOf(workspace), dependenciesFor(workspace))
-
-    command.run('', first.context)
-    command.run('', second.context)
-    await finished(first.updates)
-
-    expect(second.failures).toEqual([expect.stringContaining('Wait for it to finish, then try again.')])
   })
 
   it('shouldShowTheUsageWhenMoreThanOneExperimentIsGiven', async () => {
@@ -169,40 +247,6 @@ describe('TEMPORARY /optimize command', () => {
     await finished(updates)
 
     expect(spawnOptimizer.mock.calls[0]![0].args).toContain(join(workspace.root, 'other.py'))
-  })
-
-  it('shouldKeepRunningAndShowItInTheNewChatWhenTheFirstChatCloses', async () => {
-    const workspace = await workspaceFixture()
-    const firstChat = new AbortController()
-    const first = contextFixture(firstChat.signal)
-    const second = contextFixture()
-    let release: () => void = () => {}
-    const spawnOptimizer = vi.fn(async ({ onLine }: TemporaryEvalsProcess) => {
-      onLine('candidate  0 baseline complete n=4 Contains 0.5')
-      await new Promise<void>((resolve) => {
-        release = resolve
-      })
-      return { code: 0, stdout: 'ships candidate 0: {}\n', stderrTail: [] }
-    })
-    const command = temporaryOptimizeCommand(
-      workspace,
-      projectOf(workspace),
-      dependenciesFor(workspace, spawnOptimizer)
-    )
-    command.run('', first.context)
-    await vi.waitFor(() => expect(spawnOptimizer).toHaveBeenCalled())
-
-    firstChat.abort()
-    const seenByFirst = first.updates.length
-    command.attach!(second.context)
-    release()
-
-    expect(second.updates[0]?.text).toContain('candidate  0 baseline complete')
-    expect(await finished(second.updates)).toEqual({
-      status: 'success',
-      text: expect.stringContaining('ships candidate 0'),
-    })
-    expect(first.updates).toHaveLength(seenByFirst)
   })
 
   it('shouldShowTheCaseCountAndTheNextStepWhenAnExperimentIsSaved', async () => {
@@ -257,5 +301,23 @@ describe('TEMPORARY /optimize command', () => {
         /^TEMPORARY test finished\n3 of 4 checks passed \(overall score 0\.75\)\nReport: .+\.json\n.+Run \/optimize support to improve/u
       ),
     })
+  })
+
+  it('shouldNameThePathInTheNextStepWhenTheExperimentIsOutsideTheExperimentsFolder', async () => {
+    const workspace = await workspaceFixture()
+    const outside = join(workspace.root, 'cases', 'refunds.json')
+    await writeFileAt(outside, JSON.stringify({ cases: [{ name: 'a' }] }))
+    const { context, updates } = contextFixture()
+    const spawnTests = vi.fn(async ({ args }: TemporaryEvalsProcess) => {
+      await writeFileAt(outputOf(args), JSON.stringify({ overall_score: 0, test_passes: [false] }))
+      return { code: 0, stdout: '', stderrTail: [] }
+    })
+
+    temporaryTestCommand(workspace, projectOf(workspace), { run: dependenciesFor(workspace).run, spawnTests }).run(
+      outside,
+      context
+    )
+
+    expect((await finished(updates)).text).toContain(`Run /optimize ${outside} to improve`)
   })
 })

@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs'
 import { mkdir, readFile } from 'node:fs/promises'
-import { basename, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 
 import type { DevWorkspace } from '../workspace.js'
 import { ignoreProgress, prepareTemporaryOptimizerEnvironment, type TemporaryCommandRunner } from './environment.js'
@@ -71,8 +71,25 @@ const readScores = async (report: string): Promise<{ passed: number; checks: num
 
 const testNextStep = (code: number, log: string): string =>
   code === 2
-    ? `Fix the flags after --, or the experiment file, then try again. The full output is in ${log}.`
+    ? 'Fix the cause above (it is in the agent file, the experiment file, or the flags after --), then run the ' +
+      `test again. The full output is in ${log}.`
     : `Fix the error above, then run the test again. The full output is in ${log}.`
+
+const assertCases = (experiment: string, cases: number): void => {
+  if (cases === 0)
+    throw new Error(
+      `${experiment} has no cases, so there is nothing to test. Add cases to it, or make a new one with ` +
+        '/experiment <name> <what the agent does>, then run the test again.'
+    )
+}
+
+const assertChecked = (experiment: string, report: string, checks: number): void => {
+  if (checks === 0)
+    throw new Error(
+      `strands-evals run checked nothing: ${report} has no results. Check that ${experiment} lists evaluators, ` +
+        'then run the test again.'
+    )
+}
 
 export const runTemporaryTest = async (
   request: TemporaryTestRequest,
@@ -83,6 +100,7 @@ export const runTemporaryTest = async (
   assertTemporaryForkArguments(forkArguments, TEST_OWNED_FLAGS, 'strands dev')
   const experiment = await resolveTemporaryExperiment(temporaryExperimentsFolder(directory), request.experiment, 'test')
   const cases = await temporaryCaseCount(experiment)
+  assertCases(experiment, cases)
   await request.prepare?.()
   const python = await prepareTemporaryOptimizerEnvironment(
     { workspaceDirectory: directory, projectRoot: workspace.root, language: workspace.config.language },
@@ -122,5 +140,8 @@ export const runTemporaryTest = async (
   if (exit.code !== 0) throw temporaryEvalsFailure('strands-evals run', exit, environment, testNextStep(exit.code, log))
   if (!existsSync(report))
     throw new Error(`strands-evals run finished without writing ${report}. The full output is in ${log}.`)
-  return { experiment, name: basename(experiment, '.json'), report, ...(await readScores(report)) }
+  const scores = await readScores(report)
+  assertChecked(experiment, report, scores.checks)
+  const inFolder = dirname(experiment) === temporaryExperimentsFolder(directory)
+  return { experiment, name: inFolder ? basename(experiment, '.json') : experiment, report, ...scores }
 }

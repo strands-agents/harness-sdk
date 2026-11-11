@@ -150,6 +150,7 @@ export const temporaryOptimizeCommand = (
     spec: {
       name: 'optimize',
       usage: OPTIMIZE_USAGE,
+      replacement: '/optimize ',
       description: 'TEMPORARY: tune this agent against an experiment in strands-dev/tmp/experiments',
     },
     title: () => 'TEMPORARY optimization',
@@ -182,6 +183,7 @@ export const temporaryTestCommand = (
     spec: {
       name: 'test',
       usage: TEST_USAGE,
+      replacement: '/test ',
       description: 'TEMPORARY: run this agent on an experiment in strands-dev/tmp/experiments and save a report',
     },
     title: () => 'TEMPORARY test',
@@ -207,6 +209,7 @@ export const temporaryExperimentCommand = (
     spec: {
       name: 'experiment',
       usage: TEMPORARY_EXPERIMENT_USAGE,
+      replacement: '/experiment ',
       description: 'TEMPORARY: generate test cases for this agent in strands-dev/tmp/experiments',
     },
     title: (request) => `TEMPORARY experiment ${request.name}`,

@@ -18,6 +18,7 @@ interface Output {
 
 interface Shared {
   workspace: DevWorkspace
+  workspaceOption?: string
   experiment?: string
   forkArguments: string[]
   onProgress: (line: string) => void
@@ -54,8 +55,9 @@ const test = async (
   dependencies: TemporaryDevCommandDependencies
 ): Promise<{ lines: string[]; code: number }> => {
   const outcome = await runTemporaryTest(shared, dependencies)
+  const workspace = shared.workspaceOption ? ` --workspace ${shared.workspaceOption}` : ''
   return {
-    lines: temporaryTestSummary(outcome, 'strands dev optimize'),
+    lines: temporaryTestSummary(outcome, `strands dev optimize${workspace}`),
     code: outcome.passed < outcome.checks ? 1 : 0,
   }
 }
@@ -76,6 +78,7 @@ export const runTemporaryDevCommand = async (
     const { lines, code } = await RUNNERS[request.name](
       {
         workspace: opened.workspace,
+        ...(args.dev?.workspace ? { workspaceOption: args.dev.workspace } : {}),
         ...(request.experiment ? { experiment: request.experiment } : {}),
         forkArguments: request.forkArguments,
         onProgress: (line) => output.stderr.write(`${line}\n`),
