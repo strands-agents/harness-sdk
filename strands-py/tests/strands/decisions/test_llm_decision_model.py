@@ -96,15 +96,19 @@ class RecordingDecisionModel(DecisionModel):
         )
 
 
-def _answer_enum(output_model: type[BaseModel], question_id: str) -> list[str]:
-    """Pull the enum of allowed values for a question from the built answer model's JSON schema.
+def _answer_properties(output_model: type[BaseModel], question_id: str) -> dict[str, Any]:
+    """Pull a question's answer-object properties from the built answer model's JSON schema.
 
     Questions are exposed under their id (a field alias), each referencing a per-question ``$def``.
     """
     schema = output_model.model_json_schema()
     ref = schema["properties"][question_id]["$ref"]
-    per_question = schema["$defs"][ref.rsplit("/", 1)[-1]]
-    return per_question["properties"]["answer"]["enum"]
+    return schema["$defs"][ref.rsplit("/", 1)[-1]]["properties"]
+
+
+def _answer_enum(output_model: type[BaseModel], question_id: str) -> list[str]:
+    """Pull the enum of allowed values for a question from the built answer model's JSON schema."""
+    return _answer_properties(output_model, question_id)["answer"]["enum"]
 
 
 @pytest.mark.asyncio
@@ -203,23 +207,32 @@ async def test_returns_uncertain_carrying_the_model_supplied_reason():
 
 
 @pytest.mark.asyncio
-async def test_omits_uncertain_from_the_enum_when_a_question_opts_out():
+async def test_omits_uncertain_from_the_enum_and_offers_no_reason_when_a_question_opts_out():
     model = RecordingModel({"q": "yes"})
     decision = LLMDecisionModel(model=model)
 
-    await decision.ask("state", {"q": {"question": "ok?", "choices": ["yes", "no"], "uncertainty": False}})
+    result = await decision.ask("state", {"q": {"question": "ok?", "choices": ["yes", "no"], "uncertainty": False}})
 
-    assert _answer_enum(model.calls[0]["output_model"], "q") == ["yes", "no"]
+    properties = _answer_properties(model.calls[0]["output_model"], "q")
+    assert {"fields": list(properties), "choices": properties["answer"]["enum"]} == {
+        "fields": ["answer"],
+        "choices": ["yes", "no"],
+    }
+    assert result.answers["q"] == "yes"
 
 
 @pytest.mark.asyncio
-async def test_appends_uncertain_to_the_enum_by_default():
+async def test_appends_uncertain_to_the_enum_and_offers_a_reason_by_default():
     model = RecordingModel({"q": "uncertain"})
     decision = LLMDecisionModel(model=model)
 
     await decision.ask("state", {"q": {"question": "ok?", "choices": ["yes", "no"]}})
 
-    assert _answer_enum(model.calls[0]["output_model"], "q") == ["yes", "no", "uncertain"]
+    properties = _answer_properties(model.calls[0]["output_model"], "q")
+    assert {"fields": list(properties), "choices": properties["answer"]["enum"]} == {
+        "fields": ["answer", "reason"],
+        "choices": ["yes", "no", "uncertain"],
+    }
 
 
 @pytest.mark.asyncio
