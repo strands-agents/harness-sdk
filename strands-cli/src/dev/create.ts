@@ -1,8 +1,10 @@
-import { lstat, mkdir, readdir, rm } from 'node:fs/promises'
+import { lstat, mkdir, readdir, rm, rmdir } from 'node:fs/promises'
 import { basename, dirname, join, relative, resolve, sep } from 'node:path'
 
 import { resolveSkillPaths } from '../agent/skills.js'
 import type { CliConfigSnapshot } from '../config/store.js'
+import { containsPath } from '../paths.js'
+import { errorMessage } from '../terminal/text.js'
 import { importAgentProject } from '../project/import.js'
 import { installAgentProject, installProjectDependencies, type ProjectInstallation } from '../project/install.js'
 import { withDevModuleFiles } from './module-files.js'
@@ -112,6 +114,63 @@ const releaseDestination = async (path: string, claim: DestinationClaim): Promis
   if (claim === 'created') return rm(path, { recursive: true, force: true })
   const entries = await readdir(path).catch(() => [])
   await Promise.all(entries.map((entry) => rm(join(path, entry), { recursive: true, force: true })))
+}
+
+export interface FolderClaims {
+  claim(path: string): Promise<void>
+  claimCreated(path: string): void
+  release(): Promise<void>
+}
+
+interface FolderClaim {
+  path: string
+  claim: DestinationClaim
+  missingParents: readonly string[]
+}
+
+const missingParents = async (path: string): Promise<string[]> => {
+  const parents: string[] = []
+  for (let parent = dirname(path); parent !== dirname(parent) && (await isMissing(parent)); parent = dirname(parent))
+    parents.push(parent)
+  return parents
+}
+
+const isEmptyFolder = async (path: string): Promise<boolean> =>
+  (await lstat(path)).isDirectory() && (await readdir(path)).length === 0
+
+const removeEmptyFolder = async (path: string): Promise<boolean> => {
+  try {
+    await rmdir(path)
+    return true
+  } catch (error) {
+    if (['ENOTEMPTY', 'EEXIST', 'ENOENT'].includes((error as NodeJS.ErrnoException).code ?? '')) return false
+    throw error
+  }
+}
+
+const releaseClaim = async ({ path, claim, missingParents }: FolderClaim): Promise<void> => {
+  await releaseDestination(path, claim)
+  for (const parent of missingParents) if (!(await removeEmptyFolder(parent))) return
+}
+
+export const folderClaims = (): FolderClaims => {
+  const claims: FolderClaim[] = []
+  const record = (claim: FolderClaim): void => {
+    if (!claims.some((held) => containsPath(held.path, claim.path))) claims.push(claim)
+  }
+  return {
+    claim: async (path): Promise<void> => {
+      if (await isMissing(path)) record({ path, claim: 'created', missingParents: await missingParents(path) })
+      else if (await isEmptyFolder(path)) record({ path, claim: 'empty', missingParents: [] })
+    },
+    claimCreated: (path): void => record({ path, claim: 'created', missingParents: [] }),
+    release: async (): Promise<void> => {
+      const failures: unknown[] = []
+      for (const claim of claims.splice(0).reverse())
+        await releaseClaim(claim).catch((error: unknown) => failures.push(error))
+      if (failures.length) throw new AggregateError(failures, failures.map(errorMessage).join('; '))
+    },
+  }
 }
 
 export const createDevWorkspace = async (options: CreateDevWorkspaceOptions): Promise<DevWorkspace> => {

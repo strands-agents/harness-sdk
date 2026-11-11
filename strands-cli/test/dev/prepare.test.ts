@@ -378,7 +378,7 @@ describe('default workspace placement', () => {
     const screen = { signal: new AbortController().signal, show: vi.fn() }
 
     const first = await prepareDevRun(parseArgs(['dev']), { screen, deferPreparation: true })
-    const second = await prepareDevRun(parseArgs(['dev']), { screen, deferPreparation: true, forceSelection: true })
+    const second = await prepareDevRun(parseArgs(['dev']), { screen, deferPreparation: true })
 
     const project = join(launch, 'strands-workspace')
     expect(first?.workspace.root).toBe(project)
@@ -421,27 +421,6 @@ describe('default workspace placement', () => {
       [join(launch, 'exported/agent/agent.py')]: join(launch, 'exported/agent/strands-dev'),
       [join(launch, 'repo/src/agent.py')]: join(launch, 'repo/src/strands-dev'),
       [join(launch, 'web/src/agent.ts')]: join(launch, 'web/src/strands-dev'),
-    })
-  })
-
-  it('shouldSuggestFreshFoldersForFoundHarnessesWhenTheUserReturnsToSelection', async () => {
-    const root = await fixture()
-    const workspace = await bindExistingAgent(join(root, 'strands-dev'), join(root, 'agent.ts'))
-    vi.spyOn(CliConfigStore, 'load').mockResolvedValue(config())
-    vi.spyOn(search, 'discoverHarnesses').mockResolvedValue({
-      harnesses: [{ ...found(root), workspace }],
-      warnings: [],
-    })
-    vi.spyOn(picker, 'chooseHarness').mockResolvedValue(undefined)
-    const screen = { signal: new AbortController().signal, show: vi.fn() }
-
-    await prepareDevRun(parseArgs(['dev']), { screen, deferPreparation: true, forceSelection: true })
-
-    const options = vi.mocked(picker.chooseHarness).mock.calls[0]![0]
-    await options.search?.(() => {}, new AbortController().signal)
-    expect(options.folderFor?.({ kind: 'discovered', harness: found(root) })).toEqual({
-      path: join(root, 'strands-dev-2'),
-      detected: false,
     })
   })
 
@@ -690,23 +669,6 @@ describe('workspace folder selection', () => {
     expect(await readFile(join(folder, '.config'), 'utf8')).toBe('{')
   })
 
-  it('shouldSuggestTheNextUnusedFolderWhenTheUserReturnsToSelection', async () => {
-    await bindExistingAgent(strandsUserPath('strands-dev'), join(await fixture(), 'agent.ts'))
-    await mkdir(strandsUserPath('strands-dev-2'))
-    await writeFile(strandsUserPath('strands-dev-2/notes.txt'), 'notes')
-    vi.spyOn(CliConfigStore, 'load').mockResolvedValue(config())
-    vi.spyOn(search, 'discoverHarnesses').mockResolvedValue({ harnesses: [], warnings: [] })
-    vi.spyOn(picker, 'chooseHarness').mockResolvedValue(undefined)
-    const screen = { signal: new AbortController().signal, show: vi.fn() }
-
-    await prepareDevRun(parseArgs(['dev']), { screen, deferPreparation: true, forceSelection: true })
-
-    expect(vi.mocked(picker.chooseHarness).mock.calls[0]?.[0].folderFor?.({ kind: 'cli' })).toEqual({
-      path: strandsUserPath('strands-dev-3'),
-      detected: false,
-    })
-  })
-
   it.each<[string, () => Promise<unknown>, boolean]>([
     [
       'its own workspace',
@@ -757,29 +719,35 @@ describe('selection after the user goes back', () => {
     const root = await fixture()
     return { name: 'Failed', entrypoint: join(root, 'agent.ts'), root, language: 'typescript' }
   }
+  const exists = async (path: string): Promise<boolean> =>
+    readdir(path).then(
+      () => true,
+      () => false
+    )
+  const screen = () => ({ signal: new AbortController().signal, show: vi.fn() })
+  interface Reselection {
+    first: HarnessChoice
+    second?: HarnessChoice
+    flags?: string[]
+    folder?: string
+  }
   const selectTwice = async (
     store: CliConfigStore,
     failed: DiscoveredHarness,
-    { first, second, flags = [] }: { first: HarnessChoice; second?: HarnessChoice; flags?: string[] }
+    { first, second, flags = [], folder }: Reselection
   ) => {
     const savedConfig = store.snapshot()
     vi.spyOn(search, 'discoverHarnesses').mockResolvedValue({ harnesses: [failed], warnings: [] })
     vi.spyOn(picker, 'chooseHarness')
-      .mockImplementationOnce(async (_options, screen, open) => open(first, screen.signal))
+      .mockImplementationOnce(async (_options, screen, open) => open(first, screen.signal, folder))
       .mockImplementationOnce(async (_options, screen, open) => (second ? open(second, screen.signal) : undefined))
-    const screen = { signal: new AbortController().signal, show: vi.fn() }
     const args = parseArgs(['dev', ...flags])
-    await prepareDevRun(args, { config: store, savedConfig, screen, deferPreparation: true })
-    const prepared = await prepareDevRun(args, {
-      config: store,
-      savedConfig,
-      screen,
-      deferPreparation: true,
-      forceSelection: true,
-    })
-    const options = vi.mocked(picker.chooseHarness).mock.calls[1]![0]
-    const listed = (await options.search?.(() => {}, new AbortController().signal)) ?? []
-    return { prepared, cli: options.cli, listed: listed.map(({ entrypoint }) => entrypoint) }
+    const options = { config: store, savedConfig, screen: screen(), deferPreparation: true }
+    const rejected = (await prepareDevRun(args, options))!
+    const prepared = await prepareDevRun(args, { ...options, rejected })
+    const picked = vi.mocked(picker.chooseHarness).mock.calls[1]![0]
+    const listed = (await picked.search?.(() => {}, new AbortController().signal)) ?? []
+    return { rejected, prepared, picked, listed: listed.map(({ entrypoint }) => entrypoint) }
   }
 
   it.each<[string, (failed: DiscoveredHarness) => HarnessChoice, string[]]>([
@@ -793,9 +761,9 @@ describe('selection after the user goes back', () => {
   ])('shouldOfferTheSavedBaseCliAndListEveryHarnessAfter%s', async (_case, first, flags) => {
     const failed = await failedHarness()
 
-    const { cli, listed } = await selectTwice(config(), failed, { first: first(failed), flags })
+    const { picked, listed } = await selectTwice(config(), failed, { first: first(failed), flags })
 
-    expect(cli).toEqual({ name: 'Saved CLI', path: 'in-memory' })
+    expect(picked.cli).toEqual({ name: 'Saved CLI', path: 'in-memory' })
     expect(listed).toEqual([failed.entrypoint])
   })
 
@@ -812,5 +780,192 @@ describe('selection after the user goes back', () => {
 
     expect(prepared?.workspace.root).toBe(base)
     expect(prepared?.workspace.config.origin).toEqual({ kind: 'cli', source: join(base, 'agent.ts') })
+  })
+
+  it.each<[string, (failed: DiscoveredHarness) => Reselection, (failed: DiscoveredHarness) => string]>([
+    [
+      'AFoundHarness',
+      (harness) => ({ first: { kind: 'discovered', harness } }),
+      ({ root }) => join(root, 'strands-dev'),
+    ],
+    [
+      'ANewHarness',
+      () => ({ first: { kind: 'create', language: 'typescript', name: 'fresh' } }),
+      () => join(process.cwd(), 'strands-workspace'),
+    ],
+    ['TheBaseCli', () => ({ first: { kind: 'cli' } }), () => strandsUserPath('strands-dev')],
+    [
+      'AFolderWithNewParents',
+      (harness) => ({ first: { kind: 'discovered', harness }, folder: join(process.cwd(), 'new/place') }),
+      () => join(process.cwd(), 'new'),
+    ],
+  ])('shouldDeleteWhatTheRejectedRunMadeFor%s', async (_case, reselection, made) => {
+    const failed = await failedHarness()
+
+    const { rejected, picked } = await selectTwice(config(), failed, reselection(failed))
+
+    expect(containsPath(made(failed), rejected.workspace.directory!)).toBe(true)
+    expect(await exists(made(failed))).toBe(false)
+    expect((await readdir(failed.root)).sort()).toEqual(['agent.ts', 'package.json'])
+    expect(picked.folderFor?.({ kind: 'discovered', harness: failed })).toEqual({
+      path: join(failed.root, 'strands-dev'),
+      detected: false,
+    })
+    expect(picked.newProject).toBe(join(process.cwd(), 'strands-workspace'))
+  })
+
+  it('shouldKeepAFolderThatTheRejectedRunMadeWhenItGotOtherFiles', async () => {
+    const store = config()
+    vi.spyOn(search, 'discoverHarnesses').mockResolvedValue({ harnesses: [], warnings: [] })
+    vi.spyOn(picker, 'chooseHarness')
+      .mockImplementationOnce(async (_options, screen, open) => open({ kind: 'cli' }, screen.signal))
+      .mockResolvedValueOnce(undefined)
+    const options = { config: store, savedConfig: store.snapshot(), screen: screen(), deferPreparation: true }
+    const rejected = (await prepareDevRun(parseArgs(['dev']), options))!
+    await writeFile(strandsUserPath('cli.toml'), '[profile]\n')
+
+    await prepareDevRun(parseArgs(['dev']), { ...options, rejected })
+
+    expect(rejected.workspace.directory).toBe(strandsUserPath('strands-dev'))
+    expect(await readdir(strandsUserPath())).toEqual(['cli.toml'])
+  })
+
+  it('shouldDeleteTheWorkspaceThatAnAgentFlagMade', async () => {
+    const failed = await failedHarness()
+    const store = config()
+    vi.spyOn(picker, 'chooseHarness').mockResolvedValue(undefined)
+    const options = { config: store, savedConfig: store.snapshot(), screen: screen(), deferPreparation: true }
+
+    const rejected = await prepareDevRun(parseArgs(['dev', '--agent', failed.entrypoint]), options)
+    await prepareDevRun(parseArgs(['dev']), { ...options, rejected: rejected! })
+
+    expect(rejected?.workspace.directory).toBe(join(failed.root, 'strands-dev'))
+    expect(await exists(join(failed.root, 'strands-dev'))).toBe(false)
+  })
+
+  it('shouldEmptyAnEmptyFolderThatTheRejectedRunFilled', async () => {
+    const failed = await failedHarness()
+    const folder = join(process.cwd(), 'strands-dev')
+    await mkdir(folder)
+
+    await selectTwice(config(), failed, { first: { kind: 'discovered', harness: failed }, folder })
+
+    expect(await readdir(folder)).toEqual([])
+  })
+
+  it('shouldKeepAWorkspaceThatExistedBeforeTheRejectedRunAndSuggestTheNextFolder', async () => {
+    const failed = await failedHarness()
+    const folder = join(failed.root, 'strands-dev')
+    await bindExistingAgent(folder, failed.entrypoint)
+    const before = await readFile(join(folder, '.config'), 'utf8')
+
+    const { picked } = await selectTwice(config(), failed, { first: { kind: 'discovered', harness: failed } })
+
+    expect(await readFile(join(folder, '.config'), 'utf8')).toBe(before)
+    expect(picked.folderFor?.({ kind: 'discovered', harness: failed })).toEqual({
+      path: join(failed.root, 'strands-dev-2'),
+      detected: false,
+    })
+  })
+
+  it('shouldNotSuggestAKeptNumberedFolderOfTheRejectedRunAgain', async () => {
+    const failed = await failedHarness()
+    await mkdir(join(failed.root, 'strands-dev'))
+    await writeFile(join(failed.root, 'strands-dev/notes.txt'), 'notes')
+    const kept = join(failed.root, 'strands-dev-2')
+    await bindExistingAgent(kept, failed.entrypoint)
+
+    const { picked } = await selectTwice(config(), failed, {
+      first: { kind: 'discovered', harness: failed },
+      folder: kept,
+    })
+
+    expect(await exists(kept)).toBe(true)
+    expect(picked.folderFor?.({ kind: 'discovered', harness: failed })).toEqual({
+      path: join(failed.root, 'strands-dev-3'),
+      detected: false,
+    })
+  })
+
+  it('shouldKeepAvoidingAKeptFolderAfterASecondBack', async () => {
+    const failed = await failedHarness()
+    const kept = join(failed.root, 'strands-dev')
+    await bindExistingAgent(kept, failed.entrypoint)
+    const store = config()
+    const discovered = { kind: 'discovered', harness: failed } as const
+    vi.spyOn(search, 'discoverHarnesses').mockResolvedValue({ harnesses: [failed], warnings: [] })
+    vi.spyOn(picker, 'chooseHarness')
+      .mockImplementationOnce(async (_options, screen, open) => open(discovered, screen.signal))
+      .mockImplementationOnce(async (options, screen, open) => {
+        await options.search?.(() => {}, screen.signal)
+        return open(discovered, screen.signal)
+      })
+      .mockResolvedValueOnce(undefined)
+    const options = { config: store, savedConfig: store.snapshot(), screen: screen(), deferPreparation: true }
+
+    const first = (await prepareDevRun(parseArgs(['dev']), options))!
+    const second = (await prepareDevRun(parseArgs(['dev']), { ...options, rejected: first }))!
+    await prepareDevRun(parseArgs(['dev']), { ...options, rejected: second })
+
+    const picked = vi.mocked(picker.chooseHarness).mock.calls[2]![0]
+    await picked.search?.(() => {}, new AbortController().signal)
+    expect(second.workspace.directory).toBe(join(failed.root, 'strands-dev-2'))
+    expect(await exists(join(failed.root, 'strands-dev-2'))).toBe(false)
+    expect(picked.folderFor?.(discovered)).toEqual({ path: join(failed.root, 'strands-dev-2'), detected: false })
+  })
+
+  it('shouldSkipTheKeptBaseCliWorkspaceAndEveryUsedFolderAfterItWasRejected', async () => {
+    await mkdir(strandsUserPath(), { recursive: true })
+    await mkdir(strandsUserPath('strands-dev'))
+    await bindWorkspace(strandsUserPath('strands-dev'), {
+      version: 1,
+      name: 'Saved CLI',
+      agent: { path: await fixture(), entrypoint: 'agent.ts', language: 'typescript' },
+      origin: { kind: 'cli' },
+    })
+    await mkdir(strandsUserPath('strands-dev-2'))
+    await writeFile(strandsUserPath('strands-dev-2/notes.txt'), 'notes')
+
+    const { picked } = await selectTwice(config(), await failedHarness(), { first: { kind: 'cli' } })
+
+    expect(await exists(strandsUserPath('strands-dev'))).toBe(true)
+    expect(picked.folderFor?.({ kind: 'cli' })).toEqual({ path: strandsUserPath('strands-dev-3'), detected: false })
+  })
+
+  it('shouldReuseTheBaseCliWorkspaceWhenAnotherHarnessWasRejected', async () => {
+    await mkdir(strandsUserPath('strands-dev'), { recursive: true })
+    await bindWorkspace(strandsUserPath('strands-dev'), {
+      version: 1,
+      name: 'Saved CLI',
+      agent: { path: await fixture(), entrypoint: 'agent.ts', language: 'typescript' },
+      origin: { kind: 'cli' },
+    })
+    const failed = await failedHarness()
+
+    const { picked } = await selectTwice(config(), failed, { first: { kind: 'discovered', harness: failed } })
+
+    expect(picked.folderFor?.({ kind: 'cli' })).toEqual({ path: strandsUserPath('strands-dev'), detected: true })
+  })
+
+  it('shouldWarnInThePickerWhenTheRejectedFoldersCannotBeDeleted', async () => {
+    const failed = await failedHarness()
+    const store = config()
+    vi.spyOn(search, 'discoverHarnesses').mockResolvedValue({ harnesses: [failed], warnings: [] })
+    vi.spyOn(picker, 'chooseHarness')
+      .mockImplementationOnce(async (_options, screen, open) =>
+        open({ kind: 'discovered', harness: failed }, screen.signal)
+      )
+      .mockResolvedValueOnce(undefined)
+    const options = { config: store, savedConfig: store.snapshot(), screen: screen(), deferPreparation: true }
+    const rejected = (await prepareDevRun(parseArgs(['dev']), options))!
+
+    await prepareDevRun(parseArgs(['dev']), {
+      ...options,
+      rejected: { ...rejected, discard: vi.fn().mockRejectedValue(new Error('EBUSY: resource busy')) },
+    })
+
+    expect(vi.mocked(picker.chooseHarness).mock.calls[1]![0].warning).toBe(
+      'Could not delete the folders of the failed setup: EBUSY: resource busy'
+    )
   })
 })

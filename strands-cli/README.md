@@ -115,7 +115,9 @@ This rule also applies when the Base CLI has a saved project.
 You can edit the path before you continue. When you change a detected path, the heading changes to **Create a workspace**.
 When the path that you type ends in `strands-dev` or `strands-dev-N`, the note names that folder.
 A relative path starts from the launch directory. Esc in the folder step goes back to the harness list.
-After you go back from a failed setup, the note names the next unused folder, for example `strands-dev-2/`.
+
+When you go back from a failed setup, dev deletes the folders that the failed setup made. The other choices keep their usual folders.
+If the failed setup used a folder that was there before, dev keeps that folder. The note then names the next unused folder, for example `strands-dev-2/`.
 
 **Create a new harness** does not ask for a folder. Dev creates the project in `strands-workspace/` in the launch directory.
 The harness file is `strands-workspace/agent.py` or `strands-workspace/agent.ts`, and its workspace is `strands-workspace/strands-dev/`.
