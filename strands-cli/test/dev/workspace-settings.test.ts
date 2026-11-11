@@ -282,6 +282,29 @@ describe('agent import from workspace Settings', () => {
     await expect(change).resolves.toBeUndefined()
   })
 
+  it('shouldTellTheCreateFormWhichLanguageCannotLoadTheSavedModelModule', async () => {
+    const files = await playground()
+    await bindExistingAgent(files.directory, files.current)
+    const saved = CliConfigStore.memory().snapshot()
+    const savedConfig: CliConfigSnapshot = {
+      ...saved,
+      profile: {
+        ...saved.profile,
+        model: 'bedrock/us.example.model',
+        modelModule: { kind: 'model', module: './models/custom.mjs' },
+      },
+    }
+    const { change, pickers } = await importFromSettings(files, { savedConfig })
+    const picker = pickers()[0]!
+
+    expect(picker.modelNotice?.('python')).toBe(
+      'Python cannot load the model module custom.mjs. The new harness uses bedrock/us.example.model.'
+    )
+    expect(picker.modelNotice?.('typescript')).toBeUndefined()
+    await picker.onSelect(undefined)
+    await expect(change).resolves.toBeUndefined()
+  })
+
   it('shouldHideProjectsThatContainOrSitInsideTheWorkspaceFolder', async () => {
     const files = await playground()
     await bindExistingAgent(files.directory, files.current)

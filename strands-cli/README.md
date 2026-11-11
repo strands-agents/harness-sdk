@@ -122,6 +122,7 @@ If the failed setup used a folder that was there before, dev keeps that folder. 
 **Create a new harness** does not ask for a folder. Dev creates the project in `strands-workspace/` in the launch directory.
 The harness file is `strands-workspace/agent.py` or `strands-workspace/agent.ts`, and its workspace is `strands-workspace/strands-dev/`.
 When `strands-workspace/` exists, dev uses the next unused name, for example `strands-workspace-2/`.
+If the model module of the saved profile is in the other language, the new harness uses the `model` of the profile. The form shows a note.
 
 Dev creates `strands-dev/` inside the path that you type or give to `--workspace`.
 Dev uses the path as it is when the path ends in `strands-dev` or `strands-dev-N`, or when the path is already a workspace.

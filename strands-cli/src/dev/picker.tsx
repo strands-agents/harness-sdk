@@ -37,6 +37,7 @@ interface PickerProps {
   warning?: string
   folderFor?: (choice: HarnessChoice) => FolderSuggestion | undefined
   newProject?: string
+  modelNotice?: (language: 'typescript' | 'python') => string | undefined
   onSelect: (selection: HarnessChoice | undefined, workspace?: string) => void | Promise<void>
 }
 
@@ -126,6 +127,7 @@ export const HarnessPicker = ({
   warning,
   folderFor,
   newProject,
+  modelNotice,
   onSelect,
 }: PickerProps): ReactElement => {
   const [selectedRow, setSelectedRow] = useState(() =>
@@ -288,6 +290,7 @@ export const HarnessPicker = ({
     Number(showsFolder) + (cli ? lineCount(globalNotice) + lineCount(localNotice) : lineCount(projectNotice))
   const step = placing ? 'folder' : creating ? 'name' : 'list'
   const createsInPlace = folderOf({ kind: 'create', name, language }) === undefined
+  const languageModelNotice = modelNotice?.(language)
   const next = {
     list: folderOf(selected.choice) === undefined ? 'open' : 'continue',
     name: createsInPlace ? 'create' : 'continue',
@@ -404,6 +407,7 @@ export const HarnessPicker = ({
               Creates {sanitizeTerminalText(newProject)} with the agent and its strands-dev folder.
             </Text>
           ) : null}
+          {languageModelNotice ? <Text color={warningColor}>{sanitizeTerminalText(languageModelNotice)}</Text> : null}
         </Box>
       ) : (
         <>

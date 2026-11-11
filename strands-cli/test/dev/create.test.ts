@@ -210,6 +210,39 @@ describe('createDevProject', () => {
     }
   )
 
+  it.each([
+    ['APythonHarnessFromATypeScriptModelModule', 'python', 'custom.mjs'],
+    ['ATypeScriptHarnessFromAPythonModelModule', 'typescript', 'custom.py'],
+  ] as const)('shouldUseTheProfileModelWhenCreating%s', async (_case, language, file) => {
+    const cwd = await temporaryDirectory()
+    const base = await temporaryDirectory()
+    await mkdir(join(base, 'models'))
+    await writeFile(join(base, 'models', file), language === 'python' ? 'export default {}\n' : 'model = None\n')
+    vi.spyOn(installer, 'prepareWorkspaceDependencies').mockResolvedValue()
+    const profile = CliConfigStore.memory(
+      {},
+      {},
+      {
+        profile: {
+          name: 'Test harness',
+          model: 'bedrock/us.example.model',
+          modelModule: { kind: 'model', module: `./models/${file}`, files: [`./models/${file}`] },
+          session: false,
+          memory: false,
+          skills: false,
+        },
+        profileBaseDir: base,
+      }
+    ).snapshot()
+
+    const workspace = await createDevProject({ cwd, language, snapshot: profile, deferDependencies: true })
+
+    const source = await readFile(workspace.entrypoint, 'utf8')
+    expect(source).toContain('bedrock/us.example.model')
+    expect(source).not.toContain(file)
+    expect(profile.profile.modelModule?.module).toBe(`./models/${file}`)
+  })
+
   it('shouldUseTheNextFreeNameWhenStrandsWorkspaceIsTaken', async () => {
     const cwd = await temporaryDirectory()
     await mkdir(join(cwd, 'strands-workspace'))

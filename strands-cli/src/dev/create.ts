@@ -5,8 +5,9 @@ import { resolveSkillPaths } from '../agent/skills.js'
 import type { CliConfigSnapshot } from '../config/store.js'
 import { containsPath } from '../paths.js'
 import { errorMessage } from '../terminal/text.js'
-import { importAgentProject } from '../project/import.js'
+import { importAgentProject, type AgentProjectLanguage } from '../project/import.js'
 import { installAgentProject, installProjectDependencies, type ProjectInstallation } from '../project/install.js'
+import { moduleLanguage } from '../project/portability.js'
 import { withDevModuleFiles } from './module-files.js'
 import { bindWorkspace } from './binding.js'
 import { boundDevWorkspace, readDevWorkspace, WORKSPACE_FOLDER, type DevWorkspace } from './workspace.js'
@@ -77,13 +78,33 @@ export const newProjectFolder = async (parent: string): Promise<string> => {
 
 type ProfileProject = Extract<ProjectInstallation, { profile: unknown }>
 
+const LANGUAGE_NAMES: Record<AgentProjectLanguage, string> = { typescript: 'TypeScript', python: 'Python' }
+
+const foreignModelModule = (snapshot: CliConfigSnapshot, language: AgentProjectLanguage): string | undefined => {
+  const reference = snapshot.profile.modelModule
+  const written = reference && moduleLanguage(reference)
+  return written && written !== language ? reference.module : undefined
+}
+
+export const newProjectModelNotice = (
+  snapshot: CliConfigSnapshot,
+  language: AgentProjectLanguage
+): string | undefined => {
+  const module = foreignModelModule(snapshot, language)
+  return (
+    module &&
+    `${LANGUAGE_NAMES[language]} cannot load the model module ${basename(module)}. The new harness uses ${snapshot.profile.model}.`
+  )
+}
+
 const profileProject = async (
   snapshot: CliConfigSnapshot,
   cwd: string,
-  language: 'typescript' | 'python'
+  language: AgentProjectLanguage
 ): Promise<Omit<ProfileProject, 'destination'>> => {
   const baseDir = snapshot.profileBaseDir ?? cwd
-  const profile = await withDevModuleFiles(snapshot.profile, baseDir, language)
+  const source = foreignModelModule(snapshot, language) ? { ...snapshot.profile, modelModule: null } : snapshot.profile
+  const profile = await withDevModuleFiles(source, baseDir, language)
   const skills = resolveSkillPaths(
     typeof profile.skills === 'object' ? [...profile.skills] : profile.skills,
     baseDir,

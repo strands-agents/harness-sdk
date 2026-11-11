@@ -12,6 +12,7 @@ import {
   createDevWorkspace,
   existingDevProject,
   folderClaims,
+  newProjectModelNotice,
   newProjectFolder,
   numberedFolder,
   type FolderClaims,
@@ -162,6 +163,7 @@ const selectWorkspace = async (
       cli: { name: base.name, path: base.source },
       harnesses: [],
       ...(warning ? { warning } : {}),
+      modelNotice: (language) => newProjectModelNotice(snapshot, language),
       search: (found, signal) =>
         discoverLocalHarnesses(cwd, dev.searchRoots, base.excludedEntrypoints, {
           signal,

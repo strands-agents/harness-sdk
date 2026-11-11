@@ -209,6 +209,7 @@ describe('prepareDevRun', () => {
         search: expect.any(Function),
         folderFor: expect.any(Function),
         newProject: join(cwd, 'strands-workspace'),
+        modelNotice: expect.any(Function),
       },
       screen,
       expect.any(Function)
@@ -711,6 +712,37 @@ describe('workspace folder selection', () => {
     await expect(readFile(join(folder, '.config'))).rejects.toMatchObject({
       code: expect.stringMatching(/ENOENT|ENOTDIR/),
     })
+  })
+})
+
+describe('new harness model', () => {
+  it('shouldTellTheCreateFormWhichLanguageCannotLoadTheSavedModelModule', async () => {
+    const store = CliConfigStore.memory(
+      {},
+      {},
+      {
+        profile: {
+          name: 'Saved CLI',
+          skills: false,
+          model: 'bedrock/us.example.model',
+          modelModule: { kind: 'model', module: './models/custom.mjs', files: ['./models/custom.mjs'] },
+        },
+      }
+    )
+    vi.spyOn(CliConfigStore, 'load').mockResolvedValue(store)
+    vi.spyOn(search, 'discoverHarnesses').mockResolvedValue({ harnesses: [], warnings: [] })
+    vi.spyOn(picker, 'chooseHarness').mockResolvedValue(undefined)
+
+    await prepareDevRun(parseArgs(['dev']), {
+      screen: { signal: new AbortController().signal, show: vi.fn() },
+      deferPreparation: true,
+    })
+
+    const options = vi.mocked(picker.chooseHarness).mock.calls[0]![0]
+    expect(options.modelNotice?.('python')).toBe(
+      'Python cannot load the model module custom.mjs. The new harness uses bedrock/us.example.model.'
+    )
+    expect(options.modelNotice?.('typescript')).toBeUndefined()
   })
 })
 

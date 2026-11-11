@@ -530,12 +530,15 @@ describe('HarnessPicker', () => {
     expect(text()).not.toContain('Create a workspace')
   })
 
-  const createForm = async () => {
+  const createForm = async (props: Partial<Parameters<typeof HarnessPicker>[0]> = {}) => {
     const input = ttyInput()
     const output = ttyOutput(100, 36)
     const frame = captureFrame(output)
     const selected = vi.fn()
-    render(createElement(HarnessPicker, { harnesses: [], onSelect: selected }), { stdin: input, stdout: output })
+    render(createElement(HarnessPicker, { harnesses: [], onSelect: selected, ...props }), {
+      stdin: input,
+      stdout: output,
+    })
     await vi.waitFor(() => expect(frame().join('\n')).toContain('› Create a new harness'))
     input.write('\r')
     await vi.waitFor(() => expect(frame().join('\n')).toContain('› Name: new-harness'))
@@ -554,6 +557,21 @@ describe('HarnessPicker', () => {
     await vi.waitFor(() =>
       expect(selected).toHaveBeenCalledWith({ kind: 'create', name: 'new-harness', language: 'python' })
     )
+  })
+
+  it('shouldShowTheModelNoticeOnlyForTheLanguageThatCannotLoadTheModelModule', async () => {
+    const notice = 'Python cannot load the model module custom.mjs.'
+    const { input, text } = await createForm({
+      modelNotice: (language) => (language === 'python' ? notice : undefined),
+    })
+
+    input.write('\u001b[B')
+    await vi.waitFor(() => expect(text()).toContain('› Language: typescript'))
+    expect(text()).not.toContain(notice)
+    input.write('\u001b[C')
+
+    await vi.waitFor(() => expect(text()).toContain('› Language: python'))
+    await vi.waitFor(() => expect(text()).toContain(notice))
   })
 
   it('shouldEditTheNameOnlyWhenTheNameFieldIsSelected', async () => {
