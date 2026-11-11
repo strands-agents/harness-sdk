@@ -4,7 +4,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { parseArgs } from '../../src/cli/arguments.js'
-import { containsPath } from '../../src/paths.js'
+import { containsPath, strandsUserPath } from '../../src/paths.js'
 import { CliConfigStore } from '../../src/config/store.js'
 import { bindWorkspace } from '../../src/dev/binding.js'
 import { bindExistingAgent } from '../../src/dev/create.js'
@@ -38,11 +38,15 @@ const terminal = (enabled: boolean): void => {
 
 beforeEach(async () => {
   vi.spyOn(process, 'cwd').mockReturnValue(await temporaryDirectory())
+  const home = await temporaryDirectory()
+  vi.stubEnv('HOME', home)
+  vi.stubEnv('USERPROFILE', home)
   vi.spyOn(installer, 'prepareWorkspaceDependencies').mockResolvedValue()
 })
 
 afterEach(() => {
   vi.restoreAllMocks()
+  vi.unstubAllEnvs()
   if (originalInputTty) Object.defineProperty(process.stdin, 'isTTY', originalInputTty)
   else Reflect.deleteProperty(process.stdin, 'isTTY')
   if (originalOutputTty) Object.defineProperty(process.stdout, 'isTTY', originalOutputTty)
@@ -95,7 +99,7 @@ describe('prepareDevRun', () => {
     vi.spyOn(CliConfigStore, 'load').mockResolvedValue(config())
     vi.spyOn(search, 'discoverHarnesses').mockResolvedValue({ harnesses: [], warnings: [] })
     vi.spyOn(picker, 'chooseHarness').mockImplementation(async (_options, screen, open) =>
-      open({ kind: 'cli' }, screen.signal)
+      open({ kind: 'cli' }, screen.signal, join(launch, 'strands-dev'))
     )
     const screen = { signal: new AbortController().signal, show: vi.fn() }
 
@@ -277,12 +281,12 @@ describe('workspace path option', () => {
       (launch) => join(launch, 'chosen', 'strands-dev'),
     ],
     [
-      'a launch folder with an unrelated .config folder',
+      'no workspace path from a launch folder with an unrelated .config folder',
       [],
       (launch) => mkdir(join(launch, '.config')),
-      (launch) => join(launch, 'strands-dev'),
+      () => strandsUserPath('strands-dev'),
     ],
-  ])('shouldStartTheFolderFieldInsideStrandsDevWhenTheUserGives%s', async (_case, flags, arrange, expected) => {
+  ])('shouldStartTheBaseCliFolderFieldWhenTheUserGives%s', async (_case, flags, arrange, expected) => {
     const launch = process.cwd()
     await arrange(launch)
     vi.spyOn(CliConfigStore, 'load').mockResolvedValue(config())
@@ -474,9 +478,9 @@ describe('default workspace placement', () => {
   })
 
   it.each<[string, (launch: string) => Promise<string | undefined>, (launch: string, project?: string) => string]>([
-    ['only a saved profile', async () => undefined, (launch) => join(launch, 'strands-dev')],
-    ['a saved project', async () => fixture(), (_launch, project) => join(project!, 'strands-dev')],
-  ])('shouldUseTheBaseCliFolderWhenCreatingTheCliHarnessWith%s', async (_case, arrange, expected) => {
+    ['only a saved profile', async () => undefined, () => strandsUserPath('strands-dev')],
+    ['a saved project', async () => fixture(), () => strandsUserPath('strands-dev')],
+  ])('shouldUseTheStrandsFolderWhenCreatingTheCliHarnessWith%s', async (_case, arrange, expected) => {
     const launch = process.cwd()
     const project = await arrange(launch)
     const saved = config()
@@ -671,10 +675,9 @@ describe('workspace folder selection', () => {
   })
 
   it('shouldSuggestTheNextUnusedFolderWhenTheUserReturnsToSelection', async () => {
-    const launch = process.cwd()
-    await bindExistingAgent(join(launch, 'strands-dev'), join(await fixture(), 'agent.ts'))
-    await mkdir(join(launch, 'strands-dev-2'))
-    await writeFile(join(launch, 'strands-dev-2/notes.txt'), 'notes')
+    await bindExistingAgent(strandsUserPath('strands-dev'), join(await fixture(), 'agent.ts'))
+    await mkdir(strandsUserPath('strands-dev-2'))
+    await writeFile(strandsUserPath('strands-dev-2/notes.txt'), 'notes')
     vi.spyOn(CliConfigStore, 'load').mockResolvedValue(config())
     vi.spyOn(search, 'discoverHarnesses').mockResolvedValue({ harnesses: [], warnings: [] })
     vi.spyOn(picker, 'chooseHarness').mockResolvedValue(undefined)
@@ -683,7 +686,7 @@ describe('workspace folder selection', () => {
     await prepareDevRun(parseArgs(['dev']), { screen, deferPreparation: true, forceSelection: true })
 
     expect(vi.mocked(picker.chooseHarness).mock.calls[0]?.[0].folderFor?.({ kind: 'cli' })).toBe(
-      join(launch, 'strands-dev-3')
+      strandsUserPath('strands-dev-3')
     )
   })
 

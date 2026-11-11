@@ -99,13 +99,16 @@ It skips dependency folders, build output, private state, and copied harness lib
 It never lists an agent inside a `strands-dev/` or `strands-dev-N/` folder, for example the copies in `strands-dev/tmp/`.
 
 When the launch directory has no workspace, the picker asks for the workspace folder after you select an existing harness.
-The folder field starts with `strands-dev/` in the folder that contains the harness file. For example, `~/agents/support/agent.py` gives `~/agents/support/strands-dev/`.
+The folder field starts with the folder that contains the harness file. Dev creates `strands-dev/` in that folder.
+For example, `~/agents/support/agent.py` gives the field `~/agents/support` and the workspace `~/agents/support/strands-dev/`.
 The rule is the same when the file is in a source folder: `~/repo/src/agent.ts` gives `~/repo/src/strands-dev/`.
-When that `strands-dev/` contains a different agent, the field starts with the next unused name, for example `strands-dev-2/`.
+When that `strands-dev/` contains a different agent, a note under the field names the next unused folder, for example `strands-dev-2/`.
 
-For the Base CLI, the field starts next to its saved source file. When the Base CLI has only a saved profile, the field starts in the launch directory.
+For the Base CLI, the field always starts with `~/.strands`, the folder of the CLI config. Its workspace is `~/.strands/strands-dev/`.
+This rule also applies when the Base CLI has a saved project.
+
 You can edit the path before you continue. A relative path starts from the launch directory. Esc in the folder step goes back to the harness list.
-After you go back from a failed setup, the field starts with the next unused name, for example `strands-dev-2/`.
+After you go back from a failed setup, the note names the next unused folder, for example `strands-dev-2/`.
 
 **Create a new harness** does not ask for a folder. Dev creates the project in `strands-workspace/` in the launch directory.
 The harness file is `strands-workspace/agent.py` or `strands-workspace/agent.ts`, and its workspace is `strands-workspace/strands-dev/`.
@@ -121,7 +124,7 @@ A workspace named `strands-dev` reopens from its parent folder or from inside it
 To reopen a workspace with a different name, run `strands dev` inside it, or give its folder to `--workspace`.
 
 `--agent` and `--create` do not show the picker. `--agent` uses `strands-dev/` in the folder that contains the agent file, or the ZIP.
-`--create typescript` and `--create python` create `strands-workspace/` in the launch directory. `--create cli` uses the Base CLI folder.
+`--create typescript` and `--create python` create `strands-workspace/` in the launch directory. `--create cli` uses `~/.strands/strands-dev/`.
 With `--workspace`, the two flags use that folder.
 
 Initialization records the persistent agent in `.config` and installs one independent copy under `tmp/`.
@@ -235,7 +238,8 @@ The dev session always runs the bound persistent agent. Editing its configuratio
 Runtime state stays separate from candidate source. The existing watcher reloads the bound project when its source changes. After a successful reload, the status shows `↻ agent.ts reloaded · session kept` (or the Python filename).
 Reload waits for active work to finish. A failed replacement keeps the previous agent and conversation active without showing a success message.
 Legacy `.strands/config.json` agents remain in place. Startup creates a `.config` binding and initial copy without moving or rewriting their source.
-For the old `strands-dev/base-cli/` layout, selecting Base CLI creates the control files in `strands-dev/` and binds the existing agent.
+For the old `strands-dev/base-cli/` layout, select Base CLI and type the folder that contains `strands-dev/`.
+Dev then creates the control files in `strands-dev/` and binds the existing agent.
 
 ### Workspace Settings
 
