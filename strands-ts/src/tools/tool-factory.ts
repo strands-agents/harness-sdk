@@ -4,6 +4,14 @@ import type { FunctionToolConfig } from './function-tool.js'
 import type { JSONValue } from '../types/json.js'
 import { z } from 'zod'
 import { ZodTool, type ZodToolConfig } from './zod-tool.js'
+import type { StandardSchemaV1 } from '@standard-schema/spec'
+import {
+  StandardSchemaTool,
+  hasStandardJsonSchema,
+  isStandardSchema,
+  type StandardSchemaToolConfig,
+  type StandardToolSchema,
+} from './standard-schema-tool.js'
 
 /**
  * Checks whether a value is a Zod schema type.
@@ -28,6 +36,21 @@ export function tool<TInput extends z.ZodType, TReturn = JSONValue>(
 ): InvokableTool<z.infer<TInput>, TReturn>
 
 /**
+ * Creates an InvokableTool from a Standard Schema and callback function.
+ *
+ * Any schema that implements both Standard Schema and Standard JSON Schema works, such as ArkType or a schema
+ * library's validator object. Input is validated at runtime and the callback receives the schema's output type.
+ *
+ * @typeParam TInput - Schema type for input validation
+ * @typeParam TReturn - Return type of the callback function
+ * @param config - Tool configuration with a Standard Schema
+ * @returns An InvokableTool with typed input and output
+ */
+export function tool<TInput extends StandardToolSchema, TReturn = JSONValue>(
+  config: StandardSchemaToolConfig<TInput, TReturn>
+): InvokableTool<StandardSchemaV1.InferOutput<TInput>, TReturn>
+
+/**
  * Creates an InvokableTool from a JSON schema and callback function.
  *
  * @param config - Tool configuration with optional JSON schema
@@ -38,9 +61,10 @@ export function tool(config: FunctionToolConfig): InvokableTool<unknown, JSONVal
 /**
  * Creates an InvokableTool from either a Zod schema or JSON schema configuration.
  *
- * When a Zod schema is provided as `inputSchema`, input is validated at runtime and
- * the callback receives typed input. When a JSON schema (or no schema) is provided,
- * the callback receives `unknown` input with no runtime validation.
+ * When a Zod schema, or any schema that implements Standard Schema and Standard JSON Schema,
+ * is provided as `inputSchema`, input is validated at runtime and the callback receives typed
+ * input. When a JSON schema (or no schema) is provided, the callback receives `unknown` input
+ * with no runtime validation.
  *
  * @example
  * ```typescript
@@ -72,10 +96,21 @@ export function tool(config: FunctionToolConfig): InvokableTool<unknown, JSONVal
  * @returns An InvokableTool that implements the Tool interface with invoke() method
  */
 export function tool(
-  config: ZodToolConfig<z.ZodType | undefined, JSONValue> | FunctionToolConfig
+  config:
+    | ZodToolConfig<z.ZodType | undefined, JSONValue>
+    | StandardSchemaToolConfig<StandardToolSchema, JSONValue>
+    | FunctionToolConfig
 ): InvokableTool<unknown, JSONValue> {
   if (config.inputSchema && isZodType(config.inputSchema)) {
     return new ZodTool(config as ZodToolConfig<z.ZodType, JSONValue>)
+  }
+  if (isStandardSchema(config.inputSchema)) {
+    if (!hasStandardJsonSchema(config.inputSchema)) {
+      throw new TypeError(
+        `tool ${config.name}: inputSchema implements Standard Schema but not Standard JSON Schema, so it cannot describe its input to the model; pass a schema that implements both, or a JSON Schema`
+      )
+    }
+    return new StandardSchemaTool(config as StandardSchemaToolConfig<StandardToolSchema, JSONValue>)
   }
 
   return new FunctionTool(config as FunctionToolConfig)
