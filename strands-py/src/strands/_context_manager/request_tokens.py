@@ -1,0 +1,36 @@
+"""Token counting for the request a context strategy is gated on."""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+from ..models._model_proxy import ModelProxy
+from ..types.content import Messages
+
+if TYPE_CHECKING:
+    from ..agent.agent import Agent
+
+
+async def _count_request_tokens(agent: Agent, messages: Messages) -> int:
+    """Count what the next request carries: the messages, plus the system prompt and tool specs.
+
+    The system prompt and tool specs occupy the same context window as the messages. Counting them
+    matches the inputs behind ``BeforeModelCallEvent.projected_input_tokens``, so a utilization gate
+    reads the same number the agent's own projection would.
+
+    Counts that measure a single block or a subset rather than a whole request call ``count_tokens``
+    directly — including the system prompt there would inflate every block against its threshold.
+
+    Args:
+        agent: The agent whose system prompt and tool specs the request carries.
+        messages: The messages the request would send.
+
+    Returns:
+        Total input token count for the request.
+    """
+    return await ModelProxy(agent.model).count_tokens(
+        messages,
+        tool_specs=agent.tool_registry.get_all_tool_specs(),
+        system_prompt=agent.system_prompt,
+        system_prompt_content=agent.system_prompt_content,
+    )

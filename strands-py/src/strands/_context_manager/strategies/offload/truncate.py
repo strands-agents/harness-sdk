@@ -6,9 +6,9 @@ import logging
 import math
 from typing import TYPE_CHECKING
 
-from ....models._model_proxy import ModelProxy
 from ....types.content import ContentBlock, Message
 from ...methods.truncate import TruncateConfig, _truncate_text_block, _truncate_tool_result
+from ...request_tokens import _count_request_tokens
 from ...stash import Stash, _format_stash_refs
 from ...types import is_text_block
 from .base import (
@@ -144,7 +144,7 @@ class EmergencyTruncateStrategy(TruncateStrategy):
         if len(context.messages) <= 3:
             return False
         if not context.overflow:
-            tokens = await ModelProxy(context.agent.model).count_tokens(context.messages)
+            tokens = await _count_request_tokens(context.agent, context.messages)
             utilization = context.agent.model.estimate_utilization(tokens)
             if utilization < 1.0:
                 return False
