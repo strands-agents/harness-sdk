@@ -37,7 +37,7 @@ export type {
   WebFetchTransport,
   WebSearchSetting,
 } from './types/agent.js'
-export { supportsThinking, supportsWebSearch, webSearchKind } from './models.js'
+export { supportsThinking, supportsWebSearch } from './models.js'
 export { type InterventionsOption } from './interventions.js'
 export { configureLogging } from './logging.js'
 export {

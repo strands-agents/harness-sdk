@@ -26,9 +26,9 @@ from strands_harness.memory import resolve_memory
 from strands_harness.models import (
     _bedrock_region,
     _supports_media,
+    _web_search_kind,
     resolve_model,
     resolve_web_fetch_model,
-    web_search_kind,
 )
 from strands_harness.options import (
     _builtin_tool_config,
@@ -121,7 +121,7 @@ def _web_search_mode(
             "environment and is subject to Exa's privacy policy (https://exa.ai/privacy-policy)."
         )
         return "exa"
-    kind = web_search_kind(model)
+    kind = _web_search_kind(model)
     if kind is not None:
         return kind
     target = (
@@ -315,7 +315,7 @@ def create_harness(
             agent's sandbox (the default, ``"curl"``).
             ``web_search`` turns on the model provider's native web search (OpenAI, Anthropic, Google,
             GPT-5, GPT-6, and Daybreak models on bedrock-mantle). On every other Bedrock API
-            (``web_search_kind``) it is a tool backed by Amazon Bedrock AgentCore web search in the
+            (``supports_web_search``) it is a tool backed by Amazon Bedrock AgentCore web search in the
             model's region (signed by the default AWS credential chain, which needs the
             ``bedrock-agentcore:InvokeWebSearch`` IAM permission), and a ``web_search`` tool you pass
             replaces it (e.g. ``make_agentcore_web_search(boto_session=...)``). Elsewhere (another

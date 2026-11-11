@@ -481,7 +481,6 @@ def test_root_exports_match_the_spec_table():
         "BUILTIN_PLUGIN_NAMES",
         "supports_thinking",
         "supports_web_search",
-        "web_search_kind",
         "resolve_interventions",
         "resolve_memory",
         "InterventionsOption",

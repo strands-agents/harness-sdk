@@ -578,7 +578,7 @@ def test_web_search_kind_covers_every_bedrock_api():
     from strands.models.openai import OpenAIModel
     from strands.models.openai_responses import OpenAIResponsesModel
 
-    from strands_harness.models import _bedrock_region, web_search_kind
+    from strands_harness.models import _bedrock_region, _web_search_kind
 
     def anthropic_on(client):
         # Set after construction so this runs on SDK releases whose AnthropicModel has no ``client`` argument.
@@ -595,11 +595,11 @@ def test_web_search_kind_covers_every_bedrock_api():
         "ca-central-1": OpenAIModel(model_id="qwen.qwen3-32b-v1:0", bedrock_mantle_config={"region": "ca-central-1"}),
     }
     for region, model in bedrock_models.items():
-        assert (web_search_kind(model), _bedrock_region(model)) == ("agentcore", region)
-    assert web_search_kind(anthropic_on(AsyncAnthropic(api_key="x"))) is None
-    assert web_search_kind(OpenAIModel(client_args={"api_key": "x"}, model_id="gpt-5.6-sol")) is None
-    assert web_search_kind("bedrock-mantle/qwen.qwen3-32b-v1:0") == "agentcore"
-    assert web_search_kind("bedrock-mantle/openai.gpt-6-astra") == "native"
+        assert (_web_search_kind(model), _bedrock_region(model)) == ("agentcore", region)
+    assert _web_search_kind(anthropic_on(AsyncAnthropic(api_key="x"))) is None
+    assert _web_search_kind(OpenAIModel(client_args={"api_key": "x"}, model_id="gpt-5.6-sol")) is None
+    assert _web_search_kind("bedrock-mantle/qwen.qwen3-32b-v1:0") == "agentcore"
+    assert _web_search_kind("bedrock-mantle/openai.gpt-6-astra") == "native"
 
 
 def test_openai_web_search_adds_tool_alongside_reasoning():

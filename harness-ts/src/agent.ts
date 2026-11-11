@@ -126,7 +126,7 @@ export interface HarnessAgentOptions extends Omit<
    * `false` drops a tool, `true` adds one, and a config object enables and configures one
    * (`ToolConfig`; the keys per tool are `BUILTIN_TOOL_CONFIG_KEYS`). `web_search` turns on the
    * provider's native web search (OpenAI, Anthropic, Google, GPT-5, GPT-6, and Daybreak models on bedrock-mantle).
-   * On every other Bedrock API (`webSearchKind`) it is a tool backed by Amazon Bedrock AgentCore web
+   * On every other Bedrock API (`supportsWebSearch`) it is a tool backed by Amazon Bedrock AgentCore web
    * search in the model's region (needs the `bedrock-agentcore:InvokeWebSearch` IAM permission).
    * Elsewhere it is off, and naming
    * it there throws. `{ web_search: 'exa' }` instead gives the model a

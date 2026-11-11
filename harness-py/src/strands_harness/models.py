@@ -329,7 +329,7 @@ class Provider(NamedTuple):
     non-clobbering seam for it (OpenAI Responses ``params.tools`` for OpenAI and bedrock-mantle,
     Gemini ``gemini_tools``, Anthropic-direct ``anthropic_tools``); ``_has_web_search`` narrows
     bedrock-mantle to its GPT-5, GPT-6, and Daybreak models. Every other Bedrock API gets AgentCore
-    web search as a harness tool instead (``web_search_kind``).
+    web search as a harness tool instead (``_web_search_kind``).
 
     ``caching`` marks providers where prompt caching is in effect when requested, whether or not
     the harness configures anything: Bedrock, Anthropic direct, OpenAI, and bedrock-mantle (the harness
@@ -456,7 +456,7 @@ def _bedrock_region(model: Model | ModelRouter) -> str | None:
     return None
 
 
-def web_search_kind(model: Model | ModelRouter | str | None) -> Literal["native", "agentcore"] | None:
+def _web_search_kind(model: Model | ModelRouter | str | None) -> Literal["native", "agentcore"] | None:
     """How ``web_search`` is served for ``model`` without the Exa opt-in: the provider's native
     search, else AgentCore web search on any Bedrock API (a harness tool), else ``None``.
 
@@ -476,11 +476,11 @@ def web_search_kind(model: Model | ModelRouter | str | None) -> Literal["native"
 def supports_web_search(model: Model | ModelRouter | str | None) -> bool:
     """Whether ``web_search`` works for ``model`` without the Exa opt-in.
 
-    True where the provider has native web search, and on every Bedrock API (see ``web_search_kind``),
-    where AgentCore web search serves it. Any other instance has an unknown provider, so this is
+    True where the provider has native web search, and on every Bedrock API, where AgentCore web
+    search serves it as the harness's native search. Any other instance has an unknown provider, so this is
     ``False``. ``None`` resolves to the default model.
     """
-    return web_search_kind(model) is not None
+    return _web_search_kind(model) is not None
 
 
 def supports_thinking(model: Model | str | None) -> bool:
@@ -537,7 +537,7 @@ def resolve_model(
     raise. For a ``provider/name`` string, ``effort`` is validated against the provider (and Bedrock
     model family); ``caching`` on a provider without it raises when explicit (``caching_explicit``)
     and otherwise warns and builds without it. ``web_search`` turns on the model's native search and
-    is only passed for models that have one (``web_search_kind`` is ``"native"``).
+    is only passed for models that have one (``_web_search_kind`` is ``"native"``).
     """
     _check_effort(effort)
     if isinstance(model, (Model, ModelRouter)):

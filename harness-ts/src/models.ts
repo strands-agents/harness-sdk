@@ -615,6 +615,8 @@ function onBedrock(model: Model | ModelRouter): boolean {
  *
  * @param model - A `Model` instance, a `"provider/name"` string, a bare Bedrock id, or undefined.
  * @returns `'native'`, `'agentcore'`, or `undefined` when the model has no built-in web search.
+ *
+ * @internal
  */
 export function webSearchKind(model: Model | ModelRouter | string | undefined): 'native' | 'agentcore' | undefined {
   if (model instanceof Model || model instanceof ModelRouter) {
@@ -646,8 +648,8 @@ export async function bedrockRegion(model: Model | ModelRouter): Promise<string 
 /**
  * Whether `web_search` works for `model` without the Exa opt-in.
  *
- * True where the provider has native web search, and on every Bedrock API (see `webSearchKind`),
- * where AgentCore web search serves it. Any other instance has an unknown provider, so this is
+ * True where the provider has native web search, and on every Bedrock API, where AgentCore web
+ * search serves it as the harness's native search. Any other instance has an unknown provider, so this is
  * `false`. `undefined` resolves to the default model.
  *
  * @param model - A `Model` instance, a `"provider/name"` string, a bare Bedrock id, or undefined.
