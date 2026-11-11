@@ -2539,13 +2539,14 @@ def stream_structured_output(model, test_output_model_cls, alist):
     return stream_structured_output
 
 
+@pytest.mark.parametrize("model_id", ["us.anthropic.claude-opus-5-5", "global.anthropic.claude-haiku-5-5"])
 @pytest.mark.asyncio
 async def test_stream_structured_output_starts_at_native_when_the_model_info_forbids_forcing(
-    native_output_client, test_output_model_cls, messages, alist
+    native_output_client, test_output_model_cls, messages, alist, model_id
 ):
     """A model the shared model info says cannot be forced skips the forced request entirely."""
     native_output_client.converse_stream.return_value = {"stream": []}
-    model = BedrockModel(model_id="us.anthropic.claude-opus-5-5")
+    model = BedrockModel(model_id=model_id)
     tool_spec = convert_pydantic_to_tool_spec(test_output_model_cls)
 
     await alist(

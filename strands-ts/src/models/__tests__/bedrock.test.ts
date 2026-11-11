@@ -1912,15 +1912,18 @@ describe('BedrockModel', () => {
         expect(sentRequests().map(mechanismOf)).toStrictEqual(['forced', 'auto'])
       })
 
-      it('starts at native output for a model the shared model info says cannot be forced', async () => {
-        const mockSend = mockRejections()
-        const provider = new BedrockModel({ modelId: 'us.anthropic.claude-opus-5-5' })
+      it.each(['us.anthropic.claude-opus-5-5', 'global.anthropic.claude-haiku-5-5'])(
+        'starts at native output for %s, which the shared model info says cannot be forced',
+        async (modelId) => {
+          const mockSend = mockRejections()
+          const provider = new BedrockModel({ modelId })
 
-        await collectIterator(provider.stream(messages, structuredOutputOptions))
+          await collectIterator(provider.stream(messages, structuredOutputOptions))
 
-        expect(mockSend).toHaveBeenCalledTimes(1)
-        expect(sentRequests().map(mechanismOf)).toStrictEqual(['native'])
-      })
+          expect(mockSend).toHaveBeenCalledTimes(1)
+          expect(sentRequests().map(mechanismOf)).toStrictEqual(['native'])
+        }
+      )
 
       it('skips native output when the info override says the model lacks it', async () => {
         mockRejections(forcedRejection)
