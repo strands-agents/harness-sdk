@@ -226,7 +226,11 @@ def test_package_copy_matches_the_shared_data():
     assert _PACKAGE_COPY.read_text(encoding="utf-8") == _SHARED_DATA.read_text(encoding="utf-8")
 
 
-def test_shared_data_gives_the_fields_model_info_defines_the_right_types_in_every_entry():
+# Read by another consumer (the harness), not typed by the SDK.
+_UNTYPED_CAPABILITY_KEYS = {"defaultEffort"}
+
+
+def test_shared_data_has_only_known_fields_with_the_right_types_in_every_entry():
     data = json.loads(_SHARED_DATA.read_text(encoding="utf-8"))
 
     assert sorted(data.keys()) == ["$comment", "defaults", "models"]
@@ -236,12 +240,15 @@ def test_shared_data_gives_the_fields_model_info_defines_the_right_types_in_ever
         assert _MODEL_ID_PATTERN.match(model_id), model_id
         assert set(entry) <= {"limits", "capabilities"}, model_id
         for key, value in entry.get("limits", {}).items():
-            if key in _LIMIT_KEYS:
-                assert isinstance(value, int) and value > 0, f"{model_id}.limits.{key}"
+            assert key in _LIMIT_KEYS, f"{model_id}.limits.{key}"
+            assert isinstance(value, int) and value > 0, f"{model_id}.limits.{key}"
         for key, value in entry.get("capabilities", {}).items():
             if key == "promptCaching":
                 assert value in _PROMPT_CACHING_VALUES, f"{model_id}.{key}"
-            elif key in _BOOLEAN_CAPABILITY_KEYS:
+            elif key in _UNTYPED_CAPABILITY_KEYS:
+                assert isinstance(value, str), f"{model_id}.{key}"
+            else:
+                assert key in _BOOLEAN_CAPABILITY_KEYS, f"{model_id}.capabilities.{key}"
                 assert isinstance(value, bool), f"{model_id}.{key}"
 
 

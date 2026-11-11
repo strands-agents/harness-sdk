@@ -1,8 +1,10 @@
+import json
 import pathlib
 
 import pytest
 
 from strands_harness._model_info import lookup_model
+from strands_harness.models import EFFORT_LEVELS
 
 _SHARED = pathlib.Path(__file__).parents[2] / "shared" / "model-info.json"
 _COPY = pathlib.Path(__file__).parents[1] / "src" / "strands_harness" / "model_info.json"
@@ -31,3 +33,10 @@ def test_every_spelling_of_a_model_resolves_to_its_entry(model_id):
 
 def test_an_unknown_model_has_an_empty_entry():
     assert lookup_model("unknown-model") == {}
+
+
+def test_every_default_effort_is_an_effort_level():
+    models = json.loads(_SHARED.read_text(encoding="utf-8"))["models"]
+    for model_id, entry in models.items():
+        level = entry.get("capabilities", {}).get("defaultEffort")
+        assert level is None or level in EFFORT_LEVELS[2:], model_id

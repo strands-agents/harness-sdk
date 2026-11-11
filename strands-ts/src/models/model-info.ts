@@ -111,15 +111,18 @@ const data = modelInfoData as ModelInfoData
 /** Context window limit (in tokens) assumed for a model whose window is unknown. */
 export const DEFAULT_CONTEXT_WINDOW_LIMIT = data.defaults.limits.contextWindow
 
-const CAPABILITY_FIELDS = [
-  'stateful',
-  'promptCaching',
-  'forcedToolChoice',
-  'nativeStructuredOutput',
-  'serverSideSummary',
-  'temporaryMessages',
-] as const
-const LIMIT_FIELDS = ['contextWindow', 'maxOutputTokens'] as const
+const CAPABILITY_FIELDS = Object.keys({
+  stateful: true,
+  promptCaching: true,
+  forcedToolChoice: true,
+  nativeStructuredOutput: true,
+  serverSideSummary: true,
+  temporaryMessages: true,
+} satisfies Record<keyof ModelCapabilities, true>)
+const LIMIT_FIELDS = Object.keys({ contextWindow: true, maxOutputTokens: true } satisfies Record<
+  keyof ModelLimits,
+  true
+>)
 
 // Keeps the fields the SDK types and skips the rest, as the Python SDK does: the data file is shared
 // with other consumers (the harness), so it can carry fields the SDK doesn't read.

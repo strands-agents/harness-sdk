@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { lookupModel } from '../src/model-info.js'
+import { EFFORT_LEVELS } from '../src/models.js'
 
 describe('lookupModel', () => {
   it('reads a copy equal to the shared data', () => {
@@ -22,5 +23,15 @@ describe('lookupModel', () => {
   it('has an empty entry for an unknown model', () => {
     expect(lookupModel('unknown-model')).toEqual({})
     expect(lookupModel('toString')).toEqual({})
+  })
+
+  it('gives every default effort as an effort level', () => {
+    const data = JSON.parse(readFileSync(new URL('../../shared/model-info.json', import.meta.url), 'utf-8')) as {
+      models: Record<string, { capabilities?: { defaultEffort?: string } }>
+    }
+    for (const [id, entry] of Object.entries(data.models)) {
+      const level = entry.capabilities?.defaultEffort
+      if (level !== undefined) expect(EFFORT_LEVELS.slice(2), id).toContain(level)
+    }
   })
 })

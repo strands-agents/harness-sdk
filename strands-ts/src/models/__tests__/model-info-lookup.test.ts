@@ -89,6 +89,9 @@ describe('shared model info data', () => {
         if (key === 'promptCaching') expect(['unsupported', 'auto', 'cachePoints'], `${id}.${key}`).toContain(value)
         else if (['forcedToolChoice', 'nativeStructuredOutput', 'serverSideSummary', 'temporaryMessages'].includes(key))
           expect(typeof value, `${id}.${key}`).toBe('boolean')
+        // Read by another consumer (the harness), not typed by the SDK.
+        else if (key === 'defaultEffort') expect(typeof value, `${id}.${key}`).toBe('string')
+        else throw new Error(`${id}.capabilities.${key} is not a known model info field`)
       }
     }
   })
