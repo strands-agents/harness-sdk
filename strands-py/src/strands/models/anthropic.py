@@ -1323,6 +1323,13 @@ class AnthropicModel(Model):
             if not (retry_with_drop_block or retry_with_next_mechanism):
                 raise error
 
+        except anthropic.APIStatusError as error:
+            # Bedrock InvokeModel reports a throttle that arrives mid-stream as an error event, not a 429.
+            body = error.body if isinstance(error.body, dict) else {}
+            if (body.get("error") or {}).get("type") == "throttlingException":
+                raise ModelThrottledException(str(error)) from error
+            raise
+
         if retry_with_drop_block:
             # Stale blocks stay in history, so drop_block stays on for every later request to this model.
             logger.warning(

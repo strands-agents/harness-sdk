@@ -3,8 +3,7 @@ import pathlib
 
 import pytest
 
-from strands_harness._model_info import lookup_model
-from strands_harness.models import EFFORT_LEVELS
+from strands_harness.models import EFFORT_LEVELS, lookup_model
 
 _SHARED = pathlib.Path(__file__).parents[2] / "shared" / "model-info.json"
 _COPY = pathlib.Path(__file__).parents[1] / "src" / "strands_harness" / "model_info.json"

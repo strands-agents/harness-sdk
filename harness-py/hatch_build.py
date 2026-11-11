@@ -1,6 +1,6 @@
 """Build hook that copies ``shared/model-info.json`` into the package.
 
-``strands_harness/_model_info.py`` loads the copy at import, so it has to be in place for an editable
+``strands_harness/models.py`` loads the copy at import, so it has to be in place for an editable
 install as well as a wheel. The copy is git-ignored; ``shared/model-info.json`` at the repository
 root is the source of truth.
 """

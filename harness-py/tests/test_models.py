@@ -5,9 +5,9 @@ from strands.models import (
     Model,
     ModelRouter,
 )
+from strands.models.anthropic import AnthropicModel
 
 from strands_harness import defaults, models
-from strands_harness._bedrock_claude import BedrockClaudeModel
 from strands_harness.defaults import DEFAULT_EFFORT
 from strands_harness.models import (
     _claude_extended_thinking,
@@ -28,7 +28,7 @@ def resolve(model, effort="auto", web_search=False, caching=False, caching_expli
 
 def test_none_resolves_to_default_with_thinking():
     model = resolve(None)
-    assert isinstance(model, BedrockClaudeModel)
+    assert isinstance(model, AnthropicModel)
     assert model.config["model_id"] == "global.anthropic.claude-opus-4-8"
     assert model.config["params"] == {
         "thinking": {"type": "adaptive", "display": "summarized"},
@@ -81,8 +81,8 @@ def test_bedrock_no_caching_when_off():
 @pytest.mark.parametrize(
     ("spec", "model_class"),
     [
-        ("bedrock/global.anthropic.claude-opus-5-5", BedrockClaudeModel),
-        ("bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0", BedrockClaudeModel),
+        ("bedrock/global.anthropic.claude-opus-5-5", AnthropicModel),
+        ("bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0", AnthropicModel),
         ("bedrock/amazon.nova-pro-v1:0", BedrockModel),
         ("bedrock/openai.gpt-oss-120b-1:0", BedrockModel),
     ],
@@ -103,58 +103,13 @@ def test_bedrock_claude_client_uses_the_aws_region(monkeypatch, tmp_path):
     assert model.client.aws_region == "eu-west-3"
 
 
-def _status_error(body):
-    import anthropic
-    import httpx
-
-    response = httpx.Response(200, request=httpx.Request("POST", "https://x"))
-    return anthropic.APIStatusError("stream error", response=response, body=body)
-
-
-async def _drain(model):
-    return [event async for event in model.stream([])]
-
-
-@pytest.mark.parametrize(
-    ("body", "expected"),
-    [
-        ({"error": {"type": "throttlingException", "message": "Too many requests"}}, "throttled"),
-        ({"error": {"type": "validationException", "message": "bad"}}, "unchanged"),
-        (None, "unchanged"),
-    ],
-)
-def test_bedrock_claude_maps_a_mid_stream_throttle_to_model_throttled(monkeypatch, body, expected):
-    import asyncio
-
-    import anthropic
-    from strands.models.anthropic import AnthropicModel
-    from strands.types.exceptions import ModelThrottledException
-
-    error = _status_error(body)
-
-    async def failing_stream(self, *args, **kwargs):
-        yield {"messageStart": {"role": "assistant"}}
-        raise error
-
-    monkeypatch.setattr(AnthropicModel, "stream", failing_stream)
-    model = resolve("bedrock/global.anthropic.claude-opus-5-5")
-    if expected == "throttled":
-        with pytest.raises(ModelThrottledException) as raised:
-            asyncio.run(_drain(model))
-        assert raised.value.__cause__ is error
-    else:
-        with pytest.raises(anthropic.APIStatusError) as raised:
-            asyncio.run(_drain(model))
-        assert raised.value is error
-
-
 @pytest.mark.parametrize(
     ("spec", "level"),
     [(defaults.DEFAULT_MODEL, "medium"), ("bedrock/global.anthropic.claude-opus-4-8", "high")],
 )
 def test_default_effort_on_bedrock_claude_is_the_model_info_default(spec, level):
     model = resolve_model(spec, defaults.DEFAULT_MODEL, DEFAULT_EFFORT, web_search=False, caching=True)
-    assert isinstance(model, BedrockClaudeModel)
+    assert isinstance(model, AnthropicModel)
     assert model.config["params"]["output_config"]["effort"] == level
 
 
@@ -162,7 +117,7 @@ def test_create_harness_defaults_to_bedrock_claude_at_medium_effort():
     from strands_harness import create_harness
 
     model = create_harness().model
-    assert isinstance(model, BedrockClaudeModel)
+    assert isinstance(model, AnthropicModel)
     assert model.config["model_id"] == defaults.DEFAULT_MODEL.removeprefix("bedrock/")
     assert model.config["params"]["output_config"]["effort"] == "medium"
 

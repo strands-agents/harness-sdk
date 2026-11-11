@@ -15,16 +15,17 @@ models that take them), while Gemini and litellm cache automatically server-side
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
 from collections.abc import Callable
+from importlib import resources
 from typing import Any, NamedTuple
 
 from strands.models import Model, ModelRouter
 
 from strands_harness import defaults
-from strands_harness._model_info import lookup_model
 from strands_harness.types.agent import Effort
 
 logger = logging.getLogger(__name__)
@@ -35,6 +36,28 @@ _ANTHROPIC_MAX_TOKENS = 32_000
 # type is a dated version; the current ones are listed at
 # https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool
 _ANTHROPIC_WEB_SEARCH = {"type": "web_search_20260318", "name": "web_search", "allowed_callers": ["direct"]}
+
+
+_VERSION_SUFFIX = re.compile(r"-(?:v\d+(?::\d+)?|\d+:\d+)$")
+_DATE_SUFFIX = re.compile(r"[-@]\d{8}$")
+# The shared model info (``shared/model-info.json``); hatch_build.py copies it into the package.
+_MODELS: dict[str, dict[str, Any]] = json.loads(
+    resources.files("strands_harness").joinpath("model_info.json").read_text(encoding="utf-8")
+)["models"]
+
+
+def lookup_model(model_id: str) -> dict[str, Any]:
+    """The model's entry, matched by the SDK's rule (version suffix, date, leading segments); empty when unknown."""
+    candidate = model_id
+    while True:
+        unversioned = _VERSION_SUFFIX.sub("", candidate)
+        for key in (candidate, unversioned, _DATE_SUFFIX.sub("", unversioned)):
+            if key in _MODELS:
+                return _MODELS[key]
+        dot_index = candidate.find(".")
+        if dot_index == -1:
+            return {}
+        candidate = candidate[dot_index + 1 :]
 
 
 def _claude_max_tokens(model_id: str) -> int:
@@ -213,11 +236,11 @@ def _bedrock_claude(model_id: str, effort: str | None, caching: bool) -> Model:
     import boto3
     from strands.models.bedrock import DEFAULT_BEDROCK_REGION
 
-    from strands_harness._bedrock_claude import BedrockClaudeModel
-
     # Same resolution as BedrockModel, so Claude and the other Bedrock families share a region.
     region = boto3.Session().region_name or os.environ.get("AWS_REGION") or DEFAULT_BEDROCK_REGION
-    return BedrockClaudeModel(
+    from strands.models.anthropic import AnthropicModel
+
+    return AnthropicModel(
         client=anthropic.AsyncAnthropicBedrock(aws_region=region), **_anthropic_config(model_id, effort, False, caching)
     )
 
