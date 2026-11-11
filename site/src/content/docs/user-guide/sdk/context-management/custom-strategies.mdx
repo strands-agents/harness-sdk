@@ -9,6 +9,8 @@ sourceLinks:
   - path: strands-py/src/strands/_context_manager/strategies/offload/summarize.py
   - path: strands-ts/src/context-manager/strategies/offload/base.ts
   - path: strands-ts/src/context-manager/strategies/offload/index.ts
+  - path: strands-ts/src/context-manager/strategies/offload/summarize.ts
+  - path: strands-py/src/strands/models/_summarize.py
 addedDate: 2026-09-14
 ---
 
@@ -117,6 +119,10 @@ Preview modes: `"head"`, `"tail"`, <Syntax py='"head_tail"' ts='"headTail"' />.
 
 Replaces content with an LLM-generated summary. Uses <Syntax py="agent.aux_model" ts="agent.auxModel" /> by default.
 
+:::note
+On models that preserve thinking, some summaries drop thinking blocks. See [Models that preserve thinking](#models-that-preserve-thinking) for which ones keep them, including [server-side summarization](../model-providers/anthropic#server-side-summarization).
+:::
+
 <Tabs>
 <Tab label="Python">
 
@@ -147,7 +153,9 @@ Offload.summarize("*").when(
 | Parameter | Key | Default |
 |-----------|-----|---------|
 | Model | `model` | `agent.aux_model` |
-| System prompt | `system_prompt` | Built-in |
+| Summarization instructions | `system_prompt` | Built-in |
+
+A batched summary resends the conversation with the agent's system prompt and tools, followed by the summarization instructions. When it runs on the agent's model, it can reuse the agent's prompt cache. If the summary leaves out messages it keeps, such as a pinned message or one under the `threshold`, it sends only the first message and the messages it replaces. Custom instructions replace the default guidance, but the client-side request always tells the model not to act on the conversation or call tools.
 
 </Tab>
 <Tab label="TypeScript">
@@ -155,7 +163,9 @@ Offload.summarize("*").when(
 | Parameter | Key | Default |
 |-----------|-----|---------|
 | Model | `model` | `agent.auxModel` |
-| System prompt | `systemPrompt` | Built-in |
+| Summarization instructions | `systemPrompt` | Built-in |
+
+A batched summary resends the conversation with the agent's system prompt and tools, followed by the summarization instructions. When it runs on the agent's model, it can reuse the agent's prompt cache. If the summary leaves out messages it keeps, such as a pinned message or one under the `threshold`, it sends only the first message and the messages it replaces. Custom instructions replace the default guidance, but the client-side request always tells the model not to act on the conversation or call tools.
 
 </Tab>
 </Tabs>
@@ -345,3 +355,18 @@ agent = Agent(
 Every strategy pipeline ends with an emergency truncation strategy, appended automatically. It fires only when the context window is still overflowing after all user strategies have run. When it fires, it drops the oldest 20% of non-head messages.
 
 Emergency truncation intentionally ignores pinned messages so an all-pinned overflow is still recoverable. Regular strategies respect pins.
+
+## Models that preserve thinking
+
+Claude models that preserve thinking bind each thinking block to the prefix that produced it: the system prompt, the tools, and the past messages the model saw when it generated the thinking block. A strategy that rewrites content before a thinking block leaves that block stale. Content after a thinking block, including the text in the same message, is not part of its prefix. When the model provider replays a stale block, it retries the request with `drop_block`, Claude skips the stale blocks, and the prompt cache restarts at the edited message. See [Thinking block is bound to a different conversation](../model-providers/anthropic#thinking-block-is-bound-to-a-different-conversation) for how the provider handles this.
+
+Whether a strategy keeps thinking valid depends on its granularity:
+
+- **Message-level summaries keep thinking when they run server-side.** When the summarizing model (<Syntax py="agent.aux_model" ts="agent.auxModel" /> by default) and the agent's model both support <Syntax py="server_side_summary" ts="serverSideSummary" />, a message-level summary goes through the model provider's summarization API instead of a client-side summarization request. The provider returns the summary as a single block that stands in for the start of the conversation, so the thinking after it stays valid. The [Anthropic model provider](../model-providers/anthropic#server-side-summarization) supports server-side summary. The [Amazon Bedrock model provider](../model-providers/amazon-bedrock) (`BedrockModel`) does not, so its message-level summaries are always client-side.
+- **Eager per-block strategies keep thinking.** A strategy with only a <Syntax py="threshold" ts="threshold" /> acts on each message as it is added, for any [target](#targets). It rewrites a tool result or user message before the model sees it, and an assistant message before any later thinking exists, so no thinking block's prefix changes.
+- **Other strategies drop thinking.** A per-block strategy with <Syntax py="preserve_recent" ts="preserveRecent" />, or a message-level truncate or drop strategy, rewrites older content that later thinking blocks are bound to. Claude skips those thinking blocks, and the prompt cache restarts at the rewrite.
+- **Emergency truncation drops thinking.** It removes the oldest messages when the context still overflows, so the thinking after them goes stale.
+
+To keep thinking blocks on these models, summarize or truncate tool results eagerly and leave message-level summaries to models that support server-side summary. See [Server-side summarization](../model-providers/anthropic#server-side-summarization) for an example.
+
+A message-level summary runs client-side, which drops thinking, when either model lacks server-side support or a [pinned message](./built-in-modes#agentic-context-management) falls inside the summarized range. A pin logs `server-side summary does not support pinned messages | falling back to client-side summary`. If the server-side request fails or returns no summary, the strategy falls back to a client-side summary and logs a warning ending in `the client-side summary rewrites history, so thinking blocks kept after it will be dropped`.

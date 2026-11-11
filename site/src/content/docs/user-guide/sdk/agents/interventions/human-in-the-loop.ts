@@ -213,7 +213,7 @@ async function classifierDecisionModelExample() {
       new HumanInTheLoop({
         allowedTools: ['read_file'],
         // Reads the API key from TYPESAFE_API_KEY
-        classifier: new TypeSafeDecisionModel(),
+        classifier: { decisionModel: new TypeSafeDecisionModel() },
       }),
     ],
   })

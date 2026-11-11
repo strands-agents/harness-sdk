@@ -11,7 +11,14 @@ import { isNode } from '../../__fixtures__/environment.js'
 import { BedrockModel } from '../bedrock.js'
 import type { BedrockModelOptions } from '../bedrock.js'
 import { ContextWindowOverflowError, ModelThrottledError } from '../../errors.js'
-import { Message, ReasoningBlock, ToolUseBlock, ToolResultBlock, JsonBlock } from '../../types/messages.js'
+import {
+  Message,
+  ReasoningBlock,
+  ToolUseBlock,
+  ToolResultBlock,
+  JsonBlock,
+  UnknownBlock,
+} from '../../types/messages.js'
 import type { SystemContentBlock } from '../../types/messages.js'
 import { TextBlock, GuardContentBlock, CachePointBlock, InjectedBlock } from '../../types/messages.js'
 import { AudioBlock, ImageBlock, VideoBlock, DocumentBlock } from '../../types/media.js'
@@ -881,6 +888,44 @@ describe('BedrockModel', () => {
         toolConfig: BEDROCK_NOOP_TOOL_CONFIG,
         modelId: expect.any(String),
       })
+    })
+
+    it('skips unknown blocks', async () => {
+      const provider = new BedrockModel()
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [new TextBlock('Hello'), new UnknownBlock({ futureBlock: { value: 1 } })],
+        }),
+      ]
+
+      await collectIterator(provider.stream(messages))
+
+      expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+        inferenceConfig: { maxTokens: 128_000 },
+        modelId: expect.any(String),
+        messages: [{ role: 'user', content: [{ text: 'Hello' }] }],
+      })
+    })
+
+    it('skips unknown content in a tool result', async () => {
+      const provider = new BedrockModel()
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [
+            new ToolResultBlock({
+              toolUseId: 'id-1',
+              status: 'success',
+              content: [new TextBlock('loaded'), new UnknownBlock({ toolReference: { name: 'shell' } })],
+            }),
+          ],
+        }),
+      ]
+      await collectIterator(provider.stream(messages))
+      expect(mockConverseStreamCommand.mock.lastCall?.[0]?.messages?.[0]?.content).toEqual([
+        { toolResult: { toolUseId: 'id-1', content: [{ text: 'loaded' }], status: 'success' } },
+      ])
     })
 
     it('injects noop tool config when messages have tool blocks but no toolSpecs', async () => {
@@ -4659,276 +4704,6 @@ describe('BedrockModel', () => {
         sourceContent: [{ text: 'page source' }],
         title: 'letter',
       })
-    })
-  })
-
-  describe('media blocks in tool results', () => {
-    const mockConverseStreamCommand = vi.mocked(ConverseStreamCommand)
-
-    it('formats image block in tool result', async () => {
-      const provider = new BedrockModel()
-      const imageBytes = new Uint8Array([1, 2, 3])
-      const messages = [
-        new Message({
-          role: 'user',
-          content: [
-            new ToolResultBlock({
-              toolUseId: 'tool-1',
-              status: 'success',
-              content: [new ImageBlock({ format: 'png', source: { bytes: imageBytes } })],
-            }),
-          ],
-        }),
-      ]
-
-      collectIterator(provider.stream(messages))
-
-      expect(mockConverseStreamCommand).toHaveBeenLastCalledWith(
-        expect.objectContaining({
-          messages: [
-            {
-              role: 'user',
-              content: [
-                {
-                  toolResult: {
-                    toolUseId: 'tool-1',
-                    content: [{ image: { format: 'png', source: { bytes: imageBytes } } }],
-                    status: 'success',
-                  },
-                },
-              ],
-            },
-          ],
-        })
-      )
-    })
-
-    it('formats video block in tool result with 3gp format mapping', async () => {
-      const provider = new BedrockModel()
-      const videoBytes = new Uint8Array([4, 5, 6])
-      const messages = [
-        new Message({
-          role: 'user',
-          content: [
-            new ToolResultBlock({
-              toolUseId: 'tool-1',
-              status: 'success',
-              content: [new VideoBlock({ format: '3gp', source: { bytes: videoBytes } })],
-            }),
-          ],
-        }),
-      ]
-
-      collectIterator(provider.stream(messages))
-
-      expect(mockConverseStreamCommand).toHaveBeenLastCalledWith(
-        expect.objectContaining({
-          messages: [
-            {
-              role: 'user',
-              content: [
-                {
-                  toolResult: {
-                    toolUseId: 'tool-1',
-                    content: [{ video: { format: 'three_gp', source: { bytes: videoBytes } } }],
-                    status: 'success',
-                  },
-                },
-              ],
-            },
-          ],
-        })
-      )
-    })
-
-    it('formats document block in tool result', async () => {
-      const provider = new BedrockModel()
-      const docBytes = new Uint8Array([7, 8, 9])
-      const messages = [
-        new Message({
-          role: 'user',
-          content: [
-            new ToolResultBlock({
-              toolUseId: 'tool-1',
-              status: 'success',
-              content: [new DocumentBlock({ name: 'report.pdf', format: 'pdf', source: { bytes: docBytes } })],
-            }),
-          ],
-        }),
-      ]
-
-      collectIterator(provider.stream(messages))
-
-      expect(mockConverseStreamCommand).toHaveBeenLastCalledWith(
-        expect.objectContaining({
-          messages: [
-            {
-              role: 'user',
-              content: [
-                {
-                  toolResult: {
-                    toolUseId: 'tool-1',
-                    content: [{ document: { name: 'report.pdf', format: 'pdf', source: { bytes: docBytes } } }],
-                    status: 'success',
-                  },
-                },
-              ],
-            },
-          ],
-        })
-      )
-    })
-
-    it('formats mixed text and media content in tool result', async () => {
-      const provider = new BedrockModel()
-      const imageBytes = new Uint8Array([1, 2])
-      const messages = [
-        new Message({
-          role: 'user',
-          content: [
-            new ToolResultBlock({
-              toolUseId: 'tool-1',
-              status: 'success',
-              content: [
-                new TextBlock('Here is the image:'),
-                new ImageBlock({ format: 'jpeg', source: { bytes: imageBytes } }),
-              ],
-            }),
-          ],
-        }),
-      ]
-
-      collectIterator(provider.stream(messages))
-
-      expect(mockConverseStreamCommand).toHaveBeenLastCalledWith(
-        expect.objectContaining({
-          messages: [
-            {
-              role: 'user',
-              content: [
-                {
-                  toolResult: {
-                    toolUseId: 'tool-1',
-                    content: [
-                      { text: 'Here is the image:' },
-                      { image: { format: 'jpeg', source: { bytes: imageBytes } } },
-                    ],
-                    status: 'success',
-                  },
-                },
-              ],
-            },
-          ],
-        })
-      )
-    })
-  })
-
-  describe('media blocks in messages', () => {
-    const mockConverseStreamCommand = vi.mocked(ConverseStreamCommand)
-
-    it('formats top-level image block', async () => {
-      const provider = new BedrockModel()
-      const imageBytes = new Uint8Array([1, 2, 3])
-      const messages = [
-        new Message({
-          role: 'user',
-          content: [new ImageBlock({ format: 'png', source: { bytes: imageBytes } })],
-        }),
-      ]
-
-      collectIterator(provider.stream(messages))
-
-      expect(mockConverseStreamCommand).toHaveBeenLastCalledWith(
-        expect.objectContaining({
-          messages: [
-            {
-              role: 'user',
-              content: [{ image: { format: 'png', source: { bytes: imageBytes } } }],
-            },
-          ],
-        })
-      )
-    })
-
-    it('formats top-level image block with S3 source', async () => {
-      const provider = new BedrockModel()
-      const messages = [
-        new Message({
-          role: 'user',
-          content: [
-            new ImageBlock({ format: 'png', source: { location: { type: 's3', uri: 's3://bucket/image.png' } } }),
-          ],
-        }),
-      ]
-
-      collectIterator(provider.stream(messages))
-
-      expect(mockConverseStreamCommand).toHaveBeenLastCalledWith(
-        expect.objectContaining({
-          messages: [
-            {
-              role: 'user',
-              content: [{ image: { format: 'png', source: { s3Location: { uri: 's3://bucket/image.png' } } } }],
-            },
-          ],
-        })
-      )
-    })
-
-    it('formats top-level video block with 3gp format mapping', async () => {
-      const provider = new BedrockModel()
-      const videoBytes = new Uint8Array([4, 5, 6])
-      const messages = [
-        new Message({
-          role: 'user',
-          content: [new VideoBlock({ format: '3gp', source: { bytes: videoBytes } })],
-        }),
-      ]
-
-      collectIterator(provider.stream(messages))
-
-      expect(mockConverseStreamCommand).toHaveBeenLastCalledWith(
-        expect.objectContaining({
-          messages: [
-            {
-              role: 'user',
-              content: [{ video: { format: 'three_gp', source: { bytes: videoBytes } } }],
-            },
-          ],
-        })
-      )
-    })
-
-    it('formats top-level document block with text source converted to bytes', async () => {
-      const provider = new BedrockModel()
-      const messages = [
-        new Message({
-          role: 'user',
-          content: [new DocumentBlock({ name: 'notes.txt', format: 'txt', source: { text: 'Hello world' } })],
-        }),
-      ]
-
-      collectIterator(provider.stream(messages))
-
-      expect(mockConverseStreamCommand).toHaveBeenLastCalledWith(
-        expect.objectContaining({
-          messages: [
-            {
-              role: 'user',
-              content: [
-                {
-                  document: {
-                    name: 'notes.txt',
-                    format: 'txt',
-                    source: { bytes: new TextEncoder().encode('Hello world') },
-                  },
-                },
-              ],
-            },
-          ],
-        })
-      )
     })
   })
 

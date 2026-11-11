@@ -4,9 +4,9 @@ import { join } from 'node:path'
 import type { Agent, JSONValue } from '@strands-agents/sdk'
 import { defineHarnessAgentConfig, harnessAgentOptionsFromConfig } from '@strands-agents/harness'
 
-import { CliConfigStore } from '../../src/tui/config.js'
-import { createInteractiveChat } from '../../src/tui/runtime.js'
-import type { StrandsChatBackend } from '../../src/tui/strands-backend.js'
+import { CliConfigStore } from '../../src/config/store.js'
+import { createInteractiveChat } from '../../src/ui/chat/runtime.js'
+import type { StrandsChatBackend } from '../../src/agent/backend.js'
 
 const root = await realpath(await mkdtemp(join(tmpdir(), 'strands-self-extensions-')))
 const workspace = join(root, 'workspace')
@@ -45,7 +45,7 @@ const profile = defineHarnessAgentConfig({
   mcpServers: {
     authored: {
       command: process.execPath,
-      args: [join(import.meta.dirname, 'self-building-mcp.mjs')],
+      args: [join(import.meta.dirname, './self-building-mcp.mjs')],
       continueOnError: false,
     },
   },
@@ -63,11 +63,15 @@ async function create(): ReturnType<typeof createInteractiveChat> {
     agentOptions: await harnessAgentOptionsFromConfig(profile, root),
     cwd: workspace,
     mcpPaths: [],
-    sessionCatalogPath: join(root, 'catalog.json'),
+    sessionRoot: join(root, 'sessions'),
   })
 }
 
 async function invokeText(agent: Agent, name: string, input: Record<string, JSONValue> = {}): Promise<string> {
+  // MCP connections can finish registering tools after agent construction.
+  for (let attempt = 0; !agent.toolRegistry.get(name) && attempt < 200; attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, 25))
+  }
   const result = await agent.tool[name]!.invoke(input, { recordDirectToolCall: false })
   if (result.status !== 'success') throw new Error(JSON.stringify(result.content))
   return result.content.flatMap((block) => (block.type === 'textBlock' ? [block.text] : [])).join('\n')
