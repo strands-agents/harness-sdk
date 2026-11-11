@@ -126,9 +126,7 @@ async function serverSideSummary() {
     model,
     contextManager: {
       strategies: [
-        // Per-block and eager: summarizes each large tool result before the model reasons over it
         Offload.summarize('toolResults').when({ threshold: 2000 }),
-        // Message-level: summarized server-side through Anthropic's compaction API
         Offload.summarize('*').when({ utilization: 0.85, preserveRecent: 4 }),
       ],
     },

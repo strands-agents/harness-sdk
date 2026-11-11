@@ -472,9 +472,7 @@ agent = Agent(
     model=model,
     context_manager={
         "strategies": [
-            # Per-block and eager: summarizes each large tool result before the model reasons over it
             Offload.summarize("tool_results").when(threshold=2000),
-            # Message-level: summarized server-side through Anthropic's compaction API
             Offload.summarize("*").when(utilization=0.85, preserve_recent=4),
         ],
     },

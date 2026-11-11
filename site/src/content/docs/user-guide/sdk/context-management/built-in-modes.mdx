@@ -104,6 +104,8 @@ Recent messages stay verbatim regardless, and the first user message is always p
 
 Behind the tools, agentic mode also configures a `ContextManager` with truncation and summarization strategies. The truncation threshold is higher than auto mode (8,000 tokens versus 1,500), since the model is already managing context and benefits from seeing more tool output inline. Summarization only triggers on overflow (100% utilization), acting as a safety net if the model lets the window fill.
 
+On Claude models that preserve thinking, `summarize_context` and `truncate_context` rewrite earlier history, so the thinking blocks after it are dropped. See [Models that preserve thinking](./custom-strategies#models-that-preserve-thinking).
+
 ### Choosing between auto and agentic
 
 Use `"auto"` for most agents. It manages context in the background, with no model involvement and no extra tool calls. Reach for `"agentic"` when you want the model itself to decide what stays in context: it judges relevance per message rather than compressing on a fixed threshold. The tradeoff is the tokens the model spends reading telemetry and calling the tools.

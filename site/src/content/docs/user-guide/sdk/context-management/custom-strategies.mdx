@@ -117,7 +117,11 @@ Preview modes: `"head"`, `"tail"`, <Syntax py='"head_tail"' ts='"headTail"' />.
 
 ### Summarize
 
-Replaces content with an LLM-generated summary. Uses <Syntax py="agent.aux_model" ts="agent.auxModel" /> by default. When both the summarizing model and the agent's model support server-side summary, a message-level summary goes through the model provider's API, which keeps thinking blocks valid on models that preserve thinking. See [Models that preserve thinking](#models-that-preserve-thinking).
+Replaces content with an LLM-generated summary. Uses <Syntax py="agent.aux_model" ts="agent.auxModel" /> by default.
+
+:::note
+On models that preserve thinking, some summaries drop thinking blocks. See [Models that preserve thinking](#models-that-preserve-thinking) for which ones keep them, including [server-side summarization](../model-providers/anthropic#server-side-summarization).
+:::
 
 <Tabs>
 <Tab label="Python">
@@ -361,35 +365,6 @@ Whether a strategy keeps thinking valid depends on its granularity:
 - **Other strategies drop thinking.** A per-block strategy with <Syntax py="preserve_recent" ts="preserveRecent" />, or a message-level truncate or drop strategy, rewrites older content that later thinking blocks are bound to. Claude skips those thinking blocks, and the prompt cache restarts at the rewrite.
 - **Emergency truncation drops thinking.** It removes the oldest messages when the context still overflows, so the thinking after them goes stale.
 
-To keep thinking blocks on these models, summarize or truncate tool results eagerly and leave message-level summaries to models that support server-side summary:
-
-<Tabs>
-<Tab label="Python">
-
-```python
-from strands import Agent
-from strands.experimental.context_manager import Offload
-
-agent = Agent(
-    context_manager={
-        "strategies": [
-            # Per-block and eager: summarizes each large tool result before the model reasons over it
-            Offload.summarize("tool_results").when(threshold=2000),
-            # Message-level: runs server-side when the agent's model and the summarizer both support it
-            Offload.summarize("*").when(utilization=0.85, preserve_recent=4),
-        ],
-    },
-)
-```
-</Tab>
-<Tab label="TypeScript">
-
-```typescript
---8<-- "user-guide/sdk/context-management/custom-strategies_imports.ts:preserved_thinking_imports"
-
---8<-- "user-guide/sdk/context-management/custom-strategies.ts:preserved_thinking"
-```
-</Tab>
-</Tabs>
+To keep thinking blocks on these models, summarize or truncate tool results eagerly and leave message-level summaries to models that support server-side summary. See [Server-side summarization](../model-providers/anthropic#server-side-summarization) for an example.
 
 A message-level summary runs client-side, which drops thinking, when either model lacks server-side support or a [pinned message](./built-in-modes#agentic-context-management) falls inside the summarized range. A pin logs `server-side summary does not support pinned messages | falling back to client-side summary`. If the server-side request fails or returns no summary, the strategy falls back to a client-side summary and logs a warning ending in `the client-side summary rewrites history, so thinking blocks kept after it will be dropped`.

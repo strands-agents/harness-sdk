@@ -24,8 +24,3 @@ import { Offload } from '@strands-agents/sdk/experimental'
 // --8<-- [start:stash_imports]
 import { Agent } from '@strands-agents/sdk'
 // --8<-- [end:stash_imports]
-
-// --8<-- [start:preserved_thinking_imports]
-import { Agent } from '@strands-agents/sdk'
-import { Offload } from '@strands-agents/sdk/experimental'
-// --8<-- [end:preserved_thinking_imports]
