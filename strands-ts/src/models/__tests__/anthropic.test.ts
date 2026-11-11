@@ -595,6 +595,17 @@ describe('AnthropicModel', () => {
       await expect(collectIterator(provider.stream(messages))).rejects.toThrow(ModelThrottledError)
       await expect(collectIterator(provider.stream(messages))).rejects.toThrow('Rate limit exceeded')
     })
+
+    it('maps a mid-stream Bedrock throttlingException to ModelThrottledError', async () => {
+      const mockClient = createMockClient(async function* () {
+        yield { type: 'ping' }
+        throw Object.assign(new Error('Too many tokens'), { type: 'throttlingException' })
+      })
+      const provider = new AnthropicModel({ client: mockClient })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+
+      await expect(collectIterator(provider.stream(messages))).rejects.toThrow(ModelThrottledError)
+    })
   })
 
   describe('stale thinking recovery', () => {

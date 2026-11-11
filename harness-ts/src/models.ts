@@ -13,12 +13,17 @@
  * models 2.5 and newer; litellm through its OpenAI-compatible backend). Only a pre-built `Model`
  * or `ModelRouter` instance can't be honored (its provider is unknown), so a warning is logged.
  *
+ * Claude on Bedrock runs through the Anthropic Messages API (`AnthropicModel` with an
+ * `AnthropicBedrock` client) so it gets the Anthropic-API features Converse doesn't expose; other
+ * Bedrock families use Converse (`BedrockModel`).
+ *
  * Providers are imported dynamically so a consumer only needs the peer dependency for the
- * provider they actually use (`@anthropic-ai/sdk`, `openai`, or `@google/genai`); Bedrock
- * needs none. This makes resolution async.
+ * provider they actually use (`openai` or `@google/genai`); Bedrock and Anthropic need none
+ * beyond the harness's own dependencies. This makes resolution async.
  */
 
 import { Model, ModelRouter, type JSONValue } from '@strands-agents/sdk'
+import type { AnthropicModelOptions } from '@strands-agents/sdk/models/anthropic'
 import { DEFAULT_MODEL } from './defaults.js'
 import { warnOnce } from './logging.js'
 import type { Effort } from './types/agent.js'
@@ -234,13 +239,18 @@ function bedrockThinking(modelId: string, effort: string | null): JSONValue | un
 }
 
 async function bedrock(modelId: string, effort: string | null, _webSearch: boolean, caching: boolean): Promise<Model> {
+  const thinking = bedrockThinking(modelId, effort)
+  const maxTokens = claudeMaxTokens(modelId)
+  const region = process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION
+  if (bedrockFamily(modelId).startsWith('anthropic.claude-')) {
+    const { AnthropicBedrock } = await import('@anthropic-ai/bedrock-sdk')
+    const client = new AnthropicBedrock({ awsRegion: region || (await awsConfigRegion()) })
+    return claude(modelId, maxTokens, thinking as Record<string, unknown> | undefined, caching, { client })
+  }
   const { BedrockModel } = await import('@strands-agents/sdk/models/bedrock')
   // The 'auto' strategy injects cache points (messages and tools) for Anthropic model ids on
   // Bedrock, and is a no-op for models that don't support caching.
   const cacheConfig = caching ? { strategy: 'auto' as const } : undefined
-  const thinking = bedrockThinking(modelId, effort)
-  const maxTokens = claudeMaxTokens(modelId)
-  const region = process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION
   return new BedrockModel({
     modelId,
     ...(region ? { region } : {}),
@@ -250,17 +260,32 @@ async function bedrock(modelId: string, effort: string | null, _webSearch: boole
   })
 }
 
-async function anthropic(modelId: string, effort: string | null, webSearch: boolean, caching: boolean): Promise<Model> {
-  const { AnthropicModel } = await import('@strands-agents/sdk/models/anthropic')
+// The region BedrockModel falls back to without AWS_REGION: the AWS shared config, else the SDK's us-west-2.
+async function awsConfigRegion(): Promise<string> {
+  const { BedrockRuntimeClient } = await import('@aws-sdk/client-bedrock-runtime')
+  return new BedrockRuntimeClient({}).config.region().catch(() => 'us-west-2')
+}
 
-  const cacheConfig = caching ? { strategy: 'auto' as const } : undefined
+async function anthropic(modelId: string, effort: string | null, webSearch: boolean, caching: boolean): Promise<Model> {
   const maxTokens = claudeMaxTokens(modelId) ?? ANTHROPIC_MAX_TOKENS
+  const thinking = effort === null ? undefined : claudeThinkingBlock(modelId, effort, maxTokens)
+  return claude(modelId, maxTokens, thinking, caching, webSearch ? { anthropicTools: [ANTHROPIC_WEB_SEARCH] } : {})
+}
+
+async function claude(
+  modelId: string,
+  maxTokens: number | undefined,
+  thinking: Record<string, unknown> | undefined,
+  caching: boolean,
+  options: Pick<AnthropicModelOptions, 'client' | 'anthropicTools'>
+): Promise<Model> {
+  const { AnthropicModel } = await import('@strands-agents/sdk/models/anthropic')
   return new AnthropicModel({
     modelId,
-    maxTokens,
-    ...(cacheConfig ? { cacheConfig } : {}),
-    ...(effort === null ? {} : { params: claudeThinkingBlock(modelId, effort, maxTokens) }),
-    ...(webSearch ? { anthropicTools: [ANTHROPIC_WEB_SEARCH] } : {}),
+    ...(maxTokens !== undefined ? { maxTokens } : {}),
+    ...(caching ? { cacheConfig: { strategy: 'auto' as const } } : {}),
+    ...(thinking ? { params: thinking } : {}),
+    ...options,
   })
 }
 
@@ -362,7 +387,7 @@ interface Provider {
   // Native web search is enabled through model config on the providers whose SDK exposes a
   // non-clobbering seam for it (OpenAI Responses `params.tools` for OpenAI and bedrock-mantle, Gemini
   // `builtInTools`, Anthropic-direct `anthropicTools`); `hasWebSearch` narrows bedrock-mantle to its
-  // GPT-5, GPT-6, and Daybreak models. Bedrock Converse has no mechanism.
+  // GPT-5, GPT-6, and Daybreak models. Bedrock has no native search.
   webSearch: boolean
   // Whether prompt caching is in effect when requested, whether or not the harness configures anything:
   // Bedrock, Anthropic direct, OpenAI, and bedrock-mantle (the harness passes an SDK cache config)

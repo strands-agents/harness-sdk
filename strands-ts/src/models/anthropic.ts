@@ -663,7 +663,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
     }
   }
 
-  /** Maps a context overflow or a 429 to the SDK's error types; any other error is normalized. */
+  /** Maps a context overflow or a throttle to the SDK's error types; any other error is normalized. */
   private _translateError(unknownError: unknown): Error {
     const error = normalizeError(unknownError)
 
@@ -672,8 +672,9 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
       return new ContextWindowOverflowError(error.message)
     }
 
-    const err = unknownError as Error & { status?: number }
-    if (err.status === 429) {
+    const err = unknownError as Error & { status?: number; type?: string }
+    // Bedrock sends a throttle that arrives mid-stream as a `throttlingException` frame, which has no status.
+    if (err.status === 429 || err.type === 'throttlingException') {
       const message = error.message ?? 'Request was throttled by the model provider'
       logger.debug(`throttled | error_message=<${message}>`)
       return new ModelThrottledError(message, { cause: err })

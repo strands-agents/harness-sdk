@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Model, ModelRouter } from '@strands-agents/sdk'
 import { BedrockModel } from '@strands-agents/sdk/models/bedrock'
+import { AnthropicModel } from '@strands-agents/sdk/models/anthropic'
+import { AnthropicBedrock } from '@anthropic-ai/bedrock-sdk'
+import { mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import {
   resolveModel,
@@ -30,6 +35,17 @@ function resolve(
   return resolveModel(model, DEFAULT, effort, webSearch, caching, cachingExplicit) as Promise<Model>
 }
 
+function bedrockClient(model: Model): AnthropicBedrock {
+  return (model as unknown as { _client: AnthropicBedrock })._client
+}
+
+async function region(model: Model): Promise<string> {
+  if (model instanceof AnthropicModel) {
+    return bedrockClient(model).awsRegion
+  }
+  return (model as unknown as { _client: { config: { region(): Promise<string> } } })._client.config.region()
+}
+
 describe('resolveModel', () => {
   it.each(['anthropic.claude-3-haiku-20240307-v1:0', 'us.anthropic.claude-3-haiku-20240307-v1:0'])(
     'does not send automatic cache points to %s',
@@ -41,24 +57,56 @@ describe('resolveModel', () => {
     }
   )
 
-  it('uses AWS_DEFAULT_REGION when AWS_REGION is absent and gives AWS_REGION precedence', async () => {
-    vi.stubEnv('AWS_REGION', undefined)
-    vi.stubEnv('AWS_DEFAULT_REGION', 'us-east-2')
-    const region = async (): Promise<string> => {
-      const model = await resolve(DEFAULT)
-      const client = (model as unknown as { _client: { config: { region(): Promise<string> } } })._client
-      return client.config.region()
-    }
-    expect(await region()).toBe('us-east-2')
-    vi.stubEnv('AWS_REGION', 'us-west-2')
-    expect(await region()).toBe('us-west-2')
+  it.each([
+    ['bedrock/global.anthropic.claude-opus-5-5', 'global.anthropic.claude-opus-5-5'],
+    ['global.anthropic.claude-haiku-4-5-20251001-v1:0', 'global.anthropic.claude-haiku-4-5-20251001-v1:0'],
+    ['bedrock/us.anthropic.claude-3-haiku-20240307-v1:0', 'us.anthropic.claude-3-haiku-20240307-v1:0'],
+  ])('runs %s on the Anthropic Messages API through an AnthropicBedrock client', async (spec, modelId) => {
+    const model = await resolve(spec)
+    expect(model).toBeInstanceOf(AnthropicModel)
+    expect(model.getConfig().modelId).toBe(modelId)
+    expect(bedrockClient(model)).toBeInstanceOf(AnthropicBedrock)
   })
+
+  it.each(['bedrock/amazon.nova-pro-v1:0', 'bedrock/us.openai.gpt-5.6-luna', 'bedrock/anthropic.other-model'])(
+    'keeps %s on Converse',
+    async (spec) => {
+      expect(await resolve(spec)).toBeInstanceOf(BedrockModel)
+    }
+  )
+
+  it.each([DEFAULT, 'bedrock/amazon.nova-pro-v1:0'])(
+    'uses AWS_DEFAULT_REGION when AWS_REGION is absent and gives AWS_REGION precedence for %s',
+    async (spec) => {
+      vi.stubEnv('AWS_REGION', undefined)
+      vi.stubEnv('AWS_DEFAULT_REGION', 'us-east-2')
+      expect(await region(await resolve(spec))).toBe('us-east-2')
+      vi.stubEnv('AWS_REGION', 'us-west-2')
+      expect(await region(await resolve(spec))).toBe('us-west-2')
+    }
+  )
+
+  it.each([
+    ['the AWS config region', '[default]\nregion = eu-central-1\n', 'eu-central-1'],
+    ['us-west-2', '', 'us-west-2'],
+  ])('falls back to %s without a region in the environment', async (_, config, expected) => {
+    const configFile = join(mkdtempSync(join(tmpdir(), 'harness-aws-')), 'config')
+    writeFileSync(configFile, config)
+    vi.stubEnv('AWS_REGION', undefined)
+    vi.stubEnv('AWS_DEFAULT_REGION', undefined)
+    vi.stubEnv('AWS_PROFILE', undefined)
+    vi.stubEnv('AWS_CONFIG_FILE', configFile)
+    for (const spec of [DEFAULT, 'bedrock/amazon.nova-pro-v1:0']) {
+      expect(await region(await resolve(spec))).toBe(expected)
+    }
+  })
+
   it('resolves undefined to the default with thinking', async () => {
     const model = await resolve(undefined)
-    expect(model).toBeInstanceOf(BedrockModel)
+    expect(model).toBeInstanceOf(AnthropicModel)
     const config = model.getConfig()
     expect(config.modelId).toBe('global.anthropic.claude-opus-4-8')
-    expect(config.additionalRequestFields).toEqual({
+    expect(config.params).toEqual({
       thinking: { type: 'adaptive', display: 'summarized' },
       output_config: { effort: 'high' },
     })
@@ -107,7 +155,7 @@ describe('resolveModel', () => {
 
   it('leaves provider defaults when effort is off', async () => {
     const model = await resolve('bedrock/global.anthropic.claude-opus-4-8', 'off')
-    expect(model.getConfig().additionalRequestFields).toBeUndefined()
+    expect(model.getConfig().params).toBeUndefined()
   })
 
   it('rejects an effort outside the enum by name', async () => {
@@ -118,13 +166,13 @@ describe('resolveModel', () => {
 
   it('applies an explicit thinking level', async () => {
     const model = await resolve('bedrock/global.anthropic.claude-opus-4-8', 'low')
-    const fields = model.getConfig().additionalRequestFields as { output_config: { effort: string } }
+    const fields = model.getConfig().params as { output_config: { effort: string } }
     expect(fields.output_config.effort).toBe('low')
   })
 
   it('accepts a provider-specific level', async () => {
     const model = await resolve('bedrock/global.anthropic.claude-opus-4-8', 'max')
-    const fields = model.getConfig().additionalRequestFields as { output_config: { effort: string } }
+    const fields = model.getConfig().params as { output_config: { effort: string } }
     expect(fields.output_config.effort).toBe('max')
   })
 
@@ -374,12 +422,12 @@ describe('resolveModel', () => {
 
   it.each(NO_THINKING_CLAUDE)('sends no thinking block to %s', async (modelId) => {
     const model = await resolve(`bedrock/${modelId}`)
-    expect(model.getConfig().additionalRequestFields).toBeUndefined()
+    expect(model.getConfig().params).toBeUndefined()
   })
 
   it.each(EXTENDED_CLAUDE)('sends the extended block to %s', async (modelId) => {
     const model = await resolve(`bedrock/${modelId}`)
-    expect(model.getConfig().additionalRequestFields).toEqual(EXTENDED)
+    expect(model.getConfig().params).toEqual(EXTENDED)
   })
 
   it.each([
@@ -390,7 +438,7 @@ describe('resolveModel', () => {
     ['max', 49_152],
   ] as const)('maps %s to a budget of %d that the api accepts', async (level, budget) => {
     const config = (await resolve('bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0', level)).getConfig()
-    expect(config.additionalRequestFields).toEqual({ thinking: { type: 'enabled', budget_tokens: budget } })
+    expect(config.params).toEqual({ thinking: { type: 'enabled', budget_tokens: budget } })
     expect(budget).toBeLessThan(config.maxTokens!)
   })
 
@@ -421,7 +469,7 @@ describe('resolveModel', () => {
 
   it.each(ADAPTIVE_CLAUDE)('sends the adaptive block to %s', async (modelId) => {
     const model = await resolve(`bedrock/${modelId}`)
-    expect(model.getConfig().additionalRequestFields).toEqual(ADAPTIVE)
+    expect(model.getConfig().params).toEqual(ADAPTIVE)
   })
 
   it('rejects an explicit thinking level on a claude below the thinking floor', async () => {
@@ -652,10 +700,10 @@ describe('resolveModel', () => {
 describe('default effort', () => {
   // [model spec, path of the effort field in the resolved config]
   const HIGH_BY_DEFAULT: [string, string[]][] = [
-    ['bedrock/global.anthropic.claude-opus-5', ['additionalRequestFields', 'output_config', 'effort']],
-    ['bedrock/global.anthropic.claude-sonnet-5', ['additionalRequestFields', 'output_config', 'effort']],
-    ['bedrock/us.anthropic.claude-sonnet-4-6', ['additionalRequestFields', 'output_config', 'effort']],
-    ['bedrock/global.anthropic.claude-fable-5-1', ['additionalRequestFields', 'output_config', 'effort']],
+    ['bedrock/global.anthropic.claude-opus-5', ['params', 'output_config', 'effort']],
+    ['bedrock/global.anthropic.claude-sonnet-5', ['params', 'output_config', 'effort']],
+    ['bedrock/us.anthropic.claude-sonnet-4-6', ['params', 'output_config', 'effort']],
+    ['bedrock/global.anthropic.claude-fable-5-1', ['params', 'output_config', 'effort']],
     ['bedrock/openai.gpt-5.6-sol', ['additionalRequestFields', 'reasoning', 'effort']],
     ['bedrock/global.openai.gpt-6-astra', ['additionalRequestFields', 'reasoning', 'effort']],
     ['bedrock/openai.gpt-oss-120b-1:0', ['additionalRequestFields', 'reasoning_effort']],
@@ -678,8 +726,7 @@ describe('default effort', () => {
     'is the high budget on extended-thinking %s',
     async (spec) => {
       const config = (await resolve(spec, DEFAULT_EFFORT)).getConfig()
-      const block = spec.startsWith('bedrock/') ? config.additionalRequestFields : config.params
-      expect(block).toEqual({ thinking: { type: 'enabled', budget_tokens: 16_384 } })
+      expect(config.params).toEqual({ thinking: { type: 'enabled', budget_tokens: 16_384 } })
       expect(config).toEqual((await resolve(spec, 'high')).getConfig())
     }
   )
@@ -736,7 +783,7 @@ describe('supportsThinking', () => {
     const modelId = `bedrock/${prefix}anthropic.claude-opus-4-8`
     expect(supportsThinking(modelId)).toBe(true)
     const model = await resolve(modelId, 'max')
-    expect(model.getConfig().additionalRequestFields).toEqual({
+    expect(model.getConfig().params).toEqual({
       thinking: { type: 'adaptive', display: 'summarized' },
       output_config: { effort: 'max' },
     })
@@ -757,7 +804,7 @@ describe('supportsThinking', () => {
     async (modelId) => {
       expect(supportsThinking(`bedrock/global.anthropic.${modelId}`)).toBe(true)
       const model = await resolve(`bedrock/global.anthropic.${modelId}`)
-      expect(model.getConfig().additionalRequestFields).toEqual({
+      expect(model.getConfig().params).toEqual({
         thinking: { type: 'adaptive', display: 'summarized' },
         output_config: { effort: 'high' },
       })
@@ -804,10 +851,11 @@ describe('supportsWebSearch', () => {
 describe('resolveWebFetchModel', () => {
   it('defaults to the provider small model with no thinking', async () => {
     const model = await resolveWebFetchModel('bedrock/global.anthropic.claude-opus-4-8', undefined)
-    expect(model).toBeInstanceOf(BedrockModel)
+    expect(model).toBeInstanceOf(AnthropicModel)
+    expect(bedrockClient(model)).toBeInstanceOf(AnthropicBedrock)
     const config = model.getConfig()
     expect(config.modelId).toBe('global.anthropic.claude-haiku-4-5-20251001-v1:0')
-    expect(config.additionalRequestFields).toBeUndefined()
+    expect(config.params).toBeUndefined()
   })
 
   it('uses the openai small model for an openai-on-bedrock main model', async () => {
