@@ -60,11 +60,11 @@ describe('setup presentation', () => {
   it('renders a saved agent name safely in launch guidance, editing and review without changing it', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'strands-setup-name-'))
     const name = 'Agent\u001b[31mRed'
-    const path = join(directory, 'cli.toml')
-    await writeFile(
-      path,
-      `[profile]\nname = ${JSON.stringify(name)}\n[settings]\nanimations = false\n[onboarding]\nversion = 1\n`
-    )
+    const path = join(directory, 'settings.toml')
+    await writeFile(path, '[settings]\nanimations = false\n')
+    await writeFile(join(directory, 'agent.toml'), `name = ${JSON.stringify(name)}\n`)
+    await mkdir(join(directory, 'state'))
+    await writeFile(join(directory, 'state', 'onboarding.toml'), '[onboarding]\nversion = 1\n')
     const config = await CliConfigStore.load(path)
     const input = ttyInput()
     const output = ttyOutput(100, 36)

@@ -7,14 +7,17 @@ import {
 import { SessionManager } from '@strands-agents/sdk'
 import { AgentSkills } from '@strands-agents/sdk/vended-plugins/skills'
 import { readFile } from 'node:fs/promises'
-import { resolve } from 'node:path'
+import { dirname, resolve } from 'node:path'
 
+import { readAgentDefinition } from '../config/store.js'
 import type { ResolvedMcpConfig } from '../config/trust.js'
+import { expandHome } from '../paths.js'
 import { requireBedrockRegion } from '../model/aws-config.js'
 import { importAgentProject, type ImportedAgentProject } from '../project/import.js'
 import type { AgentFactory } from '../project/typescript.js'
 import { isRecord } from '../values.js'
 import { agentConfig, projectConfigOverrides, type ParsedArgs } from './arguments.js'
+import { profileOptions, runtimeAgentFactory, runtimeOptions, workspaceStateDirectory } from './runtime-options.js'
 
 interface InvocationAgent {
   profile?: HarnessAgentConfig
@@ -36,7 +39,8 @@ export async function invocationAgentForRun(
 ): Promise<InvocationAgent> {
   const snapshot = config.snapshot()
   const projectPath = args.agent ?? snapshot.agentProject
-  if (projectPath) {
+  const definition = projectPath?.endsWith('.toml') ? resolve(cwd, expandHome(projectPath)) : undefined
+  if (projectPath && !definition) {
     project ??= importAgentProject(projectPath)
     if (args.agent) args.agent = project.entrypoint
     if (project.language !== 'typescript') {
@@ -51,22 +55,23 @@ export async function invocationAgentForRun(
     }
     requireBedrockRegion(options.model)
     return {
-      options,
-      buildAgent: authored.createAgent,
+      options: runtimeOptions(options, cwd, args),
+      buildAgent: runtimeAgentFactory(args, authored.createAgent),
       project,
     }
   }
-  const baseDir = snapshot.profileBaseDir ?? cwd
-  const profile = agentConfig(args, snapshot.profile)
+  const baseDir = definition ? dirname(definition) : (snapshot.profileBaseDir ?? cwd)
+  const profile = agentConfig(args, definition ? await readAgentDefinition(definition) : snapshot.profile)
   config.applyProviderEnvironment()
   requireBedrockRegion(profile.model)
   const options = {
-    ...(await harnessAgentOptionsFromConfig(profile, baseDir)),
+    ...(await profileOptions(profile, baseDir, cwd)),
     printer: false,
   }
   return {
     profile,
-    options,
+    options: runtimeOptions(options, cwd, args),
+    buildAgent: runtimeAgentFactory(args),
   }
 }
 
@@ -177,6 +182,9 @@ export async function pythonInvocationOptions(
   })
   return {
     cwd,
+    stateDirectory: workspaceStateDirectory(cwd, args.stateDir),
+    relocateState: args.stateDir !== undefined,
+    ...(args.appendInstructions ? { appendInstructions: args.appendInstructions } : {}),
     overrides: projectConfigOverrides({ ...args, session: undefined, memory: undefined, sessionId: undefined }),
     assignments: args.configSet,
     configFlags: { session: args.session, memory: args.memory, sessionId: args.sessionId },

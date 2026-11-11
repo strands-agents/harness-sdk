@@ -46,6 +46,8 @@ background delegates non-blocking and automatically continues the agent when the
 
 ## Installation
 
+Requires Node `^22.21.0 || >=24.5.0`, including native proxy support.
+
 Install it globally to get the `strands` command:
 
 ```bash
@@ -71,7 +73,7 @@ Windows uses its built-in Windows PowerShell for the shell tool and `!` commands
 required. File tools accept drive-letter and UNC paths, and exported agents use the same native
 PowerShell behavior.
 
-On the first interactive launch, the intro animation plays before the setup panel opens. Quickstart
+When the selected provider needs configuration, the first interactive launch opens setup. Quickstart
 lets you choose a provider and model, then launch. Customize lets you select tools, skills, MCP, and
 other capabilities individually or together, and edit the agent instructions, data paths, and approval
 controls. The CLI detects standard credential sources but never writes API keys to its config.
@@ -166,7 +168,10 @@ Run `strands --help` for the parser's current list.
 | `--prompt <text>`             | All             | Initial request; equivalent to the positional request                                                                                   |
 | `--acp-server`                | ACP server      | Serve the agent over ACP; cannot be combined with a request, `--print`, or `--setup`                                                    |
 | `--setup`                     | Ink             | Open the provider and default-agent setup wizard                                                                                        |
-| `--agent <path>`              | All             | Load an agent ZIP, project folder, or `agent.ts`/`agent.py`                                                                             |
+| `--agent <path>`              | All             | Load an agent TOML definition, ZIP, project folder, or `agent.ts`/`agent.py`                                                              |
+| `--bypass-permissions`        | Ink             | Skip CLI approvals for this run; keep saved deny rules and external enforcement                                                         |
+| `--append-instructions <text>` | All            | Append to the effective system prompt for this run, including custom prompts                                                            |
+| `--state-dir <path>`          | All             | Relocate built-in sessions and memory under a directory, grouped by workspace                                                            |
 | `--env-file <path>`           | All             | Load an explicitly trusted env file; repeat for several files, later files win                                                          |
 | `--set <field=value>`         | Harness backend | Override any portable config field; repeatable and JSON-aware                                                                           |
 | `--name <name>`               | Harness backend | Override the agent name for this invocation                                                                                             |
@@ -196,7 +201,7 @@ strands --set 'builtinTools.web_fetch.model="openai/gpt-5-mini"' --set 'session.
 
 ## Setup and providers
 
-Run `strands` or `/setup` to configure:
+Run `strands --setup` or `/setup` to configure:
 
 - enabled providers and the default model,
 - the agent name and additional instructions,
@@ -204,8 +209,22 @@ Run `strands` or `/setup` to configure:
 - skills directories, context management, caching, and long-term memory,
 - the default tool-approval mode.
 
-Configuration is stored in `~/.strands/cli.toml`. Explicit CLI flags override the saved
-profile. Applying `/setup` changes reloads the agent while preserving the conversation.
+On first launch, a configured provider opens chat directly. Missing provider configuration opens
+setup. This checks configuration without making an authentication or model request.
+
+`STRANDS_CLI_HOME` selects the CLI directory, defaulting to `~/.strands`. Relative values resolve
+against the launch directory. It holds:
+
+- `settings.toml`: display preferences, permission rules, non-secret provider settings, and the selected authored agent.
+- `agent.toml`: the default agent's portable configuration, without a `[profile]` wrapper.
+- `state/`: onboarding, trust, the session catalog, and built-in session and memory data.
+- `cache/`: disposable agent archives. `skills/` and `mcp.json` retain their native formats.
+
+Loading configuration does not rewrite it. Theme and permission changes save preferences;
+saved model changes update the agent definition. CLI overrides apply only to the current run.
+Applying `/setup` changes reloads the agent while preserving the conversation.
+Legacy `cli.toml` and `cli/config.json` are left untouched and are not loaded or migrated.
+Recreate needed defaults in the new files or use `/setup`.
 
 ### Web search and Exa
 
@@ -400,11 +419,11 @@ through `createHarness()`. Cedar automatically permits workspace-local `read` ca
 canonical-path and symlink checks), `todo_write`, `retrieve_context`, and `retrieve_offloaded_content`. Every other built-in
 or MCP tool call opens a permission panel with **Allow once**, **Always allow**, **Deny once**,
 and **Always deny**. Saved choices let you select a specific action or the whole tool.
-Saved allow and deny rules are written to `~/.strands/cli.toml` and apply across launches.
+Saved allow and deny rules are written to `~/.strands/settings.toml` and apply across launches.
 Shell scopes match command text; they do not sandbox what commands execute.
 A denial is returned to the agent as a denied tool call.
 
-The CLI reads user-level permission settings from `~/.strands/cli.toml`:
+The CLI reads user-level permission settings from `~/.strands/settings.toml`:
 
 ```toml
 [permissions]
@@ -417,6 +436,7 @@ prompts; saved deny rules still apply. It does not disable additional
 interventions supplied by the caller or an operating-system sandbox. Permission configuration is
 user-owned; the CLI does not load a project config file that could silently enable bypass mode.
 Use `/permissions` to inspect or change the mode and remove saved tool grants.
+`--bypass-permissions` selects bypass mode for one launch without changing the saved mode.
 Use `/settings` to persist presentation preferences in the same file. Disabling animations also
 skips the startup intro on later launches. Unrecognized or invalid presentation settings use their
 defaults without preventing startup; unknown settings keys are preserved when saving.
@@ -560,14 +580,18 @@ and startup with a saved session ID restore the saved system prompt along with t
 replacing the current prompt.
 Session files are trusted input: resume only sessions you created, not ones that came with a cloned repository.
 
-Sessions use the Harness default, `./.agent/sessions`. Set `session.dir` to keep them somewhere else;
-authored agents (`--agent`) keep their own session configuration. Relative paths resolve against
+The CLI's default sessions and memory use `state/workspaces/<workspace-key>/sessions/` and
+`state/workspaces/<workspace-key>/memory/` under its CLI directory. The key identifies the canonical
+workspace path. Set `session.dir` or `memory.dir` to keep them somewhere else;
+authored agents (`--agent`) keep their explicit store configuration. Relative paths resolve against
 the profile's base directory, or the current workspace when no base directory is set.
 For authored agents with sessions disabled or a custom session manager, `--session-id` is ignored;
 the authored configuration controls session identity.
 In Ink, `/sessions` lists sessions from registered workspaces and can resume them across worktrees.
-The CLI keeps this catalog under `~/.strands/sessions/`; existing sessions there or under
-`~/.strands/cli/sessions/` remain available without moving them.
+The CLI keeps this catalog under `state/sessions/`. It does not import old catalogs or transcripts.
+`--state-dir` overrides built-in file-store paths for a run and preserves disabled stores.
+Custom stores that cannot honor this override produce an error. `--append-instructions` adds
+guidance to each model call without saving it in the agent definition or conversation snapshot.
 
 `/sessions rename <name>` names the current saved session and updates the terminal
 title. Saved names return when you reopen the session. Leave out the name to have the agent's
@@ -636,7 +660,7 @@ ping is fire-and-forget: startup never waits on it and failures are silent. Noth
 projects).
 
 Turn it off with `STRANDS_CLI_TELEMETRY=off` (or `DO_NOT_TRACK=1`), the **Usage ping** toggle in `/settings`
-(takes effect at the next launch), or `telemetry = false` under `[settings]` in `~/.strands/cli.toml`.
+(takes effect at the next launch), or `telemetry = false` under `[settings]` in `~/.strands/settings.toml`.
 
 ## Beyond the CLI
 

@@ -13,6 +13,8 @@ import { DEFAULT_HARNESS_AGENT_CONFIG, defineHarnessAgentConfig } from '@strands
 import type { Agent } from '@strands-agents/sdk'
 import { AgentSkills, Skill } from '@strands-agents/sdk/vended-plugins/skills'
 
+import { workspaceStateDirectory } from '../../src/cli/runtime-options.js'
+import { temporaryDirectory } from '../fixtures/tempdir.js'
 import { main, runPlainChat, selectRunMode } from '../../src/cli/run.js'
 import { agentConfig, parseArgs, shouldPersistModelChanges } from '../../src/cli/arguments.js'
 import { invocationAgentForRun, withDiscoveredSkills } from '../../src/cli/invocation.js'
@@ -333,7 +335,7 @@ describe('profile model persistence', () => {
 describe('saved session prompts', () => {
   it.each(['print', 'plain'] as const)('keeps the current profile prompt in %s mode', async (mode) => {
     const workspace = await mkdtemp(join(tmpdir(), 'strands-console-session-'))
-    await writeSessionWithSavedSystemPrompt(join(workspace, '.agent', 'sessions'), 'saved-session')
+    await writeSessionWithSavedSystemPrompt(join(workspaceStateDirectory(workspace), 'sessions'), 'saved-session')
     const model = new SystemPromptRecordingModel()
     const build = harness.createHarness
     const create = vi.spyOn(harness, 'createHarness').mockImplementation((options) =>
@@ -379,22 +381,28 @@ describe('saved session prompts', () => {
 
 describe('project invocation', () => {
   it.each([
-    { argv: [], expected: { dir: '.agent/sessions' } },
-    { argv: ['--session-id', 'saved-session'], expected: { id: 'saved-session', dir: '.agent/sessions' } },
+    { argv: [], expected: {} },
+    { argv: ['--session-id', 'saved-session'], expected: { id: 'saved-session' } },
     { argv: ['--set', 'session.dir="custom-sessions"'], expected: { dir: 'custom-sessions' } },
     { argv: ['--session', 'off'], expected: false as const },
-  ])('preserves Harness session storage for $argv', async ({ argv, expected }) => {
-    const workspace = join(tmpdir(), 'strands-invocation-workspace')
+  ])('uses private session defaults and preserves explicit storage for $argv', async ({ argv, expected }) => {
+    const workspace = await temporaryDirectory()
     const invocation = await invocationAgentForRun(parseArgs(argv), CliConfigStore.memory(), workspace)
     expect(invocation.options.session).toEqual(
-      expected === false ? false : { ...expected, dir: join(workspace, expected.dir) }
+      expected === false
+        ? false
+        : {
+            ...expected,
+            dir:
+              'dir' in expected ? join(workspace, expected.dir!) : join(workspaceStateDirectory(workspace), 'sessions'),
+          }
     )
   })
 
   it.each([true, { id: 'saved-session' }, { dir: 'custom-sessions' }] as const)(
     'resolves profile session storage against its base directory: %j',
     async (session) => {
-      const workspace = join(tmpdir(), 'strands-invocation-workspace')
+      const workspace = await temporaryDirectory()
       const profileBaseDir = join(tmpdir(), 'strands-profile-base')
       const config = {
         snapshot: () => ({
@@ -406,13 +414,16 @@ describe('project invocation', () => {
       const invocation = await invocationAgentForRun(parseArgs([]), config, workspace)
       expect(invocation.options.session).toEqual({
         ...(session === true ? {} : session),
-        dir: join(profileBaseDir, session !== true && 'dir' in session ? session.dir : '.agent/sessions'),
+        dir:
+          session !== true && 'dir' in session
+            ? join(profileBaseDir, session.dir)
+            : join(workspaceStateDirectory(workspace), 'sessions'),
       })
     }
   )
 
   it('preserves an absolute session directory when resuming from another workspace', async () => {
-    const workspace = join(tmpdir(), 'strands-invocation-workspace')
+    const workspace = await temporaryDirectory()
     const sessionDirectory = join(tmpdir(), 'strands-saved-sessions')
     const args = parseArgs([
       '--session-id',
@@ -716,7 +727,7 @@ describe('TUI startup', () => {
       const directory = await mkdtemp(join(tmpdir(), 'strands-cli-production-'))
       const fixture = fileURLToPath(new URL('../fixtures/strands-cli-production-probe.mjs', import.meta.url))
       await mkdir(join(directory, '.strands'), { recursive: true })
-      await writeFile(join(directory, '.strands', 'cli.toml'), stringify({ settings: { animations: false } }))
+      await writeFile(join(directory, '.strands', 'settings.toml'), stringify({ settings: { animations: false } }))
       const child = spawn(process.execPath, ['--import', import.meta.resolve('tsx/esm'), fixture], {
         cwd: directory,
         env: {

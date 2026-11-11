@@ -11,6 +11,9 @@ export interface ParsedArgs {
   oneShot: boolean
   acpServer: boolean
   setup: boolean
+  bypassPermissions?: boolean
+  appendInstructions?: string
+  stateDir?: string
   agent: string | undefined
   configSet: string[]
   envFiles: string[]
@@ -51,7 +54,10 @@ export function parseArgs(argv: string[]): ParsedArgs {
     .option('--prompt <text>', 'initial request (equivalent to the positional request)')
     .option('--acp-server', 'serve the agent over ACP on stdin/stdout')
     .option('--setup', 'open the interactive provider and agent setup wizard')
-    .option('--agent <path>', 'load an agent project ZIP, folder, or agent.ts/agent.py')
+    .option('--bypass-permissions', 'skip CLI tool approvals for this run')
+    .option('--append-instructions <text>', 'append instructions for this run without changing the saved agent')
+    .option('--state-dir <path>', 'place built-in sessions and memory under this directory, grouped by workspace')
+    .option('--agent <path>', 'load an agent TOML definition, project ZIP, folder, or agent.ts/agent.py')
     .option('--set <field=value>', 'override any portable agent config field (repeatable)', collect, [])
     .option('--env-file <path>', 'load an explicitly trusted env file (repeatable)', collect, [])
     .option('--name <name>', 'agent name')
@@ -87,6 +93,9 @@ export function parseArgs(argv: string[]): ParsedArgs {
     oneShot: Boolean(opts.print),
     acpServer: Boolean(opts.acpServer),
     setup: Boolean(opts.setup),
+    ...(opts.bypassPermissions ? { bypassPermissions: true } : {}),
+    ...(opts.appendInstructions !== undefined ? { appendInstructions: opts.appendInstructions } : {}),
+    ...(opts.stateDir !== undefined ? { stateDir: opts.stateDir } : {}),
     agent: opts.agent,
     configSet: opts.set,
     envFiles: opts.envFile,

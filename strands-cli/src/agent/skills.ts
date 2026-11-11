@@ -5,6 +5,7 @@ import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 
+import { strandsUserPath } from '../paths.js'
 import { sanitizeTerminalText } from '../terminal/text.js'
 
 export interface SkillInfo {
@@ -77,7 +78,10 @@ export class AgentSkillsRuntime implements ChatSkillsRuntime {
 }
 
 export function defaultSkillPaths(cwd = process.cwd(), home = homedir()): string[] {
-  const userPaths = ['.agents', '.claude', '.codex', '.strands'].map((directory) => join(home, directory, 'skills'))
+  const userPaths = [
+    ...['.agents', '.claude', '.codex'].map((directory) => join(home, directory, 'skills')),
+    process.env.STRANDS_CLI_HOME ? strandsUserPath('skills') : join(home, '.strands', 'skills'),
+  ]
   const projectPaths = workspaceAncestors(cwd).flatMap((directory) =>
     ['.agents', '.claude', '.codex', '.agent', '.strands'].map((name) => join(directory, name, 'skills'))
   )

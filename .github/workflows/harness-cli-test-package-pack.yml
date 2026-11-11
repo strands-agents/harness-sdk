@@ -4,12 +4,22 @@ name: 'Harness CLI: Test Package Pack'
 # Reusable; called by CI and release-harness-cli.yml. Reproduces a real user's install:
 # `npm pack` the CLI, install the tarball in a tempdir OUTSIDE the repo tree (so
 # nothing hoists), and run the `strands` bin. The CLI's @strands-agents/harness /
-# @strands-agents/sdk deps resolve from the registry (ranged, not pinned), so only
-# the CLI tarball is packed.
+# @strands-agents/sdk deps resolve from the registry. Releases pin the selected
+# SDK and harness versions; pull request checks use the manifest ranges.
 
 on:
   workflow_call:
     inputs:
+      sdk_version:
+        description: Exact published SDK version containing the Mantle bearer-token fix
+        required: false
+        type: string
+        default: ''
+      harness_version:
+        description: Exact published harness version to test and package for a CLI release
+        required: false
+        type: string
+        default: ''
       release-sha:
         description: Optional full release commit SHA from origin/main history
         required: false
@@ -81,6 +91,20 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Select released SDK and harness
+        if: inputs.harness_version != '' || inputs.sdk_version != ''
+        shell: bash
+        env:
+          HARNESS_VERSION: ${{ inputs.harness_version }}
+          SDK_VERSION: ${{ inputs.sdk_version }}
+        run: |
+          if ! [[ "$HARNESS_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
+             ! [[ "$SDK_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::harness_version and sdk_version must be exact published release versions."
+            exit 1
+          fi
+          npm install --save-exact --ignore-scripts --no-audit --no-fund "@strands-agents/harness@$HARNESS_VERSION" "@strands-agents/sdk@$SDK_VERSION"
+
       - name: Setup Python for the terminal driver
         id: python
         uses: actions/setup-python@v7.0.0
@@ -98,6 +122,8 @@ jobs:
         env:
           PYTHON: ${{ steps.python.outputs.python-path }}
           STRANDS_CLI_KEEP_TARBALL: 'true'
+          STRANDS_CLI_RELEASE_HARNESS: ${{ inputs.harness_version }}
+          STRANDS_CLI_RELEASE_SDK: ${{ inputs.sdk_version }}
         run: npm run test:package-install
 
       - name: Upload tarball for downstream inspect/publish
