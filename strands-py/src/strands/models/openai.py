@@ -287,6 +287,22 @@ class OpenAIModel(Model):
             "content": content,
         }
 
+    @staticmethod
+    def _belongs_in_user_message(item: dict[str, Any]) -> bool:
+        """Whether a tool-message part has to travel in a user message.
+
+        Images always do: the Chat Completions tool role takes text only. A document does
+        only when that API can accept it there, which is a PDF; other document types stay
+        in the tool message, where LiteLLM turns them into a native tool-result document.
+        Moving those would not make an OpenAI request valid and would break that path.
+        """
+        if item.get("type") == "image_url":
+            return True
+        if item.get("type") != "file":
+            return False
+        file_data = item.get("file", {}).get("file_data", "")
+        return isinstance(file_data, str) and file_data.startswith("data:application/pdf")
+
     @classmethod
     def _split_tool_message_media(cls, tool_message: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any] | None]:
         """Split a tool message into a text-only tool message and an optional user message with media.
@@ -313,7 +329,7 @@ class OpenAIModel(Model):
         media_content = []
 
         for item in content:
-            if isinstance(item, dict) and item.get("type") in ("image_url", "file"):
+            if isinstance(item, dict) and cls._belongs_in_user_message(item):
                 media_content.append(item)
             else:
                 text_content.append(item)
