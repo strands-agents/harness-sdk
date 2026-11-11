@@ -157,9 +157,14 @@ options below.
 What <Syntax py='"auto"' ts="'auto'" /> resolves to can change in a minor release as
 better approaches become available, and a change can move calls in either direction:
 some that used to run on their own may start asking, and some that used to ask may stop.
-Every change is named in that version's release notes. If you need the behavior fixed
-across upgrades, configure the strategy explicitly instead —
-<Syntax py="classifier=True" ts="classifier: true" /> pins today's classifier.
+Every change is named in that version's release notes.
+
+To fix the mechanism, configure the strategy explicitly:
+<Syntax py="classifier=True" ts="classifier: true" /> always means the built-in LLM
+classifier. Note that this pins the mechanism, not its verdicts — the default risk prompt
+is SDK-owned and can change, and the classifier runs on <Syntax py="agent.aux_model" ts="agent.auxModel" />.
+To fix the criteria as well, pass your own prompt and model
+(<Syntax py="LLMClassifierConfig" ts="LlmClassifierConfig" />) or your own `DecisionModel`.
 :::
 
 ### Risk Classifier

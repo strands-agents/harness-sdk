@@ -98,48 +98,67 @@ async for event in agent.stream_async("Hello"):
 
 New event types added to the union don't affect existing event handling logic.
 
-## `"auto"` Settings
+## Preset and `"auto"` Setting Expansions
 
-Changing what an `"auto"` setting resolves to **is not considered a breaking change**.
+Changing what a preset or `"auto"` setting expands to **is not considered a breaking change**. The *name* is the stable contract, not its expansion.
 
-An `"auto"` setting is one documented as "the SDK picks the best approach it currently has" rather than as a specific mechanism. `HumanInTheLoop("auto")` is the first; the same policy covers any later one.
+This covers any setting whose documented meaning is a named outcome the SDK owns the implementation of, rather than a specific mechanism the caller chose:
+
+- `context_manager="auto"` / `"agentic"` — the preset expansions (truncation thresholds, the summarization utilization point). Already documented this way on the [context management presets page](../site/src/content/docs/user-guide/sdk/context-management/presets.mdx); this entry writes the rule down rather than introducing it.
+- `HumanInTheLoop("auto")` — which approval strategy decides that a tool call needs a human.
+
+It does **not** cover an `"auto"` that states a fact rather than selecting an implementation. `ModelCapabilities.prompt_caching="auto"` describes how a given model caches; it is a property of that model, not a choice the SDK re-makes between releases.
 
 ### Policy
 
-The SDK may change what an `"auto"` setting resolves to in a **minor** release. Patch releases may only fix the current implementation, never swap it for a different approach. Every such change is called out in the release notes for that version, naming the setting, what it resolved to before, and what it resolves to now.
+The SDK may change what a preset or `"auto"` setting expands to in a **minor** release. Patch releases may only fix the current expansion, never swap it for a different approach. Every such change is called out in the release notes for that version, naming the setting, what it expanded to before, and what it expands to now.
 
 A change may move behavior in **either direction**. For `HumanInTheLoop("auto")`, a release may escalate calls to the human that previously ran on their own, and it may also auto-approve calls that previously escalated. A new strategy is adopted when it classifies risk more accurately overall, which generally means being right more often in both directions rather than uniformly stricter.
 
 The guarantees that do hold across releases:
 
-- The setting keeps its meaning. `HumanInTheLoop("auto")` always means "the SDK decides which tool calls need a human", so the handler always has a strategy and never degrades to approving everything.
+- The setting keeps its meaning. `HumanInTheLoop("auto")` always means "the SDK decides which tool calls need a human", so the handler always has a strategy and never degrades to approving everything. `context_manager="auto"` always reduces context proactively rather than only on overflow.
 - The options accepted alongside it keep working, and they take precedence over the strategy. For `HumanInTheLoop("auto")` those are `ask` and `allowed_tools` / `allowedTools`: an allow-listed tool is never escalated and a `!`-negated one always asks, whatever strategy is underneath.
 - Defaults are untouched. Changing `"auto"` never changes what the setting's absence does.
 
-Callers who need behavior fixed across upgrades configure the mechanism explicitly instead — for the handler, `classifier=True` or a `DecisionModel` of their own, which pins today's strategy and is never re-pointed.
+Callers who need behavior fixed across upgrades configure the mechanism explicitly instead. For the handler, `classifier=True` always means the built-in LLM classifier and is never re-pointed to a different strategy.
+
+That pins the mechanism, not its verdicts. The classifier's default risk prompt is SDK-owned and may change like any other default, and the classifier runs on `agent.aux_model` / `agent.auxModel`. A caller who needs the criteria themselves fixed supplies them — their own prompt and model via `LLMClassifierConfig` / `LlmClassifierConfig`, or their own `DecisionModel`. The line this policy draws is between *which* mechanism runs, which an explicit `classifier` fixes, and *how that mechanism behaves*, which only caller-supplied criteria fix.
 
 ### Rationale
 
-This follows [Pay for Play](./DECISIONS.md): writing `"auto"` *is* the opt-in. The value's documented contract is an outcome, not an implementation, so a caller who chooses it has asked for the SDK's current best judgment and gets it on upgrade. Code that doesn't use `"auto"` is unaffected, and the setting is never a default — plain `HumanInTheLoop()` still requires approval for every tool not on the allow list.
+This follows [Pay for Play](./DECISIONS.md): writing the preset name *is* the opt-in. Its documented contract is an outcome, not an implementation, so a caller who chooses it has asked for the SDK's current best judgment and gets it on upgrade. Code that doesn't use the preset is unaffected, and these settings are never defaults — plain `HumanInTheLoop()` still requires approval for every tool not on the allow list.
 
-Pinning `"auto"` to its first implementation would make the name worthless: callers would be stuck on whatever classifier shipped first, and the SDK would need a new public value for each improvement. The alternative of leaving the policy unwritten is worse — callers have no way to tell which releases may move the behavior.
+Pinning a preset to its first expansion would make the name worthless: callers would be stuck on whatever shipped first, and the SDK would need a new public value for each improvement. Leaving the rule unwritten is worse — the context manager's presets have worked this way since they shipped, but only the one page documenting them says so, and nothing told a reader which releases may move the behavior or whether a safety-relevant setting like approval routing was included.
+
+What is new with `HumanInTheLoop("auto")` is not the pattern but the subject matter: the expansion decides which tool calls reach a human. That is why this entry states the direction question explicitly instead of leaving it to be inferred.
 
 ### Example
 
 ```python
-# Python — the strategy behind "auto" may change in a minor release
+# Python — which strategy decides may change in a minor release
 agent = Agent(interventions=[HumanInTheLoop("auto")])
 
-# Pinned: the built-in LLM risk classifier, now and after upgrades
+# Mechanism fixed: always the built-in LLM classifier, but its default prompt is SDK-owned
 agent = Agent(interventions=[HumanInTheLoop(classifier=True)])
+
+# Criteria fixed too: the caller supplies the prompt and model
+agent = Agent(
+    interventions=[HumanInTheLoop(classifier=LLMClassifierConfig(system_prompt=..., model=...))]
+)
 ```
 
 ```typescript
-// TypeScript — the strategy behind 'auto' may change in a minor release
+// TypeScript — which strategy decides may change in a minor release
 const agent = new Agent({ interventions: [new HumanInTheLoop('auto')] })
 
-// Pinned: the built-in LLM risk classifier, now and after upgrades
+// Mechanism fixed: always the built-in LLM classifier, but its default prompt is SDK-owned
 const agent = new Agent({ interventions: [new HumanInTheLoop({ classifier: true })] })
+
+// Criteria fixed too: the caller supplies the prompt and model
+const agent = new Agent({
+  interventions: [new HumanInTheLoop({ classifier: { systemPrompt, model } })],
+})
 ```
 
 ## Feedback
