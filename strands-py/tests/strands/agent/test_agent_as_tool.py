@@ -335,11 +335,13 @@ async def test_stream_resets_to_initial_state_when_preserve_context_false(fake_a
     assert fake_agent.state.get("counter") == 0
 
 
+# Regression: https://github.com/strands-agents/harness-sdk/issues/5208
 @pytest.mark.asyncio
 async def test_stream_resets_on_every_invocation(fake_agent):
     """Each call should reset to the same initial snapshot, not to the previous call's state."""
     fake_agent.messages = [{"role": "user", "content": [{"text": "seed"}]}]
     fake_agent.state.set("count", 1)
+    fake_agent._model_state = {"provider": {"response_id": "seed"}}
 
     tool = _AgentAsTool(fake_agent, name="fake_agent", description="desc", preserve_context=False)
 
@@ -362,6 +364,7 @@ async def test_stream_resets_on_every_invocation(fake_agent):
         pass
     fake_agent.messages.append({"role": "assistant", "content": [{"text": "added"}]})
     fake_agent.state.set("count", 99)
+    fake_agent._model_state["provider"]["response_id"] = "first-response"
 
     tool_use["toolUseId"] = "tool-2"
     async for _ in tool.stream(tool_use, {}):
@@ -369,17 +372,22 @@ async def test_stream_resets_on_every_invocation(fake_agent):
 
     assert fake_agent.messages == [{"role": "user", "content": [{"text": "seed"}]}]
     assert fake_agent.state.get("count") == 1
+    tru_model_state = fake_agent._model_state
+    exp_model_state = {"provider": {"response_id": "seed"}}
+    assert tru_model_state == exp_model_state
 
 
 @pytest.mark.asyncio
 async def test_stream_initial_snapshot_is_deep_copy(fake_agent):
     """Mutating the agent's messages after construction should not affect the snapshot."""
     fake_agent.messages = [{"role": "user", "content": [{"text": "original"}]}]
+    fake_agent._model_state = {"provider": {"response_id": "seed"}}
 
     tool = _AgentAsTool(fake_agent, name="fake_agent", description="desc", preserve_context=False)
 
     fake_agent.messages[0]["content"][0]["text"] = "mutated"
     fake_agent.messages.append({"role": "assistant", "content": [{"text": "extra"}]})
+    fake_agent._model_state["provider"]["response_id"] = "external-response"
 
     fake_agent.stream_async = lambda prompt, **kw: _mock_stream_async(
         AgentResult(
@@ -400,6 +408,9 @@ async def test_stream_initial_snapshot_is_deep_copy(fake_agent):
         pass
 
     assert fake_agent.messages == [{"role": "user", "content": [{"text": "original"}]}]
+    tru_model_state = fake_agent._model_state
+    exp_model_state = {"provider": {"response_id": "seed"}}
+    assert tru_model_state == exp_model_state
 
 
 @pytest.mark.asyncio
@@ -408,6 +419,7 @@ async def test_stream_resets_empty_initial_state_when_preserve_context_false(fak
 
     fake_agent.messages = [{"role": "user", "content": [{"text": "old"}]}]
     fake_agent.state.set("key", "value")
+    fake_agent._model_state = {"provider": {"response_id": "previous-response"}}
 
     fake_agent.stream_async = lambda prompt, **kw: _mock_stream_async(
         AgentResult(
@@ -429,6 +441,9 @@ async def test_stream_resets_empty_initial_state_when_preserve_context_false(fak
 
     assert fake_agent.messages == []
     assert fake_agent.state.get() == {}
+    tru_model_state = fake_agent._model_state
+    exp_model_state = {}
+    assert tru_model_state == exp_model_state
 
 
 @pytest.mark.asyncio
@@ -470,6 +485,7 @@ async def test_stream_preserves_context_when_explicitly_true(fake_agent):
     fake_agent.messages = [{"role": "user", "content": [{"text": "old"}]}]
     fake_agent.state.set("key", "value")
     tool = _AgentAsTool(fake_agent, name="fake_agent", description="desc", preserve_context=True)
+    fake_agent._model_state = {"provider": {"response_id": "previous-response"}}
 
     fake_agent.stream_async = lambda prompt, **kw: _mock_stream_async(
         AgentResult(
@@ -491,6 +507,9 @@ async def test_stream_preserves_context_when_explicitly_true(fake_agent):
 
     assert len(fake_agent.messages) >= 1
     assert fake_agent.state.get("key") == "value"
+    tru_model_state = fake_agent._model_state
+    exp_model_state = {"provider": {"response_id": "previous-response"}}
+    assert tru_model_state == exp_model_state
 
 
 @pytest.mark.asyncio
@@ -618,6 +637,7 @@ async def test_stream_interrupt_resume_skips_state_reset(fake_agent, orchestrato
     """Resuming an interrupt keeps the sub-agent's interrupted turn instead of resetting it."""
     # Built while the sub-agent has no messages, so its reset baseline is empty and a reset would show.
     tool = _AgentAsTool(fake_agent, name="fake_agent", description="desc", preserve_context=False)
+    fake_agent._model_state = {"provider": {"response_id": "interrupted-response"}}
 
     fake_agent.messages = [
         {"role": "user", "content": [{"text": "initial"}]},
@@ -651,6 +671,9 @@ async def test_stream_interrupt_resume_skips_state_reset(fake_agent, orchestrato
         {"role": "assistant", "content": [{"text": "working on it"}]},
     ]
     assert tru_messages == exp_messages
+    tru_model_state = fake_agent._model_state
+    exp_model_state = {"provider": {"response_id": "interrupted-response"}}
+    assert tru_model_state == exp_model_state
 
     tru_prompt = fake_agent.stream_async.call_args[0][0]
     exp_prompt = [{"interruptResponse": {"interruptId": "interrupt-1", "response": "APPROVE"}}]
@@ -905,6 +928,7 @@ async def test_stream_resume_restores_ephemeral_sub_agent_from_a_stored_turn(orc
     """An ephemeral sub-agent rebuilt from scratch resumes from the stored turn."""
     interrupted = Agent(name="fake_agent", callback_handler=None)
     interrupted.messages = [{"role": "user", "content": [{"text": "go"}]}]
+    interrupted._model_state = {"provider": {"response_id": "interrupted-response"}}
     interrupted._interrupt_state.interrupts["interrupt-1"] = Interrupt(id="interrupt-1", name="approval", reason="r")
     interrupted._interrupt_state.activate()
 
@@ -936,6 +960,9 @@ async def test_stream_resume_restores_ephemeral_sub_agent_from_a_stored_turn(orc
     tru_messages = rebuilt.messages
     exp_messages = [{"role": "user", "content": [{"text": "go"}]}]
     assert tru_messages == exp_messages
+    tru_model_state = rebuilt._model_state
+    exp_model_state = {"provider": {"response_id": "interrupted-response"}}
+    assert tru_model_state == exp_model_state
     assert list(rebuilt._interrupt_state.interrupts) == ["interrupt-1"]
 
     tru_prompt = rebuilt.stream_async.call_args[0][0]
