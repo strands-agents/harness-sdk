@@ -138,6 +138,10 @@ own rubric:
   </Tab>
 </Tabs>
 
+A blank string, a preset in the wrong case (`"OFF"`), or a word that reads as an on/off switch
+(`"false"`, `"none"`) is rejected with an error rather than treated as a rule, because the
+classifier would have nothing to judge each call against.
+
 ## Enforce a Cedar policy
 
 A string ending in `.cedar` loads a [Cedar](../../../sdk/agents/interventions/cedar-authorization/)
