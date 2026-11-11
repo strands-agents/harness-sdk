@@ -174,6 +174,10 @@ _SDK_SUPPORTS_NATIVE_OUTPUT = tuple(int(part) for part in re.findall(r"\d+", ant
 # on anthropic 2.x, and later versions reject them outright; earlier versions such as 2023-06-01 accept them.
 # https://platform.claude.com/docs/en/api/migration-2026-10-21#sampling-parameters
 _SAMPLING_PARAMS = frozenset({"temperature", "top_k", "top_p"})
+# InvokeModel on bedrock-runtime takes its own API version in the body, which still accepts the sampling parameters.
+# An anthropic_version set in params["extra_body"] wins.
+_BEDROCK_INVOKE_MODEL_API_VERSION = "bedrock-2023-05-31"
+_BEDROCK_THROTTLING_EVENTS = ("throttlingException", "serviceUnavailableException")
 _LEGACY_API_VERSION = "2023-06-01"
 _SAMPLING_PARAMS_REMOVED_VERSION = "2026-10-21"
 _API_VERSION_HEADER = "anthropic-version"
@@ -754,6 +758,11 @@ class AnthropicModel(Model):
             request = self._with_beta(request, COMPACTION_BETA)
         if self._drop_stale_thinking_model_id == self.config["model_id"]:
             request = self._request_with_drop_block(request) or request
+        if isinstance(self.client, anthropic.AsyncAnthropicBedrock):
+            request["extra_body"] = {
+                "anthropic_version": _BEDROCK_INVOKE_MODEL_API_VERSION,
+                **request.get("extra_body", {}),
+            }
 
         return request
 
@@ -1323,11 +1332,16 @@ class AnthropicModel(Model):
             if not (retry_with_drop_block or retry_with_next_mechanism):
                 raise error
 
-        except anthropic.APIStatusError as error:
-            # Bedrock InvokeModel reports a throttle that arrives mid-stream as an error event, not a 429.
-            body = error.body if isinstance(error.body, dict) else {}
-            if (body.get("error") or {}).get("type") == "throttlingException":
-                raise ModelThrottledException(str(error)) from error
+        except (anthropic.APIStatusError, ValueError) as error:
+            # Bedrock InvokeModel reports an error that arrives mid-stream as an event on the 200 response, not as
+            # an HTTP status: anthropic raises it as APIStatusError, or as a bare ValueError before 1.0.
+            message = str(error)
+            body = getattr(error, "body", None)
+            error_type = ((body.get("error") or {}) if isinstance(body, dict) else {}).get("type")
+            if error_type in _BEDROCK_THROTTLING_EVENTS or any(name in message for name in _BEDROCK_THROTTLING_EVENTS):
+                raise ModelThrottledException(message) from error
+            if any(overflow in message.lower() for overflow in AnthropicModel.OVERFLOW_MESSAGES):
+                raise ContextWindowOverflowException(message) from error
             raise
 
         if retry_with_drop_block:

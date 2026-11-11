@@ -1288,13 +1288,28 @@ def _mid_stream_error(error_type):
     return anthropic.APIStatusError("Too many requests", response=response, body=body)
 
 
+@pytest.mark.parametrize(
+    ("error", "exp_exception"),
+    [
+        (_mid_stream_error("throttlingException"), ModelThrottledException),
+        (_mid_stream_error("serviceUnavailableException"), ModelThrottledException),
+        (ValueError("throttlingException: Too many requests"), ModelThrottledException),
+        (
+            ValueError("validationException: prompt is too long: 260024 tokens > 200000 maximum"),
+            ContextWindowOverflowException,
+        ),
+    ],
+)
 @pytest.mark.asyncio
-async def test_stream_maps_a_mid_stream_bedrock_throttle_to_model_throttled(anthropic_client, alist, messages):
-    anthropic_client.messages.stream.side_effect = _mid_stream_error("throttlingException")
+async def test_stream_maps_a_mid_stream_bedrock_error_to_sdk_exception(
+    anthropic_client, alist, messages, error, exp_exception
+):
+    anthropic_client.messages.stream.side_effect = error
     model = AnthropicModel(model_id="m1", max_tokens=1)
 
-    with pytest.raises(ModelThrottledException, match="Too many requests"):
+    with pytest.raises(exp_exception) as raised:
         await alist(model.stream(messages))
+    assert raised.value.__cause__ is error
 
 
 @pytest.mark.asyncio
@@ -1306,6 +1321,35 @@ async def test_stream_reraises_other_mid_stream_errors(anthropic_client, alist, 
     with pytest.raises(anthropic.APIStatusError) as raised:
         await alist(model.stream(messages))
     assert raised.value is error
+
+
+@pytest.mark.asyncio
+async def test_stream_reraises_an_unrelated_value_error(anthropic_client, alist, messages):
+    error = ValueError("something else")
+    anthropic_client.messages.stream.side_effect = error
+    model = AnthropicModel(model_id="m1", max_tokens=1)
+
+    with pytest.raises(ValueError) as raised:
+        await alist(model.stream(messages))
+    assert raised.value is error
+
+
+@pytest.mark.parametrize(
+    ("client", "params", "exp_version"),
+    [
+        (anthropic.AsyncAnthropicBedrock(aws_region="us-west-2"), {}, "bedrock-2023-05-31"),
+        (
+            anthropic.AsyncAnthropicBedrock(aws_region="us-west-2"),
+            {"extra_body": {"anthropic_version": "bedrock-2099-01-01"}},
+            "bedrock-2099-01-01",
+        ),
+        (anthropic.AsyncAnthropic(api_key="k"), {}, None),
+    ],
+)
+def test_format_request_pins_the_invoke_model_api_version_on_a_bedrock_client(messages, client, params, exp_version):
+    model = AnthropicModel(model_id="m1", max_tokens=1, params=params, client=client)
+
+    assert model.format_request(messages).get("extra_body", {}).get("anthropic_version") == exp_version
 
 
 def test_format_request_drops_stale_thinking_only_for_remembered_model(anthropic_client, messages):

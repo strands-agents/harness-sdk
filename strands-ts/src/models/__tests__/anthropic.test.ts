@@ -596,15 +596,52 @@ describe('AnthropicModel', () => {
       await expect(collectIterator(provider.stream(messages))).rejects.toThrow('Rate limit exceeded')
     })
 
-    it('maps a mid-stream Bedrock throttlingException to ModelThrottledError', async () => {
-      const mockClient = createMockClient(async function* () {
-        yield { type: 'ping' }
-        throw Object.assign(new Error('Too many tokens'), { type: 'throttlingException' })
-      })
-      const provider = new AnthropicModel({ client: mockClient })
-      const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+    it.each(['throttlingException', 'serviceUnavailableException'])(
+      'maps a mid-stream Bedrock %s to ModelThrottledError',
+      async (type) => {
+        const mockClient = createMockClient(async function* () {
+          yield { type: 'ping' }
+          throw Object.assign(new Error('Too many tokens'), { type })
+        })
+        const provider = new AnthropicModel({ client: mockClient })
+        const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
 
-      await expect(collectIterator(provider.stream(messages))).rejects.toThrow(ModelThrottledError)
+        await expect(collectIterator(provider.stream(messages))).rejects.toThrow(ModelThrottledError)
+      }
+    )
+  })
+
+  describe('Bedrock InvokeModel API version', () => {
+    // Stands in for @anthropic-ai/bedrock-sdk's client, which the provider recognizes by class name.
+    class AnthropicBedrock {}
+    const bedrockClient = (): Anthropic =>
+      Object.assign(
+        Object.create(AnthropicBedrock.prototype),
+        createMockClient(async function* () {})
+      ) as Anthropic
+    const sentBody = async (provider: AnthropicModel, client: Anthropic): Promise<Record<string, unknown>> => {
+      await collectIterator(provider.stream([new Message({ role: 'user', content: [new TextBlock('Hi')] })]))
+      return vi.mocked(client.messages.stream).mock.calls[0]![0] as unknown as Record<string, unknown>
+    }
+
+    it('pins bedrock-2023-05-31 on an AnthropicBedrock client, keeping the sampling params', async () => {
+      const client = bedrockClient()
+      const body = await sentBody(new AnthropicModel({ client, temperature: 0.2 }), client)
+      expect(body).toMatchObject({ anthropic_version: 'bedrock-2023-05-31', temperature: 0.2 })
+    })
+
+    it('keeps an anthropic_version set in params', async () => {
+      const client = bedrockClient()
+      const body = await sentBody(
+        new AnthropicModel({ client, params: { anthropic_version: 'bedrock-2099-01-01' } }),
+        client
+      )
+      expect(body.anthropic_version).toBe('bedrock-2099-01-01')
+    })
+
+    it('sends no anthropic_version on another client', async () => {
+      const client = createMockClient(async function* () {})
+      expect(await sentBody(new AnthropicModel({ client }), client)).not.toHaveProperty('anthropic_version')
     })
   })
 
