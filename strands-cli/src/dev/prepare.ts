@@ -24,7 +24,7 @@ import {
   type DevWorkspace,
 } from './workspace.js'
 import type { StartupScreen } from '../ui/run.js'
-import type { HarnessChoice } from './picker.js'
+import type { FolderSuggestion, HarnessChoice } from './picker.js'
 import type { DiscoveredHarness } from './search.js'
 import { baseHarnessSelection, discoverLocalHarnesses, harnessFolder } from './selection.js'
 import { ensureInitialCandidate, initializeWorkspaceBinding } from './initialize.js'
@@ -65,7 +65,7 @@ const createRequested = async ({
 }
 
 interface FolderDefaults {
-  folderFor: (choice: HarnessChoice) => string | undefined
+  folderFor: (choice: HarnessChoice) => FolderSuggestion | undefined
   newProject?: string
   suggestFor(harness: DiscoveredHarness): Promise<void>
 }
@@ -75,18 +75,19 @@ const folderDefaults = async (
   { cwd, destination, forceSelection }: { cwd: string; destination: string | undefined; forceSelection: boolean }
 ): Promise<FolderDefaults> => {
   const fresh = async (folder: string): Promise<string> => (forceSelection ? availableFolder(folder) : folder)
-  if (destination) {
-    const folder = await fresh(destination)
-    return { folderFor: () => folder, suggestFor: async (): Promise<void> => {} }
-  }
-  const cli = await fresh(cliFolder)
-  const found = new Map<string, string>()
+  if (destination)
+    return { folderFor: await folderSuggestion(await fresh(destination)), suggestFor: async (): Promise<void> => {} }
+  const cli = await folderSuggestion(await fresh(cliFolder))
+  const found = new Map<string, FolderSuggestion>()
   return {
     folderFor: (choice) =>
       choice.kind === 'cli'
-        ? cli
+        ? cli(choice)
         : choice.kind === 'discovered'
-          ? (found.get(choice.harness.entrypoint) ?? join(dirname(choice.harness.entrypoint), WORKSPACE_FOLDER))
+          ? (found.get(choice.harness.entrypoint) ?? {
+              path: join(dirname(choice.harness.entrypoint), WORKSPACE_FOLDER),
+              detected: false,
+            })
           : undefined,
     newProject: await newProjectFolder(cwd),
     suggestFor: async (harness): Promise<void> => {
@@ -95,7 +96,7 @@ const folderDefaults = async (
         join(dirname(harness.entrypoint), WORKSPACE_FOLDER),
         forceSelection ? undefined : (workspace): boolean => holdsChoice(workspace, choice)
       )
-      found.set(harness.entrypoint, suggested)
+      found.set(harness.entrypoint, (await folderSuggestion(suggested))(choice))
     },
   }
 }
@@ -142,7 +143,7 @@ const selectWorkspace = async (
     screen,
     async (choice, signal, chosen): Promise<DevWorkspace> => {
       signal.throwIfAborted()
-      const folder = chosen ?? folders.folderFor(choice)
+      const folder = chosen ?? folders.folderFor(choice)?.path
       if (folder === undefined) return createInLaunchFolder(choice, { cwd, snapshot, signal, deferDependencies })
       const directory = await workspaceFolder(resolve(cwd, expandHome(folder)))
       const placed = await placeHarness(choice, { directory, cwd, snapshot, signal, deferDependencies })
@@ -192,6 +193,11 @@ const acceptsFolder = async (folder: string, holds?: (workspace: DevWorkspace) =
 
 const availableFolder = async (preferred: string, holds?: (workspace: DevWorkspace) => boolean): Promise<string> =>
   (await numberedFolder(preferred, (folder) => acceptsFolder(folder, holds))) ?? preferred
+
+const folderSuggestion = async (path: string): Promise<(choice: HarnessChoice) => FolderSuggestion> => {
+  const existing = await readDevWorkspace(path).catch(() => undefined)
+  return (choice) => ({ path, detected: existing !== undefined && holdsChoice(existing, choice) })
+}
 
 const holdsChoice = ({ root, config }: DevWorkspace, choice: HarnessChoice): boolean => {
   switch (choice.kind) {

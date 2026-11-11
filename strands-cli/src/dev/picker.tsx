@@ -13,12 +13,17 @@ import { useSpinner } from '../ui/animation.js'
 import { userConfigPath } from '../config/store.js'
 import { devFailure } from './errors.js'
 import { basename, dirname } from 'node:path'
-import { WORKSPACE_FOLDER } from './workspace.js'
+import { isWorkspaceFolderName, WORKSPACE_FOLDER } from './workspace.js'
 
 export type HarnessChoice =
   | { kind: 'cli' }
   | { kind: 'discovered'; harness: DiscoveredHarness }
   | { kind: 'create'; language: 'typescript' | 'python'; name: string }
+
+export interface FolderSuggestion {
+  path: string
+  detected: boolean
+}
 
 export interface BaseCliOption {
   name: string
@@ -30,7 +35,7 @@ interface PickerProps {
   harnesses: readonly DiscoveredHarness[]
   discovery?: HarnessDiscoveryState
   warning?: string
-  folderFor?: (choice: HarnessChoice) => string | undefined
+  folderFor?: (choice: HarnessChoice) => FolderSuggestion | undefined
   newProject?: string
   onSelect: (selection: HarnessChoice | undefined, workspace?: string) => void | Promise<void>
 }
@@ -48,10 +53,15 @@ interface PickerRow {
 }
 
 const FOLDER_LABEL = 'Workspace folder: '
-const folderNotes = (name: string): readonly string[] => [
-  `A ${name} folder will be created in this path for .config, tmp/, reports, and state.`,
-  'If this agent already has that folder here, strands dev uses it.',
-]
+const DETECTED_LABEL = 'Detected workspace: '
+const prefilledFolder = ({ path, detected }: FolderSuggestion): string => (detected ? path : dirname(path))
+const createdNote = (name: string, place: 'in' | 'at'): string =>
+  `A ${name} folder will be created ${place} this path for .config, tmp/, reports, and state.`
+const folderNote = (typed: string, suggested: FolderSuggestion): string => {
+  if (typed === prefilledFolder(suggested)) return createdNote(basename(suggested.path), 'in')
+  const name = basename(typed)
+  return isWorkspaceFolderName(name) ? createdNote(name, 'at') : createdNote(WORKSPACE_FOLDER, 'in')
+}
 const MAX_VISIBLE_ROWS = 7
 const SOURCE_DETAIL_HEIGHT = 3
 const SELECTED_AGENT_HEIGHT = 3
@@ -126,12 +136,12 @@ export const HarnessPicker = ({
   const [language, setLanguage] = useState<'typescript' | 'python'>('typescript')
   const [field, setField] = useState<FormField>('name')
   const [name, setName] = useState('new-harness')
-  const [folder, setFolder] = useState({ value: '', cursor: 0, suggested: '' })
+  const [folder, setFolder] = useState({ value: '', cursor: 0, suggested: { path: '', detected: false } })
   const [failure, setFailure] = useState<string>()
   const failureCopyHint = useCopyableError(failure)
   const [busy, setBusy] = useState(false)
   const pending = useRef(false)
-  const folderOf = (choice?: HarnessChoice): string | undefined => (choice ? folderFor?.(choice) : undefined)
+  const folderOf = (choice?: HarnessChoice): FolderSuggestion | undefined => (choice ? folderFor?.(choice) : undefined)
   const { accent, success, error: errorColor, warning: warningColor, selection: selectionColor, border } = useTheme()
   const { columns } = useTerminalSize()
   const availableRows = useStartupContentRows()
@@ -203,8 +213,8 @@ export const HarnessPicker = ({
     const suggested = folderOf(choice)
     if (suggested === undefined) return submit(choice)
     setFailure(undefined)
-    const place = dirname(suggested)
-    setFolder({ value: place, cursor: graphemes(place).length, suggested })
+    const value = prefilledFolder(suggested)
+    setFolder({ value, cursor: graphemes(value).length, suggested })
     setPlacing(choice)
   }
   const leaveFolder = (): void => {
@@ -226,8 +236,9 @@ export const HarnessPicker = ({
       return { ...current, value: state.input, cursor: state.cursor }
     })
   }
-  const unchangedFolder = (): boolean => folder.value.trim() === dirname(folder.suggested)
-  const chosenFolder = (): string => (unchangedFolder() ? folder.suggested : folder.value.trim())
+  const unchangedFolder = (): boolean => folder.value.trim() === prefilledFolder(folder.suggested)
+  const chosenFolder = (): string => (unchangedFolder() ? folder.suggested.path : folder.value.trim())
+  const detected = folder.suggested.detected && unchangedFolder()
   const editForm = (input: string, key: Key): void => {
     if (key.tab) return setLanguage(otherLanguage)
     if (key.return && name && name !== '.' && name !== '..') return choose({ kind: 'create', name, language })
@@ -294,7 +305,7 @@ export const HarnessPicker = ({
       hint: `↑↓ field · ←→ or Tab language · Enter ${next}`,
     },
     folder: {
-      heading: 'Choose a workspace folder',
+      heading: detected ? 'Select a workspace' : 'Create a workspace',
       context: placing?.kind === 'create' ? `New project · ${placing.name}` : selected.label,
       hint: 'Enter continue',
     },
@@ -312,7 +323,8 @@ export const HarnessPicker = ({
     lineCount(hint) -
     1 -
     SOURCE_DETAIL_HEIGHT
-  const notes = folderNotes(unchangedFolder() ? basename(folder.suggested) : WORKSPACE_FOLDER)
+  const folderLabel = detected ? DETECTED_LABEL : FOLDER_LABEL
+  const notes = detected ? [] : [folderNote(folder.value.trim(), folder.suggested)]
   const folderHeight =
     2 +
     (notice ? lineCount(notice) + 1 : 0) +
@@ -336,7 +348,7 @@ export const HarnessPicker = ({
           .find(({ rows: needed }) => needed <= listRows - listHeight)
       : undefined
   const detailHeight = SOURCE_DETAIL_HEIGHT + (detailNotes?.rows ?? 0)
-  const selectedFolder = folderOf(selected.choice)
+  const selectedFolder = folderOf(selected.choice)?.path
   return (
     <Box flexDirection="column">
       {selectedAgent ? (
@@ -363,11 +375,11 @@ export const HarnessPicker = ({
       {placing ? (
         <Box flexDirection="column" gap={1}>
           <Box>
-            <Text>{FOLDER_LABEL}</Text>
+            <Text>{folderLabel}</Text>
             <EditableText
               value={folder.value}
               cursor={folder.cursor}
-              width={Math.max(1, detailWidth - FOLDER_LABEL.length)}
+              width={Math.max(1, detailWidth - folderLabel.length)}
               active={!busy}
             />
           </Box>
