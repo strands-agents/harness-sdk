@@ -72,7 +72,7 @@ import { logger } from '../../logging/logger.js'
 import { warnOnce } from '../../logging/warn-once.js'
 import type { Model } from '../../models/model.js'
 import type { Plugin } from '../../plugins/plugin.js'
-import type { InvokeOptions, LocalAgent } from '../../types/agent.js'
+import type { InvocationState, InvokeOptions, LocalAgent } from '../../types/agent.js'
 import { LIMIT_STOP_REASONS, type ContentBlock, type Message, type StopReason } from '../../types/messages.js'
 import type { Snapshot } from '../../types/snapshot.js'
 import { JUDGE_OUTCOME_SCHEMA, JUDGE_SYSTEM_PROMPT, buildJudgePrompt } from './judge.js'
@@ -222,6 +222,8 @@ interface RunState {
   pausedAt?: number
   /** The interrupts the run paused on; the run continues only while the agent still holds them. */
   pausedInterruptIds?: readonly string[]
+  /** The `invocationState` of the call that armed a retry; another call never continues it. */
+  retryArmedIn?: InvocationState
   /** The latest assistant message when the current pass started, to tell whether the pass produced a new answer. */
   answerBeforePass: Message | undefined
   /**
@@ -318,15 +320,22 @@ export class GoalLoop implements Plugin {
     // current one. Clears stale state from a prior invoke that threw mid-run,
     // and starts a fresh RunState so later hooks (BeforeModelCall, After) can
     // attach to it without each having to lazy-create.
-    agent.addHook(BeforeInvocationEvent, () => {
+    agent.addHook(BeforeInvocationEvent, (event) => {
       const existing = this._runs.get(agent)
       // A paused run continues only if the agent still holds the interrupts it paused on. A
       // host that abandoned them (e.g. restored a pre-interrupt snapshot) gets a fresh run.
       const heldInterrupts = (agent as Agent)._interruptState.interrupts
       const abandoned =
         existing?.pausedInterruptIds !== undefined && !existing.pausedInterruptIds.every((id) => id in heldInterrupts)
-      if (existing?.resumed && !abandoned) {
+      // The agent drops a retry when another caller takes the turn, so that caller starts fresh.
+      const retryDropped = existing?.retryArmedIn !== undefined && existing.retryArmedIn !== event.invocationState
+      if (existing?.resumed && !abandoned && !retryDropped) {
         existing.resumed = false
+        if (existing.retryArmedIn !== undefined) {
+          delete existing.retryArmedIn
+          // Rewind only once the retry actually runs, so a dropped retry leaves the answer in place.
+          if (existing.initialSnapshot) agent.loadSnapshot(existing.initialSnapshot)
+        }
         existing.answerBeforePass = lastAssistantMessage(agent.messages)
         if (existing.pausedAt !== undefined) {
           existing.startTime += Date.now() - existing.pausedAt
@@ -453,11 +462,9 @@ export class GoalLoop implements Plugin {
         return
       }
 
-      if (run.initialSnapshot) {
-        agent.loadSnapshot(run.initialSnapshot)
-      }
       event.resume = this._resumePromptTemplate(outcome.feedback?.trim())
       run.resumed = true
+      run.retryArmedIn = event.invocationState
     })
   }
 

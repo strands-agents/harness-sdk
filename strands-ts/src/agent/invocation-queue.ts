@@ -193,6 +193,11 @@ export class InvocationQueue {
     return this._entries.some((queued) => queued.mode === 'stopPrevious')
   }
 
+  /** Whether a latest-wins caller is waiting to take the turn from the running invocation. */
+  hasTakeoverRequest(): boolean {
+    return this._entries.some((queued) => isLatestWins(queued.mode))
+  }
+
   private _armAbort(entry: QueueEntry): void {
     const signal = entry.signal!
     const onAbort = (): void => this._remove(entry)

@@ -7,6 +7,7 @@ import { tool } from '../../../tools/tool-factory.js'
 import { Message, TextBlock } from '../../../types/messages.js'
 import { z } from 'zod'
 import { InterruptResponseContent } from '../../../types/interrupt.js'
+import type { AgentResult } from '../../../types/agent.js'
 
 function createGate() {
   let signalStarted!: () => void
@@ -368,6 +369,45 @@ describe('GoalLoop with concurrent invocations', () => {
       expect(graded).toEqual(['A-answer', 'B-first', 'GOOD-B'])
       expect(goal.lastResult(agent)?.attempts.map((attempt) => attempt.attempt)).toEqual([1, 2])
       expect(history(agent).slice(-3)).toEqual([
+        'user: b',
+        expect.stringMatching(/^user: Your previous attempt/),
+        'assistant: GOOD-B',
+      ])
+    }
+  )
+
+  it.each(['stopPrevious', 'cancelPrevious'] as const)(
+    "'%s': a caller arriving after A's retry was armed gets a fresh run, and A keeps its answer",
+    async (mode) => {
+      const graded: string[] = []
+      const goal = new GoalLoop({
+        maxAttempts: 3,
+        preserveContext: false,
+        goal: (message) => {
+          graded.push(text(message))
+          return { passed: text(message) === 'GOOD-B', feedback: 'try again' }
+        },
+      })
+      const model = new MockMessageModel()
+        .addTurn({ type: 'textBlock', text: 'A-answer' })
+        .addTurn({ type: 'textBlock', text: 'B-first' })
+        .addTurn({ type: 'textBlock', text: 'GOOD-B' })
+      const agent = new Agent({ model, plugins: [goal], printer: false, concurrentInvocationMode: mode })
+      // After hooks run in reverse registration order, so this one fires once GoalLoop armed A's retry.
+      let second: Promise<AgentResult> | undefined
+      agent.addHook(AfterInvocationEvent, () => {
+        second ??= agent.invoke('b')
+      })
+
+      expect(text((await agent.invoke('a')).lastMessage)).toBe('A-answer')
+      expect(text((await second!).lastMessage)).toBe('GOOD-B')
+
+      expect(model.callCount).toBe(3)
+      expect(graded).toEqual(['A-answer', 'B-first', 'GOOD-B'])
+      expect(goal.lastResult(agent)?.attempts.map((attempt) => attempt.attempt)).toEqual([1, 2])
+      expect(history(agent)).toEqual([
+        'user: a',
+        'assistant: A-answer',
         'user: b',
         expect.stringMatching(/^user: Your previous attempt/),
         'assistant: GOOD-B',

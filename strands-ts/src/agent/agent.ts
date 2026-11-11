@@ -1574,15 +1574,15 @@ export class Agent implements LocalAgent, InvokableAgent {
         // Don't let a continuation or a hook's `resume` swallow a cancel or stop request that
         // arrived during AfterInvocation: return the completed result instead; abandoned
         // inputs re-deliver in a later invocation. A hook's `resume` is still honoured after a
-        // cancel (BackgroundTasks surfaces `input_required` interrupts that way), but never
-        // while a 'stopPrevious' caller waits, and never after 'superseded'.
-        const stopRequested = this._invocationQueue.hasStopRequest()
-        const endedAfterFinalPass = hasContinuation && (this._abortSignal.aborted || stopRequested)
+        // host cancel (BackgroundTasks surfaces `input_required` interrupts that way), but never
+        // while a latest-wins caller waits, and never after 'superseded'.
+        const takeoverRequested = this._invocationQueue.hasTakeoverRequest()
+        const endedAfterFinalPass = hasContinuation && (this._abortSignal.aborted || takeoverRequested)
 
         if (
           stopReason !== 'superseded' &&
           ((hasContinuation && !endedAfterFinalPass) ||
-            (!stopRequested && this._shouldResume(afterInvocationEvent, invocationContext)))
+            (!takeoverRequested && this._shouldResume(afterInvocationEvent, invocationContext)))
         ) {
           currentArgs = afterInvocationEvent.resume ?? []
           continue

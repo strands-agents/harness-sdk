@@ -263,31 +263,34 @@ describe("concurrentInvocationMode 'stopPrevious'", () => {
     expect(model.callCount).toBe(2)
   })
 
-  it('a hook that sets resume while a stop is pending gets the completed result back, not a resumed pass', async () => {
-    const model = new MockMessageModel()
-      .addTurn({ type: 'textBlock', text: 'A' })
-      .addTurn({ type: 'textBlock', text: 'B' })
-    const agent = new Agent({ model, printer: false, concurrentInvocationMode: 'stopPrevious' })
+  it.each(['stopPrevious', 'cancelPrevious'] as const)(
+    "a hook that sets resume while a '%s' caller waits gets the completed result back, not a resumed pass",
+    async (mode) => {
+      const model = new MockMessageModel()
+        .addTurn({ type: 'textBlock', text: 'A' })
+        .addTurn({ type: 'textBlock', text: 'B' })
+      const agent = new Agent({ model, printer: false, concurrentInvocationMode: mode })
 
-    let second: Promise<unknown> | undefined
-    let afterPasses = 0
-    agent.addHook(AfterInvocationEvent, (event) => {
-      afterPasses++
-      second ??= agent.invoke('b')
-      // Mirrors a plugin that resumes while its condition holds — here, while a caller waits.
-      if (agent.pendingInvocations.length > 0) event.resume = []
-    })
+      let second: Promise<unknown> | undefined
+      let afterPasses = 0
+      agent.addHook(AfterInvocationEvent, (event) => {
+        afterPasses++
+        second ??= agent.invoke('b')
+        // Mirrors a plugin that resumes while its condition holds — here, while a caller waits.
+        if (agent.pendingInvocations.length > 0) event.resume = []
+      })
 
-    const firstResult = await agent.invoke('a')
-    // The pass completed before the stop arrived, so its real result is returned; the resume
-    // is not started, and the waiting caller takes the turn.
-    expect(firstResult.stopReason).toBe('endTurn')
-    expect(resultText(firstResult)).toBe('A')
-    expect(afterPasses).toBe(1)
-    expect(model.callCount).toBe(1)
-    expect(resultText((await second) as { lastMessage: { content: readonly unknown[] } })).toBe('B')
-    expect(historyShape(agent)).toEqual(['user: a', 'assistant: A', 'user: b', 'assistant: B'])
-  })
+      const firstResult = await agent.invoke('a')
+      // The pass completed before the stop arrived, so its real result is returned; the resume
+      // is not started, and the waiting caller takes the turn.
+      expect(firstResult.stopReason).toBe('endTurn')
+      expect(resultText(firstResult)).toBe('A')
+      expect(afterPasses).toBe(1)
+      expect(model.callCount).toBe(1)
+      expect(resultText((await second) as { lastMessage: { content: readonly unknown[] } })).toBe('B')
+      expect(historyShape(agent)).toEqual(['user: a', 'assistant: A', 'user: b', 'assistant: B'])
+    }
+  )
 
   it('lets an in-flight model call finish before stopping', async () => {
     let releaseModel!: () => void

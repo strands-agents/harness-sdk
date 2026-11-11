@@ -15,6 +15,18 @@ describe('InvocationQueue', () => {
     expect(queue.hasStopRequest()).toBe(false)
   })
 
+  it('reports a takeover request while a cancelPrevious or stopPrevious entry waits', () => {
+    const queue = new InvocationQueue()
+    void queue.wait({ mode: 'queue', messages: [], resumesInterrupt: false }).catch(() => {})
+    expect(queue.hasTakeoverRequest()).toBe(false)
+    void queue.wait({ mode: 'cancelPrevious', messages: [], resumesInterrupt: false }).catch(() => {})
+
+    expect(queue.hasTakeoverRequest()).toBe(true)
+    expect(queue.hasStopRequest()).toBe(false)
+    queue.handoff()
+    expect(queue.hasTakeoverRequest()).toBe(false)
+  })
+
   it('resolves waiters FIFO on handoff', async () => {
     const queue = new InvocationQueue()
     const order: string[] = []
