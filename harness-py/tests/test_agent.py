@@ -154,6 +154,13 @@ def test_subagent_stays_backgrounded_under_a_custom_policy():
     assert policy.get("never") == ["*", "subagent"]
 
 
+@pytest.mark.parametrize("mode", ["agentic", "always", "never"])
+def test_background_tasks_rejects_a_bare_string_selector(mode):
+    # https://github.com/strands-agents/harness-sdk/issues/5083
+    with pytest.raises(TypeError, match=f"'{mode}' must be a list of tools or tool names, got the string 'shell'"):
+        create_harness(background_tasks={mode: "shell"})
+
+
 def test_background_tasks_can_be_disabled():
     agent = create_harness(background_tasks=False)
     assert agent._background_tasks is None

@@ -215,6 +215,10 @@ def _resolve_background_tasks(
         return False
 
     policy: BackgroundTasksConfig = {"agentic": ["*"]} if configured is None or configured is True else configured
+    for mode in ("agentic", "always", "never"):
+        # Checked here, not only in the SDK, because omit_forced below would split a string into characters first.
+        if isinstance(policy.get(mode), str):
+            raise TypeError(f"'{mode}' must be a list of tools or tool names, got the string {policy.get(mode)!r}")
     forced_names = {tool.tool_name for tool in forced}
 
     def omit_forced(selectors: Sequence[AgentTool | str]) -> list[AgentTool | str]:
