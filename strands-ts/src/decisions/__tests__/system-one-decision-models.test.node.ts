@@ -398,6 +398,22 @@ describe.each(PROVIDERS)('$name', ({ create, endpoint, defaultModelId, providerN
       expect(result.answers).toEqual({ q: 'payouts' })
     })
 
+    it.each([
+      // Rounded to 4 decimals, but the sum is past the rounding bound of 2 * 5e-5.
+      { a: 0.5001, b: 0.5001 },
+      // Within the rounding bound, but rounding can't produce values off the 4-decimal grid.
+      { a: 0.50003, b: 0.50003 },
+    ])('rejects Choice probabilities %o that sum just past the bound', async (probabilities) => {
+      const decision = create({
+        apiKey: 'test-key',
+        fetch: fakeFetch(responseBody({ q: { type: 'choice', choice: 'a', probabilities, confidence: 0 } })),
+      })
+
+      await expect(decision.ask('state', { q: { question: 'pick?', choices: ['a', 'b'] } })).rejects.toThrow(
+        /must sum to 1/
+      )
+    })
+
     it('rejects more than 255 Choice options before sending', async () => {
       const fetch = fakeFetch(responseBody({}))
       const decision = create({ apiKey: 'test-key', fetch })

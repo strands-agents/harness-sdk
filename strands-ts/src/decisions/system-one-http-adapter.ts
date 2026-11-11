@@ -343,7 +343,11 @@ function parseChoiceAnswer(answer: Record<string, unknown>, choices: readonly st
   )
   const probabilityValues = Object.values(probabilities)
   const sum = probabilityValues.reduce((total, probability) => total + probability, 0)
-  if (Math.abs(sum - 1) > choices.length * PROBABILITY_ROUNDING_TOLERANCE + PROBABILITY_TOLERANCE) {
+  const isRounded = probabilityValues.every((p) => Math.abs(p * 1e4 - Math.round(p * 1e4)) < 1e-6)
+  const tolerance = isRounded
+    ? choices.length * PROBABILITY_ROUNDING_TOLERANCE + PROBABILITY_TOLERANCE
+    : PROBABILITY_TOLERANCE
+  if (Math.abs(sum - 1) > tolerance) {
     throw new ModelError(`probabilities for question id=<${id}> must sum to 1`)
   }
   const selectedProbability = probabilities[selected]!
