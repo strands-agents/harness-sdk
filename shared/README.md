@@ -1,6 +1,6 @@
 # Shared
 
-What both SDKs must agree on: data, constants and lists that exist in Python and TypeScript alike. Anything in this folder has a copy or loader in each SDK and a parity test that fails when a copy drifts.
+What the SDKs and the harness must agree on: data, constants and lists that exist in Python and TypeScript alike. Anything in this folder has a copy or loader in each SDK and a parity test that fails when a copy drifts.
 
 ## `model-info.json`
 
@@ -10,6 +10,10 @@ Edit the file; each SDK copies it into its own package when it installs and buil
 
 - `strands-ts`: the `prepare` (any `npm ci` / `npm install`) and `prebuild` scripts `cp` it to `strands-ts/src/models/model-info.json` (git-ignored). Run `npm run prepare -w strands-ts` after editing to refresh it. `model-info.test.node.ts` asserts the copy equals this file.
 - `strands-py`: the `hatch_build.py` build hook copies it to `strands-py/src/strands/models/model_info.json` (git-ignored). `test__model_info.py` asserts the copy equals this file.
+- `harness-ts`: `prepare` / `prebuild` copy it to `harness-ts/src/model-info.json` (git-ignored); `test/model-info.test.ts` asserts the copy equals this file.
+- `harness-py`: `hatch_build.py` copies it to `harness-py/src/strands_harness/model_info.json` (git-ignored); `tests/test__model_info.py` asserts the copy equals this file.
+
+Each consumer reads only the fields it uses and skips the rest, so a field one consumer needs (the harness's `capabilities.defaultEffort`) needs no change in the others.
 
 ### Format
 
