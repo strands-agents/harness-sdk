@@ -14,9 +14,9 @@ if TYPE_CHECKING:
 async def _count_request_tokens(agent: Agent, messages: Messages) -> int:
     """Count what the next request carries: the messages, plus the system prompt and tool specs.
 
-    The system prompt and tool specs occupy the same context window as the messages. Counting them
-    matches the inputs behind ``BeforeModelCallEvent.projected_input_tokens``, so a utilization gate
-    reads the same number the agent's own projection would.
+    The system prompt and tool specs occupy the same context window as the messages, so a utilization
+    gate that leaves them out reads low. These are the same inputs behind
+    ``BeforeModelCallEvent.projected_input_tokens``.
 
     Counts that measure a single block or a subset rather than a whole request call ``count_tokens``
     directly — including the system prompt there would inflate every block against its threshold.

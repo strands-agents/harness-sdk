@@ -8,8 +8,8 @@ import type { Message } from '../types/messages.js'
 
 /**
  * Counts what the next request carries: the messages, plus the system prompt and tool specs that occupy the same
- * context window. Matches the inputs behind `BeforeModelCallEvent.projectedInputTokens`, so a utilization gate reads
- * the same number the agent's own projection would.
+ * context window, so a utilization gate that leaves them out reads low. These are the same inputs behind
+ * `BeforeModelCallEvent.projectedInputTokens`.
  *
  * Counts that measure a single block or a subset rather than a whole request call `countTokens` directly — including
  * the system prompt there would inflate every block against its threshold.
