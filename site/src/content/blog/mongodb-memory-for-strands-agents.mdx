@@ -1,0 +1,190 @@
+---
+title: 'MongoDB memory for Strands Agents'
+date: 2026-11-04
+description: 'Use MongoDB to persist Strands Agent sessions and store searchable long-term memory across conversations.'
+authors:
+  - morgan-willis
+  - tim-moreton
+tags:
+  - Open Source
+  - Announcement
+  - Memory
+  - Integrations
+draft: true
+---
+
+{/* Publication blocker: verify the strands-mongodb package, API, and Atlas index behavior against a public release before publishing this post. */}
+
+Starting a new conversation with an agent shouldn't mean explaining your project
+all over again.
+
+Decisions and lessons from previous tasks should carry forward, and work in
+progress should survive a restart. That's why agents need memory, and there are
+several ways to give it to them. Saving conversation history lets an agent pick
+up where it left off, while useful facts can carry across tasks through
+searchable long-term memory. The right mix of memory strategies and storage
+options depends on what your agent needs to remember and how it will use that
+information.
+
+Strands provides pluggable interfaces for sessions and long-term memory, so you
+can use your preferred provider and configure memory to fit your agent's use case.
+
+If you already use MongoDB, you can now use it for memory in your Strands agents
+too.
+The MongoDB team built `strands-mongodb`, a Python integration that connects
+MongoDB to Strands for persistent sessions and searchable long-term memory.
+
+## Session memory and long-term memory
+
+Session memory holds the conversation and agent state for the task in progress,
+so saving it lets the agent resume that conversation after a restart. Long-term
+memory keeps useful facts and lessons across conversations. When you start a new
+task, the agent can look up what it needs without loading every past conversation.
+
+Suppose you tell an agent that your project's integration tests use a separate
+database. Session memory preserves that exchange, and long-term memory can
+retain the database requirement for the next time you're writing tests.
+Semantic search lets the agent find that fact even if you ask about "test
+setup" rather than repeating the original wording.
+
+Strands handles those jobs through separate interfaces:
+
+| Job                                   | MongoDB backend                                    | How the agent uses it                                            |
+| ------------------------------------- | -------------------------------------------------- | ---------------------------------------------------------------- |
+| Resume a conversation                 | `MongoDBStorage`, used by `SnapshotSessionManager` | Loads saved session state using a session ID.                    |
+| Recall knowledge across conversations | `MongoDBMemoryStore`, used by `MemoryManager`      | Searches stored facts within a scope, such as a project or user. |
+
+You can use either backend on its own, or point both at the same MongoDB
+deployment to handle sessions and long-term memory together.
+
+## Getting started
+
+This example uses MongoDB Atlas, MongoDB's managed cloud database service, to
+store sessions and search long-term memories.
+
+Follow the [MongoDB integration guide](/docs/integrations/integrations/mongodb/)
+to install the packages and configure Atlas and your model credentials. Once
+that's ready, save this example as `mongodb_memory.py`:
+
+```python
+"""Persist Strands sessions and long-term memory in MongoDB."""
+
+import asyncio
+import os
+
+from strands import Agent
+from strands.memory import MemoryManager
+from strands.models import BedrockModel
+from strands.session import SnapshotSessionManager
+from strands_mongodb import MongoDBMemoryStore, MongoDBStorage
+
+
+MEMORY_SCOPE = "project-123"
+DEFAULT_PROMPT = (
+    "Remember: this project uses pytest, and integration tests "
+    "use a separate database."
+)
+
+
+async def main():
+    session_id = os.getenv("SESSION_ID", "conversation-001")
+    prompt = os.getenv("PROMPT", DEFAULT_PROMPT)
+
+    # Session state and long-term memory share this deployment.
+    config = {
+        "connection_string": os.environ["MONGODB_URI"],
+        "database": "agents",
+        "search_type": "vector",
+    }
+
+    storage = MongoDBStorage(config, collection="sessions")
+    memories = MongoDBMemoryStore(
+        name="project_notes",
+        config=config,
+        scope=MEMORY_SCOPE,  # Keep stable to share facts across conversations.
+        writable=True,
+        extraction=True,  # Extract facts into long-term memory.
+    )
+
+    try:
+        async with Agent(
+            model=BedrockModel(
+                model_id="us.anthropic.claude-haiku-4-5-20251001-v1:0",
+                region_name="us-east-1",
+            ),
+            storage=storage,
+            session_manager=SnapshotSessionManager(
+                session_id=session_id,  # Reuse to resume; change to start fresh.
+                save_latest_on="message",  # Save after every message.
+            ),
+            # Adds memory search and injects relevant memories into context.
+            memory_manager=MemoryManager(stores=[memories]),
+        ) as agent:
+            response = await agent.invoke_async(prompt)
+            print(response)
+
+        # Leaving the context flushes pending memory extraction.
+    finally:
+        await memories.close()
+        await storage.close()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+When you run the example, `conversation-001` identifies the saved conversation
+and `project-123` groups the project's long-term memories. With `extraction=True`,
+Strands uses a model call to pull useful facts out of the conversation and save
+them as memories. Leaving the `async with` block waits for that extraction work
+to finish before the connections close.
+
+To try recalling those facts, start a new session with the same memory scope
+and ask, "What test setup does this project require?" The agent should mention
+the separate database even though you haven't repeated that requirement in the
+new conversation. The integration guide includes the command to run this check.
+
+## Choosing how your agent searches memory
+
+In the example, the agent searches for "test setup" and retrieves a fact about
+integration tests and a separate database. Vector search makes that connection
+by meaning.
+
+You configure how the agent searches memory when you set up the store. This
+example uses vector search to find memories by meaning. You can also choose
+full-text search for keyword matching or hybrid search to combine both. The
+agent decides what to search for, while the store uses the search mode you've
+configured.
+
+To make that semantic search work, Atlas automated embedding turns stored
+memories and queries into numerical representations that can be compared by
+meaning. You don't need to write separate embedding code in your agent.
+
+## Keeping memory separate for users and projects
+
+Now suppose you use the same agent for another project with a different test
+setup. Both projects have relevant memories about testing, so how does the
+agent know which project's knowledge to search?
+
+That's what the `project-123` memory scope in the example is for. A scope is
+the identifier that groups memories, and the integration filters searches to
+that group. Give the second project its own scope and its memories can live
+alongside the first project's without appearing in the same search.
+
+The same approach works for an app serving multiple users. You can give each
+person a scope for their own information, or share a project scope when a team
+should draw on the same knowledge. Your app chooses the scope based on who's
+signed in and which project they have access to.
+
+As those conversations continue, you also need to manage what accumulates in
+each scope. The integration deduplicates identical memory entries within a
+store and scope, so repeated writes don't fill it with copies. Some memories
+may only be useful for a while, such as notes for a temporary test environment.
+For a store holding those memories, set `ttl_seconds` to have them expire.
+
+Thanks to the MongoDB team for building the integration.
+
+Try the example with the
+[MongoDB integration guide](/docs/integrations/integrations/mongodb/), and join
+us in the [Strands Discord](https://discord.gg/strands) if you have questions or
+want to share what you're building.

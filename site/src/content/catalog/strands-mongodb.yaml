@@ -1,0 +1,10 @@
+# Publication blocker: verify the repository and package after both are public.
+name: strands-mongodb
+description: MongoDB backends for persistent Strands sessions and searchable long-term memory.
+integrationType: integration
+languages:
+  python:
+    package: strands-mongodb[all]
+github: https://github.com/mongodb/strands-mongodb
+docsPage: docs/integrations/integrations/mongodb
+addedDate: 2026-11-04
