@@ -778,8 +778,9 @@ describe('supportsWebSearch', () => {
     // https://github.com/strands-agents/harness-sdk/issues/5187
     expect(supportsWebSearch('bedrock-mantle/openai.gpt-6.1-sol')).toBe(true)
     expect(supportsWebSearch('bedrock-mantle/openai.gpt-daybreak-blue-5.6-sol')).toBe(true)
-    expect(supportsWebSearch('bedrock-mantle/openai.gpt-oss-120b')).toBe(false)
-    expect(supportsWebSearch('bedrock-mantle/qwen.qwen3-32b-v1:0')).toBe(false)
+    // Mantle models without Bedrock Web Search get AgentCore web search instead.
+    expect(supportsWebSearch('bedrock-mantle/openai.gpt-oss-120b')).toBe(true)
+    expect(supportsWebSearch('bedrock-mantle/qwen.qwen3-32b-v1:0')).toBe(true)
   })
 
   it('is true for bedrock (AgentCore web search) and anthropic direct, false for ollama', () => {
@@ -804,6 +805,31 @@ describe('supportsWebSearch', () => {
     const { OpenAIModel } = await import('@strands-agents/sdk/models/openai')
     expect(supportsWebSearch(new BedrockModel({ modelId: 'anything' }))).toBe(true)
     expect(supportsWebSearch(new OpenAIModel({ modelId: 'gpt-5.6-sol', apiKey: 'x' }))).toBe(false)
+  })
+
+  it('covers every Bedrock API: Anthropic Bedrock/Mantle clients and OpenAI bedrockMantleConfig', async () => {
+    const { AnthropicModel } = await import('@strands-agents/sdk/models/anthropic')
+    const { OpenAIModel } = await import('@strands-agents/sdk/models/openai')
+    const anthropicOn = (client: object) => new AnthropicModel({ modelId: 'claude', client: client as never })
+    const cases: [Model, string][] = [
+      [
+        anthropicOn({ awsRegion: 'eu-west-1', baseURL: 'https://bedrock-runtime.eu-west-1.amazonaws.com' }),
+        'eu-west-1',
+      ],
+      [
+        anthropicOn({ awsRegion: 'ap-south-1', baseURL: 'https://bedrock-mantle.ap-south-1.api.aws/anthropic' }),
+        'ap-south-1',
+      ],
+      [new OpenAIModel({ modelId: 'qwen.qwen3-32b-v1:0', bedrockMantleConfig: { region: 'us-east-2' } }), 'us-east-2'],
+    ]
+    for (const [model, region] of cases) {
+      expect(webSearchKind(model)).toBe('agentcore')
+      expect(await bedrockRegion(model)).toBe(region)
+    }
+    expect(webSearchKind(anthropicOn({ baseURL: 'https://api.anthropic.com' }))).toBeUndefined()
+    expect(webSearchKind(new OpenAIModel({ modelId: 'gpt-5.6-sol', apiKey: 'x' }))).toBeUndefined()
+    expect(webSearchKind('bedrock-mantle/qwen.qwen3-32b-v1:0')).toBe('agentcore')
+    expect(webSearchKind('bedrock-mantle/openai.gpt-6-astra')).toBe('native')
   })
 
   it('is true for an all-Bedrock ModelRouter and false for a mixed one', async () => {

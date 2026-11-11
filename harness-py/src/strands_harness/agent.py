@@ -6,12 +6,12 @@ import logging
 import os
 import uuid
 from collections.abc import Mapping, Sequence
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 from strands import Agent, BackgroundTasksConfig
 from strands.experimental.context_manager import ContextManager
 from strands.memory import MemoryManager
-from strands.models import BedrockModel, Model, ModelRouter
+from strands.models import Model, ModelRouter
 from strands.plugins import Plugin
 from strands.session import SessionManager, SnapshotSessionManager
 from strands.storage import LocalFileStorage
@@ -24,6 +24,7 @@ from strands_harness import defaults
 from strands_harness.interventions import InterventionsOption, resolve_interventions
 from strands_harness.memory import resolve_memory
 from strands_harness.models import (
+    _bedrock_region,
     _supports_media,
     resolve_model,
     resolve_web_fetch_model,
@@ -313,12 +314,12 @@ def create_harness(
             {"transport": "direct"}}`` fetches from the harness process instead of running ``curl`` in the
             agent's sandbox (the default, ``"curl"``).
             ``web_search`` turns on the model provider's native web search (OpenAI, Anthropic, Google,
-            GPT-5, GPT-6, and Daybreak models on bedrock-mantle). On Bedrock it is a tool backed by
-            Amazon Bedrock AgentCore web search in the model's region (a ``BedrockModel`` instance's
-            too; signed by the default AWS credential chain, which needs the
+            GPT-5, GPT-6, and Daybreak models on bedrock-mantle). On every other Bedrock API
+            (``web_search_kind``) it is a tool backed by Amazon Bedrock AgentCore web search in the
+            model's region (signed by the default AWS credential chain, which needs the
             ``bedrock-agentcore:InvokeWebSearch`` IAM permission), and a ``web_search`` tool you pass
-            replaces it (e.g. ``make_agentcore_web_search(boto_session=...)``). Elsewhere (other
-            Mantle models, other ``Model`` instances) it is off, and naming it there raises. ``{"web_search": "exa"}``
+            replaces it (e.g. ``make_agentcore_web_search(boto_session=...)``). Elsewhere (another
+            provider's ``Model`` instance) it is off, and naming it there raises. ``{"web_search": "exa"}``
             instead gives the model a ``web_search`` tool backed by Exa's hosted search on any model,
             a third party that receives the queries (keyless; ``EXA_API_KEY`` lifts its rate limit).
             ``programmatic_tool_caller`` lets the model orchestrate its other tools by writing Python
@@ -468,9 +469,7 @@ def create_harness(
     builtin_tools_by_name = _builtin_tools(parent_config)
     default_agentcore = None
     if web_search == "agentcore":
-        bedrock = resolved_model.default_model if isinstance(resolved_model, ModelRouter) else resolved_model
-        region = cast(BedrockModel, bedrock).client.meta.region_name
-        builtin_tools_by_name["web_search"] = make_agentcore_web_search(region=region)
+        builtin_tools_by_name["web_search"] = make_agentcore_web_search(region=_bedrock_region(resolved_model))
         if not web_search_explicit:
             # A caller's own web_search (a tool, plugin, or MCP server) replaces the default, so it is
             # registered after the Agent loads theirs; naming web_search in builtin_tools still collides.

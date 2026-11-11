@@ -545,8 +545,9 @@ def test_supports_web_search_by_provider():
     assert supports_web_search("bedrock-mantle/openai.gpt-6-astra") is True
     # https://github.com/strands-agents/harness-sdk/issues/5187
     assert supports_web_search("bedrock-mantle/openai.gpt-6.1-sol") is True
-    assert supports_web_search("bedrock-mantle/openai.gpt-oss-120b") is False
-    assert supports_web_search("bedrock-mantle/qwen.qwen3-32b-v1:0") is False
+    # Mantle models without Bedrock Web Search get AgentCore web search instead.
+    assert supports_web_search("bedrock-mantle/openai.gpt-oss-120b") is True
+    assert supports_web_search("bedrock-mantle/qwen.qwen3-32b-v1:0") is True
     # Bedrock Converse has no native search; the harness serves AgentCore web search as a tool.
     assert supports_web_search("bedrock/global.anthropic.claude-opus-4-8") is True
     assert supports_web_search("global.anthropic.claude-opus-4-8") is True
@@ -569,6 +570,36 @@ def test_supports_web_search_on_model_instances():
 
     other = OpenAIModel(client_args={"api_key": "x"}, model_id="gpt-5.6-sol")
     assert supports_web_search(ModelRouter([BedrockModel(model_id="a"), other])) is False
+
+
+def test_web_search_kind_covers_every_bedrock_api():
+    from anthropic import AsyncAnthropic, AsyncAnthropicBedrock, AsyncAnthropicBedrockMantle
+    from strands.models.anthropic import AnthropicModel
+    from strands.models.openai import OpenAIModel
+    from strands.models.openai_responses import OpenAIResponsesModel
+
+    from strands_harness.models import _bedrock_region, web_search_kind
+
+    def anthropic_on(client):
+        # Set after construction so this runs on SDK releases whose AnthropicModel has no ``client`` argument.
+        model = AnthropicModel(model_id="claude", max_tokens=10)
+        model.client = client
+        return model
+
+    bedrock_models = {
+        "eu-west-1": anthropic_on(AsyncAnthropicBedrock(aws_region="eu-west-1")),
+        "ap-south-1": anthropic_on(AsyncAnthropicBedrockMantle(aws_region="ap-south-1")),
+        "us-east-2": OpenAIResponsesModel(
+            model_id="qwen.qwen3-32b-v1:0", bedrock_mantle_config={"region": "us-east-2"}
+        ),
+        "ca-central-1": OpenAIModel(model_id="qwen.qwen3-32b-v1:0", bedrock_mantle_config={"region": "ca-central-1"}),
+    }
+    for region, model in bedrock_models.items():
+        assert (web_search_kind(model), _bedrock_region(model)) == ("agentcore", region)
+    assert web_search_kind(anthropic_on(AsyncAnthropic(api_key="x"))) is None
+    assert web_search_kind(OpenAIModel(client_args={"api_key": "x"}, model_id="gpt-5.6-sol")) is None
+    assert web_search_kind("bedrock-mantle/qwen.qwen3-32b-v1:0") == "agentcore"
+    assert web_search_kind("bedrock-mantle/openai.gpt-6-astra") == "native"
 
 
 def test_openai_web_search_adds_tool_alongside_reasoning():

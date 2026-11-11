@@ -85,10 +85,11 @@ main model's family, Anthropic-on-Bedrock or OpenAI-on-Bedrock). Override it wit
 search built in, it isn't a separate tool: it turns that search on. OpenAI, Anthropic,
 Google, and the GPT-5, GPT-6, and Daybreak models on `bedrock-mantle` have one.
 
-On Amazon Bedrock, which has no built-in search, the agent instead gets a `web_search` tool
-backed by
+Everywhere else on Amazon Bedrock, the agent instead gets a `web_search` tool backed by
 [Amazon Bedrock AgentCore web search](https://docs.aws.amazon.com/bedrock-agentcore/latest/APIReference/API_InvokeWebSearch.html).
-This applies to a `BedrockModel` you build yourself, or a `ModelRouter` of them, too. It calls the `InvokeWebSearch` API in the
+That covers `bedrock/...` and the other `bedrock-mantle/...` models, a `BedrockModel` you build
+yourself, an `AnthropicModel` on Anthropic's Bedrock or Mantle client, an OpenAI model with a
+Bedrock Mantle config, and a `ModelRouter` of only those. It calls the `InvokeWebSearch` API in the
 model's region with the default AWS credential chain (not the model's own session or client
 config), so each query is authorized by IAM and billed to that AWS account. The caller needs the `bedrock-agentcore:InvokeWebSearch` IAM permission on
 `arn:aws:bedrock-agentcore:<region>:aws:tool/web-search.v1`, and the API is available in a subset

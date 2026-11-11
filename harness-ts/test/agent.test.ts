@@ -502,18 +502,34 @@ describe('createHarness', () => {
     ])
   })
 
-  it('only offers Bedrock Web Search on GPT-5 and GPT-6 Mantle models', async () => {
-    const info = vi.fn()
-    configureLogging({ debug: () => {}, info, warn: () => {}, error: () => {} })
+  it('uses Bedrock Web Search on GPT-5/GPT-6 Mantle models and AgentCore on other Mantle models', async () => {
     let agent = await createHarness({ model: 'bedrock-mantle/openai.gpt-5.6-luna' })
     expect(toolNames(agent)).not.toContain('web_search')
     expect((agent.model.getConfig().params as { tools: unknown }).tools).toEqual([
       { type: 'web_search', external_web_access: true },
     ])
     agent = await createHarness({ model: 'bedrock-mantle/openai.gpt-oss-120b-1:0' })
-    expect(toolNames(agent)).not.toContain('web_search')
+    expect(toolNames(agent)).toContain('web_search')
     expect(agent.model.getConfig().params).not.toHaveProperty('tools')
-    expect(info).toHaveBeenCalledWith(expect.stringContaining('has no built-in web search'))
+  })
+
+  it('serves web_search from AgentCore for an AnthropicModel on a Bedrock client, in its region', async () => {
+    const { AnthropicModel } = await import('@strands-agents/sdk/models/anthropic')
+    const regions: string[] = []
+    vi.spyOn(BedrockAgentCoreClient.prototype, 'send').mockImplementation(async function (
+      this: BedrockAgentCoreClient
+    ) {
+      regions.push(await this.config.region())
+      return { results: [] }
+    } as never)
+    // Stands in for `AnthropicBedrock` from @anthropic-ai/bedrock-sdk: what matters is its `awsRegion`.
+    const client = { awsRegion: 'eu-west-1', messages: {} } as never
+    const agent = await createHarness({ model: new AnthropicModel({ modelId: 'claude', client }) })
+    const search = agent.tools.find((t) => t.name === 'web_search') as unknown as {
+      invoke: (input: unknown, context: unknown) => Promise<string>
+    }
+    expect(await search.invoke({ query: 'q' }, {})).toBe('No results.')
+    expect(regions).toEqual(['eu-west-1'])
   })
 
   it('enables web_search when explicitly selected on a supported provider', async () => {

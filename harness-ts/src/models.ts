@@ -574,35 +574,61 @@ export function supportsThinking(model: Model | ModelRouter | string | undefined
   return (PROVIDERS[providerName]?.levels.length ?? 0) > 0
 }
 
+/** The SDK client a model wraps; its fields have no public accessor on the model. */
+interface ModelClient {
+  _client?: { awsRegion?: string; baseURL?: string; config?: { region?: () => Promise<string> } }
+}
+
+// Anthropic's Bedrock client and the Mantle clients (Anthropic and OpenAI `bedrockMantleConfig`) point here.
+const BEDROCK_BASE_URL = /^https:\/\/bedrock-(?:runtime|mantle)\.([a-z0-9-]+)\.(?:amazonaws\.com|api\.aws)(?:\/|$)/
+
+/** The region a non-Converse model's client calls Bedrock in, or `undefined` if it isn't a Bedrock client. */
+function vendorBedrockRegion(model: Model): string | undefined {
+  const client = (model as unknown as ModelClient)._client
+  if (client === null || typeof client !== 'object') {
+    return undefined
+  }
+  return client.awsRegion ?? BEDROCK_BASE_URL.exec(client.baseURL ?? '')?.[1]
+}
+
 /**
- * How `web_search` is served for `model` without the Exa opt-in: the provider's native search,
- * AgentCore web search on Bedrock (a harness tool, as Converse has no native search), or
- * `undefined`. A `BedrockModel` instance, or a `ModelRouter` whose candidates are all Bedrock, gets
- * AgentCore too; any other instance has an unknown provider, so it gets `undefined`.
+ * Whether a model instance calls Amazon Bedrock: `BedrockModel` (Converse), a vendor model whose
+ * client targets Bedrock (`AnthropicModel` on `AnthropicBedrock` / `AnthropicBedrockMantle`,
+ * `OpenAIModel` with `bedrockMantleConfig`), or a router of only those.
+ */
+function onBedrock(model: Model | ModelRouter): boolean {
+  if (model instanceof ModelRouter) {
+    return model.candidates.every((c) => onBedrock(c.model))
+  }
+  return model instanceof BedrockModel || vendorBedrockRegion(model) !== undefined
+}
+
+/**
+ * How `web_search` is served for `model` without the Exa opt-in: the provider's native search, else
+ * AgentCore web search on any Bedrock API (a harness tool), else `undefined`.
+ *
+ * Bedrock means `bedrock/...` and `bedrock-mantle/...` strings (Mantle's GPT models have native
+ * search instead) and instances that call Bedrock: `BedrockModel`, an `AnthropicModel` on a Bedrock
+ * or Mantle client, an `OpenAIModel` with `bedrockMantleConfig`, or a router of only those. Any other
+ * instance has an unknown provider, so it gets `undefined`.
  *
  * @param model - A `Model` instance, a `"provider/name"` string, a bare Bedrock id, or undefined.
  * @returns `'native'`, `'agentcore'`, or `undefined` when the model has no built-in web search.
  */
 export function webSearchKind(model: Model | ModelRouter | string | undefined): 'native' | 'agentcore' | undefined {
-  if (model instanceof BedrockModel) {
-    return 'agentcore'
-  }
-  if (model instanceof ModelRouter) {
-    return model.candidates.every((c) => webSearchKind(c.model) === 'agentcore') ? 'agentcore' : undefined
-  }
-  if (model instanceof Model) {
-    return undefined
+  if (model instanceof Model || model instanceof ModelRouter) {
+    return onBedrock(model) ? 'agentcore' : undefined
   }
   const [providerName, name] = splitProvider(model ?? DEFAULT_MODEL)
-  if (providerName === 'bedrock') {
-    return 'agentcore'
+  if (hasWebSearch(providerName, name)) {
+    return 'native'
   }
-  return hasWebSearch(providerName, name) ? 'native' : undefined
+  return providerName === 'bedrock' || providerName === 'bedrock-mantle' ? 'agentcore' : undefined
 }
 
 /**
- * The region a `BedrockModel` (or a router's default model) sends requests to, or `undefined` for
- * any other model. Read from its SDK client, since `BedrockModel` has no public accessor for it.
+ * The region a Bedrock-backed model calls (a router's default model's), or `undefined` when it can't
+ * be read (AgentCore then resolves it the way `BedrockModel` does).
  *
  * @internal
  */
@@ -610,19 +636,18 @@ export async function bedrockRegion(model: Model | ModelRouter): Promise<string 
   if (model instanceof ModelRouter) {
     return bedrockRegion(model.defaultModel)
   }
-  if (!(model instanceof BedrockModel)) {
-    return undefined
+  if (model instanceof BedrockModel) {
+    return (model as unknown as ModelClient)._client?.config?.region?.().catch(() => undefined)
   }
-  const client = (model as unknown as { _client?: { config?: { region?: () => Promise<string> } } })._client
-  return client?.config?.region?.().catch(() => undefined)
+  return vendorBedrockRegion(model)
 }
 
 /**
  * Whether `web_search` works for `model` without the Exa opt-in.
  *
- * True where the provider has native web search, and on Bedrock (a `BedrockModel` instance or an
- * all-Bedrock `ModelRouter` too), where AgentCore web search serves it. Any other instance has an
- * unknown provider, so this is `false`. `undefined` resolves to the default model.
+ * True where the provider has native web search, and on every Bedrock API (see `webSearchKind`),
+ * where AgentCore web search serves it. Any other instance has an unknown provider, so this is
+ * `false`. `undefined` resolves to the default model.
  *
  * @param model - A `Model` instance, a `"provider/name"` string, a bare Bedrock id, or undefined.
  * @returns Whether `web_search` is available for the resolved model.

@@ -18,6 +18,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import sys
 from collections.abc import Callable
 from typing import Any, Literal, NamedTuple
 
@@ -415,29 +416,69 @@ def _has_web_search(provider_name: str, name: str) -> bool:
     return provider_name != "bedrock-mantle" or name.startswith(_BEDROCK_GPT_PREFIXES)
 
 
+def _anthropic_bedrock_client(model: Model) -> Any:
+    """The client of an ``AnthropicModel`` on Anthropic's Bedrock (InvokeModel) or Mantle client, else ``None``."""
+    anthropic_model = sys.modules.get("strands.models.anthropic")  # loaded whenever such an instance exists
+    if anthropic_model is None or not isinstance(model, anthropic_model.AnthropicModel):
+        return None
+    import anthropic
+
+    bedrock_clients = tuple(
+        c for c in (getattr(anthropic, n, None) for n in ("AsyncAnthropicBedrock", "AsyncAnthropicBedrockMantle")) if c
+    )
+    return model.client if isinstance(model.client, bedrock_clients) else None
+
+
+def _on_bedrock(model: Model | ModelRouter) -> bool:
+    """Whether a model instance calls Amazon Bedrock: ``BedrockModel`` (Converse), an ``AnthropicModel`` on a
+    Bedrock or Mantle client, an OpenAI model with ``bedrock_mantle_config``, or a router of only those."""
+    if isinstance(model, ModelRouter):
+        return all(_on_bedrock(c.model) for c in model.candidates)
+    return (
+        isinstance(model, BedrockModel)
+        or _anthropic_bedrock_client(model) is not None
+        or getattr(model, "_bedrock_mantle_config", None) is not None
+    )
+
+
+def _bedrock_region(model: Model | ModelRouter) -> str | None:
+    """The region a Bedrock-backed model calls (a router's default model's), or ``None`` when it can't be read
+    (AgentCore then resolves it the way ``BedrockModel`` does)."""
+    if isinstance(model, ModelRouter):
+        return _bedrock_region(model.default_model)
+    if isinstance(model, BedrockModel):
+        return str(model.client.meta.region_name)
+    if (client := _anthropic_bedrock_client(model)) is not None:
+        return client.aws_region
+    if (config := getattr(model, "_bedrock_mantle_config", None)) is not None:
+        session = config.get("boto_session")
+        return config.get("region") or (session.region_name if session else None)
+    return None
+
+
 def web_search_kind(model: Model | ModelRouter | str | None) -> Literal["native", "agentcore"] | None:
     """How ``web_search`` is served for ``model`` without the Exa opt-in: the provider's native
-    search, AgentCore web search on Bedrock (a harness tool, as Converse has no native search), or
-    ``None``. A ``BedrockModel`` instance, or a ``ModelRouter`` whose candidates are all Bedrock,
-    gets AgentCore too; any other instance has an unknown provider, so it gets ``None``."""
-    if isinstance(model, BedrockModel):
-        return "agentcore"
-    if isinstance(model, ModelRouter):
-        return "agentcore" if all(web_search_kind(c.model) == "agentcore" for c in model.candidates) else None
-    if isinstance(model, Model):
-        return None
+    search, else AgentCore web search on any Bedrock API (a harness tool), else ``None``.
+
+    Bedrock means ``bedrock/...`` and ``bedrock-mantle/...`` strings (Mantle's GPT models have native
+    search instead) and instances that call Bedrock: ``BedrockModel``, an ``AnthropicModel`` on a
+    Bedrock or Mantle client, an OpenAI model with ``bedrock_mantle_config``, or a router of only
+    those. Any other instance has an unknown provider, so it gets ``None``.
+    """
+    if isinstance(model, (Model, ModelRouter)):
+        return "agentcore" if _on_bedrock(model) else None
     provider_name, name = _split_provider(model or defaults.DEFAULT_MODEL)
-    if provider_name == "bedrock":
-        return "agentcore"
-    return "native" if _has_web_search(provider_name, name) else None
+    if _has_web_search(provider_name, name):
+        return "native"
+    return "agentcore" if provider_name in ("bedrock", "bedrock-mantle") else None
 
 
 def supports_web_search(model: Model | ModelRouter | str | None) -> bool:
     """Whether ``web_search`` works for ``model`` without the Exa opt-in.
 
-    True where the provider has native web search, and on Bedrock (a ``BedrockModel`` instance or an
-    all-Bedrock ``ModelRouter`` too), where AgentCore web search serves it. Any other instance has an
-    unknown provider, so this is ``False``. ``None`` resolves to the default model.
+    True where the provider has native web search, and on every Bedrock API (see ``web_search_kind``),
+    where AgentCore web search serves it. Any other instance has an unknown provider, so this is
+    ``False``. ``None`` resolves to the default model.
     """
     return web_search_kind(model) is not None
 

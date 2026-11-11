@@ -548,6 +548,24 @@ def test_web_search_on_an_all_bedrock_router_is_agentcore_in_the_default_models_
     assert any("A pre-built ModelRouter has no built-in web search" in r.getMessage() for r in caplog.records)
 
 
+def test_web_search_on_other_bedrock_apis_is_agentcore_in_the_clients_region(monkeypatch):
+    from anthropic import AsyncAnthropicBedrock
+    from strands.models.anthropic import AnthropicModel
+
+    regions = []
+    real = agent_module.make_agentcore_web_search
+    monkeypatch.setattr(
+        agent_module, "make_agentcore_web_search", lambda **kw: regions.append(kw["region"]) or real(**kw)
+    )
+    model = AnthropicModel(model_id="claude", max_tokens=10)
+    model.client = AsyncAnthropicBedrock(aws_region="eu-west-1")
+    assert "web_search" in create_harness(model=model).tool_names
+    mantle = create_harness(model="bedrock-mantle/qwen.qwen3-32b-v1:0")
+    assert "web_search" in mantle.tool_names
+    assert "tools" not in mantle.model.config.get("params", {})
+    assert regions == ["eu-west-1", None]
+
+
 def test_web_search_on_a_bedrock_model_instance_is_the_agentcore_tool_in_its_region(monkeypatch):
     regions = []
     real = agent_module.make_agentcore_web_search
@@ -657,9 +675,9 @@ def test_web_search_native_on_anthropic_and_mantle_gpt():
     agent = create_harness(model="bedrock-mantle/openai.gpt-5.6-luna")
     assert "web_search" not in agent.tool_names
     assert agent.model.config["params"]["tools"] == [{"type": "web_search", "external_web_access": True}]
-    # Other Mantle families have no native search: the default warns and drops it.
+    # Other Mantle families have no native search, so they get the AgentCore tool instead.
     agent = create_harness(model="bedrock-mantle/openai.gpt-oss-120b-1:0")
-    assert "web_search" not in agent.tool_names
+    assert "web_search" in agent.tool_names
     assert "tools" not in agent.model.config["params"]
 
 
