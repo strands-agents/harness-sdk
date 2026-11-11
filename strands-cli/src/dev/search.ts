@@ -9,7 +9,7 @@ import { containsPath, expandHome } from '../paths.js'
 import { importAgentProject } from '../project/import.js'
 import { hasIgnoredDirectory } from '../project/packaging.js'
 import { isRecord } from '../values.js'
-import { readDevWorkspace, type DevWorkspace } from './workspace.js'
+import { insideWorkspaceFolder, readDevWorkspace, type DevWorkspace } from './workspace.js'
 
 export interface DiscoveredHarness {
   name: string
@@ -54,13 +54,19 @@ export async function discoverHarnesses(roots: readonly string[]): Promise<Harne
   }
   for (const path of [...paths].sort()) await visit(path, state, true)
   return {
-    harnesses: [...state.harnesses.values()].sort((left, right) => comparePaths(left.entrypoint, right.entrypoint)),
+    harnesses: [...state.harnesses.values()]
+      .filter(({ entrypoint }) => !insideWorkspaceFolder(entrypoint))
+      .sort((left, right) => comparePaths(left.entrypoint, right.entrypoint)),
     warnings: [...state.warnings].sort(),
   }
 }
 
 async function visit(path: string, state: DiscoveryState, explicit = false): Promise<void> {
-  if (hasIgnoredDirectory(path, IGNORED_DIRECTORIES) || [...state.vendored].some((root) => containsPath(root, path))) {
+  if (
+    hasIgnoredDirectory(path, IGNORED_DIRECTORIES) ||
+    insideWorkspaceFolder(path) ||
+    [...state.vendored].some((root) => containsPath(root, path))
+  ) {
     return
   }
   if (state.visited.has(path)) return

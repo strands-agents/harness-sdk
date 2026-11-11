@@ -49,6 +49,9 @@ export const boundDevWorkspace = (workspace: BoundWorkspace): DevWorkspace => ({
 export const WORKSPACE_FOLDER = 'strands-dev'
 const WORKSPACE_FOLDER_NAME = /^strands-dev(?:-\d+)?$/u
 
+export const insideWorkspaceFolder = (path: string): boolean =>
+  path.split(/[\\/]/u).some((part) => WORKSPACE_FOLDER_NAME.test(part))
+
 export const entrypointWorkspaceFolder = ({ root, entrypoint }: DevWorkspace): string =>
   WORKSPACE_FOLDER_NAME.test(basename(root)) ? root : join(dirname(entrypoint), WORKSPACE_FOLDER)
 
