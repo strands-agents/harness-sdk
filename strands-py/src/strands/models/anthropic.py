@@ -1338,7 +1338,12 @@ class AnthropicModel(Model):
             message = str(error)
             body = getattr(error, "body", None)
             error_type = ((body.get("error") or {}) if isinstance(body, dict) else {}).get("type")
-            if error_type in _BEDROCK_THROTTLING_EVENTS or any(name in message for name in _BEDROCK_THROTTLING_EVENTS):
+            throttled = (
+                error_type in _BEDROCK_THROTTLING_EVENTS
+                if isinstance(error, anthropic.APIStatusError)
+                else any(name in message for name in _BEDROCK_THROTTLING_EVENTS)
+            )
+            if throttled:
                 raise ModelThrottledException(message) from error
             if any(overflow in message.lower() for overflow in AnthropicModel.OVERFLOW_MESSAGES):
                 raise ContextWindowOverflowException(message) from error
