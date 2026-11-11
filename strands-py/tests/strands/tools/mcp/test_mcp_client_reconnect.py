@@ -311,6 +311,58 @@ def test_concurrent_calls_share_one_reconnect(mock_transport, mock_session):
     client.stop(None, None, None)
 
 
+@pytest.mark.parametrize("call_async", [False, True], ids=["sync", "async"])
+@pytest.mark.parametrize("pause_during", ["teardown", "startup"])
+def test_call_tool_waits_for_another_callers_reconnect(mock_transport, mock_session, call_async, pause_during):
+    """Calls share a rebuild even before its new thread exists (#5297)."""
+    mock_session.call_tool.return_value = _ok_result()
+    reconnect_paused = threading.Event()
+    resume_reconnect = threading.Event()
+    second_checked = threading.Event()
+
+    with MCPClient(mock_transport["transport_callable"], auto_reconnect=True) as client:
+        _drop_session(client)
+        target, name = (mcp_client.uuid, "uuid4") if pause_during == "teardown" else (client, "_start_with_backoff")
+        original_step = getattr(target, name)
+        original_check = client._check_session_for_tool_call
+
+        def pause_reconnect(*args, **kwargs):
+            reconnect_paused.set()
+            assert resume_reconnect.wait(timeout=5)
+            return original_step(*args, **kwargs)
+
+        def check_second_call():
+            try:
+                original_check()
+            finally:
+                second_checked.set()
+
+        def second_call():
+            if call_async:
+                return asyncio.run(
+                    client.call_tool_async(tool_use_id="tu-second", name="echo", arguments={"to_echo": "hi"})
+                )
+            return _call(client, "tu-second")
+
+        with pytest.MonkeyPatch.context() as monkeypatch:
+            monkeypatch.setattr(target, name, pause_reconnect)
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                first = pool.submit(_call, client, "tu-first")
+                try:
+                    assert reconnect_paused.wait(timeout=5)
+                    monkeypatch.setattr(client, "_check_session_for_tool_call", check_second_call)
+                    second = pool.submit(second_call)
+                    assert second_checked.wait(timeout=5)
+                finally:
+                    resume_reconnect.set()
+                tru_results = [first.result(timeout=5), second.result(timeout=5)]
+
+    exp_results = [_success("tu-first"), _success("tu-second")]
+    assert tru_results == exp_results
+    assert mock_transport["transport_callable"].call_count == 2
+    assert mock_session.call_tool.call_count == 2
+
+
 @pytest.mark.asyncio
 async def test_reconnect_preserves_tool_provider_state(mock_transport, mock_session):
     """Consumers and loaded tools survive a reconnect so the provider still cleans up on last removal."""
@@ -456,16 +508,133 @@ def test_in_flight_call_survives_another_callers_reconnect(mock_transport, mock_
     assert [record for record in caplog.records if record.name == "asyncio"] == []
 
 
-def test_call_scheduled_on_a_stopped_loop_fails_instead_of_hanging(mock_transport, mock_session):
+@pytest.mark.parametrize("drop_during_submission", [False, True])
+def test_call_scheduled_on_a_stopped_loop_fails_instead_of_hanging(
+    mock_transport, mock_session, monkeypatch, caplog, drop_during_submission
+):
+    """A rejected submission releases its coroutine even when shutdown races scheduling (#5297)."""
     client = MCPClient(mock_transport["transport_callable"], auto_reconnect=True)
     client.start()
-    _drop_session(client)
+    loop = client._background_thread_event_loop
+    original_submit = loop.call_soon_threadsafe
 
-    future = client._invoke_on_background_thread(asyncio.sleep(0))
+    def drop_then_submit(*args, **kwargs):
+        monkeypatch.setattr(loop, "call_soon_threadsafe", original_submit)
+        _drop_session(client)
+        return original_submit(*args, **kwargs)
 
+    if drop_during_submission:
+        monkeypatch.setattr(loop, "call_soon_threadsafe", drop_then_submit)
+    else:
+        _drop_session(client)
+    coro = asyncio.sleep(0)
+    future = client._invoke_on_background_thread(coro)
     with pytest.raises(RuntimeError, match="Connection to the MCP server was closed"):
         future.result(timeout=1)
+    loop.run_until_complete(asyncio.sleep(0))
     client.stop(None, None, None)
+    assert coro.cr_frame is None
+    gc.collect()
+    assert [record for record in caplog.records if record.name == "asyncio"] == []
+
+
+def test_uninitialized_submission_closes_its_coroutine(mock_transport):
+    """A missing session cannot leave rejected invocation coroutines unawaited (#5297)."""
+    client = MCPClient(mock_transport["transport_callable"])
+    coro = asyncio.sleep(0)
+
+    with pytest.raises(MCPClientInitializationError, match="session was not initialized"):
+        client._invoke_on_background_thread(coro)
+
+    assert coro.cr_frame is None
+
+
+def test_stop_after_loop_exit_does_not_leak_shutdown_coroutines(mock_transport, mock_session, monkeypatch, recwarn):
+    """Shutdown releases queued work even when the loop finishes before its thread exits (#5297)."""
+    client = MCPClient(mock_transport["transport_callable"])
+    loop_stopped = threading.Event()
+    release_thread = threading.Event()
+    joining_thread = threading.Event()
+    original_background_task = client._background_task
+
+    def delayed_thread_exit():
+        original_background_task()
+        loop_stopped.set()
+        assert release_thread.wait(timeout=5)
+
+    monkeypatch.setattr(client, "_background_task", delayed_thread_exit)
+    client.start()
+    original_join = client._background_thread.join
+
+    def observe_join(*args, **kwargs):
+        joining_thread.set()
+        return original_join(*args, **kwargs)
+
+    monkeypatch.setattr(client._background_thread, "join", observe_join)
+    client._background_thread_event_loop.call_soon_threadsafe(client._close_future.set_result, None)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        try:
+            assert loop_stopped.wait(timeout=5)
+            stopped = pool.submit(client.stop, None, None, None)
+            assert joining_thread.wait(timeout=5)
+        finally:
+            release_thread.set()
+        stopped.result(timeout=5)
+    gc.collect()
+    assert [warning for warning in recwarn if "was never awaited" in str(warning.message)] == []
+
+
+def test_cancelled_submission_closes_its_coroutine_before_the_loop_accepts_it(mock_transport, mock_session):
+    """Cancelling a queued call releases its coroutine without dispatching it (#5297)."""
+    loop_blocked = threading.Event()
+    release_loop = threading.Event()
+
+    def block_loop():
+        loop_blocked.set()
+        assert release_loop.wait(timeout=5)
+
+    with MCPClient(mock_transport["transport_callable"]) as client:
+        loop = client._background_thread_event_loop
+        loop.call_soon_threadsafe(block_loop)
+        coro = asyncio.sleep(0)
+        try:
+            assert loop_blocked.wait(timeout=5)
+            future = client._invoke_on_background_thread(coro)
+            assert future.cancel()
+            assert coro.cr_frame is None
+        finally:
+            release_loop.set()
+        asyncio.run_coroutine_threadsafe(asyncio.sleep(0), loop).result(timeout=5)
+        assert future.cancelled()
+
+
+@pytest.mark.parametrize("reject_task", [False, True], ids=["cancelled", "rejected"])
+def test_unstarted_wrapper_closes_its_coroutine(mock_transport, mock_session, monkeypatch, reject_task):
+    """Cancellation or rejection before the wrapper starts releases the undispatched coroutine (#5297)."""
+    with MCPClient(mock_transport["transport_callable"]) as client:
+        loop = client._background_thread_event_loop
+        original_create_task = loop.create_task
+        wrappers = []
+
+        def create_unstarted_wrapper(coro, **kwargs):
+            if coro.__name__ == "run_async":
+                wrappers.append(coro)
+                if reject_task:
+                    raise RuntimeError("task factory rejected call")
+            task = original_create_task(coro, **kwargs)
+            if coro.__name__ == "run_async":
+                task.cancel()
+            return task
+
+        monkeypatch.setattr(loop, "create_task", create_unstarted_wrapper)
+        coro = asyncio.sleep(0)
+        future = client._invoke_on_background_thread(coro)
+        expected_error = RuntimeError if reject_task else mcp_client.futures.CancelledError
+        with pytest.raises(expected_error):
+            future.result(timeout=5)
+        assert coro.cr_frame is None
+        assert len(wrappers) == 1
+        assert wrappers[0].cr_frame is None
 
 
 @pytest.mark.parametrize(
