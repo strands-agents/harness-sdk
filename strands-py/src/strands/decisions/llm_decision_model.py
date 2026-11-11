@@ -8,7 +8,7 @@ import time
 from collections.abc import Mapping
 from typing import Any, Literal, cast
 
-from pydantic import BaseModel, Field, ValidationError, create_model
+from pydantic import BaseModel, Field, ValidationError, create_model, model_validator
 
 from ..models.bedrock import BedrockModel
 from ..models.model import Model
@@ -122,23 +122,23 @@ def _build_answer_model(questions: dict[str, Question]) -> type[BaseModel]:
     """Build a Pydantic model with one ``{answer, reason?}`` object per question.
 
     Each question's ``answer`` is constrained to its allowed options (plus ``'uncertain'`` when
-    permitted) so the model is forced to return one of them. Fields use synthetic names aliased to
+    permitted) so the model is forced to return one of them. A reason is only ever surfaced on
+    ``Uncertain``, so a question that cannot be uncertain does not offer one. Fields use synthetic names aliased to
     the question ids so that any id — including values that are not valid Python identifiers — is
     carried through verbatim as the schema property the model answers against.
     """
     fields: dict[str, Any] = {}
     for index, (question_id, question) in enumerate(questions.items()):
         # Only an explicit False disables the default uncertain answer.
-        literals = _answer_literals(question, question.get("uncertainty") is not False)
-        answer_type: Any = Literal[tuple(literals)]
-        per_question_model = create_model(
-            f"Answer{index}",
-            answer=(answer_type, Field(description=question["question"])),
-            reason=(
+        allow_uncertain = question.get("uncertainty") is not False
+        answer_type: Any = Literal[tuple(_answer_literals(question, allow_uncertain))]
+        entry_fields: dict[str, Any] = {"answer": (answer_type, Field(description=question["question"]))}
+        if allow_uncertain:
+            entry_fields["reason"] = (
                 str | None,
                 Field(default=None, description=f"Explanation when answer is '{_UNCERTAIN_LITERAL}'; omit otherwise."),
-            ),
-        )
+            )
+        per_question_model = create_model(f"Answer{index}", __base__=_AnswerEntry, **entry_fields)
         per_question_model.__doc__ = question["question"]
         fields[_field_name(index, questions)] = (
             per_question_model,
@@ -148,6 +148,21 @@ def _build_answer_model(questions: dict[str, Question]) -> type[BaseModel]:
     model = create_model("DecisionAnswers", **fields)
     model.__doc__ = "Answer for each question in the input decision set."
     return cast(type[BaseModel], model)
+
+
+class _AnswerEntry(BaseModel):
+    """Base for each question's ``{answer, reason?}`` entry."""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_bare_answer(cls, value: Any) -> Any:
+        """Read a bare option string as ``{"answer": value}``.
+
+        Models can collapse a one-field ``{answer}`` object to the option itself (Claude Haiku 4.5
+        returns ``{"candidate": "c1"}`` for an ``{answer}``-only schema). The option is still checked
+        against the question's allowed values; the schema sent to the model is unchanged.
+        """
+        return {"answer": value} if isinstance(value, str) else value
 
 
 def _field_name(index: int, questions: dict[str, Question]) -> str:
@@ -163,7 +178,7 @@ def _convert_answers(output: BaseModel, questions: dict[str, Question]) -> dict[
         entry = getattr(output, _field_name(index, questions), None)
         if entry is None:
             raise StructuredOutputException(f"decision model omitted answer for question id=<{question_id}>")
-        answers[question_id] = _convert_single_answer(question, entry.answer, entry.reason)
+        answers[question_id] = _convert_single_answer(question, entry.answer, getattr(entry, "reason", None))
     return answers
 
 
