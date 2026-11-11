@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { bindWorkspace } from '../../src/dev/binding.js'
 import { discoverHarnesses } from '../../src/dev/search.js'
 import { initializeDevWorkspace } from '../../src/dev/workspace.js'
 import { importAgentProject } from '../../src/project/import.js'
@@ -254,6 +255,34 @@ describe('discoverHarnesses', () => {
       warnings: [],
     })
     expect(importAgentProject).not.toHaveBeenCalled()
+  })
+
+  it('should skip every agent under a strands-dev folder When the scan meets workspaces and their copies', async () => {
+    const root = await directory()
+    const app = await sourceFile(root, 'app/agent.ts')
+    const lookalike = await sourceFile(root, 'strands-dev-projects/agent.ts')
+    const candidate = 'strands-dev/tmp/1b9d6bcd-bbfd-4b2d-9b5d-ab8dfbbd4bed'
+    await sourceFile(root, `${candidate}/agent/agent.ts`)
+    await sourceFile(root, `${candidate}/baseline/agent.ts`)
+    await sourceFile(root, 'strands-dev/agent/agent/agent.ts')
+    await bindWorkspace(join(root, 'strands-dev'), {
+      version: 1,
+      name: 'Base CLI copy',
+      agent: { path: 'agent', entrypoint: 'agent/agent.ts', language: 'typescript' },
+      origin: { kind: 'cli' },
+    })
+    await sourceFile(root, 'project/strands-dev-2/agent.py', pythonSource)
+
+    const { harnesses } = await discoverHarnesses([root])
+
+    expect(harnesses.map(({ entrypoint }) => entrypoint)).toEqual([app, lookalike])
+  })
+
+  it('should find nothing When the search root is inside a strands-dev folder', async () => {
+    const workspace = join(await directory(), 'strands-dev')
+    await sourceFile(workspace, 'agent.ts')
+
+    expect(await discoverHarnesses([workspace])).toEqual({ harnesses: [], warnings: [] })
   })
 
   it('should keep scanning with a warning When workspace metadata is malformed', async () => {

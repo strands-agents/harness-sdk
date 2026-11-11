@@ -96,6 +96,7 @@ Discovery omits the current CLI source and the base workspace already represente
 Creation errors stay in the picker so you can retry without restarting the CLI.
 Discovery reads the current folder and any explicit search roots. It does not execute source or follow symbolic links.
 It skips dependency folders, build output, private state, and copied harness libraries.
+It never lists an agent inside a `strands-dev/` or `strands-dev-N/` folder, for example the copies in `strands-dev/tmp/`.
 
 When the launch directory has no workspace, the picker asks for the workspace folder after you select an existing harness.
 The folder field starts with `strands-dev/` in the folder that contains the harness file. For example, `~/agents/support/agent.py` gives `~/agents/support/strands-dev/`.
