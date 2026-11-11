@@ -354,7 +354,7 @@ export const HarnessPicker = ({
       {selectedAgent ? (
         <Box flexDirection="column" marginBottom={1}>
           <Text bold color={success}>
-            Selected a project
+            Selected project
           </Text>
           <Text bold wrap="truncate-middle">
             Harness path: {selectedAgent}

@@ -311,8 +311,8 @@ describe('HarnessPicker', () => {
     await vi.waitFor(() => expect(text()).toContain('Create a workspace'))
     const lines = text().split('\n')
     const row = (label: string): number => lines.findIndex((line) => line.includes(label))
-    expect(row('Selected a project')).toBeGreaterThanOrEqual(0)
-    expect(row(`Harness path: ${path}`)).toBe(row('Selected a project') + 1)
+    expect(row('Selected project')).toBeGreaterThanOrEqual(0)
+    expect(row(`Harness path: ${path}`)).toBe(row('Selected project') + 1)
     expect(row('Create a workspace')).toBeGreaterThan(row(`Harness path: ${path}`))
   })
 
@@ -326,7 +326,7 @@ describe('HarnessPicker', () => {
     input.write('\r')
 
     await vi.waitFor(() => expect(text()).toContain('New project · new-harness'))
-    expect(text()).not.toContain('Selected a project')
+    expect(text()).not.toContain('Selected project')
   })
 
   it('shouldColorTheHeadingAndContextGreenWhenTheFolderStepIsShown', async () => {
@@ -667,7 +667,7 @@ describe('HarnessPicker', () => {
       await vi.waitFor(() =>
         expect(frame().join('\n')).toContain(detected ? 'Select a workspace' : 'Create a workspace')
       )
-      expect(frame().join('\n').includes('Selected a project')).toBe(agentVisible)
+      expect(frame().join('\n').includes('Selected project')).toBe(agentVisible)
       expect(frame().length).toBeLessThanOrEqual(rows)
     }
   )
