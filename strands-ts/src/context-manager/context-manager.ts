@@ -17,7 +17,6 @@ import { logger } from '../logging/logger.js'
 import type { ContextManagerConfig, ContextStrategy, ContextState } from './types.js'
 import { EmergencyTruncateStrategy, Offload } from './strategies/offload/index.js'
 import { resolveStrategies } from './presets.js'
-import { countRequestTokens } from './request-tokens.js'
 import { Stash } from './stash.js'
 import { createRetrievalTool, RETRIEVAL_TOOL_NAME } from './retrieval-tool.js'
 import { ToolUseBlock, type Message } from '../types/messages.js'
@@ -211,7 +210,7 @@ export class ContextManager implements Plugin {
     invocationContext?: InvocationContext
   ): Promise<boolean> {
     const messages = agent.messages
-    const inputTokens = precomputedInputTokens ?? (await countRequestTokens(agent, messages))
+    const inputTokens = precomputedInputTokens ?? (await agent.countRequestTokens(messages))
     const auxiliaryInvocationContext = createAuxiliaryInvocationContext(invocationContext)
 
     const strategyContext: ContextState = {
@@ -230,7 +229,7 @@ export class ContextManager implements Plugin {
         const acted = await strategy.apply(strategyContext)
         if (acted) {
           anyActed = true
-          strategyContext.utilization = agent.model.estimateUtilization(await countRequestTokens(agent, messages))
+          strategyContext.utilization = agent.model.estimateUtilization(await agent.countRequestTokens(messages))
           logger.debug(`strategy=<${strategy.name}>, agentId=<${agent.id}> | strategy applied`)
         }
       } catch (error) {

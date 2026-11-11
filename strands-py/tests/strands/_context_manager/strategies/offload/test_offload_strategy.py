@@ -1,5 +1,6 @@
 """Tests for offload strategies — truncate, drop, and base infrastructure."""
 
+import functools
 import unittest.mock
 
 import pytest
@@ -20,6 +21,7 @@ from strands._context_manager.strategies.offload.base import (
 from strands._context_manager.strategies.offload.drop import DROPPED_MARKER
 from strands._context_manager.strategies.offload.truncate import EmergencyTruncateStrategy
 from strands._context_manager.types import ContextState
+from strands.agent.agent import Agent
 from strands.hooks.events import MessageAddedEvent
 from strands.hooks.registry import HookRegistry
 from strands.types.content import ContentBlock, Message, Messages
@@ -32,6 +34,8 @@ def mock_agent():
     agent.model = unittest.mock.AsyncMock()
     agent.model.count_tokens = unittest.mock.AsyncMock(return_value=5000)
     agent.model.estimate_utilization = unittest.mock.MagicMock(return_value=0.5)
+    # Delegate to the real implementation so these tests measure Agent's behavior, not the mock's.
+    agent._count_request_tokens = functools.partial(Agent._count_request_tokens, agent)
     agent.messages = []
     return agent
 

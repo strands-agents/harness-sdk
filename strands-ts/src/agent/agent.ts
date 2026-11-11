@@ -2433,7 +2433,7 @@ export class Agent implements LocalAgent, InvokableAgent {
       let projectedInputTokens: number | undefined
       try {
         // Context management continues to size against the agent's default model.
-        projectedInputTokens = await this._estimateInputTokens(streamOptions)
+        projectedInputTokens = await this._estimateInputTokens()
       } catch (error) {
         logger.debug(`error=<${error}> | token estimation failed, proceeding without estimate`)
       }
@@ -2493,7 +2493,7 @@ export class Agent implements LocalAgent, InvokableAgent {
 
       if (modelContinuation !== undefined) {
         try {
-          projectedInputTokens = await this._estimateInputTokens(streamOptions)
+          projectedInputTokens = await this._estimateInputTokens()
         } catch (error) {
           projectedInputTokens = undefined
           logger.debug(
@@ -2943,10 +2943,9 @@ export class Agent implements LocalAgent, InvokableAgent {
    * estimates only new messages added after it. Falls back to full estimation when no metadata is
    * available (cold start or first call).
    *
-   * @param streamOptions - The stream options containing system prompt and tool specs
    * @returns Estimated input token count
    */
-  private async _estimateInputTokens(streamOptions: StreamOptions): Promise<number> {
+  private async _estimateInputTokens(): Promise<number> {
     // Find the last assistant message with usage metadata
     let lastAssistantIdx = -1
     for (let i = this.messages.length - 1; i >= 0; i--) {
@@ -2968,13 +2967,29 @@ export class Agent implements LocalAgent, InvokableAgent {
         estimate = knownBaseline + (await new ModelProxy(this.model).countTokens(newMessages))
       }
     } else {
-      estimate = await new ModelProxy(this.model).countTokens(this.messages, {
-        ...(streamOptions.systemPrompt !== undefined && { systemPrompt: streamOptions.systemPrompt }),
-        ...(streamOptions.toolSpecs !== undefined && { toolSpecs: streamOptions.toolSpecs }),
-      })
+      estimate = await this.countRequestTokens(this.messages)
     }
 
     return estimate
+  }
+
+  /**
+   * Counts what a request carries: the messages, plus the system prompt and tool specs that occupy the same context
+   * window, so a count that leaves them out reads low. These are the same inputs behind
+   * `BeforeModelCallEvent.projectedInputTokens`.
+   *
+   * Counts that measure a single block or a subset rather than a whole request call `countTokens` directly —
+   * including the system prompt there would inflate every block against its threshold.
+   *
+   * @param messages - The messages the request would send
+   * @returns Total input token count for the request
+   * @internal
+   */
+  async countRequestTokens(messages: Message[]): Promise<number> {
+    return new ModelProxy(this.model).countTokens(messages, {
+      ...(this.systemPrompt !== undefined && { systemPrompt: this.systemPrompt }),
+      toolSpecs: this.toolRegistry.list().map((tool) => tool.toolSpec),
+    })
   }
 
   /**

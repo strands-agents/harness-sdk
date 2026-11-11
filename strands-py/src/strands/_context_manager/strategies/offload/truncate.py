@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING
 
 from ....types.content import ContentBlock, Message
 from ...methods.truncate import TruncateConfig, _truncate_text_block, _truncate_tool_result
-from ...request_tokens import _count_request_tokens
 from ...stash import Stash, _format_stash_refs
 from ...types import is_text_block
 from .base import (
@@ -144,7 +143,7 @@ class EmergencyTruncateStrategy(TruncateStrategy):
         if len(context.messages) <= 3:
             return False
         if not context.overflow:
-            tokens = await _count_request_tokens(context.agent, context.messages)
+            tokens = await context.agent._count_request_tokens(context.messages)
             utilization = context.agent.model.estimate_utilization(tokens)
             if utilization < 1.0:
                 return False
@@ -158,7 +157,7 @@ class EmergencyTruncateStrategy(TruncateStrategy):
         Consulted only on the proactive path. An overflow signal is the provider's own verdict on a request it
         refused, which outranks this estimate.
         """
-        overhead = await _count_request_tokens(agent, [])
+        overhead = await agent._count_request_tokens([])
         if agent.model.estimate_utilization(overhead) < 1.0:
             return False
         logger.warning(

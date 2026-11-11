@@ -2198,6 +2198,30 @@ class Agent(AgentBase, LocalAgent):
         logger.debug("limit=<%s> | ignoring resume because the request reached its limit", limit_stop_reason)
         return False
 
+    async def _count_request_tokens(self, messages: Messages) -> int:
+        """Count what a request carries: the messages, plus the system prompt and tool specs.
+
+        The system prompt and tool specs occupy the same context window as the messages, so a count
+        that leaves them out reads low. These are the same inputs behind
+        ``BeforeModelCallEvent.projected_input_tokens``.
+
+        Counts that measure a single block or a subset rather than a whole request call
+        ``count_tokens`` directly — including the system prompt there would inflate every block
+        against its threshold.
+
+        Args:
+            messages: The messages the request would send.
+
+        Returns:
+            Total input token count for the request.
+        """
+        return await ModelProxy(self.model).count_tokens(
+            messages,
+            tool_specs=self.tool_registry.get_all_tool_specs(),
+            system_prompt=self.system_prompt,
+            system_prompt_content=self._system_prompt_content,
+        )
+
     async def _append_messages(self, *messages: Message, invocation_context: InvocationContext | None = None) -> None:
         """Appends messages to history and invoke the callbacks for the MessageAddedEvent.
 

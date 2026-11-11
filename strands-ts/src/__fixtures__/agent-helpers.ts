@@ -4,7 +4,7 @@
  */
 
 import { expect } from 'vitest'
-import type { Agent } from '../agent/agent.js'
+import { Agent } from '../agent/agent.js'
 import type { AgentResult, InvokableAgent, InvokeArgs, InvokeOptions } from '../types/agent.js'
 import type { StopReason } from '../types/messages.js'
 import { Message, TextBlock } from '../types/messages.js'
@@ -89,6 +89,11 @@ export function createMockAgent(data?: MockAgentData): MockAgent {
     // No-op so plugins that register middleware in initAgent (e.g. MemoryManager injection) work
     // out of the box. Tests that inspect registrations override this via `extra.addMiddleware`.
     addMiddleware: () => () => {},
+    // Delegate to the real implementation so tests asserting which inputs a request count carries
+    // measure Agent's behavior rather than the fixture's.
+    countRequestTokens(this: MockAgent, messages: Message[]): Promise<number> {
+      return Agent.prototype.countRequestTokens.call(this, messages)
+    },
     auxModel: data?.extra?.auxModel ?? data?.extra?.model,
     ...data?.extra,
     trackedHooks,
