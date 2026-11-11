@@ -268,6 +268,29 @@ class MCPClient(ToolProvider):
                 ``continue_on_error``. A failure building an individual server (e.g. a missing env
                 var) also raises unless ``continue_on_error`` applies to that server, in which case
                 it is skipped.
+
+        Example:
+            ```python
+            from strands import Agent
+            from strands.tools.mcp import MCPClient
+
+            clients = MCPClient.load_servers(
+                {
+                    "mcpServers": {
+                        "documentation": {
+                            "command": "uvx",
+                            "args": ["awslabs.aws-documentation-mcp-server@latest"],
+                        },
+                        "remote-api": {"url": "https://api.example.com/mcp/"},
+                    }
+                },
+                prefix_with_server_name=True,
+            )
+
+            agent = Agent(tools=clients)
+            ```
+
+            The same config can be read from a JSON file: ``MCPClient.load_servers("mcp.json")``.
         """
         servers = _load_servers_mapping(config)
 
