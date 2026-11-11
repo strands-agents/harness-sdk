@@ -166,6 +166,29 @@ describe('InProcessTaskManager', () => {
     await manager.waitForIdle()
   })
 
+  it('cancels every non-terminal task synchronously, including ones not yet notified', async () => {
+    const { manager, work } = createFixture(async ({ value }, context) => {
+      if (value === 'done') return value
+      await new Promise<void>((resolve) =>
+        context!.cancelSignal.addEventListener('abort', () => resolve(), { once: true })
+      )
+      return 'late'
+    })
+    const done = await submit(manager, work, 'done')
+    await manager.wait(done.taskId)
+    const pending = await Promise.all([submit(manager, work, 'a'), submit(manager, work, 'b')])
+
+    manager.cancelAll()
+
+    const statuses = (await manager.list()).map((task) => [task.taskId, task.status])
+    expect(statuses).toEqual([
+      [done.taskId, 'completed'],
+      [pending[0].taskId, 'cancelled'],
+      [pending[1].taskId, 'cancelled'],
+    ])
+    await manager.waitForIdle()
+  })
+
   it('rejects an invalid wait timeout', async () => {
     const { manager } = createFixture(({ value }) => value)
 
