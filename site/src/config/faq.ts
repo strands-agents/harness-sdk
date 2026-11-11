@@ -35,9 +35,9 @@ export interface FaqItem {
 
 export const FAQ_TITLE = 'Frequently asked questions'
 export const FAQ_DESCRIPTION =
-  'Answers to common questions about choosing, building, deploying, and securing agents with Strands harness and the Strands Harness SDK.'
+  'Answers to common questions about choosing, building, evaluating, deploying, and securing Strands agents.'
 export const FAQ_INTRO =
-  'Find practical answers about choosing a starting point, building an agent, and preparing it for production.'
+  'Find practical answers about choosing a starting point, building and evaluating an agent, and preparing it for production.'
 
 export const faqCategories: ReadonlyArray<{ id: FaqCategoryId; label: string }> = [
   { id: 'choose', label: 'Choose your starting point' },
@@ -73,8 +73,6 @@ export const faqItems: FaqItem[] = [
     id: 'keep-current-model',
     category: 'choose',
     question: 'Can I keep my current model when I move to Strands?',
-    featuredSummary:
-      'Usually. The agent loop and model provider are separate, so you can keep a supported provider while moving orchestration to Strands.',
     answer: [
       paragraph(
         'You can keep the model when its provider supports the capabilities your agent needs. The agent loop is separate from the ',
@@ -122,6 +120,80 @@ export const faqItems: FaqItem[] = [
         ' keep a live, full-duplex session open. They can accept new text or audio while the model is still responding. Use them for interruptible voice and other real-time interactions. The ',
         link('Bidi model adapters', '/docs/user-guide/sdk/bidi/models/'),
         ' list the current provider support.'
+      ),
+    ],
+  },
+  {
+    id: 'strands-labs-projects',
+    category: 'choose',
+    question: 'When should I use a Strands Labs project?',
+    answer: [
+      paragraph(
+        link('Strands Labs', '/docs/labs/'),
+        ' houses experimental projects that extend the SDK into robotics, world models, agentic benchmarks, harness optimization, audio processing, and decision models. Each project lives in its own open source repository and works alongside the SDK.'
+      ),
+      paragraph(
+        'Labs projects change faster than the core SDK. Check each project for its current setup, support, and maturity before using it in production. A project may graduate, become a standalone product, or remain experimental.'
+      ),
+    ],
+  },
+  {
+    id: 'simulated-or-physical-robots',
+    category: 'choose',
+    question: 'Can Strands control simulated and physical robots?',
+    answer: [
+      paragraph(
+        link('Strands Robots', '/docs/labs/'),
+        ' is an experimental Python library with one interface for simulation and supported hardware. An agent can select robot capabilities through tools, while the robot runtime applies motion and safety controls.'
+      ),
+      paragraph(
+        'Start in simulation before connecting physical hardware. A deployed robot still needs tested limits, an emergency stop, and supervision appropriate to the task.'
+      ),
+    ],
+  },
+  {
+    id: 'strands-for-cosmos',
+    category: 'choose',
+    question: 'What can Strands for Cosmos add to an agent?',
+    answer: [
+      paragraph(
+        link('Strands for Cosmos', '/docs/labs/'),
+        ' is an experimental Python model provider integration for NVIDIA Cosmos. It lets an agent reason over images and video and use project tools for media or robot-action workflows on local NVIDIA compute.'
+      ),
+      paragraph(
+        'Choose it for physical-world or multimodal work that needs Cosmos models. Check the project requirements first because model choice, GPU memory, and runtime setup differ by task.'
+      ),
+    ],
+  },
+  {
+    id: 'benchmark-harnesses-or-evals',
+    category: 'choose',
+    question: 'Should I use Benchmark Harnesses or the Strands Evals SDK?',
+    answer: [
+      paragraph(
+        'Use ',
+        link('Benchmark Harnesses', '/docs/labs/'),
+        ' to reproduce or modify a complete agent and environment for a public benchmark. Each project includes its runner, tools, configuration, and task environment.'
+      ),
+      paragraph(
+        'Use the ',
+        link('Strands Evals SDK', '/docs/user-guide/evals-sdk/'),
+        ' to measure your own agent with repeatable cases and evaluators, diagnose failures, and compare reports across runs.'
+      ),
+    ],
+  },
+  {
+    id: 'ai-functions-or-regular-code',
+    category: 'choose',
+    question: 'When should I use AI Functions instead of regular Python code?',
+    answer: [
+      paragraph(
+        'Use ',
+        link('AI Functions', '/docs/labs/'),
+        ' when a task is hard to implement deterministically but you can validate the result. A typed Python function and its docstring define the task. Post-conditions check each result and return validation errors to the model for another attempt, up to the configured limit.'
+      ),
+      paragraph(
+        'Write regular Python when the logic is straightforward and deterministic. AI Functions is a Strands Labs project. Code execution stays off by default, and its local execution mode is not a sandbox.'
       ),
     ],
   },
@@ -245,6 +317,67 @@ export const faqItems: FaqItem[] = [
     ],
   },
   {
+    id: 'agent-configuration',
+    category: 'build',
+    question: 'When should I define an agent in configuration instead of code?',
+    answer: [
+      paragraph(
+        'Use the experimental ',
+        link('Agent Configuration', '/docs/user-guide/sdk/experimental/agent-config/'),
+        ' API when the agent name, Amazon Bedrock model ID, system prompt, and tools that can be declared in configuration fit in a JSON file or Python dictionary. ',
+        code('config_to_agent'),
+        ' returns an ',
+        code('Agent'),
+        ', and constructor arguments override values from the configuration.'
+      ),
+      paragraph(
+        'Build the agent in code when a tool needs constructor arguments or another live object. Agent Configuration is available in the Python SDK and remains experimental.'
+      ),
+    ],
+  },
+  {
+    id: 'harness-optimizer',
+    category: 'build',
+    question: 'When should I use Harness Optimizer?',
+    answer: [
+      paragraph(
+        'Use ',
+        link('Harness Optimizer', '/docs/labs/'),
+        ' after you have repeatable tasks and a reward signal. It represents parts of an agent harness, such as the system prompt, tool descriptions, or agent skills, as tunable ',
+        code('Formula'),
+        ' objects. Rollout engines run the tasks, reward functions score the trajectories, and optimizers update the ',
+        code('Formula'),
+        ' objects.'
+      ),
+      paragraph(
+        'Test each update against cases the optimizer did not use. This catches changes that improve the training rollouts without improving the agent more generally.'
+      ),
+    ],
+  },
+  {
+    id: 'voice-agent-speaker-echo',
+    category: 'build',
+    question: 'How do I stop a voice agent from hearing its own speaker output?',
+    answer: [
+      paragraph(
+        'In a Python Bidi agent, use a headset or enable ',
+        link('audio processing', '/docs/user-guide/sdk/bidi/io/#audio-processing'),
+        ' in the same ',
+        code('AudioIO'),
+        ' instance that handles microphone input and speaker output. Install the ',
+        code('bidi-aec'),
+        ' extra and set ',
+        code('audio_processor=True'),
+        '. Strands then applies echo cancellation, noise suppression, and automatic gain control.'
+      ),
+      paragraph(
+        'Audio processing requires mono microphone input, and echo cancellation also requires mono playback. With a headset, use ',
+        code('AudioProcessorConfig'),
+        ' to turn off echo cancellation while keeping noise suppression and gain control.'
+      ),
+    ],
+  },
+  {
     id: 'approval-for-risky-tools',
     category: 'run',
     question: 'How do I require approval for risky tool calls?',
@@ -283,6 +416,25 @@ export const faqItems: FaqItem[] = [
     ],
   },
   {
+    id: 'evaluate-before-production',
+    category: 'run',
+    question: 'How do I evaluate a Strands agent before production?',
+    featuredSummary:
+      "Use Strands Evals to run repeatable cases, score the agent's output and behavior, and diagnose failed runs before production.",
+    answer: [
+      paragraph(
+        'Use ',
+        link('Strands Evals', '/docs/user-guide/evals-sdk/'),
+        " to run repeatable cases and score an agent's output, trajectory, or interactions. An experiment combines cases, a task that runs the agent, and one or more evaluators. It returns scores and pass or fail results."
+      ),
+      paragraph(
+        'Start with output checks, then add trace-based evaluators for tool use or multi-turn behavior. Simulators create user and tool interactions, red teaming probes unsafe behavior, and detectors diagnose failed runs. The ',
+        link('evaluation guide', '/docs/user-guide/evals-sdk/how-evaluation-works/'),
+        ' explains how these pieces fit together.'
+      ),
+    ],
+  },
+  {
     id: 'deploy-strands-agent',
     category: 'run',
     question: 'Where can I deploy a Strands agent?',
@@ -296,6 +448,25 @@ export const faqItems: FaqItem[] = [
       ),
       paragraph(
         'Pick a target based on latency, streaming, state, network access, scaling, and isolation requirements. Keeping environment details outside the agent lets the same code move between targets.'
+      ),
+    ],
+  },
+  {
+    id: 'strands-shell-isolation',
+    category: 'run',
+    question: 'When should I use Strands Shell?',
+    answer: [
+      paragraph(
+        'Use ',
+        link('Strands Shell', '/docs/user-guide/shell/'),
+        ' when an agent needs a fast command line with controlled access to files, network destinations, and credentials. It runs inside your application as a Python or Node.js library, or as an MCP server. Only bound host paths are exposed, and configured credentials are injected for matching requests. Public HTTP(S) URLs remain reachable under the default SSRF guard; use ',
+        code('allowed_urls'),
+        ' to permit specific internal destinations.'
+      ),
+      paragraph(
+        'Strands Shell provides in-process mediation. Run it inside a container or microVM when untrusted tenants can execute adversarial code. The ',
+        link('security model', '/docs/user-guide/shell/security/'),
+        ' explains the boundary and configuration choices.'
       ),
     ],
   },

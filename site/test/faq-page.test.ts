@@ -16,6 +16,7 @@ describe('standalone FAQ page', () => {
   const page = parse(html)
 
   it('renders every curated question outside the docs sidebar', () => {
+    expect(faqItems).toHaveLength(25)
     expect(page.querySelectorAll('.faq-item')).toHaveLength(faqItems.length)
     expect(page.querySelectorAll('.faq-group')).toHaveLength(3)
     expect(page.querySelectorAll('details.faq-item')).toHaveLength(0)
@@ -49,6 +50,12 @@ describe('standalone FAQ page', () => {
 
 describe('homepage FAQ selection', () => {
   it('keeps the preview focused on five questions', () => {
-    expect(featuredFaqItems).toHaveLength(5)
+    expect(featuredFaqItems.map((item) => item.id)).toEqual([
+      'harness-or-sdk',
+      'python-or-typescript',
+      'custom-or-mcp-tool',
+      'evaluate-before-production',
+      'deploy-strands-agent',
+    ])
   })
 })

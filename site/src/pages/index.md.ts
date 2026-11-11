@@ -13,7 +13,7 @@ export const GET: APIRoute = () => {
     `- [Harness quickstart](${siteLink('/docs/user-guide/harness/quickstart/index.md')}): Start with a fully assembled agent.`,
     `- [Build with AI coding agents](${siteLink('/docs/user-guide/build-with-ai/index.md')}): Install the Strands plugin for Claude Code, Codex, or Cursor.`,
     `- [Examples](${siteLink('/examples/')}): Explore complete agent examples.`,
-    `- [Frequently asked questions](${siteLink('/faq/index.md')}): Get practical answers about choosing, building, and deploying with Strands.`,
+    `- [Frequently asked questions](${siteLink('/faq/index.md')}): Get practical answers about choosing, building, evaluating, and deploying with Strands.`,
     '',
     '## Official packages',
     '',
