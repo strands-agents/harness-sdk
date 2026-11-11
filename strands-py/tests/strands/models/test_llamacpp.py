@@ -842,6 +842,29 @@ def test_format_messages_with_image() -> None:
     assert result[0]["content"][1]["image_url"]["url"].startswith("data:image/png;base64,")
 
 
+@pytest.mark.parametrize(
+    ("image", "exp_detail"),
+    [
+        ({"format": "png", "source": {"bytes": b"image"}}, "auto"),
+        ({"format": "png", "source": {"bytes": b"image"}, "detail": "low"}, "low"),
+    ],
+    ids=["detail_unset", "detail_set"],
+)
+def test_format_message_content_image_detail(image, exp_detail) -> None:
+    model = LlamaCppModel()
+
+    tru_content = model._format_message_content({"image": image})
+    exp_content = {
+        "image_url": {
+            "detail": exp_detail,
+            "format": "image/png",
+            "url": "data:image/png;base64,aW1hZ2U=",
+        },
+        "type": "image_url",
+    }
+    assert tru_content == exp_content
+
+
 def test_format_messages_with_mixed_content() -> None:
     """Test that _format_messages handles mixed audio and image content correctly."""
     model = LlamaCppModel()
