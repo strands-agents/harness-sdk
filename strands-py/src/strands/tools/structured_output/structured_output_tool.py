@@ -5,6 +5,7 @@ with the existing tool execution and error handling infrastructure.
 """
 
 import logging
+import weakref
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any
 
@@ -17,7 +18,9 @@ from .structured_output_utils import convert_pydantic_to_tool_spec
 
 logger = logging.getLogger(__name__)
 
-_TOOL_SPEC_CACHE: dict[type[BaseModel], ToolSpec] = {}
+# Weakly keyed so dynamically created output models (pydantic.create_model) are released
+# with their last strong reference instead of accumulating for the life of the process.
+_TOOL_SPEC_CACHE: "weakref.WeakKeyDictionary[type[BaseModel], ToolSpec]" = weakref.WeakKeyDictionary()
 
 if TYPE_CHECKING:
     from ._structured_output_context import StructuredOutputContext
