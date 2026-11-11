@@ -372,8 +372,9 @@ export type AgentConfig = {
    * (the resume yields to a parked `'stopPrevious'` / `'cancelPrevious'` caller once its
    * interrupt is settled: after the pending tool batch for a tool interrupt, or after the
    * model-call pass that consumes the response for a hook-raised one; a custom hook
-   * interrupt that nothing settles runs its pass to the end). Abandoning the interrupt with
-   * {@link Agent.loadSnapshot} releases the parked callers. A resume cancelled before its
+   * interrupt that nothing settles runs its pass to the end). Abandoning the interrupt by
+   * loading a snapshot taken before it releases the parked callers; a snapshot that excludes
+   * `interrupts` leaves the interrupt in place. A resume cancelled before its
    * pending tool batch leaves the interrupt in place, so parked callers wait for a later
    * resume or `loadSnapshot`; `cancel()` does not release them, each caller's own
    * `cancelSignal` does. Under `'throw'` such a call rejects at once.
@@ -1759,7 +1760,9 @@ export class Agent implements LocalAgent, InvokableAgent {
    * as a tool by another agent.
    *
    * The returned tool accepts a single `input` string parameter, invokes
-   * this agent, and returns the text response as a tool result.
+   * this agent, and returns the text response as a tool result. A call made while
+   * the tool is already running returns an error result; {@link AgentConfig.concurrentInvocationMode}
+   * does not apply to it.
    *
    * **Note:** You can also pass an Agent directly in another agent's
    * {@link AgentConfig.tools | tools} array — it will be wrapped

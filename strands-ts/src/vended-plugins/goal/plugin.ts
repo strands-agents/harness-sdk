@@ -297,7 +297,9 @@ export class GoalLoop implements Plugin {
    * run has finished on that agent since this plugin was constructed. Reads
    * while a run is in-flight, or after a thrown invoke that left a run
    * half-finished, return `undefined` rather than stale data — the previous
-   * run's snapshot is dropped on the next invoke.
+   * run's snapshot is dropped on the next invoke. A queued caller's run can start
+   * before `await agent.invoke()` returns, so read it from an `AgentResultEvent`
+   * hook when invocations queue.
    */
   lastResult(agent: LocalAgent): GoalResult | undefined {
     return this._runs.get(agent)?.result
