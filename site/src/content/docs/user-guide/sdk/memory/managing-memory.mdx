@@ -83,7 +83,7 @@ Each store carries its own identity and behavior:
 |-------|---------|
 | `name` | Unique identifier, used to target the store from tools and the programmatic API. |
 | `description` | Human-readable summary, surfaced in the memory tool descriptions so the model knows what each store holds. |
-| <Syntax py="max_search_results" ts="maxSearchResults" /> | Default result cap per search when a caller does not pass one. The manager falls back to `3` if neither is set. |
+| <Syntax py="max_search_results" ts="maxSearchResults" /> | Default result cap per search when a caller does not pass one, such as a `search_memory` call that omits it. The manager falls back to `3` if neither is set. Injection always passes its own limit, so this default does not apply there; see <Syntax py="max_entries" ts="maxEntries" />. |
 | `writable` | Whether the store accepts writes. |
 
 The manager attaches each store's `name` to its results, so the model and your code can tell which store produced each entry and target follow-up queries.
@@ -166,7 +166,7 @@ agent = Agent(
 </Tabs>
 
 - `trigger` accepts `'userTurn'` (the default, inject only on a fresh user ask), `'everyTurn'` (inject before every model call, for autonomous agents), or a predicate: a function that receives the injection context and returns whether to inject this call.
-- <Syntax py="max_entries" ts="maxEntries" /> caps how many entries are retrieved and injected.
+- <Syntax py="max_entries" ts="maxEntries" /> caps how many entries are retrieved and injected. Injection asks each store for up to this many entries, in place of the store's <Syntax py="max_search_results" ts="maxSearchResults" />, then keeps the first <Syntax py="max_entries" ts="maxEntries" /> of the combined results.
 - `query` overrides the adaptive default with your own query logic. Return an empty value to skip injection for this call.
 - `format` renders the retrieved entries. The default emits an escaped `<memory>` block; a custom formatter that emits markup owns its own escaping.
 

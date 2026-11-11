@@ -223,7 +223,7 @@ print(result.document_id)
 </Tab>
 </Tabs>
 
-The search result cap defaults to `10` when neither the call nor the store sets one. This `10` default applies only to direct calls on the store. Reached through a `MemoryManager` tool or its search method, the manager supplies its own per-call cap instead; set <Syntax py="max_search_results" ts="maxSearchResults" /> on the store to pin a value across both paths.
+The search result cap defaults to `10` when neither the call nor the store sets one. This `10` default applies only to direct calls on the store. Reached through a `MemoryManager` tool or its search method, the manager supplies its own per-call cap instead; set <Syntax py="max_search_results" ts="maxSearchResults" /> on the store to pin a value across both paths. Memory injection is the exception: it asks each store for up to <Syntax py="max_entries" ts="maxEntries" /> entries, so the store's value does not apply there (see [Context Injection](./managing-memory#context-injection)).
 
 Each entry's `metadata` carries the document's own attributes plus two reserved synthetic keys: <Syntax py="_relevance_score" ts="_relevanceScore" /> (the Bedrock relevance score) and <Syntax py="_source_location" ts="_sourceLocation" /> (the retrieval location). When `scope` is set, search filters to that namespace automatically; an explicit `filter` overrides the scope-derived one. The asymmetry is deliberate: an explicit `filter` affects search only, while writes always scope by `scope`.
 
