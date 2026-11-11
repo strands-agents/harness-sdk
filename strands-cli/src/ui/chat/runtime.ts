@@ -34,6 +34,7 @@ import { PythonVoiceSession } from '../../agent/voice.js'
 import { importAgentProject, type ImportedAgentProject } from '../../project/import.js'
 import { PythonBackend, type PythonOptions } from '../../project/python.js'
 import { TypescriptBackend, type TypescriptInit } from '../../project/typescript-backend.js'
+import { temporaryOptimizeCommand } from '../../dev/temporary-evals-fork/command.js'
 import { readDevWorkspace, type DevWorkspace } from '../../dev/workspace.js'
 import {
   createInteractiveRuntime,
@@ -146,6 +147,7 @@ export async function createTypescriptChat(
         ...(devWorkspace
           ? {
               workspaceAction: (action: WorkspaceAction): void => requestSetup({ workspaceAction: action }),
+              devCommands: [temporaryOptimizeCommand(devWorkspace, project)],
             }
           : {}),
         awsProfile: awsProfileSelection(config, requestSetup, peerEndpointId, project.entrypoint),
@@ -346,7 +348,10 @@ export async function createPythonChat(
       setSettings: (settings) => config.setSettings(settings),
       requestSetup,
       ...(devWorkspace
-        ? { workspaceAction: (action: WorkspaceAction): void => requestSetup({ workspaceAction: action }) }
+        ? {
+            workspaceAction: (action: WorkspaceAction): void => requestSetup({ workspaceAction: action }),
+            devCommands: [temporaryOptimizeCommand(devWorkspace, project)],
+          }
         : {}),
       awsProfile: awsProfileSelection(config, requestSetup, undefined, project.entrypoint),
       project,
