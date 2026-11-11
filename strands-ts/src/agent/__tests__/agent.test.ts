@@ -2726,7 +2726,7 @@ describe('normalizeToolUseNames', () => {
         const initial = mcpTool('tool_a')
         vi.spyOn(mcpClient, 'listTools').mockResolvedValue([initial])
         let refresh: ((oldTools: string[], newTools: McpTool[]) => void) | undefined
-        vi.spyOn(McpClient.prototype, 'onToolsChanged', 'set').mockImplementation((cb) => {
+        const setterSpy = vi.spyOn(McpClient.prototype, 'onToolsChanged', 'set').mockImplementation((cb) => {
           refresh = cb
         })
         const agent = new Agent({
@@ -2739,6 +2739,7 @@ describe('normalizeToolUseNames', () => {
           printer: false,
         })
         await agent.initialize()
+        setterSpy.mockRestore()
         return { agent, refresh: refresh!, mcpTool, initial }
       }
 
@@ -2757,7 +2758,7 @@ describe('normalizeToolUseNames', () => {
           expect(agent.toolRegistry.get('tool_a')).toBe(toolA)
           expect(agent.toolRegistry.get('tool_c')).toBe(toolC)
           expect(warnSpy).toHaveBeenCalledWith(
-            `client=<strands-agents-ts-sdk>, tool=<${name}>, error=<Tool with name '${name}' already registered> | skipping refreshed mcp tool`
+            `client=<strands-agents-ts-sdk>, tool_name=<${name}>, error=<Tool with name '${name}' already registered> | skipping refreshed mcp tool`
           )
         }
       )

@@ -921,7 +921,7 @@ export class Agent implements LocalAgent, InvokableAgent {
   /**
    * Swaps an MCP client's registered tools for its refreshed list. A refreshed tool that is invalid, or that takes the
    * name of a tool from another source such as `retrieve_context`, is skipped with a warning; the rest of the refresh
-   * applies.
+   * applies. A skipped tool comes back only on this client's next refresh, even if the other source drops the name first.
    *
    * @param client - The MCP client whose tools changed
    * @param current - The tools the client has registered
@@ -932,7 +932,7 @@ export class Agent implements LocalAgent, InvokableAgent {
     const skipped = this._toolRegistry.swap(current, refreshed)
     for (const { tool, error } of skipped) {
       logger.warn(
-        `client=<${client.clientName}>, tool=<${tool.name}>, error=<${error.message}> | skipping refreshed mcp tool`
+        `client=<${client.clientName}>, tool_name=<${tool.name}>, error=<${error.message}> | skipping refreshed mcp tool`
       )
     }
     const skippedTools = new Set(skipped.map(({ tool }) => tool))
