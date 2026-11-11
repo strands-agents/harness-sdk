@@ -254,7 +254,9 @@ def _anthropic(model_id: str, effort: str | None, web_search: bool, caching: boo
 def _anthropic_config(model_id: str, effort: str | None, web_search: bool, caching: bool) -> dict[str, Any]:
     from strands.models import CacheConfig
 
-    max_tokens = _claude_max_tokens(model_id) or _ANTHROPIC_MAX_TOKENS
+    max_tokens = (
+        _claude_max_tokens(model_id) or lookup_model_info(model_id).limits.max_output_tokens or _ANTHROPIC_MAX_TOKENS
+    )
     config: dict[str, Any] = {"model_id": model_id, "max_tokens": max_tokens}
     if effort is not None:
         config["params"] = _claude_thinking_block(model_id, effort, max_tokens)

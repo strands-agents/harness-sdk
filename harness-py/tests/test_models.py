@@ -9,7 +9,8 @@ from strands.models import (
     ReasoningCapability,
 )
 
-from strands_harness import models
+from strands_harness import defaults, models
+from strands_harness._bedrock_claude import BedrockClaudeModel
 from strands_harness.defaults import DEFAULT_EFFORT
 from strands_harness.models import (
     _claude_extended_thinking,
@@ -30,9 +31,9 @@ def resolve(model, effort="auto", web_search=False, caching=False, caching_expli
 
 def test_none_resolves_to_default_with_thinking():
     model = resolve(None)
-    assert isinstance(model, BedrockModel)
+    assert isinstance(model, BedrockClaudeModel)
     assert model.config["model_id"] == "global.anthropic.claude-opus-4-8"
-    assert model.config["additional_request_fields"] == {
+    assert model.config["params"] == {
         "thinking": {"type": "adaptive", "display": "summarized"},
         "output_config": {"effort": "high"},
     }
@@ -78,6 +79,95 @@ def test_bedrock_no_caching_when_off():
     model = resolve("bedrock/global.anthropic.claude-opus-4-8", caching=False)
     assert "cache_config" not in model.config
     assert "cache_tools" not in model.config
+
+
+@pytest.mark.parametrize(
+    ("spec", "model_class"),
+    [
+        ("bedrock/global.anthropic.claude-opus-5-5", BedrockClaudeModel),
+        ("bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0", BedrockClaudeModel),
+        ("bedrock/amazon.nova-pro-v1:0", BedrockModel),
+        ("bedrock/openai.gpt-oss-120b-1:0", BedrockModel),
+    ],
+)
+def test_bedrock_claude_uses_the_anthropic_bedrock_client_and_other_families_stay_on_converse(spec, model_class):
+    assert type(resolve(spec)) is model_class
+
+
+def test_bedrock_claude_client_uses_the_aws_region(monkeypatch, tmp_path):
+    import anthropic
+
+    monkeypatch.delenv("AWS_DEFAULT_REGION", raising=False)
+    monkeypatch.delenv("AWS_PROFILE", raising=False)
+    monkeypatch.setenv("AWS_CONFIG_FILE", str(tmp_path / "missing"))
+    monkeypatch.setenv("AWS_REGION", "eu-west-3")
+    model = resolve("bedrock/global.anthropic.claude-opus-5-5")
+    assert isinstance(model.client, anthropic.AsyncAnthropicBedrock)
+    assert model.client.aws_region == "eu-west-3"
+
+
+def _status_error(body):
+    import anthropic
+    import httpx
+
+    response = httpx.Response(200, request=httpx.Request("POST", "https://x"))
+    return anthropic.APIStatusError("stream error", response=response, body=body)
+
+
+async def _drain(model):
+    return [event async for event in model.stream([])]
+
+
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        ({"error": {"type": "throttlingException", "message": "Too many requests"}}, "throttled"),
+        ({"error": {"type": "validationException", "message": "bad"}}, "unchanged"),
+        (None, "unchanged"),
+    ],
+)
+def test_bedrock_claude_maps_a_mid_stream_throttle_to_model_throttled(monkeypatch, body, expected):
+    import asyncio
+
+    import anthropic
+    from strands.models.anthropic import AnthropicModel
+    from strands.types.exceptions import ModelThrottledException
+
+    error = _status_error(body)
+
+    async def failing_stream(self, *args, **kwargs):
+        yield {"messageStart": {"role": "assistant"}}
+        raise error
+
+    monkeypatch.setattr(AnthropicModel, "stream", failing_stream)
+    model = resolve("bedrock/global.anthropic.claude-opus-5-5")
+    if expected == "throttled":
+        with pytest.raises(ModelThrottledException) as raised:
+            asyncio.run(_drain(model))
+        assert raised.value.__cause__ is error
+    else:
+        with pytest.raises(anthropic.APIStatusError) as raised:
+            asyncio.run(_drain(model))
+        assert raised.value is error
+
+
+@pytest.mark.parametrize(
+    ("spec", "level"),
+    [(defaults.DEFAULT_MODEL, "medium"), ("bedrock/global.anthropic.claude-opus-4-8", "high")],
+)
+def test_default_effort_on_bedrock_claude_is_the_model_info_default(spec, level):
+    model = resolve_model(spec, defaults.DEFAULT_MODEL, DEFAULT_EFFORT, web_search=False, caching=True)
+    assert isinstance(model, BedrockClaudeModel)
+    assert model.config["params"]["output_config"]["effort"] == level
+
+
+def test_create_harness_defaults_to_bedrock_claude_at_medium_effort():
+    from strands_harness import create_harness
+
+    model = create_harness().model
+    assert isinstance(model, BedrockClaudeModel)
+    assert model.config["model_id"] == defaults.DEFAULT_MODEL.removeprefix("bedrock/")
+    assert model.config["params"]["output_config"]["effort"] == "medium"
 
 
 @pytest.mark.parametrize("prefix", ["", "us."])
@@ -166,7 +256,7 @@ def test_litellm_caching_does_not_warn(caplog):
 
 def test_effort_off_leaves_provider_defaults():
     model = resolve("bedrock/global.anthropic.claude-opus-4-8", effort="off")
-    assert model.config.get("additional_request_fields") is None
+    assert model.config.get("params") is None
 
 
 @pytest.mark.parametrize("effort", [None, True, "turbo"])
@@ -194,7 +284,7 @@ def test_default_effort_on_model_instance_does_not_warn(caplog):
     assert not any("not applied" in r.message for r in caplog.records)
 
 
-_BEDROCK_CLAUDE = ("additional_request_fields", "output_config", "effort")
+_BEDROCK_CLAUDE = ("params", "output_config", "effort")
 _BEDROCK_GPT = ("additional_request_fields", "reasoning", "effort")
 _BEDROCK_REASONING_EFFORT = ("additional_request_fields", "reasoning_effort")
 
@@ -263,8 +353,7 @@ def test_default_effort_falls_back_to_the_provider_level_when_the_vendor_default
 )
 def test_default_effort_is_the_high_budget_on_extended_thinking_claude(spec):
     config = resolve(spec, effort=DEFAULT_EFFORT).config
-    block = config["additional_request_fields"] if spec.startswith("bedrock/") else config["params"]
-    assert block == {"thinking": {"type": "enabled", "budget_tokens": 16_384}}
+    assert config["params"] == {"thinking": {"type": "enabled", "budget_tokens": 16_384}}
     assert config == resolve(spec, effort="high").config
 
 
@@ -288,12 +377,12 @@ def test_default_effort_sends_no_reasoning_field_where_the_model_has_no_levels(s
 
 def test_effort_explicit_level():
     model = resolve("bedrock/global.anthropic.claude-opus-4-8", effort="low")
-    assert model.config["additional_request_fields"]["output_config"]["effort"] == "low"
+    assert model.config["params"]["output_config"]["effort"] == "low"
 
 
 def test_bedrock_accepts_provider_specific_level():
     model = resolve("bedrock/global.anthropic.claude-opus-4-8", effort="max")
-    assert model.config["additional_request_fields"]["output_config"]["effort"] == "max"
+    assert model.config["params"]["output_config"]["effort"] == "max"
 
 
 def test_openai_on_bedrock_maps_effort_to_reasoning_effort():
@@ -513,9 +602,16 @@ def test_bedrock_non_claude_model_has_no_forced_max_tokens():
     assert "max_tokens" not in model.config
 
 
-def test_bedrock_legacy_claude_3_id_has_no_forced_max_tokens():
-    model = resolve("bedrock/anthropic.claude-3-haiku-20240307-v1:0")
-    assert "max_tokens" not in model.config
+@pytest.mark.parametrize(
+    ("spec", "max_tokens"),
+    [
+        ("bedrock/anthropic.claude-3-haiku-20240307-v1:0", 4_096),
+        ("anthropic/claude-3-5-haiku-20241022", 8_192),
+        ("anthropic/claude-unknown-1", 32_000),
+    ],
+)
+def test_claude_without_a_tier_ceiling_uses_the_model_info_output_limit(spec, max_tokens):
+    assert resolve(spec).config["max_tokens"] == max_tokens
 
 
 def test_bedrock_mantle_builds_via_openai_responses_model():
@@ -682,17 +778,17 @@ ADAPTIVE_CLAUDE = [
 
 @pytest.mark.parametrize("model_id", NO_THINKING_CLAUDE)
 def test_claude_below_the_thinking_floor_gets_no_block(model_id):
-    assert "additional_request_fields" not in resolve(f"bedrock/{model_id}").config
+    assert "params" not in resolve(f"bedrock/{model_id}").config
 
 
 @pytest.mark.parametrize("model_id", EXTENDED_CLAUDE)
 def test_claude_on_the_4_5_tier_gets_an_extended_block(model_id):
-    assert resolve(f"bedrock/{model_id}").config["additional_request_fields"] == EXTENDED
+    assert resolve(f"bedrock/{model_id}").config["params"] == EXTENDED
 
 
 @pytest.mark.parametrize("model_id", ADAPTIVE_CLAUDE)
 def test_claude_with_adaptive_thinking_gets_the_block(model_id):
-    assert resolve(f"bedrock/{model_id}", effort="high").config["additional_request_fields"] == ADAPTIVE
+    assert resolve(f"bedrock/{model_id}", effort="high").config["params"] == ADAPTIVE
 
 
 def test_claude_below_the_thinking_floor_rejects_an_explicit_level_locally():
@@ -718,7 +814,7 @@ def test_anthropic_direct_below_the_floor_sends_no_thinking_params(monkeypatch):
 
 def test_an_unrecognized_claude_family_defaults_to_adaptive():
     model = resolve("bedrock/global.anthropic.claude-quasar-6")
-    assert model.config["additional_request_fields"]["thinking"] == {
+    assert model.config["params"]["thinking"] == {
         "type": "adaptive",
         "display": "summarized",
     }
@@ -740,14 +836,14 @@ def test_a_non_claude_bedrock_model_sends_no_thinking_block():
 )
 def test_a_dot_separated_version_parses_like_a_dashed_one(model_id, expected):
     config = resolve(f"bedrock/global.anthropic.{model_id}").config
-    assert config.get("additional_request_fields") == expected
+    assert config.get("params") == expected
 
 
 @pytest.mark.parametrize(
     "model_id", ["claude-opus-latest", "claude-sonnet-latest", "claude-haiku-latest", "claude-haiku", "claude-opus-100"]
 )
 def test_an_id_with_no_parsable_version_fails_open_to_adaptive(model_id):
-    assert resolve(f"bedrock/global.anthropic.{model_id}").config["additional_request_fields"] == ADAPTIVE
+    assert resolve(f"bedrock/global.anthropic.{model_id}").config["params"] == ADAPTIVE
 
 
 @pytest.mark.parametrize(
@@ -756,7 +852,7 @@ def test_an_id_with_no_parsable_version_fails_open_to_adaptive(model_id):
 )
 def test_each_level_maps_to_a_budget_the_api_accepts(level, budget):
     config = resolve(HAIKU_ON_BEDROCK, effort=level).config
-    assert config["additional_request_fields"] == {"thinking": {"type": "enabled", "budget_tokens": budget}}
+    assert config["params"] == {"thinking": {"type": "enabled", "budget_tokens": budget}}
     assert budget < config["max_tokens"]
 
 
@@ -824,7 +920,7 @@ def test_a_bedrock_family_without_thinking_reports_none(model_id):
 def test_every_cross_region_prefix_resolves_the_claude_family(prefix):
     model_id = f"bedrock/{prefix}anthropic.claude-opus-4-8"
     assert supports_thinking(model_id) is True
-    assert resolve(model_id, effort="max").config["additional_request_fields"]["output_config"] == {"effort": "max"}
+    assert resolve(model_id, effort="max").config["params"]["output_config"] == {"effort": "max"}
 
 
 def test_an_unsupported_level_on_anthropic_direct_names_the_model_not_the_provider():
