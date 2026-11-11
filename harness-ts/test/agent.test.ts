@@ -527,15 +527,15 @@ describe('createHarness', () => {
     expect(conversationManagerName(agent)).toBe('NullConversationManager')
   })
 
-  it('uses the recommended level when effort is auto', async () => {
+  it("uses the default model's vendor default level when effort is auto", async () => {
     const agent = await createHarness({ effort: 'auto' })
-    const fields = agent.model.getConfig().additionalRequestFields as { output_config: { effort: string } }
-    expect(fields.output_config.effort).toBe('high')
+    const params = agent.model.getConfig().params as { output_config: { effort: string } }
+    expect(params.output_config.effort).toBe('medium')
   })
 
   it('sends no reasoning fields when effort is off', async () => {
     const agent = await createHarness({ effort: 'off' })
-    expect(agent.model.getConfig().additionalRequestFields).toBeUndefined()
+    expect(agent.model.getConfig().params).toBeUndefined()
   })
 
   it('lets an explicit context manager win', async () => {
