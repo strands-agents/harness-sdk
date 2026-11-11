@@ -736,14 +736,14 @@ class Agent(AgentBase, LocalAgent):
         Note:
             Multiple calls to cancel() are safe and idempotent.
         """
-        if cancel_background_tasks and self._background_tasks is not None:
-            self._background_tasks.cancel_all()
         if message is not None:
             self._cancel_message = message
         if after_current_tools:
             self._deferred_cancel = True
         else:
             self._cancel_signal.set()
+        if cancel_background_tasks and self._background_tasks is not None:
+            self._background_tasks.cancel_all()
 
     @property
     def cancel_signal(self) -> threading.Event:
