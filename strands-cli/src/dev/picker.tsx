@@ -404,7 +404,7 @@ export const HarnessPicker = ({
                   </Box>
                 ) : null}
                 {row.key === DISCOVERY_ROW && discovery !== undefined ? (
-                  <Box paddingX={1} paddingLeft={3}>
+                  <Box paddingX={1}>
                     <DiscoveryStatus discovery={discovery} count={harnesses.length} warningColor={warningColor} />
                   </Box>
                 ) : (

@@ -620,6 +620,8 @@ describe('HarnessPicker', () => {
     expect(row('DISCOVERED PROJECTS')).toBeLessThan(row('Searching for local harnesses…'))
     expect(row('Searching for local harnesses…')).toBeLessThan(row('NEW PROJECT'))
     expect(frame().join('\n')).toContain('1 / 2')
+    const searchLine = frame()[row('Searching for local harnesses…')]!
+    expect(searchLine.search(/\S/u)).toBe(frame()[row('Base CLI')]!.indexOf('›'))
 
     instance.rerender(createElement(HarnessPicker, { ...props, harnesses: [harness], discovery: 'running' }))
     await vi.waitFor(() => expect(frame().join('\n')).toContain('1 found'))
