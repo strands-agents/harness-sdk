@@ -47,7 +47,8 @@ class ContextInjector(Plugin):
 
     Before each model call, the plugin asks ``render_content`` for text, gated by ``trigger``, and
     writes it into the latest user message as an ``injected`` block. The block stays in the
-    conversation and the session. When the model takes temporary messages (``AnthropicModel`` on
+    conversation and in snapshot sessions; the File and S3 session managers save each message once,
+    when it is added, so they don't keep it. When the model takes temporary messages (``AnthropicModel`` on
     supported Claude models), the model receives each block as a system message it reads only until
     the next user message, so the stored history is sent unchanged on every call. Every other model
     receives only the latest user message's blocks, as text.

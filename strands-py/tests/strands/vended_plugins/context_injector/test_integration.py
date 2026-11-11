@@ -211,29 +211,6 @@ def test_injection_writes_with_the_agentic_context_manager(model, model_seen):
     assert {"injected": {"text": "<now>T1</now>", "source": "strands:context-injector"}} in agent.messages[0]["content"]
 
 
-def test_injected_block_is_saved_and_restored_by_file_session_manager(model, tmp_path):
-    from strands.session.file_session_manager import FileSessionManager
-
-    agent = Agent(
-        model=model,
-        callback_handler=None,
-        session_manager=FileSessionManager(session_id="s", storage_dir=str(tmp_path)),
-        plugins=[ContextInjector(lambda context: "<ctx>A</ctx>")],
-    )
-    agent("hello")
-
-    restored = Agent(
-        model=MockedModelProvider([]),
-        callback_handler=None,
-        session_manager=FileSessionManager(session_id="s", storage_dir=str(tmp_path)),
-    )
-
-    assert restored.messages[0]["content"] == [
-        {"text": "hello"},
-        {"injected": {"text": "<ctx>A</ctx>", "source": "strands:context-injector"}},
-    ]
-
-
 def test_a_later_middleware_editing_the_call_copy_leaves_history_unchanged(model):
     from strands.middleware import InvokeModelStage
 
