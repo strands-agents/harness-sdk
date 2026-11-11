@@ -1,5 +1,5 @@
 /**
- * What a summary request reads: messages and tool results rendered as content blocks a user turn accepts.
+ * Messages and tool results rendered as content blocks that can go back into model input.
  *
  * The summarize strategy renders the content it summarizes through these, and the retrieval tool renders the
  * messages it hands back the same way, so stored media reaches the model as media rather than as JSON.
@@ -13,16 +13,16 @@ import {
   TextBlock,
   ToolResultBlock,
   ToolUseBlock,
-} from '../../types/messages.js'
-import { AudioBlock, DocumentBlock, ImageBlock, VideoBlock } from '../../types/media.js'
-import { CitationsBlock } from '../../types/citations.js'
-import type { ContentBlock, ToolResultContent } from '../../types/messages.js'
+} from '../types/messages.js'
+import { AudioBlock, DocumentBlock, ImageBlock, VideoBlock } from '../types/media.js'
+import { CitationsBlock } from '../types/citations.js'
+import type { ContentBlock, ToolResultContent } from '../types/messages.js'
 
 /**
- * Converts a block to what the summarizer accepts in a user turn: text, images, and documents pass
- * through, other content is rendered as text or a placeholder, and the rest is left out.
+ * Converts a block to what a model takes as input: text, images, and documents pass through, other
+ * content is rendered as text or a placeholder, and the rest is left out.
  */
-function toSummarizerBlocks(block: ContentBlock | ToolResultContent): ContentBlock[] {
+function toInputBlocks(block: ContentBlock | ToolResultContent): ContentBlock[] {
   if (block instanceof TextBlock || block instanceof ImageBlock || block instanceof DocumentBlock) return [block]
   if (block instanceof JsonBlock) return [new TextBlock(JSON.stringify(block.json, null, 2))]
   if (block instanceof CitationsBlock) return block.content.map((content) => new TextBlock(content.text))
@@ -36,10 +36,10 @@ function toSummarizerBlocks(block: ContentBlock | ToolResultContent): ContentBlo
 }
 
 /**
- * Converts ToolResultContent[] to ContentBlock[] the summarizer accepts.
+ * Converts ToolResultContent[] to ContentBlock[] a model takes as input.
  */
 export function toolResultToContentBlocks(content: ToolResultContent[]): ContentBlock[] {
-  return content.flatMap(toSummarizerBlocks)
+  return content.flatMap(toInputBlocks)
 }
 
 /**
@@ -53,8 +53,7 @@ export function formatToolResultLabel(block: ToolResultBlock, name: string | und
 }
 
 /**
- * Converts a message's content to ContentBlocks for the summarizer, rendering tool calls and tool result
- * labels as text.
+ * Converts a message's content to ContentBlocks, rendering tool calls and tool result labels as text.
  */
 function messageToContentBlocks(message: Message, toolNames: Map<string, string>): ContentBlock[] {
   const blocks: ContentBlock[] = []
@@ -67,15 +66,15 @@ function messageToContentBlocks(message: Message, toolNames: Map<string, string>
     } else if (block instanceof ToolUseBlock) {
       blocks.push(new TextBlock(`[tool call: ${block.name}] ${JSON.stringify(block.input)}`))
     } else {
-      blocks.push(...toSummarizerBlocks(block))
+      blocks.push(...toInputBlocks(block))
     }
   }
   return blocks
 }
 
 /**
- * Flattens a range of messages into a single ContentBlock array for multimodal summarization.
- * Inserts role markers and separators so the summarizer understands message boundaries.
+ * Flattens a range of messages into a single ContentBlock array, for a summary request or a retrieval result.
+ * Inserts role markers and separators so the reader can tell the message boundaries.
  * Reasoning blocks are left out: they are assistant-only content, and their signatures are bound to the
  * conversation that produced them. Messages with nothing left get no role marker.
  */

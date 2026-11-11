@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
-import { flattenMessagesToContent, toolResultToContentBlocks } from '../summarize.js'
-import { AudioBlock, ImageBlock, VideoBlock } from '../../../types/media.js'
-import { CitationsBlock } from '../../../types/citations.js'
+import { flattenMessagesToContent, toolResultToContentBlocks } from '../content-rendering.js'
+import { AudioBlock, ImageBlock, VideoBlock } from '../../types/media.js'
+import { CitationsBlock } from '../../types/citations.js'
 import {
   CachePointBlock,
   GuardContentBlock,
@@ -13,7 +13,7 @@ import {
   TextBlock,
   ToolResultBlock,
   ToolUseBlock,
-} from '../../../types/messages.js'
+} from '../../types/messages.js'
 
 describe('flattenMessagesToContent', () => {
   it('excludes reasoning blocks', () => {

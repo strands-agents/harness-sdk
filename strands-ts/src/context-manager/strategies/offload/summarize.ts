@@ -19,7 +19,7 @@ import type { SummarizeResult } from '../../../models/summarize.js'
 import { unwrapInvocationContext, type InvocationContext } from '../../../agent/invocation-context.js'
 import type { LocalAgent } from '../../../types/agent.js'
 import type { ContextState } from '../../types.js'
-import { formatToolResultLabel, toolResultToContentBlocks } from '../../methods/summarize.js'
+import { formatToolResultLabel, toolResultToContentBlocks } from '../../content-rendering.js'
 import { formatOffloaded, formatSummarized, REMOVED_MESSAGES } from '../../placeholder.js'
 import {
   placeholderFor,

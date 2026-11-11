@@ -29,7 +29,7 @@ import type {
 import type { JSONValue } from '../types/json.js'
 import type { Tool } from '../tools/tool.js'
 import type { Stash } from './stash.js'
-import { flattenMessagesToContent } from './methods/summarize.js'
+import { flattenMessagesToContent } from './content-rendering.js'
 import { isOffloaded } from './placeholder.js'
 
 /** What a stash entry holds: one stored block, or the messages removed together. */
