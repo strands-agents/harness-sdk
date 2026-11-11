@@ -94,7 +94,7 @@ describe('SageMakerDecisionModel', () => {
       expect(mockSageMakerRuntimeClient).toHaveBeenCalledWith({
         region: 'us-east-1',
         maxAttempts: 5,
-        customUserAgent: 'my-app strands-agents-ts-sdk',
+        customUserAgent: [['my-app'], ['strands-agents-ts-sdk']],
       })
     })
 

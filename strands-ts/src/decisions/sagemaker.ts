@@ -70,9 +70,11 @@ export class SageMakerDecisionModel extends DecisionModel {
     }
     this._endpointName = endpointName
     this._providedClient = options.client
-    const customUserAgent = options.clientConfig?.customUserAgent
-      ? `${options.clientConfig.customUserAgent} strands-agents-ts-sdk`
-      : 'strands-agents-ts-sdk'
+    const userAgent = options.clientConfig?.customUserAgent
+    const customUserAgent: [string, string?][] = [
+      ...(typeof userAgent === 'string' ? [[userAgent] as [string]] : (userAgent ?? [])),
+      ['strands-agents-ts-sdk'],
+    ]
     this._clientConfig = {
       ...options.clientConfig,
       ...(options.region && { region: options.region }),
