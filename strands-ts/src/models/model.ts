@@ -422,7 +422,7 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
    *
    * A provider that knows better than the shared model info overrides this getter: put its facts over
    * `super.modelInfo`, then the user's `getConfig().modelInfo` over those so the override still wins:
-   * `mergeModelInfo(super.modelInfo, { capabilities: { promptCaching: 'auto' } }, config.modelInfo)`.
+   * `{ ...info, capabilities: { ...info.capabilities, promptCaching: 'auto', ...config.modelInfo?.capabilities } }`.
    * Do not read {@link stateful} inside the override; it reads this getter.
    */
   get modelInfo(): ModelInfo {

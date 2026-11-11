@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { mergeModelInfo, type ModelInfo, type ReasoningCapability } from '../model-info.js'
+import { mergeModelInfo, type ModelInfo } from '../model-info.js'
 
 const base: ModelInfo = {
   capabilities: { stateful: false, promptCaching: 'cachePoints' },
@@ -34,35 +34,6 @@ describe('mergeModelInfo', () => {
 
   it('leaves out sections with nothing known', () => {
     expect(mergeModelInfo({}, undefined, { limits: { contextWindow: undefined } })).toEqual({})
-    expect(mergeModelInfo({ capabilities: { reasoning: { defaultEffort: undefined } } })).toEqual({})
-  })
-
-  it('merges the nested reasoning record field by field', () => {
-    const withEffort: ModelInfo = { capabilities: { stateful: false, reasoning: { defaultEffort: 'high' } } }
-
-    const inherited = mergeModelInfo(
-      withEffort,
-      { capabilities: { promptCaching: 'auto' } },
-      { capabilities: { reasoning: { defaultEffort: undefined } } }
-    )
-    const overridden = mergeModelInfo(withEffort, { capabilities: { reasoning: { defaultEffort: 'medium' } } })
-
-    expect(inherited.capabilities).toEqual({
-      stateful: false,
-      promptCaching: 'auto',
-      reasoning: { defaultEffort: 'high' },
-    })
-    expect(overridden.capabilities).toEqual({ stateful: false, reasoning: { defaultEffort: 'medium' } })
-    expect(Object.isFrozen(overridden.capabilities?.reasoning)).toBe(true)
-  })
-
-  it('treats null and a non-record where a record belongs as unknown (untyped callers)', () => {
-    const merged = mergeModelInfo(
-      { capabilities: { stateful: false, reasoning: 'high' as unknown as ReasoningCapability } },
-      { capabilities: { stateful: null as unknown as boolean, reasoning: { defaultEffort: 'medium' } } }
-    )
-
-    expect(merged.capabilities).toEqual({ stateful: false, reasoning: { defaultEffort: 'medium' } })
   })
 
   it('returns a frozen record', () => {

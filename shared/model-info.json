@@ -13,9 +13,7 @@
       },
       "capabilities": {
         "promptCaching": "cachePoints",
-        "reasoning": {
-          "defaultEffort": "high"
-        }
+        "defaultEffort": "high"
       }
     },
     "claude-sonnet-4-20250514": {
@@ -45,9 +43,7 @@
       },
       "capabilities": {
         "promptCaching": "cachePoints",
-        "reasoning": {
-          "defaultEffort": "high"
-        }
+        "defaultEffort": "high"
       }
     },
     "claude-opus-4-7": {
@@ -57,9 +53,7 @@
       },
       "capabilities": {
         "promptCaching": "cachePoints",
-        "reasoning": {
-          "defaultEffort": "xhigh"
-        }
+        "defaultEffort": "xhigh"
       }
     },
     "claude-opus-4-8": {
@@ -72,9 +66,7 @@
         "forcedToolChoice": true,
         "nativeStructuredOutput": false,
         "temporaryMessages": true,
-        "reasoning": {
-          "defaultEffort": "high"
-        }
+        "defaultEffort": "high"
       }
     },
     "claude-opus-5": {
@@ -87,9 +79,7 @@
         "forcedToolChoice": true,
         "nativeStructuredOutput": true,
         "temporaryMessages": true,
-        "reasoning": {
-          "defaultEffort": "high"
-        }
+        "defaultEffort": "high"
       }
     },
     "claude-opus-5-5": {
@@ -103,9 +93,7 @@
         "nativeStructuredOutput": true,
         "serverSideSummary": true,
         "temporaryMessages": true,
-        "reasoning": {
-          "defaultEffort": "medium"
-        }
+        "defaultEffort": "medium"
       }
     },
     "claude-fable-5": {
@@ -116,9 +104,7 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "temporaryMessages": true,
-        "reasoning": {
-          "defaultEffort": "high"
-        }
+        "defaultEffort": "high"
       }
     },
     "claude-fable-5-1": {
@@ -131,9 +117,7 @@
         "forcedToolChoice": false,
         "serverSideSummary": true,
         "temporaryMessages": true,
-        "reasoning": {
-          "defaultEffort": "high"
-        }
+        "defaultEffort": "high"
       }
     },
     "claude-fable-5-2": {
@@ -147,9 +131,7 @@
         "nativeStructuredOutput": true,
         "serverSideSummary": true,
         "temporaryMessages": true,
-        "reasoning": {
-          "defaultEffort": "high"
-        }
+        "defaultEffort": "high"
       }
     },
     "claude-sonnet-5": {
@@ -161,9 +143,7 @@
         "promptCaching": "cachePoints",
         "forcedToolChoice": true,
         "nativeStructuredOutput": false,
-        "reasoning": {
-          "defaultEffort": "high"
-        }
+        "defaultEffort": "high"
       }
     },
     "claude-sonnet-5-5": {
@@ -177,9 +157,7 @@
         "nativeStructuredOutput": true,
         "serverSideSummary": true,
         "temporaryMessages": true,
-        "reasoning": {
-          "defaultEffort": "medium"
-        }
+        "defaultEffort": "medium"
       }
     },
     "claude-haiku-5-5": {
@@ -193,9 +171,7 @@
         "nativeStructuredOutput": true,
         "serverSideSummary": true,
         "temporaryMessages": true,
-        "reasoning": {
-          "defaultEffort": "medium"
-        }
+        "defaultEffort": "medium"
       }
     },
     "claude-opus-4-5": {
@@ -316,9 +292,7 @@
         "nativeStructuredOutput": true,
         "serverSideSummary": true,
         "temporaryMessages": true,
-        "reasoning": {
-          "defaultEffort": "high"
-        }
+        "defaultEffort": "high"
       }
     },
     "claude-mythos-preview": {
@@ -409,9 +383,7 @@
       },
       "capabilities": {
         "promptCaching": "cachePoints",
-        "reasoning": {
-          "defaultEffort": "low"
-        }
+        "defaultEffort": "low"
       }
     },
     "gpt-6.1-sol": {
@@ -420,9 +392,7 @@
       },
       "capabilities": {
         "promptCaching": "cachePoints",
-        "reasoning": {
-          "defaultEffort": "low"
-        }
+        "defaultEffort": "low"
       }
     },
     "openai.gpt-6.1-sol": {
@@ -431,9 +401,7 @@
       },
       "capabilities": {
         "promptCaching": "cachePoints",
-        "reasoning": {
-          "defaultEffort": "low"
-        }
+        "defaultEffort": "low"
       }
     },
     "gpt-6.1-terra": {
@@ -442,9 +410,7 @@
       },
       "capabilities": {
         "promptCaching": "cachePoints",
-        "reasoning": {
-          "defaultEffort": "low"
-        }
+        "defaultEffort": "low"
       }
     },
     "openai.gpt-6.1-terra": {
@@ -452,9 +418,7 @@
         "contextWindow": 1050000
       },
       "capabilities": {
-        "reasoning": {
-          "defaultEffort": "low"
-        }
+        "defaultEffort": "low"
       }
     },
     "gpt-6-sol": {
@@ -463,9 +427,7 @@
       },
       "capabilities": {
         "promptCaching": "cachePoints",
-        "reasoning": {
-          "defaultEffort": "medium"
-        }
+        "defaultEffort": "medium"
       }
     },
     "gpt-6-luna": {
@@ -474,9 +436,7 @@
       },
       "capabilities": {
         "promptCaching": "cachePoints",
-        "reasoning": {
-          "defaultEffort": "medium"
-        }
+        "defaultEffort": "medium"
       }
     },
     "gpt-6-cyber": {
@@ -490,9 +450,7 @@
       },
       "capabilities": {
         "promptCaching": "cachePoints",
-        "reasoning": {
-          "defaultEffort": "medium"
-        }
+        "defaultEffort": "medium"
       }
     },
     "gpt-5.6-sol": {
@@ -501,9 +459,7 @@
       },
       "capabilities": {
         "promptCaching": "cachePoints",
-        "reasoning": {
-          "defaultEffort": "low"
-        }
+        "defaultEffort": "low"
       }
     },
     "gpt-5.6-terra": {
@@ -512,9 +468,7 @@
       },
       "capabilities": {
         "promptCaching": "cachePoints",
-        "reasoning": {
-          "defaultEffort": "medium"
-        }
+        "defaultEffort": "medium"
       }
     },
     "gpt-5.6-luna": {
@@ -523,9 +477,7 @@
       },
       "capabilities": {
         "promptCaching": "cachePoints",
-        "reasoning": {
-          "defaultEffort": "medium"
-        }
+        "defaultEffort": "medium"
       }
     },
     "openai.gpt-5.6-cyber": {
@@ -543,9 +495,7 @@
         "contextWindow": 1050000
       },
       "capabilities": {
-        "reasoning": {
-          "defaultEffort": "medium"
-        }
+        "defaultEffort": "medium"
       }
     },
     "gpt-5.5-pro": {
@@ -558,9 +508,7 @@
         "contextWindow": 1050000
       },
       "capabilities": {
-        "reasoning": {
-          "defaultEffort": "medium"
-        }
+        "defaultEffort": "medium"
       }
     },
     "gpt-5.4-pro": {
@@ -573,9 +521,7 @@
         "contextWindow": 272000
       },
       "capabilities": {
-        "reasoning": {
-          "defaultEffort": "medium"
-        }
+        "defaultEffort": "medium"
       }
     },
     "gpt-5.4-nano": {
@@ -588,9 +534,7 @@
         "contextWindow": 272000
       },
       "capabilities": {
-        "reasoning": {
-          "defaultEffort": "medium"
-        }
+        "defaultEffort": "medium"
       }
     },
     "gpt-5.2-pro": {
@@ -603,9 +547,7 @@
         "contextWindow": 272000
       },
       "capabilities": {
-        "reasoning": {
-          "defaultEffort": "medium"
-        }
+        "defaultEffort": "medium"
       }
     },
     "gpt-5": {
@@ -613,9 +555,7 @@
         "contextWindow": 272000
       },
       "capabilities": {
-        "reasoning": {
-          "defaultEffort": "medium"
-        }
+        "defaultEffort": "medium"
       }
     },
     "gpt-5-mini": {
@@ -718,9 +658,7 @@
         "contextWindow": 1048576
       },
       "capabilities": {
-        "reasoning": {
-          "defaultEffort": "high"
-        }
+        "defaultEffort": "high"
       }
     },
     "gemini-3-flash-preview": {
@@ -728,9 +666,7 @@
         "contextWindow": 1048576
       },
       "capabilities": {
-        "reasoning": {
-          "defaultEffort": "high"
-        }
+        "defaultEffort": "high"
       }
     },
     "gemini-3.6-flash": {
@@ -743,9 +679,7 @@
         "contextWindow": 1048576
       },
       "capabilities": {
-        "reasoning": {
-          "defaultEffort": "high"
-        }
+        "defaultEffort": "high"
       }
     },
     "gemini-3.5-flash-lite": {
@@ -753,9 +687,7 @@
         "contextWindow": 1048576
       },
       "capabilities": {
-        "reasoning": {
-          "defaultEffort": "high"
-        }
+        "defaultEffort": "high"
       }
     },
     "gemini-3.1-flash-lite": {
@@ -763,9 +695,7 @@
         "contextWindow": 1048576
       },
       "capabilities": {
-        "reasoning": {
-          "defaultEffort": "high"
-        }
+        "defaultEffort": "high"
       }
     },
     "gemini-3.1-pro-preview": {
@@ -773,9 +703,7 @@
         "contextWindow": 1048576
       },
       "capabilities": {
-        "reasoning": {
-          "defaultEffort": "high"
-        }
+        "defaultEffort": "high"
       }
     },
     "gemini-3.1-flash-lite-preview": {
@@ -783,9 +711,7 @@
         "contextWindow": 1048576
       },
       "capabilities": {
-        "reasoning": {
-          "defaultEffort": "high"
-        }
+        "defaultEffort": "high"
       }
     },
     "mistral-large-latest": {
@@ -828,9 +754,7 @@
         "contextWindow": 128000
       },
       "capabilities": {
-        "reasoning": {
-          "defaultEffort": "medium"
-        }
+        "defaultEffort": "medium"
       }
     },
     "openai.gpt-oss-20b": {
@@ -838,9 +762,7 @@
         "contextWindow": 128000
       },
       "capabilities": {
-        "reasoning": {
-          "defaultEffort": "medium"
-        }
+        "defaultEffort": "medium"
       }
     },
     "openai.gpt-oss-safeguard-120b": {
@@ -933,9 +855,7 @@
         "contextWindow": 131072
       },
       "capabilities": {
-        "reasoning": {
-          "defaultEffort": "medium"
-        }
+        "defaultEffort": "medium"
       }
     },
     "gpt-oss-20b": {
@@ -943,9 +863,7 @@
         "contextWindow": 131072
       },
       "capabilities": {
-        "reasoning": {
-          "defaultEffort": "medium"
-        }
+        "defaultEffort": "medium"
       }
     },
     "gemini-4-argon": {
