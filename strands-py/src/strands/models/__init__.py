@@ -14,6 +14,7 @@ from ._model_info import (
     ReasoningCapability,
     lookup_model_info,
 )
+from ._summarize import SummarizeResult
 from .bedrock import BedrockModel
 from .model import BaseModelConfig, CacheConfig, CacheToolsConfig, Model
 from .routing import (
@@ -49,6 +50,7 @@ __all__ = [
     "RoutingCandidate",
     "RoutingContext",
     "RoutingStrategy",
+    "SummarizeResult",
     "lookup_model_info",
 ]
 

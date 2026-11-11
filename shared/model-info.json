@@ -71,6 +71,7 @@
         "promptCaching": "cachePoints",
         "forcedToolChoice": true,
         "nativeStructuredOutput": false,
+        "temporaryMessages": true,
         "reasoning": {
           "defaultEffort": "high"
         }
@@ -85,6 +86,7 @@
         "promptCaching": "cachePoints",
         "forcedToolChoice": true,
         "nativeStructuredOutput": true,
+        "temporaryMessages": true,
         "reasoning": {
           "defaultEffort": "high"
         }
@@ -99,6 +101,8 @@
         "promptCaching": "cachePoints",
         "forcedToolChoice": false,
         "nativeStructuredOutput": true,
+        "serverSideSummary": true,
+        "temporaryMessages": true,
         "reasoning": {
           "defaultEffort": "medium"
         }
@@ -111,6 +115,7 @@
       },
       "capabilities": {
         "promptCaching": "cachePoints",
+        "temporaryMessages": true,
         "reasoning": {
           "defaultEffort": "high"
         }
@@ -124,6 +129,24 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "forcedToolChoice": false,
+        "serverSideSummary": true,
+        "temporaryMessages": true,
+        "reasoning": {
+          "defaultEffort": "high"
+        }
+      }
+    },
+    "claude-fable-5-2": {
+      "limits": {
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000
+      },
+      "capabilities": {
+        "promptCaching": "cachePoints",
+        "forcedToolChoice": false,
+        "nativeStructuredOutput": true,
+        "serverSideSummary": true,
+        "temporaryMessages": true,
         "reasoning": {
           "defaultEffort": "high"
         }
@@ -152,6 +175,8 @@
         "promptCaching": "cachePoints",
         "forcedToolChoice": false,
         "nativeStructuredOutput": true,
+        "serverSideSummary": true,
+        "temporaryMessages": true,
         "reasoning": {
           "defaultEffort": "medium"
         }
@@ -166,6 +191,8 @@
         "promptCaching": "cachePoints",
         "forcedToolChoice": true,
         "nativeStructuredOutput": true,
+        "serverSideSummary": true,
+        "temporaryMessages": true,
         "reasoning": {
           "defaultEffort": "medium"
         }
@@ -278,6 +305,22 @@
         "promptCaching": "cachePoints"
       }
     },
+    "claude-mythos-5-2": {
+      "limits": {
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000
+      },
+      "capabilities": {
+        "promptCaching": "cachePoints",
+        "forcedToolChoice": false,
+        "nativeStructuredOutput": true,
+        "serverSideSummary": true,
+        "temporaryMessages": true,
+        "reasoning": {
+          "defaultEffort": "high"
+        }
+      }
+    },
     "claude-mythos-preview": {
       "limits": {
         "contextWindow": 1000000
@@ -365,6 +408,7 @@
         "contextWindow": 1050000
       },
       "capabilities": {
+        "promptCaching": "cachePoints",
         "reasoning": {
           "defaultEffort": "low"
         }
@@ -375,6 +419,7 @@
         "contextWindow": 1050000
       },
       "capabilities": {
+        "promptCaching": "cachePoints",
         "reasoning": {
           "defaultEffort": "low"
         }
@@ -385,6 +430,7 @@
         "contextWindow": 1000000
       },
       "capabilities": {
+        "promptCaching": "cachePoints",
         "reasoning": {
           "defaultEffort": "low"
         }
@@ -395,6 +441,7 @@
         "contextWindow": 1050000
       },
       "capabilities": {
+        "promptCaching": "cachePoints",
         "reasoning": {
           "defaultEffort": "low"
         }
@@ -415,6 +462,7 @@
         "contextWindow": 1050000
       },
       "capabilities": {
+        "promptCaching": "cachePoints",
         "reasoning": {
           "defaultEffort": "medium"
         }
@@ -425,9 +473,15 @@
         "contextWindow": 1050000
       },
       "capabilities": {
+        "promptCaching": "cachePoints",
         "reasoning": {
           "defaultEffort": "medium"
         }
+      }
+    },
+    "gpt-6-cyber": {
+      "limits": {
+        "contextWindow": 1050000
       }
     },
     "gpt-5.6": {
@@ -435,6 +489,7 @@
         "contextWindow": 1050000
       },
       "capabilities": {
+        "promptCaching": "cachePoints",
         "reasoning": {
           "defaultEffort": "medium"
         }
@@ -445,6 +500,7 @@
         "contextWindow": 1050000
       },
       "capabilities": {
+        "promptCaching": "cachePoints",
         "reasoning": {
           "defaultEffort": "low"
         }
@@ -455,6 +511,7 @@
         "contextWindow": 1050000
       },
       "capabilities": {
+        "promptCaching": "cachePoints",
         "reasoning": {
           "defaultEffort": "medium"
         }
@@ -465,6 +522,7 @@
         "contextWindow": 1050000
       },
       "capabilities": {
+        "promptCaching": "cachePoints",
         "reasoning": {
           "defaultEffort": "medium"
         }

@@ -1,8 +1,46 @@
 import { spawn } from 'node:child_process'
+import { compare, valid } from 'semver'
+import { readCliVersion } from '../package-version.js'
+import { captureCommand, captureNpm, npmInvocation } from '../terminal/npm.js'
 
-import { readCliVersion } from '../tui/package-version.js'
-import { CLI_PACKAGE, compareVersions, publishedVersion } from '../tui/update-check.js'
-import { captureCommand, npmInvocation } from '../tui/npm.js'
+export const CLI_PACKAGE = '@strands-agents/cli'
+
+export interface UpdateCheckOptions {
+  currentVersion?: string
+  resolveLatest?: () => Promise<string>
+}
+
+/** Resolves the latest published CLI version when it is newer than this one, or undefined when unknown. */
+export async function availableCliUpdate(options: UpdateCheckOptions = {}): Promise<string | undefined> {
+  const currentVersion = options.currentVersion ?? readCliVersion()
+  if (currentVersion.includes('development')) {
+    return undefined
+  }
+  try {
+    const latestVersion = await (options.resolveLatest ?? resolveLatestCliVersion)()
+    return compareVersions(latestVersion, currentVersion) === 1 ? latestVersion : undefined
+  } catch {
+    // Setup stays usable offline; the notice only appears when npm resolves the configured registry.
+    return undefined
+  }
+}
+
+async function resolveLatestCliVersion(): Promise<string> {
+  return publishedVersion(await captureNpm(['view', `${CLI_PACKAGE}@latest`, 'version', '--json'], { timeout: 3_000 }))
+}
+
+export function publishedVersion(output: string): string {
+  const parsed = JSON.parse(output) as unknown
+  if (typeof parsed !== 'string' || !parsed.trim()) {
+    throw new Error('npm returned an invalid package version')
+  }
+  return parsed.trim()
+}
+
+/** Orders two versions by semver precedence, or undefined when either is not a valid version. */
+export function compareVersions(candidate: string, current: string): -1 | 0 | 1 | undefined {
+  return valid(candidate) && valid(current) ? compare(candidate, current) : undefined
+}
 
 export interface UpdateRunner {
   capture(command: string, args: string[]): Promise<string>
@@ -31,7 +69,7 @@ export async function updateCli(options: UpdateOptions = {}): Promise<number> {
 
   if (currentVersion.includes('development')) {
     errorOutput.write(
-      'error: `strands update` is unavailable from a development checkout. Pull the latest source and run `npm run setup` instead.\n'
+      'error: This is a development checkout, so npm cannot update it. Update it with Git; `npm run setup` only rebuilds the local CLI afterward.\n'
     )
     return 1
   }
@@ -71,9 +109,7 @@ export async function updateCli(options: UpdateOptions = {}): Promise<number> {
 }
 
 const nodeUpdateRunner: UpdateRunner = {
-  async capture(command, args) {
-    return captureCommand(command, args)
-  },
+  capture: captureCommand,
   async inherit(command, args) {
     return new Promise<number>((resolve, reject) => {
       const child = spawn(command, args, { stdio: 'inherit' })

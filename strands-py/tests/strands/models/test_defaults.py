@@ -32,6 +32,11 @@ class TestGetContextWindowLimit:
         assert get_context_window_limit("anthropic.claude-haiku-5-5") == 1_000_000
         assert get_context_window_limit("eu.anthropic.claude-haiku-5-5") == 1_000_000
         assert get_context_window_limit("global.anthropic.claude-haiku-5-5") == 1_000_000
+        # Claude Fable 5.2 and Mythos 5.2 (#5986).
+        assert get_context_window_limit("claude-fable-5-2") == 1_000_000
+        assert get_context_window_limit("global.anthropic.claude-fable-5-2") == 1_000_000
+        assert get_context_window_limit("claude-mythos-5-2") == 1_000_000
+        assert get_context_window_limit("us.anthropic.claude-mythos-5-2") == 1_000_000
 
     def test_known_bedrock_nova(self):
         assert get_context_window_limit("amazon.nova-pro-v1:0") == 300_000
@@ -109,6 +114,7 @@ class TestGetContextWindowLimit:
         assert get_context_window_limit("gpt-6.1-terra") == 1_050_000
         assert get_context_window_limit("gpt-6-sol") == 1_050_000
         assert get_context_window_limit("gpt-6-luna") == 1_050_000
+        assert get_context_window_limit("gpt-6-cyber") == 1_050_000
         assert get_context_window_limit("gpt-5.4") == 1_050_000
         assert get_context_window_limit("gpt-4o") == 128_000
         assert get_context_window_limit("o3") == 200_000

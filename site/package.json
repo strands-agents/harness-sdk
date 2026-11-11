@@ -3,10 +3,10 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "prebuild": "npm run samples:sync",
+    "prebuild": "npm run samples:sync && npm run external-docs:generate",
     "build": "astro build",
     "build:all": "npm run sdk:generate && npm run build",
-    "predev": "npm run samples:sync",
+    "predev": "npm run samples:sync && npm run external-docs:generate",
     "dev": "astro dev",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
@@ -25,6 +25,8 @@
     "changelog:sync": "tsx scripts/changelog/sync.ts",
     "catalog:stats": "tsx scripts/catalog/refresh-stats.ts",
     "samples:sync": "tsx scripts/samples/sync.ts",
+    "external-docs:generate": "tsx scripts/external-docs/cli.ts",
+    "external-docs:update-lock": "tsx scripts/external-docs/update-lock.ts",
     "astro": "astro"
   },
   "author": "",
@@ -63,7 +65,7 @@
   },
   "devDependencies": {
     "@astrojs/markdown-remark": "^7.3.5",
-    "@astrojs/markdown-satteri": "^0.4.5",
+    "@astrojs/markdown-satteri": "^0.4.6",
     "@astrojs/starlight": "^0.42.7",
     "@octokit/rest": "^22.0.1",
     "@types/js-yaml": "^4.0.9",
@@ -85,7 +87,7 @@
     "typedoc": "^0.28.20",
     "typedoc-plugin-markdown": "^4.14.1",
     "unified": "^11.0.5",
-    "unist-util-visit": "^5.1.0",
+    "unist-util-visit": "^5.2.0",
     "vitest": "^4.1.6"
   },
   "overrides": {

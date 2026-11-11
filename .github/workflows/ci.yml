@@ -171,8 +171,22 @@ jobs:
     uses: ./.github/workflows/harness-cli-test-lint.yml
     permissions:
       contents: read
-    with:
-      ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+  cli-tui-integration:
+    name: Strands CLI TUI Integration
+    needs: detect-changes
+    if: needs.detect-changes.outputs.strands-cli == 'true'
+    uses: ./.github/workflows/harness-cli-tui-integration-test.yml
+    permissions:
+      contents: read
+
+  cli-package:
+    name: Strands CLI Package
+    needs: detect-changes
+    if: needs.detect-changes.outputs.strands-cli == 'true'
+    uses: ./.github/workflows/harness-cli-test-package-pack.yml
+    permissions:
+      contents: read
 
   pr-metrics:
     name: PR Metrics Scripts
@@ -224,11 +238,26 @@ jobs:
   ci-gate:
     name: CI Gate
     if: always()
-    needs: [detect-changes, dependency-review, python, typescript, docs, mcp, harness-python, harness-typescript, cli, pr-metrics, integ-metrics]
+    needs:
+      [
+        detect-changes,
+        dependency-review,
+        python,
+        typescript,
+        docs,
+        mcp,
+        harness-python,
+        harness-typescript,
+        cli,
+        cli-tui-integration,
+        cli-package,
+        pr-metrics,
+        integ-metrics,
+      ]
     runs-on: strands-agents_ubuntu-latest_4-core
     permissions: {}
     steps:
       - uses: re-actors/alls-green@b5b5b37504aa4183270bd3d855c52a67f212be35 # release/v1
         with:
-          allowed-skips: dependency-review, python, typescript, docs, mcp, harness-python, harness-typescript, cli, pr-metrics, integ-metrics
+          allowed-skips: dependency-review, python, typescript, docs, mcp, harness-python, harness-typescript, cli, cli-tui-integration, cli-package, pr-metrics, integ-metrics
           jobs: ${{ toJSON(needs) }}

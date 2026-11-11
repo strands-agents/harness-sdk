@@ -7,9 +7,8 @@ name: "Harness CLI: Integration Test"
 # environment before any credentialed job runs, and the test job checks out the
 # PR head.
 #
-# Reusable too: release-harness-cli.yml calls it with an explicit `ref`; the
-# authorization-check is skipped on that path because the caller is
-# workflow_dispatch-gated (repo write access).
+# Releases provide a full `release-sha`, verified against origin/main history
+# before repository code runs or AWS credentials are configured.
 
 on:
   pull_request_target:
@@ -21,58 +20,52 @@ on:
     types: [checks_requested]
   workflow_call:
     inputs:
-      ref:
+      release-sha:
+        description: Full release commit SHA from origin/main history
         required: true
         type: string
 
 concurrency:
   group: harness-cli-integration-test-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ inputs.ref == '' && github.event_name == 'pull_request_target' }}
+  cancel-in-progress: ${{ inputs.release-sha == '' && github.event_name == 'pull_request_target' }}
 
 jobs:
-  validate-call-ref:
-    name: Validate workflow_call ref
-    if: inputs.ref != ''
-    runs-on: strands-agents_ubuntu-latest_4-core
-    permissions:
-      contents: read
-    steps:
-      - name: Reject untrusted-shaped refs
-        env:
-          REF: ${{ inputs.ref }}
-        run: |
-          set -euo pipefail
-          case "$REF" in
-            refs/pull/*|*:*)
-              echo "::error::workflow_call ref '$REF' looks like a fork PR or cross-repo ref."
-              exit 1
-              ;;
-          esac
-          echo "ref '$REF' passed shape check."
-
   authorization-check:
     name: Check access
-    needs: [validate-call-ref]
-    if: |
-      always() &&
-      (needs.validate-call-ref.result == 'success' || needs.validate-call-ref.result == 'skipped')
     permissions:
       contents: read
     runs-on: strands-agents_ubuntu-latest_4-core
     outputs:
-      approval-env: ${{ steps.auth.outputs.approval-env }}
+      approval-env: ${{ steps.auth.outputs.result }}
     steps:
       - name: Check Authorization
         id: auth
-        uses: strands-agents/devtools/authorization-check@main
+        uses: actions/github-script@v8
+        env:
+          SKIP_CHECK: ${{ github.event_name == 'merge_group' || inputs.release-sha != '' }}
         with:
-          skip-check: ${{ github.event_name == 'merge_group' || inputs.ref != '' }}
-          username: ${{ github.event.pull_request.user.login || 'invalid' }}
-          allowed-roles: 'maintain,triage,write,admin'
+          result-encoding: string
+          script: |
+            if (process.env.SKIP_CHECK === 'true') return 'auto-approve';
+            const pr = context.payload.pull_request;
+            if (!pr || pr.draft) return 'manual-approval';
+            const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
+              ...context.repo,
+              username: pr.user.login,
+            });
+            return ['maintain', 'triage', 'write', 'admin'].includes(data.role_name)
+              ? 'auto-approve'
+              : 'manual-approval';
 
   integration-test:
-    name: Run integration tests
-    runs-on: strands-agents_ubuntu-latest_4-core
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: strands-agents_ubuntu-latest_4-core, name: Run integration tests }
+          - { os: strands-agents_windows-latest_4-core, name: Run integration tests (Windows) }
     needs: authorization-check
     if: always() && needs.authorization-check.result == 'success'
     environment:
@@ -86,6 +79,37 @@ jobs:
       run:
         working-directory: strands-cli
     steps:
+      - name: Checkout head commit
+        if: github.event_name == 'pull_request_target'
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+          allow-unsafe-pr-checkout: true  # opt back into fork-PR checkout, blocked by default in checkout@v7
+
+      - name: Checkout event revision
+        if: github.event_name != 'pull_request_target'
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Select trusted release commit
+        if: inputs.release-sha != ''
+        shell: bash
+        working-directory: .
+        env:
+          RELEASE_SHA: ${{ inputs.release-sha }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] ||
+             ! git merge-base --is-ancestor "$RELEASE_SHA" refs/remotes/origin/main; then
+            echo "::error::release-sha must be a full commit SHA from origin/main history."
+            exit 1
+          fi
+          git checkout --detach "$RELEASE_SHA"
+
       - name: Configure Credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
@@ -93,18 +117,18 @@ jobs:
           aws-region: us-east-1
           mask-aws-account-id: true
 
-      - name: Checkout head commit
-        uses: actions/checkout@v7
-        with:
-          ref: ${{ inputs.ref || github.event.pull_request.head.sha }}
-          persist-credentials: false
-          allow-unsafe-pr-checkout: true  # opt back into fork-PR checkout, blocked by default in checkout@v7
-
       - name: Setup Node.js
         uses: actions/setup-node@v7
         with:
           node-version: 22
           package-manager-cache: false
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+
+      - name: Install PortAudio
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y portaudio19-dev
 
       - name: Install dependencies
         run: npm ci
@@ -112,6 +136,9 @@ jobs:
       - name: Build
         # The CLI e2e drives the built `strands` binary.
         run: npm run build
+
+      - name: Prepare and test voice runtime
+        run: npm run test:voice
 
       - name: Run integration tests
         env:

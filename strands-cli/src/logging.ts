@@ -16,7 +16,7 @@
  *                   in `STRANDS_CLI_LOG`
  */
 
-import { chmodSync, fchmodSync, mkdirSync, openSync, writeSync } from 'node:fs'
+import { fchmodSync, mkdirSync, openSync, writeSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { configureLogging as configureCliLogging } from '@strands-agents/harness'
@@ -69,15 +69,14 @@ export function initLogging(mode: CliRunMode, env: NodeJS.ProcessEnv = process.e
  * line is written to the held descriptor, so live TUI rendering isn't stalled by an open/close per
  * log call; writes stay synchronous so a crash-time log isn't lost in a buffer. The log can hold
  * prompts and tool output and the default path is in the shared temp dir, so the directory is
- * created `0o700` and the file opened `0o600`, and both are re-applied to a pre-existing path. If the
- * log file can't be prepared (e.g. an unwritable
+ * created `0o700` and the file kept `0o600`. Existing parent directories may be shared and retain
+ * their permissions. If the log file can't be prepared (e.g. an unwritable
  * temp dir) it degrades to a no-op logger so logging never breaks a run.
  */
 export function createFileLogger(filePath: string, level: LogLevel = 'debug'): Logger {
   let fd: number
   try {
     mkdirSync(dirname(filePath), { recursive: true, mode: 0o700 })
-    chmodSync(dirname(filePath), 0o700)
     fd = openSync(filePath, 'a', 0o600)
     fchmodSync(fd, 0o600)
   } catch {

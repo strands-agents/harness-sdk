@@ -109,7 +109,7 @@ session = boto3.Session(
 
 # Create a Bedrock model with the custom session
 bedrock_model = BedrockModel(
-    model_id="global.anthropic.claude-sonnet-5",
+    model_id="global.anthropic.claude-sonnet-5-5",
     boto_session=session
 )
 ```
@@ -186,7 +186,7 @@ You can specify which Bedrock model to use by passing in the model ID string dir
 from strands import Agent
 
 # Create an agent with a specific model by passing the model ID string
-agent = Agent(model="global.anthropic.claude-sonnet-5")
+agent = Agent(model="global.anthropic.claude-sonnet-5-5")
 
 response = agent("Tell me about Amazon Bedrock.")
 ```
@@ -307,9 +307,9 @@ boto_config = BotocoreConfig(
 
 # Create a configured Bedrock model
 bedrock_model = BedrockModel(
-    model_id="global.anthropic.claude-sonnet-5",
+    model_id="global.anthropic.claude-sonnet-5-5",
     region_name="us-east-1",  # Specify a different region than the default
-    temperature=0.3,
+    max_tokens=4096,
     stop_sequences=["###", "END"],
     boto_client_config=boto_config,
 )
@@ -359,7 +359,7 @@ Some Bedrock models only support non-streaming tool use. Set the streaming confi
 ```python
 # Streaming model (default)
 streaming_model = BedrockModel(
-    model_id="global.anthropic.claude-sonnet-5",
+    model_id="global.anthropic.claude-sonnet-5-5",
     streaming=True,  # This is the default
 )
 
@@ -393,7 +393,7 @@ from strands.models import BedrockModel
 
 # Create a Bedrock model that supports multimodal inputs
 bedrock_model = BedrockModel(
-    model_id="global.anthropic.claude-sonnet-5"
+    model_id="global.anthropic.claude-sonnet-5-5"
 )
 agent = Agent(model=bedrock_model)
 
@@ -492,7 +492,7 @@ from strands.models import BedrockModel
 
 # Using guardrails with BedrockModel
 bedrock_model = BedrockModel(
-    model_id="global.anthropic.claude-sonnet-5",
+    model_id="global.anthropic.claude-sonnet-5-5",
     guardrail_id="your-guardrail-id",
     guardrail_version="DRAFT",
     guardrail_trace="enabled",  # Options: "enabled", "disabled", "enabled_full"
@@ -557,13 +557,13 @@ You can update the model configuration during runtime:
 ```python
 # Create the model with initial configuration
 bedrock_model = BedrockModel(
-    model_id="global.anthropic.claude-sonnet-5",
-    temperature=0.7
+    model_id="global.anthropic.claude-haiku-5-5",
+    max_tokens=4096,
 )
 
 # Update configuration later
 bedrock_model.update_config(
-    temperature=0.3,
+    max_tokens=8192,
 )
 ```
 </Tab>
@@ -595,16 +595,16 @@ def update_model_id(model_id: str, agent: Agent) -> str:
 
 
 @tool
-def update_temperature(temperature: float, agent: Agent) -> str:
+def update_max_tokens(max_tokens: int, agent: Agent) -> str:
     """
-    Update the temperature of the agent
+    Update the maximum number of tokens the agent's model can generate
 
     Args:
-      temperature: Temperature value for the model to use.
+      max_tokens: Maximum number of tokens for the model to generate.
     """
-    print(f"Updating Temperature to {temperature}")
-    agent.model.update_config(temperature=temperature)
-    return f"Temperature updated to {temperature}"
+    print(f"Updating max_tokens to {max_tokens}")
+    agent.model.update_config(max_tokens=max_tokens)
+    return f"max_tokens updated to {max_tokens}"
 ```
 </Tab>
 <Tab label="TypeScript">
@@ -617,48 +617,77 @@ def update_temperature(temperature: float, agent: Agent) -> str:
 </Tab>
 </Tabs>
 
-### Reasoning Support
+### Reasoning support
 
-Amazon Bedrock models can provide detailed reasoning steps when generating responses. For detailed information about supported models and reasoning token configuration, see the [Amazon Bedrock documentation on inference reasoning](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-reasoning.html).
+Many models on Amazon Bedrock can reason through a problem before they answer. You turn
+reasoning on and set its depth through
+<Syntax py="additional_request_fields" ts="additionalRequestFields" />, which
+`BedrockModel` passes to the Converse API as `additionalModelRequestFields`. Each model
+family names these fields differently:
+
+| Model family | Reasoning fields | Reference |
+|--------------|------------------|-----------|
+| Anthropic Claude | `thinking: {"type": "adaptive"}`, with depth set by `output_config.effort`. Claude Opus 4.5, Claude Sonnet 4.5, Claude Haiku 4.5, and older models take `thinking: {"type": "enabled", "budget_tokens": N}` instead | [Adaptive thinking](https://docs.aws.amazon.com/bedrock/latest/userguide/claude-messages-adaptive-thinking.html), [extended thinking](https://docs.aws.amazon.com/bedrock/latest/userguide/claude-messages-extended-thinking.html) |
+| OpenAI GPT | OpenAI Chat Completions fields, such as `reasoning_effort: "high"` (or `"low"` or `"medium"`) on gpt-oss models | [OpenAI models](https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-openai.html) |
+
+GPT models served only through the OpenAI-compatible endpoint, such as GPT-5.6, use the
+[OpenAI Responses provider](./openai-responses) instead of `BedrockModel`. Set OpenAI's
+`reasoning` parameter in its `params`; see
+[OpenAI models through the OpenAI-compatible APIs](#openai-models-through-the-openai-compatible-apis). For other
+models, look up the fields on the model's page in
+[inference request parameters](https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters.html).
+
+This example sets reasoning depth on Claude Opus 5.5:
 
 <Tabs>
 <Tab label="Python">
-
-Enable reasoning on your [`BedrockModel`](@api/python/strands.models.bedrock):
 
 ```python
 from strands import Agent
 from strands.models import BedrockModel
 
-# Create a Bedrock model with reasoning configuration
 bedrock_model = BedrockModel(
-    model_id="global.anthropic.claude-sonnet-5",
+    model_id="global.anthropic.claude-opus-5-5",
     additional_request_fields={
-        "thinking": {
-            "type": "enabled",
-            "budget_tokens": 4096 # Minimum of 1,024
-        }
-    }
+        "thinking": {"type": "adaptive", "display": "summarized"},
+        "output_config": {"effort": "high"},
+    },
 )
 
-# Create an agent with the reasoning-enabled model
 agent = Agent(model=bedrock_model)
 
-# Ask a question that requires reasoning
-response = agent("If a train travels at 120 km/h and needs to cover 450 km, how long will the journey take?")
+response = agent(
+    "Two trains start 450 km apart and head toward each other at 120 km/h and 80 km/h. "
+    "A bird flies between them at 150 km/h until they meet. How far does the bird fly?"
+)
 ```
 </Tab>
 <Tab label="TypeScript">
 
-Enable reasoning on your [`BedrockModel`](@api/typescript/BedrockModel):
-
 ```typescript
+--8<-- "user-guide/sdk/model-providers/amazon-bedrock_imports.ts:reasoning_imports"
+
 --8<-- "user-guide/sdk/model-providers/amazon-bedrock.ts:reasoning"
 ```
 </Tab>
 </Tabs>
 
-> **Note**: Not all models support structured reasoning output. Check the [inference reasoning documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-reasoning.html) for details on supported models.
+Claude Opus 5.5 always reasons, at `medium` effort unless you set another level, and
+returns reasoning blocks with empty text unless you ask for `display: "summarized"`.
+
+#### Reading reasoning output
+
+Whichever model reasons, its reasoning arrives as `reasoningContent` blocks in the model
+response, separate from the response text. When you stream, Python callback handlers
+receive each reasoning delta with `reasoning=True` and `reasoningText`. In TypeScript, a
+`ModelStreamUpdateEvent` carries each `reasoningContentDelta`, and a `ContentBlockEvent`
+carries the assembled `ReasoningBlock`. See [streaming events](../streaming/events.md) for
+the full event list.
+
+Models can skip reasoning on simple requests, so don't assume every response has a
+reasoning block. Read reasoning from these blocks rather than prompting the model to write
+it into its answer: newer Claude models, such as Claude Opus 5.5 and Claude Sonnet 5.5,
+may refuse requests that try to pull their reasoning into the response text.
 
 ### Structured Output
 
@@ -732,7 +761,7 @@ You can enable native token counting with:
 
 ```python
 model = BedrockModel(
-    model_id="global.anthropic.claude-sonnet-5",
+    model_id="global.anthropic.claude-sonnet-5-5",
     use_native_token_count=True,
 )
 ```
@@ -747,38 +776,202 @@ You can enable native token counting with:
 
 ```typescript
 const model = new BedrockModel({
-  modelId: 'global.anthropic.claude-sonnet-5',
+  modelId: 'global.anthropic.claude-sonnet-5-5',
   useNativeTokenCount: true,
 })
 ```
 </Tab>
 </Tabs>
 
-### OpenAI-Compatible Endpoints (Mantle)
+### Other Bedrock APIs
 
-Mantle is not a separate service or model catalog: it is Amazon Bedrock's second
-endpoint family,
-[`bedrock-mantle`](https://docs.aws.amazon.com/bedrock/latest/userguide/bedrock-mantle.html),
-which serves Bedrock-hosted models through OpenAI-compatible APIs. The two families
-serve different, overlapping model sets: many models are only on the standard
-`bedrock-runtime` endpoint that `BedrockModel` uses, some model lines are only on
-`bedrock-mantle`, and some are on both. AWS lists which endpoint serves each model in
+To use a model that Amazon Bedrock only serves on `bedrock-mantle`, or a vendor feature
+that the Converse API doesn't expose (such as an Anthropic beta), call the model through
+its vendor's API instead of `BedrockModel`. For everything else, stay on `BedrockModel`:
+its Converse API gives every model on `bedrock-runtime` the same request shape.
+
+[`bedrock-mantle`](https://docs.aws.amazon.com/bedrock/latest/userguide/bedrock-mantle.html)
+isn't a separate service or model catalog. It is Bedrock's second endpoint family, and
+it serves Bedrock-hosted models through vendor APIs. The two families serve different,
+overlapping model sets: AWS lists which endpoint serves each model in
 [endpoint availability by model](https://docs.aws.amazon.com/bedrock/latest/userguide/models-endpoint-availability.html).
 
-Pick your provider by where the model is served. When it is on `bedrock-runtime`, use
-`BedrockModel` as described on the rest of this page (AWS recommends that endpoint
-when a model is on both). When it is served through Mantle, connect with the SDK's
-[OpenAI Responses provider](./openai-responses) instead, in one of the two ways below.
-In Python, that provider can also target `bedrock-runtime`; see
-[Choosing the Endpoint](#choosing-the-endpoint).
+To use a vendor API, build the vendor SDK's client for Bedrock and pass it to the
+matching model provider as `client`. The vendor SDK signs requests with your AWS
+credentials, and the model provider runs the agent loop on top of it. We chose this over
+Bedrock-specific wrappers because the vendor SDKs already ship Bedrock clients and keep
+them current.
 
-#### Connecting with AWS Credentials
+| API | Endpoint | Model provider | Client |
+|-----|----------|----------------|--------|
+| Anthropic Messages (InvokeModel) | `bedrock-runtime` | <Syntax py="AnthropicModel" ts="AnthropicModel" /> | <Syntax py="anthropic.AsyncAnthropicBedrock" ts="AnthropicBedrock" /> |
+| Anthropic Messages | `bedrock-mantle` | <Syntax py="AnthropicModel" ts="AnthropicModel" /> | <Syntax py="anthropic.AsyncAnthropicBedrockMantle" ts="AnthropicBedrockMantle" /> |
+| OpenAI Responses | both | <Syntax py="OpenAIResponsesModel" ts="OpenAIModel" /> | <Syntax py="openai.AsyncOpenAI" ts="OpenAI" /> |
+| OpenAI Chat Completions | both | <Syntax py="OpenAIModel" ts="OpenAIModel with api: 'chat'" /> | <Syntax py="openai.AsyncOpenAI" ts="OpenAI" /> |
 
-Pass <Syntax py="bedrock_mantle_config" ts="bedrockMantleConfig" /> and the provider
-derives the endpoint from your region, routes the model to the correct Mantle base
-path, and mints short-lived bearer tokens from your AWS credentials (via the
-standard credential chain), refreshing them so long-running agents survive token
-expiry:
+The model provider doesn't close a client you pass in. In Python, don't share one client
+across asyncio event loops.
+
+#### Claude through the Anthropic Messages API
+
+Pass Anthropic's Bedrock client to `AnthropicModel`. It uses your AWS credentials from
+the standard credential chain.
+
+<Tabs>
+<Tab label="Python">
+
+```python
+import anthropic
+from strands import Agent
+from strands.models.anthropic import AnthropicModel
+
+model = AnthropicModel(
+    model_id="global.anthropic.claude-sonnet-4-6",
+    max_tokens=4096,
+    client=anthropic.AsyncAnthropicBedrock(aws_region="us-west-2"),
+)
+
+agent = Agent(model=model)
+response = agent("What is 2+2?")
+print(response)
+```
+
+Requires `pip install 'strands-agents[anthropic]'`.
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/model-providers/amazon-bedrock_imports.ts:anthropic_bedrock_imports"
+
+--8<-- "user-guide/sdk/model-providers/amazon-bedrock.ts:anthropic_bedrock"
+```
+
+Requires `npm install @anthropic-ai/sdk @anthropic-ai/bedrock-sdk`.
+</Tab>
+</Tabs>
+
+Two differences from the Anthropic API apply on `bedrock-runtime`:
+
+- **Sampling parameters.** With Python `anthropic` 2.x or TypeScript
+  `@anthropic-ai/sdk` 1.x, Bedrock rejects `temperature` with
+  `Extra inputs are not permitted` unless the request body pins the Bedrock API version.
+  In Python, add `"extra_body": {"anthropic_version": "bedrock-2023-05-31"}` to
+  `params`. In TypeScript, add `anthropic_version: 'bedrock-2023-05-31'` to `params`.
+- **Throttling.** In Python, a throttling error that arrives in the middle of an
+  InvokeModel stream isn't raised as `ModelThrottledException`, so the agent doesn't
+  retry it. Use `BedrockModel` if you rely on Strands retrying throttled requests.
+
+To reach Claude on `bedrock-mantle` instead of InvokeModel on `bedrock-runtime`, swap in
+the `bedrock-mantle` client:
+
+<Tabs>
+<Tab label="Python">
+
+```python
+import anthropic
+from strands import Agent
+from strands.models.anthropic import AnthropicModel
+
+model = AnthropicModel(
+    model_id="anthropic.claude-haiku-4-5",
+    max_tokens=4096,
+    client=anthropic.AsyncAnthropicBedrockMantle(aws_region="us-west-2"),
+)
+
+agent = Agent(model=model)
+response = agent("What is 2+2?")
+print(response)
+```
+
+`AsyncAnthropicBedrockMantle` requires `anthropic` 0.91 or later.
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/model-providers/amazon-bedrock_imports.ts:anthropic_bedrock_mantle_imports"
+
+--8<-- "user-guide/sdk/model-providers/amazon-bedrock.ts:anthropic_bedrock_mantle"
+```
+
+Requires `npm install @anthropic-ai/sdk @anthropic-ai/bedrock-sdk`.
+</Tab>
+</Tabs>
+
+#### OpenAI models through the OpenAI-compatible APIs
+
+Point an OpenAI client at your region's Bedrock endpoint and give it a function that
+mints a bearer token from your AWS credentials. The client calls that function on every
+request, so long-running agents survive token expiry.
+
+<Tabs>
+<Tab label="Python">
+
+```python
+import asyncio
+
+from aws_bedrock_token_generator import provide_token
+from openai import AsyncOpenAI
+from strands import Agent
+from strands.models.openai_responses import OpenAIResponsesModel
+
+region = "us-east-1"
+
+
+async def bedrock_token() -> str:
+    return await asyncio.to_thread(provide_token, region=region)
+
+
+client = AsyncOpenAI(
+    base_url=f"https://bedrock-mantle.{region}.api.aws/v1",
+    api_key=bedrock_token,
+)
+
+model = OpenAIResponsesModel(model_id="openai.gpt-oss-120b", client=client)
+
+agent = Agent(model=model)
+response = agent("What is 2+2?")
+print(response)
+```
+
+Requires `pip install 'strands-agents[openai]'` with `openai` 1.106 or later, the first
+release that accepts a function as `api_key`. For Chat Completions, pass the same client
+to `OpenAIModel` from `strands.models.openai`.
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/model-providers/amazon-bedrock_imports.ts:openai_bedrock_client_imports"
+
+--8<-- "user-guide/sdk/model-providers/amazon-bedrock.ts:openai_bedrock_client"
+```
+
+Requires `npm install openai @aws/bedrock-token-generator`.
+</Tab>
+</Tabs>
+
+To authenticate with a
+[Bedrock API key](https://docs.aws.amazon.com/bedrock/latest/userguide/api-key-management.html)
+instead, pass the key string as the API key.
+
+The base URL depends on the endpoint and, on `bedrock-mantle`, on the model:
+
+| Endpoint | Base URL |
+|----------|----------|
+| `bedrock-runtime` | `https://bedrock-runtime.{region}.amazonaws.com/openai/v1` |
+| `bedrock-mantle`, most models | `https://bedrock-mantle.{region}.api.aws/v1` |
+| `bedrock-mantle`, newer lines such as `openai.gpt-5.*` and `xai.grok-4.*` | `https://bedrock-mantle.{region}.api.aws/openai/v1` |
+
+A wrong base path fails with HTTP 400. Only `bedrock-runtime` accepts
+[cross-Region inference](https://docs.aws.amazon.com/bedrock/latest/userguide/cross-region-inference.html)
+profile IDs such as `global.openai.gpt-5.6-luna`. AWS compares the two endpoints in
+[endpoints supported by Amazon Bedrock](https://docs.aws.amazon.com/bedrock/latest/userguide/endpoints.html).
+
+#### Letting Strands build the OpenAI client
+
+To skip building the client yourself, pass
+<Syntax py="bedrock_mantle_config" ts="bedrockMantleConfig" />. The provider derives
+the endpoint from your region, picks the `bedrock-mantle` base path for the model, and mints
+bearer tokens from your AWS credentials:
 
 <Tabs>
 <Tab label="Python">
@@ -814,75 +1007,8 @@ credentials to forward to the token generator
 (<Syntax py="credentials_provider" ts="credentials" />, a
 <Syntax py="botocore CredentialProvider" ts="static identity or provider function" plain />)
 and a token-lifetime override (<Syntax py="expiry" ts="expiresInSeconds" />). In
-Python, `boto_session` can also supply the region from a configured profile.
-
-#### Choosing the Endpoint
-
-The config targets `bedrock-mantle` by default. In Python, set `endpoint` to
-`bedrock-runtime`, which is where the OpenAI GPT models are served through
-[cross-Region inference](https://docs.aws.amazon.com/bedrock/latest/userguide/cross-region-inference.html)
-profile ids such as `global.openai.gpt-5.6-luna`:
-
-<Tabs>
-<Tab label="Python">
-
-```python
-from strands import Agent
-from strands.models.openai_responses import OpenAIResponsesModel
-
-model = OpenAIResponsesModel(
-    model_id="global.openai.gpt-5.6-luna",
-    bedrock_mantle_config={"endpoint": "bedrock-runtime", "region": "us-east-1"},
-)
-
-agent = Agent(model=model)
-response = agent("What is 2+2?")
-print(response)
-```
-</Tab>
-</Tabs>
-
-AWS compares what the two endpoints support in
-[endpoints supported by Amazon Bedrock](https://docs.aws.amazon.com/bedrock/latest/userguide/endpoints.html).
-
-#### Connecting with a Bedrock API Key
-
-Authenticate with a
-[Bedrock API key](https://docs.aws.amazon.com/bedrock/latest/userguide/api-key-management.html)
-and point the client at your region's Mantle endpoint yourself. Note that some model
-lines are served from `/openai/v1` rather than `/v1`; the config-based approach above
-picks the right path for you.
-
-<Tabs>
-<Tab label="Python">
-
-```python
-from strands import Agent
-from strands.models.openai_responses import OpenAIResponsesModel
-
-region = "us-east-1"
-model = OpenAIResponsesModel(
-    model_id="openai.gpt-oss-120b",
-    client_args={
-        "api_key": "<BEDROCK_API_KEY>",
-        "base_url": f"https://bedrock-mantle.{region}.api.aws/v1",
-    },
-)
-
-agent = Agent(model=model)
-response = agent("What is 2+2?")
-print(response)
-```
-</Tab>
-<Tab label="TypeScript">
-
-```typescript
---8<-- "user-guide/sdk/model-providers/amazon-bedrock_imports.ts:bedrock_mantle_imports"
-
---8<-- "user-guide/sdk/model-providers/amazon-bedrock.ts:bedrock_mantle"
-```
-</Tab>
-</Tabs>
+Python, `boto_session` can also supply the region from a configured profile, and
+`"endpoint": "bedrock-runtime"` targets `bedrock-runtime` instead of `bedrock-mantle`.
 
 ## Troubleshooting
 
@@ -897,13 +1023,13 @@ This typically indicates that the model requires Cross-Region Inference, as docu
 Instead of: 
 
 ```
-anthropic.claude-sonnet-5
+anthropic.claude-sonnet-5-5
 ```
 
 Use: 
 
 ```
-us.anthropic.claude-sonnet-5
+us.anthropic.claude-sonnet-5-5
 ```
 
 
@@ -912,7 +1038,7 @@ If you encounter the error:
 
 > ValidationException: An error occurred (ValidationException) when calling the ConverseStream operation: The provided model identifier is invalid
 
-This is very likely due to calling Bedrock with an inference model id, such as: `us.anthropic.claude-sonnet-5` from a region that does not [support inference profiles](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles-support.html). If so, pass in a valid model id, as follows:
+This is very likely due to calling Bedrock with an inference model id, such as: `us.anthropic.claude-sonnet-5-5` from a region that does not [support inference profiles](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles-support.html). If so, pass in a valid model id, as follows:
 
 <Tabs>
 <Tab label="Python">
@@ -934,14 +1060,14 @@ const agent = new Agent({
 
 :::note[Default Inference Model]
 
-Strands uses a default Claude 4 Sonnet inference model from the region of your credentials when no model is provided. So if you did not pass in any model id and are getting the above error, it's very likely due to the `region` from the credentials not supporting inference profiles.
+Strands uses a default Claude Sonnet 4.6 inference model from the region of your credentials when no model is provided. So if you did not pass in any model id and are getting the above error, it's very likely due to the `region` from the credentials not supporting inference profiles.
 :::
 
 ### CacheConfig with ARN-based inference profiles
 
 If you're using an ARN-based application inference profile as your `model_id` (e.g., `arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/abc123`), `CacheConfig(strategy="auto")` will not automatically enable prompt caching.
 
-The `strategy="auto"` detection checks the model ID string for `"claude"` or `"anthropic"` substrings. Cross-region inference profile IDs like `us.anthropic.claude-sonnet-5` contain `"anthropic"` and are detected correctly, but application inference profiles use opaque resource IDs (`application-inference-profile/abc123`) that carry no model name information, so detection returns `None`, caching is skipped, and Strands logs a warning: `model_id=<your-arn> | cache_config is enabled but this model does not support automatic caching`.
+The `strategy="auto"` detection checks the model ID string for `"claude"` or `"anthropic"` substrings. Cross-region inference profile IDs like `us.anthropic.claude-sonnet-5-5` contain `"anthropic"` and are detected correctly, but application inference profiles use opaque resource IDs (`application-inference-profile/abc123`) that carry no model name information, so detection returns `None`, caching is skipped, and Strands logs a warning: `model_id=<your-arn> | cache_config is enabled but this model does not support automatic caching`.
 
 Use `strategy="anthropic"` explicitly to fix this:
 

@@ -34,6 +34,7 @@ import { Model } from '../models/model.js'
 import { ModelProxy } from '../models/model-proxy.js'
 import { ModelRouter } from '../models/routing/router.js'
 import type { BaseModelConfig, StreamAggregatedResult, StreamOptions } from '../models/model.js'
+import type { AgentMetadata } from './agent-metadata.js'
 import { ModelPlugin } from '../plugins/model-plugin.js'
 import { totalPromptTokens, isModelStreamEvent } from '../models/streaming.js'
 import { InvocationContextImpl, reachedLimit, resolveInvocationContext } from './invocation-context.js'
@@ -529,6 +530,15 @@ export class Agent implements LocalAgent, InvokableAgent {
       this._sessionId = globalThis.crypto.randomUUID().slice(0, 8)
     }
     return this._sessionId
+  }
+
+  /**
+   * Metadata the agent passes to its model on `stream()`; the session id only when a session manager is attached.
+   *
+   * @internal
+   */
+  get agentMetadata(): AgentMetadata | undefined {
+    return this.sessionManager ? { sessionId: this.sessionId } : undefined
   }
 
   private readonly _hooksRegistry: HookRegistryImplementation
@@ -2629,7 +2639,7 @@ export class Agent implements LocalAgent, InvokableAgent {
             ...(ctx.toolChoice && { toolChoice: ctx.toolChoice }),
             // Omitted when zero, so an ordinary call's options are unchanged.
             ...(ctx.dynamicTrailingBlocks ? { dynamicTrailingBlocks: ctx.dynamicTrailingBlocks } : {}),
-            ...(self.sessionManager ? { agentMetadata: { sessionId: self.sessionId } } : {}),
+            ...(self.agentMetadata && { agentMetadata: self.agentMetadata }),
             ...(ctx.structuredOutputSchema && { structuredOutputSchema: ctx.structuredOutputSchema }),
           }
           const gen = self._streamFromModel(
@@ -2933,10 +2943,10 @@ export class Agent implements LocalAgent, InvokableAgent {
         estimate = knownBaseline
       } else {
         // System prompt and tool spec tokens are already included in the baseline from the prior model call
-        estimate = knownBaseline + (await this.model.countTokens(newMessages))
+        estimate = knownBaseline + (await new ModelProxy(this.model).countTokens(newMessages))
       }
     } else {
-      estimate = await this.model.countTokens(this.messages, {
+      estimate = await new ModelProxy(this.model).countTokens(this.messages, {
         ...(streamOptions.systemPrompt !== undefined && { systemPrompt: streamOptions.systemPrompt }),
         ...(streamOptions.toolSpecs !== undefined && { toolSpecs: streamOptions.toolSpecs }),
       })

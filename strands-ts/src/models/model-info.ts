@@ -38,6 +38,19 @@ export interface ModelCapabilities {
   readonly forcedToolChoice?: boolean | undefined
   /** Whether the provider can make the model's text output conform to a JSON schema. */
   readonly nativeStructuredOutput?: boolean | undefined
+  /**
+   * Whether the model summarizes history server-side through {@link Model.summarize}; set `false` in `modelInfo`
+   * to summarize client-side.
+   */
+  readonly serverSideSummary?: boolean | undefined
+  /**
+   * Whether the model and provider take temporary messages: injected text the model reads only until the next user
+   * message, such as Anthropic's turn-scoped system messages. When `true`, the provider receives each `InjectedBlock`
+   * as stored and formats it; otherwise it receives only the latest user message's injected text, as text. The shared
+   * data lists the models that take them, but `Model.modelInfo` reports `false` unless the provider can send them
+   * (`AnthropicModel`). A `modelInfo` override that turns it on for another provider drops the injected text.
+   */
+  readonly temporaryMessages?: boolean | undefined
   /** How the model reasons. */
   readonly reasoning?: ReasoningCapability | undefined
 }
@@ -91,6 +104,14 @@ export function mergeModelInfo(...parts: (ModelInfo | undefined)[]): ModelInfo {
   if (limits) merged.limits = limits
   return Object.freeze(merged)
 }
+
+/**
+ * Turns `serverSideSummary` off for providers that serve a model the shared info lists it for but have no
+ * server-side summary of their own.
+ *
+ * @internal
+ */
+export const SERVER_SIDE_SUMMARY_OFF: ModelInfo = Object.freeze({ capabilities: { serverSideSummary: false } })
 
 interface ModelInfoData {
   readonly defaults: { readonly limits: { readonly contextWindow: number } }

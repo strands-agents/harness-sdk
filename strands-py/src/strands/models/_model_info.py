@@ -49,6 +49,10 @@ class ModelCapabilities:
             (``any`` or a named tool).
         native_structured_output: Whether the provider can make the model's text output conform to a
             JSON schema.
+        server_side_summary: Whether the model summarizes history server-side through
+            :meth:`strands.models.Model.summarize`, which the summarize strategy then calls instead of its
+            client-side summary. The shared model info sets it for the Claude models whose API supports it;
+            providers without a server-side summary turn it off. Set it to False to summarize client-side.
         reasoning: How the model reasons; always present, every field None when unknown.
     """
 
@@ -56,6 +60,7 @@ class ModelCapabilities:
     prompt_caching: PromptCaching | None = None
     forced_tool_choice: bool | None = None
     native_structured_output: bool | None = None
+    server_side_summary: bool | None = None
     reasoning: ReasoningCapability = ReasoningCapability()
 
 
@@ -130,11 +135,16 @@ def _merge_section(parts: list[_SectionT], empty: _SectionT) -> _SectionT:
     return merged
 
 
+SERVER_SIDE_SUMMARY_OFF = ModelInfo(capabilities=ModelCapabilities(server_side_summary=False))
+"""Turns ``server_side_summary`` off for providers that serve a model the shared info lists it for but have no
+server-side summary of their own."""
+
 _CAPABILITY_FIELDS = {
     "stateful": "stateful",
     "promptCaching": "prompt_caching",
     "forcedToolChoice": "forced_tool_choice",
     "nativeStructuredOutput": "native_structured_output",
+    "serverSideSummary": "server_side_summary",
     "reasoning": "reasoning",
 }
 _REASONING_FIELDS = {"defaultEffort": "default_effort"}

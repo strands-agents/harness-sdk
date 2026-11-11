@@ -39,7 +39,7 @@ import {
   type CacheTTL,
   type StreamOptions,
 } from './model.js'
-import type { ModelInfo } from './model-info.js'
+import { mergeModelInfo, SERVER_SIDE_SUMMARY_OFF, type ModelInfo } from './model-info.js'
 import { resolveOpenAICache, warnUnsupportedRetention } from './openai/cache.js'
 import {
   ModelContentBlockDeltaEvent,
@@ -166,6 +166,22 @@ export class VercelModel extends Model<VercelModelConfig> {
    */
   override get modelId(): string {
     return this._config.modelId ?? this._provider.modelId
+  }
+
+  /**
+   * Turns `serverSideSummary` off, and reports OpenAI models on Bedrock as implicitly cached; a `modelInfo`
+   * override still wins over both. The shared model info lists cache points for their OpenAI-compatible APIs, but
+   * Converse caches them implicitly and rejects cache points.
+   */
+  override get modelInfo(): ModelInfo {
+    const bedrock = this._provider.provider.split('.')[0] === 'amazon-bedrock'
+    const implicitCache = bedrock && this.modelId.toLowerCase().includes('openai.')
+    return mergeModelInfo(
+      super.modelInfo,
+      SERVER_SIDE_SUMMARY_OFF,
+      implicitCache ? { capabilities: { promptCaching: 'auto' } } : undefined,
+      this._config.modelInfo
+    )
   }
 
   updateConfig(config: VercelModelConfig): void {
@@ -829,6 +845,8 @@ function formatUserMessage(message: Message, prompt: LanguageModelV3Prompt, tool
           output: formatToolResultOutput(block.status, block.content),
         })
         break
+      case 'unknownBlock':
+        break
       default:
         logger.warn(`block_type=<${block.type}> | unsupported content type in vercel user message, skipping`)
         break
@@ -880,6 +898,8 @@ function formatAssistantMessage(message: Message, prompt: LanguageModelV3Prompt)
       case 'documentBlock':
       case 'videoBlock':
         content.push(...formatMediaBlock(block))
+        break
+      case 'unknownBlock':
         break
       default:
         logger.warn(`block_type=<${block.type}> | unsupported content type in vercel assistant message, skipping`)
@@ -1003,6 +1023,8 @@ function formatToolResultOutput(
         }
         break
       }
+      case 'unknownBlock':
+        break
       default:
         logger.warn(
           `block_type=<${(c as unknown as { type: string }).type}> | unsupported content type in vercel tool result, skipping`
