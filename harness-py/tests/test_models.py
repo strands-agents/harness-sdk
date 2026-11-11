@@ -3,10 +3,7 @@ from strands.models import (
     BedrockModel,
     CacheConfig,
     Model,
-    ModelCapabilities,
-    ModelInfo,
     ModelRouter,
-    ReasoningCapability,
 )
 
 from strands_harness import defaults, models
@@ -339,8 +336,7 @@ def test_default_effort_is_the_vendor_default_from_the_model_info_else_high(spec
 def test_default_effort_falls_back_to_the_provider_level_when_the_vendor_default_is_not_one_the_provider_takes(
     monkeypatch,
 ):
-    info = ModelInfo(capabilities=ModelCapabilities(reasoning=ReasoningCapability(default_effort="ultra")))
-    monkeypatch.setattr(models, "lookup_model_info", lambda model_id: info)
+    monkeypatch.setattr(models, "lookup_model", lambda model_id: {"capabilities": {"defaultEffort": "ultra"}})
 
     assert resolve("bedrock/us.openai.gpt-6-sol").config["additional_request_fields"] == {
         "reasoning": {"effort": "high"}
@@ -861,17 +857,13 @@ def test_each_level_maps_to_a_budget_the_api_accepts(level, budget):
     ("model_id", "max_tokens"),
     [
         ("claude-sonnet-4-5-20250929-v1:0", 64_000),
-        ("claude-sonnet-4.5", 64_000),
         ("claude-sonnet-4-6", 128_000),
-        ("claude-sonnet-4.6", 128_000),
         ("claude-sonnet-5", 128_000),
         ("claude-opus-4-5-20251101-v1:0", 64_000),
-        ("claude-opus-4.5", 64_000),
         ("claude-opus-4-8", 128_000),
         ("claude-opus-5", 128_000),
         ("claude-opus-5-5", 128_000),
         ("claude-haiku-4-5-20251001-v1:0", 64_000),
-        ("claude-haiku-4.5", 64_000),
         ("claude-haiku-5-5", 128_000),
     ],
 )

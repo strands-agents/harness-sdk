@@ -21,9 +21,10 @@ import re
 from collections.abc import Callable
 from typing import Any, NamedTuple
 
-from strands.models import Model, ModelRouter, lookup_model_info
+from strands.models import Model, ModelRouter
 
 from strands_harness import defaults
+from strands_harness._model_info import lookup_model
 from strands_harness.types.agent import Effort
 
 logger = logging.getLogger(__name__)
@@ -35,30 +36,9 @@ _ANTHROPIC_MAX_TOKENS = 32_000
 # https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool
 _ANTHROPIC_WEB_SEARCH = {"type": "web_search_20260318", "name": "web_search", "allowed_callers": ["direct"]}
 
-# Claude's real max_tokens ceiling by tier, verified live against Bedrock Converse. Applied on
-# Bedrock and Anthropic-direct only — other Bedrock-hosted model families aren't known to need
-# this. Matched as a substring so any Bedrock region/vendor prefix in front of it doesn't matter.
-_CLAUDE_MAX_TOKENS = {
-    "claude-opus-": 128_000,
-    "claude-sonnet-": 128_000,
-    "claude-haiku-": 128_000,
-    "claude-fable-": 128_000,
-}
-_CLAUDE_MAX_TOKENS_BY_VERSION = (
-    ("claude-opus-4-5", 64_000),
-    ("claude-opus-4.5", 64_000),
-    ("claude-sonnet-4-5", 64_000),
-    ("claude-sonnet-4.5", 64_000),
-    ("claude-haiku-4-5", 64_000),
-    ("claude-haiku-4.5", 64_000),
-)
 
-
-def _claude_max_tokens(model_id: str) -> int | None:
-    pinned = next((tokens for needle, tokens in _CLAUDE_MAX_TOKENS_BY_VERSION if needle in model_id), None)
-    if pinned is not None:
-        return pinned
-    return next((tokens for needle, tokens in _CLAUDE_MAX_TOKENS.items() if needle in model_id), None)
+def _claude_max_tokens(model_id: str) -> int:
+    return lookup_model(model_id).get("limits", {}).get("maxOutputTokens") or _ANTHROPIC_MAX_TOKENS
 
 
 # Small, fast model per provider for the web_fetch summarizer. Keyed by the main agent's provider
@@ -200,7 +180,7 @@ def _bedrock_thinking(model_id: str, effort: str | None) -> dict | None:
         return None
     family = _bedrock_family(model_id)
     if family.startswith("anthropic."):
-        return _claude_thinking_block(family, effort, _claude_max_tokens(model_id) or _ANTHROPIC_MAX_TOKENS)
+        return _claude_thinking_block(family, effort, _claude_max_tokens(model_id))
     if family.startswith("amazon.nova-2"):
         return {"reasoningConfig": {"type": "enabled", "maxReasoningEffort": effort}}
     if family.startswith(_BEDROCK_GPT_PREFIXES):
@@ -221,9 +201,6 @@ def _bedrock(model_id: str, effort: str | None, web_search: bool, caching: bool)
 
     thinking = _bedrock_thinking(model_id, effort)
     extra: dict[str, Any] = {} if thinking is None else {"additional_request_fields": thinking}
-    max_tokens = _claude_max_tokens(model_id)
-    if max_tokens is not None:
-        extra["max_tokens"] = max_tokens
     if caching:
         # The SDK injects cache points on models that take them (a no-op for others).
         # Tools are stable across turns, so cache them too.
@@ -254,9 +231,7 @@ def _anthropic(model_id: str, effort: str | None, web_search: bool, caching: boo
 def _anthropic_config(model_id: str, effort: str | None, web_search: bool, caching: bool) -> dict[str, Any]:
     from strands.models import CacheConfig
 
-    max_tokens = (
-        _claude_max_tokens(model_id) or lookup_model_info(model_id).limits.max_output_tokens or _ANTHROPIC_MAX_TOKENS
-    )
+    max_tokens = _claude_max_tokens(model_id)
     config: dict[str, Any] = {"model_id": model_id, "max_tokens": max_tokens}
     if effort is not None:
         config["params"] = _claude_thinking_block(model_id, effort, max_tokens)
@@ -396,7 +371,7 @@ def _model_levels(provider_name: str, model_id: str, default: tuple[str, ...]) -
 def _default_effort(model_id: str, levels: tuple[str, ...], recommended: str | None) -> str | None:
     """The level ``"auto"`` resolves to: the vendor's default for the model from the shared model info
     (what Claude Code, Codex, or Gemini CLI run it at), else the provider's ``recommended`` level."""
-    vendor_default = lookup_model_info(model_id).capabilities.reasoning.default_effort
+    vendor_default = lookup_model(model_id).get("capabilities", {}).get("defaultEffort")
     return vendor_default if vendor_default in levels else recommended
 
 
