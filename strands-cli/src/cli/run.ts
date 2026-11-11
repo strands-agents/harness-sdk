@@ -290,6 +290,7 @@ async function runInteractive(
                 : requestedArgs
               const prepared = await prepareDevRun(selectionArgs, {
                 config,
+                savedConfig,
                 screen,
                 deferPreparation: true,
                 forceSelection: selectAgain,

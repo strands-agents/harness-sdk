@@ -29,7 +29,8 @@ export const baseHarnessSelection = async (
   const project = baseHarnessProject(snapshot, cwd)
   const source = project?.entrypoint ?? snapshot.path
   const workspace = destination ? resolve(cwd, destination) : strandsUserPath(WORKSPACE_FOLDER)
-  const existing = await readDevWorkspace(workspace)
+  const bound = await readDevWorkspace(workspace)
+  const existing = bound?.config.origin.kind === 'cli' ? bound : undefined
   return {
     name: existing?.config.name ?? snapshot.profile.name,
     source,

@@ -718,3 +718,66 @@ describe('workspace folder selection', () => {
     })
   })
 })
+
+describe('selection after the user goes back', () => {
+  const failedHarness = async (): Promise<DiscoveredHarness> => {
+    const root = await fixture()
+    return { name: 'Failed', entrypoint: join(root, 'agent.ts'), root, language: 'typescript' }
+  }
+  const selectTwice = async (
+    store: CliConfigStore,
+    failed: DiscoveredHarness,
+    { first, second, flags = [] }: { first: HarnessChoice; second?: HarnessChoice; flags?: string[] }
+  ) => {
+    const savedConfig = store.snapshot()
+    vi.spyOn(search, 'discoverHarnesses').mockResolvedValue({ harnesses: [failed], warnings: [] })
+    vi.spyOn(picker, 'chooseHarness')
+      .mockImplementationOnce(async (_options, screen, open) => open(first, screen.signal))
+      .mockImplementationOnce(async (_options, screen, open) => (second ? open(second, screen.signal) : undefined))
+    const screen = { signal: new AbortController().signal, show: vi.fn() }
+    const args = parseArgs(['dev', ...flags])
+    await prepareDevRun(args, { config: store, savedConfig, screen, deferPreparation: true })
+    const prepared = await prepareDevRun(args, {
+      config: store,
+      savedConfig,
+      screen,
+      deferPreparation: true,
+      forceSelection: true,
+    })
+    const options = vi.mocked(picker.chooseHarness).mock.calls[1]![0]
+    const listed = (await options.search?.(() => {}, new AbortController().signal)) ?? []
+    return { prepared, cli: options.cli, listed: listed.map(({ entrypoint }) => entrypoint) }
+  }
+
+  it.each<[string, (failed: DiscoveredHarness) => HarnessChoice, string[]]>([
+    ['TheFailedHarness', (harness) => ({ kind: 'discovered', harness }), []],
+    [
+      'TheFailedHarnessInTheWorkspaceFolder',
+      (harness) => ({ kind: 'discovered', harness }),
+      ['init', '--workspace', 'chosen'],
+    ],
+    ['ANewHarness', () => ({ kind: 'create', language: 'typescript', name: 'fresh' }), []],
+  ])('shouldOfferTheSavedBaseCliAndListEveryHarnessAfter%s', async (_case, first, flags) => {
+    const failed = await failedHarness()
+
+    const { cli, listed } = await selectTwice(config(), failed, { first: first(failed), flags })
+
+    expect(cli).toEqual({ name: 'Saved CLI', path: 'in-memory' })
+    expect(listed).toEqual([failed.entrypoint])
+  })
+
+  it('shouldBindTheBaseCliToItsSavedProject', async () => {
+    const base = await fixture()
+    const store = config()
+    await store.useAgentProject(join(base, 'agent.ts'))
+    const failed = await failedHarness()
+
+    const { prepared } = await selectTwice(store, failed, {
+      first: { kind: 'discovered', harness: failed },
+      second: { kind: 'cli' },
+    })
+
+    expect(prepared?.workspace.root).toBe(base)
+    expect(prepared?.workspace.config.origin).toEqual({ kind: 'cli', source: join(base, 'agent.ts') })
+  })
+})
