@@ -62,10 +62,10 @@ export function makeEdit(
     description: options.description ?? DEFAULT_EDIT_DESCRIPTION,
     inputSchema: editInputSchema,
     callback: async (input, context) => {
-      if (!context) throw new Error('Tool context is required for edit operations')
       validateAbsolutePath(input.path)
+      if (!boundSandbox && !context) throw new Error('Tool context is required for edit operations')
       if (input.old_str === '') throw new Error('old_str must not be empty.')
-      const sandbox = boundSandbox ?? context.agent.sandbox
+      const sandbox = boundSandbox ?? context!.agent.sandbox
 
       const content = await sandbox.readText(input.path)
       const occurrences = content.split(input.old_str).length - 1
