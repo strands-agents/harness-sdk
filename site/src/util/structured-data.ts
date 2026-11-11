@@ -207,3 +207,24 @@ export function integrationsSchema(cards: CatalogCardModel[], pageUrl: string, s
     })),
   }
 }
+
+export interface FaqSchemaItem {
+  question: string
+  answer: string
+}
+
+export function faqPageSchema(items: FaqSchemaItem[], pageUrl: string): JsonLdNode {
+  return {
+    '@type': 'FAQPage',
+    '@id': `${pageUrl}#faq`,
+    url: pageUrl,
+    mainEntity: items.map((item) => ({
+      '@type': 'Question',
+      name: item.question,
+      acceptedAnswer: {
+        '@type': 'Answer',
+        text: item.answer,
+      },
+    })),
+  }
+}
