@@ -149,14 +149,6 @@ describe('SageMakerDecisionModel', () => {
         OriginalStatusCode: 422,
         OriginalMessage: '{"detail":"prompt of 9000 tokens exceeds the context window of 8192 tokens"}',
       },
-      {
-        OriginalStatusCode: 400,
-        OriginalMessage: "This model's maximum context length is 8192 tokens. However, you requested 9000 tokens.",
-      },
-      {
-        OriginalStatusCode: 400,
-        OriginalMessage: '{"object":"error","message":"This model\'s maximum context length is 8192 tokens."}',
-      },
       { OriginalStatusCode: '413' },
       { $metadata: { httpStatusCode: 413 } },
     ])('maps a container error %o to ContextWindowOverflowError', async (fields) => {

@@ -185,31 +185,25 @@ function translateSageMakerError(error: unknown): Error {
   // Throttling by the container or a proxy, matching translateHttpError.
   if (status === 429 || status === 503 || status === 529) return new ModelThrottledError(message, { cause: error })
   if (status === 413) return new ContextWindowOverflowError(message)
-  // Validation errors share these statuses, so only the message tells a context overflow apart:
-  // strands-decider sends 422, vLLM sends 400.
-  if ((status === 400 || status === 422) && isContextOverflowMessage(OriginalMessage)) {
+  // Validation errors share strands-decider's 422, so only the message tells a context overflow apart.
+  if (status === 422 && isContextOverflowMessage(OriginalMessage)) {
     return new ContextWindowOverflowError(message)
   }
   return new ModelError(message, { cause: error })
 }
 
 /**
- * Whether a container's 400 or 422 body reports a prompt longer than the model's context window.
- * strands-decider sends 422 `{"detail": "... exceeds the context window ..."}`; vLLM sends 400
- * `{"message": "... maximum context length ..."}`. Validation errors also use these statuses, but
- * their `detail` is a list that echoes the request, so only a string `detail` or `message` is matched.
+ * Whether a container's 422 body reports a prompt longer than the model's context window.
+ * strands-decider sends 422 `{"detail": "... exceeds the context window ..."}` when deployed with
+ * `--strict-window`. Validation errors also use 422, but their `detail` is a list that echoes the
+ * request, so only a string `detail` is matched.
  */
 function isContextOverflowMessage(originalMessage: unknown): boolean {
   if (typeof originalMessage !== 'string') return false
-  let text: unknown = originalMessage
   try {
-    const body = JSON.parse(originalMessage) as unknown
-    if (typeof body === 'object' && body !== null) {
-      const { detail, message } = body as { detail?: unknown; message?: unknown }
-      text = typeof detail === 'string' ? detail : message
-    }
+    const { detail } = (JSON.parse(originalMessage) ?? {}) as { detail?: unknown }
+    return typeof detail === 'string' && /context window/i.test(detail)
   } catch {
-    // A non-JSON body is matched as plain text.
+    return false
   }
-  return typeof text === 'string' && /context (window|length)/i.test(text)
 }
