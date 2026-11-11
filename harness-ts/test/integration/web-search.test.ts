@@ -31,17 +31,8 @@ describe('exa backend (live)', () => {
 
 describe('agentcore backend (live)', () => {
   // `web_search` on Bedrock; needs `bedrock-agentcore:InvokeWebSearch`.
-  it('returns parsed results', async (ctx) => {
-    let results
-    try {
-      results = await agentCoreBackend()('Strands Agents SDK documentation', 3)
-    } catch (err) {
-      // Skipped only until the integ role is granted bedrock-agentcore:InvokeWebSearch.
-      if (err instanceof WebSearchError && err.message.includes('the caller needs bedrock-agentcore:InvokeWebSearch')) {
-        ctx.skip(err.message)
-      }
-      throw err
-    }
+  it('returns parsed results', async () => {
+    const results = await agentCoreBackend()('Strands Agents SDK documentation', 3)
     expect(results.length).toBeGreaterThan(0)
     expect(results.length).toBeLessThanOrEqual(3)
     for (const result of results) {

@@ -13,7 +13,6 @@ import re
 from collections.abc import Callable
 from pathlib import Path
 
-import pytest
 from strands import Agent
 from strands.vended_interventions.hitl import HumanInTheLoop
 
@@ -49,8 +48,6 @@ async def test_web_search_on_bedrock_uses_agentcore(
     # On Bedrock, web_search is the AgentCore InvokeWebSearch tool; "Sources:" only comes from real results.
     agent = build_agent(builtin_tools=["web_search"])
     await agent.invoke_async(f"{_TESTING} Use the web_search tool to find the Strands Agents SDK documentation site.")
-    if tool_result_contains(agent, "web_search", "the caller needs bedrock-agentcore:InvokeWebSearch"):
-        pytest.skip("the integ role lacks bedrock-agentcore:InvokeWebSearch")
     assert tool_result_contains(agent, "web_search", "Sources:")
 
 

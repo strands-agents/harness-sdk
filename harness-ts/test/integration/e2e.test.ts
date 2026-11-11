@@ -47,13 +47,10 @@ describe('e2e', () => {
     expect(result.toString()).toContain('hi')
   })
 
-  it('serves web_search on bedrock from AgentCore', async (ctx) => {
+  it('serves web_search on bedrock from AgentCore', async () => {
     // "Sources:" only comes from real InvokeWebSearch results; a failure returns "web_search failed: ...".
     const agent = await buildAgent({ builtinTools: ['web_search'] })
     await agent.invoke(`${TESTING} Use the web_search tool to find the Strands Agents SDK documentation site.`)
-    if (toolResultContains(agent, 'web_search', 'the caller needs bedrock-agentcore:InvokeWebSearch')) {
-      ctx.skip('the integ role lacks bedrock-agentcore:InvokeWebSearch')
-    }
     expect(toolResultContains(agent, 'web_search', 'Sources:')).toBe(true)
   })
 
