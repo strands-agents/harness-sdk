@@ -7,6 +7,7 @@ from typing import Any
 
 from . import bedrock, model, routing
 from ._model_info import ModelCapabilities, ModelInfo, ModelLimits, PromptCaching
+from ._summarize import SummarizeResult
 from .bedrock import BedrockModel
 from .model import BaseModelConfig, CacheConfig, CacheToolsConfig, Model
 from .routing import (
@@ -41,6 +42,7 @@ __all__ = [
     "RoutingCandidate",
     "RoutingContext",
     "RoutingStrategy",
+    "SummarizeResult",
 ]
 
 

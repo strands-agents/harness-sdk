@@ -54,8 +54,9 @@ This MCP server provides curated documentation access to your GenAI tools via ll
 
 ### Tool behavior
 
-- `search_docs(query, k)` ranks by page title, URL path, and llms.txt description, and by page content once a page has been hydrated. Both title-like keywords and body terms work; call `fetch_doc` to inspect a result's contents. The changelog index, which concatenates every release note, is ranked by title and description only.
-- Search scores are unbounded field-weighted BM25 values. They are useful only for ordering results from the same query; they are not probabilities and should not be compared across queries.
+- `search_docs(query, k, alternate_queries)` ranks by page title, URL path, and llms.txt description, and by page content once a page has been hydrated. Both title-like keywords and body terms work; call `fetch_doc` to inspect a result's contents. The changelog index, which concatenates every release note, is ranked by title and description only.
+- `alternate_queries` takes up to 4 other phrasings of the same question. Each phrasing is searched and the rankings are combined with reciprocal rank fusion, so pages matched by several phrasings rank first. Phrasings that tokenize the same as an earlier one are searched once.
+- Search scores are unbounded field-weighted BM25 values, or fused rank scores when `alternate_queries` are given. They are useful only for ordering results from the same query; they are not probabilities and should not be compared across queries.
 - `search_docs` returns an empty list when no document matches. If a matched page cannot be fetched for its snippet, the result still includes the URL and title.
 - `fetch_doc` returns `{"error": "...", "url": "...", "hint": "..."}` for unsupported URLs, URLs that are not in
   the docs catalog (with the closest catalog URLs as `suggestions`), and unknown section IDs (with the valid
