@@ -5,6 +5,6 @@ maintainedBy: partner
 languages:
   python:
     package: strands-deepkeep
-github: https://github.com/Deepkeepai/strands-deepkeep
-docsUrl: https://github.com/Deepkeepai/strands-deepkeep#readme
+github: https://github.com/Deepkeepai/deepkeep-integrations/tree/main/integrations/strands
+docsUrl: https://github.com/Deepkeepai/deepkeep-integrations/tree/main/integrations/strands#readme
 addedDate: 2026-08-26
