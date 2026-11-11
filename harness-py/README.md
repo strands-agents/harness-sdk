@@ -142,7 +142,7 @@ for every provider:
 
 ```python
 create_harness(effort="high")     # minimal | low | medium | high | xhigh | max, as the provider offers them
-create_harness(effort="auto")     # the provider's recommended level (medium on Bedrock/Anthropic, high elsewhere), the default
+create_harness(effort="auto")     # the provider's recommended level (high where supported), the default
 create_harness(effort="off")      # no reasoning
 ```
 

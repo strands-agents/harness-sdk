@@ -530,7 +530,7 @@ describe('createHarness', () => {
   it('uses the recommended level when effort is auto', async () => {
     const agent = await createHarness({ effort: 'auto' })
     const fields = agent.model.getConfig().additionalRequestFields as { output_config: { effort: string } }
-    expect(fields.output_config.effort).toBe('medium')
+    expect(fields.output_config.effort).toBe('high')
   })
 
   it('sends no reasoning fields when effort is off', async () => {
