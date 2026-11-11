@@ -553,12 +553,22 @@ class _SubagentTool(AgentTool):
                 else:
                     prompt = spec.task
 
-            # Cancelling the parent's tool call cancels the delegation too (mirrors the SDK's _AgentAsTool).
-            cancel_signal = getattr(parent, "cancel_signal", None)
+            # Cancelling the tool call cancels the delegation, and the child joins the call's request so it
+            # shares its limits and usage (mirrors the SDK's _AgentAsTool).
+            tool_context = kwargs.get("_tool_context")
+            cancel_signal = (
+                tool_context.cancel_signal if tool_context is not None else getattr(parent, "cancel_signal", None)
+            )
+            invocation_context = tool_context.invocation_context if tool_context is not None else None
             # Shallow copy: the SDK rewrites invocation_state["agent"] per cycle; a shared dict would bleed agent=child.
             child_state = {**invocation_state} if isinstance(invocation_state, dict) else invocation_state
             result = None
-            async for event in child.stream_async(prompt, invocation_state=child_state, cancel_signal=cancel_signal):
+            async for event in child.stream_async(
+                prompt,
+                invocation_state=child_state,
+                cancel_signal=cancel_signal,
+                invocation_context=invocation_context,
+            ):
                 if "result" in event:
                     result = event["result"]
                 else:

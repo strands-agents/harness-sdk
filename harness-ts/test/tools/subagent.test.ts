@@ -12,11 +12,15 @@
  */
 
 import {
+  Agent,
+  type BaseModelConfig,
   type ContentBlock,
   ImageBlock,
   InterruptResponseContent,
   JsonBlock,
   Message,
+  Model,
+  type ModelStreamEvent,
   ReasoningBlock,
   TextBlock,
   type ToolContext,
@@ -47,6 +51,7 @@ function fakeResult(text = 'done', stopReason = 'endTurn', interrupts: unknown[]
 function fakeChild(results: ReturnType<typeof fakeResult>[], interruptList: unknown[] = [], activated = false) {
   const prompts: unknown[] = []
   const invocationStates: unknown[] = []
+  const invocationContexts: unknown[] = []
   const appStateMap = new Map<string, unknown>()
   const _interruptState = {
     activated,
@@ -55,6 +60,7 @@ function fakeChild(results: ReturnType<typeof fakeResult>[], interruptList: unkn
   return {
     prompts,
     invocationStates,
+    invocationContexts,
     _interruptState,
     appState: {
       get: (key: string) => appStateMap.get(key),
@@ -63,9 +69,10 @@ function fakeChild(results: ReturnType<typeof fakeResult>[], interruptList: unkn
       },
     },
     // eslint-disable-next-line require-yield
-    async *stream(prompt: unknown, options?: { invocationState?: unknown }) {
+    async *stream(prompt: unknown, options?: { invocationState?: unknown; invocationContext?: unknown }) {
       prompts.push(prompt)
       invocationStates.push(options?.invocationState)
+      invocationContexts.push(options?.invocationContext)
       return results.shift()
     },
   }
@@ -120,6 +127,7 @@ interface DriveOptions {
   parent?: unknown
   interrupt?: (params: { name: string; reason?: unknown }) => unknown
   invocationState?: Record<string, unknown>
+  invocationContext?: unknown
 }
 
 // Drive the tool's stream to completion; return the yielded events and the final ToolResultBlock
@@ -134,6 +142,7 @@ async function drive(
     agent: options.parent,
     invocationState: options.invocationState ?? {},
     cancelSignal: new globalThis.AbortController().signal,
+    invocationContext: options.invocationContext,
     interrupt: options.interrupt ?? ((): unknown => undefined),
   } as unknown as ToolContext
   const gen = tool.stream(toolContext)
@@ -912,6 +921,72 @@ describe('subagent cancellation and failure', () => {
     const { result } = await drive(tool, { task: 'x' })
     expect(result.status).toBe('error')
     expect((result.content[0] as { text: string }).text.toLowerCase()).toContain('no result')
+  })
+})
+
+// Streams the queued replies in order (a string is a text turn, an object a tool call) and counts its calls.
+class ScriptedModel extends Model {
+  calls = 0
+  private readonly _replies: (string | { name: string; input: object })[]
+
+  constructor(...replies: (string | { name: string; input: object })[]) {
+    super()
+    this._replies = replies
+  }
+
+  updateConfig(): void {}
+
+  getConfig(): BaseModelConfig {
+    return { modelId: 'scripted' }
+  }
+
+  async *stream(): AsyncGenerator<ModelStreamEvent> {
+    this.calls++
+    const reply = this._replies.shift()!
+    yield { type: 'modelMessageStartEvent', role: 'assistant' }
+    if (typeof reply === 'string') {
+      yield { type: 'modelContentBlockStartEvent' }
+      yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: reply } }
+      yield { type: 'modelContentBlockStopEvent' }
+      yield { type: 'modelMessageStopEvent', stopReason: 'endTurn' }
+      return
+    }
+    const start = { type: 'toolUseStart' as const, name: reply.name, toolUseId: `${reply.name}-use` }
+    yield { type: 'modelContentBlockStartEvent', start }
+    yield {
+      type: 'modelContentBlockDeltaEvent',
+      delta: { type: 'toolUseInputDelta', input: JSON.stringify(reply.input) },
+    }
+    yield { type: 'modelContentBlockStopEvent' }
+    yield { type: 'modelMessageStopEvent', stopReason: 'toolUse' }
+  }
+}
+
+describe('subagent request context', () => {
+  it("forwards the tool context's invocation context to the child", async () => {
+    const child = fakeChild([fakeResult()])
+    const invocationContext = {}
+    const tool = makeSubagent({ builder: () => child as never, presets: { generalist: GENERALIST } })
+    await drive(tool, { task: 'x' }, { invocationContext })
+    expect(child.invocationContexts[0]).toBe(invocationContext)
+  })
+
+  it("stops the child on the parent's limits", async () => {
+    const childModel = new ScriptedModel('child ran')
+    const tool = makeSubagent({
+      builder: () => new Agent({ model: childModel, printer: false }),
+      presets: { generalist: GENERALIST },
+    })
+    const parent = new Agent({
+      model: new ScriptedModel({ name: 'subagent', input: { task: 'x' } }, 'parent done'),
+      tools: [tool],
+      printer: false,
+    })
+
+    const result = await parent.invoke('delegate', { limits: { turns: 1 } })
+
+    expect(childModel.calls).toBe(0)
+    expect(result.stopReason).toBe('limitTurns')
   })
 })
 

@@ -1,9 +1,14 @@
 """Tests for the ``subagent`` tool: schema derivation, spec resolution, and interrupt propagation."""
 
+import asyncio
+import json
+import threading
 from types import SimpleNamespace
 
 import pytest
+from strands import Agent, ToolContext, tool
 from strands.agent.state import AgentState
+from strands.models import Model
 
 from strands_harness.tools import Choice, Fixed, Inherit, Open, Option, Preset, make_subagent
 from strands_harness.tools.subagent import _CONTEXT_PREAMBLE, GENERALIST
@@ -151,12 +156,16 @@ class _FakeChild:
         self.messages: list = []
         self.prompts: list = []
         self.invocation_states: list = []
+        self.cancel_signals: list = []
+        self.invocation_contexts: list = []
         self.state = AgentState()
         self._interrupt_state = SimpleNamespace(activated=activated, interrupts={})
 
-    async def stream_async(self, prompt, invocation_state=None, cancel_signal=None):
+    async def stream_async(self, prompt, invocation_state=None, cancel_signal=None, invocation_context=None):
         self.prompts.append(prompt)
         self.invocation_states.append(invocation_state)
+        self.cancel_signals.append(cancel_signal)
+        self.invocation_contexts.append(invocation_context)
         yield {"result": self._results.pop(0)}
 
 
@@ -580,7 +589,7 @@ async def test_child_exception_becomes_an_error_result():
         state = AgentState()
         _interrupt_state = SimpleNamespace(activated=False, interrupts={})
 
-        async def stream_async(self, prompt, invocation_state=None, cancel_signal=None):
+        async def stream_async(self, prompt, invocation_state=None, cancel_signal=None, invocation_context=None):
             raise RuntimeError("kaboom")
             yield  # pragma: no cover - makes this an async generator
 
@@ -812,3 +821,127 @@ async def test_any_other_stop_reason_returns_the_childs_text_as_a_success(stop_r
     tool = make_subagent(builder=lambda spec: child, presets={"generalist": GENERALIST})
     result = _final_result(await _events(tool, {"task": "x"}))
     assert result == {"toolUseId": "t1", "status": "success", "content": [{"text": "the text\n"}]}
+
+
+@pytest.mark.asyncio
+async def test_the_tool_contexts_cancel_signal_and_invocation_context_reach_the_child():
+    # A background call carries its own cancel signal, scoped to that task, in the tool context.
+    child = _FakeChild(_FakeResult())
+    parent = SimpleNamespace(state=AgentState(), messages=[], cancel_signal=threading.Event())
+    tool_context = SimpleNamespace(cancel_signal=threading.Event(), invocation_context=object())
+    tool = make_subagent(builder=lambda spec: child, presets={"generalist": GENERALIST})
+    tool_use = {"toolUseId": "t1", "name": "subagent", "input": {"task": "x"}}
+    [event async for event in tool.stream(tool_use, {"agent": parent}, _tool_context=tool_context)]
+    assert child.cancel_signals == [tool_context.cancel_signal]
+    assert child.invocation_contexts == [tool_context.invocation_context]
+
+
+@pytest.mark.asyncio
+async def test_without_a_tool_context_the_child_gets_the_parents_cancel_signal():
+    child = _FakeChild(_FakeResult())
+    parent = SimpleNamespace(state=AgentState(), messages=[], cancel_signal=threading.Event())
+    tool = make_subagent(builder=lambda spec: child, presets={"generalist": GENERALIST})
+    await _events(tool, {"task": "x"}, parent=parent)
+    assert child.cancel_signals == [parent.cancel_signal]
+    assert child.invocation_contexts == [None]
+
+
+class _ScriptedModel(Model):
+    """Streams the queued assistant messages in order and counts the calls it served."""
+
+    def __init__(self, *messages: dict):
+        self._messages = list(messages)
+        self.calls = 0
+
+    def update_config(self, **model_config):
+        pass
+
+    def get_config(self):
+        return {}
+
+    async def structured_output(self, output_model, prompt, system_prompt=None, **kwargs):
+        raise NotImplementedError
+        yield
+
+    async def stream(self, messages, tool_specs=None, system_prompt=None, **kwargs):
+        self.calls += 1
+        message = self._messages.pop(0)
+        yield {"messageStart": {"role": "assistant"}}
+        for block in message["content"]:
+            if "toolUse" in block:
+                use = block["toolUse"]
+                yield {
+                    "contentBlockStart": {"start": {"toolUse": {"name": use["name"], "toolUseId": use["toolUseId"]}}}
+                }
+                yield {"contentBlockDelta": {"delta": {"toolUse": {"input": json.dumps(use["input"])}}}}
+            else:
+                yield {"contentBlockStart": {"start": {}}}
+                yield {"contentBlockDelta": {"delta": {"text": block["text"]}}}
+            yield {"contentBlockStop": {}}
+        stop_reason = "tool_use" if any("toolUse" in block for block in message["content"]) else "end_turn"
+        yield {"messageStop": {"stopReason": stop_reason}}
+
+
+def _tool_use(name: str, tool_input: dict) -> dict:
+    return {
+        "role": "assistant",
+        "content": [{"toolUse": {"name": name, "toolUseId": f"{name}-use", "input": tool_input}}],
+    }
+
+
+def _text(text: str) -> dict:
+    return {"role": "assistant", "content": [{"text": text}]}
+
+
+@pytest.mark.asyncio
+async def test_the_child_stops_on_the_parents_limits():
+    child_model = _ScriptedModel(_text("child ran"))
+    tool = make_subagent(
+        builder=lambda spec: Agent(model=child_model, callback_handler=None), presets={"generalist": GENERALIST}
+    )
+    parent = Agent(
+        model=_ScriptedModel(_tool_use("subagent", {"task": "x"}), _text("parent done")),
+        tools=[tool],
+        callback_handler=None,
+    )
+
+    result = await parent.invoke_async("delegate", limits={"turns": 1})
+
+    assert child_model.calls == 0
+    assert result.stop_reason == "limit_turns"
+
+
+def test_cancelling_a_background_subagent_task_cancels_the_child():
+    # A sync invocation runs background work off the caller's loop, so cancelling the task only
+    # sets its cancel signal; the child stops only if that signal reaches it.
+    started = threading.Event()
+    saw_cancel = threading.Event()
+
+    @tool(context=True)
+    async def wait(tool_context: ToolContext) -> str:
+        """Wait until cancelled."""
+        started.set()
+        while not tool_context.cancel_signal.is_set():
+            await asyncio.sleep(0.01)
+        saw_cancel.set()
+        return "cancelled"
+
+    subagent = make_subagent(
+        builder=lambda spec: Agent(
+            model=_ScriptedModel(_tool_use("wait", {}), _text("child done")), tools=[wait], callback_handler=None
+        ),
+        presets={"generalist": GENERALIST},
+    )
+    parent = Agent(
+        model=_ScriptedModel(_tool_use("subagent", {"task": "x"}), _text("Task admitted.")),
+        tools=[subagent],
+        background_tasks={"always": [subagent], "wait_for_completion": False},
+        callback_handler=None,
+    )
+    parent("delegate")
+    assert started.wait(5)
+
+    [task] = parent.state.get("strands.background_tasks")
+    parent.tool.strands_manage_background_task(mode="cancel", task_id=task["task_id"])
+
+    assert saw_cancel.wait(5)
