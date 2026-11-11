@@ -12,6 +12,7 @@ import {
   SummaryBlock,
   type SummaryBlockData,
   contentBlockFromData,
+  toolResultContentFromData,
   generateTrackingId,
   type MessageData,
   type SystemPromptData,
@@ -213,6 +214,13 @@ describe('OffloadedBlock', () => {
     expect(block.toJSON()).toEqual({ text: 'hello' })
     expect(isOffloaded(block)).toBe(false)
     expect(contentBlockFromData(block.toJSON())).not.toBeInstanceOf(OffloadedBlock)
+  })
+
+  test('passes a live instance through unchanged, at top level and inside a tool result', () => {
+    const block = new OffloadedBlock({ text: '[Dropped] [ref: tu-1]', method: 'drop', ref: 'tu-1', tokens: 42 })
+
+    expect(contentBlockFromData(block)).toBe(block)
+    expect(toolResultContentFromData(block)).toBe(block)
   })
 
   test('round-trips through message data at top level and inside a tool result', () => {

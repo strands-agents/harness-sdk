@@ -812,6 +812,8 @@ describe('ResolvedConditions.withoutPreserved', () => {
     ['70%', 10, 3],
     ['50%', 3, 1],
     ['99%', 10, 0],
+    // A share that divides exactly keeps exactly that many, with no rounding up from float error.
+    ['7%', 100, 93],
   ] as const)('preserveRecent=%j of %i matches leaves %i', (preserveRecent, count, left) => {
     expect(new ResolvedConditions({ preserveRecent }).withoutPreserved(matches(count))).toEqual(matches(left))
   })
@@ -981,13 +983,13 @@ describe('parseCondition', () => {
   }
 
   it.each([
-    ['contextUtilization', '70%', { value: 0.7, isShare: true }],
+    ['contextUtilization', '70%', { value: 70, isShare: true }],
     ['contextUtilization', 50_000, { value: 50_000, isShare: false }],
     ['contextUtilization', 1000, { value: 1000, isShare: false }],
     ['blockThreshold', 2500, { value: 2500, isShare: false }],
-    ['blockThreshold', '5%', { value: 0.05, isShare: true }],
+    ['blockThreshold', '5%', { value: 5, isShare: true }],
     ['preserveRecent', 4, { value: 4, isShare: false }],
-    ['preserveRecent', '50%', { value: 0.5, isShare: true }],
+    ['preserveRecent', '50%', { value: 50, isShare: true }],
   ] as const)('accepts %s=%j', (name, raw, expected) => {
     expect(parseCondition(name, raw)).toEqual(expected)
   })
@@ -1026,7 +1028,7 @@ describe('parseCondition', () => {
 describe('condition resolution', () => {
   it.each(['utilisation', 'constructor', 'toString'])('rejects the unknown condition name %s', (name) => {
     expect(() => Offload.drop('toolResults').when({ [name]: 0.5 } as OffloadConditions)).toThrow(
-      `unknown condition "${name}": expected`
+      `unknown condition "${name}": expected contextUtilization, blockThreshold, or preserveRecent`
     )
   })
 

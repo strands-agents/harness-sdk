@@ -601,6 +601,8 @@ export class ToolResultBlock implements JSONSerializable<{ toolResult: ToolResul
  * @throws Error if the content data type is unknown
  */
 export function toolResultContentFromData(data: ToolResultContentData): ToolResultContent {
+  // An instance records its offload in its own fields, not under `offloaded`, so converting it would strip them.
+  if (data instanceof OffloadedBlock) return data
   if ('text' in data) return recordsOffload(data) ? OffloadedBlock.fromJSON(data) : TextBlock.fromJSON(data)
   if ('json' in data) return new JsonBlock(data)
   if ('image' in data) return ImageBlock.fromJSON(data as { image: ImageBlockData })
@@ -1284,6 +1286,8 @@ export class InjectedBlock implements JSONSerializable<{ injected: InjectedBlock
  * @throws Error if the content block type is unknown
  */
 export function contentBlockFromData(data: ContentBlockData): ContentBlock {
+  // An instance records its offload in its own fields, not under `offloaded`, so converting it would strip them.
+  if (data instanceof OffloadedBlock) return data
   if ('text' in data) {
     return recordsOffload(data) ? OffloadedBlock.fromJSON(data) : TextBlock.fromJSON(data)
   } else if ('toolUse' in data) {

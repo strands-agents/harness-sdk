@@ -68,8 +68,8 @@ type ConditionName = keyof OffloadConditions
  */
 export class ParsedCondition {
   /**
-   * @param value - The count, or the share in `[0, 1]`
-   * @param isShare - Whether `value` is a share of a whole rather than a count
+   * @param value - The count, or a share's percent as written
+   * @param isShare - Whether `value` is a percent of a whole rather than a count
    */
   constructor(
     readonly value: number,
@@ -78,7 +78,14 @@ export class ParsedCondition {
 
   /** The count this condition stands for out of `whole`, rounded up. */
   of(whole: number): number {
-    return this.isShare ? Math.ceil(this.value * whole) : this.value
+    // Multiplies before dividing: `percent / 100` is inexact for most percents, and the product of that and `whole`
+    // lands just above the answer, so "7%" of 100 would round up to 8.
+    return this.isShare ? Math.ceil((this.value * whole) / 100) : this.value
+  }
+
+  /** A share's fraction of the whole, for a condition compared against one directly. */
+  get share(): number {
+    return this.value / 100
   }
 }
 
@@ -106,7 +113,7 @@ const CONDITION_RULES = {
   },
 } satisfies Record<ConditionName, object>
 
-const CONDITION_NAMES = Object.keys(CONDITION_RULES)
+const CONDITION_NAMES = new Intl.ListFormat('en', { type: 'disjunction' }).format(Object.keys(CONDITION_RULES))
 
 /**
  * Parses one offload condition value: a `'N%'` string is a share, and a whole number is a count.
@@ -122,7 +129,7 @@ export function parseCondition(name: ConditionName, raw: unknown): ParsedConditi
   const rule = CONDITION_RULES[name]
   if (typeof raw === 'string' && PERCENT_PATTERN.test(raw)) {
     const percent = Number(raw.slice(0, -1))
-    if (rule.percentInRange(percent)) return new ParsedCondition(percent / 100, true)
+    if (rule.percentInRange(percent)) return new ParsedCondition(percent, true)
   }
   if (typeof raw === 'number' && Number.isInteger(raw) && raw >= rule.minCount) return new ParsedCondition(raw, false)
   throw new Error(`${name}=${formatConditionValue(raw)} is invalid: expected ${rule.expected}${percentHint(raw)}`)
@@ -161,7 +168,7 @@ export class ResolvedConditions {
   constructor(conditions: OffloadConditions | undefined) {
     for (const name of Object.keys(conditions ?? {})) {
       if (!Object.hasOwn(CONDITION_RULES, name)) {
-        throw new Error(`unknown condition "${name}": expected ${CONDITION_NAMES.join(', ')}`)
+        throw new Error(`unknown condition "${name}": expected ${CONDITION_NAMES}`)
       }
     }
     this.contextUtilization = parseCondition('contextUtilization', conditions?.contextUtilization)
@@ -186,7 +193,7 @@ export class ResolvedConditions {
   reached(context: ContextState): boolean {
     const utilization = this.contextUtilization
     if (!utilization || context.overflow) return true
-    const share = utilization.isShare ? utilization.value : utilization.value / effectiveWindowLimit(context.agent)
+    const share = utilization.isShare ? utilization.share : utilization.value / effectiveWindowLimit(context.agent)
     return context.utilization >= share
   }
 
