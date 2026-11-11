@@ -1628,12 +1628,12 @@ class TestAutoMode:
     )
     def test_auto_rejects_strategy_options(self, option):
         with pytest.raises(ValueError, match='"auto" only accepts ask and allowed_tools'):
-            HumanInTheLoop("auto", **option)  # type: ignore[call-overload]
+            HumanInTheLoop("auto", **option)
 
     def test_unknown_mode_raises(self):
         with pytest.raises(ValueError, match='mode must be "auto"'):
-            HumanInTheLoop("yolo")  # type: ignore[call-overload]
+            HumanInTheLoop("yolo")  # type: ignore[arg-type]
 
     def test_mode_is_positional_only(self):
         with pytest.raises(TypeError):
-            HumanInTheLoop(mode="auto")  # type: ignore[call-overload]
+            HumanInTheLoop(mode="auto")  # type: ignore[call-arg]

@@ -9,7 +9,7 @@ import json
 import logging
 import threading
 from collections.abc import Awaitable
-from typing import Any, Literal, Protocol, overload, runtime_checkable
+from typing import Any, Literal, Protocol, runtime_checkable
 
 from ...decisions import DecisionModel
 from ...hooks.events import BeforeToolCallEvent
@@ -132,29 +132,6 @@ class HumanInTheLoop(InterventionHandler):
     """
 
     name = "strands:human-in-the-loop"
-
-    @overload
-    def __init__(
-        self,
-        mode: Literal["auto"],
-        /,
-        *,
-        allowed_tools: list[str] | None = None,
-        ask: AskCallback | Literal["stdio"] | None = None,
-    ) -> None: ...
-
-    @overload
-    def __init__(
-        self,
-        /,
-        *,
-        allowed_tools: list[str] | None = None,
-        classifier: bool | LLMClassifierConfig | DecisionModel | HumanInTheLoopClassifier | None = None,
-        enable_trust: bool = False,
-        evaluate_trust: EvaluateCallback | None = None,
-        evaluate: EvaluateCallback | None = None,
-        ask: AskCallback | Literal["stdio"] | None = None,
-    ) -> None: ...
 
     def __init__(
         self,
