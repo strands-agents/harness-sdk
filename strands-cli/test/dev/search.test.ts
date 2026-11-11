@@ -452,4 +452,27 @@ describe('discoverHarnesses', () => {
 
     expect(await discoverHarnesses([root])).toEqual({ harnesses: [], warnings: [`${entrypoint}: source disappeared`] })
   })
+
+  it('shouldReportEachHarnessThroughFoundAsTheSearchReachesIt', async () => {
+    const root = await directory()
+    const first = await sourceFile(root, 'a/agent.ts')
+    const second = await sourceFile(root, 'b/agent.py', pythonSource)
+    const reported: string[] = []
+
+    const result = await discoverHarnesses([root], { found: ({ entrypoint }) => reported.push(entrypoint) })
+
+    expect(reported).toEqual([first, second])
+    expect(result.harnesses.map(({ entrypoint }) => entrypoint)).toEqual([first, second])
+  })
+
+  it('shouldStopSearchingWhenTheSignalIsAborted', async () => {
+    const root = await directory()
+    const first = await sourceFile(root, 'a/agent.ts')
+    await sourceFile(root, 'b/agent.ts')
+    const abort = new AbortController()
+
+    const result = await discoverHarnesses([root], { signal: abort.signal, found: () => abort.abort() })
+
+    expect(result.harnesses.map(({ entrypoint }) => entrypoint)).toEqual([first])
+  })
 })

@@ -193,9 +193,11 @@ describe('prepareDevRun', () => {
       harnesses: [{ ...harness, preparationStatus: 'Needs setup' }],
       warnings: ['Workspace config version must be 1.'],
     })
-    vi.spyOn(picker, 'chooseHarness').mockImplementation(async (_options, _screen, open) =>
-      open({ kind: 'discovered', harness }, _screen.signal)
-    )
+    const reported: DiscoveredHarness[] = []
+    vi.spyOn(picker, 'chooseHarness').mockImplementation(async (options, _screen, open) => {
+      await options.search?.((found) => reported.push(found), _screen.signal)
+      return open({ kind: 'discovered', harness }, _screen.signal)
+    })
     const screen = { signal: new AbortController().signal, show: vi.fn() }
 
     const prepared = await prepareDevRun(parseArgs(['dev', '--search-root', '../other']), { screen })
@@ -203,19 +205,24 @@ describe('prepareDevRun', () => {
     expect(picker.chooseHarness).toHaveBeenCalledWith(
       {
         cli: { name: 'Saved CLI', path: 'in-memory' },
-        harnesses: [{ ...harness, preparationStatus: 'Needs setup' }],
+        harnesses: [],
+        search: expect.any(Function),
         folderFor: expect.any(Function),
         newProject: join(cwd, 'strands-workspace'),
       },
       screen,
       expect.any(Function)
     )
+    expect(reported).toEqual([{ ...harness, preparationStatus: 'Needs setup' }])
     expect(prepared?.workspace.root).toBe(root)
     expect(prepared?.workspace.directory).toBe(join(root, 'strands-dev'))
     expect(JSON.stringify(vi.mocked(picker.chooseHarness).mock.calls ?? [])).not.toContain(
       'Workspace config version must be 1.'
     )
-    expect(search.discoverHarnesses).toHaveBeenCalledWith([cwd, join(cwd, '../other')])
+    expect(search.discoverHarnesses).toHaveBeenCalledWith(
+      [cwd, join(cwd, '../other')],
+      expect.objectContaining({ found: expect.any(Function) })
+    )
   })
 
   it('shouldNotWriteFilesWhenTheUserCancelsSelection', async () => {
@@ -310,7 +317,9 @@ describe('default workspace placement', () => {
     vi.spyOn(picker, 'chooseHarness').mockResolvedValue(undefined)
     const screen = { signal: new AbortController().signal, show: vi.fn() }
     await prepareDevRun(parseArgs(['dev', ...flags]), { screen, deferPreparation: true })
-    return vi.mocked(picker.chooseHarness).mock.calls[0]![0]
+    const options = vi.mocked(picker.chooseHarness).mock.calls[0]![0]
+    await options.search?.(() => {}, new AbortController().signal)
+    return options
   }
   const found = (root: string): DiscoveredHarness => ({
     name: 'Found',
@@ -401,8 +410,9 @@ describe('default workspace placement', () => {
     await prepareDevRun(parseArgs(['dev']), { screen, deferPreparation: true })
 
     const options = vi.mocked(picker.chooseHarness).mock.calls[0]![0]
+    const harnesses = (await options.search?.(() => {}, new AbortController().signal)) ?? []
     const folders = Object.fromEntries(
-      options.harnesses.map((harness) => [harness.entrypoint, options.folderFor?.({ kind: 'discovered', harness })])
+      harnesses.map((harness) => [harness.entrypoint, options.folderFor?.({ kind: 'discovered', harness })])
     )
     expect(folders).toEqual({
       [join(launch, 'arielnab/agent.py')]: join(launch, 'arielnab/strands-dev'),
@@ -426,6 +436,7 @@ describe('default workspace placement', () => {
     await prepareDevRun(parseArgs(['dev']), { screen, deferPreparation: true, forceSelection: true })
 
     const options = vi.mocked(picker.chooseHarness).mock.calls[0]![0]
+    await options.search?.(() => {}, new AbortController().signal)
     expect(options.folderFor?.({ kind: 'discovered', harness: found(root) })).toBe(join(root, 'strands-dev-2'))
   })
 

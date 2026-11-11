@@ -68,32 +68,20 @@ const createRequested = async ({
 interface FolderDefaults {
   folderFor: (choice: HarnessChoice) => string | undefined
   newProject?: string
+  suggestFor(harness: DiscoveredHarness): Promise<void>
 }
 
 const folderDefaults = async (
   cliFolder: string,
-  harnesses: readonly DiscoveredHarness[],
   { cwd, destination, forceSelection }: { cwd: string; destination: string | undefined; forceSelection: boolean }
 ): Promise<FolderDefaults> => {
   const fresh = async (folder: string): Promise<string> => (forceSelection ? availableFolder(folder) : folder)
   if (destination) {
     const folder = await fresh(destination)
-    return { folderFor: () => folder }
+    return { folderFor: () => folder, suggestFor: async (): Promise<void> => {} }
   }
-  const suggest = (preferred: string, choice: HarnessChoice): Promise<string> =>
-    availableFolder(preferred, forceSelection ? undefined : (workspace): boolean => holdsChoice(workspace, choice))
   const cli = await fresh(cliFolder)
-  const found = new Map(
-    await Promise.all(
-      harnesses.map(
-        async (harness) =>
-          [
-            harness.entrypoint,
-            await suggest(join(dirname(harness.entrypoint), WORKSPACE_FOLDER), { kind: 'discovered', harness }),
-          ] as const
-      )
-    )
-  )
+  const found = new Map<string, string>()
   return {
     folderFor: (choice) =>
       choice.kind === 'cli'
@@ -102,6 +90,14 @@ const folderDefaults = async (
           ? (found.get(choice.harness.entrypoint) ?? join(dirname(choice.harness.entrypoint), WORKSPACE_FOLDER))
           : undefined,
     newProject: await newProjectFolder(cwd),
+    suggestFor: async (harness): Promise<void> => {
+      const choice = { kind: 'discovered', harness } as const
+      const suggested = await availableFolder(
+        join(dirname(harness.entrypoint), WORKSPACE_FOLDER),
+        forceSelection ? undefined : (workspace): boolean => holdsChoice(workspace, choice)
+      )
+      found.set(harness.entrypoint, suggested)
+    },
   }
 }
 
@@ -126,14 +122,24 @@ const selectWorkspace = async (
     throw new Error(`No dev workspace at ${destination}. Run strands dev init --workspace <path> --create cli.`)
   if (!screen)
     throw new Error('Run strands dev init in a terminal, or select --workspace, --agent, or --create explicitly.')
-  screen.show(undefined, 'Discovering local harnesses…')
   const base = await baseHarnessSelection(config.snapshot(), cwd, destination)
-  const harnesses = await discoverLocalHarnesses(cwd, dev.searchRoots, base.excludedEntrypoints)
+  const { suggestFor, ...folders } = await folderDefaults(base.workspace, { cwd, destination, forceSelection })
   screen.signal.throwIfAborted()
-  const folders = await folderDefaults(base.workspace, harnesses, { cwd, destination, forceSelection })
   const { chooseHarness } = await import('./picker.js')
   return chooseHarness(
-    { cli: { name: base.name, path: base.source }, harnesses, ...folders },
+    {
+      cli: { name: base.name, path: base.source },
+      harnesses: [],
+      search: (found, signal) =>
+        discoverLocalHarnesses(cwd, dev.searchRoots, base.excludedEntrypoints, {
+          signal,
+          found: async (harness): Promise<void> => {
+            await suggestFor(harness)
+            found(harness)
+          },
+        }),
+      ...folders,
+    },
     screen,
     async (choice, signal, chosen): Promise<DevWorkspace> => {
       signal.throwIfAborted()

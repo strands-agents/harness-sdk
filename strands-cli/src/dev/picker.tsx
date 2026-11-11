@@ -3,12 +3,13 @@ import { Box, useInput, type Key } from 'ink'
 import { Text, useTheme } from '../ui/theme.js'
 import type { StartupScreen } from '../ui/run.js'
 import { emptyEditor, reduceInputSequence } from '../terminal/composer.js'
-import { graphemes, sanitizeTerminalText, wrapLines } from '../terminal/text.js'
+import { errorMessage, graphemes, sanitizeTerminalText, wrapLines } from '../terminal/text.js'
 import { EditableText } from '../ui/text-input.js'
 import type { DiscoveredHarness } from './search.js'
 import { useTerminalSize } from '../ui/terminal-size.js'
 import { useCopyableError } from '../ui/clipboard.js'
 import { useStartupContentRows } from '../ui/startup.js'
+import { useSpinner } from '../ui/animation.js'
 import { userConfigPath } from '../config/store.js'
 import { devFailure } from './errors.js'
 import { basename, dirname } from 'node:path'
@@ -27,6 +28,8 @@ export interface BaseCliOption {
 interface PickerProps {
   cli?: BaseCliOption
   harnesses: readonly DiscoveredHarness[]
+  searching?: boolean
+  searchError?: string
   warning?: string
   folderFor?: (choice: HarnessChoice) => string | undefined
   newProject?: string
@@ -34,6 +37,7 @@ interface PickerProps {
 }
 
 interface PickerRow {
+  key: string
   label: string
   detail: string
   group: string
@@ -70,15 +74,32 @@ type FormField = 'name' | 'language'
 const otherLanguage = (current: 'typescript' | 'python'): 'typescript' | 'python' =>
   current === 'typescript' ? 'python' : 'typescript'
 
+const CLI_ROW = 'cli'
+const CREATE_ROW = 'create'
+const harnessRow = (harness: DiscoveredHarness): string => `harness:${harness.entrypoint}`
+
+const SearchStatus = ({ count }: { count: number }): ReactElement => {
+  const spinner = useSpinner(true, true)
+  return (
+    <Text dimColor wrap="truncate-end">
+      {spinner} Searching for local harnesses…{count ? ` ${count} found` : ''}
+    </Text>
+  )
+}
+
 export const HarnessPicker = ({
   cli,
   harnesses,
+  searching = false,
+  searchError,
   warning,
   folderFor,
   newProject,
   onSelect,
 }: PickerProps): ReactElement => {
-  const [selection, setSelection] = useState(0)
+  const [selectedRow, setSelectedRow] = useState(() =>
+    cli ? CLI_ROW : harnesses[0] ? harnessRow(harnesses[0]) : CREATE_ROW
+  )
   const [creating, setCreating] = useState(false)
   const [placing, setPlacing] = useState<HarnessChoice>()
   const [language, setLanguage] = useState<'typescript' | 'python'>('typescript')
@@ -97,6 +118,7 @@ export const HarnessPicker = ({
     ...(cli
       ? [
           {
+            key: CLI_ROW,
             label: `Base CLI · ${sanitizeTerminalText(cli.name)}`,
             detail: sanitizeTerminalText(cli.path ?? userConfigPath()),
             group: 'CLI DEFAULT',
@@ -106,6 +128,7 @@ export const HarnessPicker = ({
         ]
       : []),
     ...harnesses.map((harness) => ({
+      key: harnessRow(harness),
       label: sanitizeTerminalText(harness.name),
       detail: sanitizeTerminalText(harness.entrypoint),
       group: `LOCAL PROJECTS (${harnesses.length})`,
@@ -113,6 +136,7 @@ export const HarnessPicker = ({
       choice: { kind: 'discovered', harness } as const,
     })),
     {
+      key: CREATE_ROW,
       label: 'Create a new harness',
       detail: newProject
         ? `Creates ${sanitizeTerminalText(newProject)} from your saved profile.`
@@ -121,6 +145,10 @@ export const HarnessPicker = ({
       language: '',
     },
   ]
+  const selection = Math.max(
+    0,
+    rows.findIndex(({ key }) => key === selectedRow)
+  )
   const submit = (choice: HarnessChoice | undefined, workspace?: string): void => {
     if (pending.current && choice) return
     pending.current = true
@@ -177,9 +205,17 @@ export const HarnessPicker = ({
     if (!key.ctrl && !key.meta && /^[a-zA-Z0-9._-]+$/.test(input))
       setName((current) => `${current}${input}`.slice(0, 64))
   }
+  const moveSelection = (step: number): void =>
+    setSelectedRow((current) => {
+      const index = Math.max(
+        0,
+        rows.findIndex(({ key }) => key === current)
+      )
+      return rows[(index + step + rows.length) % rows.length]!.key
+    })
   const browse = (key: Key): void => {
-    if (key.upArrow) setSelection((current) => (current + rows.length - 1) % rows.length)
-    if (key.downArrow) setSelection((current) => (current + 1) % rows.length)
+    if (key.upArrow) moveSelection(-1)
+    if (key.downArrow) moveSelection(1)
     if (!key.return) return
     const choice = rows[selection]?.choice
     if (choice) return choose(choice)
@@ -231,9 +267,11 @@ export const HarnessPicker = ({
   const hint = busy
     ? 'Preparing workspace… · Esc cancel'
     : [screens[step].hint, failureCopyHint, `Esc ${step === 'folder' ? 'back' : 'cancel'}`].filter(Boolean).join(' · ')
+  const searchLine = step === 'list' && (searching || searchError !== undefined)
   const listRows =
     availableRows -
     2 -
+    (searchLine ? 2 : 0) -
     (notice ? lineCount(notice) + 1 : 0) -
     (failure ? lineCount(failure) : 0) -
     1 -
@@ -283,6 +321,17 @@ export const HarnessPicker = ({
         </Text>
         <Text dimColor>{context}</Text>
       </Box>
+      {searchLine ? (
+        <Box marginBottom={1}>
+          {searching ? (
+            <SearchStatus count={harnesses.length} />
+          ) : (
+            <Text color={warningColor} wrap="truncate-end">
+              Local harness search stopped: {sanitizeTerminalText(searchError ?? '')}
+            </Text>
+          )}
+        </Box>
+      ) : null}
       {notice ? (
         <Box marginBottom={1}>
           <Text color={warningColor}>{notice}</Text>
@@ -391,16 +440,28 @@ export const HarnessPicker = ({
   )
 }
 
+export type HarnessSource = (
+  found: (harness: DiscoveredHarness) => void,
+  signal: AbortSignal
+) => Promise<readonly DiscoveredHarness[]>
+
+const SEARCH_FLUSH_MS = 100
+
 export const chooseHarness = async <Opened,>(
-  options: Omit<PickerProps, 'onSelect'>,
+  { search, ...options }: Omit<PickerProps, 'onSelect' | 'searching' | 'searchError'> & { search?: HarnessSource },
   screen: StartupScreen,
   open: (choice: HarnessChoice, signal: AbortSignal, workspace?: string) => Promise<Opened>
 ): Promise<Opened | undefined> => {
   screen.signal.throwIfAborted()
   const operation = new AbortController()
   const signal = AbortSignal.any([screen.signal, operation.signal])
+  const searchAbort = new AbortController()
   let complete: (opened: Opened | undefined) => void = () => undefined
   let settled = false
+  let opening = false
+  let harnesses = options.harnesses
+  let searching = search !== undefined
+  let searchError: string | undefined
   const result = new Promise<Opened | undefined>((resolve) => {
     complete = resolve
   })
@@ -409,32 +470,71 @@ export const chooseHarness = async <Opened,>(
     operation.abort(new Error('Workspace selection cancelled.'))
     complete(undefined)
   }
+  const onSelect = async (choice: HarnessChoice | undefined, workspace?: string): Promise<void> => {
+    if (!choice) return cancel()
+    let opened: Opened
+    opening = true
+    try {
+      opened = await open(choice, signal, workspace)
+    } catch (error) {
+      opening = false
+      throw devFailure(error, {
+        operation: 'open',
+        path: choice.kind === 'discovered' ? choice.harness.entrypoint : (workspace ?? options.cli?.path),
+      })
+    }
+    if (!settled && !signal.aborted) {
+      settled = true
+      complete(opened)
+    }
+  }
+  const show = (): void => {
+    if (settled || opening) return
+    screen.show(
+      createElement(HarnessPicker, {
+        ...options,
+        harnesses,
+        searching,
+        ...(searchError === undefined ? {} : { searchError }),
+        onSelect,
+      }),
+      'Select a local harness'
+    )
+  }
   screen.signal.addEventListener('abort', cancel, { once: true })
-  screen.show(
-    createElement(HarnessPicker, {
-      ...options,
-      onSelect: async (choice, workspace): Promise<void> => {
-        if (!choice) return cancel()
-        let opened: Opened
-        try {
-          opened = await open(choice, signal, workspace)
-        } catch (error) {
-          throw devFailure(error, {
-            operation: 'open',
-            path: choice.kind === 'discovered' ? choice.harness.entrypoint : (workspace ?? options.cli?.path),
-          })
-        }
-        if (!settled && !signal.aborted) {
-          settled = true
-          complete(opened)
-        }
+  show()
+  let flush: ReturnType<typeof setTimeout> | undefined
+  if (search) {
+    const add = (harness: DiscoveredHarness): void => {
+      const index = harnesses.findIndex(({ entrypoint }) => entrypoint === harness.entrypoint)
+      harnesses = index < 0 ? [...harnesses, harness] : harnesses.map((known, at) => (at === index ? harness : known))
+    }
+    void search(
+      (harness) => {
+        add(harness)
+        flush ??= setTimeout(() => {
+          flush = undefined
+          show()
+        }, SEARCH_FLUSH_MS)
       },
-    }),
-    'Select a local harness'
-  )
+      AbortSignal.any([signal, searchAbort.signal])
+    )
+      .then((found) => found.forEach(add))
+      .catch((error: unknown) => {
+        if (!signal.aborted && !searchAbort.signal.aborted) searchError = errorMessage(error)
+      })
+      .finally(() => {
+        clearTimeout(flush)
+        flush = undefined
+        searching = false
+        show()
+      })
+  }
   try {
     return await result
   } finally {
+    searchAbort.abort(new Error('Harness selection closed.'))
+    clearTimeout(flush)
     screen.signal.removeEventListener('abort', cancel)
     screen.show(undefined, 'Preparing workspace…')
   }
