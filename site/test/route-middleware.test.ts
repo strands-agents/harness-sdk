@@ -182,7 +182,7 @@ describe('Sidebar filtering with live navigation.yml data', () => {
     ]
 
     const labs = getAllLinks(filterSidebarByBasePath(labsSidebar as any, '/docs/labs/'))
-    expect(labs.map((link) => link.label)).toContain('Robots')
+    expect(labs.map((link) => link.label)).toEqual(['Overview', 'Robots', 'Overview', 'Inference'])
 
     const decider = getAllLinks(filterSidebarByBasePath(labsSidebar as any, '/docs/labs/strands-decider/'))
     expect(decider.map((link) => link.label)).toEqual(['Overview', 'Inference'])
