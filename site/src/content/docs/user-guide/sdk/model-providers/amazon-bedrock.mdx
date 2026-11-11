@@ -1143,6 +1143,11 @@ unchanged.
   accept `drop_block` only with `"type": "adaptive"`. With any other thinking type, the
   retry fails and its error is raised.
 
+`BedrockModel` does not support server-side summary, so a message-level summary from
+[context management](../context-management/) is always client-side and rewrites that
+earlier conversation. To keep thinking, see
+[Models that preserve thinking](../context-management/custom-strategies#models-that-preserve-thinking).
+
 ## Related Resources
 
 - [Amazon Bedrock Documentation](https://docs.aws.amazon.com/bedrock/)

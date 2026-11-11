@@ -302,16 +302,6 @@ export class DefaultNotConfiguredError extends Error {
 }
 
 /**
- * Thrown when a model does not implement an optional operation, such as a server-side summary.
- */
-export class NotImplementedError extends Error {
-  constructor(message: string) {
-    super(message)
-    this.name = 'NotImplementedError'
-  }
-}
-
-/**
  * Error thrown when a storage operation fails.
  *
  * Wraps backend-specific errors (filesystem, S3, network) with a uniform type

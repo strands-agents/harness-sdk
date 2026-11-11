@@ -48,7 +48,7 @@ describe.each([openaiResponses, openai, bedrock, anthropic])(
           .flatMap((message) => message.content)
           .filter((block) => block instanceof TextBlock && block.text.startsWith('[Summarized: 2 messages'))
         expect(summaries).toHaveLength(1)
-        expect((summaries[0] as TextBlock).text).toMatch(/lookup_order|ORD-48213/)
+        expect((summaries[0] as TextBlock).text).toContain('FX-7731')
       },
       120_000
     )

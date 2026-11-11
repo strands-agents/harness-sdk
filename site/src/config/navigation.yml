@@ -389,6 +389,20 @@ sidebar:
               - docs/user-guide/sdk/model-providers/vercel
               - docs/user-guide/sdk/model-providers/writer
               - docs/user-guide/sdk/model-providers/custom_model_provider
+          - label: Decision models
+            addedDate: 2026-11-10
+            items:
+              - label: "Overview"
+                slug: docs/user-guide/sdk/decision-models
+              - docs/user-guide/sdk/decision-models/quickstart
+              - docs/user-guide/sdk/decision-models/questions
+              - docs/user-guide/sdk/decision-models/agents
+              - docs/user-guide/sdk/decision-models/observability
+              - label: Models
+                items:
+                  - label: "Overview"
+                    slug: docs/user-guide/sdk/decision-models/models
+                  - docs/user-guide/sdk/decision-models/models/llm
           - label: Tools
             items:
               - docs/user-guide/sdk/tools/tool-results
