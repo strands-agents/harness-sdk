@@ -23,6 +23,7 @@ from ..tools.decorator import tool
 from ..tools.executors._executor import _lookup_tool
 from ..types.agent import LocalAgent
 from ..types.content import Messages
+from ..types.session import decode_bytes_values, encode_bytes_values
 from ..types.tools import AgentTool, ToolContext, ToolResult, ToolResultContent, ToolSpec, ToolUse
 from ._errors import BackgroundTaskNotFoundError
 from ._types import BackgroundTask, BackgroundTasksConfig, is_task_status_terminal
@@ -253,7 +254,7 @@ class _BackgroundTasks(Plugin):
         Persisted work cannot resume in a new process, so non-terminal tasks are recorded as
         failed and their interrupts are dropped from the agent's interrupt state.
         """
-        stored: list[BackgroundTask] = self._agent.state.get(_BACKGROUND_TASKS_STATE_KEY) or []
+        stored: list[BackgroundTask] = decode_bytes_values(self._agent.state.get(_BACKGROUND_TASKS_STATE_KEY) or [])
         recovered_interrupt_ids: set[str] = set()
         tasks: dict[str, BackgroundTask] = {}
         for task in stored:
@@ -464,7 +465,7 @@ class _BackgroundTasks(Plugin):
         with self._tasks_lock:
             tasks = list(self._tasks.values())
             if tasks:
-                self._agent.state.set(_BACKGROUND_TASKS_STATE_KEY, tasks)
+                self._agent.state.set(_BACKGROUND_TASKS_STATE_KEY, encode_bytes_values(tasks))
             else:
                 self._agent.state.delete(_BACKGROUND_TASKS_STATE_KEY)
 

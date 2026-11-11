@@ -615,7 +615,11 @@ def test_origin_loop_shutdown_settles_background_execution() -> None:
 @pytest.mark.asyncio
 async def test_delivers_work_that_finishes_between_invocations() -> None:
     released = asyncio.Event()
-    content = [{"text": "done"}, {"image": {"format": "png", "source": {"location": {"uri": "s3://bucket/image.png"}}}}]
+    content = [
+        {"text": "done"},
+        {"image": {"format": "png", "source": {"location": {"uri": "s3://bucket/image.png"}}}},
+        {"image": {"format": "png", "source": {"bytes": b"png"}}},
+    ]
 
     @tool(name="work")
     async def work() -> dict[str, Any]:
@@ -654,7 +658,12 @@ async def test_delivers_work_that_finishes_between_invocations() -> None:
             "status": "completed",
             "created_at": ANY,
             "last_updated_at": ANY,
-            "result": {"content": content},
+            "result": {
+                "content": [
+                    *content[:2],
+                    {"image": {"format": "png", "source": {"bytes": {"__bytes_encoded__": True, "data": "cG5n"}}}},
+                ]
+            },
         }
     ]
     assert tru_tasks == exp_tasks
@@ -784,6 +793,42 @@ async def test_load_state_fails_restored_non_terminal_work() -> None:
         {"name": _MANAGE_TOOL_NAME, "toolUseId": "working", "input": {"mode": "get", "task_id": "working"}}
     ]
     assert tru_deliveries == exp_deliveries
+
+
+@pytest.mark.asyncio
+async def test_restored_result_bytes_are_delivered_decoded() -> None:
+    image = {"image": {"format": "png", "source": {"bytes": b"png"}}}
+    source = Agent(model=MockedModelProvider([]), background_tasks={}, callback_handler=None)
+    source._background_tasks._tasks["done"] = {
+        "task_id": "done",
+        "tool_use_id": "done-use",
+        "tool_name": "work",
+        "status": "completed",
+        "created_at": "2026-08-27T12:00:00Z",
+        "last_updated_at": "2026-08-27T12:00:00Z",
+        "result": {"content": [image]},
+    }
+    source._background_tasks._persist_tasks()
+    snapshot = source.take_snapshot(preset="session")
+
+    def load_snapshot(event: AgentInitializedEvent) -> None:
+        event.agent.load_snapshot(snapshot)
+
+    agent = Agent(
+        model=MockedModelProvider([_assistant_text("Results received.")]),
+        background_tasks={},
+        hooks=[load_snapshot],
+        callback_handler=None,
+    )
+    await agent.invoke_async("Continue.")
+
+    tru_content = next(
+        block["toolResult"]["content"]
+        for message in agent.messages
+        for block in message["content"]
+        if "toolResult" in block and block["toolResult"]["toolUseId"] == "done"
+    )
+    assert tru_content[1:] == [image]
 
 
 @pytest.mark.asyncio
