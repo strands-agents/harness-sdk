@@ -1,7 +1,9 @@
 import asyncio
 import base64
+import gc
 import threading
 import time
+import warnings
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -2115,3 +2117,132 @@ def test_mcp_client_client_info_none_when_no_name(mock_transport, mock_session, 
         with MCPClient(mock_transport["transport_callable"], **kwargs) as _client:
             call_kwargs = mock_client_session.call_args[1]
             assert call_kwargs["client_info"] is None
+
+
+@pytest.mark.parametrize("closed", [False, True])
+@pytest.mark.parametrize("transport_failed", [False, True])
+def test_stop_after_background_loop_finished_resets_without_coroutines(closed, transport_failed):
+    """An already finished loop needs no signal; preserve the actual failure cause."""
+    client = MCPClient(MagicMock())
+    loop = asyncio.new_event_loop()
+    close_future = loop.create_future()
+    close_future.cancel()
+    thread = threading.Thread(target=lambda: None)
+    thread.start()
+    thread.join()
+    if closed:
+        loop.close()
+    client._background_thread = thread
+    client._background_thread_event_loop = loop
+    client._close_future = close_future
+    original_error = ConnectionError("Synthetic transport failure") if transport_failed else None
+    client._close_exception = original_error
+
+    gc.collect()
+    with warnings.catch_warnings(record=True) as observed:
+        warnings.simplefilter("always")
+        if transport_failed:
+            with pytest.raises(RuntimeError, match="Connection to the MCP server was closed") as exc_info:
+                client.stop(None, None, None)
+            assert exc_info.value.__cause__ is original_error
+        else:
+            client.stop(None, None, None)
+        gc.collect()
+
+    assert not any("MCPClient.stop" in str(warning.message) for warning in observed)
+    assert not thread.is_alive()
+    assert loop.is_closed()
+    assert client._background_thread is None
+    assert client._background_thread_event_loop is None
+    assert client._close_exception is None
+    # Public repeated cleanup remains harmless after the error has been reported.
+    client.stop(None, None, None)
+
+
+def test_stop_loop_closes_between_check_and_signal():
+    """Only a confirmed closed loop permits ignoring the submission RuntimeError."""
+    client = MCPClient(MagicMock())
+    client._background_thread = MagicMock()
+    loop = MagicMock()
+    loop.is_running.return_value = True
+    loop.is_closed.return_value = False
+
+    def close_before_submission(*args):
+        loop.is_closed.return_value = True
+        raise RuntimeError("Event loop is closed")
+
+    loop.call_soon_threadsafe.side_effect = close_before_submission
+    client._background_thread_event_loop = loop
+    client.stop(None, None, None)
+    loop.call_soon_threadsafe.assert_called_once()
+    loop.close.assert_called_once()
+    assert client._background_thread is None
+
+
+def test_stop_preserves_unrelated_signal_error():
+    """Never swallow unexpected callback submission failures on an open loop."""
+    client = MCPClient(MagicMock())
+    client._background_thread = MagicMock()
+    loop = MagicMock()
+    loop.is_running.return_value = True
+    loop.is_closed.return_value = False
+    unexpected = RuntimeError("Synthetic unrelated failure")
+    loop.call_soon_threadsafe.side_effect = unexpected
+    client._background_thread_event_loop = loop
+    with pytest.raises(RuntimeError) as exc_info:
+        client.stop(None, None, None)
+    assert exc_info.value is unexpected
+    assert client._background_thread_event_loop is loop
+
+
+def test_start_read_error_preserves_cause_and_resets(mock_transport):
+    """The real public failed-start cleanup must preserve the transport error."""
+    from httpx import ReadError
+
+    original_error = ReadError("Synthetic transport failure")
+    mock_transport["transport_cm"].__aenter__.side_effect = original_error
+    client = MCPClient(mock_transport["transport_callable"])
+    gc.collect()
+    with warnings.catch_warnings(record=True) as observed:
+        warnings.simplefilter("always")
+        with pytest.raises(MCPClientInitializationError) as exc_info:
+            client.start()
+        assert exc_info.value.__cause__ is original_error
+        gc.collect()
+    assert not any("MCPClient.stop" in str(warning.message) for warning in observed)
+    assert client._background_thread is None
+    assert client._background_thread_event_loop is None
+    client.stop(None, None, None)
+
+
+def test_stop_can_signal_loop_before_its_first_iteration():
+    """A started worker may have published its loop but not created its close future."""
+    client = MCPClient(MagicMock())
+    loop = asyncio.new_event_loop()
+    begin = threading.Event()
+    original_submit = loop.call_soon_threadsafe
+
+    def submit_then_begin(*args):
+        handle = original_submit(*args)
+        begin.set()
+        return handle
+
+    async def initialize_close_future():
+        client._close_future = loop.create_future()
+        await client._close_future
+
+    def worker():
+        assert begin.wait(2)
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(initialize_close_future())
+
+    thread = threading.Thread(target=worker)
+    client._background_thread_event_loop = loop
+    client._background_thread = thread
+    thread.start()
+    assert not loop.is_running()
+    with patch.object(loop, "call_soon_threadsafe", side_effect=submit_then_begin):
+        client.stop(None, None, None)
+    assert not thread.is_alive()
+    assert loop.is_closed()
+    assert client._background_thread is None
