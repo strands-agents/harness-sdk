@@ -192,4 +192,140 @@ describe('dev ingress', () => {
       expect((await readdir(failed)).sort()).toEqual(['agent.ts', 'package.json'])
     }
   )
+
+  it.each(['Back', 'Cancel'] as const)('shouldRestoreAReplacedWorkspaceWhenTheUser%s', async (action) => {
+    const failed = await temporaryDirectory()
+    await writeFile(join(failed, 'package.json'), '{"type":"module"}')
+    await writeFile(join(failed, 'agent.ts'), 'export const agent = {}')
+    const other = await temporaryDirectory()
+    await writeFile(join(other, 'package.json'), '{"type":"module"}')
+    await writeFile(join(other, 'agent.ts'), 'export const agent = {}')
+    await bindExistingAgent(join(failed, 'strands-dev'), join(other, 'agent.ts'))
+    const before = await readFile(join(failed, 'strands-dev/.config'), 'utf8')
+    const harness = {
+      name: 'Failed',
+      entrypoint: join(failed, 'agent.ts'),
+      root: failed,
+      language: 'typescript' as const,
+    }
+    const configPath = join(await temporaryDirectory(), 'cli.toml')
+    await writeFile(configPath, '[profile]\nname = "Saved"\n')
+    vi.spyOn(CliConfigStore, 'load').mockResolvedValue(await CliConfigStore.load(configPath, { persist: false }))
+    const setup = vi.fn(async () => {
+      replaced = await readFile(join(failed, 'strands-dev/.config'), 'utf8')
+      return action === 'Back' ? ('ready' as const) : ('cancel' as const)
+    })
+    vi.spyOn(projectSetup, 'projectSetupSession').mockReturnValue({
+      prepare: setup,
+      recover: vi.fn().mockResolvedValue('back'),
+    })
+    vi.spyOn(search, 'discoverHarnesses').mockResolvedValue({ harnesses: [harness], warnings: [] })
+    vi.spyOn(picker, 'chooseHarness')
+      .mockImplementationOnce(async (_options, screen, open) =>
+        open({ kind: 'discovered', harness }, screen.signal, undefined, true)
+      )
+      .mockResolvedValueOnce(undefined)
+    let replaced = ''
+    ui.run.mockImplementation(async (_factory: unknown, options: Parameters<typeof runInkChat>[1]) => {
+      const screen = { signal: new AbortController().signal, show: vi.fn() }
+      if (!(await options?.prepare?.(screen))) return 0
+      await options?.recoverStartup?.(new Error("No module named 'failed'"), screen)
+      await options?.prepare?.(screen)
+      return 0
+    })
+    const home = await temporaryDirectory()
+    vi.stubEnv('HOME', home)
+    vi.stubEnv('USERPROFILE', home)
+    terminal(true)
+    const cwd = process.cwd()
+    process.chdir(await temporaryDirectory())
+    try {
+      await main(['dev'])
+    } finally {
+      process.chdir(cwd)
+      vi.unstubAllEnvs()
+    }
+
+    expect(replaced).not.toBe(before)
+    expect(await readFile(join(failed, 'strands-dev/.config'), 'utf8')).toBe(before)
+    expect((await readdir(failed)).sort()).toEqual(['agent.ts', 'package.json', 'strands-dev'])
+  })
+
+  it.each(['Starts', 'FailsToLoad'] as const)('shouldDeleteTheReplacedWorkspaceOnlyAfterTheChat%s', async (outcome) => {
+    const parent = await temporaryDirectory()
+    const project = join(parent, 'project')
+    await mkdir(project)
+    await writeFile(join(project, 'package.json'), '{"type":"module"}')
+    await writeFile(join(project, 'agent.ts'), 'export const agent = {}')
+    const other = await temporaryDirectory()
+    await writeFile(join(other, 'package.json'), '{"type":"module"}')
+    await writeFile(join(other, 'agent.ts'), 'export const agent = {}')
+    await bindExistingAgent(join(project, 'strands-dev'), join(other, 'agent.ts'))
+    const before = await readFile(join(project, 'strands-dev/.config'), 'utf8')
+    const harness = {
+      name: 'Desk',
+      entrypoint: join(project, 'agent.ts'),
+      root: project,
+      language: 'typescript' as const,
+    }
+    const configPath = join(await temporaryDirectory(), 'cli.toml')
+    await writeFile(configPath, '[profile]\nname = "Saved"\n')
+    vi.spyOn(CliConfigStore, 'load').mockResolvedValue(await CliConfigStore.load(configPath, { persist: false }))
+    vi.spyOn(projectSetup, 'projectSetupSession').mockReturnValue({
+      prepare: vi.fn().mockResolvedValue('ready'),
+      recover: vi.fn().mockResolvedValue('back'),
+    })
+    vi.spyOn(search, 'discoverHarnesses').mockResolvedValue({ harnesses: [harness], warnings: [] })
+    vi.spyOn(picker, 'chooseHarness')
+      .mockImplementationOnce(async (_options, screen, open) =>
+        open({ kind: 'discovered', harness }, screen.signal, undefined, true)
+      )
+      .mockResolvedValueOnce(undefined)
+    const controller = new ChatController(idleBackend())
+    if (outcome === 'Starts') ui.typescript.mockResolvedValueOnce(controller)
+    else ui.typescript.mockRejectedValueOnce(new Error('load failed'))
+    const backups = async (): Promise<string[]> =>
+      (await readdir(parent)).filter((name) => name.startsWith('.strands-dev-'))
+    let beforeChat: string[] = []
+    let afterChat: string[] = []
+    ui.run.mockImplementation(
+      async (factory: Parameters<typeof runInkChat>[0], options: Parameters<typeof runInkChat>[1]) => {
+        if (typeof factory !== 'function') throw new Error('expected a controller factory')
+        const screen = { signal: new AbortController().signal, show: vi.fn() }
+        await options?.prepare?.(screen)
+        beforeChat = await backups()
+        try {
+          await factory(
+            new AbortController().signal,
+            () => undefined,
+            undefined,
+            undefined,
+            async () => false
+          )
+        } catch (error) {
+          await options?.recoverStartup?.(error, screen)
+          await options?.prepare?.(screen)
+        }
+        await vi.waitFor(async () => expect(await backups()).toEqual([]))
+        afterChat = await backups()
+        return 0
+      }
+    )
+    vi.spyOn(process.stderr, 'write').mockReturnValue(true)
+    terminal(true)
+    const cwd = process.cwd()
+    process.chdir(await temporaryDirectory())
+    try {
+      await main(['dev'])
+    } finally {
+      process.chdir(cwd)
+      await controller.dispose()
+    }
+
+    expect(beforeChat).toHaveLength(1)
+    expect(afterChat).toEqual([])
+    const after = await readFile(join(project, 'strands-dev/.config'), 'utf8')
+    if (outcome === 'Starts') expect(after).not.toBe(before)
+    else expect(after).toBe(before)
+  })
 })

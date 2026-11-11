@@ -6,6 +6,7 @@ import { containsPath } from '../paths.js'
 import type { ImportedAgentProject } from '../project/import.js'
 import type { StartupScreen, WorkspaceChange } from '../ui/run.js'
 import type { BaseCliOption, HarnessChoice } from './picker.js'
+import { newProjectModelNotice } from './create.js'
 import { projectSetupSession } from './project-setup.js'
 import { createWorkspaceReplacement, type WorkspaceReplacement } from './replace.js'
 import { baseHarnessProject, discoverLocalHarnesses, distinctHarnesses } from './selection.js'
@@ -103,6 +104,7 @@ const chooseReplacement = async (
         )
       ).filter(visible),
     warning: replacementWarning(workspace),
+    modelNotice: (language: 'typescript' | 'python'): string | undefined => newProjectModelNotice(snapshot, language),
   }
   const { chooseHarness } = await import('./picker.js')
   for (;;) {

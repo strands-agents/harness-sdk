@@ -2,6 +2,7 @@ import chalk from 'chalk'
 import { createElement } from 'react'
 import { Box } from 'ink'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { WorkspaceFolderInUse } from '../../src/dev/errors.js'
 import { chooseHarness, HarnessPicker } from '../../src/dev/picker.js'
 import type { DiscoveredHarness } from '../../src/dev/search.js'
 import * as terminal from '../../src/terminal/terminal.js'
@@ -446,6 +447,80 @@ describe('HarnessPicker', () => {
     expect(selected).toHaveBeenCalledTimes(2)
   })
 
+  const withOccupiedFolder = (selected: Parameters<typeof HarnessPicker>[0]['onSelect']) => {
+    const input = ttyInput()
+    const output = ttyOutput(100, 40)
+    const frame = captureFrame(output)
+    render(
+      createElement(HarnessPicker, {
+        cli: { name: 'Saved profile', path: '/home/test/.strands/cli.toml' },
+        harnesses: [],
+        folderFor: () => ({
+          path: '/home/test/.strands/strands-dev',
+          detected: false,
+          occupiedBy: 'Strands harness (/desk/agent.py)',
+        }),
+        onSelect: selected,
+      }),
+      { stdin: input, stdout: output }
+    )
+    return { input, text: () => frame().join('\n').replace(/\s+/gu, ' ') }
+  }
+  const inUse = () => new WorkspaceFolderInUse('/home/test/.strands/strands-dev', 'Strands harness (/desk/agent.py)')
+
+  it('shouldSayTheSuggestedFolderHoldsAnotherWorkspaceBeforeTheUserContinues', async () => {
+    const { input, text } = withOccupiedFolder(vi.fn())
+    await vi.waitFor(() => expect(text()).toContain('Select a harness'))
+    input.write('\r')
+
+    await vi.waitFor(() =>
+      expect(text()).toContain('strands-dev in this path holds the workspace of Strands harness (/desk/agent.py).')
+    )
+    expect(text()).toContain('Enter asks you to confirm before it is replaced.')
+  })
+
+  it('shouldReplaceTheFolderOnlyAfterTheUserTypesDelete', async () => {
+    const selected = vi.fn().mockRejectedValueOnce(inUse()).mockResolvedValueOnce(undefined)
+    const { input, text } = withOccupiedFolder(selected)
+    await vi.waitFor(() => expect(text()).toContain('Select a harness'))
+    input.write('\r')
+    await vi.waitFor(() => expect(text()).toContain('Create a workspace'))
+    input.write('\r')
+
+    await vi.waitFor(() => expect(text()).toContain('DELETE workspace and replace?'))
+    expect(text()).toContain('Current workspace: Strands harness (/desk/agent.py)')
+    expect(text()).toContain('Replacement: Base CLI · Saved profile')
+    input.write('DELET')
+    await vi.waitFor(() => expect(text()).toContain('Type DELETE to confirm: DELET▏'))
+    input.write('\r')
+    await vi.waitFor(() => expect(text()).toContain('Type DELETE exactly to confirm'))
+    expect(selected).toHaveBeenCalledTimes(1)
+    input.write('E')
+    await vi.waitFor(() => expect(text()).toContain('Type DELETE to confirm: DELETE▏'))
+    input.write('\r')
+
+    await vi.waitFor(() =>
+      expect(selected).toHaveBeenLastCalledWith({ kind: 'cli' }, '/home/test/.strands/strands-dev', true)
+    )
+    expect(selected).toHaveBeenNthCalledWith(1, { kind: 'cli' }, '/home/test/.strands/strands-dev')
+  })
+
+  it('shouldReturnToTheFolderStepWhenTheUserCancelsTheReplacement', async () => {
+    const selected = vi.fn().mockRejectedValueOnce(inUse())
+    const { input, text } = withOccupiedFolder(selected)
+    await vi.waitFor(() => expect(text()).toContain('Select a harness'))
+    input.write('\r')
+    await vi.waitFor(() => expect(text()).toContain('Create a workspace'))
+    input.write('\r')
+    await vi.waitFor(() => expect(text()).toContain('DELETE workspace and replace?'))
+
+    input.write('\u001b')
+
+    await vi.waitFor(() => expect(text()).toContain('Create a workspace'))
+    expect(text()).not.toContain('DELETE workspace and replace?')
+    expect(selected).toHaveBeenCalledTimes(1)
+  })
+
   it('shouldNameTheNumberedFolderInTheNoteUntilThePathChanges', async () => {
     const input = ttyInput()
     const output = ttyOutput(100, 36)
@@ -530,12 +605,15 @@ describe('HarnessPicker', () => {
     expect(text()).not.toContain('Create a workspace')
   })
 
-  const createForm = async () => {
+  const createForm = async (props: Partial<Parameters<typeof HarnessPicker>[0]> = {}) => {
     const input = ttyInput()
     const output = ttyOutput(100, 36)
     const frame = captureFrame(output)
     const selected = vi.fn()
-    render(createElement(HarnessPicker, { harnesses: [], onSelect: selected }), { stdin: input, stdout: output })
+    render(createElement(HarnessPicker, { harnesses: [], onSelect: selected, ...props }), {
+      stdin: input,
+      stdout: output,
+    })
     await vi.waitFor(() => expect(frame().join('\n')).toContain('› Create a new harness'))
     input.write('\r')
     await vi.waitFor(() => expect(frame().join('\n')).toContain('› Name: new-harness'))
@@ -554,6 +632,21 @@ describe('HarnessPicker', () => {
     await vi.waitFor(() =>
       expect(selected).toHaveBeenCalledWith({ kind: 'create', name: 'new-harness', language: 'python' })
     )
+  })
+
+  it('shouldShowTheModelNoticeOnlyForTheLanguageThatCannotLoadTheModelModule', async () => {
+    const notice = 'Python cannot load the model module custom.mjs.'
+    const { input, text } = await createForm({
+      modelNotice: (language) => (language === 'python' ? notice : undefined),
+    })
+
+    input.write('\u001b[B')
+    await vi.waitFor(() => expect(text()).toContain('› Language: typescript'))
+    expect(text()).not.toContain(notice)
+    input.write('\u001b[C')
+
+    await vi.waitFor(() => expect(text()).toContain('› Language: python'))
+    await vi.waitFor(() => expect(text()).toContain(notice))
   })
 
   it('shouldEditTheNameOnlyWhenTheNameFieldIsSelected', async () => {

@@ -210,34 +210,62 @@ describe('createDevProject', () => {
     }
   )
 
-  it('shouldUseTheNextFreeNameWhenStrandsWorkspaceIsTaken', async () => {
+  it.each([
+    ['APythonHarnessFromATypeScriptModelModule', 'python', 'custom.mjs'],
+    ['ATypeScriptHarnessFromAPythonModelModule', 'typescript', 'custom.py'],
+  ] as const)('shouldUseTheProfileModelWhenCreating%s', async (_case, language, file) => {
+    const cwd = await temporaryDirectory()
+    const base = await temporaryDirectory()
+    await mkdir(join(base, 'models'))
+    await writeFile(join(base, 'models', file), language === 'python' ? 'export default {}\n' : 'model = None\n')
+    vi.spyOn(installer, 'prepareWorkspaceDependencies').mockResolvedValue()
+    const profile = CliConfigStore.memory(
+      {},
+      {},
+      {
+        profile: {
+          name: 'Test harness',
+          model: 'bedrock/us.example.model',
+          modelModule: { kind: 'model', module: `./models/${file}`, files: [`./models/${file}`] },
+          session: false,
+          memory: false,
+          skills: false,
+        },
+        profileBaseDir: base,
+      }
+    ).snapshot()
+
+    const workspace = await createDevProject({ cwd, language, snapshot: profile, deferDependencies: true })
+
+    const source = await readFile(workspace.entrypoint, 'utf8')
+    expect(source).toContain('bedrock/us.example.model')
+    expect(source).not.toContain(file)
+    expect(profile.profile.modelModule?.module).toBe(`./models/${file}`)
+  })
+
+  it('shouldRefuseToWriteIntoStrandsWorkspaceWhenItAlreadyExists', async () => {
     const cwd = await temporaryDirectory()
     await mkdir(join(cwd, 'strands-workspace'))
-    await writeFile(join(cwd, 'strands-workspace-2'), 'notes')
+    await writeFile(join(cwd, 'strands-workspace/keep.txt'), 'keep')
 
-    const workspace = await createDevProject({
-      cwd,
-      language: 'typescript',
-      snapshot: snapshot(),
-      deferDependencies: true,
-    })
+    await expect(
+      createDevProject({ cwd, language: 'typescript', snapshot: snapshot(), deferDependencies: true })
+    ).rejects.toThrow('already exists')
 
-    expect(workspace.root).toBe(join(cwd, 'strands-workspace-3'))
-    expect(await readdir(join(cwd, 'strands-workspace'))).toEqual([])
-    expect(await readFile(join(cwd, 'strands-workspace-2'), 'utf8')).toBe('notes')
+    expect(await readdir(cwd)).toEqual(['strands-workspace'])
+    expect(await readdir(join(cwd, 'strands-workspace'))).toEqual(['keep.txt'])
   })
 
   it('shouldRemoveOnlyTheNewProjectWhenInstallationFails', async () => {
     const cwd = await temporaryDirectory()
-    await mkdir(join(cwd, 'strands-workspace'))
-    await writeFile(join(cwd, 'strands-workspace/keep.txt'), 'keep')
+    await writeFile(join(cwd, 'keep.txt'), 'keep')
     vi.spyOn(installer, 'prepareWorkspaceDependencies').mockRejectedValue(new Error('install failed'))
 
     await expect(createDevProject({ cwd, language: 'typescript', snapshot: snapshot() })).rejects.toThrow(
       'install failed'
     )
-    expect(await readdir(cwd)).toEqual(['strands-workspace'])
-    expect(await readFile(join(cwd, 'strands-workspace/keep.txt'), 'utf8')).toBe('keep')
+    expect(await readdir(cwd)).toEqual(['keep.txt'])
+    expect(await readFile(join(cwd, 'keep.txt'), 'utf8')).toBe('keep')
   })
 
   it('shouldLeaveNoProjectWhenCreationIsCancelled', async () => {
@@ -276,6 +304,34 @@ describe('folderClaims', () => {
 
       expect(await readdir(root)).toEqual(['locked'])
       expect(await readdir(locked)).toEqual(['strands-dev'])
+    }
+  )
+})
+
+describe('folderClaims', () => {
+  it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+    'shouldStillRestoreAReplacedFolderWhenAnotherClaimCannotBeDeleted',
+    async () => {
+      const root = await temporaryDirectory()
+      const locked = join(root, 'locked')
+      await mkdir(join(locked, 'made'), { recursive: true })
+      const replaced = join(root, 'strands-dev')
+      await mkdir(replaced)
+      await writeFile(join(replaced, '.config'), 'old')
+      const claims = folderClaims()
+      claims.claimCreated(join(locked, 'made'))
+      await claims.replace(replaced)
+      await mkdir(replaced)
+      await chmod(locked, 0o500)
+
+      try {
+        await expect(claims.release()).rejects.toThrow(`Could not delete ${join(locked, 'made')}`)
+      } finally {
+        await chmod(locked, 0o700)
+      }
+
+      expect(await readFile(join(replaced, '.config'), 'utf8')).toBe('old')
+      expect((await readdir(root)).sort()).toEqual(['locked', 'strands-dev'])
     }
   )
 })
