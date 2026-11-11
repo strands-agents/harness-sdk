@@ -1,5 +1,6 @@
 ---
 import arrow from '../assets/banner/arrow.svg?raw'
+import InstallCommand from './InstallCommand.astro'
 import { pathWithBase } from '../util/links'
 
 const foundations = [
@@ -13,19 +14,23 @@ const foundations = [
       'Start with a complete agent harness and benchmarked defaults for the system prompt, tools, memory, session management, and context management.',
     bestFor: 'Getting an agent running quickly without giving up the ability to customize it.',
     features: ['Optimized defaults', 'CLI or library', 'Every layer overridable'],
+    pip: 'pip install strands-harness',
+    npm: 'npm i @strands-agents/harness',
     href: pathWithBase('/docs/user-guide/harness/quickstart/'),
     cta: 'Build your first agent',
   },
   {
     slug: '/harness-sdk',
     label: 'Strands Harness SDK',
-    badge: 'Full control',
+    badge: 'Build from primitives',
     accent: 'var(--card-accent-teal)',
     title: 'Compose the agent loop yourself.',
     description:
       'Build from SDK primitives when you want to choose every model provider, tool, hook, intervention, memory system, and lifecycle control.',
     bestFor: 'Custom architectures where your team wants to own every decision.',
     features: ['Own the agent loop', 'Tools and MCP', 'Python and TypeScript'],
+    pip: 'pip install strands-agents',
+    npm: 'npm i @strands-agents/sdk',
     href: pathWithBase('/docs/user-guide/sdk/quickstart/overview/'),
     cta: 'Start from SDK primitives',
   },
@@ -129,6 +134,15 @@ const modules = [
           </div>
 
           <p class="foundation-card__description">{foundation.description}</p>
+
+          <div class="foundation-card__install">
+            <span class="foundation-card__install-label">Install</span>
+            <InstallCommand
+              pip={foundation.pip}
+              npm={foundation.npm}
+              copyLabel={`Copy ${foundation.label} install command`}
+            />
+          </div>
 
           <div class="foundation-card__best-for">
             <span class="foundation-card__best-for-label">Best when</span>
@@ -370,6 +384,33 @@ const modules = [
     font-size: 17px;
     line-height: 1.5;
     color: var(--fg);
+  }
+
+  .foundation-card__install {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+    min-width: 0;
+    margin-top: 24px;
+  }
+
+  .foundation-card__install-label {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1.3;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+
+  .foundation-card__install :global(.install) {
+    width: 100%;
+  }
+
+  .foundation-card__install :global(.install__cmd) {
+    font-size: 13px;
   }
 
   .foundation-card__best-for {
@@ -615,6 +656,10 @@ const modules = [
       grid-template-columns: 1fr;
     }
 
+    .toolkit__foundations {
+      grid-template-columns: 1fr;
+    }
+
     .toolkit__header {
       gap: 16px;
     }
@@ -682,6 +727,21 @@ const modules = [
 
     .foundation-card__description {
       font-size: 16px;
+    }
+
+    .foundation-card__install :global(.install) {
+      gap: 6px;
+      padding: 8px 7px 8px 11px;
+    }
+
+    .foundation-card__install :global(.install__cmd) {
+      gap: 7px;
+      font-size: 11px;
+    }
+
+    .foundation-card__install :global(.install__copy) {
+      padding: 6px 9px;
+      font-size: 12px;
     }
 
     .foundation-card__best-for {

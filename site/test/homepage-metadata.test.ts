@@ -88,21 +88,39 @@ describe('homepage machine-readable metadata', () => {
     expect(
       foundations.map((card) => ({
         slug: card.querySelector('.foundation-card__slug')?.text.trim(),
+        badge: card.querySelector('.foundation-card__badge')?.text.trim(),
         heading: {
           tagName: card.querySelector('.foundation-card__title')?.tagName,
           text: card.querySelector('.foundation-card__title')?.text.trim(),
+        },
+        install: {
+          python: card.querySelector('[data-install-variant="Python"]')?.text.trim(),
+          typescript: card.querySelector('[data-install-variant="TypeScript"]')?.text.trim(),
+          copyLabel: card.querySelector('[data-install-copy]')?.getAttribute('aria-label'),
         },
         href: card.querySelector('.foundation-card__cta')?.getAttribute('href'),
       }))
     ).toEqual([
       {
         slug: '/harness',
+        badge: 'Recommended',
         heading: { tagName: 'H3', text: 'Get a working agent first.' },
+        install: {
+          python: 'pip install strands-harness',
+          typescript: 'npm i @strands-agents/harness',
+          copyLabel: 'Copy Strands harness install command',
+        },
         href: configuredPathWithBase('/docs/user-guide/harness/quickstart/'),
       },
       {
         slug: '/harness-sdk',
+        badge: 'Build from primitives',
         heading: { tagName: 'H3', text: 'Compose the agent loop yourself.' },
+        install: {
+          python: 'pip install strands-agents',
+          typescript: 'npm i @strands-agents/sdk',
+          copyLabel: 'Copy Strands Harness SDK install command',
+        },
         href: configuredPathWithBase('/docs/user-guide/sdk/quickstart/overview/'),
       },
     ])

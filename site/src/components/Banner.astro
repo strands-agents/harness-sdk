@@ -63,6 +63,7 @@ import { pathWithBase } from '../util/links';
           <InstallCommand
             pip="pip install strands-harness"
             npm="npm i @strands-agents/harness"
+            copyLabel="Copy Strands harness install command"
           />
         </div>
         <ul class="banner__starter-features" role="list">
@@ -97,6 +98,7 @@ import { pathWithBase } from '../util/links';
     justify-content: center;
     overflow: hidden;
     border-radius: 40px;
+    opacity: 0.48;
     pointer-events: none;
   }
 
@@ -120,8 +122,15 @@ import { pathWithBase } from '../util/links';
     position: absolute;
     inset: 0;
     background:
-      linear-gradient(to right, var(--bg) 0%, transparent 28%, transparent 72%, var(--bg) 100%),
-      linear-gradient(to bottom, transparent 50%, var(--bg) 100%);
+      linear-gradient(
+        to right,
+        var(--bg) 0%,
+        var(--bg) 44%,
+        color-mix(in srgb, var(--bg) 94%, transparent) 61%,
+        color-mix(in srgb, var(--bg) 42%, transparent) 80%,
+        var(--bg) 100%
+      ),
+      linear-gradient(to bottom, transparent 34%, var(--bg) 100%);
     pointer-events: none;
   }
 
@@ -390,11 +399,15 @@ import { pathWithBase } from '../util/links';
       inset: 22px 19px auto;
       height: 360px;
       border-radius: 18px;
-      opacity: 0.28;
+      opacity: 0.18;
     }
 
     .banner__gradient {
-      background: linear-gradient(to bottom, transparent 12%, var(--bg) 62%);
+      background: linear-gradient(
+        to bottom,
+        color-mix(in srgb, var(--bg) 48%, transparent) 0%,
+        var(--bg) 68%
+      );
     }
 
     .banner__content {
