@@ -28,6 +28,10 @@ class _BackgroundTaskRuntime:
         future = asyncio.run_coroutine_threadsafe(self._invoke(operation), loop)
         return await asyncio.wrap_future(future)
 
+    def call_soon(self, operation: Callable[[], object]) -> None:
+        """Schedule a callback on the persistent loop without waiting for it. Safe from any thread."""
+        self._ensure_started().call_soon_threadsafe(operation)
+
     def _ensure_started(self) -> asyncio.AbstractEventLoop:
         existing_loop = self._loop
         if existing_loop is not None:

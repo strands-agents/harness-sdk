@@ -41,6 +41,15 @@ const scoped = await createHarness({
 The default policy is equivalent to `{ agentic: ['*'] }`: the model may run any compatible
 tool in the background.
 
+## Cancel background work
+
+`agent.cancel()` stops the current invocation but leaves background tasks running. To stop
+them too, pass `cancelBackgroundTasks`:
+
+```typescript
+agent.cancel({ cancelBackgroundTasks: true })
+```
+
 ## The CLI
 
 The Strands harness CLI runs on the TypeScript library, so the `generalist` runs in the background

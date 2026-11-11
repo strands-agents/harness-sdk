@@ -7,7 +7,7 @@ import copy
 import dataclasses
 import logging
 import threading
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, TypeGuard
 
@@ -229,6 +229,16 @@ class _BackgroundTasks(Plugin):
         )
         return {"toolUseId": tool_use["toolUseId"], "status": "success", "content": [{"text": acknowledgement}]}
 
+    def cancel_all(self) -> None:
+        """Request cancellation of every non-terminal task and drop the agent interrupts they raised.
+
+        Safe from any thread; does not wait for the tasks to settle.
+        """
+        self._manager.cancel_all()
+        self._drop_interrupts(
+            interrupt["id"] for task in self._task_snapshots() for interrupt in task.get("interrupts", [])
+        )
+
     def assert_tool_can_run(self, tool_instance: AgentTool | None) -> None:
         """Reject a middleware-substituted tool that cannot run in the background.
 
@@ -268,12 +278,15 @@ class _BackgroundTasks(Plugin):
             tasks[task["task_id"]] = task
         with self._tasks_lock:
             self._tasks = tasks
+        self._drop_interrupts(recovered_interrupt_ids)
+        self._persist_tasks()
+
+    def _drop_interrupts(self, interrupt_ids: Iterable[str]) -> None:
         interrupt_state = self._agent._interrupt_state
-        for interrupt_id in recovered_interrupt_ids:
+        for interrupt_id in interrupt_ids:
             interrupt_state.interrupts.pop(interrupt_id, None)
         if interrupt_state.activated and not interrupt_state.interrupts:
             interrupt_state.deactivate()
-        self._persist_tasks()
 
     async def _transform_tool_specs(self, context: InvokeModelContext) -> InvokeModelContext:
         transformed: list[ToolSpec] = []

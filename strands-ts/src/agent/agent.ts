@@ -1097,7 +1097,7 @@ export class Agent implements LocalAgent, InvokableAgent {
    * For cancellation driven from outside the agent, prefer the `cancelSignal`
    * option on `invoke` / `stream`.
    *
-   * @param options - See {@link CancelOptions} for `message` and `afterCurrentTools`.
+   * @param options - See {@link CancelOptions} for `message`, `afterCurrentTools`, and `cancelBackgroundTasks`.
    *
    * @example
    * ```typescript
@@ -1113,6 +1113,9 @@ export class Agent implements LocalAgent, InvokableAgent {
    * ```
    */
   public cancel(options?: CancelOptions): void {
+    if (options?.cancelBackgroundTasks) {
+      this._backgroundTasks?.cancelAll()
+    }
     if (!this._isInvoking) {
       return
     }

@@ -176,6 +176,16 @@ class InProcessTaskManager:
             lambda: _to_background_task(self._engine.cancel(task_id, reason="Cancellation requested"))
         )
 
+    def cancel_all(self) -> None:
+        """Request cancellation of every non-terminal task without waiting for it. Safe from any thread."""
+
+        def cancel_all() -> None:
+            for record in self._engine.list():
+                if not is_task_status_terminal(record["status"]):
+                    self._engine.cancel(record["task_id"], reason="Cancellation requested")
+
+        self._runtime.call_soon(cancel_all)
+
     async def wait(self, task_id: str) -> BackgroundTask:
         """Wait until one task requires input or becomes terminal."""
         return await self._runtime.run(lambda: self._wait(task_id))
