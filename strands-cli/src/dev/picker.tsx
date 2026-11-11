@@ -11,6 +11,8 @@ import { useCopyableError } from '../ui/clipboard.js'
 import { useStartupContentRows } from '../ui/startup.js'
 import { userConfigPath } from '../config/store.js'
 import { devFailure } from './errors.js'
+import { basename, dirname } from 'node:path'
+import { WORKSPACE_FOLDER } from './workspace.js'
 
 export type HarnessChoice =
   | { kind: 'cli' }
@@ -77,7 +79,7 @@ export const HarnessPicker = ({
   const [language, setLanguage] = useState<'typescript' | 'python'>('typescript')
   const [field, setField] = useState<FormField>('name')
   const [name, setName] = useState('new-harness')
-  const [folder, setFolder] = useState({ value: '', cursor: 0 })
+  const [folder, setFolder] = useState({ value: '', cursor: 0, suggested: '' })
   const [failure, setFailure] = useState<string>()
   const failureCopyHint = useCopyableError(failure)
   const [busy, setBusy] = useState(false)
@@ -133,7 +135,8 @@ export const HarnessPicker = ({
     const suggested = folderOf(choice)
     if (suggested === undefined) return submit(choice)
     setFailure(undefined)
-    setFolder({ value: suggested, cursor: graphemes(suggested).length })
+    const place = dirname(suggested)
+    setFolder({ value: place, cursor: graphemes(place).length, suggested })
     setPlacing(choice)
   }
   const leaveFolder = (): void => {
@@ -143,7 +146,7 @@ export const HarnessPicker = ({
   }
   const editFolder = (input: string, key: Key): void => {
     if (key.return)
-      return folder.value.trim() ? submit(placing, folder.value.trim()) : setFailure('Enter a workspace folder.')
+      return folder.value.trim() ? submit(placing, chosenFolder()) : setFailure('Enter a workspace folder.')
     if (key.tab || (key.ctrl && input === 'j')) return
     setFolder((current) => {
       const { state } = reduceInputSequence(
@@ -152,9 +155,11 @@ export const HarnessPicker = ({
         key,
         'idle'
       )
-      return { value: state.input, cursor: state.cursor }
+      return { ...current, value: state.input, cursor: state.cursor }
     })
   }
+  const unchangedFolder = (): boolean => folder.value.trim() === dirname(folder.suggested)
+  const chosenFolder = (): string => (unchangedFolder() ? folder.suggested : folder.value.trim())
   const editForm = (input: string, key: Key): void => {
     if (key.tab) return setLanguage(otherLanguage)
     if (key.return && name && name !== '.' && name !== '..') return choose({ kind: 'create', name, language })
@@ -266,10 +271,11 @@ export const HarnessPicker = ({
               active={!busy}
             />
           </Box>
-          <Text dimColor>strands dev makes a strands-dev folder here for .config, tmp/, reports, and state.</Text>
           <Text dimColor>
-            strands dev uses a path that ends in strands-dev, or a workspace of this agent, as it is.
+            A {unchangedFolder() ? basename(folder.suggested) : WORKSPACE_FOLDER} folder will be created in this path
+            for .config, tmp/, reports, and state.
           </Text>
+          <Text dimColor>If this agent already has that folder here, strands dev uses it.</Text>
         </Box>
       ) : creating ? (
         <Box flexDirection="column" gap={1}>

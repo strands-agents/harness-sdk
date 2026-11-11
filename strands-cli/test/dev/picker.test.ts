@@ -209,7 +209,8 @@ describe('HarnessPicker', () => {
     input.write('\r')
 
     await vi.waitFor(() => expect(text()).toContain('Choose a workspace folder'))
-    expect(text()).toContain('Workspace folder: /work/strands-dev')
+    expect(text()).toMatch(/Workspace folder: \/work▌?\s*$/m)
+    expect(text()).toContain('A strands-dev folder will be created in this path')
     expect(text()).toContain('Project harness')
     expect(selected).not.toHaveBeenCalled()
     input.write('\r')
@@ -221,14 +222,13 @@ describe('HarnessPicker', () => {
     const { input, text, selected } = withFolder()
     await vi.waitFor(() => expect(text()).toContain('Select a harness'))
     input.write('\r')
-    await vi.waitFor(() => expect(text()).toContain('Workspace folder: /work/strands-dev'))
+    await vi.waitFor(() => expect(text()).toMatch(/Workspace folder: \/work▌?\s*$/m))
 
-    for (const _ of 'dev') input.write('\u001b[D')
-    input.write('my-')
-    await vi.waitFor(() => expect(text()).toContain('/work/strands-my-dev'))
+    input.write('/my-agents')
+    await vi.waitFor(() => expect(text()).toContain('Workspace folder: /work/my-agents'))
     input.write('\r')
 
-    await vi.waitFor(() => expect(selected).toHaveBeenCalledWith({ kind: 'cli' }, '/work/strands-my-dev'))
+    await vi.waitFor(() => expect(selected).toHaveBeenCalledWith({ kind: 'cli' }, '/work/my-agents'))
   })
 
   it('shouldReturnToTheListWhenEscapeIsPressedInTheFolderStep', async () => {
@@ -269,10 +269,10 @@ describe('HarnessPicker', () => {
     const { input, text, selected } = withFolder()
     await vi.waitFor(() => expect(text()).toContain('Select a harness'))
     input.write('\r')
-    await vi.waitFor(() => expect(text()).toContain('Workspace folder: /work/strands-dev'))
+    await vi.waitFor(() => expect(text()).toMatch(/Workspace folder: \/work▌?\s*$/m))
 
     input.write('\u0015')
-    await vi.waitFor(() => expect(text()).not.toContain('/work/strands-dev'))
+    await vi.waitFor(() => expect(text()).not.toContain('Workspace folder: /work'))
     input.write('\r')
 
     await vi.waitFor(() => expect(text()).toContain('Enter a workspace folder.'))
@@ -316,12 +316,38 @@ describe('HarnessPicker', () => {
     await vi.waitFor(() => expect(frame().join('\n')).toContain('Folder is busy'))
     expect(frame().join('\n')).toContain('Choose a workspace folder')
 
-    input.write('-2')
-    await vi.waitFor(() => expect(frame().join('\n')).toContain('/work/strands-dev-2'))
+    input.write('/other')
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('Workspace folder: /work/other'))
     input.write('\r')
 
-    await vi.waitFor(() => expect(selected).toHaveBeenLastCalledWith({ kind: 'cli' }, '/work/strands-dev-2'))
+    await vi.waitFor(() => expect(selected).toHaveBeenLastCalledWith({ kind: 'cli' }, '/work/other'))
+    expect(selected).toHaveBeenNthCalledWith(1, { kind: 'cli' }, '/work/strands-dev')
     expect(selected).toHaveBeenCalledTimes(2)
+  })
+
+  it('shouldNameTheNumberedFolderInTheNoteUntilThePathChanges', async () => {
+    const input = ttyInput()
+    const output = ttyOutput(100, 36)
+    const frame = captureFrame(output)
+    const selected = vi.fn()
+    render(
+      createElement(HarnessPicker, {
+        cli: { name: 'Saved profile', path: '/home/test/.strands/cli.toml' },
+        harnesses: [],
+        folderFor: () => '/work/strands-dev-2',
+        onSelect: selected,
+      }),
+      { stdin: input, stdout: output }
+    )
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('Select a harness'))
+    input.write('\r')
+    await vi.waitFor(() => expect(frame().join('\n')).toMatch(/Workspace folder: \/work▌?\s*$/m))
+    expect(frame().join('\n')).toContain('A strands-dev-2 folder will be created in this path')
+
+    input.write('/next')
+
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('A strands-dev folder will be created in this path'))
+    expect(frame().join('\n')).not.toContain('strands-dev-2')
   })
 
   const withPlacement = () => {
@@ -357,7 +383,7 @@ describe('HarnessPicker', () => {
     await vi.waitFor(() => expect(text()).toContain('Workspace: /other/strands-dev'))
     input.write('\r')
 
-    await vi.waitFor(() => expect(text()).toContain('Workspace folder: /other/strands-dev'))
+    await vi.waitFor(() => expect(text()).toMatch(/Workspace folder: \/other▌?\s*$/m))
     input.write('\r')
 
     await vi.waitFor(() =>
