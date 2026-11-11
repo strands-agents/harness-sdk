@@ -2,6 +2,9 @@ import type { Interrupt } from '../interrupt.js'
 import type { Tool } from '../tools/tool.js'
 import type { ToolResultContentData } from '../types/messages.js'
 
+/** @internal */
+export const MANAGE_TOOL_NAME = 'strands_manage_background_task'
+
 /** Configures background tool execution. */
 export interface BackgroundTasksConfig {
   /** Wait for background work before an invocation returns. Defaults to `true`. */
