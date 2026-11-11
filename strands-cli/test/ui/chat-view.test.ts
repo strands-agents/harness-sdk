@@ -3049,6 +3049,30 @@ describe('ChatView', () => {
     expect(frame.join('\n')).not.toContain('/settings')
   })
 
+  it('shouldDrawTheStartupCardWithoutABackgroundColorWhenColorsAreOn', () => {
+    const level = chalk.level
+    let rows: string[]
+    try {
+      chalk.level = 3
+      rows = renderView(
+        {
+          snapshot: snapshot(),
+          terminalWidth: 120,
+          terminalHeight: 50,
+          startupContent: createElement(Text, {}, 'Startup choice'),
+        },
+        { columns: 120 }
+      ).split('\n')
+    } finally {
+      chalk.level = level
+    }
+    const top = rows.findIndex((line) => line.includes('╭'))
+    const bottom = rows.findIndex((line) => line.includes('╰'))
+
+    expect(top).toBeGreaterThan(0)
+    expect(rows.slice(top, bottom + 1).join('\n')).not.toContain('\u001b[48;')
+  })
+
   const StartupRowsProbe = (): ReactElement =>
     createElement(Box, { height: useStartupContentRows() }, createElement(Text, {}, 'Startup rows'))
 

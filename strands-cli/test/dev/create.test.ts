@@ -1,8 +1,8 @@
-import { lstat, mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
+import { chmod, lstat, mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { CliConfigStore } from '../../src/config/store.js'
-import { createDevProject, createDevWorkspace, bindExistingAgent } from '../../src/dev/create.js'
+import { createDevProject, createDevWorkspace, bindExistingAgent, folderClaims } from '../../src/dev/create.js'
 import { readDevWorkspace } from '../../src/dev/workspace.js'
 import * as installer from '../../src/project/archive.js'
 import { temporaryDirectory } from '../fixtures/tempdir.js'
@@ -252,4 +252,30 @@ describe('createDevProject', () => {
     ).rejects.toThrow('cancelled')
     expect(await readdir(cwd)).toEqual([])
   })
+})
+
+describe('folderClaims', () => {
+  it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+    'shouldDeleteTheOtherClaimedFoldersWhenOneDeleteFails',
+    async () => {
+      const root = await temporaryDirectory()
+      const locked = join(root, 'locked')
+      await mkdir(locked)
+      const claims = folderClaims()
+      await claims.claim(join(root, 'strands-dev'))
+      await claims.claim(join(locked, 'strands-dev'))
+      await mkdir(join(root, 'strands-dev'))
+      await mkdir(join(locked, 'strands-dev'))
+      await chmod(locked, 0o500)
+
+      try {
+        await expect(claims.release()).rejects.toThrow('EACCES')
+      } finally {
+        await chmod(locked, 0o700)
+      }
+
+      expect(await readdir(root)).toEqual(['locked'])
+      expect(await readdir(locked)).toEqual(['strands-dev'])
+    }
+  )
 })

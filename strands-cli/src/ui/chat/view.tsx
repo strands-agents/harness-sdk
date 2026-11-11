@@ -525,6 +525,7 @@ function ChatViewContent({
       <FadeIn animate={settings.animations && entranceFade} background={canvas}>
         <Box
           position="absolute"
+          display={startupContent ? 'none' : 'flex'}
           marginTop={Math.max(0, terminalHeight - expandedCommandDeckHeight)}
           width={editorWidth}
           height={expandedCommandDeckHeight}
@@ -660,23 +661,8 @@ function ChatViewContent({
       {startupContent ? (
         <Box position="absolute" width={editorWidth} height={terminalHeight} flexDirection="column">
           <Box flexBasis={startupHeaderHeight} flexShrink={1} />
-          <Box
-            flexGrow={1}
-            flexShrink={0}
-            flexDirection="column"
-            justifyContent="center"
-            paddingX={1}
-            paddingY={1}
-            backgroundColor={canvas}
-          >
-            <Box
-              flexDirection="column"
-              borderStyle="round"
-              borderColor={accent}
-              backgroundColor={canvas}
-              paddingX={1}
-              paddingY={1}
-            >
+          <Box flexGrow={1} flexShrink={0} flexDirection="column" justifyContent="center" paddingX={1} paddingY={1}>
+            <Box flexDirection="column" borderStyle="round" borderColor={accent} paddingX={1} paddingY={1}>
               <StartupContentRows value={startupContentRows}>{startupContent}</StartupContentRows>
             </Box>
           </Box>

@@ -16,6 +16,7 @@ import type { CliConfigStore } from '../config/store.js'
 import type { StartupScreen, WorkspaceChange } from '../ui/run.js'
 import type { WorkspaceAction } from '../agent/configuration.js'
 import { devFailure } from '../dev/errors.js'
+import type { PreparedDevRun } from '../dev/prepare.js'
 
 export { runPlainChat, runTurn, TurnRenderer } from './console.js'
 
@@ -275,14 +276,15 @@ async function runInteractive(
     const launchDirectory = process.cwd()
     const requestedArgs = args
     const setupSession = args.dev ? (await import('../dev/project-setup.js')).projectSetupSession() : undefined
-    let selectAgain = false
+    let rejected: PreparedDevRun | undefined
+    let opened: PreparedDevRun | undefined
     const prepare =
       args.dev && !suppliedConfig
         ? async (screen: StartupScreen): Promise<boolean> => {
             const { prepareDevRun } = await import('../dev/prepare.js')
             for (;;) {
               process.chdir(launchDirectory)
-              const selectionArgs = selectAgain
+              const selectionArgs = rejected
                 ? {
                     ...requestedArgs,
                     agent: undefined,
@@ -298,7 +300,7 @@ async function runInteractive(
                 savedConfig,
                 screen,
                 deferPreparation: true,
-                forceSelection: selectAgain,
+                ...(rejected ? { rejected } : {}),
               })
               if (!prepared || screen.signal.aborted) return false
               const result = await setupSession!.prepare(
@@ -321,9 +323,10 @@ async function runInteractive(
               )
               if (result === 'cancel') return false
               if (result === 'back') {
-                selectAgain = true
+                rejected = prepared
                 continue
               }
+              opened = prepared
               args = { ...prepared.args, dev: { ...prepared.args.dev!, prepared: true } }
               initialWorkspace = prepared.workspace.root
               process.chdir(initialWorkspace)
@@ -436,7 +439,7 @@ async function runInteractive(
           ? {
               recoverStartup: async (error: unknown, screen: StartupScreen): Promise<'retry' | 'back' | 'exit'> => {
                 const action = await setupSession.recover(error, screen)
-                if (action === 'back') selectAgain = true
+                if (action === 'back') rejected = opened
                 return action
               },
             }
