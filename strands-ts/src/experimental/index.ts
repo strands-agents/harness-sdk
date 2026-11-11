@@ -17,4 +17,4 @@ export type { OffloadStrategy } from '../context-manager/strategies/offload/base
 export type { OffloadConditions } from '../context-manager/strategies/offload/conditions.js'
 export type { OffloadTarget } from '../context-manager/strategies/offload/target.js'
 export type { TruncateConfig } from '../context-manager/methods/truncate.js'
-export type { SummarizeConfig } from '../context-manager/methods/summarize.js'
+export type { SummarizeConfig } from '../context-manager/strategies/offload/summarize.js'

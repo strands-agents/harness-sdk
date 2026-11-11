@@ -8,7 +8,7 @@ import { OffloadTargetMatcher } from '../offload/target.js'
 import type { OffloadTarget } from '../offload/target.js'
 import { collectRemovableWithPair, insertMarker, repairAlternation } from '../../message-trimming.js'
 import type { TruncateConfig } from '../../methods/truncate.js'
-import { InjectedBlock, Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../../types/messages.js'
+import { InjectedBlock, Message, SummaryBlock, TextBlock, ToolResultBlock, ToolUseBlock } from '../../../types/messages.js'
 import { ImageBlock } from '../../../types/media.js'
 import { logger } from '../../../logging/logger.js'
 import type { Role } from '../../../types/messages.js'
@@ -18,12 +18,11 @@ import type { Agent } from '../../../agent/agent.js'
 import type { ContextState } from '../../types.js'
 import { withDefaultLocale } from '../../../__fixtures__/locale-helpers.js'
 import { offloadedBy, placeholdersIn } from '../../../__fixtures__/context-manager-helpers.js'
-import { summarizeContent } from '../../methods/summarize.js'
 
-vi.mock('../../methods/summarize.js', async (importOriginal) => {
-  const actual = (await importOriginal()) as Record<string, unknown>
-  return { ...actual, summarizeContent: vi.fn(async () => 'summary') }
-})
+/** The summarizer every context's model shares, so a pass can assert no summary was requested. */
+const summarize = vi.fn(async (_messages: Message[], _options?: unknown) => ({
+  content: [new SummaryBlock({ text: 'summary' })],
+}))
 
 function makeToolResultMessage(text: string, toolUseId = 'tool-123'): Message {
   return new Message({
@@ -66,6 +65,7 @@ function makeContext(
   const model = {
     countTokens: async (msgs: Message[]) => heuristicCountTokens(msgs),
     modelInfo: contextWindowLimit === undefined ? {} : { limits: { contextWindow: contextWindowLimit } },
+    summarize,
   }
   const agent = createMockAgent({ messages, extra: { model } as unknown as Partial<Agent> })
   return {
@@ -1097,13 +1097,13 @@ describe('tool results that already hold a placeholder', () => {
 
     expect(await strategy.apply(makeContext(messages, 0.9))).toBe(true)
     const offloaded = resultTexts(messages)
-    vi.mocked(summarizeContent).mockClear()
+    summarize.mockClear()
 
     expect(await strategy.apply(makeContext(messages, 0.9))).toBe(false)
 
     expect(resultMethods(messages)).toEqual([method, method])
     expect(resultTexts(messages)).toEqual(offloaded)
-    expect(summarizeContent).not.toHaveBeenCalled()
+    expect(summarize).not.toHaveBeenCalled()
   })
 
   it.each([
@@ -1112,12 +1112,12 @@ describe('tool results that already hold a placeholder', () => {
   ] as const)('%s leaves a dropped result alone', async (_method, builder) => {
     const messages = [...toolHistory([1000, 1000]), text('user', 'next')]
     await Offload.drop('toolResults').when({ contextUtilization: '50%' }).apply(makeContext(messages, 0.9))
-    vi.mocked(summarizeContent).mockClear()
+    summarize.mockClear()
 
     expect(await builder().when({ contextUtilization: '50%' }).apply(makeContext(messages, 0.9))).toBe(false)
 
     expect(resultMethods(messages)).toEqual(['drop', 'drop'])
-    expect(summarizeContent).not.toHaveBeenCalled()
+    expect(summarize).not.toHaveBeenCalled()
   })
 })
 

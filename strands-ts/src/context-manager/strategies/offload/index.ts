@@ -5,7 +5,7 @@
  */
 
 import type { TruncateConfig } from '../../methods/truncate.js'
-import type { SummarizeConfig } from '../../methods/summarize.js'
+import type { SummarizeConfig } from './summarize.js'
 import type { OffloadStrategy } from './base.js'
 import type { OffloadTarget } from './target.js'
 import { DropStrategy } from './drop.js'

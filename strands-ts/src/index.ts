@@ -49,7 +49,6 @@ export {
   StructuredOutputError,
   ToolNotFoundError,
   DefaultNotConfiguredError,
-  NotImplementedError,
   StorageError,
 } from './errors.js'
 
@@ -102,6 +101,7 @@ export {
   GuardContentBlock,
   InjectedBlock,
   SummaryBlock,
+  UnknownBlock,
   Message,
   JsonBlock,
   contentBlockFromData,
@@ -213,6 +213,7 @@ export type {
   SummarizeOptions,
   CacheConfig,
 } from './models/model.js'
+export type { SummarizeResult } from './models/summarize.js'
 export type { ModelInfo, ModelCapabilities, ModelLimits, PromptCaching } from './models/model-info.js'
 
 export { Model } from './models/model.js'
@@ -328,7 +329,7 @@ export type { ContextManagerConfig, ContextStrategy, ContextState, StashConfig }
 export { Offload } from './context-manager/strategies/offload/index.js'
 export type { OffloadTarget, OffloadConditions, OffloadStrategy } from './context-manager/strategies/offload/index.js'
 export type { TruncateConfig } from './context-manager/methods/truncate.js'
-export type { SummarizeConfig } from './context-manager/methods/summarize.js'
+export type { SummarizeConfig } from './context-manager/strategies/offload/summarize.js'
 export type { StrategyPresetName } from './context-manager/presets.js'
 
 // Conversation Manager

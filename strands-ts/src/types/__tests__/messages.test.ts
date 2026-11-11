@@ -1,4 +1,4 @@
-import { describe, expect, test, it } from 'vitest'
+import { describe, expect, test, it, vi } from 'vitest'
 import {
   Message,
   TextBlock,
@@ -11,8 +11,10 @@ import {
   InjectedBlock,
   SummaryBlock,
   type SummaryBlockData,
+  UnknownBlock,
   contentBlockFromData,
   toolResultContentFromData,
+  contentBlockFromSavedData,
   generateTrackingId,
   type MessageData,
   type SystemPromptData,
@@ -24,6 +26,7 @@ import { AudioBlock, ImageBlock, VideoBlock, DocumentBlock, encodeBase64 } from 
 import { CitationsBlock } from '../citations.js'
 import { anyTrackingId } from '../../__fixtures__/message-helpers.js'
 import { isOffloaded } from '../../context-manager/placeholder.js'
+import { logger } from '../../logging/logger.js'
 
 describe('Message', () => {
   test('creates message with role and content', () => {
@@ -433,6 +436,17 @@ describe('InjectedBlock', () => {
   })
 })
 
+describe('UnknownBlock', () => {
+  test('creates unknown block holding the raw data', () => {
+    const block = new UnknownBlock({ futureBlock: { value: 1 } })
+
+    expect(block).toEqual({
+      type: 'unknownBlock',
+      data: { futureBlock: { value: 1 } },
+    })
+  })
+})
+
 describe('Message.fromMessageData', () => {
   it('converts text block data to TextBlock', () => {
     const messageData: MessageData = {
@@ -703,6 +717,94 @@ describe('Message.fromMessageData', () => {
   })
 })
 
+describe('restoring saved data with an unknown content block type', () => {
+  const savedData = {
+    role: 'assistant',
+    content: [{ text: 'Hello' }, { futureBlock: { nested: { a: 1 }, items: [1, 'two', null] } }],
+    trackingId: 'durable-1',
+  } as unknown as MessageData
+
+  it('contentBlockFromSavedData keeps it as an UnknownBlock and warns', () => {
+    using warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+
+    const block = contentBlockFromSavedData({ futureBlock: { value: 1 } } as never)
+
+    expect(block).toEqual(new UnknownBlock({ futureBlock: { value: 1 } }))
+    expect(warnSpy.mock.calls).toEqual([
+      [
+        'block_keys=<futureBlock> | unrecognized content block type | keeping it in history and leaving it out of model requests | if a newer sdk version saved it, upgrade to use it',
+      ],
+    ])
+  })
+
+  it('contentBlockFromSavedData keeps unknown content inside a tool result and serializes it back unchanged', () => {
+    using _warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    const saved = {
+      toolResult: {
+        toolUseId: 'tool-1',
+        status: 'success',
+        content: [{ text: 'loaded' }, { toolReference: { name: 'shell' } }],
+      },
+    }
+
+    const block = contentBlockFromSavedData(saved as never)
+
+    expect(block).toEqual(
+      new ToolResultBlock({
+        toolUseId: 'tool-1',
+        status: 'success',
+        content: [new TextBlock('loaded'), new UnknownBlock({ toolReference: { name: 'shell' } })],
+      })
+    )
+    expect(block.toJSON()).toStrictEqual(saved)
+  })
+
+  it('contentBlockFromData still throws on unknown content inside a tool result', () => {
+    const data = { toolResult: { toolUseId: 'tool-1', status: 'success', content: [{ toolReference: {} }] } }
+
+    expect(() => contentBlockFromData(data as never)).toThrow('Unknown ToolResultContentData type')
+  })
+
+  it('ToolResultBlock.fromJSON keeps unknown content', () => {
+    using _warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    const data = { toolResult: { toolUseId: 'tool-1', status: 'success', content: [{ toolReference: {} }] } }
+
+    expect(ToolResultBlock.fromJSON(data as never).content).toEqual([new UnknownBlock({ toolReference: {} })])
+  })
+
+  it('contentBlockFromSavedData converts known types as usual, without a warning', () => {
+    using warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+
+    expect(contentBlockFromSavedData({ text: 'Hello' })).toEqual(new TextBlock('Hello'))
+    expect(warnSpy).not.toHaveBeenCalled()
+  })
+
+  it('Message.fromJSON restores the message and serializes it back unchanged', () => {
+    using _warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+
+    const message = Message.fromJSON(savedData)
+
+    expect(message.content).toEqual([
+      new TextBlock('Hello'),
+      new UnknownBlock({ futureBlock: { nested: { a: 1 }, items: [1, 'two', null] } }),
+    ])
+    expect(message.toJSON()).toStrictEqual(savedData)
+    expect(JSON.parse(JSON.stringify(message))).toStrictEqual(savedData)
+  })
+
+  it('Message.clone keeps the UnknownBlock without warning again', () => {
+    using warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    const message = Message.fromJSON(savedData)
+    warnSpy.mockClear()
+
+    const copy = message.clone()
+
+    expect(copy).toEqual(message)
+    expect(copy.content[1]).not.toBe(message.content[1])
+    expect(warnSpy).not.toHaveBeenCalled()
+  })
+})
+
 describe('systemPromptFromData', () => {
   describe('when called with string', () => {
     it('returns the string unchanged', () => {
@@ -932,6 +1034,7 @@ describe('toJSON/fromJSON round-trips', () => {
     ['Message with multiple content blocks',   () => new Message({ role: 'assistant', content: [new TextBlock('Here is the result'), new ToolUseBlock({ name: 'test-tool', toolUseId: '123', input: { key: 'value' } })] })],
     ['Message with image content',             () => new Message({ role: 'user', content: [new TextBlock('Check this image'), new ImageBlock({ format: 'png', source: { bytes: new Uint8Array([1, 2, 3]) } })] })],
     ['CitationsBlock',                         () => new CitationsBlock({ citations: [{ location: { type: 'documentChar', documentIndex: 0, start: 0, end: 10 }, source: 'doc-0', sourceContent: [{ text: 'source' }], title: 'Test' }], content: [{ text: 'generated' }] })],
+    ['UnknownBlock',                           () => new UnknownBlock({ futureBlock: { nested: { a: 1 } } })],
   ] as const
 
   it.each(roundTripCases)('%s', (_name, createBlock) => {
