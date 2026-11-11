@@ -9,6 +9,7 @@ import unittest.mock
 import warnings
 
 import anthropic
+import httpx
 import pydantic
 import pytest
 
@@ -1279,6 +1280,32 @@ async def test_stream_maps_retry_error_to_sdk_exception(anthropic_client, alist,
         await alist(model.stream(messages))
 
     assert anthropic_client.messages.stream.call_count == 2
+
+
+def _mid_stream_error(error_type):
+    response = httpx.Response(200, request=httpx.Request("POST", "https://bedrock-runtime.us-west-2.amazonaws.com"))
+    body = {"type": "error", "error": {"type": error_type, "message": "Too many requests"}}
+    return anthropic.APIStatusError("Too many requests", response=response, body=body)
+
+
+@pytest.mark.asyncio
+async def test_stream_maps_a_mid_stream_bedrock_throttle_to_model_throttled(anthropic_client, alist, messages):
+    anthropic_client.messages.stream.side_effect = _mid_stream_error("throttlingException")
+    model = AnthropicModel(model_id="m1", max_tokens=1)
+
+    with pytest.raises(ModelThrottledException, match="Too many requests"):
+        await alist(model.stream(messages))
+
+
+@pytest.mark.asyncio
+async def test_stream_reraises_other_mid_stream_errors(anthropic_client, alist, messages):
+    error = _mid_stream_error("validationException")
+    anthropic_client.messages.stream.side_effect = error
+    model = AnthropicModel(model_id="m1", max_tokens=1)
+
+    with pytest.raises(anthropic.APIStatusError) as raised:
+        await alist(model.stream(messages))
+    assert raised.value is error
 
 
 def test_format_request_drops_stale_thinking_only_for_remembered_model(anthropic_client, messages):

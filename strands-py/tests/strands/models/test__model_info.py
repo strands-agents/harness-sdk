@@ -226,7 +226,11 @@ def test_package_copy_matches_the_shared_data():
     assert _PACKAGE_COPY.read_text(encoding="utf-8") == _SHARED_DATA.read_text(encoding="utf-8")
 
 
-def test_shared_data_has_only_the_fields_model_info_defines_with_the_right_types_in_every_entry():
+# Read by another consumer (the harness), not typed by the SDK.
+_UNTYPED_CAPABILITY_KEYS = {"defaultEffort"}
+
+
+def test_shared_data_has_only_known_fields_with_the_right_types_in_every_entry():
     data = json.loads(_SHARED_DATA.read_text(encoding="utf-8"))
 
     assert sorted(data.keys()) == ["$comment", "defaults", "models"]
@@ -241,6 +245,12 @@ def test_shared_data_has_only_the_fields_model_info_defines_with_the_right_types
         for key, value in entry.get("capabilities", {}).items():
             if key == "promptCaching":
                 assert value in _PROMPT_CACHING_VALUES, f"{model_id}.{key}"
+            elif key in _UNTYPED_CAPABILITY_KEYS:
+                assert isinstance(value, str), f"{model_id}.{key}"
             else:
                 assert key in _BOOLEAN_CAPABILITY_KEYS, f"{model_id}.capabilities.{key}"
                 assert isinstance(value, bool), f"{model_id}.{key}"
+
+
+def test_lookup_skips_data_fields_the_sdk_does_not_type():
+    assert not hasattr(lookup_model_info("claude-opus-5-5").capabilities, "default_effort")

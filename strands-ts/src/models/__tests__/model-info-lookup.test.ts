@@ -27,6 +27,10 @@ describe('shared model info data', () => {
     expect(lookupModel('us.anthropic.claude-3-5-sonnet-20241022-v2:0')?.limits?.contextWindow).toBe(200_000)
   })
 
+  it('skips data fields the SDK does not type', () => {
+    expect(lookupModelInfo('claude-opus-5-5').capabilities).not.toHaveProperty('defaultEffort')
+  })
+
   it('returns undefined for unknown ids', () => {
     expect(lookupModel('unknown-model')).toBeUndefined()
     expect(lookupModel('')).toBeUndefined()
@@ -85,7 +89,9 @@ describe('shared model info data', () => {
         if (key === 'promptCaching') expect(['unsupported', 'auto', 'cachePoints'], `${id}.${key}`).toContain(value)
         else if (['forcedToolChoice', 'nativeStructuredOutput', 'serverSideSummary', 'temporaryMessages'].includes(key))
           expect(typeof value, `${id}.${key}`).toBe('boolean')
-        else throw new Error(`${id}.capabilities.${key} is not a ModelCapabilities field`)
+        // Read by another consumer (the harness), not typed by the SDK.
+        else if (key === 'defaultEffort') expect(typeof value, `${id}.${key}`).toBe('string')
+        else throw new Error(`${id}.capabilities.${key} is not a known model info field`)
       }
     }
   })
