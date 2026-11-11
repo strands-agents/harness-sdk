@@ -103,6 +103,22 @@ def _truncate(output: str, max_chars: int, message: str) -> str:
     return output[:slice_end] + f"\n\n[{message}]"
 
 
+def _clip_to_match(line: str, match: re.Match[str], width: int) -> str:
+    """Clip a line to a ``width``-char window centered on ``match``, marking cut ends with ``…``.
+
+    A match wider than the window (e.g. ``ERROR.*``) shows its head and tail rather than its middle.
+    """
+    if match.end() - match.start() > width:
+        half = width // 2
+        head = line[match.start() : match.start() + half]
+        tail = line[match.end() - half : match.end()]
+        return ("…" if match.start() > 0 else "") + head + "…" + tail + ("…" if match.end() < len(line) else "")
+    center = (match.start() + match.end()) // 2
+    start = min(max(0, center - width // 2), len(line) - width)
+    end = start + width
+    return ("…" if start > 0 else "") + line[start:end] + ("…" if end < len(line) else "")
+
+
 def _format_lines(lines: list[str], indices: list[int], matched_set: set[int]) -> str:
     """Format line indices with line numbers, > prefixes for matches, and --- separators."""
     if not indices:
@@ -137,14 +153,15 @@ def _search_by_pattern(
     except re.error:
         regex = re.compile(re.escape(safe_input))
 
-    matched_set: set[int] = set()
+    matches: dict[int, re.Match[str]] = {}
     for i in range(scope_start, scope_end + 1):
-        if regex.search(lines[i]):
-            matched_set.add(i)
+        if match := regex.search(lines[i]):
+            matches[i] = match
 
-    if not matched_set:
+    if not matches:
         return f"No matches found for pattern '{pattern}'{scope_label} (searched {scope_end - scope_start + 1} lines)."
 
+    matched_set = set(matches)
     visible: set[int] = set()
     for idx in matched_set:
         for i in range(max(scope_start, idx - context_lines), min(scope_end, idx + context_lines) + 1):
@@ -152,7 +169,13 @@ def _search_by_pattern(
 
     safe_pattern = re.sub(r"[\n\r/\]]", " ", pattern)[:50]
     header = f"[{len(matched_set)} match{'es' if len(matched_set) > 1 else ''} for /{safe_pattern}/{scope_label}]"
-    body = _format_lines(lines, sorted(visible), matched_set)
+    # A matched line longer than the budget would be cut at its start, hiding the match; show a window around the
+    # match instead. Half the budget leaves room for the line prefix and preceding context lines.
+    display = list(lines)
+    for idx, match in matches.items():
+        if len(lines[idx]) > max_chars:
+            display[idx] = _clip_to_match(lines[idx], match, max_chars // 2)
+    body = _format_lines(display, sorted(visible), matched_set)
     truncated_body = _truncate(body, max_chars, "output truncated, narrow your search")
     return f"{header}\n\n{truncated_body}"
 
