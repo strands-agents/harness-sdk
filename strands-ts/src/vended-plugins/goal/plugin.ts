@@ -67,12 +67,18 @@ import {
   unwrapInvocationContext,
   type InvocationContext,
 } from '../../agent/invocation-context.js'
-import { AfterInvocationEvent, BeforeInvocationEvent, BeforeModelCallEvent } from '../../hooks/events.js'
+import {
+  AfterInvocationEvent,
+  AgentResultEvent,
+  BeforeInvocationEvent,
+  BeforeModelCallEvent,
+} from '../../hooks/events.js'
+import { HookOrder } from '../../hooks/types.js'
 import { logger } from '../../logging/logger.js'
 import { warnOnce } from '../../logging/warn-once.js'
 import type { Model } from '../../models/model.js'
 import type { Plugin } from '../../plugins/plugin.js'
-import type { InvocationState, InvokeOptions, LocalAgent } from '../../types/agent.js'
+import type { InvokeOptions, LocalAgent } from '../../types/agent.js'
 import { LIMIT_STOP_REASONS, type ContentBlock, type Message, type StopReason } from '../../types/messages.js'
 import type { Snapshot } from '../../types/snapshot.js'
 import { JUDGE_OUTCOME_SCHEMA, JUDGE_SYSTEM_PROMPT, buildJudgePrompt } from './judge.js'
@@ -222,8 +228,8 @@ interface RunState {
   pausedAt?: number
   /** The interrupts the run paused on; the run continues only while the agent still holds them. */
   pausedInterruptIds?: readonly string[]
-  /** The `invocationState` of the call that armed a retry; another call never continues it. */
-  retryArmedIn?: InvocationState
+  /** The request that armed a retry; a pass of another request never continues it. */
+  retryArmedIn?: InvocationContext
   /** The latest assistant message when the current pass started, to tell whether the pass produced a new answer. */
   answerBeforePass: Message | undefined
   /**
@@ -330,7 +336,9 @@ export class GoalLoop implements Plugin {
       const abandoned =
         existing?.pausedInterruptIds !== undefined && !existing.pausedInterruptIds.every((id) => id in heldInterrupts)
       // The agent drops a retry when another caller takes the turn, so that caller starts fresh.
-      const retryDropped = existing?.retryArmedIn !== undefined && existing.retryArmedIn !== event.invocationState
+      const retryDropped =
+        existing?.retryArmedIn !== undefined &&
+        existing.retryArmedIn !== unwrapInvocationContext(event.invocationContext)
       if (existing?.resumed && !abandoned && !retryDropped) {
         existing.resumed = false
         if (existing.retryArmedIn !== undefined) {
@@ -454,11 +462,7 @@ export class GoalLoop implements Plugin {
       }
       // A caller that arrived while this answer was graded takes the turn instead of a retry:
       // the agent drops the resume, so don't arm it (or rewind the conversation for it).
-      const takenOver = agent.cancelSignal.aborted
-        ? 'cancelled'
-        : (agent as Agent).pendingInvocations.some((pending) => pending.mode === 'stopPrevious')
-          ? 'superseded'
-          : undefined
+      const takenOver = takenOverBy(agent)
       if (takenOver) {
         finishRun(run, 'stopped', takenOver)
         return
@@ -466,8 +470,19 @@ export class GoalLoop implements Plugin {
 
       event.resume = this._resumePromptTemplate(outcome.feedback?.trim())
       run.resumed = true
-      run.retryArmedIn = event.invocationState
+      if (invocationContext) run.retryArmedIn = invocationContext
     })
+
+    // AgentResultEvent fires only on the request's final pass, so a retry still armed here was
+    // dropped by the agent for a newer caller. SDK_FIRST so user hooks already see the result.
+    agent.addHook(
+      AgentResultEvent,
+      () => {
+        const run = this._runs.get(agent)
+        if (run?.retryArmedIn !== undefined) finishRun(run, 'stopped', takenOverBy(agent))
+      },
+      { order: HookOrder.SDK_FIRST }
+    )
   }
 
   /**
@@ -525,6 +540,15 @@ function finishRun(run: RunState, stopReason: GoalStopReason, agentStopReason?: 
     attempts: run.attempts.slice(),
   }
   run.resumed = false
+  delete run.retryArmedIn
+}
+
+/** Whether a caller took the turn from the running request: a cancel, or a waiting `'stopPrevious'` caller. */
+function takenOverBy(agent: LocalAgent): StopReason | undefined {
+  if (agent.cancelSignal.aborted) return 'cancelled'
+  return (agent as Agent).pendingInvocations.some((pending) => pending.mode === 'stopPrevious')
+    ? 'superseded'
+    : undefined
 }
 
 function defaultResumePrompt(feedback: string | undefined): string {

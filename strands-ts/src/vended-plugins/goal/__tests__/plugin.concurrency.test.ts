@@ -1,13 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import { Agent } from '../../../agent/agent.js'
 import { GoalLoop } from '../plugin.js'
-import { AfterInvocationEvent } from '../../../hooks/events.js'
+import { AfterInvocationEvent, AgentResultEvent, BeforeInvocationEvent } from '../../../hooks/events.js'
 import { MockMessageModel } from '../../../__fixtures__/mock-message-model.js'
 import { tool } from '../../../tools/tool-factory.js'
 import { Message, TextBlock } from '../../../types/messages.js'
 import { z } from 'zod'
 import { InterruptResponseContent } from '../../../types/interrupt.js'
-import type { AgentResult } from '../../../types/agent.js'
+import type { AgentResult, InvokeOptions } from '../../../types/agent.js'
+import type { InvocationContext } from '../../../agent/invocation-context.js'
 
 function createGate() {
   let signalStarted!: () => void
@@ -376,9 +377,14 @@ describe('GoalLoop with concurrent invocations', () => {
     }
   )
 
-  it.each(['stopPrevious', 'cancelPrevious'] as const)(
-    "'%s': a caller arriving after A's retry was armed gets a fresh run, and A keeps its answer",
-    async (mode) => {
+  it.each([
+    ['stopPrevious', 'separate options'],
+    ['cancelPrevious', 'separate options'],
+    ['stopPrevious', 'one shared options object'],
+    ['cancelPrevious', 'one shared invocationContext'],
+  ] as const)(
+    "'%s' with %s: a caller arriving after A's retry was armed gets a fresh run, and A keeps its answer",
+    async (mode, sharing) => {
       const graded: string[] = []
       const goal = new GoalLoop({
         maxAttempts: 3,
@@ -393,15 +399,35 @@ describe('GoalLoop with concurrent invocations', () => {
         .addTurn({ type: 'textBlock', text: 'B-first' })
         .addTurn({ type: 'textBlock', text: 'GOOD-B' })
       const agent = new Agent({ model, plugins: [goal], printer: false, concurrentInvocationMode: mode })
+      const options = async (): Promise<InvokeOptions | undefined> => {
+        if (sharing === 'one shared options object') return sharedOptions
+        if (sharing === 'one shared invocationContext') return { invocationContext: await sharedContext }
+        return undefined
+      }
+      const sharedOptions: InvokeOptions = { invocationState: {} }
+      const sharedContext = new Promise<InvocationContext>((resolve) => {
+        const other = new Agent({
+          model: new MockMessageModel().addTurn({ type: 'textBlock', text: 'x' }),
+          printer: false,
+        })
+        other.addHook(BeforeInvocationEvent, (event) => resolve(event.invocationContext!))
+        void other.invoke('x')
+      })
       // After hooks run in reverse registration order, so this one fires once GoalLoop armed A's retry.
       let second: Promise<AgentResult> | undefined
-      agent.addHook(AfterInvocationEvent, () => {
-        second ??= agent.invoke('b')
+      agent.addHook(AfterInvocationEvent, async () => {
+        second ??= agent.invoke('b', await options())
+      })
+      const resultsSeen: unknown[] = []
+      agent.addHook(AgentResultEvent, () => {
+        resultsSeen.push(goal.lastResult(agent)?.stopReason)
       })
 
-      expect(text((await agent.invoke('a')).lastMessage)).toBe('A-answer')
+      expect(text((await agent.invoke('a', await options())).lastMessage)).toBe('A-answer')
       expect(text((await second!).lastMessage)).toBe('GOOD-B')
 
+      // A's dropped retry ends its run 'stopped'; B's run is its own: attempts 1-2, its retry restored B's snapshot.
+      expect(resultsSeen).toEqual(['stopped', 'satisfied'])
       expect(model.callCount).toBe(3)
       expect(graded).toEqual(['A-answer', 'B-first', 'GOOD-B'])
       expect(goal.lastResult(agent)?.attempts.map((attempt) => attempt.attempt)).toEqual([1, 2])
@@ -414,6 +440,26 @@ describe('GoalLoop with concurrent invocations', () => {
       ])
     }
   )
+
+  it("a consumer that breaks out after A's retry was armed leaves the next call a fresh run", async () => {
+    const goal = new GoalLoop({
+      maxAttempts: 3,
+      preserveContext: false,
+      goal: (message) => ({ passed: text(message) === 'GOOD-B', feedback: 'try again' }),
+    })
+    const model = new MockMessageModel()
+      .addTurn({ type: 'textBlock', text: 'A-answer' })
+      .addTurn({ type: 'textBlock', text: 'GOOD-B' })
+    const agent = new Agent({ model, plugins: [goal], printer: false })
+
+    for await (const event of agent.stream('a')) {
+      if (event.type === 'afterInvocationEvent') break
+    }
+    await agent.invoke('b')
+
+    expect(goal.lastResult(agent)).toMatchObject({ stopReason: 'satisfied', attempts: [{ attempt: 1 }] })
+    expect(history(agent)).toEqual(['user: a', 'assistant: A-answer', 'user: b', 'assistant: GOOD-B'])
+  })
 
   it('a cancel during grading ends the run without rewinding the conversation for a retry', async () => {
     const model = new MockMessageModel()
