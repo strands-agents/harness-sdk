@@ -40,8 +40,13 @@ interface PickerRow {
 }
 
 const FOLDER_LABEL = 'Workspace folder: '
+const FOLDER_NOTES = [
+  'strands dev makes a strands-dev folder here for .config, tmp/, reports, and state.',
+  'strands dev uses a path that ends in strands-dev, or a workspace of this agent, as it is.',
+] as const
 const MAX_VISIBLE_ROWS = 7
 const SOURCE_DETAIL_HEIGHT = 3
+const SELECTED_AGENT_HEIGHT = 3
 
 const windowHeight = (rows: readonly PickerRow[], count: number): number =>
   Math.max(
@@ -83,7 +88,7 @@ export const HarnessPicker = ({
   const [busy, setBusy] = useState(false)
   const pending = useRef(false)
   const folderOf = (choice?: HarnessChoice): string | undefined => (choice ? folderFor?.(choice) : undefined)
-  const { accent, error: errorColor, warning: warningColor, selection: selectionColor, border } = useTheme()
+  const { accent, success, error: errorColor, warning: warningColor, selection: selectionColor, border } = useTheme()
   const { columns } = useTerminalSize()
   const availableRows = useStartupContentRows()
   const rows: PickerRow[] = [
@@ -230,6 +235,18 @@ export const HarnessPicker = ({
     lineCount(hint) -
     1 -
     SOURCE_DETAIL_HEIGHT
+  const folderHeight =
+    2 +
+    (notice ? lineCount(notice) + 1 : 0) +
+    1 +
+    FOLDER_NOTES.reduce((total, note) => total + 1 + lineCount(note), 0) +
+    (failure ? lineCount(failure) : 0) +
+    1 +
+    lineCount(hint)
+  const selectedAgent =
+    placing && placing.kind !== 'create' && availableRows - folderHeight >= SELECTED_AGENT_HEIGHT
+      ? selected.detail
+      : undefined
   const capacity = visibleCapacity(rows, listRows)
   const listHeight = windowHeight(rows, capacity)
   const start = Math.min(Math.max(0, selection - capacity + 1), Math.max(0, rows.length - capacity))
@@ -244,6 +261,16 @@ export const HarnessPicker = ({
   const selectedFolder = folderOf(selected.choice)
   return (
     <Box flexDirection="column">
+      {selectedAgent ? (
+        <Box flexDirection="column" marginBottom={1}>
+          <Text bold color={success}>
+            Agent selected
+          </Text>
+          <Text bold wrap="truncate-middle">
+            {selectedAgent}
+          </Text>
+        </Box>
+      ) : null}
       <Box marginBottom={1} justifyContent="space-between">
         <Text bold color={accent}>
           {heading}
@@ -266,10 +293,11 @@ export const HarnessPicker = ({
               active={!busy}
             />
           </Box>
-          <Text dimColor>strands dev makes a strands-dev folder here for .config, tmp/, reports, and state.</Text>
-          <Text dimColor>
-            strands dev uses a path that ends in strands-dev, or a workspace of this agent, as it is.
-          </Text>
+          {FOLDER_NOTES.map((note) => (
+            <Text key={note} dimColor>
+              {note}
+            </Text>
+          ))}
         </Box>
       ) : creating ? (
         <Box flexDirection="column" gap={1}>
