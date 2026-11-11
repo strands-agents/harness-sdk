@@ -35,6 +35,27 @@ describe('dev chat commands', () => {
     expect(controller.commandAssistance('/opt')?.completions).toEqual([expect.objectContaining({ name: 'optimize' })])
   })
 
+  it('shouldListTheDevCommandsBeforeTheBuiltInCommandsWhenTheUserTypesOnlyASlash', () => {
+    const experiment = {
+      ...devCommand(),
+      spec: { name: 'experiment', usage: '/experiment <name>', description: 'Make cases' },
+    }
+    const controller = new ChatController(idleBackend(), { devCommands: [experiment, devCommand()] })
+
+    const names = controller.commandAssistance('/')?.completions.map((command) => command.name)
+
+    expect(names?.slice(0, 3)).toEqual(['experiment', 'optimize', 'help'])
+  })
+
+  it('shouldListTheDevCommandsInHelpWhenTheUserOpensIt', async () => {
+    const controller = new ChatController(idleBackend(), { devCommands: [devCommand()] })
+
+    await controller.submit('/help')
+
+    const rows = controller.getSnapshot().panel?.rows.filter((row) => row.section === 'Commands') ?? []
+    expect(rows[0]).toMatchObject({ label: '/optimize [experiment]', description: 'Tune this agent' })
+  })
+
   it('shouldTreatTheCommandAsUnknownWhenNoDevCommandsAreGiven', async () => {
     const controller = new ChatController(idleBackend())
 

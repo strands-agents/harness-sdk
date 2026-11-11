@@ -436,10 +436,12 @@ export class ChatController implements ChatControllerApi {
     if (!input.startsWith('/')) {
       return undefined
     }
-    return resolveCommandAssistance(input, this.actionableCommandToken(input), [
-      ...this._devCommands.map((command) => command.spec),
-      ...this._skillCommands(),
-    ])
+    return resolveCommandAssistance(
+      input,
+      this.actionableCommandToken(input),
+      this._skillCommands(),
+      this._devCommands.map((command) => command.spec)
+    )
   }
 
   async start(firstRequest?: string): Promise<void> {
@@ -1414,6 +1416,7 @@ export class ChatController implements ChatControllerApi {
             tools: this._builtinTools !== undefined,
             export: this._exportAgentProject !== undefined,
             config: this._configurationSource !== undefined,
+            devCommands: this._devCommands.map((command) => command.spec),
           }),
           searchable: true,
           filters: [
