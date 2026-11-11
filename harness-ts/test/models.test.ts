@@ -827,6 +827,12 @@ describe('supportsWebSearch', () => {
       expect(await bedrockRegion(model)).toBe(region)
     }
     expect(webSearchKind(anthropicOn({ baseURL: 'https://api.anthropic.com' }))).toBeUndefined()
+    // Claude Platform on AWS (`AnthropicAws`) carries an `awsRegion` too, but it isn't Bedrock.
+    expect(
+      webSearchKind(
+        anthropicOn({ awsRegion: 'us-east-1', baseURL: 'https://aws-external-anthropic.us-east-1.api.aws' })
+      )
+    ).toBeUndefined()
     expect(webSearchKind(new OpenAIModel({ modelId: 'gpt-5.6-sol', apiKey: 'x' }))).toBeUndefined()
     expect(webSearchKind('bedrock-mantle/qwen.qwen3-32b-v1:0')).toBe('agentcore')
     expect(webSearchKind('bedrock-mantle/openai.gpt-6-astra')).toBe('native')

@@ -362,8 +362,8 @@ interface Provider {
   // Native web search is enabled through model config on the providers whose SDK exposes a
   // non-clobbering seam for it (OpenAI Responses `params.tools` for OpenAI and bedrock-mantle, Gemini
   // `builtInTools`, Anthropic-direct `anthropicTools`); `hasWebSearch` narrows bedrock-mantle to its
-  // GPT-5, GPT-6, and Daybreak models. Bedrock Converse has no mechanism, so the harness serves
-  // AgentCore web search there as a tool instead (`webSearchKind`).
+  // GPT-5, GPT-6, and Daybreak models. Every other Bedrock API gets AgentCore web search as a
+  // harness tool instead (`webSearchKind`).
   webSearch: boolean
   // Whether prompt caching is in effect when requested, whether or not the harness configures anything:
   // Bedrock, Anthropic direct, OpenAI, and bedrock-mantle (the harness passes an SDK cache config)
@@ -576,10 +576,11 @@ export function supportsThinking(model: Model | ModelRouter | string | undefined
 
 /** The SDK client a model wraps; its fields have no public accessor on the model. */
 interface ModelClient {
-  _client?: { awsRegion?: string; baseURL?: string; config?: { region?: () => Promise<string> } }
+  _client?: { baseURL?: string; config?: { region?: () => Promise<string> } }
 }
 
-// Anthropic's Bedrock client and the Mantle clients (Anthropic and OpenAI `bedrockMantleConfig`) point here.
+// Default hosts of Anthropic's Bedrock and Mantle clients and of OpenAI's `bedrockMantleConfig`. Matching
+// the host (not an `awsRegion` field) keeps non-Bedrock AWS clients such as Claude Platform on AWS out.
 const BEDROCK_BASE_URL = /^https:\/\/bedrock-(?:runtime|mantle)\.([a-z0-9-]+)\.(?:amazonaws\.com|api\.aws)(?:\/|$)/
 
 /** The region a non-Converse model's client calls Bedrock in, or `undefined` if it isn't a Bedrock client. */
@@ -588,12 +589,12 @@ function vendorBedrockRegion(model: Model): string | undefined {
   if (client === null || typeof client !== 'object') {
     return undefined
   }
-  return client.awsRegion ?? BEDROCK_BASE_URL.exec(client.baseURL ?? '')?.[1]
+  return BEDROCK_BASE_URL.exec(client.baseURL ?? '')?.[1]
 }
 
 /**
  * Whether a model instance calls Amazon Bedrock: `BedrockModel` (Converse), a vendor model whose
- * client targets Bedrock (`AnthropicModel` on `AnthropicBedrock` / `AnthropicBedrockMantle`,
+ * client targets a Bedrock host (`AnthropicModel` on `AnthropicBedrock` / `AnthropicBedrockMantle`,
  * `OpenAIModel` with `bedrockMantleConfig`), or a router of only those.
  */
 function onBedrock(model: Model | ModelRouter): boolean {

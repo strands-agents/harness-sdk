@@ -328,8 +328,8 @@ class Provider(NamedTuple):
     ``web_search`` is enabled through model config on the providers whose SDK exposes a
     non-clobbering seam for it (OpenAI Responses ``params.tools`` for OpenAI and bedrock-mantle,
     Gemini ``gemini_tools``, Anthropic-direct ``anthropic_tools``); ``_has_web_search`` narrows
-    bedrock-mantle to its GPT-5, GPT-6, and Daybreak models. Bedrock Converse has no mechanism, so
-    the harness serves AgentCore web search there as a tool instead (``web_search_kind``).
+    bedrock-mantle to its GPT-5, GPT-6, and Daybreak models. Every other Bedrock API gets AgentCore
+    web search as a harness tool instead (``web_search_kind``).
 
     ``caching`` marks providers where prompt caching is in effect when requested, whether or not
     the harness configures anything: Bedrock, Anthropic direct, OpenAI, and bedrock-mantle (the harness

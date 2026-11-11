@@ -522,8 +522,8 @@ describe('createHarness', () => {
       regions.push(await this.config.region())
       return { results: [] }
     } as never)
-    // Stands in for `AnthropicBedrock` from @anthropic-ai/bedrock-sdk: what matters is its `awsRegion`.
-    const client = { awsRegion: 'eu-west-1', messages: {} } as never
+    // Stands in for `AnthropicBedrock` from @anthropic-ai/bedrock-sdk: what matters is its default Bedrock host.
+    const client = { baseURL: 'https://bedrock-runtime.eu-west-1.amazonaws.com', messages: {} } as never
     const agent = await createHarness({ model: new AnthropicModel({ modelId: 'claude', client }) })
     const search = agent.tools.find((t) => t.name === 'web_search') as unknown as {
       invoke: (input: unknown, context: unknown) => Promise<string>
