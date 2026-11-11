@@ -56,6 +56,18 @@ describe('dev chat commands', () => {
     expect(rows[0]).toMatchObject({ label: '/optimize [experiment]', description: 'Tune this agent' })
   })
 
+  it('shouldShowTheUsageInsteadOfRunningWhenTheUserPicksADevCommandInHelp', async () => {
+    const run = vi.fn()
+    const controller = new ChatController(idleBackend(), { devCommands: [devCommand(run)] })
+    await controller.submit('/help')
+    const row = controller.getSnapshot().panel!.rows.find((candidate) => candidate.label === '/optimize [experiment]')!
+
+    await controller.activatePanelRow(row)
+
+    expect(run).not.toHaveBeenCalled()
+    expect(controller.getSnapshot().panel).toMatchObject({ kind: 'help-detail', body: 'Tune this agent' })
+  })
+
   it('shouldTreatTheCommandAsUnknownWhenNoDevCommandsAreGiven', async () => {
     const controller = new ChatController(idleBackend())
 
