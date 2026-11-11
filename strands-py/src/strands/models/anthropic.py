@@ -850,7 +850,8 @@ class AnthropicModel(Model):
 
     def _request_with_drop_block(self, request: dict[str, Any]) -> dict[str, Any] | None:
         """Return the request with stale thinking blocks dropped, or None if it cannot change."""
-        thinking = thinking_with_drop_block(request.get("thinking"))
+        tool_forced = request.get("tool_choice", {}).get("type") in ("any", "tool")
+        thinking = thinking_with_drop_block(request.get("thinking"), tool_forced)
         if thinking is None:
             return None
         return {**self._with_beta(request, THINKING_BINDING_BETA), "thinking": thinking}
@@ -1352,6 +1353,7 @@ class AnthropicModel(Model):
             if not (retry_with_drop_block or retry_with_next_mechanism):
                 raise error
 
+        previous_drop_stale_thinking_model_id = self._drop_stale_thinking_model_id
         if retry_with_drop_block:
             # Stale blocks stay in history, so drop_block stays on for every later request to this model.
             logger.warning(
@@ -1360,16 +1362,24 @@ class AnthropicModel(Model):
             )
             self._drop_stale_thinking_model_id = self.config["model_id"]
         if retry_with_drop_block or retry_with_next_mechanism:
-            async for chunk in self.stream(
-                messages,
-                tool_specs,
-                system_prompt,
-                tool_choice=tool_choice,
-                system_prompt_content=system_prompt_content,
-                structured_output_model=structured_output_model,
-                **kwargs,
-            ):
-                yield chunk
+            yielded = False
+            try:
+                async for chunk in self.stream(
+                    messages,
+                    tool_specs,
+                    system_prompt,
+                    tool_choice=tool_choice,
+                    system_prompt_content=system_prompt_content,
+                    structured_output_model=structured_output_model,
+                    **kwargs,
+                ):
+                    yielded = True
+                    yield chunk
+            except Exception:
+                # A rejected retry must not leave drop_block on for later requests.
+                if not yielded:
+                    self._drop_stale_thinking_model_id = previous_drop_stale_thinking_model_id
+                raise
             return
 
         logger.debug("finished streaming response from model")
