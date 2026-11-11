@@ -125,8 +125,10 @@ export class SageMakerDecisionModel extends DecisionModel {
       throw translateSageMakerError(error)
     }
 
+    const text = new TextDecoder().decode(responseBody)
+    if (text.length === 0) return undefined
     try {
-      return JSON.parse(new TextDecoder().decode(responseBody)) as unknown
+      return JSON.parse(text) as unknown
     } catch (error) {
       throw new ModelError('decision provider returned a non-JSON response', { cause: error })
     }
