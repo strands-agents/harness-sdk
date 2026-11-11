@@ -1,12 +1,13 @@
 ---
 import { pathWithBase } from '../util/links'
-import type { FaqBlock } from '../config/faq'
+import { isExternalFaqHref, type FaqBlock } from '../config/faq'
 
 interface Props {
   blocks: FaqBlock[]
 }
 
 const { blocks } = Astro.props
+const resolveHref = (href: string) => (isExternalFaqHref(href) ? href : pathWithBase(href))
 ---
 
 {
@@ -19,7 +20,7 @@ const { blocks } = Astro.props
           ) : part.kind === 'code' ? (
             <code>{part.text}</code>
           ) : (
-            <a href={pathWithBase(part.href)}>{part.text}</a>
+            <a href={resolveHref(part.href)}>{part.text}</a>
           )
         )}
       </p>
@@ -33,7 +34,7 @@ const { blocks } = Astro.props
               ) : part.kind === 'code' ? (
                 <code>{part.text}</code>
               ) : (
-                <a href={pathWithBase(part.href)}>{part.text}</a>
+                <a href={resolveHref(part.href)}>{part.text}</a>
               )
             )}
           </li>

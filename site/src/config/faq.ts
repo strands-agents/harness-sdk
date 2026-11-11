@@ -130,7 +130,9 @@ export const faqItems: FaqItem[] = [
     answer: [
       paragraph(
         link('Strands Labs', '/docs/labs/'),
-        ' houses experimental projects that extend the SDK into robotics, world models, agentic benchmarks, harness optimization, audio processing, and decision models. Each project lives in its own open source repository and works alongside the SDK.'
+        ' houses experimental projects that extend the SDK into robotics, world models, agentic benchmarks, harness optimization, audio processing, and decision models. Each project lives in its own open source repository in the ',
+        link('Strands Labs GitHub organization', 'https://github.com/strands-labs'),
+        ' and works alongside the SDK.'
       ),
       paragraph(
         'Labs projects change faster than the core SDK. Check each project for its current setup, support, and maturity before using it in production. A project may graduate, become a standalone product, or remain experimental.'
@@ -143,7 +145,7 @@ export const faqItems: FaqItem[] = [
     question: 'Can Strands control simulated and physical robots?',
     answer: [
       paragraph(
-        link('Strands Robots', '/docs/labs/'),
+        link('Strands Robots', 'https://github.com/strands-labs/robots'),
         ' is an experimental Python library with one interface for simulation and supported hardware. An agent can select robot capabilities through tools, while the robot runtime applies motion and safety controls.'
       ),
       paragraph(
@@ -157,7 +159,7 @@ export const faqItems: FaqItem[] = [
     question: 'What can Strands for Cosmos add to an agent?',
     answer: [
       paragraph(
-        link('Strands for Cosmos', '/docs/labs/'),
+        link('Strands for Cosmos', 'https://github.com/strands-labs/strands-for-cosmos'),
         ' is an experimental Python model provider integration for NVIDIA Cosmos. It lets an agent reason over images and video and use project tools for media or robot-action workflows on local NVIDIA compute.'
       ),
       paragraph(
@@ -172,7 +174,7 @@ export const faqItems: FaqItem[] = [
     answer: [
       paragraph(
         'Use ',
-        link('Benchmark Harnesses', '/docs/labs/'),
+        link('Benchmark Harnesses', 'https://github.com/strands-labs/benchmark-harnesses'),
         ' to reproduce or modify a complete agent and environment for a public benchmark. Each project includes its runner, tools, configuration, and task environment.'
       ),
       paragraph(
@@ -189,7 +191,7 @@ export const faqItems: FaqItem[] = [
     answer: [
       paragraph(
         'Use ',
-        link('AI Functions', '/docs/labs/'),
+        link('AI Functions', 'https://github.com/strands-labs/ai-functions'),
         ' when a task is hard to implement deterministically but you can validate the result. A typed Python function and its docstring define the task. Post-conditions check each result and return validation errors to the model for another attempt, up to the configured limit.'
       ),
       paragraph(
@@ -342,7 +344,7 @@ export const faqItems: FaqItem[] = [
     answer: [
       paragraph(
         'Use ',
-        link('Harness Optimizer', '/docs/labs/'),
+        link('Harness Optimizer', 'https://github.com/strands-labs/harness-optimizer'),
         ' after you have repeatable tasks and a reward signal. It represents parts of an agent harness, such as the system prompt, tool descriptions, or agent skills, as tunable ',
         code('Formula'),
         ' objects. Rollout engines run the tasks, reward functions score the trajectories, and optimizers update the ',
@@ -526,7 +528,13 @@ export function faqAnswerText(blocks: FaqBlock[]): string {
     .join('\n\n')
 }
 
+export function isExternalFaqHref(href: string): boolean {
+  return href.startsWith('https://') || href.startsWith('http://')
+}
+
 export function faqMarkdownHref(href: string): string {
+  if (isExternalFaqHref(href)) return href
+
   const hashIndex = href.indexOf('#')
   const path = hashIndex === -1 ? href : href.slice(0, hashIndex)
   const hash = hashIndex === -1 ? '' : href.slice(hashIndex)

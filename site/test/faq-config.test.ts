@@ -12,4 +12,8 @@ describe('faqMarkdownHref', () => {
       '/docs/user-guide/sdk/agents/structured-output-behavior/index.md#limit-attempts'
     )
   })
+
+  it('keeps external URLs unchanged', () => {
+    expect(faqMarkdownHref('https://github.com/strands-labs/robots')).toBe('https://github.com/strands-labs/robots')
+  })
 })

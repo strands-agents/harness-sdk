@@ -16,7 +16,53 @@ describe('standalone FAQ page', () => {
   const page = parse(html)
 
   it('renders every curated question outside the docs sidebar', () => {
-    expect(faqItems).toHaveLength(25)
+    expect(
+      faqCategories.map((category) => [
+        category.id,
+        faqItems.filter((item) => item.category === category.id).map((item) => item.id),
+      ])
+    ).toEqual([
+      [
+        'choose',
+        [
+          'harness-or-sdk',
+          'keep-current-model',
+          'python-or-typescript',
+          'bidirectional-or-standard-streaming',
+          'strands-labs-projects',
+          'simulated-or-physical-robots',
+          'strands-for-cosmos',
+          'benchmark-harnesses-or-evals',
+          'ai-functions-or-regular-code',
+        ],
+      ],
+      [
+        'build',
+        [
+          'custom-or-mcp-tool',
+          'multi-agent-pattern',
+          'sessions-memory-context',
+          'automatic-or-agentic-context',
+          'structured-output-validation',
+          'hooks-plugins-middleware-interventions',
+          'agent-configuration',
+          'harness-optimizer',
+          'voice-agent-speaker-echo',
+        ],
+      ],
+      [
+        'run',
+        [
+          'approval-for-risky-tools',
+          'retries-or-invocation-limits',
+          'evaluate-before-production',
+          'deploy-strands-agent',
+          'strands-shell-isolation',
+          'production-observability',
+          'production-security',
+        ],
+      ],
+    ])
     expect(page.querySelectorAll('.faq-item')).toHaveLength(faqItems.length)
     expect(page.querySelectorAll('.faq-group')).toHaveLength(3)
     expect(page.querySelectorAll('details.faq-item')).toHaveLength(0)
@@ -37,7 +83,13 @@ describe('standalone FAQ page', () => {
 
     expect(hrefs).toContain(configuredPathWithBase('/docs/user-guide/harness/'))
     expect(hrefs).toContain(configuredPathWithBase('/docs/user-guide/sdk/safety-security/'))
-    expect(hrefs.every((href) => href?.startsWith(configuredPathWithBase('/docs/')))).toBe(true)
+    expect(hrefs).toContain('https://github.com/strands-labs/robots')
+    expect(
+      hrefs.every(
+        (href) =>
+          href?.startsWith(configuredPathWithBase('/docs/')) || href?.startsWith('https://github.com/strands-labs')
+      )
+    ).toBe(true)
   })
 
   it('publishes the same FAQ as Markdown', () => {
@@ -45,6 +97,7 @@ describe('standalone FAQ page', () => {
 
     for (const item of faqItems) expect(markdown).toContain(`### ${item.question}`)
     expect(markdown).toContain(configuredPathWithBase('/docs/user-guide/sdk/model-providers/index.md'))
+    expect(markdown).toContain('https://github.com/strands-labs/robots')
   })
 })
 

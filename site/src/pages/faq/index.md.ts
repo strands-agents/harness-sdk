@@ -1,9 +1,18 @@
 import type { APIRoute } from 'astro'
 
-import { FAQ_INTRO, FAQ_TITLE, faqAnswerMarkdown, faqCategories, faqItems, faqMarkdownHref } from '../../config/faq'
+import {
+  FAQ_INTRO,
+  FAQ_TITLE,
+  faqAnswerMarkdown,
+  faqCategories,
+  faqItems,
+  faqMarkdownHref,
+  isExternalFaqHref,
+} from '../../config/faq'
 import { siteLink } from '../../util/links'
 
 function markdownLink(href: string): string {
+  if (isExternalFaqHref(href)) return href
   return siteLink(faqMarkdownHref(href))
 }
 
