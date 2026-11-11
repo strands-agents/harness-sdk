@@ -25,23 +25,13 @@ export type HumanInTheLoopClassifier = (event: BeforeToolCallEvent) => Classifie
 /**
  * Configuration for the built-in LLM risk classifier (used when `classifier: true`).
  *
- * Kept for backwards compatibility. Prefer {@link DecisionModelClassifierConfig} for new code.
+ * Kept for backwards compatibility. Prefer passing a {@link DecisionModel} as the classifier for new code.
  */
 export interface LlmClassifierConfig {
   /** System prompt describing risk criteria. Defaults to a general-purpose risk prompt. */
   systemPrompt?: string
   /** Model for risk evaluation. Resolution order: `this model > agent.auxModel > agent.model`. */
   model?: Model
-}
-
-/**
- * Configuration for a {@link DecisionModel}-backed risk classifier.
- */
-export interface DecisionModelClassifierConfig {
-  /** Decision model that answers whether a tool call requires approval. */
-  decisionModel: DecisionModel
-  /** Question posed to the decision model. Defaults to a general-purpose risk question. */
-  question?: string
 }
 
 const RISK_DECISION = z.object({
@@ -128,17 +118,14 @@ export function createLlmRiskClassifier(config?: LlmClassifierConfig): HumanInTh
  * An `Uncertain` answer requires approval.
  *
  * @internal
- * @param config - Decision model and optional question override.
+ * @param decisionModel - Decision model that answers whether a tool call requires approval.
  * @returns A classifier function backed by the decision model.
  */
-export function createDecisionModelRiskClassifier(config: DecisionModelClassifierConfig): HumanInTheLoopClassifier {
-  const { decisionModel } = config
-  const question = config.question ?? DEFAULT_RISK_QUESTION
-
+export function createDecisionModelRiskClassifier(decisionModel: DecisionModel): HumanInTheLoopClassifier {
   return async (event: BeforeToolCallEvent): Promise<ClassifierResult> => {
     const result = await decisionModel.ask(
       formatToolCall(event),
-      { requiresApproval: { question, choices: 'boolean' } },
+      { requiresApproval: { question: DEFAULT_RISK_QUESTION, choices: 'boolean' } },
       { ...(event.invocationContext && { invocationContext: event.invocationContext }) }
     )
     const answer = result.answers.requiresApproval
