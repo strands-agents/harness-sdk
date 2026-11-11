@@ -46,6 +46,7 @@ import { Graph, Swarm, MultiAgentState } from '@strands-agents/sdk/multiagent'
 import { AgentSkills } from '@strands-agents/sdk/vended-plugins/skills'
 import { ContextOffloader, InMemoryStorage } from '@strands-agents/sdk/vended-plugins/context-offloader'
 import { GoalLoop } from '@strands-agents/sdk/vended-plugins/goal'
+import { SageMakerDecisionModel } from '@strands-agents/sdk/decisions/sagemaker'
 
 import { z } from 'zod'
 
@@ -126,6 +127,14 @@ for (const [name, ctor] of Object.entries({ Graph, Swarm })) {
   }
 }
 console.log('[pack-test] multiagent + vended-plugin subpaths constructible')
+
+// decisions/sagemaker loads its optional peer (@aws-sdk/client-sagemaker-runtime) only on the
+// first ask(), so importing and constructing it must work without the peer installed.
+const sageMaker = new SageMakerDecisionModel({ endpointName: 'pack-test-endpoint' })
+if (!(sageMaker instanceof SageMakerDecisionModel)) {
+  throw new Error('SageMakerDecisionModel construction failed')
+}
+console.log('[pack-test] decisions/sagemaker constructible without its optional peer')
 
 const ctxErr = new ContextWindowOverflowError('test')
 if (!(ctxErr instanceof Error)) {
