@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { z } from 'zod'
 import { Agent } from '../../agent/agent.js'
 import { AgentPrinter } from '../../agent/printer.js'
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
@@ -6,7 +7,14 @@ import { MockSnapshotStorage } from '../../__fixtures__/mock-storage-provider.js
 import { collectGenerator } from '../../__fixtures__/model-test-helpers.js'
 import { createCancellableAgent } from '../../__fixtures__/agent-helpers.js'
 import { AfterNodeCallEvent, BeforeNodeCallEvent, MultiAgentInitializedEvent } from '../events.js'
-import { ReasoningBlock, TextBlock, type ContentBlockData } from '../../types/messages.js'
+import {
+  ReasoningBlock,
+  TextBlock,
+  ToolUseBlock,
+  type ContentBlock,
+  type ContentBlockData,
+} from '../../types/messages.js'
+import { STRUCTURED_OUTPUT_TOOL_NAME } from '../../tools/structured-output-tool.js'
 import { Status, MultiAgentState } from '../state.js'
 import { AgentNode, MultiAgentNode } from '../nodes.js'
 import { Graph } from '../graph.js'
@@ -402,6 +410,35 @@ describe('Graph', () => {
       const input = streamSpy.mock.calls[0]![0] as TextBlock[]
       expect(input.map((b) => b.text)).toStrictEqual(['task-input', '[node: a]', 'from-a'])
       expect(input.map((b) => b.type)).toStrictEqual(['textBlock', 'textBlock', 'textBlock'])
+    })
+
+    it('does not pass a dependency structured-output tool use to downstream nodes', async () => {
+      const classifier = new Agent({
+        model: new MockMessageModel().addTurn(
+          new ToolUseBlock({ name: STRUCTURED_OUTPUT_TOOL_NAME, toolUseId: 't1', input: { category: 'billing' } })
+        ),
+        printer: false,
+        id: 'classifier',
+        structuredOutputSchema: z.object({ category: z.string() }),
+      })
+      const specialist = makeAgent('billing')
+      const streamSpy = vi.spyOn(specialist, 'stream')
+
+      const graph = new Graph({
+        nodes: [classifier, specialist],
+        edges: [['classifier', 'billing']],
+      })
+
+      await graph.invoke('I was double charged')
+
+      expect(streamSpy).toHaveBeenCalled()
+      // The structured output is read from the classifier node's structuredOutput via state, so the
+      // internal tool use must not be forwarded to the specialist (before the fix it leaked in as a
+      // dangling toolUse block). Normalize to blocks since a filtered-empty dependency forwards the
+      // raw task input.
+      const forwarded = streamSpy.mock.calls[0]![0]
+      const blocks = (typeof forwarded === 'string' ? [new TextBlock(forwarded)] : forwarded) as ContentBlock[]
+      expect(blocks.some((b) => b.type === 'toolUseBlock')).toBe(false)
     })
 
     it('converts ContentBlockData[] input to ContentBlock instances for downstream nodes', async () => {

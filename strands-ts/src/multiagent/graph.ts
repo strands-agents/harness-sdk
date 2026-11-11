@@ -15,6 +15,7 @@ import {
 } from './multiagent.js'
 import type { ContentBlock } from '../types/messages.js'
 import { TextBlock, contentBlockFromData } from '../types/messages.js'
+import { STRUCTURED_OUTPUT_TOOL_NAME } from '../tools/structured-output-tool.js'
 import type { InterruptResponseContent } from '../types/interrupt.js'
 import { InterruptError } from '../interrupt.js'
 import { logger } from '../logging/logger.js'
@@ -785,7 +786,14 @@ export class Graph implements MultiAgent {
     for (const edge of this.edges.filter((e) => e.target.id === node.id)) {
       const ns = state.node(edge.source.id)!
       if (ns.content.length > 0) {
-        const content = ns.content.filter((block) => block.type !== 'reasoningBlock')
+        // Exclude reasoning blocks and the internal structured-output tool use: the latter is a
+        // dangling toolUse (its result is captured in the node's structuredOutput, read via state),
+        // so forwarding it leaks malformed tool content into the next node's message.
+        const content = ns.content.filter(
+          (block) =>
+            block.type !== 'reasoningBlock' &&
+            !(block.type === 'toolUseBlock' && block.name === STRUCTURED_OUTPUT_TOOL_NAME)
+        )
         if (content.length > 0) {
           deps.push(new TextBlock(`[node: ${edge.source.id}]`), ...content)
         }
