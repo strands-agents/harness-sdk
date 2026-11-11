@@ -15,6 +15,7 @@ SMOKE_MODELS = [
         (providers.anthropic, "claude-opus-5-5", 1_000_000),
         (providers.anthropic, "claude-sonnet-5-5", 1_000_000),
         (providers.anthropic, "claude-haiku-5-5", 1_000_000),
+        (providers.gemini, "gemini-4-carbon", 1_048_576),
         (providers.gemini, "gemini-4-argon", 1_048_576),
         (providers.gemini, "gemini-3.8-flash", 1_048_576),
         (providers.bedrock, "us.xai.grok-4.7", 524_288),
