@@ -83,7 +83,12 @@ describe('a custom provider with a listed id', () => {
     expect(await strategy.apply({ messages: agent.messages, agent, utilization: 0.9 })).toBe(true)
     await agent.invoke('next')
 
-    const marker = offloadPlaceholder('summarize', formatSummarized(REMOVED_MESSAGES, tokens, 'a summary'), undefined, tokens)
+    const marker = offloadPlaceholder(
+      'summarize',
+      formatSummarized(REMOVED_MESSAGES, tokens, 'a summary'),
+      undefined,
+      tokens
+    )
     expect(agent.messages.slice(0, 3).map(({ role, content }) => ({ role, content }))).toEqual([
       { role: 'user', content: [new TextBlock('task')] },
       { role: 'assistant', content: [marker] },

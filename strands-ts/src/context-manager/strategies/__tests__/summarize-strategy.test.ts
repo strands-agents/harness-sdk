@@ -1186,11 +1186,12 @@ describe('client-side summaries use Model.summarize', () => {
   })
 
   it('a block summary labels a failed tool result with its status', async () => {
+    const failure = 'x'.repeat(10000)
     const messages = [
       new Message({ role: 'assistant', content: [new ToolUseBlock({ name: 'bash', toolUseId: 't1', input: {} })] }),
       new Message({
         role: 'user',
-        content: [new ToolResultBlock({ toolUseId: 't1', status: 'error', content: [new TextBlock('boom')] })],
+        content: [new ToolResultBlock({ toolUseId: 't1', status: 'error', content: [new TextBlock(failure)] })],
       }),
     ]
     const { agent, summarize } = mockAgent(messages)
@@ -1203,7 +1204,7 @@ describe('client-side summaries use Model.summarize', () => {
         content: [
           new TextBlock('<content>'),
           new TextBlock('[tool result: bash (error)]'),
-          new TextBlock('boom'),
+          new TextBlock(failure),
           new TextBlock('</content>'),
         ],
       },

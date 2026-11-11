@@ -8,7 +8,14 @@ import { OffloadTargetMatcher } from '../offload/target.js'
 import type { OffloadTarget } from '../offload/target.js'
 import { collectRemovableWithPair, insertMarker, repairAlternation } from '../../message-trimming.js'
 import type { TruncateConfig } from '../../methods/truncate.js'
-import { InjectedBlock, Message, SummaryBlock, TextBlock, ToolResultBlock, ToolUseBlock } from '../../../types/messages.js'
+import {
+  InjectedBlock,
+  Message,
+  SummaryBlock,
+  TextBlock,
+  ToolResultBlock,
+  ToolUseBlock,
+} from '../../../types/messages.js'
 import { ImageBlock } from '../../../types/media.js'
 import { logger } from '../../../logging/logger.js'
 import type { Role } from '../../../types/messages.js'

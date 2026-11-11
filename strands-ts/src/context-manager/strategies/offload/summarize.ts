@@ -196,12 +196,7 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
    *
    * @returns False when the summary held no text, leaving the history unchanged
    */
-  private async _placeTextSummary(
-    context: ContextState,
-    model: Model,
-    end: number,
-    summary: string
-  ): Promise<boolean> {
+  private async _placeTextSummary(context: ContextState, model: Model, end: number, summary: string): Promise<boolean> {
     if (!summary) {
       logger.warn(`model=<${model.constructor.name}> | summary held no text | leaving the content unsummarized`)
       return false

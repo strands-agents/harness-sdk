@@ -5,7 +5,15 @@
  * messages it hands back the same way, so stored media reaches the model as media rather than as JSON.
  */
 
-import { GuardContentBlock, JsonBlock, Message, SummaryBlock, TextBlock, ToolResultBlock, ToolUseBlock } from '../../types/messages.js'
+import {
+  GuardContentBlock,
+  JsonBlock,
+  Message,
+  SummaryBlock,
+  TextBlock,
+  ToolResultBlock,
+  ToolUseBlock,
+} from '../../types/messages.js'
 import { AudioBlock, DocumentBlock, ImageBlock, VideoBlock } from '../../types/media.js'
 import { CitationsBlock } from '../../types/citations.js'
 import type { ContentBlock, ToolResultContent } from '../../types/messages.js'
