@@ -97,12 +97,14 @@ const BEDROCK_INVOKE_MODEL_API_VERSION = 'bedrock-2023-05-31'
 const BEDROCK_THROTTLING_EVENTS = ['throttlingException', 'serviceUnavailableException']
 
 // An `AnthropicBedrock` client (bedrock-runtime InvokeModel), found without importing the optional
-// `@anthropic-ai/bedrock-sdk`. Its Mantle client is a separate class and takes the Anthropic API versions.
+// `@anthropic-ai/bedrock-sdk`: by class name, or by its bedrock-runtime base URL when a bundler renamed the class.
+// The Mantle client is a separate class on a bedrock-mantle host and takes the Anthropic API versions.
 function isBedrockRuntimeClient(client: unknown): boolean {
   for (let proto = Object.getPrototypeOf(client); proto; proto = Object.getPrototypeOf(proto)) {
     if ((proto as { constructor?: { name?: string } }).constructor?.name === 'AnthropicBedrock') return true
   }
-  return false
+  const baseURL = (client as { baseURL?: unknown } | null)?.baseURL
+  return typeof baseURL === 'string' && /\bbedrock-runtime\./.test(baseURL)
 }
 
 /**
@@ -1048,9 +1050,8 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
     if (isBedrockRuntimeClient(this._client)) {
       const body = request as unknown as Record<string, unknown>
       body.anthropic_version ??= BEDROCK_INVOKE_MODEL_API_VERSION
-    } else {
-      this._rejectRemovedSamplingParams(request)
     }
+    this._rejectRemovedSamplingParams(request)
     const dropBlockThinking = this._dropsStaleThinking() ? thinkingWithDropBlock(request.thinking) : undefined
     if (dropBlockThinking) request.thinking = dropBlockThinking
     // params.tools is already merged into tools above; never let it bypass the forced-turn rule.

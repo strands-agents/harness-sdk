@@ -1282,10 +1282,10 @@ async def test_stream_maps_retry_error_to_sdk_exception(anthropic_client, alist,
     assert anthropic_client.messages.stream.call_count == 2
 
 
-def _mid_stream_error(error_type):
+def _mid_stream_error(error_type, message="Too many requests"):
     response = httpx.Response(200, request=httpx.Request("POST", "https://bedrock-runtime.us-west-2.amazonaws.com"))
-    body = {"type": "error", "error": {"type": error_type, "message": "Too many requests"}}
-    return anthropic.APIStatusError("Too many requests", response=response, body=body)
+    body = {"type": "error", "error": {"type": error_type, "message": message}}
+    return anthropic.APIStatusError(str(body), response=response, body=body)
 
 
 @pytest.mark.parametrize(
@@ -1293,6 +1293,10 @@ def _mid_stream_error(error_type):
     [
         (_mid_stream_error("throttlingException"), ModelThrottledException),
         (_mid_stream_error("serviceUnavailableException"), ModelThrottledException),
+        (
+            _mid_stream_error("validationException", "Input is too long for requested model."),
+            ContextWindowOverflowException,
+        ),
         (ValueError("throttlingException: Too many requests"), ModelThrottledException),
         (
             ValueError("validationException: prompt is too long: 260024 tokens > 200000 maximum"),
@@ -1344,9 +1348,20 @@ async def test_stream_reraises_an_unrelated_value_error(anthropic_client, alist,
             "bedrock-2099-01-01",
         ),
         (anthropic.AsyncAnthropic(api_key="k"), {}, None),
+        pytest.param(
+            "mantle",
+            {},
+            None,
+            marks=pytest.mark.skipif(
+                not hasattr(anthropic, "AsyncAnthropicBedrockMantle"),
+                reason="anthropic before 0.91 has no Mantle client",
+            ),
+        ),
     ],
 )
 def test_format_request_pins_the_invoke_model_api_version_on_a_bedrock_client(messages, client, params, exp_version):
+    if client == "mantle":
+        client = anthropic.AsyncAnthropicBedrockMantle(aws_region="us-west-2")
     model = AnthropicModel(model_id="m1", max_tokens=1, params=params, client=client)
 
     assert model.format_request(messages).get("extra_body", {}).get("anthropic_version") == exp_version
