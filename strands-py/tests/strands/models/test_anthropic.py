@@ -1229,20 +1229,42 @@ async def test_stream_retries_with_drop_block_on_thinking_binding_error(anthropi
     assert anthropic_client.messages.stream.call_args.kwargs["extra_headers"] == exp_headers
 
 
+@pytest.mark.asyncio
+async def test_stream_retries_with_drop_block_without_thinking_config(anthropic_client, alist, messages, tool_spec):
+    anthropic_client.messages.stream.side_effect = [
+        _thinking_binding_error(),
+        _message_start_stream(),
+        _message_start_stream(),
+        _message_start_stream(),
+    ]
+    model = AnthropicModel(model_id="m1", max_tokens=1)
+
+    await alist(model.stream(messages))
+    await alist(model.stream(messages))
+    await alist(model.stream(messages, [tool_spec], tool_choice={"any": {}}))
+
+    calls = anthropic_client.messages.stream.call_args_list
+    exp_thinking = {"type": "adaptive", "block_binding": {"prefix_mismatch_behavior": "drop_block"}}
+    assert [call.kwargs.get("thinking") for call in calls] == [None, exp_thinking, exp_thinking, None]
+    assert calls[1].kwargs["extra_headers"] == {"anthropic-beta": "thinking-binding-controls-2026-08-01"}
+
+
 @pytest.mark.parametrize(
-    "params",
+    ("params", "tool_choice"),
     [
-        {"thinking": {"type": "adaptive", "block_binding": {"prefix_mismatch_behavior": "error"}}},
-        {"temperature": 1},
+        ({"thinking": {"type": "adaptive", "block_binding": {"prefix_mismatch_behavior": "error"}}}, None),
+        ({"temperature": 1}, {"any": {}}),
     ],
 )
 @pytest.mark.asyncio
-async def test_stream_does_not_retry_thinking_binding_error_without_drop_block(anthropic_client, messages, params):
+async def test_stream_does_not_retry_thinking_binding_error_without_drop_block(
+    anthropic_client, messages, tool_spec, params, tool_choice
+):
     anthropic_client.messages.stream.side_effect = _thinking_binding_error()
     model = AnthropicModel(model_id="m1", max_tokens=1, params=params)
 
     with pytest.raises(anthropic.BadRequestError, match="bound to a different conversation"):
-        await anext(model.stream(messages))
+        await anext(model.stream(messages, [tool_spec], tool_choice=tool_choice))
 
     anthropic_client.messages.stream.assert_called_once()
     assert model._drop_stale_thinking_model_id is None
@@ -1365,6 +1387,25 @@ def test_format_request_pins_the_invoke_model_api_version_on_a_bedrock_client(me
     model = AnthropicModel(model_id="m1", max_tokens=1, params=params, client=client)
 
     assert model.format_request(messages).get("extra_body", {}).get("anthropic_version") == exp_version
+
+
+@pytest.mark.asyncio
+async def test_stream_does_not_keep_drop_block_after_rejected_retry(anthropic_client, alist, messages):
+    temperature_error = anthropic.BadRequestError(
+        "`temperature` may only be set to 1", response=unittest.mock.Mock(), body=None
+    )
+    anthropic_client.messages.stream.side_effect = [
+        _thinking_binding_error(),
+        temperature_error,
+        _message_start_stream(),
+    ]
+    model = AnthropicModel(model_id="m1", max_tokens=1, params={"temperature": 0.2})
+
+    with pytest.raises(anthropic.BadRequestError, match="temperature"):
+        await alist(model.stream(messages))
+    await alist(model.stream(messages))
+
+    assert "thinking" not in anthropic_client.messages.stream.call_args.kwargs
 
 
 def test_format_request_drops_stale_thinking_only_for_remembered_model(anthropic_client, messages):
