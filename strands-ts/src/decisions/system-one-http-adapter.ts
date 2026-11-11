@@ -19,6 +19,8 @@ export interface SystemOneRequestConfig {
   modelId?: string
   defaultMinConfidence: number
   maxQuestions?: number
+  /** Builds the request body for APIs that differ from the System One `{ state, model, questions }` shape. */
+  buildRequestBody?: (state: DecisionInput, questions: Record<string, Question>) => unknown
 }
 
 /** @internal */
@@ -27,6 +29,8 @@ export interface SystemOneProviderConfig extends SystemOneRequestConfig {
   apiKey: string
   modelId: string
   fetch: typeof globalThis.fetch
+  /** Header that carries the API key as is. Defaults to `Authorization: Bearer <apiKey>`. */
+  apiKeyHeader?: string
 }
 
 /**
@@ -53,7 +57,7 @@ export function resolveSystemOneProviderConfig(
     defaultMinConfidence?: number
     fetch?: typeof globalThis.fetch
   },
-  defaults: Omit<SystemOneProviderConfig, 'apiKey' | 'modelId' | 'fetch'> & {
+  defaults: Omit<SystemOneProviderConfig, 'apiKey' | 'modelId' | 'fetch' | 'buildRequestBody'> & {
     apiKeyEnvironmentVariable: string
     modelId: string
     className: string
@@ -89,6 +93,7 @@ export function resolveSystemOneProviderConfig(
     defaultMinConfidence,
     fetch: (input, init) => fetchImplementation(input, init),
     ...(defaults.maxQuestions !== undefined && { maxQuestions: defaults.maxQuestions }),
+    ...(defaults.apiKeyHeader !== undefined && { apiKeyHeader: defaults.apiKeyHeader }),
   }
 }
 
@@ -100,7 +105,7 @@ interface WireNoulQuestion {
 interface WireChoiceQuestion {
   type: 'choice'
   instructions: string
-  criteria: Record<string, null>
+  criteria: Record<string, null | ''>
 }
 
 type WireQuestion = WireNoulQuestion | WireChoiceQuestion
@@ -140,16 +145,18 @@ export async function askSystemOne<const Q extends Record<string, Question>>(
     throw new Error(`${config.providerName} accepts at most ${config.maxQuestions} questions per request`)
   }
 
-  const body = JSON.stringify({
-    state: toWireState(state),
-    ...(config.modelId !== undefined && { model: config.modelId }),
-    questions: toWireQuestions(questions),
-  })
+  const body = JSON.stringify(
+    config.buildRequestBody?.(state, questions) ?? {
+      state: toWireState(state),
+      ...(config.modelId !== undefined && { model: config.modelId }),
+      questions: toWireQuestions(questions),
+    }
+  )
 
   const startedAt = globalThis.performance.now()
   const payload = await transport(body, cancelSignal)
 
-  const result = parseResult(payload, questions, config.defaultMinConfidence)
+  const result = parseResult(payload, questions, config.defaultMinConfidence, config.modelId)
   return {
     answers: result.answers,
     ...(result.usage !== undefined && { usage: result.usage }),
@@ -163,7 +170,8 @@ export async function askSystemOne<const Q extends Record<string, Question>>(
   }
 }
 
-function toWireState(state: DecisionInput): unknown {
+/** @internal */
+export function toWireState(state: DecisionInput): unknown {
   if (typeof state === 'string' || state.length === 0) return state
   if (state[0] instanceof Message) {
     return (state as Message[]).map((message) => ({
@@ -186,7 +194,14 @@ function toWireContentBlock(block: ContentBlock): unknown {
   return block.toJSON()
 }
 
-function toWireQuestions(questions: Record<string, Question>): Record<string, WireQuestion> {
+/**
+ * @param choiceDescription - Value sent for each choice in `criteria`, for APIs that require a string.
+ * @internal
+ */
+export function toWireQuestions(
+  questions: Record<string, Question>,
+  choiceDescription: null | '' = null
+): Record<string, WireQuestion> {
   return Object.fromEntries(
     Object.entries(questions).map(([id, question]) => {
       if (question.choices === 'boolean') {
@@ -195,7 +210,7 @@ function toWireQuestions(questions: Record<string, Question>): Record<string, Wi
       if (question.choices.length > MAX_CHOICE_COUNT) {
         throw new Error(`question id=<${id}> | System One APIs allow at most ${MAX_CHOICE_COUNT} choices`)
       }
-      const criteria = Object.fromEntries(question.choices.map((choice) => [choice, null]))
+      const criteria = Object.fromEntries(question.choices.map((choice) => [choice, choiceDescription]))
       return [id, { type: 'choice', instructions: question.question, criteria } satisfies WireChoiceQuestion]
     })
   )
@@ -216,7 +231,9 @@ async function sendHttp(config: SystemOneProviderConfig, body: string, cancelSig
     response = await config.fetch(config.endpoint, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${config.apiKey}`,
+        ...(config.apiKeyHeader !== undefined
+          ? { [config.apiKeyHeader]: config.apiKey }
+          : { Authorization: `Bearer ${config.apiKey}` }),
         'Content-Type': 'application/json',
       },
       body,
@@ -269,7 +286,8 @@ function errorDetail(body: unknown): string | undefined {
 function parseResult<const Q extends Record<string, Question>>(
   payload: unknown,
   questions: Q,
-  defaultMinConfidence: number
+  defaultMinConfidence: number,
+  requestModelId: string | undefined
 ): {
   modelId: string
   answers: { [K in keyof Q]: AnswerOf<Q[K]> }
@@ -278,7 +296,8 @@ function parseResult<const Q extends Record<string, Question>>(
   usage?: { inputTokens: number; outputTokens: number; totalTokens: number }
 } {
   const response = requireRecord(payload, 'decision provider response')
-  const modelId = requireNonEmptyString(response['model'], 'decision provider model')
+  // Some APIs, such as Gemini Decisions, do not echo the model, so fall back to the requested one.
+  const modelId = requireNonEmptyString(response['model'] ?? requestModelId, 'decision provider model')
   const rawAnswers = requireRecord(response['answers'], 'decision provider answers')
   const answers = {} as { [K in keyof Q]: AnswerOf<Q[K]> }
   const probabilities = {} as { [K in keyof Q]: Readonly<Record<string, number>> }
@@ -375,8 +394,9 @@ function resolveMinConfidence(question: Question, providerDefault: number): numb
 function parseUsage(value: unknown): { inputTokens: number; outputTokens: number; totalTokens: number } | undefined {
   if (value === undefined || value === null) return undefined
   const usage = requireRecord(value, 'decision provider usage')
-  const inputTokens = usage['input_tokens']
-  const outputTokens = usage['output_tokens']
+  // Gemini Decisions reports `total_input_tokens` and `total_output_tokens`.
+  const inputTokens = usage['input_tokens'] ?? usage['total_input_tokens']
+  const outputTokens = usage['output_tokens'] ?? usage['total_output_tokens']
   if (typeof inputTokens !== 'number' || typeof outputTokens !== 'number' || inputTokens < 0 || outputTokens < 0) {
     return undefined
   }
