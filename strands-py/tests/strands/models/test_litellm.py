@@ -65,6 +65,21 @@ def test_update_config(model, model_id):
     assert tru_model_id == exp_model_id
 
 
+@pytest.mark.parametrize("tool_specs", [None, []])
+def test_format_request_omits_tools_when_empty(model, messages, tool_specs):
+    """Inherited no-tool formatting omits tools for compatible servers (#4854)."""
+    tru_request = model.format_request(messages, tool_specs=tool_specs)
+    exp_request = {
+        "messages": [{"role": "user", "content": [{"text": "test", "type": "text"}]}],
+        "model": "m1",
+        "stream": True,
+        "stream_options": {"include_usage": True},
+    }
+
+    assert "tools" not in tru_request
+    assert tru_request == exp_request
+
+
 def test_cache_key_maps_to_prompt_cache_key(litellm_acompletion, model_id, messages):
     _ = litellm_acompletion
     model = LiteLLMModel(model_id=model_id, cache_config=CacheConfig(cache_key="tenant-42"))
@@ -315,7 +330,6 @@ async def test_stream(litellm_acompletion, api_key, model_id, model, agenerator,
             model=model_id,
             stream=True,
             stream_options={"include_usage": True},
-            tools=[],
         )
     ]
 
@@ -349,7 +363,6 @@ async def test_stream_empty(litellm_acompletion, api_key, model_id, model, agene
         "messages": [],
         "stream": True,
         "stream_options": {"include_usage": True},
-        "tools": [],
     }
     litellm_acompletion.assert_called_once_with(**expected_request)
 
@@ -598,7 +611,6 @@ async def test_stream_non_streaming(litellm_acompletion, api_key, model_id, alis
         "messages": [{"role": "user", "content": [{"text": "What is 123981723 + 234982734?", "type": "text"}]}],
         "stream": False,  # Verify that stream=False was passed to litellm
         # stream_options is only sent for streaming requests
-        "tools": [],
     }
     litellm_acompletion.assert_called_once_with(**expected_request)
 
