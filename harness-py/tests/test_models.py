@@ -564,6 +564,11 @@ def test_supports_web_search_none_uses_default_provider(monkeypatch):
 def test_supports_web_search_on_model_instances():
     assert supports_web_search(BedrockModel(model_id="anything")) is True
     assert supports_web_search(MagicMock(spec=Model)) is False
+    assert supports_web_search(ModelRouter([BedrockModel(model_id="a"), BedrockModel(model_id="b")])) is True
+    from strands.models.openai import OpenAIModel
+
+    other = OpenAIModel(client_args={"api_key": "x"}, model_id="gpt-5.6-sol")
+    assert supports_web_search(ModelRouter([BedrockModel(model_id="a"), other])) is False
 
 
 def test_openai_web_search_adds_tool_alongside_reasoning():

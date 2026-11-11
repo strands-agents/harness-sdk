@@ -806,9 +806,14 @@ describe('supportsWebSearch', () => {
     expect(supportsWebSearch(new OpenAIModel({ modelId: 'gpt-5.6-sol', apiKey: 'x' }))).toBe(false)
   })
 
-  it('is false for a ModelRouter', () => {
-    const router = new ModelRouter([new BedrockModel({ modelId: 'fast' })])
-    expect(supportsWebSearch(router)).toBe(false)
+  it('is true for an all-Bedrock ModelRouter and false for a mixed one', async () => {
+    const { OpenAIModel } = await import('@strands-agents/sdk/models/openai')
+    expect(supportsWebSearch(new ModelRouter([new BedrockModel({ modelId: 'fast' })]))).toBe(true)
+    const mixed = new ModelRouter([
+      new BedrockModel({ modelId: 'fast' }),
+      new OpenAIModel({ modelId: 'gpt-5.6-sol', apiKey: 'x' }),
+    ])
+    expect(supportsWebSearch(mixed)).toBe(false)
   })
 })
 
@@ -817,6 +822,11 @@ describe('bedrockRegion', () => {
     const { OpenAIModel } = await import('@strands-agents/sdk/models/openai')
     expect(await bedrockRegion(new BedrockModel({ modelId: 'x', region: 'eu-west-1' }))).toBe('eu-west-1')
     expect(await bedrockRegion(new OpenAIModel({ modelId: 'gpt-5.6-sol', apiKey: 'x' }))).toBeUndefined()
+    const router = new ModelRouter([
+      new BedrockModel({ modelId: 'a', region: 'ap-south-1' }),
+      new BedrockModel({ modelId: 'b', region: 'eu-west-1' }),
+    ])
+    expect(await bedrockRegion(router)).toBe('ap-south-1')
   })
 })
 

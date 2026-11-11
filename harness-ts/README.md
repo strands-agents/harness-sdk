@@ -326,7 +326,7 @@ model provider has its own search (OpenAI, Google, Anthropic, and GPT-5, GPT-6, 
 `bedrock-mantle` via Bedrock Web Search) the harness turns that on by default. On Amazon Bedrock
 (Converse), which has no native search, the model gets a `web_search` tool backed by
 [Amazon Bedrock AgentCore web search](https://docs.aws.amazon.com/bedrock-agentcore/latest/APIReference/API_InvokeWebSearch.html)
-(`InvokeWebSearch`), called in the model's region (a `BedrockModel` instance's too) and billed
+(`InvokeWebSearch`), called in the model's region (a `BedrockModel` instance's or an all-Bedrock `ModelRouter`'s too) and billed
 per query to your AWS account. The caller needs the `bedrock-agentcore:InvokeWebSearch` IAM
 permission on `arn:aws:bedrock-agentcore:<region>:aws:tool/web-search.v1`, and the API is offered
 in a subset of regions; without them the first search returns an error telling the model to answer

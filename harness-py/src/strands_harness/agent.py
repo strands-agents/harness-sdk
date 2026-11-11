@@ -124,8 +124,10 @@ def _web_search_mode(
     if kind is not None:
         return kind
     target = (
-        "A pre-built Model instance"
-        if isinstance(model, (Model, ModelRouter))
+        "A pre-built ModelRouter"
+        if isinstance(model, ModelRouter)
+        else "A pre-built Model instance"
+        if isinstance(model, Model)
         else f"Model {model or defaults.DEFAULT_MODEL}"
     )
     if explicit:
@@ -466,7 +468,8 @@ def create_harness(
     builtin_tools_by_name = _builtin_tools(parent_config)
     default_agentcore = None
     if web_search == "agentcore":
-        region = cast(BedrockModel, resolved_model).client.meta.region_name
+        bedrock = resolved_model.default_model if isinstance(resolved_model, ModelRouter) else resolved_model
+        region = cast(BedrockModel, bedrock).client.meta.region_name
         builtin_tools_by_name["web_search"] = make_agentcore_web_search(region=region)
         if not web_search_explicit:
             # A caller's own web_search (a tool, plugin, or MCP server) replaces the default, so it is

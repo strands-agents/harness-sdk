@@ -218,6 +218,22 @@ test('internal mode grants the Mantle actions the base-path drift tests need', (
   );
 });
 
+test('internal mode grants AgentCore web search for the harness web_search tests', () => {
+  const template = synth({ internal: true });
+
+  const statements = Object.values(template.findResources('AWS::IAM::Policy')).flatMap(
+    (p: any) => p.Properties?.PolicyDocument?.Statement ?? [],
+  );
+  expect(statements).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        Action: 'bedrock-agentcore:InvokeWebSearch',
+        Resource: 'arn:aws:bedrock-agentcore:*:aws:tool/web-search.v1',
+      }),
+    ]),
+  );
+});
+
 test('internal mode grants the permissions Bidi integration tests need', () => {
   const template = synth({ internal: true });
 

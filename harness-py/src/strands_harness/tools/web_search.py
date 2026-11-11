@@ -16,11 +16,13 @@ import contextlib
 import logging
 import os
 import re
+import threading
 from collections.abc import Awaitable, Callable
 from datetime import timedelta
 from typing import Any, TypedDict
 
 import boto3
+from botocore.config import Config
 from botocore.exceptions import ClientError, NoCredentialsError
 from strands.models.bedrock import DEFAULT_BEDROCK_REGION
 from strands.tools.decorator import tool
@@ -107,12 +109,13 @@ def _exa_backend(api_key: str | None = None) -> SearchBackend:
     return search
 
 
-def _unavailable(state: dict[str, Any], reason: str) -> str:
+def _unavailable(state: dict[str, Any], lock: threading.Lock, reason: str) -> str:
     """Remember a permanent AgentCore failure (logged once) and return what the model is told."""
-    if "unavailable" not in state:
-        logger.warning("web_search: AgentCore web search is unavailable, so every search will fail: %s", reason)
-        state["unavailable"] = reason + _UNAVAILABLE
-    return str(state["unavailable"])
+    with lock:
+        if "unavailable" not in state:
+            logger.warning("web_search: AgentCore web search is unavailable, so every search will fail: %s", reason)
+            state["unavailable"] = reason + _UNAVAILABLE
+        return str(state["unavailable"])
 
 
 def _agentcore_backend(region: str | None = None, boto_session: boto3.Session | None = None) -> SearchBackend:
@@ -123,14 +126,26 @@ def _agentcore_backend(region: str | None = None, boto_session: boto3.Session | 
     later calls fail without a request.
     """
     state: dict[str, Any] = {}  # the client is built on first search, so constructing a harness stays cheap
+    lock = threading.Lock()  # parallel first searches run in separate threads
 
     def call(query: str, max_results: int) -> list[SearchResult]:
-        if "unavailable" in state:
-            raise WebSearchError(state["unavailable"])
-        if "client" not in state:
-            session = boto_session or boto3.Session()
-            state["region"] = region or session.region_name or os.environ.get("AWS_REGION") or DEFAULT_BEDROCK_REGION
-            state["client"] = session.client("bedrock-agentcore", region_name=state["region"])
+        with lock:
+            if "unavailable" in state:
+                raise WebSearchError(state["unavailable"])
+            if "client" not in state:
+                session = boto_session or boto3.Session()
+                state["region"] = (
+                    region or session.region_name or os.environ.get("AWS_REGION") or DEFAULT_BEDROCK_REGION
+                )
+                state["client"] = session.client(
+                    "bedrock-agentcore",
+                    region_name=state["region"],
+                    config=Config(
+                        connect_timeout=10,
+                        read_timeout=int(_TIMEOUT.total_seconds()),
+                        retries={"max_attempts": 2, "mode": "standard"},
+                    ),
+                )
         try:
             response = state["client"].invoke_web_search(
                 webSearchId=_AGENTCORE_WEB_SEARCH_ID, searchQuery=query, maxResults=max_results
@@ -139,7 +154,7 @@ def _agentcore_backend(region: str | None = None, boto_session: boto3.Session | 
             reason = (
                 f"{exc} (AgentCore web search is signed with AWS credentials; a Bedrock API key does not cover it)."
             )
-            raise WebSearchError(_unavailable(state, reason)) from exc
+            raise WebSearchError(_unavailable(state, lock, reason)) from exc
         except ClientError as exc:
             code = exc.response.get("Error", {}).get("Code")
             status = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
@@ -152,7 +167,7 @@ def _agentcore_backend(region: str | None = None, boto_session: boto3.Session | 
                 reason = f"{exc} (the caller needs bedrock-agentcore:InvokeWebSearch on {resource})."
             else:
                 raise
-            raise WebSearchError(_unavailable(state, reason)) from exc
+            raise WebSearchError(_unavailable(state, lock, reason)) from exc
         return [
             {
                 "title": result.get("title") or result.get("url", ""),

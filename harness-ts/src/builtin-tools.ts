@@ -4,7 +4,7 @@
  * from the same record.
  */
 
-import { type Agent, McpClient, MemoryManager, Tool, type ToolList } from '@strands-agents/sdk'
+import { type Agent, McpClient, MemoryManager, ModelRouter, Tool, type ToolList } from '@strands-agents/sdk'
 import { makeShell } from '@strands-agents/sdk/vended-tools/bash'
 
 import type { HarnessAgentOptions } from './agent.js'
@@ -129,7 +129,11 @@ export function webSearchMode(
     return kind
   }
   const target =
-    typeof model === 'string' || model === undefined ? `Model ${model ?? DEFAULT_MODEL}` : 'A pre-built Model instance'
+    typeof model === 'string' || model === undefined
+      ? `Model ${model ?? DEFAULT_MODEL}`
+      : model instanceof ModelRouter
+        ? 'A pre-built ModelRouter'
+        : 'A pre-built Model instance'
   if (explicit) {
     throw new Error(
       `${target} has no built-in web search. Pass builtinTools: { web_search: 'exa' } to search ` +

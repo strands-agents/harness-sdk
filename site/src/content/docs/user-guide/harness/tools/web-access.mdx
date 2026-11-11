@@ -88,7 +88,7 @@ Google, and the GPT-5, GPT-6, and Daybreak models on `bedrock-mantle` have one.
 On Amazon Bedrock, which has no built-in search, the agent instead gets a `web_search` tool
 backed by
 [Amazon Bedrock AgentCore web search](https://docs.aws.amazon.com/bedrock-agentcore/latest/APIReference/API_InvokeWebSearch.html).
-This applies to a `BedrockModel` you build yourself too. It calls the `InvokeWebSearch` API in the
+This applies to a `BedrockModel` you build yourself, or a `ModelRouter` of them, too. It calls the `InvokeWebSearch` API in the
 model's region with the default AWS credential chain (not the model's own session or client
 config), so each query is authorized by IAM and billed to that AWS account. The caller needs the `bedrock-agentcore:InvokeWebSearch` IAM permission on
 `arn:aws:bedrock-agentcore:<region>:aws:tool/web-search.v1`, and the API is available in a subset

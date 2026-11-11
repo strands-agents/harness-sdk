@@ -577,8 +577,8 @@ export function supportsThinking(model: Model | ModelRouter | string | undefined
 /**
  * How `web_search` is served for `model` without the Exa opt-in: the provider's native search,
  * AgentCore web search on Bedrock (a harness tool, as Converse has no native search), or
- * `undefined`. A `BedrockModel` instance gets AgentCore too; any other `Model` or `ModelRouter` has
- * an unknown provider, so it gets `undefined`.
+ * `undefined`. A `BedrockModel` instance, or a `ModelRouter` whose candidates are all Bedrock, gets
+ * AgentCore too; any other instance has an unknown provider, so it gets `undefined`.
  *
  * @param model - A `Model` instance, a `"provider/name"` string, a bare Bedrock id, or undefined.
  * @returns `'native'`, `'agentcore'`, or `undefined` when the model has no built-in web search.
@@ -587,7 +587,10 @@ export function webSearchKind(model: Model | ModelRouter | string | undefined): 
   if (model instanceof BedrockModel) {
     return 'agentcore'
   }
-  if (model instanceof Model || model instanceof ModelRouter) {
+  if (model instanceof ModelRouter) {
+    return model.candidates.every((c) => webSearchKind(c.model) === 'agentcore') ? 'agentcore' : undefined
+  }
+  if (model instanceof Model) {
     return undefined
   }
   const [providerName, name] = splitProvider(model ?? DEFAULT_MODEL)
@@ -598,12 +601,15 @@ export function webSearchKind(model: Model | ModelRouter | string | undefined): 
 }
 
 /**
- * The region a `BedrockModel` sends requests to, or `undefined` for any other model. Read from its
- * SDK client, since `BedrockModel` has no public accessor for it.
+ * The region a `BedrockModel` (or a router's default model) sends requests to, or `undefined` for
+ * any other model. Read from its SDK client, since `BedrockModel` has no public accessor for it.
  *
  * @internal
  */
 export async function bedrockRegion(model: Model | ModelRouter): Promise<string | undefined> {
+  if (model instanceof ModelRouter) {
+    return bedrockRegion(model.defaultModel)
+  }
   if (!(model instanceof BedrockModel)) {
     return undefined
   }
@@ -614,9 +620,9 @@ export async function bedrockRegion(model: Model | ModelRouter): Promise<string 
 /**
  * Whether `web_search` works for `model` without the Exa opt-in.
  *
- * True where the provider has native web search, and on Bedrock (a `BedrockModel` instance too),
- * where AgentCore web search serves it. Any other `Model` or `ModelRouter` instance has an unknown
- * provider, so this is `false`. `undefined` resolves to the default model.
+ * True where the provider has native web search, and on Bedrock (a `BedrockModel` instance or an
+ * all-Bedrock `ModelRouter` too), where AgentCore web search serves it. Any other instance has an
+ * unknown provider, so this is `false`. `undefined` resolves to the default model.
  *
  * @param model - A `Model` instance, a `"provider/name"` string, a bare Bedrock id, or undefined.
  * @returns Whether `web_search` is available for the resolved model.

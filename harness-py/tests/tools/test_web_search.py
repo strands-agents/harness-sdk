@@ -226,19 +226,21 @@ def agentcore(monkeypatch):
     client = boto3.client(
         "bedrock-agentcore", region_name="us-east-1", aws_access_key_id="x", aws_secret_access_key="x"
     )
-    regions = []
+    regions, configs = [], []
 
     class Session:
         region_name = None
 
-        def client(self, service, region_name):
+        def client(self, service, region_name, config):
             assert service == "bedrock-agentcore"
             regions.append(region_name)
+            configs.append(config)
             return client
 
     monkeypatch.setattr(web_search_module.boto3, "Session", Session)
     with Stubber(client) as stubber:
         stubber.regions = regions
+        stubber.configs = configs
         yield stubber
 
 
@@ -269,6 +271,10 @@ async def test_agentcore_web_search_builds_one_client_across_searches(agentcore)
     tool = web_search_module.make_agentcore_web_search(region="us-west-2")
     assert [await tool._tool_func(query="q"), await tool._tool_func(query="q")] == ["No results.", "No results."]
     assert agentcore.regions == ["us-west-2"]
+    # Bounded like the Exa path, instead of botocore's 60 s timeouts and 5 legacy attempts.
+    config = agentcore.configs[0]
+    assert (config.connect_timeout, config.read_timeout) == (10, 30)
+    assert config.retries == {"max_attempts": 2, "mode": "standard"}
 
 
 async def test_agentcore_web_search_region_defaults_like_bedrock_model(agentcore, monkeypatch):

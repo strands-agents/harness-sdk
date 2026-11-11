@@ -418,11 +418,13 @@ def _has_web_search(provider_name: str, name: str) -> bool:
 def web_search_kind(model: Model | ModelRouter | str | None) -> Literal["native", "agentcore"] | None:
     """How ``web_search`` is served for ``model`` without the Exa opt-in: the provider's native
     search, AgentCore web search on Bedrock (a harness tool, as Converse has no native search), or
-    ``None``. A ``BedrockModel`` instance gets AgentCore too; any other ``Model`` or ``ModelRouter``
-    has an unknown provider, so it gets ``None``."""
+    ``None``. A ``BedrockModel`` instance, or a ``ModelRouter`` whose candidates are all Bedrock,
+    gets AgentCore too; any other instance has an unknown provider, so it gets ``None``."""
     if isinstance(model, BedrockModel):
         return "agentcore"
-    if isinstance(model, (Model, ModelRouter)):
+    if isinstance(model, ModelRouter):
+        return "agentcore" if all(web_search_kind(c.model) == "agentcore" for c in model.candidates) else None
+    if isinstance(model, Model):
         return None
     provider_name, name = _split_provider(model or defaults.DEFAULT_MODEL)
     if provider_name == "bedrock":
@@ -433,8 +435,8 @@ def web_search_kind(model: Model | ModelRouter | str | None) -> Literal["native"
 def supports_web_search(model: Model | ModelRouter | str | None) -> bool:
     """Whether ``web_search`` works for ``model`` without the Exa opt-in.
 
-    True where the provider has native web search, and on Bedrock (a ``BedrockModel`` instance too),
-    where AgentCore web search serves it. Any other ``Model`` or ``ModelRouter`` instance has an
+    True where the provider has native web search, and on Bedrock (a ``BedrockModel`` instance or an
+    all-Bedrock ``ModelRouter`` too), where AgentCore web search serves it. Any other instance has an
     unknown provider, so this is ``False``. ``None`` resolves to the default model.
     """
     return web_search_kind(model) is not None

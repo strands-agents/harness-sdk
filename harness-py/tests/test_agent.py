@@ -531,6 +531,23 @@ def test_web_search_on_bedrock_is_the_agentcore_tool_in_the_model_region(monkeyp
     assert "web_search" in explicit.tool_names
 
 
+def test_web_search_on_an_all_bedrock_router_is_agentcore_in_the_default_models_region(monkeypatch, caplog):
+    import logging
+
+    regions = []
+    real = agent_module.make_agentcore_web_search
+    monkeypatch.setattr(
+        agent_module, "make_agentcore_web_search", lambda **kw: regions.append(kw["region"]) or real(**kw)
+    )
+    router = ModelRouter([BedrockModel(model_id="fast", region_name="eu-west-1"), BedrockModel(model_id="deep")])
+    assert "web_search" in create_harness(model=router).tool_names
+    assert regions == ["eu-west-1"]
+    with caplog.at_level(logging.INFO, logger="strands_harness.agent"):
+        mixed = create_harness(model=ModelRouter([BedrockModel(model_id="fast"), _RetrievingModel()]))
+    assert "web_search" not in mixed.tool_names
+    assert any("A pre-built ModelRouter has no built-in web search" in r.getMessage() for r in caplog.records)
+
+
 def test_web_search_on_a_bedrock_model_instance_is_the_agentcore_tool_in_its_region(monkeypatch):
     regions = []
     real = agent_module.make_agentcore_web_search

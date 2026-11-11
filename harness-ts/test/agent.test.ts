@@ -398,6 +398,16 @@ describe('createHarness', () => {
     expect(toolNames(named)).toContain('web_search')
   })
 
+  it('serves web_search on an all-Bedrock ModelRouter and names the router when it cannot', async () => {
+    const router = new ModelRouter([new BedrockModel({ modelId: 'fast' }), new BedrockModel({ modelId: 'deep' })])
+    expect(toolNames(await createHarness({ model: router }))).toContain('web_search')
+    const info = vi.fn()
+    configureLogging({ debug: () => {}, info, warn: () => {}, error: () => {} })
+    const mixed = new ModelRouter([new BedrockModel({ modelId: 'fast' }), new RetrievingModel()])
+    expect(toolNames(await createHarness({ model: mixed }))).not.toContain('web_search')
+    expect(info).toHaveBeenCalledWith(expect.stringContaining('A pre-built ModelRouter has no built-in web search'))
+  })
+
   it('serves web_search on a BedrockModel instance from AgentCore in its region', async () => {
     const regions: string[] = []
     vi.spyOn(BedrockAgentCoreClient.prototype, 'send').mockImplementation(async function (

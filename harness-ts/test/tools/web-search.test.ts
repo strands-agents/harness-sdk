@@ -229,12 +229,18 @@ describe('searchTool', () => {
 describe('makeAgentCoreWebSearch', () => {
   /** Stub `BedrockAgentCoreClient.send` with one outcome per call; records each command's input, client and region. */
   function mockSend(...outcomes: unknown[]) {
-    const calls: { input: unknown; region: string; client: BedrockAgentCoreClient }[] = []
+    const calls: {
+      input: unknown
+      region: string
+      client: BedrockAgentCoreClient
+      options?: { abortSignal?: AbortSignal }
+    }[] = []
     vi.spyOn(BedrockAgentCoreClient.prototype, 'send').mockImplementation(async function (
       this: BedrockAgentCoreClient,
-      command: { input: unknown }
+      command: { input: unknown },
+      options?: { abortSignal?: AbortSignal }
     ) {
-      calls.push({ input: command.input, region: await this.config.region(), client: this })
+      calls.push({ input: command.input, region: await this.config.region(), client: this, options })
       const outcome = outcomes[calls.length - 1]
       if (outcome instanceof Error) {
         throw outcome
@@ -274,6 +280,9 @@ describe('makeAgentCoreWebSearch', () => {
     ])
     expect(calls.map((c) => c.region)).toEqual(['eu-west-1', 'eu-west-1'])
     expect(calls[1]!.client).toBe(calls[0]!.client)
+    // Bounded like the Exa path: two attempts, and each send carries a timeout signal.
+    expect(await calls[0]!.client.config.maxAttempts()).toBe(2)
+    expect(calls[0]!.options?.abortSignal).toBeInstanceOf(AbortSignal)
   })
 
   it('names the IAM permission on AccessDenied, in the default region, and stops calling', async () => {

@@ -137,7 +137,8 @@ async function agentCoreClient(
     process.env.AWS_REGION ||
     process.env.AWS_DEFAULT_REGION ||
     (await new BedrockAgentCoreClient({}).config.region().catch(() => BEDROCK_DEFAULT_REGION))
-  return { client: new BedrockAgentCoreClient({ ...options.clientConfig, region }), region }
+  // Bounded like the Exa path (see TIMEOUT_MS on send), instead of the SDK's 3 attempts per call.
+  return { client: new BedrockAgentCoreClient({ maxAttempts: 2, ...options.clientConfig, region }), region }
 }
 
 /**
@@ -164,7 +165,8 @@ export function agentCoreBackend(options: MakeAgentCoreWebSearchOptions = {}): S
     let response
     try {
       response = await client.send(
-        new InvokeWebSearchCommand({ webSearchId: AGENTCORE_WEB_SEARCH_ID, searchQuery: query, maxResults })
+        new InvokeWebSearchCommand({ webSearchId: AGENTCORE_WEB_SEARCH_ID, searchQuery: query, maxResults }),
+        { abortSignal: AbortSignal.timeout(TIMEOUT_MS) }
       )
     } catch (err) {
       const name = err instanceof Error ? err.name : undefined
