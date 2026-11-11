@@ -58,6 +58,11 @@ const CLAUDE_MAX_TOKENS_BY_VERSION: ReadonlyArray<readonly [string, number]> = [
   ['claude-haiku-4.5', 64_000],
 ]
 
+// The tier ceiling, else the model info's output limit, else the harness default.
+function claudeOutputTokens(modelId: string): number {
+  return claudeMaxTokens(modelId) ?? lookupModelInfo(modelId).limits?.maxOutputTokens ?? ANTHROPIC_MAX_TOKENS
+}
+
 function claudeMaxTokens(modelId: string): number | undefined {
   const pinned = CLAUDE_MAX_TOKENS_BY_VERSION.find(([needle]) => modelId.includes(needle))?.[1]
   if (pinned !== undefined) {
@@ -222,7 +227,7 @@ function bedrockThinking(modelId: string, effort: string | null): JSONValue | un
   }
   const family = bedrockFamily(modelId)
   if (family.startsWith('anthropic.')) {
-    return claudeThinkingBlock(family, effort, claudeMaxTokens(modelId) ?? ANTHROPIC_MAX_TOKENS) as JSONValue
+    return claudeThinkingBlock(family, effort, claudeOutputTokens(modelId)) as JSONValue
   }
   if (isBedrockGpt(family)) {
     return { reasoning: { effort } }
@@ -241,12 +246,13 @@ function bedrockThinking(modelId: string, effort: string | null): JSONValue | un
 
 async function bedrock(modelId: string, effort: string | null, _webSearch: boolean, caching: boolean): Promise<Model> {
   const thinking = bedrockThinking(modelId, effort)
-  const maxTokens = claudeMaxTokens(modelId)
   const region = process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION
   if (bedrockFamily(modelId).startsWith('anthropic.claude-')) {
     const { AnthropicBedrock } = await import('@anthropic-ai/bedrock-sdk')
     const client = new AnthropicBedrock({ awsRegion: region || (await awsConfigRegion()) })
-    return claude(modelId, maxTokens, thinking as Record<string, unknown> | undefined, caching, { client })
+    return claude(modelId, claudeOutputTokens(modelId), thinking as Record<string, unknown> | undefined, caching, {
+      client,
+    })
   }
   const { BedrockModel } = await import('@strands-agents/sdk/models/bedrock')
   // The 'auto' strategy injects cache points (messages and tools) for Anthropic model ids on
@@ -255,7 +261,6 @@ async function bedrock(modelId: string, effort: string | null, _webSearch: boole
   return new BedrockModel({
     modelId,
     ...(region ? { region } : {}),
-    ...(maxTokens !== undefined ? { maxTokens } : {}),
     ...(cacheConfig ? { cacheConfig } : {}),
     ...(thinking ? { additionalRequestFields: thinking } : {}),
   })
@@ -268,14 +273,14 @@ async function awsConfigRegion(): Promise<string> {
 }
 
 async function anthropic(modelId: string, effort: string | null, webSearch: boolean, caching: boolean): Promise<Model> {
-  const maxTokens = claudeMaxTokens(modelId) ?? ANTHROPIC_MAX_TOKENS
+  const maxTokens = claudeOutputTokens(modelId)
   const thinking = effort === null ? undefined : claudeThinkingBlock(modelId, effort, maxTokens)
   return claude(modelId, maxTokens, thinking, caching, webSearch ? { anthropicTools: [ANTHROPIC_WEB_SEARCH] } : {})
 }
 
 async function claude(
   modelId: string,
-  maxTokens: number | undefined,
+  maxTokens: number,
   thinking: Record<string, unknown> | undefined,
   caching: boolean,
   options: Pick<AnthropicModelOptions, 'client' | 'anthropicTools'>
@@ -283,7 +288,7 @@ async function claude(
   const { AnthropicModel } = await import('@strands-agents/sdk/models/anthropic')
   return new AnthropicModel({
     modelId,
-    ...(maxTokens !== undefined ? { maxTokens } : {}),
+    maxTokens,
     ...(caching ? { cacheConfig: { strategy: 'auto' as const } } : {}),
     ...(thinking ? { params: thinking } : {}),
     ...options,

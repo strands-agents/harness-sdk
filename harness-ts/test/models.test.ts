@@ -504,16 +504,18 @@ describe('resolveModel', () => {
     expect(model.getConfig().maxTokens).toBe(128_000)
   })
 
+  it.each([
+    ['bedrock/anthropic.claude-3-haiku-20240307-v1:0', 4_096],
+    ['anthropic/claude-3-5-haiku-20241022', 8_192],
+    ['anthropic/claude-unknown-1', 32_000],
+    ['bedrock/anthropic.claude-unknown-1', 32_000],
+  ] as const)('caps %s without a tier ceiling at the model info output limit (%d)', async (spec, maxTokens) => {
+    expect((await resolve(spec)).getConfig().maxTokens).toBe(maxTokens)
+  })
+
   it('does not force max tokens on a non-claude bedrock model', async () => {
     const model = await resolve('bedrock/amazon.nova-pro-v1:0')
     expect(model.getConfig().maxTokens).toBeUndefined()
-  })
-
-  it('does not force max tokens on a legacy claude 3 bedrock id', async () => {
-    const model = await resolve('bedrock/anthropic.claude-3-haiku-20240307-v1:0')
-    // The SDK may default maxTokens from its model info; the harness must not pass its own.
-    const config = (model as unknown as { _config: { maxTokens?: number } })._config
-    expect(config.maxTokens).toBeUndefined()
   })
 
   it('builds bedrock-mantle via the OpenAI provider', async () => {

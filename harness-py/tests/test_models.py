@@ -608,6 +608,7 @@ def test_bedrock_non_claude_model_has_no_forced_max_tokens():
         ("bedrock/anthropic.claude-3-haiku-20240307-v1:0", 4_096),
         ("anthropic/claude-3-5-haiku-20241022", 8_192),
         ("anthropic/claude-unknown-1", 32_000),
+        ("bedrock/anthropic.claude-unknown-1", 32_000),
     ],
 )
 def test_claude_without_a_tier_ceiling_uses_the_model_info_output_limit(spec, max_tokens):
