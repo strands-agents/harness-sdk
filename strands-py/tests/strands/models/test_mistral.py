@@ -678,8 +678,9 @@ def test_format_chunk_message_stop_tool_use(model):
     assert actual_chunk == exp_chunk
 
 
-def test_format_chunk_message_stop_max_tokens(model):
-    event = {"chunk_type": "message_stop", "data": "length"}
+@pytest.mark.parametrize("finish_reason", ["length", "model_length"])
+def test_format_chunk_message_stop_max_tokens(model, finish_reason):
+    event = {"chunk_type": "message_stop", "data": finish_reason}
 
     actual_chunk = model.format_chunk(event)
     exp_chunk = {"messageStop": {"stopReason": "max_tokens"}}
@@ -1168,3 +1169,18 @@ async def test_stream_non_streaming_splits_list_content_into_reasoning_and_text(
         {"messageStop": {"stopReason": "end_turn"}},
     ]
     assert tru_chunks == exp_chunks
+
+
+@pytest.mark.asyncio
+async def test_stream_non_streaming_model_length_is_max_tokens(mistral_client, model_id, max_tokens, alist):
+    """A response cut off by the model's context window is truncated, not a normal end of turn."""
+    model = MistralModel(model_id=model_id, max_tokens=max_tokens, stream=False)
+    message = unittest.mock.Mock(content="The answer is", tool_calls=None)
+    response = unittest.mock.Mock(
+        choices=[unittest.mock.Mock(message=message, finish_reason="model_length")], usage=None
+    )
+    mistral_client.chat.complete_async = unittest.mock.AsyncMock(return_value=response)
+
+    tru_chunks = await alist(model.stream([{"role": "user", "content": [{"text": "q"}]}]))
+
+    assert tru_chunks[-1] == {"messageStop": {"stopReason": "max_tokens"}}
