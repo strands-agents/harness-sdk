@@ -493,6 +493,26 @@ def test_split_tool_message_media_with_document():
     assert user_with_media["content"] == [file_part]
 
 
+def test_split_tool_message_media_keeps_a_non_pdf_document():
+    """A non-PDF document stays in the tool message: only PDF is valid in a user message.
+
+    LiteLLM turns a ``file`` part inside a tool message into a native tool-result document,
+    so moving a text or CSV document out of the tool message breaks that path without
+    making the OpenAI request any more valid.
+    """
+    txt_part = {"type": "file", "file": {"file_data": "data:text/plain;base64,aGk=", "filename": "notes.txt"}}
+    tool_message = {
+        "role": "tool",
+        "tool_call_id": "c1",
+        "content": [{"type": "text", "text": "Result"}, dict(txt_part)],
+    }
+
+    tool_clean, user_with_media = OpenAIModel._split_tool_message_media(tool_message)
+
+    assert tool_clean is tool_message
+    assert user_with_media is None
+
+
 def test_split_tool_message_media_without_image():
     """Test that tool messages without images are unchanged."""
     tool_message = {"role": "tool", "tool_call_id": "c1", "content": [{"type": "text", "text": "Result"}]}
