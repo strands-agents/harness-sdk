@@ -245,6 +245,36 @@ describe('HarnessPicker', () => {
     await vi.waitFor(() => expect(selected).toHaveBeenCalledWith(undefined))
   })
 
+  it.each([
+    ['BaseCli', '', '/home/test/.strands/cli.toml'],
+    ['FoundHarness', '\u001b[B', '/project/agent.py'],
+  ])('shouldShowTheSelectedAgentAboveTheFolderStepWhen%sIsChosen', async (_, move, path) => {
+    const { input, text } = withFolder()
+    await vi.waitFor(() => expect(text()).toContain('Select a harness'))
+    input.write(move)
+    input.write('\r')
+
+    await vi.waitFor(() => expect(text()).toContain('Choose a workspace folder'))
+    const lines = text().split('\n')
+    const row = (label: string): number => lines.findIndex((line) => line.includes(label))
+    expect(row('Agent selected')).toBeGreaterThanOrEqual(0)
+    expect(row(path)).toBe(row('Agent selected') + 1)
+    expect(row('Choose a workspace folder')).toBeGreaterThan(row(path))
+  })
+
+  it('shouldLeaveOutTheSelectedAgentWhenANewHarnessNeedsAFolder', async () => {
+    const { input, text } = withFolder([])
+    await vi.waitFor(() => expect(text()).toContain('Select a harness'))
+    input.write('\u001b[B')
+    await vi.waitFor(() => expect(text()).toContain('› Create a new harness'))
+    input.write('\r')
+    await vi.waitFor(() => expect(text()).toContain('Tab language · Enter continue'))
+    input.write('\r')
+
+    await vi.waitFor(() => expect(text()).toContain('New project · new-harness'))
+    expect(text()).not.toContain('Agent selected')
+  })
+
   it('shouldAskForTheFolderAfterTheNewHarnessForm', async () => {
     const { input, text, selected } = withFolder([])
     await vi.waitFor(() => expect(text()).toContain('Select a harness'))
@@ -489,5 +519,28 @@ describe('HarnessPicker', () => {
     await vi.waitFor(() => expect(frame().join('\n')).toContain('Esc cancel'))
 
     expect(frame().join('\n').includes('Manual import applies')).toBe(notesVisible)
+  })
+
+  it.each([
+    [11, false],
+    [12, true],
+  ])('shouldShowTheSelectedAgentOnlyWhenTheFolderStepFitsAt%sRows', async (rows, agentVisible) => {
+    const input = ttyInput()
+    const output = ttyOutput(120, 50)
+    const frame = captureFrame(output)
+    render(
+      createElement(
+        StartupContentRows,
+        { value: rows },
+        createElement(HarnessPicker, { harnesses: [harness], folderFor: () => '/work/strands-dev', onSelect: vi.fn() })
+      ),
+      { stdin: input, stdout: output }
+    )
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('Select a harness'))
+    input.write('\r')
+
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('Choose a workspace folder'))
+    expect(frame().join('\n').includes('Agent selected')).toBe(agentVisible)
+    expect(frame().length).toBeLessThanOrEqual(rows)
   })
 })
