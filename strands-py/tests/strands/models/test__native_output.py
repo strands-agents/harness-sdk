@@ -29,16 +29,19 @@ class Color(enum.Enum):
     BLUE = "blue"
 
 
-class Team(pydantic.BaseModel):
+class Roster(pydantic.BaseModel):
     """A team of people."""
 
     members: list[Person] = pydantic.Field(min_length=2)
     lead: Person | None = None
-    color: Color
-    kind: Literal["a", "b"]
     code: str = pydantic.Field(pattern=r"^[A-Z]+$", description="Team code")
     founded: datetime.date
     score: float = pydantic.Field(ge=0)
+
+
+class Team(Roster):
+    color: Color
+    kind: Literal["a", "b"]
 
 
 class WithDict(pydantic.BaseModel):
@@ -46,7 +49,7 @@ class WithDict(pydantic.BaseModel):
 
 
 class WithNestedDict(pydantic.BaseModel):
-    team: Team
+    team: Roster
     extra: list[WithDict]
 
 
@@ -170,10 +173,35 @@ def test_find_unsupported_native_output_feature(schema, exp_feature):
     assert tru_feature == exp_feature
 
 
-@pytest.mark.parametrize("output_model", [Person, Team, WithNestedDict])
+@pytest.mark.parametrize("output_model", [Person, Roster, WithNestedDict])
 def test_to_native_output_schema_matches_anthropic_transform_schema(output_model):
     tru_schema = to_native_output_schema(output_model.model_json_schema())
     exp_schema = anthropic.transform_schema(output_model)
+
+    assert tru_schema == exp_schema
+
+
+@pytest.mark.parametrize(
+    ("output_type", "exp_schema"),
+    [
+        (Color, {"type": "string", "enum": ["red", "blue"], "title": "Color"}),
+        (Literal["a", "b"], {"type": "string", "enum": ["a", "b"]}),
+        (
+            list[Color],
+            {
+                "$defs": {"Color": {"type": "string", "enum": ["red", "blue"], "title": "Color"}},
+                "type": "array",
+                "items": {"$ref": "#/$defs/Color"},
+            },
+        ),
+        (
+            list[Literal["a", "b"]],
+            {"type": "array", "items": {"type": "string", "enum": ["a", "b"]}},
+        ),
+    ],
+)
+def test_to_native_output_schema_keeps_enums_and_their_types(output_type, exp_schema):
+    tru_schema = to_native_output_schema(pydantic.TypeAdapter(output_type).json_schema())
 
     assert tru_schema == exp_schema
 
