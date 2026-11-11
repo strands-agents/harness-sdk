@@ -464,6 +464,24 @@ describe('createHarness', () => {
     expect(agent.model.getConfig().cacheConfig).toEqual({ strategy: 'auto' })
   })
 
+  it.each(
+    ['openai/gpt-5.6-sol', 'bedrock-mantle/openai.gpt-6-luna'].flatMap((model) =>
+      ([undefined, 'auto', true, false, null] as const).map((caching) => ({ model, caching }))
+    )
+  )('configures $model caching=$caching', async ({ model, caching }) => {
+    const agent = await createHarness({
+      model,
+      ...(caching !== undefined && { caching }),
+      session: false,
+      memory: false,
+      skills: false,
+      builtinTools: [],
+    })
+    expect(agent.model.getConfig().cacheConfig).toEqual(
+      caching === false || caching === null ? undefined : { strategy: 'auto' }
+    )
+  })
+
   it('builds silently with default caching on a Model instance', async () => {
     const warn = vi.fn()
     configureLogging({ debug: () => {}, info: () => {}, warn, error: () => {} })

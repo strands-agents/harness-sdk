@@ -1,9 +1,11 @@
 import Anthropic, { type ClientOptions } from '@anthropic-ai/sdk'
+import { VERSION as ANTHROPIC_SDK_VERSION } from '@anthropic-ai/sdk/version'
 import {
   Model,
   type BaseModelConfig,
   type CountTokensOptions,
   type StreamOptions,
+  type SummarizeOptions,
   resolveConfigMetadata,
   resolveMaxTokens,
   resolveCacheSection,
@@ -18,9 +20,12 @@ import {
   type StructuredOutputMechanism,
 } from './native-output.js'
 import { zodSchemaToJsonSchema } from '../tools/zod-utils.js'
-import type { Message, ContentBlock, SystemPrompt } from '../types/messages.js'
-import type { ModelStreamEvent } from '../models/streaming.js'
-import { createEmptyUsage } from '../models/streaming.js'
+import { lookupModelInfo, mergeModelInfo, type ModelInfo } from './model-info.js'
+import { Message, SummaryBlock } from '../types/messages.js'
+import type { ContentBlock, SystemPrompt } from '../types/messages.js'
+import type { ModelStreamEvent, Usage } from '../models/streaming.js'
+import { accumulateUsage, createEmptyUsage } from '../models/streaming.js'
+import type { SummarizeResult } from './summarize.js'
 import { ContextWindowOverflowError, ModelError, ModelThrottledError, normalizeError } from '../errors.js'
 import type { Citation } from '../types/citations.js'
 import type { ImageBlock, DocumentBlock } from '../types/media.js'
@@ -64,7 +69,28 @@ const MAX_PAUSE_TURN_CONTINUATIONS = 10
  */
 const ANTHROPIC_CACHE_TYPE = 'ephemeral' as const
 
+/**
+ * Beta that lets a mid-conversation system message carry `clear_at`.
+ *
+ * @see https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages
+ */
+const TURN_SCOPED_SYSTEM_BETA = 'mid-conversation-system-clear-at-2026-08-21'
+
+/**
+ * A system message cleared at the next user message. Declared here because the SDK types lack `clear_at`, and
+ * because `MessageParam` is an interface before SDK 1.x and a union from it.
+ */
+interface TurnScopedSystemMessage {
+  role: 'system'
+  content: Anthropic.TextBlockParam[]
+  clear_at: 'next_user_message'
+}
 const TEXT_FILE_FORMATS = ['txt', 'md', 'markdown', 'csv', 'json', 'xml', 'html', 'yml', 'yaml', 'js', 'ts', 'py']
+
+// API version 2026-10-21 removed the sampling params and rejects document blocks in assistant messages.
+// @see https://platform.claude.com/docs/en/api/migration-2026-10-21
+const SAMPLING_PARAMS_REMOVED_VERSION = '2026-10-21'
+const REMOVED_SAMPLING_PARAMS = ['temperature', 'top_p', 'top_k']
 
 /**
  * Validates that `anthropicTools` does not contain function tool definitions.
@@ -82,6 +108,12 @@ function validateAnthropicTools(anthropicTools: Anthropic.ToolUnion[]): void {
       )
     }
   }
+}
+
+/** A server tool's `name`, or its `type` for a toolset, which has none. */
+function serverToolName(tool: Anthropic.ToolUnion): string {
+  // The cast keeps 0.x compiling, where every ToolUnion member has a name and the else branch is `never`.
+  return 'name' in tool ? tool.name : (tool as { type: string }).type
 }
 
 /**
@@ -133,18 +165,101 @@ function apiErrorMessage(error: unknown): string {
 }
 
 /**
- * Reads the `anthropic-beta` values from client default headers, skipping the `undefined` and `null` values
- * the SDK leaves out of the request.
+ * Reads a header's values from client default headers, matching the name case-insensitively and skipping the
+ * `undefined` and `null` values the SDK leaves out of the request.
  */
-function headerBetas(headers: ClientOptions['defaultHeaders']): string[] {
+function headerValues(headers: ClientOptions['defaultHeaders'], name: string): string[] {
   if (!headers) return []
   const rows: Iterable<readonly unknown[]> =
     headers instanceof Headers || Array.isArray(headers) ? headers : Object.entries(headers)
   return [...rows]
-    .filter(([name]) => typeof name === 'string' && name.toLowerCase() === 'anthropic-beta')
+    .filter(([key]) => typeof key === 'string' && key.toLowerCase() === name)
     .flatMap(([, value]) => (Array.isArray(value) ? value : [value]))
     .filter((value): value is string => typeof value === 'string')
-    .flatMap((value) => value.split(',').flatMap((beta) => beta.trim() || []))
+}
+
+/** Beta that enables on-demand compaction, and compaction blocks in later requests. */
+const COMPACTION_BETA = 'compact-2026-09-04'
+
+type UsageCounters = Partial<
+  Record<'input_tokens' | 'output_tokens' | 'cache_read_input_tokens' | 'cache_creation_input_tokens', number | null>
+>
+
+type CompactionUsage = UsageCounters & { iterations?: UsageCounters[] | null }
+
+const USAGE_COUNTERS = [
+  'input_tokens',
+  'output_tokens',
+  'cache_read_input_tokens',
+  'cache_creation_input_tokens',
+] as const
+
+/** Converts an Anthropic usage payload to a Strands usage. */
+function formatUsage(usage: UsageCounters): Usage {
+  const inputTokens = usage.input_tokens ?? 0
+  const outputTokens = usage.output_tokens ?? 0
+  const cacheRead = usage.cache_read_input_tokens ?? 0
+  const cacheWrite = usage.cache_creation_input_tokens ?? 0
+  // Anthropic's input_tokens excludes tokens read from or written to the cache, so the
+  // billed total is the sum of all four counters.
+  return {
+    inputTokens,
+    outputTokens,
+    totalTokens: inputTokens + outputTokens + cacheRead + cacheWrite,
+    ...(cacheRead && { cacheReadInputTokens: cacheRead }),
+    ...(cacheWrite && { cacheWriteInputTokens: cacheWrite }),
+  }
+}
+
+/** Converts a compaction response's usage, which counts its tokens per iteration and zero at the top level. */
+function formatCompactionUsage(usage: CompactionUsage): Usage {
+  const iterations = usage.iterations ?? []
+  if (iterations.length === 0) return formatUsage(usage)
+  const totals: UsageCounters = {}
+  for (const key of USAGE_COUNTERS) {
+    totals[key] = iterations.reduce((sum, iteration) => sum + (iteration[key] ?? 0), 0)
+  }
+  return formatUsage(totals)
+}
+
+/** Returns the combined usage of two calls, or whichever one reported usage. */
+function sumUsage(first: Usage | undefined, second: Usage | undefined): Usage | undefined {
+  if (first === undefined || second === undefined) return first ?? second
+  const total = { ...first }
+  accumulateUsage(total, second)
+  return total
+}
+
+/** Whether `block` holds a compaction block Anthropic returned. */
+function isCompaction(block: ContentBlock): block is SummaryBlock {
+  return block.type === 'summaryBlock' && block.provider === 'anthropic'
+}
+
+/**
+ * Returns the messages from the last compaction block, which stands in for everything before it, or all of them.
+ * The API rejects any content before a compaction block.
+ */
+function fromLastCompaction(messages: Message[]): Message[] {
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index]!
+    const position = message.content.map(isCompaction).lastIndexOf(true)
+    if (position < 0) continue
+    const first = new Message({ role: message.role, content: message.content.slice(position) })
+    return [first, ...messages.slice(index + 1)]
+  }
+  return messages
+}
+
+/** Reads the `anthropic-beta` values from client default headers. */
+function headerBetas(headers: ClientOptions['defaultHeaders']): string[] {
+  return headerValues(headers, 'anthropic-beta').flatMap((value) =>
+    value.split(',').flatMap((beta) => beta.trim() || [])
+  )
+}
+
+/** The `anthropic-version` the SDK sends unless a default header pins one: `2023-06-01` on 0.x, `2026-10-21` from 1.0. */
+function sdkDefaultApiVersion(): string {
+  return ANTHROPIC_SDK_VERSION.startsWith('0.') ? '2023-06-01' : SAMPLING_PARAMS_REMOVED_VERSION
 }
 
 export interface AnthropicModelConfig extends BaseModelConfig {
@@ -196,17 +311,28 @@ export interface AnthropicModelConfig extends BaseModelConfig {
   cacheConfig?: CacheConfig
 }
 
+type AnthropicMessagesClient = {
+  messages: Pick<Anthropic['messages'], 'stream'> & Partial<Pick<Anthropic['messages'], 'countTokens'>>
+}
+
 export interface AnthropicModelOptions extends AnthropicModelConfig {
   apiKey?: string
-  client?: Anthropic
+  /**
+   * Pre-built client for any Anthropic Messages API endpoint, such as `Anthropic`, or
+   * `AnthropicBedrock` / `AnthropicBedrockMantle` from `@anthropic-ai/bedrock-sdk`.
+   */
+  client?: AnthropicMessagesClient
   clientConfig?: ClientOptions
 }
 
 export class AnthropicModel extends Model<AnthropicModelConfig> {
   private _config: AnthropicModelConfig
-  private _client: Anthropic
+  private _client: AnthropicMessagesClient
   private _dropStaleThinkingModelId: string | undefined
   private _clientBetas: string[]
+  // Unknown for an injected client, which may not be this SDK's `Anthropic` (e.g. a Bedrock or Vertex client).
+  private _apiVersion: string | undefined
+  private _apiVersionOrigin = ''
 
   constructor(options?: AnthropicModelOptions) {
     super()
@@ -244,7 +370,14 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
         ...(apiKey ? { apiKey } : {}),
         ...clientConfig,
       })
+      this._resolveApiVersion(clientConfig)
     }
+  }
+
+  /** Turns temporary messages back on for the models the shared model info lists. */
+  override get modelInfo(): ModelInfo {
+    const { temporaryMessages } = lookupModelInfo(this.modelId ?? '').capabilities ?? {}
+    return mergeModelInfo(super.modelInfo, { capabilities: { temporaryMessages } }, this._config.modelInfo)
   }
 
   updateConfig(modelConfig: AnthropicModelConfig): void {
@@ -279,7 +412,13 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
    * @returns Total input token count
    */
   override async countTokens(messages: Message[], options?: CountTokensOptions): Promise<number> {
+    // Count what a request sends, which starts at the last compaction block.
+    if (this._serverSideSummary()) messages = fromLastCompaction(messages)
     if (this._config.useNativeTokenCount !== true) return super.countTokens(messages, options)
+
+    // Bedrock clients omit `countTokens`.
+    const countTokens = this._client.messages.countTokens?.bind(this._client.messages)
+    if (!countTokens) return super.countTokens(messages, options)
 
     try {
       const request = this._formatRequest(messages, options)
@@ -291,10 +430,8 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
         ...(request.tool_choice && { tool_choice: request.tool_choice }),
       }
 
-      const requestOptions = this._buildRequestOptions()
-      const response = requestOptions
-        ? await this._client.messages.countTokens(params, requestOptions)
-        : await this._client.messages.countTokens(params)
+      const requestOptions = this._buildRequestOptions(request, this._compactionBetas(messages))
+      const response = requestOptions ? await countTokens(params, requestOptions) : await countTokens(params)
 
       logger.debug(`total_tokens=<${response.input_tokens}> | native token count`)
       return response.input_tokens
@@ -325,7 +462,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
         options
       )
       thinking = request.thinking
-      const requestOptions = this._buildRequestOptions()
+      const requestOptions = this._buildRequestOptions(request, this._compactionBetas(messages))
       const usage = createEmptyUsage()
 
       while (true) {
@@ -522,22 +659,107 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
         return
       }
 
-      const error = normalizeError(unknownError)
-
-      const lowered = error.message.toLowerCase()
-      if (CONTEXT_WINDOW_OVERFLOW_ERRORS.some((msg) => lowered.includes(msg))) {
-        throw new ContextWindowOverflowError(error.message)
-      }
-
-      const err = unknownError as Error & { status?: number }
-      if (err.status === 429) {
-        const message = error.message ?? 'Request was throttled by the model provider'
-        logger.debug(`throttled | error_message=<${message}>`)
-        throw new ModelThrottledError(message, { cause: err })
-      }
-
-      throw error
+      throw this._translateError(unknownError)
     }
+  }
+
+  /** Maps a context overflow or a 429 to the SDK's error types; any other error is normalized. */
+  private _translateError(unknownError: unknown): Error {
+    const error = normalizeError(unknownError)
+
+    const lowered = error.message.toLowerCase()
+    if (CONTEXT_WINDOW_OVERFLOW_ERRORS.some((msg) => lowered.includes(msg))) {
+      return new ContextWindowOverflowError(error.message)
+    }
+
+    const err = unknownError as Error & { status?: number }
+    if (err.status === 429) {
+      const message = error.message ?? 'Request was throttled by the model provider'
+      logger.debug(`throttled | error_message=<${message}>`)
+      return new ModelThrottledError(message, { cause: err })
+    }
+
+    return error
+  }
+
+  /**
+   * Summarizes `messages` with Anthropic on-demand compaction.
+   *
+   * Sends the request unchanged under beta `compact-2026-09-04`, so the thinking kept after a summary of the live
+   * conversation stays valid. Later requests from a model with `serverSideSummary` rebuild the compaction block
+   * from the returned summary block and start from it; requests without it send the summary text. Uses the base
+   * {@link Model.summarize} when `modelInfo.capabilities.serverSideSummary` is not `true`, when the client has no
+   * beta messages API, when the compaction request fails with an API error (a rejection, an overload, a timeout or
+   * a connection error), or when the response holds no compaction block.
+   *
+   * @param messages - The request to summarize, left unmodified
+   * @param options - The request's system prompt and tools, instructions replacing the API's own prompt, and the
+   *   cancel signal and agent metadata passed to the base implementation
+   * @returns The summary and the usage of every call made for it
+   */
+  override async summarize(messages: Message[], options?: SummarizeOptions): Promise<SummarizeResult> {
+    if (!this._serverSideSummary()) return super.summarize(messages, options)
+
+    const result = await this._compact(messages, options)
+    if (result.content.length > 0) return result
+
+    const fallback = await super.summarize(messages, options)
+    const usage = sumUsage(result.usage, fallback.usage)
+    return { content: fallback.content, ...(usage && { usage }) }
+  }
+
+  /** Sends `messages` as a compaction request; the result is empty when the response holds no compaction. */
+  private async _compact(messages: Message[], options?: SummarizeOptions): Promise<SummarizeResult> {
+    const request = this._formatRequest(messages, {
+      ...(options?.systemPrompt !== undefined && { systemPrompt: options.systemPrompt }),
+      ...(options?.toolSpecs !== undefined && { toolSpecs: options.toolSpecs }),
+    })
+    // The API rejects these on a compaction request.
+    const {
+      stop_sequences: _stopSequences,
+      context_management: _contextManagement,
+      ...rest
+    } = request as Anthropic.MessageStreamParams & { context_management?: unknown }
+    const params = {
+      ...rest,
+      compaction: { type: 'summarize', ...(options?.instructions && { instructions: options.instructions }) },
+    } as unknown as Anthropic.Beta.Messages.MessageCreateParamsStreaming
+    const requestOptions = this._buildRequestOptions(request, [COMPACTION_BETA])
+
+    // On-demand compaction is only on the beta endpoint, which a narrower injected client may not have.
+    const beta = (this._client as Partial<Pick<Anthropic, 'beta'>>).beta
+    if (!beta) {
+      logger.warn(`model_id=<${this._config.modelId}> | client has no beta messages API | summarizing client-side`)
+      return { content: [] }
+    }
+    let response: Anthropic.Beta.Messages.BetaMessage
+    try {
+      response = await beta.messages.stream(params, requestOptions).finalMessage()
+    } catch (error) {
+      if (!(error instanceof Anthropic.APIError)) throw this._translateError(error)
+      logger.warn(
+        `model_id=<${this._config.modelId}>, error=<${error.message}> | compaction request failed | summarizing client-side`
+      )
+      return { content: [] }
+    }
+    const responseUsage = response.usage as unknown as CompactionUsage | undefined
+    const usage = responseUsage ? formatCompactionUsage(responseUsage) : undefined
+
+    const block = (response.content as unknown as Record<string, unknown>[] | undefined)?.find(
+      (item) => item.type === 'compaction'
+    )
+    if ((response.stop_reason as string) !== 'compaction' || !block || !block.content) {
+      logger.debug(
+        `model_id=<${this._config.modelId}>, stop_reason=<${response.stop_reason}> | compaction returned no summary | summarizing client-side`
+      )
+      return { content: [], ...(usage && { usage }) }
+    }
+    const summary = new SummaryBlock({
+      provider: 'anthropic',
+      ...(typeof block.signature === 'string' && { signature: block.signature }),
+      text: block.content as string,
+    })
+    return { content: [summary], ...(usage && { usage }) }
   }
 
   /** Chooses the strongest structured output mechanism not yet rejected for this model. */
@@ -563,20 +785,81 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
     return handleRejectedMechanism('anthropic', modelId, mechanism, schema, apiErrorMessage(error))
   }
 
-  private _buildRequestOptions(): Anthropic.RequestOptions | undefined {
+  private _buildRequestOptions(
+    request: Anthropic.MessageStreamParams,
+    extra: string[] = []
+  ): Anthropic.RequestOptions | undefined {
+    const required = [
+      ...extra,
+      ...(this._dropsStaleThinking() ? [THINKING_BINDING_BETA] : []),
+      ...(request.messages.some((message) => 'clear_at' in message) ? [TURN_SCOPED_SYSTEM_BETA] : []),
+    ]
     let betas = this._config.betas ?? []
-    if (this._dropsStaleThinking()) {
-      // Request headers replace client headers of the same name, so betas set on the client are carried over.
-      if (betas.length === 0) betas = this._clientBetas
-      if (!betas.includes(THINKING_BINDING_BETA)) betas = [...betas, THINKING_BINDING_BETA]
-    }
+    // Request headers replace client headers of the same name, so betas set on the client are carried over.
+    if (required.length > 0 && betas.length === 0) betas = this._clientBetas
+    betas = [...new Set([...betas, ...required])]
     if (betas.length === 0) return undefined
     return { headers: { 'anthropic-beta': betas.join(',') } }
+  }
+
+  /** The compaction beta when `messages` carry a compaction block this model sends as one. */
+  private _compactionBetas(messages: Message[]): string[] {
+    const carries = messages.some((message) => message.content.some(isCompaction))
+    return this._serverSideSummary() && carries ? [COMPACTION_BETA] : []
+  }
+
+  private _serverSideSummary(): boolean {
+    return this.modelInfo.capabilities?.serverSideSummary === true
+  }
+
+  /** Formats a summary as a compaction block when Anthropic wrote it and compaction is enabled, else as text. */
+  private _formatSummary(summary: SummaryBlock): Anthropic.ContentBlockParam {
+    if (summary.provider !== 'anthropic' || !this._serverSideSummary()) return { type: 'text', text: summary.text }
+    return {
+      type: 'compaction',
+      content: summary.text,
+      ...(summary.signature && { signature: summary.signature }),
+    } as unknown as Anthropic.ContentBlockParam
   }
 
   /** Whether a binding error already turned drop_block on for the configured model. */
   private _dropsStaleThinking(): boolean {
     return this._dropStaleThinkingModelId === this._config.modelId
+  }
+
+  /** Resolves the `anthropic-version` the built client sends, and where it comes from for error messages. */
+  private _resolveApiVersion(clientConfig: ClientOptions | undefined): void {
+    // The SDK merges ANTHROPIC_CUSTOM_HEADERS into `_options.defaultHeaders`; fall back to clientConfig if that moves.
+    const sent =
+      (this._client as unknown as { _options?: ClientOptions })._options?.defaultHeaders ?? clientConfig?.defaultHeaders
+    // The SDK lets the last of several case-variant keys win.
+    const pinned = headerValues(sent, 'anthropic-version').at(-1)
+    this._apiVersion = pinned ?? sdkDefaultApiVersion()
+    if (pinned === undefined) {
+      this._apiVersionOrigin = `the default for @anthropic-ai/sdk ${ANTHROPIC_SDK_VERSION}`
+    } else if (pinned === headerValues(clientConfig?.defaultHeaders, 'anthropic-version').at(-1)) {
+      this._apiVersionOrigin = "pinned by clientConfig.defaultHeaders['anthropic-version']"
+    } else {
+      this._apiVersionOrigin = 'pinned by the ANTHROPIC_CUSTOM_HEADERS environment variable'
+    }
+  }
+
+  /** Whether the request goes to an API version that dropped the sampling params and assistant documents. */
+  private _usesCurrentApiVersion(): boolean {
+    return this._apiVersion !== undefined && this._apiVersion >= SAMPLING_PARAMS_REMOVED_VERSION
+  }
+
+  /** The API rejects these params with a 400, so a request that carries them fails here with the fixes instead. */
+  private _rejectRemovedSamplingParams(request: Record<string, unknown>): void {
+    if (!this._usesCurrentApiVersion()) return
+    const set = REMOVED_SAMPLING_PARAMS.filter((name) => request[name] !== undefined)
+    if (set.length === 0) return
+    throw new Error(
+      `${set.join(', ')} ${set.length === 1 ? 'is' : 'are'} not supported by Anthropic API version ` +
+        `${this._apiVersion}, ${this._apiVersionOrigin}. Remove the ${set.length === 1 ? 'param' : 'params'}, or pin API ` +
+        `version 2023-06-01 for models that still honor them: ` +
+        `clientConfig: { defaultHeaders: { 'anthropic-version': '2023-06-01' } }`
+    )
   }
 
   /** Resolves a cache section, disabled when `cacheConfig` is unset or its strategy is unknown. */
@@ -681,6 +964,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
 
   private _formatRequest(messages: Message[], options?: StreamOptions): Anthropic.MessageStreamParams {
     if (!this._config.modelId) throw new Error('Model ID is required')
+    if (this._serverSideSummary()) messages = fromLastCompaction(messages)
 
     const messagesCache = this._cacheSection('messagesTTL')
     // The cache point goes on the last user message with content, not counting cache point blocks.
@@ -721,7 +1005,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
       tools.push(...serverTools.map((tool) => ({ ...tool })))
     } else if (serverTools.length > 0) {
       logger.warn(
-        `tool_choice=<${Object.keys(options.toolChoice)[0]}>, server_tools=<${serverTools.map((tool) => tool.name).join(',')}> | forced tool call, omitting server tools`
+        `tool_choice=<${Object.keys(options.toolChoice)[0]}>, server_tools=<${serverTools.map(serverToolName).join(',')}> | forced tool call, omitting server tools`
       )
     }
 
@@ -742,10 +1026,12 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
       }
     }
 
-    if (this._config.temperature !== undefined) request.temperature = this._config.temperature
-    if (this._config.topP !== undefined) request.top_p = this._config.topP
+    const sampling: Record<string, number> = {}
+    if (this._config.temperature !== undefined) sampling.temperature = this._config.temperature
+    if (this._config.topP !== undefined) sampling.top_p = this._config.topP
     if (this._config.stopSequences !== undefined) request.stop_sequences = this._config.stopSequences
-    if (this._config.params) Object.assign(request, this._config.params)
+    Object.assign(request, sampling, this._config.params)
+    this._rejectRemovedSamplingParams(request)
     const dropBlockThinking = this._dropsStaleThinking() ? thinkingWithDropBlock(request.thinking) : undefined
     if (dropBlockThinking) request.thinking = dropBlockThinking
     // params.tools is already merged into tools above; never let it bypass the forced-turn rule.
@@ -797,7 +1083,15 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
         }
 
         const formattedBlock = this._formatContentBlock(block)
-        if (formattedBlock) content.push(formattedBlock)
+        if (!formattedBlock) continue
+        if (formattedBlock.type === 'document' && role === 'assistant' && this._usesCurrentApiVersion()) {
+          logger.warn(
+            `msg_idx=<${messageIndex}>, api_version=<${this._apiVersion}> | document blocks are not accepted in ` +
+              `assistant messages, skipping`
+          )
+          continue
+        }
+        content.push(formattedBlock)
       }
 
       // Placed after formatting so the cache point lands on a block that survived translation.
@@ -824,8 +1118,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
       )
     }
 
-    // The API rejects an empty message anywhere but the trailing assistant turn.
-    return formatted.filter((msg) => msg.content.length > 0)
+    return requestMessages(messages, formatted, this.modelInfo.capabilities?.temporaryMessages === true)
   }
 
   private _isCacheableBlock(
@@ -846,6 +1139,9 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
     switch (block.type) {
       case 'textBlock':
         return { type: 'text', text: block.text }
+
+      case 'summaryBlock':
+        return this._formatSummary(block)
 
       case 'imageBlock': {
         const imgBlock = block as ImageBlock
@@ -1124,4 +1420,46 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
         return anthropicReason
     }
   }
+}
+
+/**
+ * Drops the formatted messages left empty, which the API rejects anywhere but the trailing assistant turn. With
+ * `temporaryMessages`, each user message's injected text follows it as a turn-scoped system message.
+ *
+ * @param messages - The messages of the request
+ * @param formatted - The formatted messages, one per message
+ * @param temporaryMessages - Whether to send injected text as turn-scoped system messages
+ * @returns The messages to send
+ */
+function requestMessages(
+  messages: Message[],
+  formatted: Anthropic.MessageParam[],
+  temporaryMessages: boolean
+): Anthropic.MessageParam[] {
+  const kept = formatted
+    .map((message, index) => ({ message, source: messages[index]! }))
+    .filter(({ message }) => message.content.length > 0)
+  if (!temporaryMessages) return kept.map(({ message }) => message)
+  return kept.flatMap(({ message, source }, index) => {
+    const systemMessage = turnScopedSystemMessage(source)
+    // The API rejects one followed directly by a user message. No assistant turn can have read it, so it is left out.
+    if (!systemMessage || message.role !== 'user' || kept[index + 1]?.message.role === 'user') return [message]
+    return [message, systemMessage]
+  })
+}
+
+/**
+ * The message's injected text as a system message the model reads only until a later user message exists. Once
+ * cleared, it stays in the request but renders nothing, so the history before every later assistant turn is sent
+ * unchanged. Never carries `cache_control`: a cleared message is not part of any cache key.
+ *
+ * @param message - A message of the conversation
+ * @returns The system message, or `undefined` when the message has no injected text
+ */
+function turnScopedSystemMessage(message: Message): TurnScopedSystemMessage | undefined {
+  const content = message.content.flatMap((block): Anthropic.TextBlockParam[] =>
+    block.type === 'injectedBlock' ? [{ type: 'text', text: block.injected.text }] : []
+  )
+  if (content.length === 0) return undefined
+  return { role: 'system', content, clear_at: 'next_user_message' }
 }

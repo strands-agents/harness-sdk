@@ -32,10 +32,13 @@ const sampleGuideSlug = sampleGuideLanguage
   ? currentPath.replace(/^\/examples\//, '').replace(/\/$/, '')
   : undefined
 const sampleGuides = sampleGuideLanguage ? sortSampleGuides(await getCollection('sampleGuides')) : []
+const currentSampleGuide = sampleGuideSlug
+  ? sampleGuides.find((guide) => guide.data.slug === sampleGuideSlug)
+  : undefined
 
 function switchHref(lang: LanguageSlug): string | undefined {
-  if (sampleGuideSlug) {
-    const target = sampleGuideSwitchPath(sampleGuides, sampleGuideSlug, lang)
+  if (currentSampleGuide) {
+    const target = sampleGuideSwitchPath(sampleGuides, currentSampleGuide.data.slug, lang)
     return target ? pathWithBase(target) : undefined
   }
 
@@ -58,8 +61,16 @@ const pageLanguages = routeData?.languages
   ? (Array.isArray(routeData.languages) ? routeData.languages : [routeData.languages]).map((l) => l.toLowerCase())
   : undefined
 const resolvedLanguages = pageLanguages?.length ? pageLanguages : undefined
-const pythonDisabled = resolvedLanguages !== undefined && !resolvedLanguages.includes('python')
-const typescriptDisabled = resolvedLanguages !== undefined && !resolvedLanguages.includes('typescript')
+const sampleLanguageAvailable = (language: LanguageSlug) =>
+  currentSampleGuide?.data.language === language ||
+  (currentSampleGuide !== undefined &&
+    sampleGuideSwitchPath(sampleGuides, currentSampleGuide.data.slug, language) !== undefined)
+const pythonDisabled = currentSampleGuide
+  ? !sampleLanguageAvailable('python')
+  : resolvedLanguages !== undefined && !resolvedLanguages.includes('python')
+const typescriptDisabled = currentSampleGuide
+  ? !sampleLanguageAvailable('typescript')
+  : resolvedLanguages !== undefined && !resolvedLanguages.includes('typescript')
 ---
 
 <language-toggle

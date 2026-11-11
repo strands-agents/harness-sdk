@@ -214,13 +214,7 @@ export function normalizeUsage(model: Model | undefined, usage: Usage): Normaliz
     ...(usage.cacheWriteInputTokens !== undefined ? { cacheWriteInputTokens } : {}),
   }
 
-  // The pinned SDK preserves Gemini's provider total but discards the raw buckets
-  // needed to distinguish tool-use prompt tokens from generated output.
   const modelName = model?.constructor.name
-  if (modelName === 'GoogleModel') {
-    return common
-  }
-
   let inputTokens = Math.max(reportedInput, inputFromTotal, cacheInputTokens)
   if (modelName === 'AnthropicModel' || modelName === 'BedrockModel') {
     inputTokens = Math.max(inputTokens, reportedInput + cacheInputTokens)
