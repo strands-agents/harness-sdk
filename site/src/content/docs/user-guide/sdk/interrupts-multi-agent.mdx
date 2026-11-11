@@ -3,6 +3,7 @@ title: Interrupts in Multi-Agent Systems
 tags: [event-loop, hooks, multi-agent, error-handling]
 description: "Pause swarm and graph orchestration for human approval or input. Raise and resume interrupts across multi-agent systems with the same interfaces as single agents."
 sourceLinks:
+  - path: strands-py/src/strands/agent/_agent_as_tool.py
   - path: strands-py/src/strands/multiagent/swarm.py
   - path: strands-py/src/strands/multiagent/graph.py
   - path: strands-py/src/strands/hooks/events.py
@@ -12,6 +13,10 @@ sourceLinks:
 Interrupts work across multi-agent orchestration, so you can pause a swarm or graph for human approval or input the same way you pause a single agent. Raise an interrupt from a `BeforeNodeCallEvent` hook that runs before each node, or from within the nodes themselves. Session management works here too, so you can persist an interrupted multi-agent run and resume it later.
 
 The interfaces mirror those used for [single-agent interrupts](./interrupts.md). Read that page first if you have not built an interrupt/resume loop before.
+
+## Agents as Tools
+
+An agent used as a tool with [Agents as Tools](./multi-agent/agents-as-tools.md) propagates its interrupts to the orchestrator, where they are raised and answered like any other interrupt. The interrupt ids are scoped to the orchestrator's tool call; treat them as opaque.
 
 ## Swarm
 

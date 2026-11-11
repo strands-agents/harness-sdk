@@ -1,25 +1,32 @@
-name: "Harness CLI: Test and Lint"
+name: 'Harness CLI: Test and Lint'
 
 # Build + lint + unit tests for the Strands CLI (`@strands-agents/cli`). Reusable:
 # called by ci.yml on PRs that touch strands-cli, and by release-harness-cli.yml
 # at release time. Mirrors harness-ts-test-lint.yml.
 #
-# The CLI installs standalone (its own package-lock.json) against the published
-# @strands-agents/harness (< 2.0.0) and @strands-agents/sdk, not the repo-root
-# workspace. `npm run build` also bundles the sibling harness-py source
-# (scripts/bundle-python.js reads ../harness-py), so this needs a full checkout.
+# The CLI installs standalone against published Harness and SDK packages.
+# Python runtime tests install the sibling packages, requiring a full checkout.
 
 on:
   workflow_call:
     inputs:
-      ref:
-        required: true
+      release-sha:
+        description: Optional full release commit SHA from origin/main history
+        required: false
         type: string
+        default: ''
 
 jobs:
   test-lint:
-    name: Test and Lint
-    runs-on: strands-agents_ubuntu-latest_4-core
+    # `name` comes from the matrix so the Linux leg keeps its historical check name.
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: strands-agents_ubuntu-latest_4-core, name: Test and Lint }
+          - { os: strands-agents_windows-latest_4-core, name: Test and Lint (Windows) }
     timeout-minutes: 20
     permissions:
       contents: read
@@ -27,17 +34,62 @@ jobs:
       run:
         working-directory: strands-cli
     steps:
-      - name: Checkout code
+      - name: Checkout pull request
+        if: github.event_name == 'pull_request'
         uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.ref }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
           persist-credentials: false
+
+      - name: Checkout event revision
+        if: github.event_name != 'pull_request'
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Select trusted release commit
+        if: inputs.release-sha != ''
+        shell: bash
+        working-directory: .
+        env:
+          RELEASE_SHA: ${{ inputs.release-sha }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] ||
+             ! git merge-base --is-ancestor "$RELEASE_SHA" refs/remotes/origin/main; then
+            echo "::error::release-sha must be a full commit SHA from origin/main history."
+            exit 1
+          fi
+          git checkout --detach "$RELEASE_SHA"
 
       - name: Setup Node.js
         uses: actions/setup-node@v7
         with:
           node-version: 22
           package-manager-cache: false
+
+      - name: Setup Python
+        uses: actions/setup-python@v7.0.0
+        with:
+          python-version: '3.12'
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+
+      - name: Install PortAudio
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y portaudio19-dev
+
+      - name: Prepare Python agent runtime
+        run: |
+          python -m venv ../harness-py/.venv
+          python -c "import os, pathlib, subprocess; root=pathlib.Path('../harness-py/.venv'); python=root/('Scripts/python.exe' if os.name == 'nt' else 'bin/python'); subprocess.check_call([str(python), '-m', 'pip', 'install', '--disable-pip-version-check', '-e', '../strands-py', '-e', '../harness-py[openai]'])"
+
+      - name: Select test Python
+        run: python -c "import os, pathlib; root=pathlib.Path('../harness-py/.venv').resolve(); python=root/('Scripts/python.exe' if os.name == 'nt' else 'bin/python'); env=open(os.environ['GITHUB_ENV'], 'a'); print(f'PYTHON={python}', file=env); print(f'STRANDS_TEST_PYTHON={python}', file=env)"
 
       - name: Install dependencies
         run: npm ci
@@ -47,3 +99,6 @@ jobs:
 
       - name: Lint, format, type-check, and test
         run: npm run check
+
+      - name: Test voice adapters against the pinned SDK
+        run: npm run test:voice

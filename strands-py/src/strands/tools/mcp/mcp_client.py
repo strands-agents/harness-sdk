@@ -319,6 +319,7 @@ class MCPClient(ToolProvider):
         progress_callback: ProgressFnT | None = None,
         tasks_config: TasksConfig | None = None,
         on_tools_changed: ToolsChanged | None = None,
+        meta: dict[str, Any] | None = None,
     ) -> None:
         """Initialize a new MCP Server connection.
 
@@ -363,6 +364,10 @@ class MCPClient(ToolProvider):
                 `subscriptions/listen` stream to receive the notifications, and a failure to open
                 it (other than the server lacking support) raises `MCPClientInitializationError`
                 from `start()`.
+            meta: Optional request metadata (the MCP spec's `_meta` field) sent with tool calls made through
+                `call_tool_sync`/`call_tool_async`, including model-driven calls dispatched via `MCPAgentTool`,
+                which routes through `call_tool_async`. Trace context is merged on top. A per-call `meta`
+                argument to either method takes precedence over this client-level value.
 
         Raises:
             ValueError: If neither or both of `transport_callable` and `url` are provided, if
@@ -380,6 +385,7 @@ class MCPClient(ToolProvider):
         self._connection_failed = False
         self._elicitation_callback = elicitation_callback
         self._progress_callback = progress_callback
+        self._meta = meta
         self._on_tools_changed = on_tools_changed
         self._tools_refresh_in_progress = False
         self._tools_refresh_pending = False
@@ -934,6 +940,10 @@ class MCPClient(ToolProvider):
         """
         use_task = self._should_use_task(name)
         effective_callback = progress_callback if progress_callback is not None else self._progress_callback
+
+        # Fall back to the client-level meta so model-driven calls (which have no
+        # per-call meta) inherit it; an explicit per-call meta takes precedence.
+        meta = meta if meta is not None else self._meta
 
         # Inject once, before branching, so both the task-augmented and direct
         # call paths below carry the same enriched meta. This is safe on the
@@ -1534,15 +1544,28 @@ class MCPClient(ToolProvider):
             if not self._init_future.done():
                 self._init_future.set_exception(e)
             else:
+                self._log_debug_with_thread(
+                    "encountered exception on background thread after initialization %s", str(e)
+                )
+
                 # _close_future is automatically cancelled by the framework which doesn't provide us with the useful
                 # exception, so instead we store the exception in a different field where stop() can read it
                 self._close_exception = e
                 if self._close_future and not self._close_future.done():
                     self._close_future.set_result(None)
 
-                self._log_debug_with_thread(
-                    "encountered exception on background thread after initialization %s", str(e)
-                )
+                self._log_debug_with_thread("wait for remaining tasks on background thread to complete")
+
+                deadline = asyncio.get_event_loop().time() + 5
+                while asyncio.get_event_loop().time() < deadline:
+                    await asyncio.sleep(0)
+                    pending = [t for t in asyncio.all_tasks() if t is not asyncio.current_task() and not t.done()]
+                    if not pending:
+                        break
+                    await asyncio.wait(
+                        pending,
+                        timeout=max(0, deadline - asyncio.get_event_loop().time()),
+                    )
 
     # Raise an exception if the underlying client raises an exception in a message
     # This happens when the underlying client has an http timeout error
@@ -1621,6 +1644,7 @@ class MCPClient(ToolProvider):
         self._background_thread_event_loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self._background_thread_event_loop)
         self._background_thread_event_loop.run_until_complete(self._async_background_thread())
+        self._log_debug_with_thread("background task event loop finished")
 
     def map_mcp_content_to_tool_result_content(
         self,

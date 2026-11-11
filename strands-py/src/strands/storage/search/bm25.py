@@ -23,137 +23,10 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
 from ..storage import StorageSearchResult
-from .keyword import tokenize
+from .keyword import STOP_WORDS, tokenize
 
 if TYPE_CHECKING:
     from ..local_file_storage import LocalFileStorage
-
-STOP_WORDS: frozenset[str] = frozenset(
-    {
-        "a",
-        "about",
-        "above",
-        "after",
-        "again",
-        "all",
-        "although",
-        "an",
-        "and",
-        "any",
-        "are",
-        "as",
-        "at",
-        "be",
-        "because",
-        "been",
-        "before",
-        "being",
-        "below",
-        "between",
-        "both",
-        "but",
-        "by",
-        "can",
-        "could",
-        "dare",
-        "did",
-        "do",
-        "does",
-        "during",
-        "each",
-        "either",
-        "every",
-        "few",
-        "for",
-        "from",
-        "further",
-        "had",
-        "has",
-        "have",
-        "he",
-        "her",
-        "him",
-        "his",
-        "how",
-        "i",
-        "if",
-        "in",
-        "into",
-        "is",
-        "it",
-        "its",
-        "just",
-        "may",
-        "me",
-        "might",
-        "more",
-        "most",
-        "my",
-        "need",
-        "neither",
-        "no",
-        "nor",
-        "not",
-        "of",
-        "off",
-        "on",
-        "once",
-        "only",
-        "or",
-        "other",
-        "ought",
-        "our",
-        "out",
-        "over",
-        "own",
-        "same",
-        "shall",
-        "she",
-        "should",
-        "since",
-        "so",
-        "some",
-        "such",
-        "than",
-        "that",
-        "the",
-        "their",
-        "them",
-        "then",
-        "these",
-        "they",
-        "this",
-        "those",
-        "though",
-        "through",
-        "to",
-        "too",
-        "under",
-        "unless",
-        "until",
-        "up",
-        "us",
-        "used",
-        "very",
-        "was",
-        "we",
-        "were",
-        "what",
-        "when",
-        "where",
-        "which",
-        "while",
-        "who",
-        "whom",
-        "why",
-        "will",
-        "with",
-        "would",
-        "yet",
-        "you",
-        "your",
-    }
-)
 
 
 def _build_query(query: str) -> str | None:
@@ -181,7 +54,11 @@ class Bm25SearchStrategyConfig:
 
     Attributes:
         db_path: Path to the SQLite database file for the FTS5 index.
-            Defaults to ``.<dir>-fts5.sqlite`` alongside the storage directory.
+            Defaults to ``.<dir>-fts5.sqlite`` alongside the storage directory,
+            which gives each directory its own index. An explicit ``db_path``
+            holds one directory's index, so a strategy with ``db_path`` set
+            raises ``ValueError`` if it is then used with a second directory
+            (for example a second ``FileMemoryStore`` on the same storage).
     """
 
     db_path: str | None = field(default=None)
@@ -201,6 +78,10 @@ class Bm25SearchStrategy:
 
     The FTS5 index is persisted on the host filesystem via the storage's
     ``base_dir`` and is not sandbox-aware.
+
+    Keeps one index per storage directory, so one instance can serve several
+    namespaced storages, such as multiple ``FileMemoryStore`` instances on the same
+    ``LocalFileStorage``, and :meth:`close` closes all of them.
 
     Example:
         ```python
@@ -225,8 +106,9 @@ class Bm25SearchStrategy:
             config: Optional configuration. See :class:`Bm25SearchStrategyConfig`.
         """
         self._config = config or Bm25SearchStrategyConfig()
-        self._conn: sqlite3.Connection | None = None
-        self._storage_path: str | None = None
+        # One FTS5 connection per absolute storage directory, so namespaced storages (e.g. one per
+        # FileMemoryStore) share this strategy without closing each other's index.
+        self._conns: dict[str, sqlite3.Connection] = {}
         self._lock = asyncio.Lock()
 
     async def index(self, storage: LocalFileStorage, key: str, data: bytes, **kwargs: Any) -> None:
@@ -275,27 +157,38 @@ class Bm25SearchStrategy:
             return await asyncio.shield(asyncio.to_thread(self._query, conn, fts_query))
 
     async def close(self) -> None:
-        """Close the SQLite connection and release resources."""
-        if self._conn is not None:
-            self._conn.close()
-            self._conn = None
-            self._storage_path = None
+        """Close every SQLite connection this strategy has opened and release resources."""
+        async with self._lock:
+            conns = list(self._conns.values())
+            self._conns.clear()
+            for conn in conns:
+                conn.close()
 
     def _ensure_connection(self, storage: LocalFileStorage) -> sqlite3.Connection:
-        """Lazily initialize the SQLite connection from the storage backend."""
-        storage_path = self._resolve_storage_path(storage)
+        """Return the connection for the storage's directory, opening it on first use.
 
-        if self._conn is not None and self._storage_path == storage_path:
-            return self._conn
+        Raises:
+            ValueError: If an explicit ``db_path`` is configured and already holds another directory's index.
+        """
+        storage_path = os.path.abspath(self._resolve_storage_path(storage))
 
-        if self._conn is not None:
-            self._conn.close()
+        conn = self._conns.get(storage_path)
+        if conn is not None:
+            return conn
+
+        db_path = self._config.db_path
+        if db_path is not None and self._conns:
+            bound_path = next(iter(self._conns))
+            raise ValueError(
+                f"Bm25SearchStrategy db_path '{db_path}' already indexes '{bound_path}' and cannot also index "
+                f"'{storage_path}'. Omit db_path to keep one index per directory (e.g. per FileMemoryStore), "
+                "or use one strategy per storage."
+            )
 
         os.makedirs(storage_path, exist_ok=True)
-        db_path = self._config.db_path
         if db_path is None:
-            parent = os.path.dirname(os.path.abspath(storage_path))
-            basename = os.path.basename(os.path.abspath(storage_path))
+            parent = os.path.dirname(storage_path)
+            basename = os.path.basename(storage_path)
             db_path = os.path.join(parent, f".__strands_{basename}-fts5.sqlite")
 
         conn = sqlite3.connect(db_path, check_same_thread=False)
@@ -307,8 +200,7 @@ class Bm25SearchStrategy:
         conn.execute("CREATE TABLE IF NOT EXISTS doc_hashes (key TEXT PRIMARY KEY, hash TEXT NOT NULL)")
         conn.commit()
 
-        self._conn = conn
-        self._storage_path = storage_path
+        self._conns[storage_path] = conn
         return conn
 
     def _upsert(self, conn: sqlite3.Connection, key: str, content: str, content_hash: str) -> None:

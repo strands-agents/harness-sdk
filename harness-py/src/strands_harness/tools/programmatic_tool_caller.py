@@ -58,10 +58,6 @@ _USER_CODE_FILENAME = "<programmatic_tool_caller>"
 # Cap on the text returned to the model; a runaway ``print`` should not blow up the context window.
 _MAX_OUTPUT_CHARS = 200_000
 
-# ``invocation_state`` key the SDK's ``ContextOffloader`` honours (``SKIP_CONTEXT_OFFLOAD_KEY``). Inner results
-# are consumed by the guest code, not the model, so a preview in place of the data would break it.
-_SKIP_CONTEXT_OFFLOAD_KEY = "strands:skip_context_offload"
-
 # Wall-clock ceiling for a run, tool calls included.
 _DEFAULT_TIMEOUT = 900.0
 _CANCEL_POLL_INTERVAL = 0.05
@@ -173,7 +169,8 @@ async def _execute_tool(tool_context: ToolContext, tool_name: str, tool_input: d
         "input": tool_input,
     }
     tool_results: list[ToolResult] = []
-    invocation_state = {**tool_context.invocation_state, _SKIP_CONTEXT_OFFLOAD_KEY: True}
+    # A copy, so an inner call cannot change the parent's invocation state.
+    invocation_state = {**tool_context.invocation_state}
     try:
         async for event in ToolExecutor._stream(agent, tool_use, tool_results, invocation_state):
             if isinstance(event, ToolInterruptEvent):

@@ -156,12 +156,12 @@ async function processFile(file: FileInfo): Promise<void> {
     // Rewrite category-prefixed links in namespace pages/members to relative paths
     linkedFixed = linkedFixed.replace(
       /\]\((classes|interfaces|type-aliases|functions|variables|enumerations|namespaces)\/([^)]+?)\.md((?:#[^)]*)?)\)/g,
-      (_match, _cat, name, hash) => `](../${file.namespace}:${name}/${hash})`,
+      (_match, _cat, name, hash) => `](../${file.namespace}:${name}/${hash})`
     )
     // Also rewrite bare Name.md links (after ../category/ was already stripped) to relative paths
     linkedFixed = linkedFixed.replace(
       /\]\(([A-Za-z][^)/]+?)\.md((?:#[^)]*)?)\)/g,
-      (_match, name, hash) => `](../${file.namespace}:${name}/${hash})`,
+      (_match, name, hash) => `](../${file.namespace}:${name}/${hash})`
     )
   }
 

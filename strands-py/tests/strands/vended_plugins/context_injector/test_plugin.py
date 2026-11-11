@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from strands._middleware.stages import InvokeModelContext, InvokeModelStage
+from strands.middleware.stages import InvokeModelContext, InvokeModelStage
 from strands.vended_plugins.context_injector import ContextInjector
 
 
@@ -28,7 +28,7 @@ def register(plugin: ContextInjector) -> tuple[Any, Any]:
     """Run the plugin's init_agent and return (agent, registered_handler)."""
     agent = make_agent()
     plugin.init_agent(agent)
-    call = agent._middleware_registry.add_middleware.call_args
+    call = agent.add_middleware.call_args
     return agent, call
 
 

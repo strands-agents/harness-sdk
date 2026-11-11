@@ -1,7 +1,7 @@
-name: "Harness CLI: Test Package Pack"
+name: 'Harness CLI: Test Package Pack'
 
 # End-to-end package install smoke test for the Strands CLI (`@strands-agents/cli`).
-# Reusable; called by release-harness-cli.yml. Reproduces a real user's install:
+# Reusable; called by CI and release-harness-cli.yml. Reproduces a real user's install:
 # `npm pack` the CLI, install the tarball in a tempdir OUTSIDE the repo tree (so
 # nothing hoists), and run the `strands` bin. The CLI's @strands-agents/harness /
 # @strands-agents/sdk deps resolve from the registry (ranged, not pinned), so only
@@ -10,9 +10,11 @@ name: "Harness CLI: Test Package Pack"
 on:
   workflow_call:
     inputs:
-      ref:
-        required: true
+      release-sha:
+        description: Optional full release commit SHA from origin/main history
+        required: false
         type: string
+        default: ''
       version:
         description: 'If set, stamp the tarball with this version via `npm version --no-git-tag-version`. Required at release time; PR-time callers leave this empty.'
         required: false
@@ -21,19 +23,54 @@ on:
 
 jobs:
   test-package-pack:
-    name: Pack Install
+    name: ${{ matrix.os-name }}
     permissions:
       contents: read
-    runs-on: strands-agents_ubuntu-latest_4-core
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os-name: Linux
+            runner: strands-agents_ubuntu-latest_4-core
+          - os-name: macOS
+            runner: macos-latest
+          - os-name: Windows
+            runner: strands-agents_windows-latest_4-core
     defaults:
       run:
         working-directory: strands-cli
     steps:
-      - name: Checkout code
+      - name: Checkout pull request
+        if: github.event_name == 'pull_request'
         uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.ref }}
+          ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
+
+      - name: Checkout event revision
+        if: github.event_name != 'pull_request'
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Select trusted release commit
+        if: inputs.release-sha != ''
+        shell: bash
+        working-directory: .
+        env:
+          RELEASE_SHA: ${{ inputs.release-sha }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] ||
+             ! git merge-base --is-ancestor "$RELEASE_SHA" refs/remotes/origin/main; then
+            echo "::error::release-sha must be a full commit SHA from origin/main history."
+            exit 1
+          fi
+          git checkout --detach "$RELEASE_SHA"
 
       - name: Setup Node.js
         uses: actions/setup-node@v7
@@ -44,35 +81,28 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Setup Python for the terminal driver
+        id: python
+        uses: actions/setup-python@v7.0.0
+        with:
+          python-version: '3.12'
+
       - name: Stamp version (release only)
+        if: inputs.version != ''
+        shell: bash
         env:
-          PINNED_VERSION: ${{ inputs.version }}
-        run: |
-          set -euo pipefail
-          if [ -n "$PINNED_VERSION" ]; then
-            echo "Stamping $PINNED_VERSION into package.json"
-            npm version "$PINNED_VERSION" --no-git-tag-version
-          else
-            echo "No version pinned; packing with package.json as-committed."
-          fi
+          VERSION: ${{ inputs.version }}
+        run: npm version "$VERSION" --no-git-tag-version
 
       - name: Pack, install in a tmpdir, run the bin
-        # The tmpdir MUST live outside the monorepo so nothing hoists into resolution.
-        run: |
-          set -euo pipefail
-          TARBALL=$(npm pack --silent)
-          TARBALL_PATH="$GITHUB_WORKSPACE/strands-cli/$TARBALL"
-          echo "Packed: $TARBALL_PATH"
-
-          WORK=$(mktemp -d)
-          trap 'rm -rf "$WORK"' EXIT
-          cd "$WORK"
-          npm init -y >/dev/null
-          npm install --ignore-scripts --no-audit --no-fund "$TARBALL_PATH"
-          ./node_modules/.bin/strands --help
+        env:
+          PYTHON: ${{ steps.python.outputs.python-path }}
+          STRANDS_CLI_KEEP_TARBALL: 'true'
+        run: npm run test:package-install
 
       - name: Upload tarball for downstream inspect/publish
-        uses: actions/upload-artifact@v7.0.1
+        if: matrix.os-name == 'Linux'
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: harness-cli-npm-build-output
           path: strands-cli/*.tgz

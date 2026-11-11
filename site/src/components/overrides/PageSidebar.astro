@@ -1,0 +1,37 @@
+---
+import Default from '@astrojs/starlight/components/PageSidebar.astro'
+import LanguageToggle from '../LanguageToggle.astro'
+---
+
+<Default />
+{
+  Astro.locals.starlightRoute.toc && (
+    <div class="toc-lang">
+      <LanguageToggle />
+    </div>
+  )
+}
+
+<style>
+  /* Sits on the right of the fixed mobile "On this page" bar, the only place
+     the language toggle fits at phone widths. */
+  .toc-lang {
+    display: none;
+  }
+
+  @media (max-width: 49.9375rem) {
+    .toc-lang {
+      position: fixed;
+      top: calc(var(--sl-nav-height) - 1px);
+      inset-inline-end: 1rem;
+      z-index: calc(var(--sl-z-index-toc) + 1);
+      display: flex;
+      align-items: center;
+      height: var(--sl-mobile-toc-height);
+    }
+
+    :global(#starlight__on-this-page--mobile) {
+      padding-inline-end: 7.5rem;
+    }
+  }
+</style>

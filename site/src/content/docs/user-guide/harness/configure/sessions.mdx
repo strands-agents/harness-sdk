@@ -145,8 +145,7 @@ it elsewhere:
 
 When a session is active, offloaded tool results (from context management) are kept under
 the session directory too, so they stay durable across restarts alongside the conversation.
-Without a session, offloaded artifacts go to a temporary directory that does not outlive
-the process.
+Without a session, they stay in memory and do not outlive the process.
 
 ## Sessions are not memory
 
@@ -165,7 +164,9 @@ storage is a file storage under the session directory. Either way the on-disk re
 session store rooted at the session directory.
 
 To supply your own session manager (for example an S3-backed one), pass it through to the
-`Agent`; your explicit manager wins over the one Strands harness would build from `session`. For
-the storage backends, see [storage](../../../sdk/storage/). For the full
+`Agent`; your explicit manager wins over the one Strands harness would build from `session`. Pass
+`storage` along with it too: without it, offloaded tool results are embedded in every snapshot the
+manager writes instead of being stored once. For the storage backends, see
+[storage](../../../sdk/storage/). For the full
 option list, see the
 [configuration reference](../../reference/configuration/).

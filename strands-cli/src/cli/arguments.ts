@@ -1,8 +1,9 @@
-import { Command } from 'commander'
 import { DEFAULT_HARNESS_AGENT_CONFIG, type HarnessAgentConfig } from '@strands-agents/harness'
 import { EFFORT_LEVELS, normalizeHarnessAgentConfig } from '@strands-agents/harness/internal'
+import { Command } from 'commander'
 
-import { readCliVersion } from '../tui/package-version.js'
+import { readCliVersion } from '../package-version.js'
+import { isRecord } from '../values.js'
 
 export interface ParsedArgs {
   update: boolean
@@ -157,6 +158,12 @@ export function agentConfig(args: ParsedArgs, defaults: HarnessAgentConfig): Har
   if (args.model !== undefined) {
     config.model = modelSpecifier(args.model, '--model')
   }
+  if (
+    (args.model !== undefined || args.configSet.some((assignment) => assignment.startsWith('model='))) &&
+    !args.configSet.some((assignment) => /^modelModule[.=]/u.test(assignment))
+  ) {
+    config.modelModule = null
+  }
   if (args.builtinTools !== undefined) {
     config.builtinTools = commaSeparated(args.builtinTools)
   }
@@ -242,7 +249,7 @@ function applyConfigAssignment(config: Record<string, unknown>, assignment: stri
   let target = config
   for (const key of keys.slice(0, -1)) {
     const value = target[key]
-    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    if (!isRecord(value)) {
       target[key] = {}
     }
     target = target[key] as Record<string, unknown>
@@ -256,7 +263,10 @@ function applyConfigAssignment(config: Record<string, unknown>, assignment: stri
 }
 
 function commaSeparated(value: string): string[] {
-  return value.split(',').filter(Boolean)
+  return value
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean)
 }
 
 function modelSpecifier(value: string, option: string): string {

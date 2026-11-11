@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { NodeResult, NodeState, MultiAgentResult, MultiAgentState, Status } from '../state.js'
-import { TextBlock, ToolUseBlock } from '../../types/messages.js'
+import { TextBlock, ToolResultBlock, ToolUseBlock, UnknownBlock } from '../../types/messages.js'
+import { logger } from '../../logging/logger.js'
 import type { JSONValue } from '../../types/json.js'
 import {
   stateToJSONSymbol,
@@ -9,11 +10,38 @@ import {
   loadStateSerializable,
 } from '../../types/serializable.js'
 import { Interrupt } from '../../interrupt.js'
+import { InvocationContextImpl } from '../../agent/invocation-context.js'
 import { InterruptResponseContent } from '../../types/interrupt.js'
 import { extractResumeResponses, groupInterruptResponsesByNode } from '../multiagent.js'
 
 describe('NodeResult', () => {
   describe('toJSON / fromJSON', () => {
+    it('restores content block types this version does not know, unchanged', () => {
+      using _warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      const saved = {
+        type: 'nodeResult',
+        nodeId: 'agent-1',
+        status: Status.COMPLETED,
+        duration: 150,
+        content: [
+          { futureBlock: { value: 1 } },
+          { toolResult: { toolUseId: 't-0', status: 'success', content: [{ toolReference: { name: 'shell' } }] } },
+        ],
+      } as JSONValue
+
+      const restored = NodeResult.fromJSON(saved)
+
+      expect(restored.content).toEqual([
+        new UnknownBlock({ futureBlock: { value: 1 } }),
+        new ToolResultBlock({
+          toolUseId: 't-0',
+          status: 'success',
+          content: [new UnknownBlock({ toolReference: { name: 'shell' } })],
+        }),
+      ])
+      expect(restored.toJSON()).toStrictEqual(saved)
+    })
+
     it('round-trips a completed result with text content', () => {
       const original = new NodeResult({
         nodeId: 'agent-1',
@@ -397,6 +425,22 @@ describe('MultiAgentResult', () => {
 })
 
 describe('MultiAgentState', () => {
+  describe('_bindInvocationContext', () => {
+    it('exposes the last bound request without enumerating or serializing it', () => {
+      const state = new MultiAgentState({ nodeIds: ['a'] })
+      const latest = new InvocationContextImpl()
+
+      state._bindInvocationContext(new InvocationContextImpl())
+      state._bindInvocationContext(latest)
+
+      expect(state.invocationContext).toBe(latest)
+      expect({
+        enumerated: Object.keys(state).includes('invocationContext'),
+        serialized: Object.keys(state[stateToJSONSymbol]() as Record<string, JSONValue>).includes('invocationContext'),
+      }).toEqual({ enumerated: false, serialized: false })
+    })
+  })
+
   describe('stateToJSONSymbol / loadStateFromJSONSymbol', () => {
     it('round-trips a fresh state with node IDs', () => {
       const original = new MultiAgentState({ nodeIds: ['a', 'b', 'c'] })
@@ -518,6 +562,20 @@ describe('MultiAgentState', () => {
         startTime: 1234567890,
         steps: 5,
       })
+    })
+
+    it('restores _pendingInput content a newer SDK saved, unchanged', () => {
+      using _warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      const restored = new MultiAgentState()
+      loadStateSerializable(restored, {
+        ...(serializeStateSerializable(new MultiAgentState()) as Record<string, JSONValue>),
+        _pendingInput: [{ text: 'question' }, { futureBlock: { value: 1 } }],
+      } as JSONValue)
+
+      expect(restored._pendingInput).toEqual([
+        new TextBlock('question'),
+        new UnknownBlock({ futureBlock: { value: 1 } }),
+      ])
     })
 
     it('round-trips _pendingInput as a string', () => {

@@ -25,7 +25,6 @@ from strands_harness.tools import make_programmatic_tool_caller, programmatic_to
 from strands_harness.tools.programmatic_tool_caller import (
     _MAX_CONCURRENT_TOOL_CALLS,
     _MAX_OUTPUT_CHARS,
-    _SKIP_CONTEXT_OFFLOAD_KEY,
     DEFAULT_PROGRAMMATIC_TOOL_CALLER_DESCRIPTION,
     _Output,
     _unwrap_result,
@@ -86,18 +85,17 @@ def test_loop_over_calls():
 
 
 def test_gather_runs_calls_concurrently():
+    barrier = threading.Barrier(4, timeout=5)
+
     @tool
-    def slow(value: int) -> int:
-        """Sleep, then return the value."""
-        time.sleep(0.3)
+    def concurrent(value: int) -> int:
+        """Wait for all four calls, then return the value."""
+        barrier.wait()
         return value
 
-    code = "import asyncio\nprint(await asyncio.gather(*[slow(value=i) for i in range(4)]))"
-    start = time.monotonic()
-    result = _run(_agent(slow), code)
-    elapsed = time.monotonic() - start
+    code = "import asyncio\nprint(await asyncio.gather(*[concurrent(value=i) for i in range(4)]))"
+    result = _run(_agent(concurrent), code)
     assert _text(result) == "['0', '1', '2', '3']"
-    assert elapsed < 1.1, f"gather did not run concurrently ({elapsed:.2f}s)"  # serial would take >= 1.2 s
 
 
 def test_inner_call_concurrency_is_bounded():
@@ -179,13 +177,11 @@ def test_inner_calls_carry_the_parent_invocation_state_not_guest_kwargs():
     assert seen[0]["principal"] == "alice"
 
 
-def test_inner_calls_opt_out_of_context_offloading_without_touching_the_parent_state():
-    seen = []
-
+def test_inner_calls_do_not_change_the_parent_state():
     @tool(context="tool_context")
     def whoami(tool_context: ToolContext) -> str:
-        """Record the invocation state the inner call ran with."""
-        seen.append(dict(tool_context.invocation_state))
+        """Write to the invocation state the inner call ran with."""
+        tool_context.invocation_state["written_by_inner_call"] = True
         return "ok"
 
     parent_state = {"principal": "alice"}
@@ -196,8 +192,6 @@ def test_inner_calls_opt_out_of_context_offloading_without_touching_the_parent_s
     )
     result = asyncio.run(programmatic_tool_caller._tool_func(code="print(await whoami())", tool_context=context))
     assert _text(result) == "ok"
-    # The inner call opts out; the parent's own result must still be eligible for offloading.
-    assert seen[0][_SKIP_CONTEXT_OFFLOAD_KEY] is True
     assert parent_state == {"principal": "alice"}
 
 

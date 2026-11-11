@@ -65,6 +65,28 @@ async def test_path_traversal_rejected(ctx):
         await read._tool_func(path="/tmp/../etc/passwd", tool_context=ctx)
 
 
+async def test_windows_drive_letter_path_is_absolute():
+    written = []
+
+    class _Sandbox:
+        async def write_text(self, path, content):
+            written.append(path)
+
+    class _Agent:
+        sandbox = _Sandbox()
+
+    win_ctx = _Ctx(_Agent())
+    await write._tool_func(path="C:\\Users\\me\\novel.json", content="{}", tool_context=win_ctx)
+    await write._tool_func(path="C:/Users/me/novel.json", content="{}", tool_context=win_ctx)
+    await write._tool_func(path="\\\\server\\share\\novel.json", content="{}", tool_context=win_ctx)
+    assert written == ["C:\\Users\\me\\novel.json", "C:/Users/me/novel.json", "\\\\server\\share\\novel.json"]
+    # Drive-relative (``C:foo``) is not absolute on either platform.
+    with pytest.raises(ValueError, match="not absolute"):
+        await write._tool_func(path="C:novel.json", content="", tool_context=win_ctx)
+    with pytest.raises(ValueError, match="path traversal"):
+        await write._tool_func(path="C:\\Users\\..\\secret", content="", tool_context=win_ctx)
+
+
 async def test_read_image_returns_image_content(ctx, tmp_path):
     path = tmp_path / "pic.png"
     path.write_bytes(b"\x89PNG\r\n\x1a\nfake")
@@ -80,6 +102,47 @@ async def test_read_jpg_maps_to_jpeg(ctx, tmp_path):
     path.write_bytes(b"\xff\xd8\xff\xe0fake")
     result = await read._tool_func(path=str(path), tool_context=ctx)
     assert result["content"][0]["image"]["format"] == "jpeg"
+
+
+@pytest.mark.parametrize(
+    ("name", "data", "expected"),
+    [
+        ("a.gif", b"GIF89a fake", "gif"),
+        ("a.gif", b"GIF87a fake", "gif"),
+        ("a.webp", b"RIFF\x00\x00\x00\x00WEBPVP8 fake", "webp"),
+        ("photo.jpg", b"\x89PNG\r\n\x1a\nfake", "png"),
+        ("shot.png", b"\xff\xd8\xff\xe0fake", "jpeg"),
+    ],
+)
+async def test_read_image_format_follows_the_bytes_not_the_extension(ctx, tmp_path, name, data, expected):
+    path = tmp_path / name
+    path.write_bytes(data)
+    result = await read._tool_func(path=str(path), tool_context=ctx)
+    assert result["content"][0]["image"]["format"] == expected
+
+
+@pytest.mark.parametrize(
+    "data", [b"this is plain text\n", b"", b"\x89PNG\r\n\x1aXtruncated signature", b"RIFF\x00\x00\x00\x00WAVE"]
+)
+async def test_read_rejects_non_image_bytes_under_an_image_extension(ctx, tmp_path, data):
+    path = tmp_path / "notes.png"
+    path.write_bytes(data)
+    with pytest.raises(ValueError, match=rf"\.png extension but its {len(data)} bytes are not"):
+        await read._tool_func(path=str(path), tool_context=ctx)
+    with pytest.raises(ValueError, match=rf"\.png extension but its {len(data)} bytes are not"):
+        await make_read(media=False)._tool_func(path=str(path), tool_context=ctx)
+
+
+async def test_read_surfaces_a_non_image_as_an_error_tool_result(ctx, tmp_path):
+    # A rejected file must reach history as a text error result, not a success image block.
+    path = tmp_path / "notes.png"
+    path.write_bytes(b"this is plain text\n")
+    tool_use = {"toolUseId": "t1", "name": "read", "input": {"path": str(path)}}
+    events = [e async for e in read.stream(tool_use, {"agent": ctx.agent})]
+    result = events[-1].tool_result
+    assert result["status"] == "error"
+    assert [next(iter(c)) for c in result["content"]] == ["text"]
+    assert "19 bytes are not a png, jpeg, gif, or webp image" in result["content"][0]["text"]
 
 
 async def test_read_pdf_returns_document_content(ctx, tmp_path):

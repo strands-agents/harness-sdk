@@ -6,6 +6,8 @@ sidebar:
 tags: [quickstart]
 ---
 
+import Diagram from '@components/Diagram.astro'
+
 This quickstart takes you to a first running agent: install the SDK, pick a model
 provider, run the agent, then give it a tool. Everything past that (streaming, memory,
 observability, deployment) has its own guide, linked from [next steps](#next-steps).
@@ -239,19 +241,10 @@ the SDK.
 The agent decides when to call a tool based on the request, loops until it has an
 answer, and streams the response to your console.
 
-```mermaid
-flowchart LR
-    A[Input & Context] --> Loop
-
-    subgraph Loop[" "]
-        direction TB
-        B["Reasoning (LLM)"] --> C["Tool Selection"]
-        C --> D["Tool Execution"]
-        D --> B
-    end
-
-    Loop --> E[Response]
-```
+<Diagram
+  name="agent-loop"
+  alt="The agent loop behind the quickstart. Your prompt and the conversation history go to the model. While the model asks for tools, such as the letter counter you wrote or the file editor that ships with the SDK, the agent runs them and sends the results back to the model; every pass adds to the conversation history. When the model makes no more tool calls, its message becomes the response streamed to your console."
+/>
 
 Every invocation returns an [`AgentResult`](@api/python/strands.agent.agent_result#AgentResult)
 carrying the run's messages, metrics, and traces, so you can see which tools the agent

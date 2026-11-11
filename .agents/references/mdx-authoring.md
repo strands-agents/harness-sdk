@@ -145,13 +145,14 @@ Optional fields (validated by Zod in `site/src/content.config.ts`):
 | `languages` | `string \| string[]` | Feature only available in specific SDK language(s) |
 | `community` | `boolean` | Marks page as community-contributed |
 | `experimental` | `boolean` | Marks feature as experimental |
-| `integrationType` | enum | `model-provider`, `tool`, `session-manager`, `integration`, `plugin`, `agent-extension` |
+| `externalDocs` | object | Generated provenance and publication status for imported docs; authors must not set it |
+| `integrationType` | enum | `model-provider`, `tool`, `session-manager`, `memory-store`, `storage`, `integration`, `plugin`, `observability`, `agent-extension`, `intervention` |
 | `category` | `string` | For TypeScript API doc grouping |
 | `redirectFrom` | `string[]` | Old slugs that should redirect here |
 | `tags` | `Tag[]` | From `site/src/config/tags.yml`; drives the build-time "Related pages" block |
 | `sourceLinks` | `{repo, path}[]` | Pointers to SDK implementation; rendered on headless surfaces (index.md, llms-full.txt) |
 
-These render contextual banners automatically (experimental → community → languages). Anything not in this table is silently stripped by Zod at build time, so don't invent fields like `contentType` or `lastReviewed` — add them to the schema first if they'd be useful.
+The relevant fields render contextual banners automatically (experimental → external preview → community → languages); community pages suppress the separate language banner. Anything not in this table is silently stripped by Zod at build time, so don't invent fields like `contentType` or `lastReviewed` — add them to the schema first if they'd be useful.
 
 Do not set `languages: [python, typescript]` — listing all supported languages is redundant. Omit the field when a feature is available in all languages.
 

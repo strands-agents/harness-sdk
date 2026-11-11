@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 312" width="720" height="312">
+  <!-- Type: fan-out. Story: attaching a plugin hands its init method, hooks, and tools to the matching parts of the agent, in that order. -->
+  <defs>
+    <marker id="arrow" viewBox="0 0 8 6" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+      <path class="dg-head" d="M0,0 L8,3 L0,6 Z"/>
+    </marker>
+  </defs>
+
+  <!-- Zones -->
+  <rect class="dg-zone" x="360" y="16" width="344" height="280" rx="8"/>
+  <text class="dg-eyebrow" x="376" y="36">AGENT</text>
+
+  <!-- Edges: fanned from the plugin's right edge, r=8 elbows -->
+  <path class="dg-edge" d="M208,144 H232 Q240,144 240,136 V88 Q240,80 248,80 H382" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M208,164 H382" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M208,184 H232 Q240,184 240,192 V240 Q240,248 248,248 H382" marker-end="url(#arrow)"/>
+
+  <!-- Edge labels -->
+  <rect class="dg-mask" x="250" y="60" width="108" height="12" rx="2"/>
+  <text class="dg-label" x="304" y="69" text-anchor="middle">1 · INIT METHOD</text>
+  <rect class="dg-mask" x="270" y="144" width="68" height="12" rx="2"/>
+  <text class="dg-label" x="304" y="153" text-anchor="middle">2 · HOOKS</text>
+  <rect class="dg-mask" x="270" y="228" width="68" height="12" rx="2"/>
+  <text class="dg-label" x="304" y="237" text-anchor="middle">3 · TOOLS</text>
+
+  <!-- Nodes -->
+  <rect class="dg-node is-focal" x="32" y="124" width="176" height="80" rx="6"/>
+  <text class="dg-name is-focal-text" x="120" y="161" text-anchor="middle">Plugin</text>
+  <text class="dg-sub" x="120" y="179" text-anchor="middle">attached to an agent</text>
+
+  <rect class="dg-node" x="384" y="48" width="296" height="64" rx="6"/>
+  <text class="dg-name" x="532" y="77" text-anchor="middle">Agent primitives</text>
+  <text class="dg-sub" x="532" y="95" text-anchor="middle">model, system prompt, messages</text>
+
+  <rect class="dg-node" x="384" y="132" width="296" height="64" rx="6"/>
+  <text class="dg-name" x="532" y="161" text-anchor="middle">Hook registry</text>
+  <text class="dg-sub" x="532" y="179" text-anchor="middle">fires callbacks on lifecycle events</text>
+
+  <rect class="dg-node" x="384" y="216" width="296" height="64" rx="6"/>
+  <text class="dg-name" x="532" y="245" text-anchor="middle">Tool registry</text>
+  <text class="dg-sub" x="532" y="263" text-anchor="middle">tools the model can call</text>
+</svg>

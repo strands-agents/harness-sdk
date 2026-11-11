@@ -4,7 +4,14 @@ import { isNode } from '../../../__fixtures__/environment.js'
 import { OpenAIModel } from '../index.js'
 import { ContextWindowOverflowError, ModelThrottledError } from '../../../errors.js'
 import { collectIterator } from '../../../__fixtures__/model-test-helpers.js'
-import { Message, TextBlock, ToolUseBlock, ToolResultBlock, GuardContentBlock } from '../../../types/messages.js'
+import {
+  Message,
+  TextBlock,
+  ToolUseBlock,
+  ToolResultBlock,
+  GuardContentBlock,
+  UnknownBlock,
+} from '../../../types/messages.js'
 import type { SystemContentBlock } from '../../../types/messages.js'
 import { ImageBlock, DocumentBlock, VideoBlock } from '../../../types/media.js'
 import { warnOnce } from '../../../logging/warn-once.js'
@@ -840,6 +847,37 @@ describe('OpenAIModel', () => {
           totalTokens: 0,
         },
       })
+    })
+
+    // Guards against https://github.com/strands-agents/harness-sdk/issues/4847: OpenAI-compatible
+    // providers such as OpenRouter send usage on the finish_reason chunk instead of a choice-less chunk.
+    it('emits usage that arrives on the finish_reason chunk', async () => {
+      const mockClient = createMockClient(async function* () {
+        yield {
+          choices: [{ delta: { role: 'assistant' }, index: 0 }],
+        }
+        yield {
+          choices: [{ delta: { content: 'Hi' }, index: 0 }],
+        }
+        yield {
+          choices: [{ finish_reason: 'stop', delta: { content: '' }, index: 0 }],
+          usage: { prompt_tokens: 8, completion_tokens: 6, total_tokens: 14 },
+        }
+      })
+
+      const provider = new OpenAIModel({ api: 'chat', client: mockClient })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+
+      const events = await collectIterator(provider.stream(messages))
+
+      expect(events).toEqual([
+        { type: 'modelMessageStartEvent', role: 'assistant' },
+        { type: 'modelContentBlockStartEvent' },
+        { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: 'Hi' } },
+        { type: 'modelContentBlockStopEvent' },
+        { type: 'modelMetadataEvent', usage: { inputTokens: 8, outputTokens: 6, totalTokens: 14 } },
+        { type: 'modelMessageStopEvent', stopReason: 'endTurn' },
+      ])
     })
 
     it('filters out empty string content deltas', async () => {
@@ -1796,6 +1834,28 @@ describe('OpenAIModel', () => {
       expect(captured.request!.messages).toEqual([])
 
       warnSpy.mockRestore()
+    })
+  })
+
+  describe('unknown blocks in messages', () => {
+    it('skips unknown blocks in user and assistant messages, without a warning', async () => {
+      using warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      const captured: { request: any } = { request: null }
+      const mockClient = createMockClientWithCapture(captured)
+      const provider = new OpenAIModel({ api: 'chat', client: mockClient })
+      const unknownBlock = new UnknownBlock({ futureBlock: { value: 1 } })
+      const messages = [
+        new Message({ role: 'user', content: [new TextBlock('Hello'), unknownBlock] }),
+        new Message({ role: 'assistant', content: [new TextBlock('Hi'), unknownBlock] }),
+      ]
+
+      await collectIterator(provider.stream(messages))
+
+      expect(captured.request!.messages).toEqual([
+        { role: 'user', content: [{ type: 'text', text: 'Hello' }] },
+        { role: 'assistant', content: 'Hi' },
+      ])
+      expect(warnSpy).not.toHaveBeenCalled()
     })
   })
 

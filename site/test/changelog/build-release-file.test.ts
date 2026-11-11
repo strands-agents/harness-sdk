@@ -38,7 +38,7 @@ describe('build-release-file', () => {
         breaking: false,
         commit: '155239d',
         author: 'yatszhash',
-        languages: null,
+        streams: null,
         docsOnly: false,
       }),
       deriveEntries: bodyDerive,
@@ -67,7 +67,7 @@ describe('build-release-file', () => {
         breaking: false,
         commit: 'aaa1111',
         author: 'x',
-        languages: null,
+        streams: null,
         docsOnly: false,
       }),
       deriveEntries: bodyDerive,
@@ -84,7 +84,7 @@ describe('build-release-file', () => {
         breaking: false,
         commit: null,
         author: null,
-        languages: null,
+        streams: null,
         docsOnly: false,
       }),
       deriveEntries: bodyDerive,
@@ -101,7 +101,7 @@ describe('build-release-file', () => {
         breaking: false,
         commit: null,
         author: null,
-        languages: null,
+        streams: null,
         docsOnly: false,
       }),
       readExisting: async () => null,
@@ -118,12 +118,12 @@ describe('build-release-file', () => {
       '* chore: neither-dir thing by @d in https://github.com/strands-agents/harness-sdk/pull/4',
       '* fix: unknown thing by @e in https://github.com/strands-agents/harness-sdk/pull/5',
     ].join('\n')
-    // 4 = empty languages (touches neither SDK dir -- e.g. root/ci, or a flat-layout
+    // 4 = empty streams (touches no package dir -- e.g. root/ci, or a flat-layout
     // pre-monorepo PR). 5 = unknown (files unavailable).
     const langByPr: Record<number, string[] | null> = {
-      1: ['python'],
-      2: ['typescript'],
-      3: ['python', 'typescript'],
+      1: ['sdk:python'],
+      2: ['sdk:typescript'],
+      3: ['sdk:python', 'sdk:typescript'],
       4: [],
       5: null,
     }
@@ -133,7 +133,7 @@ describe('build-release-file', () => {
         breaking: false,
         commit: null,
         author: null,
-        languages: langByPr[pr],
+        streams: langByPr[pr],
         docsOnly: false,
       }),
       deriveEntries: bodyDerive,
@@ -144,7 +144,7 @@ describe('build-release-file', () => {
       { tag_name: 'python/v1.43.0', published_at: '2026-06-12T00:00:00Z', html_url: 'h', body },
       deps as any
     )
-    // python stream keeps py(1), both(3); drops ts(2). Empty-languages(4) and
+    // python stream keeps py(1), both(3); drops ts(2). Empty-streams(4) and
     // unknown(5) are KEPT -- only a POSITIVE other-language signal drops a PR.
     expect(py!.contents).toMatch(/py thing/)
     expect(py!.contents).toMatch(/both thing/)
@@ -164,6 +164,76 @@ describe('build-release-file', () => {
     expect(ts!.contents).toMatch(/unknown thing/)
     expect(ts!.contents).not.toMatch(/py thing/)
     expect(ts!.contents).not.toMatch(/site thing/)
+  })
+
+  it('harness, cli, and mcp PRs stay out of the sdk streams', async () => {
+    const body = [
+      '* feat: sdk thing by @a in https://github.com/strands-agents/harness-sdk/pull/1',
+      '* feat: harness py thing by @b in https://github.com/strands-agents/harness-sdk/pull/2',
+      '* feat: cli thing by @c in https://github.com/strands-agents/harness-sdk/pull/3',
+      '* fix: mcp server thing by @d in https://github.com/strands-agents/harness-sdk/pull/4',
+    ].join('\n')
+    const streamsByPr: Record<number, string[]> = {
+      1: ['sdk:python'],
+      2: ['harness:python'],
+      3: ['cli'],
+      4: ['mcp'],
+    }
+    const deps = {
+      enrich: async (_repo: string, pr: number) => ({
+        areas: [],
+        breaking: false,
+        commit: null,
+        author: null,
+        streams: streamsByPr[pr],
+        docsOnly: false,
+      }),
+      deriveEntries: bodyDerive,
+      readExisting: async () => null,
+    }
+    const build = (tag: string) =>
+      buildReleaseFile(
+        'strands-agents/harness-sdk',
+        { tag_name: tag, published_at: '2026-10-15T00:00:00Z', html_url: 'h', body },
+        deps as any
+      )
+
+    const sdk = await build('python/v1.58.0')
+    expect(sdk!.contents).toMatch(/sdk thing/)
+    expect(sdk!.contents).not.toMatch(/harness py thing|cli thing|mcp server thing/)
+
+    const harness = await build('harness-python/v0.3.1')
+    expect(harness!.path).toBe('site/src/content/changelog/harness/python-v0.3.1.md')
+    expect(harness!.contents).toMatch(/harness py thing/)
+    expect(harness!.contents).not.toMatch(/sdk thing|cli thing|mcp server thing/)
+
+    const cli = await build('harness-cli/v0.2.1')
+    expect(cli!.path).toBe('site/src/content/changelog/cli/v0.2.1.md')
+    expect(cli!.contents).not.toMatch(/language:/)
+    expect(cli!.contents).toMatch(/cli thing/)
+    expect(cli!.contents).not.toMatch(/sdk thing|harness py thing|mcp server thing/)
+  })
+
+  it('box releases are written without a language and are not stream-gated', async () => {
+    const deps = {
+      enrich: async () => ({ areas: [], breaking: false, commit: null, author: null, streams: [], docsOnly: false }),
+      deriveEntries: bodyDerive,
+      readExisting: async () => null,
+    }
+    const r = await buildReleaseFile(
+      'strands-agents/box',
+      {
+        tag_name: 'v0.2.0',
+        published_at: '2026-10-20T00:00:00Z',
+        html_url: 'h',
+        body: '* feat: box thing by @a in https://github.com/strands-agents/box/pull/9',
+      },
+      deps as any
+    )
+    expect(r!.path).toBe('site/src/content/changelog/box/v0.2.0.md')
+    expect(r!.contents).toMatch(/sdk: box/)
+    expect(r!.contents).not.toMatch(/language:/)
+    expect(r!.contents).toMatch(/box thing/)
   })
 
   it('a root-lockfile-only dependency bump lands on one stream only', async () => {
@@ -201,14 +271,14 @@ describe('build-release-file', () => {
   it('monorepo-tagged release with PRs in the OLD flat repo is not language-gated', async () => {
     // Early python releases were re-tagged `python/v*` but their PRs live in the
     // old `sdk-python` repo (code under `src/`, no strands-py/ dir). The file
-    // signal there is empty languages -- gating on it would empty the release.
+    // signal there is empty streams -- gating on it would empty the release.
     const body = [
       '* feat: real py feature by @a in https://github.com/strands-agents/sdk-python/pull/423',
       '* fix: another py fix by @b in https://github.com/strands-agents/sdk-python/pull/429',
     ].join('\n')
     const deps = {
-      // old-repo PRs touch src/ etc -> languagesFromFiles yields [] (empty)
-      enrich: async () => ({ areas: [], breaking: false, commit: null, author: null, languages: [], docsOnly: false }),
+      // old-repo PRs touch src/ etc -> streamsFromFiles yields [] (empty)
+      enrich: async () => ({ areas: [], breaking: false, commit: null, author: null, streams: [], docsOnly: false }),
       deriveEntries: bodyDerive,
       readExisting: async () => null,
     }
@@ -231,7 +301,7 @@ describe('build-release-file', () => {
         breaking: false,
         commit: null,
         author: null,
-        languages: ['typescript'],
+        streams: ['sdk:typescript'],
         docsOnly: false,
       }),
       deriveEntries: bodyDerive,
@@ -272,9 +342,9 @@ describe('build-release-file', () => {
       '* @mystery made their first contribution in https://github.com/strands-agents/harness-sdk/pull/13',
     ].join('\n')
     const langByPr: Record<number, string[] | null> = {
-      1: ['python'],
-      10: ['python'],
-      11: ['typescript'],
+      1: ['sdk:python'],
+      10: ['sdk:python'],
+      11: ['sdk:typescript'],
       12: [],
       13: null,
     }
@@ -284,7 +354,7 @@ describe('build-release-file', () => {
         breaking: false,
         commit: null,
         author: null,
-        languages: langByPr[pr],
+        streams: langByPr[pr],
         docsOnly: false,
       }),
       deriveEntries: bodyDerive,
@@ -320,8 +390,8 @@ describe('build-release-file', () => {
     const deps = {
       enrich: async (_r: string, pr: number) =>
         pr === 2
-          ? { areas: [], breaking: false, commit: null, author: null, languages: [], docsOnly: true }
-          : { areas: [], breaking: false, commit: null, author: null, languages: null, docsOnly: false },
+          ? { areas: [], breaking: false, commit: null, author: null, streams: [], docsOnly: true }
+          : { areas: [], breaking: false, commit: null, author: null, streams: null, docsOnly: false },
       deriveEntries: bodyDerive,
       readExisting: async () => null,
     }
@@ -343,7 +413,7 @@ describe('build-release-file', () => {
         body: '* docs: site only by @b in https://github.com/strands-agents/evals/pull/2',
       },
       {
-        enrich: async () => ({ areas: [], breaking: false, commit: null, author: null, languages: [], docsOnly: true }),
+        enrich: async () => ({ areas: [], breaking: false, commit: null, author: null, streams: [], docsOnly: true }),
         deriveEntries: bodyDerive,
         readExisting: async () => null,
       } as any
@@ -361,8 +431,8 @@ describe('build-release-file', () => {
     const deps = {
       enrich: async (_r: string, pr: number) =>
         pr === 2
-          ? { areas: [], breaking: false, commit: null, author: null, languages: [], docsOnly: true }
-          : { areas: [], breaking: false, commit: null, author: null, languages: null, docsOnly: false },
+          ? { areas: [], breaking: false, commit: null, author: null, streams: [], docsOnly: true }
+          : { areas: [], breaking: false, commit: null, author: null, streams: null, docsOnly: false },
       deriveEntries: bodyDerive,
       readExisting: async () => null,
     }
@@ -378,7 +448,7 @@ describe('build-release-file', () => {
   it('monorepo new contributor whose PR is in the OLD flat repo is not language-gated', async () => {
     // Mirror of the entries-loop guard for the contributors loop: a python/v*
     // release's first-contributor PR can live in sdk-python (no strands-py/ dir ->
-    // languages []). It must NOT be dropped by the language gate.
+    // streams []). It must NOT be dropped by the stream gate.
     const body = [
       '* feat: x by @a in https://github.com/strands-agents/harness-sdk/pull/1',
       '',
@@ -388,8 +458,8 @@ describe('build-release-file', () => {
     const deps = {
       enrich: async (_r: string, pr: number) =>
         pr === 900
-          ? { areas: [], breaking: false, commit: null, author: null, languages: [], docsOnly: false } // cross-repo, code-touching
-          : { areas: [], breaking: false, commit: null, author: null, languages: ['python'], docsOnly: false },
+          ? { areas: [], breaking: false, commit: null, author: null, streams: [], docsOnly: false } // cross-repo, code-touching
+          : { areas: [], breaking: false, commit: null, author: null, streams: ['sdk:python'], docsOnly: false },
       deriveEntries: bodyDerive,
       readExisting: async () => null,
     }
@@ -412,8 +482,8 @@ describe('build-release-file', () => {
     const deps = {
       enrich: async (_r: string, pr: number) =>
         pr === 5
-          ? { areas: [], breaking: false, commit: null, author: null, languages: [], docsOnly: true }
-          : { areas: [], breaking: false, commit: null, author: null, languages: ['python'], docsOnly: false },
+          ? { areas: [], breaking: false, commit: null, author: null, streams: [], docsOnly: true }
+          : { areas: [], breaking: false, commit: null, author: null, streams: ['sdk:python'], docsOnly: false },
       deriveEntries: bodyDerive,
       readExisting: async () => null,
     }
@@ -441,7 +511,7 @@ describe('build-release-file', () => {
           breaking: false,
           commit: null,
           author: null,
-          languages: ['python'],
+          streams: ['sdk:python'],
           docsOnly: false,
         }),
         deriveEntries: bodyDerive,
@@ -463,7 +533,7 @@ describe('build-release-file', () => {
           breaking: true,
           commit: 'bbb2222',
           author: 'x',
-          languages: null,
+          streams: null,
           docsOnly: false,
         }),
         deriveEntries: bodyDerive,

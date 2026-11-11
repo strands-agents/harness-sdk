@@ -128,13 +128,17 @@ export function webSearchMode(
   }
   const target =
     typeof model === 'string' || model === undefined ? `Model ${model ?? DEFAULT_MODEL}` : 'A pre-built Model instance'
-  const message =
-    `${target} has no native web search. Pass builtinTools: { web_search: 'exa' } ` +
-    "to search through Exa (a third party), or drop 'web_search'."
   if (explicit) {
-    throw new Error(message)
+    throw new Error(
+      `${target} has no built-in web search. Pass builtinTools: { web_search: 'exa' } to search ` +
+        "through Exa (a third party), or remove 'web_search' from builtinTools. See https://strandsagents.com/docs/user-guide/harness/tools/web-access/#web_search"
+    )
   }
-  logger.warn(message)
+  // Info, not a warning: the user didn't ask for search, and nothing failed.
+  logger.info(
+    `${target} has no built-in web search, so the web_search tool is disabled. To enable it through Exa ` +
+      "(a third party), pass builtinTools: { web_search: 'exa' }. See https://strandsagents.com/docs/user-guide/harness/tools/web-access/#web_search"
+  )
   return undefined
 }
 

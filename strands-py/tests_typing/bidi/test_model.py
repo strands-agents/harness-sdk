@@ -1,6 +1,6 @@
 from typing_extensions import assert_type
 
-from strands.experimental.bidi.models import (
+from strands.bidi.models import (
     BedrockNovaSonicModel,
     GoogleGeminiLiveModel,
     ModelConfig,

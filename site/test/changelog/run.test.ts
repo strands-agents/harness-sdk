@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { run } from '../../scripts/changelog/run'
+import { run, findMissing } from '../../scripts/changelog/run'
 import type { Client } from '../../scripts/changelog/types'
 
 // Entries are now sourced from the compare API (commits between the prior tag
@@ -83,6 +83,56 @@ describe('run', () => {
       },
     })
     expect(Object.keys(written)).toEqual(['site/src/content/changelog/sdk/python-v1.42.0.md'])
+  })
+
+  it('syncs a shared Shell release with Shell PR links and clears the missing-release check', async () => {
+    const shellRelease = {
+      tag_name: 'v0.6.0',
+      published_at: '2026-11-04T23:03:33Z',
+      html_url: 'https://github.com/strands-agents/shell/releases/tag/v0.6.0',
+      body: '',
+    }
+    const repo = 'strands-agents/shell'
+    const client = fakeClient({
+      listReleases: async () => [shellRelease],
+      getRelease: async () => shellRelease,
+      listTags: async () => [{ name: 'v0.6.0' }, { name: 'v0.5.0' }],
+      compareCommits: async (source: string, base: string, head: string) => {
+        expect([source, base, head]).toEqual([repo, 'v0.5.0', 'v0.6.0'])
+        return { commits: [{ sha: 's1' }] }
+      },
+      getPr: async () => ({ labels: [], merge_commit_sha: 'abc1234', user: 'x', files: ['src/exec.rs'] }),
+    })
+    const written: Record<string, string> = {}
+    const check = () => findMissing({ repo, client, exists: async (p) => p in written })
+    const path = 'site/src/content/changelog/shell/v0.6.0.md'
+    expect(await check()).toEqual([{ tag: 'v0.6.0', path }])
+
+    await run({
+      repo,
+      mode: 'single',
+      tag: shellRelease.tag_name,
+      client,
+      readExisting: async () => null,
+      writeFile: async (p, c) => {
+        written[p] = c
+      },
+    })
+
+    expect(written).toEqual({
+      [path]: `---
+sdk: shell
+version: "0.6.0"
+tag: v0.6.0
+date: 2026-11-04
+releaseUrl: https://github.com/strands-agents/shell/releases/tag/v0.6.0
+packageUrl: https://github.com/strands-agents/shell/releases/tag/v0.6.0
+entries:
+  - { type: feat, breaking: false, scope: null, areas: [], title: "a", pr: 1, prUrl: "https://github.com/strands-agents/shell/pull/1", commit: "abc1234", commitUrl: "https://github.com/strands-agents/shell/commit/abc1234", author: x }
+---
+`,
+    })
+    expect(await check()).toEqual([])
   })
 
   it('single mode with unknown tag writes nothing and warns', async () => {
@@ -242,5 +292,22 @@ describe('run', () => {
       writeFile: async () => {},
     })
     expect(res.warnings.some((w) => /250-commit cap/.test(w))).toBe(true)
+  })
+})
+
+describe('findMissing', () => {
+  it('lists in-scope published releases without a changelog file', async () => {
+    const missing = await findMissing({
+      repo: 'strands-agents/harness-sdk',
+      client: {
+        listReleases: async () => [
+          ...releases,
+          { tag_name: 'harness-cli/v0.3.0', published_at: null, html_url: 'h3', body: '' },
+        ],
+      },
+      exists: async (p) => p.endsWith('python-v1.41.0.md'),
+    })
+    // python-wasm is out of scope and the unpublished draft is skipped.
+    expect(missing).toEqual([{ tag: 'python/v1.42.0', path: 'site/src/content/changelog/sdk/python-v1.42.0.md' }])
   })
 })

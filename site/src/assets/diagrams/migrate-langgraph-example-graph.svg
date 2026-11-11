@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 96" width="720" height="96">
+  <!-- Type: pipeline. Story: a case enters research, and each stage feeds the next; the shape is the same in both frameworks. -->
+  <defs>
+    <marker id="arrow" viewBox="0 0 8 6" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+      <path class="dg-head" d="M0,0 L8,3 L0,6 Z"/>
+    </marker>
+  </defs>
+
+  <!-- Edges -->
+  <path class="dg-edge" d="M128,48 H158" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M320,48 H350" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M512,48 H542" marker-end="url(#arrow)"/>
+
+  <!-- Nodes -->
+  <rect class="dg-node is-input" x="16" y="16" width="112" height="64" rx="6"/>
+  <text class="dg-name" x="72" y="45" text-anchor="middle">Case</text>
+  <text class="dg-sub" x="72" y="63" text-anchor="middle">prompt</text>
+
+  <rect class="dg-node" x="160" y="16" width="160" height="64" rx="6"/>
+  <text class="dg-name" x="240" y="45" text-anchor="middle">Research</text>
+  <text class="dg-sub" x="240" y="63" text-anchor="middle">gathers the facts</text>
+
+  <rect class="dg-node" x="352" y="16" width="160" height="64" rx="6"/>
+  <text class="dg-name" x="432" y="45" text-anchor="middle">Analysis</text>
+  <text class="dg-sub" x="432" y="63" text-anchor="middle">weighs the options</text>
+
+  <rect class="dg-node" x="544" y="16" width="160" height="64" rx="6"/>
+  <text class="dg-name" x="624" y="45" text-anchor="middle">Review</text>
+  <text class="dg-sub" x="624" y="63" text-anchor="middle">recommends a decision</text>
+</svg>

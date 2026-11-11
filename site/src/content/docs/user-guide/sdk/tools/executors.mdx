@@ -51,7 +51,7 @@ Assuming the model returns `weather_tool` and `time_tool` use requests, the conc
 
 ### Sequential Behavior
 
-Sometimes the model returns one tool use request at a time. Those tools then execute sequentially: concurrency happens only when the model returns multiple tool use requests in a single response. Some models let you influence this. Anthropic, for example, exposes an explicit parallel tool use setting ([docs](https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/implement-tool-use#parallel-tool-use)).
+Sometimes the model returns one tool use request at a time. Those tools then execute sequentially: concurrency happens only when the model returns multiple tool use requests in a single response. Some models let you influence this. Anthropic, for example, exposes an explicit parallel tool use setting ([docs](https://platform.claude.com/docs/en/agents-and-tools/tool-use/parallel-tool-use)).
 
 ## Sequential Executor
 
