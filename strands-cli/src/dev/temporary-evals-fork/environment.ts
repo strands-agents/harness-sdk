@@ -34,6 +34,7 @@ const PROJECT_SITE_PROBE =
 const OPTIMIZER_SITE_PROBE = 'import site; print(site.getsitepackages()[0])'
 const PROJECT_PACKAGES_FILE = 'temporary_strands_dev_project.pth'
 const MARKER_FILE = 'temporary-evals-fork.json'
+const MINIMUM_PYTHON_MINOR = 10
 
 const execute = promisify(execFile)
 
@@ -85,18 +86,47 @@ const projectSitePackages = async (
   return JSON.parse(output) as { version: string; paths: string[] }
 }
 
-export const prepareTemporaryOptimizerEnvironment = async (
-  { workspaceDirectory, projectRoot }: { workspaceDirectory: string; projectRoot: string },
-  { run = runCommand, signal, onProgress = ignoreProgress }: TemporaryEnvironmentOptions = {}
-): Promise<string> => {
+export interface TemporaryOptimizerTarget {
+  workspaceDirectory: string
+  projectRoot: string
+  language?: 'python' | 'typescript'
+}
+
+const basePython = ({ projectRoot, language = 'python' }: TemporaryOptimizerTarget): string => {
+  if (language === 'typescript') return process.env.PYTHON ?? (process.platform === 'win32' ? 'python' : 'python3')
   const projectPython = temporaryVenvPython(join(projectRoot, '.venv'))
   if (!existsSync(projectPython))
     throw new Error(`The project has no Python environment at ${projectPython}. Start strands dev once to prepare it.`)
+  return projectPython
+}
+
+const PYTHON_UPGRADE_HINT = {
+  python: 'Recreate the project .venv with a newer Python.',
+  typescript: 'Set PYTHON to a newer interpreter.',
+} as const
+
+const assertSupportedPython = (python: string, version: string, language: 'python' | 'typescript'): void => {
+  const [major = 0, minor = 0] = version.split('.').map(Number)
+  if (major < 3 || (major === 3 && minor < MINIMUM_PYTHON_MINOR))
+    throw new Error(
+      `Optimization needs Python 3.${MINIMUM_PYTHON_MINOR} or later, but ${python} is Python ${version}. ` +
+        PYTHON_UPGRADE_HINT[language]
+    )
+}
+
+export const prepareTemporaryOptimizerEnvironment = async (
+  target: TemporaryOptimizerTarget,
+  { run = runCommand, signal, onProgress = ignoreProgress }: TemporaryEnvironmentOptions = {}
+): Promise<string> => {
+  const { workspaceDirectory, projectRoot, language = 'python' } = target
+  const projectPython = basePython(target)
   const folder = temporaryOptimizationFolder(workspaceDirectory)
   const venv = join(folder, '.venv')
   const python = temporaryVenvPython(venv)
   const marker = join(venv, MARKER_FILE)
-  const project = await projectSitePackages(run, projectPython, projectRoot, signal)
+  const probed = await projectSitePackages(run, projectPython, projectRoot, signal)
+  assertSupportedPython(projectPython, probed.version, language)
+  const project = { version: probed.version, paths: language === 'python' ? probed.paths : [] }
   const expected = JSON.stringify({
     requirement: TEMPORARY_EVALS_FORK_REQUIREMENT,
     project,
@@ -120,7 +150,8 @@ export const prepareTemporaryOptimizerEnvironment = async (
   await mkdir(folder, { recursive: true })
   await run(request(projectPython, ['-m', 'venv', '--clear', venv], VENV_TIMEOUT_MS))
   const sitePackages = (await run(request(python, ['-c', OPTIMIZER_SITE_PROBE], PROBE_TIMEOUT_MS))).trim()
-  await writeFile(join(sitePackages, PROJECT_PACKAGES_FILE), projectPackagesHook(project.paths))
+  if (project.paths.length > 0)
+    await writeFile(join(sitePackages, PROJECT_PACKAGES_FILE), projectPackagesHook(project.paths))
   onProgress(`Installing ${TEMPORARY_EVALS_FORK_REQUIREMENT}`)
   await run(
     request(

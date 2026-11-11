@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
@@ -89,5 +90,33 @@ describe('TEMPORARY optimizer environment', () => {
     await expect(
       prepareTemporaryOptimizerEnvironment({ projectRoot, workspaceDirectory: join(projectRoot, 'strands-dev') })
     ).rejects.toThrow('Start strands dev once to prepare it')
+  })
+
+  it('shouldUseTheSystemPythonWithoutProjectPackagesWhenTheAgentIsTypeScript', async () => {
+    vi.stubEnv('PYTHON', '/opt/python3.12')
+    const paths = await layout()
+    const run = fakeRunner(paths)
+
+    await prepareTemporaryOptimizerEnvironment({ ...paths, language: 'typescript' }, { run })
+
+    const venv = run.mock.calls.map(([request]) => request).find((request) => request.args[1] === 'venv')
+    expect(venv?.command).toBe('/opt/python3.12')
+    expect(existsSync(join(paths.sitePackages, 'temporary_strands_dev_project.pth'))).toBe(false)
+    expect(installs(run)).toHaveLength(1)
+    vi.unstubAllEnvs()
+  })
+
+  it.each([
+    { language: 'python' as const, hint: 'Recreate the project .venv with a newer Python.' },
+    { language: 'typescript' as const, hint: 'Set PYTHON to a newer interpreter.' },
+  ])('shouldAskForANewerPythonWhenThe$languageBaseInterpreterIsTooOld', async ({ language, hint }) => {
+    const paths = await layout()
+
+    await expect(
+      prepareTemporaryOptimizerEnvironment({ ...paths, language }, { run: fakeRunner(paths, '3.9.6') })
+    ).rejects.toThrow(`needs Python 3.10 or later, but`)
+    await expect(
+      prepareTemporaryOptimizerEnvironment({ ...paths, language }, { run: fakeRunner(paths, '3.9.6') })
+    ).rejects.toThrow(hint)
   })
 })

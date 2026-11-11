@@ -73,20 +73,20 @@ describe('TEMPORARY strands dev optimize command', () => {
     expect(prepareProject).toHaveBeenCalledWith(workspace)
   })
 
-  it('shouldFailBeforePreparingTheProjectWhenTheWorkspaceAgentIsTypeScript', async () => {
+  it('shouldFailBeforePreparingTheProjectWhenTheExperimentIsMissing', async () => {
     const workspace = await workspaceFixture('typescript')
     const stdout = captured()
     const stderr = captured()
     const prepareProject = vi.fn(async () => {})
 
     const code = await runTemporaryDevOptimize(
-      parseArgs(['dev', 'optimize']),
+      parseArgs(['dev', 'optimize', 'refunds']),
       { stdout: stdout.stream, stderr: stderr.stream },
       { openWorkspace: async () => opened(workspace), prepareProject }
     )
 
     expect(code).toBe(1)
-    expect(stderr.text()).toContain('error: Optimization supports Python agents only')
+    expect(stderr.text()).toContain('error: No experiment named refunds')
     expect(prepareProject).not.toHaveBeenCalled()
     expect(stdout.text()).toBe('')
   })

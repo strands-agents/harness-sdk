@@ -117,7 +117,7 @@ describe('TEMPORARY dev optimization', () => {
     expect(spawnOptimizer).not.toHaveBeenCalled()
   })
 
-  it.each([['--agent', 'other.py'], ['--record=elsewhere'], ['--json'], ['--rich']])(
+  it.each([['--agent', 'other.py'], ['--record=elsewhere'], ['--json'], ['--rich'], ['--typescript-runner', 'node']])(
     'shouldRejectFlagsThatStrandsDevOwnsWhen%sIsPassed',
     async (...forkArguments) => {
       const workspace = await workspaceFixture()
@@ -128,10 +128,21 @@ describe('TEMPORARY dev optimization', () => {
     }
   )
 
-  it('shouldRejectTheWorkspaceWhenItsAgentIsTypeScript', async () => {
+  it('shouldStartTheTypescriptRunnerAndUseTheSystemPythonWhenTheWorkspaceAgentIsTypeScript', async () => {
+    vi.stubEnv('PYTHON', '/opt/python3.12')
     const workspace = await workspaceFixture(['support.json'], 'typescript')
+    const run = environmentRunner(workspace)
+    const spawnOptimizer = succeeding()
 
-    await expect(runTemporaryOptimization({ workspace })).rejects.toThrow('Python agents only')
+    await runTemporaryOptimization({ workspace }, { run, spawnOptimizer })
+
+    const { args } = spawnOptimizer.mock.calls[0]![0]
+    const runner = args[args.indexOf('--typescript-runner') + 1]!
+    expect(runner).toMatch(/^'.+' '.+typescript-runner-main\.js'$/u)
+    expect(runner).toContain(process.execPath)
+    const venv = run.mock.calls.map(([request]) => request).find((request) => request.args[1] === 'venv')
+    expect(venv?.command).toBe('/opt/python3.12')
+    vi.unstubAllEnvs()
   })
 
   it('shouldReportTheOptimizerOutputWhenItFails', async () => {
@@ -181,9 +192,9 @@ describe('TEMPORARY dev optimization', () => {
   })
 
   it.each([
-    { language: 'typescript' as const, experiments: ['support.json'], message: 'Python agents only' },
+    { language: 'typescript' as const, experiments: [], message: 'No experiment in' },
     { language: 'python' as const, experiments: [], message: 'No experiment in' },
-  ])('shouldNotPrepareTheProjectWhen$message', async ({ language, experiments, message }) => {
+  ])('shouldNotPrepareThe$languageProjectWhen$message', async ({ language, experiments, message }) => {
     const workspace = await workspaceFixture(experiments, language)
     const prepare = vi.fn(async () => {})
 

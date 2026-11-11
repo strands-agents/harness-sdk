@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs'
 import { readdir, stat } from 'node:fs/promises'
 import { basename, delimiter, dirname, join, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
+import { fileURLToPath, URL } from 'node:url'
 
 import { redactPreparationOutput } from '../../project/preparation.js'
 import { isRecord } from '../../values.js'
@@ -54,7 +55,7 @@ export interface TemporaryOptimizationDependencies {
 }
 
 const STDERR_TAIL_LINES = 20
-const WRAPPER_OWNED_FLAGS = ['--agent', '--record', '--json', '--rich']
+const WRAPPER_OWNED_FLAGS = ['--agent', '--record', '--json', '--rich', '--typescript-runner']
 
 export const temporaryExperimentsFolder = (workspaceDirectory: string): string =>
   join(workspaceDirectory, 'tmp', 'experiments')
@@ -99,12 +100,20 @@ const assertForkArguments = (forkArguments: readonly string[]): void => {
     throw new Error(`strands dev sets ${owned.join(', ')} for optimization. Remove it from the optimizer flags.`)
 }
 
-const pythonWorkspaceDirectory = ({ directory, config }: DevWorkspace): string => {
-  if (config.language !== 'python')
-    throw new Error('Optimization supports Python agents only. This workspace runs a TypeScript agent.')
+const workspaceDirectory = ({ directory }: DevWorkspace): string => {
   if (!directory) throw new Error('Optimization needs a strands-dev workspace folder. Run strands dev init first.')
   return directory
 }
+
+const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`
+
+export const temporaryTypescriptRunnerCommand = (): string => {
+  const runner = fileURLToPath(new URL('./typescript-runner-main.js', import.meta.url))
+  return `${shellQuote(process.execPath)} ${shellQuote(runner)}`
+}
+
+const languageArguments = ({ config }: DevWorkspace): string[] =>
+  config.language === 'typescript' ? ['--typescript-runner', temporaryTypescriptRunnerCommand()] : []
 
 const recordFolder = (workspaceDirectory: string, experiment: string, now: Date): string => {
   const stamp = now.toISOString().replace(/[-:]/gu, '').replace('T', '-').slice(0, 15)
@@ -144,12 +153,12 @@ export const runTemporaryOptimization = async (
   dependencies: TemporaryOptimizationDependencies = {}
 ): Promise<TemporaryOptimizationOutcome> => {
   const { workspace, forkArguments = [], environment = process.env, signal, onProgress = ignoreProgress } = request
-  const directory = pythonWorkspaceDirectory(workspace)
+  const directory = workspaceDirectory(workspace)
   assertForkArguments(forkArguments)
   const experiment = await resolveTemporaryExperiment(temporaryExperimentsFolder(directory), request.experiment)
   await request.prepare?.()
   const python = await prepareTemporaryOptimizerEnvironment(
-    { workspaceDirectory: directory, projectRoot: workspace.root },
+    { workspaceDirectory: directory, projectRoot: workspace.root, language: workspace.config.language },
     { ...(dependencies.run ? { run: dependencies.run } : {}), ...(signal ? { signal } : {}), onProgress }
   )
   const record = recordFolder(directory, experiment, request.now?.() ?? new Date())
@@ -169,6 +178,7 @@ export const runTemporaryOptimization = async (
       '--record',
       record,
       '--rich',
+      ...languageArguments(workspace),
       ...forkArguments,
     ],
     cwd: workspace.root,

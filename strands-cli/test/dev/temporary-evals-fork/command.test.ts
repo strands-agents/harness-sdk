@@ -141,16 +141,18 @@ describe('TEMPORARY /optimize command', () => {
     expect(updates).toEqual([])
   })
 
-  it('shouldReportTheFailureWhenTheWorkspaceAgentIsTypeScript', async () => {
+  it('shouldRunTheTypescriptAgentThroughTheRunnerWhenTheChatRunsTypeScript', async () => {
     const workspace = await workspaceFixture('typescript')
     const { context, updates } = contextFixture()
+    const spawnOptimizer = succeeding()
 
-    temporaryOptimizeCommand(workspace, projectOf(workspace), dependenciesFor(workspace)).run('', context)
+    temporaryOptimizeCommand(workspace, projectOf(workspace), dependenciesFor(workspace, spawnOptimizer)).run(
+      '',
+      context
+    )
 
-    expect(await finished(updates)).toEqual({
-      status: 'error',
-      text: expect.stringContaining('Optimization supports Python agents only'),
-    })
+    expect(await finished(updates)).toEqual(expect.objectContaining({ status: 'success' }))
+    expect(spawnOptimizer.mock.calls[0]![0].args).toContain('--typescript-runner')
   })
 
   it('shouldTuneTheAgentThatTheChatRunsWhenItDiffersFromTheSavedBinding', async () => {
