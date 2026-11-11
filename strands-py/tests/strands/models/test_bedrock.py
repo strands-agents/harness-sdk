@@ -16,6 +16,8 @@ import pytest
 from botocore import UNSIGNED
 from botocore.config import Config as BotocoreConfig
 from botocore.exceptions import ClientError, EventStreamError
+from botocore.serialize import create_serializer
+from botocore.session import Session as BotocoreSession
 
 import strands
 from strands import _exception_notes
@@ -31,8 +33,10 @@ from strands.models.bedrock import (
 from strands.tools import convert_pydantic_to_tool_spec
 from strands.types.exceptions import ContextWindowOverflowException, ModelThrottledException
 from strands.types.tools import ToolSpec
+from tests.fixtures.say_tool import say
 
 FORMATTED_DEFAULT_MODEL_ID = DEFAULT_BEDROCK_MODEL_ID
+
 
 # cache_tools is deprecated in favor of CacheConfig(tools_ttl=...); tests that deliberately exercise the
 # backward-compat path emit its config-time DeprecationWarning, and assert it explicitly where relevant.
@@ -990,6 +994,71 @@ def test_format_request_cache(model, messages, model_id, tool_spec, cache_type):
     }
 
     assert tru_request == exp_request
+
+
+@pytest.mark.asyncio
+async def test_stream_same_index_reasoning_survives_agent_tool_loop(bedrock_client):
+    """Keep both signed blocks in the next serialized ConverseStream request (#5498)."""
+    tool = say
+    first_turn = [
+        {"messageStart": {"role": "assistant"}},
+        {"contentBlockDelta": {"contentBlockIndex": 0, "delta": {"reasoningContent": {"text": "first"}}}},
+        {"contentBlockDelta": {"contentBlockIndex": 0, "delta": {"reasoningContent": {"signature": "SIG"}}}},
+        {"contentBlockDelta": {"contentBlockIndex": 0, "delta": {"reasoningContent": {"signature": "1"}}}},
+        {"contentBlockDelta": {"contentBlockIndex": 0, "delta": {"reasoningContent": {"text": "second"}}}},
+        {"contentBlockDelta": {"contentBlockIndex": 0, "delta": {"reasoningContent": {"signature": "SIG2"}}}},
+        {"contentBlockStop": {"contentBlockIndex": 0}},
+        {"contentBlockDelta": {"contentBlockIndex": 1, "delta": {"text": "Looking up."}}},
+        {"contentBlockStop": {"contentBlockIndex": 1}},
+        {
+            "contentBlockStart": {
+                "contentBlockIndex": 2,
+                "start": {"toolUse": {"toolUseId": "tool-1", "name": tool.tool_name}},
+            }
+        },
+        {"contentBlockDelta": {"contentBlockIndex": 2, "delta": {"toolUse": {"input": '{"input":"world"}'}}}},
+        {"contentBlockStop": {"contentBlockIndex": 2}},
+        {"messageStop": {"stopReason": "tool_use"}},
+    ]
+    last_turn = [
+        {"messageStart": {"role": "assistant"}},
+        {"contentBlockDelta": {"contentBlockIndex": 0, "delta": {"text": "Done."}}},
+        {"contentBlockStop": {"contentBlockIndex": 0}},
+        {"messageStop": {"stopReason": "end_turn"}},
+    ]
+    serialized_requests = []
+    turns = iter([first_turn, last_turn])
+    operation = BotocoreSession().get_service_model("bedrock-runtime").operation_model("ConverseStream")
+    serializer = create_serializer("rest-json")
+
+    def converse_stream(**request):
+        serialized = serializer.serialize_to_request(request, operation)
+        serialized_requests.append(json.loads(serialized["body"]))
+        return {"stream": iter(next(turns))}
+
+    bedrock_client.converse_stream.side_effect = converse_stream
+    agent = strands.Agent(model=BedrockModel(model_id="anthropic.claude-test"), tools=[tool], callback_handler=None)
+    result = await agent.invoke_async("Look it up.")
+
+    assert len(serialized_requests) == 2
+    exp_assistant = {
+        "role": "assistant",
+        "content": [
+            {"reasoningContent": {"reasoningText": {"text": "first", "signature": "SIG1"}}},
+            {"reasoningContent": {"reasoningText": {"text": "second", "signature": "SIG2"}}},
+            {"text": "Looking up."},
+            {"toolUse": {"toolUseId": "tool-1", "name": tool.tool_name, "input": {"input": "world"}}},
+        ],
+    }
+    tru_assistant = serialized_requests[1]["messages"][1]
+    assert tru_assistant == exp_assistant
+    assert agent.messages[1] == {**exp_assistant, "metadata": ANY, "tracking_id": ANY}
+    assert serialized_requests[1]["messages"][0] == serialized_requests[0]["messages"][0]
+    tru_tool_result = serialized_requests[1]["messages"][2]["content"][0]["toolResult"]["toolUseId"]
+    assert tru_tool_result == "tool-1"
+    tru_message = result.message
+    exp_message = {"role": "assistant", "content": [{"text": "Done."}], "metadata": ANY, "tracking_id": ANY}
+    assert tru_message == exp_message
 
 
 @pytest.mark.asyncio
