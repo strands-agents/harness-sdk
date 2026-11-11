@@ -13,6 +13,7 @@ from strands import Agent, ToolContext, tool
 from strands.hooks import AfterToolCallEvent, AgentInitializedEvent, BeforeModelCallEvent, BeforeToolCallEvent
 from strands.interrupt import Interrupt
 from strands.middleware.stages import ExecuteToolStage, InvokeModelStage
+from strands.session import FileSessionManager
 from strands.tools.tools import PythonAgentTool
 from strands.types._events import ToolResultEvent
 from strands.types.content import Messages
@@ -661,7 +662,7 @@ async def test_delivers_work_that_finishes_between_invocations() -> None:
             "result": {
                 "content": [
                     *content[:2],
-                    {"image": {"format": "png", "source": {"bytes": {"__bytes_encoded__": True, "data": "cG5n"}}}},
+                    {"image": {"format": "png", "source": {"bytes": {"__strands_background_task_bytes__": "cG5n"}}}},
                 ]
             },
         }
@@ -796,9 +797,14 @@ async def test_load_state_fails_restored_non_terminal_work() -> None:
 
 
 @pytest.mark.asyncio
-async def test_restored_result_bytes_are_delivered_decoded() -> None:
+async def test_restored_result_bytes_survive_a_session_round_trip(tmp_path) -> None:
     image = {"image": {"format": "png", "source": {"bytes": b"png"}}}
-    source = Agent(model=MockedModelProvider([]), background_tasks={}, callback_handler=None)
+    source = Agent(
+        model=MockedModelProvider([]),
+        background_tasks={},
+        session_manager=FileSessionManager(session_id="bytes", storage_dir=str(tmp_path)),
+        callback_handler=None,
+    )
     source._background_tasks._tasks["done"] = {
         "task_id": "done",
         "tool_use_id": "done-use",
@@ -809,15 +815,12 @@ async def test_restored_result_bytes_are_delivered_decoded() -> None:
         "result": {"content": [image]},
     }
     source._background_tasks._persist_tasks()
-    snapshot = source.take_snapshot(preset="session")
-
-    def load_snapshot(event: AgentInitializedEvent) -> None:
-        event.agent.load_snapshot(snapshot)
+    source._session_manager.sync_agent(source)
 
     agent = Agent(
         model=MockedModelProvider([_assistant_text("Results received.")]),
         background_tasks={},
-        hooks=[load_snapshot],
+        session_manager=FileSessionManager(session_id="bytes", storage_dir=str(tmp_path)),
         callback_handler=None,
     )
     await agent.invoke_async("Continue.")
