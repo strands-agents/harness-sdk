@@ -139,6 +139,55 @@ describe('Sidebar filtering with live navigation.yml data', () => {
     })
   })
 
+  it('keeps Labs project links on Labs pages but not inside a nested product', () => {
+    const labsSidebar: SidebarEntry[] = [
+      {
+        type: 'group',
+        label: 'Labs',
+        collapsed: false,
+        entries: [
+          {
+            type: 'link',
+            label: 'Overview',
+            href: '/docs/labs/',
+            isCurrent: false,
+          },
+          {
+            type: 'link',
+            label: 'Robots',
+            href: 'https://github.com/strands-labs/robots',
+            isCurrent: false,
+          },
+          {
+            type: 'group',
+            label: 'Strands Decider',
+            collapsed: false,
+            entries: [
+              {
+                type: 'link',
+                label: 'Overview',
+                href: '/docs/labs/strands-decider/overview/',
+                isCurrent: false,
+              },
+              {
+                type: 'link',
+                label: 'Inference',
+                href: '/docs/labs/strands-decider/inference/',
+                isCurrent: false,
+              },
+            ],
+          },
+        ],
+      },
+    ]
+
+    const labs = getAllLinks(filterSidebarByBasePath(labsSidebar as any, '/docs/labs/'))
+    expect(labs.map((link) => link.label)).toContain('Robots')
+
+    const decider = getAllLinks(filterSidebarByBasePath(labsSidebar as any, '/docs/labs/strands-decider/'))
+    expect(decider.map((link) => link.label)).toEqual(['Overview', 'Inference'])
+  })
+
   it('has no doc-sidebar section for integrations (dynamic catalog sidebar)', () => {
     // Integrations pages build their rail from the catalog collection
     // (src/util/integrations-sidebar.ts), not from navigation.yml.

@@ -64,15 +64,32 @@ function hasSlugAtOrBelow(item: StarlightSidebarItem, slug: string): boolean {
   return 'slug' in item && (item.slug === slug || item.slug.startsWith(`${slug}/`))
 }
 
+function findGroupByLabel(
+  items: StarlightSidebarItem[],
+  labels: Set<string>
+): Extract<StarlightSidebarItem, { items: StarlightSidebarItem[] }> | undefined {
+  for (const item of items) {
+    if (!('items' in item)) continue
+    if (labels.has(item.label)) return item
+    const nested = findGroupByLabel(item.items, labels)
+    if (nested) return nested
+  }
+  return undefined
+}
+
 /**
  * The full sidebar tree of the product whose hub page is `hubHref`, for the
- * mobile menu. Matched by hub page rather than label because product and
- * sidebar group labels differ (e.g. "Evals" vs "Evals SDK").
+ * mobile menu. Prefer an explicit product or navigation label so a product
+ * nested inside a broader section can still own its mobile tree. Fall back to
+ * the hub route because some product and sidebar labels differ (for example,
+ * "Evals" and "Evals SDK").
  */
-export async function getProductNav(hubHref: string): Promise<ProductNavItem[]> {
+export async function getProductNav(hubHref: string, groupLabels: string[] = []): Promise<ProductNavItem[]> {
   const [sidebar, labels] = await Promise.all([getSidebar(), getLabels()])
   const hubSlug = hubHref.replace(pathWithBase('/'), '').replace(/\/$/, '')
-  const group = sidebar.find((item) => 'items' in item && hasSlugAtOrBelow(item, hubSlug))
+  const group =
+    findGroupByLabel(sidebar, new Set(groupLabels)) ??
+    sidebar.find((item) => 'items' in item && hasSlugAtOrBelow(item, hubSlug))
   if (!group || !('items' in group)) return []
   return group.items.map((item) => toNavItem(item, labels)).filter((i) => i !== null)
 }
