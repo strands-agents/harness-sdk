@@ -198,4 +198,69 @@ describe('searchContent', () => {
       expect(result).not.toContain('truncated')
     })
   })
+
+  describe('window notice', () => {
+    const notice = '[Showing lines 1-20 of 4001. Use offset/limit to read more.]'
+    const note =
+      '[This reference holds only a window of the original output ("Showing lines 1-20 of 4001. Use offset/limit ' +
+      'to read more."). The rest is not stored here; call the original tool again with an offset to get it.]'
+    const text = Array.from({ length: 20 }, (_, i) => `line ${i + 1}`).join('\n') + '\n' + notice
+
+    it('adds the note when nothing matches', () => {
+      const result = searchContent(text, { pattern: 'nonexistent', context_lines: 5 }, maxChars)
+      expect(result).toBe(`No matches found for pattern 'nonexistent' (searched 21 lines).\n\n${note}`)
+    })
+
+    it('adds the note after matches', () => {
+      const result = searchContent(text, { pattern: 'line 10', context_lines: 0 }, maxChars)
+      expect(result.endsWith(`> 10| line 10\n\n${note}`)).toBe(true)
+    })
+
+    it('adds the note after a line range', () => {
+      const result = searchContent(text, { line_range: { start: 5, end: 10 }, context_lines: 5 }, maxChars)
+      expect(result.endsWith(`line 10\n\n${note}`)).toBe(true)
+    })
+
+    it('adds the note after truncation', () => {
+      const result = searchContent(text, { pattern: 'line', context_lines: 0 }, 50)
+      expect(result.endsWith(`[output truncated, narrow your search]\n\n${note}`)).toBe(true)
+    })
+
+    it('ignores a trailing newline after the notice', () => {
+      const result = searchContent(text + '\n', { pattern: 'nonexistent', context_lines: 5 }, maxChars)
+      expect(result.endsWith(`\n\n${note}`)).toBe(true)
+    })
+
+    it('recognizes a character window notice', () => {
+      const marker =
+        '[content truncated: showing characters 0-50000 of 123456; pass offset=50000 to read the next window]'
+      const result = searchContent(`a\nb\n${marker}`, { pattern: 'x', context_lines: 5 }, maxChars)
+      expect(result).toContain('only a window of the original output ("content truncated: showing characters 0-50000')
+    })
+
+    it('adds the note to an out-of-range line_range error', () => {
+      const result = searchContent(text, { line_range: { start: 2001, end: 4001 }, context_lines: 5 }, maxChars)
+      expect(result.startsWith('Error: line_range.start (2001) is beyond content length (21 lines).\n\n')).toBe(true)
+      expect(result.endsWith(note)).toBe(true)
+    })
+
+    it('does not treat a plain last line as a notice', () => {
+      const plain = Array.from({ length: 20 }, (_, i) => `line ${i + 1}`).join('\n')
+      const result = searchContent(plain, { pattern: 'nonexistent', context_lines: 5 }, maxChars)
+      expect(result).toBe("No matches found for pattern 'nonexistent' (searched 20 lines).")
+    })
+
+    it.each(['[DONE]', '[1, 2, 3]', '[[1-2 of 3]]', '[output truncated, narrow your search]'])(
+      'does not treat %s as a notice',
+      (last) => {
+        const result = searchContent(`a\n${last}`, { pattern: 'x', context_lines: 5 }, maxChars)
+        expect(result).toBe("No matches found for pattern 'x' (searched 2 lines).")
+      }
+    )
+
+    it('adds no note for a lone notice line', () => {
+      const result = searchContent(notice, { line_range: { start: 1, end: 1 }, context_lines: 5 }, maxChars)
+      expect(result).not.toContain('original output')
+    })
+  })
 })

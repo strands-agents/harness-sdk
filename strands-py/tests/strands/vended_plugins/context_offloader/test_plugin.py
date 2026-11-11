@@ -701,6 +701,22 @@ class TestRetrievalToolSearch:
         assert "  12| line 12" in result
 
     @pytest.mark.asyncio
+    async def test_no_match_keeps_pagination_notice(self, plugin, storage, tool_context):
+        """A search over a stored read page must not hide that the page was only part of the file."""
+        notice = "[Showing lines 1-200 of 5000. Use offset/limit to read more.]"
+        content = "\n".join(f"line {i}" for i in range(1, 201)) + "\n" + notice
+        ref = await storage.store("k1", content.encode("utf-8"), "text/plain")
+
+        result = await plugin.retrieve_offloaded_content(reference=ref, pattern="needle", tool_context=tool_context)
+
+        assert result.startswith("No matches found for pattern 'needle' (searched 201 lines).\n\n")
+        assert result.endswith(
+            '[This reference holds only a window of the original output ("Showing lines 1-200 of 5000. Use '
+            'offset/limit to read more."). The rest is not stored here; call the original tool again with an offset to '
+            "get it.]"
+        )
+
+    @pytest.mark.asyncio
     async def test_returns_line_range_without_pattern(self, plugin, storage, tool_context):
         content = "\n".join(f"line {i + 1}" for i in range(50))
         ref = await storage.store("k1", content.encode("utf-8"), "text/plain")

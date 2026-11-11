@@ -53,6 +53,17 @@ class TestRetrievalTool:
         assert "match" in result["content"][0]["text"].lower()
 
     @pytest.mark.asyncio
+    async def test_no_match_keeps_pagination_notice(self, stash):
+        notice = "[Showing lines 1-20 of 4001. Use offset/limit to read more.]"
+        ref = await _store_text(stash, "\n".join(f"line {i}" for i in range(1, 21)) + "\n" + notice)
+        tool = _create_retrieval_tool(stash)
+        result = await tool._tool_func({"toolUseId": "t1", "input": {"reference": ref, "pattern": "needle"}})
+        assert result["status"] == "success"
+        text = result["content"][0]["text"]
+        assert text.startswith("No matches found for pattern 'needle' (searched 21 lines).\n\n")
+        assert "only a window of the original output" in text
+
+    @pytest.mark.asyncio
     async def test_returns_line_range(self, stash):
         lines = "\n".join(f"line {i}" for i in range(1, 11))
         ref = await _store_text(stash, lines)
