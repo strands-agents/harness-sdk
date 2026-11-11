@@ -4,7 +4,14 @@ import { renderEntryToMarkdown } from '@util/render-to-markdown'
 import { siteLink } from '@util/links'
 import { sortSampleGuides } from '@util/sample-guides'
 import { languageLabel } from '@util/source-links'
-import { FAQ_INTRO, FAQ_TITLE, faqAnswerMarkdown, faqCategories, faqItems, faqMarkdownHref } from '../config/faq'
+import {
+  FAQ_INTRO,
+  FAQ_TITLE,
+  faqAbsoluteMarkdownHref,
+  faqAnswerMarkdown,
+  faqCategories,
+  faqItems,
+} from '../config/faq'
 
 export const GET: APIRoute = async () => {
   const allDocs = await getCollection('docs', ({ data }) => !data.draft && data.externalDocs?.status !== 'preview')
@@ -29,7 +36,7 @@ export const GET: APIRoute = async () => {
     for (const item of faqItems.filter((faq) => faq.category === category.id)) {
       lines.push(`#### ${item.question}`)
       lines.push('')
-      lines.push(faqAnswerMarkdown(item.answer, (href) => siteLink(faqMarkdownHref(href))))
+      lines.push(faqAnswerMarkdown(item.answer, faqAbsoluteMarkdownHref))
       lines.push('')
     }
   }

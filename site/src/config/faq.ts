@@ -1,3 +1,5 @@
+import { siteLink } from '../util/links'
+
 export type FaqCategoryId = 'choose' | 'build' | 'run'
 
 export interface FaqLink {
@@ -539,6 +541,11 @@ export function faqMarkdownHref(href: string): string {
   const path = hashIndex === -1 ? href : href.slice(0, hashIndex)
   const hash = hashIndex === -1 ? '' : href.slice(hashIndex)
   return `${path.replace(/\/$/, '')}/index.md${hash}`
+}
+
+export function faqAbsoluteMarkdownHref(href: string): string {
+  if (isExternalFaqHref(href)) return href
+  return siteLink(faqMarkdownHref(href))
 }
 
 export function faqInlineMarkdown(content: FaqInline[], resolveLink: (href: string) => string): string {

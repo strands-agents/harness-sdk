@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { faqMarkdownHref } from '../src/config/faq'
+import { faqAbsoluteMarkdownHref, faqMarkdownHref } from '../src/config/faq'
 
 describe('faqMarkdownHref', () => {
   it('rewrites a trailing-slash page URL to its Markdown endpoint', () => {
@@ -15,5 +15,8 @@ describe('faqMarkdownHref', () => {
 
   it('keeps external URLs unchanged', () => {
     expect(faqMarkdownHref('https://github.com/strands-labs/robots')).toBe('https://github.com/strands-labs/robots')
+    expect(faqAbsoluteMarkdownHref('https://github.com/strands-labs/robots')).toBe(
+      'https://github.com/strands-labs/robots'
+    )
   })
 })
