@@ -58,13 +58,12 @@ export class StateStore implements StateSerializable {
       throw new Error('key is required')
     }
 
-    const value = this._state[key]
-    if (value === undefined) {
+    if (!Object.prototype.hasOwnProperty.call(this._state, key)) {
       return undefined
     }
 
     // Return deep copy to prevent mutations
-    return deepCopy(value)
+    return deepCopy(this._state[key])
   }
 
   /**
@@ -89,7 +88,12 @@ export class StateStore implements StateSerializable {
   set<TState, K extends keyof TState = keyof TState>(key: K, value: TState[K]): void
   set(key: string, value: unknown): void
   set(key: string, value: unknown): void {
-    this._state[key] = deepCopyWithValidation(value, `value for key "${key}"`)
+    Object.defineProperty(this._state, key, {
+      value: deepCopyWithValidation(value, `value for key "${key}"`),
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    })
   }
 
   /**
