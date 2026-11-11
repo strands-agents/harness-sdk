@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any, cast
 from opentelemetry import trace as trace_api
 
 from ..agent import _continuation
+from ..agent._request_tokens import _count_request_tokens
 from ..agent.invocation_context import (
     InvocationContext,
     _create_invocation_context,
@@ -126,14 +127,8 @@ async def _estimate_input_tokens(agent: "Agent") -> int:
         # System prompt and tool spec tokens are already included in the baseline
         return known_baseline + await ModelProxy(agent.model).count_tokens(new_messages)
 
-    # Cold start: resolve tool specs lazily for estimation only
-    tool_specs = agent.tool_registry.get_all_tool_specs()
-    return await ModelProxy(agent.model).count_tokens(
-        messages,
-        tool_specs=tool_specs,
-        system_prompt=agent.system_prompt,
-        system_prompt_content=agent._system_prompt_content,
-    )
+    # Cold start: tool specs are resolved lazily for estimation only
+    return await _count_request_tokens(agent, messages)
 
 
 def _build_checkpoint_stop_event(

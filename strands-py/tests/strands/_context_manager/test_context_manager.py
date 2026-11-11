@@ -252,7 +252,7 @@ class TestTokenCounting:
     async def test_counts_system_prompt_and_tool_specs_alongside_messages(self, mock_agent):
         tool_spec = ToolSpec(name="lookup", description="stub lookup", inputSchema={"json": {"type": "object"}})
         mock_agent.system_prompt = "be helpful"
-        mock_agent.system_prompt_content = [{"text": "be helpful"}]
+        mock_agent._system_prompt_content = [{"text": "be helpful"}]
         mock_agent.tool_registry.get_all_tool_specs = unittest.mock.MagicMock(return_value=[tool_spec])
         captured = self._capture_count_kwargs(mock_agent)
 
@@ -285,7 +285,7 @@ class TestTokenCounting:
     @pytest.mark.asyncio
     async def test_passes_no_system_prompt_when_the_agent_has_none(self, mock_agent):
         mock_agent.system_prompt = None
-        mock_agent.system_prompt_content = None
+        mock_agent._system_prompt_content = None
         mock_agent.tool_registry.get_all_tool_specs = unittest.mock.MagicMock(return_value=[])
         captured = self._capture_count_kwargs(mock_agent)
 
@@ -304,7 +304,7 @@ class TestTokenCounting:
     async def test_counts_system_prompt_and_tool_specs_in_the_emergency_truncate_gate(self, mock_agent):
         tool_spec = ToolSpec(name="lookup", description="stub lookup", inputSchema={"json": {"type": "object"}})
         mock_agent.system_prompt = "be helpful"
-        mock_agent.system_prompt_content = [{"text": "be helpful"}]
+        mock_agent._system_prompt_content = [{"text": "be helpful"}]
         mock_agent.tool_registry.get_all_tool_specs = unittest.mock.MagicMock(return_value=[tool_spec])
         mock_agent.messages = [
             Message(role="user", content=[ContentBlock(text="a")]),

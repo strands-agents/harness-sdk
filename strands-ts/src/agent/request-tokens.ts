@@ -1,5 +1,5 @@
 /**
- * Token counting for the request a context strategy is gated on.
+ * Token counting for a whole model request.
  */
 
 import { ModelProxy } from '../models/model-proxy.js'
@@ -8,7 +8,7 @@ import type { Message } from '../types/messages.js'
 
 /**
  * Counts what the next request carries: the messages, plus the system prompt and tool specs that occupy the same
- * context window, so a utilization gate that leaves them out reads low. These are the same inputs behind
+ * context window, so a count that leaves them out reads low. These are the same inputs behind
  * `BeforeModelCallEvent.projectedInputTokens`.
  *
  * Counts that measure a single block or a subset rather than a whole request call `countTokens` directly — including

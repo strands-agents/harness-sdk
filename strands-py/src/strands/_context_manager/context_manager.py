@@ -9,6 +9,7 @@ import logging
 import warnings
 from typing import TYPE_CHECKING, Literal
 
+from ..agent._request_tokens import _count_request_tokens
 from ..agent.invocation_context import _create_auxiliary_invocation_context
 from ..hooks.events import AfterModelCallEvent, BeforeModelCallEvent, MessageAddedEvent
 from ..plugins.plugin import Plugin
@@ -16,7 +17,6 @@ from ..storage.in_memory_storage import InMemoryStorage
 from ..storage.storage import _EPHEMERAL
 from ..types.exceptions import ContextWindowOverflowException
 from .presets import _resolve_strategies
-from .request_tokens import _count_request_tokens
 from .retrieval_tool import _create_retrieval_tool, _track_retrieval_tool_use_ids
 from .stash import Stash
 from .strategies.offload import Offload

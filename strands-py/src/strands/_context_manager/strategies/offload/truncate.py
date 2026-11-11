@@ -6,9 +6,9 @@ import logging
 import math
 from typing import TYPE_CHECKING
 
+from ....agent._request_tokens import _count_request_tokens
 from ....types.content import ContentBlock, Message
 from ...methods.truncate import TruncateConfig, _truncate_text_block, _truncate_tool_result
-from ...request_tokens import _count_request_tokens
 from ...stash import Stash, _format_stash_refs
 from ...types import is_text_block
 from .base import (
