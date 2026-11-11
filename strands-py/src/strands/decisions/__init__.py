@@ -34,6 +34,10 @@ def __getattr__(name: str) -> Any:
         from .decisions_api_decision_model import DecisionsAPIDecisionModel
 
         return DecisionsAPIDecisionModel
+    if name == "SageMakerDecisionModel":
+        from .sagemaker_decision_model import SageMakerDecisionModel
+
+        return SageMakerDecisionModel
     if name == "TypeSafeDecisionModel":
         from .typesafe_decision_model import TypeSafeDecisionModel
 
