@@ -230,14 +230,15 @@ class _BackgroundTasks(Plugin):
         return {"toolUseId": tool_use["toolUseId"], "status": "success", "content": [{"text": acknowledgement}]}
 
     def cancel_all(self) -> None:
-        """Request cancellation of every non-terminal task and drop the agent interrupts they raised.
-
-        Safe from any thread; does not wait for the tasks to settle.
-        """
+        """Cancel every non-terminal task and drop the agent interrupts they raised. Safe from any thread."""
+        interrupt_ids = [
+            interrupt["id"]
+            for task in self._task_snapshots()
+            if not is_task_status_terminal(task["status"])
+            for interrupt in task.get("interrupts", [])
+        ]
         self._manager.cancel_all()
-        self._drop_interrupts(
-            interrupt["id"] for task in self._task_snapshots() for interrupt in task.get("interrupts", [])
-        )
+        self._drop_interrupts(interrupt_ids)
 
     def assert_tool_can_run(self, tool_instance: AgentTool | None) -> None:
         """Reject a middleware-substituted tool that cannot run in the background.

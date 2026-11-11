@@ -1020,12 +1020,13 @@ async def _wait_for_task_statuses(agent: Agent, statuses: list[str]) -> None:
 async def test_cancel_background_tasks_cancels_queued_and_working_tasks_only_when_requested(
     cancel_background_tasks: bool, exp_statuses: list[str]
 ) -> None:
-    released = asyncio.Event()
+    released = threading.Event()
 
     @tool(name="work")
     async def work() -> str:
         """Perform deferred work."""
-        await released.wait()
+        while not released.is_set():  # the task may run on another event loop
+            await asyncio.sleep(0.001)
         return "done"
 
     dispatch = {
@@ -1042,12 +1043,12 @@ async def test_cancel_background_tasks_cancels_queued_and_working_tasks_only_whe
         callback_handler=None,
     )
     await agent.invoke_async("Run work.")
-    await asyncio.wait_for(_wait_for_task_statuses(agent, ["working", "queued"]), timeout=1)
+    await asyncio.wait_for(_wait_for_task_statuses(agent, ["working", "queued"]), timeout=5)
 
     agent.cancel(cancel_background_tasks=cancel_background_tasks)
     released.set()
 
-    await asyncio.wait_for(_wait_for_task_statuses(agent, exp_statuses), timeout=1)
+    await asyncio.wait_for(_wait_for_task_statuses(agent, exp_statuses), timeout=5)
 
     await agent.invoke_async("Continue.")
     tru_delivered_statuses = [
@@ -1072,8 +1073,10 @@ async def test_cancel_background_tasks_cancels_input_required_task_and_drops_its
     agent.cancel(cancel_background_tasks=True)
 
     assert not agent._interrupt_state.activated
-    await asyncio.wait_for(_wait_for_task_statuses(agent, ["cancelled"]), timeout=1)
-    await agent.invoke_async("Continue.")
+    assert [task["status"] for task in _persisted_tasks(agent) or []] == ["cancelled"]
+    resumed = await agent.invoke_async("Continue.")
+    assert resumed.stop_reason != "interrupt"
+    assert not agent._interrupt_state.activated
     tru_status = _delivered_result(agent)["content"][0]["json"]["status"]
     exp_status = "cancelled"
     assert tru_status == exp_status
@@ -1092,7 +1095,7 @@ def test_cancel_background_tasks_without_background_tasks_only_cancels_the_invoc
 @pytest.mark.asyncio
 async def test_cancel_background_tasks_from_another_thread_settles_the_waiting_invocation() -> None:
     started = threading.Event()
-    cancelled = asyncio.Event()
+    cancelled = threading.Event()
 
     @tool(name="work")
     async def work() -> str:
@@ -1116,7 +1119,7 @@ async def test_cancel_background_tasks_from_another_thread_settles_the_waiting_i
     canceller.start()
     await asyncio.wait_for(agent.invoke_async("Run work."), timeout=2)
     canceller.join(timeout=1)
-    await asyncio.wait_for(cancelled.wait(), timeout=1)
+    assert await asyncio.to_thread(cancelled.wait, 1)
 
     await agent.invoke_async("Continue.")
     tru_status = _delivered_result(agent)["content"][0]["json"]["status"]

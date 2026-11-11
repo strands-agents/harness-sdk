@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import copy
+import logging
 import math
 import threading
 import uuid
@@ -36,6 +37,8 @@ from ._types import (
     InProcessTaskRecord,
     InterruptStateData,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class _MiddlewareInterrupt(Protocol):
@@ -177,14 +180,20 @@ class InProcessTaskManager:
         )
 
     def cancel_all(self) -> None:
-        """Request cancellation of every non-terminal task without waiting for it. Safe from any thread."""
+        """Cancel every non-terminal task; returns once their updates are delivered. Safe from any thread."""
 
         def cancel_all() -> None:
             for record in self._engine.list():
-                if not is_task_status_terminal(record["status"]):
+                if is_task_status_terminal(record["status"]):
+                    continue
+                try:
                     self._engine.cancel(record["task_id"], reason="Cancellation requested")
+                except Exception as error:
+                    logger.warning(
+                        "task_id=<%s>, error=<%s> | background task cancellation failed", record["task_id"], error
+                    )
 
-        self._runtime.call_soon(cancel_all)
+        self._runtime.call(cancel_all)
 
     async def wait(self, task_id: str) -> BackgroundTask:
         """Wait until one task requires input or becomes terminal."""

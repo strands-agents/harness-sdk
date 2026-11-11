@@ -278,9 +278,10 @@ export interface CancelOptions {
 
   /**
    * Also cancel every queued, working, or input-required background task of
-   * this agent, whether or not an invocation is running. Background tasks keep
-   * running by default. Their cancelled results are delivered to the
-   * conversation like a cancel requested by the model.
+   * this agent immediately, even with `afterCurrentTools` and whether or not an
+   * invocation is running. Background tasks keep running by default, and a
+   * `cancelSignal` passed into an invocation never cancels them. Their cancelled
+   * results are delivered like a cancel requested by the model.
    */
   cancelBackgroundTasks?: boolean
 }

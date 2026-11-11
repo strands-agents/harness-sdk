@@ -28,9 +28,21 @@ class _BackgroundTaskRuntime:
         future = asyncio.run_coroutine_threadsafe(self._invoke(operation), loop)
         return await asyncio.wrap_future(future)
 
-    def call_soon(self, operation: Callable[[], object]) -> None:
-        """Schedule a callback on the persistent loop without waiting for it. Safe from any thread."""
-        self._ensure_started().call_soon_threadsafe(operation)
+    def call(self, operation: Callable[[], object]) -> None:
+        """Run a synchronous operation on the persistent loop and wait for the callbacks it schedules.
+
+        Safe from any thread. On the loop's own thread it runs inline and does not wait.
+        """
+        loop = self._ensure_started()
+        if threading.current_thread() is self._thread:
+            operation()
+            return
+
+        async def settle() -> None:
+            operation()
+            await asyncio.sleep(0)  # let the task-update notifications it queued run first
+
+        asyncio.run_coroutine_threadsafe(settle(), loop).result()
 
     def _ensure_started(self) -> asyncio.AbstractEventLoop:
         existing_loop = self._loop

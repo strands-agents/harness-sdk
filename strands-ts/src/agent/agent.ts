@@ -1085,9 +1085,9 @@ export class Agent implements LocalAgent, InvokableAgent {
   }
 
   /**
-   * Cancels the current agent invocation cooperatively. Idempotent; no-op when
-   * the agent is not invoking. The pending `invoke`/`stream` resolves with
-   * `stopReason: 'cancelled'`.
+   * Cancels the current agent invocation cooperatively. Idempotent; no-op for the
+   * invocation when the agent is not invoking (`cancelBackgroundTasks` still applies).
+   * The pending `invoke`/`stream` resolves with `stopReason: 'cancelled'`.
    *
    * The agent stops at the next cancellation-safe point (model streaming, before
    * tools, between sequential tool calls, or the top of a loop cycle). A tool
