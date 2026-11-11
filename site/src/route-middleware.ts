@@ -54,15 +54,10 @@ export function filterSidebarByBasePath(entries: SidebarEntry[], basePath: strin
   const matchesAnyBase = (href: string) => basePaths.some((bp) => href.startsWith(bp))
   const isExternal = (href: string) => /^https?:\/\//.test(href)
 
-  // Whether this level has any base-path match (directly or in a subgroup).
-  // External links (a project repo, say) never match a docs base path; they ride
-  // along only when a sibling anchors this level, so they can't keep an unrelated
-  // group alive in every section.
-  const hasBaseMatch = (items: SidebarEntry[]): boolean =>
-    items.some((e) =>
-      e.type === 'link' ? matchesAnyBase(e.href) : e.type === 'group' ? hasBaseMatch(e.entries) : false
-    )
-  const anchored = hasBaseMatch(entries)
+  // Whether this level has a direct base-path match. External links (a project
+  // repo, say) ride along with a sibling section landing page, but not with a
+  // match nested inside another product's subgroup.
+  const anchored = entries.some((entry) => entry.type === 'link' && matchesAnyBase(entry.href))
 
   const filtered = entries
     .map((entry) => {

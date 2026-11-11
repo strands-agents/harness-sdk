@@ -156,7 +156,7 @@ describe('structured data per page type', () => {
 
   it('configures every product with a source repository and languages', () => {
     for (const product of products) {
-      expect(product.repository, product.label).toMatch(/^https:\/\/github\.com\/strands-agents\//)
+      expect(product.repository, product.label).toMatch(/^https:\/\/github\.com\/strands-(?:agents|labs)\//)
       expect(product.languages.length, product.label).toBeGreaterThan(0)
     }
   })
