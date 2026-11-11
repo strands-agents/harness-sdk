@@ -233,7 +233,10 @@ describe('SageMakerDecisionModel', () => {
   // of failing the import, so a missing package can't be simulated there.
   describe.skipIf(!isNode)('without @aws-sdk/client-sagemaker-runtime', () => {
     afterEach(() => {
-      vi.doUnmock('@aws-sdk/client-sagemaker-runtime')
+      vi.doMock('@aws-sdk/client-sagemaker-runtime', () => ({
+        SageMakerRuntimeClient: mockSageMakerRuntimeClient,
+        InvokeEndpointCommand: mockInvokeEndpointCommand,
+      }))
       vi.resetModules()
     })
 
