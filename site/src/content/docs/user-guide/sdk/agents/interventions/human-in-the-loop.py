@@ -167,6 +167,41 @@ def custom_evaluate_example():
 
 
 # =====================
+# Auto Mode
+# =====================
+
+
+def auto_mode_example():
+    # --8<-- [start:auto_mode]
+    agent = Agent(
+        tools=[read_file, delete_files],
+        interventions=[HumanInTheLoop("auto")],
+    )
+
+    agent("Read config.json then delete /tmp/old-logs")
+    # read_file: rated safe -> runs on its own
+    # delete_files: rated risky -> pauses for approval
+    # --8<-- [end:auto_mode]
+
+
+def auto_mode_options_example():
+    # --8<-- [start:auto_mode_options]
+    agent = Agent(
+        tools=[read_file, delete_files],
+        interventions=[
+            HumanInTheLoop(
+                "auto",
+                ask="stdio",  # prompt in the terminal
+                allowed_tools=["read_file"],  # skips the decision entirely
+            ),
+        ],
+    )
+
+    agent("Read config.json then delete /tmp/old-logs")
+    # --8<-- [end:auto_mode_options]
+
+
+# =====================
 # Classifier (LLM Risk Classification)
 # =====================
 
