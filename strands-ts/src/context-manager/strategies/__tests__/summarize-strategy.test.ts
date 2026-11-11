@@ -1195,8 +1195,9 @@ describe('client-side summaries use Model.summarize', () => {
       }),
     ]
     const { agent, summarize } = mockAgent(messages)
+    const strategy = Offload.summarize('toolResultErrors').when({ blockThreshold: 100 })
 
-    expect(await perBlock().apply({ messages, agent, utilization: 0.5 })).toBe(true)
+    expect(await strategy.apply({ messages, agent, utilization: 0.5 })).toBe(true)
 
     expect(turns(summarize.mock.calls[0]![0])).toEqual([
       {
