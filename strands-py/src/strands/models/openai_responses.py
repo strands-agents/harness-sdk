@@ -18,13 +18,14 @@ metadata:
 Docs: https://platform.openai.com/docs/api-reference/responses
 """
 
+import asyncio
 import base64
 import json
 import logging
 import mimetypes
 from collections import Counter
-from collections.abc import AsyncGenerator, AsyncIterator
-from contextlib import asynccontextmanager
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
+from contextlib import AsyncExitStack, asynccontextmanager
 from importlib.metadata import version as get_package_version
 from types import SimpleNamespace
 from typing import Any, Protocol, TypedDict, TypeVar, cast
@@ -82,6 +83,8 @@ _CONTEXT_WINDOW_OVERFLOW_MSG = "OpenAI Responses API threw context window overfl
 _RATE_LIMIT_MSG = "OpenAI Responses API threw rate limit error"
 # Input content types that accept prompt_cache_breakpoint (gpt-5.6+).
 _CACHEABLE_INPUT_TYPES = frozenset({"input_text", "input_image", "input_file"})
+# How long to keep reading a completed response so its pooled connection can be reused.
+_DRAIN_TIMEOUT_SECONDS = 0.5
 
 
 class _OpenAIResponsesStreamError(RuntimeError):
@@ -90,6 +93,19 @@ class _OpenAIResponsesStreamError(RuntimeError):
     def __init__(self, message: str | None, code: str | None) -> None:
         super().__init__(message or "OpenAI Responses API response failed")
         self.code = code
+
+
+async def _close_response_stream(response: Any) -> None:
+    """Close a streamed response, releasing its connection even when the stream was not read to the end."""
+    close = getattr(response, "close", None)
+    if close is not None:
+        await close()
+
+
+async def _read_to_end(response: AsyncIterable[Any]) -> None:
+    """Read and discard the rest of a streamed response."""
+    async for _event in response:
+        pass
 
 
 def _encode_media_to_data_url(data: bytes, format_ext: str, media_type: str = "image") -> str:
@@ -234,6 +250,28 @@ class OpenAIResponsesModel(Model):
             )
         return self.client_args
 
+    async def _drain_for_connection_reuse(self, response: AsyncIterable[Any]) -> None:
+        """Read the rest of a completed streamed response so its connection can return to the client's pool.
+
+        Only a pooled connection needs the rest of the body read; a per-request client is closed right after.
+        Best effort: the response is already complete, so a read that fails or outlasts the time limit closes the
+        response and only costs the connection. The limit bounds a server that keeps the stream open after the
+        terminal event.
+        """
+        if self._custom_client is None:
+            return
+
+        try:
+            await asyncio.wait_for(_read_to_end(response), timeout=_DRAIN_TIMEOUT_SECONDS)
+        # The transport's error types differ between openai majors (httpx on 2.x, httpx2 on 3.x).
+        except Exception as error:
+            logger.debug(
+                "error_type=<%s>, error=<%s> | failed to read the rest of the response stream after the terminal event",
+                type(error).__name__,
+                error,
+            )
+            await _close_response_stream(response)
+
     @asynccontextmanager
     async def _get_client(self) -> AsyncIterator[Any]:
         """Yield the injected client, or a per-request ``AsyncOpenAI`` that is closed afterwards."""
@@ -376,9 +414,10 @@ class OpenAIResponsesModel(Model):
 
         logger.debug("invoking OpenAI Responses API model")
 
-        async with self._get_client() as client:
+        async with self._get_client() as client, AsyncExitStack() as cleanup:
             try:
                 response = await client.responses.create(**request)
+                cleanup.push_async_callback(_close_response_stream, response)
 
                 logger.debug("streaming response from OpenAI Responses API model")
 
@@ -507,6 +546,10 @@ class OpenAIResponsesModel(Model):
                             if hasattr(event, "response") and hasattr(event.response, "usage"):
                                 final_usage = event.response.usage
                             break
+
+                # The loop stops at the terminal event; the rest of the stream must be read before the
+                # connection can be reused.
+                await self._drain_for_connection_reuse(response)
             except (openai.APIError, _OpenAIResponsesStreamError) as error:
                 error_kind = classify_openai_error(error)
                 if error_kind == "throttling":
