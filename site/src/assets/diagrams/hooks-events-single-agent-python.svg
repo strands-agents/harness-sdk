@@ -13,7 +13,7 @@
   <rect class="dg-zone" x="64" y="156" width="592" height="336" rx="8"/>
   <text class="dg-eyebrow" x="80" y="176">AGENT LOOP</text>
 
-  <rect class="dg-zone" x="80" y="192" width="208" height="156" rx="8"/>
+  <rect class="dg-zone" x="80" y="192" width="208" height="196" rx="8"/>
   <text class="dg-eyebrow" x="96" y="212">MODEL CALL</text>
 
   <rect class="dg-zone" x="400" y="192" width="240" height="284" rx="8"/>
@@ -28,14 +28,14 @@
   <path class="dg-edge" d="M184,132 V190" marker-end="url(#arrow)"/>
   <path class="dg-edge" d="M288,248 H398" marker-end="url(#arrow)"/>
   <path class="dg-edge" d="M400,288 H290" marker-end="url(#arrow)"/>
-  <path class="dg-edge" d="M184,348 V514" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M184,388 V514" marker-end="url(#arrow)"/>
 
   <!-- Edge labels -->
   <rect class="dg-mask is-on-zone" x="304" y="228" width="80" height="12" rx="2"/>
   <text class="dg-label" x="344" y="237" text-anchor="middle">TOOL CALLS</text>
   <rect class="dg-mask is-on-zone" x="314" y="268" width="60" height="12" rx="2"/>
   <text class="dg-label" x="344" y="277" text-anchor="middle">RESULTS</text>
-  <text class="dg-label" x="196" y="424">NO TOOL CALLS</text>
+  <text class="dg-label" x="196" y="444">NO TOOL CALLS</text>
 
   <!-- Event chips, in firing order -->
   <rect class="dg-node is-event" x="96" y="48" width="176" height="28" rx="6"/>
@@ -46,9 +46,11 @@
   <rect class="dg-node is-event" x="96" y="224" width="176" height="28" rx="6"/>
   <text class="dg-code" x="184" y="242" text-anchor="middle">BeforeModelCallEvent</text>
   <rect class="dg-node is-event" x="96" y="264" width="176" height="28" rx="6"/>
-  <text class="dg-code" x="184" y="282" text-anchor="middle">AfterModelCallEvent</text>
+  <text class="dg-code" x="184" y="282" text-anchor="middle">ModelStreamUpdateEvent</text>
   <rect class="dg-node is-event" x="96" y="304" width="176" height="28" rx="6"/>
-  <text class="dg-code" x="184" y="322" text-anchor="middle">MessageAddedEvent</text>
+  <text class="dg-code" x="184" y="322" text-anchor="middle">AfterModelCallEvent</text>
+  <rect class="dg-node is-event" x="96" y="344" width="176" height="28" rx="6"/>
+  <text class="dg-code" x="184" y="362" text-anchor="middle">MessageAddedEvent</text>
 
   <rect class="dg-node is-event" x="432" y="224" width="176" height="28" rx="6"/>
   <text class="dg-code" x="520" y="242" text-anchor="middle">BeforeToolsEvent</text>

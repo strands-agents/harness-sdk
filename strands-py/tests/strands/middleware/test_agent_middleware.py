@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from strands import Agent, Plugin
-from strands.hooks import AfterModelCallEvent, BeforeModelCallEvent
+from strands.hooks import AfterModelCallEvent, BeforeModelCallEvent, ModelStreamUpdateEvent
 from strands.middleware.stages import InvokeModelContext, InvokeModelResult, InvokeModelStage
 from strands.types._events import ModelStopReason, TextStreamEvent
 from strands.types.streaming import Metrics, Usage
@@ -602,6 +602,28 @@ def test_after_model_call_fires_after_middleware(model):
     _, events = hook_provider.get_events()
     event_types = [type(e) for e in events]
     assert AfterModelCallEvent in event_types
+
+
+def test_model_stream_update_fires_after_middleware(model):
+    hook_provider = MockHookProvider([ModelStreamUpdateEvent])
+    agent = Agent(model=model, callback_handler=None, hooks=[hook_provider])
+
+    async def drop_message_start(context, next_fn):
+        async for event in next_fn(context):
+            if "messageStart" not in event.get("event", {}):
+                yield event
+
+    agent.add_middleware(InvokeModelStage, drop_message_start)
+    agent("test")
+
+    tru_chunks = [event.chunk for event in hook_provider.events_received]
+    exp_chunks = [
+        {"contentBlockStart": {"start": {}}},
+        {"contentBlockDelta": {"delta": {"text": "Hello!"}}},
+        {"contentBlockStop": {}},
+        {"messageStop": {"stopReason": "end_turn"}},
+    ]
+    assert tru_chunks == exp_chunks
 
 
 # --- plugin middleware ---

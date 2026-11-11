@@ -24,7 +24,7 @@ The following diagram shows when hook events are emitted during a typical agent 
 
 <Diagram
   name="hooks-events-single-agent-python"
-  alt="Hook events in a single-agent invocation, in Python. Each stage groups its events in firing order. Request start: BeforeInvocationEvent, then MessageAddedEvent for the user's prompt. Then the agent loop. Model call: BeforeModelCallEvent, AfterModelCallEvent, then MessageAddedEvent for the model's message. If the model makes tool calls, tool execution runs: BeforeToolsEvent; then, for each tool call, BeforeToolCallEvent and AfterToolCallEvent; then AfterToolsEvent and MessageAddedEvent for the tool results, which go back to the model for the next model call. When the model makes no tool calls, the loop exits to request end: AfterInvocationEvent."
+  alt="Hook events in a single-agent invocation, in Python. Each stage groups its events in firing order. Request start: BeforeInvocationEvent, then MessageAddedEvent for the user's prompt. Then the agent loop. Model call: BeforeModelCallEvent, then ModelStreamUpdateEvent while the response streams, AfterModelCallEvent, then MessageAddedEvent for the model's message. If the model makes tool calls, tool execution runs: BeforeToolsEvent; then, for each tool call, BeforeToolCallEvent and AfterToolCallEvent; then AfterToolsEvent and MessageAddedEvent for the tool results, which go back to the model for the next model call. When the model makes no tool calls, the loop exits to request end: AfterInvocationEvent."
 />
 </Tab>
 <Tab label="TypeScript">
@@ -70,6 +70,7 @@ The following diagram shows when multi-agent hook events are emitted during orch
 | `MessageAddedEvent`                | Triggered when a message is added to the agent's conversation history                                         |
 | `BeforeModelCallEvent`             | Triggered before the model is invoked for inference                                                           |
 | `AfterModelCallEvent`              | Triggered after model invocation completes. Uses reverse callback ordering                                    |
+| `ModelStreamUpdateEvent`           | Triggered for each chunk the model streams during inference. Read-only. Access via `.chunk`                   |
 | `BeforeToolsEvent`                 | Triggered before tools are executed in a batch                                                                |
 | `BeforeToolCallEvent`              | Triggered before a tool is invoked                                                                            |
 | `AfterToolCallEvent`               | Triggered after tool invocation completes. Uses reverse callback ordering                                     |
