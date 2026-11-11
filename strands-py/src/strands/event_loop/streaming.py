@@ -570,6 +570,7 @@ async def stream_messages(
     Yields:
         The reason for stopping, the final message, and the usage metrics
     """
+    # Lazy: _model_proxy imports this module at load time.
     from ..models._model_proxy import ModelProxy
 
     async for event in ModelProxy(model).stream(
