@@ -272,6 +272,7 @@ export class EmergencyTruncateStrategy implements ContextStrategy {
     if (!context.overflow) {
       const tokens = await countRequestTokens(agent, messages)
       if (agent.model.estimateUtilization(tokens) < 1.0) return false
+      if (await this._overheadFillsWindow(agent)) return false
     }
 
     const removable = messages.slice(1)
@@ -283,6 +284,21 @@ export class EmergencyTruncateStrategy implements ContextStrategy {
       return false
     }
     repairAlternation(messages)
+    return true
+  }
+
+  /**
+   * Whether the system prompt and tool specs alone fill the window, so dropping messages cannot help.
+   *
+   * Consulted only on the proactive path. An overflow signal is the provider's own verdict on a request it
+   * refused, which outranks this estimate.
+   */
+  private async _overheadFillsWindow(agent: LocalAgent): Promise<boolean> {
+    const overhead = await countRequestTokens(agent, [])
+    if (agent.model.estimateUtilization(overhead) < 1.0) return false
+    logger.warn(
+      `agentId=<${agent.id}>, overheadTokens=<${overhead}> | system prompt and tool specs alone fill the context window, skipping emergency truncation`
+    )
     return true
   }
 }

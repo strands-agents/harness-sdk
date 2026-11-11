@@ -148,7 +148,26 @@ class EmergencyTruncateStrategy(TruncateStrategy):
             utilization = context.agent.model.estimate_utilization(tokens)
             if utilization < 1.0:
                 return False
+            if await self._overhead_fills_window(context.agent):
+                return False
         return await self._apply_per_message(context)
+
+    async def _overhead_fills_window(self, agent: Agent) -> bool:
+        """Whether the system prompt and tool specs alone fill the window, so dropping messages cannot help.
+
+        Consulted only on the proactive path. An overflow signal is the provider's own verdict on a request it
+        refused, which outranks this estimate.
+        """
+        overhead = await _count_request_tokens(agent, [])
+        if agent.model.estimate_utilization(overhead) < 1.0:
+            return False
+        logger.warning(
+            "agent_id=<%s>, overhead_tokens=<%s> | system prompt and tool specs alone fill the context window, "
+            "skipping emergency truncation",
+            agent.agent_id,
+            overhead,
+        )
+        return True
 
     async def _apply_per_message(self, context: ContextState) -> bool:
         """Drop the oldest 20% of non-head messages each pass.
