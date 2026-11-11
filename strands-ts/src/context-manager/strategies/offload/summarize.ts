@@ -155,8 +155,8 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
    *
    * A server-side summary can only stand in for the conversation's exact start, so every message before `end` is
    * sent, even ones `removable` leaves out. The summary becomes an assistant message at index 1, followed by the
-   * placeholder the removed messages are retrievable under. A summary without a `provider`, which a capable model
-   * returns when its own summary request failed, is placed as a client-side marker instead.
+   * placeholder the messages it stands for are retrievable under. A summary without a `provider`, which a capable
+   * model returns when its own summary request failed, is placed as a client-side marker instead.
    *
    * @returns False when the summary failed or held no text, leaving the history unchanged
    */
@@ -185,15 +185,20 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
     const summary = providerSummary(result)
     if (summary === undefined) return this._placeTextSummary(context, model, end, summaryText(result))
 
-    const reference = await this._removedReference(messages.slice(1, end), model)
+    // Message 0 stays in the array, but a provider sending the summary as a compaction block stops sending anything
+    // before it, so the summary stands for message 0 too and a retrieval has to be able to return it.
+    const reference = await this._removedReference(messages.slice(0, end), model)
     messages.splice(1, replaced, summaryMessage(summary, reference))
     logger.debug(`summarized=<${replaced}> | summarized opening messages server-side`)
     return true
   }
 
   /**
-   * The placeholder the messages a server-side summary replaced are retrievable under, or nothing when they were not
-   * stashed — the summary then stands alone rather than carrying a reference that resolves to nothing.
+   * The placeholder the messages a server-side summary stands for are retrievable under, or nothing when they were
+   * not stashed — the summary then stands alone rather than carrying a reference that resolves to nothing.
+   *
+   * The tokens it reports cover every message the summary stands for, so a provider that keeps sending message 0 as
+   * text is over-reported by that message rather than under-reported by it.
    */
   private async _removedReference(removed: Message[], model: Model): Promise<OffloadedBlock | undefined> {
     const stashRef = await stashRemoved(this._stash, removed, this._method)

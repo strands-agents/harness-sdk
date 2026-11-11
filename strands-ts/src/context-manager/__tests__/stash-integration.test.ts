@@ -300,10 +300,11 @@ describe('Offload strategies with stash', () => {
 
       const summarizeMessages = () => Offload.summarize('*').when({ contextUtilization: '50%', preserveRecent: 1 })
 
-      it('leaves an OffloadedBlock that retrieves the messages it replaced', async () => {
+      it('leaves an OffloadedBlock that retrieves every message it stands for', async () => {
         const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
         const messages = history()
-        const removed = messages.slice(1, 4)
+        // Message 0 stays in the array but a compaction block stops it being sent, so the summary stands for it too.
+        const covered = messages.slice(0, 4)
         await stashAll(stash, messages)
 
         const acted = await summarizeMessages().apply(
@@ -317,16 +318,16 @@ describe('Offload strategies with stash', () => {
           [
             compaction,
             new OffloadedBlock({
-              text: '[Summarized: earlier messages, ~9 tokens] [ref: removed-m1]',
+              text: '[Summarized: earlier messages, ~11 tokens] [ref: removed-m0]',
               method: 'summarize',
-              ref: 'removed-m1',
-              tokens: 9,
+              ref: 'removed-m0',
+              tokens: 11,
             }),
           ],
           [new TextBlock('latest')],
         ])
-        expect(await invokeRetrievalTool(createRetrievalTool(stash), { reference: 'removed-m1' })).toEqual(
-          flattenMessagesToContent(removed)
+        expect(await invokeRetrievalTool(createRetrievalTool(stash), { reference: 'removed-m0' })).toEqual(
+          flattenMessagesToContent(covered)
         )
       })
 
@@ -337,7 +338,11 @@ describe('Offload strategies with stash', () => {
 
         await summarizeMessages().apply(makeContext(messages, { stash, utilization: 0.9, model: serverSideModel() }))
 
-        expect(messages[1]!.content).toEqual([compaction])
+        expect(messages.map((message) => message.content)).toEqual([
+          [new TextBlock('start')],
+          [compaction],
+          [new TextBlock('latest')],
+        ])
       })
     })
 
