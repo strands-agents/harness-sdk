@@ -785,9 +785,7 @@ describe('a summarized block replays the turns it sits in', () => {
     }),
     new Message({
       role: 'user',
-      content: [
-        new ToolResultBlock({ toolUseId: 't1', status: 'success', content: [new TextBlock(output), video()] }),
-      ],
+      content: [new ToolResultBlock({ toolUseId: 't1', status: 'success', content: [new TextBlock(output), video()] })],
     }),
   ]
 
@@ -807,11 +805,16 @@ describe('a summarized block replays the turns it sits in', () => {
     expect(await perBlock().apply({ messages, agent, utilization: 0.5 })).toBe(true)
 
     const [sent, options] = summarize.mock.calls[0]!
-    expect(turns(sent)).toEqual(turns(replayHistory()))
-    // The instruction closes the tool result's own turn, leaving the request in the shape the agent sent it.
+    // A copy of the live history, compared by identity: the strategy rewrites the result once the summary is back.
+    expect(sent).toEqual(messages)
+    expect(sent).not.toBe(messages)
+    // The instruction closes the tool result's own turn, and the result reaches the model as it was written.
     const streamed = turns(stream.mock.calls[0]![0])
     expect(streamed).toHaveLength(3)
-    expect(streamed[2]!.content).toHaveLength(2)
+    expect(streamed[2]!.content).toEqual([
+      replayHistory()[2]!.content[0],
+      new TextBlock(`${SUMMARIZE_GUARD}\n\n${options!.instructions}`),
+    ])
     expect(options).toEqual({
       instructions: expect.stringContaining(
         'Summarize only the result of tool call t1 from read_file in the final message above'

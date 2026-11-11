@@ -45,7 +45,7 @@ function makeContext(
 ): ContextState {
   return makeBaseContext(messages, {
     utilization,
-    overflow,
+    ...(overflow !== undefined && { overflow }),
     model: {
       modelInfo: contextWindowLimit === undefined ? {} : { limits: { contextWindow: contextWindowLimit } },
       summarize,
