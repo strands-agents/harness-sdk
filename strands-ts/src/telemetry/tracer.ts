@@ -1328,6 +1328,8 @@ export class Tracer {
           return { type: 'text', content: block.text }
         case 'injectedBlock':
           return { type: 'text', content: block.injected.text }
+        case 'summaryBlock':
+          return { type: 'text', content: block.text }
         case 'toolUseBlock':
           return { type: 'tool_call', name: block.name, id: block.toolUseId, arguments: block.input }
         case 'toolResultBlock':

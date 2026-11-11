@@ -73,6 +73,7 @@ export type {
   ReasoningBlockData,
   CachePointBlockData,
   GuardContentBlockData,
+  SummaryBlockData,
   GuardContentText,
   GuardContentImage,
   GuardQualifier,
@@ -97,6 +98,8 @@ export {
   CachePointBlock,
   GuardContentBlock,
   InjectedBlock,
+  SummaryBlock,
+  UnknownBlock,
   Message,
   JsonBlock,
   contentBlockFromData,
@@ -201,7 +204,14 @@ export {
 } from './models/streaming.js'
 
 // Model provider types
-export type { BaseModelConfig, CountTokensOptions, StreamOptions, CacheConfig } from './models/model.js'
+export type {
+  BaseModelConfig,
+  CountTokensOptions,
+  StreamOptions,
+  SummarizeOptions,
+  CacheConfig,
+} from './models/model.js'
+export type { SummarizeResult } from './models/summarize.js'
 export type { ModelInfo, ModelCapabilities, ModelLimits, PromptCaching } from './models/model-info.js'
 
 export { Model } from './models/model.js'
@@ -321,7 +331,7 @@ export type {
   OffloadStrategyBuilder,
 } from './context-manager/strategies/offload/index.js'
 export type { TruncateConfig } from './context-manager/methods/truncate.js'
-export type { SummarizeConfig } from './context-manager/methods/summarize.js'
+export type { SummarizeConfig } from './context-manager/strategies/offload/summarize.js'
 export type { StrategyPresetName } from './context-manager/presets.js'
 
 // Conversation Manager

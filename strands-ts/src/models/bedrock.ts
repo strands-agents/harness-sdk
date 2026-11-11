@@ -13,6 +13,7 @@ import {
   type CachePointBlock as BedrockCachePointBlock,
   type CacheTTL as BedrockSdkCacheTTL,
   type ContentBlock as BedrockContentBlock,
+  type ToolResultContentBlock,
   type ContentBlockDeltaEvent as BedrockContentBlockDeltaEvent,
   type ContentBlockStartEvent as BedrockContentBlockStartEvent,
   ConverseCommand,
@@ -61,7 +62,7 @@ import {
   resolveConfigMetadata,
   resolveMaxTokens,
 } from '../models/model.js'
-import { mergeModelInfo, type ModelInfo } from './model-info.js'
+import { mergeModelInfo, SERVER_SIDE_SUMMARY_OFF, type ModelInfo } from './model-info.js'
 import { THINKING_BINDING_BETA, isThinkingBindingError, thinkingWithDropBlock } from './thinking-binding.js'
 import type { ContentBlock, Message, ReasoningBlock, StopReason, ToolUseBlock } from '../types/messages.js'
 import type { AudioSource, ImageSource, VideoSource, DocumentSource } from '../types/media.js'
@@ -527,13 +528,18 @@ export class BedrockModel extends Model<BedrockModelConfig> {
   }
 
   /**
-   * Reports OpenAI models as implicitly cached, which a `modelInfo` override still wins over. The
-   * shared model info lists cache points for their OpenAI-compatible APIs, but Converse caches them
-   * implicitly and rejects cache points.
+   * Turns `serverSideSummary` off, and reports OpenAI models as implicitly cached; a `modelInfo` override still
+   * wins over both. The shared model info lists cache points for their OpenAI-compatible APIs, but Converse caches
+   * them implicitly and rejects cache points.
    */
   override get modelInfo(): ModelInfo {
-    if (!this.modelId?.toLowerCase().includes('openai.')) return super.modelInfo
-    return mergeModelInfo(super.modelInfo, { capabilities: { promptCaching: 'auto' } }, this._config.modelInfo)
+    const openai = this.modelId?.toLowerCase().includes('openai.')
+    return mergeModelInfo(
+      super.modelInfo,
+      SERVER_SIDE_SUMMARY_OFF,
+      openai ? { capabilities: { promptCaching: 'auto' } } : undefined,
+      this._config.modelInfo
+    )
   }
 
   /**
@@ -1506,36 +1512,44 @@ export class BedrockModel extends Model<BedrockModelConfig> {
         }
 
       case 'toolResultBlock': {
-        const content = block.content.map((content) => {
+        const content = block.content.flatMap((content): ToolResultContentBlock[] => {
           switch (content.type) {
+            case 'unknownBlock':
+              return []
             case 'textBlock':
-              return { text: content.text }
+              return [{ text: content.text }]
             case 'jsonBlock':
-              return { json: content.json }
+              return [{ json: content.json }]
             case 'imageBlock':
-              return {
-                image: {
-                  format: content.format as ImageFormat,
-                  source: this._formatMediaSource(content.source),
+              return [
+                {
+                  image: {
+                    format: content.format as ImageFormat,
+                    source: this._formatMediaSource(content.source),
+                  },
                 },
-              }
+              ]
             case 'videoBlock':
-              return {
-                video: {
-                  format: content.format === '3gp' ? 'three_gp' : (content.format as VideoFormat),
-                  source: this._formatMediaSource(content.source),
+              return [
+                {
+                  video: {
+                    format: content.format === '3gp' ? 'three_gp' : (content.format as VideoFormat),
+                    source: this._formatMediaSource(content.source),
+                  },
                 },
-              }
+              ]
             case 'documentBlock':
-              return {
-                document: {
-                  name: content.name,
-                  format: content.format as DocumentFormat,
-                  source: this._formatDocumentSource(content.source),
-                  ...(content.citations && { citations: content.citations }),
-                  ...(content.context && { context: content.context }),
+              return [
+                {
+                  document: {
+                    name: content.name,
+                    format: content.format as DocumentFormat,
+                    source: this._formatDocumentSource(content.source),
+                    ...(content.citations && { citations: content.citations }),
+                    ...(content.context && { context: content.context }),
+                  },
                 },
-              }
+              ]
           }
         })
 
@@ -1649,6 +1663,10 @@ export class BedrockModel extends Model<BedrockModelConfig> {
         // ModelProxy turns the ones Bedrock should see into text, so only a direct call or a modelInfo override that
         // turns temporaryMessages on gets here.
         warnOnce(logger, 'block_type=<injectedBlock> | bedrock does not send injected blocks | skipping it')
+        return undefined
+      case 'summaryBlock':
+        throw new Error(`content_type=<${block.type}> | unsupported type`)
+      case 'unknownBlock':
         return undefined
     }
   }

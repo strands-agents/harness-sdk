@@ -66,6 +66,77 @@ describe('homepage machine-readable metadata', () => {
     expect(main?.querySelectorAll('h1')).toHaveLength(1)
   })
 
+  it('highlights one product under each toolkit pillar', () => {
+    const toolkit = homepage.querySelector('.toolkit')
+    const pillars = toolkit?.querySelectorAll('.toolkit__section') ?? []
+
+    expect(toolkit?.querySelector('.toolkit__cards-title')?.tagName).toBe('H2')
+    expect(
+      pillars.map((pillar) => ({
+        title: {
+          tagName: pillar.querySelector('.toolkit__section-title')?.tagName,
+          text: pillar.querySelector('.toolkit__section-title')?.text.trim(),
+        },
+        products: pillar.querySelectorAll('.toolkit__card').map((card) => {
+          const heading = card.querySelector('.toolkit__card-slug')
+          const docsLink = card.querySelector('.toolkit__card-read')
+          return {
+            tagName: heading?.tagName,
+            text: heading?.text.trim(),
+            docs: {
+              text: docsLink?.text.trim(),
+              href: docsLink?.getAttribute('href'),
+              ariaLabel: docsLink?.getAttribute('aria-label'),
+            },
+          }
+        }),
+      }))
+    ).toEqual([
+      {
+        title: { tagName: 'H3', text: 'Build' },
+        products: [
+          {
+            tagName: 'H4',
+            text: '/harness',
+            docs: {
+              text: 'Read docs',
+              href: configuredPathWithBase('/docs/user-guide/harness/'),
+              ariaLabel: 'Read Strands harness docs',
+            },
+          },
+        ],
+      },
+      {
+        title: { tagName: 'H3', text: 'Control' },
+        products: [
+          {
+            tagName: 'H4',
+            text: '/box',
+            docs: {
+              text: 'Read docs',
+              href: configuredPathWithBase('/docs/user-guide/box/'),
+              ariaLabel: 'Read Strands Box docs',
+            },
+          },
+        ],
+      },
+      {
+        title: { tagName: 'H3', text: 'Validate' },
+        products: [
+          {
+            tagName: 'H4',
+            text: '/evals',
+            docs: {
+              text: 'Read docs',
+              href: configuredPathWithBase('/docs/user-guide/evals-sdk/'),
+              ariaLabel: 'Read Strands Evals docs',
+            },
+          },
+        ],
+      },
+    ])
+  })
+
   it('promotes distinct recent blog posts', async () => {
     const posts = await getCollection('blog', ({ data }) => !data.draft)
     posts.sort((a, b) => b.data.date.getTime() - a.data.date.getTime())
