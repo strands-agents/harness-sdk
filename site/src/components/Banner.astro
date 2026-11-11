@@ -5,38 +5,72 @@ import InstallCommand from './InstallCommand.astro';
 import { pathWithBase } from '../util/links';
 ---
 
-<section class="banner" aria-label="Introduction">
+<section class="banner" aria-labelledby="homepage-hero-title">
   <div class="banner__inner">
     <div class="banner__halftone" aria-hidden="true">
       <div class="banner__halftone-mask" style={`--halftone-mask: url("${halftone}")`} />
     </div>
     <div class="banner__gradient" aria-hidden="true" />
+
     <div class="banner__content">
-    <div class="banner__text">
-      <h1 class="banner__headline">
-        The open source<br />
-        toolkit for building<br />
-        production agents.
-      </h1>
-    </div>
-    <div class="banner__actions">
-      <div class="banner__links">
-        <a href={pathWithBase('/docs/user-guide/harness/quickstart/')} class="banner__link">
-          Quickstart
-          <span class="banner__arrow" set:html={arrow} />
-        </a>
-        <a
-          href="https://github.com/strands-agents"
-          class="banner__link"
-          target="_blank"
-          rel="noopener"
-        >
-          GitHub
-          <span class="banner__arrow" set:html={arrow} />
+      <div class="banner__copy">
+        <p class="banner__eyebrow">Open source · Python + TypeScript</p>
+        <h1 id="homepage-hero-title" class="banner__headline">
+          Build production AI agents with open source tools.
+        </h1>
+        <p class="banner__summary">
+          Strands is an open source agent framework with focused tools for context, decisions,
+          secure execution, and evaluation. Start with a complete harness or compose the agent
+          loop yourself.
+        </p>
+
+        <div class="banner__actions">
+          <a
+            href={pathWithBase('/docs/user-guide/harness/quickstart/')}
+            class="banner__action banner__action--primary"
+          >
+            Build your first agent
+            <span class="banner__arrow" set:html={arrow} />
+          </a>
+          <a
+            href={pathWithBase('/docs/user-guide/sdk/quickstart/overview/')}
+            class="banner__action banner__action--secondary"
+          >
+            Start from SDK primitives
+            <span class="banner__arrow" set:html={arrow} />
+          </a>
+        </div>
+
+        <a href="#toolkit" class="banner__explore">
+          Explore every Strands tool
+          <span class="banner__explore-arrow" aria-hidden="true">↓</span>
         </a>
       </div>
-      <InstallCommand pip="pip install strands-harness" npm="npm install @strands-agents/harness" />
-    </div>
+
+      <aside class="banner__starter" aria-label="Fastest way to start">
+        <div class="banner__starter-kicker">
+          <span class="banner__starter-dot" aria-hidden="true"></span>
+          <span>Fastest path</span>
+          <span class="banner__starter-slug">/harness</span>
+        </div>
+        <p class="banner__starter-title">Start with a complete agent.</p>
+        <p class="banner__starter-description">
+          Get benchmarked defaults for tools, sessions, memory, and context management. Replace
+          any part when you need more control.
+        </p>
+        <div class="banner__install">
+          <span class="banner__install-label">Install Strands harness</span>
+          <InstallCommand
+            pip="pip install strands-harness"
+            npm="npm i @strands-agents/harness"
+          />
+        </div>
+        <ul class="banner__starter-features" role="list">
+          <li>Ready-made defaults</li>
+          <li>Fully customizable</li>
+          <li>No hosted control plane</li>
+        </ul>
+      </aside>
     </div>
   </div>
 </section>
@@ -49,40 +83,30 @@ import { pathWithBase } from '../util/links';
 
   .banner__inner {
     position: relative;
-    min-height: 324px;
     max-width: 1442px;
+    min-height: 520px;
     margin: 0 auto;
     overflow: hidden;
-    display: flex;
-    align-items: center;
   }
 
   .banner__halftone {
     position: absolute;
-    top: 44px;
-    left: 55px;
-    right: 55px;
-    height: 280px;
-    /* Rounded to clearly follow the banner card's rounded aesthetic. Needs to
-       be well above the ~20px dot spacing or the corner reads as square (a
-       small radius only clips the single corner dot). */
-    border-radius: 40px;
-    overflow: hidden;
-    /* Decorative only — never intercept taps/clicks meant for content. */
-    pointer-events: none;
-    /* SVG is 750px tall; we show a 280px slice, centered, rotated 180deg. */
+    inset: 36px 55px;
     display: flex;
     align-items: center;
     justify-content: center;
+    overflow: hidden;
+    border-radius: 40px;
+    pointer-events: none;
   }
 
   .banner__halftone-mask {
     display: block;
     width: 1332px;
     height: 750px;
-    transform: rotate(180deg);
     flex: none;
     background-color: var(--halftone-dot);
+    transform: rotate(180deg);
     -webkit-mask-image: var(--halftone-mask);
     mask-image: var(--halftone-mask);
     -webkit-mask-repeat: no-repeat;
@@ -95,80 +119,111 @@ import { pathWithBase } from '../util/links';
   .banner__gradient {
     position: absolute;
     inset: 0;
-    background: linear-gradient(to bottom, transparent 0%, var(--bg) 100%);
+    background:
+      linear-gradient(to right, var(--bg) 0%, transparent 28%, transparent 72%, var(--bg) 100%),
+      linear-gradient(to bottom, transparent 50%, var(--bg) 100%);
     pointer-events: none;
   }
 
   .banner__content {
     position: relative;
-    display: flex;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: minmax(0, 1.2fr) minmax(360px, 0.8fr);
     align-items: center;
-    gap: 32px clamp(24px, 3vw, 48px);
-    padding: 69px clamp(24px, 5vw, 96px) 48px;
+    gap: clamp(40px, 6vw, 88px);
+    width: 100%;
+    max-width: 1332px;
+    min-height: 520px;
+    margin: 0 auto;
+    padding: 76px clamp(32px, 5vw, 72px) 68px;
   }
 
-  .banner__text {
+  .banner__copy {
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    align-items: flex-start;
+    min-width: 0;
+  }
+
+  .banner__eyebrow {
+    margin: 0 0 18px;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 1.3;
+    color: var(--eyebrow);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
   }
 
   .banner__headline {
+    max-width: 830px;
     margin: 0;
     font-family: 'JetBrains Mono', ui-monospace, monospace;
-    font-weight: 500;
-    /* Sized so the headline and the fixed-width install pill fit side by
-       side from 1024px, even with a classic scrollbar. */
-    font-size: clamp(30px, 3.25vw, 52px);
-    letter-spacing: 0.1em;
-    line-height: 1.2;
+    font-size: clamp(38px, 4.15vw, 62px);
+    font-weight: 600;
+    line-height: 1.08;
     color: var(--banner-headline);
-    white-space: pre;
+    letter-spacing: 0.025em;
+    text-wrap: balance;
+  }
+
+  .banner__summary {
+    max-width: 720px;
+    margin: 24px 0 0;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: clamp(17px, 1.45vw, 20px);
+    line-height: 1.5;
+    color: var(--fg);
   }
 
   .banner__actions {
     display: flex;
-    flex-direction: column;
-    align-items: stretch;
-    gap: 16px;
-    /* Hug the widest child (the install command pill) so the Quickstart /
-       GitHub links stretch to its width and the column reads as one set. */
-    width: fit-content;
-    max-width: 100%;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-top: 30px;
   }
 
-  .banner__links {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-    width: 100%;
-  }
-
-  .banner__link {
-    flex: 1;
+  .banner__action {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 6px;
-    padding: 10px 15px;
+    gap: 8px;
+    min-height: 46px;
+    padding: 11px 18px;
     font-family: 'JetBrains Mono', ui-monospace, monospace;
-    font-weight: 600;
-    font-size: 16px;
+    font-size: 14px;
+    font-weight: 700;
     line-height: 1.3;
-    color: var(--fg);
     text-decoration: none;
-    white-space: nowrap;
-    /* Sit the links on the same pill surface as the language toggle below so
-       they stay legible over the halftone backdrop and read as a set. */
-    background: var(--toggle-bg);
-    border: 1px solid var(--toggle-inactive-border);
+    border: 1px solid var(--fg);
     border-radius: 999px;
+    transition:
+      opacity 0.15s ease,
+      transform 0.15s ease;
   }
 
-  .banner__link:hover {
-    opacity: 0.75;
+  .banner__action:hover {
+    opacity: 0.82;
+    transform: translateY(-1px);
+  }
+
+  .banner__action:focus-visible,
+  .banner__explore:focus-visible {
+    outline: 3px solid var(--accent-green);
+    outline-offset: 3px;
+  }
+
+  .banner__action--primary {
+    background: var(--strands-green);
+    border-color: var(--strands-green);
+    color: var(--strands-black);
+  }
+
+  .banner__action--secondary {
+    background: var(--toggle-bg);
+    border-color: var(--toggle-inactive-border);
+    color: var(--fg);
   }
 
   .banner__arrow {
@@ -182,102 +237,222 @@ import { pathWithBase } from '../util/links';
     height: 100%;
   }
 
-  /* The install command is the shared <InstallCommand /> component; its pill
-     styling lives in InstallCommand.astro. */
+  .banner__explore {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 20px;
+    padding: 4px 0;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--fg);
+    text-underline-offset: 4px;
+  }
 
-  /* ---------- Tablet (768–1023px) ----------
-     Side-by-side no longer fits; use the mobile design's centered
-     stacked structure, at larger sizing. */
-  @media (max-width: 1023px) {
+  .banner__explore-arrow {
+    color: var(--accent-green);
+    font-size: 17px;
+    line-height: 1;
+  }
+
+  .banner__starter {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    padding: clamp(24px, 3vw, 34px);
+    background: color-mix(in srgb, var(--card-bg) 90%, transparent);
+    border: 1px solid var(--card-border);
+    border-radius: 18px;
+    box-shadow: 10px 10px 0 color-mix(in srgb, var(--accent-green) 30%, transparent);
+    backdrop-filter: blur(8px);
+  }
+
+  .banner__starter-kicker {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 24px;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1.3;
+    color: var(--fg);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .banner__starter-dot {
+    width: 8px;
+    height: 8px;
+    flex: none;
+    background: var(--strands-green);
+    border-radius: 50%;
+  }
+
+  .banner__starter-slug {
+    margin-left: auto;
+    color: var(--card-accent-orange);
+  }
+
+  .banner__starter-title {
+    margin: 0;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: clamp(23px, 2.2vw, 30px);
+    font-weight: 700;
+    line-height: 1.2;
+    color: var(--fg);
+    text-wrap: balance;
+  }
+
+  .banner__starter-description {
+    margin: 14px 0 0;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: 15px;
+    line-height: 1.5;
+    color: var(--fg);
+  }
+
+  .banner__install {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+    min-width: 0;
+    margin-top: 24px;
+  }
+
+  .banner__install-label {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--toggle-inactive-fg);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .banner__install :global(.install) {
+    width: 100%;
+    gap: 6px;
+    padding: 8px 7px 8px 12px;
+  }
+
+  .banner__install :global(.install__cmd) {
+    gap: 7px;
+    font-size: 12px;
+  }
+
+  .banner__install :global(.install__copy) {
+    padding: 6px 10px;
+    font-size: 12px;
+  }
+
+  .banner__starter-features {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 22px 0 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .banner__starter-features li {
+    padding: 5px 9px;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: 12px;
+    line-height: 1.3;
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+  }
+
+  @media (max-width: 1080px) {
     .banner__content {
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      gap: 24px;
+      grid-template-columns: 1fr;
+      gap: 36px;
+      padding-right: clamp(56px, 9vw, 112px);
+      padding-left: clamp(56px, 9vw, 112px);
+    }
+
+    .banner__starter {
       width: 100%;
-      padding: 69px 33px 48px;
-      text-align: center;
-    }
-
-    .banner__text {
-      align-items: center;
-    }
-
-    .banner__headline {
-      font-size: clamp(30px, 3.6vw, 52px);
-    }
-
-    .banner__halftone {
-      left: 33px;
-      right: 33px;
-    }
-
-    .banner__links {
-      justify-content: center;
+      max-width: 720px;
     }
   }
 
-  /* ---------- Mobile (< 768px) ---------- */
   @media (max-width: 767px) {
-    .banner__inner {
-      height: auto;
-      padding: 36px 33px 24px;
-    }
-
-    /* Halftone stays an inset rounded card on mobile (Figma 745:11980):
-       33px side margins, 14px radius, clipped by the section. On mobile the
-       headline is centered directly over the densest dots, so green text on
-       green dots was unreadable — fade the dots to a faint texture so the
-       headline reads clearly. (On desktop the text sits left of the field, so
-       full-strength dots are fine there.) */
-    .banner__halftone {
-      top: 23px;
-      left: 33px;
-      right: 33px;
-      width: auto;
-      height: 280px;
-      border-radius: 14px;
-      align-items: flex-start;
-      justify-content: flex-start;
-      opacity: 0.25;
-    }
-
-    /* Must stay `position: relative` — static content would paint UNDER the
-       absolutely-positioned halftone/gradient overlays, making the toggle
-       untappable and washing out the buttons. */
+    .banner__inner,
     .banner__content {
-      position: relative;
-      flex-direction: column;
-      align-items: center;
-      gap: 13px;
-      padding: 0;
-      width: 100%;
+      min-height: 0;
+    }
+
+    .banner__halftone {
+      inset: 22px 19px auto;
+      height: 360px;
+      border-radius: 18px;
+      opacity: 0.28;
+    }
+
+    .banner__gradient {
+      background: linear-gradient(to bottom, transparent 12%, var(--bg) 62%);
+    }
+
+    .banner__content {
+      gap: 32px;
+      padding: 54px 28px 52px;
+    }
+
+    .banner__eyebrow {
+      margin-bottom: 14px;
+      font-size: 11px;
     }
 
     .banner__headline {
-      max-width: 374px;
-      font-size: 26px;
-      font-weight: 600;
-      letter-spacing: 2.6px;
-      line-height: 1.2;
-      text-align: center;
-      white-space: normal;
+      max-width: 560px;
+      font-size: clamp(32px, 10vw, 44px);
+      letter-spacing: 0;
+    }
+
+    .banner__summary {
+      margin-top: 18px;
+      font-size: 16px;
+      line-height: 1.45;
     }
 
     .banner__actions {
-      width: fit-content;
-      max-width: 100%;
-      align-items: stretch;
-      gap: 12px;
-    }
-
-    .banner__links {
+      display: grid;
+      grid-template-columns: 1fr;
       width: 100%;
-      justify-content: center;
+      margin-top: 24px;
     }
 
-    .banner__link {
+    .banner__action {
+      width: 100%;
+      font-size: 13px;
+    }
+
+    .banner__starter {
+      padding: 22px;
+      border-radius: 14px;
+      box-shadow: 6px 6px 0 color-mix(in srgb, var(--accent-green) 30%, transparent);
+    }
+
+    .banner__starter-title {
+      font-size: 22px;
+    }
+
+    .banner__starter-description {
       font-size: 14px;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .banner__action {
+      transition: none;
+    }
+
+    .banner__action:hover {
+      transform: none;
     }
   }
 </style>

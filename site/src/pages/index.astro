@@ -27,9 +27,9 @@ const markdownHref = `${base.replace(/\/$/, '')}/index.md`;
 // Standalone pages don't inherit Starlight's head, so declare the shared
 // /og-image.png share card here too (docs/blog get theirs from Starlight).
 const ogImageHref = new URL('og-image.png', Astro.site ?? 'https://strandsagents.com').href;
-const pageTitle = 'Strands Agents | The open source toolkit for production AI agents';
+const pageTitle = 'Strands Agents | Open source tools for production AI agents';
 const pageDescription =
-  'Strands is the open source toolkit for building production AI agents in Python and TypeScript: an agent harness, policy-enforced sandboxing, and evals.';
+  'Strands is an open source agent framework and toolkit for building production AI agents in Python and TypeScript, from complete harnesses to focused tools.';
 const siteUrl = Astro.site?.origin || 'https://strandsagents.com';
 const structuredData = {
   '@context': 'https://schema.org',
@@ -54,7 +54,7 @@ const structuredData = {
     <meta property="og:image" content={ogImageHref} />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
-    <meta property="og:image:alt" content="Strands Agents — the open source toolkit for production agents" />
+    <meta property="og:image:alt" content="Strands Agents: open source tools for production AI agents" />
     <meta name="twitter:card" content="summary_large_image" />
     {Astro.site?.origin !== 'https://strandsagents.com' && <meta name="robots" content="noindex, nofollow" />}
     <meta name="twitter:title" content={pageTitle} />

@@ -6,7 +6,7 @@ import { ogImageResponse } from '../util/og-image'
 export const GET: APIRoute = async () => {
   // Headline omits "Strands" since the wordmark already carries it.
   return ogImageResponse({
-    title: 'The open source toolkit for production agents.',
-    description: 'An agent harness, policy-enforced sandboxing, and evals — in Python and TypeScript.',
+    title: 'Build production AI agents with open source tools.',
+    description: 'Start complete, compose the agent loop, or add focused tools in Python and TypeScript.',
   })
 }

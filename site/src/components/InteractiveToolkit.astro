@@ -1,344 +1,209 @@
 ---
-import plus from '../assets/toolkit/plus.svg?raw';
-import arrow from '../assets/banner/arrow.svg?raw';
-import { pathWithBase } from '../util/links';
+import arrow from '../assets/banner/arrow.svg?raw'
+import { pathWithBase } from '../util/links'
 
-// Token helpers for the expanded-card code samples — same model + colors as
-// the Use Cases terminal. `kw` = keyword/decorator, `str` = string literal;
-// bare strings render in the default foreground.
-const kw = (text: string) => ({ text, color: 'var(--code-keyword)' });
-const str = (text: string) => ({ text, color: 'var(--code-string)' });
-const t = (text: string) => ({ text });
-
-// Each card can define an `expanded` payload. When present, the `+` button
-// toggles between the compact and expanded view. `defaultOpen` renders the
-// card expanded on load.
-const cards = [
+const foundations = [
   {
-    name: 'Strands harness',
     slug: '/harness',
-    color: 'var(--card-accent-orange)',
-    description: 'A fully assembled agent harness with benchmarked defaults.',
-    tags: ['Optimized', 'CLI or library', 'Fully customizable'],
-    expanded: {
-      description:
-        'Strands harness gives you a fully assembled agent with benchmarked defaults for the system prompt, tools, memory, session management, and context management, ready to take your idea to production.',
-      features: [
-        {
-          title: 'Optimized defaults',
-          body: 'Every default is tuned and optimized. Spend your time on what makes your agent different, not on wiring up a harness piece by piece.',
-        },
-        {
-          title: 'CLI or library',
-          body: 'Build an agent with the strands CLI, or import it in Python or TypeScript.',
-        },
-        {
-          title: 'Customize anything',
-          body: 'Strands harness is built on the Strands Harness SDK, so nothing is a black box. Swap the model provider, override any default, add your own tools, or go all the way down to the primitives, with no rewrite.',
-        },
-      ],
-      viewMoreHref: pathWithBase('/docs/user-guide/harness/'),
-      codePy: [
-        { lineNo: 1, tokens: [kw('from'), t(' strands_harness '), kw('import'), t(' create_harness')] },
-        { lineNo: 2, tokens: [t('')] },
-        { lineNo: 3, tokens: [t('agent = create_harness()')] },
-        { lineNo: 4, tokens: [t('agent('), str('"Summarize what this repository does"'), t(')')] },
-      ],
-      codeTs: [
-        { lineNo: 1, tokens: [kw('import'), t(' { createHarness } '), kw('from'), t(' '), str('"@strands-agents/harness"')] },
-        { lineNo: 2, tokens: [t('')] },
-        { lineNo: 3, tokens: [kw('const'), t(' agent = '), kw('await'), t(' createHarness()')] },
-        { lineNo: 4, tokens: [kw('await'), t(' agent.invoke('), str('"Summarize what this repository does"'), t(')')] },
-      ],
-    },
+    label: 'Strands harness',
+    badge: 'Recommended',
+    accent: 'var(--card-accent-orange)',
+    title: 'Get a working agent first.',
+    description:
+      'Start with a complete agent harness and benchmarked defaults for the system prompt, tools, memory, session management, and context management.',
+    bestFor: 'Getting an agent running quickly without giving up the ability to customize it.',
+    features: ['Optimized defaults', 'CLI or library', 'Every layer overridable'],
+    href: pathWithBase('/docs/user-guide/harness/quickstart/'),
+    cta: 'Build your first agent',
   },
   {
-    name: 'Strands Box',
+    slug: '/harness-sdk',
+    label: 'Strands Harness SDK',
+    badge: 'Full control',
+    accent: 'var(--card-accent-teal)',
+    title: 'Compose the agent loop yourself.',
+    description:
+      'Build from SDK primitives when you want to choose every model provider, tool, hook, intervention, memory system, and lifecycle control.',
+    bestFor: 'Custom architectures where your team wants to own every decision.',
+    features: ['Own the agent loop', 'Tools and MCP', 'Python and TypeScript'],
+    href: pathWithBase('/docs/user-guide/sdk/quickstart/overview/'),
+    cta: 'Start from SDK primitives',
+  },
+]
+
+const modules = [
+  {
+    slug: '/stash',
+    label: 'Strands Stash',
+    badge: 'Coming soon',
+    accent: 'var(--accent-green)',
+    title: 'Keep working context available.',
+    description:
+      'Move bulky content out of the prompt without losing the original, then let the agent retrieve it when needed.',
+    useWhen: 'Long-running agents need to stay inside the model context window.',
+    href: pathWithBase('/docs/user-guide/sdk/context-management/'),
+    cta: 'Explore context management',
+  },
+  {
+    slug: '/decider',
+    label: 'Strands Decider',
+    badge: 'Labs',
+    accent: 'var(--card-accent-blue)',
+    title: 'Make focused decisions faster.',
+    description:
+      'Pick between options, rate on a scale, and route work with a calibrated confidence on every decision.',
+    useWhen: 'An agent keeps asking a general model small, closed questions.',
+    href: pathWithBase('/docs/labs/strands-decider/'),
+    cta: 'Explore Decider',
+  },
+  {
+    slug: '/shell',
+    label: 'Strands Shell',
+    badge: 'Python · Node · MCP',
+    accent: 'var(--card-accent-yellow)',
+    title: 'Give agents a constrained shell.',
+    description:
+      'Run familiar shell commands inside your process while declaring which files, URLs, and credentials the agent can reach.',
+    useWhen: 'An agent needs command-line tools without unrestricted host access.',
+    href: pathWithBase('/docs/user-guide/shell/'),
+    cta: 'Explore Shell',
+  },
+  {
     slug: '/box',
-    color: 'var(--card-accent-purple)',
-    description: 'An agent sandbox that pairs OS containment with Dogwood policy.',
-    tags: ['OS containment', 'Dogwood policy', 'Credential injection'],
-    expanded: {
-      description:
-        'Strands Box is an open source sandbox for AI agents. It runs an agent such as the Strands CLI, Claude Code, or Codex CLI on your Mac, inside a sandbox the operating system enforces and under a Dogwood policy that decides its shell commands, file operations, network requests, and MCP calls. Box is in preview, so pin your version.',
-      features: [
-        {
-          title: 'Enforced by the operating system',
-          body: 'Seatbelt on macOS sets which files and programs the agent can reach. Each tool and local MCP server runs in its own sandbox.',
-        },
-        {
-          title: 'Rules that depend on history',
-          body: 'Dogwood rules can depend on what the box already recorded: allow git push only after the tests pass, or block uploads after the agent reads customer data.',
-        },
-        {
-          title: 'Credentials injected at the gateway',
-          body: 'The egress gateway replaces credential placeholders with the real API keys and signs AWS requests. The agent holds only the placeholder.',
-        },
-      ],
-      viewMoreHref: pathWithBase('/docs/user-guide/box/'),
-      codePy: [
-        { lineNo: 1, tokens: [kw('@id'), t('('), str('"no_deletes"'), t(')')] },
-        { lineNo: 2, tokens: [kw('forbid'), t(' (principal, action == Box::Action::'), str('"fs:delete"'), t(', resource);')] },
-        { lineNo: 3, tokens: [t('')] },
-        { lineNo: 4, tokens: [kw('@id'), t('('), str('"push_after_tests"'), t(')')] },
-        { lineNo: 5, tokens: [kw('forbid'), t(' (principal, action == Box::Action::'), str('"shell:spawn"'), t(', resource)')] },
-        { lineNo: 6, tokens: [kw('when'), t(' { context.input.program == '), str('"git"'), t(' &&')] },
-        { lineNo: 7, tokens: [t('       context.input has arg1 && context.input.arg1 == '), str('"push"'), t(' }')] },
-        { lineNo: 8, tokens: [kw('unless temporal'), t(' {')] },
-        { lineNo: 9, tokens: [t('  '), kw('formerly within'), t(' 1h (Box::Action::'), str('"shell:spawn"'), t('::response{')] },
-        { lineNo: 10, tokens: [t('    input.program: '), str('"npm"'), t(', input.arg1: '), str('"test"'), t(', output.status: 0')] },
-        { lineNo: 11, tokens: [t('  })')] },
-        { lineNo: 12, tokens: [t('};')] },
-      ],
-    },
+    label: 'Strands Box',
+    badge: 'Open source',
+    accent: 'var(--card-accent-purple)',
+    title: 'Contain the whole agent.',
+    description:
+      'Pair operating-system containment with Dogwood policy for shell commands, files, network requests, and MCP calls.',
+    useWhen: 'You need enforceable boundaries around an agent and its tools.',
+    href: pathWithBase('/docs/user-guide/box/'),
+    cta: 'Explore Box',
   },
   {
-    name: 'Strands Evals',
     slug: '/evals',
-    color: 'var(--card-accent-pink)',
-    description: 'Validate your agent before you ship.',
-    tags: ['Score', 'Diagnose', 'Simulate'],
-    expanded: {
-      description:
-        'Strands Evals lets you validate your agent before you ship. Score its output and its trajectory, find the root cause when a case fails, and simulate the users and tools it will meet in production.',
-      features: [
-        {
-          title: 'Score',
-          body: '25+ built-in evaluators check a single answer, a full turn, or a whole conversation: output quality, tool selection, trajectory, goal success, and safety.',
-        },
-        {
-          title: 'Diagnose',
-          body: 'When a case fails, detectors read the trace, find the span where things went wrong, and propose a root cause. Scoring says whether; diagnosis says why.',
-        },
-        {
-          title: 'Simulate',
-          body: 'Simulators play the user or stand in for a tool, so you can score multi-turn behavior and run red-team attacks without a human in the loop.',
-        },
-      ],
-      viewMoreHref: pathWithBase('/docs/user-guide/evals-sdk/'),
-      pythonOnly: true,
-      codePy: [
-        { lineNo: 1, tokens: [kw('from'), t(' strands '), kw('import'), t(' Agent')] },
-        { lineNo: 2, tokens: [kw('from'), t(' strands_evals '), kw('import'), t(' eval_task, Case, Experiment')] },
-        { lineNo: 3, tokens: [kw('from'), t(' strands_evals.evaluators '), kw('import'), t(' OutputEvaluator')] },
-        { lineNo: 4, tokens: [t('')] },
-        { lineNo: 5, tokens: [kw('@eval_task'), t('()')] },
-        { lineNo: 6, tokens: [kw('def'), t(' task():')] },
-        { lineNo: 7, tokens: [t('    '), kw('return'), t(' Agent(system_prompt='), str('"You are helpful."'), t(')')] },
-        { lineNo: 8, tokens: [t('')] },
-        { lineNo: 9, tokens: [t('cases = [Case[str, str](')] },
-        { lineNo: 10, tokens: [t('  input='), str('"Capital of France?"'), t(', expected_output='), str('"Paris"'), t(')]')] },
-        { lineNo: 11, tokens: [t('')] },
-        { lineNo: 12, tokens: [t('Experiment[str, str](cases=cases,')] },
-        { lineNo: 13, tokens: [t('  evaluators=[OutputEvaluator(rubric='), str('"Correct?"'), t(')],')] },
-        { lineNo: 14, tokens: [t(').run_evaluations(task)')] },
-      ],
-    },
+    label: 'Strands Evals',
+    badge: 'Python',
+    accent: 'var(--card-accent-pink)',
+    title: 'Validate behavior before you ship.',
+    description:
+      'Score output and trajectories, diagnose the root cause of failures, and simulate the users and tools an agent will meet.',
+    useWhen: 'You need evidence that an agent behaves as intended.',
+    href: pathWithBase('/docs/user-guide/evals-sdk/'),
+    cta: 'Explore Evals',
   },
-];
-
-function cardFor(slug: string) {
-  const card = cards.find((candidate) => candidate.slug === slug);
-  if (!card) throw new Error(`Missing toolkit card: ${slug}`);
-  return card;
-}
-
-const pillars = [
-  { title: 'Build', cards: [cardFor('/harness')] },
-  { title: 'Control', cards: [cardFor('/box')] },
-  { title: 'Validate', cards: [cardFor('/evals')] },
-];
-
+]
 ---
 
-<section class="toolkit" aria-label="Strands toolkit">
+<section id="toolkit" class="toolkit" aria-labelledby="toolkit-title">
   <div class="toolkit__inner">
-    <div class="toolkit__cards">
-      <div class="toolkit__cards-header">
-        <span class="toolkit__cards-branch toolkit__cards-branch--left" aria-hidden="true"></span>
-        <h2 class="toolkit__cards-title">The Strands toolkit</h2>
-        <span class="toolkit__cards-branch toolkit__cards-branch--right" aria-hidden="true"></span>
-      </div>
-      <div class="toolkit__cards-grid">
-        {pillars.map((pillar) => (
-          <section class="toolkit__section">
-            <h3 class="toolkit__section-title">{pillar.title}</h3>
-            <div class="toolkit__section-cards">
-              {pillar.cards.map((card) => (
-                <article
-                  class:list={[
-                    'toolkit__card',
-                    card.expanded && 'toolkit__card--expandable',
-                    card.defaultOpen && 'is-open',
-                  ]}
-                  style={`--accent: ${card.color};`}
-                  data-expandable={card.expanded ? '' : undefined}
-                >
-                  {/* Compact view: always rendered, hidden when card is open. */}
-                  <div class="toolkit__card-compact">
-                    <h4 class="toolkit__card-slug">{card.slug}</h4>
-                    <p class="toolkit__card-desc">{card.description}</p>
-                    <ul class="toolkit__card-tags" role="list">
-                      {card.tags.map((tag) => (
-                        <li class="toolkit__card-tag">{tag}</li>
-                      ))}
-                    </ul>
-                    <a
-                      href={card.expanded.viewMoreHref}
-                      class="toolkit__card-read"
-                      aria-label={`Read ${card.name} docs`}
-                    >
-                      Read docs
-                      <span class="toolkit__card-read-arrow" set:html={arrow} />
-                    </a>
-                  </div>
+    <header class="toolkit__header">
+      <p class="toolkit__eyebrow">Choose where to start</p>
+      <h2 id="toolkit-title" class="toolkit__title">
+        Start complete, or build from the loop up.
+      </h2>
+      <p class="toolkit__lede">
+        Strands gives you two foundations for building agents. Pick the assembled
+        harness for the fastest path, or use SDK primitives when you need to own
+        every decision.
+      </p>
+    </header>
 
-                  {card.expanded && (
-                    <div class="toolkit__card-expanded">
-                      <h4 class="toolkit__card-slug toolkit__card-slug--expanded">
-                        {card.slug}
-                      </h4>
-                      <div class="toolkit__card-expanded-body">
-                        <div class="toolkit__card-expanded-text">
-                          <p class="toolkit__card-expanded-desc">
-                            {card.expanded.description}
-                          </p>
-                          <ul class="toolkit__card-features" role="list">
-                            {card.expanded.features.map((f) => (
-                              <li class="toolkit__card-feature">
-                                <span
-                                  class="toolkit__card-feature-bullet"
-                                  aria-hidden="true"
-                                ></span>
-                                <p class="toolkit__card-feature-text">
-                                  <strong>{f.title}</strong> {f.body}
-                                </p>
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                        {card.expanded.codePy && (
-                          <div class="toolkit__card-terminal">
-                            <header class="toolkit__card-terminal-header">
-                              <div class="toolkit__card-terminal-dots" aria-hidden="true">
-                                <span class="toolkit__card-terminal-dot toolkit__card-terminal-dot--red" />
-                                <span class="toolkit__card-terminal-dot toolkit__card-terminal-dot--yellow" />
-                                <span class="toolkit__card-terminal-dot toolkit__card-terminal-dot--green" />
-                              </div>
-                              <button
-                                type="button"
-                                class="toolkit__card-terminal-copy"
-                                aria-label="Copy code"
-                              >
-                                <svg
-                                  class="toolkit__card-terminal-copy-icon toolkit__card-terminal-copy-icon--copy"
-                                  viewBox="0 0 16 19"
-                                  fill="none"
-                                  aria-hidden="true"
-                                >
-                                  <rect
-                                    x="4.5"
-                                    y="0.5"
-                                    width="11"
-                                    height="14"
-                                    rx="1.5"
-                                    stroke="currentColor"
-                                  />
-                                  <rect
-                                    x="0.5"
-                                    y="4.5"
-                                    width="11"
-                                    height="14"
-                                    rx="1.5"
-                                    fill="var(--terminal-bg)"
-                                    stroke="currentColor"
-                                  />
-                                </svg>
-                                <svg
-                                  class="toolkit__card-terminal-copy-icon toolkit__card-terminal-copy-icon--check"
-                                  viewBox="0 0 16 16"
-                                  fill="none"
-                                  aria-hidden="true"
-                                >
-                                  <path
-                                    d="M13.5 4.5L6.5 11.5L3 8"
-                                    stroke="currentColor"
-                                    stroke-width="2"
-                                    stroke-linecap="round"
-                                    stroke-linejoin="round"
-                                  />
-                                </svg>
-                                <span class="toolkit__card-terminal-copy-label">copy</span>
-                              </button>
-                            </header>
-                            {/* TypeScript panel (only for cards that have a TS
-                                variant). Hidden unless the current language is TS. */}
-                            {card.expanded.codeTs && (
-                              <pre
-                                class="toolkit__card-terminal-code"
-                                data-lang-code="typescript"
-                                hidden
-                              ><code>{card.expanded.codeTs.map((row) => (
-                                <div class="toolkit__card-terminal-row">
-                                  <span class="toolkit__card-terminal-lineno">{row.lineNo}</span>
-                                  <span class="toolkit__card-terminal-line">{row.tokens.map((tok) => (
-                                    tok.color ? <span style={`color: ${tok.color};`}>{tok.text}</span> : <span>{tok.text}</span>
-                                  ))}</span>
-                                </div>
-                              ))}</code></pre>
-                            )}
-                            {/* Python panel. Always present; the default view. */}
-                            <pre
-                              class="toolkit__card-terminal-code"
-                              data-lang-code="python"
-                            ><code>{card.expanded.codePy.map((row) => (
-                              <div class="toolkit__card-terminal-row">
-                                <span class="toolkit__card-terminal-lineno">{row.lineNo}</span>
-                                <span class="toolkit__card-terminal-line">{row.tokens.map((tok) => (
-                                  tok.color ? <span style={`color: ${tok.color};`}>{tok.text}</span> : <span>{tok.text}</span>
-                                ))}</span>
-                              </div>
-                            ))}</code></pre>
-                            {/* Python-only note (e.g. /evals): shown only when the
-                                current language is TS, since there's no TS variant. */}
-                            {card.expanded.pythonOnly && (
-                              <p class="toolkit__card-terminal-note" data-python-only-note hidden>
-                                The Evals SDK is Python-only.
-                              </p>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                      {card.expanded.viewMoreHref && (
-                        <a
-                          href={card.expanded.viewMoreHref}
-                          class="toolkit__card-view-more"
-                        >
-                          View more
-                          <span
-                            class="toolkit__card-view-more-arrow"
-                            set:html={arrow}
-                          />
-                        </a>
-                      )}
-                    </div>
-                  )}
+    <div class="toolkit__foundations" role="list" aria-label="Agent-building foundations">
+      {foundations.map((foundation, index) => (
+        <article
+          class="foundation-card"
+          role="listitem"
+          style={`--accent: ${foundation.accent};`}
+        >
+          <div class="foundation-card__topline">
+            <span class="foundation-card__number" aria-hidden="true">
+              {String(index + 1).padStart(2, '0')}
+            </span>
+            <span class="foundation-card__badge">{foundation.badge}</span>
+          </div>
 
-                  <button
-                    type="button"
-                    class="toolkit__card-open"
-                    aria-label={`Toggle ${card.slug} details`}
-                    aria-expanded={card.defaultOpen ? 'true' : 'false'}
-                    data-toggle
-                  >
-                    <span class="toolkit__card-open-icon" set:html={plus} />
-                  </button>
-                </article>
-              ))}
-            </div>
-          </section>
-        ))}
+          <div class="foundation-card__heading">
+            <p class="foundation-card__slug">{foundation.slug}</p>
+            <h3 class="foundation-card__title">{foundation.title}</h3>
+          </div>
+
+          <p class="foundation-card__description">{foundation.description}</p>
+
+          <div class="foundation-card__best-for">
+            <span class="foundation-card__best-for-label">Best when</span>
+            <p>{foundation.bestFor}</p>
+          </div>
+
+          <ul class="foundation-card__features">
+            {foundation.features.map((feature) => (
+              <li>
+                <span aria-hidden="true"></span>
+                {feature}
+              </li>
+            ))}
+          </ul>
+
+          <a
+            class="foundation-card__cta"
+            href={foundation.href}
+            aria-label={`${foundation.cta} with ${foundation.label}`}
+          >
+            {foundation.cta}
+            <span class="foundation-card__arrow" set:html={arrow} />
+          </a>
+        </article>
+      ))}
+    </div>
+
+    <div class="toolkit__divider" aria-hidden="true">
+      <span></span>
+      <span></span>
+      <span></span>
+    </div>
+
+    <header class="toolkit__modules-header">
+      <div>
+        <p class="toolkit__eyebrow">Add only what you need</p>
+        <h2 class="toolkit__modules-title">
+          Focused tools for the rest of the agent stack.
+        </h2>
       </div>
+      <p class="toolkit__modules-lede">
+        Use them with Strands, or bring them into an agent you already have.
+      </p>
+    </header>
+
+    <div class="toolkit__modules" role="list" aria-label="Focused Strands tools">
+      {modules.map((module) => (
+        <article
+          class="module-card"
+          role="listitem"
+          style={`--accent: ${module.accent};`}
+        >
+          <div class="module-card__topline">
+            <p class="module-card__slug">{module.slug}</p>
+            <span class="module-card__badge">{module.badge}</span>
+          </div>
+
+          <h3 class="module-card__title">{module.title}</h3>
+          <p class="module-card__description">{module.description}</p>
+
+          <div class="module-card__use-when">
+            <span>Use when</span>
+            <p>{module.useWhen}</p>
+          </div>
+
+          <a
+            class="module-card__cta"
+            href={module.href}
+            aria-label={`${module.cta}: ${module.label}`}
+          >
+            {module.cta}
+            <span class="module-card__arrow" set:html={arrow} />
+          </a>
+        </article>
+      ))}
     </div>
   </div>
 </section>
@@ -347,800 +212,507 @@ const pillars = [
   .toolkit {
     background: var(--bg);
     color: var(--fg);
-    padding: 64px 55px;
+    padding: 96px 55px 104px;
+    scroll-margin-top: var(--sl-nav-height, 84px);
   }
 
   .toolkit__inner {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 80px;
     max-width: 1332px;
     margin: 0 auto;
   }
 
-  .toolkit__cards {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 32px;
-    width: 100%;
-    /* Cards grid spans the full diagram width (1332px): three equal-width
-       cards per row, with 24px gaps. */
-    max-width: 1332px;
-  }
-
-  .toolkit__cards-header {
-    display: flex;
-    align-items: flex-start;
-    gap: 0;
-    width: 100%;
-    justify-content: center;
-  }
-
-  /* Each branch is a dashed horizontal line + a vertical stub dropping
-     down with an arrow. Text sits at the same height as the horizontal
-     line so it appears inline/centered on it. */
-  .toolkit__cards-branch {
-    flex: 1;
-    max-width: 340px;
-    height: 40px;
-    border-top: 1.5px dashed var(--fg);
-    position: relative;
-  }
-
-  .toolkit__cards-branch--left {
-    border-left: 1.5px dashed var(--fg);
-  }
-
-  .toolkit__cards-branch--right {
-    border-right: 1.5px dashed var(--fg);
-  }
-
-  /* Downward arrow at the vertical stub bottom. */
-  .toolkit__cards-branch::after {
-    content: '';
-    position: absolute;
-    bottom: -6px;
-    width: 0;
-    height: 0;
-    border-left: 5px solid transparent;
-    border-right: 5px solid transparent;
-    border-top: 8px solid var(--fg);
-  }
-
-  .toolkit__cards-branch--left::after {
-    left: -1px;
-    transform: translateX(-50%);
-  }
-
-  .toolkit__cards-branch--right::after {
-    right: -1px;
-    transform: translateX(50%);
-  }
-
-  .toolkit__cards-title {
-    margin: 0;
-    padding: 0 16px;
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
-    font-weight: 700;
-    font-size: 20px;
-    line-height: 1.3;
-    color: var(--fg);
-    white-space: nowrap;
-    /* Pull the text up so the dashed line runs through its vertical center. */
-    transform: translateY(-50%);
-  }
-
-  .toolkit__cards-grid {
+  .toolkit__header {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 24px;
-    width: 100%;
-    /* Ease the column reflow when a card opens/closes so the expand isn't an
-       instant jump. */
-    transition: grid-template-columns 0.3s ease;
+    grid-template-columns: minmax(0, 1.25fr) minmax(280px, 0.75fr);
+    gap: 18px 64px;
+    align-items: end;
+    margin-bottom: 40px;
   }
 
-  /* Each grid cell is a pillar with one or more product cards. */
-  .toolkit__section {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    min-width: 0;
-  }
-
-  .toolkit__section-title {
+  .toolkit__eyebrow {
+    grid-column: 1 / -1;
     margin: 0;
     font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 13px;
     font-weight: 700;
-    font-size: 16px;
-    letter-spacing: 1.6px;
-    text-transform: uppercase;
     line-height: 1.3;
-    text-align: center;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--eyebrow);
+  }
+
+  .toolkit__title,
+  .toolkit__modules-title {
+    margin: 0;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-weight: 500;
+    letter-spacing: -0.035em;
     color: var(--fg);
   }
 
-  .toolkit__section-cards {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    flex: 1;
+  .toolkit__title {
+    max-width: 850px;
+    font-size: clamp(38px, 4vw, 60px);
+    line-height: 1.06;
   }
 
-  @media (min-width: 1024px) {
-    .toolkit__section-cards > .toolkit__card:not(.is-open) {
-      flex: 1;
-    }
+  .toolkit__lede,
+  .toolkit__modules-lede {
+    margin: 0;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: 18px;
+    line-height: 1.5;
+    color: var(--fg);
+    opacity: 0.76;
   }
 
-  /* When a card is expanded, its pillar widens to 2fr while the other two
-     stay 1fr. The wide track follows the open card's pillar. */
-  .toolkit__cards-grid:has(.toolkit__card.is-open) .toolkit__section {
-    align-self: start;
-  }
-  .toolkit__cards-grid:has(.toolkit__section:nth-child(3n + 1) .toolkit__card.is-open) {
-    grid-template-columns: 2fr 1fr 1fr;
-  }
-  .toolkit__cards-grid:has(.toolkit__section:nth-child(3n + 2) .toolkit__card.is-open) {
-    grid-template-columns: 1fr 2fr 1fr;
-  }
-  .toolkit__cards-grid:has(.toolkit__section:nth-child(3n + 3) .toolkit__card.is-open) {
-    grid-template-columns: 1fr 1fr 2fr;
+  .toolkit__foundations {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 24px;
   }
 
-  .toolkit__card {
+  .foundation-card,
+  .module-card {
     position: relative;
     display: flex;
     flex-direction: column;
-    box-sizing: border-box;
-    width: 100%;
-    /* Reserve room below the tags for the absolutely-positioned `+` control so
-       a wrapped second tag row never collides with it. */
-    padding: 22px 24px 40px;
-    min-height: 200px;
-    background: var(--card-bg);
-    border: 1.5px solid var(--card-border);
-    border-radius: 16px;
+    background:
+      linear-gradient(
+        145deg,
+        color-mix(in srgb, var(--accent) 9%, transparent),
+        transparent 42%
+      ),
+      var(--card-bg);
+    border: 1px solid var(--card-border);
     overflow: hidden;
   }
 
-  /* The compact view is a flex column that spreads its 3 rows across the
-     available height so the layout doesn't feel top-heavy (Figma spec). */
-  .toolkit__card-compact {
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-    flex: 1;
-  }
-
-  /* The whole compact tile opens an expandable card, so signal it's clickable. */
-  .toolkit__card--expandable .toolkit__card-compact {
-    cursor: pointer;
-  }
-
-  /* Push the tags row toward the bottom of the card. */
-  .toolkit__card-compact > .toolkit__card-tags {
-    margin-top: auto;
-  }
-
-  .toolkit__card-slug {
-    margin: 0;
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
-    font-weight: 700;
-    font-size: 24px;
-    line-height: 1.3;
-    color: var(--accent);
-  }
-
-  .toolkit__card-desc {
-    margin: 0;
-    font-family: 'Space Grotesk', system-ui, sans-serif;
-    font-weight: 400;
-    font-size: 14px;
-    line-height: 1.3;
-    color: var(--fg);
-  }
-
-  .toolkit__card-tags {
-    display: flex;
-    gap: 6px;
-    flex-wrap: wrap;
-    margin: 0;
-    padding: 0;
-    list-style: none;
-  }
-
-  .toolkit__card-tag {
-    padding: 4px 9px;
-    font-family: 'Space Grotesk', system-ui, sans-serif;
-    font-weight: 400;
-    font-size: 10px;
-    line-height: 1.3;
-    color: var(--fg);
-    border: 0.827px solid var(--accent);
-    border-radius: 999px;
-    white-space: nowrap;
-  }
-
-  .toolkit__card-read {
-    position: absolute;
-    bottom: 12px;
-    left: 24px;
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
-    font-weight: 600;
-    font-size: 12px;
-    line-height: 1.3;
-    color: var(--fg);
-    text-decoration: none;
-  }
-
-  .toolkit__card-read:hover {
-    opacity: 0.8;
-  }
-
-  .toolkit__card-read-arrow {
-    display: inline-flex;
-    width: 9px;
-    height: 8px;
-  }
-
-  .toolkit__card-read-arrow :global(svg) {
-    width: 100%;
-    height: 100%;
-  }
-
-  .toolkit__card-open {
-    position: absolute;
-    bottom: 12.65px;
-    right: 12.65px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 16px;
-    height: 16px;
-    padding: 0;
-    background: transparent;
-    border: none;
-    color: var(--accent);
-    cursor: pointer;
-  }
-
-  /* 44px hit area around the 16px icon. */
-  .toolkit__card-open::before {
+  .foundation-card::before,
+  .module-card::before {
     content: '';
     position: absolute;
-    inset: -14px;
-  }
-
-  .toolkit__card-open-icon {
-    display: inline-flex;
-    width: 100%;
-    height: 100%;
-  }
-
-  .toolkit__card-open-icon :global(svg) {
-    width: 100%;
-    height: 100%;
-  }
-
-  /* ---------- Expandable card (Figma 745:12185) ---------- */
-
-  .toolkit__card-expanded {
-    display: none;
-    flex-direction: column;
-    gap: 24px;
-    width: 100%;
-  }
-
-  .toolkit__card.is-open {
-    height: auto;
-    padding: 24px;
-    align-self: start;
-  }
-
-  .toolkit__card.is-open .toolkit__card-compact {
-    display: none;
-  }
-
-  .toolkit__card.is-open .toolkit__card-expanded {
-    display: flex;
-    /* display can't transition, so fade + slide the body in with a keyframe
-       once the card opens. */
-    animation: toolkit-expand-in 0.3s ease both;
-  }
-
-  @keyframes toolkit-expand-in {
-    from {
-      opacity: 0;
-      transform: translateY(6px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .toolkit__cards-grid {
-      transition: none;
-    }
-    .toolkit__card.is-open .toolkit__card-expanded {
-      animation: none;
-    }
-  }
-
-  .toolkit__card-slug--expanded {
-    font-size: 28px;
-  }
-
-  .toolkit__card-expanded-body {
-    /* Stack: description + features on top, the code terminal below. */
-    display: flex;
-    flex-direction: column;
-    gap: 24px;
-    align-items: stretch;
-  }
-
-  .toolkit__card-terminal {
-    width: 100%;
-    min-width: 0;
-  }
-
-  .toolkit__card-expanded-text {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 24px;
-    min-width: 0;
-  }
-
-  .toolkit__card-expanded-desc {
-    margin: 0;
-    font-family: 'Space Grotesk', system-ui, sans-serif;
-    font-size: 14px;
-    line-height: 1.4;
-    letter-spacing: 0.192px;
-    color: var(--fg);
-  }
-
-  .toolkit__card-features {
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-    margin: 0;
-    padding: 0;
-    list-style: none;
-  }
-
-  .toolkit__card-feature {
-    display: flex;
-    gap: 8px;
-    align-items: flex-start;
-  }
-
-  .toolkit__card-feature-bullet {
-    flex: none;
-    width: 6px;
-    height: 6px;
-    margin-top: 8px;
+    inset: 0 auto 0 0;
+    width: 5px;
     background: var(--accent);
   }
 
-  .toolkit__card-feature-text {
-    margin: 0;
-    font-family: 'Space Grotesk', system-ui, sans-serif;
-    font-size: 14px;
-    line-height: 1.4;
-    color: var(--fg);
+  .foundation-card {
+    padding: 30px 32px 32px 37px;
+    border-radius: 18px;
   }
 
-  .toolkit__card-feature-text strong {
-    font-weight: 700;
-  }
-
-  .toolkit__card-terminal {
-    background: var(--terminal-bg);
-    border: 0.5px solid var(--strands-charcoal-1);
-    border-radius: 8px;
-    overflow: hidden;
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
-  }
-
-  .toolkit__card-terminal-header {
+  .foundation-card__topline,
+  .module-card__topline {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 8px 12px;
-    border-bottom: 0.5px solid var(--strands-charcoal-1);
-    background: var(--terminal-bg);
+    gap: 16px;
   }
 
-  .toolkit__card-terminal-dots {
-    display: flex;
-    gap: 4px;
-  }
-
-  .toolkit__card-terminal-dot {
-    display: inline-block;
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-  }
-
-  .toolkit__card-terminal-dot--red { background: var(--strands-red); }
-  .toolkit__card-terminal-dot--yellow { background: var(--strands-yellow); }
-  .toolkit__card-terminal-dot--green { background: var(--strands-green); }
-
-  .toolkit__card-terminal-copy {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 0;
-    background: transparent;
-    border: none;
-    color: var(--terminal-fg, var(--strands-grey-600));
-    font-family: inherit;
-    font-size: 12px;
-    line-height: 1;
-    cursor: pointer;
-  }
-
-  .toolkit__card-terminal-copy-icon {
-    width: 10px;
-    height: 12px;
-  }
-
-  .toolkit__card-terminal-copy-icon--check {
-    display: none;
-    height: 10px;
-  }
-
-  /* On successful copy: green button, check icon, "copied!" label. */
-  .toolkit__card-terminal-copy.is-copied {
-    color: var(--strands-green);
-  }
-
-  .toolkit__card-terminal-copy.is-copied .toolkit__card-terminal-copy-icon--copy {
-    display: none;
-  }
-
-  .toolkit__card-terminal-copy.is-copied .toolkit__card-terminal-copy-icon--check {
-    display: inline-block;
-  }
-
-  .toolkit__card-terminal-code {
-    margin: 0;
-    padding: 16px 20px;
-    font-size: 12px;
-    line-height: 1.5;
-    color: var(--terminal-fg, var(--fg));
-    background: transparent;
-  }
-
-  .toolkit__card-terminal-note {
-    margin: 0;
-    padding: 16px 20px;
+  .foundation-card__number {
     font-family: 'JetBrains Mono', ui-monospace, monospace;
     font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    color: var(--accent);
+  }
+
+  .foundation-card__badge,
+  .module-card__badge {
+    display: inline-flex;
+    align-items: center;
+    min-height: 26px;
+    padding: 4px 10px;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1.2;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--fg);
+    border: 1px solid var(--accent);
+    border-radius: 999px;
+  }
+
+  .foundation-card__heading {
+    margin-top: 50px;
+  }
+
+  .foundation-card__slug,
+  .module-card__slug {
+    margin: 0;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-weight: 700;
+    color: var(--accent);
+  }
+
+  .foundation-card__slug {
+    font-size: 19px;
+    line-height: 1.3;
+  }
+
+  .foundation-card__title {
+    max-width: 540px;
+    margin: 14px 0 0;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: clamp(30px, 3vw, 44px);
+    font-weight: 600;
+    line-height: 1.05;
+    letter-spacing: -0.035em;
+    color: var(--fg);
+  }
+
+  .foundation-card__description {
+    max-width: 610px;
+    margin: 22px 0 0;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: 17px;
     line-height: 1.5;
-    color: var(--strands-grey-600);
-    background: transparent;
+    color: var(--fg);
   }
 
-  .toolkit__card-terminal-row {
+  .foundation-card__best-for {
+    display: grid;
+    grid-template-columns: 78px 1fr;
+    gap: 16px;
+    margin-top: 28px;
+    padding-top: 22px;
+    border-top: 1px solid var(--divider);
+  }
+
+  .foundation-card__best-for-label,
+  .module-card__use-when > span {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1.4;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+
+  .foundation-card__best-for p {
+    margin: 0;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: 14px;
+    line-height: 1.45;
+    color: var(--fg);
+    opacity: 0.78;
+  }
+
+  .foundation-card__features {
     display: flex;
-    gap: 12px;
-    min-height: 16px;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 24px 0 0;
+    padding: 0;
+    list-style: none;
   }
 
-  .toolkit__card-terminal-lineno {
-    display: inline-block;
-    width: 18px;
-    color: var(--strands-grey-600);
-    text-align: right;
-    user-select: none;
-    flex: none;
-  }
-
-  .toolkit__card-terminal-line {
-    /* Wrap long lines so the terminal never scrolls horizontally. Preserve
-       leading whitespace (indentation) via `pre-wrap`. */
-    white-space: pre-wrap;
-    word-break: break-word;
-  }
-
-  .toolkit__card-view-more {
+  .foundation-card__features li {
     display: inline-flex;
     align-items: center;
     gap: 8px;
-    padding: 10px 15px 10px 0;
+    padding: 7px 11px;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: 12px;
+    line-height: 1.2;
+    color: var(--fg);
+    border: 1px solid var(--divider);
+    border-radius: 999px;
+  }
+
+  .foundation-card__features li span {
+    width: 6px;
+    height: 6px;
+    flex: none;
+    background: var(--accent);
+    border-radius: 50%;
+  }
+
+  .foundation-card__cta,
+  .module-card__cta {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    width: fit-content;
+    margin-top: auto;
     font-family: 'JetBrains Mono', ui-monospace, monospace;
-    font-weight: 600;
-    font-size: 14px;
+    font-weight: 700;
     line-height: 1.3;
     color: var(--fg);
     text-decoration: none;
-    width: max-content;
   }
 
-  .toolkit__card-view-more:hover {
-    opacity: 0.8;
+  .foundation-card__cta {
+    padding-top: 34px;
+    font-size: 15px;
   }
 
-  .toolkit__card-view-more-arrow {
+  .foundation-card__cta:hover,
+  .module-card__cta:hover {
+    color: var(--accent);
+  }
+
+  .foundation-card__cta:focus-visible,
+  .module-card__cta:focus-visible {
+    outline: 3px solid var(--accent);
+    outline-offset: 4px;
+    border-radius: 2px;
+  }
+
+  .foundation-card__arrow,
+  .module-card__arrow {
     display: inline-flex;
     width: 11px;
     height: 9px;
   }
 
-  .toolkit__card-view-more-arrow :global(svg) {
+  .foundation-card__arrow :global(svg),
+  .module-card__arrow :global(svg) {
     width: 100%;
     height: 100%;
   }
 
-  /* When open, hide the `+` SVG and draw a horizontal `−` line via ::after. */
-  .toolkit__card.is-open .toolkit__card-open-icon {
-    display: none;
+  .toolkit__divider {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin: 88px 0;
   }
 
-  .toolkit__card.is-open .toolkit__card-open::after {
+  .toolkit__divider::before,
+  .toolkit__divider::after {
     content: '';
-    display: block;
-    width: 12px;
-    height: 2px;
-    background: var(--accent);
-    border-radius: 1px;
+    flex: 1;
+    border-top: 1px dashed var(--divider);
   }
 
-  @media (max-width: 1023px) {
-    /* Force a single column when stacked. These selectors must match the
-       specificity of the desktop expansion rules above
-       (`:has(.toolkit__section:nth-child(N) .toolkit__card.is-open)`) —
-       media queries add no specificity, so a lower-specificity selector
-       would lose and the grid would stay multi-column with the open card
-       squeezing the rest. */
-    .toolkit__cards-grid,
-    .toolkit__cards-grid:has(.toolkit__card.is-open),
-    .toolkit__cards-grid:has(.toolkit__section:nth-child(3n + 1) .toolkit__card.is-open),
-    .toolkit__cards-grid:has(.toolkit__section:nth-child(3n + 2) .toolkit__card.is-open),
-    .toolkit__cards-grid:has(.toolkit__section:nth-child(3n + 3) .toolkit__card.is-open) {
+  .toolkit__divider span {
+    display: block;
+    width: 6px;
+    height: 6px;
+    background: var(--fg);
+    transform: rotate(45deg);
+  }
+
+  .toolkit__divider span:first-child,
+  .toolkit__divider span:last-child {
+    width: 4px;
+    height: 4px;
+    opacity: 0.35;
+  }
+
+  .toolkit__modules-header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(280px, 0.48fr);
+    gap: 32px 72px;
+    align-items: end;
+    margin-bottom: 32px;
+  }
+
+  .toolkit__modules-header .toolkit__eyebrow {
+    margin-bottom: 14px;
+  }
+
+  .toolkit__modules-title {
+    max-width: 780px;
+    font-size: clamp(30px, 3.3vw, 48px);
+    line-height: 1.1;
+  }
+
+  .toolkit__modules {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 18px;
+  }
+
+  .module-card {
+    grid-column: span 2;
+    min-height: 410px;
+    padding: 24px 24px 25px 29px;
+    border-radius: 14px;
+  }
+
+  .module-card:nth-child(4) {
+    grid-column: 2 / span 2;
+  }
+
+  .module-card__slug {
+    font-size: 16px;
+    line-height: 1.3;
+  }
+
+  .module-card__title {
+    margin: 38px 0 0;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: 26px;
+    font-weight: 600;
+    line-height: 1.08;
+    letter-spacing: -0.025em;
+    color: var(--fg);
+  }
+
+  .module-card__description {
+    margin: 16px 0 0;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: 15px;
+    line-height: 1.48;
+    color: var(--fg);
+  }
+
+  .module-card__use-when {
+    margin-top: 24px;
+    padding-top: 19px;
+    border-top: 1px solid var(--divider);
+  }
+
+  .module-card__use-when p {
+    margin: 7px 0 0;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: 13px;
+    line-height: 1.45;
+    color: var(--fg);
+    opacity: 0.74;
+  }
+
+  .module-card__cta {
+    padding-top: 26px;
+    font-size: 13px;
+  }
+
+  @media (hover: hover) {
+    .foundation-card,
+    .module-card {
+      transition:
+        transform 0.2s ease,
+        box-shadow 0.2s ease;
+    }
+
+    .foundation-card:hover,
+    .module-card:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 14px 30px color-mix(in srgb, var(--accent) 13%, transparent);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .foundation-card,
+    .module-card {
+      transition: none;
+    }
+
+    .foundation-card:hover,
+    .module-card:hover {
+      transform: none;
+    }
+  }
+
+  @media (max-width: 1100px) {
+    .toolkit__header,
+    .toolkit__modules-header {
       grid-template-columns: 1fr;
     }
 
-    .toolkit__card {
-      min-height: 0;
+    .toolkit__header {
+      gap: 16px;
+    }
+
+    .toolkit__modules-header {
+      gap: 18px;
+    }
+
+    .toolkit__lede,
+    .toolkit__modules-lede {
+      max-width: 740px;
+    }
+
+    .toolkit__modules {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .module-card,
+    .module-card:nth-child(4) {
+      grid-column: auto;
+    }
+
+    .module-card:last-child {
+      grid-column: 1 / -1;
+      min-height: 330px;
     }
   }
 
   @media (max-width: 767px) {
     .toolkit {
-      padding: 40px 19px;
+      padding: 64px 19px 72px;
     }
 
-    .toolkit__inner {
-      gap: 40px;
+    .toolkit__header {
+      margin-bottom: 28px;
     }
 
-    /* Stack the toolkit cards vertically. */
-    .toolkit__cards-grid {
+    .toolkit__title {
+      font-size: clamp(34px, 10vw, 46px);
+    }
+
+    .toolkit__lede,
+    .toolkit__modules-lede {
+      font-size: 16px;
+    }
+
+    .toolkit__foundations,
+    .toolkit__modules {
       grid-template-columns: 1fr;
     }
 
-    /* Mobile branches: simple horizontal dashed lines flanking the label,
-       no downward arrows (Figma spec). Override the desktop L-bracket
-       styling by removing top/side borders and the ::after arrow. */
-    .toolkit__cards-branch {
-      display: block;
-      height: 0;
-      border: none;
-      border-top: 1.5px solid var(--fg);
-      max-width: none;
-      flex: 1;
+    .foundation-card {
+      min-height: 0;
+      padding: 22px 20px 24px 25px;
+      border-radius: 14px;
     }
 
-    .toolkit__cards-branch::after {
-      display: none;
+    .foundation-card__heading {
+      margin-top: 34px;
     }
 
-    .toolkit__cards-title {
-      font-size: 18px;
+    .foundation-card__title {
+      font-size: 31px;
     }
 
-    .toolkit__cards {
-      gap: 16px;
+    .foundation-card__description {
+      font-size: 16px;
     }
 
-    .toolkit__section-cards {
-      gap: 12px;
+    .foundation-card__best-for {
+      grid-template-columns: 1fr;
+      gap: 7px;
     }
 
-    /* Cards per Figma 745:12133: compact rows with 12px padding, hugging
-       their content; smaller type throughout. */
-    .toolkit__card {
-      padding: 12px 12px 40px;
+    .foundation-card__cta {
+      margin-top: 34px;
+      padding-top: 0;
     }
 
-    .toolkit__card-read {
-      left: 12px;
-      font-size: 11px;
+    .toolkit__divider {
+      margin: 58px 0;
     }
 
-    .toolkit__card-compact {
-      gap: 8px;
+    .toolkit__modules-title {
+      font-size: 34px;
     }
 
-    .toolkit__card-slug {
-      font-size: 15px;
+    .module-card,
+    .module-card:nth-child(4),
+    .module-card:last-child {
+      grid-column: auto;
+      min-height: 360px;
+      padding: 22px 20px 23px 25px;
     }
 
-    .toolkit__card-desc {
-      font-size: 14px;
-    }
-
-    /* Expanded card (Figma 745:12596): 17px side padding, smaller type,
-       text stacked above the terminal (handled by the <1024px block). */
-    .toolkit__card.is-open {
-      padding: 12px 17px;
-    }
-
-    .toolkit__card-slug--expanded {
-      font-size: 15px;
-    }
-
-    .toolkit__card-expanded {
-      gap: 10px;
-    }
-
-    .toolkit__card-expanded-body {
-      gap: 18px;
-    }
-
-    .toolkit__card-expanded-text {
-      gap: 8px;
-    }
-
-    .toolkit__card-expanded-desc,
-    .toolkit__card-feature-text {
-      font-size: 12px;
-    }
-
-    .toolkit__card-features {
-      gap: 8px;
-    }
-
-    .toolkit__card-feature-bullet {
-      width: 5px;
-      height: 5px;
-      margin-top: 6px;
-    }
-
-    .toolkit__card-tag {
-      font-size: 12px;
-    }
-
-    .toolkit__card-terminal-code {
-      padding: 12px 14px;
-    }
-
-    .toolkit__card-view-more {
-      font-size: 12px;
+    .module-card__title {
+      margin-top: 32px;
+      font-size: 25px;
     }
   }
 </style>
-
-<script>
-  import { attachCopyButton } from '../util/clipboard'
-  import { LANGUAGE_STORAGE_KEY, DEFAULT_LANGUAGE_LABEL } from '../util/language-preference'
-
-  // Expandable toolkit cards: toggle `.is-open` on the card and swap the
-  // `+` icon for a `−` via CSS. Only cards flagged with `data-expandable`
-  // (i.e. those that have real expanded content) participate; the others
-  // ignore clicks so the button appears inert until content ships.
-  function setCardOpen(card: HTMLElement, willOpen: boolean) {
-    // Accordion: only one card open at a time, so the widened grid track
-    // never has to accommodate two expanded cards.
-    if (willOpen) {
-      document.querySelectorAll<HTMLElement>('.toolkit__card.is-open').forEach((open) => {
-        if (open === card) return;
-        open.classList.remove('is-open');
-        open
-          .querySelector<HTMLButtonElement>('[data-toggle]')
-          ?.setAttribute('aria-expanded', 'false');
-      });
-    }
-    card.classList.toggle('is-open', willOpen);
-    card
-      .querySelector<HTMLButtonElement>('[data-toggle]')
-      ?.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
-  }
-
-  document.querySelectorAll<HTMLElement>('.toolkit__card[data-expandable]').forEach((card) => {
-    // The `+` button is the primary, keyboard-accessible control (it toggles).
-    card.querySelector<HTMLButtonElement>('[data-toggle]')?.addEventListener('click', () => {
-      setCardOpen(card, !card.classList.contains('is-open'));
-    });
-
-    // The `+` alone is easy to miss, so the whole compact tile is a click
-    // target too. The compact view is hidden once open, so this only ever
-    // opens a card — it never competes with the links/copy button that live in
-    // the expanded view.
-    card.querySelector<HTMLElement>('.toolkit__card-compact')?.addEventListener('click', (event) => {
-      if (event.target instanceof Element && event.target.closest('a')) return;
-      setCardOpen(card, true);
-    });
-  });
-
-  // Copy the expanded card's *visible* code panel.
-  document
-    .querySelectorAll<HTMLButtonElement>('.toolkit__card-terminal-copy')
-    .forEach((btn) => {
-      attachCopyButton(btn, {
-        label: btn.querySelector<HTMLElement>('.toolkit__card-terminal-copy-label'),
-        getText: () => {
-          const code = btn
-            .closest<HTMLElement>('.toolkit__card-terminal')
-            ?.querySelector<HTMLElement>('.toolkit__card-terminal-code:not([hidden]) code');
-          if (!code) return '';
-          return Array.from(code.querySelectorAll<HTMLElement>('.toolkit__card-terminal-line'))
-            .map((line) => line.textContent ?? '')
-            .join('\n');
-        },
-        track: {
-          surface: 'code:toolkit',
-          detail: () =>
-            btn
-              .closest<HTMLElement>('.toolkit__card-terminal')
-              ?.querySelector<HTMLElement>('.toolkit__card-terminal-code:not([hidden])')
-              ?.dataset.langCode,
-        },
-      });
-    });
-
-  // Language switching: keep every toolkit card's terminal in sync with the
-  // site-wide Python/TypeScript selector. Cards without a TS variant (only
-  // /evals) show their Python panel plus a "Python-only" note when TS is
-  // selected.
-
-  function applyToolkitLang(lang: string) {
-    const isPython = lang === 'Python';
-    document
-      .querySelectorAll<HTMLElement>('.toolkit__card-terminal')
-      .forEach((term) => {
-        const ts = term.querySelector<HTMLElement>('[data-lang-code="typescript"]');
-        const py = term.querySelector<HTMLElement>('[data-lang-code="python"]');
-        const note = term.querySelector<HTMLElement>('[data-python-only-note]');
-        if (isPython) {
-          if (ts) ts.hidden = true;
-          if (py) py.hidden = false;
-          if (note) note.hidden = true;
-        } else if (ts) {
-          // Card has a real TS variant.
-          ts.hidden = false;
-          if (py) py.hidden = true;
-          if (note) note.hidden = true;
-        } else {
-          // Python-only card (e.g. /evals): keep Python visible, show note.
-          if (py) py.hidden = false;
-          if (note) note.hidden = false;
-        }
-      });
-  }
-
-  function currentLang() {
-    try {
-      return localStorage.getItem(LANGUAGE_STORAGE_KEY) === 'Python' ? 'Python' : DEFAULT_LANGUAGE_LABEL;
-    } catch {
-      return 'TypeScript';
-    }
-  }
-
-  applyToolkitLang(currentLang());
-  window.addEventListener('lang-change', (e: Event) => {
-    applyToolkitLang((e as CustomEvent).detail);
-  });
-</script>

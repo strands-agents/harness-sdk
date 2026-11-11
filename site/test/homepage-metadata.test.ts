@@ -63,76 +63,84 @@ describe('homepage machine-readable metadata', () => {
 
     expect(main?.text.trim().length).toBeGreaterThan(500)
     expect(headings[0]?.tagName).toBe('H1')
+    expect(headings[0]?.text.trim()).toBe('Build production AI agents with open source tools.')
     expect(main?.querySelectorAll('h1')).toHaveLength(1)
   })
 
-  it('highlights one product under each toolkit pillar', () => {
-    const toolkit = homepage.querySelector('.toolkit')
-    const pillars = toolkit?.querySelectorAll('.toolkit__section') ?? []
+  it('routes visitors to distinct harness and SDK quickstarts', () => {
+    const primary = homepage.querySelector('.banner__action--primary')
+    const secondary = homepage.querySelector('.banner__action--secondary')
 
-    expect(toolkit?.querySelector('.toolkit__cards-title')?.tagName).toBe('H2')
+    expect(primary?.text.trim()).toContain('Build your first agent')
+    expect(primary?.getAttribute('href')).toBe(configuredPathWithBase('/docs/user-guide/harness/quickstart/'))
+    expect(secondary?.text.trim()).toContain('Start from SDK primitives')
+    expect(secondary?.getAttribute('href')).toBe(configuredPathWithBase('/docs/user-guide/sdk/quickstart/overview/'))
+    expect(homepage.querySelector('.banner__explore')?.getAttribute('href')).toBe('#toolkit')
+  })
+
+  it('separates agent-building foundations from focused tools', () => {
+    const toolkit = homepage.querySelector('.toolkit')
+    const foundations = toolkit?.querySelectorAll('.foundation-card') ?? []
+    const modules = toolkit?.querySelectorAll('.module-card') ?? []
+
+    expect(toolkit?.getAttribute('id')).toBe('toolkit')
+    expect(toolkit?.querySelector('.toolkit__title')?.tagName).toBe('H2')
     expect(
-      pillars.map((pillar) => ({
-        title: {
-          tagName: pillar.querySelector('.toolkit__section-title')?.tagName,
-          text: pillar.querySelector('.toolkit__section-title')?.text.trim(),
+      foundations.map((card) => ({
+        slug: card.querySelector('.foundation-card__slug')?.text.trim(),
+        heading: {
+          tagName: card.querySelector('.foundation-card__title')?.tagName,
+          text: card.querySelector('.foundation-card__title')?.text.trim(),
         },
-        products: pillar.querySelectorAll('.toolkit__card').map((card) => {
-          const heading = card.querySelector('.toolkit__card-slug')
-          const docsLink = card.querySelector('.toolkit__card-read')
-          return {
-            tagName: heading?.tagName,
-            text: heading?.text.trim(),
-            docs: {
-              text: docsLink?.text.trim(),
-              href: docsLink?.getAttribute('href'),
-              ariaLabel: docsLink?.getAttribute('aria-label'),
-            },
-          }
-        }),
+        href: card.querySelector('.foundation-card__cta')?.getAttribute('href'),
       }))
     ).toEqual([
       {
-        title: { tagName: 'H3', text: 'Build' },
-        products: [
-          {
-            tagName: 'H4',
-            text: '/harness',
-            docs: {
-              text: 'Read docs',
-              href: configuredPathWithBase('/docs/user-guide/harness/'),
-              ariaLabel: 'Read Strands harness docs',
-            },
-          },
-        ],
+        slug: '/harness',
+        heading: { tagName: 'H3', text: 'Get a working agent first.' },
+        href: configuredPathWithBase('/docs/user-guide/harness/quickstart/'),
       },
       {
-        title: { tagName: 'H3', text: 'Control' },
-        products: [
-          {
-            tagName: 'H4',
-            text: '/box',
-            docs: {
-              text: 'Read docs',
-              href: configuredPathWithBase('/docs/user-guide/box/'),
-              ariaLabel: 'Read Strands Box docs',
-            },
-          },
-        ],
+        slug: '/harness-sdk',
+        heading: { tagName: 'H3', text: 'Compose the agent loop yourself.' },
+        href: configuredPathWithBase('/docs/user-guide/sdk/quickstart/overview/'),
+      },
+    ])
+
+    expect(
+      modules.map((card) => ({
+        slug: card.querySelector('.module-card__slug')?.text.trim(),
+        heading: {
+          tagName: card.querySelector('.module-card__title')?.tagName,
+          text: card.querySelector('.module-card__title')?.text.trim(),
+        },
+        href: card.querySelector('.module-card__cta')?.getAttribute('href'),
+      }))
+    ).toEqual([
+      {
+        slug: '/stash',
+        heading: { tagName: 'H3', text: 'Keep working context available.' },
+        href: configuredPathWithBase('/docs/user-guide/sdk/context-management/'),
       },
       {
-        title: { tagName: 'H3', text: 'Validate' },
-        products: [
-          {
-            tagName: 'H4',
-            text: '/evals',
-            docs: {
-              text: 'Read docs',
-              href: configuredPathWithBase('/docs/user-guide/evals-sdk/'),
-              ariaLabel: 'Read Strands Evals docs',
-            },
-          },
-        ],
+        slug: '/decider',
+        heading: { tagName: 'H3', text: 'Make focused decisions faster.' },
+        href: configuredPathWithBase('/docs/labs/strands-decider/'),
+      },
+      {
+        slug: '/shell',
+        heading: { tagName: 'H3', text: 'Give agents a constrained shell.' },
+        href: configuredPathWithBase('/docs/user-guide/shell/'),
+      },
+      {
+        slug: '/box',
+        heading: { tagName: 'H3', text: 'Contain the whole agent.' },
+        href: configuredPathWithBase('/docs/user-guide/box/'),
+      },
+      {
+        slug: '/evals',
+        heading: { tagName: 'H3', text: 'Validate behavior before you ship.' },
+        href: configuredPathWithBase('/docs/user-guide/evals-sdk/'),
       },
     ])
   })
@@ -162,7 +170,9 @@ describe('homepage machine-readable metadata', () => {
     const markdown = readFileSync(new URL('../dist/index.md', import.meta.url), 'utf8')
 
     expect(markdown).toContain('# Strands Agents')
+    expect(markdown.indexOf('Harness quickstart')).toBeLessThan(markdown.indexOf('SDK quickstart'))
     expect(markdown).toContain('/docs/user-guide/sdk/quickstart/overview/index.md')
+    expect(markdown).toContain('/docs/labs/strands-decider/inference/index.md')
     expect(markdown).toContain('/examples/')
     expect(markdown).toContain('https://pypi.org/project/strands-agents/')
     expect(markdown).toContain('https://www.npmjs.com/package/@strands-agents/sdk')
