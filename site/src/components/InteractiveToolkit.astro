@@ -9,30 +9,30 @@ const foundations = [
     label: 'Strands harness',
     badge: 'Recommended',
     accent: 'var(--card-accent-orange)',
-    title: 'Get a working agent first.',
+    title: 'Start with a complete agent.',
     description:
-      'Start with a complete agent harness and benchmarked defaults for the system prompt, tools, memory, session management, and context management.',
-    bestFor: 'Getting an agent running quickly without giving up the ability to customize it.',
-    features: ['Optimized defaults', 'CLI or library', 'Every layer overridable'],
+      'Use benchmarked defaults for the system prompt, tools, memory, session management, and context management. Override any default.',
+    bestFor: 'Getting to a capable agent quickly.',
+    features: ['Benchmarked defaults', 'CLI + library', 'Every default overridable'],
     pip: 'pip install strands-harness',
     npm: 'npm i @strands-agents/harness',
     href: pathWithBase('/docs/user-guide/harness/quickstart/'),
-    cta: 'Build your first agent',
+    cta: 'Start with Strands harness',
   },
   {
     slug: '/harness-sdk',
     label: 'Strands Harness SDK',
     badge: 'Build from primitives',
     accent: 'var(--card-accent-teal)',
-    title: 'Compose the agent loop yourself.',
+    title: 'Compose your own agent loop.',
     description:
-      'Build from SDK primitives when you want to choose every model provider, tool, hook, intervention, memory system, and lifecycle control.',
-    bestFor: 'Custom architectures where your team wants to own every decision.',
-    features: ['Own the agent loop', 'Tools and MCP', 'Python and TypeScript'],
+      'Choose the model provider, tools, hooks, memory, and lifecycle controls from SDK primitives.',
+    bestFor: 'Custom architectures that need control over every layer.',
+    features: ['Agent loop primitives', 'MCP tools', 'Python + TypeScript'],
     pip: 'pip install strands-agents',
     npm: 'npm i @strands-agents/sdk',
     href: pathWithBase('/docs/user-guide/sdk/quickstart/overview/'),
-    cta: 'Start from SDK primitives',
+    cta: 'Build with SDK primitives',
   },
 ]
 
@@ -104,14 +104,7 @@ const modules = [
   <div class="toolkit__inner">
     <header class="toolkit__header">
       <p class="toolkit__eyebrow">Choose where to start</p>
-      <h2 id="toolkit-title" class="toolkit__title">
-        Start complete, or build from the loop up.
-      </h2>
-      <p class="toolkit__lede">
-        Strands gives you two foundations for building agents. Pick the assembled
-        harness for the fastest path, or use SDK primitives when you need to own
-        every decision.
-      </p>
+      <h2 id="toolkit-title" class="toolkit__title">Choose your agent foundation.</h2>
     </header>
 
     <div class="toolkit__foundations" role="list" aria-label="Agent-building foundations">
@@ -161,7 +154,7 @@ const modules = [
           <a
             class="foundation-card__cta"
             href={foundation.href}
-            aria-label={`${foundation.cta} with ${foundation.label}`}
+            aria-label={foundation.cta}
           >
             {foundation.cta}
             <span class="foundation-card__arrow" set:html={arrow} />
@@ -265,12 +258,12 @@ const modules = [
   }
 
   .toolkit__title {
-    max-width: 850px;
+    grid-column: 1 / -1;
+    max-width: none;
     font-size: clamp(38px, 4vw, 60px);
     line-height: 1.06;
   }
 
-  .toolkit__lede,
   .toolkit__modules-lede {
     margin: 0;
     font-family: 'Space Grotesk', system-ui, sans-serif;
@@ -283,6 +276,7 @@ const modules = [
   .toolkit__foundations {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: stretch;
     gap: 24px;
   }
 
@@ -650,6 +644,27 @@ const modules = [
     }
   }
 
+  @media (min-width: 1101px) {
+    @supports (grid-template-rows: subgrid) {
+      .toolkit__foundations {
+        grid-template-rows: repeat(7, auto);
+        column-gap: 24px;
+        row-gap: 0;
+      }
+
+      .foundation-card {
+        display: grid;
+        grid-row: 1 / -1;
+        grid-template-rows: subgrid;
+        height: 100%;
+      }
+
+      .foundation-card__cta {
+        margin-top: 0;
+      }
+    }
+  }
+
   @media (max-width: 1100px) {
     .toolkit__header,
     .toolkit__modules-header {
@@ -668,7 +683,6 @@ const modules = [
       gap: 18px;
     }
 
-    .toolkit__lede,
     .toolkit__modules-lede {
       max-width: 740px;
     }
@@ -701,7 +715,6 @@ const modules = [
       font-size: clamp(34px, 10vw, 46px);
     }
 
-    .toolkit__lede,
     .toolkit__modules-lede {
       font-size: 16px;
     }

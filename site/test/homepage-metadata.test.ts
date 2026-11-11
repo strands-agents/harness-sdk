@@ -85,6 +85,9 @@ describe('homepage machine-readable metadata', () => {
 
     expect(toolkit?.getAttribute('id')).toBe('toolkit')
     expect(toolkit?.querySelector('.toolkit__title')?.tagName).toBe('H2')
+    expect(toolkit?.querySelector('.toolkit__title')?.text.trim()).toBe('Choose your agent foundation.')
+    expect(toolkit?.querySelector('.toolkit__lede')).toBeNull()
+    expect(homepage.querySelector('.banner__starter-features')).toBeNull()
     expect(
       foundations.map((card) => ({
         slug: card.querySelector('.foundation-card__slug')?.text.trim(),
@@ -98,29 +101,32 @@ describe('homepage machine-readable metadata', () => {
           typescript: card.querySelector('[data-install-variant="TypeScript"]')?.text.trim(),
           copyLabel: card.querySelector('[data-install-copy]')?.getAttribute('aria-label'),
         },
+        ctaLabel: card.querySelector('.foundation-card__cta')?.getAttribute('aria-label'),
         href: card.querySelector('.foundation-card__cta')?.getAttribute('href'),
       }))
     ).toEqual([
       {
         slug: '/harness',
         badge: 'Recommended',
-        heading: { tagName: 'H3', text: 'Get a working agent first.' },
+        heading: { tagName: 'H3', text: 'Start with a complete agent.' },
         install: {
           python: 'pip install strands-harness',
           typescript: 'npm i @strands-agents/harness',
           copyLabel: 'Copy Strands harness install command',
         },
+        ctaLabel: 'Start with Strands harness',
         href: configuredPathWithBase('/docs/user-guide/harness/quickstart/'),
       },
       {
         slug: '/harness-sdk',
         badge: 'Build from primitives',
-        heading: { tagName: 'H3', text: 'Compose the agent loop yourself.' },
+        heading: { tagName: 'H3', text: 'Compose your own agent loop.' },
         install: {
           python: 'pip install strands-agents',
           typescript: 'npm i @strands-agents/sdk',
           copyLabel: 'Copy Strands Harness SDK install command',
         },
+        ctaLabel: 'Build with SDK primitives',
         href: configuredPathWithBase('/docs/user-guide/sdk/quickstart/overview/'),
       },
     ])
