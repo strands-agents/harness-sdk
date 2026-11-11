@@ -221,10 +221,9 @@ class LlamaCppModel(Model):
         else:
             timeout_obj = httpx.Timeout(timeout or 30.0)
 
-        self.client = httpx.AsyncClient(
-            base_url=self.base_url,
-            timeout=timeout_obj,
-        )
+        # A pooled httpx connection is bound to the event loop that opened it, and each synchronous
+        # Agent call runs on a new loop, so a client is created per request.
+        self.client_args: dict[str, Any] = {"base_url": self.base_url, "timeout": timeout_obj}
 
     @override
     def update_config(self, **model_config: Unpack[LlamaCppConfig]) -> None:  # type: ignore[override]
@@ -605,7 +604,8 @@ class LlamaCppModel(Model):
                 **({"tools": request["tools"]} if request.get("tools") else {}),
             }
 
-            response = await self.client.post("/tokenize", json=payload)
+            async with httpx.AsyncClient(**self.client_args) as client:
+                response = await client.post("/tokenize", json=payload)
             response.raise_for_status()
             data = response.json()
             total_tokens: int = len(data.get("tokens", []))
@@ -662,7 +662,8 @@ class LlamaCppModel(Model):
             logger.debug("request=<%s>", request)
 
             logger.debug("invoking model")
-            response = await self.client.post("/v1/chat/completions", json=request)
+            async with httpx.AsyncClient(**self.client_args) as client:
+                response = await client.post("/v1/chat/completions", json=request)
             response.raise_for_status()
 
             logger.debug("got response from model")

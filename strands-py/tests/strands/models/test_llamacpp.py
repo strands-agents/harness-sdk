@@ -1,5 +1,6 @@
 """Unit tests for llama.cpp model provider."""
 
+import asyncio
 import base64
 import json
 import logging
@@ -17,12 +18,20 @@ from strands.types.exceptions import (
 )
 
 
+@pytest.fixture
+def llamacpp_client():
+    with patch("strands.models.llamacpp.httpx.AsyncClient") as mock_client_cls:
+        mock_client = AsyncMock()
+        mock_client_cls.return_value.__aenter__.return_value = mock_client
+        yield mock_client
+
+
 def test_init_default_config() -> None:
     """Test initialization with default configuration."""
     model = LlamaCppModel()
 
     assert model.config["model_id"] == "default"
-    assert isinstance(model.client, httpx.AsyncClient)
+    assert model.client_args == {"base_url": "http://localhost:8080", "timeout": httpx.Timeout(30.0)}
     assert model.base_url == "http://localhost:8080"
 
 
@@ -394,7 +403,7 @@ def test_cache_config_cache_key_warns_and_is_not_routed() -> None:
 
 
 @pytest.mark.asyncio
-async def test_stream_basic() -> None:
+async def test_stream_basic(llamacpp_client) -> None:
     """Test basic streaming functionality."""
     model = LlamaCppModel()
 
@@ -414,31 +423,31 @@ async def test_stream_basic() -> None:
     mock_response.aiter_lines = mock_aiter_lines
     mock_response.raise_for_status = MagicMock()
 
-    with patch.object(model.client, "post", return_value=mock_response):
-        messages = [{"role": "user", "content": [{"text": "Hi"}]}]
+    llamacpp_client.post.return_value = mock_response
+    messages = [{"role": "user", "content": [{"text": "Hi"}]}]
 
-        chunks = []
-        async for chunk in model.stream(messages):
-            chunks.append(chunk)
+    chunks = []
+    async for chunk in model.stream(messages):
+        chunks.append(chunk)
 
-        # Verify we got the expected chunks
-        assert any("messageStart" in chunk for chunk in chunks)
-        assert any(
-            "contentBlockDelta" in chunk and chunk["contentBlockDelta"]["delta"]["text"] == "Hello" for chunk in chunks
-        )
-        assert any(
-            "contentBlockDelta" in chunk and chunk["contentBlockDelta"]["delta"]["text"] == " world" for chunk in chunks
-        )
-        assert any("messageStop" in chunk for chunk in chunks)
-        # Verify usage metadata is yielded after the trailing usage SSE line
-        # (regression: previously the loop broke on finish_reason and dropped this)
-        metadata_chunks = [c for c in chunks if "metadata" in c]
-        assert len(metadata_chunks) == 1, f"Expected exactly one metadata chunk, got {len(metadata_chunks)}"
-        assert "usage" in metadata_chunks[0]["metadata"]
+    # Verify we got the expected chunks
+    assert any("messageStart" in chunk for chunk in chunks)
+    assert any(
+        "contentBlockDelta" in chunk and chunk["contentBlockDelta"]["delta"]["text"] == "Hello" for chunk in chunks
+    )
+    assert any(
+        "contentBlockDelta" in chunk and chunk["contentBlockDelta"]["delta"]["text"] == " world" for chunk in chunks
+    )
+    assert any("messageStop" in chunk for chunk in chunks)
+    # Verify usage metadata is yielded after the trailing usage SSE line
+    # (regression: previously the loop broke on finish_reason and dropped this)
+    metadata_chunks = [c for c in chunks if "metadata" in c]
+    assert len(metadata_chunks) == 1, f"Expected exactly one metadata chunk, got {len(metadata_chunks)}"
+    assert "usage" in metadata_chunks[0]["metadata"]
 
 
 @pytest.mark.asyncio
-async def test_stream_surfaces_cache_read_tokens() -> None:
+async def test_stream_surfaces_cache_read_tokens(llamacpp_client) -> None:
     """A reused KV prefix is surfaced as cacheReadInputTokens, like the other cache-aware providers.
 
     llama.cpp reports the reused prefix length in usage.prompt_tokens_details.cached_tokens.
@@ -460,10 +469,10 @@ async def test_stream_surfaces_cache_read_tokens() -> None:
     mock_response.aiter_lines = mock_aiter_lines
     mock_response.raise_for_status = MagicMock()
 
-    with patch.object(model.client, "post", return_value=mock_response):
-        chunks = []
-        async for chunk in model.stream([{"role": "user", "content": [{"text": "Hi"}]}]):
-            chunks.append(chunk)
+    llamacpp_client.post.return_value = mock_response
+    chunks = []
+    async for chunk in model.stream([{"role": "user", "content": [{"text": "Hi"}]}]):
+        chunks.append(chunk)
 
     usage = next(chunk["metadata"]["usage"] for chunk in chunks if "metadata" in chunk)
     assert usage == {"inputTokens": 100, "outputTokens": 5, "totalTokens": 105, "cacheReadInputTokens": 91}
@@ -482,7 +491,7 @@ _NO_REUSE_TOKENS = {"prompt_tokens": 100, "completion_tokens": 5, "total_tokens"
     ids=["cached_zero", "details_null", "details_absent"],
 )
 @pytest.mark.asyncio
-async def test_stream_omits_cache_read_tokens_when_prefix_not_reused(usage_payload) -> None:
+async def test_stream_omits_cache_read_tokens_when_prefix_not_reused(usage_payload, llamacpp_client) -> None:
     """No reuse — cached zero, a null details object, or the field absent — yields usage with no cache-read key.
 
     The whole-dict assertion pins the ``or {}`` guard in stream() and the ``getattr(..., 0)`` default in
@@ -504,10 +513,10 @@ async def test_stream_omits_cache_read_tokens_when_prefix_not_reused(usage_paylo
     mock_response.aiter_lines = mock_aiter_lines
     mock_response.raise_for_status = MagicMock()
 
-    with patch.object(model.client, "post", return_value=mock_response):
-        chunks = []
-        async for chunk in model.stream([{"role": "user", "content": [{"text": "Hi"}]}]):
-            chunks.append(chunk)
+    llamacpp_client.post.return_value = mock_response
+    chunks = []
+    async for chunk in model.stream([{"role": "user", "content": [{"text": "Hi"}]}]):
+        chunks.append(chunk)
 
     usage = next(chunk["metadata"]["usage"] for chunk in chunks if "metadata" in chunk)
     assert usage == {"inputTokens": 100, "outputTokens": 5, "totalTokens": 105}
@@ -557,11 +566,11 @@ def test_timeout_configuration() -> None:
     """Test timeout configuration."""
     # Test that timeout configuration is accepted without error
     model = LlamaCppModel(timeout=30.0)
-    assert model.client.timeout is not None
+    assert model.client_args["timeout"] == httpx.Timeout(30.0)
 
     # Test with tuple timeout
     model2 = LlamaCppModel(timeout=(10.0, 60.0))
-    assert model2.client.timeout is not None
+    assert model2.client_args["timeout"] == httpx.Timeout(connect=10.0, read=60.0, write=None, pool=None)
 
 
 def test_max_retries_configuration() -> None:
@@ -602,7 +611,7 @@ def test_json_schema_via_params() -> None:
 
 
 @pytest.mark.asyncio
-async def test_stream_with_context_overflow_error() -> None:
+async def test_stream_with_context_overflow_error(llamacpp_client) -> None:
     """Test stream handling of context overflow errors."""
     model = LlamaCppModel()
 
@@ -615,18 +624,18 @@ async def test_stream_with_context_overflow_error() -> None:
     error = httpx.HTTPStatusError("Bad Request", request=error_response.request, response=error_response)
 
     # Mock the client to raise the error
-    with patch.object(model.client, "post", side_effect=error):
-        messages = [{"role": "user", "content": [{"text": "Very long message"}]}]
+    llamacpp_client.post.side_effect = error
+    messages = [{"role": "user", "content": [{"text": "Very long message"}]}]
 
-        with pytest.raises(ContextWindowOverflowException) as exc_info:
-            async for _ in model.stream(messages):
-                pass
+    with pytest.raises(ContextWindowOverflowException) as exc_info:
+        async for _ in model.stream(messages):
+            pass
 
-        assert "Context window exceeded" in str(exc_info.value)
+    assert "Context window exceeded" in str(exc_info.value)
 
 
 @pytest.mark.asyncio
-async def test_stream_with_server_overload_error() -> None:
+async def test_stream_with_server_overload_error(llamacpp_client) -> None:
     """Test stream handling of server overload errors."""
     model = LlamaCppModel()
 
@@ -643,14 +652,49 @@ async def test_stream_with_server_overload_error() -> None:
     )
 
     # Mock the client to raise the error
-    with patch.object(model.client, "post", side_effect=error):
-        messages = [{"role": "user", "content": [{"text": "Test"}]}]
+    llamacpp_client.post.side_effect = error
+    messages = [{"role": "user", "content": [{"text": "Test"}]}]
 
-        with pytest.raises(ModelThrottledException) as exc_info:
-            async for _ in model.stream(messages):
-                pass
+    with pytest.raises(ModelThrottledException) as exc_info:
+        async for _ in model.stream(messages):
+            pass
 
-        assert "server is busy or overloaded" in str(exc_info.value)
+    assert "server is busy or overloaded" in str(exc_info.value)
+
+
+class _LoopBoundTransport(httpx.AsyncBaseTransport):
+    """Serves a completion over a connection bound to the event loop that first used it, like a pooled one."""
+
+    def __init__(self) -> None:
+        self.loop: asyncio.AbstractEventLoop | None = None
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        self.loop = self.loop or asyncio.get_running_loop()
+        self.loop.call_soon(lambda: None)  # raises "Event loop is closed" once that loop has exited
+        body = 'data: {"choices": [{"delta": {"content": "Hi"}, "finish_reason": "stop"}]}\n\ndata: [DONE]\n\n'
+        return httpx.Response(200, text=body)
+
+
+def test_stream_succeeds_on_each_new_event_loop() -> None:
+    """Each synchronous Agent call runs stream on a new event loop, and every call succeeds."""
+    real_async_client = httpx.AsyncClient
+
+    def create_client(**client_args):
+        return real_async_client(transport=_LoopBoundTransport(), **client_args)
+
+    with patch("strands.models.llamacpp.httpx.AsyncClient", side_effect=create_client):
+        model = LlamaCppModel()
+        messages = [{"role": "user", "content": [{"text": "Hi"}]}]
+
+        async def stream_text() -> str:
+            events = [event async for event in model.stream(messages)]
+            deltas = [event["contentBlockDelta"]["delta"] for event in events if "contentBlockDelta" in event]
+            return "".join(delta["text"] for delta in deltas)
+
+        tru_texts = [asyncio.run(stream_text()), asyncio.run(stream_text())]
+
+    exp_texts = ["Hi", "Hi"]
+    assert tru_texts == exp_texts
 
 
 @pytest.mark.asyncio
@@ -1014,55 +1058,55 @@ class TestCountTokens:
         ]
 
     @pytest.mark.asyncio
-    async def test_native_count_tokens_success(self, model, messages):
+    async def test_native_count_tokens_success(self, model, messages, llamacpp_client):
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {"tokens": [1, 2, 3, 4, 5]}
         mock_response.raise_for_status = MagicMock()
-        model.client.post = AsyncMock(return_value=mock_response)
+        llamacpp_client.post.return_value = mock_response
 
         result = await model.count_tokens(messages=messages)
 
         assert result == 5
-        model.client.post.assert_called_once()
-        call_args = model.client.post.call_args
+        llamacpp_client.post.assert_called_once()
+        call_args = llamacpp_client.post.call_args
         assert call_args[0][0] == "/tokenize"
 
     @pytest.mark.asyncio
-    async def test_native_count_tokens_with_system_prompt(self, model, messages):
+    async def test_native_count_tokens_with_system_prompt(self, model, messages, llamacpp_client):
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {"tokens": list(range(10))}
         mock_response.raise_for_status = MagicMock()
-        model.client.post = AsyncMock(return_value=mock_response)
+        llamacpp_client.post.return_value = mock_response
 
         result = await model.count_tokens(messages=messages, system_prompt="Be helpful.")
 
         assert result == 10
-        call_kwargs = model.client.post.call_args[1]
+        call_kwargs = llamacpp_client.post.call_args[1]
         payload = call_kwargs["json"]
         assert payload["messages"][0]["role"] == "system"
         assert payload["messages"][0]["content"] == "Be helpful."
 
     @pytest.mark.asyncio
-    async def test_native_count_tokens_with_tool_specs(self, model, messages, tool_specs):
+    async def test_native_count_tokens_with_tool_specs(self, model, messages, tool_specs, llamacpp_client):
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {"tokens": list(range(20))}
         mock_response.raise_for_status = MagicMock()
-        model.client.post = AsyncMock(return_value=mock_response)
+        llamacpp_client.post.return_value = mock_response
 
         result = await model.count_tokens(messages=messages, tool_specs=tool_specs)
 
         assert result == 20
-        call_kwargs = model.client.post.call_args[1]
+        call_kwargs = llamacpp_client.post.call_args[1]
         payload = call_kwargs["json"]
         assert "tools" in payload
 
     @pytest.mark.asyncio
-    async def test_fallback_on_http_error(self, model, messages):
-        model.client.post = AsyncMock(
-            side_effect=httpx.HTTPStatusError("Server error", request=MagicMock(), response=MagicMock(status_code=500))
+    async def test_fallback_on_http_error(self, model, messages, llamacpp_client):
+        llamacpp_client.post.side_effect = httpx.HTTPStatusError(
+            "Server error", request=MagicMock(), response=MagicMock(status_code=500)
         )
 
         result = await model.count_tokens(messages=messages)
@@ -1071,8 +1115,8 @@ class TestCountTokens:
         assert result >= 0
 
     @pytest.mark.asyncio
-    async def test_fallback_on_connection_error(self, model, messages):
-        model.client.post = AsyncMock(side_effect=httpx.ConnectError("Connection refused"))
+    async def test_fallback_on_connection_error(self, model, messages, llamacpp_client):
+        llamacpp_client.post.side_effect = httpx.ConnectError("Connection refused")
 
         result = await model.count_tokens(messages=messages)
 
@@ -1080,8 +1124,8 @@ class TestCountTokens:
         assert result >= 0
 
     @pytest.mark.asyncio
-    async def test_fallback_logs_debug(self, model, messages, caplog):
-        model.client.post = AsyncMock(side_effect=RuntimeError("Server down"))
+    async def test_fallback_logs_debug(self, model, messages, caplog, llamacpp_client):
+        llamacpp_client.post.side_effect = RuntimeError("Server down")
 
         with caplog.at_level(logging.DEBUG, logger="strands.models.llamacpp"):
             await model.count_tokens(messages=messages)
@@ -1089,24 +1133,22 @@ class TestCountTokens:
         assert any("native token counting failed" in record.message for record in caplog.records)
 
     @pytest.mark.asyncio
-    async def test_skip_native_api_when_use_native_token_count_false(self, messages):
+    async def test_skip_native_api_when_use_native_token_count_false(self, messages, llamacpp_client):
         model = LlamaCppModel(base_url="http://localhost:8080", use_native_token_count=False)
-        model.client.post = AsyncMock()
 
         result = await model.count_tokens(messages=messages)
 
-        model.client.post.assert_not_called()
+        llamacpp_client.post.assert_not_called()
         assert isinstance(result, int)
         assert result >= 0
 
     @pytest.mark.asyncio
-    async def test_skip_native_api_by_default(self, messages):
+    async def test_skip_native_api_by_default(self, messages, llamacpp_client):
         model = LlamaCppModel(base_url="http://localhost:8080")
-        model.client.post = AsyncMock()
 
         result = await model.count_tokens(messages=messages)
 
-        model.client.post.assert_not_called()
+        llamacpp_client.post.assert_not_called()
         assert isinstance(result, int)
         assert result >= 0
 
