@@ -84,7 +84,7 @@ describe('SageMakerDecisionModel', () => {
       const decision = new SageMakerDecisionModel({
         endpointName: ENDPOINT_NAME,
         region: 'us-east-1',
-        clientConfig: { region: 'us-west-2', maxAttempts: 5, customUserAgent: 'my-app' },
+        clientConfig: { region: 'us-west-2', maxAttempts: 5 },
       })
 
       await decision.ask('state', { q: { question: 'ok?', choices: 'boolean' } })
@@ -94,8 +94,23 @@ describe('SageMakerDecisionModel', () => {
       expect(mockSageMakerRuntimeClient).toHaveBeenCalledWith({
         region: 'us-east-1',
         maxAttempts: 5,
-        customUserAgent: [['my-app'], ['strands-agents-ts-sdk']],
+        customUserAgent: [['strands-agents-ts-sdk']],
       })
+    })
+
+    it.each([
+      ['my-app', [['my-app'], ['strands-agents-ts-sdk']]],
+      [[['my-app', '1.0']], [['my-app', '1.0'], ['strands-agents-ts-sdk']]],
+    ])('appends the SDK user agent to customUserAgent %o', async (customUserAgent, expected) => {
+      respond({ model: 'm', answers: { q: { type: 'noul', noul: 1 } } })
+      const decision = new SageMakerDecisionModel({
+        endpointName: ENDPOINT_NAME,
+        clientConfig: { customUserAgent: customUserAgent as string | [string, string][] },
+      })
+
+      await decision.ask('state', { q: { question: 'ok?', choices: 'boolean' } })
+
+      expect(mockSageMakerRuntimeClient).toHaveBeenCalledWith({ customUserAgent: expected })
     })
 
     it('uses a provided client as is instead of creating one', async () => {
@@ -194,6 +209,16 @@ describe('SageMakerDecisionModel', () => {
 
       await expect(decision.ask('state', { q: { question: 'ok?', choices: 'boolean' } })).rejects.toThrow(
         /non-JSON response/
+      )
+    })
+
+    it('rejects an empty response body as a non-object response', async () => {
+      mockSend.mockResolvedValue({ Body: new Uint8Array() })
+
+      const decision = new SageMakerDecisionModel({ endpointName: ENDPOINT_NAME })
+
+      await expect(decision.ask('state', { q: { question: 'ok?', choices: 'boolean' } })).rejects.toThrow(
+        /decision provider response must be an object/
       )
     })
   })
