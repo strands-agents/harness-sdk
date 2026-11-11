@@ -226,8 +226,8 @@ def test_package_copy_matches_the_shared_data():
     assert _PACKAGE_COPY.read_text(encoding="utf-8") == _SHARED_DATA.read_text(encoding="utf-8")
 
 
-# Read by another consumer (the harness), not typed by the SDK.
-_UNTYPED_CAPABILITY_KEYS = {"defaultEffort"}
+# Read by another consumer (the harness), not typed by the SDK: the harness's effort levels.
+_DEFAULT_EFFORT_VALUES = {"minimal", "low", "medium", "high", "xhigh", "max"}
 
 
 def test_shared_data_has_only_known_fields_with_the_right_types_in_every_entry():
@@ -245,12 +245,21 @@ def test_shared_data_has_only_known_fields_with_the_right_types_in_every_entry()
         for key, value in entry.get("capabilities", {}).items():
             if key == "promptCaching":
                 assert value in _PROMPT_CACHING_VALUES, f"{model_id}.{key}"
-            elif key in _UNTYPED_CAPABILITY_KEYS:
-                assert isinstance(value, str), f"{model_id}.{key}"
+            elif key == "defaultEffort":
+                assert value in _DEFAULT_EFFORT_VALUES, f"{model_id}.{key}"
             else:
                 assert key in _BOOLEAN_CAPABILITY_KEYS, f"{model_id}.capabilities.{key}"
                 assert isinstance(value, bool), f"{model_id}.{key}"
 
 
-def test_lookup_skips_data_fields_the_sdk_does_not_type():
-    assert not hasattr(lookup_model_info("claude-opus-5-5").capabilities, "default_effort")
+def test_lookup_keeps_the_typed_fields_and_skips_the_rest():
+    # The data entry also carries defaultEffort, which the SDK does not type.
+    assert lookup_model_info("claude-opus-5-5") == ModelInfo(
+        capabilities=ModelCapabilities(
+            prompt_caching="cache_points",
+            forced_tool_choice=False,
+            native_structured_output=True,
+            server_side_summary=True,
+        ),
+        limits=ModelLimits(context_window=1_000_000, max_output_tokens=128_000),
+    )
