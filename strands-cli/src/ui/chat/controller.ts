@@ -103,6 +103,9 @@ import {
   type ChatRuntimeInfo,
   type ChatSettings,
   type ChatSnapshot,
+  type DevChatCommand,
+  type DevChatCommandContext,
+  type DevChatNotice,
   type NewChatPanel,
 } from './types.js'
 
@@ -164,6 +167,8 @@ export class ChatController implements ChatControllerApi {
   private readonly _setSettings: ((settings: Partial<ChatSettings>) => Promise<void>) | undefined
   private readonly _requestSetup: ChatControllerOptions['requestSetup']
   private readonly _workspaceAction: ChatControllerOptions['workspaceAction']
+  private readonly _devCommands: readonly DevChatCommand[]
+  private readonly _devCommandAbort = new AbortController()
   private readonly _awsProfile: ChatControllerOptions['awsProfile']
   private readonly _builtinTools: ChatControllerOptions['builtinTools']
   private _builtinToolSelection = new Set<string>()
@@ -232,6 +237,7 @@ export class ChatController implements ChatControllerApi {
     this._setSettings = options.setSettings
     this._requestSetup = options.requestSetup
     this._workspaceAction = options.workspaceAction
+    this._devCommands = options.devCommands ?? []
     this._awsProfile = options.awsProfile
     this._builtinTools = options.builtinTools
     this._exportAgentProject = options.exportAgentProject
@@ -276,6 +282,7 @@ export class ChatController implements ChatControllerApi {
       })
     }
     this._snapshot = this._createSnapshot()
+    for (const command of this._devCommands) command.attach?.(this._devCommandContext())
     this._stopWatchingTasks = this._backend.watchTasks?.((tasks) => {
       if (this._closed) {
         return
@@ -413,7 +420,10 @@ export class ChatController implements ChatControllerApi {
     if (!invocation) {
       return undefined
     }
-    if (invocation.prefix === '/' && LOCAL_COMMAND_NAMES.has(invocation.name.toLowerCase())) {
+    if (
+      invocation.prefix === '/' &&
+      (LOCAL_COMMAND_NAMES.has(invocation.name.toLowerCase()) || this._devCommand(invocation.name))
+    ) {
       return invocation.token
     }
     return this._backend.protocol === 'strands' && this._skillNames.has(invocation.name.toLowerCase())
@@ -426,7 +436,10 @@ export class ChatController implements ChatControllerApi {
     if (!input.startsWith('/')) {
       return undefined
     }
-    return resolveCommandAssistance(input, this.actionableCommandToken(input), this._skillCommands())
+    return resolveCommandAssistance(input, this.actionableCommandToken(input), [
+      ...this._devCommands.map((command) => command.spec),
+      ...this._skillCommands(),
+    ])
   }
 
   async start(firstRequest?: string): Promise<void> {
@@ -896,6 +909,7 @@ export class ChatController implements ChatControllerApi {
     }
     this._closed = true
     this._sessionNaming?.abort()
+    this._devCommandAbort.abort()
     this._stopWatchingUsage()
     this._backgroundContinuationPending = false
     const interrupted = this._execution !== undefined
@@ -915,6 +929,7 @@ export class ChatController implements ChatControllerApi {
   async dispose(): Promise<void> {
     this._closed = true
     this._sessionNaming?.abort()
+    this._devCommandAbort.abort()
     this._stopWatchingUsage()
     if (this._execution) {
       this._execution.presentationAbort.abort()
@@ -1469,6 +1484,11 @@ export class ChatController implements ChatControllerApi {
         this.close()
         break
       default: {
+        const devCommand = this._devCommand(command)
+        if (devCommand) {
+          devCommand.run(parseCommandInvocation(prompt)?.argument ?? '', this._devCommandContext())
+          break
+        }
         const turn = await this._activateSkillAndRun(command, prompt)
         if (turn === null) {
           this._openError('unknown command', `/${command}`, 'Type / to browse commands or use /skills to list skills.')
@@ -2908,6 +2928,30 @@ export class ChatController implements ChatControllerApi {
       (notice) => notice.status !== 'success' || !notice.taskId || !this._deliveredBackgroundTaskIds.has(notice.taskId)
     )
     this._deliveredBackgroundTaskIds.clear()
+  }
+
+  private _devCommand(name: string): DevChatCommand | undefined {
+    const requested = name.toLowerCase()
+    return this._devCommands.find((command) => command.spec.name.toLowerCase() === requested)
+  }
+
+  private _devCommandContext(): DevChatCommandContext {
+    return {
+      signal: this._devCommandAbort.signal,
+      report: (status, text): DevChatNotice => {
+        let notice = this._addNotice(status, text)
+        this._emit()
+        return {
+          update: (nextStatus, nextText): void => {
+            if (this._closed) return
+            this._notices = this._notices.filter((candidate) => candidate !== notice)
+            notice = this._addNotice(nextStatus, nextText)
+            this._emit()
+          },
+        }
+      },
+      fail: (title, detail): void => this._openError(title, '', detail),
+    }
   }
 
   private _addNotice(status: ChatNotice['status'], text: string, taskId?: string): ChatNotice {

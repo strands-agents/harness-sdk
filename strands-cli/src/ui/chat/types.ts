@@ -29,6 +29,7 @@ import type { ChatSettings, SettingsCategory } from '../../config/settings.js'
 import type { AgentProjectOutput } from '../../project/export.js'
 import type { ImportedAgentProject } from '../../project/import.js'
 import type { ChatSessionRuntime, ResumeSession } from '../../session/sessions.js'
+import type { LocalCommandSpec } from './commands.js'
 import type { CommandAssistance } from './commands.js'
 import type { StreamPresentationOptions } from './stream-presentation.js'
 
@@ -53,6 +54,22 @@ export interface ChatNotice {
   taskId?: string
   text: string
   status: 'running' | 'success' | 'error' | 'delivered'
+}
+
+export interface DevChatNotice {
+  update(status: ChatNotice['status'], text: string): void
+}
+
+export interface DevChatCommandContext {
+  readonly signal: AbortSignal
+  report(status: ChatNotice['status'], text: string): DevChatNotice
+  fail(title: string, detail: string): void
+}
+
+export interface DevChatCommand {
+  spec: LocalCommandSpec
+  run(argument: string, context: DevChatCommandContext): void
+  attach?(context: DevChatCommandContext): void
 }
 
 export interface ChatPanelRow {
@@ -254,6 +271,7 @@ export interface ChatControllerOptions {
   setSettings?: (settings: Partial<ChatSettings>) => Promise<void>
   requestSetup?: () => void
   workspaceAction?: (action: WorkspaceAction) => void
+  devCommands?: readonly DevChatCommand[]
   awsProfile?: {
     get(): Omit<NonNullable<ChatModelPanel['awsProfile']>, 'open'>
     select(profile: string): void
