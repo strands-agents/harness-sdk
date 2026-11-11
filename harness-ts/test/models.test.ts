@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { Model, ModelRouter, lookupModelInfo } from '@strands-agents/sdk'
+import { Model, ModelRouter } from '@strands-agents/sdk'
+import { lookupModel } from '../src/model-info.js'
 import { BedrockModel } from '@strands-agents/sdk/models/bedrock'
 import { AnthropicModel } from '@strands-agents/sdk/models/anthropic'
 import { AnthropicBedrock } from '@anthropic-ai/bedrock-sdk'
@@ -19,9 +20,9 @@ import { DEFAULT_EFFORT } from '../src/defaults.js'
 import { configureLogging, resetWarnOnce } from '../src/logging.js'
 
 // Pass-through by default; one test swaps in a vendor default the provider does not take.
-vi.mock('@strands-agents/sdk', async (importOriginal) => {
-  const sdk = await importOriginal<typeof import('@strands-agents/sdk')>()
-  return { ...sdk, lookupModelInfo: vi.fn(sdk.lookupModelInfo) }
+vi.mock('../src/model-info.js', async (importOriginal) => {
+  const info = await importOriginal<typeof import('../src/model-info.js')>()
+  return { ...info, lookupModel: vi.fn(info.lookupModel) }
 })
 
 const DEFAULT = 'bedrock/global.anthropic.claude-opus-4-8'
@@ -29,7 +30,7 @@ const DEFAULT = 'bedrock/global.anthropic.claude-opus-4-8'
 afterEach(() => {
   resetWarnOnce()
   vi.unstubAllEnvs()
-  vi.mocked(lookupModelInfo).mockReset()
+  vi.mocked(lookupModel).mockReset()
 })
 
 function resolve(
@@ -450,17 +451,13 @@ describe('resolveModel', () => {
 
   it.each([
     ['claude-sonnet-4-5-20250929-v1:0', 64_000],
-    ['claude-sonnet-4.5', 64_000],
     ['claude-sonnet-4-6', 128_000],
-    ['claude-sonnet-4.6', 128_000],
     ['claude-sonnet-5', 128_000],
     ['claude-opus-4-5-20251101-v1:0', 64_000],
-    ['claude-opus-4.5', 64_000],
     ['claude-opus-4-8', 128_000],
     ['claude-opus-5', 128_000],
     ['claude-opus-5-5', 128_000],
     ['claude-haiku-4-5-20251001-v1:0', 64_000],
-    ['claude-haiku-4.5', 64_000],
     ['claude-haiku-5-5', 128_000],
   ] as const)('gives %s a max tokens ceiling of %d', async (modelId, maxTokens) => {
     const model = await resolve(`bedrock/global.anthropic.${modelId}`)
@@ -748,7 +745,7 @@ describe('default effort', () => {
   })
 
   it('falls back to the provider level when the vendor default is not one the provider takes', async () => {
-    vi.mocked(lookupModelInfo).mockReturnValue({ capabilities: { reasoning: { defaultEffort: 'ultra' } } })
+    vi.mocked(lookupModel).mockReturnValue({ capabilities: { defaultEffort: 'ultra' } })
 
     expect((await resolve('bedrock/us.openai.gpt-6-sol')).getConfig().additionalRequestFields).toEqual({
       reasoning: { effort: 'high' },

@@ -24,6 +24,8 @@
     }
   },
   "scripts": {
+    "prepare": "node -e \"require('node:fs').copyFileSync('../shared/model-info.json','src/model-info.json')\"",
+    "prebuild": "node -e \"require('node:fs').copyFileSync('../shared/model-info.json','src/model-info.json')\"",
     "build": "tsc --project src/tsconfig.json",
     "clean:dist": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "prepack": "npm run clean:dist && npm run build",

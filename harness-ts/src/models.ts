@@ -22,9 +22,10 @@
  * beyond the harness's own dependencies. This makes resolution async.
  */
 
-import { Model, ModelRouter, lookupModelInfo, type JSONValue } from '@strands-agents/sdk'
+import { Model, ModelRouter, type JSONValue } from '@strands-agents/sdk'
 import type { AnthropicModelOptions } from '@strands-agents/sdk/models/anthropic'
 import { DEFAULT_MODEL } from './defaults.js'
+import { lookupModel } from './model-info.js'
 import { warnOnce } from './logging.js'
 import type { Effort } from './types/agent.js'
 
@@ -39,36 +40,8 @@ const ANTHROPIC_WEB_SEARCH = {
   allowed_callers: ['direct' as const],
 }
 
-// Claude's real max_tokens ceiling by tier, verified live against Bedrock Converse. Applied on
-// Bedrock and Anthropic-direct only — other Bedrock-hosted model families aren't known to need
-// this. Matched as a substring so any Bedrock region/vendor prefix in front of it doesn't matter.
-const CLAUDE_MAX_TOKENS: Readonly<Record<string, number>> = {
-  'claude-opus-': 128_000,
-  'claude-sonnet-': 128_000,
-  'claude-haiku-': 128_000,
-  'claude-fable-': 128_000,
-}
-
-const CLAUDE_MAX_TOKENS_BY_VERSION: ReadonlyArray<readonly [string, number]> = [
-  ['claude-opus-4-5', 64_000],
-  ['claude-opus-4.5', 64_000],
-  ['claude-sonnet-4-5', 64_000],
-  ['claude-sonnet-4.5', 64_000],
-  ['claude-haiku-4-5', 64_000],
-  ['claude-haiku-4.5', 64_000],
-]
-
-// The tier ceiling, else the model info's output limit, else the harness default.
 function claudeOutputTokens(modelId: string): number {
-  return claudeMaxTokens(modelId) ?? lookupModelInfo(modelId).limits?.maxOutputTokens ?? ANTHROPIC_MAX_TOKENS
-}
-
-function claudeMaxTokens(modelId: string): number | undefined {
-  const pinned = CLAUDE_MAX_TOKENS_BY_VERSION.find(([needle]) => modelId.includes(needle))?.[1]
-  if (pinned !== undefined) {
-    return pinned
-  }
-  return Object.entries(CLAUDE_MAX_TOKENS).find(([needle]) => modelId.includes(needle))?.[1]
+  return lookupModel(modelId).limits?.maxOutputTokens ?? ANTHROPIC_MAX_TOKENS
 }
 
 // Small, fast model per provider for the web_fetch summarizer. Keyed by the main agent's provider
@@ -426,7 +399,7 @@ export const EFFORT_LEVELS: readonly Effort[] = ['auto', 'off', 'minimal', 'low'
  * (what Claude Code, Codex, or Gemini CLI run it at), else the provider's `recommended` level.
  */
 function defaultEffort(modelId: string, levels: readonly string[], recommended: string | null): string | null {
-  const vendorDefault = lookupModelInfo(modelId).capabilities?.reasoning?.defaultEffort
+  const vendorDefault = lookupModel(modelId).capabilities?.defaultEffort
   return vendorDefault !== undefined && levels.includes(vendorDefault) ? vendorDefault : recommended
 }
 
