@@ -87,7 +87,12 @@ describe('homepage machine-readable metadata', () => {
     expect(toolkit?.querySelector('.toolkit__title')?.tagName).toBe('H2')
     expect(toolkit?.querySelector('.toolkit__title')?.text.trim()).toBe('Choose your agent foundation.')
     expect(toolkit?.querySelector('.toolkit__lede')).toBeNull()
+    expect(toolkit?.querySelector('.toolkit__modules-title')?.text.trim()).toBe(
+      'Focused tools for the rest of the agent stack.'
+    )
+    expect(toolkit?.querySelector('.toolkit__modules-lede')).toBeNull()
     expect(homepage.querySelector('.banner__starter-features')).toBeNull()
+    expect(homepage.querySelector('.banner__starter-slug')?.text.trim()).toBe('/harness')
     expect(
       foundations.map((card) => ({
         slug: card.querySelector('.foundation-card__slug')?.text.trim(),

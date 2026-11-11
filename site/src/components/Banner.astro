@@ -19,9 +19,8 @@ import { pathWithBase } from '../util/links';
           Build production AI agents with open source tools.
         </h1>
         <p class="banner__summary">
-          Strands is an open source framework and toolkit for production agents. Start with a
-          complete harness, compose your own agent loop with SDK primitives, and add focused
-          tools as you need them.
+          Strands is an open source framework for production agents. Start with a complete
+          harness or compose the agent loop from SDK primitives.
         </p>
 
         <div class="banner__actions">
@@ -132,7 +131,7 @@ import { pathWithBase } from '../util/links';
   .banner__content {
     position: relative;
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: minmax(0, 1.25fr) minmax(420px, 1fr);
     align-items: center;
     gap: 24px;
     width: calc(100% - 110px);
@@ -297,6 +296,7 @@ import { pathWithBase } from '../util/links';
   .banner__starter-slug {
     margin-left: auto;
     color: var(--card-accent-orange);
+    text-transform: none;
   }
 
   .banner__starter-title {

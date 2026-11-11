@@ -170,15 +170,8 @@ const modules = [
     </div>
 
     <header class="toolkit__modules-header">
-      <div>
-        <p class="toolkit__eyebrow">Add only what you need</p>
-        <h2 class="toolkit__modules-title">
-          Focused tools for the rest of the agent stack.
-        </h2>
-      </div>
-      <p class="toolkit__modules-lede">
-        Use them with Strands, or bring them into an agent you already have.
-      </p>
+      <p class="toolkit__eyebrow">Add only what you need</p>
+      <h2 class="toolkit__modules-title">Focused tools for the rest of the agent stack.</h2>
     </header>
 
     <div class="toolkit__modules" role="list" aria-label="Focused Strands tools">
@@ -262,15 +255,6 @@ const modules = [
     max-width: none;
     font-size: clamp(38px, 4vw, 60px);
     line-height: 1.06;
-  }
-
-  .toolkit__modules-lede {
-    margin: 0;
-    font-family: 'Space Grotesk', system-ui, sans-serif;
-    font-size: 18px;
-    line-height: 1.5;
-    color: var(--fg);
-    opacity: 0.76;
   }
 
   .toolkit__foundations {
@@ -540,10 +524,6 @@ const modules = [
   }
 
   .toolkit__modules-header {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(280px, 0.48fr);
-    gap: 32px 72px;
-    align-items: end;
     margin-bottom: 32px;
   }
 
@@ -552,7 +532,7 @@ const modules = [
   }
 
   .toolkit__modules-title {
-    max-width: 780px;
+    max-width: none;
     font-size: clamp(30px, 3.3vw, 48px);
     line-height: 1.1;
   }
@@ -666,8 +646,7 @@ const modules = [
   }
 
   @media (max-width: 1100px) {
-    .toolkit__header,
-    .toolkit__modules-header {
+    .toolkit__header {
       grid-template-columns: 1fr;
     }
 
@@ -677,14 +656,6 @@ const modules = [
 
     .toolkit__header {
       gap: 16px;
-    }
-
-    .toolkit__modules-header {
-      gap: 18px;
-    }
-
-    .toolkit__modules-lede {
-      max-width: 740px;
     }
 
     .toolkit__modules {
@@ -713,10 +684,6 @@ const modules = [
 
     .toolkit__title {
       font-size: clamp(34px, 10vw, 46px);
-    }
-
-    .toolkit__modules-lede {
-      font-size: 16px;
     }
 
     .toolkit__foundations,
