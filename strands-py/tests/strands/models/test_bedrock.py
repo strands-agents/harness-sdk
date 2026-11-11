@@ -1429,23 +1429,63 @@ async def test_stream_retries_with_drop_block_on_thinking_binding_error(
     assert converse_method.call_args.kwargs["additionalModelRequestFields"] == exp_fields[1]
 
 
+@pytest.mark.parametrize("streaming", [True, False])
+@pytest.mark.asyncio
+async def test_stream_retries_with_drop_block_without_thinking_config(
+    bedrock_client, alist, messages, tool_spec, streaming
+):
+    converse_method = bedrock_client.converse_stream if streaming else bedrock_client.converse
+    converse_method.side_effect = [
+        _thinking_binding_error("ConverseStream" if streaming else "Converse"),
+        _converse_response(streaming),
+        _converse_response(streaming),
+        _converse_response(streaming),
+    ]
+    model = BedrockModel(model_id="m1", streaming=streaming)
+
+    await alist(model.stream(messages))
+    await alist(model.stream(messages))
+    await alist(model.stream(messages, [tool_spec], tool_choice={"any": {}}))
+
+    tru_fields = [call.kwargs.get("additionalModelRequestFields") for call in converse_method.call_args_list]
+    exp_retry_fields = {"anthropic_beta": ["thinking-binding-controls-2026-08-01"], "thinking": DROP_BLOCK_THINKING}
+    assert tru_fields == [None, exp_retry_fields, exp_retry_fields, None]
+
+
+@pytest.mark.asyncio
+async def test_stream_drops_stale_thinking_set_in_additional_args(bedrock_client, alist, messages):
+    bedrock_client.converse_stream.side_effect = [
+        _thinking_binding_error("ConverseStream"),
+        {"stream": []},
+        {"stream": []},
+    ]
+    model = BedrockModel(model_id="m1", additional_args={"additionalModelRequestFields": {"thinking": THINKING}})
+
+    await alist(model.stream(messages))
+    await alist(model.stream(messages))
+
+    tru_fields = [call.kwargs["additionalModelRequestFields"] for call in bedrock_client.converse_stream.call_args_list]
+    exp_retry_fields = {"thinking": DROP_BLOCK_THINKING, "anthropic_beta": ["thinking-binding-controls-2026-08-01"]}
+    assert tru_fields == [{"thinking": THINKING}, exp_retry_fields, exp_retry_fields]
+
+
 @pytest.mark.parametrize(
-    "additional_request_fields",
+    ("additional_request_fields", "tool_choice"),
     [
-        {"thinking": {"type": "adaptive", "block_binding": {"prefix_mismatch_behavior": "error"}}},
-        {"reasoning_config": {"type": "enabled"}},
-        None,
+        ({"thinking": {"type": "adaptive", "block_binding": {"prefix_mismatch_behavior": "error"}}}, None),
+        (None, {"any": {}}),
+        ({"thinking": THINKING}, {"tool": {"name": "name"}}),
     ],
 )
 @pytest.mark.asyncio
 async def test_stream_does_not_retry_thinking_binding_error_without_drop_block(
-    bedrock_client, alist, messages, additional_request_fields
+    bedrock_client, alist, messages, tool_spec, additional_request_fields, tool_choice
 ):
     bedrock_client.converse_stream.side_effect = _thinking_binding_error("ConverseStream")
     model = BedrockModel(model_id="m1", additional_request_fields=additional_request_fields)
 
     with pytest.raises(ClientError, match="bound to a different conversation"):
-        await alist(model.stream(messages))
+        await alist(model.stream(messages, [tool_spec], tool_choice=tool_choice))
 
     bedrock_client.converse_stream.assert_called_once()
     assert model._drop_stale_thinking_model_id is None
@@ -1494,19 +1534,41 @@ async def test_stream_maps_retry_error_to_sdk_exception(
     assert converse_method.call_count == 2
 
 
-def test_format_request_drops_stale_thinking_only_for_remembered_model(bedrock_client, messages):
-    _ = bedrock_client
+@pytest.mark.asyncio
+async def test_stream_does_not_keep_drop_block_after_rejected_retry(bedrock_client, alist, messages):
+    temperature_error = ClientError(
+        {"Error": {"Code": "ValidationException", "Message": "`temperature` may only be set to 1"}}, "ConverseStream"
+    )
+    bedrock_client.converse_stream.side_effect = [
+        _thinking_binding_error("ConverseStream"),
+        temperature_error,
+        {"stream": []},
+    ]
+    model = BedrockModel(model_id="m1", temperature=0.2)
+
+    with pytest.raises(ClientError, match="temperature"):
+        await alist(model.stream(messages))
+    await alist(model.stream(messages))
+
+    assert "additionalModelRequestFields" not in bedrock_client.converse_stream.call_args.kwargs
+
+
+@pytest.mark.asyncio
+async def test_stream_drops_stale_thinking_only_for_remembered_model(bedrock_client, alist, messages):
+    bedrock_client.converse_stream.return_value = {"stream": []}
     model = BedrockModel(model_id="m1", additional_request_fields={"thinking": THINKING})
     model._drop_stale_thinking_model_id = "m1"
 
-    assert model.format_request(messages)["additionalModelRequestFields"] == {
-        "thinking": DROP_BLOCK_THINKING,
-        "anthropic_beta": ["thinking-binding-controls-2026-08-01"],
-    }
-
+    await alist(model.stream(messages))
     model.update_config(model_id="m2")
+    await alist(model.stream(messages))
 
-    assert model.format_request(messages)["additionalModelRequestFields"] == {"thinking": THINKING}
+    tru_fields = [call.kwargs["additionalModelRequestFields"] for call in bedrock_client.converse_stream.call_args_list]
+    exp_fields = [
+        {"thinking": DROP_BLOCK_THINKING, "anthropic_beta": ["thinking-binding-controls-2026-08-01"]},
+        {"thinking": THINKING},
+    ]
+    assert tru_fields == exp_fields
 
 
 @pytest.mark.asyncio

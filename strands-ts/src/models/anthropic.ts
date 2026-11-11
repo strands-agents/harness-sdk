@@ -155,6 +155,11 @@ function withNativeOutput(
   }
 }
 
+/** Whether the request forces a tool call, which rules thinking out. */
+function isToolForced(request: Anthropic.MessageStreamParams): boolean {
+  return request.tool_choice?.type === 'any' || request.tool_choice?.type === 'tool'
+}
+
 /**
  * The provider's error text. The SDK's error message is the JSON-encoded response body, which escapes quotes in the
  * text, so the body's own message is read when present.
@@ -453,6 +458,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
    */
   async *stream(messages: Message[], options?: StreamOptions): AsyncIterable<ModelStreamEvent> {
     let thinking: Anthropic.ThinkingConfigParam | undefined
+    let toolForced = false
     let continuations = 0
     const mechanism = this._structuredOutputMechanism(options)
     try {
@@ -462,6 +468,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
         options
       )
       thinking = request.thinking
+      toolForced = isToolForced(request)
       const requestOptions = this._buildRequestOptions(request, this._compactionBetas(messages))
       const usage = createEmptyUsage()
 
@@ -641,14 +648,25 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
         continuations === 0 &&
         (unknownError as { status?: number }).status === 400 &&
         isThinkingBindingError(unknownError) &&
-        thinkingWithDropBlock(thinking)
+        thinkingWithDropBlock(thinking, toolForced)
       ) {
         // Stale blocks stay in history, so drop_block stays on for every later request to this model.
         logger.warn(
           `model_id=<${this._config.modelId}> | history edit invalidated replayed thinking blocks, retrying with drop_block`
         )
+        const previous = this._dropStaleThinkingModelId
         this._dropStaleThinkingModelId = this._config.modelId
-        yield* this.stream(messages, options)
+        let yielded = false
+        try {
+          for await (const event of this.stream(messages, options)) {
+            yielded = true
+            yield event
+          }
+        } catch (error) {
+          // A rejected retry must not leave drop_block on for later requests.
+          if (!yielded) this._dropStaleThinkingModelId = previous
+          throw error
+        }
         return
       }
 
@@ -1032,7 +1050,9 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
     if (this._config.stopSequences !== undefined) request.stop_sequences = this._config.stopSequences
     Object.assign(request, sampling, this._config.params)
     this._rejectRemovedSamplingParams(request)
-    const dropBlockThinking = this._dropsStaleThinking() ? thinkingWithDropBlock(request.thinking) : undefined
+    const dropBlockThinking = this._dropsStaleThinking()
+      ? thinkingWithDropBlock(request.thinking, isToolForced(request))
+      : undefined
     if (dropBlockThinking) request.thinking = dropBlockThinking
     // params.tools is already merged into tools above; never let it bypass the forced-turn rule.
     if (tools.length > 0) request.tools = tools
