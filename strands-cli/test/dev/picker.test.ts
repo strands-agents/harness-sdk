@@ -97,7 +97,7 @@ describe('HarnessPicker', () => {
     expect(text).toContain('Manual import applies these changes globally')
     expect(text).toContain('development changes stay in this local workspace')
     expect(text).toContain('CLI DEFAULT')
-    expect(text).toContain('LOCAL PROJECTS (1)')
+    expect(text).toContain('DISCOVERED PROJECTS (1)')
     input.write('\r')
 
     await vi.waitFor(() => expect(selected).toHaveBeenCalledWith({ kind: 'cli' }))
@@ -571,20 +571,46 @@ describe('HarnessPicker', () => {
     expect(frame().length).toBeLessThanOrEqual(rows)
   })
 
-  it('shouldShowTheSearchLineUnderTheTitleOnlyWhileSearching', async () => {
+  it('shouldShowTheSearchLineInsideDiscoveredProjectsBelowTheCliDefault', async () => {
     const output = ttyOutput(100, 36)
     const frame = captureFrame(output)
     const props = { cli: { name: 'Saved profile', path: '/home/test/.strands/cli.toml' }, onSelect: vi.fn() }
-    const instance = render(createElement(HarnessPicker, { ...props, harnesses: [], searching: true }), {
+    const instance = render(createElement(HarnessPicker, { ...props, harnesses: [], discovery: 'running' }), {
       stdin: ttyInput(),
       stdout: output,
     })
     await vi.waitFor(() => expect(frame().join('\n')).toContain('Searching for local harnesses…'))
+    const row = (text: string): number => frame().findIndex((line) => line.includes(text))
+    expect(row('CLI DEFAULT')).toBeLessThan(row('DISCOVERED PROJECTS'))
+    expect(row('DISCOVERED PROJECTS')).toBeLessThan(row('Searching for local harnesses…'))
+    expect(row('Searching for local harnesses…')).toBeLessThan(row('NEW PROJECT'))
+    expect(frame().join('\n')).toContain('1 / 2')
 
-    instance.rerender(createElement(HarnessPicker, { ...props, harnesses: [harness], searching: false }))
+    instance.rerender(createElement(HarnessPicker, { ...props, harnesses: [harness], discovery: 'running' }))
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('1 found'))
+    expect(row('Project harness')).toBeLessThan(row('Searching for local harnesses…'))
 
-    await vi.waitFor(() => expect(frame().join('\n')).toContain('LOCAL PROJECTS (1)'))
-    expect(frame().join('\n')).not.toContain('Searching for local harnesses…')
+    instance.rerender(createElement(HarnessPicker, { ...props, harnesses: [harness], discovery: 'done' }))
+
+    await vi.waitFor(() => expect(frame().join('\n')).not.toContain('Searching for local harnesses…'))
+    expect(frame().join('\n')).toContain('DISCOVERED PROJECTS (1)')
+  })
+
+  it('shouldSayNoHarnessesWereFoundWhenTheSearchEndsEmpty', async () => {
+    const output = ttyOutput(100, 36)
+    const frame = captureFrame(output)
+    render(
+      createElement(HarnessPicker, {
+        cli: { name: 'Saved profile', path: '/home/test/.strands/cli.toml' },
+        harnesses: [],
+        discovery: 'done',
+        onSelect: vi.fn(),
+      }),
+      { stdin: ttyInput(), stdout: output }
+    )
+
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('No local harnesses found.'))
+    expect(frame().join('\n')).toContain('DISCOVERED PROJECTS')
   })
 
   it('shouldKeepTheSelectedRowWhenAHarnessArrivesAboveIt', async () => {
@@ -592,7 +618,7 @@ describe('HarnessPicker', () => {
     const output = ttyOutput(100, 36)
     const frame = captureFrame(output)
     const props = { cli: { name: 'Saved profile', path: '/home/test/.strands/cli.toml' }, onSelect: vi.fn() }
-    const instance = render(createElement(HarnessPicker, { ...props, harnesses: [], searching: true }), {
+    const instance = render(createElement(HarnessPicker, { ...props, harnesses: [], discovery: 'running' }), {
       stdin: input,
       stdout: output,
     })
@@ -600,7 +626,7 @@ describe('HarnessPicker', () => {
     input.write('\u001b[B')
     await vi.waitFor(() => expect(frame().join('\n')).toContain('› Create a new harness'))
 
-    instance.rerender(createElement(HarnessPicker, { ...props, harnesses: [harness], searching: true }))
+    instance.rerender(createElement(HarnessPicker, { ...props, harnesses: [harness], discovery: 'running' }))
 
     await vi.waitFor(() => expect(frame().join('\n')).toContain('3 / 3'))
     expect(frame().join('\n')).toContain('› Create a new harness')
@@ -634,12 +660,12 @@ describe('HarnessPicker', () => {
     )
 
     expect(shownPickers(show)).toHaveLength(1)
-    expect(shownPickers(show)[0]).toMatchObject({ harnesses: [], searching: true })
+    expect(shownPickers(show)[0]).toMatchObject({ harnesses: [], discovery: 'running' })
     report(harness)
     await vi.waitFor(() => expect(shownPickers(show).at(-1)?.harnesses).toEqual([harness]))
-    expect(shownPickers(show).at(-1)?.searching).toBe(true)
+    expect(shownPickers(show).at(-1)?.discovery).toBe('running')
     finish()
-    await vi.waitFor(() => expect(shownPickers(show).at(-1)?.searching).toBe(false))
+    await vi.waitFor(() => expect(shownPickers(show).at(-1)?.discovery).toBe('done'))
     await shownPickers(show).at(-1)!.onSelect(undefined)
 
     expect(await running).toBeUndefined()
@@ -662,8 +688,7 @@ describe('HarnessPicker', () => {
 
     await vi.waitFor(() =>
       expect(shownPickers(show).at(-1)).toMatchObject({
-        searching: false,
-        searchError: 'EACCES: permission denied, scandir /root',
+        discovery: { failed: 'EACCES: permission denied, scandir /root' },
       })
     )
     await shownPickers(show).at(-1)!.onSelect(undefined)

@@ -28,16 +28,18 @@ export interface BaseCliOption {
 interface PickerProps {
   cli?: BaseCliOption
   harnesses: readonly DiscoveredHarness[]
-  searching?: boolean
-  searchError?: string
+  discovery?: HarnessDiscoveryState
   warning?: string
   folderFor?: (choice: HarnessChoice) => string | undefined
   newProject?: string
   onSelect: (selection: HarnessChoice | undefined, workspace?: string) => void | Promise<void>
 }
 
+export type HarnessDiscoveryState = 'running' | 'done' | { failed: string }
+
 interface PickerRow {
   key: string
+  selectable?: false
   label: string
   detail: string
   group: string
@@ -76,6 +78,7 @@ const otherLanguage = (current: 'typescript' | 'python'): 'typescript' | 'python
 
 const CLI_ROW = 'cli'
 const CREATE_ROW = 'create'
+const DISCOVERY_ROW = 'discovery'
 const harnessRow = (harness: DiscoveredHarness): string => `harness:${harness.entrypoint}`
 
 const SearchStatus = ({ count }: { count: number }): ReactElement => {
@@ -87,11 +90,29 @@ const SearchStatus = ({ count }: { count: number }): ReactElement => {
   )
 }
 
+const DiscoveryStatus = ({
+  discovery,
+  count,
+  warningColor,
+}: {
+  discovery: HarnessDiscoveryState
+  count: number
+  warningColor: string
+}): ReactElement =>
+  discovery === 'running' ? (
+    <SearchStatus count={count} />
+  ) : discovery === 'done' ? (
+    <Text dimColor>No local harnesses found.</Text>
+  ) : (
+    <Text color={warningColor} wrap="truncate-end">
+      Search stopped: {sanitizeTerminalText(discovery.failed)}
+    </Text>
+  )
+
 export const HarnessPicker = ({
   cli,
   harnesses,
-  searching = false,
-  searchError,
+  discovery,
   warning,
   folderFor,
   newProject,
@@ -114,6 +135,8 @@ export const HarnessPicker = ({
   const { accent, success, error: errorColor, warning: warningColor, selection: selectionColor, border } = useTheme()
   const { columns } = useTerminalSize()
   const availableRows = useStartupContentRows()
+  const discoveredGroup = `DISCOVERED PROJECTS${harnesses.length ? ` (${harnesses.length})` : ''}`
+  const discoveryNote = discovery !== undefined && (discovery !== 'done' || harnesses.length === 0)
   const rows: PickerRow[] = [
     ...(cli
       ? [
@@ -131,10 +154,22 @@ export const HarnessPicker = ({
       key: harnessRow(harness),
       label: sanitizeTerminalText(harness.name),
       detail: sanitizeTerminalText(harness.entrypoint),
-      group: `LOCAL PROJECTS (${harnesses.length})`,
+      group: discoveredGroup,
       language: [harness.language, harness.preparationStatus].filter(Boolean).join(' · '),
       choice: { kind: 'discovered', harness } as const,
     })),
+    ...(discoveryNote
+      ? [
+          {
+            key: DISCOVERY_ROW,
+            selectable: false as const,
+            label: '',
+            detail: '',
+            group: discoveredGroup,
+            language: '',
+          },
+        ]
+      : []),
     {
       key: CREATE_ROW,
       label: 'Create a new harness',
@@ -205,13 +240,14 @@ export const HarnessPicker = ({
     if (!key.ctrl && !key.meta && /^[a-zA-Z0-9._-]+$/.test(input))
       setName((current) => `${current}${input}`.slice(0, 64))
   }
+  const choices = rows.filter(({ selectable }) => selectable !== false)
   const moveSelection = (step: number): void =>
     setSelectedRow((current) => {
       const index = Math.max(
         0,
-        rows.findIndex(({ key }) => key === current)
+        choices.findIndex(({ key }) => key === current)
       )
-      return rows[(index + step + rows.length) % rows.length]!.key
+      return choices[(index + step + choices.length) % choices.length]!.key
     })
   const browse = (key: Key): void => {
     if (key.upArrow) moveSelection(-1)
@@ -249,7 +285,7 @@ export const HarnessPicker = ({
   const screens = {
     list: {
       heading: 'Select a harness',
-      context: `${selection + 1} / ${rows.length}`,
+      context: `${choices.indexOf(rows[selection]!) + 1} / ${choices.length}`,
       hint: `↑↓ select · Enter ${next}`,
     },
     name: {
@@ -267,11 +303,9 @@ export const HarnessPicker = ({
   const hint = busy
     ? 'Preparing workspace… · Esc cancel'
     : [screens[step].hint, failureCopyHint, `Esc ${step === 'folder' ? 'back' : 'cancel'}`].filter(Boolean).join(' · ')
-  const searchLine = step === 'list' && (searching || searchError !== undefined)
   const listRows =
     availableRows -
     2 -
-    (searchLine ? 2 : 0) -
     (notice ? lineCount(notice) + 1 : 0) -
     (failure ? lineCount(failure) : 0) -
     1 -
@@ -321,17 +355,6 @@ export const HarnessPicker = ({
         </Text>
         <Text dimColor>{context}</Text>
       </Box>
-      {searchLine ? (
-        <Box marginBottom={1}>
-          {searching ? (
-            <SearchStatus count={harnesses.length} />
-          ) : (
-            <Text color={warningColor} wrap="truncate-end">
-              Local harness search stopped: {sanitizeTerminalText(searchError ?? '')}
-            </Text>
-          )}
-        </Box>
-      ) : null}
       {notice ? (
         <Box marginBottom={1}>
           <Text color={warningColor}>{notice}</Text>
@@ -380,20 +403,26 @@ export const HarnessPicker = ({
                     <Text dimColor>{row.group}</Text>
                   </Box>
                 ) : null}
-                <Box
-                  paddingX={1}
-                  justifyContent="space-between"
-                  {...(start + index === selection ? { backgroundColor: selectionColor } : {})}
-                >
-                  <Text
-                    bold={start + index === selection}
-                    {...(start + index === selection ? { color: accent } : {})}
-                    wrap="truncate-end"
+                {row.key === DISCOVERY_ROW && discovery !== undefined ? (
+                  <Box paddingX={1} paddingLeft={3}>
+                    <DiscoveryStatus discovery={discovery} count={harnesses.length} warningColor={warningColor} />
+                  </Box>
+                ) : (
+                  <Box
+                    paddingX={1}
+                    justifyContent="space-between"
+                    {...(start + index === selection ? { backgroundColor: selectionColor } : {})}
                   >
-                    {start + index === selection ? '›' : ' '} {row.label}
-                  </Text>
-                  {row.language ? <Text dimColor> {row.language}</Text> : null}
-                </Box>
+                    <Text
+                      bold={start + index === selection}
+                      {...(start + index === selection ? { color: accent } : {})}
+                      wrap="truncate-end"
+                    >
+                      {start + index === selection ? '›' : ' '} {row.label}
+                    </Text>
+                    {row.language ? <Text dimColor> {row.language}</Text> : null}
+                  </Box>
+                )}
               </Box>
             ))}
           </Box>
@@ -448,7 +477,7 @@ export type HarnessSource = (
 const SEARCH_FLUSH_MS = 100
 
 export const chooseHarness = async <Opened,>(
-  { search, ...options }: Omit<PickerProps, 'onSelect' | 'searching' | 'searchError'> & { search?: HarnessSource },
+  { search, ...options }: Omit<PickerProps, 'onSelect' | 'discovery'> & { search?: HarnessSource },
   screen: StartupScreen,
   open: (choice: HarnessChoice, signal: AbortSignal, workspace?: string) => Promise<Opened>
 ): Promise<Opened | undefined> => {
@@ -460,8 +489,7 @@ export const chooseHarness = async <Opened,>(
   let settled = false
   let opening = false
   let harnesses = options.harnesses
-  let searching = search !== undefined
-  let searchError: string | undefined
+  let discovery: HarnessDiscoveryState | undefined = search ? 'running' : undefined
   const result = new Promise<Opened | undefined>((resolve) => {
     complete = resolve
   })
@@ -494,8 +522,7 @@ export const chooseHarness = async <Opened,>(
       createElement(HarnessPicker, {
         ...options,
         harnesses,
-        searching,
-        ...(searchError === undefined ? {} : { searchError }),
+        ...(discovery === undefined ? {} : { discovery }),
         onSelect,
       }),
       'Select a local harness'
@@ -519,14 +546,16 @@ export const chooseHarness = async <Opened,>(
       },
       AbortSignal.any([signal, searchAbort.signal])
     )
-      .then((found) => found.forEach(add))
+      .then((found) => {
+        found.forEach(add)
+        discovery = 'done'
+      })
       .catch((error: unknown) => {
-        if (!signal.aborted && !searchAbort.signal.aborted) searchError = errorMessage(error)
+        discovery = signal.aborted || searchAbort.signal.aborted ? 'done' : { failed: errorMessage(error) }
       })
       .finally(() => {
         clearTimeout(flush)
         flush = undefined
-        searching = false
         show()
       })
   }

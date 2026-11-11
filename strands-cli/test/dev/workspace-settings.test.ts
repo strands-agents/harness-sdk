@@ -72,7 +72,7 @@ const importFromSettings = async (
     select,
   })
   const pickers = (): PickerProps[] =>
-    shown<PickerProps>(screen.show, HarnessPicker).filter(({ searching }) => !searching)
+    shown<PickerProps>(screen.show, HarnessPicker).filter(({ discovery }) => discovery !== 'running')
   const confirmations = (): ConfirmationProps[] =>
     shown<ConfirmationProps>(screen.show, WorkspaceReplacementConfirmation)
   await vi.waitFor(() => expect(pickers()).toHaveLength(1))
