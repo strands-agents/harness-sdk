@@ -2,9 +2,9 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
-import { temporaryOptimizeCommand } from '../../../src/dev/temporary-evals-fork/command.js'
+import { temporaryExperimentCommand, temporaryOptimizeCommand } from '../../../src/dev/temporary-evals-fork/command.js'
 import { temporaryVenvPython, type TemporaryCommandRequest } from '../../../src/dev/temporary-evals-fork/environment.js'
-import type { TemporaryOptimizerProcess } from '../../../src/dev/temporary-evals-fork/optimize.js'
+import type { TemporaryEvalsProcess } from '../../../src/dev/temporary-evals-fork/evals-process.js'
 import type { DevWorkspace } from '../../../src/dev/workspace.js'
 import type { ImportedAgentProject } from '../../../src/project/import.js'
 import type { ChatNotice, DevChatCommandContext } from '../../../src/ui/chat/types.js'
@@ -48,7 +48,7 @@ const dependenciesFor = (workspace: DevWorkspace, spawnOptimizer = succeeding())
 })
 
 function succeeding() {
-  return vi.fn(async ({ onLine }: TemporaryOptimizerProcess) => {
+  return vi.fn(async ({ onLine }: TemporaryEvalsProcess) => {
     onLine('candidate  1 text complete n=4 Contains 0.75')
     return { code: 0, stdout: 'ships candidate 1: {}\nrecord: here\n', stderrTail: [] }
   })
@@ -125,7 +125,7 @@ describe('TEMPORARY /optimize command', () => {
     command.run('', second.context)
     await finished(first.updates)
 
-    expect(second.failures).toEqual(['Optimization running: Wait for the current optimization to finish.'])
+    expect(second.failures).toEqual([expect.stringContaining('Wait for it to finish, then try again.')])
   })
 
   it('shouldShowTheUsageWhenMoreThanOneExperimentIsGiven', async () => {
@@ -173,7 +173,7 @@ describe('TEMPORARY /optimize command', () => {
     const first = contextFixture(firstChat.signal)
     const second = contextFixture()
     let release: () => void = () => {}
-    const spawnOptimizer = vi.fn(async ({ onLine }: TemporaryOptimizerProcess) => {
+    const spawnOptimizer = vi.fn(async ({ onLine }: TemporaryEvalsProcess) => {
       onLine('candidate  0 baseline complete n=4 Contains 0.5')
       await new Promise<void>((resolve) => {
         release = resolve
@@ -199,5 +199,37 @@ describe('TEMPORARY /optimize command', () => {
       text: expect.stringContaining('ships candidate 0'),
     })
     expect(first.updates).toHaveLength(seenByFirst)
+  })
+
+  it('shouldShowTheCaseCountAndTheNextStepWhenAnExperimentIsSaved', async () => {
+    const workspace = await workspaceFixture()
+    const { context, updates } = contextFixture()
+    const spawnGenerator = vi.fn(async ({ args }: TemporaryEvalsProcess) => {
+      const output = args[args.indexOf('--output') + 1]!
+      await writeFileAt(output, JSON.stringify({ cases: [{ name: 'a' }, { name: 'b' }] }))
+      return { code: 0, stdout: '', stderrTail: [] }
+    })
+
+    temporaryExperimentCommand(workspace, projectOf(workspace), {
+      run: dependenciesFor(workspace).run,
+      spawnGenerator,
+    }).run('refunds Answers refund questions', context)
+
+    expect(await finished(updates)).toEqual({
+      status: 'success',
+      text: expect.stringMatching(
+        /saved\n2 cases in .+refunds\.json\nReview or edit the cases there, then run \/optimize refunds\./u
+      ),
+    })
+  })
+
+  it('shouldShowTheUsageWhenTheExperimentHasNoName', async () => {
+    const workspace = await workspaceFixture()
+    const { context, updates, failures } = contextFixture()
+
+    temporaryExperimentCommand(workspace, projectOf(workspace)).run('', context)
+
+    expect(failures).toEqual([expect.stringContaining('Example: /experiment refunds Answers refund questions')])
+    expect(updates).toEqual([])
   })
 })

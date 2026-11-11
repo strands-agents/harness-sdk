@@ -4,9 +4,10 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 
+import { redactPreparationOutput } from '../../project/preparation.js'
 import { pythonInstallEnvironment } from '../../project/python-runtime.js'
 import { isRecord } from '../../values.js'
-import { TEMPORARY_EVALS_FORK_REQUIREMENT } from './fork.js'
+import { TEMPORARY_EVALS_FORK, TEMPORARY_EVALS_FORK_REQUIREMENT } from './fork.js'
 
 export interface TemporaryCommandRequest {
   command: string
@@ -35,6 +36,8 @@ const OPTIMIZER_SITE_PROBE = 'import site; print(site.getsitepackages()[0])'
 const PROJECT_PACKAGES_FILE = 'temporary_strands_dev_project.pth'
 const MARKER_FILE = 'temporary-evals-fork.json'
 const MINIMUM_PYTHON_MINOR = 10
+const DETAIL_LINES = 3
+const FORK_LABEL = `strands-agents-evals from ${TEMPORARY_EVALS_FORK.repository} at ${TEMPORARY_EVALS_FORK.commit.slice(0, 7)}`
 
 const execute = promisify(execFile)
 
@@ -96,7 +99,10 @@ const basePython = ({ projectRoot, language = 'python' }: TemporaryOptimizerTarg
   if (language === 'typescript') return process.env.PYTHON ?? (process.platform === 'win32' ? 'python' : 'python3')
   const projectPython = temporaryVenvPython(join(projectRoot, '.venv'))
   if (!existsSync(projectPython))
-    throw new Error(`The project has no Python environment at ${projectPython}. Start strands dev once to prepare it.`)
+    throw new Error(
+      `The project has no Python environment at ${projectPython}. Restart strands dev on this agent so that it ` +
+        'prepares the project, then try again.'
+    )
   return projectPython
 }
 
@@ -114,7 +120,45 @@ const assertSupportedPython = (python: string, version: string, language: 'pytho
     )
 }
 
+const IMPORTANT_LINE = /^\s*(?:ERROR|error|fatal)\b/u
+
+const failureDetail = (error: unknown): string => {
+  const stderr = isRecord(error) && typeof error.stderr === 'string' ? error.stderr : ''
+  const lines = stderr.split('\n').filter((line) => line.trim().length > 0)
+  const important = lines.filter((line) => IMPORTANT_LINE.test(line))
+  const shown = (important.length > 0 ? important : lines).slice(-DETAIL_LINES)
+  const detail = shown.length > 0 ? shown.join('\n') : String(isRecord(error) ? error.message : error)
+  return redactPreparationOutput(detail)
+}
+
+const step = async <T>(work: Promise<T>, explain: (detail: string) => string): Promise<T> => {
+  try {
+    return await work
+  } catch (error) {
+    throw new Error(explain(failureDetail(error)), { cause: error })
+  }
+}
+
+const PYTHON_START_HINT = {
+  python: 'Restart strands dev on this agent so that it prepares the project again, then try again.',
+  typescript: 'Set PYTHON to a working Python 3.10 or later, then try again.',
+} as const
+
+const preparing = new Map<string, Promise<string>>()
+
 export const prepareTemporaryOptimizerEnvironment = async (
+  target: TemporaryOptimizerTarget,
+  options: TemporaryEnvironmentOptions = {}
+): Promise<string> => {
+  const key = temporaryOptimizationFolder(target.workspaceDirectory)
+  const running = preparing.get(key)
+  if (running) return running
+  const work = prepareEnvironment(target, options).finally(() => preparing.delete(key))
+  preparing.set(key, work)
+  return work
+}
+
+const prepareEnvironment = async (
   target: TemporaryOptimizerTarget,
   { run = runCommand, signal, onProgress = ignoreProgress }: TemporaryEnvironmentOptions = {}
 ): Promise<string> => {
@@ -124,7 +168,10 @@ export const prepareTemporaryOptimizerEnvironment = async (
   const venv = join(folder, '.venv')
   const python = temporaryVenvPython(venv)
   const marker = join(venv, MARKER_FILE)
-  const probed = await projectSitePackages(run, projectPython, projectRoot, signal)
+  const probed = await step(
+    projectSitePackages(run, projectPython, projectRoot, signal),
+    (detail) => `Could not start ${projectPython}:\n${detail}\n${PYTHON_START_HINT[language]}`
+  )
   assertSupportedPython(projectPython, probed.version, language)
   const project = { version: probed.version, paths: language === 'python' ? probed.paths : [] }
   const expected = JSON.stringify({
@@ -148,18 +195,28 @@ export const prepareTemporaryOptimizerEnvironment = async (
   })
   onProgress(`Creating the TEMPORARY optimizer environment in ${venv}`)
   await mkdir(folder, { recursive: true })
-  await run(request(projectPython, ['-m', 'venv', '--clear', venv], VENV_TIMEOUT_MS))
-  const sitePackages = (await run(request(python, ['-c', OPTIMIZER_SITE_PROBE], PROBE_TIMEOUT_MS))).trim()
+  const cannotCreate = (detail: string): string =>
+    `Could not create the optimizer environment in ${venv}:\n${detail}\n` +
+    `Check that ${projectPython} -m venv works (some Linux systems need the python3-venv package), then try again.`
+  await step(run(request(projectPython, ['-m', 'venv', '--clear', venv], VENV_TIMEOUT_MS)), cannotCreate)
+  const sitePackages = (
+    await step(run(request(python, ['-c', OPTIMIZER_SITE_PROBE], PROBE_TIMEOUT_MS)), cannotCreate)
+  ).trim()
   if (project.paths.length > 0)
     await writeFile(join(sitePackages, PROJECT_PACKAGES_FILE), projectPackagesHook(project.paths))
-  onProgress(`Installing ${TEMPORARY_EVALS_FORK_REQUIREMENT}`)
-  await run(
-    request(
-      python,
-      ['-m', 'pip', 'install', '--disable-pip-version-check', '--prefer-binary', TEMPORARY_EVALS_FORK_REQUIREMENT],
-      INSTALL_TIMEOUT_MS,
-      pythonInstallEnvironment(process.env)
-    )
+  onProgress(`Installing ${FORK_LABEL}. This takes about a minute the first time.`)
+  await step(
+    run(
+      request(
+        python,
+        ['-m', 'pip', 'install', '--disable-pip-version-check', '--prefer-binary', TEMPORARY_EVALS_FORK_REQUIREMENT],
+        INSTALL_TIMEOUT_MS,
+        pythonInstallEnvironment(process.env)
+      )
+    ),
+    (detail) =>
+      `Could not install ${FORK_LABEL}:\n${detail}\n` +
+      'Check your network connection and that git is installed, then try again.'
   )
   await writeFile(marker, expected)
   return python

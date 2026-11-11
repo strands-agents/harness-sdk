@@ -1,36 +1,22 @@
-import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { readdir, stat } from 'node:fs/promises'
-import { basename, delimiter, dirname, join, resolve } from 'node:path'
-import { createInterface } from 'node:readline'
+import { mkdir, readdir, stat } from 'node:fs/promises'
+import { basename, join, resolve } from 'node:path'
 import { fileURLToPath, URL } from 'node:url'
 
-import { redactPreparationOutput } from '../../project/preparation.js'
 import { isRecord } from '../../values.js'
 import type { DevWorkspace } from '../workspace.js'
+import { isTemporaryExperimentName } from './experiment.js'
+import { ignoreProgress, prepareTemporaryOptimizerEnvironment, temporaryOptimizationFolder } from './environment.js'
+import type { TemporaryCommandRunner } from './environment.js'
 import {
-  ignoreProgress,
-  prepareTemporaryOptimizerEnvironment,
-  temporaryOptimizationFolder,
-  type TemporaryCommandRunner,
-} from './environment.js'
-
-export interface TemporaryOptimizerProcess {
-  command: string
-  args: string[]
-  cwd: string
-  env: NodeJS.ProcessEnv
-  signal?: AbortSignal
-  onLine: (line: string) => void
-}
-
-export interface TemporaryOptimizerExit {
-  code: number
-  stdout: string
-  stderrTail: string[]
-}
-
-export type TemporaryOptimizerSpawner = (process: TemporaryOptimizerProcess) => Promise<TemporaryOptimizerExit>
+  assertTemporaryForkArguments,
+  spawnTemporaryEvals,
+  temporaryEvalsEnvironment,
+  temporaryEvalsFailure,
+  temporaryExperimentsFolder,
+  temporaryWorkspaceDirectory,
+  type TemporaryEvalsSpawner,
+} from './evals-process.js'
 
 export interface TemporaryOptimizationRequest {
   workspace: DevWorkspace
@@ -51,14 +37,10 @@ export interface TemporaryOptimizationOutcome {
 
 export interface TemporaryOptimizationDependencies {
   run?: TemporaryCommandRunner
-  spawnOptimizer?: TemporaryOptimizerSpawner
+  spawnOptimizer?: TemporaryEvalsSpawner
 }
 
-const STDERR_TAIL_LINES = 20
 const WRAPPER_OWNED_FLAGS = ['--agent', '--record', '--json', '--rich', '--typescript-runner']
-
-export const temporaryExperimentsFolder = (workspaceDirectory: string): string =>
-  join(workspaceDirectory, 'tmp', 'experiments')
 
 const isFile = async (path: string): Promise<boolean> => {
   try {
@@ -78,31 +60,41 @@ const experimentNames = async (folder: string): Promise<string[]> => {
   }
 }
 
+const listed = (names: readonly string[]): string => names.map((name) => basename(name, '.json')).join(', ')
+
+const missingExperiment = (folder: string, requested: string, names: readonly string[]): Error => {
+  if (!isTemporaryExperimentName(requested))
+    return new Error(
+      `No experiment file at ${resolve(requested)}. Check the path, or name an experiment in ${folder}` +
+        (names.length > 0 ? `: ${listed(names)}.` : '.')
+    )
+  return new Error(
+    names.length > 0
+      ? `No experiment named ${requested} in ${folder}. Use one of ${listed(names)}, or create it with ` +
+          `/experiment ${requested} <what the agent does> in a strands dev chat.`
+      : `No experiment named ${requested} yet. Create it with /experiment ${requested} <what the agent does> ` +
+          `in a strands dev chat, then run /optimize ${requested}.`
+  )
+}
+
 export const resolveTemporaryExperiment = async (folder: string, requested?: string): Promise<string> => {
+  const names = await experimentNames(folder)
   if (requested) {
     for (const candidate of [resolve(requested), join(folder, requested), join(folder, `${requested}.json`)]) {
       if (await isFile(candidate)) return candidate
     }
-    throw new Error(`No experiment named ${requested} in ${folder}.`)
+    throw missingExperiment(folder, requested, names)
   }
-  const names = await experimentNames(folder)
   if (names.length === 1) return join(folder, names[0]!)
   if (names.length === 0)
-    throw new Error(`No experiment in ${folder}. Save an Experiment JSON file there, or pass the path of one.`)
-  throw new Error(`${folder} holds several experiments: ${names.join(', ')}. Name the one to optimize.`)
-}
-
-const assertForkArguments = (forkArguments: readonly string[]): void => {
-  const owned = forkArguments.filter((argument) =>
-    WRAPPER_OWNED_FLAGS.some((flag) => argument === flag || argument.startsWith(`${flag}=`))
+    throw new Error(
+      'There is no experiment to optimize yet. Create one with /experiment <name> <what the agent does> ' +
+        `in a strands dev chat, then run /optimize <name>. You can also save an Experiment JSON file in ${folder}.`
+    )
+  throw new Error(
+    `${folder} has more than one experiment: ${listed(names)}. Name the one to use, for example ` +
+      `/optimize ${basename(names[0]!, '.json')} in a chat, or strands dev optimize ${basename(names[0]!, '.json')} in a shell.`
   )
-  if (owned.length > 0)
-    throw new Error(`strands dev sets ${owned.join(', ')} for optimization. Remove it from the optimizer flags.`)
-}
-
-const workspaceDirectory = ({ directory }: DevWorkspace): string => {
-  if (!directory) throw new Error('Optimization needs a strands-dev workspace folder. Run strands dev init first.')
-  return directory
 }
 
 const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`
@@ -120,41 +112,13 @@ const recordFolder = (workspaceDirectory: string, experiment: string, now: Date)
   return join(temporaryOptimizationFolder(workspaceDirectory), `${stamp}-${basename(experiment, '.json')}`)
 }
 
-const spawnOptimizer: TemporaryOptimizerSpawner = ({ command, args, cwd, env, signal, onLine }) =>
-  new Promise((resolveExit, rejectExit) => {
-    const child = spawn(command, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
-    const stdout: string[] = []
-    const stderrTail: string[] = []
-    const abort = (): void => void child.kill('SIGTERM')
-    signal?.addEventListener('abort', abort, { once: true })
-    process.once('exit', abort)
-    child.stdout.setEncoding('utf8').on('data', (chunk: string) => stdout.push(chunk))
-    createInterface({ input: child.stderr }).on('line', (line) => {
-      stderrTail.push(line)
-      if (stderrTail.length > STDERR_TAIL_LINES) stderrTail.shift()
-      onLine(line)
-    })
-    child.once('error', rejectExit)
-    child.once('close', (code) => {
-      signal?.removeEventListener('abort', abort)
-      process.removeListener('exit', abort)
-      resolveExit({ code: code ?? 1, stdout: stdout.join(''), stderrTail })
-    })
-  })
-
-const optimizerEnvironment = (python: string, environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv => ({
-  ...environment,
-  PATH: [dirname(python), environment.PATH].filter(Boolean).join(delimiter),
-  ...(environment.AWS_REGION ? { AWS_DEFAULT_REGION: environment.AWS_REGION } : {}),
-})
-
 export const runTemporaryOptimization = async (
   request: TemporaryOptimizationRequest,
   dependencies: TemporaryOptimizationDependencies = {}
 ): Promise<TemporaryOptimizationOutcome> => {
   const { workspace, forkArguments = [], environment = process.env, signal, onProgress = ignoreProgress } = request
-  const directory = workspaceDirectory(workspace)
-  assertForkArguments(forkArguments)
+  const directory = temporaryWorkspaceDirectory(workspace)
+  assertTemporaryForkArguments(forkArguments, WRAPPER_OWNED_FLAGS, 'strands dev')
   const experiment = await resolveTemporaryExperiment(temporaryExperimentsFolder(directory), request.experiment)
   await request.prepare?.()
   const python = await prepareTemporaryOptimizerEnvironment(
@@ -162,11 +126,14 @@ export const runTemporaryOptimization = async (
     { ...(dependencies.run ? { run: dependencies.run } : {}), ...(signal ? { signal } : {}), onProgress }
   )
   const record = recordFolder(directory, experiment, request.now?.() ?? new Date())
-  if (existsSync(record)) throw new Error(`The optimization record ${record} already exists. Try again in a second.`)
+  if (existsSync(record))
+    throw new Error(`The optimization record ${record} already exists. Wait a second, then try again.`)
+  const log = `${record}.log`
+  await mkdir(temporaryOptimizationFolder(directory), { recursive: true })
   onProgress(`Optimizing ${workspace.entrypoint} against ${experiment}`)
   onProgress(`Record: ${record}`)
   onProgress('Measuring the baseline. The optimizer reports each candidate when it finishes.')
-  const exit = await (dependencies.spawnOptimizer ?? spawnOptimizer)({
+  const exit = await (dependencies.spawnOptimizer ?? spawnTemporaryEvals)({
     command: python,
     args: [
       '-m',
@@ -182,13 +149,12 @@ export const runTemporaryOptimization = async (
       ...forkArguments,
     ],
     cwd: workspace.root,
-    env: optimizerEnvironment(python, environment),
+    env: temporaryEvalsEnvironment(python, environment),
     ...(signal ? { signal } : {}),
+    log,
     onLine: onProgress,
   })
-  if (exit.code !== 0) {
-    const detail = redactPreparationOutput(exit.stderrTail.join('\n'), environment)
-    throw new Error(`strands-evals optimize exited with code ${exit.code}.\n${detail}`)
-  }
+  if (exit.code !== 0)
+    throw temporaryEvalsFailure('strands-evals optimize', exit, environment, `The full optimizer output is in ${log}.`)
   return { experiment, record, summary: exit.stdout.split('\n').filter((line) => line.trim().length > 0) }
 }

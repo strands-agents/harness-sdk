@@ -1,12 +1,10 @@
-import { chmod, mkdir, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 import { temporaryVenvPython, type TemporaryCommandRequest } from '../../../src/dev/temporary-evals-fork/environment.js'
-import {
-  runTemporaryOptimization,
-  type TemporaryOptimizerProcess,
-} from '../../../src/dev/temporary-evals-fork/optimize.js'
+import type { TemporaryEvalsProcess } from '../../../src/dev/temporary-evals-fork/evals-process.js'
+import { runTemporaryOptimization } from '../../../src/dev/temporary-evals-fork/optimize.js'
 import type { DevWorkspace } from '../../../src/dev/workspace.js'
 import { temporaryDirectory } from '../../fixtures/tempdir.js'
 
@@ -46,7 +44,7 @@ const environmentRunner = (workspace: DevWorkspace) =>
   })
 
 const succeeding = (stdout = 'ships candidate 3\nrecord: somewhere\n') =>
-  vi.fn(async (process: TemporaryOptimizerProcess) => {
+  vi.fn(async (process: TemporaryEvalsProcess) => {
     process.onLine('candidate  0 baseline complete n=4 Contains 0.5')
     return { code: 0, stdout, stderrTail: [] }
   })
@@ -101,9 +99,19 @@ describe('TEMPORARY dev optimization', () => {
   })
 
   it.each([
-    { experiments: [], requested: undefined, message: 'No experiment in' },
-    { experiments: ['billing.json', 'support.json'], requested: undefined, message: 'billing.json, support.json' },
-    { experiments: ['support.json'], requested: 'refunds', message: 'No experiment named refunds' },
+    { experiments: [], requested: undefined, message: 'Create one with /experiment <name> <what the agent does>' },
+    { experiments: ['billing.json', 'support.json'], requested: undefined, message: 'for example /optimize billing' },
+    {
+      experiments: ['support.json'],
+      requested: 'refunds',
+      message: 'Use one of support, or create it with /experiment refunds',
+    },
+    { experiments: [], requested: 'refunds', message: 'Create it with /experiment refunds <what the agent does>' },
+    {
+      experiments: ['support.json'],
+      requested: './missing/refunds.json',
+      message: 'Check the path, or name an experiment in',
+    },
   ])('shouldExplainTheExperimentChoiceWhen$message', async ({ experiments, requested, message }) => {
     const workspace = await workspaceFixture(experiments)
     const spawnOptimizer = succeeding()
@@ -155,7 +163,9 @@ describe('TEMPORARY dev optimization', () => {
 
     await expect(
       runTemporaryOptimization({ workspace }, { run: environmentRunner(workspace), spawnOptimizer })
-    ).rejects.toThrow(/exited with code 2\.\n.*must export a Strands Agent/u)
+    ).rejects.toThrow(
+      /stopped with exit code 2: agent\.py must export a Strands Agent .*\nThe full optimizer output is in .+\.log\./u
+    )
   })
 
   it.each([
@@ -192,9 +202,9 @@ describe('TEMPORARY dev optimization', () => {
   })
 
   it.each([
-    { language: 'typescript' as const, experiments: [], message: 'No experiment in' },
-    { language: 'python' as const, experiments: [], message: 'No experiment in' },
-  ])('shouldNotPrepareThe$languageProjectWhen$message', async ({ language, experiments, message }) => {
+    { language: 'typescript' as const, experiments: [], message: 'There is no experiment to optimize yet' },
+    { language: 'python' as const, experiments: [], message: 'There is no experiment to optimize yet' },
+  ])('shouldNotPrepareTheProjectWhen$message ($language)', async ({ language, experiments, message }) => {
     const workspace = await workspaceFixture(experiments, language)
     const prepare = vi.fn(async () => {})
 
@@ -227,6 +237,7 @@ describe('TEMPORARY dev optimization', () => {
 
       expect(progress).toContain('candidate  0 baseline complete')
       expect(outcome.summary).toEqual(['ships candidate 0: {}'])
+      expect(await readFile(`${outcome.record}.log`, 'utf8')).toBe('candidate  0 baseline complete\n')
     }
   )
 
@@ -250,6 +261,6 @@ describe('TEMPORARY dev optimization', () => {
           },
         }
       )
-    ).rejects.toThrow(/exited with code 2\.\nstrands-evals: error: the record is in use/u)
+    ).rejects.toThrow(/stopped with exit code 2: the record is in use\nThe full optimizer output is in .+\.log\./u)
   })
 })
