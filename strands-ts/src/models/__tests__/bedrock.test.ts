@@ -2120,6 +2120,25 @@ describe('BedrockModel', () => {
         expect(sentFields(ConverseStreamCommand).at(-1)).toStrictEqual(dropBlockFields)
       })
 
+      it('does not keep drop_block on after a rejected retry', async () => {
+        const temperatureError = new ValidationException({
+          message: '`temperature` may only be set to 1',
+          $metadata: {},
+        })
+        const mockSend = vi
+          .fn()
+          .mockRejectedValueOnce(bindingError)
+          .mockRejectedValueOnce(temperatureError)
+          .mockResolvedValue({ stream: (async function* (): AsyncGenerator<unknown> {})() })
+        mockBedrockClientImplementation({ send: mockSend })
+        const provider = new BedrockModel({ modelId: 'm1', temperature: 0.2 })
+
+        await expect(collectIterator(provider.stream(messages))).rejects.toThrow('temperature')
+        await collectIterator(provider.stream(messages))
+
+        expect(sentFields(ConverseStreamCommand).at(-1)).toBeUndefined()
+      })
+
       it('re-throws the binding message on a non-validation error', async () => {
         const mockSend = vi.fn().mockRejectedValue(new Error(bindingError.message))
         mockBedrockClientImplementation({ send: mockSend })

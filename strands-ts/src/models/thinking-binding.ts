@@ -35,7 +35,7 @@ export function thinkingWithDropBlock<T>(
   thinking: T | undefined,
   toolForced = false
 ): (T & { block_binding: { prefix_mismatch_behavior: 'drop_block' } }) | undefined {
-  const config = thinking === undefined && !toolForced ? ({ type: 'adaptive' } as T) : thinking
+  const config = (thinking === undefined || thinking === null) && !toolForced ? ({ type: 'adaptive' } as T) : thinking
   if (typeof config !== 'object' || config === null || Array.isArray(config) || 'block_binding' in config) {
     return undefined
   }

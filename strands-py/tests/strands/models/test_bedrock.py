@@ -1466,6 +1466,25 @@ async def test_stream_maps_retry_error_to_sdk_exception(
 
 
 @pytest.mark.asyncio
+async def test_stream_does_not_keep_drop_block_after_rejected_retry(bedrock_client, alist, messages):
+    temperature_error = ClientError(
+        {"Error": {"Code": "ValidationException", "Message": "`temperature` may only be set to 1"}}, "ConverseStream"
+    )
+    bedrock_client.converse_stream.side_effect = [
+        _thinking_binding_error("ConverseStream"),
+        temperature_error,
+        {"stream": []},
+    ]
+    model = BedrockModel(model_id="m1", temperature=0.2)
+
+    with pytest.raises(ClientError, match="temperature"):
+        await alist(model.stream(messages))
+    await alist(model.stream(messages))
+
+    assert "additionalModelRequestFields" not in bedrock_client.converse_stream.call_args.kwargs
+
+
+@pytest.mark.asyncio
 async def test_stream_drops_stale_thinking_only_for_remembered_model(bedrock_client, alist, messages):
     bedrock_client.converse_stream.return_value = {"stream": []}
     model = BedrockModel(model_id="m1", additional_request_fields={"thinking": THINKING})

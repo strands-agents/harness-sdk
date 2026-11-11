@@ -654,8 +654,19 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
         logger.warn(
           `model_id=<${this._config.modelId}> | history edit invalidated replayed thinking blocks, retrying with drop_block`
         )
+        const previous = this._dropStaleThinkingModelId
         this._dropStaleThinkingModelId = this._config.modelId
-        yield* this.stream(messages, options)
+        let yielded = false
+        try {
+          for await (const event of this.stream(messages, options)) {
+            yielded = true
+            yield event
+          }
+        } catch (error) {
+          // A rejected retry must not leave drop_block on for later requests.
+          if (!yielded) this._dropStaleThinkingModelId = previous
+          throw error
+        }
         return
       }
 

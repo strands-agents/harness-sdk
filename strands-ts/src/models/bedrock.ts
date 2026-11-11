@@ -933,8 +933,10 @@ export class BedrockModel extends Model<BedrockModelConfig> {
       logger.warn(
         `model_id=<${request.modelId}> | history edit invalidated replayed thinking blocks, retrying with drop_block`
       )
+      const response = await send(retryRequest)
+      // Latched only once the retry is accepted, so a rejected retry does not alter later requests.
       this._dropStaleThinkingModelId = request.modelId
-      return send(retryRequest)
+      return response
     }
   }
 

@@ -1134,9 +1134,9 @@ unchanged.
 - **Thinking does not need to be configured.** The retry uses the `thinking` set in
   <Syntax py="additional_request_fields" ts="additionalRequestFields" /> or in
   `additionalModelRequestFields` of <Syntax py="additional_args" ts="additionalArgs" />.
-  Without one, it sends `"type": "adaptive"`, the default for these models. A request
-  that forces a tool call has no thinking, so this error is raised as is, as are other
-  errors.
+  Without one, it sends `"type": "adaptive"`, the default for Claude models that preserve
+  thinking, on the retry and on later requests to that model. A request that forces a
+  tool call has no thinking, so this error is raised as is, as are other errors.
 - **Your `block_binding` wins.** If the thinking configuration already contains
   `block_binding`, the provider sends it as written and does not retry. Set it yourself
   to choose the behavior up front or to keep the error.

@@ -746,6 +746,22 @@ describe('AnthropicModel', () => {
       ])
     })
 
+    it('does not keep drop_block on after a rejected retry', async () => {
+      const temperatureError = Object.assign(new Error('400 `temperature` may only be set to 1'), { status: 400 })
+      const { stream, client } = createRejectingOnceClient(bindingError, temperatureError)
+      const provider = new AnthropicModel({ client, modelId: 'm1', params: { temperature: 0.2 } })
+
+      await expect(collectIterator(provider.stream(messages))).rejects.toThrow('temperature')
+      stream.mockImplementation(() =>
+        (async function* () {
+          yield { type: 'message_start', message: { role: 'assistant', usage: {} } }
+        })()
+      )
+      await collectIterator(provider.stream(messages))
+
+      expect((stream.mock.calls.at(-1) as unknown[])[0]).not.toHaveProperty('thinking')
+    })
+
     it('re-throws the binding message on a non-400 error', async () => {
       const { stream, client } = createRejectingOnceClient(Object.assign(new Error(bindingMessage), { status: 500 }))
       const provider = new AnthropicModel({ client, modelId: 'm1', params: { thinking: { type: 'adaptive' } } })

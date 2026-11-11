@@ -596,8 +596,9 @@ class BedrockModel(Model):
 
         The retry turns drop_block on for every later request to this model, since the stale blocks stay in history.
         """
-        if self._drop_stale_thinking_model_id == request["modelId"]:
-            request = _request_with_drop_block(request) or request
+        if self._drop_stale_thinking_model_id == request["modelId"] and (latched := _request_with_drop_block(request)):
+            logger.debug("model_id=<%s> | sending drop_block for stale thinking", request["modelId"])
+            request = latched
         try:
             return converse_method(**request)
         except ClientError as error:
@@ -611,8 +612,10 @@ class BedrockModel(Model):
             "model_id=<%s> | history edit invalidated replayed thinking blocks, retrying with drop_block",
             request["modelId"],
         )
+        response = converse_method(**retry_request)
+        # Latched only once the retry is accepted, so a rejected retry does not alter later requests.
         self._drop_stale_thinking_model_id = request["modelId"]
-        return converse_method(**retry_request)
+        return response
 
     def _apply_system_cache_ttl(
         self, system_blocks: list[SystemContentBlock], tools_cache_point: list[dict[str, Any]]
