@@ -921,19 +921,20 @@ export class BedrockModel extends Model<BedrockModelConfig> {
     request: ConverseStreamCommandInput,
     send: (input: ConverseStreamCommandInput) => Promise<T>
   ): Promise<T> {
+    const sent = (this._dropStaleThinkingModelId === request.modelId && requestWithDropBlock(request)) || request
     try {
-      return await send(request)
+      return await send(sent)
     } catch (error) {
       const isBindingError =
         error instanceof Error && error.name === 'ValidationException' && isThinkingBindingError(error)
-      const retryFields = isBindingError ? fieldsWithDropBlock(request.additionalModelRequestFields) : undefined
-      if (!retryFields) throw error
+      const retryRequest = isBindingError ? requestWithDropBlock(sent) : undefined
+      if (!retryRequest) throw error
 
       logger.warn(
         `model_id=<${request.modelId}> | history edit invalidated replayed thinking blocks, retrying with drop_block`
       )
       this._dropStaleThinkingModelId = request.modelId
-      return send({ ...request, additionalModelRequestFields: retryFields })
+      return send(retryRequest)
     }
   }
 
@@ -1081,7 +1082,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
 
     const toolChoice = options?.toolChoice
     if (!toolChoice || 'auto' in toolChoice) {
-      return this._dropStaleThinkingModelId === this._config.modelId ? (fieldsWithDropBlock(fields) ?? fields) : fields
+      return fields
     }
 
     const { thinking: _, ...rest } = fields
@@ -2329,18 +2330,20 @@ function recordRejectedMechanism(
 }
 
 /**
- * Return additional request fields that drop stale thinking blocks, or undefined if they cannot change.
+ * Return the request with stale thinking blocks dropped, or undefined if it cannot change.
  *
- * @param fields - The additional model request fields
- * @returns The fields with drop_block and its beta, or undefined
+ * @param request - The Bedrock request
+ * @returns The request with drop_block and its beta, or undefined
  */
-function fieldsWithDropBlock(fields: JSONValue | undefined): Record<string, JSONValue> | undefined {
+function requestWithDropBlock(request: ConverseStreamCommandInput): ConverseStreamCommandInput | undefined {
+  const fields = request.additionalModelRequestFields ?? {}
   if (typeof fields !== 'object' || fields === null || Array.isArray(fields)) return undefined
-  const thinking = thinkingWithDropBlock(fields.thinking)
+  const toolChoice = request.toolConfig?.toolChoice
+  const thinking = thinkingWithDropBlock(fields.thinking, !!toolChoice && ('any' in toolChoice || 'tool' in toolChoice))
   if (!thinking) return undefined
   const betas = Array.isArray(fields.anthropic_beta) ? fields.anthropic_beta : []
   const anthropicBeta = betas.includes(THINKING_BINDING_BETA) ? betas : [...betas, THINKING_BINDING_BETA]
-  return { ...fields, anthropic_beta: anthropicBeta, thinking }
+  return { ...request, additionalModelRequestFields: { ...fields, anthropic_beta: anthropicBeta, thinking } }
 }
 
 /**

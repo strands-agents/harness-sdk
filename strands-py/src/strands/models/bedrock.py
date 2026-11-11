@@ -196,15 +196,17 @@ DEFAULT_READ_TIMEOUT = 120
 _CANCEL_POLL_INTERVAL = 0.05
 
 
-def _fields_with_drop_block(fields: dict[str, Any]) -> dict[str, Any] | None:
-    """Return additional request fields that drop stale thinking blocks, or None if they cannot change."""
-    thinking = thinking_with_drop_block(fields.get("thinking"))
+def _request_with_drop_block(request: dict[str, Any]) -> dict[str, Any] | None:
+    """Return the request with stale thinking blocks dropped, or None if it cannot change."""
+    fields = request.get("additionalModelRequestFields") or {}
+    tool_choice = request.get("toolConfig", {}).get("toolChoice", {})
+    thinking = thinking_with_drop_block(fields.get("thinking"), "any" in tool_choice or "tool" in tool_choice)
     if thinking is None:
         return None
     betas = list(fields.get("anthropic_beta") or [])
     if THINKING_BINDING_BETA not in betas:
         betas.append(THINKING_BINDING_BETA)
-    return {**fields, "anthropic_beta": betas, "thinking": thinking}
+    return {**request, "additionalModelRequestFields": {**fields, "anthropic_beta": betas, "thinking": thinking}}
 
 
 class BedrockModel(Model):
@@ -587,9 +589,6 @@ class BedrockModel(Model):
                 return {"additionalModelRequestFields": fields_without_thinking}
             return {}
 
-        if self._drop_stale_thinking_model_id == self.config["model_id"]:
-            additional_fields = _fields_with_drop_block(additional_fields) or additional_fields
-
         return {"additionalModelRequestFields": additional_fields}
 
     def _converse(self, converse_method: Callable[..., Any], request: dict[str, Any]) -> Any:
@@ -597,14 +596,15 @@ class BedrockModel(Model):
 
         The retry turns drop_block on for every later request to this model, since the stale blocks stay in history.
         """
+        if self._drop_stale_thinking_model_id == request["modelId"]:
+            request = _request_with_drop_block(request) or request
         try:
             return converse_method(**request)
         except ClientError as error:
-            fields = request.get("additionalModelRequestFields") or {}
             error_code = error.response.get("Error", {}).get("Code")
             is_binding_error = error_code == "ValidationException" and is_thinking_binding_error(error)
-            retry_fields = _fields_with_drop_block(fields) if is_binding_error else None
-            if retry_fields is None:
+            retry_request = _request_with_drop_block(request) if is_binding_error else None
+            if retry_request is None:
                 raise
 
         logger.warning(
@@ -612,7 +612,7 @@ class BedrockModel(Model):
             request["modelId"],
         )
         self._drop_stale_thinking_model_id = request["modelId"]
-        return converse_method(**{**request, "additionalModelRequestFields": retry_fields})
+        return converse_method(**retry_request)
 
     def _apply_system_cache_ttl(
         self, system_blocks: list[SystemContentBlock], tools_cache_point: list[dict[str, Any]]

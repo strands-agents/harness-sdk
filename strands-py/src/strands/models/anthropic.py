@@ -821,7 +821,8 @@ class AnthropicModel(Model):
 
     def _request_with_drop_block(self, request: dict[str, Any]) -> dict[str, Any] | None:
         """Return the request with stale thinking blocks dropped, or None if it cannot change."""
-        thinking = thinking_with_drop_block(request.get("thinking"))
+        tool_forced = request.get("tool_choice", {}).get("type") in ("any", "tool")
+        thinking = thinking_with_drop_block(request.get("thinking"), tool_forced)
         if thinking is None:
             return None
         return {**self._with_beta(request, THINKING_BINDING_BETA), "thinking": thinking}

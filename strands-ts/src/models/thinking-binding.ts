@@ -26,15 +26,18 @@ export function isThinkingBindingError(error: unknown): boolean {
 /**
  * Return the thinking config with stale blocks dropped, or undefined if it cannot or should not change.
  *
- * A caller-set `block_binding` is left as written.
+ * A caller-set `block_binding` is left as written. Without a config, adaptive thinking is added, since these models
+ * think adaptively by default and some reject a config without a type; a forced tool rules thinking out.
  *
  * @internal
  */
 export function thinkingWithDropBlock<T>(
-  thinking: T
+  thinking: T | undefined,
+  toolForced = false
 ): (T & { block_binding: { prefix_mismatch_behavior: 'drop_block' } }) | undefined {
-  if (typeof thinking !== 'object' || thinking === null || Array.isArray(thinking) || 'block_binding' in thinking) {
+  const config = thinking === undefined && !toolForced ? ({ type: 'adaptive' } as T) : thinking
+  if (typeof config !== 'object' || config === null || Array.isArray(config) || 'block_binding' in config) {
     return undefined
   }
-  return { ...thinking, block_binding: { prefix_mismatch_behavior: 'drop_block' } }
+  return { ...config, block_binding: { prefix_mismatch_behavior: 'drop_block' } }
 }

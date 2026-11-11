@@ -603,6 +603,12 @@ describe('AnthropicModel', () => {
     const bindingError = Object.assign(new Error(bindingMessage), { status: 400 })
     const dropBlockThinking = { type: 'adaptive', block_binding: { prefix_mismatch_behavior: 'drop_block' } }
     const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+    const forced = {
+      toolSpecs: [
+        { name: 'calc', description: 'Calculator', inputSchema: { type: 'object' as const, properties: {} } },
+      ],
+      toolChoice: { any: {} },
+    }
 
     const createRejectingOnceClient = (error: Error = bindingError, retryError?: Error) => {
       let calls = 0
@@ -712,13 +718,32 @@ describe('AnthropicModel', () => {
         name: 'a caller-set block_binding',
         params: { thinking: { type: 'adaptive', block_binding: { prefix_mismatch_behavior: 'error' } } },
       },
-      { name: 'no thinking config', params: undefined },
-    ])('re-throws the binding error with $name', async ({ params }) => {
+      { name: 'a forced tool and no thinking config', params: undefined, options: forced },
+    ])('re-throws the binding error with $name', async ({ params, options }) => {
       const { stream, client } = createRejectingOnceClient()
       const provider = new AnthropicModel({ client, modelId: 'm1', ...(params && { params }) })
 
-      await expect(collectIterator(provider.stream(messages))).rejects.toThrow('bound to a different conversation')
+      await expect(collectIterator(provider.stream(messages, options))).rejects.toThrow(
+        'bound to a different conversation'
+      )
       expect(stream).toHaveBeenCalledOnce()
+    })
+
+    it('retries with adaptive thinking when no thinking config is set', async () => {
+      const { stream, client } = createRejectingOnceClient()
+      const provider = new AnthropicModel({ client, modelId: 'm1' })
+
+      await collectIterator(provider.stream(messages))
+      await collectIterator(provider.stream(messages))
+      await collectIterator(provider.stream(messages, forced))
+
+      const expectedOptions = { headers: { 'anthropic-beta': 'thinking-binding-controls-2026-08-01' } }
+      expect(stream.mock.calls.map((call: unknown[]) => [(call[0] as any).thinking, call[1]])).toStrictEqual([
+        [undefined, undefined],
+        [dropBlockThinking, expectedOptions],
+        [dropBlockThinking, expectedOptions],
+        [undefined, expectedOptions],
+      ])
     })
 
     it('re-throws the binding message on a non-400 error', async () => {
