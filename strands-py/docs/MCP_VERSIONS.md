@@ -17,7 +17,7 @@ The SDK ships a compatibility layer (`src/strands/tools/mcp/_compat.py`) that ha
 
 ## Choosing a version
 
-The dependency range is `mcp>=1.23.0,<2.2`. A fresh install resolves to the newest 2.x release in that range.
+The dependency range is `mcp>=1.23.0,<2.4`. A fresh install resolves to the newest 2.x release in that range.
 
 To stay on 1.x, pin it in your own project:
 
