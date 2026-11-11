@@ -70,7 +70,7 @@ async def _summarize_with_stream(
     usage: Usage | None = None
     async for event in ModelProxy(model).stream(
         _with_instructions(messages, f"{_SUMMARIZE_GUARD}\n\n{instructions or DEFAULT_SUMMARIZE_INSTRUCTIONS}"),
-        tool_specs,
+        tool_specs or [],
         system_prompt,
         system_prompt_content=system_prompt_content,
         cancel_signal=cancel_signal,

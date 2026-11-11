@@ -94,7 +94,7 @@ class ModelExtractor:
             with trace_api.use_span(span, end_on_exit=False):
                 async for event in ModelProxy(model).stream(
                     [prompt],
-                    None,
+                    [],
                     self._system_prompt,
                     invocation_context=context.invocation_context if context is not None else None,
                 ):
