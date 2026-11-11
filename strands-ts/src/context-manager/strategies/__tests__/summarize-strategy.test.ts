@@ -17,7 +17,12 @@ import { logger } from '../../../logging/logger.js'
 import { createMockAgent } from '../../../__fixtures__/agent-helpers.js'
 import { MockMessageModel } from '../../../__fixtures__/mock-message-model.js'
 import { TestModelProvider } from '../../../__fixtures__/model-test-helpers.js'
-import { placeholdersIn } from '../../../__fixtures__/context-manager-helpers.js'
+import {
+  heuristicCountTokens,
+  makeContext as makeBaseContext,
+  makeToolResultMessage,
+  placeholdersIn,
+} from '../../../__fixtures__/context-manager-helpers.js'
 import { DEFAULT_SUMMARIZE_INSTRUCTIONS, SUMMARIZE_GUARD, type SummarizeResult } from '../../../models/summarize.js'
 import type { ModelStreamEvent, Usage } from '../../../models/streaming.js'
 import type { Agent } from '../../../agent/agent.js'
@@ -34,56 +39,12 @@ const summaryResult = (text: string, provider?: string): SummarizeResult => ({
 const mockSummarize = () =>
   vi.fn(async (_messages: Message[], _options?: unknown) => summaryResult('Summary of multimodal content'))
 
-function makeToolResultMessage(text: string, toolUseId = 'tool-123'): Message {
-  return new Message({
-    role: 'user',
-    content: [
-      new ToolResultBlock({
-        toolUseId,
-        status: 'success',
-        content: [new TextBlock(text)],
-      }),
-    ],
-  })
-}
-
-function heuristicCountTokens(messages: Message[]): number {
-  let total = 0
-  for (const message of messages) {
-    for (const block of message.content) {
-      if (block instanceof TextBlock) {
-        total += Math.ceil(block.text.length / 4)
-      } else if (block instanceof ToolResultBlock) {
-        for (const content of block.content) {
-          if (content instanceof TextBlock) total += Math.ceil(content.text.length / 4)
-          else total += Math.ceil(JSON.stringify(content).length / 2)
-        }
-      } else {
-        total += Math.ceil(JSON.stringify(block).length / 2)
-      }
-    }
-  }
-  return total
-}
-
+/** A context whose model is `model` over a {@link mockSummarize} default; no `model` leaves the agent without one. */
 function makeContext(messages: Message[], utilization = 0.5, model?: unknown): ContextState {
-  const resolvedModel = model
-    ? {
-        countTokens: async (msgs: Message[]) => heuristicCountTokens(msgs),
-        modelInfo: {},
-        summarize: mockSummarize(),
-        ...(model as object),
-      }
-    : undefined
-  const mockData = resolvedModel
-    ? { messages, extra: { model: resolvedModel } as unknown as Partial<Agent> }
-    : { messages }
-  const agent = createMockAgent(mockData)
-  return {
-    messages,
-    agent,
+  return makeBaseContext(messages, {
     utilization,
-  }
+    model: model ? { modelInfo: {}, summarize: mockSummarize(), ...(model as object) } : null,
+  })
 }
 
 describe('Offload.summarize', () => {

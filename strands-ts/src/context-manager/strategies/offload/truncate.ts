@@ -18,11 +18,10 @@ import {
 } from '../../methods/truncate.js'
 import type { Stash } from '../../stash.js'
 import { placeholderFor, removeMessages, withPairs } from '../../message-trimming.js'
-import { formatElided, formatOffloaded } from '../../placeholder.js'
+import { formatElided, formatOffloaded, isOffloaded } from '../../placeholder.js'
 import { BaseOffloadStrategy } from './base.js'
 import type { OffloadConditions } from './conditions.js'
 import { mediaKind, type OffloadTarget } from './target.js'
-import { isOffloaded } from '../../placeholder.js'
 
 export class TruncateStrategy extends BaseOffloadStrategy {
   private readonly _truncateConfig: TruncateConfig

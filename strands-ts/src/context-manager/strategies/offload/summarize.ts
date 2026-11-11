@@ -21,7 +21,13 @@ import type { LocalAgent } from '../../../types/agent.js'
 import type { ContextState } from '../../types.js'
 import { formatToolResultLabel, toolResultToContentBlocks } from '../../methods/summarize.js'
 import { formatOffloaded, formatSummarized, REMOVED_MESSAGES } from '../../placeholder.js'
-import { removedTokens, removeMessages, repairAlternation, stashRemoved } from '../../message-trimming.js'
+import {
+  placeholderFor,
+  removedTokens,
+  removeMessages,
+  repairAlternation,
+  stashRemoved,
+} from '../../message-trimming.js'
 import { BaseOffloadStrategy } from './base.js'
 import type { OffloadConditions } from './conditions.js'
 import { mediaKind, type OffloadTarget } from './target.js'
@@ -222,10 +228,7 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
       `model=<${model.constructor.name}> | no server-side summary | the client-side summary rewrites history,` +
         ' so thinking blocks kept after it will be dropped'
     )
-    const textFor = async (removed: Message[]): Promise<{ text: string; tokens: number }> => {
-      const tokens = await removedTokens(removed, model)
-      return { text: formatSummarized(REMOVED_MESSAGES, tokens, summary), tokens }
-    }
+    const textFor = placeholderFor(model, (tokens) => formatSummarized(REMOVED_MESSAGES, tokens, summary))
     return removeMessages(context.messages, context.messages.slice(1, end), textFor, 'summarize', this._stash)
   }
 

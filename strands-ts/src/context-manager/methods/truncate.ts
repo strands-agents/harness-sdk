@@ -6,8 +6,7 @@
 
 import { JsonBlock, TextBlock, ToolResultBlock } from '../../types/messages.js'
 import type { ToolResultContent } from '../../types/messages.js'
-import { formatTruncated } from '../placeholder.js'
-import { isOffloaded } from '../placeholder.js'
+import { formatTruncated, isOffloaded } from '../placeholder.js'
 
 const DEFAULT_PREVIEW_TOKENS = 1000
 const CHARS_PER_TOKEN = 4

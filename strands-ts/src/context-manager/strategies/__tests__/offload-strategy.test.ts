@@ -24,63 +24,33 @@ import { MockMessageModel } from '../../../__fixtures__/mock-message-model.js'
 import type { Agent } from '../../../agent/agent.js'
 import type { ContextState } from '../../types.js'
 import { withDefaultLocale } from '../../../__fixtures__/locale-helpers.js'
-import { offloadedBy, placeholdersIn } from '../../../__fixtures__/context-manager-helpers.js'
+import {
+  makeContext as makeBaseContext,
+  makeToolResultMessage,
+  offloadedBy,
+  placeholdersIn,
+} from '../../../__fixtures__/context-manager-helpers.js'
 
 /** The summarizer every context's model shares, so a pass can assert no summary was requested. */
 const summarize = vi.fn(async (_messages: Message[], _options?: unknown) => ({
   content: [new SummaryBlock({ text: 'summary' })],
 }))
 
-function makeToolResultMessage(text: string, toolUseId = 'tool-123'): Message {
-  return new Message({
-    role: 'user',
-    content: [
-      new ToolResultBlock({
-        toolUseId,
-        status: 'success',
-        content: [new TextBlock(text)],
-      }),
-    ],
-  })
-}
-
-function heuristicCountTokens(messages: Message[]): number {
-  let total = 0
-  for (const message of messages) {
-    for (const block of message.content) {
-      if (block instanceof TextBlock) {
-        total += Math.ceil(block.text.length / 4)
-      } else if (block instanceof ToolResultBlock) {
-        for (const content of block.content) {
-          if (content instanceof TextBlock) total += Math.ceil(content.text.length / 4)
-          else total += Math.ceil(JSON.stringify(content).length / 2)
-        }
-      } else {
-        total += Math.ceil(JSON.stringify(block).length / 2)
-      }
-    }
-  }
-  return total
-}
-
+/** A context whose model shares {@link summarize} and reports `contextWindowLimit` as its window. */
 function makeContext(
   messages: Message[],
   utilization = 0.5,
   overflow?: boolean,
   contextWindowLimit?: number
 ): ContextState {
-  const model = {
-    countTokens: async (msgs: Message[]) => heuristicCountTokens(msgs),
-    modelInfo: contextWindowLimit === undefined ? {} : { limits: { contextWindow: contextWindowLimit } },
-    summarize,
-  }
-  const agent = createMockAgent({ messages, extra: { model } as unknown as Partial<Agent> })
-  return {
-    messages,
-    agent,
+  return makeBaseContext(messages, {
     utilization,
-    ...(overflow ? { overflow: true } : {}),
-  }
+    overflow,
+    model: {
+      modelInfo: contextWindowLimit === undefined ? {} : { limits: { contextWindow: contextWindowLimit } },
+      summarize,
+    },
+  })
 }
 
 describe('Offload.truncate', () => {
