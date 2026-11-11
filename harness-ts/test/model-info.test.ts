@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
+import { AnthropicModel } from '@strands-agents/sdk/models/anthropic'
 import { lookupModel } from '../src/model-info.js'
 import { EFFORT_LEVELS } from '../src/models.js'
 
@@ -33,5 +34,21 @@ describe('lookupModel', () => {
       const level = entry.capabilities?.defaultEffort
       if (level !== undefined) expect(EFFORT_LEVELS.slice(2), id).toContain(level)
     }
+  })
+
+  it.each([
+    'claude-opus-5-5',
+    'us.anthropic.claude-opus-5-5-20260401-v1:0',
+    'arn:aws:bedrock:us-west-2:123:inference-profile/global.anthropic.claude-haiku-4-5-20251001-v1:0',
+    'claude-haiku-4-5@20251001',
+    'anthropic.claude-3-5-haiku-20241022-v2:0',
+    'openai.gpt-6.1-sol',
+    'global.openai.gpt-6-astra',
+    'amazon.nova-pro-v1:0',
+    'gemini-3.5-flash',
+    'unknown-model',
+  ])('matches %s to the same entry as the SDK', (modelId) => {
+    const sdk = new AnthropicModel({ modelId, apiKey: 'test' }).modelInfo
+    expect(lookupModel(modelId).limits?.maxOutputTokens).toBe(sdk.limits?.maxOutputTokens)
   })
 })

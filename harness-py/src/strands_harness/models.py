@@ -46,7 +46,7 @@ _MODELS: dict[str, dict[str, Any]] = json.loads(
 )["models"]
 
 
-def lookup_model(model_id: str) -> dict[str, Any]:
+def _lookup_model(model_id: str) -> dict[str, Any]:
     """The model's entry, matched by the SDK's rule (version suffix, date, leading segments); empty when unknown."""
     candidate = model_id
     while True:
@@ -61,7 +61,7 @@ def lookup_model(model_id: str) -> dict[str, Any]:
 
 
 def _claude_max_tokens(model_id: str) -> int:
-    return lookup_model(model_id).get("limits", {}).get("maxOutputTokens") or _ANTHROPIC_MAX_TOKENS
+    return _lookup_model(model_id).get("limits", {}).get("maxOutputTokens") or _ANTHROPIC_MAX_TOKENS
 
 
 # Small, fast model per provider for the web_fetch summarizer. Keyed by the main agent's provider
@@ -240,9 +240,14 @@ def _bedrock_claude(model_id: str, effort: str | None, caching: bool) -> Model:
     region = boto3.Session().region_name or os.environ.get("AWS_REGION") or DEFAULT_BEDROCK_REGION
     from strands.models.anthropic import AnthropicModel
 
-    return AnthropicModel(
-        client=anthropic.AsyncAnthropicBedrock(aws_region=region), **_anthropic_config(model_id, effort, False, caching)
-    )
+    # Anthropic's client reads ANTHROPIC_BEDROCK_BASE_URL but not the AWS endpoint overrides BedrockModel honors.
+    endpoint = None if os.environ.get("ANTHROPIC_BEDROCK_BASE_URL") else _aws_endpoint_url()
+    client = anthropic.AsyncAnthropicBedrock(aws_region=region, **({"base_url": endpoint} if endpoint else {}))
+    return AnthropicModel(client=client, **_anthropic_config(model_id, effort, False, caching))
+
+
+def _aws_endpoint_url() -> str | None:
+    return os.environ.get("AWS_ENDPOINT_URL_BEDROCK_RUNTIME") or os.environ.get("AWS_ENDPOINT_URL")
 
 
 def _anthropic(model_id: str, effort: str | None, web_search: bool, caching: bool) -> Model:
@@ -394,7 +399,7 @@ def _model_levels(provider_name: str, model_id: str, default: tuple[str, ...]) -
 def _default_effort(model_id: str, levels: tuple[str, ...], recommended: str | None) -> str | None:
     """The level ``"auto"`` resolves to: the vendor's default for the model from the shared model info
     (what Claude Code, Codex, or Gemini CLI run it at), else the provider's ``recommended`` level."""
-    vendor_default = lookup_model(model_id).get("capabilities", {}).get("defaultEffort")
+    vendor_default = _lookup_model(model_id).get("capabilities", {}).get("defaultEffort")
     return vendor_default if vendor_default in levels else recommended
 
 

@@ -222,7 +222,17 @@ async function bedrock(modelId: string, effort: string | null, _webSearch: boole
   const region = process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION
   if (bedrockFamily(modelId).startsWith('anthropic.claude-')) {
     const { AnthropicBedrock } = await import('@anthropic-ai/bedrock-sdk')
-    const client = new AnthropicBedrock({ awsRegion: region || (await awsConfigRegion()) })
+    // Unlike the AWS SDK BedrockModel uses, Anthropic's client reads neither the AWS endpoint overrides nor the
+    // Bedrock API key from the environment (only ANTHROPIC_BEDROCK_BASE_URL), so pass them through.
+    const endpoint = process.env.ANTHROPIC_BEDROCK_BASE_URL
+      ? undefined
+      : process.env.AWS_ENDPOINT_URL_BEDROCK_RUNTIME || process.env.AWS_ENDPOINT_URL
+    const apiKey = process.env.AWS_BEARER_TOKEN_BEDROCK
+    const client = new AnthropicBedrock({
+      awsRegion: region || (await awsConfigRegion()),
+      ...(endpoint ? { baseURL: endpoint } : {}),
+      ...(apiKey ? { apiKey } : {}),
+    })
     return claude(modelId, claudeOutputTokens(modelId), thinking as Record<string, unknown> | undefined, caching, {
       client,
     })

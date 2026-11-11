@@ -104,6 +104,33 @@ def test_bedrock_claude_client_uses_the_aws_region(monkeypatch, tmp_path):
 
 
 @pytest.mark.parametrize(
+    ("env", "base_url"),
+    [
+        ({}, "https://bedrock-runtime.us-west-2.amazonaws.com"),
+        ({"AWS_ENDPOINT_URL": "https://vpce.example"}, "https://vpce.example"),
+        (
+            {"AWS_ENDPOINT_URL": "https://all.example", "AWS_ENDPOINT_URL_BEDROCK_RUNTIME": "https://runtime.example"},
+            "https://runtime.example",
+        ),
+        (
+            {
+                "AWS_ENDPOINT_URL_BEDROCK_RUNTIME": "https://runtime.example",
+                "ANTHROPIC_BEDROCK_BASE_URL": "https://a.example",
+            },
+            "https://a.example",
+        ),
+    ],
+)
+def test_bedrock_claude_client_honors_the_endpoint_overrides(monkeypatch, env, base_url):
+    for name in ("AWS_ENDPOINT_URL", "AWS_ENDPOINT_URL_BEDROCK_RUNTIME", "ANTHROPIC_BEDROCK_BASE_URL"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("AWS_REGION", "us-west-2")
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+    assert str(resolve("bedrock/global.anthropic.claude-opus-5-5").client.base_url).rstrip("/") == base_url
+
+
+@pytest.mark.parametrize(
     ("spec", "level"),
     [(defaults.DEFAULT_MODEL, "medium"), ("bedrock/global.anthropic.claude-opus-4-8", "high")],
 )
@@ -291,7 +318,7 @@ def test_default_effort_is_the_vendor_default_from_the_model_info_else_high(spec
 def test_default_effort_falls_back_to_the_provider_level_when_the_vendor_default_is_not_one_the_provider_takes(
     monkeypatch,
 ):
-    monkeypatch.setattr(models, "lookup_model", lambda model_id: {"capabilities": {"defaultEffort": "ultra"}})
+    monkeypatch.setattr(models, "_lookup_model", lambda model_id: {"capabilities": {"defaultEffort": "ultra"}})
 
     assert resolve("bedrock/us.openai.gpt-6-sol").config["additional_request_fields"] == {
         "reasoning": {"effort": "high"}

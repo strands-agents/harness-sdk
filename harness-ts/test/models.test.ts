@@ -76,6 +76,30 @@ describe('resolveModel', () => {
     expect(bedrockClient(model)).toBeInstanceOf(AnthropicBedrock)
   })
 
+  it.each([
+    [{}, 'https://bedrock-runtime.us-west-2.amazonaws.com'],
+    [{ AWS_ENDPOINT_URL: 'https://vpce.example' }, 'https://vpce.example'],
+    [
+      { AWS_ENDPOINT_URL: 'https://all.example', AWS_ENDPOINT_URL_BEDROCK_RUNTIME: 'https://runtime.example' },
+      'https://runtime.example',
+    ],
+    [
+      { AWS_ENDPOINT_URL_BEDROCK_RUNTIME: 'https://runtime.example', ANTHROPIC_BEDROCK_BASE_URL: 'https://a.example' },
+      'https://a.example',
+    ],
+  ])('points the AnthropicBedrock client at the endpoint override %o', async (env, baseURL) => {
+    for (const name of ['AWS_ENDPOINT_URL', 'AWS_ENDPOINT_URL_BEDROCK_RUNTIME', 'ANTHROPIC_BEDROCK_BASE_URL']) {
+      vi.stubEnv(name, (env as Record<string, string>)[name] ?? '')
+    }
+    vi.stubEnv('AWS_REGION', 'us-west-2')
+    expect(bedrockClient(await resolve('bedrock/global.anthropic.claude-opus-5-5')).baseURL).toBe(baseURL)
+  })
+
+  it('passes AWS_BEARER_TOKEN_BEDROCK to the AnthropicBedrock client', async () => {
+    vi.stubEnv('AWS_BEARER_TOKEN_BEDROCK', 'bedrock-api-key')
+    expect(bedrockClient(await resolve('bedrock/global.anthropic.claude-opus-5-5')).apiKey).toBe('bedrock-api-key')
+  })
+
   it.each(['bedrock/amazon.nova-pro-v1:0', 'bedrock/us.openai.gpt-5.6-luna', 'bedrock/anthropic.other-model'])(
     'keeps %s on Converse',
     async (spec) => {
