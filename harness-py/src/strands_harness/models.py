@@ -215,6 +215,8 @@ def _bedrock_thinking(model_id: str, effort: str | None) -> dict | None:
 
 
 def _bedrock(model_id: str, effort: str | None, web_search: bool, caching: bool) -> Model:
+    if _bedrock_family(model_id).startswith("anthropic.claude-"):
+        return _bedrock_claude(model_id, effort, caching)
     from strands.models import BedrockModel, CacheConfig
 
     thinking = _bedrock_thinking(model_id, effort)
@@ -223,25 +225,46 @@ def _bedrock(model_id: str, effort: str | None, web_search: bool, caching: bool)
     if max_tokens is not None:
         extra["max_tokens"] = max_tokens
     if caching:
-        # The SDK injects cache points for Anthropic model ids on Bedrock (a no-op for others).
+        # The SDK injects cache points on models that take them (a no-op for others).
         # Tools are stable across turns, so cache them too.
         extra["cache_config"] = CacheConfig(strategy="auto", tools_ttl=True)
     return BedrockModel(model_id=model_id, **extra)
 
 
+def _bedrock_claude(model_id: str, effort: str | None, caching: bool) -> Model:
+    import anthropic
+    import boto3
+    from strands.models.bedrock import DEFAULT_BEDROCK_REGION
+
+    from strands_harness._bedrock_claude import BedrockClaudeModel
+
+    # Same resolution as BedrockModel, so Claude and the other Bedrock families share a region.
+    region = boto3.Session().region_name or os.environ.get("AWS_REGION") or DEFAULT_BEDROCK_REGION
+    return BedrockClaudeModel(
+        client=anthropic.AsyncAnthropicBedrock(aws_region=region), **_anthropic_config(model_id, effort, False, caching)
+    )
+
+
 def _anthropic(model_id: str, effort: str | None, web_search: bool, caching: bool) -> Model:
-    from strands.models import CacheConfig
     from strands.models.anthropic import AnthropicModel
 
+    return AnthropicModel(**_anthropic_config(model_id, effort, web_search, caching))
+
+
+def _anthropic_config(model_id: str, effort: str | None, web_search: bool, caching: bool) -> dict[str, Any]:
+    from strands.models import CacheConfig
+
     max_tokens = _claude_max_tokens(model_id) or _ANTHROPIC_MAX_TOKENS
-    extra: dict[str, Any] = {} if effort is None else {"params": _claude_thinking_block(model_id, effort, max_tokens)}
+    config: dict[str, Any] = {"model_id": model_id, "max_tokens": max_tokens}
+    if effort is not None:
+        config["params"] = _claude_thinking_block(model_id, effort, max_tokens)
     if web_search:
-        extra["anthropic_tools"] = [_ANTHROPIC_WEB_SEARCH]
+        config["anthropic_tools"] = [_ANTHROPIC_WEB_SEARCH]
     if caching:
         # Caches the tool definitions plus a cache point on the last user message; the system
-        # prompt is cached automatically. Mirrors the Bedrock builder.
-        extra["cache_config"] = CacheConfig(strategy="auto", tools_ttl=True)
-    return AnthropicModel(model_id=model_id, max_tokens=max_tokens, **extra)
+        # prompt is cached automatically.
+        config["cache_config"] = CacheConfig(strategy="auto", tools_ttl=True)
+    return config
 
 
 def _openai(model_id: str, effort: str | None, web_search: bool, caching: bool) -> Model:
@@ -327,7 +350,8 @@ class Provider(NamedTuple):
     ``web_search`` is enabled through model config on the providers whose SDK exposes a
     non-clobbering seam for it (OpenAI Responses ``params.tools`` for OpenAI and bedrock-mantle,
     Gemini ``gemini_tools``, Anthropic-direct ``anthropic_tools``); ``_has_web_search`` narrows
-    bedrock-mantle to its GPT-5, GPT-6, and Daybreak models. Bedrock Converse has no mechanism.
+    bedrock-mantle to its GPT-5, GPT-6, and Daybreak models. Bedrock has none: Converse has no
+    mechanism, and Anthropic's web search tool isn't served on Bedrock.
 
     ``caching`` marks providers where prompt caching is in effect when requested, whether or not
     the harness configures anything: Bedrock, Anthropic direct, OpenAI, and bedrock-mantle (the harness
