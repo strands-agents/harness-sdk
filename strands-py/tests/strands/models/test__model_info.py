@@ -8,6 +8,7 @@ from typing import get_args
 
 import pytest
 
+import strands.models
 from strands.models._model_info import (
     _CAPABILITY_FIELDS,
     _LIMIT_FIELDS,
@@ -17,6 +18,7 @@ from strands.models._model_info import (
     ModelInfo,
     ModelLimits,
     PromptCaching,
+    ReasoningCapability,
     _load_data,
     _section,
     get_context_window_limit,
@@ -41,6 +43,8 @@ _BOOLEAN_CAPABILITY_KEYS = (
     "serverSideSummary",
     "temporaryMessages",
 )
+# The vendors' own level names; a default outside this set is a typo, not a new level.
+_EFFORT_VALUES = ("minimal", "low", "medium", "high", "xhigh", "max")
 
 
 def test_model_info_merge_returns_the_base_when_nothing_else_is_given():
@@ -78,7 +82,30 @@ def test_model_info_merge_returns_empty_sections_when_nothing_is_known():
 
     assert tru_merged == ModelInfo()
     assert tru_merged.capabilities == ModelCapabilities()
+    assert tru_merged.capabilities.reasoning == ReasoningCapability()
     assert tru_merged.limits == ModelLimits()
+
+
+def test_model_info_merge_merges_the_nested_reasoning_record_field_by_field():
+    base = ModelInfo(
+        capabilities=ModelCapabilities(stateful=False, reasoning=ReasoningCapability(default_effort="high"))
+    )
+
+    tru_inherited = ModelInfo.merge(
+        base,
+        ModelInfo(capabilities=ModelCapabilities(prompt_caching="auto")),
+        ModelInfo(capabilities=ModelCapabilities(reasoning=ReasoningCapability(default_effort=None))),
+    )
+    tru_overridden = ModelInfo.merge(
+        base, ModelInfo(capabilities=ModelCapabilities(reasoning=ReasoningCapability(default_effort="medium")))
+    )
+
+    assert tru_inherited.capabilities == ModelCapabilities(
+        stateful=False, prompt_caching="auto", reasoning=ReasoningCapability(default_effort="high")
+    )
+    assert tru_overridden.capabilities == ModelCapabilities(
+        stateful=False, reasoning=ReasoningCapability(default_effort="medium")
+    )
 
 
 def test_model_info_merge_rejects_a_plain_dict_with_the_expected_type_named():
@@ -127,16 +154,23 @@ def test_lookup_model_returns_none_for_unknown_ids():
 
 def test_lookup_model_info_returns_the_entry_facts_and_nothing_for_unknown_ids():
     assert lookup_model_info("eu.anthropic.claude-sonnet-4-6") == ModelInfo(
-        capabilities=ModelCapabilities(prompt_caching="cache_points"),
+        capabilities=ModelCapabilities(
+            prompt_caching="cache_points", reasoning=ReasoningCapability(default_effort="high")
+        ),
         limits=ModelLimits(context_window=1_000_000, max_output_tokens=128_000),
     )
-    for model_id in ("anthropic.claude-opus-5-5", "global.anthropic.claude-fable-5-2", "claude-mythos-5-2"):
+    for model_id, effort in (
+        ("anthropic.claude-opus-5-5", "medium"),
+        ("global.anthropic.claude-fable-5-2", "high"),
+        ("claude-mythos-5-2", "high"),
+    ):
         assert lookup_model_info(model_id) == ModelInfo(
             capabilities=ModelCapabilities(
                 prompt_caching="cache_points",
                 forced_tool_choice=False,
                 native_structured_output=True,
                 server_side_summary=True,
+                reasoning=ReasoningCapability(default_effort=effort),
             ),
             limits=ModelLimits(context_window=1_000_000, max_output_tokens=128_000),
         )
@@ -157,10 +191,31 @@ def test_default_context_window_limit_comes_from_the_data():
     assert DEFAULT_CONTEXT_WINDOW_LIMIT == 200_000
 
 
+def test_lookup_model_info_and_reasoning_capability_are_public():
+    assert strands.models.lookup_model_info is lookup_model_info
+    assert strands.models.ReasoningCapability is ReasoningCapability
+    assert {"lookup_model_info", "ReasoningCapability"} <= set(strands.models.__all__)
+
+
+def test_loader_reads_the_nested_reasoning_record_and_ignores_facts_it_has_no_field_for():
+    entry = {"capabilities": {"stateful": False, "reasoning": {"defaultEffort": "medium", "effortLevels": ["low"]}}}
+
+    assert _section(entry, "capabilities", _CAPABILITY_FIELDS, ModelCapabilities) == ModelCapabilities(
+        stateful=False, reasoning=ReasoningCapability(default_effort="medium")
+    )
+
+
+@pytest.mark.parametrize("reasoning", [{"defaultEffort": 3}, {"defaultEffort": None}, "medium", True, {}])
+def test_loader_treats_a_reasoning_record_it_cannot_read_as_unknown(reasoning):
+    entry = {"capabilities": {"stateful": False, "reasoning": reasoning}}
+
+    assert _section(entry, "capabilities", _CAPABILITY_FIELDS, ModelCapabilities) == ModelCapabilities(stateful=False)
+
+
 def test_loader_ignores_facts_this_version_has_no_field_for():
     """The data file is shared with the TypeScript SDK, so a fact added there first must not break the import."""
     entry = {
-        "capabilities": {"promptCaching": "cachePoints", "reasoning": True},
+        "capabilities": {"promptCaching": "cachePoints", "serverTools": ["web_search"]},
         "limits": {"contextWindow": 1_000, "maxThinkingTokens": 4_096},
     }
 
@@ -171,7 +226,7 @@ def test_loader_ignores_facts_this_version_has_no_field_for():
 
 
 def test_loader_returns_an_empty_section_when_its_only_facts_are_unknown_to_this_version():
-    entry = {"capabilities": {"reasoning": True}}
+    entry = {"capabilities": {"serverTools": ["web_search"]}}
 
     assert _section(entry, "capabilities", _CAPABILITY_FIELDS, ModelCapabilities) == ModelCapabilities()
 
@@ -241,6 +296,9 @@ def test_shared_data_has_only_the_fields_model_info_defines_with_the_right_types
         for key, value in entry.get("capabilities", {}).items():
             if key == "promptCaching":
                 assert value in _PROMPT_CACHING_VALUES, f"{model_id}.{key}"
+            elif key == "reasoning":
+                assert set(value) == {"defaultEffort"}, f"{model_id}.capabilities.reasoning"
+                assert value["defaultEffort"] in _EFFORT_VALUES, f"{model_id}.capabilities.reasoning.defaultEffort"
             else:
                 assert key in _BOOLEAN_CAPABILITY_KEYS, f"{model_id}.capabilities.{key}"
                 assert isinstance(value, bool), f"{model_id}.{key}"

@@ -271,7 +271,7 @@ class Model(abc.ABC):
             override = getattr(config, "model_info", None)
 
         return ModelInfo.merge(
-            lookup_model_info(model_id),
+            lookup_model_info(model_id) if isinstance(model_id, str) else None,
             ModelInfo(limits=ModelLimits(context_window=context_window_limit)),
             override,
         )

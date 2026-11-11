@@ -17,10 +17,17 @@ import modelInfoData from './model-info.json' with { type: 'json' }
 /** How a model supports prompt caching. */
 export type PromptCaching = 'unsupported' | 'auto' | 'cachePoints'
 
+/** How the model reasons. */
+export interface ReasoningCapability {
+  /** Effort the vendor's own agent harness runs the model at by default, in the vendor's level names; the SDK does not send it. */
+  readonly defaultEffort?: string | undefined
+}
+
 /**
  * What the model can do. A yes/no fact is a `boolean`; a fact with more than two states is a string
  * union, like {@link PromptCaching} (which mechanism). A fact about two features together gets its
- * own field named after the pair. `undefined` is unknown either way.
+ * own field named after the pair; facts about one feature are grouped in a nested record, like
+ * {@link ReasoningCapability}. `undefined` is unknown either way.
  */
 export interface ModelCapabilities {
   /** Whether the model keeps conversation state server-side; {@link Model.stateful} reads it. */
@@ -44,6 +51,8 @@ export interface ModelCapabilities {
    * (`AnthropicModel`). A `modelInfo` override that turns it on for another provider drops the injected text.
    */
   readonly temporaryMessages?: boolean | undefined
+  /** How the model reasons. */
+  readonly reasoning?: ReasoningCapability | undefined
 }
 
 /** Size limits of the model. */
@@ -60,8 +69,23 @@ export interface ModelInfo {
   readonly limits?: ModelLimits
 }
 
-function defined<T extends object>(section: T): T | undefined {
-  const entries = Object.entries(section).filter(([, value]) => value !== undefined)
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/**
+ * Merges one section field by field, later defined fields winning; a nested record
+ * (`capabilities.reasoning`) merges the same way. Returns undefined when nothing is known.
+ */
+function mergeSection<T extends object>(parts: (T | undefined)[]): T | undefined {
+  const merged: Record<string, unknown> = {}
+  for (const part of parts) {
+    for (const [key, value] of Object.entries(part ?? {})) {
+      if (isRecord(value)) merged[key] = mergeSection([isRecord(merged[key]) ? merged[key] : undefined, value])
+      else if (value !== undefined && value !== null) merged[key] = value
+    }
+  }
+  const entries = Object.entries(merged).filter(([, value]) => value !== undefined)
   return entries.length === 0 ? undefined : (Object.freeze(Object.fromEntries(entries)) as T)
 }
 
@@ -73,18 +97,11 @@ function defined<T extends object>(section: T): T | undefined {
  * @returns A new frozen record containing only the fields that are known
  */
 export function mergeModelInfo(...parts: (ModelInfo | undefined)[]): ModelInfo {
-  const capabilities: Record<string, unknown> = {}
-  const limits: Record<string, unknown> = {}
-  for (const part of parts) {
-    for (const [key, value] of Object.entries(part?.capabilities ?? {}))
-      if (value !== undefined) capabilities[key] = value
-    for (const [key, value] of Object.entries(part?.limits ?? {})) if (value !== undefined) limits[key] = value
-  }
   const merged: { capabilities?: ModelCapabilities; limits?: ModelLimits } = {}
-  const mergedCapabilities = defined(capabilities as ModelCapabilities)
-  const mergedLimits = defined(limits as ModelLimits)
-  if (mergedCapabilities) merged.capabilities = mergedCapabilities
-  if (mergedLimits) merged.limits = mergedLimits
+  const capabilities = mergeSection(parts.map((part) => part?.capabilities))
+  const limits = mergeSection(parts.map((part) => part?.limits))
+  if (capabilities) merged.capabilities = capabilities
+  if (limits) merged.limits = limits
   return Object.freeze(merged)
 }
 
@@ -136,9 +153,10 @@ export function lookupModel(modelId: string): ModelInfo | undefined {
 }
 
 /**
- * What the shared model info data knows about a model.
+ * What the shared model info data knows about a model, without building one. {@link Model.modelInfo}
+ * is the resolved view once a model exists: it adds what the provider declares and the `modelInfo`
+ * config override on top of this.
  *
- * @internal
  * @param modelId - The model id to describe
  * @returns What the data knows about the model; empty when it knows nothing
  */

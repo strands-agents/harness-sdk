@@ -34,10 +34,14 @@ describe('shared model info data', () => {
 
   it('returns the entry facts and nothing for unknown ids', () => {
     expect(lookupModelInfo('eu.anthropic.claude-sonnet-4-6')).toEqual({
-      capabilities: { promptCaching: 'cachePoints' },
+      capabilities: { promptCaching: 'cachePoints', reasoning: { defaultEffort: 'high' } },
       limits: { contextWindow: 1_000_000, maxOutputTokens: 128_000 },
     })
-    for (const modelId of ['anthropic.claude-opus-5-5', 'global.anthropic.claude-fable-5-2', 'claude-mythos-5-2']) {
+    for (const [modelId, defaultEffort] of [
+      ['anthropic.claude-opus-5-5', 'medium'],
+      ['global.anthropic.claude-fable-5-2', 'high'],
+      ['claude-mythos-5-2', 'high'],
+    ] as const) {
       expect(lookupModelInfo(modelId)).toEqual({
         capabilities: {
           promptCaching: 'cachePoints',
@@ -45,6 +49,7 @@ describe('shared model info data', () => {
           nativeStructuredOutput: true,
           serverSideSummary: true,
           temporaryMessages: true,
+          reasoning: { defaultEffort },
         },
         limits: { contextWindow: 1_000_000, maxOutputTokens: 128_000 },
       })
@@ -66,6 +71,11 @@ describe('shared model info data', () => {
     expect(DEFAULT_CONTEXT_WINDOW_LIMIT).toBe(200_000)
   })
 
+  it('exports lookupModelInfo from the package root', async () => {
+    const sdk = await import('../../index.js')
+    expect(sdk.lookupModelInfo).toBe(lookupModelInfo)
+  })
+
   it('has only the fields ModelInfo defines, with the right types, in every entry', () => {
     const data = modelInfoData as Record<string, unknown>
     expect(Object.keys(data).sort()).toEqual(['$comment', 'defaults', 'models'])
@@ -83,7 +93,16 @@ describe('shared model info data', () => {
       }
       for (const [key, value] of Object.entries(entry.capabilities ?? {})) {
         if (key === 'promptCaching') expect(['unsupported', 'auto', 'cachePoints'], `${id}.${key}`).toContain(value)
-        else if (['forcedToolChoice', 'nativeStructuredOutput', 'serverSideSummary', 'temporaryMessages'].includes(key))
+        else if (key === 'reasoning') {
+          // The vendors' own level names; a default outside this set is a typo, not a new level.
+          expect(Object.keys(value as object), `${id}.capabilities.reasoning`).toEqual(['defaultEffort'])
+          expect(
+            ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
+            `${id}.capabilities.reasoning.defaultEffort`
+          ).toContain((value as { defaultEffort: unknown }).defaultEffort)
+        } else if (
+          ['forcedToolChoice', 'nativeStructuredOutput', 'serverSideSummary', 'temporaryMessages'].includes(key)
+        )
           expect(typeof value, `${id}.${key}`).toBe('boolean')
         else throw new Error(`${id}.capabilities.${key} is not a ModelCapabilities field`)
       }
