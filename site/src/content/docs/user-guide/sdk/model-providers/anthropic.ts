@@ -5,6 +5,7 @@
 
 import Anthropic from '@anthropic-ai/sdk'
 import { Agent } from '@strands-agents/sdk'
+import { Offload } from '@strands-agents/sdk/experimental'
 import { AnthropicModel } from '@strands-agents/sdk/models/anthropic'
 import { z } from 'zod'
 
@@ -110,4 +111,25 @@ async function promptCaching() {
   // Typical output:
   // { inputTokens: 12, ..., cacheReadInputTokens: 2505 }
   // --8<-- [end:prompt_caching]
+}
+
+// Server-side summarization
+async function serverSideSummary() {
+  // --8<-- [start:server_side_summary]
+  const model = new AnthropicModel({
+    modelId: 'claude-opus-5-5',
+    maxTokens: 16000,
+    params: { thinking: { type: 'adaptive' } },
+  })
+
+  const agent = new Agent({
+    model,
+    contextManager: {
+      strategies: [
+        Offload.summarize('toolResults').when({ threshold: 2000 }),
+        Offload.summarize('*').when({ utilization: 0.85, preserveRecent: 4 }),
+      ],
+    },
+  })
+  // --8<-- [end:server_side_summary]
 }
