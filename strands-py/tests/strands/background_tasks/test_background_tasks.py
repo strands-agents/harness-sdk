@@ -13,6 +13,7 @@ from strands import Agent, ToolContext, tool
 from strands.hooks import AfterToolCallEvent, AgentInitializedEvent, BeforeModelCallEvent, BeforeToolCallEvent
 from strands.interrupt import Interrupt
 from strands.middleware.stages import ExecuteToolStage, InvokeModelStage
+from strands.tools.executors import SequentialToolExecutor
 from strands.tools.tools import PythonAgentTool
 from strands.types._events import ToolResultEvent
 from strands.types.content import Messages
@@ -1050,7 +1051,8 @@ async def test_cancel_background_tasks_cancels_queued_and_working_tasks_only_whe
 
     await asyncio.wait_for(_wait_for_task_statuses(agent, exp_statuses), timeout=5)
 
-    await agent.invoke_async("Continue.")
+    continued = await agent.invoke_async("Continue.")
+    assert continued.stop_reason == "cancelled"  # on an idle agent, cancel() also cancels the next invocation
     tru_delivered_statuses = [
         _tool_result(agent, delivery["toolUseId"])["content"][0]["json"]["status"]
         for delivery in _deliveries(agent.messages)
@@ -1151,3 +1153,44 @@ async def test_cancel_background_tasks_from_a_tool_on_the_agent_loop() -> None:
     exp_stop_reason = "cancelled"
     assert tru_stop_reason == exp_stop_reason
     await asyncio.wait_for(_wait_for_task_statuses(agent, ["cancelled"]), timeout=1)
+
+
+@pytest.mark.asyncio
+async def test_cancel_background_tasks_lands_immediately_while_after_current_tools_finishes_the_batch() -> None:
+    statuses_at_stop: list[str] = []
+
+    @tool(name="work")
+    async def work() -> str:
+        """Wait until cancelled."""
+        await asyncio.Event().wait()
+        return "unreachable"
+
+    @tool(name="stop_all", context=True)
+    def stop_all(tool_context: ToolContext) -> str:
+        """Stop after this batch, and stop background work now."""
+        tool_context.agent.cancel(after_current_tools=True, cancel_background_tasks=True)
+        statuses_at_stop.extend(task["status"] for task in _persisted_tasks(agent) or [])
+        return "stopped"
+
+    @tool(name="after")
+    def after() -> str:
+        """Run after stop_all in the same batch."""
+        return "ran"
+
+    batch = {
+        "role": "assistant",
+        "content": [
+            {"toolUse": {"name": "stop_all", "toolUseId": "stop-use", "input": {}}},
+            {"toolUse": {"name": "after", "toolUseId": "after-use", "input": {}}},
+        ],
+    }
+    agent = _background_agent(
+        work, stop_all, after, responses=[batch, _assistant_text("Unreached.")], wait_for_completion=False
+    )
+    agent.tool_executor = SequentialToolExecutor()
+
+    result = await asyncio.wait_for(agent.invoke_async("Run work, then stop."), timeout=2)
+
+    assert result.stop_reason == "cancelled"
+    assert statuses_at_stop == ["cancelled"]
+    assert _tool_result(agent, "after-use")["content"] == [{"text": "ran"}]

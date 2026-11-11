@@ -361,13 +361,11 @@ export class BackgroundTasks implements Plugin {
    * Does not wait for the tasks to settle.
    */
   cancelAll(): void {
-    const tasks = [...this._tasks.values()].filter((task) => !isTaskStatusTerminal(task.status))
-    for (const task of tasks) {
-      this._manager.cancel(task.taskId).catch((error: unknown) => {
-        logger.warn(`task_id=<${task.taskId}>, error=<${error}> | background task cancellation failed`)
-      })
-    }
-    this._dropInterrupts(tasks.flatMap((task) => (task.interrupts ?? []).map((interrupt) => interrupt.id)))
+    const interruptIds = [...this._tasks.values()]
+      .filter((task) => !isTaskStatusTerminal(task.status))
+      .flatMap((task) => (task.interrupts ?? []).map((interrupt) => interrupt.id))
+    this._manager.cancelAll()
+    this._dropInterrupts(interruptIds)
   }
 
   private _dropInterrupts(interruptIds: Iterable<string>): void {

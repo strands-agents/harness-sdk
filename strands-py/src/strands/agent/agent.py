@@ -711,8 +711,9 @@ class Agent(AgentBase, LocalAgent):
         Background tasks keep running unless ``cancel_background_tasks=True``, which also cancels
         every queued, working, or input-required background task of this agent immediately, even with
         ``after_current_tools=True``. Their cancelled results are delivered like a cancel requested by the
-        model. On an idle agent, ``cancel()`` still cancels the next invocation, and a ``cancel_signal``
-        passed into an invocation never cancels background tasks.
+        model, and ``cancel()`` may block briefly (at most a few seconds) until the cancel has landed. On an
+        idle agent, ``cancel()`` still cancels the next invocation, and a ``cancel_signal`` passed into an
+        invocation never cancels background tasks.
 
         Args:
             message: Text of the final assistant message the invocation ends with.
