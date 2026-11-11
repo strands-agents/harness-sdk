@@ -883,7 +883,7 @@ export class Agent implements LocalAgent, InvokableAgent {
       this._mcpClients.map(async (client) => {
         let registered = await client.listTools()
         this._toolRegistry.add(registered)
-        // The client's own list of old names includes a refresh this agent rejected, so track what was registered.
+        // The client's own list of old names includes tools this agent skipped, so track what was registered.
         client.onToolsChanged = (_oldTools, newTools): void => {
           registered = this._replaceMcpTools(client, registered, newTools)
         }
@@ -920,8 +920,8 @@ export class Agent implements LocalAgent, InvokableAgent {
 
   /**
    * Swaps an MCP client's registered tools for its refreshed list. A refreshed tool that is invalid, or that takes the
-   * name of a tool from another source such as `retrieve_context`, rejects the whole refresh: the client keeps its
-   * current tools and the other source keeps its own.
+   * name of a tool from another source such as `retrieve_context`, is skipped with a warning; the rest of the refresh
+   * applies.
    *
    * @param client - The MCP client whose tools changed
    * @param current - The tools the client has registered
@@ -929,20 +929,14 @@ export class Agent implements LocalAgent, InvokableAgent {
    * @returns The tools the client has registered afterwards
    */
   private _replaceMcpTools(client: McpClient, current: McpTool[], refreshed: McpTool[]): McpTool[] {
-    current.forEach((tool) => this._toolRegistry.remove(tool.name))
-    try {
-      this._toolRegistry.add(refreshed)
-      return refreshed
-    } catch (error) {
-      for (const tool of refreshed) {
-        if (this._toolRegistry.get(tool.name) === tool) this._toolRegistry.remove(tool.name)
-      }
-      this._toolRegistry.add(current)
+    const skipped = this._toolRegistry.swap(current, refreshed)
+    for (const { tool, error } of skipped) {
       logger.warn(
-        `client=<${client.clientName}>, error=<${error}> | rejected the mcp tools refresh | keeping the current mcp tools`
+        `client=<${client.clientName}>, tool=<${tool.name}>, error=<${error.message}> | skipping refreshed mcp tool`
       )
-      return current
     }
+    const skippedTools = new Set(skipped.map(({ tool }) => tool))
+    return refreshed.filter((tool) => !skippedTools.has(tool))
   }
 
   /**
