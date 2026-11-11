@@ -1,0 +1,9 @@
+name: strands-proxmint
+description: Fetch web pages for Strands agents through Proxmint residential, datacenter or mobile proxies, with country, city and ASN targeting and sticky sessions.
+integrationType: tool
+languages:
+  python:
+    package: strands-proxmint
+github: https://github.com/proxmint/strands-proxmint
+docsUrl: https://proxmint.com/docs/strands
+addedDate: 2026-10-27
