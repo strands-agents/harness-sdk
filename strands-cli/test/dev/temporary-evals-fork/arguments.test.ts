@@ -9,11 +9,21 @@ describe('TEMPORARY strands dev optimize arguments', () => {
     expect(parsed.dev).toMatchObject({
       init: false,
       workspace: 'desk',
-      temporaryOptimize: { experiment: 'support', forkArguments: ['--tune', 'effort'] },
+      temporaryCommand: { name: 'optimize', experiment: 'support', forkArguments: ['--tune', 'effort'] },
     })
   })
 
   it('shouldRejectUnknownFlagsBeforeTheSeparatorWhenDevOptimizeIsCalled', () => {
     expect(() => parseArgs(['dev', 'optimize', '--tune', 'effort'])).toThrow()
+  })
+
+  it('shouldParseTheTestCommandWhenDevTestIsCalled', () => {
+    const parsed = parseArgs(['dev', 'test', 'refunds', '--', '--max-workers', '2'])
+
+    expect(parsed.dev?.temporaryCommand).toEqual({
+      name: 'test',
+      experiment: 'refunds',
+      forkArguments: ['--max-workers', '2'],
+    })
   })
 })

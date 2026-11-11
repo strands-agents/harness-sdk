@@ -1,8 +1,9 @@
 import { existsSync } from 'node:fs'
-import { mkdir, readFile, rm } from 'node:fs/promises'
+import { mkdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import type { DevWorkspace } from '../workspace.js'
+import { temporaryCaseCount } from './experiment-files.js'
 import { ignoreProgress, prepareTemporaryOptimizerEnvironment, type TemporaryCommandRunner } from './environment.js'
 import {
   assertTemporaryForkArguments,
@@ -56,11 +57,6 @@ const assertRequest = ({ name, description }: TemporaryExperimentRequest): void 
       `${name} is not a usable experiment name. Use letters, numbers, dots, dashes, and underscores, ` +
         'for example refunds-v1.'
     )
-}
-
-const caseCount = async (path: string): Promise<number> => {
-  const experiment = JSON.parse(await readFile(path, 'utf8')) as { cases?: unknown[] }
-  return experiment.cases?.length ?? 0
 }
 
 export const createTemporaryExperiment = async (
@@ -130,7 +126,7 @@ const generate = async (
     throw new Error(
       `strands-evals generate finished without writing ${path}. The generator said:\n${said}\nRun /experiment again.`
     )
-  const cases = await caseCount(path)
+  const cases = await temporaryCaseCount(path)
   if (cases === 0) {
     await rm(path, { force: true })
     throw new Error(

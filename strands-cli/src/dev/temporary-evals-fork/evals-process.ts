@@ -1,7 +1,8 @@
 import { spawn } from 'node:child_process'
 import { createWriteStream } from 'node:fs'
-import { delimiter, dirname, join } from 'node:path'
+import { basename, delimiter, dirname, join } from 'node:path'
 import { createInterface } from 'node:readline'
+import { fileURLToPath, URL } from 'node:url'
 
 import { redactPreparationOutput } from '../../project/preparation.js'
 import type { DevWorkspace } from '../workspace.js'
@@ -29,6 +30,21 @@ const ERROR_LINE = /^strands-evals(?: [a-z-]+)?: error: /u
 
 export const temporaryExperimentsFolder = (workspaceDirectory: string): string =>
   join(workspaceDirectory, 'tmp', 'experiments')
+
+export const temporaryReportsFolder = (workspaceDirectory: string): string => join(workspaceDirectory, 'tmp', 'reports')
+
+export const temporaryRunName = (experiment: string, now: Date): string =>
+  `${now.toISOString().replace(/[-:]/gu, '').replace('T', '-').slice(0, 15)}-${basename(experiment, '.json')}`
+
+const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`
+
+export const temporaryTypescriptRunnerCommand = (): string => {
+  const runner = fileURLToPath(new URL('./typescript-runner-main.js', import.meta.url))
+  return `${shellQuote(process.execPath)} ${shellQuote(runner)}`
+}
+
+export const temporaryLanguageArguments = ({ config }: DevWorkspace): string[] =>
+  config.language === 'typescript' ? ['--typescript-runner', temporaryTypescriptRunnerCommand()] : []
 
 export const temporaryWorkspaceDirectory = ({ directory, entrypoint }: DevWorkspace): string => {
   if (!directory)

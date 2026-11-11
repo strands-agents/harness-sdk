@@ -2,7 +2,11 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
-import { temporaryExperimentCommand, temporaryOptimizeCommand } from '../../../src/dev/temporary-evals-fork/command.js'
+import {
+  temporaryExperimentCommand,
+  temporaryOptimizeCommand,
+  temporaryTestCommand,
+} from '../../../src/dev/temporary-evals-fork/command.js'
 import { temporaryVenvPython, type TemporaryCommandRequest } from '../../../src/dev/temporary-evals-fork/environment.js'
 import type { TemporaryEvalsProcess } from '../../../src/dev/temporary-evals-fork/evals-process.js'
 import type { DevWorkspace } from '../../../src/dev/workspace.js'
@@ -218,7 +222,7 @@ describe('TEMPORARY /optimize command', () => {
     expect(await finished(updates)).toEqual({
       status: 'success',
       text: expect.stringMatching(
-        /saved\n2 cases in .+refunds\.json\nReview or edit the cases there, then run \/optimize refunds\./u
+        /saved\n2 cases in .+refunds\.json\nReview or edit the cases there, then run \/test refunds or \/optimize refunds\./u
       ),
     })
   })
@@ -231,5 +235,27 @@ describe('TEMPORARY /optimize command', () => {
 
     expect(failures).toEqual([expect.stringContaining('Example: /experiment refunds Answers refund questions')])
     expect(updates).toEqual([])
+  })
+
+  it('shouldShowTheChecksAndTheReportWhenATestFinishes', async () => {
+    const workspace = await workspaceFixture()
+    const { context, updates } = contextFixture()
+    const spawnTests = vi.fn(async ({ args }: TemporaryEvalsProcess) => {
+      const report = args[args.indexOf('--output') + 1]!
+      await writeFileAt(report, JSON.stringify({ overall_score: 0.75, test_passes: [true, true, true, false] }))
+      return { code: 0, stdout: '', stderrTail: [] }
+    })
+
+    temporaryTestCommand(workspace, projectOf(workspace), { run: dependenciesFor(workspace).run, spawnTests }).run(
+      'support',
+      context
+    )
+
+    expect(await finished(updates)).toEqual({
+      status: 'success',
+      text: expect.stringMatching(
+        /^TEMPORARY test finished\n3 of 4 checks passed \(overall score 0\.75\)\nReport: .+\.json\n.+Run \/optimize support to improve/u
+      ),
+    })
   })
 })

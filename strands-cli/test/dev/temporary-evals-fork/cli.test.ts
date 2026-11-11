@@ -4,7 +4,7 @@ import { PassThrough } from 'node:stream'
 import { describe, expect, it, vi } from 'vitest'
 
 import { parseArgs } from '../../../src/cli/arguments.js'
-import { runTemporaryDevOptimize } from '../../../src/dev/temporary-evals-fork/cli.js'
+import { runTemporaryDevCommand } from '../../../src/dev/temporary-evals-fork/cli.js'
 import { temporaryVenvPython, type TemporaryCommandRequest } from '../../../src/dev/temporary-evals-fork/environment.js'
 import type { PreparedDevRun } from '../../../src/dev/prepare.js'
 import type { DevWorkspace } from '../../../src/dev/workspace.js'
@@ -61,7 +61,7 @@ describe('TEMPORARY strands dev optimize command', () => {
       return { code: 0, stdout: 'ships candidate 0: {}\n', stderrTail: [] }
     })
 
-    const code = await runTemporaryDevOptimize(
+    const code = await runTemporaryDevCommand(
       parseArgs(['dev', 'optimize', 'support']),
       { stdout: stdout.stream, stderr: stderr.stream },
       { openWorkspace: async () => opened(workspace), prepareProject, run: run(workspace), spawnOptimizer }
@@ -79,7 +79,7 @@ describe('TEMPORARY strands dev optimize command', () => {
     const stderr = captured()
     const prepareProject = vi.fn(async () => {})
 
-    const code = await runTemporaryDevOptimize(
+    const code = await runTemporaryDevCommand(
       parseArgs(['dev', 'optimize', 'refunds']),
       { stdout: stdout.stream, stderr: stderr.stream },
       { openWorkspace: async () => opened(workspace), prepareProject }
@@ -89,5 +89,35 @@ describe('TEMPORARY strands dev optimize command', () => {
     expect(stderr.text()).toContain('error: No experiment named refunds')
     expect(prepareProject).not.toHaveBeenCalled()
     expect(stdout.text()).toBe('')
+  })
+
+  it.each([
+    { passes: [true, true], code: 0, last: 'Every check passed.' },
+    { passes: [true, false], code: 1, last: 'Run strands dev optimize support to improve the agent on them.' },
+  ])('shouldExitWith$codeAndPrintTheSummaryWhenDevTestFinishes', async ({ passes, code, last }) => {
+    const workspace = await workspaceFixture()
+    const stdout = captured()
+    const stderr = captured()
+    const spawnTests = vi.fn(async ({ args }: { args: string[] }) => {
+      const report = args[args.indexOf('--output') + 1]!
+      await writeFileAt(report, JSON.stringify({ overall_score: 0.5, test_passes: passes }))
+      return { code: 0, stdout: '', stderrTail: [] }
+    })
+
+    const exit = await runTemporaryDevCommand(
+      parseArgs(['dev', 'test', 'support']),
+      { stdout: stdout.stream, stderr: stderr.stream },
+      {
+        openWorkspace: async () => opened(workspace),
+        prepareProject: vi.fn(async () => {}),
+        run: run(workspace),
+        spawnTests,
+      }
+    )
+
+    expect(exit).toBe(code)
+    const lines = stdout.text().trim().split('\n')
+    expect(lines[0]).toBe(`${passes.filter(Boolean).length} of 2 checks passed (overall score 0.50)`)
+    expect(lines.at(-1)).toContain(last)
   })
 })

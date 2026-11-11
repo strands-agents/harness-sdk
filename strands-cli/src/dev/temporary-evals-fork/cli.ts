@@ -2,9 +2,11 @@ import type { ParsedArgs } from '../../cli/arguments.js'
 import { errorMessage } from '../../terminal/text.js'
 import type { PreparedDevRun } from '../prepare.js'
 import type { DevWorkspace } from '../workspace.js'
+import { temporaryTestSummary } from './command.js'
 import { runTemporaryOptimization, type TemporaryOptimizationDependencies } from './optimize.js'
+import { runTemporaryTest, type TemporaryTestDependencies } from './test.js'
 
-export interface TemporaryDevOptimizeDependencies extends TemporaryOptimizationDependencies {
+export interface TemporaryDevCommandDependencies extends TemporaryOptimizationDependencies, TemporaryTestDependencies {
   openWorkspace?: (args: ParsedArgs) => Promise<PreparedDevRun | undefined>
   prepareProject?: (workspace: DevWorkspace) => Promise<void>
 }
@@ -12,6 +14,14 @@ export interface TemporaryDevOptimizeDependencies extends TemporaryOptimizationD
 interface Output {
   stdout: NodeJS.WritableStream
   stderr: NodeJS.WritableStream
+}
+
+interface Shared {
+  workspace: DevWorkspace
+  experiment?: string
+  forkArguments: string[]
+  onProgress: (line: string) => void
+  prepare: () => Promise<void>
 }
 
 const openWorkspace = async (args: ParsedArgs): Promise<PreparedDevRun | undefined> => {
@@ -31,18 +41,39 @@ const prepareProject = async (workspace: DevWorkspace): Promise<void> => {
   )
 }
 
-export const runTemporaryDevOptimize = async (
+const optimize = async (
+  shared: Shared,
+  dependencies: TemporaryDevCommandDependencies
+): Promise<{ lines: string[]; code: number }> => ({
+  lines: (await runTemporaryOptimization(shared, dependencies)).summary,
+  code: 0,
+})
+
+const test = async (
+  shared: Shared,
+  dependencies: TemporaryDevCommandDependencies
+): Promise<{ lines: string[]; code: number }> => {
+  const outcome = await runTemporaryTest(shared, dependencies)
+  return {
+    lines: temporaryTestSummary(outcome, 'strands dev optimize'),
+    code: outcome.passed < outcome.checks ? 1 : 0,
+  }
+}
+
+const RUNNERS = { optimize, test }
+
+export const runTemporaryDevCommand = async (
   args: ParsedArgs,
   output: Output = process,
-  dependencies: TemporaryDevOptimizeDependencies = {}
+  dependencies: TemporaryDevCommandDependencies = {}
 ): Promise<number> => {
-  const request = args.dev?.temporaryOptimize
+  const request = args.dev?.temporaryCommand
   if (!request) return 1
-  const { openWorkspace: open = openWorkspace, prepareProject: prepare = prepareProject, ...optimizer } = dependencies
+  const { openWorkspace: open = openWorkspace, prepareProject: prepare = prepareProject, ...runner } = dependencies
   try {
     const opened = await open(args)
     if (!opened) return 1
-    const outcome = await runTemporaryOptimization(
+    const { lines, code } = await RUNNERS[request.name](
       {
         workspace: opened.workspace,
         ...(request.experiment ? { experiment: request.experiment } : {}),
@@ -53,10 +84,10 @@ export const runTemporaryDevOptimize = async (
           opened.config.applyProviderEnvironment()
         },
       },
-      optimizer
+      runner
     )
-    output.stdout.write(`${outcome.summary.join('\n')}\n`)
-    return 0
+    output.stdout.write(`${lines.join('\n')}\n`)
+    return code
   } catch (error) {
     output.stderr.write(`error: ${errorMessage(error)}\n`)
     return 1

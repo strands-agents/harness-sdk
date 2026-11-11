@@ -38,9 +38,9 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     process.exitCode = await updateCli()
     return
   }
-  if (args.dev?.temporaryOptimize) {
-    const { runTemporaryDevOptimize } = await import('../dev/temporary-evals-fork/cli.js')
-    process.exitCode = await runTemporaryDevOptimize(args)
+  if (args.dev?.temporaryCommand) {
+    const { runTemporaryDevCommand } = await import('../dev/temporary-evals-fork/cli.js')
+    process.exitCode = await runTemporaryDevCommand(args)
     return
   }
   if (args.dev) {

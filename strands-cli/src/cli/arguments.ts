@@ -2,7 +2,11 @@ import { DEFAULT_HARNESS_AGENT_CONFIG, type HarnessAgentConfig } from '@strands-
 import { EFFORT_LEVELS, normalizeHarnessAgentConfig } from '@strands-agents/harness/internal'
 import { Command } from 'commander'
 
-import { parseTemporaryDevOptimizeArguments } from '../dev/temporary-evals-fork/arguments.js'
+import {
+  isTemporaryDevCommand,
+  parseTemporaryDevCommandArguments,
+  type TemporaryDevCommandName,
+} from '../dev/temporary-evals-fork/arguments.js'
 import { readCliVersion } from '../package-version.js'
 import { isRecord } from '../values.js'
 
@@ -12,7 +16,7 @@ export interface DevArgs {
   workspace?: string
   searchRoots: string[]
   create?: 'cli' | 'typescript' | 'python'
-  temporaryOptimize?: { experiment?: string; forkArguments: string[] }
+  temporaryCommand?: { name: TemporaryDevCommandName; experiment?: string; forkArguments: string[] }
 }
 
 export interface ParsedArgs {
@@ -50,10 +54,10 @@ export function parseArgs(argv: string[]): ParsedArgs {
   if (argv[0] === 'update') {
     return parseUpdateArgs(argv.slice(1))
   }
-  if (argv[0] === 'dev' && argv[1] === 'optimize') {
-    const { workspace, ...temporaryOptimize } = parseTemporaryDevOptimizeArguments(argv.slice(2))
+  if (argv[0] === 'dev' && isTemporaryDevCommand(argv[1])) {
+    const { workspace, ...temporaryCommand } = parseTemporaryDevCommandArguments(argv[1], argv.slice(2))
     const parsed = parseChatArgs(workspace ? ['--workspace', workspace] : [], false)
-    return { ...parsed, dev: { ...parsed.dev!, temporaryOptimize } }
+    return { ...parsed, dev: { ...parsed.dev!, temporaryCommand } }
   }
   if (argv[0] === 'dev') {
     const init = argv[1] === 'init'
