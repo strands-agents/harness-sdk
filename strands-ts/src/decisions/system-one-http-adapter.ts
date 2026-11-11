@@ -1,4 +1,10 @@
-import { ContextWindowOverflowError, ModelError, ModelThrottledError, normalizeError } from '../errors.js'
+import {
+  ContextWindowOverflowError,
+  ModelError,
+  ModelThrottledError,
+  StructuredOutputError,
+  normalizeError,
+} from '../errors.js'
 import { Message, type ContentBlock } from '../types/messages.js'
 import { Uncertain, type AnswerOf, type DecisionInput, type DecisionResult, type Question } from './types.js'
 
@@ -199,7 +205,7 @@ async function readPayload(response: Response): Promise<unknown> {
     return JSON.parse(text) as unknown
   } catch (error) {
     if (response.ok) {
-      throw new ModelError('decision provider returned a non-JSON response', { cause: error })
+      throw new StructuredOutputError('decision provider returned a non-JSON response', { cause: error })
     }
     return text
   }
@@ -247,7 +253,7 @@ function parseResult<const Q extends Record<string, Question>>(
     const question = questions[id]!
     const rawAnswer = rawAnswers[String(id)]
     if (rawAnswer === undefined)
-      throw new ModelError(`decision provider omitted answer for question id=<${String(id)}>`)
+      throw new StructuredOutputError(`decision provider omitted answer for question id=<${String(id)}>`)
     const parsed = parseAnswer(rawAnswer, question, String(id))
     const minConfidence = resolveMinConfidence(question, defaultMinConfidence)
     answers[id] = (
@@ -269,7 +275,7 @@ function parseAnswer(rawAnswer: unknown, question: Question, id: string): Parsed
 
 function parseNoulAnswer(answer: Record<string, unknown>, id: string): ParsedAnswer {
   if (answer['type'] !== 'noul') {
-    throw new ModelError(`answer for boolean question id=<${id}> must have type 'noul'`)
+    throw new StructuredOutputError(`answer for boolean question id=<${id}> must have type 'noul'`)
   }
   const probability = requireProbability(answer['noul'], `noul for question id=<${id}>`)
   return {
@@ -281,17 +287,17 @@ function parseNoulAnswer(answer: Record<string, unknown>, id: string): ParsedAns
 
 function parseChoiceAnswer(answer: Record<string, unknown>, choices: readonly string[], id: string): ParsedAnswer {
   if (answer['type'] !== 'choice') {
-    throw new ModelError(`answer for choice question id=<${id}> must have type 'choice'`)
+    throw new StructuredOutputError(`answer for choice question id=<${id}> must have type 'choice'`)
   }
   const selected = answer['choice']
   if (typeof selected !== 'string' || !choices.includes(selected)) {
-    throw new ModelError(`answer for choice question id=<${id}> selected an unknown choice`)
+    throw new StructuredOutputError(`answer for choice question id=<${id}> selected an unknown choice`)
   }
 
   const rawProbabilities = requireRecord(answer['probabilities'], `probabilities for question id=<${id}>`)
   const probabilityKeys = Object.keys(rawProbabilities)
   if (probabilityKeys.length !== choices.length || choices.some((choice) => !Object.hasOwn(rawProbabilities, choice))) {
-    throw new ModelError(`probabilities for question id=<${id}> must contain exactly the requested choices`)
+    throw new StructuredOutputError(`probabilities for question id=<${id}> must contain exactly the requested choices`)
   }
 
   const probabilities = Object.fromEntries(
@@ -303,12 +309,12 @@ function parseChoiceAnswer(answer: Record<string, unknown>, choices: readonly st
   const probabilityValues = Object.values(probabilities)
   const sum = probabilityValues.reduce((total, probability) => total + probability, 0)
   if (Math.abs(sum - 1) > PROBABILITY_TOLERANCE) {
-    throw new ModelError(`probabilities for question id=<${id}> must sum to 1`)
+    throw new StructuredOutputError(`probabilities for question id=<${id}> must sum to 1`)
   }
   const selectedProbability = probabilities[selected]!
   const maxProbability = Math.max(...probabilityValues)
   if (selectedProbability + PROBABILITY_TOLERANCE < maxProbability) {
-    throw new ModelError(`choice for question id=<${id}> must have the highest probability`)
+    throw new StructuredOutputError(`choice for question id=<${id}> must have the highest probability`)
   }
 
   const providerConfidence = requireProbability(answer['confidence'], `confidence for question id=<${id}>`)
@@ -339,7 +345,7 @@ function parseUsage(value: unknown): { inputTokens: number; outputTokens: number
 }
 
 function requireRecord(value: unknown, name: string): Record<string, unknown> {
-  if (!isRecord(value)) throw new ModelError(`${name} must be an object`)
+  if (!isRecord(value)) throw new StructuredOutputError(`${name} must be an object`)
   return value
 }
 
@@ -349,20 +355,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function requireNonEmptyString(value: unknown, name: string): string {
   if (typeof value !== 'string' || value.trim().length === 0) {
-    throw new ModelError(`${name} must be a non-empty string`)
+    throw new StructuredOutputError(`${name} must be a non-empty string`)
   }
   return value
 }
 
 function requireProbability(value: unknown, name: string): number {
   const probability = requireNonNegativeNumber(value, name)
-  if (probability > 1) throw new ModelError(`${name} must be in [0.0, 1.0]`)
+  if (probability > 1) throw new StructuredOutputError(`${name} must be in [0.0, 1.0]`)
   return probability
 }
 
 function requireNonNegativeNumber(value: unknown, name: string): number {
   if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
-    throw new ModelError(`${name} must be a non-negative finite number`)
+    throw new StructuredOutputError(`${name} must be a non-negative finite number`)
   }
   return value
 }

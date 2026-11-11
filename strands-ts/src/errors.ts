@@ -247,8 +247,8 @@ export class ToolValidationError extends Error {
  * even after being forced via toolChoice.
  */
 export class StructuredOutputError extends Error {
-  constructor(message: string) {
-    super(message)
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options)
     this.name = 'StructuredOutputError'
   }
 }

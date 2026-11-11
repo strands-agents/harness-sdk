@@ -26,6 +26,12 @@ export interface TypeSafeDecisionModelOptions {
 /**
  * Decision model backed by TypeSafe's hosted Jev API.
  *
+ * Throws {@link ModelThrottledError} on throttling (HTTP 429, 503, or 529),
+ * {@link ContextWindowOverflowError} when the request exceeds the provider's size limit (HTTP 413 or the
+ * pre-send body-byte check), `Error` for request-level violations (too many choices, binary content),
+ * {@link ModelError} for transport failures and any other non-2xx response, and
+ * {@link StructuredOutputError} for a malformed provider response.
+ *
  * @example
  * ```typescript
  * const decisions = new TypeSafeDecisionModel()
