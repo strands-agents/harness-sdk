@@ -181,14 +181,29 @@ async function removeRun(
 
   const start = messages.indexOf(run[0]!)
   messages.splice(start, run.length)
-  let stashRef: string | undefined
-  try {
-    stashRef = await stash?.storeRemoved(run)
-  } catch (error) {
-    logger.warn(`method=<${method}>, error=<${error}> | failed to stash removed messages`)
-  }
+  const stashRef = await stashRemoved(stash, run, method)
   insertMarker(messages, start, offloadPlaceholder(method, placeholder.text, stashRef, placeholder.tokens))
   return true
+}
+
+/**
+ * The reference a run of removed messages is retrievable under, or undefined when there is no stash or the write
+ * failed, which leaves the placeholder without a reference rather than keeping content the caller has accounted for.
+ *
+ * @internal
+ */
+export async function stashRemoved(
+  stash: Stash | undefined,
+  removed: Message[],
+  method: OffloadMethod
+): Promise<string | undefined> {
+  if (!stash || removed.length === 0) return undefined
+  try {
+    return await stash.storeRemoved(removed)
+  } catch (error) {
+    logger.warn(`method=<${method}>, error=<${error}> | failed to stash removed messages`)
+    return undefined
+  }
 }
 
 /** Splits `selected`, in conversation order, into runs of messages adjacent in `messages`. */

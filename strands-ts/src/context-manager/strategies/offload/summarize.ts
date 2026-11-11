@@ -13,7 +13,7 @@ import { normalizeError } from '../../../errors.js'
 import { isPinned } from '../../../conversation-manager/compression/pin-message.js'
 import { Message, ReasoningBlock, SummaryBlock, TextBlock, ToolResultBlock } from '../../../types/messages.js'
 import { DocumentBlock, ImageBlock } from '../../../types/media.js'
-import type { ContentBlock } from '../../../types/messages.js'
+import type { ContentBlock, OffloadedBlock } from '../../../types/messages.js'
 import type { Model, SummarizeOptions } from '../../../models/model.js'
 import type { SummarizeResult } from '../../../models/summarize.js'
 import { unwrapInvocationContext, type InvocationContext } from '../../../agent/invocation-context.js'
@@ -21,7 +21,7 @@ import type { LocalAgent } from '../../../types/agent.js'
 import type { ContextState } from '../../types.js'
 import { formatToolResultLabel, toolResultToContentBlocks } from '../../methods/summarize.js'
 import { formatOffloaded, formatSummarized, REMOVED_MESSAGES } from '../../placeholder.js'
-import { removedTokens, removeMessages, repairAlternation } from '../../message-trimming.js'
+import { removedTokens, removeMessages, repairAlternation, stashRemoved } from '../../message-trimming.js'
 import { BaseOffloadStrategy } from './base.js'
 import type { OffloadConditions } from './conditions.js'
 import { mediaKind, type OffloadTarget } from './target.js'
@@ -185,31 +185,21 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
     const summary = providerSummary(result)
     if (summary === undefined) return this._placeTextSummary(context, model, end, summaryText(result))
 
-    const content = [summary, ...(await this._removedPlaceholder(messages.slice(1, end), model))]
-    messages.splice(1, replaced, new Message({ role: 'assistant', content }))
+    const reference = await this._removedReference(messages.slice(1, end), model)
+    messages.splice(1, replaced, summaryMessage(summary, reference))
     logger.debug(`summarized=<${replaced}> | summarized opening messages server-side`)
     return true
   }
 
   /**
-   * The placeholder recording what the messages a server-side summary replaced stood for, stashed under the
-   * reference it carries so `retrieve_context` can bring them back.
-   *
-   * It follows the summary block rather than preceding it, since a provider that takes the summary as a compaction
-   * block rejects content before one. Empty without a stash, or when the write failed — the summary stands alone
-   * rather than advertising a reference that resolves to nothing.
+   * The placeholder the messages a server-side summary replaced are retrievable under, or nothing when they were not
+   * stashed — the summary then stands alone rather than carrying a reference that resolves to nothing.
    */
-  private async _removedPlaceholder(removed: Message[], model: Model): Promise<ContentBlock[]> {
-    if (!this._stash || removed.length === 0) return []
-    let stashRef: string
-    try {
-      stashRef = await this._stash.storeRemoved(removed)
-    } catch (error) {
-      logger.warn(`error=<${normalizeError(error).message}> | failed to stash summarized messages`)
-      return []
-    }
+  private async _removedReference(removed: Message[], model: Model): Promise<OffloadedBlock | undefined> {
+    const stashRef = await stashRemoved(this._stash, removed, this._method)
+    if (stashRef === undefined) return undefined
     const tokens = await removedTokens(removed, model)
-    return [this._placeholder(formatSummarized(REMOVED_MESSAGES, tokens), stashRef, tokens)]
+    return this._placeholder(formatSummarized(REMOVED_MESSAGES, tokens), stashRef, tokens)
   }
 
   /**
@@ -382,6 +372,18 @@ function endOf(messages: Message[], removable: Message[]): number {
     if (removableSet.has(message)) end = index + 1
   })
   return end
+}
+
+/**
+ * The message a server-side summary becomes: the summary block, then the placeholder referencing the messages it
+ * replaced.
+ *
+ * The placeholder follows the summary rather than preceding it because a provider that sends the summary as a
+ * compaction block drops the content before it, which is the whole reason the reference is a block of its own: a
+ * provider's summary text is signed, so the reference cannot be written into it.
+ */
+function summaryMessage(summary: SummaryBlock, reference: OffloadedBlock | undefined): Message {
+  return new Message({ role: 'assistant', content: reference ? [summary, reference] : [summary] })
 }
 
 /** `result`'s summary when its provider wrote it, which is the only form the agent's model can replay. */

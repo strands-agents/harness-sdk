@@ -12,7 +12,7 @@ import { warnOnce } from '../../../logging/warn-once.js'
 import { MessageAddedEvent } from '../../../hooks/events.js'
 import { ModelProxy } from '../../../models/model-proxy.js'
 import { InjectedBlock, Message, TextBlock, type OffloadMethod, ToolResultBlock } from '../../../types/messages.js'
-import type { ContentBlock } from '../../../types/messages.js'
+import type { ContentBlock, OffloadedBlock } from '../../../types/messages.js'
 import type { InvocationContext } from '../../../agent/invocation-context.js'
 import type { LocalAgent } from '../../../types/agent.js'
 import type { ContextStrategy, ContextState } from '../../types.js'
@@ -176,7 +176,7 @@ export abstract class BaseOffloadStrategy implements OffloadStrategy {
   }
 
   /** The placeholder this strategy leaves for a block it replaced, recording the tokens it stands for. */
-  protected _placeholder(preview: string, stashRef: string | undefined, tokens: number): TextBlock {
+  protected _placeholder(preview: string, stashRef: string | undefined, tokens: number): OffloadedBlock {
     return offloadPlaceholder(this._method, preview, stashRef, tokens)
   }
 
