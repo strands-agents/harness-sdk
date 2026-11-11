@@ -98,26 +98,23 @@ async for event in agent.stream_async("Hello"):
 
 New event types added to the union don't affect existing event handling logic.
 
-## Preset and `"auto"` Setting Expansions
+## `HumanInTheLoop("auto")` Expansion
 
-Changing what a preset or `"auto"` setting expands to **is not considered a breaking change**. The *name* is the stable contract, not its expansion.
+Changing which approval strategy `HumanInTheLoop("auto")` expands to **is not considered a breaking change**. The *name* is the stable contract, not its expansion: `"auto"` means "the SDK decides which tool calls need a human", and a release may change how it decides.
 
-This covers any setting whose documented meaning is a named outcome the SDK owns the implementation of, rather than a specific mechanism the caller chose:
-
-- `context_manager="auto"` / `"agentic"` — the preset expansions (truncation thresholds, the summarization utilization point). Already documented this way on the [context management presets page](../site/src/content/docs/user-guide/sdk/context-management/presets.mdx); this entry writes the rule down rather than introducing it.
-- `HumanInTheLoop("auto")` — which approval strategy decides that a tool call needs a human.
-
-It does **not** cover an `"auto"` that states a fact rather than selecting an implementation. `ModelCapabilities.prompt_caching="auto"` describes how a given model caches; it is a property of that model, not a choice the SDK re-makes between releases.
+This entry covers that one setting. It is written this way because the setting's documented meaning is a named outcome the SDK owns the implementation of, rather than a specific mechanism the caller chose — which is not true of every `"auto"` in the SDK. `ModelCapabilities.prompt_caching="auto"` states a fact about how a given model caches; it is a property of that model, not a choice the SDK re-makes between releases.
 
 ### Policy
 
-The SDK may change what a preset or `"auto"` setting expands to in a **minor** release. Patch releases may only fix the current expansion, never swap it for a different approach. Every such change is called out in the release notes for that version, naming the setting, what it expanded to before, and what it expands to now.
+The SDK may change what `"auto"` expands to in a **minor** release. Patch releases may only fix the current expansion, never swap it for a different approach. Every such change is called out in the release notes for that version, naming what `"auto"` expanded to before and what it expands to now.
 
-A change may move behavior in **either direction**. For `HumanInTheLoop("auto")`, a release may escalate calls to the human that previously ran on their own, and it may also auto-approve calls that previously escalated. A new strategy is adopted when it classifies risk more accurately overall, which generally means being right more often in both directions rather than uniformly stricter.
+A change may move behavior in **either direction**: a release may escalate calls to the human that previously ran on their own, and it may also auto-approve calls that previously escalated. A new strategy is adopted when it classifies risk more accurately overall, which generally means being right more often in both directions rather than uniformly stricter.
 
 ### Rationale
 
-This follows [Pay for Play](./DECISIONS.md): writing the preset name *is* the opt-in. Its documented contract is an outcome, not an implementation, so a caller who chooses it has asked for the SDK's current best judgment and gets it on upgrade. Code that doesn't use the preset is unaffected, and these settings are never defaults — plain `HumanInTheLoop()` still requires approval for every tool not on the allow list.
+This follows [Pay for Play](./DECISIONS.md): writing `"auto"` *is* the opt-in. Its documented contract is an outcome, not an implementation, so a caller who chooses it has asked for the SDK's current best judgment and gets it on upgrade. Code that doesn't pass `"auto"` is unaffected, and it is never the default — plain `HumanInTheLoop()` still requires approval for every tool not on the allow list.
+
+The same name-over-expansion shape appears elsewhere in the SDK as prior art, not as something this entry governs: [context management strategy presets](../site/src/content/docs/user-guide/sdk/context-management/presets.mdx) already document that their expansions "may change between releases as tuning improves" while "the preset *name* is the stable contract", and the [`"auto"` and `"agentic"` context manager modes](../site/src/content/docs/user-guide/sdk/context-management/built-in-modes.mdx) wrap tuned defaults behind an API that is still experimental. Bringing either under the minor-release-and-release-notes rule above is a separate change for the context manager owners to make.
 
 ## Feedback
 
