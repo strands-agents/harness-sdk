@@ -109,6 +109,7 @@ describe('SageMakerDecisionModel', () => {
 
       expect(result.answers).toEqual({ q: true })
       expect(send).toHaveBeenCalledTimes(1)
+      expect(send.mock.calls[0]![0].input).toMatchObject({ EndpointName: ENDPOINT_NAME })
       expect(mockSageMakerRuntimeClient).not.toHaveBeenCalled()
     })
 
