@@ -10,6 +10,7 @@ const APPROVAL = 'DELETE'
 interface ConfirmationProps {
   directory: string
   replacement: string
+  current?: string
   onConfirm(): void
   onCancel(): void
 }
@@ -20,6 +21,7 @@ const isPrintable = (input: string): boolean =>
 export const WorkspaceReplacementConfirmation = ({
   directory,
   replacement,
+  current,
   onConfirm,
   onCancel,
 }: ConfirmationProps): ReactElement => {
@@ -40,6 +42,7 @@ export const WorkspaceReplacementConfirmation = ({
       <Text bold>DELETE workspace and replace?</Text>
       <Text color="red">This is a DELETE operation.</Text>
       <Text>Workspace folder: {sanitizeTerminalText(directory)}</Text>
+      {current ? <Text>Current workspace: {sanitizeTerminalText(current)}</Text> : null}
       <Text>
         All files in this folder will be replaced, including tmp agents, reports, state, and agents stored inside it.
       </Text>

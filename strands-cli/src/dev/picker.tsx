@@ -11,7 +11,8 @@ import { useCopyableError } from '../ui/clipboard.js'
 import { useStartupContentRows } from '../ui/startup.js'
 import { useSpinner } from '../ui/animation.js'
 import { userConfigPath } from '../config/store.js'
-import { devFailure } from './errors.js'
+import { devFailure, WorkspaceFolderInUse } from './errors.js'
+import { WorkspaceReplacementConfirmation } from './settings.js'
 import { basename, dirname } from 'node:path'
 import { isWorkspaceFolderName, WORKSPACE_FOLDER } from './workspace.js'
 
@@ -23,6 +24,7 @@ export type HarnessChoice =
 export interface FolderSuggestion {
   path: string
   detected: boolean
+  occupiedBy?: string
 }
 
 export interface BaseCliOption {
@@ -38,7 +40,14 @@ interface PickerProps {
   folderFor?: (choice: HarnessChoice) => FolderSuggestion | undefined
   newProject?: string
   modelNotice?: (language: 'typescript' | 'python') => string | undefined
-  onSelect: (selection: HarnessChoice | undefined, workspace?: string) => void | Promise<void>
+  onSelect: (selection: HarnessChoice | undefined, workspace?: string, replace?: boolean) => void | Promise<void>
+}
+
+interface Replacement {
+  choice: HarnessChoice
+  workspace?: string
+  folder: string
+  holder: string
 }
 
 export type HarnessDiscoveryState = 'running' | 'done' | { failed: string }
@@ -59,10 +68,18 @@ const prefilledFolder = ({ path, detected }: FolderSuggestion): string => (detec
 const createdNote = (name: string, place: 'in' | 'at'): string =>
   `A ${name} folder will be created ${place} this path for .config, tmp/, reports, and state.`
 const folderNote = (typed: string, suggested: FolderSuggestion): string => {
+  if (typed === prefilledFolder(suggested) && suggested.occupiedBy)
+    return `${basename(suggested.path)} in this path holds the workspace of ${sanitizeTerminalText(suggested.occupiedBy)}. Enter asks you to confirm before it is replaced.`
   if (typed === prefilledFolder(suggested)) return createdNote(basename(suggested.path), 'in')
   const name = basename(typed)
   return isWorkspaceFolderName(name) ? createdNote(name, 'at') : createdNote(WORKSPACE_FOLDER, 'in')
 }
+const choiceLabel = (choice: HarnessChoice, cli?: BaseCliOption): string =>
+  choice.kind === 'cli'
+    ? `Base CLI · ${cli?.name ?? 'saved profile'}`
+    : choice.kind === 'discovered'
+      ? `${choice.harness.name} (${choice.harness.entrypoint})`
+      : `New ${choice.language} harness ${choice.name}`
 const MAX_VISIBLE_ROWS = 7
 const SOURCE_DETAIL_HEIGHT = 3
 const SELECTED_AGENT_HEIGHT = 3
@@ -140,6 +157,7 @@ export const HarnessPicker = ({
   const [name, setName] = useState('new-harness')
   const [folder, setFolder] = useState({ value: '', cursor: 0, suggested: { path: '', detected: false } })
   const [failure, setFailure] = useState<string>()
+  const [replacing, setReplacing] = useState<Replacement>()
   const failureCopyHint = useCopyableError(failure)
   const [busy, setBusy] = useState(false)
   const pending = useRef(false)
@@ -196,14 +214,25 @@ export const HarnessPicker = ({
     0,
     rows.findIndex(({ key }) => key === selectedRow)
   )
-  const submit = (choice: HarnessChoice | undefined, workspace?: string): void => {
+  const select = (choice: HarnessChoice | undefined, workspace?: string, replace = false): void | Promise<void> => {
+    if (choice && replace) return onSelect(choice, workspace, true)
+    return choice && workspace !== undefined ? onSelect(choice, workspace) : onSelect(choice)
+  }
+  const submit = (choice: HarnessChoice | undefined, workspace?: string, replace = false): void => {
     if (pending.current && choice) return
     pending.current = true
     setBusy(choice !== undefined)
     setFailure(undefined)
     void Promise.resolve()
-      .then(() => (choice && workspace !== undefined ? onSelect(choice, workspace) : onSelect(choice)))
+      .then(() => select(choice, workspace, replace))
       .catch((error: unknown) => {
+        if (error instanceof WorkspaceFolderInUse && choice && !replace)
+          return setReplacing({
+            choice,
+            ...(workspace !== undefined ? { workspace } : {}),
+            folder: error.folder,
+            holder: error.holder,
+          })
         setFailure(devFailure(error, { operation: 'open' }).message)
       })
       .finally(() => {
@@ -271,14 +300,17 @@ export const HarnessPicker = ({
     setField('name')
     setCreating(true)
   }
-  useInput((input, key) => {
-    if (key.ctrl && input === 'c') return submit(undefined)
-    if (key.escape) return placing && !pending.current ? leaveFolder() : submit(undefined)
-    if (pending.current) return
-    if (placing) return editFolder(input, key)
-    if (creating) return editForm(input, key)
-    browse(key)
-  })
+  useInput(
+    (input, key) => {
+      if (key.ctrl && input === 'c') return submit(undefined)
+      if (key.escape) return placing && !pending.current ? leaveFolder() : submit(undefined)
+      if (pending.current) return
+      if (placing) return editFolder(input, key)
+      if (creating) return editForm(input, key)
+      browse(key)
+    },
+    { isActive: replacing === undefined }
+  )
   const detailWidth = Math.max(1, columns - 12)
   const lineCount = (text: string): number => wrapLines(text, detailWidth).length
   const notice = warning ? sanitizeTerminalText(warning) : undefined
@@ -352,6 +384,20 @@ export const HarnessPicker = ({
       : undefined
   const detailHeight = SOURCE_DETAIL_HEIGHT + (detailNotes?.rows ?? 0)
   const selectedFolder = folderOf(selected.choice)?.path
+  if (replacing)
+    return (
+      <WorkspaceReplacementConfirmation
+        directory={replacing.folder}
+        current={replacing.holder}
+        replacement={choiceLabel(replacing.choice, cli)}
+        onConfirm={() => {
+          const { choice, workspace } = replacing
+          setReplacing(undefined)
+          submit(choice, workspace, true)
+        }}
+        onCancel={() => setReplacing(undefined)}
+      />
+    )
   return (
     <Box flexDirection="column">
       {selectedAgent ? (
@@ -495,7 +541,7 @@ const SEARCH_FLUSH_MS = 100
 export const chooseHarness = async <Opened,>(
   { search, ...options }: Omit<PickerProps, 'onSelect' | 'discovery'> & { search?: HarnessSource },
   screen: StartupScreen,
-  open: (choice: HarnessChoice, signal: AbortSignal, workspace?: string) => Promise<Opened>
+  open: (choice: HarnessChoice, signal: AbortSignal, workspace?: string, replace?: boolean) => Promise<Opened>
 ): Promise<Opened | undefined> => {
   screen.signal.throwIfAborted()
   const operation = new AbortController()
@@ -514,12 +560,12 @@ export const chooseHarness = async <Opened,>(
     operation.abort(new Error('Workspace selection cancelled.'))
     complete(undefined)
   }
-  const onSelect = async (choice: HarnessChoice | undefined, workspace?: string): Promise<void> => {
+  const onSelect = async (choice: HarnessChoice | undefined, workspace?: string, replace?: boolean): Promise<void> => {
     if (!choice) return cancel()
     let opened: Opened
     opening = true
     try {
-      opened = await open(choice, signal, workspace)
+      opened = await (replace ? open(choice, signal, workspace, true) : open(choice, signal, workspace))
     } catch (error) {
       opening = false
       throw devFailure(error, {

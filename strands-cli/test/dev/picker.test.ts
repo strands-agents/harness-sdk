@@ -2,6 +2,7 @@ import chalk from 'chalk'
 import { createElement } from 'react'
 import { Box } from 'ink'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { WorkspaceFolderInUse } from '../../src/dev/errors.js'
 import { chooseHarness, HarnessPicker } from '../../src/dev/picker.js'
 import type { DiscoveredHarness } from '../../src/dev/search.js'
 import * as terminal from '../../src/terminal/terminal.js'
@@ -444,6 +445,80 @@ describe('HarnessPicker', () => {
     await vi.waitFor(() => expect(selected).toHaveBeenLastCalledWith({ kind: 'cli' }, '/work/other'))
     expect(selected).toHaveBeenNthCalledWith(1, { kind: 'cli' }, '/work/strands-dev')
     expect(selected).toHaveBeenCalledTimes(2)
+  })
+
+  const withOccupiedFolder = (selected: Parameters<typeof HarnessPicker>[0]['onSelect']) => {
+    const input = ttyInput()
+    const output = ttyOutput(100, 40)
+    const frame = captureFrame(output)
+    render(
+      createElement(HarnessPicker, {
+        cli: { name: 'Saved profile', path: '/home/test/.strands/cli.toml' },
+        harnesses: [],
+        folderFor: () => ({
+          path: '/home/test/.strands/strands-dev',
+          detected: false,
+          occupiedBy: 'Strands harness (/desk/agent.py)',
+        }),
+        onSelect: selected,
+      }),
+      { stdin: input, stdout: output }
+    )
+    return { input, text: () => frame().join('\n').replace(/\s+/gu, ' ') }
+  }
+  const inUse = () => new WorkspaceFolderInUse('/home/test/.strands/strands-dev', 'Strands harness (/desk/agent.py)')
+
+  it('shouldSayTheSuggestedFolderHoldsAnotherWorkspaceBeforeTheUserContinues', async () => {
+    const { input, text } = withOccupiedFolder(vi.fn())
+    await vi.waitFor(() => expect(text()).toContain('Select a harness'))
+    input.write('\r')
+
+    await vi.waitFor(() =>
+      expect(text()).toContain('strands-dev in this path holds the workspace of Strands harness (/desk/agent.py).')
+    )
+    expect(text()).toContain('Enter asks you to confirm before it is replaced.')
+  })
+
+  it('shouldReplaceTheFolderOnlyAfterTheUserTypesDelete', async () => {
+    const selected = vi.fn().mockRejectedValueOnce(inUse()).mockResolvedValueOnce(undefined)
+    const { input, text } = withOccupiedFolder(selected)
+    await vi.waitFor(() => expect(text()).toContain('Select a harness'))
+    input.write('\r')
+    await vi.waitFor(() => expect(text()).toContain('Create a workspace'))
+    input.write('\r')
+
+    await vi.waitFor(() => expect(text()).toContain('DELETE workspace and replace?'))
+    expect(text()).toContain('Current workspace: Strands harness (/desk/agent.py)')
+    expect(text()).toContain('Replacement: Base CLI · Saved profile')
+    input.write('DELET')
+    await vi.waitFor(() => expect(text()).toContain('Type DELETE to confirm: DELET▏'))
+    input.write('\r')
+    await vi.waitFor(() => expect(text()).toContain('Type DELETE exactly to confirm'))
+    expect(selected).toHaveBeenCalledTimes(1)
+    input.write('E')
+    await vi.waitFor(() => expect(text()).toContain('Type DELETE to confirm: DELETE▏'))
+    input.write('\r')
+
+    await vi.waitFor(() =>
+      expect(selected).toHaveBeenLastCalledWith({ kind: 'cli' }, '/home/test/.strands/strands-dev', true)
+    )
+    expect(selected).toHaveBeenNthCalledWith(1, { kind: 'cli' }, '/home/test/.strands/strands-dev')
+  })
+
+  it('shouldReturnToTheFolderStepWhenTheUserCancelsTheReplacement', async () => {
+    const selected = vi.fn().mockRejectedValueOnce(inUse())
+    const { input, text } = withOccupiedFolder(selected)
+    await vi.waitFor(() => expect(text()).toContain('Select a harness'))
+    input.write('\r')
+    await vi.waitFor(() => expect(text()).toContain('Create a workspace'))
+    input.write('\r')
+    await vi.waitFor(() => expect(text()).toContain('DELETE workspace and replace?'))
+
+    input.write('\u001b')
+
+    await vi.waitFor(() => expect(text()).toContain('Create a workspace'))
+    expect(text()).not.toContain('DELETE workspace and replace?')
+    expect(selected).toHaveBeenCalledTimes(1)
   })
 
   it('shouldNameTheNumberedFolderInTheNoteUntilThePathChanges', async () => {

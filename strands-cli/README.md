@@ -106,22 +106,29 @@ When that folder does not contain the workspace of the harness, the heading is *
 The folder field starts with the folder that contains the harness file. Dev creates `strands-dev/` in that folder.
 For example, `~/agents/support/agent.py` gives the field `~/agents/support` and the workspace `~/agents/support/strands-dev/`.
 The rule is the same when the file is in a source folder: `~/repo/src/agent.ts` gives `~/repo/src/strands-dev/`.
-When that `strands-dev/` contains a different agent, a note under the field names the next unused folder, for example `strands-dev-2/`.
+
+When that `strands-dev/` holds the workspace of a different agent, a note under the field names that agent.
+Then Enter asks you to type DELETE before dev replaces that workspace. Dev never makes a numbered folder such as `strands-dev-2/`.
 
 For the Base CLI, the suggested workspace is `~/.strands/strands-dev/`, in the folder of the CLI config.
 When that folder does not contain the Base CLI workspace, the field starts with `~/.strands`.
 This rule also applies when the Base CLI has a saved project.
+That folder holds the Base CLI workspace only when dev made it from the current project or config of the CLI.
 
 You can edit the path before you continue. When you change a detected path, the heading changes to **Create a workspace**.
 When the path that you type ends in `strands-dev` or `strands-dev-N`, the note names that folder.
 A relative path starts from the launch directory. Esc in the folder step goes back to the harness list.
 
 When you go back from a failed setup, dev deletes the folders that the failed setup made. The other choices keep their usual folders.
-If the failed setup used a folder that was there before, dev keeps that folder. The note then names the next unused folder, for example `strands-dev-2/`.
+If the failed setup used a folder that was there before, dev keeps that folder. The next selection suggests the same folder.
+
+Before dev replaces a workspace, it moves the old folder to a hidden backup. Dev deletes the backup when the chat starts.
+If you go back, cancel, or quit before the chat starts, dev puts the old folder back.
 
 **Create a new harness** does not ask for a folder. Dev creates the project in `strands-workspace/` in the launch directory.
 The harness file is `strands-workspace/agent.py` or `strands-workspace/agent.ts`, and its workspace is `strands-workspace/strands-dev/`.
-When `strands-workspace/` exists, dev uses the next unused name, for example `strands-workspace-2/`.
+When `strands-workspace/` holds the same new harness, dev opens it.
+When it holds a different harness, dev asks you to type DELETE before it replaces that project.
 If the model module of the saved profile is in the other language, the new harness uses the `model` of the profile. The form shows a note.
 
 Dev creates `strands-dev/` inside the path that you type or give to `--workspace`.
@@ -129,13 +136,16 @@ Dev uses the path as it is when the path ends in `strands-dev` or `strands-dev-N
 For example, `--workspace ~/my-agents` gives the workspace `~/my-agents/strands-dev/`.
 With `--workspace`, the folder field of each choice starts in that folder. Then a new harness goes into `agent/` inside the workspace.
 
-The workspace folder must be new or empty, or it must be the existing workspace of the selected agent.
+The workspace folder must be new or empty, or it must hold a workspace.
+Dev opens the workspace of the selected agent. For the workspace of another agent, dev asks you to type DELETE first.
 A workspace named `strands-dev` reopens from its parent folder or from inside it.
 To reopen a workspace with a different name, run `strands dev` inside it, or give its folder to `--workspace`.
 
 `--agent` and `--create` do not show the picker. `--agent` uses `strands-dev/` in the folder that contains the agent file, or the ZIP.
 `--create typescript` and `--create python` create `strands-workspace/` in the launch directory. `--create cli` uses `~/.strands/strands-dev/`.
 With `--workspace`, the two flags use that folder.
+
+When that folder holds the workspace of another agent, the two flags stop with an error that names the folder and the agent. They do not replace it.
 
 Initialization records the persistent agent in `.config` and installs one independent copy under `tmp/`.
 An existing workspace reopens with its recorded initial copy instead of creating another one. `--agent` selects another entrypoint for one launch without changing the manifest.

@@ -1,3 +1,4 @@
+import { realpathSync } from 'node:fs'
 import { realpath } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 
@@ -6,13 +7,14 @@ import { expandHome, strandsUserPath } from '../paths.js'
 import { importAgentProject, type ImportedAgentProject } from '../project/import.js'
 import { planProjectPreparation } from '../project/preparation-plan.js'
 import { discoverHarnesses, type DiscoveredHarness } from './search.js'
-import { readDevWorkspace, WORKSPACE_FOLDER } from './workspace.js'
+import { readDevWorkspace, WORKSPACE_FOLDER, type DevWorkspace } from './workspace.js'
 
 export interface BaseHarnessSelection {
   name: string
   source: string
   workspace: string
   excludedEntrypoints: readonly string[]
+  holds(workspace: DevWorkspace): boolean
 }
 
 export const baseHarnessProject = (snapshot: CliConfigSnapshot, cwd: string): ImportedAgentProject | undefined =>
@@ -29,13 +31,32 @@ export const baseHarnessSelection = async (
   const project = baseHarnessProject(snapshot, cwd)
   const source = project?.entrypoint ?? snapshot.path
   const workspace = destination ? resolve(cwd, destination) : strandsUserPath(WORKSPACE_FOLDER)
+  const sameFile = (left: string, right: string): boolean =>
+    canonicalPathSync(resolve(cwd, expandHome(left))) === canonicalPathSync(resolve(cwd, expandHome(right)))
+  const madeFromThisCli = ({ config, entrypoint }: DevWorkspace): boolean => {
+    const { source: origin } = config.origin
+    if (origin === undefined) return true
+    if (!snapshot.agentProject) return sameFile(origin, snapshot.path)
+    return sameFile(entrypoint, source) || sameFile(origin, snapshot.agentProject)
+  }
+  const holds = (bound: DevWorkspace): boolean => bound.config.origin.kind === 'cli' && madeFromThisCli(bound)
   const bound = await readDevWorkspace(workspace)
-  const existing = bound?.config.origin.kind === 'cli' ? bound : undefined
+  const existing = bound && holds(bound) ? bound : undefined
   return {
     name: existing?.config.name ?? snapshot.profile.name,
     source,
     workspace,
     excludedEntrypoints: [...(snapshot.agentProject ? [source] : []), ...(existing ? [existing.entrypoint] : [])],
+    holds,
+  }
+}
+
+const canonicalPathSync = (path: string): string => {
+  try {
+    return realpathSync(path)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return path
+    throw error
   }
 }
 

@@ -1,4 +1,6 @@
-import { lstat, mkdir, readdir, rm, rmdir } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import { renameSync, rmSync } from 'node:fs'
+import { lstat, mkdir, readdir, rename, rm, rmdir } from 'node:fs/promises'
 import { basename, dirname, join, relative, resolve, sep } from 'node:path'
 
 import { resolveSkillPaths } from '../agent/skills.js'
@@ -32,18 +34,6 @@ export interface CreateDevProjectOptions {
 type DestinationClaim = 'created' | 'empty'
 
 const PROJECT_FOLDER = 'strands-workspace'
-const MAX_FOLDER_NUMBER = 100
-
-export const numberedFolder = async (
-  base: string,
-  accepts: (path: string) => Promise<boolean>
-): Promise<string | undefined> => {
-  for (let number = 1; number <= MAX_FOLDER_NUMBER; number++) {
-    const candidate = number === 1 ? base : `${base}-${number}`
-    if (await accepts(candidate)) return candidate
-  }
-  return undefined
-}
 
 const isMissing = async (path: string): Promise<boolean> => {
   try {
@@ -55,26 +45,7 @@ const isMissing = async (path: string): Promise<boolean> => {
   }
 }
 
-export const existingDevProject = async (
-  cwd: string,
-  language: 'typescript' | 'python',
-  name: string
-): Promise<DevWorkspace | undefined> => {
-  for (let number = 1; number <= MAX_FOLDER_NUMBER; number++) {
-    const root = join(cwd, number === 1 ? PROJECT_FOLDER : `${PROJECT_FOLDER}-${number}`)
-    if (await isMissing(root)) return undefined
-    const workspace = await readDevWorkspace(join(root, WORKSPACE_FOLDER)).catch(() => undefined)
-    const { origin, language: bound, name: label } = workspace?.config ?? {}
-    if (workspace?.root === root && origin?.kind === 'created' && bound === language && label === name) return workspace
-  }
-  return undefined
-}
-
-export const newProjectFolder = async (parent: string): Promise<string> => {
-  const folder = await numberedFolder(join(parent, PROJECT_FOLDER), isMissing)
-  if (!folder) throw new Error(`Every ${PROJECT_FOLDER} name in ${parent} is in use. Remove an unused one, then retry.`)
-  return folder
-}
+export const projectFolder = (parent: string): string => join(parent, PROJECT_FOLDER)
 
 type ProfileProject = Extract<ProjectInstallation, { profile: unknown }>
 
@@ -140,7 +111,14 @@ const releaseDestination = async (path: string, claim: DestinationClaim): Promis
 export interface FolderClaims {
   claim(path: string): Promise<void>
   claimCreated(path: string): void
+  replace(path: string, outside?: string): Promise<void>
   release(): Promise<void>
+  commit(): Promise<void>
+}
+
+interface Replacement {
+  path: string
+  backup: string
 }
 
 interface FolderClaim {
@@ -174,22 +152,97 @@ const releaseClaim = async ({ path, claim, missingParents }: FolderClaim): Promi
   for (const parent of missingParents) if (!(await removeEmptyFolder(parent))) return
 }
 
+const restoreReplacement = async ({ path, backup }: Replacement): Promise<void> => {
+  await rm(path, { recursive: true, force: true })
+  await rename(backup, path)
+}
+
+const settle = async <Item>(
+  items: Item[],
+  action: (item: Item) => Promise<void>,
+  failure: (item: Item, error: unknown) => string
+): Promise<string[]> => {
+  const failures: string[] = []
+  for (const item of [...items].reverse()) {
+    try {
+      await action(item)
+      items.splice(items.indexOf(item), 1)
+    } catch (error) {
+      failures.push(failure(item, error))
+    }
+  }
+  return failures
+}
+
+const notDeleted = ({ path }: FolderClaim, error: unknown): string => `Could not delete ${path}: ${errorMessage(error)}`
+const notRestored = ({ path, backup }: Replacement, error: unknown): string =>
+  `Could not restore ${path}: ${errorMessage(error)}. The old folder is kept at ${backup}`
+const backupKept = ({ backup }: Replacement, error: unknown): string =>
+  `Could not delete the replaced workspace kept at ${backup}: ${errorMessage(error)}`
+
+const restoreBeforeExit = (replacements: Replacement[]): void => {
+  for (const replacement of replacements.splice(0).reverse()) {
+    try {
+      rmSync(replacement.path, { recursive: true, force: true })
+      renameSync(replacement.backup, replacement.path)
+    } catch (error) {
+      process.stderr.write(`${notRestored(replacement, error)}\n`)
+    }
+  }
+}
+
+const backupPath = (path: string, parent: string): string => join(parent, `.${basename(path)}-${randomUUID()}.replaced`)
+
+const setAside = async (path: string, outside: string | undefined): Promise<string> => {
+  if (outside) {
+    const backup = backupPath(path, outside)
+    const moved = await rename(path, backup).then(
+      () => true,
+      () => false
+    )
+    if (moved) return backup
+  }
+  const backup = backupPath(path, dirname(path))
+  await rename(path, backup)
+  return backup
+}
+
 export const folderClaims = (): FolderClaims => {
   const claims: FolderClaim[] = []
+  const replacements: Replacement[] = []
   const record = (claim: FolderClaim): void => {
     if (!claims.some((held) => containsPath(held.path, claim.path))) claims.push(claim)
   }
+  const restoreOnExit = (): void => restoreBeforeExit(replacements)
   return {
     claim: async (path): Promise<void> => {
       if (await isMissing(path)) record({ path, claim: 'created', missingParents: await missingParents(path) })
       else if (await isEmptyFolder(path)) record({ path, claim: 'empty', missingParents: [] })
     },
     claimCreated: (path): void => record({ path, claim: 'created', missingParents: [] }),
+    replace: async (path, outside): Promise<void> => {
+      const backup = await setAside(path, outside)
+      if (!replacements.length) process.once('exit', restoreOnExit)
+      replacements.push({ path, backup })
+    },
     release: async (): Promise<void> => {
-      const failures: unknown[] = []
-      for (const claim of claims.splice(0).reverse())
-        await releaseClaim(claim).catch((error: unknown) => failures.push(error))
-      if (failures.length) throw new AggregateError(failures, failures.map(errorMessage).join('; '))
+      const failures = [
+        ...(await settle(claims, releaseClaim, notDeleted)),
+        ...(await settle(replacements, restoreReplacement, notRestored)),
+      ]
+      if (!replacements.length) process.removeListener('exit', restoreOnExit)
+      if (failures.length) throw new Error(failures.join('; '))
+    },
+    commit: async (): Promise<void> => {
+      process.removeListener('exit', restoreOnExit)
+      claims.splice(0)
+      const failures = await settle(
+        replacements,
+        ({ backup }) => rm(backup, { recursive: true, force: true }),
+        backupKept
+      )
+      replacements.splice(0)
+      if (failures.length) throw new Error(failures.join('; '))
     },
   }
 }
@@ -245,7 +298,7 @@ export const createDevWorkspace = async (options: CreateDevWorkspaceOptions): Pr
 export const createDevProject = async (options: CreateDevProjectOptions): Promise<DevWorkspace> => {
   options.signal?.throwIfAborted()
   const input = await profileProject(options.snapshot, options.cwd, options.language)
-  const root = await newProjectFolder(resolve(options.cwd))
+  const root = projectFolder(resolve(options.cwd))
   const project = await installAgentProject({
     destination: root,
     deferDependencies: true,

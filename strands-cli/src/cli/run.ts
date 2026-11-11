@@ -64,6 +64,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
           await ensureInitialCandidate(prepared.workspace, undefined, async (candidate) => {
             await executePreparation(await planProjectPreparation(candidate))
           })
+          await prepared.keep()
           prepared.args.dev = { ...prepared.args.dev!, prepared: true }
         }
         if (!prepared || prepared.args.dev?.init) return
@@ -273,6 +274,13 @@ async function runInteractive(
     const setupSession = args.dev ? (await import('../dev/project-setup.js')).projectSetupSession() : undefined
     let rejected: PreparedDevRun | undefined
     let opened: PreparedDevRun | undefined
+    let keepFailure: string | undefined
+    const keepOpened = <Chat>(chat: Chat): Chat => {
+      void opened?.keep().catch((error: unknown) => {
+        keepFailure = errorMessage(error)
+      })
+      return chat
+    }
     const prepare =
       args.dev && !suppliedConfig
         ? async (screen: StartupScreen): Promise<boolean> => {
@@ -297,7 +305,11 @@ async function runInteractive(
                 deferPreparation: true,
                 ...(rejected ? { rejected } : {}),
               })
-              if (!prepared || screen.signal.aborted) return false
+              if (!prepared) return false
+              if (screen.signal.aborted) {
+                await prepared.discard()
+                return false
+              }
               const result = await setupSession!.prepare(
                 {
                   root: prepared.workspace.root,
@@ -316,7 +328,10 @@ async function runInteractive(
                   })
                 }
               )
-              if (result === 'cancel') return false
+              if (result === 'cancel') {
+                await prepared.discard()
+                return false
+              }
               if (result === 'back') {
                 rejected = prepared
                 continue
@@ -353,33 +368,37 @@ async function runInteractive(
         const project = projectPath ? importAgentProject(projectPath) : undefined
         if (project?.language === 'python') {
           const { createPythonChat } = await import('../ui/chat/runtime.js')
-          return createPythonChat(
-            project.entrypoint,
-            config,
-            await pythonInvocationOptions(args, initialWorkspace, config.snapshot().settings, initialMcp),
-            signal,
-            requestSetup,
-            conversations,
-            launch?.conversationId
+          return keepOpened(
+            await createPythonChat(
+              project.entrypoint,
+              config,
+              await pythonInvocationOptions(args, initialWorkspace, config.snapshot().settings, initialMcp),
+              signal,
+              requestSetup,
+              conversations,
+              launch?.conversationId
+            )
           )
         }
         if (project?.language === 'typescript') {
           const { createTypescriptChat } = await import('../ui/chat/runtime.js')
-          return createTypescriptChat(
-            project.entrypoint,
-            config,
-            {
-              args: launch?.agentProject ? { ...args, agent: project.entrypoint } : args,
-              cwd: initialWorkspace,
-              initialWorkspace,
-              mcpPaths: initialMcp.paths,
-              mcpStrictPaths: initialMcp.strictPaths,
-              ...(initialMcp.expectedDigests ? { mcpDigests: initialMcp.expectedDigests } : {}),
-            },
-            signal,
-            requestSetup,
-            conversations,
-            launch?.conversationId
+          return keepOpened(
+            await createTypescriptChat(
+              project.entrypoint,
+              config,
+              {
+                args: launch?.agentProject ? { ...args, agent: project.entrypoint } : args,
+                cwd: initialWorkspace,
+                initialWorkspace,
+                mcpPaths: initialMcp.paths,
+                mcpStrictPaths: initialMcp.strictPaths,
+                ...(initialMcp.expectedDigests ? { mcpDigests: initialMcp.expectedDigests } : {}),
+              },
+              signal,
+              requestSetup,
+              conversations,
+              launch?.conversationId
+            )
           )
         }
         const { createInteractiveChat } = await import('../ui/chat/runtime.js')
@@ -468,6 +487,7 @@ async function runInteractive(
         },
       }
     )
+    if (keepFailure) process.stderr.write(`warning: ${keepFailure}\n`)
     if (updateRequested) {
       const { updateCli } = await import('./update.js')
       process.exitCode = await updateCli()

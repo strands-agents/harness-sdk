@@ -14,6 +14,25 @@ export class DevFailure extends Error {
   }
 }
 
+export class WorkspaceFolderInUse extends DevFailure {
+  constructor(
+    readonly folder: string,
+    readonly holder: string
+  ) {
+    super(
+      [
+        'Workspace folder is in use.',
+        `Folder: ${sanitizeTerminalText(folder)}`,
+        `Reason: It holds the workspace of ${sanitizeTerminalText(holder)}.`,
+        'Next: Run strands dev in a terminal and pick this agent again to replace that workspace, ' +
+          'or choose another folder with --workspace <path>.',
+      ].join('\n'),
+      undefined
+    )
+    this.name = 'WorkspaceFolderInUse'
+  }
+}
+
 const causes = (error: unknown): unknown[] => {
   const result: unknown[] = []
   for (let current = error; current && !result.includes(current) && result.length < 8;) {
