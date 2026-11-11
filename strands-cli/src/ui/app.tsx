@@ -1,6 +1,7 @@
 import { type ReactElement, type ReactNode, useCallback, useEffect, useRef, useState } from 'react'
-import { Box, useInput } from 'ink'
+import { Box, useInput, useStdout } from 'ink'
 import { sanitizeTerminalText } from '../terminal/text.js'
+import { pauseMouseReporting } from '../terminal/terminal.js'
 import { Text, useTheme, ThemeProvider } from './theme.js'
 import { basename } from 'node:path'
 import { ChatApp } from './chat/screen.js'
@@ -55,6 +56,12 @@ export type ChatLaunch = SetupChange
 export interface SetupBridge {
   request: RequestSetup
   confirmMcp(workspace: string, paths: readonly string[]): Promise<boolean>
+}
+
+const StartupView = (props: Parameters<typeof ChatView>[0]): ReactElement => {
+  const { stdout } = useStdout()
+  useEffect(() => pauseMouseReporting(stdout), [stdout])
+  return <ChatView {...props} />
 }
 
 interface ChatRootProps {
@@ -222,7 +229,7 @@ export function ChatRoot({
       startupContent ??
       (startupStatus ? <StartupStatus status={startupStatus} animate={settings.animations} /> : undefined)
     return (
-      <ChatView
+      <StartupView
         snapshot={startupSnapshot(settings, config)}
         {...(startupCard ? { startupContent: startupCard } : {})}
         entranceFade={placeholderEntranceFade.current}
