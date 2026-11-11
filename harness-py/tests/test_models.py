@@ -1,6 +1,15 @@
 import pytest
-from strands.models import BedrockModel, CacheConfig, Model, ModelRouter
+from strands.models import (
+    BedrockModel,
+    CacheConfig,
+    Model,
+    ModelCapabilities,
+    ModelInfo,
+    ModelRouter,
+    ReasoningCapability,
+)
 
+from strands_harness import models
 from strands_harness.defaults import DEFAULT_EFFORT
 from strands_harness.models import (
     _claude_extended_thinking,
@@ -185,37 +194,68 @@ def test_default_effort_on_model_instance_does_not_warn(caplog):
     assert not any("not applied" in r.message for r in caplog.records)
 
 
-# https://github.com/strands-agents/harness-sdk/issues/4472
+_BEDROCK_CLAUDE = ("additional_request_fields", "output_config", "effort")
+_BEDROCK_GPT = ("additional_request_fields", "reasoning", "effort")
+_BEDROCK_REASONING_EFFORT = ("additional_request_fields", "reasoning_effort")
+
+
+# https://github.com/strands-agents/harness-sdk/issues/4472; the level is the vendor's default for the model
+# from the shared model info (Claude Code, Codex, Gemini CLI), else the provider's high.
 @pytest.mark.parametrize(
-    ("spec", "path"),
+    ("spec", "path", "level"),
     [
-        ("bedrock/global.anthropic.claude-opus-5", ("additional_request_fields", "output_config", "effort")),
-        ("bedrock/global.anthropic.claude-sonnet-5", ("additional_request_fields", "output_config", "effort")),
-        ("bedrock/us.anthropic.claude-sonnet-4-6", ("additional_request_fields", "output_config", "effort")),
-        ("bedrock/global.anthropic.claude-fable-5-1", ("additional_request_fields", "output_config", "effort")),
-        ("bedrock/openai.gpt-5.6-sol", ("additional_request_fields", "reasoning", "effort")),
-        ("bedrock/us.openai.gpt-5.5", ("additional_request_fields", "reasoning", "effort")),
-        ("bedrock/global.openai.gpt-6-astra", ("additional_request_fields", "reasoning", "effort")),
-        ("bedrock/openai.gpt-oss-120b-1:0", ("additional_request_fields", "reasoning_effort")),
-        ("bedrock/qwen.qwen3-32b-v1:0", ("additional_request_fields", "reasoning_effort")),
-        ("bedrock/us.xai.grok-4", ("additional_request_fields", "reasoning_effort")),
+        ("bedrock/global.anthropic.claude-opus-5", _BEDROCK_CLAUDE, "high"),
+        ("bedrock/global.anthropic.claude-sonnet-5", _BEDROCK_CLAUDE, "high"),
+        ("bedrock/us.anthropic.claude-sonnet-4-6", _BEDROCK_CLAUDE, "high"),
+        ("bedrock/global.anthropic.claude-fable-5-1", _BEDROCK_CLAUDE, "high"),
+        ("bedrock/global.anthropic.claude-opus-5-5", _BEDROCK_CLAUDE, "medium"),
+        ("bedrock/us.anthropic.claude-opus-5-5-20260401-v1:0", _BEDROCK_CLAUDE, "medium"),
+        ("bedrock/global.anthropic.claude-sonnet-5-5", _BEDROCK_CLAUDE, "medium"),
+        ("bedrock/global.anthropic.claude-opus-4-7", _BEDROCK_CLAUDE, "xhigh"),
+        ("bedrock/global.anthropic.claude-opus-9", _BEDROCK_CLAUDE, "high"),
+        ("bedrock/openai.gpt-5.6-sol", _BEDROCK_GPT, "low"),
+        ("bedrock/us.openai.gpt-5.5", _BEDROCK_GPT, "medium"),
+        ("bedrock/global.openai.gpt-6-astra", _BEDROCK_GPT, "low"),
+        ("bedrock/us.openai.gpt-6.1-terra", _BEDROCK_GPT, "low"),
+        ("bedrock/us.openai.gpt-6-sol", _BEDROCK_GPT, "medium"),
+        ("bedrock/openai.gpt-5.6-cyber", _BEDROCK_GPT, "high"),
+        ("bedrock/openai.gpt-oss-120b-1:0", _BEDROCK_REASONING_EFFORT, "medium"),
+        ("bedrock/qwen.qwen3-32b-v1:0", _BEDROCK_REASONING_EFFORT, "high"),
+        ("bedrock/us.xai.grok-4", _BEDROCK_REASONING_EFFORT, "high"),
         (
             "bedrock/global.amazon.nova-2-lite-v1:0",
             ("additional_request_fields", "reasoningConfig", "maxReasoningEffort"),
+            "high",
         ),
-        ("anthropic/claude-opus-5", ("params", "output_config", "effort")),
-        ("openai/gpt-5.6-sol", ("params", "reasoning", "effort")),
-        ("bedrock-mantle/openai.gpt-5.6-sol", ("params", "reasoning", "effort")),
-        ("google/gemini-3.5-flash", ("params", "thinking_config", "thinking_level")),
+        ("anthropic/claude-opus-5", ("params", "output_config", "effort"), "high"),
+        ("anthropic/claude-opus-5-5", ("params", "output_config", "effort"), "medium"),
+        ("anthropic/claude-haiku-5-5-20260601", ("params", "output_config", "effort"), "medium"),
+        ("openai/gpt-5.6-sol", ("params", "reasoning", "effort"), "low"),
+        ("openai/gpt-5.5", ("params", "reasoning", "effort"), "medium"),
+        ("openai/o3", ("params", "reasoning", "effort"), "high"),
+        ("bedrock-mantle/openai.gpt-5.6-sol", ("params", "reasoning", "effort"), "low"),
+        ("google/gemini-3.5-flash", ("params", "thinking_config", "thinking_level"), "high"),
     ],
 )
-def test_default_effort_is_high_where_the_model_has_levels(spec, path):
+def test_default_effort_is_the_vendor_default_from_the_model_info_else_high(spec, path, level):
     config = resolve(spec, effort=DEFAULT_EFFORT).config
     at = config
     for key in path:
         at = at[key]
-    assert at == "high"
-    assert config == resolve(spec, effort="high").config
+    assert at == level
+    assert config == resolve(spec, effort=level).config
+
+
+def test_default_effort_falls_back_to_the_provider_level_when_the_vendor_default_is_not_one_the_provider_takes(
+    monkeypatch,
+):
+    info = ModelInfo(capabilities=ModelCapabilities(reasoning=ReasoningCapability(default_effort="ultra")))
+    monkeypatch.setattr(models, "lookup_model_info", lambda model_id: info)
+
+    assert resolve("bedrock/us.openai.gpt-6-sol").config["additional_request_fields"] == {
+        "reasoning": {"effort": "high"}
+    }
+    assert resolve("openai/gpt-5.5").config["params"]["reasoning"] == {"effort": "high"}
 
 
 @pytest.mark.parametrize(
@@ -265,7 +305,7 @@ def test_openai_on_bedrock_maps_effort_to_reasoning_effort():
     "model_id", ["openai.gpt-6-astra", "global.openai.gpt-6-astra", "us.openai.gpt-6-astra", "us.openai.gpt-6.1-sol"]
 )
 def test_astra_and_6_1_sol_on_bedrock_resolve_effort_without_none(model_id):
-    for effort, level in [("auto", "high"), ("low", "low"), ("max", "max")]:
+    for effort, level in [("auto", "low"), ("low", "low"), ("max", "max")]:
         model = resolve(f"bedrock/{model_id}", effort=effort)
         assert model.config["additional_request_fields"] == {"reasoning": {"effort": level}}
     assert "additional_request_fields" not in resolve(f"bedrock/{model_id}", effort="off").config
@@ -278,7 +318,7 @@ def test_astra_and_6_1_sol_on_bedrock_resolve_effort_without_none(model_id):
 )
 def test_gpt_5_4_and_5_5_on_bedrock_resolve_effort_without_max(model_id):
     # https://github.com/strands-agents/harness-sdk/issues/5191
-    for effort, level in [("auto", "high"), ("low", "low"), ("xhigh", "xhigh"), ("off", "none")]:
+    for effort, level in [("auto", "medium"), ("low", "low"), ("xhigh", "xhigh"), ("off", "none")]:
         model = resolve(f"bedrock/{model_id}", effort=effort)
         assert model.config["additional_request_fields"] == {"reasoning": {"effort": level}}
     for effort in ("minimal", "max"):
@@ -297,7 +337,7 @@ def test_gpt_5_4_and_5_5_on_bedrock_resolve_effort_without_max(model_id):
     ],
 )
 def test_gpt_5_6_6_and_daybreak_on_bedrock_resolve_every_effort(model_id):
-    for effort, level in [("auto", "high"), ("low", "low"), ("max", "max"), ("off", "none")]:
+    for effort, level in [("low", "low"), ("max", "max"), ("off", "none")]:
         model = resolve(f"bedrock/{model_id}", effort=effort)
         assert model.config["additional_request_fields"] == {"reasoning": {"effort": level}}
     with pytest.raises(ValueError, match="not supported"):
@@ -436,7 +476,7 @@ def test_google_uses_model_id_directly():
 
 
 def test_openai_maps_to_reasoning_effort():
-    model = resolve("openai/gpt-5.6-sol")
+    model = resolve("openai/gpt-5.6-sol", effort="high")
     assert isinstance(model, Model)
     assert model.config["params"]["reasoning"]["effort"] == "high"
 
@@ -484,7 +524,7 @@ def test_bedrock_mantle_builds_via_openai_responses_model():
     model = resolve("bedrock-mantle/openai.gpt-oss-120b")
     assert isinstance(model, OpenAIResponsesModel)
     assert model.config["model_id"] == "openai.gpt-oss-120b"
-    assert model.config["params"]["reasoning"]["effort"] == "high"
+    assert model.config["params"]["reasoning"]["effort"] == "medium"
 
 
 def test_bedrock_mantle_caching_does_not_warn(caplog):
@@ -502,7 +542,7 @@ def test_bedrock_mantle_rejects_an_unsupported_thinking_level():
 
 def test_bedrock_mantle_web_search_adds_bedrock_web_search_tool():
     model = resolve("bedrock-mantle/openai.gpt-5.6-luna", web_search=True)
-    assert model.config["params"]["reasoning"]["effort"] == "high"
+    assert model.config["params"]["reasoning"]["effort"] == "medium"
     assert model.config["params"]["tools"] == [{"type": "web_search", "external_web_access": True}]
 
 
@@ -558,7 +598,7 @@ def test_supports_web_search_model_instance_is_false():
 
 def test_openai_web_search_adds_tool_alongside_reasoning():
     model = resolve("openai/gpt-5.6-sol", web_search=True)
-    assert model.config["params"]["reasoning"]["effort"] == "high"
+    assert model.config["params"]["reasoning"]["effort"] == "low"
     assert model.config["params"]["tools"] == [{"type": "web_search"}]
 
 
@@ -652,7 +692,7 @@ def test_claude_on_the_4_5_tier_gets_an_extended_block(model_id):
 
 @pytest.mark.parametrize("model_id", ADAPTIVE_CLAUDE)
 def test_claude_with_adaptive_thinking_gets_the_block(model_id):
-    assert resolve(f"bedrock/{model_id}").config["additional_request_fields"] == ADAPTIVE
+    assert resolve(f"bedrock/{model_id}", effort="high").config["additional_request_fields"] == ADAPTIVE
 
 
 def test_claude_below_the_thinking_floor_rejects_an_explicit_level_locally():

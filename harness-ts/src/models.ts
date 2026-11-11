@@ -18,7 +18,7 @@
  * needs none. This makes resolution async.
  */
 
-import { Model, ModelRouter, type JSONValue } from '@strands-agents/sdk'
+import { Model, ModelRouter, lookupModelInfo, type JSONValue } from '@strands-agents/sdk'
 import { DEFAULT_MODEL } from './defaults.js'
 import { warnOnce } from './logging.js'
 import type { Effort } from './types/agent.js'
@@ -204,10 +204,11 @@ function bedrockLevels(modelId: string): readonly string[] {
   return NO_THINKING_LEVELS
 }
 
-function bedrockEffort(modelId: string, effort: Effort): string | null {
+function bedrockEffort(modelId: string, effort: Effort, recommended: string | null): string | null {
   const levels = bedrockLevels(modelId)
   // Families that take no level get none by default; an explicit level is rejected by resolveEffort.
-  return resolveEffort(effort, levels.length > 0 ? 'high' : null, levels, `Bedrock model ${modelId}`)
+  const fallback = levels.length > 0 ? defaultEffort(modelId, levels, recommended) : null
+  return resolveEffort(effort, fallback, levels, `Bedrock model ${modelId}`)
 }
 
 function bedrockThinking(modelId: string, effort: string | null): JSONValue | undefined {
@@ -391,8 +392,17 @@ const PROVIDERS: Record<string, Provider> = {
 export const EFFORT_LEVELS: readonly Effort[] = ['auto', 'off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
 
 /**
+ * The level `'auto'` resolves to: the vendor's default for the model from the shared model info
+ * (what Claude Code, Codex, or Gemini CLI run it at), else the provider's `recommended` level.
+ */
+function defaultEffort(modelId: string, levels: readonly string[], recommended: string | null): string | null {
+  const vendorDefault = lookupModelInfo(modelId).capabilities?.reasoning?.defaultEffort
+  return vendorDefault !== undefined && levels.includes(vendorDefault) ? vendorDefault : recommended
+}
+
+/**
  * Map an `effort` to the level sent to a provider: the provider's `none` (or `null`, omitting the
- * reasoning field, where it has no such level) for `'off'`, the provider's recommended level for
+ * reasoning field, where it has no such level) for `'off'`, the model's default level for
  * `'auto'`, the level itself when the provider supports it; anything else throws.
  */
 function resolveEffort(
@@ -507,21 +517,16 @@ export async function resolveModel(
     )
   }
 
-  let { levels, recommended } = provider
-  if (providerName === 'anthropic' && claudeThinkingMode(name) === null) {
-    levels = NO_THINKING_LEVELS
-    recommended = null
+  let level: string | null
+  if (providerName === 'bedrock') {
+    level = bedrockEffort(name, effort, provider.recommended)
+  } else if (providerName === 'anthropic' && claudeThinkingMode(name) === null) {
+    level = resolveEffort(effort, null, NO_THINKING_LEVELS, `model ${name}`)
   } else {
-    levels = modelLevels(providerName, name, levels)
+    const levels = modelLevels(providerName, name, provider.levels)
+    level = resolveEffort(effort, defaultEffort(name, levels, provider.recommended), levels, `model ${name}`)
   }
-  return provider.build(
-    name,
-    providerName === 'bedrock'
-      ? bedrockEffort(name, effort)
-      : resolveEffort(effort, recommended, levels, `model ${name}`),
-    nativeSearch,
-    caching && provider.caching && !unsupportedCaching
-  )
+  return provider.build(name, level, nativeSearch, caching && provider.caching && !unsupportedCaching)
 }
 
 /**

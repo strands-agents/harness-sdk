@@ -266,7 +266,8 @@ def create_harness(
             ``"anthropic/claude-fable-5"``), a bare Bedrock model id, or ``None`` for the
             harness default (Bedrock Opus 5.5).
         effort: Reasoning effort applied to the resolved model, mapped to each provider's request
-            fields. ``"auto"`` (the default) uses the provider's recommended level, ``"off"`` turns
+            fields. ``"auto"`` (the default) uses the model vendor's default level (what Claude Code,
+            Codex, or Gemini CLI run it at; the provider's ``"high"`` otherwise), ``"off"`` turns
             reasoning off, and ``"minimal"``/``"low"``/``"medium"``/``"high"``/``"xhigh"``/``"max"``
             set it explicitly; a level the provider does not offer raises. When ``model`` is a
             ``Model`` or ``ModelRouter`` instance a non-``"auto"`` effort is ignored with a warning

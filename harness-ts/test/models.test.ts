@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { Model, ModelRouter } from '@strands-agents/sdk'
+import { Model, ModelRouter, lookupModelInfo } from '@strands-agents/sdk'
 import { BedrockModel } from '@strands-agents/sdk/models/bedrock'
 
 import {
@@ -13,11 +13,18 @@ import type { Effort } from '../src/types/agent.js'
 import { DEFAULT_EFFORT } from '../src/defaults.js'
 import { configureLogging, resetWarnOnce } from '../src/logging.js'
 
+// Pass-through by default; one test swaps in a vendor default the provider does not take.
+vi.mock('@strands-agents/sdk', async (importOriginal) => {
+  const sdk = await importOriginal<typeof import('@strands-agents/sdk')>()
+  return { ...sdk, lookupModelInfo: vi.fn(sdk.lookupModelInfo) }
+})
+
 const DEFAULT = 'bedrock/global.anthropic.claude-opus-4-8'
 
 afterEach(() => {
   resetWarnOnce()
   vi.unstubAllEnvs()
+  vi.mocked(lookupModelInfo).mockReset()
 })
 
 function resolve(
@@ -149,7 +156,7 @@ describe('resolveModel', () => {
     'resolves Astra and 6.1 Sol effort without none for %s',
     async (modelId) => {
       for (const [thinking, effort] of [
-        ['auto', 'high'],
+        ['auto', 'low'],
         ['low', 'low'],
         ['max', 'max'],
       ] as const) {
@@ -168,7 +175,7 @@ describe('resolveModel', () => {
     'resolves GPT-5.4/5.5 effort without max for %s',
     async (modelId) => {
       for (const [thinking, effort] of [
-        ['auto', 'high'],
+        ['auto', 'medium'],
         ['low', 'low'],
         ['xhigh', 'xhigh'],
         ['off', 'none'],
@@ -192,7 +199,6 @@ describe('resolveModel', () => {
     'us.openai.gpt-daybreak-blue-5.6-sol',
   ])('resolves every GPT-5.6, GPT-6, and Daybreak effort for %s', async (modelId) => {
     for (const [thinking, effort] of [
-      ['auto', 'high'],
       ['low', 'low'],
       ['max', 'max'],
       ['off', 'none'],
@@ -294,7 +300,7 @@ describe('resolveModel', () => {
   })
 
   it('maps openai to reasoning effort', async () => {
-    const model = await resolve('openai/gpt-5.6-sol')
+    const model = await resolve('openai/gpt-5.6-sol', 'high')
     expect(model).toBeInstanceOf(Model)
     const params = model.getConfig().params as { reasoning: { effort: string } }
     expect(params.reasoning.effort).toBe('high')
@@ -420,7 +426,7 @@ describe('resolveModel', () => {
   })
 
   it.each(ADAPTIVE_CLAUDE)('sends the adaptive block to %s', async (modelId) => {
-    const model = await resolve(`bedrock/${modelId}`)
+    const model = await resolve(`bedrock/${modelId}`, 'high')
     expect(model.getConfig().additionalRequestFields).toEqual(ADAPTIVE)
   })
 
@@ -468,7 +474,7 @@ describe('resolveModel', () => {
     expect(model).toBeInstanceOf(OpenAIModel)
     const config = model.getConfig() as { modelId: string; params: { reasoning: { effort: string } } }
     expect(config.modelId).toBe('openai.gpt-oss-120b')
-    expect(config.params.reasoning.effort).toBe('high')
+    expect(config.params.reasoning.effort).toBe('medium')
   })
 
   it('rejects an unsupported thinking level for bedrock-mantle', async () => {
@@ -480,7 +486,7 @@ describe('resolveModel', () => {
   it('adds the Bedrock Web Search tool for bedrock-mantle web_search', async () => {
     const model = await resolve('bedrock-mantle/openai.gpt-5.6-luna', 'auto', true)
     const params = model.getConfig().params as { reasoning: { effort: string }; tools: unknown }
-    expect(params.reasoning.effort).toBe('high')
+    expect(params.reasoning.effort).toBe('medium')
     expect(params.tools).toEqual([{ type: 'web_search', external_web_access: true }])
   })
 
@@ -648,30 +654,58 @@ describe('resolveModel', () => {
   })
 })
 
-// https://github.com/strands-agents/harness-sdk/issues/4472
+// https://github.com/strands-agents/harness-sdk/issues/4472; the level is the vendor's default for the model from
+// the shared model info (Claude Code, Codex, Gemini CLI), else the provider's high.
 describe('default effort', () => {
-  // [model spec, path of the effort field in the resolved config]
-  const HIGH_BY_DEFAULT: [string, string[]][] = [
-    ['bedrock/global.anthropic.claude-opus-5', ['additionalRequestFields', 'output_config', 'effort']],
-    ['bedrock/global.anthropic.claude-sonnet-5', ['additionalRequestFields', 'output_config', 'effort']],
-    ['bedrock/us.anthropic.claude-sonnet-4-6', ['additionalRequestFields', 'output_config', 'effort']],
-    ['bedrock/global.anthropic.claude-fable-5-1', ['additionalRequestFields', 'output_config', 'effort']],
-    ['bedrock/openai.gpt-5.6-sol', ['additionalRequestFields', 'reasoning', 'effort']],
-    ['bedrock/global.openai.gpt-6-astra', ['additionalRequestFields', 'reasoning', 'effort']],
-    ['bedrock/openai.gpt-oss-120b-1:0', ['additionalRequestFields', 'reasoning_effort']],
-    ['bedrock/qwen.qwen3-32b-v1:0', ['additionalRequestFields', 'reasoning_effort']],
-    ['bedrock/us.xai.grok-4', ['additionalRequestFields', 'reasoning_effort']],
-    ['anthropic/claude-opus-5', ['params', 'output_config', 'effort']],
-    ['openai/gpt-5.6-sol', ['params', 'reasoning', 'effort']],
-    ['bedrock-mantle/openai.gpt-5.6-sol', ['params', 'reasoning', 'effort']],
-    ['google/gemini-3.5-flash', ['params', 'thinkingConfig', 'thinkingLevel']],
+  const BEDROCK_CLAUDE = ['additionalRequestFields', 'output_config', 'effort']
+  const BEDROCK_GPT = ['additionalRequestFields', 'reasoning', 'effort']
+  const BEDROCK_REASONING_EFFORT = ['additionalRequestFields', 'reasoning_effort']
+  // [model spec, path of the effort field in the resolved config, level]
+  const BY_DEFAULT: [string, string[], string][] = [
+    ['bedrock/global.anthropic.claude-opus-5', BEDROCK_CLAUDE, 'high'],
+    ['bedrock/global.anthropic.claude-sonnet-5', BEDROCK_CLAUDE, 'high'],
+    ['bedrock/us.anthropic.claude-sonnet-4-6', BEDROCK_CLAUDE, 'high'],
+    ['bedrock/global.anthropic.claude-fable-5-1', BEDROCK_CLAUDE, 'high'],
+    ['bedrock/global.anthropic.claude-opus-5-5', BEDROCK_CLAUDE, 'medium'],
+    ['bedrock/us.anthropic.claude-opus-5-5-20260401-v1:0', BEDROCK_CLAUDE, 'medium'],
+    ['bedrock/global.anthropic.claude-sonnet-5-5', BEDROCK_CLAUDE, 'medium'],
+    ['bedrock/global.anthropic.claude-opus-4-7', BEDROCK_CLAUDE, 'xhigh'],
+    ['bedrock/global.anthropic.claude-opus-9', BEDROCK_CLAUDE, 'high'],
+    ['bedrock/openai.gpt-5.6-sol', BEDROCK_GPT, 'low'],
+    ['bedrock/us.openai.gpt-5.5', BEDROCK_GPT, 'medium'],
+    ['bedrock/global.openai.gpt-6-astra', BEDROCK_GPT, 'low'],
+    ['bedrock/us.openai.gpt-6.1-terra', BEDROCK_GPT, 'low'],
+    ['bedrock/us.openai.gpt-6-sol', BEDROCK_GPT, 'medium'],
+    ['bedrock/openai.gpt-5.6-cyber', BEDROCK_GPT, 'high'],
+    ['bedrock/openai.gpt-oss-120b-1:0', BEDROCK_REASONING_EFFORT, 'medium'],
+    ['bedrock/qwen.qwen3-32b-v1:0', BEDROCK_REASONING_EFFORT, 'high'],
+    ['bedrock/us.xai.grok-4', BEDROCK_REASONING_EFFORT, 'high'],
+    ['anthropic/claude-opus-5', ['params', 'output_config', 'effort'], 'high'],
+    ['anthropic/claude-opus-5-5', ['params', 'output_config', 'effort'], 'medium'],
+    ['anthropic/claude-haiku-5-5-20260601', ['params', 'output_config', 'effort'], 'medium'],
+    ['openai/gpt-5.6-sol', ['params', 'reasoning', 'effort'], 'low'],
+    ['openai/gpt-5.5', ['params', 'reasoning', 'effort'], 'medium'],
+    ['openai/o3', ['params', 'reasoning', 'effort'], 'high'],
+    ['bedrock-mantle/openai.gpt-5.6-sol', ['params', 'reasoning', 'effort'], 'low'],
+    ['google/gemini-3.5-flash', ['params', 'thinkingConfig', 'thinkingLevel'], 'high'],
   ]
 
-  it.each(HIGH_BY_DEFAULT)('is high on %s', async (spec, path) => {
+  it.each(BY_DEFAULT)('is the vendor default from the model info, else high, on %s', async (spec, path, level) => {
     const config = (await resolve(spec, DEFAULT_EFFORT)).getConfig() as Record<string, unknown>
     const at = path.reduce<unknown>((value, key) => (value as Record<string, unknown> | undefined)?.[key], config)
-    expect(at).toBe('high')
-    expect(config).toEqual((await resolve(spec, 'high')).getConfig())
+    expect(at).toBe(level)
+    expect(config).toEqual((await resolve(spec, level as Effort)).getConfig())
+  })
+
+  it('falls back to the provider level when the vendor default is not one the provider takes', async () => {
+    vi.mocked(lookupModelInfo).mockReturnValue({ capabilities: { reasoning: { defaultEffort: 'ultra' } } })
+
+    expect((await resolve('bedrock/us.openai.gpt-6-sol')).getConfig().additionalRequestFields).toEqual({
+      reasoning: { effort: 'high' },
+    })
+    expect(((await resolve('openai/gpt-5.5')).getConfig().params as { reasoning: unknown }).reasoning).toEqual({
+      effort: 'high',
+    })
   })
 
   it.each(['bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0', 'anthropic/claude-haiku-4-5-20251001'])(

@@ -148,7 +148,7 @@ for every provider:
 
 ```typescript
 await createHarness({ effort: 'high' }) // minimal | low | medium | high | xhigh | max, as the provider offers them
-await createHarness({ effort: 'auto' }) // the provider's recommended level (high where supported), the default
+await createHarness({ effort: 'auto' }) // the model vendor's default level (e.g. medium on Opus 5.5, else high), the default
 await createHarness({ effort: 'off' }) // reasoning off (the provider's `none` level where it has one)
 ```
 

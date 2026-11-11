@@ -21,7 +21,7 @@ import re
 from collections.abc import Callable
 from typing import Any, NamedTuple
 
-from strands.models import Model, ModelRouter
+from strands.models import Model, ModelRouter, lookup_model_info
 
 from strands_harness import defaults
 from strands_harness.types.agent import Effort
@@ -185,10 +185,10 @@ def _bedrock_levels(model_id: str) -> tuple[str, ...]:
     return ()
 
 
-def _bedrock_effort(model_id: str, effort: Effort) -> str | None:
+def _bedrock_effort(model_id: str, effort: Effort, recommended: str | None) -> str | None:
     levels = _bedrock_levels(model_id)
     if levels:
-        return _effort(effort, "high", levels, f"Bedrock model {model_id}")
+        return _effort(effort, _default_effort(model_id, levels, recommended), levels, f"Bedrock model {model_id}")
     _check_effort(effort)
     if effort in ("auto", "off"):
         return None
@@ -367,6 +367,13 @@ def _model_levels(provider_name: str, model_id: str, default: tuple[str, ...]) -
     return next((levels for prefix, levels in rows if model_id.startswith(prefix)), default)
 
 
+def _default_effort(model_id: str, levels: tuple[str, ...], recommended: str | None) -> str | None:
+    """The level ``"auto"`` resolves to: the vendor's default for the model from the shared model info
+    (what Claude Code, Codex, or Gemini CLI run it at), else the provider's ``recommended`` level."""
+    vendor_default = lookup_model_info(model_id).capabilities.reasoning.default_effort
+    return vendor_default if vendor_default in levels else recommended
+
+
 def _effort(
     effort: Effort,
     recommended: str | None,
@@ -518,17 +525,14 @@ def resolve_model(
             f"Model {provider_name}/{name} does not support prompt caching. Pass caching=False.",
             f"model=<{provider_name}/{name}> | prompt caching not supported by this model; continuing without it",
         )
-    levels = provider.thinking_levels
-    recommended = provider.recommended_thinking
-    if provider_name == "anthropic" and _claude_thinking_mode(name) is None:
-        levels, recommended = (), None
+    if provider_name == "bedrock":
+        level = _bedrock_effort(name, effort, provider.recommended_thinking)
+    elif provider_name == "anthropic" and _claude_thinking_mode(name) is None:
+        level = _effort(effort, None, (), f"model {name}")
     else:
-        levels = _model_levels(provider_name, name, levels)
-    level = (
-        _bedrock_effort(name, effort)
-        if provider_name == "bedrock"
-        else _effort(effort, recommended, levels, f"model {name}")
-    )
+        levels = _model_levels(provider_name, name, provider.thinking_levels)
+        recommended = _default_effort(name, levels, provider.recommended_thinking)
+        level = _effort(effort, recommended, levels, f"model {name}")
     native_search = web_search and _has_web_search(provider_name, name)
     return provider.build(name, level, native_search, caching and provider.caching and not unsupported_caching)
 
