@@ -8,7 +8,14 @@ import { ContextManager } from '../context-manager.js'
 import { createRetrievalTool, RETRIEVAL_TOOL_NAME } from '../retrieval-tool.js'
 import { PluginRegistry } from '../../plugins/registry.js'
 import { InMemoryStorage } from '../../storage/in-memory-storage.js'
-import { Message, TextBlock, ToolResultBlock, ToolUseBlock, OffloadedBlock } from '../../types/messages.js'
+import {
+  Message,
+  SummaryBlock,
+  TextBlock,
+  ToolResultBlock,
+  ToolUseBlock,
+  OffloadedBlock,
+} from '../../types/messages.js'
 import { DocumentBlock, ImageBlock } from '../../types/media.js'
 import { createMockAgent } from '../../__fixtures__/agent-helpers.js'
 import { makeContext, makeToolResultMessage } from '../../__fixtures__/context-manager-helpers.js'
@@ -262,6 +269,76 @@ describe('Offload strategies with stash', () => {
       expect(await invokeRetrievalTool(retrieve, { reference: 'removed-m1', pattern: 'second' })).toContain(
         'second question'
       )
+    })
+
+    describe('a server-side summary', () => {
+      const compaction = new SummaryBlock({ provider: 'anthropic', text: 'compacted' })
+
+      /** A history whose messages 1 through 3 a server-side summary replaces, `preserveRecent` keeping the last. */
+      const history = (): Message[] =>
+        [
+          ['user', 'start'],
+          ['assistant', 'first answer'],
+          ['user', 'second question'],
+          ['assistant', 'final'],
+          ['user', 'latest'],
+        ].map(
+          ([role, content], index) =>
+            new Message({
+              role: role as 'user' | 'assistant',
+              content: [new TextBlock(content!)],
+              trackingId: `m${index}`,
+            })
+        )
+
+      /** A model that reports the server-side summary capability and returns `compaction`. */
+      const serverSideModel = () => ({
+        modelId: 'test-model',
+        modelInfo: { capabilities: { serverSideSummary: true } },
+        summarize: vi.fn().mockResolvedValue({ content: [compaction] }),
+      })
+
+      const summarizeMessages = () => Offload.summarize('*').when({ contextUtilization: '50%', preserveRecent: 1 })
+
+      it('leaves an OffloadedBlock that retrieves the messages it replaced', async () => {
+        const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+        const messages = history()
+        const removed = messages.slice(1, 4)
+        await stashAll(stash, messages)
+
+        const acted = await summarizeMessages().apply(
+          makeContext(messages, { stash, utilization: 0.9, model: serverSideModel() })
+        )
+
+        expect(acted).toBe(true)
+        // The placeholder follows the summary: a provider sending it as a compaction block rejects content before one.
+        expect(messages.map((message) => message.content)).toEqual([
+          [new TextBlock('start')],
+          [
+            compaction,
+            new OffloadedBlock({
+              text: '[Summarized: earlier messages, ~9 tokens] [ref: removed-m1]',
+              method: 'summarize',
+              ref: 'removed-m1',
+              tokens: 9,
+            }),
+          ],
+          [new TextBlock('latest')],
+        ])
+        expect(await invokeRetrievalTool(createRetrievalTool(stash), { reference: 'removed-m1' })).toEqual(
+          flattenMessagesToContent(removed)
+        )
+      })
+
+      it('stands on its own when the stash write fails', async () => {
+        const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+        vi.spyOn(stash, 'storeRemoved').mockRejectedValue(new Error('storage unavailable'))
+        const messages = history()
+
+        await summarizeMessages().apply(makeContext(messages, { stash, utilization: 0.9, model: serverSideModel() }))
+
+        expect(messages[1]!.content).toEqual([compaction])
+      })
     })
 
     it('leaves a marker without a reference when there is no stash', async () => {

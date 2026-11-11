@@ -154,9 +154,9 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
    * Summarizes messages 0 through `end - 1` server-side, replacing messages 1 through `end - 1` with the summary.
    *
    * A server-side summary can only stand in for the conversation's exact start, so every message before `end` is
-   * sent, even ones `removable` leaves out. The summary becomes an assistant message at index 1. A summary without
-   * a `provider`, which a capable model returns when its own summary request failed, is placed as a client-side
-   * marker instead.
+   * sent, even ones `removable` leaves out. The summary becomes an assistant message at index 1, followed by the
+   * placeholder the removed messages are retrievable under. A summary without a `provider`, which a capable model
+   * returns when its own summary request failed, is placed as a client-side marker instead.
    *
    * @returns False when the summary failed or held no text, leaving the history unchanged
    */
@@ -185,9 +185,31 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
     const summary = providerSummary(result)
     if (summary === undefined) return this._placeTextSummary(context, model, end, summaryText(result))
 
-    messages.splice(1, replaced, new Message({ role: 'assistant', content: [summary] }))
+    const content = [summary, ...(await this._removedPlaceholder(messages.slice(1, end), model))]
+    messages.splice(1, replaced, new Message({ role: 'assistant', content }))
     logger.debug(`summarized=<${replaced}> | summarized opening messages server-side`)
     return true
+  }
+
+  /**
+   * The placeholder recording what the messages a server-side summary replaced stood for, stashed under the
+   * reference it carries so `retrieve_context` can bring them back.
+   *
+   * It follows the summary block rather than preceding it, since a provider that takes the summary as a compaction
+   * block rejects content before one. Empty without a stash, or when the write failed — the summary stands alone
+   * rather than advertising a reference that resolves to nothing.
+   */
+  private async _removedPlaceholder(removed: Message[], model: Model): Promise<ContentBlock[]> {
+    if (!this._stash || removed.length === 0) return []
+    let stashRef: string
+    try {
+      stashRef = await this._stash.storeRemoved(removed)
+    } catch (error) {
+      logger.warn(`error=<${normalizeError(error).message}> | failed to stash summarized messages`)
+      return []
+    }
+    const tokens = await removedTokens(removed, model)
+    return [this._placeholder(formatSummarized(REMOVED_MESSAGES, tokens), stashRef, tokens)]
   }
 
   /**
