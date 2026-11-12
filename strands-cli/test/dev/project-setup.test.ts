@@ -11,6 +11,7 @@ import { captureFrame, render, ttyInput, ttyOutput } from '../fixtures/terminal.
 import { temporaryDirectory } from '../fixtures/tempdir.js'
 import * as preparation from '../../src/project/preparation.js'
 import * as terminal from '../../src/terminal/terminal.js'
+import * as fix from '../../src/dev/fix-in-new-tab.js'
 
 afterEach(() => vi.restoreAllMocks())
 
@@ -53,6 +54,7 @@ describe('project setup guidance', () => {
           logPath: '/tmp/setup.log',
           details: 'Build failed',
         },
+        directory: '/project',
         onAction: action,
       }),
       { stdin: input, stdout: output }
@@ -89,6 +91,7 @@ describe('project setup guidance', () => {
           logPath: '/tmp/setup.log',
           details,
         },
+        directory: '/project',
         onAction: vi.fn(),
       }),
       { stdin: input, stdout: output }
@@ -110,6 +113,100 @@ describe('project setup guidance', () => {
         'Log: /tmp/setup.log',
       ].join('\n')
     )
+  })
+
+  it('shouldOpenStrandsInANewTabWithTheSetupReportWhenFIsPressed', async () => {
+    const open = vi.spyOn(fix, 'fixInNewTab').mockResolvedValue({
+      status: 'success',
+      text: 'Opened Strands in a new tmux window. Press r here when it is done.',
+    })
+    const input = ttyInput()
+    const output = ttyOutput(140, 40)
+    const frame = captureFrame(output)
+    render(
+      createElement(ProjectSetupPanel, {
+        plan: {
+          project: { root: '/project', entrypoint: '/project/agent.ts', language: 'typescript' },
+          runtime: 'Node 22',
+          manager: 'npm',
+          fingerprint: 'x',
+          commands: [],
+          guidance: 'Prepare dependencies with pnpm, then choose Validate existing environment.',
+        },
+        failure: {
+          stage: 'build',
+          summary: 'Project build failed',
+          action: 'Fix the project, then Retry.',
+          details: 'Build failed',
+        },
+        directory: '/project',
+        onAction: vi.fn(),
+      }),
+      { stdin: input, stdout: output }
+    )
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('f fix with Strands'))
+
+    input.write('f')
+
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('Opened Strands in a new tmux window.'))
+    expect(open).toHaveBeenCalledOnce()
+    expect(open.mock.calls[0]![0]).toEqual({
+      report: [
+        'Project build failed',
+        'Root: /project',
+        'Entrypoint: /project/agent.ts',
+        'Runtime: Node 22',
+        'Build failed',
+        'Fix the project, then Retry.',
+        'Setup guidance: Prepare dependencies with pnpm, then choose Validate existing environment.',
+      ].join('\n'),
+      directory: '/project',
+      retry: 'setup',
+    })
+  })
+
+  it('shouldFixTheSelectedProjectWhenItsEntrypointFailsAfterSetup', async () => {
+    const open = vi.spyOn(fix, 'fixInNewTab').mockResolvedValue({ status: 'success', text: 'Opened Strands' })
+    const input = ttyInput()
+    const output = ttyOutput(140, 40)
+    const frame = captureFrame(output)
+    const root = await temporaryDirectory()
+    await writeFile(join(root, 'agent.py'), 'invalid source fixture')
+    const project = { root, entrypoint: join(root, 'agent.py'), language: 'python' as const }
+    const setup = projectSetupSession()
+    vi.spyOn(preparation, 'executePreparation').mockResolvedValue('/tmp/setup.log')
+    const controller = new ChatController(idleBackend())
+    const factory = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("No module named 'refund_desk'"))
+      .mockResolvedValueOnce(controller)
+    const running = runInkChat(factory, {
+      input,
+      output,
+      errorOutput: output,
+      config: CliConfigStore.memory({}, { animations: false }),
+      intro: false,
+      renderApp: render as RenderApp,
+      prepare: async (screen) => (await setup.prepare(project, screen)) === 'ready',
+      recoverStartup: setup.recover,
+    })
+    try {
+      await vi.waitFor(() => expect(frame().join('\n')).toContain('refund_desk'))
+
+      input.write('f')
+
+      await vi.waitFor(() => expect(open).toHaveBeenCalledOnce())
+      expect(open.mock.calls[0]![0]).toMatchObject({ directory: root, retry: 'setup' })
+      expect(open.mock.calls[0]![0].report).toContain("No module named 'refund_desk'")
+      input.write('v')
+      await vi.waitFor(() => expect(factory).toHaveBeenCalledTimes(2))
+      controller.close()
+      expect(await running).toBe(0)
+    } finally {
+      input.write('b')
+      controller.close()
+      await controller.dispose()
+    }
   })
 
   it('shouldKeepImportFailuresInTheTuiAndAllowValidationRetry', async () => {

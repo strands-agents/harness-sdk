@@ -48,6 +48,7 @@ import {
   type ScreenSelectionSegment,
 } from '../../terminal/mouse-input.js'
 import { setTerminalMouseMotion } from '../../terminal/terminal.js'
+import { fixInNewTab } from '../../dev/fix-in-new-tab.js'
 import { isCopyShortcut, useClipboard } from '../clipboard.js'
 import { openExternalUrl } from '../../terminal/open-url.js'
 import { openAgentProject } from '../../terminal/open-editor.js'
@@ -684,6 +685,16 @@ export function ChatApp({
       controller.showError?.('could not open project', `${project.root}\n${errorMessage(cause)}`)
     })
   }, [controller, openProject, suspendTerminal])
+  const fixErrorInNewTab = useCallback(
+    (report: string, directory: string): void => {
+      const retry = controller.getSnapshot().runtime.sourceWatching ? 'reload' : 'restart'
+      controller.dismissPanel()
+      void fixInNewTab({ report, directory, retry }, stdout).then(({ status, text }) =>
+        controller.notify?.(status, text)
+      )
+    },
+    [controller, stdout]
+  )
 
   useLayoutEffect(() => {
     const { snapshot, terminalWidth, terminalHeight, panelRows, composerHeight } = viewPropsRef.current
@@ -1401,6 +1412,10 @@ export function ChatApp({
           }
           if (snapshot.panel.kind === 'error' && isCopyShortcut(character, key)) {
             copyText(errorPanelText(snapshot.panel))
+            return
+          }
+          if (snapshot.panel.kind === 'error' && snapshot.panel.fixDirectory && character.toLowerCase() === 'f') {
+            fixErrorInNewTab(errorPanelText(snapshot.panel), snapshot.panel.fixDirectory)
             return
           }
           const errorLayout =
