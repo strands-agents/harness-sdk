@@ -17,6 +17,11 @@ configured at construction time via `make_web_fetch` / `makeWebFetch`:
 - **`markdown`**: HTML is converted to clean markdown with scripts, styles,
   and noise stripped. Use when the agent needs full pages for reasoning.
 
+In both modes a body that contains NUL bytes or largely fails to decode (images,
+PDFs, archives) is not shown; the tool returns a short marker such as
+`[binary image/png, 48,213 bytes; not shown]` (`[undecodable text/...]` for text
+types) instead, without calling the analyst.
+
 The `max_bytes` / `maxBytes` parameter caps the HTTP response size (default 5 MiB);
 `max_content_chars` / `maxContentChars` caps the extracted content delivered to the model or
 analyst (default 50,000 characters). For `mode='agentic'` / `mode: 'agentic'`,
