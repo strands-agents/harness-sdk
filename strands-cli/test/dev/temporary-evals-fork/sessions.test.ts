@@ -8,6 +8,7 @@ import { temporaryVenvPython, type TemporaryCommandRequest } from '../../../src/
 import type { TemporaryEvalsProcess } from '../../../src/dev/temporary-evals-fork/evals-process.js'
 import type { TemporarySessionDependencies } from '../../../src/dev/temporary-evals-fork/host.js'
 import { TemporaryExperiments } from '../../../src/dev/temporary-evals-fork/experiments-session.js'
+import { readTemporaryTestResults, rememberTemporaryTestResults } from '../../../src/dev/temporary-evals-fork/report.js'
 import type { TemporarySessionHost } from '../../../src/dev/temporary-evals-fork/host.js'
 import {
   TemporaryTest,
@@ -193,10 +194,16 @@ const finished = (sessions: ReturnType<typeof temporaryDevSessions>, path: strin
 const runStatus = (sessions: ReturnType<typeof temporaryDevSessions>, path: string) =>
   sessions.test.snapshot().runs.find(({ experiment }) => experiment.path === path)?.run.status
 
-const restartedTest = (workspace: DevWorkspace): TemporaryTest => {
-  const host = (): TemporarySessionHost => ({ workspace, agent: () => ({}) })
+const restartedTest = (
+  workspace: DevWorkspace,
+  dependencies?: Partial<TemporarySessionDependencies>
+): TemporaryTest => {
+  const host = (): TemporarySessionHost => ({ workspace, agent: () => ({}), ...(dependencies ? { dependencies } : {}) })
   return new TemporaryTest(host, new TemporaryExperiments(host))
 }
+
+const remembered = async (workspace: DevWorkspace, name: string): Promise<void> =>
+  vi.waitFor(() => expect(existsSync(join(workspace.directory!, 'tmp/reports/latest', `${name}.json`))).toBe(true))
 
 const strictTestingProcess = (failing: ReadonlySet<string>) =>
   vi.fn(async ({ args }: TemporaryEvalsProcess) => {
@@ -437,33 +444,76 @@ describe('TEMPORARY dev sessions on open', () => {
     const { workspace, sessions } = await sessionsFor({ spawnTests: testingProcess() })
     const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2'])
     sessions.test.run([experiment])
-    await vi.waitFor(() => expect(runStatus(sessions, experiment.path)).toBe('done'))
+    await remembered(workspace, experiment.name)
     const restarted = restartedTest(workspace)
 
-    restarted.show()
+    await restarted.show()
 
-    await vi.waitFor(() => expect(restarted.snapshot().runs).toHaveLength(1))
-    expect(restarted.snapshot().runs[0]).toEqual({
-      experiment,
-      run: { status: 'done', results: finished(sessions, experiment.path) },
-    })
+    expect(restarted.snapshot().runs).toEqual([
+      { experiment, run: { status: 'done', results: finished(sessions, experiment.path) } },
+    ])
   })
 
   it('shouldShowWhyTheLastReportCannotBeReadWhenTheTestPanelOpensAfterARestart', async () => {
     const { workspace, sessions } = await sessionsFor({ spawnTests: testingProcess() })
     const experiment = await savedExperiment(workspace, ['c0'])
     sessions.test.run([experiment])
-    await vi.waitFor(() => expect(runStatus(sessions, experiment.path)).toBe('done'))
+    await remembered(workspace, experiment.name)
     await writeFileAt(finished(sessions, experiment.path).report, '{"overall_score": ')
     const restarted = restartedTest(workspace)
 
-    restarted.show()
+    await restarted.show()
 
-    await vi.waitFor(() => expect(restarted.snapshot().runs).toHaveLength(1))
-    expect(restarted.snapshot().runs[0]?.run).toEqual({
-      status: 'failed',
-      message: expect.stringContaining('is not a usable test report'),
+    expect(restarted.snapshot().runs.map(({ run }) => run)).toEqual([
+      { status: 'failed', message: expect.stringContaining('is not a usable test report') },
+    ])
+  })
+
+  it('shouldKeepARunningTestWhenTheTestPanelOpensAgainDuringTheRun', async () => {
+    const workspace = await workspaceFixture()
+    const experiment = await savedExperiment(workspace, ['c0', 'c1'])
+    const reports = join(workspace.directory!, 'tmp/reports')
+    const earlier = join(reports, 'earlier-capital.json')
+    await writeFileAt(
+      earlier,
+      JSON.stringify({ overall_score: 1, scores: [1], test_passes: [true], cases: [{ name: 'c0' }] })
+    )
+    await rememberTemporaryTestResults(
+      reports,
+      experiment.name,
+      await readTemporaryTestResults(earlier, { experiment: experiment.name, seconds: 1 })
+    )
+    let release = (): void => undefined
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
     })
+    const testing = testingProcess()
+    const held = vi.fn(async (process: TemporaryEvalsProcess) => {
+      await gate
+      return testing(process)
+    })
+    const restarted = restartedTest(workspace, { run: environmentRunner(workspace), spawnTests: held })
+    await restarted.show()
+    restarted.run([experiment])
+    await vi.waitFor(() => expect(held).toHaveBeenCalled())
+
+    await restarted.show()
+
+    expect(restarted.snapshot().runs.map(({ run }) => run.status)).toEqual(['running'])
+    release()
+    await vi.waitFor(() => expect(restarted.snapshot().runs.map(({ run }) => run.status)).toEqual(['done']))
+  })
+
+  it('shouldKeepTheResultsAndWarnWhenTheLastReportCannotBeSaved', async () => {
+    const { workspace, sessions, notices } = await sessionsFor({ spawnTests: testingProcess() })
+    const experiment = await savedExperiment(workspace, ['c0', 'c1'])
+    await writeFileAt(join(workspace.directory!, 'tmp/reports/latest'), 'a file where the folder goes')
+
+    sessions.test.run([experiment])
+
+    await vi.waitFor(() => expect(notices.at(-1)?.status).toBe('error'))
+    expect(runStatus(sessions, experiment.path)).toBe('done')
+    expect(notices.at(-1)?.text).toMatch(/^test · capital · \/test cannot show this report after a restart: /u)
   })
 
   it('shouldRunAndRerunCasesThatShareANameWhenTheDataStoreNeedsUniqueNames', async () => {

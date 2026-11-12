@@ -177,6 +177,8 @@ describe('TEMPORARY test report', () => {
   })
 })
 
+const literal = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')
+
 describe('TEMPORARY last test run', () => {
   it('shouldReadTheRememberedResultsWhenTheExperimentRanBefore', async () => {
     const path = await writeReport(report(ROWS))
@@ -202,7 +204,7 @@ describe('TEMPORARY last test run', () => {
 
     await expect(readTemporaryLatestTestResults(folder, 'refunds')).rejects.toThrow(
       new RegExp(
-        `^${path} is not a usable record of the last test run \\(.*${detail}.*\\)\\. Run the test again\\.$`,
+        `^${literal(path)} is not a usable record of the last test run \\(.*${detail}.*\\)\\. Run the test again\\.$`,
         'u'
       )
     )

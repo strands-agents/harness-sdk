@@ -103,12 +103,12 @@ export const temporaryCaseCount = async (path: string): Promise<number> => {
 export const temporaryCaseName = (raw: TemporaryRawCase, index: number): string =>
   typeof raw.name === 'string' && raw.name ? raw.name : `case_${index}`
 
-const PATH_SEPARATORS = /[\\/]/gu
+const UNSAFE_FILE_NAME_CHARACTERS = /[\\/:*?"<>|]/gu
 
 const uniqueFileNames = (): ((name: string) => string) => {
   const taken = new Set<string>()
   return (name) => {
-    const safe = name.replace(PATH_SEPARATORS, '-')
+    const safe = name.replace(UNSAFE_FILE_NAME_CHARACTERS, '-')
     let unique = safe
     for (let copy = 2; taken.has(unique.toLowerCase()); copy++) unique = `${safe}-${copy}`
     taken.add(unique.toLowerCase())

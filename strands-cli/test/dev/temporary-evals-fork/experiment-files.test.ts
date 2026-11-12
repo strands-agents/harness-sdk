@@ -170,7 +170,11 @@ describe('TEMPORARY experiment files', () => {
   it.each<[string, unknown[], string[]]>([
     ['repeat in any case', ['refund', 'refund', 'Refund'], ['refund', 'refund-2', 'Refund-3']],
     ['are missing', [null, undefined, '', 'case_1'], ['case_0', 'case_1', 'case_2', 'case_1-2']],
-    ['contain path separators', ['a/b', 'a\\b'], ['a-b', 'a-b-2']],
+    [
+      'contain characters that a file name cannot hold',
+      ['a/b', 'a\\b', 'Step 1: why?'],
+      ['a-b', 'a-b-2', 'Step 1- why-'],
+    ],
   ])('shouldGiveEveryCaseAUniqueFileNameWhenNames%s', (_case, names, expected) => {
     const document = experimentDocument(...names.map((name, index) => ({ ...rawCase(`c${index}`), name })))
 

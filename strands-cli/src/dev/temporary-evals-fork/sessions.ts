@@ -14,6 +14,7 @@ import {
   type OptimizeSession,
   type OptimizeState,
   type ProposedEdit,
+  type TestResults,
   type TestRun,
   type TestSession,
   type TestState,
@@ -106,8 +107,8 @@ export class TemporaryTest extends Store<TestState> implements TestSession {
     super({ runs: [] })
   }
 
-  show(): void {
-    void this.restore()
+  show(): Promise<void> {
+    return this.restore()
   }
 
   run(experiments: readonly ExperimentSummary[]): void {
@@ -141,6 +142,18 @@ export class TemporaryTest extends Store<TestState> implements TestSession {
     await Promise.all(
       saved.filter(({ path }) => !this.runs.has(path)).map((experiment) => this.restoreRun(folder, experiment))
     )
+  }
+
+  private async remember(name: string, results: TestResults): Promise<void> {
+    try {
+      await rememberTemporaryTestResults(this.reportsFolder(), name, results)
+    } catch (error) {
+      announce(
+        this.host(),
+        'error',
+        `test · ${name} · /test cannot show this report after a restart: ${errorMessage(error)}`
+      )
+    }
   }
 
   private async restoreRun(folder: string, experiment: ExperimentSummary): Promise<void> {
@@ -208,7 +221,6 @@ export class TemporaryTest extends Store<TestState> implements TestSession {
         experiment: experiment.name,
         seconds: (Date.now() - startedAt) / MILLISECONDS,
       })
-      await rememberTemporaryTestResults(this.reportsFolder(), experiment.name, results)
       this.update(experiment, { status: 'done', results })
       const passed = results.cases.filter((item) => item.passed).length
       announce(
@@ -216,6 +228,7 @@ export class TemporaryTest extends Store<TestState> implements TestSession {
         'success',
         `test · ${experiment.name} · ${passed} of ${plural(results.cases.length, 'case')} passed · /test shows the results`
       )
+      await this.remember(experiment.name, results)
     } catch (error) {
       this.update(experiment, { status: 'failed', message: errorMessage(error) })
       announce(this.host(), 'error', `test · ${experiment.name} stopped · /test shows why`)
