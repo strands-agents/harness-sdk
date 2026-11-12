@@ -1,10 +1,21 @@
-import { useCallback, useState, useSyncExternalStore, type ReactElement } from 'react'
+import { useState, useSyncExternalStore, type ReactElement } from 'react'
 import { useInput } from 'ink'
 
 import type { DevChatPanelProps } from '../../ui/chat/types.js'
 import { useSpinner } from '../../ui/animation.js'
-import { ExperimentPicker } from './picker.js'
-import type { CaseResult, ExperimentSummary, TestResults, TestSession, TestState } from './model.js'
+import { Text, useTheme } from '../../ui/theme.js'
+import {
+  isGenerating,
+  type CaseResult,
+  type ExperimentRun,
+  type ExperimentsState,
+  type ExperimentSummary,
+  type Generation,
+  type TestResults,
+  type TestRun,
+  type TestSession,
+  type TestState,
+} from './model.js'
 import {
   Field,
   formatSeconds,
@@ -14,6 +25,7 @@ import {
   KeyHints,
   labelWidthFor,
   Line,
+  oneLine,
   PanelTitle,
   plural,
   ProgressBar,
@@ -21,10 +33,12 @@ import {
   shortcut,
   SplitLine,
   StoppedView,
+  useCursor,
   useElapsed,
+  useSyncedState,
   type ListItem,
+  type Tone,
 } from './ui.js'
-import { Text, useTheme } from '../../ui/theme.js'
 
 export interface TestPanelProps extends DevChatPanelProps {
   readonly session: TestSession
@@ -33,43 +47,211 @@ export interface TestPanelProps extends DevChatPanelProps {
 const COMMAND = 'test'
 const FIXED_ROWS = 4
 const SCORE_COLUMN = 6
+const LIST_CHROME_ROWS = 3
+
+type TestRow =
+  | { readonly kind: 'experiment'; readonly experiment: ExperimentSummary; readonly run?: TestRun }
+  | { readonly kind: 'waiting'; readonly generation: Generation }
+  | { readonly kind: 'new' }
 
 export const TestPanel = (props: TestPanelProps): ReactElement => {
   const { session } = props
-  const state = useSyncExternalStore(session.subscribe, session.snapshot)
-  const use = useCallback((experiment: ExperimentSummary) => session.run(experiment), [session])
-  switch (state.step) {
-    case 'pick':
-      return <ExperimentPicker {...props} experiments={session.experiments} command={COMMAND} onUse={use} />
-    case 'running':
-      return <RunningView {...props} state={state} />
-    case 'results':
-      return <ResultsView {...props} results={state.results} />
-    case 'failed':
-      return <StoppedView {...props} command={COMMAND} message={state.message} retry={() => session.reset()} />
+  const tests = useSyncExternalStore(session.subscribe, session.snapshot)
+  const experiments = useSyncExternalStore(session.experiments.subscribe, session.experiments.snapshot)
+  const [open, setOpen] = useState<string | undefined>()
+  const shown = tests.runs.find(({ experiment }) => experiment.path === open)
+  const back = (): void => setOpen(undefined)
+  if (shown?.run.status === 'running') return <RunningView {...props} shown={shown} run={shown.run} onBack={back} />
+  if (shown?.run.status === 'done')
+    return (
+      <ResultsView
+        {...props}
+        results={shown.run.results}
+        onBack={back}
+        onRerun={() => session.rerunFailed(shown.experiment.path)}
+        onRunAgain={() => session.run([shown.experiment])}
+      />
+    )
+  if (shown?.run.status === 'failed')
+    return (
+      <StoppedView
+        {...props}
+        command={`${COMMAND} · ${shown.experiment.name}`}
+        message={shown.run.message}
+        close={back}
+        retry={() => session.run([shown.experiment])}
+      />
+    )
+  return <TestList {...props} tests={tests} experiments={experiments} onOpen={setOpen} />
+}
+
+export const testRows = ({ saved, generations }: ExperimentsState, { runs }: TestState): TestRow[] => [
+  ...saved.map((experiment) => {
+    const run = runs.find((entry) => entry.experiment.path === experiment.path)?.run
+    return { kind: 'experiment' as const, experiment, ...(run ? { run } : {}) }
+  }),
+  ...generations
+    .filter((generation) => generation.phase !== 'failed')
+    .map((generation) => ({ kind: 'waiting' as const, generation })),
+  { kind: 'new' },
+]
+
+const runDetail = (experiment: ExperimentSummary, run: TestRun | undefined): { text: string; tone?: Tone } => {
+  const cases = plural(experiment.caseCount, 'case')
+  if (!run) return { text: `${cases} · not run yet`, tone: 'muted' }
+  if (run.status === 'running') return { text: `${cases} · running ${run.done}/${run.cases}`, tone: 'warning' }
+  if (run.status === 'failed') return { text: `${cases} · stopped: ${oneLine(run.message)}`, tone: 'error' }
+  const passed = run.results.cases.filter((result) => result.passed).length
+  const total = run.results.cases.length
+  return { text: `${cases} · ${passed}/${total} passed`, tone: passed === total ? 'success' : 'warning' }
+}
+
+const rowItem = (row: TestRow, chosen: ReadonlySet<string>): ListItem => {
+  if (row.kind === 'new')
+    return {
+      key: 'new',
+      label: 'Generate a new experiment',
+      detail: 'opens /experiment',
+      mark: { text: '+' },
+      tone: 'muted',
+    }
+  if (row.kind === 'waiting')
+    return {
+      key: row.generation.id,
+      label: row.generation.name,
+      detail: isGenerating(row.generation)
+        ? `generating · ${row.generation.made + row.generation.failed}/${row.generation.total} cases`
+        : 'waiting for review in /experiment',
+      mark: { text: isGenerating(row.generation) ? '◐' : '●', tone: 'muted' },
+      tone: 'muted',
+    }
+  const { text, tone } = runDetail(row.experiment, row.run)
+  return {
+    key: row.experiment.path,
+    label: row.experiment.name,
+    detail: text,
+    mark: chosen.has(row.experiment.path) ? { text: '☑', tone: 'success' } : { text: '☐', tone: 'muted' },
+    ...(tone ? { tone } : {}),
   }
 }
 
-const RunningView = ({
+const selectable = (row: TestRow | undefined): boolean => row !== undefined && row.kind !== 'waiting'
+
+const TestList = ({
+  session,
+  tests,
+  experiments,
   close,
-  state,
-}: TestPanelProps & { state: Extract<TestState, { step: 'running' }> }): ReactElement => {
-  const elapsed = useElapsed(state.startedAt)
+  openCommand,
+  width,
+  height,
+  onOpen,
+}: TestPanelProps & {
+  tests: TestState
+  experiments: ExperimentsState
+  onOpen: (path: string) => void
+}): ReactElement => {
+  const rows = testRows(experiments, tests)
+  const chosen = useSyncedState<ReadonlySet<string>>(new Set())
+  const cursor = useCursor(rows.length, Math.max(0, rows.findIndex(selectable)))
+  const step = (direction: 1 | -1): void => {
+    for (let index = cursor.current() + direction; index >= 0 && index < rows.length; index += direction) {
+      if (selectable(rows[index])) {
+        cursor.set(index)
+        return
+      }
+    }
+  }
+  const ready = rows.flatMap((row) => (row.kind === 'experiment' ? [row.experiment] : []))
+  useInput((input, key) => {
+    const typed = shortcut(input, key)
+    const row = rows[cursor.current()]
+    if (key.escape) close()
+    else if (key.upArrow) step(-1)
+    else if (key.downArrow) step(1)
+    else if (typed === ' ' && row?.kind === 'experiment')
+      chosen.set((current) => {
+        const next = new Set(current)
+        if (!next.delete(row.experiment.path)) next.add(row.experiment.path)
+        return next
+      })
+    else if (typed === 'a')
+      chosen.set((current) => (current.size === ready.length ? new Set() : new Set(ready.map(({ path }) => path))))
+    else if (key.rightArrow && row?.kind === 'experiment' && row.run) onOpen(row.experiment.path)
+    else if (key.return) {
+      const picked = ready.filter(({ path }) => chosen.current().has(path))
+      if (picked.length > 0) {
+        session.run(picked)
+        chosen.set(new Set())
+      } else if (row?.kind === 'experiment') session.run([row.experiment])
+      else if (row?.kind === 'new') openCommand('experiment')
+    }
+  })
+  const running = tests.runs.filter(({ run }) => run.status === 'running').length
+  const waiting = rows.some((row) => row.kind === 'waiting')
+  const parts = experiments.loaded
+    ? [
+        plural(experiments.saved.length, 'experiment'),
+        ...(running > 0 ? [`${running} running`] : []),
+        ...(chosen.value.size > 0 ? [`${chosen.value.size} selected`] : []),
+      ]
+    : ['reading experiments']
+  const current = rows[cursor.index]
+  return (
+    <>
+      <PanelTitle name={COMMAND} parts={parts} />
+      {experiments.error ? <Line tone="error">{`  ${experiments.error}`}</Line> : <Gap />}
+      <ItemList
+        items={rows.map((row) => rowItem(row, chosen.value))}
+        selected={cursor.index}
+        capacity={Math.max(1, height - LIST_CHROME_ROWS - Number(waiting))}
+        labelWidth={labelWidthFor(
+          rows.map((row) => rowItem(row, chosen.value).label),
+          width
+        )}
+      />
+      <Fill />
+      {waiting ? (
+        <Line tone="muted">{'  Grey experiments are still generating, or wait for review in /experiment.'}</Line>
+      ) : null}
+      <KeyHints
+        hints={[
+          'Space select',
+          'a all',
+          chosen.value.size > 0 ? `Enter run ${chosen.value.size}` : 'Enter run',
+          ...(current?.kind === 'experiment' && current.run ? ['→ results'] : []),
+          'Esc close',
+        ]}
+      />
+    </>
+  )
+}
+
+const RunningView = ({
+  shown,
+  run,
+  onBack,
+}: TestPanelProps & {
+  shown: ExperimentRun
+  run: Extract<TestRun, { status: 'running' }>
+  onBack: () => void
+}): ReactElement => {
+  const elapsed = useElapsed(run.startedAt)
   const spinner = useSpinner(true, true)
   useInput((_input, key) => {
-    if (key.escape) close()
+    if (key.escape) onBack()
   })
-  const judging = state.done >= state.cases
+  const judging = run.done >= run.cases
   return (
     <>
       <PanelTitle
         name={COMMAND}
         parts={[
-          state.experiment,
-          plural(state.cases, state.rerun ? 'failed case' : 'case'),
-          plural(state.evaluators.length, 'evaluator'),
+          shown.experiment.name,
+          plural(run.cases, run.rerun ? 'failed case' : 'case'),
+          plural(run.evaluators.length, 'evaluator'),
         ]}
-        right={<ProgressBar done={state.done} total={state.cases} />}
+        right={<ProgressBar done={run.done} total={run.cases} />}
       />
       <Line tone="muted">{`  ${formatSeconds(elapsed)}`}</Line>
       <Gap />
@@ -79,7 +261,7 @@ const RunningView = ({
           : `  ${spinner} Running your agent on each case. The evaluators score the answers at the end.`}
       </Line>
       <Fill />
-      <KeyHints hints={['Esc run in background']} />
+      <KeyHints hints={['Esc back to the list', 'the run goes on']} />
     </>
   )
 }
@@ -101,26 +283,32 @@ const failuresFirst = (results: TestResults): CaseResult[] => [
 ]
 
 const ResultsView = ({
-  close,
-  session,
   width,
   height,
   results,
-}: TestPanelProps & { results: TestResults }): ReactElement => {
-  const [selected, setSelected] = useState(0)
+  onBack,
+  onRerun,
+  onRunAgain,
+}: TestPanelProps & {
+  results: TestResults
+  onBack: () => void
+  onRerun: () => void
+  onRunAgain: () => void
+}): ReactElement => {
   const ordered = failuresFirst(results)
-  const index = Math.min(selected, Math.max(0, ordered.length - 1))
+  const cursor = useCursor(ordered.length)
+  const index = cursor.index
   const current = ordered[index]
   const failed = ordered.filter((result) => !result.passed).length
   const checks = results.cases.reduce((total, result) => total + result.verdicts.length, 0)
   const verdictRows = current?.verdicts.length ?? 0
   const capacity = Math.max(1, height - FIXED_ROWS - verdictRows - 1)
   useInput((input, key) => {
-    if (key.escape) close()
-    else if (key.upArrow) setSelected(Math.max(0, index - 1))
-    else if (key.downArrow) setSelected(Math.min(ordered.length - 1, index + 1))
-    else if (shortcut(input, key) === 'r' && failed > 0) session.rerunFailed()
-    else if (key.return) session.reset()
+    if (key.escape) onBack()
+    else if (key.upArrow) cursor.move(-1)
+    else if (key.downArrow) cursor.move(1)
+    else if (shortcut(input, key) === 'r' && failed > 0) onRerun()
+    else if (key.return) onRunAgain()
   })
   const labelWidth = labelWidthFor(current?.verdicts.map(({ evaluator }) => evaluator) ?? [], width)
   return (
@@ -162,7 +350,7 @@ const ResultsView = ({
         />
       ))}
       <Fill />
-      <KeyHints hints={['↑↓', ...(failed > 0 ? ['r rerun failed'] : []), 'Enter test again', 'Esc close']} />
+      <KeyHints hints={['↑↓', ...(failed > 0 ? ['r rerun failed'] : []), 'Enter run again', 'Esc back to the list']} />
     </>
   )
 }

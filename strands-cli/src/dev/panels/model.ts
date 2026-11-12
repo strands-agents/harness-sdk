@@ -146,27 +146,33 @@ export interface TestResults {
   readonly seconds: number
 }
 
-export type TestState =
-  | { readonly step: 'pick' }
+export type TestRun =
   | {
-      readonly step: 'running'
-      readonly experiment: string
+      readonly status: 'running'
       readonly cases: number
       readonly evaluators: readonly string[]
       readonly done: number
       readonly startedAt: number
       readonly rerun: boolean
     }
-  | { readonly step: 'results'; readonly results: TestResults }
-  | { readonly step: 'failed'; readonly message: string }
+  | { readonly status: 'done'; readonly results: TestResults }
+  | { readonly status: 'failed'; readonly message: string }
+
+export interface ExperimentRun {
+  readonly experiment: ExperimentSummary
+  readonly run: TestRun
+}
+
+export interface TestState {
+  readonly runs: readonly ExperimentRun[]
+}
 
 export interface TestSession {
   readonly experiments: ExperimentSession
   subscribe(listener: () => void): () => void
   snapshot(): TestState
-  run(experiment: ExperimentSummary): void
-  rerunFailed(): void
-  reset(): void
+  run(experiments: readonly ExperimentSummary[]): void
+  rerunFailed(path: string): void
 }
 
 export type KnobKey = 'instructions' | 'effort' | 'tools'

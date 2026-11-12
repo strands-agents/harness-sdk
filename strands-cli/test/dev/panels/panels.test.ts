@@ -1,17 +1,60 @@
 import { createElement } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 
-import type { OptimizeSession, OptimizeState, TestSession, TestState } from '../../../src/dev/panels/model.js'
+import type {
+  ExperimentsState,
+  OptimizeSession,
+  OptimizeState,
+  TestResults,
+  TestSession,
+  TestState,
+} from '../../../src/dev/panels/model.js'
 import { OptimizePanel } from '../../../src/dev/panels/optimize.js'
 import { TestPanel } from '../../../src/dev/panels/test.js'
 import { listWindow } from '../../../src/dev/panels/ui.js'
-import { experimentsSession, panelProps as freshProps, show, store } from './fixtures.js'
+import { experimentsSession, generation, panelProps as freshProps, show, store } from './fixtures.js'
+
+const DOWN_KEY = '\u001b[B'
+const RIGHT_KEY = '\u001b[C'
 
 const panelProps = freshProps()
 
-const testSession = (initial: TestState) => {
-  const states = store(initial)
-  const { session: experiments } = experimentsSession()
+const capital = { name: 'capital', path: '/w/capital.json', caseCount: 4 }
+const refunds = { name: 'refunds', path: '/w/refunds.json', caseCount: 2 }
+const cities = { name: 'cities', path: '/w/cities.json', caseCount: 6 }
+
+const finishedResults: TestResults = {
+  experiment: 'refunds',
+  evaluators: ['OutputEvaluator'],
+  overall: 0.5,
+  report: '/w/report.json',
+  seconds: 41,
+  cases: [
+    {
+      name: 'standard-refund',
+      input: 'Refund order 2001',
+      passed: true,
+      verdicts: [{ evaluator: 'OutputEvaluator', score: 1, passed: true, reason: 'Refunded correctly' }],
+    },
+    {
+      name: 'refund-window',
+      input: 'Refund order 1094',
+      passed: false,
+      verdicts: [
+        {
+          evaluator: 'OutputEvaluator',
+          score: 0,
+          passed: false,
+          reason: 'issued refund without checking delivery date',
+        },
+      ],
+    },
+  ],
+}
+
+const testSession = (runs: TestState['runs'] = [], generations: Partial<ExperimentsState> = {}) => {
+  const states = store<TestState>({ runs })
+  const { session: experiments } = experimentsSession({ saved: [capital, refunds, cities], ...generations })
   return {
     states,
     session: {
@@ -20,86 +63,121 @@ const testSession = (initial: TestState) => {
       snapshot: states.snapshot,
       run: vi.fn(),
       rerunFailed: vi.fn(),
-      reset: vi.fn(),
     } satisfies TestSession,
   }
 }
 
-const results: TestState = {
-  step: 'results',
-  results: {
-    experiment: 'refunds',
-    evaluators: ['OutputEvaluator'],
-    overall: 0.5,
-    report: '/w/report.json',
-    seconds: 41,
-    cases: [
-      {
-        name: 'standard-refund',
-        input: 'Refund order 2001',
-        passed: true,
-        verdicts: [{ evaluator: 'OutputEvaluator', score: 1, passed: true, reason: 'Refunded correctly' }],
-      },
-      {
-        name: 'refund-window',
-        input: 'Refund order 1094',
-        passed: false,
-        verdicts: [
-          {
-            evaluator: 'OutputEvaluator',
-            score: 0,
-            passed: false,
-            reason: 'issued refund without checking delivery date',
-          },
-        ],
-      },
-    ],
+const withRuns = (): TestState['runs'] => [
+  {
+    experiment: capital,
+    run: { status: 'running', cases: 4, evaluators: ['OutputEvaluator'], done: 2, startedAt: Date.now(), rerun: false },
   },
-}
+  { experiment: refunds, run: { status: 'done', results: finishedResults } },
+]
 
 describe('TestPanel', () => {
-  it('shouldShowTheProgressWhileTheCasesRun', async () => {
-    const { session } = testSession({
-      step: 'running',
-      experiment: 'refunds',
-      cases: 4,
-      evaluators: ['OutputEvaluator'],
-      done: 2,
-      startedAt: Date.now(),
-      rerun: false,
+  it('shouldListEveryExperimentWithItsLastResultWhenItOpens', async () => {
+    const { session } = testSession(withRuns(), {
+      generations: [
+        generation({ name: 'returns' }),
+        generation({ id: 'generation-2', name: 'broken', phase: 'failed' }),
+      ],
     })
 
-    const { text } = await show(createElement(TestPanel, { ...panelProps, session }))
+    const { text } = await show(createElement(TestPanel, { ...panelProps, session }), 24)
 
-    expect(text()).toContain('test · refunds · 4 cases · 1 evaluator')
-    expect(text()).toContain('2/4')
-    expect(text()).toContain('Esc run in background')
+    expect(text()).toContain('test · 3 experiments · 1 running')
+    expect(text()).toMatch(/☐ capital\s+4 cases · running 2\/4/u)
+    expect(text()).toMatch(/☐ refunds\s+2 cases · 1\/2 passed/u)
+    expect(text()).toMatch(/☐ cities\s+6 cases · not run yet/u)
+    expect(text()).toContain('generating · 8/20 cases')
+    expect(text()).not.toContain('broken')
   })
 
-  it('shouldListTheFailedCasesFirstWithTheirReasonsWhenTheTestFinishes', async () => {
-    const { session } = testSession(results)
+  it('shouldRunTheSelectedExperimentsWhenTheUserSelectsSomeAndPressesEnter', async () => {
+    const { session } = testSession()
+    const { press, text } = await show(createElement(TestPanel, { ...panelProps, session }), 24)
 
-    const { text } = await show(createElement(TestPanel, { ...panelProps, session }))
+    await press(' ')
+    await press(DOWN_KEY)
+    await press(DOWN_KEY)
+    await press(' ')
+    const selected = text()
+    await press('\r')
 
+    expect(selected).toContain('2 selected')
+    expect(selected).toContain('Enter run 2')
+    expect(session.run).toHaveBeenCalledWith([capital, cities])
+  })
+
+  it('shouldRunEveryExperimentWhenTheUserSelectsAllAndPressesEnter', async () => {
+    const { session } = testSession()
+    const { press } = await show(createElement(TestPanel, { ...panelProps, session }), 24)
+
+    await press('a')
+    await press('\r')
+
+    expect(session.run).toHaveBeenCalledWith([capital, refunds, cities])
+  })
+
+  it('shouldRunTheHighlightedExperimentWhenNothingIsSelected', async () => {
+    const { session } = testSession()
+    const { press } = await show(createElement(TestPanel, { ...panelProps, session }), 24)
+
+    await press(DOWN_KEY)
+    await press('\r')
+
+    expect(session.run).toHaveBeenCalledWith([refunds])
+  })
+
+  it('shouldSkipExperimentsThatAreStillGeneratingWhenTheUserMovesDown', async () => {
+    const { session } = testSession([], { generations: [generation({ name: 'returns' })] })
+    const props = { ...panelProps, openCommand: vi.fn(() => true) }
+    const { press } = await show(createElement(TestPanel, { ...props, session }), 24)
+
+    for (let step = 0; step < 3; step++) await press(DOWN_KEY)
+    await press('\r')
+
+    expect(props.openCommand).toHaveBeenCalledWith('experiment')
+    expect(session.run).not.toHaveBeenCalled()
+  })
+
+  it('shouldShowTheFailuresFirstAndRerunThemWhenTheUserOpensTheResults', async () => {
+    const { session } = testSession(withRuns())
+    const { press, text } = await show(createElement(TestPanel, { ...panelProps, session }), 24)
+
+    await press(DOWN_KEY)
+    await press(RIGHT_KEY)
     const lines = text().split('\n')
+    await press('r')
+
     const failed = lines.findIndex((line) => line.includes('✗ refund-window'))
     expect(failed).toBeGreaterThanOrEqual(0)
     expect(failed).toBeLessThan(lines.findIndex((line) => line.includes('✓ standard-refund')))
-    expect(text()).toContain('✓ 1 passed')
-    expect(text()).toContain('✗ 1 failed')
     expect(text()).toContain('issued refund without checking delivery date')
+    expect(session.rerunFailed).toHaveBeenCalledWith(refunds.path)
   })
 
-  it.each<[string, string, keyof TestSession]>([
-    ['r', 'r', 'rerunFailed'],
-    ['Enter', '\r', 'reset'],
-  ])('shouldCallTheSessionWhenTheUserPresses%sOnTheResults', async (_key, key, action) => {
-    const { session } = testSession(results)
-    const { press } = await show(createElement(TestPanel, { ...panelProps, session }))
+  it('shouldGoBackToTheListWhenTheUserPressesEscOnTheResults', async () => {
+    const { session } = testSession(withRuns())
+    const { press, text } = await show(createElement(TestPanel, { ...panelProps, session }), 24)
+    await press(DOWN_KEY)
+    await press(RIGHT_KEY)
 
-    await press(key)
+    await press('\u001b')
 
-    expect(session[action]).toHaveBeenCalledTimes(1)
+    await vi.waitFor(() => expect(text()).toContain('Space select'))
+    expect(panelProps.close).not.toHaveBeenCalled()
+  })
+
+  it('shouldShowTheProgressWhenTheUserOpensARunningExperiment', async () => {
+    const { session } = testSession(withRuns())
+    const { press, text } = await show(createElement(TestPanel, { ...panelProps, session }), 24)
+
+    await press(RIGHT_KEY)
+
+    expect(text()).toContain('test · capital · 4 cases · 1 evaluator')
+    expect(text()).toContain('2/4')
   })
 })
 
