@@ -277,3 +277,68 @@ describe('dev command jobs and panels', () => {
     expect(manager.getSnapshot().panel).toMatchObject({ kind: 'dev', title: '/optimize' })
   })
 })
+
+describe('dev panels across turns and repeats', () => {
+  const gatedBackend = () => {
+    const gates: (() => void)[] = []
+    const stream = vi.fn(async function* () {
+      await new Promise<void>((resolve) => gates.push(resolve))
+      yield* []
+      return { stopReason: 'endTurn' as const, context: {} }
+    })
+    return { backend: idleBackend({ stream }), stream, release: () => gates.shift()?.() }
+  }
+
+  it('shouldKeepTheDevPanelOpenWhenAQueuedPromptStartsItsTurn', async () => {
+    const { backend, stream, release } = gatedBackend()
+    const controller = new ChatController(backend, { devCommands: [devCommand()] })
+    const first = controller.submit('first question')
+    await vi.waitFor(() => expect(stream).toHaveBeenCalledTimes(1))
+    const second = controller.submit('second question')
+    await controller.submit('/optimize')
+
+    release()
+    await vi.waitFor(() => expect(stream).toHaveBeenCalledTimes(2))
+
+    expect(controller.getSnapshot().panel).toMatchObject({ kind: 'dev', title: '/optimize' })
+    release()
+    await Promise.all([first, second])
+  })
+
+  it('shouldKeepTheOpenPanelWhenItsOwnCommandOpensAgain', async () => {
+    const open = vi.fn(() => EmptyPanel)
+    const controller = new ChatController(idleBackend(), { devCommands: [devCommand(open)] })
+    await controller.submit('/optimize')
+    const before = controller.getSnapshot().panel?.id
+
+    const opened = controller.openDevCommand('optimize')
+
+    expect(opened).toBe(true)
+    expect(open).toHaveBeenCalledTimes(1)
+    expect(controller.getSnapshot().panel?.id).toBe(before)
+  })
+
+  it('shouldKeepTheManagerPanelWhenTheDevCommandCannotOpen', async () => {
+    const jobs = jobStore()
+    const manager = new ConversationManager(
+      new ChatController(idleBackend(), { devCommands: [{ ...devCommand(), jobs }] }),
+      { fork: async () => new ChatController(idleBackend()) }
+    )
+    await manager.submit('/agents')
+
+    const opened = manager.openDevCommand('missing')
+    jobs.set([{ id: 'a', label: 'refunds' }])
+
+    expect(opened).toBe(false)
+    expect(manager.getSnapshot().panel?.kind).toBe('agents')
+  })
+
+  it('shouldShowAJobLabelOnOneLineWhenItHasLineBreaksOrTabs', () => {
+    const jobs = jobStore()
+    const controller = new ChatController(idleBackend(), { devCommands: [{ ...devCommand(), jobs }] })
+
+    jobs.set([{ id: 'a', label: ' refunds\n\tsecond ', done: 1, total: 2 }])
+
+    expect(controller.getSnapshot().devJobs?.[0]?.jobs[0]?.label).toBe('refunds second')
+  })
+})

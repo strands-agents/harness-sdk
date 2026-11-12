@@ -702,8 +702,7 @@ export class ChatController implements ChatControllerApi {
       )
       return undefined
     }
-    this._panel = undefined
-    this._panelStack.length = 0
+    this._closePanelsForTurn()
     return this._runStream(prompt, this._backend.streamShell(command), 'shell')
   }
 
@@ -712,8 +711,7 @@ export class ChatController implements ChatControllerApi {
       return undefined
     }
     const submission = normalizeChatInput(input)
-    this._panel = undefined
-    this._panelStack.length = 0
+    this._closePanelsForTurn()
     const prompt =
       submission.attachments.length === 0 ? submission.text : attachmentContent(submission.text, submission.attachments)
     return this._runStream(
@@ -730,8 +728,7 @@ export class ChatController implements ChatControllerApi {
     if (this._closed || this._execution || this._resourceChanging || !this._backend.streamPeer) {
       return undefined
     }
-    this._panel = undefined
-    this._panelStack.length = 0
+    this._closePanelsForTurn()
     return this._runStream(message.body, this._backend.streamPeer(message), 'model', 'peer', message.from)
   }
 
@@ -1125,8 +1122,7 @@ export class ChatController implements ChatControllerApi {
       if (!pending) {
         return
       }
-      this._panel = undefined
-      this._panelStack.length = 0
+      this._closePanelsForTurn()
       if (pending.kind === 'peer') {
         await this._runPeerMessage(pending.message)
       } else {
@@ -2963,6 +2959,12 @@ export class ChatController implements ChatControllerApi {
     this._deliveredBackgroundTaskIds.clear()
   }
 
+  private _closePanelsForTurn(): void {
+    if (this._panel?.kind === 'dev') return
+    this._panel = undefined
+    this._panelStack.length = 0
+  }
+
   private _stopDevJobs(): void {
     for (const stop of this._stopWatchingDevJobs) stop()
     this._stopWatchingDevJobs = []
@@ -2976,8 +2978,10 @@ export class ChatController implements ChatControllerApi {
   }
 
   private _openDevPanel(devCommand: DevChatCommand): void {
+    if (this._panel?.kind === 'dev' && this._panel.command === devCommand.spec.name) return
     const opened = this._openPanel({
       kind: 'dev',
+      command: devCommand.spec.name,
       title: `/${devCommand.spec.name}`,
       rows: [],
       view: devCommand.open(this._devCommandContext()),
@@ -2992,7 +2996,7 @@ export class ChatController implements ChatControllerApi {
     return this._devCommands.flatMap(({ spec, jobs }) => {
       const running = jobs?.snapshot() ?? []
       return running.length > 0
-        ? [{ command: spec.name, jobs: running.map((job) => ({ ...job, label: sanitizeTerminalText(job.label) })) }]
+        ? [{ command: spec.name, jobs: running.map((job) => ({ ...job, label: jobLabel(job.label) })) }]
         : []
     })
   }
@@ -3161,6 +3165,10 @@ function skillInvocationPrompt(activation: SkillActivation, displayPrompt: strin
     '',
     displayPrompt,
   ].join('\n')
+}
+
+function jobLabel(label: string): string {
+  return sanitizeTerminalText(label).replace(/\s+/gu, ' ').trim()
 }
 
 function isLiveLocalCommand(prompt: string): boolean {

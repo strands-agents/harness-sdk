@@ -426,9 +426,13 @@ export class ConversationManager implements ChatControllerApi {
   }
 
   openDevCommand(name: string): boolean {
+    if (this._snapshot.panel?.kind === 'permission') return false
     if (this._taskOwnerId && !this.dismissPanel()) return false
+    const previous = this._panel
     this._panel = undefined
-    return this._active.controller.openDevCommand(name)
+    if (this._active.controller.openDevCommand(name)) return true
+    this._panel = previous
+    return false
   }
 
   openTask(taskId: string, ownerId = this._activeId): boolean {

@@ -218,6 +218,7 @@ export type NewChatPanel =
     })
   | (ChatPanelBase & {
       kind: 'dev'
+      command: string
       view: DevChatPanelView
       close: () => void
       openCommand: (name: string) => boolean
