@@ -30,6 +30,8 @@ logger = logging.getLogger(__name__)
 
 _RESPONSES_KEY = "responses"
 _INTERRUPTED_TURNS_KEY = "sub_agent_interrupted_turns"
+# The child produced no answer; "refusal" comes from the Anthropic providers and is absent from StopReason.
+_NO_ANSWER_STOP_REASONS = frozenset({"content_filtered", "refusal"})
 
 
 class _ChildAdapter(Protocol):
@@ -77,6 +79,10 @@ class _ChildAgentAdapter:
             return f"{self.label} cancelled"
         if result.stop_reason in _LIMIT_STOP_REASONS:
             return _limit_stop_message(self.agent_name, result.stop_reason)
+        if result.stop_reason in _NO_ANSWER_STOP_REASONS:
+            message = f"{self.label} stopped before finishing (stop_reason={result.stop_reason})."
+            partial = str(result).rstrip("\n")
+            return f"{message}\n\nPartial output:\n{partial}" if partial else message
         return None
 
     def pending_interrupt_ids(self, turn: Any) -> set[str]:

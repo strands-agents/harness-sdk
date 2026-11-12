@@ -26,6 +26,7 @@ from ...multiagent.spec import (
     Inherit,
     Open,
     Preset,
+    _build_agent,
     _default_builder,
     _resolve_specs,
     _to_schema_properties,
@@ -187,7 +188,7 @@ def make_swarm(
         child_agents = {}
         try:
             for spec in specs:
-                child = build(spec)
+                child = await _build_agent(build, spec)
                 for tool_name, child_tool in list(child.tool_registry.registry.items()):
                     if tool_name in _EXCLUDED_TOOLS or child_tool in _SWARM_TOOLS:
                         child.tool_registry.remove(tool_name)

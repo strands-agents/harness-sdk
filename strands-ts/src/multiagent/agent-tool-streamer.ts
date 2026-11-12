@@ -99,6 +99,11 @@ export class ChildAgentAdapter implements ChildAdapter<Agent, AgentResult> {
     if (LIMIT_STOP_REASONS.has(result.stopReason)) {
       return limitStopMessage(this._name, result.stopReason)
     }
+    if (result.stopReason === 'contentFiltered' || result.stopReason === 'refusal') {
+      const partial = result.toString().replace(/\n+$/, '')
+      const message = `${this.label} stopped before finishing (stopReason=${result.stopReason}).`
+      return partial ? `${message}\n\nPartial output:\n${partial}` : message
+    }
     return undefined
   }
 

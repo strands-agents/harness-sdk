@@ -46,6 +46,23 @@ def test_multiagent_adapter_reports_incomplete_result_with_its_label():
     )
 
 
+@pytest.mark.parametrize(
+    ("stop_reason", "text", "expected"),
+    [
+        (
+            "content_filtered",
+            "half an answer\n",
+            "Child stopped before finishing (stop_reason=content_filtered).\n\nPartial output:\nhalf an answer",
+        ),
+        ("refusal", "", "Child stopped before finishing (stop_reason=refusal)."),
+    ],
+)
+def test_agent_adapter_reports_a_child_that_produced_no_answer_as_an_error(stop_reason, text, expected):
+    result = Mock(stop_reason=stop_reason, __str__=lambda self: text)
+
+    assert AGENT_ADAPTER.classify(Mock(), result) == expected
+
+
 def test_multiagent_adapter_round_trips_orchestrator_state():
     source = Mock(id="swarm")
     source.serialize_state.return_value = {"status": "interrupted"}

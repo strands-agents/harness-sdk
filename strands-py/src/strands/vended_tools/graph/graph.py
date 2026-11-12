@@ -26,6 +26,7 @@ from ...multiagent.spec import (
     Inherit,
     Open,
     Preset,
+    _build_agent,
     _default_builder,
     _resolve_specs,
     _to_schema_properties,
@@ -197,7 +198,7 @@ def make_graph(
         graph_builder = GraphBuilder()
         try:
             for spec in specs:
-                child = build(spec)
+                child = await _build_agent(build, spec)
                 for tool_name, child_tool in list(child.tool_registry.registry.items()):
                     if child_tool in _GRAPH_TOOLS:
                         del child.tool_registry.registry[tool_name]
