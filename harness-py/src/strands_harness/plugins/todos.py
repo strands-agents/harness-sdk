@@ -63,7 +63,11 @@ _DEPRECATION_MESSAGE = (
     "The todos built-in plugin is deprecated in the harness and will be removed in a later minor "
     "release. It now ships in the SDK as strands.vended_plugins.todos.Todos — construct it "
     "yourself and pass plugins=[Todos()]. Tracked in "
-    "https://github.com/strands-agents/harness-sdk/issues/5279."
+    "https://github.com/strands-agents/harness-sdk/issues/5279.",
+    # UserWarning, not the default DeprecationWarning: ``builtin_plugins=["todos"]`` has the
+    # harness construct this plugin, so a DeprecationWarning is attributed to strands_harness and
+    # Python's default filter hides it before the user ever sees it.
+    category=UserWarning,
 )
 class Todos(Plugin):
     """Gives the agent a ``todo_write`` tool and keeps the current list in view.
