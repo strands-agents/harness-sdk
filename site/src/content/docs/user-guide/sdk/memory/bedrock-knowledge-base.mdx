@@ -237,6 +237,35 @@ Set <Syntax py="min_score" ts="minScore" /> or <Syntax py="max_score" ts="maxSco
 
 The score metric is a property of the vector store behind the knowledge base. Filtering is applied after retrieval, so a search may therefore return fewer entries than <Syntax py="max_search_results" ts="maxSearchResults" />, or none at all when nothing clears the bound. A result without a score is retained.
 
+## Citing Retrieved Passages
+
+Bedrock models that support citations, such as Anthropic Claude, can return native citations that link each part of an answer to the passage it came from. To get them for knowledge base results, give the agent a tool that calls `search` and returns each passage as a `DocumentBlock` with citations enabled. The final message then contains `citationsBlock` content blocks between its text blocks, and each citation's `title` is the name of the document it cites.
+
+:::note
+Citing retrieved passages is currently available in the TypeScript SDK only.
+:::
+
+<Tabs>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/memory/bedrock-knowledge-base_imports.ts:citations_imports"
+
+--8<-- "user-guide/sdk/memory/bedrock-knowledge-base.ts:citations"
+```
+</Tab>
+</Tabs>
+
+Bedrock rejects the request unless the documents follow these rules:
+
+- Use a `content` source with `format: 'txt'` and `citations: { enabled: true }`. A `{ text }` source is sent to Bedrock as bytes, which Bedrock rejects when citations are enabled.
+- Document names can contain only alphanumeric characters, hyphens, parentheses, square brackets, and single spaces. An S3 URI or a file name such as `guide.pdf` is rejected.
+- Document names must be unique across the whole conversation, including documents returned by parallel tool calls. The example numbers passages across all calls. If you restore a conversation from a session, continue the numbering instead of restarting it.
+
+Citations for documents do not carry the source URI or the document's `context`, so map each citation back to its passage by `title`, as the `passages` map does.
+
+The tool calls the store directly, so the store does not need a `MemoryManager`. If you also attach the store to one, set `injection: false` and `searchToolConfig: false` so the model does not receive the same passages as uncited text.
+
 ## Extraction
 
 Enable [automatic extraction](./managing-memory#automatic-extraction) on a writable store to capture memories from the conversation. By default it runs every 5 turns, distilling facts client-side with a `ModelExtractor` that uses the agent's own model:
