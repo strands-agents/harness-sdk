@@ -72,8 +72,8 @@ describe('Todos', () => {
     expect(reminder).toBeUndefined()
   })
 
-  it('is enabled by default and contributes the todo_write tool', async () => {
-    const agent = await createHarness()
+  it('contributes the todo_write tool when selected', async () => {
+    const agent = await createHarness({ builtinPlugins: ['todos'] })
     const todos = plugins(agent).filter((p): p is Todos => p instanceof Todos)
     expect(todos).toHaveLength(1)
     expect(todos[0]!.getTools().map((t) => t.name)).toContain('todo_write')
@@ -81,6 +81,11 @@ describe('Todos', () => {
 
   it('is disabled when not selected', async () => {
     const agent = await createHarness({ builtinPlugins: [] })
+    expect(plugins(agent).some((p) => p instanceof Todos)).toBe(false)
+  })
+
+  it('is not in the defaults', async () => {
+    const agent = await createHarness()
     expect(plugins(agent).some((p) => p instanceof Todos)).toBe(false)
   })
 
