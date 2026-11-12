@@ -256,10 +256,10 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
     // A cancelled agent leaves the remaining blocks as they are rather than sending a request for each.
     if (!model || agent.cancelSignal.aborted) return null
 
-    const request = blockRequest(block, message, agent, model, toolName)
+    const request = blockRequest(block, message, agent, model, toolName, this._config.systemPrompt)
     const logFields = `trackingId=<${message.trackingId}>`
     const context = { agent, invocationContext }
-    const summary = request ? await this._trySummarize(request, model, context, logFields) : ''
+    const summary = request ? await this._summarizeBlock(request, model, context, logFields) : ''
     if (request && summary) {
       logger.debug(`${logFields}, tokens=<${tokens}> | summarized ${request.description}`)
       const placeholder = this._placeholder(formatSummarized(request.description, tokens, summary), stashRef, tokens)
@@ -270,6 +270,22 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
 
     logger.debug(`${logFields}, tokens=<${tokens}> | offloaded media block`)
     return this._placeholder(formatOffloaded(tokens, mediaKind(block)), stashRef, tokens)
+  }
+
+  /**
+   * The summary of one block, falling back to the request the replay was chosen over when the replay brings none
+   * back.
+   */
+  private async _summarizeBlock(
+    request: BlockSummaryRequest,
+    model: Model,
+    context: SummarizeCaller,
+    logFields: string
+  ): Promise<string> {
+    const summary = await this._trySummarize(request, model, context, logFields)
+    if (summary || !request.lifted) return summary
+    logger.debug(`${logFields} | the replay brought back no summary | summarizing the block on its own`)
+    return this._trySummarize(request.lifted(), model, context, logFields)
   }
 
   /** Summarizes `request`, or logs the failure and returns '' so the pass continues and keeps the content. */
@@ -307,11 +323,12 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
   /**
    * The options of a `summarize()` call, with the agent's own request around a replay.
    *
-   * A configured `systemPrompt` replaces the request's own instructions; a request that brings none leaves the
-   * summarizer's default ones in place.
+   * A request's own instructions are final, since a block request has already folded a configured `systemPrompt`
+   * into them. A request that brings none takes the configured prompt, or leaves the summarizer's default ones in
+   * place.
    */
   private _summarizeOptions(agent: LocalAgent, replay: boolean, requestInstructions?: string): SummarizeOptions {
-    const instructions = this._config.systemPrompt || requestInstructions
+    const instructions = requestInstructions ?? this._config.systemPrompt
     return {
       ...(instructions !== undefined && { instructions }),
       cancelSignal: agent.cancelSignal,
@@ -342,6 +359,14 @@ interface SummaryRequest {
 /** A {@link SummaryRequest} for one block, with how the placeholder left in its place describes it. */
 interface BlockSummaryRequest extends SummaryRequest {
   description: string
+
+  /**
+   * The request to fall back on when this one brings back no summary, built only once that happens.
+   *
+   * A replay sends the conversation as well as the block, so it can overflow a window the block alone fits in, and
+   * those oversized blocks are the ones most worth summarizing.
+   */
+  lifted?: (() => SummaryRequest) | undefined
 }
 
 /** What a summary request is made on behalf of: the agent it configures itself from, and where its usage is recorded. */
@@ -440,21 +465,26 @@ function firstSummary(result: SummarizeResult): SummaryBlock | undefined {
 /**
  * The summary request for one block and how its marker describes it, or undefined when it can't be summarized.
  *
- * A tool result the agent's own model can read where it sits is replayed in place; anything else is lifted into a
- * request of its own.
+ * A tool result the agent's own model can read where it sits is replayed in place, keeping the lifted request as
+ * its fallback; anything else is lifted into a request of its own.
  */
 function blockRequest(
   block: ContentBlock,
   message: Message,
   agent: LocalAgent,
   model: Model,
-  toolName: string | undefined
+  toolName: string | undefined,
+  systemPrompt: string | undefined
 ): BlockSummaryRequest | undefined {
   if (block instanceof ToolResultBlock && canReplayBlock(message, agent, model)) {
-    return { ...replayRequest(block, agent, toolName), description: TOOL_RESULT_DESCRIPTION }
+    return {
+      ...replayRequest(block, agent, toolName, systemPrompt),
+      description: TOOL_RESULT_DESCRIPTION,
+      lifted: () => liftedRequest(summaryInput(block, toolName)!.content, systemPrompt),
+    }
   }
   const input = summaryInput(block, toolName)
-  return input ? { ...liftedRequest(input.content), description: input.description } : undefined
+  return input ? { ...liftedRequest(input.content, systemPrompt), description: input.description } : undefined
 }
 
 /**
@@ -478,21 +508,36 @@ function canReplayBlock(message: Message, agent: LocalAgent, model: Model): bool
  * The model reads the result in the conversation that produced it, and reads it as it was written rather than
  * rendered as text, which is what the retrieval tool hands back for it too.
  */
-function replayRequest(block: ToolResultBlock, agent: LocalAgent, toolName: string | undefined): SummaryRequest {
-  return { messages: agent.messages.slice(), instructions: replayInstructions(block, toolName), replay: true }
+function replayRequest(
+  block: ToolResultBlock,
+  agent: LocalAgent,
+  toolName: string | undefined,
+  systemPrompt: string | undefined
+): SummaryRequest {
+  return {
+    messages: agent.messages.slice(),
+    instructions: replayInstructions(block, toolName, systemPrompt),
+    replay: true,
+  }
 }
 
 /**
  * The instruction closing a replayed history, naming the result to summarize by the id its tool use carries.
  *
  * The id is the one identifier the conversation shows for a single result among several in the same turn, and the
- * instruction has to override the summarizer's guard, which asks for everything above.
+ * instruction has to override the summarizer's guard, which asks for everything above. Configured instructions
+ * replace the guidance on what a summary keeps, never the line naming the result, without which a replay would
+ * summarize the whole conversation into one result's place.
  */
-function replayInstructions(block: ToolResultBlock, toolName: string | undefined): string {
+function replayInstructions(
+  block: ToolResultBlock,
+  toolName: string | undefined,
+  systemPrompt: string | undefined
+): string {
   const name = toolName ? ` from ${toolName}` : ''
   return (
     `Summarize only the result of tool call ${block.toolUseId}${name} in the final message above, and nothing else` +
-    ` in the conversation. ${SUMMARY_REQUIREMENTS}`
+    ` in the conversation. ${systemPrompt || SUMMARY_REQUIREMENTS}`
   )
 }
 
@@ -502,11 +547,11 @@ function replayInstructions(block: ToolResultBlock, toolName: string | undefined
  * The content is sent between delimiters in a user turn. A tool result is introduced by the name of the tool that
  * produced it; the tool's input is left out, since it can be far larger than the result.
  */
-function liftedRequest(content: ContentBlock[]): SummaryRequest {
+function liftedRequest(content: ContentBlock[], systemPrompt: string | undefined): SummaryRequest {
   const delimited = [new TextBlock('<content>'), ...content, new TextBlock('</content>')]
   return {
     messages: [new Message({ role: 'user', content: delimited })],
-    instructions: BLOCK_SUMMARY_INSTRUCTIONS,
+    instructions: systemPrompt || BLOCK_SUMMARY_INSTRUCTIONS,
     replay: false,
   }
 }

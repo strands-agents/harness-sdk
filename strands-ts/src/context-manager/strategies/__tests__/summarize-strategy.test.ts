@@ -870,13 +870,28 @@ describe('a summarized block replays the turns it sits in', () => {
     expect(turns(summarize.mock.calls[0]![0])).toEqual([{ role: 'user', content: liftedContent }])
   })
 
-  it('a custom system prompt replaces the replay instructions', async () => {
+  it('lifts the block out when the replay brings back no summary', async () => {
+    const messages = replayHistory()
+    const { agent, summarize } = mockAgent(messages, { promptCaching: 'auto' })
+    summarize.mockRejectedValueOnce(new Error('input is too long for requested model'))
+
+    expect(await perBlock().apply({ messages, agent, utilization: 0.5 })).toBe(true)
+
+    expect(summarize).toHaveBeenCalledTimes(2)
+    expect(turns(summarize.mock.calls[1]![0])).toEqual([{ role: 'user', content: liftedContent }])
+    expect(turns(messages)[2]).toEqual(summarizedToolResult('Summary of content.'))
+  })
+
+  it('a custom system prompt replaces the replay guidance, keeping the result it names', async () => {
     const messages = replayHistory()
     const { agent, summarize } = mockAgent(messages, { promptCaching: 'auto' })
 
     expect(await perBlock({ systemPrompt: 'Be very brief.' }).apply({ messages, agent, utilization: 0.5 })).toBe(true)
 
-    expect(summarize.mock.calls[0]![1]?.instructions).toBe('Be very brief.')
+    expect(summarize.mock.calls[0]![1]?.instructions).toBe(
+      'Summarize only the result of tool call t1 from read_file in the final message above, and nothing else in the' +
+        ' conversation. Be very brief.'
+    )
   })
 })
 
