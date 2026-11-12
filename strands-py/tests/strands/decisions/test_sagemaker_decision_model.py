@@ -9,7 +9,7 @@ import pytest
 from botocore.config import Config as BotocoreConfig
 from botocore.exceptions import ClientError
 
-from strands.decisions import SageMakerDecisionModel
+from strands.decisions import DecisionMetadata, DecisionResult, SageMakerDecisionModel
 from strands.types.exceptions import (
     ContextWindowOverflowException,
     ModelThrottledException,
@@ -85,12 +85,17 @@ class TestAsk:
                 "questions": {"urgent": {"type": "noul", "instructions": "Is this urgent?"}},
             },
         }
-        assert result.answers == {"urgent": True}
-        assert result.usage == {"inputTokens": 86, "outputTokens": 1, "totalTokens": 87}
-        assert result.metadata.provider_name == "sagemaker"
-        assert result.metadata.model_id == "strands-decider-2B-qwen3.5-v1-2610"
-        assert result.metadata.confidence == {"urgent": pytest.approx(0.8)}
-        assert result.metadata.latency_ms >= 0
+        assert result == DecisionResult(
+            answers={"urgent": True},
+            usage={"inputTokens": 86, "outputTokens": 1, "totalTokens": 87},
+            metadata=DecisionMetadata(
+                latency_ms=unittest.mock.ANY,
+                provider_name="sagemaker",
+                model_id="strands-decider-2B-qwen3.5-v1-2610",
+                probabilities={"urgent": {"true": pytest.approx(0.9), "false": pytest.approx(0.1)}},
+                confidence={"urgent": pytest.approx(0.8)},
+            ),
+        )
 
     @pytest.mark.asyncio
     async def test_omits_the_model_from_the_request_body(self, mock_client):
