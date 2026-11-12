@@ -2229,3 +2229,84 @@ def test_tool_nullable_optional_field_simplifies_anyof():
     # Since tag is not required, anyOf should be simplified away
     assert "anyOf" not in schema["properties"]["tag"]
     assert schema["properties"]["tag"]["type"] == "string"
+
+
+@pytest.mark.asyncio
+async def test_stream_with_model_typed_parameter(alist):
+    """A parameter annotated with a BaseModel subclass receives the validated model instance."""
+
+    class Address(BaseModel):
+        city: str
+        zip_code: int
+
+    @strands.tool
+    def ship(addr: Address):
+        """Ship an order.
+
+        Args:
+            addr: Destination address.
+        """
+        return f"{addr.city} {addr.zip_code}"
+
+    stream = ship.stream({"toolUseId": "t1", "input": {"addr": {"city": "Seattle", "zip_code": 98101}}}, {})
+
+    tru_events = await alist(stream)
+    exp_events = [ToolResultEvent({"toolUseId": "t1", "status": "success", "content": [{"text": "Seattle 98101"}]})]
+
+    assert tru_events == exp_events
+
+
+@pytest.mark.asyncio
+async def test_stream_with_optional_model_typed_parameter(alist):
+    """An optional model-typed parameter receives the validated model instance when provided."""
+
+    class Address(BaseModel):
+        city: str
+        zip_code: int
+
+    @strands.tool
+    def ship(addr: Address | None = None):
+        """Ship an order.
+
+        Args:
+            addr: Destination address.
+        """
+        return addr.city if addr else "nowhere"
+
+    stream = ship.stream({"toolUseId": "t1", "input": {"addr": {"city": "Seattle", "zip_code": 98101}}}, {})
+
+    tru_events = await alist(stream)
+    exp_events = [ToolResultEvent({"toolUseId": "t1", "status": "success", "content": [{"text": "Seattle"}]})]
+
+    assert tru_events == exp_events
+
+
+@pytest.mark.asyncio
+async def test_stream_with_model_list_parameter(alist):
+    """A parameter annotated with a list of models receives a list of validated model instances."""
+
+    class Address(BaseModel):
+        city: str
+        zip_code: int
+
+    @strands.tool
+    def ship_all(addrs: list[Address]):
+        """Ship several orders.
+
+        Args:
+            addrs: Destination addresses.
+        """
+        return ",".join(addr.city for addr in addrs)
+
+    stream = ship_all.stream(
+        {
+            "toolUseId": "t1",
+            "input": {"addrs": [{"city": "Seattle", "zip_code": 98101}, {"city": "Austin", "zip_code": 73301}]},
+        },
+        {},
+    )
+
+    tru_events = await alist(stream)
+    exp_events = [ToolResultEvent({"toolUseId": "t1", "status": "success", "content": [{"text": "Seattle,Austin"}]})]
+
+    assert tru_events == exp_events
