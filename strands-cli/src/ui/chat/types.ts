@@ -65,6 +65,7 @@ export interface DevChatCommandContext {
   readonly signal: AbortSignal
   report(status: ChatNotice['status'], text: string): DevChatNotice
   fail(title: string, detail: string): void
+  submit(prompt: string): void
 }
 
 export interface DevChatPanelProps {

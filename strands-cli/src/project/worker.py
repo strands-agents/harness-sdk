@@ -27,18 +27,20 @@ from strands.models import Model
 from strands.session import FileSessionManager, S3SessionManager, SnapshotSessionManager
 from strands.storage import InMemoryStorage, LocalFileStorage, S3Storage
 from strands.storage import storage as storage_types
+from strands.tools import PythonAgentTool
 from strands.tools.mcp import MCPClient
 from strands.types.tools import ToolContext
 from strands.vended_memory_stores.file_memory_store import FileMemoryStore
 from strands.vended_plugins.context_offloader import ContextOffloader
 from strands.vended_plugins.context_offloader import storage as offloader_storage
-from strands.vended_plugins.skills import AgentSkills
+from strands.vended_plugins.skills import AgentSkills, Skill
 from strands_harness import define_harness_agent_config, harness_agent_kwargs_from_config
 from strands_harness.defaults import DEFAULT_MODEL
 
 channel = os.fdopen(3, "w", buffering=1)
 commands = os.fdopen(4, encoding="utf-8")
 pending_permissions = {}
+pending_tools = {}
 COMPACT_PRESERVE_RECENT_MESSAGES = 2
 MAX_SAFE_INTEGER = 9_007_199_254_740_991
 
@@ -158,6 +160,32 @@ async def authorize_tool(event):
     approved = await permission(request)
     if not approved:
         event.cancel_tool = "DENIED: Tool call denied by the user"
+
+
+def host_tool(spec):
+    async def call(tool_use, **_):
+        request_id = str(uuid4())
+        future = asyncio.get_running_loop().create_future()
+        pending_tools[request_id] = future
+        try:
+            send({"type": "tool", "id": request_id, "name": spec["name"], "input": tool_use.get("input", {})})
+            ok, text = await future
+        finally:
+            pending_tools.pop(request_id, None)
+        return {"toolUseId": tool_use["toolUseId"], "status": "success" if ok else "error", "content": [{"text": text}]}
+
+    return PythonAgentTool(
+        spec["name"],
+        {"name": spec["name"], "description": spec["description"], "inputSchema": {"json": spec["inputSchema"]}},
+        call,
+    )
+
+
+def append_instructions(agent, instructions):
+    content = agent.system_prompt_content or []
+    if not instructions or any(block.get("text") == instructions for block in content):
+        return
+    agent.system_prompt = [*content, {"text": instructions}]
 
 
 async def permission(request):
@@ -436,6 +464,7 @@ class Runtime:
         self.interactive = command.get("interactive", False)
         self.mcp_servers = command.get("mcpServers", {})
         self.skill_paths = command.get("skillPaths", []) if self.options.get("skills", authored.get("skills", True)) else []
+        self.extension = command.get("extension") or {}
         self.cancel_signal = threading.Event()
         self.reload_requested = False
         self.context_estimates = None
@@ -511,7 +540,28 @@ class Runtime:
                 )
             else:
                 agent._plugin_registry.add_and_init(AgentSkills(skills=self.skill_paths))
+        await self.extend(agent)
         self.attach_context_capture(agent)
+
+    async def extend(self, agent):
+        registered = {spec["name"] for spec in agent.tool_registry.get_all_tool_specs()}
+        tools = [host_tool(spec) for spec in self.extension.get("tools", []) if spec["name"] not in registered]
+        if tools:
+            agent.tool_registry.process_tools(tools)
+        added = [Skill(**skill) for skill in self.extension.get("skills", [])]
+        if added:
+            skills = next(
+                (plugin for plugin in agent._plugin_registry._plugins.values() if isinstance(plugin, AgentSkills)),
+                None,
+            )
+            if skills:
+                names = {skill.name for skill in added}
+                current = [skill for skill in skills.get_available_skills(agent) if skill.name not in names]
+                skills.set_available_skills([*current, *added])
+                await skills.init_agent(agent)
+            else:
+                agent._plugin_registry.add_and_init(AgentSkills(skills=added))
+        append_instructions(agent, self.extension.get("instructions", ""))
 
     def attach_context_capture(self, agent):
         # Python exposes effective model requests only through the optional middleware registry.
@@ -1088,6 +1138,10 @@ async def main():
                 future = pending_permissions.get(command["requestId"])
                 if future and not future.done():
                     future.set_result(command["approved"])
+            elif kind == "toolResult":
+                future = pending_tools.get(command["id"])
+                if future and not future.done():
+                    future.set_result((command["ok"], command["text"]))
             elif kind in ("cancel", "close"):
                 runtime.cancel_signal.set()
                 if running:

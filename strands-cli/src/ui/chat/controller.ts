@@ -3027,6 +3027,9 @@ export class ChatController implements ChatControllerApi {
         }
       },
       fail: (title, detail): void => this._openError(title, '', detail),
+      submit: (prompt): void => {
+        void this.submit(prompt)
+      },
     }
   }
 

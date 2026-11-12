@@ -157,6 +157,7 @@ const chat = () => {
       }
     },
     fail: vi.fn(),
+    submit: vi.fn(),
   }
   return { context, notices }
 }

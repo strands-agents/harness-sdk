@@ -30,6 +30,14 @@ import { graphemes } from '../terminal/text.js'
 import { StrandsChatBackend } from './backend.js'
 import { BackgroundAgentActivityStore, interactiveBackgroundTasks, observeSubagentActivity } from './background.js'
 import { CONFIGURATION_INSTRUCTIONS, createConfigurationTool } from './configuration.js'
+import {
+  addExtensionSkills,
+  appendInstructions,
+  extensionPolicies,
+  extensionSkills,
+  extensionTools,
+  type AgentExtensionHost,
+} from './extension.js'
 import { loadMcp, type LoadedMcp, type LoadMcpOptions } from './mcp.js'
 import {
   AgentMessaging,
@@ -38,7 +46,7 @@ import {
   peerMessagePrompt,
   type PeerMessageRouter,
 } from './messaging.js'
-import { CedarPermissions, ToolPermissionBroker } from './permissions.js'
+import { CedarPermissions, DEFAULT_CEDAR_POLICIES, ToolPermissionBroker } from './permissions.js'
 import { WorkspaceSandbox } from './sandbox.js'
 import { AgentSkillsRuntime, resolveSkillSources } from './skills.js'
 import { type ChatConversation, type ChatDiffPreview, type ChatForkState } from './types.js'
@@ -59,6 +67,7 @@ export interface CreateInteractiveRuntimeOptions {
   agentMessaging?: AgentMessaging
   peerMessageRouter?: PeerMessageRouter
   configurationEnabled?: boolean
+  extension?: AgentExtensionHost
   allowRebuild?: boolean
   onModelChange?: (change: { model: string; effort: ProfileEffort }) => Promise<void> | void
 }
@@ -166,14 +175,19 @@ export async function createInteractiveRuntime(options: CreateInteractiveRuntime
       : withContextOffloadThreshold(agentOptions, launchSettings.contextOffloadThreshold)
     requireBedrockRegion(resolvedAgentOptions.model)
     let skills: AgentSkills | undefined
+    let skillsExtended = false
     const prepareOptions = (configured: HarnessAgentOptions): HarnessAgentOptions => {
       skills = configured.plugins?.find((plugin): plugin is AgentSkills => plugin instanceof AgentSkills)
       if (skills) return configured
       if (configured.skills instanceof AgentSkills) {
         skills = configured.skills
       } else {
-        const sources = resolveSkillSources(configured.skills, workspace, config.snapshot().settings.skillDiscovery)
+        const sources = [
+          ...resolveSkillSources(configured.skills, workspace, config.snapshot().settings.skillDiscovery),
+          ...(options.extension ? extensionSkills(options.extension.extension) : []),
+        ]
         skills = sources.length > 0 ? new AgentSkills({ skills: sources }) : undefined
+        skillsExtended = true
       }
       return { ...configured, skills: skills ?? false }
     }
@@ -206,6 +220,10 @@ export async function createInteractiveRuntime(options: CreateInteractiveRuntime
       if (disposed) throw new Error('Runtime was disposed while building an agent.')
       await initializeAgentDefinition(agent)
       agent.messages = upgradeDesktopAgentProfileMessages(agent.messages)
+      if (options.extension) {
+        if (skills && !skillsExtended) await addExtensionSkills(skills, agent, options.extension.extension)
+        appendInstructions(agent, options.extension.extension.instructions)
+      }
       if (disposed) throw new Error('Runtime was disposed while building an agent.')
       agents.add(agent)
       if (skills) skillsByAgent.set(agent, skills)
@@ -332,12 +350,16 @@ export async function createInteractiveRuntime(options: CreateInteractiveRuntime
     const configuredTools: NonNullable<HarnessAgentOptions['tools']> = [
       ...(baseAgentOptions.tools ?? []),
       ...mcp.clients,
+      ...(options.extension ? extensionTools(options.extension) : []),
     ]
     const permissionBroker = new ToolPermissionBroker()
     const cedarPermissions = new CedarPermissions({
       broker: permissionBroker,
       config,
       cwd: workspace,
+      ...(options.extension
+        ? { policies: DEFAULT_CEDAR_POLICIES + extensionPolicies(options.extension.extension) }
+        : {}),
       configurationPreview: (): ChatDiffPreview | undefined => configuration?.preview(),
       configurationDenied: (revision): void => {
         if (configuration?.discard(revision)) request.onConfigurationDiscard?.()

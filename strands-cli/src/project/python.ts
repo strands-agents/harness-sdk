@@ -10,6 +10,7 @@ import type { Readable, Writable } from 'node:stream'
 import { fileURLToPath, URL } from 'node:url'
 
 import type { SetupChange } from '../agent/configuration.js'
+import { extensionPolicies, type AgentExtension, type AgentExtensionHost } from '../agent/extension.js'
 import { createDiffPreview } from '../agent/file-changes.js'
 import { canonicalPath, permissionRuleDecision } from '../agent/permission-rules.js'
 import {
@@ -40,7 +41,7 @@ import {
   type EffortInput,
 } from '../model/selection.js'
 import { terminateProcessTree } from '../terminal/process-tree.js'
-import { sanitizeTerminalText } from '../terminal/text.js'
+import { errorMessage, sanitizeTerminalText } from '../terminal/text.js'
 import { prepareArchiveDependencies } from './archive.js'
 import type { ImportedAgentProject } from './import.js'
 import { preparePythonRuntime } from './python-runtime.js'
@@ -83,6 +84,8 @@ type WorkerMessage =
   | { type: 'result'; result: ChatRunResult; state: PythonState; reload?: boolean }
   | { type: 'error'; message: string }
 
+type ToolMessage = { type: 'tool'; id: string; name: string; input: JSONValue }
+
 export interface PythonOptions {
   devWorkspace?: string
   prepared?: boolean
@@ -99,6 +102,7 @@ export interface PythonOptions {
   skillPaths?: readonly string[]
   cwd?: string
   resume?: boolean
+  extension?: AgentExtension
 }
 
 export class PythonBackend implements ChatBackend {
@@ -120,7 +124,8 @@ export class PythonBackend implements ChatBackend {
     private readonly _child: ChildProcess,
     private readonly _project: ImportedAgentProject,
     private readonly _config: CliConfigStore,
-    readonly cwd: string
+    readonly cwd: string,
+    private readonly _extension: AgentExtensionHost | undefined
   ) {
     this._commands = _child.stdio[4] as Writable
     for (const output of [_child.stdout, _child.stderr]) {
@@ -136,9 +141,13 @@ export class PythonBackend implements ChatBackend {
           !message ||
           typeof message !== 'object' ||
           !('type' in message) ||
-          !['ready', 'event', 'authorize', 'result', 'error'].includes(String(message.type))
+          !['ready', 'event', 'authorize', 'result', 'error', 'tool'].includes(String(message.type))
         ) {
           throw new Error('Unexpected Python message')
+        }
+        if (message.type === 'tool') {
+          void this._callTool(message as ToolMessage)
+          return
         }
         this._messages.push(message as WorkerMessage)
         this._wake?.()
@@ -159,8 +168,9 @@ export class PythonBackend implements ChatBackend {
   static async open(
     project: ImportedAgentProject,
     config: CliConfigStore,
-    options: PythonOptions = {},
-    signal?: AbortSignal
+    options: Omit<PythonOptions, 'extension'> = {},
+    signal?: AbortSignal,
+    extension?: AgentExtensionHost
   ): Promise<PythonBackend> {
     await prepareArchiveDependencies(project.root, project.language)
     const python =
@@ -186,14 +196,15 @@ export class PythonBackend implements ChatBackend {
       }),
       project,
       config,
-      cwd
+      cwd,
+      extension
     )
     const cancel = (): void => backend._fail(new Error('Python agent loading cancelled.'))
     signal?.addEventListener('abort', cancel, { once: true })
     const timeout = setTimeout(() => backend._fail(new Error('Python agent loading timed out.')), 60_000)
     try {
       signal?.throwIfAborted()
-      await backend._request({ type: 'init', ...options })
+      await backend._request({ type: 'init', ...options, ...(extension ? { extension: extension.extension } : {}) })
       return backend
     } catch (error) {
       await backend.dispose()
@@ -348,7 +359,7 @@ export class PythonBackend implements ChatBackend {
     return skill ? { skill, content: result.finalText ?? skill.instructions } : undefined
   }
 
-  async fork(options: PythonOptions, signal?: AbortSignal): Promise<PythonBackend> {
+  async fork(options: Omit<PythonOptions, 'extension'>, signal?: AbortSignal): Promise<PythonBackend> {
     const target = await PythonBackend.open(
       this._project,
       this._config,
@@ -363,7 +374,8 @@ export class PythonBackend implements ChatBackend {
           ...(this._state.modelSpecifier ? { model: this._state.modelSpecifier } : {}),
         },
       },
-      signal
+      signal,
+      this._extension
     )
     try {
       const snapshot = await this._request({ type: 'snapshot' })
@@ -481,7 +493,9 @@ export class PythonBackend implements ChatBackend {
             message.pathInWorkspace && message.name === 'read' && pathIsWithinWorkspace(message.input.path, this.cwd),
         },
       },
-      policies: { staticPolicies: DEFAULT_CEDAR_POLICIES },
+      policies: {
+        staticPolicies: DEFAULT_CEDAR_POLICIES + (this._extension ? extensionPolicies(this._extension.extension) : ''),
+      },
     })
     if (authorization.type === 'failure') throw new Error('Cedar permission evaluation failed.')
     if (authorization.response.decision === 'allow') return true
@@ -500,6 +514,18 @@ export class PythonBackend implements ChatBackend {
     const decision = await requestToolPermission(this._permissions, message.name, message.input, workspace, diff)
     await savePermissionDecision(this._config, decision)
     return decision.type === 'allow-once' || decision.type === 'allow-always'
+  }
+
+  private async _callTool({ id, name, input }: ToolMessage): Promise<void> {
+    let reply: { ok: boolean; text: string }
+    try {
+      if (!this._extension) throw new Error(`This agent has no host tool named ${name}.`)
+      reply = { ok: true, text: await this._extension.call(name, input) }
+    } catch (error) {
+      reply = { ok: false, text: errorMessage(error) }
+    }
+    if (this._failure) return
+    this._send({ type: 'toolResult', id, ...reply })
   }
 
   private async _request(command: object): Promise<ChatRunResult> {

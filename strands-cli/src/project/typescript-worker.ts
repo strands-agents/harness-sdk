@@ -213,6 +213,15 @@ async function initialize(
         send: (senderId, to, body) => hostCall<string>({ operation: 'sendPeer', senderId, to, body }),
       },
       configurationEnabled: true,
+      ...(input.extension
+        ? {
+            extension: {
+              extension: input.extension,
+              call: (name, toolInput): Promise<string> =>
+                hostCall<string>({ operation: 'extensionTool', name, input: toolInput }),
+            },
+          }
+        : {}),
       allowRebuild: false,
     })
     if (closing) throw new Error('TypeScript runtime closed during initialization.')

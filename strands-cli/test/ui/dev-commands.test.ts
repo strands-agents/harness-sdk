@@ -106,6 +106,26 @@ describe('dev chat commands', () => {
     expect(controller.actionableCommandToken('/optimize')).toBeUndefined()
   })
 
+  it('shouldRunThePromptAsAUserTurnWhenTheDevCommandSubmitsIt', async () => {
+    const prompts: unknown[] = []
+    const { command, context } = capture()
+    const controller = new ChatController(
+      idleBackend({
+        async *stream(prompt) {
+          prompts.push(prompt)
+          yield* []
+          return { stopReason: 'endTurn' }
+        },
+      }),
+      { devCommands: [command] }
+    )
+    await controller.submit('/optimize')
+
+    context().submit('Help me create an experiment')
+
+    await vi.waitFor(() => expect(prompts).toEqual(['Help me create an experiment']))
+  })
+
   it('shouldUpdateTheSameNoticeWhenTheDevCommandReportsProgress', async () => {
     const { command, context } = capture()
     const controller = new ChatController(idleBackend(), { devCommands: [command] })

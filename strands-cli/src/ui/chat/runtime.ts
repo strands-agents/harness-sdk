@@ -34,6 +34,8 @@ import { PythonVoiceSession } from '../../agent/voice.js'
 import { importAgentProject, type ImportedAgentProject } from '../../project/import.js'
 import { PythonBackend, type PythonOptions } from '../../project/python.js'
 import { TypescriptBackend, type TypescriptInit } from '../../project/typescript-backend.js'
+import type { AgentExtensionHost } from '../../agent/extension.js'
+import { devChatExtension } from '../../dev/chat-extension.js'
 import { temporaryDevCommands } from '../../dev/temporary-evals-fork/command.js'
 import { readDevWorkspace, type DevWorkspace } from '../../dev/workspace.js'
 import {
@@ -64,6 +66,11 @@ async function restoreSessionNames(
   return { ...names, agentName: conversation.agentName }
 }
 
+const devExtension = (
+  workspace: DevWorkspace | undefined,
+  project: ImportedAgentProject
+): AgentExtensionHost | undefined => (workspace ? devChatExtension(workspace, project, []) : undefined)
+
 const nestedWorkspace = (project: ImportedAgentProject, workspace: DevWorkspace | undefined): string[] =>
   workspace?.directory && workspace.directory !== project.root && containsPath(project.root, workspace.directory)
     ? [workspace.directory]
@@ -80,6 +87,7 @@ export async function createTypescriptChat(
 ): Promise<ConversationManager> {
   const project = importAgentProject(path)
   const devWorkspace = options.args.dev?.workspace ? await readDevWorkspace(options.args.dev.workspace) : undefined
+  const extension = devExtension(devWorkspace, project)
   const messaging = new AgentMessaging()
   const catalog = await SessionRootCatalog.load(
     options.args.dev?.workspace ? resolve(options.args.dev.workspace, '.strands/state/catalog') : undefined
@@ -99,7 +107,8 @@ export async function createTypescriptChat(
       { ...initialOptions, project, peerEndpointId },
       config,
       messaging,
-      signal
+      signal,
+      extension
     )
     try {
       signal.throwIfAborted()
@@ -313,6 +322,7 @@ export async function createPythonChat(
 ): Promise<ConversationManager> {
   const project = importAgentProject(path)
   const devWorkspace = options.devWorkspace ? await readDevWorkspace(options.devWorkspace) : undefined
+  const extension = devExtension(devWorkspace, project)
   const createController = async (backend: PythonBackend, conversation?: ChatConversation): Promise<ChatController> => {
     const snapshot = config.snapshot()
     const sessions = new FileSessionRuntime(backend, backend.sessionDirectory, {
@@ -375,7 +385,7 @@ export async function createPythonChat(
     initialOptions: PythonOptions,
     conversation?: ChatConversation
   ): Promise<ChatController> => {
-    const backend = await PythonBackend.open(project, config, initialOptions, signal)
+    const backend = await PythonBackend.open(project, config, initialOptions, signal, extension)
     try {
       if (conversation) await backend.restoreConversation(conversation)
       return await createController(backend, conversation)
