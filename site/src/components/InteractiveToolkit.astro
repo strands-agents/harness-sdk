@@ -1,4 +1,9 @@
 ---
+import {
+  createShikiHighlighter,
+  type CreateShikiHighlighterOptions,
+} from '@astrojs/markdown-remark/shiki'
+
 import arrow from '../assets/banner/arrow.svg?raw'
 import plus from '../assets/toolkit/plus.svg?raw'
 import { products } from '../config/navbar'
@@ -9,7 +14,50 @@ function getProduct(label: string) {
   return product
 }
 
-const modules = [
+const dogwoodLanguage: NonNullable<CreateShikiHighlighterOptions['langs']>[number] = {
+  name: 'dogwood',
+  scopeName: 'source.dogwood',
+  patterns: [
+    {
+      name: 'comment.line.double-slash.dogwood',
+      begin: '//',
+      end: '$',
+    },
+    {
+      name: 'meta.annotation.dogwood',
+      match: '@[A-Za-z_][A-Za-z0-9_]*',
+    },
+    {
+      name: 'keyword.control.dogwood',
+      match: '\\b(?:permit|forbid|when)\\b',
+    },
+    {
+      name: 'support.type.dogwood',
+      match: '\\bBox(?=::)',
+    },
+    {
+      name: 'string.quoted.double.dogwood',
+      begin: '"',
+      end: '"',
+      patterns: [
+        {
+          name: 'constant.character.escape.dogwood',
+          match: '\\\\.',
+        },
+      ],
+    },
+  ],
+}
+
+const highlighter = await createShikiHighlighter({
+  langs: [dogwoodLanguage],
+  themes: {
+    light: 'github-light-high-contrast',
+    dark: 'github-dark-high-contrast',
+  },
+})
+
+const moduleDefinitions = [
   {
     product: getProduct('Box'),
     category: 'Agent sandbox',
@@ -18,10 +66,17 @@ const modules = [
       'Isolate the agent and set policies for files, programs, network requests, and MCP tool calls.',
     cta: 'Explore Box',
     exampleLabel: 'Policy',
+    syntax: 'dogwood',
     code: `@id("no_env")
 @description("The .env file holds credentials the agent must not read.")
-forbid (principal, action == Box::Action::"fs:read", resource)
-when { context.input.path == "~/project/.env" };`,
+forbid (
+  principal,
+  action == Box::Action::"fs:read",
+  resource
+)
+when {
+  context.input.path == "~/project/.env"
+};`,
   },
   {
     product: getProduct('Decider'),
@@ -31,7 +86,9 @@ when { context.input.path == "~/project/.env" };`,
       'Classify and route work with yes/no, choice, and score answers plus calibrated confidence.',
     cta: 'Explore Decider',
     exampleLabel: 'CLI',
-    code: String.raw`strands-decider ask StrandsAgents/strands-decider-2B-qwen3.5-v1-2610 \
+    syntax: 'shellscript',
+    code: String.raw`strands-decider ask \
+  StrandsAgents/strands-decider-2B-qwen3.5-v1-2610 \
   --state "Help! My payouts have been failing for 3 days." \
   --choice "Which team should handle this?=billing,technical,sales"`,
   },
@@ -43,14 +100,40 @@ when { context.input.path == "~/project/.env" };`,
       'Evaluate outputs and trajectories, diagnose failures, and simulate users and tools.',
     cta: 'Explore Evals',
     exampleLabel: 'Python',
-    code: `from strands_evals import Case, Experiment
+    syntax: 'python',
+    code: `from strands import Agent
+from strands_evals import Case, Experiment, eval_task
 from strands_evals.evaluators import OutputEvaluator
 
-cases = [Case(name="capital", input="Capital of France?", expected_output="Paris")]
+@eval_task()
+def get_response():
+    return Agent(callback_handler=None)
+
+cases = [
+    Case(
+        name="capital",
+        input="Capital of France?",
+        expected_output="Paris",
+    )
+]
 evaluator = OutputEvaluator(rubric="Score 1.0 if correct, else 0.0.")
-experiment = Experiment(cases=cases, evaluators=[evaluator])`,
+report = Experiment(
+    cases=cases,
+    evaluators=[evaluator],
+).run_evaluations(get_response)
+report.display()`,
   },
 ]
+
+const modules = await Promise.all(
+  moduleDefinitions.map(async (module) => ({
+    ...module,
+    highlightedCode: await highlighter.codeToHtml(module.code, module.syntax, {
+      defaultColor: false,
+      attributes: { class: 'code-terminal__highlighted-code' },
+    }),
+  })),
+)
 ---
 
 <section id="tools" class="toolkit" aria-labelledby="tools-title">
@@ -118,7 +201,9 @@ experiment = Experiment(cases=cases, evaluators=[evaluator])`,
                       <span role="status" aria-live="polite" data-code-copy-label>copy</span>
                     </button>
                   </header>
-                  <pre class="code-terminal__code"><code>{module.code}</code></pre>
+                  <div class="code-terminal__source" data-code-value={module.code}>
+                    <Fragment set:html={module.highlightedCode} />
+                  </div>
                 </div>
               </div>
             </article>
@@ -376,16 +461,31 @@ experiment = Experiment(cases=cases, evaluators=[evaluator])`,
     color: var(--strands-green);
   }
 
-  .code-terminal__code {
+  .code-terminal__source {
+    margin: 0;
+    min-width: 0;
+    background: transparent;
+  }
+
+  .code-terminal__source :global(.astro-code) {
     margin: 0;
     padding: 15px 17px 17px;
-    overflow-x: auto;
     font-family: 'JetBrains Mono', ui-monospace, monospace;
-    font-size: 11px;
+    font-size: 12px;
     line-height: 1.55;
-    color: var(--fg);
     background: transparent;
     white-space: pre;
+    tab-size: 2;
+    color: var(--shiki-light);
+  }
+
+  .code-terminal__source :global(.astro-code span) {
+    color: var(--shiki-light);
+  }
+
+  :global([data-theme='dark']) .code-terminal__source :global(.astro-code),
+  :global([data-theme='dark']) .code-terminal__source :global(.astro-code span) {
+    color: var(--shiki-dark);
   }
 
   .toolkit {
@@ -413,13 +513,29 @@ experiment = Experiment(cases=cases, evaluators=[evaluator])`,
     grid-template-columns: repeat(3, minmax(0, 1fr));
     align-items: start;
     gap: 14px;
+    transition: grid-template-columns 0.25s ease;
   }
 
   .module-card {
     display: flex;
+    min-width: 0;
     min-height: 215px;
     padding: 16px 17px 16px 20px;
     flex-direction: column;
+  }
+
+  @media (min-width: 1120px) {
+    .toolkit__modules:has(.module-card:nth-child(1).is-open) {
+      grid-template-columns: 2fr 1fr 1fr;
+    }
+
+    .toolkit__modules:has(.module-card:nth-child(2).is-open) {
+      grid-template-columns: 1fr 2fr 1fr;
+    }
+
+    .toolkit__modules:has(.module-card:nth-child(3).is-open) {
+      grid-template-columns: 1fr 1fr 2fr;
+    }
   }
 
   .module-card__slug {
@@ -465,9 +581,9 @@ experiment = Experiment(cases=cases, evaluators=[evaluator])`,
       gap: 12px;
     }
 
-    .code-terminal__code {
+    .code-terminal__source :global(.astro-code) {
       padding: 13px 14px 15px;
-      font-size: 10px;
+      font-size: 11px;
     }
 
     .toolkit {
@@ -497,6 +613,10 @@ experiment = Experiment(cases=cases, evaluators=[evaluator])`,
   }
 
   @media (prefers-reduced-motion: reduce) {
+    .toolkit__modules {
+      transition: none;
+    }
+
     .code-drawer {
       animation: none;
     }
@@ -549,8 +669,7 @@ experiment = Experiment(cases=cases, evaluators=[evaluator])`,
 
     attachCopyButton(button, {
       label: button.querySelector<HTMLElement>('[data-code-copy-label]'),
-      getText: () =>
-        terminal.querySelector<HTMLElement>('.code-terminal__code:not([hidden]) code')?.textContent ?? '',
+      getText: () => terminal.querySelector<HTMLElement>('[data-code-value]')?.dataset.codeValue ?? '',
       track: {
         surface: 'code:homepage',
         detail: () =>

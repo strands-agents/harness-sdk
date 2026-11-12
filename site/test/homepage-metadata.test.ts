@@ -27,7 +27,7 @@ describe('homepage machine-readable metadata', () => {
     expect(homepage.querySelector('.starter')).toBeNull()
     expect(hero?.querySelector('.banner__eyebrow')).toBeNull()
     expect(hero?.querySelector('.banner__summary')?.text.trim().replace(/\s+/g, ' ')).toBe(
-      'An open source framework for building production agents. Start with the ready-to-use /harness.'
+      'An open source framework for building production agents.'
     )
     expect(hero?.querySelector('.banner__harness')?.text.trim()).toBe('/harness')
     expect(hero?.querySelector('.banner__start-eyebrow')).toBeNull()
@@ -173,6 +173,7 @@ describe('homepage machine-readable metadata', () => {
     }
 
     const harnessExamples = homepage.querySelectorAll('#harness-code-example [data-example-language]')
+    const moduleExamples = homepage.querySelectorAll('.module-card [data-code-value]')
 
     expect(harnessExamples).toHaveLength(2)
     expect(harnessExamples.map((example) => example.querySelector('pre')?.getAttribute('data-language'))).toEqual([
@@ -182,6 +183,17 @@ describe('homepage machine-readable metadata', () => {
     expect(harnessExamples.every((example) => example.querySelector('pre')?.innerHTML.includes('--shiki-light:'))).toBe(
       true
     )
+
+    expect(moduleExamples.map((example) => example.querySelector('pre')?.getAttribute('data-language'))).toEqual([
+      'dogwood',
+      'shellscript',
+      'python',
+    ])
+    expect(moduleExamples.every((example) => example.querySelector('pre')?.innerHTML.includes('--shiki-light:'))).toBe(
+      true
+    )
+    expect(moduleExamples[2]?.getAttribute('data-code-value')).toContain('.run_evaluations(get_response)')
+    expect(moduleExamples[2]?.getAttribute('data-code-value')).toContain('report.display()')
   })
 
   it('labels the customer proof band', () => {

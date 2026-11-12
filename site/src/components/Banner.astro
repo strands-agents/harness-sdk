@@ -52,10 +52,7 @@ await agent.invoke('Summarize this repository')`,
 
     <div class="banner__content">
       <h1 id="homepage-hero-title" class="banner__headline">Build AI agents.</h1>
-      <p class="banner__summary">
-        An open source framework for building production agents. Start with the ready-to-use
-        {' '}<span class="banner__harness">/harness</span>.
-      </p>
+      <p class="banner__summary">An open source framework for building production agents.</p>
 
       <div
         class="banner__start"
@@ -64,6 +61,8 @@ await agent.invoke('Summarize this repository')`,
         data-example-closed-label="Code example"
         data-example-card
       >
+        <p class="banner__harness">/harness</p>
+
         <div class="banner__start-row">
           <div class="banner__install">
             <InstallCommand
@@ -213,18 +212,22 @@ await agent.invoke('Summarize this repository')`,
     line-height: 1.5;
     color: var(--fg);
     text-wrap: balance;
+    white-space: nowrap;
   }
 
   .banner__harness {
+    margin: 0 0 10px;
     font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: clamp(22px, 2.1vw, 28px);
     font-weight: 700;
+    line-height: 1.2;
     color: var(--card-accent-orange);
   }
 
   .banner__start {
     width: 100%;
     max-width: 620px;
-    margin-top: 24px;
+    margin-top: 20px;
   }
 
   .banner__start-row {
