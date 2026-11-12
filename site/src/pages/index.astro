@@ -8,6 +8,7 @@ import LogoFarm from '../components/LogoFarm.astro';
 import UseCases from '../components/UseCases.astro';
 import ProveCases from '../components/ProveCases.astro';
 import CommunityHub from '../components/CommunityHub.astro';
+import HomeFaq from '../components/HomeFaq.astro';
 import NextSteps from '../components/NextSteps.astro';
 import Footer from '../components/Footer.astro';
 import SiteScripts from '../components/SiteScripts.astro';
@@ -29,9 +30,10 @@ const markdownHref = `${base.replace(/\/$/, '')}/index.md`;
 const ogImageHref = new URL('og-image.png', Astro.site ?? 'https://strandsagents.com').href;
 const pageTitle = 'Strands Agents | Build production AI agents';
 const pageDescription =
-  'Build production agents with an open source harness and SDK for Python and TypeScript, then add focused tools for decisions, security, and evaluation.';
+  'Build production agents with an open source framework, a ready-to-use harness, and focused tools for decisions, security, and evaluation.';
 const siteUrl = Astro.site?.origin || 'https://strandsagents.com';
-const homepageProducts = products.filter((product) => product.label !== 'Shell');
+const homepageProductLabels = new Set(['Harness', 'Box', 'Evals', 'Decider']);
+const homepageProducts = products.filter((product) => homepageProductLabels.has(product.label));
 const structuredData = {
   '@context': 'https://schema.org',
   '@graph': [...baseSchemas(siteUrl), ...homepageProducts.map((product) => productSchema(product, siteUrl))],
@@ -96,6 +98,7 @@ const structuredData = {
       <UseCases />
       <ProveCases />
       <CommunityHub />
+      <HomeFaq />
       <NextSteps />
     </main>
     {/* NextSteps already provides the green curved transition on the homepage. */}

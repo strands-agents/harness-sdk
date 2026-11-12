@@ -24,7 +24,9 @@ describe('homepage machine-readable metadata', () => {
     const hero = homepage.querySelector('.banner')
 
     expect(homepage.querySelector('.banner__halftone')).toBeNull()
-    expect(homepage.querySelector('.banner__starter')).toBeNull()
+    expect(homepage.querySelector('.starter')).toBeNull()
+    expect(hero?.querySelector('.banner__harness')?.text.trim()).toBe('/harness')
+    expect(hero?.querySelector('.banner__start-title')).toBeNull()
     expect(hero?.querySelector('[data-install-variant="Python"]')?.text.trim()).toBe('pip install strands-harness')
     expect(hero?.querySelector('[data-install-variant="TypeScript"]')?.text.trim()).toBe(
       'npm i @strands-agents/harness'
@@ -34,7 +36,7 @@ describe('homepage machine-readable metadata', () => {
   it('publishes concise homepage metadata', () => {
     expect(homepage.querySelector('title')?.text.trim()).toBe('Strands Agents | Build production AI agents')
     expect(homepage.querySelector('meta[name="description"]')?.getAttribute('content')).toBe(
-      'Build production agents with an open source harness and SDK for Python and TypeScript, then add focused tools for decisions, security, and evaluation.'
+      'Build production agents with an open source framework, a ready-to-use harness, and focused tools for decisions, security, and evaluation.'
     )
     expect(homepage.querySelector('meta[property="og:image:alt"]')?.getAttribute('content')).toBe(
       'Strands Agents: build agents you can put to work'
@@ -60,6 +62,11 @@ describe('homepage machine-readable metadata', () => {
       'SoftwareApplication',
       'SoftwareApplication',
     ])
+    expect(
+      structuredData['@graph']
+        .filter((schema: { '@type': string }) => schema['@type'] === 'SoftwareApplication')
+        .map((schema: { name: string }) => schema.name)
+    ).toEqual(['Strands harness', 'Strands Box', 'Strands Evals', 'Strands Decider'])
     expect(structuredData['@graph'][0].sameAs).toContain('https://github.com/strands-agents')
     expect(JSON.stringify(structuredData)).not.toContain('SearchAction')
   })
@@ -74,63 +81,92 @@ describe('homepage machine-readable metadata', () => {
     expect(main?.querySelectorAll('h1')).toHaveLength(1)
   })
 
-  it('routes visitors to the recommended harness quickstart and the tools section', () => {
+  it('routes visitors through one recommended hero action', () => {
     const primary = homepage.querySelector('.banner__action--primary')
-    const secondary = homepage.querySelector('.banner__action--secondary')
+    const hero = homepage.querySelector('.banner')
 
     expect(primary?.text.trim()).toContain('Build your first agent')
     expect(primary?.getAttribute('href')).toBe(configuredPathWithBase('/docs/user-guide/harness/quickstart/'))
-    expect(secondary?.text.trim()).toContain('Explore the tools')
-    expect(secondary?.getAttribute('href')).toBe('#tools')
+    expect(hero?.querySelectorAll('.banner__action')).toHaveLength(1)
+    expect(hero?.querySelector('.banner__action--secondary')).toBeNull()
+    expect(hero?.querySelector('.banner__sdk-link')).toBeNull()
   })
 
-  it('keeps the SDK secondary before presenting focused tools', () => {
+  it('integrates the recommended harness path into the hero before focused tools', () => {
+    const hero = homepage.querySelector('.banner')
+    const starter = hero?.querySelector('.banner__start')
     const toolkit = homepage.querySelector('.toolkit')
     const modules = toolkit?.querySelectorAll('.module-card') ?? []
 
-    expect(toolkit?.getAttribute('id')).toBe('tools')
-    expect(toolkit?.querySelector('.toolkit__title')?.tagName).toBe('H2')
-    expect(toolkit?.querySelector('.toolkit__title')?.text.trim()).toBe('Add only what you need.')
-    expect(toolkit?.querySelector('.start-card')).toBeNull()
+    expect(hero?.querySelector('.banner__harness')?.text.trim()).toBe('/harness')
+    expect(starter?.querySelector('.banner__start-title')).toBeNull()
+    expect(starter?.querySelector('.banner__action--primary')?.getAttribute('href')).toBe(
+      configuredPathWithBase('/docs/user-guide/harness/quickstart/')
+    )
 
-    expect({
-      text: homepage.querySelector('.banner__sdk-link')?.text.trim(),
-      href: homepage.querySelector('.banner__sdk-link')?.getAttribute('href'),
-    }).toEqual({
-      text: 'Building from primitives? Explore the Strands Harness SDK',
-      href: configuredPathWithBase('/docs/user-guide/sdk/quickstart/overview/'),
-    })
+    expect(toolkit?.getAttribute('id')).toBe('tools')
+    expect(toolkit?.querySelector('.section-eyebrow')?.text.trim()).toBe('Extend your agent')
+    expect(toolkit?.querySelector('.toolkit__title')?.tagName).toBe('H2')
+    expect(toolkit?.querySelector('.toolkit__title')?.text.trim()).toBe('Add focused tools when you need them.')
 
     expect(
       modules.map((card) => ({
         slug: card.querySelector('.module-card__slug')?.text.trim(),
-        badge: card.querySelector('.module-card__badge')?.text.trim(),
+        category: card.querySelector('.product-category')?.text.trim(),
         heading: {
           tagName: card.querySelector('.module-card__title')?.tagName,
           text: card.querySelector('.module-card__title')?.text.trim(),
         },
-        href: card.querySelector('.module-card__cta')?.getAttribute('href'),
+        href: card.querySelector('.card-action--text')?.getAttribute('href'),
+        accent: card.getAttribute('style'),
       }))
     ).toEqual([
       {
         slug: '/box',
-        badge: 'Open source',
+        category: 'Agent sandbox',
         heading: { tagName: 'H3', text: 'Contain the agent.' },
-        href: configuredPathWithBase('/docs/user-guide/box/quickstart/'),
+        href: configuredPathWithBase('/docs/user-guide/box/'),
+        accent: '--accent: var(--card-accent-purple);',
       },
       {
         slug: '/decider',
-        badge: 'Labs',
-        heading: { tagName: 'H3', text: 'Make faster decisions.' },
-        href: configuredPathWithBase('/docs/labs/strands-decider/inference/'),
+        category: 'Decision model',
+        heading: { tagName: 'H3', text: 'Make focused decisions.' },
+        href: configuredPathWithBase('/docs/labs/strands-decider/overview/'),
+        accent: '--accent: var(--card-accent-red);',
       },
       {
         slug: '/evals',
-        badge: 'Python',
-        heading: { tagName: 'H3', text: 'Validate before deployment.' },
+        category: 'Evaluation toolkit',
+        heading: { tagName: 'H3', text: 'Find failures before deployment.' },
         href: configuredPathWithBase('/docs/user-guide/evals-sdk/'),
+        accent: '--accent: var(--card-accent-pink);',
       },
     ])
+  })
+
+  it('keeps concise code examples available on demand', () => {
+    const cards = homepage.querySelectorAll('[data-example-card]')
+    const panelIds = cards.map((card) => card.querySelector('[data-example-toggle]')?.getAttribute('aria-controls'))
+
+    expect(cards).toHaveLength(4)
+    expect(homepage.querySelector('.module-card__badge')).toBeNull()
+    expect(panelIds.every(Boolean)).toBe(true)
+    expect(new Set(panelIds).size).toBe(cards.length)
+
+    for (const card of cards) {
+      const toggle = card.querySelector('[data-example-toggle]')
+      const panelId = toggle?.getAttribute('aria-controls')
+      const panel = panelId ? homepage.querySelector(`#${panelId}`) : null
+
+      expect(toggle?.getAttribute('aria-expanded')).toBe('false')
+      expect(panel?.hasAttribute('hidden')).toBe(true)
+      expect(panel?.querySelector('[data-code-copy]')).not.toBeNull()
+      expect(panel?.querySelector('[data-code-copy-label]')?.getAttribute('aria-live')).toBe('polite')
+      expect(panel?.querySelector('pre')?.text.trim().length).toBeGreaterThan(30)
+    }
+
+    expect(homepage.querySelectorAll('#harness-code-example [data-example-language]')).toHaveLength(2)
   })
 
   it('promotes distinct recent blog posts', async () => {
@@ -154,14 +190,24 @@ describe('homepage machine-readable metadata', () => {
     if (posts.length > 1) expect(communityLink?.getAttribute('href')).not.toBe(bannerLink?.getAttribute('href'))
   })
 
+  it('shows five FAQ previews and links to the standalone FAQ page', () => {
+    const section = homepage.querySelector('.home-faq')
+    const items = section?.querySelectorAll('.home-faq__item') ?? []
+    const link = section?.querySelector('.home-faq__cta')
+
+    expect(items).toHaveLength(5)
+    expect(link?.getAttribute('href')).toBe(configuredPathWithBase('/faq/'))
+  })
+
   it('publishes a concise Markdown homepage with official resources', () => {
     const markdown = readFileSync(new URL('../dist/index.md', import.meta.url), 'utf8')
 
     expect(markdown).toContain('# Strands Agents')
-    expect(markdown.indexOf('Harness quickstart')).toBeLessThan(markdown.indexOf('SDK quickstart'))
-    expect(markdown).toContain('/docs/user-guide/sdk/quickstart/overview/index.md')
-    expect(markdown).toContain('/docs/labs/strands-decider/inference/index.md')
+    expect(markdown).toContain('Harness quickstart')
+    expect(markdown).not.toContain('SDK quickstart')
+    expect(markdown).toContain('/docs/labs/strands-decider/overview/index.md')
     expect(markdown).toContain('/examples/')
+    expect(markdown).toContain('/faq/index.md')
     expect(markdown).toContain('https://pypi.org/project/strands-agents/')
     expect(markdown).toContain('https://www.npmjs.com/package/@strands-agents/sdk')
     expect(markdown).toContain('https://github.com/strands-agents/harness-sdk')

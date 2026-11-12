@@ -1,40 +1,54 @@
 ---
 import arrow from '../assets/banner/arrow.svg?raw'
-import { pathWithBase } from '../util/links'
+import plus from '../assets/toolkit/plus.svg?raw'
+import { products } from '../config/navbar'
+
+function getProduct(label: string) {
+  const product = products.find((candidate) => candidate.label === label)
+  if (!product) throw new Error(`Missing homepage product: ${label}`)
+  return product
+}
 
 const modules = [
   {
-    slug: '/box',
-    label: 'Strands Box',
-    badge: 'Open source',
-    accent: 'var(--card-accent-purple)',
+    product: getProduct('Box'),
+    category: 'Agent sandbox',
     title: 'Contain the agent.',
     description:
-      'Isolate the agent and set policy for files, programs, network requests, and MCP calls.',
-    href: pathWithBase('/docs/user-guide/box/quickstart/'),
+      'Isolate the agent and set policies for files, programs, network requests, and MCP tool calls.',
     cta: 'Explore Box',
+    exampleLabel: 'Policy',
+    code: `@id("no_env")
+@description("The .env file holds credentials the agent must not read.")
+forbid (principal, action == Box::Action::"fs:read", resource)
+when { context.input.path == "~/project/.env" };`,
   },
   {
-    slug: '/decider',
-    label: 'Strands Decider',
-    badge: 'Labs',
-    accent: 'var(--card-accent-blue)',
-    title: 'Make faster decisions.',
+    product: getProduct('Decider'),
+    category: 'Decision model',
+    title: 'Make focused decisions.',
     description:
-      'Answer typed yes/no, choice, and score questions with calibrated confidence.',
-    href: pathWithBase('/docs/labs/strands-decider/inference/'),
+      'Classify and route work with yes/no, choice, and score answers plus calibrated confidence.',
     cta: 'Explore Decider',
+    exampleLabel: 'CLI',
+    code: String.raw`strands-decider ask StrandsAgents/strands-decider-2B-qwen3.5-v1-2610 \
+  --state "Help! My payouts have been failing for 3 days." \
+  --choice "Which team should handle this?=billing,technical,sales"`,
   },
   {
-    slug: '/evals',
-    label: 'Strands Evals',
-    badge: 'Python',
-    accent: 'var(--card-accent-pink)',
-    title: 'Validate before deployment.',
+    product: getProduct('Evals'),
+    category: 'Evaluation toolkit',
+    title: 'Find failures before deployment.',
     description:
-      'Score outputs and trajectories, diagnose failures, and simulate users and tools.',
-    href: pathWithBase('/docs/user-guide/evals-sdk/'),
+      'Evaluate outputs and trajectories, diagnose failures, and simulate users and tools.',
     cta: 'Explore Evals',
+    exampleLabel: 'Python',
+    code: `from strands_evals import Case, Experiment
+from strands_evals.evaluators import OutputEvaluator
+
+cases = [Case(name="capital", input="Capital of France?", expected_output="Paris")]
+evaluator = OutputEvaluator(rubric="Score 1.0 if correct, else 0.0.")
+experiment = Experiment(cases=cases, evaluators=[evaluator])`,
   },
 ]
 ---
@@ -42,32 +56,74 @@ const modules = [
 <section id="tools" class="toolkit" aria-labelledby="tools-title">
   <div class="toolkit__inner">
     <header class="toolkit__header">
-      <p class="toolkit__eyebrow">Focused tools</p>
-      <h2 id="tools-title" class="toolkit__title">Add only what you need.</h2>
+      <p class="section-eyebrow">Extend your agent</p>
+      <h2 id="tools-title" class="toolkit__title">Add focused tools when you need them.</h2>
     </header>
 
     <div class="toolkit__modules" role="list" aria-label="Focused Strands tools">
       {
-        modules.map((module) => (
-          <article class="module-card" role="listitem" style={`--accent: ${module.accent};`}>
-            <div class="module-card__topline">
-              <p class="module-card__slug">{module.slug}</p>
-              <span class="module-card__badge">{module.badge}</span>
-            </div>
+        modules.map((module) => {
+          const exampleId = `${module.product.slug.slice(1)}-code-example`
+          const accent = `var(--card-accent-${module.product.accent})`
 
-            <h3 class="module-card__title">{module.title}</h3>
-            <p class="module-card__description">{module.description}</p>
-
-            <a
-              class="module-card__cta"
-              href={module.href}
-              aria-label={`${module.cta}: ${module.label}`}
+          return (
+            <article
+              class="module-card"
+              role="listitem"
+              style={`--accent: ${accent};`}
+              data-product-name={module.product.name}
+              data-example-closed-label="View code"
+              data-example-card
             >
-              {module.cta}
-              <span class="module-card__arrow" set:html={arrow} />
-            </a>
-          </article>
-        ))
+              <div class="module-card__topline">
+                <p class="module-card__slug">{module.product.slug}</p>
+                <span class="product-category">{module.category}</span>
+              </div>
+
+              <h3 class="module-card__title">{module.title}</h3>
+              <p class="module-card__description">{module.description}</p>
+
+              <div class="card-actions card-actions--module">
+                <a
+                  class="card-action card-action--text"
+                  href={module.product.href}
+                  aria-label={`${module.cta}: ${module.product.name}`}
+                >
+                  {module.cta}
+                  <span class="card-action__arrow" set:html={arrow} />
+                </a>
+                <button
+                  type="button"
+                  class="example-toggle example-toggle--compact"
+                  aria-expanded="false"
+                  aria-controls={exampleId}
+                  aria-label={`View code example for ${module.product.name}`}
+                  data-example-toggle
+                >
+                  <span data-example-toggle-label>View code</span>
+                  <span class="example-toggle__icon" aria-hidden="true" set:html={plus} />
+                </button>
+              </div>
+
+              <div id={exampleId} class="code-drawer" data-example-panel hidden>
+                <div class="code-terminal" data-code-terminal>
+                  <header class="code-terminal__header">
+                    <span class="code-terminal__language">{module.exampleLabel}</span>
+                    <button
+                      type="button"
+                      class="code-terminal__copy"
+                      aria-label={`Copy ${module.product.name} code example`}
+                      data-code-copy
+                    >
+                      <span role="status" aria-live="polite" data-code-copy-label>copy</span>
+                    </button>
+                  </header>
+                  <pre class="code-terminal__code"><code>{module.code}</code></pre>
+                </div>
+              </div>
+            </article>
+          )
+        })
       }
     </div>
   </div>
@@ -75,10 +131,8 @@ const modules = [
 
 <style>
   .toolkit {
-    padding: 56px 55px 88px;
     background: var(--bg);
     color: var(--fg);
-    scroll-margin-top: var(--sl-nav-height, 84px);
   }
 
   .toolkit__inner {
@@ -86,11 +140,7 @@ const modules = [
     margin: 0 auto;
   }
 
-  .toolkit__header {
-    margin-bottom: 26px;
-  }
-
-  .toolkit__eyebrow {
+  .section-eyebrow {
     margin: 0 0 10px;
     font-family: 'JetBrains Mono', ui-monospace, monospace;
     font-size: 12px;
@@ -101,84 +151,9 @@ const modules = [
     text-transform: uppercase;
   }
 
-  .toolkit__title {
-    margin: 0;
-    max-width: 760px;
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
-    font-size: clamp(32px, 3.4vw, 48px);
-    font-weight: 500;
-    line-height: 1.06;
-    color: var(--fg);
-    letter-spacing: -0.04em;
-  }
-
-  .module-card__slug {
-    margin: 0;
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
-    font-weight: 700;
-  }
-
-  .module-card__badge {
-    display: inline-flex;
-    min-height: 24px;
-    padding: 3px 8px;
-    align-items: center;
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
-    font-size: 10px;
-    font-weight: 700;
-    line-height: 1.2;
-    color: var(--fg);
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    border: 1px solid currentColor;
-    border-radius: 999px;
-  }
-
-  .module-card__cta {
-    display: inline-flex;
-    width: fit-content;
-    align-items: center;
-    gap: 8px;
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
-    font-weight: 700;
-    line-height: 1.3;
-    text-decoration: none;
-  }
-
-  .module-card__cta:hover {
-    opacity: 0.78;
-  }
-
-  .module-card__cta:focus-visible {
-    outline: 3px solid var(--accent-green);
-    outline-offset: 4px;
-    border-radius: 4px;
-  }
-
-  .module-card__arrow {
-    display: inline-flex;
-    width: 11px;
-    height: 9px;
-  }
-
-  .module-card__arrow :global(svg) {
-    width: 100%;
-    height: 100%;
-  }
-
-  .toolkit__modules {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(330px, 1fr));
-    gap: 14px;
-  }
-
   .module-card {
     position: relative;
-    display: flex;
-    min-height: 205px;
     overflow: hidden;
-    padding: 16px 17px 17px 20px;
-    flex-direction: column;
     background:
       linear-gradient(
         145deg,
@@ -206,17 +181,253 @@ const modules = [
   }
 
   .module-card__slug {
-    font-size: 14px;
+    margin: 0;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-weight: 700;
     line-height: 1.3;
     color: var(--accent);
   }
 
-  .module-card__badge {
-    border-color: var(--accent);
+  .product-category {
+    display: inline-flex;
+    min-height: 24px;
+    padding: 3px 9px;
+    align-items: center;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1.2;
+    color: var(--fg);
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    border: 1px solid var(--accent);
+    border-radius: 999px;
+    white-space: nowrap;
+  }
+
+  .card-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .card-actions--module {
+    margin-top: auto;
+    padding-top: 16px;
+    justify-content: space-between;
+  }
+
+  .card-action,
+  .example-toggle {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-weight: 700;
+    line-height: 1.3;
+  }
+
+  .card-action {
+    display: inline-flex;
+    width: fit-content;
+    align-items: center;
+    gap: 8px;
+    color: var(--fg);
+    text-decoration: none;
+  }
+
+  .card-action:hover,
+  .example-toggle:hover {
+    opacity: 0.78;
+  }
+
+  .card-action:focus-visible,
+  .example-toggle:focus-visible,
+  .code-terminal__copy:focus-visible {
+    outline: 3px solid var(--accent-green);
+    outline-offset: 3px;
+    border-radius: 4px;
+  }
+
+  .card-action--text {
+    font-size: 12px;
+  }
+
+  .card-action__arrow {
+    display: inline-flex;
+    width: 11px;
+    height: 9px;
+  }
+
+  .card-action__arrow :global(svg) {
+    width: 100%;
+    height: 100%;
+  }
+
+  .example-toggle {
+    display: inline-flex;
+    min-height: 38px;
+    padding: 8px 0;
+    align-items: center;
+    gap: 9px;
+    background: transparent;
+    border: 0;
+    color: var(--fg);
+    font-size: 12px;
+    cursor: pointer;
+  }
+
+  .example-toggle--compact {
+    min-height: 32px;
+    padding: 5px 0;
+    font-size: 11px;
+  }
+
+  .example-toggle__icon {
+    position: relative;
+    display: inline-flex;
+    width: 13px;
+    height: 13px;
+    color: var(--accent);
+  }
+
+  .example-toggle__icon :global(svg) {
+    width: 100%;
+    height: 100%;
+  }
+
+  .is-open .example-toggle__icon :global(svg) {
+    display: none;
+  }
+
+  .is-open .example-toggle__icon::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 0;
+    width: 13px;
+    height: 2px;
+    background: var(--accent);
+    border-radius: 2px;
+    transform: translateY(-50%);
+  }
+
+  .code-drawer {
+    margin-top: 18px;
+    padding-top: 18px;
+    border-top: 1px solid color-mix(in srgb, var(--card-border) 70%, transparent);
+    animation: reveal-code 0.2s ease both;
+  }
+
+  .code-drawer[hidden] {
+    display: none;
+  }
+
+  @keyframes reveal-code {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .code-terminal {
+    min-width: 0;
+    overflow: hidden;
+    background: var(--terminal-bg);
+    border: 1px solid var(--toggle-inactive-border);
+    border-radius: 8px;
+  }
+
+  .code-terminal__header {
+    display: flex;
+    min-height: 36px;
+    padding: 8px 10px 8px 13px;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    border-bottom: 1px solid var(--toggle-inactive-border);
+  }
+
+  .code-terminal__language,
+  .code-terminal__copy {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1.2;
+    letter-spacing: 0.06em;
+  }
+
+  .code-terminal__language {
+    color: var(--toggle-inactive-fg);
+    text-transform: uppercase;
+  }
+
+  .code-terminal__copy {
+    margin-left: auto;
+    padding: 4px 7px;
+    background: transparent;
+    border: 0;
+    color: var(--toggle-inactive-fg);
+    cursor: pointer;
+  }
+
+  .code-terminal__copy.is-copied {
+    color: var(--strands-green);
+  }
+
+  .code-terminal__code {
+    margin: 0;
+    padding: 15px 17px 17px;
+    overflow-x: auto;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 11px;
+    line-height: 1.55;
+    color: var(--fg);
+    background: transparent;
+    white-space: pre;
+  }
+
+  .toolkit {
+    padding: 84px 55px 88px;
+    scroll-margin-top: var(--sl-nav-height, 84px);
+  }
+
+  .toolkit__header {
+    margin-bottom: 24px;
+  }
+
+  .toolkit__title {
+    max-width: 760px;
+    margin: 0;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: clamp(32px, 3.4vw, 48px);
+    font-weight: 500;
+    line-height: 1.06;
+    color: var(--fg);
+    letter-spacing: -0.04em;
+  }
+
+  .toolkit__modules {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    align-items: start;
+    gap: 14px;
+  }
+
+  .module-card {
+    display: flex;
+    min-height: 215px;
+    padding: 16px 17px 16px 20px;
+    flex-direction: column;
+  }
+
+  .module-card__slug {
+    font-size: 14px;
   }
 
   .module-card__title {
-    margin: 18px 0 0;
+    margin: 16px 0 0;
     font-family: 'Space Grotesk', system-ui, sans-serif;
     font-size: 22px;
     font-weight: 600;
@@ -233,44 +444,118 @@ const modules = [
     color: var(--fg);
   }
 
-  .module-card__cta {
-    margin-top: auto;
-    padding-top: 15px;
-    font-size: 12px;
-    color: var(--fg);
+  @media (max-width: 1023px) {
+    .toolkit__modules {
+      grid-template-columns: 1fr;
+    }
+
+    .module-card {
+      min-height: 0;
+    }
   }
 
   @media (max-width: 767px) {
+    .section-eyebrow {
+      margin-bottom: 12px;
+      font-size: 10px;
+    }
+
+    .card-actions--module {
+      align-items: center;
+      gap: 12px;
+    }
+
+    .code-terminal__code {
+      padding: 13px 14px 15px;
+      font-size: 10px;
+    }
+
     .toolkit {
-      padding: 46px 19px 64px;
+      padding: 58px 19px 64px;
     }
 
     .toolkit__header {
       margin-bottom: 22px;
     }
 
-    .toolkit__eyebrow {
-      margin-bottom: 12px;
-      font-size: 10px;
-    }
-
     .toolkit__title {
       font-size: clamp(31px, 9vw, 40px);
     }
 
-    .toolkit__modules {
-      grid-template-columns: 1fr;
-    }
-
     .module-card {
-      min-height: 210px;
-      padding: 16px 16px 17px 20px;
+      padding: 15px 15px 15px 19px;
     }
 
     .module-card__title {
-      margin-top: 18px;
-      font-size: 22px;
+      margin-top: 15px;
+      font-size: 21px;
+    }
+
+    .product-category {
+      font-size: 9px;
     }
   }
 
+  @media (prefers-reduced-motion: reduce) {
+    .code-drawer {
+      animation: none;
+    }
+  }
 </style>
+
+<script>
+  import { attachCopyButton } from '../util/clipboard'
+
+  const toolkit = document.querySelector<HTMLElement>('.toolkit')
+
+  function setExampleOpen(card: HTMLElement, willOpen: boolean) {
+    card.classList.toggle('is-open', willOpen)
+
+    const toggle = card.querySelector<HTMLButtonElement>('[data-example-toggle]')
+    const panel = card.querySelector<HTMLElement>('[data-example-panel]')
+    const label = toggle?.querySelector<HTMLElement>('[data-example-toggle-label]')
+
+    toggle?.setAttribute('aria-expanded', willOpen ? 'true' : 'false')
+    if (toggle) {
+      const productName = card.dataset.productName ?? 'this product'
+      toggle.setAttribute(
+        'aria-label',
+        `${willOpen ? 'Hide' : 'View'} code example for ${productName}`,
+      )
+    }
+    if (panel) panel.hidden = !willOpen
+    if (label) {
+      label.textContent = willOpen
+        ? 'Hide code'
+        : (card.dataset.exampleClosedLabel ?? 'View code')
+    }
+  }
+
+  toolkit?.querySelectorAll<HTMLElement>('[data-example-card]').forEach((card) => {
+    card.querySelector<HTMLButtonElement>('[data-example-toggle]')?.addEventListener('click', () => {
+      const willOpen = !card.classList.contains('is-open')
+      if (willOpen) {
+        toolkit.querySelectorAll<HTMLElement>('[data-example-card].is-open').forEach((openCard) => {
+          if (openCard !== card) setExampleOpen(openCard, false)
+        })
+      }
+      setExampleOpen(card, willOpen)
+    })
+  })
+
+  toolkit?.querySelectorAll<HTMLElement>('[data-code-terminal]').forEach((terminal) => {
+    const button = terminal.querySelector<HTMLButtonElement>('[data-code-copy]')
+    if (!button) return
+
+    attachCopyButton(button, {
+      label: button.querySelector<HTMLElement>('[data-code-copy-label]'),
+      getText: () =>
+        terminal.querySelector<HTMLElement>('.code-terminal__code:not([hidden]) code')?.textContent ?? '',
+      track: {
+        surface: 'code:homepage',
+        detail: () =>
+          terminal.querySelector<HTMLElement>('.code-terminal__language')?.textContent?.trim(),
+      },
+    })
+  })
+</script>

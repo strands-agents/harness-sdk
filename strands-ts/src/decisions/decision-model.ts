@@ -12,10 +12,11 @@ import type { AskOptions, DecisionCallOptions, DecisionInput, DecisionResult, Qu
  * Abstract base for anything that can answer closed questions.
  *
  * The public `ask` opens a `decision` span, validates the question map, delegates
- * to the subclass `_ask`, records usage and the answer set as span attributes/events,
- * and closes the span. Every implementation is traced identically. Given an
- * `invocationContext`, `ask` also adds the reported usage to that request once
- * `_ask` returns.
+ * to the subclass `_ask`, records usage, the question ids, and the answer set as span
+ * attributes, and closes the span. Content goes on span attributes rather than span
+ * events because OpenTelemetry has deprecated the span-event recording API. Every
+ * implementation is traced identically. Given an `invocationContext`, `ask` also adds
+ * the reported usage to that request once `_ask` returns.
  */
 export abstract class DecisionModel {
   /**
@@ -44,9 +45,9 @@ export abstract class DecisionModel {
       kind: SpanKind.INTERNAL,
       attributes: {
         'gen_ai.operation.name': 'decision',
+        'gen_ai.decision.questions': Object.keys(questions),
       },
     })
-    span.addEvent('gen_ai.decision.questions', { ids: Object.keys(questions) })
 
     try {
       const result = await context.with(trace.setSpan(context.active(), span), () =>
@@ -55,15 +56,16 @@ export abstract class DecisionModel {
         })
       )
 
-      const spanAttributes: Record<string, number> = { 'gen_ai.decision.latency_ms': result.metadata.latencyMs }
+      const spanAttributes: Record<string, string | number> = {
+        'gen_ai.decision.latency_ms': result.metadata.latencyMs,
+        'gen_ai.decision.answers': JSON.stringify(result.answers),
+      }
       if (result.usage !== undefined) {
         invocationContext?.recordUsage(result.usage)
         spanAttributes['gen_ai.usage.input_tokens'] = result.usage.inputTokens
         spanAttributes['gen_ai.usage.output_tokens'] = result.usage.outputTokens
       }
       span.setAttributes(spanAttributes)
-
-      span.addEvent('gen_ai.decision.answers', { answers: JSON.stringify(result.answers) })
       span.setStatus({ code: SpanStatusCode.OK })
 
       return result

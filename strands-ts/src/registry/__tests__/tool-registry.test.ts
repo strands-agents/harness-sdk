@@ -143,6 +143,56 @@ describe('ToolRegistry', () => {
     })
   })
 
+  describe('swap', () => {
+    it('replaces the current tools with the next ones and keeps every other tool', () => {
+      const other = createMockTool({ name: 'other' })
+      const [oldA, oldB] = [createMockTool({ name: 'tool-a' }), createMockTool({ name: 'tool-b' })]
+      const [newB, newC] = [createMockTool({ name: 'tool-b' }), createMockTool({ name: 'tool-c' })]
+      registry.add([other, oldA, oldB])
+
+      expect(registry.swap([oldA, oldB], [newB, newC])).toEqual([])
+
+      expect(registry.list()).toEqual([other, newB, newC])
+    })
+
+    it.each([
+      ['takes the name of another tool', 'other', "Tool with name 'other' already registered"],
+      [
+        'differs from another tool only by - or _',
+        'other_tool',
+        "Tool name 'other_tool' already exists as 'other-tool'",
+      ],
+      ['has an invalid name', 'bad name!', 'Tool name must contain only alphanumeric characters'],
+    ])('skips a next tool that %s and registers the rest', (_case, name, reason) => {
+      const others = [createMockTool({ name: 'other' }), createMockTool({ name: 'other-tool' })]
+      const current = createMockTool({ name: 'tool-a' })
+      const [kept, rejected] = [createMockTool({ name: 'tool-b' }), createMockTool({ name })]
+      registry.add([...others, current])
+
+      const skipped = registry.swap([current], [rejected, kept])
+
+      expect(skipped).toEqual([{ tool: rejected, error: expect.any(ToolValidationError) }])
+      expect(skipped[0]!.error.message).toContain(reason)
+      expect(registry.list()).toEqual([...others, kept])
+    })
+
+    it('skips a next tool whose name an earlier next tool took', () => {
+      const [first, second] = [createMockTool({ name: 'tool-a' }), createMockTool({ name: 'tool-a' })]
+
+      expect(registry.swap([], [first, second])).toEqual([{ tool: second, error: expect.any(ToolValidationError) }])
+      expect(registry.list()).toEqual([first])
+    })
+
+    it('leaves a tool registered under a current name by another source', () => {
+      const other = createMockTool({ name: 'tool-a' })
+      registry.add(other)
+
+      registry.swap([createMockTool({ name: 'tool-a' })], [])
+
+      expect(registry.get('tool-a')).toBe(other)
+    })
+  })
+
   describe('get', () => {
     it('retrieves a tool by name', () => {
       const tool = createMockTool({ name: 'find-me' })

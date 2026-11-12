@@ -196,15 +196,17 @@ DEFAULT_READ_TIMEOUT = 120
 _CANCEL_POLL_INTERVAL = 0.05
 
 
-def _fields_with_drop_block(fields: dict[str, Any]) -> dict[str, Any] | None:
-    """Return additional request fields that drop stale thinking blocks, or None if they cannot change."""
-    thinking = thinking_with_drop_block(fields.get("thinking"))
+def _request_with_drop_block(request: dict[str, Any]) -> dict[str, Any] | None:
+    """Return the request with stale thinking blocks dropped, or None if it cannot change."""
+    fields = request.get("additionalModelRequestFields") or {}
+    tool_choice = request.get("toolConfig", {}).get("toolChoice", {})
+    thinking = thinking_with_drop_block(fields.get("thinking"), "any" in tool_choice or "tool" in tool_choice)
     if thinking is None:
         return None
     betas = list(fields.get("anthropic_beta") or [])
     if THINKING_BINDING_BETA not in betas:
         betas.append(THINKING_BINDING_BETA)
-    return {**fields, "anthropic_beta": betas, "thinking": thinking}
+    return {**request, "additionalModelRequestFields": {**fields, "anthropic_beta": betas, "thinking": thinking}}
 
 
 class BedrockModel(Model):
@@ -587,9 +589,6 @@ class BedrockModel(Model):
                 return {"additionalModelRequestFields": fields_without_thinking}
             return {}
 
-        if self._drop_stale_thinking_model_id == self.config["model_id"]:
-            additional_fields = _fields_with_drop_block(additional_fields) or additional_fields
-
         return {"additionalModelRequestFields": additional_fields}
 
     def _converse(self, converse_method: Callable[..., Any], request: dict[str, Any]) -> Any:
@@ -597,22 +596,26 @@ class BedrockModel(Model):
 
         The retry turns drop_block on for every later request to this model, since the stale blocks stay in history.
         """
+        if self._drop_stale_thinking_model_id == request["modelId"] and (latched := _request_with_drop_block(request)):
+            logger.debug("model_id=<%s> | sending drop_block for stale thinking", request["modelId"])
+            request = latched
         try:
             return converse_method(**request)
         except ClientError as error:
-            fields = request.get("additionalModelRequestFields") or {}
             error_code = error.response.get("Error", {}).get("Code")
             is_binding_error = error_code == "ValidationException" and is_thinking_binding_error(error)
-            retry_fields = _fields_with_drop_block(fields) if is_binding_error else None
-            if retry_fields is None:
+            retry_request = _request_with_drop_block(request) if is_binding_error else None
+            if retry_request is None:
                 raise
 
         logger.warning(
             "model_id=<%s> | history edit invalidated replayed thinking blocks, retrying with drop_block",
             request["modelId"],
         )
+        response = converse_method(**retry_request)
+        # Latched only once the retry is accepted, so a rejected retry does not alter later requests.
         self._drop_stale_thinking_model_id = request["modelId"]
-        return converse_method(**{**request, "additionalModelRequestFields": retry_fields})
+        return response
 
     def _apply_system_cache_ttl(
         self, system_blocks: list[SystemContentBlock], tools_cache_point: list[dict[str, Any]]
@@ -972,6 +975,7 @@ class BedrockModel(Model):
 
         filtered_unknown_members = False
         dropped_reasoning_content = False
+        skipped_injected = False
 
         # Pre-compute the index of the last user message containing text or image content.
         # This ensures guardContent wrapping is maintained across tool execution cycles, where
@@ -987,6 +991,11 @@ class BedrockModel(Model):
                 # Filter out SDK_UNKNOWN_MEMBER content blocks
                 if "SDK_UNKNOWN_MEMBER" in content_block:
                     filtered_unknown_members = True
+                    continue
+
+                # Only a direct model call or a model_info override that turns temporary_messages on gets here.
+                if "injected" in content_block:
+                    skipped_injected = True
                     continue
 
                 if "reasoningContent" in content_block and self._rejects_reasoning_block(
@@ -1036,6 +1045,8 @@ class BedrockModel(Model):
             logger.warning(
                 "Filtered out SDK_UNKNOWN_MEMBER content blocks from messages, consider upgrading boto3 version"
             )
+        if skipped_injected:
+            logger.warning("block_type=<injected> | bedrock does not send injected blocks | skipping it")
         if dropped_reasoning_content:
             logger.debug(
                 "model_id=<%s> | dropped reasoningContent blocks the model does not accept", self.config["model_id"]

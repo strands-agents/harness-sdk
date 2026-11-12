@@ -522,6 +522,18 @@ class TestTruncateStrategy:
         assert await strategy.apply(context) is True
         assert "[Truncated:" in messages[1]["content"][0]["text"]
 
+    @pytest.mark.asyncio
+    async def test_leaves_injected_text_in_place(self, mock_agent):
+        strategy = Offload.truncate("*", {"preview_tokens": 50}).when(threshold=100)
+        injected = ContentBlock(injected={"text": "x" * (2500 * 4 + 100), "source": "strands:memory-manager"})
+        user_msg = Message(role="user", content=[ContentBlock(text="ask"), injected])
+        messages: Messages = [user_msg]
+        mock_agent.messages = messages
+        context = ContextState(messages=messages, agent=mock_agent, utilization=0.5)
+
+        assert await strategy.apply(context) is False
+        assert user_msg["content"] == [ContentBlock(text="ask"), injected]
+
 
 class TestMessageLevelDrop:
     """Tests for message-level drop — base _apply_per_message behavior exercised via Drop."""

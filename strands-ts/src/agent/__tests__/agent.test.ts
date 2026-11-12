@@ -4,6 +4,7 @@ import { Agent, type ToolList } from '../agent.js'
 import { SessionManager } from '../../session/session-manager.js'
 import { McpClient } from '../../mcp/index.js'
 import { McpTool } from '../../tools/mcp-tool.js'
+import { logger } from '../../logging/logger.js'
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
 import { collectGenerator } from '../../__fixtures__/model-test-helpers.js'
 import { createMockTool, createRandomTool } from '../../__fixtures__/tool-helpers.js'
@@ -2709,6 +2710,84 @@ describe('normalizeToolUseNames', () => {
       expect(agent.tools.find((t) => t.name === 'tool_b')!.description).toBe('B-updated')
 
       setterSpy.mockRestore()
+    })
+
+    describe('when a refreshed tool is invalid or taken', () => {
+      /** An agent with one MCP tool, a user tool and the context manager's retrieval tool, plus its refresh callback. */
+      async function setup(): Promise<{
+        agent: Agent
+        refresh: (oldTools: string[], newTools: McpTool[]) => void
+        mcpTool: (name: string) => McpTool
+        initial: McpTool
+      }> {
+        const mcpClient = new McpClient({ transport: { start: vi.fn(), send: vi.fn(), close: vi.fn() } as never })
+        const mcpTool = (name: string): McpTool =>
+          new McpTool({ name, description: `MCP ${name}`, inputSchema: {}, client: mcpClient })
+        const initial = mcpTool('tool_a')
+        vi.spyOn(mcpClient, 'listTools').mockResolvedValue([initial])
+        let refresh: ((oldTools: string[], newTools: McpTool[]) => void) | undefined
+        const setterSpy = vi.spyOn(McpClient.prototype, 'onToolsChanged', 'set').mockImplementation((cb) => {
+          refresh = cb
+        })
+        const agent = new Agent({
+          model: new MockMessageModel(),
+          tools: [
+            mcpClient,
+            createMockTool('shell', () => new ToolResultBlock({ toolUseId: 'shell', status: 'success', content: [] })),
+          ],
+          contextManager: 'auto',
+          printer: false,
+        })
+        await agent.initialize()
+        setterSpy.mockRestore()
+        return { agent, refresh: refresh!, mcpTool, initial }
+      }
+
+      it.each(['retrieve_context', 'shell'])(
+        'skips a refreshed tool that takes the name %s from another source and applies the rest',
+        async (name) => {
+          using warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+          const { agent, refresh, mcpTool } = await setup()
+          const before = agent.toolRegistry.get(name)
+          expect(before).toBeDefined()
+          const [toolA, toolC] = [mcpTool('tool_a'), mcpTool('tool_c')]
+
+          refresh(['tool_a'], [toolA, toolC, mcpTool(name)])
+
+          expect(agent.toolRegistry.get(name)).toBe(before)
+          expect(agent.toolRegistry.get('tool_a')).toBe(toolA)
+          expect(agent.toolRegistry.get('tool_c')).toBe(toolC)
+          expect(warnSpy).toHaveBeenCalledWith(
+            `client=<strands-agents-ts-sdk>, tool_name=<${name}>, error=<Tool with name '${name}' already registered> | skipping refreshed mcp tool`
+          )
+        }
+      )
+
+      it('skips an invalid refreshed tool and removes the tools the server dropped', async () => {
+        using _warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+        const { agent, refresh, mcpTool } = await setup()
+        const toolC = mcpTool('tool_c')
+
+        refresh(['tool_a'], [toolC, mcpTool('bad name!')])
+
+        expect(agent.toolRegistry.get('tool_a')).toBeUndefined()
+        expect(agent.toolRegistry.get('tool_c')).toBe(toolC)
+        expect(agent.toolRegistry.get('bad name!')).toBeUndefined()
+      })
+
+      it('keeps the other source tool on the next refresh, though the client reports it as an old tool', async () => {
+        using _warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+        const { agent, refresh, mcpTool } = await setup()
+        const retrieval = agent.toolRegistry.get('retrieve_context')
+        expect(retrieval).toBeDefined()
+        refresh(['tool_a'], [mcpTool('tool_a'), mcpTool('retrieve_context')])
+
+        refresh(['tool_a', 'retrieve_context'], [mcpTool('tool_d')])
+
+        expect(agent.toolRegistry.get('retrieve_context')).toBe(retrieval)
+        expect(agent.toolRegistry.get('tool_a')).toBeUndefined()
+        expect(agent.toolRegistry.get('tool_d')?.description).toBe('MCP tool_d')
+      })
     })
   })
 

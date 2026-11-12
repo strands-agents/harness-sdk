@@ -254,6 +254,11 @@ def handle_content_block_delta(
         typed_event = CitationStreamEvent(delta=delta_content, citation=delta_content["citation"])
 
     elif "reasoningContent" in delta_content:
+        reasoning_delta = delta_content["reasoningContent"]
+        # A new reasoning payload after a signature starts a block, even under the same index.
+        if "signature" in state and ("text" in reasoning_delta or "redactedContent" in reasoning_delta):
+            _finalize_reasoning_text(state)
+
         if "text" in delta_content["reasoningContent"]:
             if "reasoningText" not in state:
                 state["reasoningText"] = ""
@@ -281,6 +286,25 @@ def handle_content_block_delta(
     return state, typed_event
 
 
+def _finalize_reasoning_text(state: dict[str, Any]) -> None:
+    """Append only the pending reasoning text and consume its signature."""
+    if state["reasoningText"] or "signature" in state:
+        content_block: ContentBlock = {
+            "reasoningContent": {
+                "reasoningText": {
+                    "text": state["reasoningText"],
+                }
+            }
+        }
+
+        # Consume the signature so it belongs to exactly this block and does not leak into the next one.
+        if (signature := state.pop("signature", None)) is not None:
+            content_block["reasoningContent"]["reasoningText"]["signature"] = signature
+
+        state["content"].append(content_block)
+        state["reasoningText"] = ""
+
+
 def handle_content_block_stop(state: dict[str, Any]) -> dict[str, Any]:
     """Handles the end of a content block by finalizing tool usage, text content, or reasoning content.
 
@@ -294,7 +318,6 @@ def handle_content_block_stop(state: dict[str, Any]) -> dict[str, Any]:
 
     current_tool_use = state["current_tool_use"]
     text = state["text"]
-    reasoning_text = state["reasoningText"]
     citations_content = state["citationsContent"]
     redacted_content = state.get("redactedContent")
 
@@ -351,21 +374,7 @@ def handle_content_block_stop(state: dict[str, Any]) -> dict[str, Any]:
             content.append({"text": text})
         state["text"] = ""
 
-    if reasoning_text or "signature" in state:
-        content_block: ContentBlock = {
-            "reasoningContent": {
-                "reasoningText": {
-                    "text": state["reasoningText"],
-                }
-            }
-        }
-
-        # Consume the signature so it belongs to exactly this block and does not leak into the next one.
-        if (signature := state.pop("signature", None)) is not None:
-            content_block["reasoningContent"]["reasoningText"]["signature"] = signature
-
-        content.append(content_block)
-        state["reasoningText"] = ""
+    _finalize_reasoning_text(state)
     if redacted_content:
         content.append({"reasoningContent": {"redactedContent": redacted_content}})
         state["redactedContent"] = b""
@@ -545,7 +554,7 @@ async def stream_messages(
     invocation_context: InvocationContext | None = None,
     **kwargs: Any,
 ) -> AsyncGenerator[TypedEvent, None]:
-    """Streams messages to the model and processes the response.
+    """Streams messages to the model and processes the response, through the SDK-internal ``ModelProxy``.
 
     Args:
         model: Model provider.
@@ -570,41 +579,21 @@ async def stream_messages(
     Yields:
         The reason for stopping, the final message, and the usage metrics
     """
-    logger.debug("model=<%s> | streaming messages", model)
+    # Lazy: _model_proxy imports this module at load time.
+    from ..models._model_proxy import ModelProxy
 
-    messages = _normalize_messages(messages)
-    # Whitelist only role and content before sending to the model provider.
-    # This ensures metadata (and any future non-model fields) never leak to providers.
-    messages = [Message(role=msg["role"], content=msg["content"]) for msg in messages]
-    has_summary = any("summary" in block for message in messages for block in message["content"])
-    if has_summary and model.model_info.capabilities.server_side_summary is not True:
-        # Only a provider with server-side summaries reads a summary block; others get its text.
-        for message in messages:
-            message["content"] = [
-                ContentBlock(text=block["summary"]["text"]) if "summary" in block else block
-                for block in message["content"]
-            ]
-    start_time = time.time()
-
-    # Omitted when unset, so an ordinary call's arguments are unchanged.
-    optional_kwargs: dict[str, Any] = {}
-    if dynamic_trailing_blocks:
-        optional_kwargs["dynamic_trailing_blocks"] = dynamic_trailing_blocks
-    if structured_output_model:
-        optional_kwargs["structured_output_model"] = structured_output_model
-
-    chunks = model.stream(
+    async for event in ModelProxy(model).stream(
         messages,
-        tool_specs if tool_specs else None,
+        tool_specs,
         system_prompt,
         tool_choice=tool_choice,
         system_prompt_content=system_prompt_content,
         invocation_state=invocation_state,
         model_state=model_state,
+        dynamic_trailing_blocks=dynamic_trailing_blocks,
         cancel_signal=cancel_signal,
         agent_metadata=agent_metadata,
-        **optional_kwargs,
-    )
-
-    async for event in process_stream(chunks, start_time, cancel_signal, invocation_context):
+        structured_output_model=structured_output_model,
+        invocation_context=invocation_context,
+    ):
         yield event

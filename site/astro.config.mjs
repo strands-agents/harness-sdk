@@ -88,7 +88,7 @@ export default defineConfig({
         ],
       },
       title: 'Strands Agents',
-      description: 'The open source toolkit for building production agents.',
+      description: 'An open source framework, ready-to-use harness, and focused tools for building production agents.',
       sidebar: sidebar,
       tableOfContents: {
         minHeadingLevel: 2,

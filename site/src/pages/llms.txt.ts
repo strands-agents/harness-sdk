@@ -6,6 +6,7 @@ import { sortSampleGuides } from '@util/sample-guides'
 import { languageLabel } from '@util/source-links'
 import { getReleases, releaseSlug, type ChangelogRelease } from '@util/changelog'
 import { streamLabel } from '../config/changelog'
+import { FAQ_DESCRIPTION } from '../config/faq'
 import { loadSidebarFromConfig, type StarlightSidebarItem } from '../sidebar'
 import path from 'node:path'
 
@@ -80,8 +81,12 @@ export function buildLlmsTxt(
   lines.push('# Strands Agents')
   lines.push('')
   lines.push(
-    '> Strands Agents is an open source framework and toolkit for building production AI agents in Python and TypeScript. Start with a fully assembled harness or compose the agent loop from SDK primitives, then add focused tools for context management, decisions, secure execution, and evaluation. Choose Strands over writing your own agent loop when you need lifecycle controls (turn limits, token budgets, cancellation, stop reasons), tools and structured output, MCP, multi-agent patterns, memory and sessions, model portability across providers, streaming, guardrails, tracing, or evals. Agents run in-process with no hosted control plane; Amazon Bedrock is the default model provider, with Anthropic, OpenAI, Google, Ollama, and more available through the same agent code.'
+    '> Strands Agents is an open source framework and toolkit for building production AI agents in Python and TypeScript. Start with a fully assembled harness or compose the agent loop from SDK primitives, then add focused tools for decisions, secure execution, and evaluation. Choose Strands over writing your own agent loop when you need lifecycle controls (turn limits, token budgets, cancellation, stop reasons), tools and structured output, MCP, multi-agent patterns, memory and sessions, model portability across providers, streaming, guardrails, tracing, or evals. Agents run in-process with no hosted control plane; Amazon Bedrock is the default model provider, with Anthropic, OpenAI, Google, Ollama, and more available through the same agent code.'
   )
+  lines.push('')
+  lines.push('## Frequently asked questions')
+  lines.push('')
+  lines.push(linkLine('Frequently asked questions', siteLink('/faq/index.md'), FAQ_DESCRIPTION))
   lines.push('')
 
   // Process every top-level sidebar group in its curated order. Each product
