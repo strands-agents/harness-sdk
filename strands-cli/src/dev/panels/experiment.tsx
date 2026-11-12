@@ -636,12 +636,11 @@ const DetailView = ({
         <>
           <Line tone="error">{`  ✗ ${generation.error?.summary ?? 'Generation stopped'}`}</Line>
           {problem ? <Line tone="error">{`  ${problem}`}</Line> : null}
-          <Paragraph rows={Math.max(1, height - 4 - Number(Boolean(problem)))}>
-            {(generation.error?.detail ?? `Log: ${generation.log}`)
-              .split('\n')
-              .map((line) => `  ${line}`)
-              .join('\n')}
-          </Paragraph>
+          <Box paddingLeft={2} flexShrink={0}>
+            <Paragraph rows={Math.max(1, height - 4 - Number(Boolean(problem)))}>
+              {generation.error?.detail ?? `Log: ${generation.log}`}
+            </Paragraph>
+          </Box>
         </>
       )}
       <Fill />

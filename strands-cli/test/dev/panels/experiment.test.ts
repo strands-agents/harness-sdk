@@ -84,6 +84,25 @@ describe('ExperimentPanel home', () => {
     expect(session[action]).toHaveBeenCalledWith(argument)
   })
 
+  it('shouldIndentEveryLineOfTheErrorDetailWhenItWraps', async () => {
+    const long = `strands-evals said: ${'AccessDeniedException is not authorized to perform '.repeat(4)}`
+    const { session } = experimentsSession({
+      generations: [
+        generation({ id: 'generation-3', phase: 'failed', error: { summary: 'Bedrock denied access', detail: long } }),
+      ],
+    })
+    const { press, text } = await show(createElement(ExperimentPanel, { ...panelProps(), session }), 24)
+
+    await press(DOWN)
+    await press(ENTER)
+
+    const wrapped = text()
+      .split('\n')
+      .filter((line) => line.includes('perform'))
+    expect(wrapped.length).toBeGreaterThan(1)
+    expect(wrapped.every((line) => line.startsWith('  '))).toBe(true)
+  })
+
   it('shouldShowWhyAndRetryWhenTheUserOpensAFailedGeneration', async () => {
     const { session } = mixed()
     const { press, text } = await show(createElement(ExperimentPanel, { ...panelProps(), session }), 24)
