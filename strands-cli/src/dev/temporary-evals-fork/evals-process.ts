@@ -111,6 +111,7 @@ export const spawnTemporaryEvals: TemporaryEvalsSpawner = ({
     const stderrTail: string[] = []
     const abort = (): void => void child.kill('SIGTERM')
     signal?.addEventListener('abort', abort, { once: true })
+    if (signal?.aborted) abort()
     process.once('exit', abort)
     if (background) {
       child.unref()

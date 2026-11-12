@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import {
+  createTemporaryExperimentCases,
   listTemporaryExperiments,
   readTemporaryExperimentFile,
   temporaryBlankCase,
@@ -140,6 +141,18 @@ describe('TEMPORARY experiment files', () => {
     await writeTemporaryExperimentCases(path, raw, [{ ...rawCase('c1'), expected_output: 'edited' }])
 
     expect(await readJson(path)).toEqual(experimentDocument({ ...rawCase('c1'), expected_output: 'edited' }))
+  })
+
+  it('shouldRefuseToReplaceAFileWhenANewExperimentIsCreated', async () => {
+    const path = join(await temporaryDirectory(), 'refunds.json')
+    await writeJson(path, experimentDocument(rawCase('c0')))
+
+    await expect(createTemporaryExperimentCases(path, experimentDocument(), [rawCase('c1')])).rejects.toThrow(
+      'exists already, so nothing was saved'
+    )
+
+    expect(await readJson(path)).toEqual(experimentDocument(rawCase('c0')))
+    expect(await readdir(join(path, '..'))).toEqual(['refunds.json'])
   })
 
   it.each([

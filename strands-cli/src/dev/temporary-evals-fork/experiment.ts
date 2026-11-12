@@ -157,7 +157,11 @@ export const generateTemporaryExperiment = async (
   const directory = temporaryWorkspaceDirectory(workspace)
   const python = await prepareTemporaryOptimizerEnvironment(
     { workspaceDirectory: directory, projectRoot: workspace.root, language: workspace.config.language },
-    { ...(dependencies.run ? { run: dependencies.run } : {}), onProgress: request.onStatus ?? ignoreProgress }
+    {
+      ...(dependencies.run ? { run: dependencies.run } : {}),
+      ...(signal ? { signal } : {}),
+      onProgress: request.onStatus ?? ignoreProgress,
+    }
   )
   signal?.throwIfAborted()
   await mkdir(dirname(files.draft), { recursive: true })

@@ -190,4 +190,27 @@ describe('TEMPORARY optimizer environment', () => {
 
     expect(run.mock.calls.filter(([request]) => request.args[1] === 'venv')).toHaveLength(1)
   })
+
+  it('shouldFinishTheSharedSetupForTheOtherCallerWhenOneCallerStops', async () => {
+    const paths = await layout()
+    let release = (): void => undefined
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const base = fakeRunner(paths)
+    const run = vi.fn(async (request: TemporaryCommandRequest): Promise<string> => {
+      if (request.args.includes('install')) await gate
+      return base(request)
+    })
+    const stop = new AbortController()
+
+    const stopped = prepareTemporaryOptimizerEnvironment(paths, { run, signal: stop.signal })
+    const other = prepareTemporaryOptimizerEnvironment(paths, { run })
+    await vi.waitFor(() => expect(installs(base)).toHaveLength(0))
+    stop.abort(new Error('stopped by the user'))
+    release()
+
+    await expect(stopped).rejects.toThrow('stopped by the user')
+    await expect(other).resolves.toBe(temporaryVenvPython(join(paths.workspaceDirectory, 'tmp/optimization/.venv')))
+  })
 })

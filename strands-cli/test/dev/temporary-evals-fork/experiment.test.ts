@@ -4,7 +4,11 @@ import { dirname, join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { GenerationSettings } from '../../../src/dev/panels/model.js'
-import { temporaryVenvPython, type TemporaryCommandRequest } from '../../../src/dev/temporary-evals-fork/environment.js'
+import {
+  prepareTemporaryOptimizerEnvironment,
+  temporaryVenvPython,
+  type TemporaryCommandRequest,
+} from '../../../src/dev/temporary-evals-fork/environment.js'
 import type { TemporaryEvalsProcess } from '../../../src/dev/temporary-evals-fork/evals-process.js'
 import {
   generateTemporaryExperiment,
@@ -200,6 +204,10 @@ describe('TEMPORARY experiment generation', () => {
     ).rejects.toThrow()
 
     expect(spawnGenerator).not.toHaveBeenCalled()
+    await prepareTemporaryOptimizerEnvironment(
+      { workspaceDirectory: workspace.directory!, projectRoot: workspace.root, language: 'python' },
+      { run: environmentRunner(workspace) }
+    )
   })
 
   it.each<[string, TemporaryGenerationEvent | undefined]>([

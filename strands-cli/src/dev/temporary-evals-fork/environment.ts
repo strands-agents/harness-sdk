@@ -146,16 +146,30 @@ const PYTHON_START_HINT = {
 
 const preparing = new Map<string, Promise<string>>()
 
+const untilAborted = <Value>(work: Promise<Value>, signal: AbortSignal | undefined): Promise<Value> => {
+  if (!signal) return work
+  return new Promise((resolve, reject) => {
+    const stop = (): void => reject(signal.reason)
+    if (signal.aborted) {
+      stop()
+      return
+    }
+    signal.addEventListener('abort', stop, { once: true })
+    work.then(resolve, reject).finally(() => signal.removeEventListener('abort', stop))
+  })
+}
+
 export const prepareTemporaryOptimizerEnvironment = async (
   target: TemporaryOptimizerTarget,
-  options: TemporaryEnvironmentOptions = {}
+  { signal, ...options }: TemporaryEnvironmentOptions = {}
 ): Promise<string> => {
   const key = temporaryOptimizationFolder(target.workspaceDirectory)
-  const running = preparing.get(key)
-  if (running) return running
-  const work = prepareEnvironment(target, options).finally(() => preparing.delete(key))
-  preparing.set(key, work)
-  return work
+  let work = preparing.get(key)
+  if (!work) {
+    work = prepareEnvironment(target, options).finally(() => preparing.delete(key))
+    preparing.set(key, work)
+  }
+  return untilAborted(work, signal)
 }
 
 const prepareEnvironment = async (

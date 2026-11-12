@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { link, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
 
 import { errorMessage } from '../../terminal/text.js'
@@ -182,14 +182,28 @@ const pickCases = (raw: TemporaryExperimentDocument, names: readonly string[]): 
   })
 }
 
-const writeDocument = async (path: string, document: TemporaryExperimentDocument): Promise<void> => {
+const writeDocument = async (
+  path: string,
+  document: TemporaryExperimentDocument,
+  place: (staging: string, path: string) => Promise<void> = rename
+): Promise<void> => {
   await mkdir(dirname(path), { recursive: true })
   const staging = `${path}.${process.pid}.${randomUUID()}.tmp`
   try {
     await writeFile(staging, `${JSON.stringify(document, null, 2)}\n`)
-    await rename(staging, path)
+    await place(staging, path)
   } finally {
     await rm(staging, { force: true })
+  }
+}
+
+const placeNew = async (staging: string, path: string): Promise<void> => {
+  try {
+    await link(staging, path)
+  } catch (error) {
+    if (isRecord(error) && error.code === 'EEXIST')
+      throw new Error(`${path} exists already, so nothing was saved.`, { cause: error })
+    throw error
   }
 }
 
@@ -204,6 +218,12 @@ export const writeTemporaryExperimentCases = async (
   raw: TemporaryExperimentDocument,
   cases: readonly TemporaryRawCase[]
 ): Promise<void> => writeDocument(path, { ...raw, cases })
+
+export const createTemporaryExperimentCases = async (
+  path: string,
+  raw: TemporaryExperimentDocument,
+  cases: readonly TemporaryRawCase[]
+): Promise<void> => writeDocument(path, { ...raw, cases }, placeNew)
 
 export const temporaryBlankCase = (name: string, input: string, expected: string): TemporaryRawCase => ({
   name,

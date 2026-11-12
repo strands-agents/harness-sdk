@@ -349,4 +349,32 @@ describe('TEMPORARY experiment generation session', () => {
       expect.objectContaining({ name: 'refunds', phase: 'ready', made: 2 }),
     ])
   })
+
+  it('shouldDeleteAnUnreadableDraftWhenItIsDismissed', async () => {
+    const { workspace, experiments } = await setup()
+    const draft = join(workspace.directory!, 'tmp/experiments/drafts/20261112-101010-broken.json')
+    await writeFileAt(draft, '{"cases": [')
+    await experiments.reload()
+    expect(onlyGeneration(experiments)).toMatchObject({ name: 'broken', phase: 'failed' })
+
+    experiments.dismiss(onlyGeneration(experiments).id)
+    await vi.waitFor(() => expect(existsSync(draft)).toBe(false))
+    await experiments.reload()
+
+    expect(experiments.snapshot().generations).toEqual([])
+  })
+
+  it('shouldDeleteTheDraftWhenTheGenerationIsCancelledAfterTheDraftWasWritten', async () => {
+    const { experiments, generator, start } = await setup()
+    start({ name: 'refunds' })
+    await vi.waitFor(() => expect(generator.runs).toHaveLength(1))
+    const draft = flagValue(generator.runs[0]!.args, '--output')
+    await writeFileAt(draft, JSON.stringify(experimentDocument(['c0'])))
+
+    experiments.cancel(onlyGeneration(experiments).id)
+
+    await vi.waitFor(() => expect(existsSync(draft)).toBe(false))
+    await experiments.reload()
+    expect(experiments.snapshot().generations).toEqual([])
+  })
 })

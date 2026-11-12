@@ -30,6 +30,7 @@ import {
   type TemporaryGenerationFiles,
 } from './experiment.js'
 import {
+  createTemporaryExperimentCases,
   listTemporaryExperiments,
   readTemporaryExperimentFile,
   temporaryBlankCase,
@@ -313,7 +314,7 @@ export class TemporaryExperiments extends Store<ExperimentsState> implements Exp
       })
     const cases = kept.map(rawOf)
     try {
-      await writeTemporaryExperimentCases(path, opened.raw, cases)
+      await (opened.path ? writeTemporaryExperimentCases : createTemporaryExperimentCases)(path, opened.raw, cases)
     } catch (error) {
       return this.note({ tone: 'error', text: `Could not save the cases to ${shown}: ${errorMessage(error)}` })
     }
@@ -437,11 +438,14 @@ export class TemporaryExperiments extends Store<ExperimentsState> implements Exp
     job.abort.abort()
     this.jobs.delete(id)
     if (this.opened?.key === id) this.opened = undefined
-    if (job.draft)
-      void rm(job.files.draft, { force: true }).catch((error: unknown) => {
-        this.error = `Could not delete the draft ${job.files.draft}: ${errorMessage(error)}`
-        this.publish()
-      })
+    if (!isGenerating(job.generation)) this.discardDraft(job)
+  }
+
+  private discardDraft(job: Job): void {
+    void rm(job.files.draft, { force: true }).catch((error: unknown) => {
+      this.error = `Could not delete the draft ${job.files.draft}: ${errorMessage(error)}`
+      this.publish()
+    })
   }
 
   private update(job: Job, change: Partial<Generation>): void {
@@ -492,6 +496,10 @@ export class TemporaryExperiments extends Store<ExperimentsState> implements Exp
         },
         dependencies
       )
+      if (this.jobs.get(job.generation.id) !== job) {
+        this.discardDraft(job)
+        return
+      }
       const { raw } = await readTemporaryExperimentFile(outcome.path)
       job.draft = raw
       this.update(job, { phase: 'ready', made: raw.cases.length, endedAt: Date.now() })
@@ -503,7 +511,10 @@ export class TemporaryExperiments extends Store<ExperimentsState> implements Exp
           `experiment · ${settings.name} · ${plural(raw.cases.length, 'case')} drafted${failed} · /experiment to review`
         )
     } catch (error) {
-      if (job.abort.signal.aborted || this.jobs.get(job.generation.id) !== job) return
+      if (job.abort.signal.aborted || this.jobs.get(job.generation.id) !== job) {
+        this.discardDraft(job)
+        return
+      }
       const failure = temporaryGenerationError(error, {
         settings,
         ...(job.reported ? { reported: job.reported } : {}),
