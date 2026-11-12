@@ -2229,3 +2229,31 @@ def test_tool_nullable_optional_field_simplifies_anyof():
     # Since tag is not required, anyOf should be simplified away
     assert "anyOf" not in schema["properties"]["tag"]
     assert schema["properties"]["tag"]["type"] == "string"
+
+
+@pytest.mark.asyncio
+async def test_tool_async_generator_that_yields_nothing_emits_no_result():
+    """A tool that streams no events emits no result for the decorator to wrap.
+
+    The executor reports the canonical "Tool '<name>' did not return a result"
+    for that shape, so the decorator must not produce a result of its own.
+    """
+
+    @strands.tool(context=False)
+    async def silent() -> AsyncGenerator:
+        """Tool that yields nothing."""
+        if False:  # pragma: no cover - the body only makes this an async generator
+            yield "never"
+
+    tool: AgentTool = silent
+    tool_use: ToolUse = {"toolUseId": "t1", "name": "silent", "input": {}}
+
+    events = [
+        event
+        async for event in tool.stream(
+            tool_use=tool_use,
+            invocation_state={"agent": Agent(name="test_agent")},
+        )
+    ]
+
+    assert events == []
