@@ -7,10 +7,13 @@
  */
 
 import { posix, win32 } from 'node:path'
+import { TextDecoder } from 'node:util'
 
 import { DocumentBlock, ImageBlock, tool } from '@strands-agents/sdk'
 import type { DocumentFormat, ImageFormat, ToolContext } from '@strands-agents/sdk'
 import { z } from 'zod'
+
+import { mediaProblem } from './media-validation.js'
 
 const READ_DEFAULT_LIMIT = 2000
 
@@ -105,46 +108,78 @@ const READ_DESCRIPTION =
 type ReadInput = z.infer<typeof READ_SCHEMA>
 type ReadOutput = string | ImageBlock | DocumentBlock
 
+interface MediaCheck {
+  /** The format the file would be sent as; `undefined` when its bytes match no image signature. */
+  format: string | undefined
+  /** What the file should be, for the message when it is not. */
+  expected: string
+  /** Why the file is not usable as media; `undefined` when it is, `''` when there is nothing to add. */
+  problem: string | undefined
+}
+
+function checkMedia(ext: string, bytes: Uint8Array): MediaCheck {
+  if (DOCUMENT_FORMATS.includes(ext)) {
+    return { format: ext, expected: `a valid ${ext} document`, problem: mediaProblem(ext, bytes) }
+  }
+  const format = sniffImageFormat(bytes)
+  if (!format) return { format: undefined, expected: 'a png, jpeg, gif, or webp image', problem: '' }
+  return { format, expected: `a valid ${format} image`, problem: mediaProblem(format, bytes) }
+}
+
+function mediaResult(path: string, format: string, bytes: Uint8Array, media: boolean): ReadOutput {
+  const isDocument = DOCUMENT_FORMATS.includes(format)
+  if (!media) return mediaPlaceholder(path, isDocument ? 'Document' : 'Image', format, bytes.length)
+  if (!isDocument) return new ImageBlock({ format: format as ImageFormat, source: { bytes } })
+  return new DocumentBlock({ name: documentName(path), format: format as DocumentFormat, source: { bytes } })
+}
+
+/** A note and the text of a file that is not valid media, throwing if it is not text either. */
+function invalidMediaAsText(path: string, ext: string, bytes: Uint8Array, check: MediaCheck): [string, string] {
+  // Sending it as media would fail this request and every later one, since the block stays in history.
+  const reason = check.problem ? `: ${check.problem}` : ''
+  let content = ''
+  try {
+    content = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes)
+  } catch {
+    // Not UTF-8: falls through to the error below.
+  }
+  if (!content || content.includes('\0')) {
+    throw new Error(
+      `${path} has a .${ext} extension but its ${bytes.length} bytes are not ${check.expected}${reason}. ` +
+        'Identify it with `file`.'
+    )
+  }
+  return [`[${path} is not ${check.expected}${reason}. Showing it as text.]\n`, content]
+}
+
 function readCallback(media: boolean): (input: ReadInput, context?: ToolContext) => Promise<ReadOutput> {
   return async (input: ReadInput, context?: ToolContext): Promise<ReadOutput> => {
     if (!context) throw new Error('Tool context is required for read.')
     validatePath(input.path)
     const ext = extension(input.path)
 
-    if (IMAGE_EXTENSIONS.includes(ext)) {
+    let note = ''
+    let content: string
+    if (IMAGE_EXTENSIONS.includes(ext) || DOCUMENT_FORMATS.includes(ext)) {
       const bytes = await context.agent.sandbox.readFile(input.path)
-      const imageFormat = sniffImageFormat(bytes)
-      if (!imageFormat) {
-        throw new Error(
-          `${input.path} has a .${ext} extension but its ${bytes.length} bytes are not a png, jpeg, gif, or webp ` +
-            'image. Identify it with `file`; if it is text, read it with `cat`.'
-        )
+      const check = checkMedia(ext, bytes)
+      if (check.format !== undefined && check.problem === undefined) {
+        return mediaResult(input.path, check.format, bytes, media)
       }
-      if (!media) {
-        return mediaPlaceholder(input.path, 'Image', imageFormat, bytes.length)
-      }
-      return new ImageBlock({ format: imageFormat, source: { bytes } })
+      ;[note, content] = invalidMediaAsText(input.path, ext, bytes, check)
+    } else {
+      content = await context.agent.sandbox.readText(input.path)
     }
-
-    if (DOCUMENT_FORMATS.includes(ext)) {
-      const bytes = await context.agent.sandbox.readFile(input.path)
-      if (!media) {
-        return mediaPlaceholder(input.path, 'Document', ext, bytes.length)
-      }
-      return new DocumentBlock({ name: documentName(input.path), format: ext as DocumentFormat, source: { bytes } })
-    }
-
-    const content = await context.agent.sandbox.readText(input.path)
 
     const lines = content.split('\n')
     const start = Math.max(0, input.offset ? input.offset - 1 : 0)
     const count = input.limit ?? READ_DEFAULT_LIMIT
     const window = lines.slice(start, start + count)
     if (window.length === 0) {
-      return `[File has ${lines.length} lines; offset ${input.offset} is past the end.]`
+      return `${note}[File has ${lines.length} lines; offset ${input.offset} is past the end.]`
     }
 
-    let numbered = numberLines(window.join('\n'), start + 1)
+    let numbered = note + numberLines(window.join('\n'), start + 1)
     if (start > 0 || start + count < lines.length) {
       const shownEnd = start + window.length
       numbered += `\n[Showing lines ${start + 1}-${shownEnd} of ${lines.length}. Use offset/limit to read more.]`
