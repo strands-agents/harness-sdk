@@ -618,6 +618,71 @@ describe('GoogleModel', () => {
       })
     })
 
+    // #5916
+    const unavailableMessage =
+      'got status: UNAVAILABLE. {"error":{"code":503,"message":"The model is overloaded.","status":"UNAVAILABLE"}}'
+    const serviceUnavailableBody = JSON.stringify({
+      error: { message: 'Service Unavailable', code: 503, status: 'Service Unavailable' },
+    })
+    const throwingProvider = (error: Error): GoogleModel =>
+      new GoogleModel({
+        client: {
+          models: {
+            generateContentStream: vi.fn(async () => {
+              throw error
+            }),
+          },
+        } as unknown as GoogleGenAI,
+      })
+    const hi = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+
+    it.each([
+      [
+        'an ApiError with a non-JSON body wrapped by @google/genai',
+        new ApiError({ message: serviceUnavailableBody, status: 503 }),
+      ],
+      ['a mid-stream ApiError', new ApiError({ message: unavailableMessage, status: 503 })],
+      [
+        'a mid-stream ApiError from another @google/genai module copy',
+        Object.assign(new Error(unavailableMessage), { name: 'ApiError', status: 503 }),
+      ],
+      ['an error whose JSON message carries code 503', new Error(serviceUnavailableBody)],
+    ])('throws ModelThrottledError for HTTP 503 from %s', async (_, error) => {
+      await expect(collectIterator(throwingProvider(error).stream(hi))).rejects.toMatchObject({
+        name: 'ModelThrottledError',
+        cause: error,
+      })
+    })
+
+    it.each([
+      [
+        'an ApiError 500 with a non-JSON body',
+        new ApiError({
+          message: JSON.stringify({ error: { message: 'oops', code: 500, status: 'Internal Server Error' } }),
+          status: 500,
+        }),
+      ],
+      [
+        'a mid-stream ApiError 500',
+        new ApiError({
+          message: 'got status: INTERNAL. {"error":{"code":500,"message":"Internal error","status":"INTERNAL"}}',
+          status: 500,
+        }),
+      ],
+      [
+        'an ApiError 400 that mentions unavailable',
+        new ApiError({
+          message: JSON.stringify({
+            error: { message: 'Model unavailable in this region', code: 400, status: 'INVALID_ARGUMENT' },
+          }),
+          status: 400,
+        }),
+      ],
+      ['a plain error that says Service Unavailable', new Error('Service Unavailable')],
+    ])('rethrows %s unchanged', async (_, error) => {
+      await expect(collectIterator(throwingProvider(error).stream(hi))).rejects.toBe(error)
+    })
+
     it('rethrows unrecognized errors', async () => {
       const mockClient = {
         models: {
