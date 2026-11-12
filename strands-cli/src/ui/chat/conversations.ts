@@ -3,6 +3,8 @@ import { makePanel } from './panel-state.js'
 import {
   ChatController,
   type ChatControllerApi,
+  type ChatNotice,
+  type ChatErrorOptions,
   type NewChatPanel,
   type ChatPanel,
   type ChatPanelRow,
@@ -199,8 +201,12 @@ export class ConversationManager implements ChatControllerApi {
     this._active.controller.markReloaded(paths)
   }
 
-  showError(title: string, message: string): void {
-    this._openError(title, '', message)
+  showError(title: string, message: string, options: ChatErrorOptions = {}): void {
+    this._openError(title, '', message, options.fixDirectory)
+  }
+
+  notify(status: ChatNotice['status'], text: string): void {
+    this._active.controller.notify(status, text)
   }
 
   get busy(): boolean {
@@ -746,11 +752,12 @@ export class ConversationManager implements ChatControllerApi {
     }
   }
 
-  private _openError(title: string, label: string, description: string): void {
+  private _openError(title: string, label: string, description: string, fixDirectory?: string): void {
     this._panel = this._makePanel({
       kind: 'error',
       title,
       rows: [{ label, description, tone: 'danger' }],
+      ...(fixDirectory ? { fixDirectory } : {}),
     })
     this._emit()
   }

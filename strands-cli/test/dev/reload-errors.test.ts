@@ -58,6 +58,7 @@ describe('dev reload failures', () => {
       expect(message).toContain('previous working agent and session are still active')
       expect(message).toContain('save again to retry')
       expect(message).not.toContain('at source-loader')
+      expect(showError.mock.calls[0]![2]).toEqual({ fixDirectory: previous.getSnapshot().runtime.cwd })
       expect(previous.getSnapshot().runtime.session).toBe('existing-session')
       expect(backend.dispose).not.toHaveBeenCalled()
       expect(previous.getSnapshot().status).not.toBe('closed')

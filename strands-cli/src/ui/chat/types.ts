@@ -105,7 +105,11 @@ export interface ChatPanelBase {
 
 export type NewChatPanel =
   | (ChatPanelBase & {
-      kind: 'context' | 'skills' | 'tools' | 'voice' | 'help' | 'error'
+      kind: 'context' | 'skills' | 'tools' | 'voice' | 'help'
+    })
+  | (ChatPanelBase & {
+      kind: 'error'
+      fixDirectory?: string
     })
   | (ChatPanelBase & {
       kind: 'agents'
@@ -270,6 +274,10 @@ export interface ChatControllerOptions {
   peerEndpointId?: string
 }
 
+export interface ChatErrorOptions {
+  fixDirectory?: string
+}
+
 export interface ChatControllerApi {
   readonly subscribe: (listener: () => void) => () => void
   readonly getSnapshot: () => ChatSnapshot
@@ -279,7 +287,8 @@ export interface ChatControllerApi {
   readonly resumeSession?: ResumeSession | undefined
   captureConversations?(): Promise<ChatConversations>
   pauseVoiceInput?(): () => void
-  showError?(title: string, message: string): void
+  showError?(title: string, message: string, options?: ChatErrorOptions): void
+  notify?(status: ChatNotice['status'], text: string): void
   markReloaded?(paths: readonly string[]): void
   clearReloadStatus?(): void
   setSettings?(settings: Partial<ChatSettings>): Promise<boolean>

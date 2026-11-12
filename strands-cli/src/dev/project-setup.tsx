@@ -1,5 +1,5 @@
 import { createElement, useState, type ReactElement } from 'react'
-import { Box, useInput } from 'ink'
+import { Box, useInput, useStdout } from 'ink'
 
 import { Text, useTheme } from '../ui/theme.js'
 import type { StartupScreen } from '../ui/run.js'
@@ -17,12 +17,14 @@ import {
 } from '../project/preparation.js'
 import type { ImportedAgentProject } from '../project/import.js'
 import { sanitizeTerminalText } from '../terminal/text.js'
+import { fixInNewTab, type FixOutcome } from './fix-in-new-tab.js'
 
 export type SetupAction = 'validate' | 'back' | 'cancel' | 'retry'
 
 interface ProjectSetupPanelProps {
   plan?: ProjectPreparationPlan
   failure: PreparationFailure
+  directory: string
   onAction(action: SetupAction): void
 }
 
@@ -40,15 +42,24 @@ const failureReport = (plan: ProjectPreparationPlan | undefined, failure: Prepar
     .filter((line) => line.trim())
     .join('\n')
 
-export const ProjectSetupPanel = ({ plan, failure, onAction }: ProjectSetupPanelProps): ReactElement => {
+export const ProjectSetupPanel = ({ plan, failure, directory, onAction }: ProjectSetupPanelProps): ReactElement => {
   const { error } = useTheme()
   const { rows } = useTerminalSize()
+  const { stdout } = useStdout()
   const [details, setDetails] = useState(false)
-  const copyHint = useCopyableError(failureReport(plan, failure))
+  const [fix, setFix] = useState<FixOutcome>()
+  const report = failureReport(plan, failure)
+  const copyHint = useCopyableError(report)
+  const fixInTab = (): void => {
+    setFix({ status: 'delivered', text: 'Opening Strands in a new tab…' })
+    const guidance = plan?.guidance ? `\nSetup guidance: ${plan.guidance}` : ''
+    void fixInNewTab({ report: `${report}${guidance}`, directory, retry: 'setup' }, stdout).then(setFix)
+  }
   useInput((input, key) => {
     if (key.ctrl && input === 'c') return onAction('cancel')
     if (key.escape || input.toLowerCase() === 'b') return onAction('back')
     if (input.toLowerCase() === 'd') return setDetails((visible) => !visible)
+    if (input.toLowerCase() === 'f') return fixInTab()
     if (input.toLowerCase() === 'v') return onAction('validate')
     if (key.return || input.toLowerCase() === 'r') return onAction('retry')
   })
@@ -80,8 +91,9 @@ export const ProjectSetupPanel = ({ plan, failure, onAction }: ProjectSetupPanel
           <Text>{failure.details}</Text>
         </Box>
       ) : null}
+      {fix ? <Text {...(fix.status === 'error' ? { color: error } : {})}>{fix.text}</Text> : null}
       <Text dimColor>
-        {`Enter / r retry · v validate after manual setup · d ${details ? 'hide details' : 'details'} · ${copyHint} · b back`}
+        {`Enter / r retry · v validate after manual setup · f fix with Strands · d ${details ? 'hide details' : 'details'} · ${copyHint} · b back`}
       </Text>
     </Box>
   )
@@ -151,7 +163,11 @@ export const projectSetupSession = (): ProjectSetupSession => {
           return 'ready'
         } catch (error) {
           if (screen.signal.aborted) return 'cancel'
-          const action = await ask(screen, { ...(plan ? { plan } : {}), failure: failure(error) })
+          const action = await ask(screen, {
+            ...(plan ? { plan } : {}),
+            failure: failure(error),
+            directory: project.root,
+          })
           if (action === 'back' || action === 'cancel') return action
           validateOnly = action === 'validate'
           force = true
@@ -171,7 +187,11 @@ export const projectSetupSession = (): ProjectSetupSession => {
         }
       }
       for (;;) {
-        const action = await ask(screen, { ...(plan ? { plan } : {}), failure: failureRecord })
+        const action = await ask(screen, {
+          ...(plan ? { plan } : {}),
+          failure: failureRecord,
+          directory: plan?.project.root ?? process.cwd(),
+        })
         if (action === 'cancel') return 'exit'
         if (action === 'back') return 'back'
         try {

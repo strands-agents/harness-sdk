@@ -193,6 +193,12 @@ Enter or `r` retries. `v` validates after manual setup. `d` shows details. `b` r
 Retry re-reads the project manifests and forces setup when repair is needed. Dev does not reset source or silently rewrite lockfiles.
 Logs live under the selected project's `.strands/state/setup/`. Known credential values and authenticated URL credentials are redacted.
 
+`f` opens the Strands CLI in a new terminal tab to fix the project. The first message has the error, the project folder, and how dev loads agents.
+The **Agent reload failed** panel in a dev chat has the same key. The new tab uses the built-in agent, not a saved default agent.
+
+In tmux, dev opens a new tmux window. On macOS, dev opens an iTerm2 tab, a Ghostty tab (Ghostty 1.3 or later), or a Terminal window.
+In other terminals, dev copies a command and shows it. Run that command in a new tab.
+
 If a runtime or package manager is unsupported, prepare the project with its own tooling and then validate it in dev.
 If an import is missing, check the selected root and declared dependencies. For Python src-layout projects, check package metadata and editable installation.
 
@@ -381,7 +387,7 @@ Run `strands --help` for the parser's current list.
 | `--prompt <text>`             | All             | Initial request; equivalent to the positional request                                                                                   |
 | `--acp-server`                | ACP server      | Serve the agent over ACP; cannot be combined with a request, `--print`, or `--setup`                                                    |
 | `--setup`                     | Ink             | Open the provider and default-agent setup wizard                                                                                        |
-| `--agent <path>`              | All             | Load an agent ZIP, project folder, or `agent.ts`/`agent.py`                                                                             |
+| `--agent <path>`              | All             | Load an agent ZIP, project folder, or `agent.ts`/`agent.py`, or `""` for the built-in agent                                             |
 | `--env-file <path>`           | All             | Load an explicitly trusted env file; repeat for several files, later files win                                                          |
 | `--set <field=value>`         | Harness backend | Override any portable config field; repeatable and JSON-aware                                                                           |
 | `--name <name>`               | Harness backend | Override the agent name for this invocation                                                                                             |

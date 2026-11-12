@@ -52,6 +52,17 @@ export function PanelHelpFooter({
   )
 }
 
+function errorPanelKeys(panel: Extract<ChatPanel, { kind: 'error' }>, width: number, scrollable: boolean): string {
+  const narrow = width < 60
+  const keys = !scrollable
+    ? 'Ctrl+Y copy error · Esc close'
+    : narrow
+      ? '↑↓ scroll · Ctrl+Y copy · Esc close'
+      : '↑↓ / PgUp / PgDn scroll · Ctrl+Y copy error · Esc close'
+  if (!panel.fixDirectory) return keys
+  return `${narrow ? 'f fix' : 'f fix with Strands'} · ${keys}`
+}
+
 function panelHelpKeys(panel: ChatPanel, width: number, scrollable: boolean): string {
   if (panel.kind === 'agents' && panel.renameInput) return 'Enter save · Esc cancel'
   if (panel.kind === 'permission') {
@@ -61,12 +72,7 @@ function panelHelpKeys(panel: ChatPanel, width: number, scrollable: boolean): st
         ? '↑↓←→ · Enter choose · Esc deny'
         : '↑↓←→ · Enter choose · PgUp/PgDn scroll · Esc deny once'
   }
-  if (panel.kind === 'error') {
-    if (!scrollable) return 'Ctrl+Y copy error · Esc close'
-    return width < 60
-      ? '↑↓ scroll · Ctrl+Y copy · Esc close'
-      : '↑↓ / PgUp / PgDn scroll · Ctrl+Y copy error · Esc close'
-  }
+  if (panel.kind === 'error') return errorPanelKeys(panel, width, scrollable)
   if (panel.kind === 'detail' || panel.kind === 'help-detail') {
     return width < 53 ? '↑↓ scroll · Esc back' : '↑↓ / PgUp / PgDn scroll · Esc back'
   }

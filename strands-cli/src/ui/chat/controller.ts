@@ -97,6 +97,7 @@ import {
   type ChatControllerApi,
   type ChatControllerOptions,
   type ChatNotice,
+  type ChatErrorOptions,
   type ChatPanel,
   type ChatPanelRow,
   type ChatMcpStartup,
@@ -369,8 +370,13 @@ export class ChatController implements ChatControllerApi {
     this._emit()
   }
 
-  showError(title: string, message: string): void {
-    this._openError(title, '', message)
+  showError(title: string, message: string, options: ChatErrorOptions = {}): void {
+    this._openError(title, '', message, options.fixDirectory)
+  }
+
+  notify(status: ChatNotice['status'], text: string): void {
+    this._addNotice(status, text)
+    this._emit()
   }
 
   get backend(): ChatBackend {
@@ -3022,8 +3028,13 @@ export class ChatController implements ChatControllerApi {
     return makePanel(`panel-${this._nextPanel++}`, input)
   }
 
-  private _openError(title: string, label: string, description: string): void {
-    this._openPanel({ kind: 'error', title, rows: [{ label, description, tone: 'danger' }] })
+  private _openError(title: string, label: string, description: string, fixDirectory?: string): void {
+    this._openPanel({
+      kind: 'error',
+      title,
+      rows: [{ label, description, tone: 'danger' }],
+      ...(fixDirectory ? { fixDirectory } : {}),
+    })
   }
 }
 
