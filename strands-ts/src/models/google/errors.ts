@@ -25,7 +25,7 @@ export interface ErrorStatusConfig {
   messagePatterns?: Set<string>
 }
 
-const THROTTLING_HTTP_CODES = new Set<unknown>([429, 503])
+const THROTTLING_HTTP_CODES: ReadonlySet<number> = new Set([429, 503])
 
 /**
  * Mapping of Google GenAI API error statuses to error handling configuration.
@@ -59,7 +59,12 @@ export function classifyGoogleError(error: Error): GoogleErrorType | undefined {
   }
 
   // Checked by shape because instanceof fails across the @google/genai ESM and CJS builds.
-  if (error.name === 'ApiError' && 'status' in error && THROTTLING_HTTP_CODES.has(error.status)) {
+  if (
+    error.name === 'ApiError' &&
+    'status' in error &&
+    typeof error.status === 'number' &&
+    THROTTLING_HTTP_CODES.has(error.status)
+  ) {
     return 'throttling'
   }
 
@@ -81,7 +86,7 @@ export function classifyGoogleError(error: Error): GoogleErrorType | undefined {
     return undefined
   }
 
-  if (THROTTLING_HTTP_CODES.has(code)) {
+  if (typeof code === 'number' && THROTTLING_HTTP_CODES.has(code)) {
     return 'throttling'
   }
 
