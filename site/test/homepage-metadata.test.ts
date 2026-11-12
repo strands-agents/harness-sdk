@@ -10,10 +10,6 @@ function configuredPathWithBase(value: string): string {
   return `${base}${normalizedValue}`
 }
 
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-}
-
 describe('homepage machine-readable metadata', () => {
   const homepageHtml = readFileSync(new URL('../dist/index.html', import.meta.url), 'utf8')
   const homepage = parse(homepageHtml)
@@ -24,13 +20,25 @@ describe('homepage machine-readable metadata', () => {
     expect(homepageHtml.indexOf('<h1')).toBeLessThan(250_000)
   })
 
-  it('loads the decorative halftone as an external asset', () => {
-    const maskStyle = homepage.querySelector('.banner__halftone-mask')?.getAttribute('style')
-    const maskUrl = maskStyle?.match(/--halftone-mask: url\("([^"]+)"\)/)?.[1]
+  it('keeps the hero focused on one recommended starting path', () => {
+    const hero = homepage.querySelector('.banner')
 
-    const assetPrefix = escapeRegExp(configuredPathWithBase('/_astro/halftone.'))
-    expect(maskUrl).toMatch(new RegExp(`^${assetPrefix}[^/]+\\.svg$`))
-    expect(homepage.querySelector('.banner__halftone svg')).toBeNull()
+    expect(homepage.querySelector('.banner__halftone')).toBeNull()
+    expect(homepage.querySelector('.banner__starter')).toBeNull()
+    expect(hero?.querySelector('[data-install-variant="Python"]')?.text.trim()).toBe('pip install strands-harness')
+    expect(hero?.querySelector('[data-install-variant="TypeScript"]')?.text.trim()).toBe(
+      'npm i @strands-agents/harness'
+    )
+  })
+
+  it('publishes concise homepage metadata', () => {
+    expect(homepage.querySelector('title')?.text.trim()).toBe('Strands Agents | Build production AI agents')
+    expect(homepage.querySelector('meta[name="description"]')?.getAttribute('content')).toBe(
+      'Build production agents with an open source harness and SDK for Python and TypeScript, then add focused tools for decisions, security, and evaluation.'
+    )
+    expect(homepage.querySelector('meta[property="og:image:alt"]')?.getAttribute('content')).toBe(
+      'Strands Agents: build agents you can put to work'
+    )
   })
 
   it('advertises the Markdown homepage', () => {
@@ -51,7 +59,6 @@ describe('homepage machine-readable metadata', () => {
       'SoftwareApplication',
       'SoftwareApplication',
       'SoftwareApplication',
-      'SoftwareApplication',
     ])
     expect(structuredData['@graph'][0].sameAs).toContain('https://github.com/strands-agents')
     expect(JSON.stringify(structuredData)).not.toContain('SearchAction')
@@ -63,82 +70,41 @@ describe('homepage machine-readable metadata', () => {
 
     expect(main?.text.trim().length).toBeGreaterThan(500)
     expect(headings[0]?.tagName).toBe('H1')
-    expect(headings[0]?.text.trim()).toBe('Build production AI agents with open source tools.')
+    expect(headings[0]?.text.trim()).toBe('Build agents you can put to work.')
     expect(main?.querySelectorAll('h1')).toHaveLength(1)
   })
 
-  it('routes visitors to distinct harness and SDK quickstarts', () => {
+  it('routes visitors to the recommended harness quickstart and the tools section', () => {
     const primary = homepage.querySelector('.banner__action--primary')
     const secondary = homepage.querySelector('.banner__action--secondary')
 
     expect(primary?.text.trim()).toContain('Build your first agent')
     expect(primary?.getAttribute('href')).toBe(configuredPathWithBase('/docs/user-guide/harness/quickstart/'))
-    expect(secondary?.text.trim()).toContain('Start from SDK primitives')
-    expect(secondary?.getAttribute('href')).toBe(configuredPathWithBase('/docs/user-guide/sdk/quickstart/overview/'))
-    expect(homepage.querySelector('.banner__explore')?.getAttribute('href')).toBe('#toolkit')
+    expect(secondary?.text.trim()).toContain('Explore the tools')
+    expect(secondary?.getAttribute('href')).toBe('#tools')
   })
 
-  it('separates agent-building foundations from focused tools', () => {
+  it('keeps the SDK secondary before presenting focused tools', () => {
     const toolkit = homepage.querySelector('.toolkit')
-    const foundations = toolkit?.querySelectorAll('.foundation-card') ?? []
     const modules = toolkit?.querySelectorAll('.module-card') ?? []
 
-    expect(toolkit?.getAttribute('id')).toBe('toolkit')
+    expect(toolkit?.getAttribute('id')).toBe('tools')
     expect(toolkit?.querySelector('.toolkit__title')?.tagName).toBe('H2')
-    expect(toolkit?.querySelector('.toolkit__title')?.text.trim()).toBe('Choose your agent foundation.')
-    expect(toolkit?.querySelector('.toolkit__lede')).toBeNull()
-    expect(toolkit?.querySelector('.toolkit__modules-title')?.text.trim()).toBe(
-      'Focused tools for the rest of the agent stack.'
-    )
-    expect(toolkit?.querySelector('.toolkit__modules-lede')).toBeNull()
-    expect(homepage.querySelector('.banner__starter-features')).toBeNull()
-    expect(homepage.querySelector('.banner__starter-slug')?.text.trim()).toBe('/harness')
-    expect(
-      foundations.map((card) => ({
-        slug: card.querySelector('.foundation-card__slug')?.text.trim(),
-        badge: card.querySelector('.foundation-card__badge')?.text.trim(),
-        heading: {
-          tagName: card.querySelector('.foundation-card__title')?.tagName,
-          text: card.querySelector('.foundation-card__title')?.text.trim(),
-        },
-        install: {
-          python: card.querySelector('[data-install-variant="Python"]')?.text.trim(),
-          typescript: card.querySelector('[data-install-variant="TypeScript"]')?.text.trim(),
-          copyLabel: card.querySelector('[data-install-copy]')?.getAttribute('aria-label'),
-        },
-        ctaLabel: card.querySelector('.foundation-card__cta')?.getAttribute('aria-label'),
-        href: card.querySelector('.foundation-card__cta')?.getAttribute('href'),
-      }))
-    ).toEqual([
-      {
-        slug: '/harness',
-        badge: 'Recommended',
-        heading: { tagName: 'H3', text: 'Start with a complete agent.' },
-        install: {
-          python: 'pip install strands-harness',
-          typescript: 'npm i @strands-agents/harness',
-          copyLabel: 'Copy Strands harness install command',
-        },
-        ctaLabel: 'Start with Strands harness',
-        href: configuredPathWithBase('/docs/user-guide/harness/quickstart/'),
-      },
-      {
-        slug: '/harness-sdk',
-        badge: 'Build from primitives',
-        heading: { tagName: 'H3', text: 'Compose your own agent loop.' },
-        install: {
-          python: 'pip install strands-agents',
-          typescript: 'npm i @strands-agents/sdk',
-          copyLabel: 'Copy Strands Harness SDK install command',
-        },
-        ctaLabel: 'Build with SDK primitives',
-        href: configuredPathWithBase('/docs/user-guide/sdk/quickstart/overview/'),
-      },
-    ])
+    expect(toolkit?.querySelector('.toolkit__title')?.text.trim()).toBe('Add only what you need.')
+    expect(toolkit?.querySelector('.start-card')).toBeNull()
+
+    expect({
+      text: homepage.querySelector('.banner__sdk-link')?.text.trim(),
+      href: homepage.querySelector('.banner__sdk-link')?.getAttribute('href'),
+    }).toEqual({
+      text: 'Building from primitives? Explore the Strands Harness SDK',
+      href: configuredPathWithBase('/docs/user-guide/sdk/quickstart/overview/'),
+    })
 
     expect(
       modules.map((card) => ({
         slug: card.querySelector('.module-card__slug')?.text.trim(),
+        badge: card.querySelector('.module-card__badge')?.text.trim(),
         heading: {
           tagName: card.querySelector('.module-card__title')?.tagName,
           text: card.querySelector('.module-card__title')?.text.trim(),
@@ -147,28 +113,21 @@ describe('homepage machine-readable metadata', () => {
       }))
     ).toEqual([
       {
-        slug: '/stash',
-        heading: { tagName: 'H3', text: 'Keep working context available.' },
-        href: configuredPathWithBase('/docs/user-guide/sdk/context-management/'),
+        slug: '/box',
+        badge: 'Open source',
+        heading: { tagName: 'H3', text: 'Contain the agent.' },
+        href: configuredPathWithBase('/docs/user-guide/box/quickstart/'),
       },
       {
         slug: '/decider',
-        heading: { tagName: 'H3', text: 'Make focused decisions faster.' },
-        href: configuredPathWithBase('/docs/labs/strands-decider/'),
-      },
-      {
-        slug: '/shell',
-        heading: { tagName: 'H3', text: 'Give agents a constrained shell.' },
-        href: configuredPathWithBase('/docs/user-guide/shell/'),
-      },
-      {
-        slug: '/box',
-        heading: { tagName: 'H3', text: 'Contain the whole agent.' },
-        href: configuredPathWithBase('/docs/user-guide/box/'),
+        badge: 'Labs',
+        heading: { tagName: 'H3', text: 'Make faster decisions.' },
+        href: configuredPathWithBase('/docs/labs/strands-decider/inference/'),
       },
       {
         slug: '/evals',
-        heading: { tagName: 'H3', text: 'Validate behavior before you ship.' },
+        badge: 'Python',
+        heading: { tagName: 'H3', text: 'Validate before deployment.' },
         href: configuredPathWithBase('/docs/user-guide/evals-sdk/'),
       },
     ])

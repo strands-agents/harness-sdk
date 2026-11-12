@@ -72,7 +72,7 @@ export default defineConfig({
         { tag: 'meta', attrs: { property: 'og:image', content: `${site}/og-image.png` } },
         { tag: 'meta', attrs: { property: 'og:image:width', content: '1200' } },
         { tag: 'meta', attrs: { property: 'og:image:height', content: '630' } },
-        { tag: 'meta', attrs: { property: 'og:image:alt', content: 'Strands Agents — the open source toolkit for production agents' } },
+        { tag: 'meta', attrs: { property: 'og:image:alt', content: 'Strands Agents: build agents you can put to work' } },
         { tag: 'meta', attrs: { name: 'twitter:image', content: `${site}/og-image.png` } },
         // Keep preview hosts out of search, since their canonical URLs point at themselves.
         ...(site === 'https://strandsagents.com'

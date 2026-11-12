@@ -1,218 +1,83 @@
 ---
 import arrow from '../assets/banner/arrow.svg?raw'
-import InstallCommand from './InstallCommand.astro'
 import { pathWithBase } from '../util/links'
-
-const foundations = [
-  {
-    slug: '/harness',
-    label: 'Strands harness',
-    badge: 'Recommended',
-    accent: 'var(--card-accent-orange)',
-    title: 'Start with a complete agent.',
-    description:
-      'Use benchmarked defaults for the system prompt, tools, memory, session management, and context management. Override any default.',
-    bestFor: 'Getting to a capable agent quickly.',
-    features: ['Benchmarked defaults', 'CLI + library', 'Every default overridable'],
-    pip: 'pip install strands-harness',
-    npm: 'npm i @strands-agents/harness',
-    href: pathWithBase('/docs/user-guide/harness/quickstart/'),
-    cta: 'Start with Strands harness',
-  },
-  {
-    slug: '/harness-sdk',
-    label: 'Strands Harness SDK',
-    badge: 'Build from primitives',
-    accent: 'var(--card-accent-teal)',
-    title: 'Compose your own agent loop.',
-    description:
-      'Choose the model provider, tools, hooks, memory, and lifecycle controls from SDK primitives.',
-    bestFor: 'Custom architectures that need control over every layer.',
-    features: ['Agent loop primitives', 'MCP tools', 'Python + TypeScript'],
-    pip: 'pip install strands-agents',
-    npm: 'npm i @strands-agents/sdk',
-    href: pathWithBase('/docs/user-guide/sdk/quickstart/overview/'),
-    cta: 'Build with SDK primitives',
-  },
-]
 
 const modules = [
   {
-    slug: '/stash',
-    label: 'Strands Stash',
-    badge: 'Coming soon',
-    accent: 'var(--accent-green)',
-    title: 'Keep working context available.',
+    slug: '/box',
+    label: 'Strands Box',
+    badge: 'Open source',
+    accent: 'var(--card-accent-purple)',
+    title: 'Contain the agent.',
     description:
-      'Move bulky content out of the prompt without losing the original, then let the agent retrieve it when needed.',
-    useWhen: 'Long-running agents need to stay inside the model context window.',
-    href: pathWithBase('/docs/user-guide/sdk/context-management/'),
-    cta: 'Explore context management',
+      'Isolate the agent and set policy for files, programs, network requests, and MCP calls.',
+    href: pathWithBase('/docs/user-guide/box/quickstart/'),
+    cta: 'Explore Box',
   },
   {
     slug: '/decider',
     label: 'Strands Decider',
     badge: 'Labs',
     accent: 'var(--card-accent-blue)',
-    title: 'Make focused decisions faster.',
+    title: 'Make faster decisions.',
     description:
-      'Pick between options, rate on a scale, and route work with a calibrated confidence on every decision.',
-    useWhen: 'An agent keeps asking a general model small, closed questions.',
-    href: pathWithBase('/docs/labs/strands-decider/'),
+      'Answer typed yes/no, choice, and score questions with calibrated confidence.',
+    href: pathWithBase('/docs/labs/strands-decider/inference/'),
     cta: 'Explore Decider',
-  },
-  {
-    slug: '/shell',
-    label: 'Strands Shell',
-    badge: 'Python · Node · MCP',
-    accent: 'var(--card-accent-yellow)',
-    title: 'Give agents a constrained shell.',
-    description:
-      'Run familiar shell commands inside your process while declaring which files, URLs, and credentials the agent can reach.',
-    useWhen: 'An agent needs command-line tools without unrestricted host access.',
-    href: pathWithBase('/docs/user-guide/shell/'),
-    cta: 'Explore Shell',
-  },
-  {
-    slug: '/box',
-    label: 'Strands Box',
-    badge: 'Open source',
-    accent: 'var(--card-accent-purple)',
-    title: 'Contain the whole agent.',
-    description:
-      'Pair operating-system containment with Dogwood policy for shell commands, files, network requests, and MCP calls.',
-    useWhen: 'You need enforceable boundaries around an agent and its tools.',
-    href: pathWithBase('/docs/user-guide/box/'),
-    cta: 'Explore Box',
   },
   {
     slug: '/evals',
     label: 'Strands Evals',
     badge: 'Python',
     accent: 'var(--card-accent-pink)',
-    title: 'Validate behavior before you ship.',
+    title: 'Validate before deployment.',
     description:
-      'Score output and trajectories, diagnose the root cause of failures, and simulate the users and tools an agent will meet.',
-    useWhen: 'You need evidence that an agent behaves as intended.',
+      'Score outputs and trajectories, diagnose failures, and simulate users and tools.',
     href: pathWithBase('/docs/user-guide/evals-sdk/'),
     cta: 'Explore Evals',
   },
 ]
 ---
 
-<section id="toolkit" class="toolkit" aria-labelledby="toolkit-title">
+<section id="tools" class="toolkit" aria-labelledby="tools-title">
   <div class="toolkit__inner">
     <header class="toolkit__header">
-      <p class="toolkit__eyebrow">Choose where to start</p>
-      <h2 id="toolkit-title" class="toolkit__title">Choose your agent foundation.</h2>
-    </header>
-
-    <div class="toolkit__foundations" role="list" aria-label="Agent-building foundations">
-      {foundations.map((foundation, index) => (
-        <article
-          class="foundation-card"
-          role="listitem"
-          style={`--accent: ${foundation.accent};`}
-        >
-          <div class="foundation-card__topline">
-            <span class="foundation-card__number" aria-hidden="true">
-              {String(index + 1).padStart(2, '0')}
-            </span>
-            <span class="foundation-card__badge">{foundation.badge}</span>
-          </div>
-
-          <div class="foundation-card__heading">
-            <p class="foundation-card__slug">{foundation.slug}</p>
-            <h3 class="foundation-card__title">{foundation.title}</h3>
-          </div>
-
-          <p class="foundation-card__description">{foundation.description}</p>
-
-          <div class="foundation-card__install">
-            <span class="foundation-card__install-label">Install</span>
-            <InstallCommand
-              pip={foundation.pip}
-              npm={foundation.npm}
-              copyLabel={`Copy ${foundation.label} install command`}
-            />
-          </div>
-
-          <div class="foundation-card__best-for">
-            <span class="foundation-card__best-for-label">Best when</span>
-            <p>{foundation.bestFor}</p>
-          </div>
-
-          <ul class="foundation-card__features">
-            {foundation.features.map((feature) => (
-              <li>
-                <span aria-hidden="true"></span>
-                {feature}
-              </li>
-            ))}
-          </ul>
-
-          <a
-            class="foundation-card__cta"
-            href={foundation.href}
-            aria-label={foundation.cta}
-          >
-            {foundation.cta}
-            <span class="foundation-card__arrow" set:html={arrow} />
-          </a>
-        </article>
-      ))}
-    </div>
-
-    <div class="toolkit__divider" aria-hidden="true">
-      <span></span>
-      <span></span>
-      <span></span>
-    </div>
-
-    <header class="toolkit__modules-header">
-      <p class="toolkit__eyebrow">Add only what you need</p>
-      <h2 class="toolkit__modules-title">Focused tools for the rest of the agent stack.</h2>
+      <p class="toolkit__eyebrow">Focused tools</p>
+      <h2 id="tools-title" class="toolkit__title">Add only what you need.</h2>
     </header>
 
     <div class="toolkit__modules" role="list" aria-label="Focused Strands tools">
-      {modules.map((module) => (
-        <article
-          class="module-card"
-          role="listitem"
-          style={`--accent: ${module.accent};`}
-        >
-          <div class="module-card__topline">
-            <p class="module-card__slug">{module.slug}</p>
-            <span class="module-card__badge">{module.badge}</span>
-          </div>
+      {
+        modules.map((module) => (
+          <article class="module-card" role="listitem" style={`--accent: ${module.accent};`}>
+            <div class="module-card__topline">
+              <p class="module-card__slug">{module.slug}</p>
+              <span class="module-card__badge">{module.badge}</span>
+            </div>
 
-          <h3 class="module-card__title">{module.title}</h3>
-          <p class="module-card__description">{module.description}</p>
+            <h3 class="module-card__title">{module.title}</h3>
+            <p class="module-card__description">{module.description}</p>
 
-          <div class="module-card__use-when">
-            <span>Use when</span>
-            <p>{module.useWhen}</p>
-          </div>
-
-          <a
-            class="module-card__cta"
-            href={module.href}
-            aria-label={`${module.cta}: ${module.label}`}
-          >
-            {module.cta}
-            <span class="module-card__arrow" set:html={arrow} />
-          </a>
-        </article>
-      ))}
+            <a
+              class="module-card__cta"
+              href={module.href}
+              aria-label={`${module.cta}: ${module.label}`}
+            >
+              {module.cta}
+              <span class="module-card__arrow" set:html={arrow} />
+            </a>
+          </article>
+        ))
+      }
     </div>
   </div>
 </section>
 
 <style>
   .toolkit {
+    padding: 56px 55px 88px;
     background: var(--bg);
     color: var(--fg);
-    padding: 96px 55px 104px;
     scroll-margin-top: var(--sl-nav-height, 84px);
   }
 
@@ -222,79 +87,117 @@ const modules = [
   }
 
   .toolkit__header {
-    display: grid;
-    grid-template-columns: minmax(0, 1.25fr) minmax(280px, 0.75fr);
-    gap: 18px 64px;
-    align-items: end;
-    margin-bottom: 40px;
+    margin-bottom: 26px;
   }
 
   .toolkit__eyebrow {
-    grid-column: 1 / -1;
-    margin: 0;
+    margin: 0 0 10px;
     font-family: 'JetBrains Mono', ui-monospace, monospace;
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 700;
     line-height: 1.3;
+    color: var(--eyebrow);
     letter-spacing: 0.12em;
     text-transform: uppercase;
-    color: var(--eyebrow);
-  }
-
-  .toolkit__title,
-  .toolkit__modules-title {
-    margin: 0;
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
-    font-weight: 500;
-    letter-spacing: -0.035em;
-    color: var(--fg);
   }
 
   .toolkit__title {
-    grid-column: 1 / -1;
-    max-width: none;
-    font-size: clamp(38px, 4vw, 60px);
+    margin: 0;
+    max-width: 760px;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: clamp(32px, 3.4vw, 48px);
+    font-weight: 500;
     line-height: 1.06;
+    color: var(--fg);
+    letter-spacing: -0.04em;
   }
 
-  .toolkit__foundations {
+  .module-card__slug {
+    margin: 0;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-weight: 700;
+  }
+
+  .module-card__badge {
+    display: inline-flex;
+    min-height: 24px;
+    padding: 3px 8px;
+    align-items: center;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1.2;
+    color: var(--fg);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    border: 1px solid currentColor;
+    border-radius: 999px;
+  }
+
+  .module-card__cta {
+    display: inline-flex;
+    width: fit-content;
+    align-items: center;
+    gap: 8px;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-weight: 700;
+    line-height: 1.3;
+    text-decoration: none;
+  }
+
+  .module-card__cta:hover {
+    opacity: 0.78;
+  }
+
+  .module-card__cta:focus-visible {
+    outline: 3px solid var(--accent-green);
+    outline-offset: 4px;
+    border-radius: 4px;
+  }
+
+  .module-card__arrow {
+    display: inline-flex;
+    width: 11px;
+    height: 9px;
+  }
+
+  .module-card__arrow :global(svg) {
+    width: 100%;
+    height: 100%;
+  }
+
+  .toolkit__modules {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    align-items: stretch;
-    gap: 24px;
+    grid-template-columns: repeat(auto-fit, minmax(330px, 1fr));
+    gap: 14px;
   }
 
-  .foundation-card,
   .module-card {
     position: relative;
     display: flex;
+    min-height: 205px;
+    overflow: hidden;
+    padding: 16px 17px 17px 20px;
     flex-direction: column;
     background:
       linear-gradient(
         145deg,
-        color-mix(in srgb, var(--accent) 9%, transparent),
+        color-mix(in srgb, var(--accent) 6%, transparent),
         transparent 42%
       ),
       var(--card-bg);
     border: 1px solid var(--card-border);
-    overflow: hidden;
+    border-radius: 12px;
   }
 
-  .foundation-card::before,
   .module-card::before {
     content: '';
     position: absolute;
     inset: 0 auto 0 0;
-    width: 5px;
+    width: 3px;
     background: var(--accent);
   }
 
-  .foundation-card {
-    padding: 30px 32px 32px 37px;
-    border-radius: 18px;
-  }
-
-  .foundation-card__topline,
   .module-card__topline {
     display: flex;
     align-items: center;
@@ -302,457 +205,72 @@ const modules = [
     gap: 16px;
   }
 
-  .foundation-card__number {
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
-    font-size: 12px;
-    font-weight: 700;
-    letter-spacing: 0.12em;
-    color: var(--accent);
-  }
-
-  .foundation-card__badge,
-  .module-card__badge {
-    display: inline-flex;
-    align-items: center;
-    min-height: 26px;
-    padding: 4px 10px;
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
-    font-size: 11px;
-    font-weight: 700;
-    line-height: 1.2;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: var(--fg);
-    border: 1px solid var(--accent);
-    border-radius: 999px;
-  }
-
-  .foundation-card__heading {
-    margin-top: 50px;
-  }
-
-  .foundation-card__slug,
   .module-card__slug {
-    margin: 0;
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
-    font-weight: 700;
-    color: var(--accent);
-  }
-
-  .foundation-card__slug {
-    font-size: 19px;
-    line-height: 1.3;
-  }
-
-  .foundation-card__title {
-    max-width: 540px;
-    margin: 14px 0 0;
-    font-family: 'Space Grotesk', system-ui, sans-serif;
-    font-size: clamp(30px, 3vw, 44px);
-    font-weight: 600;
-    line-height: 1.05;
-    letter-spacing: -0.035em;
-    color: var(--fg);
-  }
-
-  .foundation-card__description {
-    max-width: 610px;
-    margin: 22px 0 0;
-    font-family: 'Space Grotesk', system-ui, sans-serif;
-    font-size: 17px;
-    line-height: 1.5;
-    color: var(--fg);
-  }
-
-  .foundation-card__install {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 8px;
-    min-width: 0;
-    margin-top: 24px;
-  }
-
-  .foundation-card__install-label {
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
-    font-size: 11px;
-    font-weight: 700;
-    line-height: 1.3;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: var(--accent);
-  }
-
-  .foundation-card__install :global(.install) {
-    width: 100%;
-  }
-
-  .foundation-card__install :global(.install__cmd) {
-    font-size: 13px;
-  }
-
-  .foundation-card__best-for {
-    display: grid;
-    grid-template-columns: 78px 1fr;
-    gap: 16px;
-    margin-top: 28px;
-    padding-top: 22px;
-    border-top: 1px solid var(--divider);
-  }
-
-  .foundation-card__best-for-label,
-  .module-card__use-when > span {
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
-    font-size: 11px;
-    font-weight: 700;
-    line-height: 1.4;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: var(--accent);
-  }
-
-  .foundation-card__best-for p {
-    margin: 0;
-    font-family: 'Space Grotesk', system-ui, sans-serif;
     font-size: 14px;
-    line-height: 1.45;
-    color: var(--fg);
-    opacity: 0.78;
-  }
-
-  .foundation-card__features {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    margin: 24px 0 0;
-    padding: 0;
-    list-style: none;
-  }
-
-  .foundation-card__features li {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    padding: 7px 11px;
-    font-family: 'Space Grotesk', system-ui, sans-serif;
-    font-size: 12px;
-    line-height: 1.2;
-    color: var(--fg);
-    border: 1px solid var(--divider);
-    border-radius: 999px;
-  }
-
-  .foundation-card__features li span {
-    width: 6px;
-    height: 6px;
-    flex: none;
-    background: var(--accent);
-    border-radius: 50%;
-  }
-
-  .foundation-card__cta,
-  .module-card__cta {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    width: fit-content;
-    margin-top: auto;
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
-    font-weight: 700;
     line-height: 1.3;
-    color: var(--fg);
-    text-decoration: none;
-  }
-
-  .foundation-card__cta {
-    padding-top: 34px;
-    font-size: 15px;
-  }
-
-  .foundation-card__cta:hover,
-  .module-card__cta:hover {
     color: var(--accent);
   }
 
-  .foundation-card__cta:focus-visible,
-  .module-card__cta:focus-visible {
-    outline: 3px solid var(--accent);
-    outline-offset: 4px;
-    border-radius: 2px;
-  }
-
-  .foundation-card__arrow,
-  .module-card__arrow {
-    display: inline-flex;
-    width: 11px;
-    height: 9px;
-  }
-
-  .foundation-card__arrow :global(svg),
-  .module-card__arrow :global(svg) {
-    width: 100%;
-    height: 100%;
-  }
-
-  .toolkit__divider {
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    margin: 88px 0;
-  }
-
-  .toolkit__divider::before,
-  .toolkit__divider::after {
-    content: '';
-    flex: 1;
-    border-top: 1px dashed var(--divider);
-  }
-
-  .toolkit__divider span {
-    display: block;
-    width: 6px;
-    height: 6px;
-    background: var(--fg);
-    transform: rotate(45deg);
-  }
-
-  .toolkit__divider span:first-child,
-  .toolkit__divider span:last-child {
-    width: 4px;
-    height: 4px;
-    opacity: 0.35;
-  }
-
-  .toolkit__modules-header {
-    margin-bottom: 32px;
-  }
-
-  .toolkit__modules-header .toolkit__eyebrow {
-    margin-bottom: 14px;
-  }
-
-  .toolkit__modules-title {
-    max-width: none;
-    font-size: clamp(30px, 3.3vw, 48px);
-    line-height: 1.1;
-  }
-
-  .toolkit__modules {
-    display: grid;
-    grid-template-columns: repeat(6, minmax(0, 1fr));
-    gap: 18px;
-  }
-
-  .module-card {
-    grid-column: span 2;
-    min-height: 410px;
-    padding: 24px 24px 25px 29px;
-    border-radius: 14px;
-  }
-
-  .module-card:nth-child(4) {
-    grid-column: 2 / span 2;
-  }
-
-  .module-card__slug {
-    font-size: 16px;
-    line-height: 1.3;
+  .module-card__badge {
+    border-color: var(--accent);
   }
 
   .module-card__title {
-    margin: 38px 0 0;
+    margin: 18px 0 0;
     font-family: 'Space Grotesk', system-ui, sans-serif;
-    font-size: 26px;
+    font-size: 22px;
     font-weight: 600;
-    line-height: 1.08;
-    letter-spacing: -0.025em;
+    line-height: 1.12;
     color: var(--fg);
+    letter-spacing: -0.025em;
   }
 
   .module-card__description {
-    margin: 16px 0 0;
+    margin: 8px 0 0;
     font-family: 'Space Grotesk', system-ui, sans-serif;
-    font-size: 15px;
-    line-height: 1.48;
+    font-size: 14px;
+    line-height: 1.42;
     color: var(--fg);
-  }
-
-  .module-card__use-when {
-    margin-top: 24px;
-    padding-top: 19px;
-    border-top: 1px solid var(--divider);
-  }
-
-  .module-card__use-when p {
-    margin: 7px 0 0;
-    font-family: 'Space Grotesk', system-ui, sans-serif;
-    font-size: 13px;
-    line-height: 1.45;
-    color: var(--fg);
-    opacity: 0.74;
   }
 
   .module-card__cta {
-    padding-top: 26px;
-    font-size: 13px;
-  }
-
-  @media (hover: hover) {
-    .foundation-card,
-    .module-card {
-      transition:
-        transform 0.2s ease,
-        box-shadow 0.2s ease;
-    }
-
-    .foundation-card:hover,
-    .module-card:hover {
-      transform: translateY(-4px);
-      box-shadow: 0 14px 30px color-mix(in srgb, var(--accent) 13%, transparent);
-    }
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .foundation-card,
-    .module-card {
-      transition: none;
-    }
-
-    .foundation-card:hover,
-    .module-card:hover {
-      transform: none;
-    }
-  }
-
-  @media (min-width: 1101px) {
-    @supports (grid-template-rows: subgrid) {
-      .toolkit__foundations {
-        grid-template-rows: repeat(7, auto);
-        column-gap: 24px;
-        row-gap: 0;
-      }
-
-      .foundation-card {
-        display: grid;
-        grid-row: 1 / -1;
-        grid-template-rows: subgrid;
-        height: 100%;
-      }
-
-      .foundation-card__cta {
-        margin-top: 0;
-      }
-    }
-  }
-
-  @media (max-width: 1100px) {
-    .toolkit__header {
-      grid-template-columns: 1fr;
-    }
-
-    .toolkit__foundations {
-      grid-template-columns: 1fr;
-    }
-
-    .toolkit__header {
-      gap: 16px;
-    }
-
-    .toolkit__modules {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-
-    .module-card,
-    .module-card:nth-child(4) {
-      grid-column: auto;
-    }
-
-    .module-card:last-child {
-      grid-column: 1 / -1;
-      min-height: 330px;
-    }
+    margin-top: auto;
+    padding-top: 15px;
+    font-size: 12px;
+    color: var(--fg);
   }
 
   @media (max-width: 767px) {
     .toolkit {
-      padding: 64px 19px 72px;
+      padding: 46px 19px 64px;
     }
 
     .toolkit__header {
-      margin-bottom: 28px;
+      margin-bottom: 22px;
+    }
+
+    .toolkit__eyebrow {
+      margin-bottom: 12px;
+      font-size: 10px;
     }
 
     .toolkit__title {
-      font-size: clamp(34px, 10vw, 46px);
+      font-size: clamp(31px, 9vw, 40px);
     }
 
-    .toolkit__foundations,
     .toolkit__modules {
       grid-template-columns: 1fr;
     }
 
-    .foundation-card {
-      min-height: 0;
-      padding: 22px 20px 24px 25px;
-      border-radius: 14px;
-    }
-
-    .foundation-card__heading {
-      margin-top: 34px;
-    }
-
-    .foundation-card__title {
-      font-size: 31px;
-    }
-
-    .foundation-card__description {
-      font-size: 16px;
-    }
-
-    .foundation-card__install :global(.install) {
-      gap: 6px;
-      padding: 8px 7px 8px 11px;
-    }
-
-    .foundation-card__install :global(.install__cmd) {
-      gap: 7px;
-      font-size: 11px;
-    }
-
-    .foundation-card__install :global(.install__copy) {
-      padding: 6px 9px;
-      font-size: 12px;
-    }
-
-    .foundation-card__best-for {
-      grid-template-columns: 1fr;
-      gap: 7px;
-    }
-
-    .foundation-card__cta {
-      margin-top: 34px;
-      padding-top: 0;
-    }
-
-    .toolkit__divider {
-      margin: 58px 0;
-    }
-
-    .toolkit__modules-title {
-      font-size: 34px;
-    }
-
-    .module-card,
-    .module-card:nth-child(4),
-    .module-card:last-child {
-      grid-column: auto;
-      min-height: 360px;
-      padding: 22px 20px 23px 25px;
+    .module-card {
+      min-height: 210px;
+      padding: 16px 16px 17px 20px;
     }
 
     .module-card__title {
-      margin-top: 32px;
-      font-size: 25px;
+      margin-top: 18px;
+      font-size: 22px;
     }
   }
+
 </style>

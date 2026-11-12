@@ -148,6 +148,7 @@ describe('structured data on every built page', () => {
 
 describe('structured data per page type', () => {
   const sdk = products.find((product) => product.label === 'Harness SDK')!
+  const homepageProducts = products.filter((product) => product.label !== 'Shell')
   const routeUrl = (route: string) => `${site}${base}${route}`
 
   it('configures every product with a source repository and languages', () => {
@@ -157,8 +158,11 @@ describe('structured data per page type', () => {
     }
   })
 
-  it('describes every product with its source repository on the homepage', () => {
-    expect(page('/')).toEqual([...baseSchemas(site), ...products.map((product) => productSchema(product, site))])
+  it('describes the products featured on the homepage', () => {
+    expect(page('/')).toEqual([
+      ...baseSchemas(site),
+      ...homepageProducts.map((product) => productSchema(product, site)),
+    ])
   })
 
   it('ties guides to the product they document', async () => {

@@ -27,13 +27,14 @@ const markdownHref = `${base.replace(/\/$/, '')}/index.md`;
 // Standalone pages don't inherit Starlight's head, so declare the shared
 // /og-image.png share card here too (docs/blog get theirs from Starlight).
 const ogImageHref = new URL('og-image.png', Astro.site ?? 'https://strandsagents.com').href;
-const pageTitle = 'Strands Agents | Open source tools for production AI agents';
+const pageTitle = 'Strands Agents | Build production AI agents';
 const pageDescription =
-  'Strands is an open source agent framework and toolkit for building production AI agents in Python and TypeScript, from complete harnesses to focused tools.';
+  'Build production agents with an open source harness and SDK for Python and TypeScript, then add focused tools for decisions, security, and evaluation.';
 const siteUrl = Astro.site?.origin || 'https://strandsagents.com';
+const homepageProducts = products.filter((product) => product.label !== 'Shell');
 const structuredData = {
   '@context': 'https://schema.org',
-  '@graph': [...baseSchemas(siteUrl), ...products.map((product) => productSchema(product, siteUrl))],
+  '@graph': [...baseSchemas(siteUrl), ...homepageProducts.map((product) => productSchema(product, siteUrl))],
 };
 ---
 
@@ -54,7 +55,7 @@ const structuredData = {
     <meta property="og:image" content={ogImageHref} />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
-    <meta property="og:image:alt" content="Strands Agents: open source tools for production AI agents" />
+    <meta property="og:image:alt" content="Strands Agents: build agents you can put to work" />
     <meta name="twitter:card" content="summary_large_image" />
     {Astro.site?.origin !== 'https://strandsagents.com' && <meta name="robots" content="noindex, nofollow" />}
     <meta name="twitter:title" content={pageTitle} />
