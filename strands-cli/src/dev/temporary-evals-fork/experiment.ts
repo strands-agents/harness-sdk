@@ -5,9 +5,10 @@ import { dirname, join } from 'node:path'
 import { errorMessage } from '../../terminal/text.js'
 import { isRecord } from '../../values.js'
 import type { GenerationError, GenerationSettings } from '../panels/model.js'
-import type { DevWorkspace } from '../workspace.js'
+import type { DevWorkspace, DevWorkspaceConfig } from '../workspace.js'
 import { temporaryCaseCount } from './experiment-files.js'
 import { ignoreProgress, prepareTemporaryOptimizerEnvironment, type TemporaryCommandRunner } from './environment.js'
+import { temporaryEvaluatorArguments } from './evaluators.js'
 import {
   spawnTemporaryEvals,
   temporaryEvalsEnvironment,
@@ -82,7 +83,8 @@ export const temporaryGenerationFiles = (
 export const temporaryGenerateArguments = (
   settings: GenerationSettings,
   context: string,
-  files: TemporaryGenerationFiles
+  files: TemporaryGenerationFiles,
+  language: DevWorkspaceConfig['language']
 ): string[] => [
   '-m',
   'strands_evals.cli',
@@ -94,8 +96,9 @@ export const temporaryGenerateArguments = (
   '--num-cases',
   String(settings.cases),
   ...(settings.topics > 0 ? ['--num-topics', String(settings.topics)] : []),
-  '--evaluator',
-  settings.evaluator,
+  ...temporaryEvaluatorArguments(settings.evaluators),
+  '--temporary-agent-language',
+  language,
   ...(settings.model ? ['--model', settings.model] : []),
   '--max-parallel-num-cases',
   String(settings.parallel),
@@ -145,7 +148,7 @@ export const parseTemporaryGenerationEvent = (line: string): TemporaryGeneration
 
 const generatorNextStep = (code: number): string =>
   code === 2
-    ? 'The strands-evals generate command rejected its flags. Update the TEMPORARY evals fork, then try again.'
+    ? 'Change the evaluator or the setting that the error names, then try again.'
     : 'Check that your AWS credentials can call the generator model, then try again.'
 
 export const generateTemporaryExperiment = async (
@@ -174,7 +177,7 @@ export const generateTemporaryExperiment = async (
   try {
     exit = await (dependencies.spawnGenerator ?? spawnTemporaryEvals)({
       command: python,
-      args: temporaryGenerateArguments(settings, context, files),
+      args: temporaryGenerateArguments(settings, context, files, workspace.config.language),
       cwd: workspace.root,
       env: temporaryEvalsEnvironment(python, environment),
       ...(signal ? { signal } : {}),

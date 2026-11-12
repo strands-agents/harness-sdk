@@ -135,7 +135,7 @@ describe('TEMPORARY experiment generation session', () => {
       task: 'Answers refund questions',
       model: 'us.anthropic.claude-test',
       cases: 10,
-      evaluator: 'OutputEvaluator',
+      evaluators: [{ name: 'OutputEvaluator' }],
     })
     expect(form.agentContext).toBe('agent.py · 1 tool · instructions.md')
   })

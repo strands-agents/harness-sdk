@@ -32,7 +32,7 @@ const settings = (overrides: Partial<GenerationSettings> = {}): GenerationSettin
   context: '',
   cases: 3,
   topics: 0,
-  evaluator: 'OutputEvaluator',
+  evaluators: [{ name: 'OutputEvaluator' }],
   model: '',
   parallel: 4,
   expectedOutput: true,
@@ -89,7 +89,7 @@ describe('TEMPORARY experiment generation', () => {
     const args = temporaryGenerateArguments(
       settings({
         topics: 3,
-        evaluator: 'TrajectoryEvaluator',
+        evaluators: [{ name: 'TrajectoryEvaluator' }],
         model: 'us.anthropic.claude-sonnet',
         parallel: 2,
         expectedOutput: false,
@@ -98,7 +98,8 @@ describe('TEMPORARY experiment generation', () => {
         metadata: true,
       }),
       'An agent for refunds',
-      files
+      files,
+      'python'
     )
 
     expect(args).toEqual([
@@ -115,6 +116,8 @@ describe('TEMPORARY experiment generation', () => {
       '3',
       '--evaluator',
       'TrajectoryEvaluator',
+      '--temporary-agent-language',
+      'python',
       '--model',
       'us.anthropic.claude-sonnet',
       '--max-parallel-num-cases',
@@ -131,12 +134,48 @@ describe('TEMPORARY experiment generation', () => {
   })
 
   it('shouldLeaveOptionalFlagsOutWhenTheDefaultsAreUsed', () => {
-    const args = temporaryGenerateArguments(settings(), 'context', { draft: 'd', log: 'l', progress: 'p' })
+    const args = temporaryGenerateArguments(settings(), 'context', { draft: 'd', log: 'l', progress: 'p' }, 'python')
 
     expect(args).not.toContain('--num-topics')
     expect(args).not.toContain('--model')
     expect(args).not.toContain('--no-expected-output')
     expect(args).toContain('--max-parallel-num-cases')
+  })
+
+  it('shouldPassEachEvaluatorWhenSeveralAreChosen', () => {
+    const evaluators = [
+      { name: 'OutputEvaluator' },
+      { name: 'HelpfulnessEvaluator', settings: {} },
+      { name: 'ToolCalled', settings: { tool_name: 'lookup_order' } },
+      { name: 'Contains', settings: { value: 'refund', case_sensitive: false, name: 'says refund' } },
+    ]
+
+    const args = temporaryGenerateArguments(
+      settings({ evaluators }),
+      'context',
+      { draft: 'd', log: 'l', progress: 'p' },
+      'typescript'
+    )
+
+    const values = args.flatMap((arg, index) => (args[index - 1] === '--evaluator' ? [arg] : []))
+    expect(values).toEqual([
+      'OutputEvaluator',
+      'HelpfulnessEvaluator',
+      JSON.stringify({ tool_name: 'lookup_order', evaluator_type: 'ToolCalled' }),
+      JSON.stringify({ value: 'refund', case_sensitive: false, name: 'says refund', evaluator_type: 'Contains' }),
+    ])
+    expect(flagValue(args, '--temporary-agent-language')).toBe('typescript')
+  })
+
+  it('shouldNameTheEvaluatorTypeFromTheChoiceWhenItsSettingsAlsoNameOne', () => {
+    const args = temporaryGenerateArguments(
+      settings({ evaluators: [{ name: 'ToolCalled', settings: { evaluator_type: 'Equals', tool_name: 'search' } }] }),
+      'context',
+      { draft: 'd', log: 'l', progress: 'p' },
+      'python'
+    )
+
+    expect(JSON.parse(flagValue(args, '--evaluator'))).toEqual({ evaluator_type: 'ToolCalled', tool_name: 'search' })
   })
 
   it('shouldPutTheDraftLogAndProgressNextToEachOtherWhenFilesAreNamed', () => {
@@ -182,6 +221,34 @@ describe('TEMPORARY experiment generation', () => {
     ).rejects.toThrow('wrote no cases, because every case failed')
 
     expect(existsSync(files.draft)).toBe(false)
+  })
+
+  it('shouldGiveTheEvaluatorErrorOfTheForkAndANextStepWhenGenerateRejectsAnEvaluator', async () => {
+    const workspace = await workspaceFixture()
+    const rejected = vi.fn(async (_process: TemporaryEvalsProcess) => ({
+      code: 2,
+      stdout: '',
+      stderrTail: [
+        'usage: strands-evals generate [-h] ...',
+        'strands-evals generate: error: argument --evaluator: ToolCalled needs tool_name.',
+      ],
+    }))
+
+    await expect(
+      generateTemporaryExperiment(
+        {
+          workspace,
+          settings: settings({ evaluators: [{ name: 'ToolCalled' }] }),
+          context: 'context',
+          files: temporaryGenerationFiles(workspace.directory!, 'refunds', NOW),
+        },
+        { run: environmentRunner(workspace), spawnGenerator: rejected }
+      )
+    ).rejects.toThrow(
+      'strands-evals generate stopped with exit code 2: argument --evaluator: ToolCalled needs tool_name.\n' +
+        'Change the evaluator or the setting that the error names, then try again.'
+    )
+    expect(flagValue(rejected.mock.calls[0]![0].args, '--temporary-agent-language')).toBe('python')
   })
 
   it('shouldNotStartTheGeneratorWhenItWasCancelledDuringSetup', async () => {

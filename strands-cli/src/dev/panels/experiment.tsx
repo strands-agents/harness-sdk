@@ -283,6 +283,11 @@ const choiceLabel = (key: ChoiceKey, value: number | string): string => {
   return String(value)
 }
 
+const firstEvaluator = ({ evaluators }: GenerationSettings): string => evaluators[0]?.name ?? ''
+
+const choiceValue = (settings: GenerationSettings, key: ChoiceKey): number | string =>
+  key === 'evaluator' ? firstEvaluator(settings) : settings[key]
+
 const cycled = <Value,>(values: readonly Value[], current: Value, step: number): Value => {
   const position = Math.max(0, values.indexOf(current))
   return values[(position + step + values.length) % values.length] ?? current
@@ -302,7 +307,7 @@ const withChoice = (
     case 'parallel':
       return { ...settings, parallel: cycled(choices.parallel, settings.parallel, step) }
     case 'evaluator':
-      return { ...settings, evaluator: cycled(choices.evaluators, settings.evaluator, step) }
+      return { ...settings, evaluators: [{ name: cycled(choices.evaluators, firstEvaluator(settings), step) }] }
   }
 }
 
@@ -347,8 +352,8 @@ const FormRow = ({
   const value =
     field.kind === 'choice'
       ? active
-        ? `‹ ${choiceLabel(field.key, settings[field.key])} ›`
-        : choiceLabel(field.key, settings[field.key])
+        ? `‹ ${choiceLabel(field.key, choiceValue(settings, field.key))} ›`
+        : choiceLabel(field.key, choiceValue(settings, field.key))
       : field.kind === 'toggle'
         ? settings[field.key]
           ? '☑ on'

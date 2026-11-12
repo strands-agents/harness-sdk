@@ -48,7 +48,7 @@ export const generationSettings = (overrides: Partial<GenerationSettings> = {}):
   context: '',
   cases: 10,
   topics: 0,
-  evaluator: 'OutputEvaluator',
+  evaluators: [{ name: 'OutputEvaluator' }],
   model: 'us.anthropic.claude-test',
   parallel: 4,
   expectedOutput: true,

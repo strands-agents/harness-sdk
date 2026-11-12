@@ -22,7 +22,10 @@ export interface DraftCase extends EvalCase {
   readonly saved: boolean
 }
 
-export type EvaluatorKind = 'OutputEvaluator' | 'TrajectoryEvaluator' | 'InteractionsEvaluator'
+export interface EvaluatorChoice {
+  readonly name: string
+  readonly settings?: Readonly<Record<string, unknown>>
+}
 
 export interface GenerationSettings {
   readonly name: string
@@ -30,7 +33,7 @@ export interface GenerationSettings {
   readonly context: string
   readonly cases: number
   readonly topics: number
-  readonly evaluator: EvaluatorKind
+  readonly evaluators: readonly EvaluatorChoice[]
   readonly model: string
   readonly parallel: number
   readonly expectedOutput: boolean
@@ -46,7 +49,7 @@ export interface GenerationForm {
     readonly cases: readonly number[]
     readonly topics: readonly number[]
     readonly parallel: readonly number[]
-    readonly evaluators: readonly EvaluatorKind[]
+    readonly evaluators: readonly string[]
   }
 }
 

@@ -373,7 +373,7 @@ export class TemporaryExperiments extends Store<ExperimentsState> implements Exp
       context: '',
       cases: DEFAULT_CASES,
       topics: 0,
-      evaluator: 'OutputEvaluator',
+      evaluators: [{ name: 'OutputEvaluator' }],
       model: generatorModel(facts.model),
       parallel: DEFAULT_PARALLEL,
       expectedOutput: true,
