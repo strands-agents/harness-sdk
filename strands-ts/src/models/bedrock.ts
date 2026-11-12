@@ -61,8 +61,10 @@ import {
   resolveCacheSection,
   resolveConfigMetadata,
   resolveMaxTokens,
+  type ResolvedCacheSection,
 } from '../models/model.js'
 import { mergeModelInfo, SERVER_SIDE_SUMMARY_OFF, type ModelInfo } from './model-info.js'
+import { bedrockCacheModelInfo, bedrockLimitsCachePoints } from './bedrock-cache.js'
 import { THINKING_BINDING_BETA, isThinkingBindingError, thinkingWithDropBlock } from './thinking-binding.js'
 import type { ContentBlock, Message, ReasoningBlock, StopReason, ToolUseBlock } from '../types/messages.js'
 import type { AudioSource, ImageSource, VideoSource, DocumentSource } from '../types/media.js'
@@ -406,6 +408,27 @@ export interface BedrockModelOptions extends BedrockModelConfig {
 }
 
 /**
+ * Steps a cache point index back over the adjacent run of non-PDF documents directly ahead of it. Bedrock only
+ * rejects a cache point *directly* preceded by a non-PDF document; moving further would evict durable content -
+ * usually the document itself, the expensive part - from the cached prefix for no reason.
+ *
+ * @param content - Content blocks of the message
+ * @param idx - Index of the cache point
+ * @returns The index the cache point may legally sit at
+ */
+function stepBackOverDocuments(content: BedrockContentBlock[], idx: number): number {
+  let targetIdx = idx
+  while (targetIdx > 0) {
+    const previous = content[targetIdx - 1]
+    if (!previous || !('document' in previous) || previous.document?.format === 'pdf') {
+      return targetIdx
+    }
+    targetIdx--
+  }
+  return targetIdx
+}
+
+/**
  * AWS Bedrock model provider implementation.
  *
  * Implements the Model interface for AWS Bedrock using the Converse Stream API.
@@ -528,16 +551,14 @@ export class BedrockModel extends Model<BedrockModelConfig> {
   }
 
   /**
-   * Turns `serverSideSummary` off, and reports OpenAI models as implicitly cached; a `modelInfo` override still
-   * wins over both. The shared model info lists cache points for their OpenAI-compatible APIs, but Converse caches
-   * them implicitly and rejects cache points.
+   * Turns `serverSideSummary` off, and reports how Converse caches the model where that differs from the shared
+   * model info; a `modelInfo` override still wins over both.
    */
   override get modelInfo(): ModelInfo {
-    const openai = this.modelId?.toLowerCase().includes('openai.')
     return mergeModelInfo(
       super.modelInfo,
       SERVER_SIDE_SUMMARY_OFF,
-      openai ? { capabilities: { promptCaching: 'auto' } } : undefined,
+      bedrockCacheModelInfo(this.modelId ?? ''),
       this._config.modelInfo
     )
   }
@@ -577,6 +598,10 @@ export class BedrockModel extends Model<BedrockModelConfig> {
 
     if (strategy === 'auto') {
       const detectedStrategy = this._getCacheStrategy()
+      // A model the provider caches implicitly needs no cache points, so it gets no warning.
+      if (!detectedStrategy && this.modelInfo.capabilities?.promptCaching === 'auto') {
+        return false
+      }
       if (!detectedStrategy) {
         warnOnce(
           logger,
@@ -588,6 +613,86 @@ export class BedrockModel extends Model<BedrockModelConfig> {
     }
 
     return strategy === 'anthropic'
+  }
+
+  /**
+   * Whether Converse limits where this model takes cache points (no tools cache point, no TTL, none directly after a
+   * tool result).
+   *
+   * @returns True for a Nova model that takes cache points
+   */
+  private _limitsCachePoints(): boolean {
+    return bedrockLimitsCachePoints(this._config.modelId ?? MODEL_DEFAULTS.bedrock.modelId)
+  }
+
+  /**
+   * Resolves a cache section against `cacheConfig.ttl`, dropping the TTL with a one-time warning when the model
+   * rejects one.
+   *
+   * @param section - The section's own setting
+   * @returns The resolved section
+   */
+  private _cacheSection(section: boolean | CacheTTL | undefined): ResolvedCacheSection {
+    const resolved = resolveCacheSection(section, this._config.cacheConfig?.ttl)
+    if (!resolved.ttl || !this._limitsCachePoints()) {
+      return resolved
+    }
+    warnOnce(
+      logger,
+      `model_id=<${this._config.modelId}> | ttl is not supported by this model, using the default cache duration`
+    )
+    return { enabled: resolved.enabled }
+  }
+
+  /**
+   * Resolves the tools cache section, disabled when caching is off or the model rejects a tools cache point.
+   *
+   * @returns The resolved section
+   */
+  private _toolsCacheSection(): ResolvedCacheSection {
+    if (!this._shouldEnableCaching()) {
+      return { enabled: false }
+    }
+    const toolsTTL = this._config.cacheConfig?.toolsTTL
+    if (this._limitsCachePoints()) {
+      if (toolsTTL !== undefined && toolsTTL !== false) {
+        warnOnce(
+          logger,
+          `model_id=<${this._config.modelId}>, toolsTTL=<${toolsTTL}> | this model accepts no tool-level cache point, tool definitions are cached only as part of the system prompt prefix`
+        )
+      }
+      return { enabled: false }
+    }
+    return this._cacheSection(toolsTTL)
+  }
+
+  /**
+   * Removes caller-placed TTLs from system cache points when the model rejects any TTL, warning once.
+   *
+   * @param system - The formatted system blocks (modified in place)
+   */
+  private _dropUnsupportedSystemTTLs(system: SystemContentBlock[]): void {
+    if (!this._limitsCachePoints()) {
+      return
+    }
+    for (const block of system) {
+      if (!('cachePoint' in block) || !block.cachePoint?.ttl) continue
+      delete block.cachePoint.ttl
+      warnOnce(
+        logger,
+        `model_id=<${this._config.modelId}> | ttl is not supported by this model, using the default cache duration`
+      )
+    }
+  }
+
+  /**
+   * Whether Bedrock rejects a cache point directly after this block for this model.
+   *
+   * @param block - The block the cache point would follow
+   * @returns True for a `toolResult` on a model that rejects a cache point after one
+   */
+  private _rejectsCachePointAfter(block: BedrockContentBlock | undefined): boolean {
+    return block !== undefined && 'toolResult' in block && this._limitsCachePoints()
   }
 
   /**
@@ -620,8 +725,9 @@ export class BedrockModel extends Model<BedrockModelConfig> {
     if (!system || !this._shouldEnableCaching()) {
       return
     }
+    this._dropUnsupportedSystemTTLs(system)
     const cacheConfig = this._config.cacheConfig
-    const systemSection = resolveCacheSection(cacheConfig?.systemPromptTTL, cacheConfig?.ttl)
+    const systemSection = this._cacheSection(cacheConfig?.systemPromptTTL)
     let ttl = systemSection.ttl
 
     if (ttl && typeof cacheConfig?.systemPromptTTL !== 'string') {
@@ -997,10 +1103,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
           }) as Tool
       )
 
-      const cacheConfig = this._config.cacheConfig
-      const toolsCache = this._shouldEnableCaching()
-        ? resolveCacheSection(cacheConfig?.toolsTTL, cacheConfig?.ttl)
-        : { enabled: false }
+      const toolsCache = this._toolsCacheSection()
       if (toolsCache.enabled) {
         const cachePoint: BedrockCachePointBlock = { type: 'default' }
         if (toolsCache.ttl) {
@@ -1133,9 +1236,8 @@ export class BedrockModel extends Model<BedrockModelConfig> {
       )
     }
 
-    const cacheConfig = this._config.cacheConfig
     const messagesCache = this._shouldEnableCaching()
-      ? resolveCacheSection(cacheConfig?.messagesTTL, cacheConfig?.ttl)
+      ? this._cacheSection(this._config.cacheConfig?.messagesTTL)
       : { enabled: false }
     if (messagesCache.enabled) {
       this._injectCachePoint(formattedMessages, messagesCache.ttl, dynamicTrailingBlocks)
@@ -1181,9 +1283,10 @@ export class BedrockModel extends Model<BedrockModelConfig> {
    * @param msgIdx - Index of the message, for logging
    * @param ttl - TTL for the honored cache point. Falsy leaves the Bedrock default.
    * @returns True when the point was kept, possibly relocated. False when nothing cacheable precedes
-   *   it, so the point was removed: Bedrock rejects a cache point with no content ahead of it ("There
-   *   is nothing available to cache"). The caller then retries automatic placement, which lands a point
-   *   only if the remaining content allows one - for a leading document it declines too.
+   *   it, or it would directly follow a tool result the model rejects it after, so the point was
+   *   removed: Bedrock rejects a cache point with no content ahead of it ("There is nothing available
+   *   to cache"). The caller then retries automatic placement, which lands a point only if the
+   *   remaining content allows one - for a leading document it declines too.
    */
   private _honorPlacedCachePoint(
     content: BedrockContentBlock[],
@@ -1217,16 +1320,12 @@ export class BedrockModel extends Model<BedrockModelConfig> {
       placed.cachePoint.ttl = ttl as BedrockSdkCacheTTL
     }
 
-    // Bedrock only rejects a cache point *directly* preceded by a non-PDF document, so step back over
-    // the adjacent run of them. Moving further would evict durable content - usually the document
-    // itself, the expensive part - from the cached prefix for no reason.
-    let targetIdx = placedIdx
-    while (targetIdx > 0) {
-      const previous = content[targetIdx - 1]
-      if (!previous || !('document' in previous) || previous.document?.format === 'pdf') {
-        break
-      }
-      targetIdx--
+    const targetIdx = stepBackOverDocuments(content, placedIdx)
+
+    if (this._rejectsCachePointAfter(content[targetIdx - 1])) {
+      content.splice(placedIdx, 1)
+      logger.debug(`msg_idx=<${msgIdx}> | skipped cache point directly after a tool result`)
+      return false
     }
 
     if (targetIdx !== placedIdx) {
@@ -1352,31 +1451,37 @@ export class BedrockModel extends Model<BedrockModelConfig> {
           return
         }
 
-        // Locate the first non-PDF document block
-        let firstNonPdfDocIdx: number | null = null
-        for (let i = 0; i < content.length; i++) {
-          const block = content[i]
-          if (block && 'document' in block && block.document?.format !== 'pdf') {
-            firstNonPdfDocIdx = i
-            break
-          }
-        }
-
-        // Insert the cache point before the first non-PDF document so it is not directly
-        // preceded by that block, which Bedrock rejects with a ValidationException
-        if (firstNonPdfDocIdx === null) {
-          content.push({ cachePoint })
-        } else if (firstNonPdfDocIdx > 0) {
-          content.splice(firstNonPdfDocIdx, 0, { cachePoint })
-        } else {
-          // A leading non-PDF document leaves no prefix to cache and Bedrock rejects it
-          logger.debug(`msg_idx=<${lastUserIdx}> | skipped cache point for leading non-PDF document`)
+        const insertIdx = this._autoCachePointIdx(content, lastUserIdx)
+        if (insertIdx === undefined) {
           return
         }
+        content.splice(insertIdx, 0, { cachePoint })
 
         logger.debug(`msg_idx=<${lastUserIdx}> | added cache point to last user message`)
       }
     }
+  }
+
+  /**
+   * Where automatic placement puts the conversation cache point in the last user message: before the first non-PDF
+   * document, since Bedrock rejects a cache point directly after one, else at the end.
+   *
+   * @param content - Content blocks of the last user message
+   * @param msgIdx - Index of the message, for logging
+   * @returns The insertion index, or undefined when Bedrock would reject a point at it
+   */
+  private _autoCachePointIdx(content: BedrockContentBlock[], msgIdx: number): number | undefined {
+    const firstNonPdfDocIdx = content.findIndex((block) => 'document' in block && block.document?.format !== 'pdf')
+    if (firstNonPdfDocIdx === 0) {
+      logger.debug(`msg_idx=<${msgIdx}> | skipped cache point for leading non-PDF document`)
+      return undefined
+    }
+    const insertIdx = firstNonPdfDocIdx === -1 ? content.length : firstNonPdfDocIdx
+    if (this._rejectsCachePointAfter(content[insertIdx - 1])) {
+      logger.debug(`msg_idx=<${msgIdx}> | skipped cache point directly after a tool result`)
+      return undefined
+    }
+    return insertIdx
   }
 
   /**

@@ -1426,6 +1426,57 @@ describe('VercelModel', () => {
         expect(bedrockMessageCachePoint(args)).toEqual({ type: 'default', ttl: '1h' })
       })
 
+      it('caches system and messages on Nova without a ttl, warning that the ttl is dropped', async () => {
+        const modelId = 'us.amazon.nova-pro-v1:0'
+        const { collect, callArgs } = setupCaptureTest(
+          minimalParts,
+          { cacheConfig: { ttl: '1h' } },
+          'amazon-bedrock',
+          modelId
+        )
+        await collect(userMessages, { systemPrompt: 'be helpful' })
+
+        const args = callArgs()
+        expect(bedrockSystemCachePoint(args)).toEqual({ type: 'default' })
+        expect(bedrockMessageCachePoint(args)).toEqual({ type: 'default' })
+        expect(warnOnce).toHaveBeenCalledWith(
+          expect.anything(),
+          `model_id=<${modelId}> | ttl is not supported by this model, using the default cache duration`
+        )
+        expect(warnOnce).not.toHaveBeenCalledWith(
+          expect.anything(),
+          expect.stringContaining('is not known to support automatic caching')
+        )
+      })
+
+      it('keeps the Nova conversation cache point off a trailing tool result', async () => {
+        const messages = [
+          new Message({ role: 'user', content: [new TextBlock('What is 6 x 7?')] }),
+          new Message({
+            role: 'assistant',
+            content: [new ToolUseBlock({ name: 'calculator', toolUseId: 'tu1', input: {} })],
+          }),
+          new Message({
+            role: 'user',
+            content: [new ToolResultBlock({ toolUseId: 'tu1', status: 'success', content: [new TextBlock('42')] })],
+          }),
+        ]
+        const { collect, callArgs } = setupCaptureTest(
+          minimalParts,
+          { cacheConfig: {} },
+          'amazon-bedrock',
+          'us.amazon.nova-pro-v1:0'
+        )
+        await collect(messages, { toolSpecs })
+
+        const prompt = callArgs().prompt
+        const tool = prompt.filter((message) => message.role === 'tool')
+        expect(tool).toHaveLength(1)
+        expect(tool[0]?.providerOptions?.bedrock).toBeUndefined()
+        expect(tool[0]?.content.map((part) => part.providerOptions?.bedrock)).toStrictEqual([undefined])
+        expect(bedrockMessageCachePoint(callArgs())).toEqual({ type: 'default' })
+      })
+
       it('never marks tool definitions, since bedrock caches them as part of the prefix', async () => {
         const config = { cacheConfig: { toolsTTL: '1h' as const } }
         const { collect, callArgs } = setupCaptureTest(minimalParts, config, 'amazon-bedrock', CACHING_MODEL_ID)
@@ -1696,6 +1747,28 @@ describe('VercelModel', () => {
 
         expect(model.modelInfo.capabilities?.promptCaching).toBe('auto')
         expect(bedrockSystemCachePoint(callArgs())).toBeUndefined()
+        expect(warnOnce).not.toHaveBeenCalledWith(
+          expect.anything(),
+          expect.stringContaining('is not known to support automatic caching')
+        )
+      })
+
+      it('under the default auto strategy, warns that gpt-oss has no automatic caching and skips it', async () => {
+        const modelId = 'openai.gpt-oss-120b-1:0'
+        const { collect, callArgs, model } = setupCaptureTest(
+          minimalParts,
+          { cacheConfig: {} },
+          'amazon-bedrock',
+          modelId
+        )
+        await collect(userMessages, { systemPrompt: 'be helpful' })
+
+        expect(model.modelInfo.capabilities?.promptCaching).toBeUndefined()
+        expect(bedrockSystemCachePoint(callArgs())).toBeUndefined()
+        expect(warnOnce).toHaveBeenCalledWith(
+          expect.anything(),
+          `model_id=<${modelId}> | cacheConfig is enabled but this bedrock model is not known to support automatic caching, ignoring`
+        )
       })
 
       it('lets a modelInfo override win over implicit caching for an OpenAI model', () => {
