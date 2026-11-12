@@ -17,10 +17,10 @@ StrategyPresetName = str
 Preset names are the stable contract. The strategies they resolve to may change
 between releases.
 
-- ``'proactive_summarization'`` — batch summarize oldest messages at 70% utilization
+- ``'proactive_summarization'`` — batch summarize the oldest 30% of messages at 70% utilization
 - ``'large_tool_offloading'`` — truncate tool results over 2500 tokens to a 1000-token preview
-- ``'overflow_protection'`` — truncate oldest messages when the context window is full
-- ``'stale_tool_cleanup'`` — drop tool results older than 5 messages
+- ``'overflow_protection'`` — drop the oldest messages when the context window is full
+- ``'stale_tool_cleanup'`` — drop tool results outside the newest 5 tool-result messages
 """
 
 STRATEGY_PRESET_NAMES: tuple[str, ...] = (
@@ -40,12 +40,13 @@ def _resolve_preset(name: str) -> list[ContextStrategy]:
     Returns:
         The strategy array for the given preset.
     """
+    # Defaults are tuning decisions, not API promises — adjust freely.
     if name == "proactive_summarization":
-        return [Offload.summarize("*").when(utilization=0.7, preserve_recent=0.7)]
+        return [Offload.summarize("*").when(context_utilization="70%", preserve_recent="70%")]
     if name == "large_tool_offloading":
-        return [Offload.truncate("tool_results", {"preview_tokens": 1000}).when(threshold=2500)]
+        return [Offload.truncate("tool_results", {"preview_tokens": 1000}).when(block_threshold=2500)]
     if name == "overflow_protection":
-        return [Offload.truncate("*").when(utilization=1.0, preserve_recent=4)]
+        return [Offload.drop("*").when(context_utilization="100%", preserve_recent=4)]
     if name == "stale_tool_cleanup":
         return [Offload.drop("tool_results").when(preserve_recent=5)]
     raise ValueError(f'Unknown strategy preset: "{name}". Valid presets: {", ".join(STRATEGY_PRESET_NAMES)}')
@@ -59,11 +60,16 @@ def _resolve_strategies(entries: list[ContextStrategy | str]) -> list[ContextStr
 
     Returns:
         Flattened list of concrete strategies.
+
+    Raises:
+        ValueError: When an entry is None or an unknown preset name.
     """
     strategies: list[ContextStrategy] = []
     for entry in entries:
         if isinstance(entry, str):
             strategies.extend(_resolve_preset(entry))
+        elif entry is None:
+            raise ValueError(f"Strategy entries must be a strategy or a preset name, got {entry}")
         else:
             strategies.append(entry)
     return strategies

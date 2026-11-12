@@ -5,20 +5,10 @@ import unittest.mock
 
 import pytest
 
-from strands._context_manager.stash import Stash, _BytesEncoder, _format_stash_refs, _is_offload_placeholder
+from strands._context_manager.stash import Stash, _BytesEncoder, _parse_stash_key
 from strands.storage.in_memory_storage import InMemoryStorage
 from strands.types.content import ContentBlock, Message
 from strands.types.tools import ToolResult
-
-
-@pytest.fixture
-def storage():
-    return InMemoryStorage()
-
-
-@pytest.fixture
-def stash(storage):
-    return Stash(storage, "test-session", "test-agent")
 
 
 class TestStoreAndRetrieve:
@@ -85,28 +75,74 @@ class TestListAndDelete:
         assert result is None
 
 
-class TestRefsFor:
-    """Tests for refs_for — deterministic key computation."""
+class TestStashKeys:
+    """Tests for the ``<id>_<index>`` key a stash entry is stored under."""
 
-    def test_tool_result_block_produces_per_sub_block_refs(self):
-        stash = Stash(InMemoryStorage(), "s", "a")
-        block = ContentBlock(
-            toolResult=ToolResult(
-                toolUseId="tu-1",
-                status="success",
-                content=[{"text": "a"}, {"text": "b"}],
-            )
-        )
-        message = Message(role="user", content=[block])
-        refs = stash.refs_for(block, message, 0)
-        assert refs == ["tu-1_0", "tu-1_1"]
+    @pytest.mark.parametrize(
+        ("block_id", "block_index"),
+        [("tu-1", 0), ("call_12", 3), ("removed-0199-abc", 0)],
+    )
+    @pytest.mark.asyncio
+    async def test_round_trips_an_id_and_index(self, stash, block_id, block_index):
+        key = await stash.store(block_id, block_index, b"{}")
+        assert _parse_stash_key(key) == (block_id, block_index)
 
-    def test_text_block_uses_tracking_id(self):
-        stash = Stash(InMemoryStorage(), "s", "a")
-        block = ContentBlock(text="hello")
-        message = Message(role="assistant", content=[block], tracking_id="track-1")
-        refs = stash.refs_for(block, message, 0)
-        assert refs == ["track-1_0"]
+    @pytest.mark.parametrize("key", ["tu-1", "tu-1_", "_0", "tu-1_x", "tu-1_1a"])
+    def test_rejects_a_key_without_an_index(self, key):
+        assert _parse_stash_key(key) is None
+
+
+class TestEnsureStashed:
+    """Tests for the reference an offload placeholder carries for the block it replaces."""
+
+    @pytest.mark.asyncio
+    async def test_references_a_tool_result_by_tool_use_id_and_any_other_block_by_position(self, stash):
+        tool_result = ContentBlock(toolResult=ToolResult(toolUseId="tu-1", status="success", content=[{"text": "a"}]))
+        message = Message(role="user", content=[ContentBlock(text="t"), tool_result], tracking_id="track-1")
+
+        assert await stash.ensure_stashed(tool_result, message, 1) == "tu-1"
+        assert await stash.ensure_stashed(message["content"][0], message, 0) == "track-1_0"
+        assert await stash.take_snapshot() == {"tu-1_0": {"text": "a"}, "track-1_0": {"text": "t"}}
+
+    @pytest.mark.asyncio
+    async def test_leaves_an_entry_already_stored_under_the_reference_untouched(self, stash):
+        await stash.store("track-1", 0, json.dumps({"text": "original"}).encode("utf-8"))
+        message = Message(role="user", content=[ContentBlock(text="edited")], tracking_id="track-1")
+
+        assert await stash.ensure_stashed(message["content"][0], message, 0) == "track-1_0"
+        assert await stash.retrieve("track-1_0") == {"text": "original"}
+
+    @pytest.mark.asyncio
+    async def test_does_not_restash_a_tool_result_that_holds_a_placeholder(self, stash):
+        placeholder = {"text": "[Dropped] [ref: tu-1]", "offloaded": {"method": "drop", "ref": "tu-1"}}
+        tool_result = ContentBlock(toolResult=ToolResult(toolUseId="tu-1", status="success", content=[placeholder]))
+        message = Message(role="user", content=[tool_result], tracking_id="track-1")
+
+        assert await stash.ensure_stashed(tool_result, message, 0) == "tu-1"
+        assert await stash.take_snapshot() == {}
+
+
+class TestKeysOf:
+    """Tests for the keys stored under one reference id."""
+
+    @pytest.mark.asyncio
+    async def test_returns_the_keys_in_index_order(self, stash):
+        for block_index in (2, 0, 1):
+            await stash.store("tu-1", block_index, b"{}")
+
+        assert await stash.keys_of("tu-1") == ["tu-1_0", "tu-1_1", "tu-1_2"]
+
+    @pytest.mark.asyncio
+    async def test_leaves_out_ids_that_extend_this_one(self, stash):
+        await stash.store("tool", 0, b"{}")
+        await stash.store("tool_1", 0, b"{}")
+
+        assert await stash.keys_of("tool") == ["tool_0"]
+        assert await stash.keys_of("tool_1") == ["tool_1_0"]
+
+    @pytest.mark.asyncio
+    async def test_returns_nothing_for_an_unknown_id(self, stash):
+        assert await stash.keys_of("tu-1") == []
 
 
 class TestStoreMessage:
@@ -194,41 +230,40 @@ class TestStoreMessage:
         assert tru_entries == exp_entries
 
     @pytest.mark.asyncio
-    async def test_skips_tool_result_carrying_stash_refs(self, stash):
+    async def test_stashes_text_that_only_looks_like_a_placeholder(self, stash):
+        message = Message(role="user", content=[ContentBlock(text="[Dropped] [ref: tu-1]")], tracking_id="track-1")
+
+        await stash.store_message(message)
+
+        assert await stash.take_snapshot() == {"track-1_0": {"text": "[Dropped] [ref: tu-1]"}}
+
+    @pytest.mark.asyncio
+    async def test_skips_a_placeholder_and_a_tool_result_that_holds_one_keeping_other_blocks(self, stash):
         message = Message(
             role="user",
             content=[
+                ContentBlock(text="[Dropped] [ref: track-0_0]", offloaded={"method": "drop", "ref": "track-0_0"}),
                 ContentBlock(
                     toolResult=ToolResult(
                         toolUseId="tu-1",
                         status="success",
                         content=[
-                            {"text": "[Truncated: 1 block, ~10,973 tokens]\n\nrow-1\n\n[Stashed] [ref: tu-1_0]"},
+                            {
+                                "text": "[Truncated: 1 block, ~10,973 tokens]\n\nrow-1 [ref: tu-1]",
+                                "offloaded": {"method": "truncate", "ref": "tu-1"},
+                            },
                             {"image": {"format": "png", "source": {"bytes": b"img"}}},
                         ],
                     )
-                )
-            ],
-        )
-
-        await stash.store_message(message)
-
-        assert await stash.take_snapshot() == {}
-
-    @pytest.mark.asyncio
-    async def test_skips_text_placeholder_and_keeps_other_blocks(self, stash):
-        message = Message(
-            role="user",
-            content=[
-                ContentBlock(text="[Dropped] [refs: track-1_0, track-1_1]"),
-                ContentBlock(text="see [ref: x] for details"),
+                ),
+                ContentBlock(text="kept"),
             ],
             tracking_id="track-1",
         )
 
         await stash.store_message(message)
 
-        assert await stash.take_snapshot() == {"track-1_1": {"text": "see [ref: x] for details"}}
+        assert await stash.take_snapshot() == {"track-1_2": {"text": "kept"}}
 
 
 class TestNamespacing:
@@ -254,40 +289,6 @@ class TestNamespacing:
         keys_b = await stash_b.list()
         assert keys_a == ["tool-1_0"]
         assert keys_b == ["tool-1_0"]
-
-
-class TestFormatStashRefs:
-    """Tests for the _format_stash_refs helper."""
-
-    def test_empty_returns_empty_string(self):
-        assert _format_stash_refs([]) == ""
-
-    def test_single_ref(self):
-        assert _format_stash_refs(["tu-1_0"]) == " [ref: tu-1_0]"
-
-    def test_multiple_refs(self):
-        result = _format_stash_refs(["tu-1_0", "tu-1_1"])
-        assert result == " [refs: tu-1_0, tu-1_1]"
-
-
-class TestIsOffloadPlaceholder:
-    """Tests for the _is_offload_placeholder helper."""
-
-    @pytest.mark.parametrize("refs", [["tu-1_0"], ["tu-1_0", "tu-1_1"]])
-    def test_detects_formatted_refs(self, refs):
-        assert _is_offload_placeholder({"text": f"[Dropped]{_format_stash_refs(refs)}"})
-
-    @pytest.mark.parametrize(
-        "block",
-        [
-            {"text": "plain text"},
-            {"text": "see [ref: x] for details"},
-            {"json": {"text": "[Dropped] [ref: tu-1_0]"}},
-            "[Dropped] [ref: tu-1_0]",
-        ],
-    )
-    def test_ignores_non_placeholders(self, block):
-        assert not _is_offload_placeholder(block)
 
 
 class TestBytesEncoder:

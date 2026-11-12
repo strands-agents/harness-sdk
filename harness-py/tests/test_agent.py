@@ -854,8 +854,7 @@ def test_offloaded_tool_result_returned_in_full_on_retrieval(tmp_path):
 
     assert len(model.seen_tool_results) == 2
     assert model.seen_tool_results[0].startswith("[Truncated:")
-    # The Python SDK returns a full retrieval as the stashed block serialized to JSON.
-    assert json.loads(model.seen_tool_results[1]) == {"text": _LARGE_RESULT}
+    assert model.seen_tool_results[1] == _LARGE_RESULT
     assert agent.context_manager.stash_is_durable is True
     agent_scope = Path("scopes", "agent", agent.agent_id)
     snapshot_path = tmp_path / "session" / "retrieval" / agent_scope / "snapshots" / "snapshot_latest.json"

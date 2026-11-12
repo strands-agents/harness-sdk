@@ -8,16 +8,18 @@ from __future__ import annotations
 import base64
 import json
 import logging
-from typing import TYPE_CHECKING, Any
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any, Union, cast
 
 from ..tools.tools import PythonAgentTool
 from ..types.tools import ToolResult, ToolResultContent, ToolSpec
 from ..vended_plugins.context_offloader.search import _search_content
+from .content_rendering import flatten_messages_to_content
 from .methods.truncate import CHARS_PER_TOKEN
-from .stash import _is_offload_placeholder
+from .placeholder import is_offloaded
 
 if TYPE_CHECKING:
-    from ..types.content import Message
+    from ..types.content import ContentBlock, Message, Messages
     from .stash import Stash
 
 logger = logging.getLogger(__name__)
@@ -26,34 +28,13 @@ RETRIEVAL_TOOL_NAME = "retrieve_context"
 
 _DEFAULT_MAX_RESULT_TOKENS = 10_000
 
+_StashEntry = Union["ContentBlock", ToolResultContent, "Messages"]
+"""What a stash entry holds: one stored block, or the messages removed together."""
 
-_MEDIA_KEYS = frozenset({"image", "document"})
+_MEDIA_KEYS = ("image", "document")
+"""Media a tool result can carry back, whose bytes the stash holds base64-encoded."""
 
-
-def _restore_media(data: dict[str, Any]) -> ToolResultContent | None:
-    """Reconstruct a media ToolResultContent from stash data, or None if not media."""
-    for key in _MEDIA_KEYS:
-        if key in data:
-            media = data[key]
-            source = media.get("source", {})
-            if isinstance(source.get("bytes"), str):
-                media = {**media, "source": {**source, "bytes": base64.b64decode(source["bytes"])}}
-            return ToolResultContent(**{key: media})  # type: ignore[misc]
-    return None
-
-
-def _extract_text(data: object) -> str | None:
-    """Extract searchable text from decoded stash data."""
-    if isinstance(data, str):
-        return data
-    if isinstance(data, dict):
-        text = data.get("text")
-        if isinstance(text, str):
-            return text
-        json_val = data.get("json")
-        if json_val is not None:
-            return json.dumps(json_val, indent=2)
-    return None
+_DEFAULT_CONTEXT_LINES = 5
 
 
 def _create_retrieval_tool(stash: Stash, max_result_tokens: int | None = None) -> PythonAgentTool:
@@ -63,55 +44,20 @@ def _create_retrieval_tool(stash: Stash, max_result_tokens: int | None = None) -
     async def _invoke(tool_use: dict[str, Any], **kwargs: Any) -> ToolResult:
         tool_use_id = tool_use["toolUseId"]
         inputs = tool_use.get("input", {})
-        reference: str = inputs["reference"]
-        pattern: str | None = inputs.get("pattern")
-        line_range: dict[str, int] | None = inputs.get("line_range")
-        context_lines: int | None = inputs.get("context_lines")
+        reference = str(inputs["reference"]).strip()
 
-        result = await stash.retrieve(reference)
-        if result is None:
-            text = f"Error: reference not found: {reference}"
-            return ToolResult(toolUseId=tool_use_id, status="error", content=[ToolResultContent(text=text)])
-        if _is_offload_placeholder(result):
-            text = f"Error: original content for reference {reference} is no longer available"
-            return ToolResult(toolUseId=tool_use_id, status="error", content=[ToolResultContent(text=text)])
-
-        if pattern is None and line_range is None:
-            if isinstance(result, dict):
-                media = _restore_media(result)
-                if media is not None:
-                    return ToolResult(toolUseId=tool_use_id, status="success", content=[media])
-            full_text = json.dumps(result)
-            if len(full_text) > max_chars:
-                full_text = full_text[:max_chars] + "\n\n[truncated]"
-            content: list[ToolResultContent] = [ToolResultContent(text=full_text)]
-            return ToolResult(toolUseId=tool_use_id, status="success", content=content)
-
-        text_content = _extract_text(result)
-        if text_content is None:
-            text = "Error: cannot search non-text content. Omit pattern/line_range to retrieve full content."
-            return ToolResult(toolUseId=tool_use_id, status="error", content=[ToolResultContent(text=text)])
-
-        resolved_context_lines = context_lines if context_lines is not None else 5
-        line_range_pair: tuple[int, int] | None = None
-        if line_range is not None:
-            try:
-                line_range_pair = (int(line_range["start"]), int(line_range["end"]))
-            except (KeyError, TypeError, ValueError) as error:
-                text = f"Error: invalid line_range: {error}"
-                return ToolResult(toolUseId=tool_use_id, status="error", content=[ToolResultContent(text=text)])
-
-        try:
-            search_result = _search_content(
-                text_content,
-                pattern=pattern,
-                line_range=line_range_pair,
-                context_lines=resolved_context_lines,
-                max_chars=max_chars,
+        entries = await _resolve_reference(stash, reference)
+        if not entries:
+            return _error(
+                tool_use_id,
+                f'reference not found: {reference}. Pass only the <id> from the placeholder\'s "[ref: <id>]".',
             )
-        except ValueError as error:
-            return ToolResult(toolUseId=tool_use_id, status="error", content=[ToolResultContent(text=str(error))])
-        return ToolResult(toolUseId=tool_use_id, status="success", content=[ToolResultContent(text=search_result)])
+        if any(_entry_is_offloaded(entry) for entry in entries):
+            return _error(tool_use_id, f"original content for reference {reference} is no longer available")
+
+        if inputs.get("pattern") is None and inputs.get("line_range") is None:
+            return ToolResult(toolUseId=tool_use_id, status="success", content=_full_content(entries, max_chars))
+        return _search_entries(tool_use_id, entries, inputs, max_chars)
 
     _invoke.__name__ = RETRIEVAL_TOOL_NAME
 
@@ -120,23 +66,23 @@ def _create_retrieval_tool(stash: Stash, max_result_tokens: int | None = None) -
         description=(
             "Retrieve content that was offloaded from context.\n\n"
             "When content is offloaded (truncated, dropped, or summarized), the original is "
-            "persisted and a reference key is left in its place. Use this tool with that "
-            "reference to access the original content.\n\n"
+            'persisted and the placeholder left in its place ends in "[ref: <id>]". Pass that '
+            "<id> as the reference to access the original content.\n\n"
             "Options:\n"
             "  - pattern: regex/keyword to find matching lines with context\n"
             "  - line_range: { start, end } to read a specific span\n"
             "  - Without pattern/line_range: returns the full original content\n\n"
             "Examples:\n"
-            '  { reference: "tu_abc123_0", pattern: "error" }\n'
-            '  { reference: "tu_abc123_0", line_range: { start: 10, end: 25 } }\n'
-            '  { reference: "tu_abc123_0" }'
+            '  { reference: "toolu_abc", pattern: "error" }\n'
+            '  { reference: "toolu_abc", line_range: { start: 10, end: 25 } }\n'
+            '  { reference: "toolu_abc" }'
         ),
         inputSchema={
             "type": "object",
             "properties": {
                 "reference": {
                     "type": "string",
-                    "description": "The reference key from the offload placeholder.",
+                    "description": 'The <id> from the "[ref: <id>]" at the end of the offload placeholder.',
                 },
                 "pattern": {
                     "type": "string",
@@ -144,7 +90,7 @@ def _create_retrieval_tool(stash: Stash, max_result_tokens: int | None = None) -
                 },
                 "line_range": {
                     "type": "object",
-                    "description": "Line range to extract (1-indexed, inclusive).",
+                    "description": "Return only this span of lines (1-indexed, inclusive).",
                     "properties": {
                         "start": {"type": "integer", "minimum": 1, "description": "First line to return."},
                         "end": {"type": "integer", "minimum": 1, "description": "Last line to return."},
@@ -166,6 +112,152 @@ def _create_retrieval_tool(stash: Stash, max_result_tokens: int | None = None) -
         tool_spec=tool_spec,
         tool_func=_invoke,
     )
+
+
+async def _resolve_reference(stash: Stash, reference: str) -> list[_StashEntry]:
+    """Resolve a reference to its stored entries.
+
+    An id (a tool result's ``toolUseId``, or ``removed-<tracking_id>``) resolves to every entry keyed under it, in
+    index order; otherwise the reference is an exact key and resolves to that entry. Ids take precedence because a
+    placeholder references a tool result by id, and an id may itself end like a key (``tool_1``).
+    """
+    keys = await stash.keys_of(reference)
+    if keys:
+        stored = [await stash.retrieve(key) for key in keys]
+        return [cast("_StashEntry", entry) for entry in stored if entry is not None]
+    exact = await stash.retrieve(reference)
+    return [cast("_StashEntry", exact)] if exact is not None else []
+
+
+def _full_content(entries: list[_StashEntry], max_chars: int) -> list[ToolResultContent]:
+    """The stored content itself.
+
+    Tool result items, and removed messages rendered as role markers and their content, are returned as blocks, so
+    media reaches the model as media and only their text is cut to ``max_chars``; anything else is returned as JSON.
+    """
+    blocks = [block for entry in entries for block in _entry_blocks(entry)]
+    items = [item for item in (_as_result_item(block) for block in blocks) if item is not None]
+    if len(items) == len(blocks):
+        return _clip_text(items, max_chars)
+
+    serialized = json.dumps(entries[0] if len(entries) == 1 else entries)
+    text = serialized if len(serialized) <= max_chars else f"{serialized[:max_chars]}\n\n[truncated]"
+    return [ToolResultContent(text=text)]
+
+
+def _search_entries(
+    tool_use_id: str, entries: list[_StashEntry], inputs: Mapping[str, Any], max_chars: int
+) -> ToolResult:
+    """The lines of the entries' text that match ``pattern`` or fall in ``line_range``."""
+    text = _join_text(_entry_text(entry) for entry in entries)
+    if text is None:
+        return _error(tool_use_id, "cannot search non-text content. Omit pattern/line_range to retrieve full content.")
+
+    line_range: Mapping[str, Any] | None = inputs.get("line_range")
+    try:
+        span = (int(line_range["start"]), int(line_range["end"])) if line_range is not None else None
+    except (KeyError, TypeError, ValueError) as error:
+        return _error(tool_use_id, f"invalid line_range: {error}")
+
+    try:
+        found = _search_content(
+            text,
+            pattern=inputs.get("pattern"),
+            line_range=span,
+            context_lines=inputs.get("context_lines") or _DEFAULT_CONTEXT_LINES,
+            max_chars=max_chars,
+        )
+    except ValueError as error:
+        return ToolResult(toolUseId=tool_use_id, status="error", content=[ToolResultContent(text=str(error))])
+    return ToolResult(toolUseId=tool_use_id, status="success", content=[ToolResultContent(text=found)])
+
+
+def _entry_blocks(entry: _StashEntry) -> list[ContentBlock | ToolResultContent]:
+    """An entry as content blocks: removed messages rendered with role markers, or the stored block itself."""
+    if isinstance(entry, list):
+        return list(flatten_messages_to_content(entry))
+    return [entry]
+
+
+def _as_result_item(block: ContentBlock | ToolResultContent) -> ToolResultContent | None:
+    """A block as a tool result item, media bytes decoded, or None when a tool result can't carry it."""
+    # The two content shapes share their keys but not their types, so the keys are read off the mapping itself.
+    data: Mapping[str, Any] = block
+    media = _restore_media(data)
+    if media is not None:
+        return media
+    for key in ("text", "json"):
+        if key in data:
+            return cast("ToolResultContent", {key: data[key]})
+    return None
+
+
+def _restore_media(data: Mapping[str, Any]) -> ToolResultContent | None:
+    """A media tool result item from stash data, bytes decoded from the base64 the stash holds, or None."""
+    for key in _MEDIA_KEYS:
+        if key not in data:
+            continue
+        media = data[key]
+        source = media.get("source", {})
+        if isinstance(source.get("bytes"), str):
+            media = {**media, "source": {**source, "bytes": base64.b64decode(source["bytes"])}}
+        return cast("ToolResultContent", {key: media})
+    return None
+
+
+def _clip_text(items: list[ToolResultContent], max_chars: int) -> list[ToolResultContent]:
+    """Cut the items' text to ``max_chars`` in total, in order.
+
+    The item that exhausts the budget is cut and marked, later textual items are left out, and media passes through
+    untouched.
+    """
+    budget = max_chars
+    kept: list[ToolResultContent] = []
+    for item in items:
+        text = _block_text(item)
+        if text is None or len(text) <= budget:
+            budget -= len(text) if text else 0
+            kept.append(item)
+        elif budget > 0:
+            kept.append(ToolResultContent(text=f"{text[:budget]}\n\n[truncated]"))
+            budget = 0
+    return kept
+
+
+def _entry_text(entry: _StashEntry) -> str | None:
+    """The searchable text of an entry: its text, JSON, and tool-result text, in order."""
+    if isinstance(entry, list):
+        return _join_text(_block_text(block) for message in entry for block in message["content"])
+    return _block_text(entry)
+
+
+def _block_text(block: ContentBlock | ToolResultContent) -> str | None:
+    """The searchable text of a block, or None when it holds none."""
+    data: Mapping[str, Any] = block
+    if "text" in data:
+        return cast("str", data["text"])
+    if "json" in data:
+        return json.dumps(data["json"], indent=2)
+    if "toolResult" in data:
+        return _join_text(_block_text(item) for item in data["toolResult"]["content"])
+    if "citationsContent" in data:
+        return _join_text(cited.get("text") for cited in data["citationsContent"].get("content", []))
+    return None
+
+
+def _join_text(parts: Any) -> str | None:
+    """The present parts joined by newlines, or None when none of them held text."""
+    present = [part for part in parts if part is not None]
+    return "\n".join(present) if present else None
+
+
+def _entry_is_offloaded(entry: _StashEntry) -> bool:
+    """Whether an entry is a placeholder, which stands where the original content no longer is."""
+    return not isinstance(entry, list) and is_offloaded(entry)
+
+
+def _error(tool_use_id: str, message: str) -> ToolResult:
+    return ToolResult(toolUseId=tool_use_id, status="error", content=[ToolResultContent(text=f"Error: {message}")])
 
 
 def _track_retrieval_tool_use_ids(message: Message, skip_set: set[str]) -> None:

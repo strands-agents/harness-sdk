@@ -17,6 +17,7 @@ from a2a.types import (
 )
 from a2a.types import Message as A2AMessage
 
+from strands._context_manager.placeholder import offload_placeholder
 from strands.agent.agent_result import AgentResult
 from strands.multiagent.a2a._converters import (
     convert_content_blocks_to_parts,
@@ -168,6 +169,15 @@ def test_convert_content_blocks_skips_non_text():
     parts = convert_content_blocks_to_parts(content_blocks)
 
     assert len(parts) == 2
+
+
+def test_convert_an_offloaded_block_to_the_text_the_model_receives():
+    """Test that an offload placeholder converts to its text, without its provenance."""
+    content_blocks = [offload_placeholder("drop", "[Dropped: ~1,200 tokens]", "tu-1", 1200)]
+
+    parts = convert_content_blocks_to_parts(content_blocks)
+
+    assert [part.root for part in parts] == [TextPart(kind="text", text="[Dropped: ~1,200 tokens] [ref: tu-1]")]
 
 
 def test_convert_task_artifact_update_event():
