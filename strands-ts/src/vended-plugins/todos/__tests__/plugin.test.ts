@@ -123,8 +123,8 @@ describe('Todos', () => {
     expect(stages).toEqual([InvokeModelStage.Input])
   })
 
-  it('names its injector after the plugin, so two instances do not collide', () => {
-    expect(new Todos({ name: 'plan:a' }).name).toBe('plan:a')
+  it('takes a configurable plugin name', () => {
+    expect(new Todos({ name: 'plan' }).name).toBe('plan')
     expect(new Todos().name).toBe('strands:todos')
   })
 })

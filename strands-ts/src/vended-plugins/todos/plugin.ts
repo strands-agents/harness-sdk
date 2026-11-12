@@ -61,6 +61,9 @@ export interface TodosConfig {
  * plugin re-renders it as a `<system-reminder>`. Sharing one instance across agents is safe: the
  * list lives in per-agent state, not on the plugin.
  *
+ * One agent takes one `Todos`. The tool is always named `todo_write`, so a second instance on the
+ * same agent conflicts over that name no matter how `name` and `stateKey` are set.
+ *
  * Because the list is re-rendered on every model call, it changes the tail of the request each
  * turn. On a provider without explicit cache points that moves the cached prefix boundary, so
  * weigh it against the task tracking it buys.

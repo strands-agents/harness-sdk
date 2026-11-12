@@ -127,13 +127,6 @@ def test_init_agent_registers_the_injector_as_model_input_middleware():
     assert [call.args[0] for call in agent.add_middleware.call_args_list] == [InvokeModelStage.Input]
 
 
-def test_the_name_is_configurable_so_two_instances_can_coexist():
-    """Plugin registration is keyed on the name, so two instances must be nameable apart."""
-    agent = Agent(
-        model=MagicMock(),
-        callback_handler=None,
-        plugins=[Todos(name="plan:a", state_key="a"), Todos(name="plan:b", state_key="b")],
-    )
-
-    tru_names = {plugin.name for plugin in agent._plugin_registry._plugins.values()}
-    assert {"plan:a", "plan:b"} <= tru_names
+def test_the_plugin_name_is_configurable():
+    assert Todos(name="plan").name == "plan"
+    assert Todos().name == _DEFAULT_NAME
