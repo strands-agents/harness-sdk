@@ -98,8 +98,8 @@ describe('ChildAgentAdapter', () => {
     expect(AGENT_ADAPTER.classify(child(), result)).toBe(`Child stopped before finishing (stopReason=${stopReason}).`)
   })
 
-  it('treats endTurn as success', () => {
-    expect(AGENT_ADAPTER.classify(child(), agentResult('endTurn'))).toBeUndefined()
+  it.each(['endTurn', 'guardrailIntervened'] as const)('treats %s as success', (stopReason) => {
+    expect(AGENT_ADAPTER.classify(child(), agentResult(stopReason))).toBeUndefined()
   })
 })
 

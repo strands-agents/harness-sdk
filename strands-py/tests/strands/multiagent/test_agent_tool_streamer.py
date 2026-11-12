@@ -63,6 +63,11 @@ def test_agent_adapter_reports_a_child_that_produced_no_answer_as_an_error(stop_
     assert AGENT_ADAPTER.classify(Mock(), result) == expected
 
 
+@pytest.mark.parametrize("stop_reason", ["end_turn", "guardrail_intervened"])
+def test_agent_adapter_treats_an_answer_as_success(stop_reason):
+    assert AGENT_ADAPTER.classify(Mock(), Mock(stop_reason=stop_reason, __str__=lambda self: "answer")) is None
+
+
 def test_multiagent_adapter_round_trips_orchestrator_state():
     source = Mock(id="swarm")
     source.serialize_state.return_value = {"status": "interrupted"}

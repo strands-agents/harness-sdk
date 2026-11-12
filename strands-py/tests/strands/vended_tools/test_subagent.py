@@ -153,8 +153,7 @@ async def test_async_builder_is_awaited():
         return _FakeChild(_FakeResult("built async"))
 
     result = _result(await _events(make_subagent(builder=builder), {"task": "do it"}))
-    assert result["status"] == "success"
-    assert result["content"][0]["text"] == "built async"
+    assert result == {"toolUseId": "t1", "status": "success", "content": [{"text": "built async"}]}
 
 
 @pytest.mark.asyncio

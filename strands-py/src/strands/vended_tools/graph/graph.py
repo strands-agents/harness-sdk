@@ -112,7 +112,7 @@ def make_graph(
     Args:
         name: Tool name shown to the model.
         description: Tool description shown to the model.
-        builder: Callable that turns an :class:`AgentSpec` into an ``Agent``.
+        builder: Callable, sync or async, that turns an :class:`AgentSpec` into an ``Agent``.
             When ``None`` a default builder is used that creates an ``Agent``
             inheriting the caller's model with the spec's instructions and tools.
         presets: Named roles the model can select via ``agent_type``.

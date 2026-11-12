@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 _RESPONSES_KEY = "responses"
 _INTERRUPTED_TURNS_KEY = "sub_agent_interrupted_turns"
 # The child produced no answer; "refusal" comes from the Anthropic providers and is absent from StopReason.
+# "guardrail_intervened" stays a success: Bedrock also reports it for masked output, which is a complete answer.
 _NO_ANSWER_STOP_REASONS = frozenset({"content_filtered", "refusal"})
 
 
