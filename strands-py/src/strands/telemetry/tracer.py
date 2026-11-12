@@ -1400,6 +1400,8 @@ class Tracer:
             elif "text" in block:
                 # Standard TextPart
                 parts.append({"type": "text", "content": block["text"]})
+            elif "injected" in block:
+                parts.append({"type": "text", "content": block["injected"]["text"]})
             elif "toolUse" in block:
                 # Standard ToolCallRequestPart
                 tool_use = block["toolUse"]

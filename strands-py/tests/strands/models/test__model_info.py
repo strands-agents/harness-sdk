@@ -137,6 +137,7 @@ def test_lookup_model_info_returns_the_entry_facts_and_nothing_for_unknown_ids()
                 forced_tool_choice=False,
                 native_structured_output=True,
                 server_side_summary=True,
+                temporary_messages=True,
             ),
             limits=ModelLimits(context_window=1_000_000, max_output_tokens=128_000),
         )

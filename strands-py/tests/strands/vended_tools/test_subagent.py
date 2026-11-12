@@ -234,12 +234,12 @@ def _framed(task):
 
 @pytest.mark.asyncio
 async def test_context_all_forks_messages():
-    """Covers forking, in-flight dropping, reasoning filtering, and trailing-user merge."""
+    """Covers forking, in-flight dropping, reasoning and injected-text filtering, and trailing-user merge."""
     child = _FakeChild(_FakeResult())
     reasoning = {"reasoningContent": {"reasoningText": {"text": "think", "signature": "sig"}}}
     tr = {"toolResult": {"toolUseId": "r1", "status": "success", "content": [{"text": "A"}]}}
     messages = [
-        {"role": "user", "content": [{"text": "go"}]},
+        {"role": "user", "content": [{"text": "go"}, {"injected": {"text": "<todos>v1</todos>", "source": "todos"}}]},
         {
             "role": "assistant",
             "content": [
@@ -262,7 +262,7 @@ async def test_context_all_forks_messages():
     await _events(tool, {"task": "do X", "context": "all"}, parent=parent)
     prompt = child.prompts[0]
     assert "reasoningContent" not in str(prompt)
-    assert prompt[0] == messages[0]
+    assert prompt[0] == {"role": "user", "content": [{"text": "go"}]}
     assert prompt[1] == {
         "role": "assistant",
         "content": [{"toolUse": {"toolUseId": "r1", "name": "read", "input": {}}}],

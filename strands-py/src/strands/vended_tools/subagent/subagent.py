@@ -159,7 +159,10 @@ class _SubagentTool(AgentTool):
             content = [
                 b
                 for b in message["content"]
-                if "reasoningContent" not in b and ("toolUse" not in b or b["toolUse"]["toolUseId"] in answered)
+                if "reasoningContent" not in b
+                # Context for the parent's own turn.
+                and "injected" not in b
+                and ("toolUse" not in b or b["toolUse"]["toolUseId"] in answered)
             ]
             if content:
                 filtered.append({"role": message["role"], "content": copy.deepcopy(content)})

@@ -4118,3 +4118,19 @@ def test_baggage_attributes_nested_agent_override_and_restore():
     assert seen_after_inner["tenant.id"] == "outer-corp", (
         f"after inner: expected 'outer-corp', got {seen_after_inner['tenant.id']}"
     )
+
+
+def test_agent_sends_an_injected_block_to_the_model_as_text_and_keeps_it_in_agent_messages():
+    model = MockedModelProvider([{"role": "assistant", "content": [{"text": "ok"}]}])
+    stream = unittest.mock.Mock(wraps=model.stream)
+    model.stream = stream
+    agent = Agent(model=model, callback_handler=None)
+
+    agent([{"text": "Refactor the tokenizer."}, {"injected": {"text": "reminder", "source": "test"}}])
+
+    tru_sent = stream.call_args.args[0][0]["content"]
+    assert tru_sent == [{"text": "Refactor the tokenizer."}, {"text": "\n\nreminder"}]
+    assert agent.messages[0]["content"] == [
+        {"text": "Refactor the tokenizer."},
+        {"injected": {"text": "reminder", "source": "test"}},
+    ]
