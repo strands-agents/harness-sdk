@@ -21,6 +21,7 @@
 import { Model, ModelRouter, type JSONValue } from '@strands-agents/sdk'
 import { DEFAULT_MODEL } from './defaults.js'
 import { warnOnce } from './logging.js'
+import type { ImageLimits } from './tools/file-tools.js'
 import type { Effort } from './types/agent.js'
 
 const ANTHROPIC_MAX_TOKENS = 32_000
@@ -557,6 +558,44 @@ export async function supportsMedia(model: Model | ModelRouter | string | undefi
     return !bedrockFamily(name).startsWith('openai.')
   }
   return true
+}
+
+/**
+ * The `read` image limits `model` is known to enforce, as `makeRead` options.
+ *
+ * Claude rejects an image over 8000 px a side, or over 3,932,160 bytes on Bedrock and 7,864,320 on the
+ * Anthropic API (5 and 10 MiB once base64-encoded), and the rejected block fails every later turn. Other
+ * Bedrock models accept larger images, so they and unknown `Model` instances get no limits. A
+ * `BedrockModel` or `AnthropicModel` instance is resolved through its `modelId`, and a `ModelRouter`
+ * gets the strictest limit among its candidates.
+ */
+export async function imageLimits(model: Model | ModelRouter | string | undefined): Promise<ImageLimits> {
+  if (model instanceof ModelRouter) {
+    const candidates = await Promise.all(model.candidates.map((candidate) => imageLimits(candidate.model)))
+    const limits: ImageLimits = {}
+    for (const key of ['maxImageBytes', 'maxImageDimension'] as const) {
+      const values = candidates.flatMap((candidate) => candidate[key] ?? [])
+      if (values.length) limits[key] = Math.min(...values)
+    }
+    return limits
+  }
+  if (model instanceof Model) {
+    const { BedrockModel } = await import('@strands-agents/sdk/models/bedrock')
+    // The optional `@anthropic-ai/sdk` peer may be absent, and then no AnthropicModel instance exists.
+    const AnthropicModel = await import('@strands-agents/sdk/models/anthropic').then(
+      (mod) => mod.AnthropicModel,
+      () => undefined
+    )
+    if (AnthropicModel && model instanceof AnthropicModel) return imageLimits(`anthropic/${model.getConfig().modelId}`)
+    const modelId = model instanceof BedrockModel ? model.getConfig().modelId : undefined
+    return typeof modelId === 'string' ? imageLimits(modelId) : {}
+  }
+  const [providerName, name] = splitProvider(model ?? DEFAULT_MODEL)
+  if (providerName === 'anthropic') return { maxImageBytes: 7_864_320, maxImageDimension: 8000 }
+  if (providerName === 'bedrock' && bedrockFamily(name).startsWith('anthropic.')) {
+    return { maxImageBytes: 3_932_160, maxImageDimension: 8000 }
+  }
+  return {}
 }
 
 export function supportsThinking(model: Model | ModelRouter | string | undefined): boolean {
