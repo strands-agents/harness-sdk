@@ -81,7 +81,11 @@ export class ModelProxy {
     if (this._model.modelInfo.capabilities?.deferredTools !== 'stubs') return options
     const toolSpecs = options.toolSpecs.map((spec) =>
       spec.deferLoading
-        ? { name: spec.name, description: `${spec.description} ${STUB_HINT}`, inputSchema: { type: 'object' as const } }
+        ? {
+            name: spec.name,
+            description: `${spec.description}\n${STUB_HINT}`,
+            inputSchema: { type: 'object' as const },
+          }
         : spec
     )
     return { ...options, toolSpecs }

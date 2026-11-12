@@ -165,7 +165,7 @@ describe('DynamicToolLoadingStrategy', () => {
     const [toolSpecs] = sentToolSpecs(model)
     expect(toolSpecs!.find((spec) => spec.name === 'shell')).toEqual({
       name: 'shell',
-      description: 'Run shell. Call strands_load_tools with this name for its parameters first.',
+      description: 'Run shell.\nCall strands_load_tools with this name for its parameters first.',
       inputSchema: { type: 'object' },
     })
     expect(agent.messages[2]!.content[0]).toEqual(
@@ -297,7 +297,7 @@ describe('DynamicToolLoadingStrategy', () => {
     const [toolSpecs] = sentToolSpecs(model)
     expect(deferredNames(toolSpecs!)).toEqual([])
     expect(toolSpecs!.map((spec) => spec.name)).not.toContain('strands_load_tools')
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('model can not defer tool schemas'))
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('model or its config can not defer tool schemas'))
   })
 
   it('sends every spec without the loader when a later call model can not defer', async () => {

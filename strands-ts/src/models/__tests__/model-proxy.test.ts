@@ -419,7 +419,7 @@ describe('ModelProxy', () => {
       expect(await sentToolSpecs('stubs')).toEqual([
         {
           name: 'shell',
-          description: 'Run a command Call strands_load_tools with this name for its parameters first.',
+          description: 'Run a command\nCall strands_load_tools with this name for its parameters first.',
           inputSchema: { type: 'object' },
         },
         pinned,

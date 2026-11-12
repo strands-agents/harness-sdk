@@ -110,7 +110,7 @@ export class DynamicToolLoadingStrategy implements ContextStrategy {
     if (deferred.size > 0) {
       warnOnce(
         logger,
-        `model_id=<${context.model.modelId}> | model can not defer tool schemas | sending every tool spec`
+        `model_id=<${context.model.modelId}> | model or its config can not defer tool schemas | sending every tool spec`
       )
     }
     return { ...context, toolSpecs: context.toolSpecs.filter((spec) => spec.name !== LOAD_TOOLS_TOOL_NAME) }

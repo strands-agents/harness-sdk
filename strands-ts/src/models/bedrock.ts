@@ -362,7 +362,8 @@ export interface BedrockModelConfig extends BaseModelConfig {
    * features outside its strict subset (recursive or external `$ref`, `minimum`/`maximum`/
    * `multipleOf`, `minLength`/`maxLength`, `additionalProperties` other than `false`) with a 400
    * at request time, and compiles each new schema on first use, which can take minutes.
-   * Incompatible with citations for Anthropic models.
+   * Incompatible with citations for Anthropic models. Turns deferred tool loading off, so the `dynamicToolLoading`
+   * preset sends every full spec: strict mode needs each tool's full input schema.
    *
    * @see https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html
    * @see https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ToolSpecification.html
@@ -530,8 +531,8 @@ export class BedrockModel extends Model<BedrockModelConfig> {
   /**
    * Turns `serverSideSummary` off, reports OpenAI models as implicitly cached, and turns deferred tools off under
    * `strictTools`; a `modelInfo` override still wins over all three. The shared model info lists cache points for
-   * their OpenAI-compatible APIs, but Converse caches them implicitly and rejects cache points. Converse can't defer
-   * a tool natively, and strict mode holds the model to a stub's open schema, so it can only send `{}`.
+   * their OpenAI-compatible APIs, but Converse caches them implicitly and rejects cache points. Strict mode needs each
+   * tool's full input schema, so it can't take a deferred tool as a stub.
    */
   override get modelInfo(): ModelInfo {
     const openai = this.modelId?.toLowerCase().includes('openai.')

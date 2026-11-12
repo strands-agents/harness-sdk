@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest'
-import { Agent, InvokeModelStage, tool } from '@strands-agents/sdk'
+import { describe, it, expect, vi } from 'vitest'
+import { Agent, tool } from '@strands-agents/sdk'
 import type { Model } from '@strands-agents/sdk'
 import { z } from 'zod'
 import { anthropic, bedrock, gemini, openai, vercelBedrock } from '../__fixtures__/model-providers.js'
@@ -72,18 +72,21 @@ describe.each([
         contextManager: { strategies: ['dynamicToolLoading'] },
         printer: false,
       })
-      const toolLists: string[] = []
-      agent.addMiddleware(InvokeModelStage, async function* (context, next) {
-        toolLists.push(JSON.stringify(context.toolSpecs))
-        return yield* next(context)
-      })
+      // The provider's input, after ModelProxy builds the stubs.
+      const streamSpy = vi.spyOn(model, 'stream')
 
       const result = await agent.invoke('What is the weather in Paris, in celsius? Use the tools.')
 
       expect(model.modelInfo.capabilities?.deferredTools).toBe(delivery)
       expect(result.stopReason).toBe('endTurn')
       expect(weatherCalls).toEqual([{ city: 'Paris', unit: 'celsius' }])
-      expect(new Set(toolLists).size).toBe(1)
+      const toolLists = streamSpy.mock.calls.map(([, options]) => options?.toolSpecs)
+      expect(new Set(toolLists.map((toolSpecs) => JSON.stringify(toolSpecs))).size).toBe(1)
+      expect(toolLists[0]!.find((spec) => spec.name === 'get_weather')).toEqual(
+        delivery === 'native'
+          ? expect.objectContaining({ deferLoading: true })
+          : expect.objectContaining({ inputSchema: { type: 'object' } })
+      )
       const loaded = agent.messages
         .flatMap((message) => message.content)
         .flatMap((block) => (block.type === 'toolResultBlock' ? block.content : []))

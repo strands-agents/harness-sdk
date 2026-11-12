@@ -56,9 +56,10 @@ export interface ModelCapabilities {
    * path on the model vendor's own API and `'unsupported'` marks a model that can't fill in a stub's parameters, such
    * as one that constrains its tool calls to the stub's open schema. `Model.modelInfo` reports `'stubs'` for every
    * other model, `'native'` only where the provider sends the deferral flag (`AnthropicModel`), and `'unsupported'`
-   * where the provider holds the model to each schema (`BedrockModel` with `strictTools`). On a provider without the
-   * flag, a `modelInfo` override that sets `'native'` sends every full spec and only changes the `strands_load_tools`
-   * result: `BedrockModel` names each loaded tool and other providers leave it out.
+   * where the provider needs each tool's full input schema (`BedrockModel` with `strictTools`). A `modelInfo`
+   * override that sets `'unsupported'` sends every full spec to a model that handles stubs badly. On a provider without
+   * the flag, an override that sets `'native'` sends every full spec and only changes the `strands_load_tools` result:
+   * `BedrockModel` names each loaded tool and other providers leave it out.
    */
   readonly deferredTools?: DeferredTools | undefined
 }
