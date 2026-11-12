@@ -493,7 +493,7 @@ class Agent(AgentBase, LocalAgent):
         # Deferred cancellation requested via cancel(after_current_tools=True); read after the tool batch.
         self._deferred_cancel = False
         self._cancel_message: str | None = None
-        self._invoking = False
+        self._invoking_depth = 0
 
         self.tool_registry = ToolRegistry()
 
@@ -714,8 +714,10 @@ class Agent(AgentBase, LocalAgent):
         ``after_current_tools=True``. Their cancelled results are delivered like a cancel requested by the
         model, and ``cancel()`` may block briefly (at most a few seconds) until the cancel has landed. On an
         idle agent, ``cancel(cancel_background_tasks=True)`` cancels only the background tasks and leaves the
-        next invocation alone, while plain ``cancel()`` cancels the next invocation. A ``cancel_signal``
-        passed into an invocation never cancels background tasks.
+        next invocation alone, while plain ``cancel()`` cancels the next invocation. An invocation scheduled with
+        ``asyncio.create_task`` counts as idle until it starts running, so in the example below the flagged call
+        would not cancel it; pass a ``cancel_signal`` into the invocation instead. A ``cancel_signal`` passed
+        into an invocation never cancels background tasks.
 
         Args:
             message: Text of the final assistant message the invocation ends with.
@@ -739,7 +741,7 @@ class Agent(AgentBase, LocalAgent):
         Note:
             Multiple calls to cancel() are safe and idempotent.
         """
-        if self._invoking or not cancel_background_tasks:
+        if self._invoking_depth > 0 or not cancel_background_tasks:
             if message is not None:
                 self._cancel_message = message
             if after_current_tools:
@@ -1573,7 +1575,7 @@ class Agent(AgentBase, LocalAgent):
         cancel_watcher: asyncio.Task[None] | None = None
 
         try:
-            self._invoking = True
+            self._invoking_depth += 1
             # Clear cancel state that bypassed stream_async's finally (e.g.
             # agent.tool.stop(...) called directly). Keep _cancel_message when the signal is
             # set so a pre-invocation agent.cancel(message=...) still carries its text.
@@ -1679,7 +1681,7 @@ class Agent(AgentBase, LocalAgent):
                 cancel_watcher.cancel()
             self._external_cancel_signal = None
 
-            self._invoking = False
+            self._invoking_depth -= 1
             # Clear cancel state to allow agent reuse after cancellation
             self._cancel_signal.clear()
             self._deferred_cancel = False

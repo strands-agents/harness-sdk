@@ -16,6 +16,7 @@ from strands.middleware.stages import ExecuteToolStage, InvokeModelStage
 from strands.tools.executors import SequentialToolExecutor
 from strands.tools.tools import PythonAgentTool
 from strands.types._events import ToolResultEvent
+from strands.types.agent import ConcurrentInvocationMode
 from strands.types.content import Messages
 from strands.types.tools import ToolResult, ToolSpec, ToolUse
 from tests.fixtures.mocked_model_provider import MockedModelProvider
@@ -1194,3 +1195,26 @@ async def test_cancel_background_tasks_lands_immediately_while_after_current_too
     assert result.stop_reason == "cancelled"
     assert statuses_at_stop == ["cancelled"]
     assert _tool_result(agent, "after-use")["content"] == [{"text": "ran"}]
+
+
+@pytest.mark.asyncio
+async def test_cancel_background_tasks_after_a_nested_reentrant_invocation_still_cancels_the_outer_one() -> None:
+    @tool(name="nest", context=True)
+    async def nest(tool_context: ToolContext) -> str:
+        """Run a nested invocation, then stop."""
+        await tool_context.agent.invoke_async("Nested.")
+        tool_context.agent.cancel(cancel_background_tasks=True)
+        return "stopped"
+
+    agent = Agent(
+        model=MockedModelProvider(
+            [_assistant_tool_use("nest", "nest-use", {}), _assistant_text("Nested."), _assistant_text("Unreached.")]
+        ),
+        tools=[nest],
+        concurrent_invocation_mode=ConcurrentInvocationMode.UNSAFE_REENTRANT,
+        callback_handler=None,
+    )
+
+    result = await asyncio.wait_for(agent.invoke_async("Nest."), timeout=2)
+
+    assert result.stop_reason == "cancelled"

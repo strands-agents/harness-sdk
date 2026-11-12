@@ -1113,7 +1113,7 @@ export class Agent implements LocalAgent, InvokableAgent {
    * ```
    */
   public cancel(options?: CancelOptions): void {
-    if (options?.cancelBackgroundTasks) {
+    if (options?.cancelBackgroundTasks && this._initialized) {
       this._backgroundTasks?.cancelAll()
     }
     if (!this._isInvoking) {

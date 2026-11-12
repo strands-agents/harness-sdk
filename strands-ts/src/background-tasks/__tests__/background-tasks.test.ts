@@ -578,6 +578,12 @@ describe('BackgroundTasks', () => {
       expect(toolResults).toEqual(expect.arrayContaining(['stop-use', 'after-use']))
     })
 
+    it('ignores cancelBackgroundTasks before the agent has initialized', () => {
+      const agent = new Agent({ model: new MockMessageModel(), tools: [], backgroundTasks: {}, printer: false })
+
+      expect(() => agent.cancel({ cancelBackgroundTasks: true })).not.toThrow()
+    })
+
     it('only cancels the invocation when background tasks are disabled', async () => {
       const stop = tool({
         name: 'stop',
