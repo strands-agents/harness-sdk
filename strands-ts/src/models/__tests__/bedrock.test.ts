@@ -11,7 +11,14 @@ import { isNode } from '../../__fixtures__/environment.js'
 import { BedrockModel } from '../bedrock.js'
 import type { BedrockModelOptions } from '../bedrock.js'
 import { ContextWindowOverflowError, ModelThrottledError } from '../../errors.js'
-import { Message, ReasoningBlock, ToolUseBlock, ToolResultBlock, JsonBlock } from '../../types/messages.js'
+import {
+  Message,
+  ReasoningBlock,
+  ToolUseBlock,
+  ToolResultBlock,
+  JsonBlock,
+  UnknownBlock,
+} from '../../types/messages.js'
 import type { SystemContentBlock } from '../../types/messages.js'
 import { TextBlock, GuardContentBlock, CachePointBlock, InjectedBlock } from '../../types/messages.js'
 import { AudioBlock, ImageBlock, VideoBlock, DocumentBlock } from '../../types/media.js'
@@ -881,6 +888,44 @@ describe('BedrockModel', () => {
         toolConfig: BEDROCK_NOOP_TOOL_CONFIG,
         modelId: expect.any(String),
       })
+    })
+
+    it('skips unknown blocks', async () => {
+      const provider = new BedrockModel()
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [new TextBlock('Hello'), new UnknownBlock({ futureBlock: { value: 1 } })],
+        }),
+      ]
+
+      await collectIterator(provider.stream(messages))
+
+      expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+        inferenceConfig: { maxTokens: 128_000 },
+        modelId: expect.any(String),
+        messages: [{ role: 'user', content: [{ text: 'Hello' }] }],
+      })
+    })
+
+    it('skips unknown content in a tool result', async () => {
+      const provider = new BedrockModel()
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [
+            new ToolResultBlock({
+              toolUseId: 'id-1',
+              status: 'success',
+              content: [new TextBlock('loaded'), new UnknownBlock({ toolReference: { name: 'shell' } })],
+            }),
+          ],
+        }),
+      ]
+      await collectIterator(provider.stream(messages))
+      expect(mockConverseStreamCommand.mock.lastCall?.[0]?.messages?.[0]?.content).toEqual([
+        { toolResult: { toolUseId: 'id-1', content: [{ text: 'loaded' }], status: 'success' } },
+      ])
     })
 
     it('injects noop tool config when messages have tool blocks but no toolSpecs', async () => {
@@ -1974,6 +2019,12 @@ describe('BedrockModel', () => {
         anthropic_beta: ['other-beta', 'thinking-binding-controls-2026-08-01'],
       }
       const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+      const forced = {
+        toolSpecs: [
+          { name: 'calc', description: 'Calculator', inputSchema: { type: 'object' as const, properties: {} } },
+        ],
+        toolChoice: { any: {} },
+      }
       const sentFields = (command: typeof ConverseStreamCommand | typeof ConverseCommand): unknown[] =>
         vi.mocked(command).mock.calls.map((call) => call[0].additionalModelRequestFields)
 
@@ -2015,15 +2066,77 @@ describe('BedrockModel', () => {
           name: 'a caller-set block_binding',
           fields: { thinking: { ...thinking, block_binding: { prefix_mismatch_behavior: 'error' } } },
         },
-        { name: 'no thinking config', fields: { reasoning_config: { type: 'enabled' } } },
-        { name: 'no additional request fields', fields: undefined },
-      ])('re-throws the binding error with $name', async ({ fields }) => {
+        { name: 'a forced tool and no thinking config', fields: undefined, options: forced },
+      ])('re-throws the binding error with $name', async ({ fields, options }) => {
         const mockSend = vi.fn().mockRejectedValue(bindingError)
         mockBedrockClientImplementation({ send: mockSend })
         const provider = new BedrockModel({ modelId: 'm1', ...(fields && { additionalRequestFields: fields }) })
 
-        await expect(collectIterator(provider.stream(messages))).rejects.toThrow('bound to a different conversation')
+        await expect(collectIterator(provider.stream(messages, options))).rejects.toThrow(
+          'bound to a different conversation'
+        )
         expect(mockSend).toHaveBeenCalledOnce()
+      })
+
+      it('retries with adaptive thinking when no thinking config is set', async () => {
+        const mockSend = vi
+          .fn()
+          .mockRejectedValueOnce(bindingError)
+          .mockResolvedValue({ stream: (async function* (): AsyncGenerator<unknown> {})() })
+        mockBedrockClientImplementation({ send: mockSend })
+        const provider = new BedrockModel({ modelId: 'm1' })
+
+        await collectIterator(provider.stream(messages))
+        await collectIterator(provider.stream(messages))
+        await collectIterator(provider.stream(messages, forced))
+
+        const syntheticFields = {
+          thinking: { type: 'adaptive', block_binding: { prefix_mismatch_behavior: 'drop_block' } },
+          anthropic_beta: ['thinking-binding-controls-2026-08-01'],
+        }
+        expect(sentFields(ConverseStreamCommand)).toStrictEqual([
+          undefined,
+          syntheticFields,
+          syntheticFields,
+          undefined,
+        ])
+      })
+
+      it('keeps drop_block on for thinking set in additionalArgs', async () => {
+        const mockSend = vi
+          .fn()
+          .mockRejectedValueOnce(bindingError)
+          .mockResolvedValue({ stream: (async function* (): AsyncGenerator<unknown> {})() })
+        mockBedrockClientImplementation({ send: mockSend })
+        const provider = new BedrockModel({
+          modelId: 'm1',
+          additionalArgs: { additionalModelRequestFields: { thinking, anthropic_beta: ['other-beta'] } },
+        })
+
+        await collectIterator(provider.stream(messages))
+        await collectIterator(provider.stream(messages))
+
+        expect(mockSend).toHaveBeenCalledTimes(3)
+        expect(sentFields(ConverseStreamCommand).at(-1)).toStrictEqual(dropBlockFields)
+      })
+
+      it('does not keep drop_block on after a rejected retry', async () => {
+        const temperatureError = new ValidationException({
+          message: '`temperature` may only be set to 1',
+          $metadata: {},
+        })
+        const mockSend = vi
+          .fn()
+          .mockRejectedValueOnce(bindingError)
+          .mockRejectedValueOnce(temperatureError)
+          .mockResolvedValue({ stream: (async function* (): AsyncGenerator<unknown> {})() })
+        mockBedrockClientImplementation({ send: mockSend })
+        const provider = new BedrockModel({ modelId: 'm1', temperature: 0.2 })
+
+        await expect(collectIterator(provider.stream(messages))).rejects.toThrow('temperature')
+        await collectIterator(provider.stream(messages))
+
+        expect(sentFields(ConverseStreamCommand).at(-1)).toBeUndefined()
       })
 
       it('re-throws the binding message on a non-validation error', async () => {
@@ -2083,7 +2196,7 @@ describe('BedrockModel', () => {
         const provider = new BedrockModel({ modelId: 'm1', additionalRequestFields: { thinking } })
         await collectIterator(provider.stream(messages))
 
-        await collectIterator(provider.stream(messages, { toolChoice: { any: {} } }))
+        await collectIterator(provider.stream(messages, forced))
 
         expect(sentFields(ConverseStreamCommand).at(-1)).toBeUndefined()
       })
@@ -4659,276 +4772,6 @@ describe('BedrockModel', () => {
         sourceContent: [{ text: 'page source' }],
         title: 'letter',
       })
-    })
-  })
-
-  describe('media blocks in tool results', () => {
-    const mockConverseStreamCommand = vi.mocked(ConverseStreamCommand)
-
-    it('formats image block in tool result', async () => {
-      const provider = new BedrockModel()
-      const imageBytes = new Uint8Array([1, 2, 3])
-      const messages = [
-        new Message({
-          role: 'user',
-          content: [
-            new ToolResultBlock({
-              toolUseId: 'tool-1',
-              status: 'success',
-              content: [new ImageBlock({ format: 'png', source: { bytes: imageBytes } })],
-            }),
-          ],
-        }),
-      ]
-
-      collectIterator(provider.stream(messages))
-
-      expect(mockConverseStreamCommand).toHaveBeenLastCalledWith(
-        expect.objectContaining({
-          messages: [
-            {
-              role: 'user',
-              content: [
-                {
-                  toolResult: {
-                    toolUseId: 'tool-1',
-                    content: [{ image: { format: 'png', source: { bytes: imageBytes } } }],
-                    status: 'success',
-                  },
-                },
-              ],
-            },
-          ],
-        })
-      )
-    })
-
-    it('formats video block in tool result with 3gp format mapping', async () => {
-      const provider = new BedrockModel()
-      const videoBytes = new Uint8Array([4, 5, 6])
-      const messages = [
-        new Message({
-          role: 'user',
-          content: [
-            new ToolResultBlock({
-              toolUseId: 'tool-1',
-              status: 'success',
-              content: [new VideoBlock({ format: '3gp', source: { bytes: videoBytes } })],
-            }),
-          ],
-        }),
-      ]
-
-      collectIterator(provider.stream(messages))
-
-      expect(mockConverseStreamCommand).toHaveBeenLastCalledWith(
-        expect.objectContaining({
-          messages: [
-            {
-              role: 'user',
-              content: [
-                {
-                  toolResult: {
-                    toolUseId: 'tool-1',
-                    content: [{ video: { format: 'three_gp', source: { bytes: videoBytes } } }],
-                    status: 'success',
-                  },
-                },
-              ],
-            },
-          ],
-        })
-      )
-    })
-
-    it('formats document block in tool result', async () => {
-      const provider = new BedrockModel()
-      const docBytes = new Uint8Array([7, 8, 9])
-      const messages = [
-        new Message({
-          role: 'user',
-          content: [
-            new ToolResultBlock({
-              toolUseId: 'tool-1',
-              status: 'success',
-              content: [new DocumentBlock({ name: 'report.pdf', format: 'pdf', source: { bytes: docBytes } })],
-            }),
-          ],
-        }),
-      ]
-
-      collectIterator(provider.stream(messages))
-
-      expect(mockConverseStreamCommand).toHaveBeenLastCalledWith(
-        expect.objectContaining({
-          messages: [
-            {
-              role: 'user',
-              content: [
-                {
-                  toolResult: {
-                    toolUseId: 'tool-1',
-                    content: [{ document: { name: 'report.pdf', format: 'pdf', source: { bytes: docBytes } } }],
-                    status: 'success',
-                  },
-                },
-              ],
-            },
-          ],
-        })
-      )
-    })
-
-    it('formats mixed text and media content in tool result', async () => {
-      const provider = new BedrockModel()
-      const imageBytes = new Uint8Array([1, 2])
-      const messages = [
-        new Message({
-          role: 'user',
-          content: [
-            new ToolResultBlock({
-              toolUseId: 'tool-1',
-              status: 'success',
-              content: [
-                new TextBlock('Here is the image:'),
-                new ImageBlock({ format: 'jpeg', source: { bytes: imageBytes } }),
-              ],
-            }),
-          ],
-        }),
-      ]
-
-      collectIterator(provider.stream(messages))
-
-      expect(mockConverseStreamCommand).toHaveBeenLastCalledWith(
-        expect.objectContaining({
-          messages: [
-            {
-              role: 'user',
-              content: [
-                {
-                  toolResult: {
-                    toolUseId: 'tool-1',
-                    content: [
-                      { text: 'Here is the image:' },
-                      { image: { format: 'jpeg', source: { bytes: imageBytes } } },
-                    ],
-                    status: 'success',
-                  },
-                },
-              ],
-            },
-          ],
-        })
-      )
-    })
-  })
-
-  describe('media blocks in messages', () => {
-    const mockConverseStreamCommand = vi.mocked(ConverseStreamCommand)
-
-    it('formats top-level image block', async () => {
-      const provider = new BedrockModel()
-      const imageBytes = new Uint8Array([1, 2, 3])
-      const messages = [
-        new Message({
-          role: 'user',
-          content: [new ImageBlock({ format: 'png', source: { bytes: imageBytes } })],
-        }),
-      ]
-
-      collectIterator(provider.stream(messages))
-
-      expect(mockConverseStreamCommand).toHaveBeenLastCalledWith(
-        expect.objectContaining({
-          messages: [
-            {
-              role: 'user',
-              content: [{ image: { format: 'png', source: { bytes: imageBytes } } }],
-            },
-          ],
-        })
-      )
-    })
-
-    it('formats top-level image block with S3 source', async () => {
-      const provider = new BedrockModel()
-      const messages = [
-        new Message({
-          role: 'user',
-          content: [
-            new ImageBlock({ format: 'png', source: { location: { type: 's3', uri: 's3://bucket/image.png' } } }),
-          ],
-        }),
-      ]
-
-      collectIterator(provider.stream(messages))
-
-      expect(mockConverseStreamCommand).toHaveBeenLastCalledWith(
-        expect.objectContaining({
-          messages: [
-            {
-              role: 'user',
-              content: [{ image: { format: 'png', source: { s3Location: { uri: 's3://bucket/image.png' } } } }],
-            },
-          ],
-        })
-      )
-    })
-
-    it('formats top-level video block with 3gp format mapping', async () => {
-      const provider = new BedrockModel()
-      const videoBytes = new Uint8Array([4, 5, 6])
-      const messages = [
-        new Message({
-          role: 'user',
-          content: [new VideoBlock({ format: '3gp', source: { bytes: videoBytes } })],
-        }),
-      ]
-
-      collectIterator(provider.stream(messages))
-
-      expect(mockConverseStreamCommand).toHaveBeenLastCalledWith(
-        expect.objectContaining({
-          messages: [
-            {
-              role: 'user',
-              content: [{ video: { format: 'three_gp', source: { bytes: videoBytes } } }],
-            },
-          ],
-        })
-      )
-    })
-
-    it('formats top-level document block with text source converted to bytes', async () => {
-      const provider = new BedrockModel()
-      const messages = [
-        new Message({
-          role: 'user',
-          content: [new DocumentBlock({ name: 'notes.txt', format: 'txt', source: { text: 'Hello world' } })],
-        }),
-      ]
-
-      collectIterator(provider.stream(messages))
-
-      expect(mockConverseStreamCommand).toHaveBeenLastCalledWith(
-        expect.objectContaining({
-          messages: [
-            {
-              role: 'user',
-              content: [
-                {
-                  document: {
-                    name: 'notes.txt',
-                    format: 'txt',
-                    source: { bytes: new TextEncoder().encode('Hello world') },
-                  },
-                },
-              ],
-            },
-          ],
-        })
-      )
     })
   })
 

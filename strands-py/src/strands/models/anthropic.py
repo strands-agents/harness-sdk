@@ -8,6 +8,7 @@ import base64
 import json
 import logging
 import re
+import threading
 import warnings
 from collections import Counter
 from collections.abc import AsyncGenerator, Mapping
@@ -41,6 +42,7 @@ from ._native_output import (
     structured_output_mechanisms,
     unsupported_mechanisms,
 )
+from ._summarize import SummarizeResult
 from ._thinking_binding import THINKING_BINDING_BETA, is_thinking_binding_error, thinking_with_drop_block
 from ._validation import (
     _has_location_source,
@@ -54,10 +56,52 @@ if TYPE_CHECKING:
     # AsyncAnthropicBedrockMantle needs anthropic>=0.91, so these are imported for typing only.
     from anthropic import AsyncAnthropicBedrock, AsyncAnthropicBedrockMantle, AsyncAnthropicVertex
 
+    from ..agent.agent_metadata import AgentMetadata
+
     _AsyncClient = anthropic.AsyncAnthropic | AsyncAnthropicBedrock | AsyncAnthropicBedrockMantle | AsyncAnthropicVertex
 
 COMPACTION_BETA = "compact-2026-09-04"
 """Beta that enables on-demand compaction, and compaction blocks in later requests."""
+
+
+def _format_usage(usage: Mapping[str, Any]) -> Usage:
+    """Convert an Anthropic usage payload to a Strands :class:`Usage`."""
+    input_tokens = usage["input_tokens"]
+    output_tokens = usage["output_tokens"]
+    cache_read = usage.get("cache_read_input_tokens") or 0
+    cache_write = usage.get("cache_creation_input_tokens") or 0
+    # Anthropic's input_tokens excludes tokens read from or written to the cache, so the
+    # billed total is the sum of all four counters.
+    formatted: Usage = {
+        "inputTokens": input_tokens,
+        "outputTokens": output_tokens,
+        "totalTokens": input_tokens + output_tokens + cache_read + cache_write,
+    }
+    if cache_read:
+        formatted["cacheReadInputTokens"] = cache_read
+    if cache_write:
+        formatted["cacheWriteInputTokens"] = cache_write
+    return formatted
+
+
+_USAGE_COUNTERS = ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
+
+
+def _format_compaction_usage(usage: Mapping[str, Any]) -> Usage:
+    """Convert a compaction response's usage, which counts its tokens per iteration and zero at the top level."""
+    iterations = usage.get("iterations") or []
+    if not iterations:
+        return _format_usage(usage)
+    return _format_usage({key: sum(iteration.get(key) or 0 for iteration in iterations) for key in _USAGE_COUNTERS})
+
+
+def _sum_usage(first: Usage | None, second: Usage | None) -> Usage | None:
+    """Return the combined usage of two calls, or whichever one reported usage."""
+    if first is None or second is None:
+        return first or second
+    totals = cast(Mapping[str, int], first)
+    added = cast(Mapping[str, int], second)
+    return cast(Usage, {key: totals.get(key, 0) + added.get(key, 0) for key in totals.keys() | added.keys()})
 
 
 def _is_compaction(block: ContentBlock) -> bool:
@@ -777,7 +821,8 @@ class AnthropicModel(Model):
 
     def _request_with_drop_block(self, request: dict[str, Any]) -> dict[str, Any] | None:
         """Return the request with stale thinking blocks dropped, or None if it cannot change."""
-        thinking = thinking_with_drop_block(request.get("thinking"))
+        tool_forced = request.get("tool_choice", {}).get("type") in ("any", "tool")
+        thinking = thinking_with_drop_block(request.get("thinking"), tool_forced)
         if thinking is None:
             return None
         return {**self._with_beta(request, THINKING_BINDING_BETA), "thinking": thinking}
@@ -1059,26 +1104,9 @@ class AnthropicModel(Model):
                 return {"messageStop": {"stopReason": message["stop_reason"]}}
 
             case "metadata":
-                usage = event["usage"]
-                input_tokens = usage["input_tokens"]
-                output_tokens = usage["output_tokens"]
-                cache_read = usage.get("cache_read_input_tokens") or 0
-                cache_write = usage.get("cache_creation_input_tokens") or 0
-                # Anthropic's input_tokens excludes tokens read from or written to the cache, so the
-                # billed total is the sum of all four counters.
-                usage_chunk: Usage = {
-                    "inputTokens": input_tokens,
-                    "outputTokens": output_tokens,
-                    "totalTokens": input_tokens + output_tokens + cache_read + cache_write,
-                }
-                if cache_read:
-                    usage_chunk["cacheReadInputTokens"] = cache_read
-                if cache_write:
-                    usage_chunk["cacheWriteInputTokens"] = cache_write
-
                 return {
                     "metadata": {
-                        "usage": usage_chunk,
+                        "usage": _format_usage(event["usage"]),
                         "metrics": {
                             "latencyMs": 0,  # TODO
                         },
@@ -1296,6 +1324,7 @@ class AnthropicModel(Model):
             if not (retry_with_drop_block or retry_with_next_mechanism):
                 raise error
 
+        previous_drop_stale_thinking_model_id = self._drop_stale_thinking_model_id
         if retry_with_drop_block:
             # Stale blocks stay in history, so drop_block stays on for every later request to this model.
             logger.warning(
@@ -1304,16 +1333,24 @@ class AnthropicModel(Model):
             )
             self._drop_stale_thinking_model_id = self.config["model_id"]
         if retry_with_drop_block or retry_with_next_mechanism:
-            async for chunk in self.stream(
-                messages,
-                tool_specs,
-                system_prompt,
-                tool_choice=tool_choice,
-                system_prompt_content=system_prompt_content,
-                structured_output_model=structured_output_model,
-                **kwargs,
-            ):
-                yield chunk
+            yielded = False
+            try:
+                async for chunk in self.stream(
+                    messages,
+                    tool_specs,
+                    system_prompt,
+                    tool_choice=tool_choice,
+                    system_prompt_content=system_prompt_content,
+                    structured_output_model=structured_output_model,
+                    **kwargs,
+                ):
+                    yielded = True
+                    yield chunk
+            except Exception:
+                # A rejected retry must not leave drop_block on for later requests.
+                if not yielded:
+                    self._drop_stale_thinking_model_id = previous_drop_stale_thinking_model_id
+                raise
             return
 
         logger.debug("finished streaming response from model")
@@ -1327,29 +1364,69 @@ class AnthropicModel(Model):
         system_prompt: str | None = None,
         system_prompt_content: list[SystemContentBlock] | None = None,
         instructions: str | None = None,
+        cancel_signal: threading.Event | None = None,
+        agent_metadata: "AgentMetadata | None" = None,
         **kwargs: Any,
-    ) -> ContentBlock:
-        """Summarize the conversation's opening ``messages`` with Anthropic on-demand compaction.
+    ) -> SummarizeResult:
+        """Summarize ``messages`` with Anthropic on-demand compaction.
 
-        Sends the live system prompt and tools unchanged under beta ``compact-2026-09-04``, so the thinking kept
-        after the summary stays valid. The returned compaction block is stored as a ``summary`` block holding its
+        Sends the request unchanged under beta ``compact-2026-09-04``, so the thinking kept after a summary of the
+        live conversation stays valid. The returned compaction block is stored as a ``summary`` block holding its
         text and signature; later requests from a model with ``server_side_summary`` rebuild the compaction block
-        from it and start from it, and requests without it send the summary text.
+        from it and start from it, and requests without it send the summary text. Uses the base
+        :meth:`Model.summarize` when ``model_info.capabilities.server_side_summary`` is not True, when the compaction
+        request fails with an API error (a rejection, an overload, a timeout or a connection error), or when the
+        response holds no compaction block.
 
         Args:
-            messages: The opening messages to summarize, from message 0, left unmodified.
-            tool_specs: The live conversation's tool specifications.
-            system_prompt: The live conversation's plain string system prompt.
-            system_prompt_content: The live conversation's structured system prompt.
+            messages: The request to summarize, left unmodified.
+            tool_specs: The request's tool specifications.
+            system_prompt: The request's plain string system prompt.
+            system_prompt_content: The request's structured system prompt.
             instructions: Summarization instructions replacing the API's own prompt.
+            cancel_signal: Event that aborts the base implementation's call.
+            agent_metadata: Stable identity of the invoking agent, passed to the base implementation.
             **kwargs: Additional keyword arguments for future extensibility.
 
         Returns:
-            The summary block.
-
-        Raises:
-            RuntimeError: If the response holds no compaction block.
+            The summary and the usage of every call made for it.
         """
+        base_kwargs: dict[str, Any] = {
+            "tool_specs": tool_specs,
+            "system_prompt": system_prompt,
+            "system_prompt_content": system_prompt_content,
+            "instructions": instructions,
+            "cancel_signal": cancel_signal,
+            "agent_metadata": agent_metadata,
+            **kwargs,
+        }
+        if self.model_info.capabilities.server_side_summary is not True:
+            return await super().summarize(messages, **base_kwargs)
+
+        try:
+            result = await self._compact(messages, tool_specs, system_prompt, system_prompt_content, instructions)
+        except anthropic.APIError as error:
+            logger.warning(
+                "model_id=<%s>, error=<%s> | compaction request failed | summarizing client-side",
+                self.config["model_id"],
+                error,
+            )
+            result = SummarizeResult()
+        if result.content:
+            return result
+
+        fallback = await super().summarize(messages, **base_kwargs)
+        return SummarizeResult(content=fallback.content, usage=_sum_usage(result.usage, fallback.usage))
+
+    async def _compact(
+        self,
+        messages: Messages,
+        tool_specs: list[ToolSpec] | None,
+        system_prompt: str | None,
+        system_prompt_content: list[SystemContentBlock] | None,
+        instructions: str | None,
+    ) -> SummarizeResult:
+        """Send ``messages`` as a compaction request; the result is empty when the response holds no compaction."""
         request = self.format_request(messages, tool_specs, system_prompt, system_prompt_content=system_prompt_content)
         # The API rejects these on a compaction request.
         request.pop("stop_sequences", None)
@@ -1361,21 +1438,21 @@ class AnthropicModel(Model):
         # The Bedrock/Vertex beta resources alias the first-party stream method, which mypy rejects as a self type.
         async with self.client.beta.messages.stream(**request) as stream:  # type: ignore[misc]
             response = cast(dict[str, Any], (await stream.get_final_message()).to_dict())
+        usage = _format_compaction_usage(response["usage"]) if response.get("usage") else None
 
         block = next((block for block in response.get("content") or [] if block.get("type") == "compaction"), None)
         if response.get("stop_reason") != "compaction" or not block or not block.get("content"):
-            raise RuntimeError(
-                f"model_id=<{self.config['model_id']}>, stop_reason=<{response.get('stop_reason')}>"
-                " | compaction returned no summary"
+            logger.debug(
+                "model_id=<%s>, stop_reason=<%s> | compaction returned no summary | summarizing client-side",
+                self.config["model_id"],
+                response.get("stop_reason"),
             )
+            return SummarizeResult(usage=usage)
         signature = block.get("signature")
-        return ContentBlock(
-            summary=SummaryBlock(
-                provider="anthropic",
-                signature=signature if isinstance(signature, str) else None,
-                text=block["content"],
-            )
+        summary = SummaryBlock(
+            provider="anthropic", signature=signature if isinstance(signature, str) else None, text=block["content"]
         )
+        return SummarizeResult(content=[ContentBlock(summary=summary)], usage=usage)
 
     def _record_rejected_mechanism(
         self,

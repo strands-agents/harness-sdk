@@ -9,16 +9,19 @@ import opentelemetry.trace as trace_api
 from opentelemetry.trace import SpanKind, StatusCode
 
 from ..agent.invocation_context import InvocationContext, _unwrap_invocation_context
+from ..telemetry.tracer import get_tracer
 from .types import DecisionInput, DecisionResult, Question, Uncertain
 
 
 class DecisionModel(abc.ABC):
     """Abstract base for anything that can answer closed questions.
 
-    The public ``ask`` opens a ``decision`` span, validates the question map, delegates to the
-    subclass ``_ask``, records usage and the answer set as span attributes/events, and closes the
-    span. Every implementation is traced identically. Given an ``invocation_context``, ``ask``
-    also adds the reported usage to that request once ``_ask`` returns.
+    The public `ask` opens a `decision` span, validates the question map, delegates to the
+    subclass `_ask`, records usage, the question ids, and the answer set as span attributes, and
+    closes the span. Content goes on span attributes rather than span events because OpenTelemetry
+    has deprecated the span-event recording API. Every implementation is traced identically. Given
+    an `invocation_context`, `ask` also adds the reported usage to that request once `_ask`
+    returns.
     """
 
     async def ask(
@@ -52,10 +55,14 @@ class DecisionModel(abc.ABC):
         _validate_questions(questions)
         invocation_context = _unwrap_invocation_context(invocation_context)
 
-        span = trace_api.get_tracer(__name__).start_span(
-            "decision", kind=SpanKind.INTERNAL, attributes={"gen_ai.operation.name": "decision"}
+        span = get_tracer().tracer.start_span(
+            "decision",
+            kind=SpanKind.INTERNAL,
+            attributes={
+                "gen_ai.operation.name": "decision",
+                "gen_ai.decision.questions": list(questions.keys()),
+            },
         )
-        span.add_event("gen_ai.decision.questions", {"ids": list(questions.keys())})
 
         try:
             with trace_api.use_span(
@@ -66,15 +73,16 @@ class DecisionModel(abc.ABC):
             ):
                 result = await self._ask(state, questions, **kwargs)
 
-            attributes: dict[str, Any] = {"gen_ai.decision.latency_ms": result.metadata.latency_ms}
+            attributes: dict[str, Any] = {
+                "gen_ai.decision.latency_ms": result.metadata.latency_ms,
+                "gen_ai.decision.answers": _serialize_answers(result.answers),
+            }
             if result.usage is not None:
                 if invocation_context is not None:
                     invocation_context._record_usage(result.usage)
                 attributes["gen_ai.usage.input_tokens"] = result.usage["inputTokens"]
                 attributes["gen_ai.usage.output_tokens"] = result.usage["outputTokens"]
             span.set_attributes(attributes)
-
-            span.add_event("gen_ai.decision.answers", {"answers": _serialize_answers(result.answers)})
             span.set_status(StatusCode.OK)
 
             return result
@@ -136,7 +144,7 @@ def _validate_uncertainty(question_id: str, question: Question) -> None:
 
 
 def _serialize_answers(answers: dict[str, bool | str | Uncertain]) -> str:
-    """Serialize an answer map to JSON for a span event, rendering ``Uncertain`` as a tagged object."""
+    """Serialize an answer map to JSON for a span attribute, rendering `Uncertain` as a tagged object."""
 
     def encode(value: bool | str | Uncertain) -> Any:
         if isinstance(value, Uncertain):

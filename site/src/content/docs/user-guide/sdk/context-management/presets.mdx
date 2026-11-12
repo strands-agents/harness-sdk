@@ -38,6 +38,8 @@ Preset expansions are internal defaults and may change between releases as tunin
 </Tab>
 </Tabs>
 
+On Claude models that preserve thinking, large tool offloading keeps thinking blocks valid, and so does proactive summarization when it runs server-side. Overflow protection and stale tool cleanup drop them. See [Models that preserve thinking](./custom-strategies#models-that-preserve-thinking).
+
 ## Using presets
 
 Pass preset name strings in the <Syntax py="strategies" ts="strategies" /> array:

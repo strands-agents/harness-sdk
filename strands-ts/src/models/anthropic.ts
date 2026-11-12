@@ -23,15 +23,10 @@ import { zodSchemaToJsonSchema } from '../tools/zod-utils.js'
 import { lookupModelInfo, mergeModelInfo, type ModelInfo } from './model-info.js'
 import { Message, SummaryBlock } from '../types/messages.js'
 import type { ContentBlock, SystemPrompt } from '../types/messages.js'
-import type { ModelStreamEvent } from '../models/streaming.js'
-import { createEmptyUsage } from '../models/streaming.js'
-import {
-  ContextWindowOverflowError,
-  ModelError,
-  ModelThrottledError,
-  NotImplementedError,
-  normalizeError,
-} from '../errors.js'
+import type { ModelStreamEvent, Usage } from '../models/streaming.js'
+import { accumulateUsage, createEmptyUsage } from '../models/streaming.js'
+import type { SummarizeResult } from './summarize.js'
+import { ContextWindowOverflowError, ModelError, ModelThrottledError, normalizeError } from '../errors.js'
 import type { Citation } from '../types/citations.js'
 import type { ImageBlock, DocumentBlock } from '../types/media.js'
 import { encodeBase64, decodeBase64 } from '../types/media.js'
@@ -160,6 +155,11 @@ function withNativeOutput(
   }
 }
 
+/** Whether the request forces a tool call, which rules thinking out. */
+function isToolForced(request: Anthropic.MessageStreamParams): boolean {
+  return request.tool_choice?.type === 'any' || request.tool_choice?.type === 'tool'
+}
+
 /**
  * The provider's error text. The SDK's error message is the JSON-encoded response body, which escapes quotes in the
  * text, so the body's own message is read when present.
@@ -185,6 +185,55 @@ function headerValues(headers: ClientOptions['defaultHeaders'], name: string): s
 
 /** Beta that enables on-demand compaction, and compaction blocks in later requests. */
 const COMPACTION_BETA = 'compact-2026-09-04'
+
+type UsageCounters = Partial<
+  Record<'input_tokens' | 'output_tokens' | 'cache_read_input_tokens' | 'cache_creation_input_tokens', number | null>
+>
+
+type CompactionUsage = UsageCounters & { iterations?: UsageCounters[] | null }
+
+const USAGE_COUNTERS = [
+  'input_tokens',
+  'output_tokens',
+  'cache_read_input_tokens',
+  'cache_creation_input_tokens',
+] as const
+
+/** Converts an Anthropic usage payload to a Strands usage. */
+function formatUsage(usage: UsageCounters): Usage {
+  const inputTokens = usage.input_tokens ?? 0
+  const outputTokens = usage.output_tokens ?? 0
+  const cacheRead = usage.cache_read_input_tokens ?? 0
+  const cacheWrite = usage.cache_creation_input_tokens ?? 0
+  // Anthropic's input_tokens excludes tokens read from or written to the cache, so the
+  // billed total is the sum of all four counters.
+  return {
+    inputTokens,
+    outputTokens,
+    totalTokens: inputTokens + outputTokens + cacheRead + cacheWrite,
+    ...(cacheRead && { cacheReadInputTokens: cacheRead }),
+    ...(cacheWrite && { cacheWriteInputTokens: cacheWrite }),
+  }
+}
+
+/** Converts a compaction response's usage, which counts its tokens per iteration and zero at the top level. */
+function formatCompactionUsage(usage: CompactionUsage): Usage {
+  const iterations = usage.iterations ?? []
+  if (iterations.length === 0) return formatUsage(usage)
+  const totals: UsageCounters = {}
+  for (const key of USAGE_COUNTERS) {
+    totals[key] = iterations.reduce((sum, iteration) => sum + (iteration[key] ?? 0), 0)
+  }
+  return formatUsage(totals)
+}
+
+/** Returns the combined usage of two calls, or whichever one reported usage. */
+function sumUsage(first: Usage | undefined, second: Usage | undefined): Usage | undefined {
+  if (first === undefined || second === undefined) return first ?? second
+  const total = { ...first }
+  accumulateUsage(total, second)
+  return total
+}
 
 /** Whether `block` holds a compaction block Anthropic returned. */
 function isCompaction(block: ContentBlock): block is SummaryBlock {
@@ -330,14 +379,10 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
     }
   }
 
-  /** Turns temporary messages and server-side summary back on for the models the shared model info lists. */
+  /** Turns temporary messages back on for the models the shared model info lists. */
   override get modelInfo(): ModelInfo {
-    const { temporaryMessages, serverSideSummary } = lookupModelInfo(this.modelId ?? '').capabilities ?? {}
-    return mergeModelInfo(
-      super.modelInfo,
-      { capabilities: { temporaryMessages, serverSideSummary } },
-      this._config.modelInfo
-    )
+    const { temporaryMessages } = lookupModelInfo(this.modelId ?? '').capabilities ?? {}
+    return mergeModelInfo(super.modelInfo, { capabilities: { temporaryMessages } }, this._config.modelInfo)
   }
 
   updateConfig(modelConfig: AnthropicModelConfig): void {
@@ -413,6 +458,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
    */
   async *stream(messages: Message[], options?: StreamOptions): AsyncIterable<ModelStreamEvent> {
     let thinking: Anthropic.ThinkingConfigParam | undefined
+    let toolForced = false
     let continuations = 0
     const mechanism = this._structuredOutputMechanism(options)
     try {
@@ -422,6 +468,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
         options
       )
       thinking = request.thinking
+      toolForced = isToolForced(request)
       const requestOptions = this._buildRequestOptions(request, this._compactionBetas(messages))
       const usage = createEmptyUsage()
 
@@ -601,14 +648,25 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
         continuations === 0 &&
         (unknownError as { status?: number }).status === 400 &&
         isThinkingBindingError(unknownError) &&
-        thinkingWithDropBlock(thinking)
+        thinkingWithDropBlock(thinking, toolForced)
       ) {
         // Stale blocks stay in history, so drop_block stays on for every later request to this model.
         logger.warn(
           `model_id=<${this._config.modelId}> | history edit invalidated replayed thinking blocks, retrying with drop_block`
         )
+        const previous = this._dropStaleThinkingModelId
         this._dropStaleThinkingModelId = this._config.modelId
-        yield* this.stream(messages, options)
+        let yielded = false
+        try {
+          for await (const event of this.stream(messages, options)) {
+            yielded = true
+            yield event
+          }
+        } catch (error) {
+          // A rejected retry must not leave drop_block on for later requests.
+          if (!yielded) this._dropStaleThinkingModelId = previous
+          throw error
+        }
         return
       }
 
@@ -643,18 +701,33 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
   }
 
   /**
-   * Summarizes the conversation's opening `messages` with Anthropic on-demand compaction.
+   * Summarizes `messages` with Anthropic on-demand compaction.
    *
-   * Sends the live system prompt and tools unchanged under beta `compact-2026-09-04`, so the thinking kept after
-   * the summary stays valid. Later requests from a model with `serverSideSummary` rebuild the compaction block
-   * from the returned summary block and start from it; requests without it send the summary text.
+   * Sends the request unchanged under beta `compact-2026-09-04`, so the thinking kept after a summary of the live
+   * conversation stays valid. Later requests from a model with `serverSideSummary` rebuild the compaction block
+   * from the returned summary block and start from it; requests without it send the summary text. Uses the base
+   * {@link Model.summarize} when `modelInfo.capabilities.serverSideSummary` is not `true`, when the client has no
+   * beta messages API, when the compaction request fails with an API error (a rejection, an overload, a timeout or
+   * a connection error), or when the response holds no compaction block.
    *
-   * @param messages - The opening messages to summarize, from message 0, left unmodified
-   * @param options - The live system prompt and tools, and summarization instructions replacing the API's own prompt
-   * @returns The summary block
-   * @throws Error - When the response holds no compaction block
+   * @param messages - The request to summarize, left unmodified
+   * @param options - The request's system prompt and tools, instructions replacing the API's own prompt, and the
+   *   cancel signal and agent metadata passed to the base implementation
+   * @returns The summary and the usage of every call made for it
    */
-  override async summarize(messages: Message[], options?: SummarizeOptions): Promise<SummaryBlock> {
+  override async summarize(messages: Message[], options?: SummarizeOptions): Promise<SummarizeResult> {
+    if (!this._serverSideSummary()) return super.summarize(messages, options)
+
+    const result = await this._compact(messages, options)
+    if (result.content.length > 0) return result
+
+    const fallback = await super.summarize(messages, options)
+    const usage = sumUsage(result.usage, fallback.usage)
+    return { content: fallback.content, ...(usage && { usage }) }
+  }
+
+  /** Sends `messages` as a compaction request; the result is empty when the response holds no compaction. */
+  private async _compact(messages: Message[], options?: SummarizeOptions): Promise<SummarizeResult> {
     const request = this._formatRequest(messages, {
       ...(options?.systemPrompt !== undefined && { systemPrompt: options.systemPrompt }),
       ...(options?.toolSpecs !== undefined && { toolSpecs: options.toolSpecs }),
@@ -673,25 +746,38 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
 
     // On-demand compaction is only on the beta endpoint, which a narrower injected client may not have.
     const beta = (this._client as Partial<Pick<Anthropic, 'beta'>>).beta
-    if (!beta) throw new NotImplementedError(`model_id=<${this._config.modelId}> | client has no beta messages API`)
+    if (!beta) {
+      logger.warn(`model_id=<${this._config.modelId}> | client has no beta messages API | summarizing client-side`)
+      return { content: [] }
+    }
     let response: Anthropic.Beta.Messages.BetaMessage
     try {
       response = await beta.messages.stream(params, requestOptions).finalMessage()
     } catch (error) {
-      throw this._translateError(error)
-    }
-
-    const block = (response.content as unknown as Record<string, unknown>[]).find((item) => item.type === 'compaction')
-    if ((response.stop_reason as string) !== 'compaction' || !block || !block.content) {
-      throw new Error(
-        `model_id=<${this._config.modelId}>, stop_reason=<${response.stop_reason}> | compaction returned no summary`
+      if (!(error instanceof Anthropic.APIError)) throw this._translateError(error)
+      logger.warn(
+        `model_id=<${this._config.modelId}>, error=<${error.message}> | compaction request failed | summarizing client-side`
       )
+      return { content: [] }
     }
-    return new SummaryBlock({
+    const responseUsage = response.usage as unknown as CompactionUsage | undefined
+    const usage = responseUsage ? formatCompactionUsage(responseUsage) : undefined
+
+    const block = (response.content as unknown as Record<string, unknown>[] | undefined)?.find(
+      (item) => item.type === 'compaction'
+    )
+    if ((response.stop_reason as string) !== 'compaction' || !block || !block.content) {
+      logger.debug(
+        `model_id=<${this._config.modelId}>, stop_reason=<${response.stop_reason}> | compaction returned no summary | summarizing client-side`
+      )
+      return { content: [], ...(usage && { usage }) }
+    }
+    const summary = new SummaryBlock({
       provider: 'anthropic',
       ...(typeof block.signature === 'string' && { signature: block.signature }),
       text: block.content as string,
     })
+    return { content: [summary], ...(usage && { usage }) }
   }
 
   /** Chooses the strongest structured output mechanism not yet rejected for this model. */
@@ -964,7 +1050,9 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
     if (this._config.stopSequences !== undefined) request.stop_sequences = this._config.stopSequences
     Object.assign(request, sampling, this._config.params)
     this._rejectRemovedSamplingParams(request)
-    const dropBlockThinking = this._dropsStaleThinking() ? thinkingWithDropBlock(request.thinking) : undefined
+    const dropBlockThinking = this._dropsStaleThinking()
+      ? thinkingWithDropBlock(request.thinking, isToolForced(request))
+      : undefined
     if (dropBlockThinking) request.thinking = dropBlockThinking
     // params.tools is already merged into tools above; never let it bypass the forced-turn rule.
     if (tools.length > 0) request.tools = tools

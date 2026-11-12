@@ -37,13 +37,18 @@ describe('shared model info data', () => {
       capabilities: { promptCaching: 'cachePoints' },
       limits: { contextWindow: 1_000_000, maxOutputTokens: 128_000 },
     })
-    expect(lookupModelInfo('anthropic.claude-opus-5-5').capabilities).toEqual({
-      promptCaching: 'cachePoints',
-      forcedToolChoice: false,
-      nativeStructuredOutput: true,
-      serverSideSummary: true,
-      temporaryMessages: true,
-    })
+    for (const modelId of ['anthropic.claude-opus-5-5', 'global.anthropic.claude-fable-5-2', 'claude-mythos-5-2']) {
+      expect(lookupModelInfo(modelId)).toEqual({
+        capabilities: {
+          promptCaching: 'cachePoints',
+          forcedToolChoice: false,
+          nativeStructuredOutput: true,
+          serverSideSummary: true,
+          temporaryMessages: true,
+        },
+        limits: { contextWindow: 1_000_000, maxOutputTokens: 128_000 },
+      })
+    }
     expect(lookupModelInfo('amazon.nova-pro-v1:0')).toEqual({
       capabilities: { forcedToolChoice: true, nativeStructuredOutput: false },
       limits: { contextWindow: 300_000 },

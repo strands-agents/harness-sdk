@@ -167,6 +167,41 @@ def custom_evaluate_example():
 
 
 # =====================
+# Auto Mode
+# =====================
+
+
+def auto_mode_example():
+    # --8<-- [start:auto_mode]
+    agent = Agent(
+        tools=[read_file, delete_files],
+        interventions=[HumanInTheLoop("auto")],
+    )
+
+    agent("Read config.json then delete /tmp/old-logs")
+    # read_file: rated safe -> runs on its own
+    # delete_files: rated risky -> pauses for approval
+    # --8<-- [end:auto_mode]
+
+
+def auto_mode_options_example():
+    # --8<-- [start:auto_mode_options]
+    agent = Agent(
+        tools=[read_file, delete_files],
+        interventions=[
+            HumanInTheLoop(
+                "auto",
+                ask="stdio",  # prompt in the terminal
+                allowed_tools=["read_file"],  # skips the decision entirely
+            ),
+        ],
+    )
+
+    agent("Read config.json then delete /tmp/old-logs")
+    # --8<-- [end:auto_mode_options]
+
+
+# =====================
 # Classifier (LLM Risk Classification)
 # =====================
 
@@ -191,47 +226,15 @@ def classifier_example():
 
 def classifier_decision_model_example():
     # --8<-- [start:classifier_decision_model]
-    import asyncio
-    import json
-    import urllib.request
-
-    from strands.decisions import DecisionMetadata, DecisionModel, DecisionResult
-
-    class StrandsDecider(DecisionModel):
-        """Asks yes/no questions of a `strands-decider serve` server."""
-
-        def __init__(self, url="http://localhost:8000/v1/systemone"):
-            self.url = url
-
-        def _post(self, body):
-            request = urllib.request.Request(
-                self.url,
-                data=json.dumps(body).encode(),
-                headers={"content-type": "application/json"},
-            )
-            with urllib.request.urlopen(request) as response:
-                return json.loads(response.read())
-
-        async def _ask(self, state, questions, **kwargs):
-            wire = {
-                qid: {"type": "noul", "instructions": q["question"]}
-                for qid, q in questions.items()
-            }
-            reply = await asyncio.to_thread(
-                self._post, {"state": state, "questions": wire}
-            )
-            return DecisionResult(
-                # "noul" is the model's probability that the answer is yes
-                answers={qid: a["noul"] >= 0.5 for qid, a in reply["answers"].items()},
-                metadata=DecisionMetadata(latency_ms=int(reply["latency_ms"])),
-            )
+    from strands.decisions import TypeSafeDecisionModel
 
     agent = Agent(
         tools=[read_file, delete_files],
         interventions=[
             HumanInTheLoop(
                 allowed_tools=["read_file"],
-                classifier=StrandsDecider(),
+                # Reads the API key from TYPESAFE_API_KEY
+                classifier=TypeSafeDecisionModel(),
             ),
         ],
     )
