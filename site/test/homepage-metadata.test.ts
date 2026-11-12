@@ -23,11 +23,11 @@ describe('homepage machine-readable metadata', () => {
   it('keeps the hero focused on one recommended starting path', () => {
     const hero = homepage.querySelector('.banner')
 
-    expect(homepage.querySelector('.banner__halftone')).toBeNull()
+    expect(homepage.querySelector('.banner__halftone')?.getAttribute('aria-hidden')).toBe('true')
     expect(homepage.querySelector('.starter')).toBeNull()
-    expect(hero?.querySelector('.banner__eyebrow')?.text.trim()).toBe('Open source')
-    expect(hero?.querySelector('.banner__summary')?.text.trim()).toBe(
-      'An open source framework for building production agents.'
+    expect(hero?.querySelector('.banner__eyebrow')).toBeNull()
+    expect(hero?.querySelector('.banner__summary')?.text.trim().replace(/\s+/g, ' ')).toBe(
+      'An open source framework for building production agents. Start with the ready-to-use /harness.'
     )
     expect(hero?.querySelector('.banner__harness')?.text.trim()).toBe('/harness')
     expect(hero?.querySelector('.banner__start-eyebrow')).toBeNull()
@@ -103,11 +103,9 @@ describe('homepage machine-readable metadata', () => {
     const modules = toolkit?.querySelectorAll('.module-card') ?? []
 
     expect(hero?.querySelector('.banner__harness')?.text.trim()).toBe('/harness')
-    expect(starter?.querySelector('.banner__start-title')?.tagName).toBe('H2')
-    expect(starter?.querySelector('.banner__start-title')?.text.trim()).toBe('/harness')
-    expect(starter?.querySelector('.banner__start-summary')?.text.trim()).toBe(
-      'A ready-to-use agent with tools, memory, sessions, and context management assembled.'
-    )
+    expect(hero?.querySelectorAll('h1, h2, h3, h4, h5, h6')).toHaveLength(1)
+    expect(starter?.querySelector('.banner__start-title')).toBeNull()
+    expect(starter?.querySelector('.banner__start-summary')).toBeNull()
     expect(starter?.querySelector('.banner__action--primary')?.getAttribute('href')).toBe(
       configuredPathWithBase('/docs/user-guide/harness/quickstart/')
     )
