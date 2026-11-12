@@ -741,7 +741,7 @@ class Agent(AgentBase, LocalAgent):
         Note:
             Multiple calls to cancel() are safe and idempotent.
         """
-        if self._invoking_depth > 0 or not cancel_background_tasks:
+        if not cancel_background_tasks or self._invoking_depth > 0:
             if message is not None:
                 self._cancel_message = message
             if after_current_tools:
