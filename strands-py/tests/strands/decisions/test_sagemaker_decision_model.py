@@ -255,6 +255,17 @@ class TestAsk:
             await decision.ask("state", {"q": {"question": "ok?", "choices": "boolean"}})
 
     @pytest.mark.asyncio
+    async def test_accepts_a_response_body_with_a_utf8_bom(self, mock_client):
+        _, client = mock_client
+        body = b"\xef\xbb\xbf" + json.dumps({"model": "m", "answers": {"q": {"type": "noul", "noul": 1}}}).encode()
+        client.invoke_endpoint.return_value = {"Body": _FakeBody(body)}
+        decision = SageMakerDecisionModel(_ENDPOINT_NAME)
+
+        result = await decision.ask("state", {"q": {"question": "ok?", "choices": "boolean"}})
+
+        assert result.answers == {"q": True}
+
+    @pytest.mark.asyncio
     async def test_rejects_a_response_body_with_non_standard_json_constants(self, mock_client):
         _, client = mock_client
         body = b'{"model":"m","answers":{"q":{"type":"noul","noul":1}},"usage":{"inputTokens":NaN}}'

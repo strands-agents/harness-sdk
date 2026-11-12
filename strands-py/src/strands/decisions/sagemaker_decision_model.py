@@ -127,8 +127,9 @@ class SageMakerDecisionModel(DecisionModel):
                 raise mapped from error
             raise
 
-        # Invalid bytes surface as a non-JSON response, never a raw UnicodeDecodeError.
-        text = response["Body"].read().decode("utf-8", errors="replace")
+        # A leading UTF-8 BOM is dropped; invalid bytes surface as a non-JSON response, never a raw
+        # UnicodeDecodeError.
+        text = response["Body"].read().decode("utf-8-sig", errors="replace")
         if not text:
             return None
         try:
