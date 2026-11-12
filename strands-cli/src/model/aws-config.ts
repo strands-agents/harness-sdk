@@ -7,6 +7,7 @@ export interface AwsConfigurationDiscovery {
   profiles: readonly string[]
   regions: readonly string[]
   profileRegions?: Readonly<Record<string, string>>
+  credentialProfiles?: readonly string[]
   credentialStatus?: 'valid' | 'missing' | 'expired' | 'unavailable'
 }
 
@@ -35,6 +36,7 @@ export function discoverAwsConfiguration(environment: NodeJS.ProcessEnv = proces
   const profiles = new Set<string>()
   const regions = new Set<string>()
   const profileRegions: Record<string, string> = Object.create(null)
+  const profileFields = new Map<string, Set<string>>()
   const { filepath, configFilepath } = awsConfigurationFiles(environment)
   for (const [path, isConfigFile] of [
     [filepath, false],
@@ -52,7 +54,10 @@ export function discoverAwsConfiguration(environment: NodeJS.ProcessEnv = proces
             : section.startsWith('profile ')
               ? section.slice('profile '.length).trim()
               : undefined
-        if (currentProfile) profiles.add(currentProfile)
+        if (currentProfile) {
+          profiles.add(currentProfile)
+          if (!profileFields.has(currentProfile)) profileFields.set(currentProfile, new Set())
+        }
         continue
       }
       const region = /^region\s*=\s*([a-z0-9-]+)(?:\s*[#;].*)?$/iu.exec(line)?.[1]
@@ -60,12 +65,24 @@ export function discoverAwsConfiguration(environment: NodeJS.ProcessEnv = proces
         regions.add(region)
         profileRegions[currentProfile] = region
       }
+      const field = /^([a-z_]+)\s*=\s*\S/iu.exec(line)?.[1]?.toLowerCase()
+      if (currentProfile && field) profileFields.get(currentProfile)!.add(field)
     }
   }
   return {
     profiles: [...profiles].sort(),
     regions: [...regions].sort(),
     profileRegions,
+    credentialProfiles: [...profileFields].flatMap(([profile, fields]) =>
+      (fields.has('aws_access_key_id') && fields.has('aws_secret_access_key')) ||
+      fields.has('credential_process') ||
+      fields.has('sso_session') ||
+      fields.has('sso_start_url') ||
+      (fields.has('role_arn') &&
+        ['source_profile', 'credential_source', 'web_identity_token_file'].some((key) => fields.has(key)))
+        ? [profile]
+        : []
+    ),
   }
 }
 

@@ -19,6 +19,7 @@ import {
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { spawnSync } from 'node:child_process'
+import { satisfies } from 'semver'
 
 const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const BUILD_INPUT_DIRECTORIES = ['strands-cli/src']
@@ -125,6 +126,10 @@ export async function ensureSourceBuild(packageRoot = PACKAGE_ROOT) {
 }
 
 export async function launch(packageRoot = PACKAGE_ROOT) {
+  const { engines } = JSON.parse(readFileSync(join(packageRoot, 'package.json'), 'utf8'))
+  if (!satisfies(process.versions.node, engines.node)) {
+    throw new Error(`Strands requires Node ${engines.node}; running ${process.versions.node}. Upgrade Node and retry.`)
+  }
   await ensureSourceBuild(packageRoot)
   const entrypoint = join(packageRoot, 'dist', 'src', 'main.js')
   if (!existsSync(entrypoint)) {

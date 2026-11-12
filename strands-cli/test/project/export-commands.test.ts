@@ -161,7 +161,9 @@ it('offers the default harness folder and command guidance when browsing is unav
   await controller.submit('/export')
 
   await chooseExport(controller, 'typescript', 'Customer Harness')
-  expect(row(controller, 'Default folder').description).toBe('~/.strands/harnesses/customer-harness')
+  expect(row(controller, 'Default folder').description).toBe(
+    join(homedir(), '.strands', 'harnesses', 'customer-harness')
+  )
   expect(row(controller, 'Custom path').description).toBe('/export typescript <path.zip>')
   expect(row(controller, 'Custom path').value).toBeUndefined()
 

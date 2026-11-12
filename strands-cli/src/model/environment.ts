@@ -121,13 +121,7 @@ export function detectEnvironment(
   return withAwsProfile(detected)
 }
 
-export function withAwsProfile(
-  environment: DetectedEnvironment,
-  aws: AwsConfigurationDiscovery = discoverAwsConfiguration({
-    AWS_CONFIG_FILE: environment.AWS_CONFIG_FILE?.value,
-    AWS_SHARED_CREDENTIALS_FILE: environment.AWS_SHARED_CREDENTIALS_FILE?.value,
-  })
-): DetectedEnvironment {
+export function withAwsProfile(environment: DetectedEnvironment, aws?: AwsConfigurationDiscovery): DetectedEnvironment {
   const resolved = { ...environment }
   if (resolved.AWS_PROFILE?.source === 'config' || resolved.AWS_PROFILE?.source === 'session') {
     delete resolved.AWS_BEARER_TOKEN_BEDROCK
@@ -136,6 +130,10 @@ export function withAwsProfile(
     delete resolved.AWS_REGION
   }
   if (!resolved.AWS_REGION && !resolved.AWS_DEFAULT_REGION) {
+    aws ??= discoverAwsConfiguration({
+      AWS_CONFIG_FILE: environment.AWS_CONFIG_FILE?.value,
+      AWS_SHARED_CREDENTIALS_FILE: environment.AWS_SHARED_CREDENTIALS_FILE?.value,
+    })
     const profile = resolved.AWS_PROFILE?.value ?? 'default'
     const region = aws.profileRegions?.[profile]
     if (region) {

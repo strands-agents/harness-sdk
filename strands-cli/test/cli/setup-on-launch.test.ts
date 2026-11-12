@@ -22,6 +22,65 @@ it.each([
     expected: true,
   },
   {
+    name: 'configured Bedrock first launch',
+    onboardingVersion: 0,
+    args: [],
+    environment: { AWS_BEARER_TOKEN_BEDROCK: 'placeholder', AWS_REGION: 'us-west-2' },
+    expected: false,
+  },
+  {
+    name: 'Bedrock token without a region',
+    onboardingVersion: 0,
+    args: [],
+    environment: { AWS_BEARER_TOKEN_BEDROCK: 'placeholder' },
+    expected: true,
+  },
+  {
+    name: 'configured Mantle bearer token',
+    onboardingVersion: 0,
+    args: ['--model', 'bedrock-mantle/openai.gpt-5'],
+    environment: { AWS_BEARER_TOKEN_BEDROCK: 'placeholder', AWS_REGION: 'us-west-2' },
+    expected: false,
+  },
+  {
+    name: 'configured Mantle first launch',
+    onboardingVersion: 0,
+    args: ['--model', 'bedrock-mantle/openai.gpt-5'],
+    environment: {
+      AWS_ACCESS_KEY_ID: 'placeholder',
+      AWS_SECRET_ACCESS_KEY: 'placeholder',
+      AWS_REGION: 'us-west-2',
+    },
+    expected: false,
+  },
+  {
+    name: 'configured model override',
+    onboardingVersion: 0,
+    args: ['--model', 'openai/test'],
+    environment: { OPENAI_API_KEY: 'placeholder' },
+    expected: false,
+  },
+  {
+    name: 'configured portable model override',
+    onboardingVersion: 0,
+    args: ['--set', 'model=openai/test'],
+    environment: { OPENAI_API_KEY: 'placeholder' },
+    expected: false,
+  },
+  {
+    name: 'unrelated provider credentials',
+    onboardingVersion: 0,
+    args: ['--model', 'anthropic/test'],
+    environment: { OPENAI_API_KEY: 'placeholder' },
+    expected: true,
+  },
+  {
+    name: 'local model',
+    onboardingVersion: 0,
+    args: ['--model', 'ollama/test'],
+    expected: false,
+  },
+  {
     name: 'explicit setup',
     onboardingVersion: SETUP_VERSION,
     args: ['--setup'],
@@ -56,6 +115,11 @@ it.each([
 ])('selects startup setup for $name', async (testCase) => {
   const { onboardingVersion, args, expected } = testCase
   const config = CliConfigStore.memory({}, {}, { onboardingVersion })
+  vi.spyOn(config, 'providerEnvironment').mockReturnValue(
+    Object.fromEntries(
+      Object.entries(testCase.environment ?? {}).map(([key, value]) => [key, { value, source: 'process' }])
+    )
+  )
   if ('agentProject' in testCase) {
     vi.spyOn(config, 'snapshot').mockReturnValue({ ...config.snapshot(), agentProject: testCase.agentProject })
   }

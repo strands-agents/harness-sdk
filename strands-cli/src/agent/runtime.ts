@@ -7,6 +7,7 @@ import { AgentSkills } from '@strands-agents/sdk/vended-plugins/skills'
 import { randomUUID } from 'node:crypto'
 import { resolve } from 'node:path'
 
+import { runtimeOptions, type RuntimeOverrides } from '../cli/runtime-options.js'
 import { type ContextOffloadThreshold } from '../config/settings.js'
 import { type ProfileEffort, type RuntimeConfig } from '../config/store.js'
 import { inspectWorkspaceMcp, isWorkspaceMcpTrusted } from '../config/trust.js'
@@ -46,6 +47,7 @@ import { type ChatConversation, type ChatDiffPreview, type ChatForkState } from 
 /** @internal */
 export interface CreateInteractiveRuntimeOptions {
   agentOptions?: HarnessAgentOptions
+  runtimeOverrides?: RuntimeOverrides
   agentProfile?: HarnessAgentConfig
   buildAgent?: AgentFactory
   project?: ImportedAgentProject
@@ -53,7 +55,7 @@ export interface CreateInteractiveRuntimeOptions {
   mcpPaths?: readonly string[]
   mcpStrictPaths?: readonly string[]
   mcpDigests?: Readonly<Record<string, string>>
-  /** Directory holding the session catalog; defaults to `~/.strands/sessions`. */
+  /** Directory holding the session catalog; defaults to the CLI's `state/sessions`. */
   sessionRoot?: string
   config: RuntimeConfig
   agentMessaging?: AgentMessaging
@@ -167,6 +169,9 @@ export async function createInteractiveRuntime(options: CreateInteractiveRuntime
     requireBedrockRegion(resolvedAgentOptions.model)
     let skills: AgentSkills | undefined
     const prepareOptions = (configured: HarnessAgentOptions): HarnessAgentOptions => {
+      if (options.runtimeOverrides) {
+        configured = runtimeOptions(configured, workspace, options.runtimeOverrides, initialWorkspace)
+      }
       skills = configured.plugins?.find((plugin): plugin is AgentSkills => plugin instanceof AgentSkills)
       if (skills) return configured
       if (configured.skills instanceof AgentSkills) {
