@@ -595,6 +595,20 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
 
       for await (const event_data of this.stream(messages, options)) {
         const event = this._convert_to_class_event(event_data)
+
+        // A new reasoning payload after a signature starts a block, even under the same index.
+        if (
+          event.type === 'modelContentBlockDeltaEvent' &&
+          event.delta.type === 'reasoningContentDelta' &&
+          accumulatedReasoning.signature !== undefined &&
+          (event.delta.text || event.delta.redactedContent)
+        ) {
+          const block = new ReasoningBlock({ ...accumulatedReasoning })
+          accumulatedReasoning = {}
+          contentBlocks.push(block)
+          yield block
+        }
+
         yield event // Pass through immediately
 
         // Aggregation logic based on event type
@@ -625,16 +639,6 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
                 accumulatedToolInput += event.delta.input
                 break
               case 'reasoningContentDelta':
-                // A new reasoning payload after a signature starts a block, even under the same index.
-                if (
-                  accumulatedReasoning.signature !== undefined &&
-                  (event.delta.text !== undefined || event.delta.redactedContent !== undefined)
-                ) {
-                  const block = new ReasoningBlock({ ...accumulatedReasoning })
-                  accumulatedReasoning = {}
-                  contentBlocks.push(block)
-                  yield block
-                }
                 if (event.delta.text) accumulatedReasoning.text = (accumulatedReasoning.text ?? '') + event.delta.text
                 if (event.delta.signature) accumulatedReasoning.signature = event.delta.signature
                 if (event.delta.redactedContent) accumulatedReasoning.redactedContent = event.delta.redactedContent
