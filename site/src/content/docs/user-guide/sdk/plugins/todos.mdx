@@ -106,11 +106,11 @@ share across agents — each agent keeps its own list.
 
 | Field | Purpose |
 |-------|---------|
-| `name` | Plugin name for logging and duplicate detection. Defaults to `'strands:todos'`. |
+| `name` | Plugin name. It also tags the reminder blocks the plugin injects, and that tag is what keeps a retry or a restored session from injecting a second copy — so keep it stable. Defaults to `'strands:todos'`. |
 | <Syntax py="state_key" ts="stateKey" /> | Agent-state key the list is stored under. Defaults to `'todos'`. Set it to avoid colliding with another consumer of that key. |
 
 One agent takes one `Todos`. The tool is always named `todo_write`, so adding a second
-instance to the same agent raises whatever `name` and
+instance to the same agent raises, regardless of what `name` and
 <Syntax py="state_key" ts="stateKey" /> are set to.
 
 :::caution[It re-injects on every model call]

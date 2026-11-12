@@ -48,7 +48,11 @@ function renderList(todos: TodoItem[]): string {
 
 /** Configuration for the {@link Todos} plugin. */
 export interface TodosConfig {
-  /** Plugin name, for logging and duplicate detection. Defaults to `'strands:todos'`. */
+  /**
+   * Plugin name. It also tags the reminder blocks the plugin injects, and that tag keeps a retry
+   * or a restored session from injecting a second copy, so keep it stable. Defaults to
+   * `'strands:todos'`.
+   */
   name?: string
   /** Agent-state key the list is stored under. Defaults to `'todos'`. */
   stateKey?: string

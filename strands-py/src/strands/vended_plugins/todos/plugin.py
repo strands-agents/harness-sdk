@@ -83,7 +83,9 @@ class Todos(Plugin):
         ```
 
     Args:
-        name: Plugin name, for logging and duplicate detection. Defaults to ``"strands:todos"``.
+        name: Plugin name. It also tags the reminder blocks the plugin injects, and that tag keeps
+            a retry or a restored session from injecting a second copy, so keep it stable.
+            Defaults to ``"strands:todos"``.
         state_key: Agent-state key the list is stored under. Defaults to ``"todos"``.
     """
 
@@ -95,7 +97,7 @@ class Todos(Plugin):
 
     @property
     def name(self) -> str:
-        """Plugin name, for logging and duplicate detection."""
+        """Plugin name, also the tag on the reminder blocks the plugin injects."""
         return self._name
 
     def init_agent(self, agent: Agent) -> None:
