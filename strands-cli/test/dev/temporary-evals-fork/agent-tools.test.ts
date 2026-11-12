@@ -117,7 +117,7 @@ const fakeSessions = () => {
     },
     test: {
       ...test,
-      show: vi.fn(),
+      show: vi.fn(async (): Promise<void> => undefined),
       run: vi.fn((chosen: readonly ExperimentSummary[]) =>
         test.set({
           runs: chosen.map((experiment) => ({
@@ -224,6 +224,23 @@ describe('TEMPORARY dev chat part', () => {
       optimization: { step: 'idle' },
       newExperiment: { name: 'experiment-2', task: 'Answer refund questions', agentContext: 'agent.py · 1 tool' },
     })
+  })
+
+  it('shouldGiveTheLastResultFromAnEarlierSessionWhenTheStatusFollowsARestart', async () => {
+    const { call, test, sessions } = setup()
+    sessions.test.show.mockImplementation(
+      () =>
+        new Promise<void>((resolve) =>
+          setTimeout(() => {
+            test.set({ runs: [{ experiment: REFUNDS, run: { status: 'done', results: results() } }] })
+            resolve()
+          }, 0)
+        )
+    )
+
+    const status = await call('strands_dev_status')
+
+    expect(status).toMatchObject({ experiments: [{ name: 'refunds', lastTest: { status: 'done', passed: 1 } }] })
   })
 
   it('shouldListTheUsableEvaluatorsAndReadTheCatalogOnceWhenItIsAskedTwice', async () => {

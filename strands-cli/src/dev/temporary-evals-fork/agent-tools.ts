@@ -252,7 +252,7 @@ const statusTool = (sessions: Sessions): DevChatTool => ({
   inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   run: async (): Promise<string> => {
     const { experiments, test, optimize } = sessions()
-    test.show()
+    await test.show()
     const saved = await experiments.reload()
     const { folder, generations } = experiments.snapshot()
     const { runs } = test.snapshot()
