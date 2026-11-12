@@ -26,6 +26,7 @@ import {
 import { deepCopy } from '../types/json.js'
 import type { JSONValue } from '../types/json.js'
 import { McpClient } from '../mcp/index.js'
+import type { McpTool } from '../tools/mcp-tool.js'
 import { isValidToolName, type Tool } from '../tools/tool.js'
 import type { ToolChoice, ToolSpec } from '../tools/types.js'
 import { cloneSystemPrompt, systemPromptFromData } from '../types/messages.js'
@@ -880,11 +881,11 @@ export class Agent implements LocalAgent, InvokableAgent {
     // Initialize MCP clients and register their tools
     await Promise.all(
       this._mcpClients.map(async (client) => {
-        const tools = await client.listTools()
-        this._toolRegistry.add(tools)
-        client.onToolsChanged = (oldTools, newTools): void => {
-          oldTools.forEach((name) => this._toolRegistry.remove(name))
-          this._toolRegistry.addOrReplace(newTools)
+        let registered = await client.listTools()
+        this._toolRegistry.add(registered)
+        // The client's own list of old names includes tools this agent skipped, so track what was registered.
+        client.onToolsChanged = (_oldTools, newTools): void => {
+          registered = this._replaceMcpTools(client, registered, newTools)
         }
       })
     )
@@ -915,6 +916,27 @@ export class Agent implements LocalAgent, InvokableAgent {
     await this._hooksRegistry.invokeCallbacks(new InitializedEvent({ agent: this }))
 
     this._initialized = true
+  }
+
+  /**
+   * Swaps an MCP client's registered tools for its refreshed list. A refreshed tool that is invalid, or that takes the
+   * name of a tool from another source such as `retrieve_context`, is skipped with a warning; the rest of the refresh
+   * applies. A skipped tool comes back only on this client's next refresh, even if the other source drops the name first.
+   *
+   * @param client - The MCP client whose tools changed
+   * @param current - The tools the client has registered
+   * @param refreshed - The client's refreshed tools
+   * @returns The tools the client has registered afterwards
+   */
+  private _replaceMcpTools(client: McpClient, current: McpTool[], refreshed: McpTool[]): McpTool[] {
+    const skipped = this._toolRegistry.swap(current, refreshed)
+    for (const { tool, error } of skipped) {
+      logger.warn(
+        `client=<${client.clientName}>, tool_name=<${tool.name}>, error=<${error.message}> | skipping refreshed mcp tool`
+      )
+    }
+    const skippedTools = new Set(skipped.map(({ tool }) => tool))
+    return refreshed.filter((tool) => !skippedTools.has(tool))
   }
 
   /**
