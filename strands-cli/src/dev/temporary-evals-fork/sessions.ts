@@ -1,46 +1,29 @@
-import { existsSync } from 'node:fs'
-import { mkdir, rm } from 'node:fs/promises'
-import { basename, dirname, join, relative } from 'node:path'
+import { mkdir } from 'node:fs/promises'
+import { basename, join } from 'node:path'
 
 import { errorMessage } from '../../terminal/text.js'
-import type { DevChatCommandContext } from '../../ui/chat/types.js'
-import type {
-  DatasetSession,
-  DatasetState,
-  DraftCase,
-  ExperimentSummary,
-  Knob,
-  KnobKey,
-  OptimizePlan,
-  OptimizeProgress,
-  OptimizeReview,
-  OptimizeSession,
-  OptimizeState,
-  ProposedEdit,
-  TestResults,
-  TestSession,
-  TestState,
+import type { DevChatJob } from '../../ui/chat/types.js'
+import {
+  type ExperimentSummary,
+  type Knob,
+  type KnobKey,
+  type OptimizePlan,
+  type OptimizeProgress,
+  type OptimizeReview,
+  type OptimizeSession,
+  type OptimizeState,
+  type ProposedEdit,
+  type TestResults,
+  type TestSession,
+  type TestState,
 } from '../panels/model.js'
-import type { DevWorkspace } from '../workspace.js'
-import { temporaryAgentContext, type TemporaryAgentFacts } from './agent-context.js'
 import { locateTemporaryEdit } from './apply.js'
-import {
-  temporaryExperimentsFolder,
-  temporaryReportsFolder,
-  temporaryRunName,
-  temporaryWorkspaceDirectory,
-} from './evals-process.js'
-import { draftTemporaryExperiment, type TemporaryExperimentDependencies } from './experiment.js'
-import {
-  appendTemporaryCases,
-  listTemporaryExperiments,
-  readTemporaryExperimentFile,
-  temporaryCaseName,
-  writeTemporaryExperimentFile,
-  type TemporaryExperimentDocument,
-} from './experiment-files.js'
-import { TemporaryJobNotice, tailTemporaryLines, watchTemporaryFileCount, type TemporaryTail } from './jobs.js'
-import { runTemporaryOptimization, type TemporaryOptimizationDependencies } from './optimize.js'
+import { temporaryReportsFolder, temporaryRunName, temporaryWorkspaceDirectory } from './evals-process.js'
+import { readTemporaryExperimentFile, temporaryCaseName, writeTemporaryExperimentFile } from './experiment-files.js'
+import { TemporaryExperiments } from './experiments-session.js'
+import { announce, plural, type TemporaryHost, type TemporarySessionHost } from './host.js'
+import { Store, tailTemporaryLines, watchTemporaryFileCount, type TemporaryTail } from './jobs.js'
+import { runTemporaryOptimization } from './optimize.js'
 import {
   TEMPORARY_ITERATION_CHOICES,
   temporaryCaseSplit,
@@ -54,32 +37,17 @@ import {
   type TemporaryMeasurement,
   type TemporaryStudyOutcome,
 } from './study.js'
-import { runTemporaryTest, type TemporaryTestDependencies } from './test.js'
-
-export interface TemporarySessionHost {
-  readonly workspace: DevWorkspace
-  readonly agent: () => TemporaryAgentFacts
-  readonly context?: DevChatCommandContext
-  readonly dependencies?: TemporarySessionDependencies
-}
-
-export type TemporarySessionDependencies = TemporaryExperimentDependencies &
-  TemporaryTestDependencies &
-  TemporaryOptimizationDependencies
+import { runTemporaryTest } from './test.js'
 
 export interface TemporaryDevSessions {
-  readonly dataset: TemporaryDataset
+  readonly experiments: TemporaryExperiments
   readonly test: TemporaryTest
   readonly optimize: TemporaryOptimize
 }
 
-type Host = () => TemporarySessionHost
-
-const DRAFT_COUNT = 20
 const DEFAULT_ITERATIONS = 4
 const WIDTH = 4
 const REPETITIONS = 1
-const STARTER_NAME = 'starter'
 const MILLISECONDS = 1000
 const TUNABLE_KNOBS: readonly KnobKey[] = ['instructions', 'effort']
 
@@ -106,219 +74,38 @@ const MEASURED_ON: Record<TemporaryMeasurement, string> = {
   test: 'test cases',
 }
 
-const plural = (count: number, word: string): string => `${count} ${word}${count === 1 ? '' : 's'}`
-
-class Store<State> {
-  private readonly listeners = new Set<() => void>()
-
-  constructor(private state: State) {}
-
-  readonly subscribe = (listener: () => void): (() => void) => {
-    this.listeners.add(listener)
-    return () => {
-      this.listeners.delete(listener)
-    }
-  }
-
-  readonly snapshot = (): State => this.state
-
-  protected set(next: State): void {
-    this.state = next
-    for (const listener of this.listeners) listener()
-  }
+const onlyReadyExperiment = (
+  experiments: TemporaryExperiments,
+  saved: readonly ExperimentSummary[]
+): ExperimentSummary | undefined => {
+  const [only] = saved
+  const waiting = experiments.snapshot().generations.some(({ phase }) => phase !== 'failed')
+  return saved.length === 1 && !waiting ? only : undefined
 }
 
-const shownPath = (workspace: DevWorkspace, path: string): string =>
-  relative(dirname(temporaryWorkspaceDirectory(workspace)), path)
+export const temporaryTestJobs = (state: TestState): DevChatJob[] =>
+  state.step === 'running' ? [{ id: 'test', label: state.experiment, done: state.done, total: state.cases }] : []
 
-export class TemporaryDataset extends Store<DatasetState> implements DatasetSession {
-  readonly notice = new TemporaryJobNotice()
-  private opened: { path: string; raw: TemporaryExperimentDocument } | undefined
-  private draft: { path: string; raw: TemporaryExperimentDocument } | undefined
-
-  constructor(private readonly host: Host) {
-    super({ step: 'loading' })
-  }
-
-  private folder(): string {
-    return temporaryExperimentsFolder(temporaryWorkspaceDirectory(this.host().workspace))
-  }
-
-  refresh(): Promise<readonly ExperimentSummary[]> {
-    if (this.snapshot().step === 'drafting' || this.hasUnsavedCases()) return Promise.resolve([])
-    this.set({ step: 'loading' })
-    return this.list()
-  }
-
-  show(): void {
-    void this.refresh().then((experiments) => {
-      const [only] = experiments
-      if (experiments.length === 1 && only && this.snapshot().step === 'pick') this.open(only)
-    })
-  }
-
-  private hasUnsavedCases(): boolean {
-    const state = this.snapshot()
-    return state.step === 'draft' && state.cases.some((item) => !item.saved)
-  }
-
-  open(experiment: ExperimentSummary): void {
-    void this.load(experiment.path)
-  }
-
-  generate(): void {
-    const state = this.snapshot()
-    if (state.step === 'drafting') return
-    const into = state.step === 'draft' && state.path ? state : undefined
-    if (state.step === 'draft' && this.hasUnsavedCases()) {
-      this.set({
-        ...state,
-        notice: { tone: 'error', text: 'Save or drop the drafted cases first, then press g again.' },
-      })
-      return
-    }
-    this.set({ step: 'drafting', startedAt: Date.now(), count: DRAFT_COUNT, ...(into ? { into: into.name } : {}) })
-    this.notice.start(this.host().context, `experiment · drafting ${DRAFT_COUNT} cases with strands-evals`)
-    void this.drafting(into)
-  }
-
-  toggle(index: number): void {
-    this.edit((cases) => cases.map((item, position) => (position === index ? { ...item, kept: !item.kept } : item)))
-  }
-
-  drop(index: number): void {
-    this.edit((cases) => cases.filter((_item, position) => position !== index))
-  }
-
-  keepAll(): void {
-    this.edit((cases) => cases.map((item) => ({ ...item, kept: true })))
-  }
-
-  async save(): Promise<ExperimentSummary | undefined> {
-    const state = this.snapshot()
-    if (state.step !== 'draft') return undefined
-    const kept = state.cases.filter((item) => item.kept)
-    if (kept.length === 0) {
-      this.set({
-        ...state,
-        notice: { tone: 'error', text: 'Keep at least one case with Space or a, then press Enter.' },
-      })
-      return undefined
-    }
-    try {
-      const path = state.path ?? this.freePath()
-      if (state.path && this.opened)
-        await writeTemporaryExperimentFile(
-          path,
-          this.opened.raw,
-          kept.filter((item) => item.saved).map((item) => item.name)
-        )
-      const fresh = kept.filter((item) => !item.saved).map((item) => item.name)
-      if (this.draft && fresh.length > 0) {
-        if (state.path) await appendTemporaryCases(path, this.draft.raw, fresh)
-        else await writeTemporaryExperimentFile(path, this.draft.raw, fresh)
-      }
-      if (this.draft) await rm(this.draft.path, { force: true })
-      return await this.load(path, {
-        tone: 'success',
-        text: `Saved ${plural(kept.length, 'case')} to ${shownPath(this.host().workspace, path)}`,
-      })
-    } catch (error) {
-      this.set({ ...state, notice: { tone: 'error', text: `Could not save the cases: ${errorMessage(error)}` } })
-      return undefined
-    }
-  }
-
-  private freePath(): string {
-    const plain = join(this.folder(), `${STARTER_NAME}.json`)
-    return existsSync(plain) ? join(this.folder(), `${temporaryRunName(STARTER_NAME, new Date())}.json`) : plain
-  }
-
-  private edit(change: (cases: readonly DraftCase[]) => DraftCase[]): void {
-    const state = this.snapshot()
-    if (state.step !== 'draft') return
-    const { notice: _notice, ...rest } = state
-    this.set({ ...rest, cases: change(state.cases) })
-  }
-
-  private async list(): Promise<readonly ExperimentSummary[]> {
-    const folder = this.folder()
-    try {
-      const experiments = await listTemporaryExperiments(folder)
-      this.set(
-        experiments.length === 0
-          ? { step: 'empty', folder: shownPath(this.host().workspace, folder) }
-          : { step: 'pick', experiments }
-      )
-      return experiments
-    } catch (error) {
-      this.set({ step: 'failed', message: `Could not read the experiments in ${folder}: ${errorMessage(error)}` })
-      return []
-    }
-  }
-
-  private async load(
-    path: string,
-    notice?: Extract<DatasetState, { step: 'draft' }>['notice']
-  ): Promise<ExperimentSummary | undefined> {
-    try {
-      const { experiment, raw } = await readTemporaryExperimentFile(path)
-      this.opened = { path, raw }
-      this.draft = undefined
-      this.set({
-        step: 'draft',
-        name: experiment.name,
-        path,
-        cases: experiment.cases.map((item) => ({ ...item, kept: true, saved: true })),
-        drafted: 0,
-        ...(notice ? { notice } : {}),
-      })
-      return { name: experiment.name, path, caseCount: experiment.cases.length }
-    } catch (error) {
-      this.set({ step: 'failed', message: errorMessage(error) })
-      return undefined
-    }
-  }
-
-  private async drafting(into: Extract<DatasetState, { step: 'draft' }> | undefined): Promise<void> {
-    const { workspace, agent, dependencies } = this.host()
-    try {
-      const context = await temporaryAgentContext(workspace, agent())
-      const outcome = await draftTemporaryExperiment(
-        { workspace, context, count: DRAFT_COUNT, background: true },
-        dependencies
-      )
-      const { experiment, raw } = await readTemporaryExperimentFile(outcome.path)
-      if (this.draft) await rm(this.draft.path, { force: true })
-      this.draft = { path: outcome.path, raw }
-      const fresh = experiment.cases.map((item) => ({ ...item, kept: false, saved: false }))
-      this.set({
-        step: 'draft',
-        name: into?.name ?? STARTER_NAME,
-        ...(into?.path ? { path: into.path } : {}),
-        cases: [...(into?.cases ?? []), ...fresh],
-        drafted: fresh.length,
-      })
-      this.notice.finish('success', `experiment · drafted ${plural(fresh.length, 'case')} · /experiment reviews them`)
-    } catch (error) {
-      this.set({ step: 'failed', message: errorMessage(error) })
-      this.notice.finish('error', 'experiment · drafting stopped · /experiment shows why')
-    }
-  }
-}
-
-const testProgressText = (state: Extract<TestState, { step: 'running' }>): string =>
-  `test · ${state.experiment} · ${state.done}/${plural(state.cases, 'case')} run`
+export const temporaryOptimizeJobs = (state: OptimizeState): DevChatJob[] =>
+  state.step === 'running'
+    ? [
+        {
+          id: 'optimize',
+          label: state.progress.run,
+          done: state.progress.candidates.length + (state.progress.baseline === undefined ? 0 : 1),
+          total: state.progress.planned,
+        },
+      ]
+    : []
 
 export class TemporaryTest extends Store<TestState> implements TestSession {
-  readonly notice = new TemporaryJobNotice()
   private last: { experiment: ExperimentSummary; results: TestResults } | undefined
 
   constructor(
-    private readonly host: Host,
-    readonly dataset: TemporaryDataset
+    private readonly host: TemporaryHost,
+    readonly experiments: TemporaryExperiments
   ) {
-    super({ step: 'dataset' })
+    super({ step: 'pick' })
   }
 
   run(experiment: ExperimentSummary): void {
@@ -327,10 +114,10 @@ export class TemporaryTest extends Store<TestState> implements TestSession {
   }
 
   show(): void {
-    if (this.snapshot().step !== 'dataset') return
-    void this.dataset.refresh().then((experiments) => {
-      const [only] = experiments
-      if (experiments.length === 1 && only && this.snapshot().step === 'dataset') this.run(only)
+    if (this.snapshot().step !== 'pick') return
+    void this.experiments.reload().then((saved) => {
+      const only = onlyReadyExperiment(this.experiments, saved)
+      if (only && this.snapshot().step === 'pick') this.run(only)
     })
   }
 
@@ -343,7 +130,7 @@ export class TemporaryTest extends Store<TestState> implements TestSession {
 
   reset(): void {
     if (this.snapshot().step === 'running') return
-    this.set({ step: 'dataset' })
+    this.set({ step: 'pick' })
     this.show()
   }
 
@@ -379,7 +166,6 @@ export class TemporaryTest extends Store<TestState> implements TestSession {
         rerun,
       }
       this.set(running)
-      this.notice.start(this.host().context, testProgressText(running))
       const outcome = await runTemporaryTest(
         {
           workspace: this.host().workspace,
@@ -389,9 +175,7 @@ export class TemporaryTest extends Store<TestState> implements TestSession {
             stopCounting = watchTemporaryFileCount(store, (done) => {
               const state = this.snapshot()
               if (state.step !== 'running') return
-              const next = { ...state, done }
-              this.set(next)
-              this.notice.update(testProgressText(next))
+              this.set({ ...state, done })
             })
           },
         },
@@ -405,40 +189,31 @@ export class TemporaryTest extends Store<TestState> implements TestSession {
       this.last = { experiment, results }
       this.set({ step: 'results', results })
       const passed = results.cases.filter((item) => item.passed).length
-      this.notice.finish(
+      announce(
+        this.host(),
         'success',
         `test · ${experiment.name} · ${passed} of ${plural(results.cases.length, 'case')} passed · /test shows the results`
       )
     } catch (error) {
       this.set({ step: 'failed', message: errorMessage(error) })
-      this.notice.finish('error', `test · ${experiment.name} stopped · /test shows why`)
+      announce(this.host(), 'error', `test · ${experiment.name} stopped · /test shows why`)
     } finally {
       stopCounting()
     }
   }
 }
 
-const optimizeProgressText = (progress: OptimizeProgress): string => {
-  const finished = progress.candidates.length + (progress.baseline === undefined ? 0 : 1)
-  const best =
-    progress.best && progress.baseline !== undefined
-      ? ` · best ${progress.best.score.toFixed(2)} (baseline ${progress.baseline.toFixed(2)})`
-      : ''
-  return `optimize · run ${progress.run} · ${finished}/${progress.planned} candidates${best}`
-}
-
 export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeSession {
-  readonly notice = new TemporaryJobNotice()
   private evaluators = 1
   private abort: AbortController | undefined
   private stopping = false
   private readonly writers = new Map<number, (after: string) => Promise<void>>()
 
   constructor(
-    private readonly host: Host,
-    readonly dataset: TemporaryDataset
+    private readonly host: TemporaryHost,
+    readonly experiments: TemporaryExperiments
   ) {
-    super({ step: 'dataset' })
+    super({ step: 'pick' })
   }
 
   plan(experiment: ExperimentSummary): void {
@@ -446,10 +221,10 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
   }
 
   show(): void {
-    if (this.snapshot().step !== 'dataset') return
-    void this.dataset.refresh().then((experiments) => {
-      const [only] = experiments
-      if (experiments.length === 1 && only && this.snapshot().step === 'dataset') this.plan(only)
+    if (this.snapshot().step !== 'pick') return
+    void this.experiments.reload().then((saved) => {
+      const only = onlyReadyExperiment(this.experiments, saved)
+      if (only && this.snapshot().step === 'pick') this.plan(only)
     })
   }
 
@@ -501,7 +276,7 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
 
   reset(): void {
     if (this.snapshot().step === 'running') return
-    this.set({ step: 'dataset' })
+    this.set({ step: 'pick' })
     this.show()
   }
 
@@ -569,13 +344,8 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
             startedAt,
             stopping: this.stopping,
           }
-    const show = (): void => {
-      const current = progress()
-      this.set({ step: 'running', progress: current })
-      this.notice.update(optimizeProgressText(current))
-    }
+    const show = (): void => this.set({ step: 'running', progress: progress() })
     this.set({ step: 'running', progress: progress() })
-    this.notice.start(this.host().context, `optimize · ${plan.experiment.name} · starting`)
     try {
       await runTemporaryOptimization(
         {
@@ -601,7 +371,7 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
       await tail?.stop()
       if (!this.stopping || !record) {
         this.set({ step: 'failed', message: errorMessage(error), ...(record ? { record } : {}) })
-        this.notice.finish('error', `optimize · ${plan.experiment.name} stopped · /optimize shows why`)
+        announce(this.host(), 'error', `optimize · ${plan.experiment.name} stopped · /optimize shows why`)
         return
       }
     } finally {
@@ -614,10 +384,10 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
     try {
       const review = await this.review(await readTemporaryStudy(record), record)
       this.set({ step: 'review', review })
-      this.notice.finish('success', `optimize · run ${review.run} finished · /optimize opens the review`)
+      announce(this.host(), 'success', `optimize · run ${review.run} finished · /optimize opens the review`)
     } catch (error) {
       this.set({ step: 'failed', message: errorMessage(error), record })
-      this.notice.finish('error', `optimize · run ${basename(record)} could not be read · /optimize shows why`)
+      announce(this.host(), 'error', `optimize · run ${basename(record)} could not be read · /optimize shows why`)
     }
   }
 
@@ -677,7 +447,8 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
     }
     this.set({ step: 'review', review: { ...state.review, applied, ...(applyError ? { applyError } : {}) } })
     const changed = applied.length > 0 ? `applied ${applied.join(', ')}` : 'changed nothing'
-    this.host().context?.report(
+    announce(
+      this.host(),
       applyError ? 'error' : 'success',
       applyError ? `optimize · ${changed} · ${applyError}` : `optimize · ${changed} · run /test to check your agent`
     )
@@ -695,15 +466,15 @@ export const temporaryDevSessions = (host: TemporarySessionHost): TemporaryDevSe
   }
   let latest = host
   const current = (): TemporarySessionHost => latest
-  const dataset = new TemporaryDataset(current)
+  const experiments = new TemporaryExperiments(current)
   const sessions = {
-    dataset,
-    test: new TemporaryTest(current, dataset),
-    optimize: new TemporaryOptimize(current, dataset),
+    experiments,
+    test: new TemporaryTest(current, experiments),
+    optimize: new TemporaryOptimize(current, experiments),
   }
   registry.set(key, {
     use: (next) => {
-      latest = next
+      latest = { ...latest, ...next }
     },
     sessions,
   })

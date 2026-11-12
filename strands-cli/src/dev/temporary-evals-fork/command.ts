@@ -1,54 +1,96 @@
 import { createElement } from 'react'
 
 import type { ImportedAgentProject } from '../../project/import.js'
-import type { DevChatCommand, DevChatCommandContext, DevChatPanelView } from '../../ui/chat/types.js'
-import { DatasetPanel } from '../panels/dataset.js'
+import type { DevChatCommand, DevChatCommandContext, DevChatJob, DevChatPanelView } from '../../ui/chat/types.js'
+import { ExperimentPanel } from '../panels/experiment.js'
 import { OptimizePanel } from '../panels/optimize.js'
 import { TestPanel } from '../panels/test.js'
 import type { DevWorkspace } from '../workspace.js'
 import type { TemporaryAgentFacts } from './agent-context.js'
-import type { TemporaryJobNotice } from './jobs.js'
-import { temporaryDevSessions, type TemporaryDevSessions } from './sessions.js'
+import { temporaryGenerationJobs } from './experiments-session.js'
+import { temporaryJobsFeed, type TemporaryStore } from './jobs.js'
+import {
+  temporaryDevSessions,
+  temporaryOptimizeJobs,
+  temporaryTestJobs,
+  type TemporaryDevSessions,
+} from './sessions.js'
 
-interface PanelCommand {
-  readonly name: string
-  readonly description: string
-  readonly view: (sessions: TemporaryDevSessions) => DevChatPanelView
-  readonly notice: (sessions: TemporaryDevSessions) => TemporaryJobNotice
-  readonly show: (sessions: TemporaryDevSessions) => void
+interface PanelSession<State> extends TemporaryStore<State> {
+  show(): void
 }
 
-const PANEL_COMMANDS: readonly PanelCommand[] = [
-  {
-    name: 'experiment',
-    description: 'TEMPORARY: draft, review, and save test cases for this agent',
-    view:
-      ({ dataset }) =>
-      (props) =>
-        createElement(DatasetPanel, { ...props, session: dataset, command: 'experiment' }),
-    notice: ({ dataset }) => dataset.notice,
-    show: ({ dataset }) => dataset.show(),
+interface PanelCommand<State> {
+  readonly name: string
+  readonly description: string
+  readonly session: (sessions: TemporaryDevSessions) => PanelSession<State>
+  readonly jobs: (state: State) => readonly DevChatJob[]
+  readonly view: (sessions: TemporaryDevSessions) => DevChatPanelView
+}
+
+type Sessions = (context?: DevChatCommandContext) => TemporaryDevSessions
+
+const devCommand = <State>(
+  { name, description, session, jobs, view }: PanelCommand<State>,
+  sessions: Sessions
+): DevChatCommand => ({
+  spec: { name, usage: `/${name}`, description },
+  open: (context): DevChatPanelView => {
+    const opened = sessions(context)
+    session(opened).show()
+    return view(opened)
   },
-  {
-    name: 'test',
-    description: 'TEMPORARY: run this agent on its test cases and show what failed',
-    view:
-      ({ test }) =>
-      (props) =>
-        createElement(TestPanel, { ...props, session: test }),
-    notice: ({ test }) => test.notice,
-    show: ({ test }) => test.show(),
-  },
-  {
-    name: 'optimize',
-    description: 'TEMPORARY: tune this agent against its test cases and review the changes',
-    view:
-      ({ optimize }) =>
-      (props) =>
-        createElement(OptimizePanel, { ...props, session: optimize }),
-    notice: ({ optimize }) => optimize.notice,
-    show: ({ optimize }) => optimize.show(),
-  },
+  attach: (context): void => void sessions(context),
+  jobs: temporaryJobsFeed(session(sessions()), jobs),
+})
+
+const PANEL_COMMANDS: readonly ((sessions: Sessions) => DevChatCommand)[] = [
+  (sessions): DevChatCommand =>
+    devCommand(
+      {
+        name: 'experiment',
+        description: 'TEMPORARY: generate test cases for this agent with strands-evals, and review them',
+        session: ({ experiments }) => ({
+          subscribe: experiments.subscribe,
+          snapshot: experiments.snapshot,
+          show: () => experiments.refresh(),
+        }),
+        jobs: temporaryGenerationJobs,
+        view:
+          ({ experiments }) =>
+          (props) =>
+            createElement(ExperimentPanel, { ...props, session: experiments }),
+      },
+      sessions
+    ),
+  (sessions): DevChatCommand =>
+    devCommand(
+      {
+        name: 'test',
+        description: 'TEMPORARY: run this agent on an experiment and show what failed',
+        session: ({ test }) => test,
+        jobs: temporaryTestJobs,
+        view:
+          ({ test }) =>
+          (props) =>
+            createElement(TestPanel, { ...props, session: test }),
+      },
+      sessions
+    ),
+  (sessions): DevChatCommand =>
+    devCommand(
+      {
+        name: 'optimize',
+        description: 'TEMPORARY: tune this agent against an experiment and review the changes',
+        session: ({ optimize }) => optimize,
+        jobs: temporaryOptimizeJobs,
+        view:
+          ({ optimize }) =>
+          (props) =>
+            createElement(OptimizePanel, { ...props, session: optimize }),
+      },
+      sessions
+    ),
 ]
 
 const targetWorkspace = (workspace: DevWorkspace, project: ImportedAgentProject): DevWorkspace => ({
@@ -64,15 +106,7 @@ export const temporaryDevCommands = (
   agent: () => TemporaryAgentFacts = () => ({})
 ): DevChatCommand[] => {
   const target = targetWorkspace(workspace, project)
-  const sessions = (context: DevChatCommandContext): TemporaryDevSessions =>
-    temporaryDevSessions({ workspace: target, agent, context })
-  return PANEL_COMMANDS.map(({ name, description, view, notice, show }) => ({
-    spec: { name, usage: `/${name}`, description },
-    open: (context): DevChatPanelView => {
-      const opened = sessions(context)
-      show(opened)
-      return view(opened)
-    },
-    attach: (context) => notice(sessions(context)).attach(context),
-  }))
+  const sessions: Sessions = (context) =>
+    temporaryDevSessions({ workspace: target, agent, ...(context ? { context } : {}) })
+  return PANEL_COMMANDS.map((make) => make(sessions))
 }

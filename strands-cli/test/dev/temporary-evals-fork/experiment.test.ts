@@ -3,24 +3,46 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
+import type { GenerationSettings } from '../../../src/dev/panels/model.js'
 import { temporaryVenvPython, type TemporaryCommandRequest } from '../../../src/dev/temporary-evals-fork/environment.js'
 import type { TemporaryEvalsProcess } from '../../../src/dev/temporary-evals-fork/evals-process.js'
-import { draftTemporaryExperiment } from '../../../src/dev/temporary-evals-fork/experiment.js'
+import {
+  generateTemporaryExperiment,
+  parseTemporaryGenerationEvent,
+  temporaryGenerateArguments,
+  temporaryGenerationError,
+  temporaryGenerationFiles,
+  type TemporaryGenerationEvent,
+} from '../../../src/dev/temporary-evals-fork/experiment.js'
 import type { DevWorkspace } from '../../../src/dev/workspace.js'
 import { temporaryDirectory } from '../../fixtures/tempdir.js'
 
-const writeFileAt = async (path: string, text = '{}'): Promise<void> => {
+const writeFileAt = async (path: string, text: string): Promise<void> => {
   await mkdir(dirname(path), { recursive: true })
   await writeFile(path, text)
 }
 
-const workspaceFixture = async (experiments: string[] = []): Promise<DevWorkspace> => {
+const settings = (overrides: Partial<GenerationSettings> = {}): GenerationSettings => ({
+  name: 'refunds',
+  task: 'Answer refund questions',
+  context: '',
+  cases: 3,
+  topics: 0,
+  evaluator: 'OutputEvaluator',
+  model: '',
+  parallel: 4,
+  expectedOutput: true,
+  expectedTrajectory: false,
+  expectedInteractions: false,
+  metadata: false,
+  ...overrides,
+})
+
+const workspaceFixture = async (): Promise<DevWorkspace> => {
   const root = await temporaryDirectory()
-  const directory = join(root, 'strands-dev')
   await writeFileAt(temporaryVenvPython(join(root, '.venv')), 'fixture interpreter')
-  await Promise.all(experiments.map((name) => writeFileAt(join(directory, 'tmp/experiments', name))))
   return {
-    directory,
+    directory: join(root, 'strands-dev'),
     root,
     entrypoint: join(root, 'agent.py'),
     config: { version: 1, name: 'desk', language: 'python', entrypoint: 'agent.py', origin: { kind: 'discovered' } },
@@ -39,76 +61,191 @@ const environmentRunner = (workspace: DevWorkspace) =>
     return ''
   })
 
-const generating = (cases = 3) =>
+const flagValue = (args: readonly string[], flag: string): string => args[args.indexOf(flag) + 1]!
+
+const generating = (cases: number, events: readonly object[] = []) =>
   vi.fn(async ({ args }: TemporaryEvalsProcess) => {
-    const output = args[args.indexOf('--output') + 1]!
     await writeFileAt(
-      output,
+      flagValue(args, '--temporary-progress'),
+      events.map((event) => `${JSON.stringify(event)}\n`).join('')
+    )
+    await writeFileAt(
+      flagValue(args, '--output'),
       JSON.stringify({ cases: Array.from({ length: cases }, (_, index) => ({ name: `c${index}` })) })
     )
     return { code: 0, stdout: '', stderrTail: [] }
   })
 
-describe('TEMPORARY starter set drafting', () => {
-  const now = (): Date => new Date('2026-11-12T15:30:12Z')
+const NOW = new Date('2026-11-12T15:30:12Z')
 
-  it('shouldDraftTheRequestedCasesIntoTheDraftsFolderFromTheAgentContext', async () => {
-    const workspace = await workspaceFixture()
-    const spawnGenerator = generating(3)
+describe('TEMPORARY experiment generation', () => {
+  it('shouldPassEveryGeneratorSettingWhenTheyDifferFromTheDefaults', () => {
+    const files = { draft: '/d/refunds.json', log: '/d/refunds.log', progress: '/d/refunds.progress.jsonl' }
 
-    const outcome = await draftTemporaryExperiment(
-      { workspace, context: 'An agent that answers refund questions', count: 20, now },
-      { run: environmentRunner(workspace), spawnGenerator }
+    const args = temporaryGenerateArguments(
+      settings({
+        topics: 3,
+        evaluator: 'TrajectoryEvaluator',
+        model: 'us.anthropic.claude-sonnet',
+        parallel: 2,
+        expectedOutput: false,
+        expectedTrajectory: true,
+        expectedInteractions: true,
+        metadata: true,
+      }),
+      'An agent for refunds',
+      files
     )
 
-    const path = join(workspace.directory!, 'tmp/experiments/drafts/20261112-153012-draft.json')
-    expect(outcome).toEqual({ path, cases: 3 })
-    expect(spawnGenerator.mock.calls[0]![0].args).toEqual([
+    expect(args).toEqual([
       '-m',
       'strands_evals.cli',
       'generate',
       '--context',
-      'An agent that answers refund questions',
+      'An agent for refunds',
+      '--task-description',
+      'Answer refund questions',
       '--num-cases',
-      '20',
+      '3',
+      '--num-topics',
+      '3',
       '--evaluator',
-      'OutputEvaluator',
+      'TrajectoryEvaluator',
+      '--model',
+      'us.anthropic.claude-sonnet',
+      '--max-parallel-num-cases',
+      '2',
+      '--no-expected-output',
+      '--expected-trajectory',
+      '--expected-interactions',
+      '--metadata',
+      '--temporary-progress',
+      '/d/refunds.progress.jsonl',
       '--output',
-      path,
+      '/d/refunds.json',
     ])
   })
 
-  it('shouldReportTheGeneratorErrorAndTheNextStepWhenDraftingFails', async () => {
-    const workspace = await workspaceFixture()
-    const spawnGenerator = vi.fn(async () => ({
-      code: 3,
-      stdout: '',
-      stderrTail: ['strands-evals: error: Unable to locate credentials'],
-    }))
+  it('shouldLeaveOptionalFlagsOutWhenTheDefaultsAreUsed', () => {
+    const args = temporaryGenerateArguments(settings(), 'context', { draft: 'd', log: 'l', progress: 'p' })
 
-    await expect(
-      draftTemporaryExperiment(
-        { workspace, context: 'refunds', count: 20 },
-        { run: environmentRunner(workspace), spawnGenerator }
-      )
-    ).rejects.toThrow(
-      /strands-evals generate stopped with exit code 3: Unable to locate credentials\nCheck that your AWS credentials/u
-    )
+    expect(args).not.toContain('--num-topics')
+    expect(args).not.toContain('--model')
+    expect(args).not.toContain('--no-expected-output')
+    expect(args).toContain('--max-parallel-num-cases')
   })
 
-  it('shouldRemoveTheDraftAndSayWhatToTryWhenTheGeneratorWritesNoCases', async () => {
-    const workspace = await workspaceFixture()
-    const spawnGenerator = vi.fn(async (process: TemporaryEvalsProcess) => {
-      await generating(0)(process)
-      return { code: 0, stdout: '', stderrTail: ['case 1 failed: the model refused'] }
+  it('shouldPutTheDraftLogAndProgressNextToEachOtherWhenFilesAreNamed', () => {
+    const files = temporaryGenerationFiles('/w/strands-dev', 'refunds', NOW)
+
+    expect(files).toEqual({
+      draft: '/w/strands-dev/tmp/experiments/drafts/20261112-153012-refunds.json',
+      log: '/w/strands-dev/tmp/experiments/drafts/20261112-153012-refunds.log',
+      progress: '/w/strands-dev/tmp/experiments/drafts/20261112-153012-refunds.progress.jsonl',
     })
+  })
+
+  it('shouldReportEachProgressEventAndReturnTheDraftWhenGenerationSucceeds', async () => {
+    const workspace = await workspaceFixture()
+    const files = temporaryGenerationFiles(workspace.directory!, 'refunds', NOW)
+    const progress = [
+      { event: 'cases', total: 3 },
+      { event: 'case', ok: true, done: 1, failed: 0, total: 3 },
+      { event: 'case', ok: false, done: 1, failed: 1, total: 3, error: 'ThrottlingException: slow down' },
+      { event: 'case', ok: true, done: 2, failed: 1, total: 3 },
+      { event: 'rubric' },
+    ]
+    const events: TemporaryGenerationEvent[] = []
+
+    const outcome = await generateTemporaryExperiment(
+      { workspace, settings: settings(), context: 'context', files, onEvent: (event) => events.push(event) },
+      { run: environmentRunner(workspace), spawnGenerator: generating(2, progress) }
+    )
+
+    expect(outcome).toEqual({ path: files.draft, cases: 2 })
+    expect(events).toEqual(progress)
+  })
+
+  it('shouldDeleteTheDraftAndSayWhyWhenEveryCaseFails', async () => {
+    const workspace = await workspaceFixture()
+    const files = temporaryGenerationFiles(workspace.directory!, 'refunds', NOW)
 
     await expect(
-      draftTemporaryExperiment(
-        { workspace, context: 'refunds', count: 20, now },
+      generateTemporaryExperiment(
+        { workspace, settings: settings(), context: 'context', files },
+        { run: environmentRunner(workspace), spawnGenerator: generating(0) }
+      )
+    ).rejects.toThrow('wrote no cases, because every case failed')
+
+    expect(existsSync(files.draft)).toBe(false)
+  })
+
+  it('shouldNotStartTheGeneratorWhenItWasCancelledDuringSetup', async () => {
+    const workspace = await workspaceFixture()
+    const abort = new AbortController()
+    abort.abort()
+    const spawnGenerator = generating(1)
+
+    await expect(
+      generateTemporaryExperiment(
+        {
+          workspace,
+          settings: settings(),
+          context: 'context',
+          files: temporaryGenerationFiles(workspace.directory!, 'refunds', NOW),
+          signal: abort.signal,
+        },
         { run: environmentRunner(workspace), spawnGenerator }
       )
-    ).rejects.toThrow(/wrote no cases[\s\S]+the model refused\nGive your agent clearer instructions/u)
-    expect(existsSync(join(workspace.directory!, 'tmp/experiments/drafts/20261112-153012-draft.json'))).toBe(false)
+    ).rejects.toThrow()
+
+    expect(spawnGenerator).not.toHaveBeenCalled()
+  })
+
+  it.each<[string, TemporaryGenerationEvent | undefined]>([
+    ['{"event":"topics"}', { event: 'topics' }],
+    ['{"event":"cases","total":20}', { event: 'cases', total: 20 }],
+    [
+      '{"event":"case","ok":true,"done":4,"failed":1,"total":20}',
+      { event: 'case', ok: true, done: 4, failed: 1, total: 20 },
+    ],
+    ['{"event":"failed","error":"ValueError: no"}', { event: 'failed', error: 'ValueError: no' }],
+    ['{"event":"unknown"}', undefined],
+    ['not json', undefined],
+  ])('shouldReadTheProgressLine%s', (line, event) => {
+    expect(parseTemporaryGenerationEvent(line)).toEqual(event)
+  })
+
+  it.each([
+    [
+      'ExpiredTokenException: The security token included in the request is expired',
+      'AWS credentials are missing or expired',
+      'Refresh your AWS credentials',
+    ],
+    [
+      "AccessDeniedException: You don't have access to the model",
+      'Bedrock denied access to us.model',
+      'choose a model that your AWS account can use',
+    ],
+    ['ThrottlingException: Too many requests', 'Bedrock throttled the requests', 'lower Parallel'],
+    ['ValidationException: The provided model identifier is invalid.', 'Bedrock cannot use us.model', 'fix the Model'],
+    ['EndpointConnectionError: Could not connect to the endpoint URL', 'Could not reach Bedrock', 'Check your network'],
+    ['ZeroDivisionError: division by zero', 'ZeroDivisionError: division by zero', 'Read the log for the cause'],
+    [
+      'AccessDeniedException: not authorized to perform: bedrock:InvokeModel on resource: arn:aws:bedrock:us-west-2:1:inference-profile/global.anthropic.claude-sonnet-4-6 because no policy allows it',
+      'Bedrock denied access to global.anthropic.claude-sonnet-4-6',
+      'choose a model that your AWS account can use',
+    ],
+  ])('shouldExplainTheFailureCleanlyWhenTheGeneratorReports%s', (reported, summary, next) => {
+    const failure = temporaryGenerationError(new Error('strands-evals generate stopped with exit code 3'), {
+      settings: settings({ model: reported.includes('inference-profile') ? '' : 'us.model' }),
+      reported,
+      log: 'strands-dev/tmp/experiments/drafts/refunds.log',
+    })
+
+    expect(failure.summary).toBe(summary)
+    expect(failure.detail).toContain(next)
+    expect(failure.detail).toContain('Log: strands-dev/tmp/experiments/drafts/refunds.log')
+    expect(failure.detail.match(/strands-evals said/gu)).toHaveLength(1)
   })
 })

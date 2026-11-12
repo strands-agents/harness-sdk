@@ -1,6 +1,6 @@
 export const TEMPORARY_EVALS_FORK = {
   repository: 'https://github.com/arielnabavian/evals',
-  commit: '257726a52c1d544a98700e046a32e736540e7128',
+  commit: '7d99f709c748b925d426c642b7851bd352e06f17',
 } as const
 
 export const TEMPORARY_EVALS_FORK_REQUIREMENT = `strands-agents-evals[optimization] @ git+${TEMPORARY_EVALS_FORK.repository}@${TEMPORARY_EVALS_FORK.commit}`

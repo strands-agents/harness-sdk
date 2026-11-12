@@ -3,9 +3,10 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import {
-  appendTemporaryCases,
   listTemporaryExperiments,
   readTemporaryExperimentFile,
+  temporaryBlankCase,
+  writeTemporaryExperimentCases,
   writeTemporaryExperimentFile,
   type TemporaryRawCase,
 } from '../../../src/dev/temporary-evals-fork/experiment-files.js'
@@ -132,36 +133,22 @@ describe('TEMPORARY experiment files', () => {
     expect(await readdir(folder)).toEqual(['refunds.json'])
   })
 
-  it('shouldRenameAppendedCasesWhenTheirNamesAreTaken', async () => {
-    const target = join(await temporaryDirectory(), 'refunds.json')
-    await writeJson(target, experimentDocument(rawCase('c0'), rawCase('c0-2')))
-    const source = experimentDocument(rawCase('c0', 'new question'), rawCase('c1'), rawCase('c2'))
+  it('shouldWriteTheGivenCasesAndKeepTheOtherFieldsWhenCasesAreWritten', async () => {
+    const path = join(await temporaryDirectory(), 'refunds.json')
+    const raw = experimentDocument(rawCase('c0'), rawCase('c1'))
 
-    const names = await appendTemporaryCases(target, source, ['c0', 'c1'])
+    await writeTemporaryExperimentCases(path, raw, [{ ...rawCase('c1'), expected_output: 'edited' }])
 
-    expect(names).toEqual(['c0-3', 'c1'])
-    expect(await readJson(target)).toEqual(
-      experimentDocument(
-        rawCase('c0'),
-        rawCase('c0-2'),
-        { ...rawCase('c0', 'new question'), name: 'c0-3' },
-        rawCase('c1')
-      )
-    )
+    expect(await readJson(path)).toEqual(experimentDocument({ ...rawCase('c1'), expected_output: 'edited' }))
   })
 
-  it('shouldGiveEachAppendedCaseItsOwnNameWhenTheSourceRepeatsAName', async () => {
-    const target = join(await temporaryDirectory(), 'refunds.json')
-    await writeJson(target, experimentDocument(rawCase('c0')))
-    const source = experimentDocument(rawCase('refund', 'first'), rawCase('refund', 'second'))
+  it.each([
+    ['an expected outcome', 'Refund it', 'Refund it'],
+    ['no expected outcome', '', null],
+  ])('shouldMakeACompleteCaseWhenABlankCaseHas%s', (_case, expected, stored) => {
+    const blank = temporaryBlankCase('case-3', 'Refund order 7', expected)
 
-    const names = await appendTemporaryCases(target, source, ['refund', 'refund'])
-
-    expect(names).toEqual(['refund', 'refund-2'])
-    expect((await readJson(target)).cases.map(({ input }: { input: string }) => input)).toEqual([
-      'question for c0',
-      'first',
-      'second',
-    ])
+    expect(blank).toMatchObject({ name: 'case-3', input: 'Refund order 7', expected_output: stored, metadata: null })
+    expect(blank.session_id).toMatch(/^[0-9a-f-]{36}$/u)
   })
 })

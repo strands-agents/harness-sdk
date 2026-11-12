@@ -37,6 +37,14 @@ describe('TEMPORARY dev commands', () => {
     expect(commands.every(({ spec }) => spec.description.startsWith('TEMPORARY: '))).toBe(true)
   })
 
+  it('shouldReportNoRunningJobsWhenNothingRuns', async () => {
+    const { workspace, project } = await fixture()
+
+    const commands = temporaryDevCommands(workspace, project)
+
+    expect(commands.map(({ jobs }) => jobs?.snapshot())).toEqual([[], [], []])
+  })
+
   it.each([0, 1, 2])('shouldOpenAPanelViewWhenCommand%iRuns', async (index) => {
     const { workspace, project } = await fixture()
 

@@ -1,39 +1,84 @@
 import { open, readdir } from 'node:fs/promises'
 
-import type { ChatNotice, DevChatCommandContext, DevChatNotice } from '../../ui/chat/types.js'
+import type { DevChatJob, DevChatJobs } from '../../ui/chat/types.js'
 import { isRecord } from '../../values.js'
 
 const TAIL_INTERVAL_MS = 1000
 const COUNT_INTERVAL_MS = 500
+const JOB_BATCH_MS = 200
 
-export class TemporaryJobNotice {
-  private views: DevChatNotice[] = []
-  private latest: { status: ChatNotice['status']; text: string } | undefined
+export interface TemporaryStore<State> {
+  subscribe(listener: () => void): () => void
+  snapshot(): State
+}
 
-  start(context: DevChatCommandContext | undefined, text: string): void {
-    this.latest = { status: 'running', text }
-    this.views = context ? [context.report('running', text)] : []
+export class Store<State> implements TemporaryStore<State> {
+  private readonly listeners = new Set<() => void>()
+
+  constructor(private state: State) {}
+
+  readonly subscribe = (listener: () => void): (() => void) => {
+    this.listeners.add(listener)
+    return () => {
+      this.listeners.delete(listener)
+    }
   }
 
-  attach(context: DevChatCommandContext): void {
-    if (this.latest?.status === 'running') this.views.push(context.report('running', this.latest.text))
-  }
+  readonly snapshot = (): State => this.state
 
-  update(text: string): void {
-    this.show('running', text)
+  protected set(next: State): void {
+    this.state = next
+    for (const listener of this.listeners) listener()
   }
+}
 
-  finish(status: 'success' | 'error', text: string): void {
-    this.show(status, text)
-    this.latest = undefined
-    this.views = []
-  }
+const sameJobs = (left: readonly DevChatJob[], right: readonly DevChatJob[]): boolean =>
+  left.length === right.length &&
+  left.every(
+    (job, index) =>
+      job.id === right[index]?.id &&
+      job.label === right[index]?.label &&
+      job.done === right[index]?.done &&
+      job.total === right[index]?.total
+  )
 
-  private show(status: ChatNotice['status'], text: string): void {
-    if (this.latest?.text === text && this.latest.status === status) return
-    this.latest = { status, text }
-    for (const view of this.views) view.update(status, text)
+export const temporaryJobsFeed = <State>(
+  store: TemporaryStore<State>,
+  jobsOf: (state: State) => readonly DevChatJob[]
+): DevChatJobs => {
+  let state = store.snapshot()
+  let jobs = jobsOf(state)
+  const snapshot = (): readonly DevChatJob[] => {
+    const latest = store.snapshot()
+    if (latest === state) return jobs
+    state = latest
+    const next = jobsOf(latest)
+    if (!sameJobs(next, jobs)) jobs = next
+    return jobs
   }
+  const subscribe = (listener: () => void): (() => void) => {
+    let seen = snapshot()
+    let timer: NodeJS.Timeout | undefined
+    let last = 0
+    const unsubscribe = store.subscribe(() => {
+      if (snapshot() === seen || timer) return
+      timer = setTimeout(
+        () => {
+          timer = undefined
+          last = Date.now()
+          seen = snapshot()
+          listener()
+        },
+        Math.max(0, last + JOB_BATCH_MS - Date.now())
+      )
+      timer.unref()
+    })
+    return () => {
+      clearTimeout(timer)
+      unsubscribe()
+    }
+  }
+  return { subscribe, snapshot }
 }
 
 export interface TemporaryTail {

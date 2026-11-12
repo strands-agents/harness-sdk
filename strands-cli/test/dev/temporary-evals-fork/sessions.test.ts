@@ -1,15 +1,13 @@
 import { existsSync } from 'node:fs'
-import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { ExperimentSummary } from '../../../src/dev/panels/model.js'
 import { temporaryVenvPython, type TemporaryCommandRequest } from '../../../src/dev/temporary-evals-fork/environment.js'
 import type { TemporaryEvalsProcess } from '../../../src/dev/temporary-evals-fork/evals-process.js'
-import {
-  temporaryDevSessions,
-  type TemporarySessionDependencies,
-} from '../../../src/dev/temporary-evals-fork/sessions.js'
+import type { TemporarySessionDependencies } from '../../../src/dev/temporary-evals-fork/host.js'
+import { temporaryDevSessions } from '../../../src/dev/temporary-evals-fork/sessions.js'
 import type { DevWorkspace } from '../../../src/dev/workspace.js'
 import type { ChatNotice, DevChatCommandContext } from '../../../src/ui/chat/types.js'
 import { temporaryDirectory } from '../../fixtures/tempdir.js'
@@ -64,12 +62,6 @@ const experimentDocument = (names: readonly string[]) => ({
 const flagValue = (args: readonly string[], flag: string): string => args[args.indexOf(flag) + 1]!
 
 const exit = { code: 0, stdout: '', stderrTail: [] }
-
-const generatingProcess = () =>
-  vi.fn(async ({ args }: TemporaryEvalsProcess) => {
-    await writeFileAt(flagValue(args, '--output'), JSON.stringify(experimentDocument(['c0', 'c1', 'c2'])))
-    return exit
-  })
 
 const testingProcess = () =>
   vi.fn(async ({ args }: TemporaryEvalsProcess) => {
@@ -190,46 +182,6 @@ describe('TEMPORARY dev sessions', () => {
     expect(again).toBe(sessions)
   })
 
-  it('shouldDraftReviewAndSaveAStarterSetWhenTheWorkspaceHasNoExperiments', async () => {
-    const generating = generatingProcess()
-    const { workspace, sessions } = await sessionsFor({ spawnGenerator: generating })
-    const { dataset } = sessions
-
-    dataset.refresh()
-    await vi.waitFor(() => expect(dataset.snapshot().step).toBe('empty'))
-    dataset.generate()
-    await vi.waitFor(() => expect(dataset.snapshot()).toMatchObject({ step: 'draft', drafted: 3 }))
-    dataset.toggle(0)
-    dataset.toggle(2)
-    const saved = await dataset.save()
-
-    const path = join(workspace.directory!, 'tmp/experiments/starter.json')
-    expect(saved).toEqual({ name: 'starter', path, caseCount: 2 })
-    const written = JSON.parse(await readFile(path, 'utf8')) as ReturnType<typeof experimentDocument>
-    expect(written.cases.map(({ name, session_id }) => [name, session_id])).toEqual([
-      ['c0', 'session-c0'],
-      ['c2', 'session-c2'],
-    ])
-    expect(dataset.snapshot()).toMatchObject({
-      step: 'draft',
-      notice: { tone: 'success', text: 'Saved 2 cases to strands-dev/tmp/experiments/starter.json' },
-    })
-    expect(await readdir(join(workspace.directory!, 'tmp/experiments/drafts'))).toEqual([])
-    expect(generating.mock.calls.at(-1)![0].args).toContain('20')
-  })
-
-  it('shouldRefuseToSaveWhenNoCaseIsKept', async () => {
-    const { sessions } = await sessionsFor({ spawnGenerator: generatingProcess() })
-    const { dataset } = sessions
-    dataset.generate()
-    await vi.waitFor(() => expect(dataset.snapshot().step).toBe('draft'))
-
-    const saved = await dataset.save()
-
-    expect(saved).toBeUndefined()
-    expect(dataset.snapshot()).toMatchObject({ notice: { tone: 'error' } })
-  })
-
   it('shouldShowTheFailedCaseAndPostANoticeWhenATestRunFinishes', async () => {
     const { workspace, sessions, notices } = await sessionsFor({ spawnTests: testingProcess() })
     const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2'])
@@ -341,7 +293,6 @@ describe('TEMPORARY dev sessions', () => {
 
 describe('TEMPORARY dev sessions on open', () => {
   it.each([
-    ['dataset', 'draft'],
     ['test', 'results'],
     ['optimize', 'setup'],
   ] as const)('shouldUseTheOnlyExperimentWhenThe%sPanelOpens', async (which, step) => {
@@ -353,21 +304,29 @@ describe('TEMPORARY dev sessions on open', () => {
     await vi.waitFor(() => expect(sessions[which].snapshot().step).toBe(step))
   })
 
-  it('shouldListExperimentsAgainWhenEveryDraftedCaseIsDropped', async () => {
-    const { workspace, sessions } = await sessionsFor({ spawnGenerator: generatingProcess() })
-    const { dataset } = sessions
-    dataset.generate()
-    await vi.waitFor(() => expect(dataset.snapshot().step).toBe('draft'))
-    for (let remaining = 3; remaining > 0; remaining--) dataset.drop(0)
-    await savedExperiment(workspace, ['c0'])
+  it.each(['test', 'optimize'] as const)(
+    'shouldWaitForAChoiceWhenThe%sPanelOpensWhileAnExperimentIsStillGenerating',
+    async (which) => {
+      let release = (): void => undefined
+      const blocked = vi.fn(
+        () =>
+          new Promise<{ code: number; stdout: string; stderrTail: string[] }>((resolve) => {
+            release = () => resolve({ code: 1, stdout: '', stderrTail: [] })
+          })
+      )
+      const { workspace, sessions } = await sessionsFor({ spawnGenerator: blocked, spawnTests: testingProcess() })
+      await savedExperiment(workspace, ['c0', 'c1'])
+      await sessions.experiments.reload()
+      sessions.experiments.generate({ ...sessions.experiments.form().settings, task: 'Answer questions' })
+      await vi.waitFor(() => expect(blocked).toHaveBeenCalled())
 
-    await dataset.refresh()
+      sessions[which].show()
+      await sessions.experiments.reload()
 
-    expect(dataset.snapshot()).toMatchObject({
-      step: 'pick',
-      experiments: [expect.objectContaining({ name: 'capital' })],
-    })
-  })
+      expect(sessions[which].snapshot().step).toBe('pick')
+      release()
+    }
+  )
 
   it('shouldKeepTheOriginalNamesWhenItRerunsFailedCasesThatHaveNoNames', async () => {
     const failing = new Set(['question q1', 'question q3'])

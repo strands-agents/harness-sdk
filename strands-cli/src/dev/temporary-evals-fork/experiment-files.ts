@@ -199,25 +199,20 @@ export const writeTemporaryExperimentFile = async (
   cases: readonly string[]
 ): Promise<void> => writeDocument(path, { ...raw, cases: pickCases(raw, cases) })
 
-const freeName = (name: string, taken: ReadonlySet<string>): string => {
-  if (!taken.has(name)) return name
-  let suffix = 2
-  while (taken.has(`${name}-${suffix}`)) suffix++
-  return `${name}-${suffix}`
-}
+export const writeTemporaryExperimentCases = async (
+  path: string,
+  raw: TemporaryExperimentDocument,
+  cases: readonly TemporaryRawCase[]
+): Promise<void> => writeDocument(path, { ...raw, cases })
 
-export const appendTemporaryCases = async (
-  target: string,
-  source: TemporaryExperimentDocument,
-  names: readonly string[]
-): Promise<string[]> => {
-  const { raw } = await readTemporaryExperimentFile(target)
-  const taken = new Set(raw.cases.map(temporaryCaseName))
-  const appended = pickCases(source, names).map((rawCase, index) => {
-    const name = freeName(names[index]!, taken)
-    taken.add(name)
-    return { ...rawCase, name }
-  })
-  await writeDocument(target, { ...raw, cases: [...raw.cases, ...appended] })
-  return appended.map(({ name }) => name)
-}
+export const temporaryBlankCase = (name: string, input: string, expected: string): TemporaryRawCase => ({
+  name,
+  session_id: randomUUID(),
+  input,
+  expected_output: expected || null,
+  expected_assertion: null,
+  expected_trajectory: null,
+  expected_interactions: null,
+  expected_environment_state: null,
+  metadata: null,
+})

@@ -6,7 +6,13 @@ import type { DevWorkspace } from '../workspace.js'
 
 export interface TemporaryAgentFacts {
   description?: string
+  model?: string
   tools?: readonly ChatToolInfo[]
+}
+
+export interface TemporaryAgentContext {
+  readonly text: string
+  readonly summary: string
 }
 
 const SOURCE_LIMIT = 12_000
@@ -48,19 +54,30 @@ const toolSection = (tools: readonly ChatToolInfo[]): string | undefined =>
       )
     : undefined
 
-export const temporaryAgentContext = async (workspace: DevWorkspace, facts: TemporaryAgentFacts): Promise<string> => {
+const summaryOf = (workspace: DevWorkspace, tools: readonly ChatToolInfo[], notes: readonly string[]): string =>
+  [
+    relative(workspace.root, workspace.entrypoint),
+    ...(tools.length > 0 ? [`${tools.length} tool${tools.length === 1 ? '' : 's'}`] : []),
+    ...notes.map((path) => relative(workspace.root, path)),
+  ].join(' · ')
+
+export const temporaryAgentContext = async (
+  workspace: DevWorkspace,
+  facts: TemporaryAgentFacts
+): Promise<TemporaryAgentContext> => {
   const source = await readText(workspace.entrypoint)
   const notes = await noteFiles([dirname(workspace.entrypoint), workspace.root])
+  const tools = facts.tools ?? []
   const noteSections = await Promise.all(
     notes.map(async (path) => {
       const text = await readText(path)
       return text?.trim() ? `The file ${relative(workspace.root, path)}:\n${clip(text, NOTE_LIMIT)}` : undefined
     })
   )
-  return [
+  const text = [
     `This is an AI agent named ${workspace.config.name}.`,
     facts.description ? `Its description: ${facts.description}` : undefined,
-    toolSection(facts.tools ?? []),
+    toolSection(tools),
     source
       ? `Its source file ${relative(workspace.root, workspace.entrypoint)}:\n${clip(source, SOURCE_LIMIT)}`
       : undefined,
@@ -69,4 +86,5 @@ export const temporaryAgentContext = async (workspace: DevWorkspace, facts: Temp
   ]
     .filter((section): section is string => Boolean(section))
     .join('\n\n')
+  return { text, summary: summaryOf(workspace, tools, notes) }
 }

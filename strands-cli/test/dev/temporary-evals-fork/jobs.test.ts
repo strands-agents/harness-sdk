@@ -3,57 +3,77 @@ import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 import {
-  TemporaryJobNotice,
+  Store,
   tailTemporaryLines,
+  temporaryJobsFeed,
   watchTemporaryFileCount,
 } from '../../../src/dev/temporary-evals-fork/jobs.js'
-import type { ChatNotice, DevChatCommandContext } from '../../../src/ui/chat/types.js'
 import { temporaryDirectory } from '../../fixtures/tempdir.js'
 
-const chat = () => {
-  const notices: { status: ChatNotice['status']; text: string }[] = []
-  const context: DevChatCommandContext = {
-    signal: new AbortController().signal,
-    report: (status, text) => {
-      const notice = { status, text }
-      notices.push(notice)
-      return {
-        update: (nextStatus, nextText): void => {
-          notice.status = nextStatus
-          notice.text = nextText
-        },
-      }
-    },
-    fail: vi.fn(),
+class Counter extends Store<{ readonly running: readonly string[]; readonly tick: number }> {
+  constructor() {
+    super({ running: [], tick: 0 })
   }
-  return { context, notices }
+
+  start(name: string): void {
+    this.set({ ...this.snapshot(), running: [...this.snapshot().running, name] })
+  }
+
+  touch(): void {
+    this.set({ ...this.snapshot(), tick: this.snapshot().tick + 1 })
+  }
 }
 
-describe('TemporaryJobNotice', () => {
-  it('shouldUpdateTheNoticeInEveryAttachedChatWhenTheJobProgresses', () => {
-    const first = chat()
-    const second = chat()
-    const notice = new TemporaryJobNotice()
+const feedOf = (store: Counter) =>
+  temporaryJobsFeed(store, ({ running }) => running.map((name) => ({ id: name, label: name })))
 
-    notice.start(first.context, 'test · 0/4 cases run')
-    notice.attach(second.context)
-    notice.update('test · 2/4 cases run')
+describe('temporaryJobsFeed', () => {
+  it('shouldCallTheListenerOnceWhenJobsChangeInAFastBurst', async () => {
+    vi.useFakeTimers()
+    const store = new Counter()
+    const feed = feedOf(store)
+    const listener = vi.fn()
+    feed.subscribe(listener)
 
-    expect(first.notices).toEqual([{ status: 'running', text: 'test · 2/4 cases run' }])
-    expect(second.notices).toEqual([{ status: 'running', text: 'test · 2/4 cases run' }])
+    store.start('refunds')
+    store.start('billing')
+    await vi.advanceTimersByTimeAsync(250)
+
+    expect(listener).toHaveBeenCalledTimes(1)
+    expect(feed.snapshot().map(({ id }) => id)).toEqual(['refunds', 'billing'])
+    vi.useRealTimers()
   })
 
-  it('shouldNotShowAFinishedJobWhenANewChatAttaches', () => {
-    const first = chat()
-    const later = chat()
-    const notice = new TemporaryJobNotice()
-    notice.start(first.context, 'test · 0/4 cases run')
+  it('shouldKeepTheSameSnapshotAndStayQuietWhenNothingAboutTheJobsChanges', async () => {
+    vi.useFakeTimers()
+    const store = new Counter()
+    store.start('refunds')
+    const feed = feedOf(store)
+    const listener = vi.fn()
+    feed.subscribe(listener)
+    const before = feed.snapshot()
 
-    notice.finish('success', 'test · 4 of 4 cases passed')
-    notice.attach(later.context)
+    store.touch()
+    await vi.advanceTimersByTimeAsync(250)
 
-    expect(first.notices).toEqual([{ status: 'success', text: 'test · 4 of 4 cases passed' }])
-    expect(later.notices).toEqual([])
+    expect(feed.snapshot()).toBe(before)
+    expect(listener).not.toHaveBeenCalled()
+    vi.useRealTimers()
+  })
+
+  it('shouldStopCallingTheListenerWhenItUnsubscribes', async () => {
+    vi.useFakeTimers()
+    const store = new Counter()
+    const feed = feedOf(store)
+    const listener = vi.fn()
+    const unsubscribe = feed.subscribe(listener)
+
+    store.start('refunds')
+    unsubscribe()
+    await vi.advanceTimersByTimeAsync(250)
+
+    expect(listener).not.toHaveBeenCalled()
+    vi.useRealTimers()
   })
 })
 
