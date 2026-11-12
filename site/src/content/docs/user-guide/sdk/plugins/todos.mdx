@@ -1,0 +1,127 @@
+---
+title: Todos
+description: "Give the agent a task list it maintains with todo_write and keeps in view: the Todos plugin re-surfaces the current plan before each model call."
+tags: [token-management]
+sourceLinks:
+  - path: strands-py/src/strands/vended_plugins/todos/plugin.py
+  - path: strands-ts/src/vended-plugins/todos/plugin.ts
+addedDate: 2026-11-12
+---
+
+The `Todos` plugin gives the agent a `todo_write` tool and keeps the current list in
+view. When the agent writes a list, the plugin re-surfaces it before each model call, so
+on a long task the agent keeps its plan in front of it without restating it.
+
+## How It Works
+
+`Todos` has two halves. The `todo_write` tool writes the whole list to agent state,
+replacing whatever was there. Before each model call, an internal
+[Context Injector](context-injector.md) renders that list back as a
+`<system-reminder>`.
+
+Re-surfacing goes through injection rather than editing the conversation directly. The
+list is rewritten on every `todo_write` call, so what matters is that the model sees one
+current copy rather than a pile of superseded ones. Each rendered list is stored as an
+`injected` block, and only the latest user message's injected blocks are sent to the
+model — older ones are dropped from the request. The lists stay readable in the stored
+messages for anything inspecting history.
+
+The injector fires on every turn, not just fresh user asks: the agent updates the list
+mid-loop via `todo_write`, so it should see the refreshed list on the next model call
+within the same invocation.
+
+## Getting Started
+
+Pass a `Todos` to your agent's `plugins` list. There is nothing to configure — the tool
+and the injector are both registered for you:
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands import Agent
+from strands.vended_plugins.todos import Todos
+
+agent = Agent(plugins=[Todos()])
+agent("Refactor the auth module, then update its tests and the changelog.")
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/plugins/todos_imports.ts:getting_started_imports"
+
+--8<-- "user-guide/sdk/plugins/todos.ts:getting_started"
+```
+</Tab>
+</Tabs>
+
+The tool description steers the agent to use the list for multi-step work (roughly three
+or more distinct steps), keep exactly one item in progress at a time, update status as it
+goes rather than batching, and clear the list when the work is done.
+
+## What the Agent Writes
+
+Each call to `todo_write` passes the full updated list. An item has three fields:
+
+| Field | Purpose |
+|-------|---------|
+| `content` | The task, imperative: `"Run tests"`. |
+| `activeForm` | Present continuous, shown while the item is in progress: `"Running tests"`. |
+| `status` | `pending`, `in_progress`, or `completed`. |
+
+Two forms of the same task sounds redundant, but it is what makes the rendered list
+readable as a status line: a completed or pending item shows its `content`, and the one
+item in progress shows its `activeForm`. Passing an empty list clears the state.
+
+## Read the List Yourself
+
+The list lives in agent state under a plain key, so your application can read it to
+render progress in a UI. It is a list of items in the shape above, or absent if the agent
+has not written one yet:
+
+<Tabs>
+<Tab label="Python">
+
+```python
+todos = agent.state.get("todos") or []
+for todo in todos:
+    print(todo["status"], todo["content"])
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/plugins/todos_imports.ts:inspect_state_imports"
+
+--8<-- "user-guide/sdk/plugins/todos.ts:inspect_state"
+```
+</Tab>
+</Tabs>
+
+Because state is per-agent rather than on the plugin, one `Todos` instance is safe to
+share across agents — each agent keeps its own list.
+
+## Configuration
+
+| Field | Purpose |
+|-------|---------|
+| `name` | Plugin name for logging and duplicate detection. Defaults to `'strands:todos'`. |
+| <Syntax py="state_key" ts="stateKey" /> | Agent-state key the list is stored under. Defaults to `'todos'`. Set it to avoid colliding with another consumer of that key. |
+
+One agent takes one `Todos`. The tool is always named `todo_write`, so adding a second
+instance to the same agent conflicts over that name whatever `name` and
+<Syntax py="state_key" ts="stateKey" /> are set to.
+
+:::caution[It re-injects on every model call]
+The list is rendered into every model call, so it costs tokens on each one and changes
+the tail of the request each turn. On a provider without explicit cache points that moves
+the cached prefix boundary. Attach it where the task tracking earns that.
+:::
+
+## Related
+
+- [Context Injector](context-injector.md) is the engine `Todos` re-surfaces the list
+  with, and the generic surface for any always-present context.
+- [Task tracking and environment](../../harness/tools/todos-and-environment.md) covers
+  the Strands harness built-in this plugin replaces.
