@@ -4,21 +4,14 @@ Thin, self-contained tools that fill gaps in the SDK's vended set. Each is a can
 into the core SDK later; keep them minimal and SDK-idiomatic.
 """
 
+from strands.multiagent import AgentSpec, Choice, Fixed, Inherit, Open, Option, Preset
+from strands.vended_tools.subagent import make_subagent
+
 from strands_harness.tools.file_tools import edit, make_read, read, write
 from strands_harness.tools.programmatic_tool_caller import (
     DEFAULT_PROGRAMMATIC_TOOL_CALLER_DESCRIPTION,
     make_programmatic_tool_caller,
     programmatic_tool_caller,
-)
-from strands_harness.tools.subagent import (
-    AgentSpec,
-    Choice,
-    Fixed,
-    Inherit,
-    Open,
-    Option,
-    Preset,
-    make_subagent,
 )
 from strands_harness.tools.web_fetch import make_web_fetch
 from strands_harness.tools.web_search import exa_web_search, make_exa_web_search

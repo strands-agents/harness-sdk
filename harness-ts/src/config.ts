@@ -166,7 +166,7 @@ export interface ProgrammaticToolCallerConfig {
   timeout?: number | null
 }
 export interface SubagentConfig {
-  /** How many levels of delegation a child may itself open. Defaults to 2. */
+  /** How many levels of delegation a child may itself open; `0` removes the tool. Defaults to 2. */
   maxDepth?: number
 }
 /**
