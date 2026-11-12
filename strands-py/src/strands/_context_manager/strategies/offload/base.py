@@ -1,515 +1,318 @@
-"""Base offload strategy and shared infrastructure."""
+"""Base offload strategy: conditions, target routing, eager hooks, and the shared execution paths.
+
+Reading order: ``apply`` checks ``reached``, then a block target runs ``_transform_blocks``, which calls each
+strategy's ``_replace_block``, and target ``"*"`` runs ``_apply_per_message`` on ``_removable_messages``, which hands
+them to ``remove_messages`` in message_trimming.py before ``repair_alternation`` restores alternation.
+"""
 
 from __future__ import annotations
 
+import json
 import logging
-import math
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from typing_extensions import TypedDict
-
-from ....agent.conversation_manager.compression.pin_message import _has_pinned_flag, is_pinned
-from ....agent.invocation_context import _invocation_context_kwargs
+from ....agent.conversation_manager.compression.pin_message import is_pinned
+from ....models._model_proxy import ModelProxy
 from ....types.content import ContentBlock, Message, Messages
-from ....types.tools import ToolUse
+from ....types.offload import OffloadMethod
+from ....types.tools import ToolResult
+from ...message_trimming import collect_removable_with_pair, placeholder_for, remove_messages, repair_alternation
+from ...placeholder import carried_tokens, format_elided, is_offloaded, offload_placeholder
 from ...retrieval_tool import RETRIEVAL_TOOL_NAME
-from ...stash import Stash
-from ...types import ContextState, is_text_block, is_tool_result_block, is_tool_use_block
+from ...types import ContextState, ContextStrategy, is_text_block, is_tool_result_block
+from .conditions import OffloadConditions, ResolvedConditions, build_conditions
+from .target import OffloadTarget, OffloadTargetMatcher, build_tool_name_map, is_media_block, is_protocol_block
 
 if TYPE_CHECKING:
     from ....agent.agent import Agent
     from ....agent.invocation_context import InvocationContext
+    from ...stash import Stash
 
 logger = logging.getLogger(__name__)
 
-OffloadTarget = Literal["*", "tool_results", "tool_result_errors", "assistant_text", "user_text"] | list[str]
-"""Target for offload operations."""
 
+@runtime_checkable
+class OffloadStrategy(ContextStrategy, Protocol):
+    """Strategy returned by ``Offload.drop``, ``Offload.truncate``, and ``Offload.summarize``.
 
-class OffloadConditions(TypedDict, total=False):
-    """Conditions that determine when an offload strategy fires.
-
-    Attributes:
-        threshold: Token threshold above which individual blocks are offloaded.
-        utilization: Context utilization ratio (0-1+) above which the strategy fires.
-        preserve_recent: Messages to preserve. An integer keeps that many most-recent
-            matches; a float between 0 and 1 (exclusive) is treated as a ratio of
-            the matching messages.
+    Without conditions it acts on each matching block as it arrives, including the one the model answers next;
+    targets ``"*"`` and ``"media"`` need conditions from :meth:`when`. A strategy keeps per-agent state, so give
+    each agent its own.
     """
 
-    threshold: int
-    utilization: float
-    preserve_recent: int | float
-
-
-def _finite_or_none(value: int | float | None) -> int | float | None:
-    if isinstance(value, (int, float)) and math.isfinite(value):
-        return max(0, value)
-    return None
-
-
-def _build_conditions(
-    *,
-    threshold: int | None = None,
-    utilization: float | None = None,
-    preserve_recent: int | float = 0,
-) -> OffloadConditions:
-    """Build an OffloadConditions dict from explicit kwargs."""
-    conditions = OffloadConditions()
-    if threshold is not None:
-        conditions["threshold"] = threshold
-    if utilization is not None:
-        conditions["utilization"] = utilization
-    if preserve_recent:
-        conditions["preserve_recent"] = preserve_recent
-    return conditions
-
-
-def _build_tool_name_map(messages: Messages) -> dict[str, str]:
-    """Build a toolUseId -> toolName map from all assistant messages."""
-    name_map: dict[str, str] = {}
-    for message in messages:
-        if message["role"] != "assistant":
-            continue
-        for block in message["content"]:
-            if "toolUse" in block:
-                tool_use: ToolUse = block["toolUse"]
-                name_map[tool_use["toolUseId"]] = tool_use["name"]
-    return name_map
-
-
-def _tool_matches_target(
-    block: ContentBlock,
-    target: OffloadTarget,
-    tool_name_map: dict[str, str],
-    tool_include_filter: set[str] | None,
-    tool_exclude_filter: set[str] | None,
-) -> bool:
-    """Check if a tool result block matches the given target."""
-    tool_result = block["toolResult"]
-    if target == "*":
-        return True
-    if target == "tool_results":
-        return tool_result["status"] == "success"
-    if target == "tool_result_errors":
-        return tool_result["status"] == "error"
-
-    tool_name = tool_name_map.get(tool_result["toolUseId"])
-    if not tool_name:
-        return False
-
-    if tool_exclude_filter:
-        return tool_name not in tool_exclude_filter
-    if tool_include_filter:
-        return tool_name in tool_include_filter
-
-    return False
-
-
-def _target_matches_message(target: OffloadTarget | None, message: Message) -> bool:
-    """Check if a message matches a text-level target."""
-    if target is None or target == "*":
-        return True
-    if target == "assistant_text":
-        return message["role"] == "assistant" and any(is_text_block(b) for b in message["content"])
-    if target == "user_text":
-        return message["role"] == "user" and any(is_text_block(b) for b in message["content"])
-    return False
-
-
-def _message_matches_target(
-    message: Message,
-    target: OffloadTarget | None,
-    tool_name_map: dict[str, str],
-    tool_include_filter: set[str] | None,
-    tool_exclude_filter: set[str] | None,
-) -> bool:
-    """Check if a message matches the target (text-level or tool result)."""
-    if _target_matches_message(target, message):
-        return True
-    if target is None:
-        return False
-
-    if message["role"] != "user":
-        return False
-    for block in message["content"]:
-        if is_tool_result_block(block):
-            if _tool_matches_target(block, target, tool_name_map, tool_include_filter, tool_exclude_filter):
-                return True
-    return False
-
-
-def _get_oldest_matches(
-    messages: Messages,
-    target: OffloadTarget | None,
-    count: int | float,
-    tool_name_map: dict[str, str],
-    tool_include_filter: set[str] | None,
-    tool_exclude_filter: set[str] | None,
-) -> list[Message]:
-    """Return target-matching messages excluding the ``count`` most recent matches.
-
-    When ``0 < count < 1`` it is treated as a ratio of the matching messages to preserve.
-    """
-    matching = [
-        msg
-        for msg in messages
-        if _message_matches_target(msg, target, tool_name_map, tool_include_filter, tool_exclude_filter)
-    ]
-    resolved = math.ceil(len(matching) * count) if 0 < count < 1 else int(count)
-    if resolved <= 0:
-        return matching
-    if resolved >= len(matching):
-        return []
-    return matching[:-resolved]
-
-
-def _collect_removable_with_pair(messages: Messages, index: int) -> list[Message]:
-    """Collect a message and its tool-use/tool-result pair partner for safe removal.
-
-    Never collects message 0 or the last message, which the next model call responds to.
-    """
-    if index <= 0 or index >= len(messages) - 1:
-        return []
-
-    message = messages[index]
-    result: list[Message] = [message]
-
-    has_tool_result = any(is_tool_result_block(b) for b in message["content"])
-    if has_tool_result:
-        prev = messages[index - 1]
-        if any(is_tool_use_block(b) for b in prev["content"]):
-            if index - 1 > 0:
-                result.append(prev)
-            else:
-                return []
-
-    has_tool_use = any(is_tool_use_block(b) for b in message["content"])
-    if has_tool_use:
-        next_msg = messages[index + 1]
-        if any(is_tool_result_block(b) for b in next_msg["content"]):
-            if index + 1 < len(messages) - 1:
-                result.append(next_msg)
-            else:
-                return []
-
-    return result
-
-
-def _splice_with_pairs(messages: Messages, to_remove: list[Message]) -> tuple[int, int]:
-    """Remove messages in place, expanding to include tool-use/tool-result pairs."""
-    identity_map = {id(msg): idx for idx, msg in enumerate(messages)}
-    to_splice: set[int] = set()
-    for message in to_remove:
-        index = identity_map.get(id(message))
-        if index is None:
-            continue
-        for removable in _collect_removable_with_pair(messages, index):
-            removable_index = identity_map.get(id(removable))
-            if removable_index is not None:
-                to_splice.add(removable_index)
-
-    if not to_splice:
-        return 0, len(messages)
-
-    for index in sorted(to_splice, reverse=True):
-        messages.pop(index)
-
-    return len(to_splice), min(to_splice)
-
-
-def _insert_marker(messages: Messages, index: int, text: str) -> None:
-    """Add a removal marker as assistant content at the gap left by removed messages.
-
-    The marker is appended to an assistant message beside the gap, which keeps that message's
-    tracking id and block indices for stash refs, or becomes its own assistant message. It never
-    joins message 0, and the last message is never removed, so a new marker never ends the history.
-    """
-    index = max(1, min(index, len(messages)))
-    block = ContentBlock(text=text)
-    for neighbor in (index - 1, index):
-        if 0 < neighbor < len(messages) and messages[neighbor]["role"] == "assistant":
-            carrier = messages[neighbor].copy()
-            carrier["content"] = [*carrier["content"], block]
-            messages[neighbor] = carrier
-            return
-    messages.insert(index, Message(role="assistant", content=[block]))
-
-
-def _repair_alternation(messages: Messages) -> None:
-    """Merge consecutive same-role messages to restore user/assistant alternation."""
-    write_index = 0
-    for read_index in range(len(messages)):
-        current = messages[read_index]
-        if write_index > 0 and messages[write_index - 1]["role"] == current["role"]:
-            prev = messages[write_index - 1]
-            prev_pinned = _has_pinned_flag(prev)
-            current_pinned = _has_pinned_flag(current)
-            merged = Message(
-                role=prev["role"],
-                content=[*prev["content"], *current["content"]],
-            )
-            if "tracking_id" in prev:
-                merged["tracking_id"] = prev["tracking_id"]
-            if prev_pinned or current_pinned:
-                merged["metadata"] = {"custom": {"pinned": True}}
-            messages[write_index - 1] = merged
-        else:
-            messages[write_index] = current
-            write_index += 1
-    del messages[write_index:]
-
-
-def _resolve_tool_filter(target: OffloadTarget | None) -> tuple[set[str] | None, set[str] | None]:
-    """Parse a ``tool::`` prefixed list target into include/exclude filter sets."""
-    if not isinstance(target, list):
-        return None, None
-
-    includes: list[str] = []
-    excludes: list[str] = []
-
-    for entry in target:
-        if entry.startswith("!"):
-            excludes.append(entry[1:].removeprefix("tool::"))
-        else:
-            includes.append(entry.removeprefix("tool::"))
-
-    if excludes and includes:
-        logger.warning(
-            "includes=<%s>, excludes=<%s> | tool filter contains both, excludes will be ignored",
-            includes,
-            excludes,
-        )
-        return set(includes), None
-    if excludes:
-        return None, set(excludes)
-    if includes:
-        return set(includes), None
-
-    return None, None
+    def when(
+        self,
+        *,
+        context_utilization: int | str | None = None,
+        block_threshold: int | str | None = None,
+        preserve_recent: int | str | None = None,
+    ) -> OffloadStrategy:
+        """Return a copy of this strategy with these conditions in place of its current ones."""
+        ...
 
 
 class BaseOffloadStrategy(ABC):
-    """Shared offload logic: target routing, eager hooks, preserveRecent."""
+    """Shared offload logic: conditions, firing, granularity, eager hooks, and ``preserve_recent``."""
 
-    @property
+    def __init__(
+        self, method: OffloadMethod, target: OffloadTarget, conditions: OffloadConditions | None = None
+    ) -> None:
+        """Build the strategy under these conditions.
+
+        Args:
+            method: Offload method; the strategy is named ``offload:<method>``.
+            target: Content the strategy acts on.
+            conditions: When and how the strategy fires; omitted, it acts on each matching block as it arrives.
+
+        Raises:
+            ValueError: When the target is empty or excludes every tool it includes, a condition value is invalid, or
+                conditions are given that leave the strategy unable to run (see :meth:`init`).
+        """
+        self.name = f"offload:{method}"
+        """Stable identifier for logging and observability."""
+        self._method = method
+        self._target = target
+        self._matcher = OffloadTargetMatcher(target)
+        self._conditions = ResolvedConditions(conditions)
+        self._stash: Stash | None = None
+        # Whether the eager hook processes each message as it arrives.
+        self._runs_eagerly = target != "*" and not self._conditions.defers_arrival
+        self._warned_eager = False
+        # Conditions that were set, even to nothing, are the caller's to fix now rather than at init.
+        if conditions is not None:
+            self._check_runnable()
+
+    def when(
+        self,
+        *,
+        context_utilization: int | str | None = None,
+        block_threshold: int | str | None = None,
+        preserve_recent: int | str | None = None,
+    ) -> BaseOffloadStrategy:
+        """Return a copy of this strategy, with the same target and config, under these conditions.
+
+        Args:
+            context_utilization: Context usage at or above which the strategy fires.
+            block_threshold: Size above which a message (target ``"*"``) or block is offloaded.
+            preserve_recent: Newest matching messages never touched.
+
+        Returns:
+            The strategy with these conditions. A strategy keeps per-agent state, so give each agent its own.
+
+        Raises:
+            ValueError: When a condition value is invalid, or the conditions leave the strategy unable to run.
+        """
+        return self._with_conditions(
+            build_conditions(
+                context_utilization=context_utilization,
+                block_threshold=block_threshold,
+                preserve_recent=preserve_recent,
+            )
+        )
+
     @abstractmethod
-    def name(self) -> str:
-        """Strategy name."""
+    def _with_conditions(self, conditions: OffloadConditions) -> BaseOffloadStrategy:
+        """Return a copy of this strategy, with the same target and config, under ``conditions``."""
         ...
 
-    _target: OffloadTarget | None
-    _threshold: int | None
-    _utilization_threshold: float | None
-    _preserve_recent: float
-    _include_filter: set[str] | None
-    _exclude_filter: set[str] | None
-    _stash: Stash | None
+    def _check_runnable(self) -> None:
+        """Check the conditions leave the strategy something to run on.
 
-    def __init__(self, target: OffloadTarget | None = None, conditions: OffloadConditions | None = None) -> None:
-        if isinstance(target, list) and len(target) == 0:
-            raise ValueError("Empty array target matches nothing — provide at least one target")
-
-        self._target = target
-        self._stash = None
-        conditions = conditions or {}
-        threshold = _finite_or_none(conditions.get("threshold"))
-        self._threshold = int(threshold) if threshold is not None else None
-        util = _finite_or_none(conditions.get("utilization"))
-        self._utilization_threshold = float(util) if util is not None else None
-        preserve = _finite_or_none(conditions.get("preserve_recent"))
-        self._preserve_recent = float(preserve) if preserve is not None else 0
-
-        self._include_filter, self._exclude_filter = _resolve_tool_filter(target)
-
-    @property
-    def _is_message_level(self) -> bool:
-        return self._utilization_threshold is not None
+        Raises:
+            ValueError: When they leave it acting on every message, or removing media before the model sees it.
+        """
+        if self._target == "*" and self._conditions.is_empty:
+            raise ValueError(
+                f'Offload.{self._method}("*") would act on every message; use .when() to set context_utilization,'
+                " block_threshold, or a preserve_recent above 0"
+            )
+        if self._target == "media" and self._runs_eagerly:
+            raise ValueError(
+                f'Offload.{self._method}("media") would remove media before the model sees it; use .when() to set'
+                " context_utilization or a preserve_recent above 0"
+            )
 
     def init(self, agent: Agent, stash: Stash | None = None) -> None:
-        """Register eager hooks if this is a per-block strategy without preserveRecent."""
-        self._stash = stash
+        """Check the conditions can run on this agent, then register the eager hook if this runs eagerly.
+
+        Args:
+            agent: The agent this strategy is attached to.
+            stash: The stash offloaded content is stored in.
+
+        Raises:
+            ValueError: When a whole-message strategy has none of ``context_utilization``, ``block_threshold``, or
+                ``preserve_recent``, a ``"media"`` strategy has neither ``context_utilization`` nor
+                ``preserve_recent``, or ``context_utilization`` is a token count larger than the model's context
+                window.
+        """
         from ....hooks.events import MessageAddedEvent
 
-        if self._is_message_level:
+        self._stash = stash
+        self._check_runnable()
+        self._conditions.check_fits(agent)
+        if not self._runs_eagerly:
             return
-        if self._preserve_recent > 0:
-            return
+        self._warn_eager()
 
-        async def _eager_hook(event: MessageAddedEvent) -> None:
+        async def eager_hook(event: MessageAddedEvent) -> None:
             try:
                 messages = event.agent.messages
-                index_map = {id(msg): i for i, msg in enumerate(messages)}
-                index = index_map.get(id(event.message), -1)
-                if index >= 0 and is_pinned(messages, index):
+                if id(event.message) in _pinned_ids(messages):
                     return
-                tool_name_map = _build_tool_name_map(messages)
-                await self._transform_blocks(event.message, messages, tool_name_map, event.agent)
+                threshold = self._conditions.threshold_tokens(event.agent)
+                await self._transform_blocks(event.message, build_tool_name_map(messages), threshold, event.agent)
             except Exception:
                 logger.warning("strategy=<%s> | eager hook failed, continuing", self.name, exc_info=True)
 
-        agent.hooks.add_callback(MessageAddedEvent, _eager_hook)
+        agent.hooks.add_callback(MessageAddedEvent, eager_hook)
 
-    async def apply(self, context: ContextState) -> bool:
-        """Apply the strategy to the context."""
-        self._stash = context.stash
-        if self._is_message_level:
-            if not context.overflow and context.utilization < self._utilization_threshold:  # type: ignore[operator]
-                return False
-            return await self._apply_per_message(context)
-
-        return await self._apply_per_block(context)
-
-    async def _apply_per_block(self, context: ContextState) -> bool:
-        """Per-block execution: walk each message, transform individual blocks above threshold."""
-        messages = context.messages
-        agent = context.agent
-        invocation_context = context.invocation_context
-        tool_name_map = _build_tool_name_map(messages)
-        eligible = (
-            _get_oldest_matches(
-                messages, self._target, self._preserve_recent, tool_name_map, self._include_filter, self._exclude_filter
-            )
-            if self._preserve_recent > 0
-            else list(messages)
+    def _warn_eager(self) -> None:
+        """Warn, once, that a strategy without conditions acts on content the model has not read yet."""
+        if self._warned_eager or not self._conditions.is_empty:
+            return
+        self._warned_eager = True
+        logger.warning(
+            "strategy=<%s>, target=<%s> | strategy has no conditions, so it acts on every matching block as it"
+            " arrives, before the model reads it | use .when() to set block_threshold, context_utilization,"
+            " or preserve_recent",
+            self.name,
+            json.dumps(self._target),
         )
 
-        acted = False
-        index_map = {id(msg): i for i, msg in enumerate(messages)}
-        for message in eligible:
-            index = index_map.get(id(message), -1)
-            if index >= 0 and is_pinned(messages, index):
-                continue
-            if await self._transform_blocks(
-                message, messages, tool_name_map, agent, invocation_context=invocation_context
-            ):
-                acted = True
+    async def apply(self, context: ContextState) -> bool:
+        """Offload content once the conditions are reached: whole messages for target ``"*"``, blocks otherwise.
 
+        Args:
+            context: The context the strategy runs on.
+
+        Returns:
+            Whether anything changed.
+        """
+        if context.stash is not None:
+            self._stash = context.stash
+        if not self._conditions.reached(context):
+            return False
+        if self._target != "*":
+            return await self._apply_per_block(context)
+        acted = await self._apply_per_message(context)
+        if acted:
+            repair_alternation(context.messages)
         return acted
 
+    @abstractmethod
     async def _apply_per_message(self, context: ContextState) -> bool:
-        """Message-level execution: remove all eligible messages with pair safety."""
+        """Act on the messages :meth:`_removable_messages` returns, for target ``"*"``.
+
+        :meth:`apply` restores alternation afterwards.
+        """
+        ...
+
+    async def _apply_per_block(self, context: ContextState) -> bool:
+        """Walk each matching message, replacing the individual blocks above the threshold."""
         messages = context.messages
-        if len(messages) <= 1:
+        tool_name_map = build_tool_name_map(messages)
+        threshold = self._conditions.threshold_tokens(context.agent)
+        acted = False
+        for message in self._unprotected_matches(messages, tool_name_map):
+            # Without the eager hook, message 0 is the task and the last message is one the model has not answered.
+            if not self._runs_eagerly and (message is messages[0] or message is messages[-1]):
+                continue
+            if await self._transform_blocks(
+                message, tool_name_map, threshold, context.agent, context.invocation_context
+            ):
+                acted = True
+        return acted
+
+    def _unprotected_matches(self, messages: Messages, tool_name_map: dict[str, str]) -> list[Message]:
+        """Matching messages outside ``preserve_recent``, without pinned ones, in history order."""
+        matching = [message for message in messages if self._matcher.matches_message(message, tool_name_map)]
+        pinned = _pinned_ids(messages)
+        return [message for message in self._conditions.without_preserved(matching) if id(message) not in pinned]
+
+    async def _removable_messages(self, context: ContextState) -> list[Message]:
+        """Messages outside ``preserve_recent`` and larger than ``block_threshold``.
+
+        Message 0, pinned messages, and messages whose tool partner is protected are left out, since removing a
+        message removes its partner too.
+        """
+        messages = context.messages
+        unprotected = self._unprotected_matches(messages, build_tool_name_map(messages))
+        removable = _without_protected_pairs(messages, unprotected)
+        threshold = self._conditions.threshold_tokens(context.agent)
+        if threshold is None:
+            return removable
+        sizes = [await context.agent.model.count_tokens([message]) for message in removable]
+        return [message for message, size in zip(removable, sizes, strict=True) if size > threshold]
+
+    def _placeholder(self, preview: str, stash_ref: str | None, tokens: int) -> ContentBlock:
+        """The placeholder this strategy leaves for a block it replaced, recording the tokens it stands for."""
+        return offload_placeholder(self._method, preview, stash_ref, tokens)
+
+    def _is_offloadable(self, block: ContentBlock, message: Message, tool_name_map: dict[str, str]) -> bool:
+        """Whether a block in ``message`` is content this strategy may replace."""
+        if is_protocol_block(block) or is_offloaded(block):
             return False
-
-        eligible = await self._get_eligible_messages(context)
-        if not eligible:
-            return False
-
-        removed, lowest_index = _splice_with_pairs(messages, eligible)
-        if removed == 0:
-            return False
-
-        marker = self._make_removal_marker(removed)
-        if marker:
-            _insert_marker(messages, lowest_index, marker)
-
-        _repair_alternation(messages)
-        return True
-
-    def _make_removal_marker(self, count: int) -> str | None:
-        """Override to insert a marker when messages are removed. Return None for no marker."""
-        return None
-
-    def _block_matches_target(self, block: ContentBlock, message: Message, tool_name_map: dict[str, str]) -> bool:
-        """Check whether a block is eligible for offload given target and filters."""
-        if is_tool_use_block(block):
-            return False
-        if "reasoningContent" in block or "cachePoint" in block:
+        if is_text_block(block) and not block["text"].strip():
             return False
         # Injected text is written after its message was stashed, so a ref to it would point at nothing.
         if "injected" in block:
             return False
-        if is_text_block(block):
-            return _target_matches_message(self._target, message)
-        if is_tool_result_block(block):
-            if self._stash and tool_name_map.get(block["toolResult"]["toolUseId"]) == RETRIEVAL_TOOL_NAME:
-                return False
-            return self._target is None or _tool_matches_target(
-                block, self._target, tool_name_map, self._include_filter, self._exclude_filter
-            )
-        return self._target is None or self._target == "*"
+        if is_tool_result_block(block) and self._is_protected_result(block["toolResult"], tool_name_map):
+            return False
+        return self._matcher.matches_block(block, message, tool_name_map)
+
+    def _is_protected_result(self, tool_result: ToolResult, tool_name_map: dict[str, str]) -> bool:
+        """Whether a tool result is the retrieval tool's output, or already holds a placeholder to leave alone.
+
+        Only drop goes further, since truncate and summarize would read the placeholder as the content.
+        """
+        if self._stash and tool_name_map.get(tool_result["toolUseId"]) == RETRIEVAL_TOOL_NAME:
+            return True
+        placeholder = next((item for item in tool_result["content"] if is_offloaded(item)), None)
+        return placeholder is not None and (self._method != "drop" or placeholder["offloaded"]["method"] == "drop")
 
     async def _transform_blocks(
         self,
         message: Message,
-        messages: Messages,
         tool_name_map: dict[str, str],
+        threshold: int | None,
         agent: Agent,
         invocation_context: InvocationContext | None = None,
     ) -> bool:
-        """Process eligible blocks in a message."""
-        effective_threshold = self._threshold or 0
+        """Replace the eligible blocks of a message larger than ``threshold`` tokens, or every one when it is unset."""
         acted = False
         content = message["content"]
-        for block_index in range(len(content)):
-            block = content[block_index]
-            if not self._block_matches_target(block, message, tool_name_map):
+        for block_index, block in enumerate(content):
+            if not self._is_offloadable(block, message, tool_name_map):
+                continue
+            tokens = await self._offload_tokens(block, message, threshold, agent)
+            if tokens is None:
                 continue
 
-            tokens = await agent.model.count_tokens([Message(role=message["role"], content=[block])])
-            if tokens <= effective_threshold:
-                continue
-
-            stash_refs = self._stash.refs_for(block, message, block_index) if self._stash else []
+            stash_ref = await self._stash.ensure_stashed(block, message, block_index) if self._stash else None
+            tool_name = tool_name_map.get(block["toolResult"]["toolUseId"]) if is_tool_result_block(block) else None
             replacement = await self._replace_block(
-                block,
-                tokens,
-                message,
-                agent,
-                stash_refs,
-                **_invocation_context_kwargs(self._replace_block, invocation_context),
+                block, tokens, message, agent, stash_ref, tool_name, invocation_context
             )
             if replacement is not None and replacement is not block:
                 content[block_index] = replacement
                 acted = True
-
         return acted
 
-    async def _get_eligible_messages(self, context: ContextState) -> list[Message]:
-        """Collect eligible messages for message-level operations."""
-        messages = context.messages
-        tool_name_map = _build_tool_name_map(messages)
+    async def _offload_tokens(
+        self, block: ContentBlock, message: Message, threshold: int | None, agent: Agent
+    ) -> int | None:
+        """The size a replacement for ``block`` stands for, or None when the block is within ``threshold``.
 
-        if self._preserve_recent > 0:
-            oldest = _get_oldest_matches(
-                messages,
-                self._target,
-                self._preserve_recent,
-                tool_name_map,
-                self._include_filter,
-                self._exclude_filter,
-            )
-            index_map = {id(msg): i for i, msg in enumerate(messages)}
-            candidates = [
-                msg for msg in oldest if msg is not messages[0] and not is_pinned(messages, index_map[id(msg)])
-            ]
-        else:
-            candidates = [
-                msg
-                for idx, msg in enumerate(messages)
-                if idx > 0
-                and not is_pinned(messages, idx)
-                and _message_matches_target(
-                    msg, self._target, tool_name_map, self._include_filter, self._exclude_filter
-                )
-            ]
-
-        if self._threshold is None:
-            return candidates
-
-        eligible: list[Message] = []
-        for message in candidates:
-            for block in message["content"]:
-                if not self._block_matches_target(block, message, tool_name_map):
-                    continue
-                tokens = await context.agent.model.count_tokens([Message(role=message["role"], content=[block])])
-                if tokens > self._threshold:
-                    eligible.append(message)
-                    break
-        return eligible
+        The threshold measures what the block occupies now; the replacement stands for what is behind it as well, so
+        a placeholder it holds adds what that already stood for.
+        """
+        measured = await agent.model.count_tokens([Message(role=message["role"], content=[block])])
+        # The token heuristic counts media as 0, so unmeasured media is never treated as within the threshold.
+        if threshold is not None and measured <= threshold and not (measured == 0 and _holds_media(block)):
+            return None
+        return measured + carried_tokens([block])
 
     @abstractmethod
     async def _replace_block(
@@ -518,8 +321,87 @@ class BaseOffloadStrategy(ABC):
         tokens: int,
         message: Message,
         agent: Agent,
-        stash_refs: list[str],
+        stash_ref: str | None,
+        tool_name: str | None,
         invocation_context: InvocationContext | None = None,
     ) -> ContentBlock | None:
-        """Transform a block. Return the replacement, or None to skip."""
+        """Transform a block. Return the replacement, or None to skip.
+
+        Args:
+            block: The block to replace.
+            message: The message holding the block.
+            tokens: Size the replacement stands for: the block's own tokens plus what a placeholder it holds already
+                stood for, so a replacement records it rather than losing it.
+            agent: The agent the strategy is attached to.
+            stash_ref: Reference the original is retrievable under, or None when there is no stash.
+            tool_name: Name of the tool that produced a tool result, when its tool use is in the conversation.
+            invocation_context: The request this reduction runs for, if any.
+        """
         ...
+
+
+_EMERGENCY_REMOVAL_RATIO = 0.2
+
+
+class EmergencyTruncateStrategy:
+    """Last-resort strategy that drops the oldest 20% of messages when the context window is still overflowing.
+
+    It recomputes utilization once every user-configured strategy has run, and is appended internally by the
+    ContextManager rather than being part of the public API. Pins are ignored so an all-pinned overflow is still
+    recoverable.
+    """
+
+    name = "offload:emergency-truncate"
+    """Stable identifier for logging and observability."""
+
+    async def apply(self, context: ContextState) -> bool:
+        """Elide the oldest fifth of the messages when the context window is still full.
+
+        Args:
+            context: The context the strategy runs on.
+
+        Returns:
+            Whether anything was removed.
+        """
+        messages = context.messages
+        if len(messages) <= 3:
+            return False
+        if not context.overflow:
+            tokens = await ModelProxy(context.agent.model).count_tokens(messages)
+            if context.agent.model.estimate_utilization(tokens) < 1.0:
+                return False
+
+        removable = messages[1:]
+        remove_count = max(1, int(len(removable) * _EMERGENCY_REMOVAL_RATIO))
+        # Cut just before an assistant message, which holds no tool result to orphan and never merges into message 0.
+        if removable[remove_count]["role"] != "assistant":
+            remove_count += 1
+        text_for = placeholder_for(context.agent.model, format_elided)
+        if not await remove_messages(messages, removable[:remove_count], text_for, "truncate", context.stash):
+            return False
+        repair_alternation(messages)
+        return True
+
+
+def _pinned_ids(messages: Messages) -> set[int]:
+    """The identities of the pinned messages, since equal messages are not the same message."""
+    return {id(message) for index, message in enumerate(messages) if is_pinned(messages, index)}
+
+
+def _without_protected_pairs(messages: Messages, unprotected: list[Message]) -> list[Message]:
+    """``unprotected`` without message 0 and without the messages whose tool partner is protected."""
+    unprotected_ids = {id(message) for message in unprotected}
+    return [
+        message
+        for index, message in enumerate(messages)
+        if index > 0
+        and id(message) in unprotected_ids
+        and all(id(partner) in unprotected_ids for partner in collect_removable_with_pair(messages, index))
+    ]
+
+
+def _holds_media(block: ContentBlock) -> bool:
+    """Whether a block is media, or a tool result holding media."""
+    if is_tool_result_block(block):
+        return any(is_media_block(item) for item in block["toolResult"]["content"])
+    return is_media_block(block)

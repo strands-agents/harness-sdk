@@ -21,6 +21,7 @@ from botocore.session import Session as BotocoreSession
 
 import strands
 from strands import _exception_notes
+from strands._context_manager.placeholder import offload_placeholder
 from strands.models import BedrockModel, CacheConfig, CacheToolsConfig, ModelCapabilities, ModelInfo, ModelLimits
 from strands.models.bedrock import (
     DEFAULT_BEDROCK_MODEL_ID,
@@ -3094,6 +3095,27 @@ def test_format_request_message_content_preserves_nonempty_tool_result_content(m
 
     tool_result = formatted_request["messages"][2]["content"][0]["toolResult"]
     assert tool_result["content"] == [{"text": "some result"}]
+
+
+def test_format_request_message_content_sends_an_offloaded_block_as_text(model, model_id):
+    """Bedrock rejects unknown content block fields, so a placeholder reaches it as the text the model receives."""
+    placeholder = offload_placeholder("drop", "[Dropped: ~1,200 tokens]", "tu-1", 1200)
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                placeholder,
+                {"toolResult": {"toolUseId": "tu-1", "status": "success", "content": [placeholder]}},
+            ],
+        }
+    ]
+
+    formatted_messages = model._format_bedrock_messages(messages)
+
+    assert formatted_messages[0]["content"] == [
+        {"text": "[Dropped: ~1,200 tokens] [ref: tu-1]"},
+        {"toolResult": {"toolUseId": "tu-1", "content": [{"text": "[Dropped: ~1,200 tokens] [ref: tu-1]"}]}},
+    ]
 
 
 def test_format_request_message_content_guard_content_without_qualifiers(model, model_id):

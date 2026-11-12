@@ -3,91 +3,118 @@
 from __future__ import annotations
 
 import logging
-import math
 from typing import TYPE_CHECKING
 
-from ....models._model_proxy import ModelProxy
 from ....types.content import ContentBlock, Message
-from ...methods.truncate import TruncateConfig, _truncate_text_block, _truncate_tool_result
-from ...stash import Stash, _format_stash_refs
-from ...types import is_text_block
-from .base import (
-    BaseOffloadStrategy,
-    OffloadConditions,
-    OffloadTarget,
-    _build_conditions,
-    _insert_marker,
-    _repair_alternation,
-    _splice_with_pairs,
+from ...message_trimming import placeholder_for, remove_messages, with_pairs
+from ...methods.truncate import (
+    TruncateConfig,
+    _head_share,
+    _resolve_preview_tokens,
+    _truncate_text_block,
+    _truncate_tool_result_block,
 )
+from ...placeholder import format_elided, format_offloaded, is_offloaded, placeholder_result
+from ...types import ContextState, is_text_block, is_tool_result_block
+from .base import BaseOffloadStrategy
+from .conditions import OffloadConditions
+from .target import OffloadTarget, media_kind
 
 if TYPE_CHECKING:
     from ....agent.agent import Agent
     from ....agent.invocation_context import InvocationContext
-
-from ...types import ContextState
+    from ...stash import Stash
 
 logger = logging.getLogger(__name__)
-
-
-def _append_stash_refs_to_tool_result(block: ContentBlock, refs: str) -> None:
-    """Append stash ref annotation to the first text entry of a tool result in place."""
-    if "toolResult" not in block:
-        return
-    for item in block["toolResult"]["content"]:
-        if "text" in item:
-            item["text"] += f"\n\n[Stashed]{refs}"
-            return
 
 
 class TruncateStrategy(BaseOffloadStrategy):
     """Truncate strategy — replaces oversized content with a head/tail preview."""
 
-    @property
-    def name(self) -> str:
-        """Strategy name."""
-        return "offload:truncate"
-
     def __init__(
         self,
-        target: OffloadTarget | None = None,
+        target: OffloadTarget,
         config: TruncateConfig | None = None,
         conditions: OffloadConditions | None = None,
     ) -> None:
-        super().__init__(target, conditions)
+        """Build the strategy.
+
+        Args:
+            target: Content the strategy truncates.
+            config: Preview budget and which portion of the content to keep.
+            conditions: When and how the strategy fires.
+
+        Raises:
+            ValueError: When target ``"*"`` is given a ``block_threshold``, or a token-count ``block_threshold`` is
+                no larger than ``preview_tokens``.
+        """
+        super().__init__("truncate", target, conditions)
         self._truncate_config: TruncateConfig = config or {}
+        self._preview_tokens = _resolve_preview_tokens(self._truncate_config)
 
-        raw_preview = self._truncate_config.get("preview_tokens", 1000)
-        preview_tokens = raw_preview if isinstance(raw_preview, (int, float)) and math.isfinite(raw_preview) else 1000
-
-        if (
-            conditions
-            and "threshold" in conditions
-            and isinstance(conditions["threshold"], (int, float))
-            and conditions["threshold"] <= preview_tokens
-        ):
+        # Every message over a threshold is larger than preview_tokens, so middle-out would elide them all, as drop
+        # does.
+        if target == "*" and self._conditions.block_threshold:
             raise ValueError(
-                f"threshold ({conditions['threshold']}) must be greater than preview_tokens ({preview_tokens}) "
-                "to ensure truncation converges"
+                'Offload.truncate("*") doesn\'t take a block_threshold; use Offload.drop("*") to remove large'
+                ' messages, or Offload.truncate("tool_results") to preview large blocks'
             )
+        # A percent needs the context window, so init checks it.
+        threshold = self._conditions.block_threshold
+        if threshold and not threshold.is_share:
+            self._check_threshold_exceeds_preview(int(threshold.value), str(int(threshold.value)))
 
-    def when(
-        self,
-        *,
-        threshold: int | None = None,
-        utilization: float | None = None,
-        preserve_recent: int | float = 0,
-    ) -> TruncateStrategy:
-        """Return a new instance with the given conditions applied."""
-        return TruncateStrategy(
-            self._target,
-            self._truncate_config,
-            _build_conditions(threshold=threshold, utilization=utilization, preserve_recent=preserve_recent),
+    def _with_conditions(self, conditions: OffloadConditions) -> TruncateStrategy:
+        return TruncateStrategy(self._target, self._truncate_config, conditions)
+
+    def init(self, agent: Agent, stash: Stash | None = None) -> None:
+        """Check a percent ``block_threshold`` against ``preview_tokens``, then initialize the strategy.
+
+        Args:
+            agent: The agent this strategy is attached to.
+            stash: The stash offloaded content is stored in.
+
+        Raises:
+            ValueError: When a percent ``block_threshold`` of the context window is no larger than ``preview_tokens``,
+                or the base strategy's conditions can't run on this agent.
+        """
+        threshold = self._conditions.block_threshold
+        tokens = self._conditions.threshold_tokens(agent)
+        if threshold is not None and threshold.is_share and tokens is not None:
+            self._check_threshold_exceeds_preview(tokens, f"{tokens} tokens of the context window")
+        super().init(agent, stash)
+
+    def _check_threshold_exceeds_preview(self, tokens: int, shown: str) -> None:
+        """Check the threshold leaves room for a preview, so truncating a block takes it below the threshold.
+
+        Raises:
+            ValueError: When the threshold is no larger than ``preview_tokens``.
+        """
+        if tokens > self._preview_tokens:
+            return
+        raise ValueError(
+            f"block_threshold ({shown}) must be greater than preview_tokens ({self._preview_tokens}) to ensure"
+            " truncation converges; raise block_threshold or lower preview_tokens"
         )
 
-    def _make_removal_marker(self, count: int) -> str:
-        word = "message" if count == 1 else "messages"
-        return f"[... {count} {word} elided ...]"
+    async def _apply_per_message(self, context: ContextState) -> bool:
+        """Middle-out: keeps the oldest and newest eligible messages within the preview budget and elides the rest."""
+        messages = context.messages
+        selected = await self._select_middle(await self._removable_messages(context), context.agent)
+        middle = with_pairs(messages, selected)
+        # A middle of only placeholders has nothing new to elide.
+        if all(is_offloaded(block) for message in middle for block in message["content"]):
+            return False
+        text_for = placeholder_for(context.agent.model, format_elided)
+        return await remove_messages(messages, middle, text_for, "truncate", self._stash)
+
+    async def _select_middle(self, eligible: list[Message], agent: Agent) -> list[Message]:
+        """The eligible messages between the head and the tail kept within the preview token budget."""
+        head_budget = self._preview_tokens * _head_share(self._truncate_config)
+        head_count = await _count_within_budget(eligible, head_budget, agent)
+        rest = eligible[head_count:]
+        tail_count = await _count_within_budget(rest[::-1], self._preview_tokens - head_budget, agent)
+        return rest[: len(rest) - tail_count]
 
     async def _replace_block(
         self,
@@ -95,81 +122,37 @@ class TruncateStrategy(BaseOffloadStrategy):
         tokens: int,
         message: Message,
         agent: Agent,
-        stash_refs: list[str],
+        stash_ref: str | None,
+        tool_name: str | None,
         invocation_context: InvocationContext | None = None,
     ) -> ContentBlock | None:
-        refs = _format_stash_refs(stash_refs)
-        if "toolResult" in block:
-            tool_use_id = block["toolResult"]["toolUseId"]
-            logger.debug("tool_use_id=<%s>, tokens=<%s> | truncated tool result", tool_use_id, tokens)
-            truncated_result = _truncate_tool_result(block["toolResult"], self._truncate_config)
-            if truncated_result is block["toolResult"]:
-                return block
-            truncated = ContentBlock(toolResult=truncated_result)
-            if refs:
-                _append_stash_refs_to_tool_result(truncated, refs)
-            return truncated
+        if is_tool_result_block(block):
+            tool_result = block["toolResult"]
+            truncated = _truncate_tool_result_block(tool_result, self._truncate_config)
+            if truncated is None:
+                return None
+            logger.debug("tool_use_id=<%s>, tokens=<%s> | truncated tool result", tool_result["toolUseId"], tokens)
+            placeholder = self._placeholder(truncated.preview, stash_ref, tokens)
+            return placeholder_result(tool_result, [placeholder, *truncated.kept])
+
         if is_text_block(block):
+            preview = _truncate_text_block(block, self._truncate_config)
+            if preview is None:
+                return None
             logger.debug("tracking_id=<%s>, tokens=<%s> | truncated text block", message.get("tracking_id"), tokens)
-            result = _truncate_text_block(block, self._truncate_config)
-            if result is block:
-                return block
-            if refs and "text" in result:
-                result = ContentBlock(text=result["text"] + f"\n\n[Stashed]{refs}")
-            return result
+            return self._placeholder(preview, stash_ref, tokens)
+
         logger.debug("tracking_id=<%s>, tokens=<%s> | offloaded media block", message.get("tracking_id"), tokens)
-        return ContentBlock(text=f"[Offloaded: ~{tokens} tokens]{refs}")
+        return self._placeholder(format_offloaded(tokens, media_kind(block)), stash_ref, tokens)
 
 
-_EMERGENCY_REMOVAL_RATIO = 0.2
-
-
-class EmergencyTruncateStrategy(TruncateStrategy):
-    """Last-resort strategy that drops the oldest 20% of messages when still overflowing."""
-
-    @property
-    def name(self) -> str:
-        """Strategy name."""
-        return "offload:emergency-truncate"
-
-    def __init__(self) -> None:
-        super().__init__("*", {"preview": "tail"})
-
-    def init(self, agent: Agent, stash: Stash | None = None) -> None:
-        """No eager hooks for emergency truncation."""
-        self._stash = stash
-
-    async def apply(self, context: ContextState) -> bool:
-        """Fire when overflow is set, or when recomputed utilization >= 1.0."""
-        if len(context.messages) <= 3:
-            return False
-        if not context.overflow:
-            tokens = await ModelProxy(context.agent.model).count_tokens(context.messages)
-            utilization = context.agent.model.estimate_utilization(tokens)
-            if utilization < 1.0:
-                return False
-        return await self._apply_per_message(context)
-
-    async def _apply_per_message(self, context: ContextState) -> bool:
-        """Drop the oldest 20% of non-head messages each pass.
-
-        Pins are intentionally ignored so an all-pinned overflow is still recoverable.
-        """
-        messages = context.messages
-        if len(messages) <= 3:
-            return False
-
-        removable = [msg for index, msg in enumerate(messages) if index > 0]
-        remove_count = max(1, int(len(removable) * _EMERGENCY_REMOVAL_RATIO))
-        # Cut just before an assistant message, which holds no tool result to orphan and never merges into message 0.
-        if removable[remove_count]["role"] != "assistant":
-            remove_count += 1
-        to_remove = removable[:remove_count]
-
-        removed, lowest_index = _splice_with_pairs(messages, to_remove)
-        if removed == 0:
-            return False
-
-        _insert_marker(messages, lowest_index, self._make_removal_marker(removed))
-        _repair_alternation(messages)
-        return True
+async def _count_within_budget(messages: list[Message], budget: float, agent: Agent) -> int:
+    """How many leading messages fit within ``budget`` tokens."""
+    total = 0
+    count = 0
+    for message in messages:
+        total += await agent.model.count_tokens([message])
+        if total > budget:
+            break
+        count += 1
+    return count
