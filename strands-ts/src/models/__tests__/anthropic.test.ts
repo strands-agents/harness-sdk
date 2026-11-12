@@ -16,6 +16,7 @@ import {
   ReasoningBlock,
   InjectedBlock,
   SummaryBlock,
+  OffloadedBlock,
   UnknownBlock,
 } from '../../types/messages.js'
 import { ImageBlock, DocumentBlock, VideoBlock } from '../../types/media.js'
@@ -595,6 +596,86 @@ describe('AnthropicModel', () => {
       await expect(collectIterator(provider.stream(messages))).rejects.toThrow(ModelThrottledError)
       await expect(collectIterator(provider.stream(messages))).rejects.toThrow('Rate limit exceeded')
     })
+
+    it.each(['throttlingException', 'serviceUnavailableException'])(
+      'maps a mid-stream Bedrock %s to ModelThrottledError',
+      async (type) => {
+        const mockClient = createMockClient(async function* () {
+          yield { type: 'ping' }
+          throw Object.assign(new Error('Too many tokens'), { type })
+        })
+        const provider = new AnthropicModel({ client: mockClient })
+        const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+
+        await expect(collectIterator(provider.stream(messages))).rejects.toThrow(ModelThrottledError)
+      }
+    )
+  })
+
+  describe('Bedrock InvokeModel API version', () => {
+    // Stands in for @anthropic-ai/bedrock-sdk's client, which the provider recognizes by class name.
+    class AnthropicBedrock {}
+    const bedrockClient = (): Anthropic =>
+      Object.assign(
+        Object.create(AnthropicBedrock.prototype),
+        createMockClient(async function* () {})
+      ) as Anthropic
+    const sentBody = async (provider: AnthropicModel, client: Anthropic): Promise<Record<string, unknown>> => {
+      await collectIterator(provider.stream([new Message({ role: 'user', content: [new TextBlock('Hi')] })]))
+      return vi.mocked(client.messages.stream).mock.calls[0]![0] as unknown as Record<string, unknown>
+    }
+
+    it('pins bedrock-2023-05-31 on an AnthropicBedrock client, keeping the sampling params', async () => {
+      const client = bedrockClient()
+      const body = await sentBody(new AnthropicModel({ client, temperature: 0.2 }), client)
+      expect(body).toMatchObject({ anthropic_version: 'bedrock-2023-05-31', temperature: 0.2 })
+    })
+
+    it('keeps an anthropic_version set in params', async () => {
+      const client = bedrockClient()
+      const body = await sentBody(
+        new AnthropicModel({ client, params: { anthropic_version: 'bedrock-2099-01-01' } }),
+        client
+      )
+      expect(body.anthropic_version).toBe('bedrock-2099-01-01')
+    })
+
+    it('pins the version on a subclass, and on a renamed class with a bedrock-runtime base URL', async () => {
+      class Subclass extends AnthropicBedrock {}
+      const subclass = Object.assign(
+        Object.create(Subclass.prototype),
+        createMockClient(async function* () {})
+      )
+      expect((await sentBody(new AnthropicModel({ client: subclass }), subclass)).anthropic_version).toBe(
+        'bedrock-2023-05-31'
+      )
+      const renamed = Object.assign(
+        createMockClient(async function* () {}),
+        {
+          baseURL: 'https://bedrock-runtime.us-west-2.amazonaws.com',
+        }
+      )
+      expect((await sentBody(new AnthropicModel({ client: renamed }), renamed)).anthropic_version).toBe(
+        'bedrock-2023-05-31'
+      )
+    })
+
+    it('sends no anthropic_version on the Mantle client', async () => {
+      class AnthropicBedrockMantle {}
+      const mantle = Object.assign(
+        Object.create(AnthropicBedrockMantle.prototype),
+        createMockClient(async function* () {}),
+        {
+          baseURL: 'https://bedrock-mantle.us-west-2.api.aws/anthropic',
+        }
+      )
+      expect(await sentBody(new AnthropicModel({ client: mantle }), mantle)).not.toHaveProperty('anthropic_version')
+    })
+
+    it('sends no anthropic_version on another client', async () => {
+      const client = createMockClient(async function* () {})
+      expect(await sentBody(new AnthropicModel({ client }), client)).not.toHaveProperty('anthropic_version')
+    })
   })
 
   describe('stale thinking recovery', () => {
@@ -603,6 +684,12 @@ describe('AnthropicModel', () => {
     const bindingError = Object.assign(new Error(bindingMessage), { status: 400 })
     const dropBlockThinking = { type: 'adaptive', block_binding: { prefix_mismatch_behavior: 'drop_block' } }
     const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+    const forced = {
+      toolSpecs: [
+        { name: 'calc', description: 'Calculator', inputSchema: { type: 'object' as const, properties: {} } },
+      ],
+      toolChoice: { any: {} },
+    }
 
     const createRejectingOnceClient = (error: Error = bindingError, retryError?: Error) => {
       let calls = 0
@@ -712,13 +799,48 @@ describe('AnthropicModel', () => {
         name: 'a caller-set block_binding',
         params: { thinking: { type: 'adaptive', block_binding: { prefix_mismatch_behavior: 'error' } } },
       },
-      { name: 'no thinking config', params: undefined },
-    ])('re-throws the binding error with $name', async ({ params }) => {
+      { name: 'a forced tool and no thinking config', params: undefined, options: forced },
+    ])('re-throws the binding error with $name', async ({ params, options }) => {
       const { stream, client } = createRejectingOnceClient()
       const provider = new AnthropicModel({ client, modelId: 'm1', ...(params && { params }) })
 
-      await expect(collectIterator(provider.stream(messages))).rejects.toThrow('bound to a different conversation')
+      await expect(collectIterator(provider.stream(messages, options))).rejects.toThrow(
+        'bound to a different conversation'
+      )
       expect(stream).toHaveBeenCalledOnce()
+    })
+
+    it('retries with adaptive thinking when no thinking config is set', async () => {
+      const { stream, client } = createRejectingOnceClient()
+      const provider = new AnthropicModel({ client, modelId: 'm1' })
+
+      await collectIterator(provider.stream(messages))
+      await collectIterator(provider.stream(messages))
+      await collectIterator(provider.stream(messages, forced))
+
+      const expectedOptions = { headers: { 'anthropic-beta': 'thinking-binding-controls-2026-08-01' } }
+      expect(stream.mock.calls.map((call: unknown[]) => [(call[0] as any).thinking, call[1]])).toStrictEqual([
+        [undefined, undefined],
+        [dropBlockThinking, expectedOptions],
+        [dropBlockThinking, expectedOptions],
+        [undefined, expectedOptions],
+      ])
+    })
+
+    it('does not keep drop_block on after a rejected retry', async () => {
+      const temperatureError = Object.assign(new Error('400 `temperature` may only be set to 1'), { status: 400 })
+      const { stream, client } = createRejectingOnceClient(bindingError, temperatureError)
+      const provider = new AnthropicModel({ client, modelId: 'm1', params: { temperature: 0.2 } })
+
+      await expect(collectIterator(provider.stream(messages))).rejects.toThrow('temperature')
+      stream.mockImplementation(() =>
+        (async function* () {
+          yield { type: 'message_start', message: { role: 'assistant', usage: {} } }
+        })()
+      )
+      await collectIterator(provider.stream(messages))
+
+      expect((stream.mock.calls.at(-1) as unknown[])[0]).not.toHaveProperty('thinking')
     })
 
     it('re-throws the binding message on a non-400 error', async () => {
@@ -941,6 +1063,25 @@ describe('AnthropicModel', () => {
       // The request the provider receives carries only role and content — never trackingId or metadata.
       expect(captured.request.messages).toEqual([{ role: 'user', content: [{ type: 'text', text: 'Hello' }] }])
       expect('trackingId' in captured.request.messages[0]).toBe(false)
+    })
+
+    it('sends an offloaded block as the text the model receives, at top level and inside a tool result', async () => {
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ modelId: 'claude-3-opus', maxTokens: 1000, client: mockClient })
+      const placeholder = new OffloadedBlock({ text: '[Dropped] [ref: tu-1]', method: 'drop', ref: 'tu-1' })
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [placeholder, new ToolResultBlock({ toolUseId: 'tu-1', status: 'success', content: [placeholder] })],
+        }),
+      ]
+
+      await collectIterator(provider.stream(messages))
+
+      expect(captured.request.messages[0].content).toEqual([
+        { type: 'text', text: '[Dropped] [ref: tu-1]' },
+        { type: 'tool_result', tool_use_id: 'tu-1', is_error: false, content: '[Dropped] [ref: tu-1]' },
+      ])
     })
 
     it('formats tools correctly', async () => {

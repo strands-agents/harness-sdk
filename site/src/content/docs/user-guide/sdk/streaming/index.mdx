@@ -30,6 +30,11 @@ Strands emits the same set of events regardless of how you consume them; you cho
     href="events/"
     description="Reference for every event the stream emits: lifecycle, model, tool, and multi-agent."
   />
+  <LinkCard
+    title="Stream to the browser with SSE"
+    href="streaming-to-the-browser-guide/"
+    description="Send agent output to a browser from Express or Next.js, with a safe event schema and resumable streams."
+  />
 </CardGrid>
 
 ## A running stream
@@ -68,3 +73,5 @@ Each `data` chunk is one piece of the model's output. The [event reference](./ev
 ## Where to go next
 
 New to streaming? Start with [Async Iterators](./async-iterators.md) to consume the stream in an async server, or [Callback Handlers](./callback-handlers.md) if your Python application is synchronous. Both receive the same events; the [event reference](./events.md) is the complete list of what you can react to.
+
+To send the stream to a browser, see [Stream to the browser with SSE](./streaming-to-the-browser-guide.md).

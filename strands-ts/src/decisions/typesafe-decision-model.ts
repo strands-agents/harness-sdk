@@ -1,6 +1,7 @@
 import { DecisionModel } from './decision-model.js'
 import {
   askSystemOne,
+  httpTransport,
   resolveSystemOneProviderConfig,
   type SystemOneProviderConfig,
 } from './system-one-http-adapter.js'
@@ -9,7 +10,6 @@ import type { DecisionCallOptions, DecisionInput, DecisionResult, Question } fro
 const TYPE_SAFE_ENDPOINT = 'https://api.typesafe.ai/v1/systemone'
 const TYPE_SAFE_DEFAULT_MODEL_ID = 'jev-latest'
 const TYPE_SAFE_DEFAULT_MIN_CONFIDENCE = 0.5
-const TYPE_SAFE_MAX_BODY_BYTES = 32 * 1024 * 1024
 
 /** Options for constructing a {@link TypeSafeDecisionModel}. */
 export interface TypeSafeDecisionModelOptions {
@@ -50,7 +50,6 @@ export class TypeSafeDecisionModel extends DecisionModel {
       apiKeyEnvironmentVariable: 'TYPESAFE_API_KEY',
       modelId: TYPE_SAFE_DEFAULT_MODEL_ID,
       defaultMinConfidence: TYPE_SAFE_DEFAULT_MIN_CONFIDENCE,
-      maxBodyBytes: TYPE_SAFE_MAX_BODY_BYTES,
     })
   }
 
@@ -59,6 +58,12 @@ export class TypeSafeDecisionModel extends DecisionModel {
     questions: Q,
     options: DecisionCallOptions
   ): Promise<DecisionResult<Q>> {
-    return askSystemOne(this._providerConfig, state, questions, options.cancelSignal)
+    return askSystemOne(
+      this._providerConfig,
+      httpTransport(this._providerConfig),
+      state,
+      questions,
+      options.cancelSignal
+    )
   }
 }
