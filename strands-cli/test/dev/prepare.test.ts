@@ -17,8 +17,9 @@ import { initializeDevWorkspace } from '../../src/dev/workspace.js'
 import * as installer from '../../src/project/archive.js'
 import { temporaryDirectory } from '../fixtures/tempdir.js'
 
-const fixture = async (): Promise<string> => {
-  const root = await temporaryDirectory()
+const fixture = async (parent?: string): Promise<string> => {
+  const root = parent ? join(parent, 'project') : await temporaryDirectory()
+  await mkdir(root, { recursive: true })
   await writeFile(join(root, 'package.json'), '{"type":"module"}')
   await writeFile(
     join(root, 'agent.ts'),
@@ -722,7 +723,8 @@ describe('workspace folder selection', () => {
   })
 
   it('shouldKeepTheBackupOutsideTheProjectWhenTheWorkspaceIsInsideIt', async () => {
-    const root = await fixture()
+    const parent = await temporaryDirectory()
+    const root = await fixture(parent)
     const folder = join(root, 'strands-dev')
     await bindExistingAgent(folder, join(await fixture(), 'agent.ts'))
 
@@ -730,9 +732,9 @@ describe('workspace folder selection', () => {
 
     expect(prepared?.workspace.directory).toBe(folder)
     expect((await readdir(root)).filter((name) => name.endsWith('.replaced'))).toEqual([])
-    expect((await readdir(dirname(root))).filter((name) => name.startsWith('.strands-dev-'))).toHaveLength(1)
+    expect((await readdir(parent)).filter((name) => name.startsWith('.strands-dev-'))).toHaveLength(1)
     await prepared!.keep()
-    expect((await readdir(dirname(root))).filter((name) => name.startsWith('.strands-dev-'))).toEqual([])
+    expect((await readdir(parent)).filter((name) => name.startsWith('.strands-dev-'))).toEqual([])
   })
 
   it('shouldListenForExitOnlyWhileAReplacedFolderCanBeRestored', async () => {
