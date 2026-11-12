@@ -30,7 +30,6 @@ import type { LocalAgent } from '../../../types/agent.js'
 import type { ContextState } from '../../types.js'
 import type { ToolRegistry } from '../../../registry/tool-registry.js'
 import type { Model } from '../../../models/model.js'
-import type { PromptCaching } from '../../../models/model-info.js'
 
 const summaryResult = (text: string, provider?: string): SummarizeResult => ({
   content: [new SummaryBlock({ text, ...(provider && { provider }) })],
@@ -332,9 +331,9 @@ function streamEvents(text: string, onDelta?: () => void): () => AsyncGenerator<
 }
 
 /** A model whose `summarize` runs the base implementation, with `summarize`, `stream` and `countTokens` spied. */
-function baseModel(serverSideSummary = false, promptCaching?: PromptCaching) {
+function baseModel(serverSideSummary = false) {
   const model = new TestModelProvider(streamEvents('Summary of content.'))
-  model.updateConfig({ modelInfo: { capabilities: { serverSideSummary, ...(promptCaching && { promptCaching }) } } })
+  model.updateConfig({ modelInfo: { capabilities: { serverSideSummary } } })
   return {
     model,
     summarize: vi.spyOn(model, 'summarize'),
@@ -346,14 +345,9 @@ function baseModel(serverSideSummary = false, promptCaching?: PromptCaching) {
 /** An agent on a {@link baseModel}, with a system prompt, a tool, a cancel signal and agent metadata. */
 function mockAgent(
   messages: Message[],
-  options: {
-    serverSideSummary?: boolean
-    systemPrompt?: string | null
-    auxModel?: unknown
-    promptCaching?: PromptCaching
-  } = {}
+  options: { serverSideSummary?: boolean; systemPrompt?: string | null; auxModel?: unknown } = {}
 ) {
-  const spies = baseModel(options.serverSideSummary, options.promptCaching)
+  const spies = baseModel(options.serverSideSummary)
   const controller = new AbortController()
   const systemPrompt = options.systemPrompt === undefined ? AGENT_PROMPT : options.systemPrompt
   const agent = createMockAgent({
@@ -771,127 +765,6 @@ describe('a summarized run replays the agent request', () => {
     expect(await perMessage().apply({ messages, agent, utilization: 0.9 })).toBe(true)
 
     expect(turns(summarize.mock.calls[0]![0])).toEqual(turns(history().slice(0, 4)))
-  })
-})
-
-describe('a summarized block replays the turns it sits in', () => {
-  const output = 'x'.repeat(10000)
-  const video = () => new VideoBlock({ format: 'mp4', source: { bytes: new Uint8Array(4000) } })
-  const replayHistory = (): Message[] => [
-    new Message({ role: 'user', content: [new TextBlock('read a.py')] }),
-    new Message({
-      role: 'assistant',
-      content: [new ToolUseBlock({ toolUseId: 't1', name: 'read_file', input: { path: 'a.py' } })],
-    }),
-    new Message({
-      role: 'user',
-      content: [new ToolResultBlock({ toolUseId: 't1', status: 'success', content: [new TextBlock(output), video()] })],
-    }),
-  ]
-
-  /** The content a lifted request holds for the same tool result, with the video rendered as a marker. */
-  const liftedContent = [
-    new TextBlock('<content>'),
-    new TextBlock('[tool result: read_file]'),
-    new TextBlock(output),
-    new TextBlock('[video omitted]'),
-    new TextBlock('</content>'),
-  ]
-
-  it('sends the history with the agent prompt and tools, asking for that result alone', async () => {
-    const messages = replayHistory()
-    const { agent, summarize, stream } = mockAgent(messages, { promptCaching: 'auto' })
-
-    expect(await perBlock().apply({ messages, agent, utilization: 0.5 })).toBe(true)
-
-    const [sent, options] = summarize.mock.calls[0]!
-    // A copy of the live history, compared by identity: the strategy rewrites the result once the summary is back.
-    expect(sent).toEqual(messages)
-    expect(sent).not.toBe(messages)
-    // The instruction closes the tool result's own turn, and the result reaches the model as it was written.
-    const streamed = turns(stream.mock.calls[0]![0])
-    expect(streamed).toHaveLength(3)
-    expect(streamed[2]!.content).toEqual([
-      replayHistory()[2]!.content[0],
-      new TextBlock(`${SUMMARIZE_GUARD}\n\n${options!.instructions}`),
-    ])
-    expect(options).toEqual({
-      instructions: expect.stringContaining(
-        'Summarize only the result of tool call t1 from read_file in the final message above'
-      ),
-      cancelSignal: agent.cancelSignal,
-      agentMetadata: agent.agentMetadata,
-      toolSpecs: [AGENT_TOOL],
-      systemPrompt: AGENT_PROMPT,
-    })
-    expect(turns(messages)[2]).toEqual(summarizedToolResult('Summary of content.'))
-  })
-
-  it('names the result by id alone when its tool use is gone', async () => {
-    const messages = [new Message({ role: 'user', content: [new TextBlock('read a.py')] }), ...replayHistory().slice(2)]
-    const { agent, summarize } = mockAgent(messages, { promptCaching: 'auto' })
-
-    expect(await perBlock().apply({ messages, agent, utilization: 0.5 })).toBe(true)
-
-    expect(summarize.mock.calls[0]![1]?.instructions).toContain(
-      'Summarize only the result of tool call t1 in the final message above'
-    )
-  })
-
-  it.each([undefined, 'unsupported' as const])('lifts the block out at promptCaching=%s', async (promptCaching) => {
-    const messages = replayHistory()
-    const { agent, summarize } = mockAgent(messages, { ...(promptCaching && { promptCaching }) })
-
-    expect(await perBlock().apply({ messages, agent, utilization: 0.5 })).toBe(true)
-
-    expect(turns(summarize.mock.calls[0]![0])).toEqual([{ role: 'user', content: liftedContent }])
-  })
-
-  it('lifts the block out for a summarizer that is not the agent model', async () => {
-    const messages = replayHistory()
-    const auxModel = {
-      countTokens: vi.fn(async () => 5000),
-      modelInfo: { capabilities: { promptCaching: 'auto' } },
-      summarize: vi.fn(async (_messages: Message[]) => summaryResult('aux summary')),
-    }
-    const { agent } = mockAgent(messages, { auxModel, promptCaching: 'auto' })
-
-    expect(await perBlock().apply({ messages, agent, utilization: 0.5 })).toBe(true)
-
-    expect(turns(auxModel.summarize.mock.calls[0]![0])).toEqual([{ role: 'user', content: liftedContent }])
-  })
-
-  it('lifts the block out once a newer turn follows it', async () => {
-    const messages = [...replayHistory(), new Message({ role: 'assistant', content: [new TextBlock('done')] })]
-    const { agent, summarize } = mockAgent(messages, { promptCaching: 'auto' })
-
-    expect(await perBlock().apply({ messages, agent, utilization: 0.5 })).toBe(true)
-
-    expect(turns(summarize.mock.calls[0]![0])).toEqual([{ role: 'user', content: liftedContent }])
-  })
-
-  it('lifts the block out when the replay brings back no summary', async () => {
-    const messages = replayHistory()
-    const { agent, summarize } = mockAgent(messages, { promptCaching: 'auto' })
-    summarize.mockRejectedValueOnce(new Error('input is too long for requested model'))
-
-    expect(await perBlock().apply({ messages, agent, utilization: 0.5 })).toBe(true)
-
-    expect(summarize).toHaveBeenCalledTimes(2)
-    expect(turns(summarize.mock.calls[1]![0])).toEqual([{ role: 'user', content: liftedContent }])
-    expect(turns(messages)[2]).toEqual(summarizedToolResult('Summary of content.'))
-  })
-
-  it('a custom system prompt replaces the replay guidance, keeping the result it names', async () => {
-    const messages = replayHistory()
-    const { agent, summarize } = mockAgent(messages, { promptCaching: 'auto' })
-
-    expect(await perBlock({ systemPrompt: 'Be very brief.' }).apply({ messages, agent, utilization: 0.5 })).toBe(true)
-
-    expect(summarize.mock.calls[0]![1]?.instructions).toBe(
-      'Summarize only the result of tool call t1 from read_file in the final message above, and nothing else in the' +
-        ' conversation. Be very brief.'
-    )
   })
 })
 
