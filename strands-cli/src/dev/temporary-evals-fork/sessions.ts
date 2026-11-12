@@ -20,7 +20,11 @@ import {
 } from '../panels/model.js'
 import { locateTemporaryEdit } from './apply.js'
 import { temporaryReportsFolder, temporaryRunName, temporaryWorkspaceDirectory } from './evals-process.js'
-import { readTemporaryExperimentFile, temporaryCaseName, writeTemporaryExperimentFile } from './experiment-files.js'
+import {
+  readTemporaryExperimentFile,
+  temporaryNamedExperiment,
+  writeTemporaryExperimentFile,
+} from './experiment-files.js'
 import { TemporaryExperiments } from './experiments-session.js'
 import { announce, plural, type TemporaryHost, type TemporarySessionHost } from './host.js'
 import { Store, tailTemporaryLines, watchTemporaryFileCount, type TemporaryTail } from './jobs.js'
@@ -31,7 +35,7 @@ import {
   temporaryOptimizeWarning,
   temporaryRolloutEstimate,
 } from './plan.js'
-import { readTemporaryTestResults } from './report.js'
+import { readTemporaryLatestTestResults, readTemporaryTestResults, rememberTemporaryTestResults } from './report.js'
 import {
   readTemporaryStudy,
   temporaryStudyReader,
@@ -103,7 +107,7 @@ export class TemporaryTest extends Store<TestState> implements TestSession {
   }
 
   show(): void {
-    this.experiments.refresh()
+    void this.restore()
   }
 
   run(experiments: readonly ExperimentSummary[]): void {
@@ -127,6 +131,29 @@ export class TemporaryTest extends Store<TestState> implements TestSession {
     return this.runs.get(path)?.run.status === 'running'
   }
 
+  private reportsFolder(): string {
+    return temporaryReportsFolder(temporaryWorkspaceDirectory(this.host().workspace))
+  }
+
+  private async restore(): Promise<void> {
+    const saved = await this.experiments.reload()
+    const folder = this.reportsFolder()
+    await Promise.all(
+      saved.filter(({ path }) => !this.runs.has(path)).map((experiment) => this.restoreRun(folder, experiment))
+    )
+  }
+
+  private async restoreRun(folder: string, experiment: ExperimentSummary): Promise<void> {
+    let run: TestRun | undefined
+    try {
+      const results = await readTemporaryLatestTestResults(folder, experiment.name)
+      if (results) run = { status: 'done', results }
+    } catch (error) {
+      run = { status: 'failed', message: errorMessage(error) }
+    }
+    if (run && !this.runs.has(experiment.path)) this.update(experiment, run)
+  }
+
   private update(experiment: ExperimentSummary, run: TestRun): void {
     this.runs.set(experiment.path, { experiment, run })
     this.set({ runs: [...this.runs.values()] })
@@ -139,14 +166,10 @@ export class TemporaryTest extends Store<TestState> implements TestSession {
   private async rerun(experiment: ExperimentSummary, names: readonly string[]): Promise<void> {
     try {
       const { raw } = await readTemporaryExperimentFile(experiment.path)
-      const named = {
-        ...raw,
-        cases: raw.cases.map((item, index) => ({ ...item, name: temporaryCaseName(item, index) })),
-      }
-      const folder = temporaryReportsFolder(temporaryWorkspaceDirectory(this.host().workspace))
+      const folder = this.reportsFolder()
       const path = join(folder, `${temporaryRunName(experiment.path, new Date())}-failed.json`)
       await mkdir(folder, { recursive: true })
-      await writeTemporaryExperimentFile(path, named, names)
+      await writeTemporaryExperimentFile(path, temporaryNamedExperiment(raw), names)
       await this.execute(experiment, path, true)
     } catch (error) {
       this.update(experiment, { status: 'failed', message: errorMessage(error) })
@@ -185,6 +208,7 @@ export class TemporaryTest extends Store<TestState> implements TestSession {
         experiment: experiment.name,
         seconds: (Date.now() - startedAt) / MILLISECONDS,
       })
+      await rememberTemporaryTestResults(this.reportsFolder(), experiment.name, results)
       this.update(experiment, { status: 'done', results })
       const passed = results.cases.filter((item) => item.passed).length
       announce(

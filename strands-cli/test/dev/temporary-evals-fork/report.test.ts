@@ -1,8 +1,12 @@
-import { writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { mkdir, rm, writeFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
-import { readTemporaryTestResults } from '../../../src/dev/temporary-evals-fork/report.js'
+import {
+  readTemporaryLatestTestResults,
+  readTemporaryTestResults,
+  rememberTemporaryTestResults,
+} from '../../../src/dev/temporary-evals-fork/report.js'
 import { temporaryDirectory } from '../../fixtures/tempdir.js'
 
 const RUN = { experiment: 'refunds', seconds: 12.5 }
@@ -169,6 +173,48 @@ describe('TEMPORARY test report', () => {
 
     await expect(readTemporaryTestResults(path, RUN)).rejects.toThrow(
       new RegExp(`^${path} is not a usable test report \\(.*${detail}.*\\)\\. Run the test again\\.$`, 'u')
+    )
+  })
+})
+
+describe('TEMPORARY last test run', () => {
+  it('shouldReadTheRememberedResultsWhenTheExperimentRanBefore', async () => {
+    const path = await writeReport(report(ROWS))
+    const results = await readTemporaryTestResults(path, RUN)
+
+    await rememberTemporaryTestResults(dirname(path), 'refunds', results)
+
+    expect(await readTemporaryLatestTestResults(dirname(path), 'refunds')).toEqual(results)
+  })
+
+  it('shouldReturnNothingWhenTheExperimentNeverRan', async () => {
+    expect(await readTemporaryLatestTestResults(await temporaryDirectory(), 'refunds')).toBeUndefined()
+  })
+
+  it.each([
+    { record: '{"report": ', detail: 'JSON' },
+    { record: JSON.stringify({ report: 'r.json' }), detail: 'it has no report file or run time' },
+  ])('shouldAskForANewTestRunWhenTheLastRunRecordHas$detail', async ({ record, detail }) => {
+    const folder = await temporaryDirectory()
+    const path = join(folder, 'latest', 'refunds.json')
+    await mkdir(dirname(path), { recursive: true })
+    await writeFile(path, record)
+
+    await expect(readTemporaryLatestTestResults(folder, 'refunds')).rejects.toThrow(
+      new RegExp(
+        `^${path} is not a usable record of the last test run \\(.*${detail}.*\\)\\. Run the test again\\.$`,
+        'u'
+      )
+    )
+  })
+
+  it('shouldAskForANewTestRunWhenTheRememberedReportIsGone', async () => {
+    const path = await writeReport(report(ROWS))
+    await rememberTemporaryTestResults(dirname(path), 'refunds', await readTemporaryTestResults(path, RUN))
+    await rm(path)
+
+    await expect(readTemporaryLatestTestResults(dirname(path), 'refunds')).rejects.toThrow(
+      `${path} is not a usable test report`
     )
   })
 })

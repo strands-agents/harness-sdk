@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -103,6 +103,28 @@ describe('TEMPORARY /test', () => {
     })
     expect(log).toBe(join(workspace.directory!, 'tmp/reports/20261111-150405-support.log'))
     expect(progress).toContain(`Testing ${workspace.entrypoint} on the 2 cases of ${outcome.experiment}`)
+  })
+
+  it('shouldRunACopyWithUniqueCaseNamesWhenTheExperimentRepeatsAName', async () => {
+    const workspace = await workspaceFixture([])
+    const experiment = join(workspace.directory!, 'tmp/experiments/support.json')
+    const document = JSON.stringify({ cases: [{ name: 'refund' }, { name: 'refund' }, {}], evaluators: [] })
+    await writeFileAt(experiment, document)
+    const spawnTests = reporting([true, true, true], 1)
+
+    const outcome = await runTemporaryTest(
+      { workspace, now: () => NOW },
+      { run: environmentRunner(workspace), spawnTests }
+    )
+
+    const copy = join(workspace.directory!, 'tmp/reports/20261111-150405-support.experiment.json')
+    expect(spawnTests.mock.calls[0]![0].args[3]).toBe(copy)
+    expect(JSON.parse(await readFile(copy, 'utf8'))).toEqual({
+      cases: [{ name: 'refund' }, { name: 'refund-2' }, { name: 'case_2' }],
+      evaluators: [],
+    })
+    expect(await readFile(experiment, 'utf8')).toBe(document)
+    expect(outcome).toMatchObject({ experiment, name: 'support' })
   })
 
   it('shouldPassTheTypescriptRunnerWhenTheAgentIsTypeScript', async () => {

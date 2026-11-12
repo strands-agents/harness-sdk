@@ -1,4 +1,5 @@
-import { readFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { basename, dirname, join } from 'node:path'
 
 import { errorMessage } from '../../terminal/text.js'
 import { isRecord } from '../../values.js'
@@ -109,4 +110,42 @@ export const readTemporaryTestResults = async (
     report: path,
     seconds,
   }
+}
+
+const LATEST_FOLDER = 'latest'
+
+const latestRecord = (reportsFolder: string, experiment: string): string =>
+  join(reportsFolder, LATEST_FOLDER, `${experiment}.json`)
+
+const unusableRecord = (path: string, detail: string, cause?: unknown): Error =>
+  new Error(`${path} is not a usable record of the last test run (${detail}). Run the test again.`, { cause })
+
+export const rememberTemporaryTestResults = async (
+  reportsFolder: string,
+  experiment: string,
+  { report, seconds }: TestResults
+): Promise<void> => {
+  const path = latestRecord(reportsFolder, experiment)
+  await mkdir(dirname(path), { recursive: true })
+  await writeFile(path, `${JSON.stringify({ report: basename(report), seconds })}\n`)
+}
+
+export const readTemporaryLatestTestResults = async (
+  reportsFolder: string,
+  experiment: string
+): Promise<TestResults | undefined> => {
+  const path = latestRecord(reportsFolder, experiment)
+  let record: unknown
+  try {
+    record = JSON.parse(await readFile(path, 'utf8'))
+  } catch (error) {
+    if (isRecord(error) && error.code === 'ENOENT') return undefined
+    throw unusableRecord(path, errorMessage(error), error)
+  }
+  if (!isRecord(record) || typeof record.report !== 'string' || typeof record.seconds !== 'number')
+    throw unusableRecord(path, 'it has no report file or run time')
+  return readTemporaryTestResults(join(reportsFolder, basename(record.report)), {
+    experiment,
+    seconds: record.seconds,
+  })
 }

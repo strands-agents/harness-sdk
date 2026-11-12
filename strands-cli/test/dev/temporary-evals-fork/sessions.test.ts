@@ -7,7 +7,13 @@ import type { ExperimentSummary } from '../../../src/dev/panels/model.js'
 import { temporaryVenvPython, type TemporaryCommandRequest } from '../../../src/dev/temporary-evals-fork/environment.js'
 import type { TemporaryEvalsProcess } from '../../../src/dev/temporary-evals-fork/evals-process.js'
 import type { TemporarySessionDependencies } from '../../../src/dev/temporary-evals-fork/host.js'
-import { temporaryDevSessions, temporaryTestJobs } from '../../../src/dev/temporary-evals-fork/sessions.js'
+import { TemporaryExperiments } from '../../../src/dev/temporary-evals-fork/experiments-session.js'
+import type { TemporarySessionHost } from '../../../src/dev/temporary-evals-fork/host.js'
+import {
+  TemporaryTest,
+  temporaryDevSessions,
+  temporaryTestJobs,
+} from '../../../src/dev/temporary-evals-fork/sessions.js'
 import type { DevWorkspace } from '../../../src/dev/workspace.js'
 import type { ChatNotice, DevChatCommandContext } from '../../../src/ui/chat/types.js'
 import { temporaryDirectory } from '../../fixtures/tempdir.js'
@@ -185,6 +191,31 @@ const finished = (sessions: ReturnType<typeof temporaryDevSessions>, path: strin
 
 const runStatus = (sessions: ReturnType<typeof temporaryDevSessions>, path: string) =>
   sessions.test.snapshot().runs.find(({ experiment }) => experiment.path === path)?.run.status
+
+const restartedTest = (workspace: DevWorkspace): TemporaryTest => {
+  const host = (): TemporarySessionHost => ({ workspace, agent: () => ({}) })
+  return new TemporaryTest(host, new TemporaryExperiments(host))
+}
+
+const strictTestingProcess = (failing: ReadonlySet<string>) =>
+  vi.fn(async ({ args }: TemporaryEvalsProcess) => {
+    const experiment = JSON.parse(await readFile(args[3]!, 'utf8')) as ReturnType<typeof experimentDocument>
+    const names = experiment.cases.map(({ name }) => name.toLowerCase())
+    if (new Set(names).size !== names.length)
+      return { code: 3, stdout: '', stderrTail: ['All case names must be unique when using an evaluation_data_store.'] }
+    const passes = experiment.cases.map(({ input }) => !failing.has(input))
+    await writeFileAt(
+      flagValue(args, '--output'),
+      JSON.stringify({
+        overall_score: 0,
+        scores: passes.map(Number),
+        test_passes: passes,
+        reasons: passes.map((pass) => (pass ? 'ok' : 'wrong')),
+        cases: experiment.cases.map((item) => ({ ...item, actual_output: 'x', evaluator: 'OutputEvaluator' })),
+      })
+    )
+    return exit
+  })
 
 describe('TEMPORARY dev sessions', () => {
   it('shouldShareTheSessionsWhenTheSameWorkspaceOpensAgain', async () => {
@@ -399,6 +430,70 @@ describe('TEMPORARY dev sessions on open', () => {
       ['case_3', 'question q3'],
     ])
     expect(finished(sessions, path).cases.map(({ name }) => name)).toEqual(['case_1', 'case_3'])
+  })
+
+  it('shouldShowTheLastReportWhenTheTestPanelOpensAfterARestart', async () => {
+    const { workspace, sessions } = await sessionsFor({ spawnTests: testingProcess() })
+    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2'])
+    sessions.test.run([experiment])
+    await vi.waitFor(() => expect(runStatus(sessions, experiment.path)).toBe('done'))
+    const restarted = restartedTest(workspace)
+
+    restarted.show()
+
+    await vi.waitFor(() => expect(restarted.snapshot().runs).toHaveLength(1))
+    expect(restarted.snapshot().runs[0]).toEqual({
+      experiment,
+      run: { status: 'done', results: finished(sessions, experiment.path) },
+    })
+  })
+
+  it('shouldShowWhyTheLastReportCannotBeReadWhenTheTestPanelOpensAfterARestart', async () => {
+    const { workspace, sessions } = await sessionsFor({ spawnTests: testingProcess() })
+    const experiment = await savedExperiment(workspace, ['c0'])
+    sessions.test.run([experiment])
+    await vi.waitFor(() => expect(runStatus(sessions, experiment.path)).toBe('done'))
+    await writeFileAt(finished(sessions, experiment.path).report, '{"overall_score": ')
+    const restarted = restartedTest(workspace)
+
+    restarted.show()
+
+    await vi.waitFor(() => expect(restarted.snapshot().runs).toHaveLength(1))
+    expect(restarted.snapshot().runs[0]?.run).toEqual({
+      status: 'failed',
+      message: expect.stringContaining('is not a usable test report'),
+    })
+  })
+
+  it('shouldRunAndRerunCasesThatShareANameWhenTheDataStoreNeedsUniqueNames', async () => {
+    const testing = strictTestingProcess(new Set(['question refund']))
+    const { workspace, sessions } = await sessionsFor({ spawnTests: testing })
+    const path = join(workspace.directory!, 'tmp/experiments/starter.json')
+    await writeFileAt(
+      path,
+      JSON.stringify({
+        cases: [
+          { name: 'Greeting', input: 'question greeting' },
+          { name: 'greeting', input: 'question refund' },
+        ],
+        evaluators: [{ evaluator_type: 'OutputEvaluator' }],
+      })
+    )
+    sessions.test.run([{ name: 'starter', path, caseCount: 2 }])
+    await vi.waitFor(() => expect(runStatus(sessions, path)).toBe('done'))
+    const first = finished(sessions, path).cases.map(({ name, passed }) => [name, passed])
+
+    sessions.test.rerunFailed(path)
+    await vi.waitFor(() => expect(testing).toHaveBeenCalledTimes(2))
+    await vi.waitFor(() => expect(runStatus(sessions, path)).toBe('done'))
+
+    expect(first).toEqual([
+      ['Greeting', true],
+      ['greeting-2', false],
+    ])
+    expect(finished(sessions, path).cases.map(({ name, input }) => [name, input])).toEqual([
+      ['greeting-2', 'question refund'],
+    ])
   })
 
   it('shouldKeepTheReviewAndNameTheChangedFileWhenAnApplyStopsHalfway', async () => {

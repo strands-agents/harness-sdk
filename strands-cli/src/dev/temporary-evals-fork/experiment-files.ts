@@ -103,6 +103,27 @@ export const temporaryCaseCount = async (path: string): Promise<number> => {
 export const temporaryCaseName = (raw: TemporaryRawCase, index: number): string =>
   typeof raw.name === 'string' && raw.name ? raw.name : `case_${index}`
 
+const PATH_SEPARATORS = /[\\/]/gu
+
+const uniqueFileNames = (): ((name: string) => string) => {
+  const taken = new Set<string>()
+  return (name) => {
+    const safe = name.replace(PATH_SEPARATORS, '-')
+    let unique = safe
+    for (let copy = 2; taken.has(unique.toLowerCase()); copy++) unique = `${safe}-${copy}`
+    taken.add(unique.toLowerCase())
+    return unique
+  }
+}
+
+export const temporaryNamedExperiment = (raw: TemporaryExperimentDocument): TemporaryExperimentDocument => {
+  const unique = uniqueFileNames()
+  return {
+    ...raw,
+    cases: raw.cases.map((rawCase, index) => ({ ...rawCase, name: unique(temporaryCaseName(rawCase, index)) })),
+  }
+}
+
 export const temporaryCaseText = (value: unknown): string | undefined => {
   if (value === undefined || value === null) return undefined
   return typeof value === 'string' ? value : JSON.stringify(value)
@@ -212,6 +233,14 @@ export const writeTemporaryExperimentFile = async (
   raw: TemporaryExperimentDocument,
   cases: readonly string[]
 ): Promise<void> => writeDocument(path, { ...raw, cases: pickCases(raw, cases) })
+
+export const temporaryRunnableExperiment = async (path: string, copy: string): Promise<string> => {
+  const { raw } = await readTemporaryExperimentFile(path)
+  const named = temporaryNamedExperiment(raw)
+  if (named.cases.every(({ name }, index) => name === raw.cases[index]?.name)) return path
+  await writeDocument(copy, named)
+  return copy
+}
 
 export const writeTemporaryExperimentCases = async (
   path: string,

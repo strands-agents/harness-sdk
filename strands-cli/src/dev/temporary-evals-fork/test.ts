@@ -16,7 +16,7 @@ import {
   temporaryWorkspaceDirectory,
   type TemporaryEvalsSpawner,
 } from './evals-process.js'
-import { resolveTemporaryExperiment, temporaryCaseCount } from './experiment-files.js'
+import { resolveTemporaryExperiment, temporaryCaseCount, temporaryRunnableExperiment } from './experiment-files.js'
 
 export interface TemporaryTestRequest {
   workspace: DevWorkspace
@@ -116,6 +116,7 @@ export const runTemporaryTest = async (
   const caseStore = join(folder, `${name}.cases`)
   if (existsSync(report)) throw new Error(`The report ${report} already exists. Wait a second, then try again.`)
   await mkdir(folder, { recursive: true })
+  const runnable = await temporaryRunnableExperiment(experiment, join(folder, `${name}.experiment.json`))
   onProgress(`Testing ${workspace.entrypoint} on the ${cases} cases of ${experiment}`)
   onProgress(`Report: ${report}`)
   onProgress('Running the cases. The summary appears when every case has finished.')
@@ -126,7 +127,7 @@ export const runTemporaryTest = async (
       '-m',
       'strands_evals.cli',
       'run',
-      experiment,
+      runnable,
       '--agent',
       workspace.entrypoint,
       ...temporaryLanguageArguments(workspace),

@@ -7,6 +7,8 @@ import {
   listTemporaryExperiments,
   readTemporaryExperimentFile,
   temporaryBlankCase,
+  temporaryNamedExperiment,
+  temporaryRunnableExperiment,
   writeTemporaryExperimentCases,
   writeTemporaryExperimentFile,
   type TemporaryRawCase,
@@ -163,5 +165,47 @@ describe('TEMPORARY experiment files', () => {
 
     expect(blank).toMatchObject({ name: 'case-3', input: 'Refund order 7', expected_output: stored, metadata: null })
     expect(blank.session_id).toMatch(/^[0-9a-f-]{36}$/u)
+  })
+
+  it.each<[string, unknown[], string[]]>([
+    ['repeat in any case', ['refund', 'refund', 'Refund'], ['refund', 'refund-2', 'Refund-3']],
+    ['are missing', [null, undefined, '', 'case_1'], ['case_0', 'case_1', 'case_2', 'case_1-2']],
+    ['contain path separators', ['a/b', 'a\\b'], ['a-b', 'a-b-2']],
+  ])('shouldGiveEveryCaseAUniqueFileNameWhenNames%s', (_case, names, expected) => {
+    const document = experimentDocument(...names.map((name, index) => ({ ...rawCase(`c${index}`), name })))
+
+    const named = temporaryNamedExperiment(document)
+
+    expect(named.cases.map(({ name }) => name)).toEqual(expected)
+    expect(named.cases.map(({ input }) => input)).toEqual(document.cases.map(({ input }) => input))
+    expect(named.evaluators).toEqual(document.evaluators)
+  })
+
+  it('shouldRunTheExperimentItselfWhenItsCaseNamesAreUnique', async () => {
+    const folder = await temporaryDirectory()
+    const path = join(folder, 'refunds.json')
+    await writeJson(path, experimentDocument(rawCase('c0'), rawCase('c1')))
+
+    const runnable = await temporaryRunnableExperiment(path, join(folder, 'copy.json'))
+
+    expect(runnable).toBe(path)
+    expect(await readdir(folder)).toEqual(['refunds.json'])
+  })
+
+  it('shouldRunACopyWithUniqueNamesWhenCaseNamesRepeat', async () => {
+    const folder = await temporaryDirectory()
+    const path = join(folder, 'refunds.json')
+    const document = experimentDocument(rawCase('refund'), rawCase('refund', 'second question'))
+    await writeJson(path, document)
+    const copy = join(folder, 'copy.json')
+
+    const runnable = await temporaryRunnableExperiment(path, copy)
+
+    expect(runnable).toBe(copy)
+    expect((await readJson(copy)).cases.map(({ name, input }: TemporaryRawCase) => [name, input])).toEqual([
+      ['refund', 'question for refund'],
+      ['refund-2', 'second question'],
+    ])
+    expect(await readJson(path)).toEqual(document)
   })
 })
