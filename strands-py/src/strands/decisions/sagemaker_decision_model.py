@@ -40,7 +40,7 @@ class SageMakerDecisionModel(DecisionModel):
 
     Example:
         ```python
-        decisions = SageMakerDecisionModel("my-decider-endpoint", region="us-east-1")
+        decisions = SageMakerDecisionModel("my-decider-endpoint", region_name="us-east-1")
         result = await decisions.ask(
             "A customer needs a refund today.",
             {"urgent": {"question": "Is this urgent?", "choices": "boolean"}},
@@ -52,8 +52,8 @@ class SageMakerDecisionModel(DecisionModel):
         self,
         endpoint_name: str,
         *,
-        region: str | None = None,
-        client_config: BotocoreConfig | None = None,
+        region_name: str | None = None,
+        boto_client_config: BotocoreConfig | None = None,
         client: "SageMakerRuntimeClient | None" = None,
         default_min_confidence: float = _SAGEMAKER_DEFAULT_MIN_CONFIDENCE,
     ) -> None:
@@ -61,31 +61,31 @@ class SageMakerDecisionModel(DecisionModel):
 
         Args:
             endpoint_name: Name of the SageMaker AI real-time endpoint serving the System One model.
-            region: AWS region of the endpoint. Takes precedence over ``client_config``'s region.
+            region_name: AWS region of the endpoint. Takes precedence over ``boto_client_config``'s
+                region. Cannot be combined with ``client``.
+            boto_client_config: ``botocore`` configuration for the ``sagemaker-runtime`` client.
                 Cannot be combined with ``client``.
-            client_config: ``botocore`` configuration for the ``sagemaker-runtime`` client. Cannot
-                be combined with ``client``.
             client: Pre-built ``sagemaker-runtime`` client, for example one shared with other
                 components or configured with custom credentials or an endpoint override. Used as
-                is. Cannot be combined with ``region`` or ``client_config``.
+                is. Cannot be combined with ``region_name`` or ``boto_client_config``.
             default_min_confidence: Default minimum confidence in ``[0.0, 1.0]``. Defaults to ``0.5``.
 
         Raises:
             ValueError: If the endpoint name is empty, the confidence threshold is out of range, or
-                ``client`` is combined with ``region`` or ``client_config``.
+                ``client`` is combined with ``region_name`` or ``boto_client_config``.
         """
         super().__init__()
         resolved_endpoint_name = (endpoint_name or "").strip()
         if not resolved_endpoint_name:
             raise ValueError("SageMakerDecisionModel requires an endpoint_name")
-        if client is not None and (region is not None or client_config is not None):
+        if client is not None and (region_name is not None or boto_client_config is not None):
             raise ValueError(
-                "Cannot specify both client and region/client_config. "
+                "Cannot specify both client and region_name/boto_client_config. "
                 "Configure them on the sagemaker-runtime client instead."
             )
 
         self._endpoint_name = resolved_endpoint_name
-        self._client = client if client is not None else _build_client(region, client_config)
+        self._client = client if client is not None else _build_client(region_name, boto_client_config)
         self._request_config = _SystemOneRequestConfig(
             provider_name=_SAGEMAKER_PROVIDER_NAME,
             default_min_confidence=_resolve_default_min_confidence(default_min_confidence, "SageMakerDecisionModel"),
@@ -123,12 +123,12 @@ class SageMakerDecisionModel(DecisionModel):
             raise StructuredOutputException("decision provider returned a non-JSON response") from error
 
 
-def _build_client(region: str | None, client_config: BotocoreConfig | None) -> "SageMakerRuntimeClient":
-    config = client_config or BotocoreConfig()
+def _build_client(region_name: str | None, boto_client_config: BotocoreConfig | None) -> "SageMakerRuntimeClient":
+    config = boto_client_config or BotocoreConfig()
     existing_user_agent = getattr(config, "user_agent_extra", None)
     user_agent = f"{existing_user_agent} strands-agents" if existing_user_agent else "strands-agents"
     config = config.merge(BotocoreConfig(user_agent_extra=user_agent))
-    return boto3.client("sagemaker-runtime", region_name=region, config=config)
+    return boto3.client("sagemaker-runtime", region_name=region_name, config=config)
 
 
 def _translate_sagemaker_error(error: Exception) -> Exception | None:

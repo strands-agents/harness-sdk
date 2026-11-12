@@ -103,11 +103,13 @@ class TestAsk:
         assert "model" not in _sent_input(client)["Body"]
 
     @pytest.mark.asyncio
-    async def test_creates_one_client_with_region_taking_precedence_over_client_config(self, mock_client):
+    async def test_creates_one_client_with_region_name_taking_precedence_over_boto_client_config(self, mock_client):
         mock_boto_client, client = mock_client
         client.invoke_endpoint.return_value = _response({"model": "m", "answers": {"q": {"type": "noul", "noul": 1}}})
         decision = SageMakerDecisionModel(
-            _ENDPOINT_NAME, region="us-east-1", client_config=BotocoreConfig(region_name="us-west-2", read_timeout=5)
+            _ENDPOINT_NAME,
+            region_name="us-east-1",
+            boto_client_config=BotocoreConfig(region_name="us-west-2", read_timeout=5),
         )
 
         await decision.ask("state", {"q": {"question": "ok?", "choices": "boolean"}})
@@ -125,7 +127,7 @@ class TestAsk:
     async def test_appends_the_sdk_user_agent_to_an_existing_one(self, mock_client):
         mock_boto_client, client = mock_client
         client.invoke_endpoint.return_value = _response({"model": "m", "answers": {"q": {"type": "noul", "noul": 1}}})
-        decision = SageMakerDecisionModel(_ENDPOINT_NAME, client_config=BotocoreConfig(user_agent_extra="my-app"))
+        decision = SageMakerDecisionModel(_ENDPOINT_NAME, boto_client_config=BotocoreConfig(user_agent_extra="my-app"))
 
         await decision.ask("state", {"q": {"question": "ok?", "choices": "boolean"}})
 
@@ -264,7 +266,7 @@ class TestConstruction:
         with pytest.raises(ValueError, match=r"default_min_confidence must be in \[0.0, 1.0\]"):
             SageMakerDecisionModel(_ENDPOINT_NAME, default_min_confidence=threshold)
 
-    @pytest.mark.parametrize("options", [{"region": "us-east-1"}, {"client_config": BotocoreConfig()}])
-    def test_rejects_a_provided_client_combined_with_region_or_client_config(self, options: dict[str, Any]):
-        with pytest.raises(ValueError, match="Cannot specify both client and region/client_config"):
+    @pytest.mark.parametrize("options", [{"region_name": "us-east-1"}, {"boto_client_config": BotocoreConfig()}])
+    def test_rejects_a_provided_client_combined_with_region_name_or_boto_client_config(self, options: dict[str, Any]):
+        with pytest.raises(ValueError, match="Cannot specify both client and region_name/boto_client_config"):
             SageMakerDecisionModel(_ENDPOINT_NAME, client=unittest.mock.Mock(), **options)
