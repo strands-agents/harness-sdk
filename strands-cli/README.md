@@ -194,7 +194,8 @@ Retry re-reads the project manifests and forces setup when repair is needed. Dev
 Logs live under the selected project's `.strands/state/setup/`. Known credential values and authenticated URL credentials are redacted.
 
 `f` opens the Strands CLI in a new terminal tab to fix the project. The first message has the error, the project folder, and how dev loads agents.
-The **Agent reload failed** panel in a dev chat has the same key. The new tab uses the built-in agent, not a saved default agent.
+In a dev chat, a failed turn opens the **Agent turn failed** panel. That panel and the **Agent reload failed** panel have the same key.
+The new tab uses the built-in agent, not a saved default agent.
 
 In tmux, dev opens a new tmux window. On macOS, dev opens an iTerm2 tab, a Ghostty tab (Ghostty 1.3 or later), or a Terminal window.
 In other terminals, dev copies a command and shows it. Run that command in a new tab.
