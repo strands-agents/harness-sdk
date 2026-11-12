@@ -1,4 +1,4 @@
-Defined in: [src/types/messages.ts:599](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L599)
+Defined in: [src/types/messages.ts:755](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L755)
 
 Cache point block for prompt caching. Marks a position in a message or system prompt where caching should occur.
 
@@ -15,7 +15,7 @@ Cache point block for prompt caching. Marks a position in a message or system pr
 new CachePointBlock(data): CachePointBlock;
 ```
 
-Defined in: [src/types/messages.ts:616](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L616)
+Defined in: [src/types/messages.ts:772](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L772)
 
 #### Parameters
 
@@ -35,7 +35,7 @@ Defined in: [src/types/messages.ts:616](https://github.com/strands-agents/harnes
 readonly type: "cachePointBlock";
 ```
 
-Defined in: [src/types/messages.ts:603](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L603)
+Defined in: [src/types/messages.ts:759](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L759)
 
 Discriminator for cache point.
 
@@ -47,7 +47,7 @@ Discriminator for cache point.
 readonly cacheType: "default";
 ```
 
-Defined in: [src/types/messages.ts:608](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L608)
+Defined in: [src/types/messages.ts:764](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L764)
 
 The cache type. Currently only ‘default’ is supported.
 
@@ -63,7 +63,7 @@ The cache type. Currently only ‘default’ is supported.
 readonly ttl?: string;
 ```
 
-Defined in: [src/types/messages.ts:614](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L614)
+Defined in: [src/types/messages.ts:770](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L770)
 
 Optional TTL for the cache entry. See [CachePointBlockData.ttl](/docs/api/typescript/CachePointBlockData/index.md#ttl) for the provider-specific value space.
 
@@ -81,7 +81,7 @@ toJSON(): {
 };
 ```
 
-Defined in: [src/types/messages.ts:627](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L627)
+Defined in: [src/types/messages.ts:783](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L783)
 
 Serializes the CachePointBlock to a JSON-compatible ContentBlockData object. Called automatically by JSON.stringify().
 
@@ -95,7 +95,7 @@ Serializes the CachePointBlock to a JSON-compatible ContentBlockData object. Cal
 
 | Name | Type | Defined in |
 | --- | --- | --- |
-| `cachePoint` | [`CachePointBlockData`](/docs/api/typescript/CachePointBlockData/index.md) | [src/types/messages.ts:627](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L627) |
+| `cachePoint` | [`CachePointBlockData`](/docs/api/typescript/CachePointBlockData/index.md) | [src/types/messages.ts:783](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L783) |
 
 #### Implementation of
 
@@ -109,7 +109,7 @@ Serializes the CachePointBlock to a JSON-compatible ContentBlockData object. Cal
 static fromJSON(data): CachePointBlock;
 ```
 
-Defined in: [src/types/messages.ts:642](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L642)
+Defined in: [src/types/messages.ts:798](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L798)
 
 Creates a CachePointBlock instance from its wrapped data format.
 

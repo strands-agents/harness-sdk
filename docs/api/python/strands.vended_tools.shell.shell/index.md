@@ -11,10 +11,11 @@ def make_shell(
         *,
         sandbox: Sandbox | None = None,
         name: str = "shell",
-        description: str = SANDBOX_SHELL_DESCRIPTION) -> DecoratedFunctionTool
+        description: str = SANDBOX_SHELL_DESCRIPTION,
+        default_timeout: int = _DEFAULT_TIMEOUT) -> DecoratedFunctionTool
 ```
 
-Defined in: [src/strands/vended\_tools/shell/shell.py:30](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_tools/shell/shell.py#L30)
+Defined in: [src/strands/vended\_tools/shell/shell.py:31](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_tools/shell/shell.py#L31)
 
 Create a stateless, sandbox-routed shell tool.
 
@@ -25,10 +26,15 @@ If a `sandbox` is passed, it is bound at creation time. Otherwise the tool reads
 -   `sandbox` - Sandbox to bind at creation. When `None`, the agent’s configured sandbox is used at call time.
 -   `name` - Tool name. Defaults to `"shell"`.
 -   `description` - Tool description shown to the model.
+-   `default_timeout` - Timeout in seconds used when the model omits `timeout`. Becomes the schema default the model sees. Defaults to `120`.
 
 **Returns**:
 
 A decorated tool that executes shell commands through the sandbox.
+
+**Raises**:
+
+-   `ValueError` - If `default_timeout` is not a positive finite number.
 
 #### shell
 

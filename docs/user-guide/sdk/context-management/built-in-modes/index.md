@@ -35,6 +35,8 @@ Two strategies whose defaults scored highest across [ContextBench](https://arxiv
 -   **Truncate tool results** (threshold: 1,500 tokens, preview: 750 tokens): intercepts large tool results at execution time, stores them in the stash, and keeps a truncated preview in context. Registers a retrieval tool so the agent can fetch full content on demand.
 -   **Summarize on pressure** (utilization: 85%): when the context window reaches 85% capacity, summarizes the oldest messages to free space, preserving the 4 most recent messages verbatim.
 
+On Claude models that preserve thinking, the truncation keeps thinking blocks valid, and so does the summary when both the agent’s model and `agent.aux_model``agent.auxModel` support server-side summary. See [Models that preserve thinking](/docs/user-guide/sdk/context-management/custom-strategies/index.md#models-that-preserve-thinking).
+
 ## Agentic context management
 
 Experimental
@@ -87,6 +89,8 @@ This is the signal the model acts on. It decides whether the window is full enou
 Recent messages stay verbatim regardless, and the first user message is always preserved so the conversation stays valid. New tools may be added to agentic mode in future releases.
 
 Behind the tools, agentic mode also configures a `ContextManager` with truncation and summarization strategies. The truncation threshold is higher than auto mode (8,000 tokens versus 1,500), since the model is already managing context and benefits from seeing more tool output inline. Summarization only triggers on overflow (100% utilization), acting as a safety net if the model lets the window fill.
+
+On Claude models that preserve thinking, `summarize_context` and `truncate_context` rewrite earlier history, so the thinking blocks after it are dropped. See [Models that preserve thinking](/docs/user-guide/sdk/context-management/custom-strategies/index.md#models-that-preserve-thinking).
 
 ### Choosing between auto and agentic
 

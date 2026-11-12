@@ -246,7 +246,7 @@ See [persist sessions](/docs/user-guide/harness/configure/sessions/index.md) for
 
 ## The agent you get
 
-However you start it, Strands harness runs on the model of your choice with reasoning on, and it follows a tuned system prompt that tells it to explore before changing things, confirm before anything irreversible, and verify before calling a task done. It also has prompt caching, automatic context management, long-term memory, a `generalist` subagent, and a `todos` task tracker enabled by default. See [what the default harness does](/docs/user-guide/harness/index.md#what-the-default-harness-does) for the full set.
+However you start it, Strands harness runs on the model of your choice with reasoning on, and it follows a tuned system prompt that tells it to explore before changing things, confirm before anything irreversible, and verify before calling a task done. It also has prompt caching, automatic context management, long-term memory, and a `generalist` subagent enabled by default. See [what the default harness does](/docs/user-guide/harness/index.md#what-the-default-harness-does) for the full set.
 
 ## Next steps
 

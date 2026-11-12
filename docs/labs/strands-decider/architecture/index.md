@@ -60,7 +60,7 @@ Three consequences worth stating plainly:
 
 The readout is ~1M parameters (`dim=256`); rank-16 LoRA adapters on the torso’s projections are the only other thing trained. The v14 checkpoint is ~88 MB — adapter, readout and tokenizer — and the base weights are fetched from HuggingFace at load.
 
-**The torso.** v13 to v19 run Qwen3.5-2B-Base (1.9B parameters), a hybrid: 18 of its 24 layers are Gated DeltaNet — linear attention carrying a recurrent state — and 6 are full attention. LoRA covers the projections of both kinds (`lora_targets`). v7 and earlier ran Qwen3-1.7B-Base, all full attention. The architecture is the same either way; what the hybrid changes is serving ([Asking many questions is nearly free](../inference/index.md#asking-many-questions-is-nearly-free)) and the training environment ([Setup](https://github.com/strands-labs/strands-decider/blob/846b69ebe7603038caa3bfe250e50f1137b141d7/training/README.md#setup)).
+**The torso.** v13 to v19 run Qwen3.5-2B-Base (1.9B parameters), a hybrid: 18 of its 24 layers are Gated DeltaNet — linear attention carrying a recurrent state — and 6 are full attention. LoRA covers the projections of both kinds (`lora_targets`). v7 and earlier ran Qwen3-1.7B-Base, all full attention. The architecture is the same either way; what the hybrid changes is serving ([Asking many questions is nearly free](../inference/index.md#asking-many-questions-is-nearly-free)) and the training environment ([Setup](https://github.com/strands-labs/strands-decider/blob/1ace5aaa86a8c59d949ac97810f9f2e3b79a1ff8/training/README.md#setup)).
 
 ### One mechanism, three primitives
 
@@ -82,7 +82,7 @@ Uniform → 0, one-hot → 1, and crucially *independent of N*, so one routing t
 
 #### The routing convention
 
-These documents use the example bands of the public Jev API documentation ([Confidence](https://docs.typesafe.ai/confidence)). At 0.9 or above, act without a check. From 0.5 to 0.9, confirm first. Below 0.5, send the answer to a person. That documentation says that the right thresholds depend on the consequences of each action. Measure them on your own traffic before you rely on them ([Summary](https://github.com/strands-labs/strands-decider/blob/846b69ebe7603038caa3bfe250e50f1137b141d7/evaluation/results.md#summary) gives the measured bands).
+These documents use the example bands of the public Jev API documentation ([Confidence](https://docs.typesafe.ai/confidence)). At 0.9 or above, act without a check. From 0.5 to 0.9, confirm first. Below 0.5, send the answer to a person. That documentation says that the right thresholds depend on the consequences of each action. Measure them on your own traffic before you rely on them ([Summary](https://github.com/strands-labs/strands-decider/blob/1ace5aaa86a8c59d949ac97810f9f2e3b79a1ff8/evaluation/results.md#summary) gives the measured bands).
 
 **`score` uses a different measure**, because max-probability reads *spread* as *doubt* — and on an ordered scale, mass on adjacent levels is precision, not confusion. A distribution split between levels 2 and 3 is confidently saying “about 2.5”. So score confidence is normalised standard deviation:
 
@@ -100,9 +100,9 @@ The loss has three parts:
 
 -   **Cross-entropy on the gold label**, with 10% of a `score` target’s mass moved to adjacent levels: being one level off is a smaller error than being four off.
 -   **KL to the frozen torso’s own readout** (weight 0.3): the same torso with its adapter disabled, reading the option-number tokens it would emit after `<answer>`. It keeps the model near what pretraining already knew, for one extra forward pass and no extra weights.
--   **KL to a frozen teacher** (weight 1.0), on the multi-step rows only: Qwen3.5-4B, read without any training ([What the torso knows untrained](https://github.com/strands-labs/strands-decider/blob/846b69ebe7603038caa3bfe250e50f1137b141d7/research/history.md#what-the-torso-knows-untrained)), its option distributions computed once and stored (`data/teacher.py`). It is used only where it is measurably better than the student: distilled on short classification, where it is not, it moved nothing ([v12](https://github.com/strands-labs/strands-decider/blob/846b69ebe7603038caa3bfe250e50f1137b141d7/research/history.md#v12-distilling-a-frozen-qwen35-4b)).
+-   **KL to a frozen teacher** (weight 1.0), on the multi-step rows only: Qwen3.5-4B, read without any training ([What the torso knows untrained](https://github.com/strands-labs/strands-decider/blob/1ace5aaa86a8c59d949ac97810f9f2e3b79a1ff8/research/history.md#what-the-torso-knows-untrained)), its option distributions computed once and stored (`data/teacher.py`). It is used only where it is measurably better than the student: distilled on short classification, where it is not, it moved nothing ([v12](https://github.com/strands-labs/strands-decider/blob/1ace5aaa86a8c59d949ac97810f9f2e3b79a1ff8/research/history.md#v12-distilling-a-frozen-qwen35-4b)).
 
-v14’s corpus is 100,449 rows from 21 public classification tasks — topic, intent, sentiment, entailment, ordinal ratings, yes/no, rule chaining — plus 12,909 multi-step rows from ContractNLI, MuSiQue and BoardgameQA ([Data sources and licences](https://github.com/strands-labs/strands-decider/blob/846b69ebe7603038caa3bfe250e50f1137b141d7/data/README.md#data-sources-and-licences)). The v19 reference recipe adds 3,815 generated document questions and 6,166 answer-adequacy rows.
+v14’s corpus is 100,449 rows from 21 public classification tasks — topic, intent, sentiment, entailment, ordinal ratings, yes/no, rule chaining — plus 12,909 multi-step rows from ContractNLI, MuSiQue and BoardgameQA ([Data sources and licences](https://github.com/strands-labs/strands-decider/blob/1ace5aaa86a8c59d949ac97810f9f2e3b79a1ff8/data/README.md#data-sources-and-licences)). The v19 reference recipe adds 3,815 generated document questions and 6,166 answer-adequacy rows.
 
 One detail matters more than any of the loss terms:
 

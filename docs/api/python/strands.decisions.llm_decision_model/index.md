@@ -8,7 +8,7 @@ Translates an `ask` call into a single forced structured-output model call, pars
 class LLMDecisionModel(DecisionModel)
 ```
 
-Defined in: [src/strands/decisions/llm\_decision\_model.py:31](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/decisions/llm_decision_model.py#L31)
+Defined in: [src/strands/decisions/llm\_decision\_model.py:32](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/decisions/llm_decision_model.py#L32)
 
 Adapter that turns any `Model` into a `DecisionModel`.
 
@@ -42,7 +42,7 @@ def __init__(model: Model | None = None,
              system_prompt: str = _DEFAULT_SYSTEM_PROMPT) -> None
 ```
 
-Defined in: [src/strands/decisions/llm\_decision\_model.py:58](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/decisions/llm_decision_model.py#L58)
+Defined in: [src/strands/decisions/llm\_decision\_model.py:59](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/decisions/llm_decision_model.py#L59)
 
 Create an LLM-backed decision model.
 

@@ -1,4 +1,4 @@
-A box records every policy decision it makes, every change to its own authority, and every span, log record, and metric the workload exports. A `[telemetry.*]` table in `box.toml` declares the target those records reach, and `include` states which records that target receives.
+A box records every policy decision it makes, every change to its own authority, each unmatched MCP route, and every span, log record, and metric the workload exports. A `[telemetry.*]` table in `box.toml` declares the target those records reach, and `include` states which records that target receives.
 
 This page covers a `file` target, which appends records to a path the operator names. A box that declares no table writes to a default target. See [The default target](#the-default-target).
 
@@ -10,7 +10,7 @@ A box with no `[telemetry]` table writes one file inside its own box directory:
 <box_dir>/private/telemetry/records.jsonl
 ```
 
-That target receives every record: each effective denial, each effective permit, the box’s own control-plane records, and the workload’s relayed spans, log records, and metrics. The workload cannot reach the file.
+That target receives every record: each effective denial, each effective permit, the box’s own control-plane records and MCP routing diagnostics, and the workload’s relayed spans, log records, and metrics. The workload cannot reach the file.
 
 The file grows for as long as the box is used. Rotate or remove it as the operator’s own task.
 
@@ -26,7 +26,7 @@ A declared target replaces this default rather than adding to it, so a box that 
 [telemetry.decisions]                  # every decision this box takes, recorded
 kind        = "file"
 destination = "~/boxes/codex/records.jsonl"
-include     = ["deny", "permit", "trace"]
+include     = ["deny", "permit", "trace", "logs"]
 ```
 
 Each table takes three keys. An unknown key is refused.
@@ -35,7 +35,7 @@ Each table takes three keys. An unknown key is refused.
 | --- | --- | --- | --- |
 | `kind` | string | none, required | `file`, which this page covers. |
 | `destination` | string | none, required | The file the records go to, as stated below. |
-| `include` | array of strings | every record | Which records reach this target: `deny`, `permit`, or `trace`. |
+| `include` | array of strings | every record | Which records reach this target: `deny`, `permit`, `trace`, `logs`, or `metrics`. |
 
 ## `kind = "file"`
 
@@ -62,10 +62,12 @@ Omit `include` and the target receives every record. Write `include` and the tar
 | `deny` | Every effective denial. |
 | `permit` | Every effective permit. |
 | `trace` | The workload’s own spans, and this box’s control-plane records. |
+| `logs` | Box’s unmatched MCP routing diagnostics and the workload’s log records. |
+| `metrics` | The workload’s metrics. |
 
-So `include = ["deny"]` writes a file of refusals, and leaves out the permits and the control-plane records.
+So `include = ["deny"]` writes a file of refusals, and leaves out the permits, control-plane records, and MCP routing diagnostics.
 
-**The workload’s log records and metrics are on by default.** They reach every target, and no value of `include` keeps them out, so the list never needs the words `logs` and `metrics`. The file `include = ["deny"]` writes therefore holds the denials, plus whatever log records and metrics the workload itself exported.
+**The workload’s log records and metrics are on by default.** They reach every target, and no value of `include` keeps them out. The word `logs` selects Box’s MCP routing diagnostics; the workload’s own logs arrive even without it. The word `metrics` is optional. The file `include = ["deny"]` writes therefore holds the denials, plus whatever log records and metrics the workload itself exported.
 
 `trace` names two things at once. A target that omits `trace` receives no control-plane record, so this box’s `box_started`, `policy_installed`, and `box_stopped` records are absent from it.
 
@@ -75,7 +77,7 @@ An empty list is refused, and so is a repeated word.
 
 OpenTelemetry calls each kind of telemetry a signal. Three of them apply here: traces, logs, and metrics.
 
-Box relays the workload’s spans, log records, and metrics, and generates no signal of that kind itself. A target receives one only when the workload exports it, so two settings apply: the workload’s own exporter setting, and a target that accepts the signal.
+Box relays the workload’s spans, log records, and metrics. These records exist only when the workload exports them, so two settings apply: the workload’s own exporter setting, and a target that accepts the signal.
 
 Box binds one loopback port for the workload and sets three variables in its environment:
 
@@ -139,6 +141,12 @@ Two keys are excluded: `url.full` and `process.command_line`.
 
 At most 64 arguments are reported. One attribute carries at most 4 KiB, and a longer value is cut on a character boundary and ends with `… (truncated)`.
 
+### An unmatched MCP route
+
+When an MCP alias invocation matches no declared command, Box writes an informational log record with event name `strands.box.mcp.unmatched` in the `strands-box.mcp` scope. `process.command` names the received program, and `process.command_args` follows the expanded-argument redaction rules above. The record includes request identifiers and parent trace context when available.
+
+The diagnostic carries no policy verdict, action, or rule. Box writes it before replying to the alias, so it does not say whether ordinary execution starts or succeeds. It produces no span. Targets receive it when `include` is omitted or contains `logs`.
+
 ### A control-plane record
 
 A control-plane record states one change to the authority this box holds. The scope is `strands-box.control`, and each operation also produces a span named `control <operation>`.
@@ -153,7 +161,7 @@ A control-plane record states one change to the authority this box holds. The sc
 
 ## Reading a records file
 
-A records file holds both scopes, so a query selects one. A box records that it started before it decides anything, so the first record in the file is a control-plane record.
+A records file can hold several scopes, so a query selects one. A box records that it started before it decides anything, so the first record in the file is a control-plane record.
 
 Every denial, one per line:
 
@@ -224,4 +232,4 @@ A target that fails while the box runs loses the record. Box reports no such los
 ## See also
 
 -   [Getting started](../../quickstart/index.md): install Box, then run Claude Code or Codex in a box.
--   [How telemetry works](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/docs/design/telemetry.md): which process records, what a workload cannot forge, and where a record can be lost.
+-   [How telemetry works](https://github.com/strands-agents/box/blob/a2cf46ed6a9ea0a8144101bfdef3f2406390952b/docs/design/telemetry.md): which process records, what a workload cannot forge, and where a record can be lost.

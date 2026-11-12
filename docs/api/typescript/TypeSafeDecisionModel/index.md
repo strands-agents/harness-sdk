@@ -55,7 +55,7 @@ ask<Q>(
 ): Promise<DecisionResult<Q>>;
 ```
 
-Defined in: [src/decisions/decision-model.ts:35](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/decision-model.ts#L35)
+Defined in: [src/decisions/decision-model.ts:36](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/decision-model.ts#L36)
 
 Ask one or more closed questions over the given state.
 
@@ -103,7 +103,7 @@ protected _ask<Q>(
 ): Promise<DecisionResult<Q>>;
 ```
 
-Defined in: [src/decisions/typesafe-decision-model.ts:57](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/typesafe-decision-model.ts#L57)
+Defined in: [src/decisions/typesafe-decision-model.ts:56](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/typesafe-decision-model.ts#L56)
 
 Implementation-specific decision logic. Must return a complete [DecisionResult](/docs/api/typescript/DecisionResult/index.md), including `metadata.latencyMs` sourced from the underlying model provider. Implementations should forward `options.cancelSignal` to any cancellable work they start. The request’s `invocationContext` is not passed: `ask` records the reported usage itself.
 

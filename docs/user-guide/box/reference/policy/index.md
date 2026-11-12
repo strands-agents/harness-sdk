@@ -435,9 +435,20 @@ when temporal {
 policy fails schema validation: temporal window `48h` exceeds the maximum allowed window `24h` set by the event schema's `max_window`; shorten this window to at most `24h`, or raise `max_window` in the event schema at line 3, column 3 (every temporal `within` window is capped by the event schema's `max_window` (default 24h); either shorten this window or raise the cap with a `max_window = <interval>` directive at the top of the event schema)
 ```
 
+An MCP call always records `::response`, even when the server replies with an error, so it never records `::error`. A predicate on `mcp:call::error`, or on a tool action’s `::error`, can’t match:
+
+```text
+forbid (principal, action == Box::Action::"shell:exec", resource)
+when temporal { formerly within 1h ( Box::Action::"mcp:call"::error{ input.server: "github" } ) };
+```
+
+```text
+policy uses an unsupported clause: the forbid rule with no @id (rule 1): a temporal predicate names Box::Action::"mcp:call"::error; Box records every MCP outcome as `::response`, so the predicate cannot match; name `::response` instead
+```
+
 ### A literal that nothing can match
 
-A path under the operator’s home is reported `~/…`, and a directory is reported without a trailing slash. The refusal names the spelling to write:
+A path under the operator’s home is reported `~/…`, and the home itself is reported `~`. A directory is reported without a trailing slash. The check also covers `context.input.cwd` on `shell:exec` and `shell:spawn`. A directory outside the operator’s home keeps its absolute path. The refusal names the spelling to write:
 
 ```text
 @id("project_read")
@@ -482,7 +493,10 @@ A pinned address reaches policy as two fields, one per address family. `ip4` hol
 @id("metadata_addresses")
 forbid (principal, action == Box::Action::"net:connect", resource)
 when {
-  (context.input has ip4 && context.input.ip4 like "169.254.*") ||
+  (context.input has ip4 && (
+    context.input.ip4 like "169.254.*" ||
+    context.input.ip4 == "168.63.129.16" ||
+    context.input.ip4 == "100.100.100.200")) ||
   (context.input has ip6 && (
     context.input.ip6 == "fd00:ec2::254" ||
     context.input.ip6 like "fe8*" || context.input.ip6 like "fe9*" ||
@@ -537,7 +551,11 @@ Each piece of the pattern between the wildcards is still held to the characters 
 
 What this does not catch is a wildcard pattern whose pieces are all plausible but whose prefix no address takes, such as `ip6 like "::ffff:a9fe:*"`. A mapped address is written with a dotted quad, so that pattern misses the mapped addresses it looks aimed at — but `::ffff:a9fe:a9fe:0` is a real address it does match, so the load cannot prove it inert. Check an `ip6` pattern against the table above.
 
-A `when temporal` clause is not judged either. History keeps the spelling each event was recorded with, so a temporal clause can still need an older one.
+A `when temporal` clause is not judged either. History keeps the spelling each event was recorded with, so a temporal clause can still need an older one. Earlier shell events can carry an absolute `cwd` below the operator’s home. A predicate on `~/project` does not match those events, and Box does not translate their stored values.
+
+An absolute `cwd` predicate below the operator home can match older events but misses new `shell:exec` and `shell:spawn` events. A `forbid` that depends on those matches can stop denying commands. The loader accepts these temporal predicates without a warning.
+
+Editing a history rule starts it with empty state, including edits that match both spellings. Plan how to preserve active budgets before upgrading a box with these predicates.
 
 **A box can hold address events that this vocabulary cannot read.** An event recorded by an earlier build carries one address field, and a predicate on `ip4` or `ip6` does not match it. There is no rewind, so a counting rule that spans such a build starts its count again.
 
@@ -676,9 +694,17 @@ strands-box: error: policy staging failed: the box record is committed, but the 
 
 The text varies: the record `is committed` or `is not committed`, and the history `is absent`, `is empty`, or `holds <n> bytes`. The run also refuses when the engine cannot read the history file, with `policy staging failed:` and the engine’s own reason, and the file is left as found. Remove the box directory to start again, as [getting started](../../quickstart/index.md#clean-up) describes.
 
+The run also refuses history stamped more than five minutes ahead of the system clock. This happens when the clock moved back after the box last ran, or when someone edited the history file:
+
+```text
+strands-box: error: policy staging failed: policy staging history failure: durable timestamp <t> is <n> ns ahead of the current clock <now>, exceeding the maximum allowed future skew of 300000000000 ns; refusing the operation rather than issuing future-dated timestamps
+```
+
+If the clock moves back more than five minutes during a run, the box denies each request and prints `policy: warn: durable timestamp ...; denying` on stderr. Requests are decided again once the clock is within five minutes of the newest history timestamp. If an action finished while the clock was that far back, the box keeps its record and prints `policy: warn: an earlier outcome is not recorded yet: ...; denying` for each request until the record is saved. Once the clock is within five minutes again, the box saves it at the next request, or when the run shuts down, and then requests are decided normally. If the run ends while the clock is still more than five minutes behind, or the process is killed, that action doesn’t count toward any limit after a restart. A time-zone change does not move this clock. Correct the system clock, or remove the box directory to start again, as [getting started](../../quickstart/index.md#clean-up) describes.
+
 ## See also
 
 -   [Write a policy and read what it decided](../../guides/write-a-policy/index.md): a first policy, a denial, and the decision log.
 -   [The action vocabulary](../policy-actions/index.md): every action, its fields, and which part of the box raises it.
 -   [Security](../../security/index.md): what `box.toml` governs, what `policy.dw` governs, and what a policy cannot do today.
--   [Policy in the design guide](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/docs/design/policy.md): how one engine per box decides, and why.
+-   [Policy in the design guide](https://github.com/strands-agents/box/blob/a2cf46ed6a9ea0a8144101bfdef3f2406390952b/docs/design/policy.md): how one engine per box decides, and why.

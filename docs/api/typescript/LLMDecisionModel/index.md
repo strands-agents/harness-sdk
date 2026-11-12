@@ -71,7 +71,7 @@ ask<Q>(
 ): Promise<DecisionResult<Q>>;
 ```
 
-Defined in: [src/decisions/decision-model.ts:35](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/decision-model.ts#L35)
+Defined in: [src/decisions/decision-model.ts:36](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/decision-model.ts#L36)
 
 Ask one or more closed questions over the given state.
 

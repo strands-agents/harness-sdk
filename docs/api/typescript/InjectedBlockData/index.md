@@ -1,4 +1,4 @@
-Defined in: [src/types/messages.ts:1076](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L1076)
+Defined in: [src/types/messages.ts:1232](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L1232)
 
 Data for an injected block.
 
@@ -10,7 +10,7 @@ Data for an injected block.
 text: string;
 ```
 
-Defined in: [src/types/messages.ts:1080](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L1080)
+Defined in: [src/types/messages.ts:1236](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L1236)
 
 Text the app adds to the user turn.
 
@@ -22,6 +22,6 @@ Text the app adds to the user turn.
 source: string;
 ```
 
-Defined in: [src/types/messages.ts:1085](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L1085)
+Defined in: [src/types/messages.ts:1241](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L1241)
 
 Name of the component that added the text, such as a `ContextInjector`’s name.

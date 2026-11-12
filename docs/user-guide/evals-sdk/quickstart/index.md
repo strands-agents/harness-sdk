@@ -134,3 +134,4 @@ You have a running evaluation. From here, a natural path forward:
 - [Use Strands with AI coding agents](/docs/user-guide/build-with-ai/index.md) (1 shared tag)
 - [Red teaming quickstart](/docs/user-guide/evals-sdk/red-teaming/quickstart/index.md) (1 shared tag)
 - [Build a Voice Agent](/docs/user-guide/sdk/bidi/quickstart/index.md) (1 shared tag)
+- [Decision models quickstart](/docs/user-guide/sdk/decision-models/quickstart/index.md) (1 shared tag)

@@ -8,7 +8,7 @@ Strategies are applied in order during `apply()`. Each decides whether to act ba
 
 ## Extended by
 
--   [`OffloadStrategyBuilder`](/docs/api/typescript/OffloadStrategyBuilder/index.md)
+-   [`OffloadStrategy`](/docs/api/typescript/OffloadStrategy/index.md)
 
 ## Properties
 

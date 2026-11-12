@@ -72,11 +72,13 @@ agent = Agent(interventions=[HumanInTheLoop()])
 # read_file runs freely, everything else pauses for approval
 agent = Agent(interventions=[HumanInTheLoop(allowed_tools=["read_file"])])
 
-# LLM-driven risk classification — only risky calls get escalated
-agent = Agent(interventions=[HumanInTheLoop(
-    allowed_tools=["read_file", "list_dir"],
-    classifier=True,
-)])
+# Auto mode - the SDK's current best approval strategy decides which calls need a human
+# (today: LLM risk classification). May change between releases; configure the handler
+# explicitly (e.g. `classifier=`) for fixed behavior.
+agent = Agent(interventions=[HumanInTheLoop("auto")])
+
+# Auto mode, prompting in the terminal and letting read_file skip the decision entirely
+agent = Agent(interventions=[HumanInTheLoop("auto", ask="stdio", allowed_tools=["read_file"])])
 
 # Risk classification via a DecisionModel, on the model you pass it
 agent = Agent(model=model, interventions=[HumanInTheLoop(classifier=LLMDecisionModel(model=model))])
@@ -94,7 +96,8 @@ agent = Agent(interventions=[HumanInTheLoop(ask=slack_ask)])
 #### \_\_init\_\_
 
 ```python
-def __init__(*,
+def __init__(mode: Literal["auto"] | None = None,
+             *,
              allowed_tools: list[str] | None = None,
              classifier: bool | LLMClassifierConfig | DecisionModel
              | HumanInTheLoopClassifier | None = None,
@@ -104,12 +107,13 @@ def __init__(*,
              ask: AskCallback | Literal["stdio"] | None = None) -> None
 ```
 
-Defined in: [src/strands/vended\_interventions/hitl/hitl.py:134](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_interventions/hitl/hitl.py#L134)
+Defined in: [src/strands/vended\_interventions/hitl/hitl.py:136](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_interventions/hitl/hitl.py#L136)
 
 Initialize the handler.
 
 **Arguments**:
 
+-   `mode` - `"auto"` lets the SDK decide which tool calls need a human, using the approval strategy it currently considers the best available. Today that is the built-in LLM risk classifier (the same as `classifier=True`): low-risk calls run on their own and risky ones are escalated to the human. What `"auto"` resolves to may change between releases as better approaches become available. Alongside `"auto"` you may pass only `ask` (how the human is reached) and `allowed_tools` (calls that skip the decision entirely); options that decide the strategy (`classifier`, trust, `evaluate`) are rejected. To pin the strategy, omit `mode` and configure the handler explicitly. Omitted: every tool not in `allowed_tools` requires approval.
 -   `allowed_tools` - Tools that can execute WITHOUT human approval. All other tools require approval. Use `"*"` to allow all tools. Prefix with `!` to exclude specific tools from `"*"` (they still require approval). For example, `["read_file", "list_dir"]` lets only those two run freely, while `["*", "!delete_file"]` lets everything run freely except `delete_file`.
 -   `classifier` - Determines how approval decisions are made for tools not in `allowed_tools`. Omitted/None: all non-allowed tools require approval.
 -   `True` - uses the built-in LLM risk classifier with defaults.
@@ -125,6 +129,7 @@ Initialize the handler.
 **Raises**:
 
 -   `ValueError` - If `allowed_tools` is a single string rather than a list.
+-   `ValueError` - If `mode` is unknown, or `"auto"` is combined with a strategy option (`classifier`, `enable_trust`, `evaluate_trust`, or `evaluate`).
 -   `TypeError` - If `classifier` is not a bool, `LLMClassifierConfig`, `DecisionModel`, or callable.
 
 **Notes**:
@@ -138,7 +143,7 @@ async def before_tool_call(event: BeforeToolCallEvent,
                            **kwargs: Any) -> InterventionAction
 ```
 
-Defined in: [src/strands/vended\_interventions/hitl/hitl.py:214](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_interventions/hitl/hitl.py#L214)
+Defined in: [src/strands/vended\_interventions/hitl/hitl.py:235](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_interventions/hitl/hitl.py#L235)
 
 Request human approval before executing a tool that is not allow-listed or trusted.
 

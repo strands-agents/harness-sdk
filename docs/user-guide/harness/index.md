@@ -51,7 +51,7 @@ Without any customization, Strands harness hands you back a fully functional age
 -   Has a [shell and file tools](/docs/user-guide/harness/tools/shell-and-files/index.md) (`read`, `write`, `edit`) and [web access](/docs/user-guide/harness/tools/web-access/index.md).
 -   [Manages its own context window](/docs/user-guide/harness/configure/context-and-caching/index.md) (the limited span of text the model reads at once), setting bulky tool results aside as a task grows, and caches the reused parts of each request to save time and cost.
 -   Keeps [long-term memory](/docs/user-guide/harness/configure/memory/index.md) across runs, and can pick up an earlier [conversation](/docs/user-guide/harness/configure/sessions/index.md) when you give it a session id.
--   Hands open-ended subtasks to a [built-in helper agent](/docs/user-guide/harness/configure/subagents/index.md) and tracks multi-step work with a [checklist](/docs/user-guide/harness/tools/todos-and-environment/index.md).
+-   Hands open-ended subtasks to a [built-in helper agent](/docs/user-guide/harness/configure/subagents/index.md), and can track multi-step work with an opt-in [checklist](/docs/user-guide/harness/tools/todos-and-environment/index.md).
 -   Loads [Agent Skills](/docs/user-guide/harness/configure/skills/index.md) when present, and lets the model [orchestrate its own tools in code](/docs/user-guide/harness/tools/programmatic-tool-calling/index.md).
 
 ## Explore Strands harness

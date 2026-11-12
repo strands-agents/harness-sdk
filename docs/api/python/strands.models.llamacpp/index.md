@@ -12,7 +12,7 @@ Provides integration with llama.cpp servers running in OpenAI-compatible mode, w
 class LlamaCppModel(Model)
 ```
 
-Defined in: [src/strands/models/llamacpp.py:85](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/llamacpp.py#L85)
+Defined in: [src/strands/models/llamacpp.py:86](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/llamacpp.py#L86)
 
 llama.cpp model provider implementation.
 
@@ -50,7 +50,7 @@ Multimodal usage (requires multimodal model like Qwen2.5-Omni):
 class LlamaCppConfig(BaseModelConfig)
 ```
 
-Defined in: [src/strands/models/llamacpp.py:133](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/llamacpp.py#L133)
+Defined in: [src/strands/models/llamacpp.py:134](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/llamacpp.py#L134)
 
 Configuration options for llama.cpp models.
 
@@ -107,7 +107,7 @@ def __init__(base_url: str = "http://localhost:8080",
              **model_config: Unpack[LlamaCppConfig]) -> None
 ```
 
-Defined in: [src/strands/models/llamacpp.py:187](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/llamacpp.py#L187)
+Defined in: [src/strands/models/llamacpp.py:188](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/llamacpp.py#L188)
 
 Initialize llama.cpp provider instance.
 
@@ -124,7 +124,7 @@ Initialize llama.cpp provider instance.
 def update_config(**model_config: Unpack[LlamaCppConfig]) -> None
 ```
 
-Defined in: [src/strands/models/llamacpp.py:230](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/llamacpp.py#L230)
+Defined in: [src/strands/models/llamacpp.py:231](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/llamacpp.py#L231)
 
 Update the llama.cpp model configuration with provided arguments.
 
@@ -140,7 +140,7 @@ Update the llama.cpp model configuration with provided arguments.
 def model_info() -> ModelInfo
 ```
 
-Defined in: [src/strands/models/llamacpp.py:241](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/llamacpp.py#L241)
+Defined in: [src/strands/models/llamacpp.py:242](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/llamacpp.py#L242)
 
 Reports server-side summary as off, which a `model_info` override still wins over.
 
@@ -153,7 +153,7 @@ The llama.cpp server has no server-side summary, including for Claude models ser
 def get_config() -> LlamaCppConfig
 ```
 
-Defined in: [src/strands/models/llamacpp.py:249](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/llamacpp.py#L249)
+Defined in: [src/strands/models/llamacpp.py:250](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/llamacpp.py#L250)
 
 Get the llama.cpp model configuration.
 
@@ -172,7 +172,7 @@ async def count_tokens(
         system_prompt_content: list[SystemContentBlock] | None = None) -> int
 ```
 
-Defined in: [src/strands/models/llamacpp.py:571](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/llamacpp.py#L571)
+Defined in: [src/strands/models/llamacpp.py:572](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/llamacpp.py#L572)
 
 Count tokens using llama.cpp’s native /tokenize endpoint.
 
@@ -201,7 +201,7 @@ async def stream(messages: Messages,
                  **kwargs: Any) -> AsyncGenerator[StreamEvent, None]
 ```
 
-Defined in: [src/strands/models/llamacpp.py:628](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/llamacpp.py#L628)
+Defined in: [src/strands/models/llamacpp.py:629](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/llamacpp.py#L629)
 
 Stream conversation with the llama.cpp model.
 
@@ -233,7 +233,7 @@ async def structured_output(
         **kwargs: Any) -> AsyncGenerator[dict[str, T | Any], None]
 ```
 
-Defined in: [src/strands/models/llamacpp.py:831](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/llamacpp.py#L831)
+Defined in: [src/strands/models/llamacpp.py:832](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/llamacpp.py#L832)
 
 Get structured output using llama.cpp’s native JSON schema support.
 

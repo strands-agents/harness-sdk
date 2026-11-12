@@ -98,7 +98,7 @@ A user-role message containing the model-generated summary.
 def as_user_summary(message: Message) -> Message
 ```
 
-Defined in: [src/strands/agent/conversation\_manager/compression/context\_compression.py:197](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/conversation_manager/compression/context_compression.py#L197)
+Defined in: [src/strands/agent/conversation\_manager/compression/context\_compression.py:193](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/conversation_manager/compression/context_compression.py#L193)
 
 Re-role a model reply as the user-role summary message kept in history.
 
@@ -122,7 +122,7 @@ A user-role message holding the reply’s text blocks.
 def matches_message_type(message: Message, filter: MessageType) -> bool
 ```
 
-Defined in: [src/strands/agent/conversation\_manager/compression/context\_compression.py:226](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/conversation_manager/compression/context_compression.py#L226)
+Defined in: [src/strands/agent/conversation\_manager/compression/context\_compression.py:222](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/conversation_manager/compression/context_compression.py#L222)
 
 Return True if the message matches the given type filter.
 

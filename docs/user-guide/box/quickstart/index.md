@@ -1,6 +1,6 @@
 Box runs an agent on Linux or macOS under a policy. The agent can reach only the files, programs, and network destinations you allow. You describe a box in two files: `box.toml` says what to run and what it can reach, and `policy.dw` decides each request it makes.
 
-In this guide you’ll put the [Strands CLI](https://github.com/strands-agents/harness-sdk/tree/main/strands-cli) in a box on macOS. You’ll give it one tool, a shell, so your policy decides every command it runs and every file its shell reads or writes, and you’ll watch the box refuse a write, then change the policy to allow it. The finished files are in [`examples/strands-cli`](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/examples/strands-cli/).
+In this guide you’ll put the [Strands CLI](https://github.com/strands-agents/harness-sdk/tree/main/strands-cli) in a box on macOS. You’ll give it one tool, a shell, so your policy decides every command it runs and every file its shell reads or writes, and you’ll watch the box refuse a write, then change the policy to allow it. The finished files are in [`examples/strands-cli`](https://github.com/strands-agents/box/blob/a2cf46ed6a9ea0a8144101bfdef3f2406390952b/examples/strands-cli/).
 
 ## Set up with your coding agent
 
@@ -11,7 +11,7 @@ Show the prompt
 ```text
 Help me put the Strands CLI in a Strands Box on this Mac. Fetch this guide and follow it step by
 step, and prefer it over what you remember about Box:
-https://raw.githubusercontent.com/strands-agents/box/f4180a035d2d164596135864604629529636bf1c/docs/user/getting-started.md
+https://raw.githubusercontent.com/strands-agents/box/a2cf46ed6a9ea0a8144101bfdef3f2406390952b/docs/user/getting-started.md
 
 Rules:
 - First, check the guide's "Before you start" list. Tell me what's missing, and stop if something
@@ -26,7 +26,7 @@ Rules:
   its decision log command to find the cause.
 - When the box works, offer to help me change what it allows in my-box/policy.dw. The
   policy-authoring skill at
-  https://raw.githubusercontent.com/strands-agents/box/f4180a035d2d164596135864604629529636bf1c/.agents/skills/authoring-box-policy/SKILL.md
+  https://raw.githubusercontent.com/strands-agents/box/a2cf46ed6a9ea0a8144101bfdef3f2406390952b/.agents/skills/authoring-box-policy/SKILL.md
   teaches the Dogwood policy language and the box's action vocabulary; fetch it and follow it.
 ```
 
@@ -66,7 +66,7 @@ The signed macOS package contains `Box.app`, with a `box` launcher and helper li
 
 After installation, continue with the [Amazon EKS coding example](../guides/deploy-to-eks/index.md) or the [AgentCore Runtime shipment example](../guides/deploy-to-agentcore-runtime/index.md). Steps 2–8 below follow the macOS Strands CLI example.
 
-Check [Linux setup requirements](../reference/cloud-deployments/index.md#shared-requirements) for the permissions Box needs at startup. Use the [platform comparison](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/docs/design/platform-differences.md) when adapting a macOS configuration.
+Check [Linux setup requirements](../reference/cloud-deployments/index.md#shared-requirements) for the permissions Box needs at startup. Use the [platform comparison](https://github.com/strands-agents/box/blob/a2cf46ed6a9ea0a8144101bfdef3f2406390952b/docs/design/platform-differences.md) when adapting a macOS configuration.
 
 Build from source (optional)
 
@@ -79,6 +79,14 @@ mkdir box-core
 cp box-src/target/release/strands-box box-core/box
 cp box-src/target/release/strands-box-sock-alias box-src/target/release/strands-box-contain-trampoline box-core/
 ```
+
+Linux x86-64 builds are experimental. Release downloads still target Linux ARM64. To run an x86-64 build, set the Box startup opt-in in the same terminal:
+
+```sh
+export EXPERIMENTAL_X86_SUPPORT=TRUE
+```
+
+Box requires the exact value `TRUE` for `run` and `policy generate-schema`, including their Rust library entry points. Help and version output do not require the flag. ARM64 does not require the flag. It does not change the sandbox permissions.
 
 ## Step 2. Install the Strands CLI
 
@@ -163,7 +171,7 @@ Save this file as `my-box/box.toml`:
 
 ```toml
 # To author or change the policy next to this file, point your coding agent at the skill:
-#   https://raw.githubusercontent.com/strands-agents/box/f4180a035d2d164596135864604629529636bf1c/.agents/skills/authoring-box-policy/SKILL.md
+#   https://raw.githubusercontent.com/strands-agents/box/a2cf46ed6a9ea0a8144101bfdef3f2406390952b/.agents/skills/authoring-box-policy/SKILL.md
 
 # The box's name, and where it keeps its own state. The agent can't reach box_dir.
 name = "strands"
@@ -372,4 +380,4 @@ rm -rf ~/box-tutorial
 -   [Collect the Strands CLI’s traces and metrics](../guides/strands-cli-telemetry/index.md): put the agent’s own spans and metrics in the same records file as the box’s decisions.
 -   [The `[mcp.<name>]` table](../guides/add-an-mcp-server/index.md): add an MCP server to the box you wrote.
 -   [Policy](../reference/policy/index.md): what a policy is, the actions, the common rules, and what to do when a policy fails to load.
--   [The design guide](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/docs/design/): how Box works, why it’s safe, and the decisions behind it.
+-   [The design guide](https://github.com/strands-agents/box/blob/a2cf46ed6a9ea0a8144101bfdef3f2406390952b/docs/design/): how Box works, why it’s safe, and the decisions behind it.

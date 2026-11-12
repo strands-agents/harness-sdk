@@ -238,6 +238,7 @@ for await (const event of agent.stream('Hello')) {
 - [Async Iterators for Streaming](/docs/user-guide/sdk/streaming/async-iterators/index.md) (1 shared tag)
 - [Callback Handlers](/docs/user-guide/sdk/streaming/callback-handlers/index.md) (1 shared tag)
 - [Stream responses](/docs/user-guide/sdk/streaming/index.md) (1 shared tag)
+- [Stream to the browser with SSE](/docs/user-guide/sdk/streaming/streaming-to-the-browser-guide/index.md) (1 shared tag)
 
 
 ## Implementation

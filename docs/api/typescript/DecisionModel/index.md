@@ -1,8 +1,8 @@
-Defined in: [src/decisions/decision-model.ts:20](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/decision-model.ts#L20)
+Defined in: [src/decisions/decision-model.ts:21](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/decision-model.ts#L21)
 
 Abstract base for anything that can answer closed questions.
 
-The public `ask` opens a `decision` span, validates the question map, delegates to the subclass `_ask`, records usage and the answer set as span attributes/events, and closes the span. Every implementation is traced identically. Given an `invocationContext`, `ask` also adds the reported usage to that request once `_ask` returns.
+The public `ask` opens a `decision` span, validates the question map, delegates to the subclass `_ask`, records usage, the question ids, and the answer set as span attributes, and closes the span. Content goes on span attributes rather than span events because OpenTelemetry has deprecated the span-event recording API. Every implementation is traced identically. Given an `invocationContext`, `ask` also adds the reported usage to that request once `_ask` returns.
 
 ## Extended by
 
@@ -34,7 +34,7 @@ ask<Q>(
 ): Promise<DecisionResult<Q>>;
 ```
 
-Defined in: [src/decisions/decision-model.ts:35](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/decision-model.ts#L35)
+Defined in: [src/decisions/decision-model.ts:36](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/decision-model.ts#L36)
 
 Ask one or more closed questions over the given state.
 
@@ -78,7 +78,7 @@ abstract protected _ask<Q>(
 ): Promise<DecisionResult<Q>>;
 ```
 
-Defined in: [src/decisions/decision-model.ts:87](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/decision-model.ts#L87)
+Defined in: [src/decisions/decision-model.ts:89](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/decision-model.ts#L89)
 
 Implementation-specific decision logic. Must return a complete [DecisionResult](/docs/api/typescript/DecisionResult/index.md), including `metadata.latencyMs` sourced from the underlying model provider. Implementations should forward `options.cancelSignal` to any cancellable work they start. The request’s `invocationContext` is not passed: `ask` records the reported usage itself.
 

@@ -1,4 +1,4 @@
-Defined in: [src/models/bedrock.ts:191](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L191)
+Defined in: [src/models/bedrock.ts:192](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L192)
 
 Redaction configuration for Bedrock guardrails. Controls whether and how blocked content is replaced.
 
@@ -10,7 +10,7 @@ Redaction configuration for Bedrock guardrails. Controls whether and how blocked
 input?: boolean;
 ```
 
-Defined in: [src/models/bedrock.ts:193](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L193)
+Defined in: [src/models/bedrock.ts:194](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L194)
 
 Redact input when blocked.
 
@@ -28,7 +28,7 @@ true
 inputMessage?: string;
 ```
 
-Defined in: [src/models/bedrock.ts:196](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L196)
+Defined in: [src/models/bedrock.ts:197](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L197)
 
 Replacement message for redacted input.
 
@@ -46,7 +46,7 @@ Replacement message for redacted input.
 output?: boolean;
 ```
 
-Defined in: [src/models/bedrock.ts:199](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L199)
+Defined in: [src/models/bedrock.ts:200](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L200)
 
 Redact output when blocked.
 
@@ -64,7 +64,7 @@ false
 outputMessage?: string;
 ```
 
-Defined in: [src/models/bedrock.ts:202](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L202)
+Defined in: [src/models/bedrock.ts:203](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L203)
 
 Replacement message for redacted output.
 

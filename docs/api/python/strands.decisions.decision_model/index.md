@@ -6,11 +6,11 @@ Base interface for making structured “decisions” from inside the SDK.
 class DecisionModel(abc.ABC)
 ```
 
-Defined in: [src/strands/decisions/decision\_model.py:15](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/decisions/decision_model.py#L15)
+Defined in: [src/strands/decisions/decision\_model.py:16](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/decisions/decision_model.py#L16)
 
 Abstract base for anything that can answer closed questions.
 
-The public `ask` opens a `decision` span, validates the question map, delegates to the subclass `_ask`, records usage and the answer set as span attributes/events, and closes the span. Every implementation is traced identically. Given an `invocation_context`, `ask` also adds the reported usage to that request once `_ask` returns.
+The public `ask` opens a `decision` span, validates the question map, delegates to the subclass `_ask`, records usage, the question ids, and the answer set as span attributes, and closes the span. Content goes on span attributes rather than span events because OpenTelemetry has deprecated the span-event recording API. Every implementation is traced identically. Given an `invocation_context`, `ask` also adds the reported usage to that request once `_ask` returns.
 
 #### ask
 
@@ -22,7 +22,7 @@ async def ask(state: DecisionInput,
               **kwargs: Any) -> DecisionResult
 ```
 
-Defined in: [src/strands/decisions/decision\_model.py:24](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/decisions/decision_model.py#L24)
+Defined in: [src/strands/decisions/decision\_model.py:27](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/decisions/decision_model.py#L27)
 
 Ask one or more closed questions over the given state.
 

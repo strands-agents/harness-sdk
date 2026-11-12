@@ -115,7 +115,7 @@ A command line is judged once, after the shell parses it, expands it, and resolv
 | `arg1?` | String | The first argument after the program. |
 | `arg2?` | String | The second argument. |
 | `arg_count` | Long | How many arguments follow the program. |
-| `cwd` | String | The working directory. |
+| `cwd` | String | The Shell’s working directory: `~` for the operator’s home, `~/…` below it, and an absolute path elsewhere. |
 
 **`shell:spawn`**, for a program of the surrounding OS, carries the six `shell:exec` fields and two more:
 
@@ -123,6 +123,12 @@ A command line is judged once, after the shell parses it, expands it, and resolv
 | --- | --- | --- |
 | `program_path` | String | The resolved binary, spelled `~/…` under the operator’s home and absolute elsewhere. |
 | `credential_reads?` | Set of String | The credential stores that `box.toml` names for this program under its `[tool.<name>]` table, such as `~/.aws`. |
+
+On `shell:spawn`, `cwd` names the program’s launch directory. For programs launched through Strands Shell, the selected `[tool.<name>]` or `[agent]` table’s `workspace` takes precedence. Otherwise, Box checks the caller’s resolved directory against the agent’s workspace and the selected table’s `read`, `write`, `list`, and `metadata` trees. It uses the caller’s directory when one of those trees covers it, or the agent’s workspace otherwise.
+
+The decision, request, and outcome use the same `cwd` spelling. The program starts in the corresponding absolute directory. If Box cannot select or resolve a directory for a Strands Shell launch, `cwd` names the Shell’s original directory. A program launched through Strands Shell starts only when its resolved directory matches the directory policy checked.
+
+A program bound to a tool grammar raises its `Tool::<name>::Action`. For programs launched through Strands Shell, its `cwd` names the same selected launch directory and stays absolute in decisions and history, including paths below the operator home. Use that absolute path in directory predicates for those grammar actions.
 
 When a tool grammar binds the program, the grammar action decides the spawn, and the spawn enters history as that action and not as `shell:spawn`. A spawn that the grammar binding refuses before any rule decides it enters history as a `shell:spawn` request. [`shell:spawn`](../shell/index.md#shellspawn) states when Box refuses one.
 
@@ -140,7 +146,7 @@ A rule that covers both actions names both, as `action in [Box::Action::"shell:e
 | `prompt?` | String | The prompt, on `prompts/get`. |
 | `uri?` | String | The resource URI, on `resources/read`. |
 
-Each stdio server in `box.toml` starts through a `shell:spawn` decision on the program its `[mcp.<name>]` table names, or through the grammar action when a tool grammar binds that program. A policy with no matching permit refuses the server at startup. For an enabled [MCP wildcard command](../../guides/add-an-mcp-server/index.md#argument-wildcards), `command` contains the effective launch command, joined by spaces. Its argument fields contain the same values, including the caller’s values in wildcard positions. A permit on `mcp:call` for a server covers every method and tool on it. Refuse one tool by name with a `tool` guard, or with the per-tool `forbid` that [MCP policy](../../guides/write-mcp-policy/index.md#step-4-narrow-the-server) shows:
+Each stdio server in `box.toml` starts through a `shell:spawn` decision on the program its `[mcp.<name>]` table names, or through the grammar action when a tool grammar binds that program. A policy with no matching permit refuses the server at startup. The `program` field is the executable’s filename, and `program_path` identifies its resolved file. The `command` field starts with that filename. For an enabled [MCP wildcard command](../../guides/add-an-mcp-server/index.md#argument-wildcards), `command` contains the alias name and effective launch arguments, joined by spaces. Its argument fields contain the same values, including the caller’s values in wildcard positions. A permit on `mcp:call` for a server covers every method and tool on it. Refuse one tool by name with a `tool` guard, or with the per-tool `forbid` that [MCP policy](../../guides/write-mcp-policy/index.md#step-4-narrow-the-server) shows:
 
 ```text
 forbid (principal, action == Box::Action::"mcp:call", resource)
@@ -178,7 +184,7 @@ Every action of a grammar carries these fields, and `unmodeled` carries only the
 | --- | --- | --- |
 | `program` | String | The first word after expansion, as on `shell:spawn`. |
 | `program_path` | String | The resolved program file, spelled `~/…` under the operator’s home and absolute elsewhere. |
-| `cwd` | String | The Shell’s working directory, as an absolute path. |
+| `cwd` | String | The program’s selected launch directory, as an absolute path. See [directory selection](#shell). |
 | `args` | Set of String | Every word after the program. |
 | `effects` | Set of `Tool::<name>::Effect` | The effects of this command. A grammar that declares no effect has no `effects` field. |
 | `credential_reads?` | Set of String | The credential stores that the program’s `[tool.<name>]` lists name, as on `shell:spawn`. |
@@ -205,6 +211,10 @@ A `when temporal { … }` clause reads recorded events. The box records three ev
 
 `requestId` is a nonempty string that identifies one policy request within this box’s history. Its recorded response or error carries the same identifier. Separate requests receive separate identifiers, even when their inputs are identical. Bind the same variable to `requestId` in two predicates to require events from the same request. Treat the identifier’s spelling as opaque. Older events that lack this field remain in history, but cannot match a predicate that requires it.
 
+For modern stdio MCP, a valid result that asks for more client input before cancellation is not a completed operation and does not record `mcp:call::response`. Each retry is a new request. Its terminal result or error records a response with that retry’s request ID.
+
+Cancelling an admitted modern stdio `tools/call`, `prompts/get`, or `resources/read` records one indeterminate response immediately. A late reply adds no second event, even if it asks for more input. When the connection ends, Box stops the server and records its remaining admitted item calls as indeterminate outcomes. Each outcome uses the original call’s request ID.
+
 To cap how many times the agent tries an action, count `A::request`, which also counts denied attempts. Use `A::response` when a later rule needs a recorded outcome. Partial or indeterminate outcomes also count; an MCP response does not establish tool success.
 
 What each caller records as a response:
@@ -216,7 +226,10 @@ What each caller records as a response:
 | `http:request` | When the upstream response completes, fails, or reaches its deadline, once per exchange | `status`: the upstream’s reply status, when received |
 | `shell:exec`, `shell:spawn` | When the command ends | `status`: the exit status. When a signal ends the command, `status` is `128` plus the signal number. |
 | A tool grammar action, `Tool::<name>::Action::"<action>"` | When a program the Shell started ends | `status`, as on `shell:spawn` |
-| `mcp:call` | For `tools/call`, `prompts/get`, and `resources/read`: when the call completes over stdio, or when the upstream response completes, fails, or reaches its deadline over HTTP | none |
+| `mcp:call` | For `tools/call`, `prompts/get`, and `resources/read`: when the call completes or ends indeterminately over stdio, or when the upstream response completes, fails, or reaches its deadline over HTTP | none |
+| A per-tool action, `<server>::Action::"<tool>"` | Beside each `mcp:call::response` for a `tools/call` that the per-tool action decided and allowed. Its `input` is the call’s arguments, as its `::request` recorded them | `reply`, a string: `result`, `tool_error`, or `protocol_error` for the server’s answer; `cancelled`; or `indeterminate` when the connection ended, when the reply only accepted an MCP task or asked for input (`resultType` other than `complete`), or when Box couldn’t read an http reply in full (over 16 MiB, compressed, or cut off). `structured`, when the tool declares an `outputSchema` and the reply is a `result`: the reply’s `structuredContent`, keeping only the fields the `outputSchema` declares, converted like `input`. An optional field that doesn’t match its declared type is left out. Box records no `structured` when a required field doesn’t match |
+
+An MCP outcome is always a response, so Box never records `mcp:call::error` or a per-tool `::error`. The load refuses a `when temporal` clause that names one, because it could never match. A `tools/call` to a tool that no per-tool action declares records only `mcp:call::response`.
 
 Each temporal operator carries a window of at most `24h`. A temporal predicate names exactly one action, so a budget that spans `fs:read` and `fs:write` is one clause per action.
 

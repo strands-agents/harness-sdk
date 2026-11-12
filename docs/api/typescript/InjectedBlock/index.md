@@ -1,4 +1,4 @@
-Defined in: [src/types/messages.ts:1109](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L1109)
+Defined in: [src/types/messages.ts:1265](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L1265)
 
 Text the app adds to a user turn, such as a reminder, kept apart from the user’s own words so readers of `agent.messages` can skip it. `ContextInjector` writes its text as injected blocks. It belongs in a user message, after the existing content; in any other message it is left out.
 
@@ -27,7 +27,7 @@ const message = new Message({
 new InjectedBlock(data): InjectedBlock;
 ```
 
-Defined in: [src/types/messages.ts:1120](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L1120)
+Defined in: [src/types/messages.ts:1276](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L1276)
 
 #### Parameters
 
@@ -47,7 +47,7 @@ Defined in: [src/types/messages.ts:1120](https://github.com/strands-agents/harne
 readonly type: "injectedBlock";
 ```
 
-Defined in: [src/types/messages.ts:1113](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L1113)
+Defined in: [src/types/messages.ts:1269](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L1269)
 
 Discriminator for injected content.
 
@@ -59,7 +59,7 @@ Discriminator for injected content.
 readonly injected: InjectedBlockData;
 ```
 
-Defined in: [src/types/messages.ts:1118](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L1118)
+Defined in: [src/types/messages.ts:1274](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L1274)
 
 The injected data: the text the app adds to the user turn and the component that added it.
 
@@ -73,7 +73,7 @@ toJSON(): {
 };
 ```
 
-Defined in: [src/types/messages.ts:1128](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L1128)
+Defined in: [src/types/messages.ts:1284](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L1284)
 
 Serializes the InjectedBlock to a JSON-compatible ContentBlockData object. Called automatically by JSON.stringify().
 
@@ -87,7 +87,7 @@ Serializes the InjectedBlock to a JSON-compatible ContentBlockData object. Calle
 
 | Name | Type | Defined in |
 | --- | --- | --- |
-| `injected` | [`InjectedBlockData`](/docs/api/typescript/InjectedBlockData/index.md) | [src/types/messages.ts:1128](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L1128) |
+| `injected` | [`InjectedBlockData`](/docs/api/typescript/InjectedBlockData/index.md) | [src/types/messages.ts:1284](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L1284) |
 
 #### Implementation of
 
@@ -101,7 +101,7 @@ Serializes the InjectedBlock to a JSON-compatible ContentBlockData object. Calle
 static fromJSON(data): InjectedBlock;
 ```
 
-Defined in: [src/types/messages.ts:1138](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L1138)
+Defined in: [src/types/messages.ts:1294](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L1294)
 
 Creates an InjectedBlock instance from its wrapped data format.
 

@@ -1,6 +1,6 @@
 A box runs the agent’s Python scripts in [Monty](https://github.com/pydantic/monty), an interpreter for a subset of Python. Policy decides each file operation a script makes, and the egress gateway decides each request a script sends with `fetch()`.
 
-Audience: an operator with a working box from [getting started](../../quickstart/index.md) whose agent runs Python. For how Box runs a script and why a script cannot act on its own, read [how Box runs Python scripts](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/docs/design/monty.md).
+Audience: an operator with a working box from [getting started](../../quickstart/index.md) whose agent runs Python. For how Box runs a script and why a script cannot act on its own, read [how Box runs Python scripts](https://github.com/strands-agents/box/blob/a2cf46ed6a9ea0a8144101bfdef3f2406390952b/docs/design/monty.md).
 
 ## Example
 
@@ -144,7 +144,7 @@ Example output:
 | Error | Cause |
 | --- | --- |
 | `TypeError` | No `url`, an argument of the wrong type, an unknown keyword, more than four positional arguments, or one argument given twice. Nothing is sent. |
-| `OSError: access denied: <host>` | The URL’s scheme is not `http` or `https`, or its host is `localhost` or a literal loopback, private, or link-local address. Nothing is sent. |
+| `OSError: access denied: <host>` | The URL’s scheme is not `http` or `https`, or its host is `localhost`, a literal loopback, private, link-local, `0.0.0.0/8`, or one of two cloud metadata addresses outside `169.254.0.0/16`, or an IPv4-mapped, IPv4-compatible, IPv4-translated, 6to4, Teredo, or `64:ff9b::/96` NAT64 address that carries one of these, or any `64:ff9b:1::/48` address. A NAT64 address under a network’s own prefix is not covered. Nothing is sent. |
 | `OSError` | The response body is larger than 1 MiB. |
 | Status `403`, with header `x-strands-box-egress: refused` | The gateway refused the request, and the body says why. The script receives it as a response, and must check `status`. A `403` without the header comes from the server. |
 
@@ -207,5 +207,5 @@ The decision log records each decision with the rule’s `@id` ([getting started
 
 ## See also
 
--   [How Box runs Python scripts](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/docs/design/monty.md): the routes, the steps for each file operation, and the residual risk.
+-   [How Box runs Python scripts](https://github.com/strands-agents/box/blob/a2cf46ed6a9ea0a8144101bfdef3f2406390952b/docs/design/monty.md): the routes, the steps for each file operation, and the residual risk.
 -   [The `[egress.<name>]` table](../../guides/network-and-credentials/index.md): the rules for a host, and a credential that the gateway adds to a request.

@@ -1,40 +1,3 @@
-Configuration types for bidirectional I/O.
-
-## AudioProcessorConfig
-
-```python
-class AudioProcessorConfig(TypedDict)
-```
-
-Defined in: [src/strands/bidi/io/configs.py:9](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/io/configs.py#L9)
-
-Configure microphone audio processing.
-
-**Attributes**:
-
--   `echo_cancellation` - Cancel the agent’s own speaker audio from the mic input.
--   `stream_delay_ms` - Playback-to-capture delay hint in milliseconds for AEC.
-
-## AudioIOConfig
-
-```python
-class AudioIOConfig(TypedDict)
-```
-
-Defined in: [src/strands/bidi/io/configs.py:21](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/io/configs.py#L21)
-
-Configure bidirectional audio input and output.
-
-## ConsoleIOConfig
-
-```python
-class ConsoleIOConfig(TypedDict)
-```
-
-Defined in: [src/strands/bidi/io/configs.py:34](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/io/configs.py#L34)
-
-Configure console input display and text, reasoning, transcript, and tool call output.
-
 Send and receive audio data from devices.
 
 Reads user audio from input device and sends agent audio to output device using PyAudio. If a user barges in, the output buffer is cleared to stop playback.
@@ -130,3 +93,40 @@ def output() -> _AudioOutputStream
 Defined in: [src/strands/bidi/io/audio.py:454](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/io/audio.py#L454)
 
 Return the speaker and console output stream.
+
+Configuration types for bidirectional I/O.
+
+## AudioProcessorConfig
+
+```python
+class AudioProcessorConfig(TypedDict)
+```
+
+Defined in: [src/strands/bidi/io/configs.py:9](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/io/configs.py#L9)
+
+Configure microphone audio processing.
+
+**Attributes**:
+
+-   `echo_cancellation` - Cancel the agent’s own speaker audio from the mic input.
+-   `stream_delay_ms` - Playback-to-capture delay hint in milliseconds for AEC.
+
+## AudioIOConfig
+
+```python
+class AudioIOConfig(TypedDict)
+```
+
+Defined in: [src/strands/bidi/io/configs.py:21](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/io/configs.py#L21)
+
+Configure bidirectional audio input and output.
+
+## ConsoleIOConfig
+
+```python
+class ConsoleIOConfig(TypedDict)
+```
+
+Defined in: [src/strands/bidi/io/configs.py:34](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/io/configs.py#L34)
+
+Configure console input display and text, reasoning, transcript, and tool call output.

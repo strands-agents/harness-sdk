@@ -56,7 +56,7 @@ Watching an agent tells you what it did; measuring quality tells you whether it 
 - [Task decorator](/docs/user-guide/evals-sdk/how-to/eval_task/index.md) (1 shared tag)
 - [Traces](/docs/user-guide/sdk/observability-evaluation/traces/index.md) (1 shared tag)
 - [Bidirectional Streaming Observability](/docs/user-guide/sdk/bidi/observability/index.md) (1 shared tag)
+- [Decision model observability](/docs/user-guide/sdk/decision-models/observability/index.md) (1 shared tag)
 - [Logging](/docs/user-guide/sdk/observability-evaluation/logs/index.md) (1 shared tag)
 - [Operating Agents in Production](/docs/user-guide/sdk/deploy/operating-agents-in-production/index.md) (1 shared tag)
 - [Root cause analysis](/docs/user-guide/evals-sdk/detectors/root_cause_analysis/index.md) (1 shared tag)
-- [Session diagnosis](/docs/user-guide/evals-sdk/detectors/diagnosis/index.md) (1 shared tag)

@@ -8,7 +8,7 @@ Ollama model provider.
 class OllamaModel(Model)
 ```
 
-Defined in: [src/strands/models/ollama.py:36](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/ollama.py#L36)
+Defined in: [src/strands/models/ollama.py:37](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/ollama.py#L37)
 
 Ollama model provider implementation.
 
@@ -24,7 +24,7 @@ The implementation handles Ollama-specific features such as:
 class OllamaConfig(BaseModelConfig)
 ```
 
-Defined in: [src/strands/models/ollama.py:53](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/ollama.py#L53)
+Defined in: [src/strands/models/ollama.py:54](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/ollama.py#L54)
 
 Configuration parameters for Ollama models.
 
@@ -49,7 +49,7 @@ def __init__(host: str | None,
              **model_config: Unpack[OllamaConfig]) -> None
 ```
 
-Defined in: [src/strands/models/ollama.py:78](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/ollama.py#L78)
+Defined in: [src/strands/models/ollama.py:79](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/ollama.py#L79)
 
 Initialize provider instance.
 
@@ -66,7 +66,7 @@ Initialize provider instance.
 def update_config(**model_config: Unpack[OllamaConfig]) -> None
 ```
 
-Defined in: [src/strands/models/ollama.py:100](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/ollama.py#L100)
+Defined in: [src/strands/models/ollama.py:101](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/ollama.py#L101)
 
 Update the Ollama Model configuration with the provided arguments.
 
@@ -82,7 +82,7 @@ Update the Ollama Model configuration with the provided arguments.
 def model_info() -> ModelInfo
 ```
 
-Defined in: [src/strands/models/ollama.py:111](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/ollama.py#L111)
+Defined in: [src/strands/models/ollama.py:112](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/ollama.py#L112)
 
 Reports server-side summary as off, which a `model_info` override still wins over.
 
@@ -95,7 +95,7 @@ Ollama has no server-side summary, including for Claude models served through it
 def get_config() -> OllamaConfig
 ```
 
-Defined in: [src/strands/models/ollama.py:119](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/ollama.py#L119)
+Defined in: [src/strands/models/ollama.py:120](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/ollama.py#L120)
 
 Get the Ollama model configuration.
 
@@ -111,7 +111,7 @@ def format_request(messages: Messages,
                    system_prompt: str | None = None) -> dict[str, Any]
 ```
 
-Defined in: [src/strands/models/ollama.py:204](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/ollama.py#L204)
+Defined in: [src/strands/models/ollama.py:205](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/ollama.py#L205)
 
 Format an Ollama chat streaming request.
 
@@ -135,7 +135,7 @@ An Ollama chat streaming request.
 def format_chunk(event: dict[str, Any]) -> StreamEvent
 ```
 
-Defined in: [src/strands/models/ollama.py:260](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/ollama.py#L260)
+Defined in: [src/strands/models/ollama.py:261](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/ollama.py#L261)
 
 Format the Ollama response events into standardized message chunks.
 
@@ -163,7 +163,7 @@ async def stream(messages: Messages,
                  **kwargs: Any) -> AsyncGenerator[StreamEvent, None]
 ```
 
-Defined in: [src/strands/models/ollama.py:324](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/ollama.py#L324)
+Defined in: [src/strands/models/ollama.py:325](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/ollama.py#L325)
 
 Stream conversation with the Ollama model.
 
@@ -194,7 +194,7 @@ async def structured_output(
         **kwargs: Any) -> AsyncGenerator[dict[str, T | Any], None]
 ```
 
-Defined in: [src/strands/models/ollama.py:394](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/ollama.py#L394)
+Defined in: [src/strands/models/ollama.py:395](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/ollama.py#L395)
 
 Get structured output from the model.
 

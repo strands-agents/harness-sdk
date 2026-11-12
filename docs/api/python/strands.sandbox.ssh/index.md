@@ -86,7 +86,7 @@ Execute a command on the remote host, streaming output.
 def get_tools() -> list[AgentTool]
 ```
 
-Defined in: [src/strands/sandbox/ssh.py:183](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/ssh.py#L183)
+Defined in: [src/strands/sandbox/ssh.py:189](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/ssh.py#L189)
 
 Default sandbox-compatible tools auto-registered with this sandbox.
 

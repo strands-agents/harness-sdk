@@ -8,7 +8,7 @@ A :class:`ModelExtractor` calls a language model with a fact-extraction system p
 class ModelExtractor()
 ```
 
-Defined in: [src/strands/memory/extraction/model\_extractor.py:38](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/memory/extraction/model_extractor.py#L38)
+Defined in: [src/strands/memory/extraction/model\_extractor.py:39](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/memory/extraction/model_extractor.py#L39)
 
 An :class:`Extractor` that calls a language model to distill messages into discrete facts.
 
@@ -30,7 +30,7 @@ def __init__(model: Model | None = None,
              system_prompt: str | None = None) -> None
 ```
 
-Defined in: [src/strands/memory/extraction/model\_extractor.py:53](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/memory/extraction/model_extractor.py#L53)
+Defined in: [src/strands/memory/extraction/model\_extractor.py:54](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/memory/extraction/model_extractor.py#L54)
 
 Initialize the extractor.
 
@@ -47,7 +47,7 @@ async def extract(
         context: ExtractorContext | None = None) -> list[ExtractionResult]
 ```
 
-Defined in: [src/strands/memory/extraction/model\_extractor.py:66](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/memory/extraction/model_extractor.py#L66)
+Defined in: [src/strands/memory/extraction/model\_extractor.py:67](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/memory/extraction/model_extractor.py#L67)
 
 Extract entries from a batch of messages.
 

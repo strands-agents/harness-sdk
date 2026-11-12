@@ -197,4 +197,4 @@ For errors from the box itself, see [If something goes wrong](../../quickstart/i
 
 -   [Telemetry](../record-telemetry/index.md): send records to a file of your own, and what each record carries.
 -   [The `[telemetry.<label>]` table](../../reference/configuration/index.md#telemetrylabel): every key, and the exporter variables a box owns.
--   [How telemetry works](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/docs/design/telemetry.md): which process records, what a workload cannot forge, and where a record can be lost.
+-   [How telemetry works](https://github.com/strands-agents/box/blob/a2cf46ed6a9ea0a8144101bfdef3f2406390952b/docs/design/telemetry.md): which process records, what a workload cannot forge, and where a record can be lost.

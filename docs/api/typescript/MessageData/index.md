@@ -1,4 +1,4 @@
-Defined in: [src/types/messages.ts:35](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L35)
+Defined in: [src/types/messages.ts:36](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L36)
 
 Data for a message.
 
@@ -10,7 +10,7 @@ Data for a message.
 role: Role;
 ```
 
-Defined in: [src/types/messages.ts:39](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L39)
+Defined in: [src/types/messages.ts:40](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L40)
 
 The role of the message sender.
 
@@ -22,7 +22,7 @@ The role of the message sender.
 content: ContentBlockData[];
 ```
 
-Defined in: [src/types/messages.ts:44](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L44)
+Defined in: [src/types/messages.ts:45](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L45)
 
 Array of content blocks that make up this message.
 
@@ -34,7 +34,7 @@ Array of content blocks that make up this message.
 trackingId?: string;
 ```
 
-Defined in: [src/types/messages.ts:50](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L50)
+Defined in: [src/types/messages.ts:51](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L51)
 
 Durable, stable UUID for the message. Optional here because serialized/legacy data may omit it; the Message constructor backfills a fresh UUID when absent, so a live Message always has one.
 
@@ -46,6 +46,6 @@ Durable, stable UUID for the message. Optional here because serialized/legacy da
 metadata?: MessageMetadata;
 ```
 
-Defined in: [src/types/messages.ts:55](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L55)
+Defined in: [src/types/messages.ts:56](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L56)
 
 Optional metadata, not sent to model providers.

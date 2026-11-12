@@ -147,13 +147,14 @@ model_id=<...> | history edit invalidated replayed thinking blocks, retrying wit
 
 Claude models that preserve thinking bind each thinking block to the conversation that came before it. Summarizing or removing messages with [context management](/docs/user-guide/sdk/context-management/index.md) or a conversation manager, restoring a session, or editing messages from a hook changes that earlier conversation, so the thinking blocks that remain in the history no longer match it. Accounts that enforce this binding, the default for accounts created on or after August 31, 2026, reject the next request.
 
-The retry sets `prefix_mismatch_behavior` to `drop_block` in the `thinking.block_binding` request field and adds the `thinking-binding-controls-2026-08-01` beta to the `anthropic-beta` header. Claude then skips the stale thinking blocks instead of rejecting the request. The stale blocks stay in the history, so the provider keeps sending `drop_block` for that model ID until the model instance is discarded. Requests before the first rejection are sent unchanged.
+The retry sets `prefix_mismatch_behavior` to `drop_block` in the `thinking.block_binding` request field, with `"type": "adaptive"` when no thinking is configured, and adds the `thinking-binding-controls-2026-08-01` beta to the `anthropic-beta` header. Claude then skips the stale thinking blocks instead of rejecting the request. The stale blocks stay in the history, so the provider keeps sending `drop_block` for that model ID until the model instance is discarded. Requests before the first rejection are sent unchanged.
 
--   **Thinking must be configured.** The retry applies only when `thinking` is set in `params`. Other errors, and this error without a thinking configuration, are raised as is.
 -   **Your `block_binding` wins.** If the thinking configuration already contains `block_binding`, the provider sends it as written and does not retry. Set it yourself to choose the behavior up front or to keep the error.
 -   **Existing betas are kept.** The beta is added to the betas the model already sends, from `extra_headers``betas` or, when that is not set, from the `anthropic-beta` default header of the client. A pre-configured client does not expose its default headers, so set its betas with `extra_headers``betas`.
 -   **Dropping has a cost.** Claude loses the reasoning in the dropped blocks, the prompt cache restarts at the edited message, and responses can use more output tokens.
 -   **Some models require adaptive thinking.** Claude Sonnet 5.5 and Claude Haiku 5.5 accept `drop_block` only with `"type": "adaptive"`. With any other thinking type, the retry fails and its error is raised.
+
+A message-level summary from [context management](/docs/user-guide/sdk/context-management/index.md) avoids this error when it runs server-side. See [Server-side summarization](#server-side-summarization) for when it does.
 
 ## Advanced Features
 
@@ -411,6 +412,64 @@ Two constraints are specific to this API:
 -   **Maximum of four cache points per request**, shared across the tool definitions, the system prompt, and the messages. Automatic placement uses one per part it caches, so hand-placing several of your own alongside it can exceed the limit, and the API rejects the request.
 
 A prompt below the model’s minimum cacheable length is not cached: if both cache metrics stay at zero, that is the likely cause. See [cache limitations](https://docs.claude.com/en/docs/build-with-claude/prompt-caching#cache-limitations) for per-model thresholds.
+
+### Server-side summarization
+
+The provider supports `server_side_summary``serverSideSummary` for Claude Opus 5.5, Claude Sonnet 5.5, Claude Haiku 5.5, Claude Fable 5.1, Claude Fable 5.2, and Claude Mythos 5.2. For these models, a message-level summary from [context management](/docs/user-guide/sdk/context-management/index.md) goes through Anthropic’s compaction API instead of a client-side summarization request. The summary replaces the start of the conversation with a single compaction block, so the thinking blocks after it stay valid and the error in [Thinking block is bound to a different conversation](#thinking-block-is-bound-to-a-different-conversation) does not occur.
+
+The provider adds the `compact-2026-09-04` beta to the compaction request and to every later request that carries the compaction block. Those requests send the conversation from the last compaction block onward.
+
+To keep thinking blocks, pair an eager per-block strategy for tool results with a message-level summary:
+
+(( tab "Python" ))
+```python
+from strands import Agent
+from strands.experimental.context_manager import Offload
+from strands.models.anthropic import AnthropicModel
+
+model = AnthropicModel(
+    model_id="claude-opus-5-5",
+    max_tokens=16000,
+    params={"thinking": {"type": "adaptive"}},
+)
+
+agent = Agent(
+    model=model,
+    context_manager={
+        "strategies": [
+            Offload.summarize("tool_results").when(threshold=2000),
+            Offload.summarize("*").when(utilization=0.85, preserve_recent=4),
+        ],
+    },
+)
+```
+(( /tab "Python" ))
+
+(( tab "TypeScript" ))
+```typescript
+import { Agent } from '@strands-agents/sdk'
+import { Offload } from '@strands-agents/sdk/experimental'
+import { AnthropicModel } from '@strands-agents/sdk/models/anthropic'
+
+const model = new AnthropicModel({
+  modelId: 'claude-opus-5-5',
+  maxTokens: 16000,
+  params: { thinking: { type: 'adaptive' } },
+})
+
+const agent = new Agent({
+  model,
+  contextManager: {
+    strategies: [
+      Offload.summarize('toolResults').when({ blockThreshold: 2000 }),
+      Offload.summarize('*').when({ contextUtilization: '85%', preserveRecent: 4 }),
+    ],
+  },
+})
+```
+(( /tab "TypeScript" ))
+
+The summarizing model, `agent.aux_model``agent.auxModel` by default, must also support server-side summary. Otherwise the summary runs client-side and drops thinking. A pinned message inside the summarized range also sends the summary client-side. See [Models that preserve thinking](/docs/user-guide/sdk/context-management/custom-strategies/index.md#models-that-preserve-thinking) for which strategies keep thinking.
 
 ### Token Counting
 

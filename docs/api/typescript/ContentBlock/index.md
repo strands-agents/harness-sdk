@@ -12,7 +12,8 @@ type ContentBlock =
   | DocumentBlock
   | CitationsBlock
   | InjectedBlock
-  | SummaryBlock;
+  | SummaryBlock
+  | UnknownBlock;
 ```
 
-Defined in: [src/types/messages.ts:193](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L193)
+Defined in: [src/types/messages.ts:223](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L223)

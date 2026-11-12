@@ -1,4 +1,4 @@
-Defined in: [src/types/messages.ts:480](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L480)
+Defined in: [src/types/messages.ts:636](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L636)
 
 Data for a reasoning block.
 
@@ -10,7 +10,7 @@ Data for a reasoning block.
 text?: string;
 ```
 
-Defined in: [src/types/messages.ts:484](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L484)
+Defined in: [src/types/messages.ts:640](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L640)
 
 The text content of the reasoning process.
 
@@ -22,7 +22,7 @@ The text content of the reasoning process.
 signature?: string;
 ```
 
-Defined in: [src/types/messages.ts:489](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L489)
+Defined in: [src/types/messages.ts:645](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L645)
 
 A cryptographic signature for verification purposes.
 
@@ -34,6 +34,6 @@ A cryptographic signature for verification purposes.
 redactedContent?: Uint8Array;
 ```
 
-Defined in: [src/types/messages.ts:494](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L494)
+Defined in: [src/types/messages.ts:650](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L650)
 
 The redacted content of the reasoning process.

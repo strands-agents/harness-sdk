@@ -1,5 +1,52 @@
 # Strands Agents Changelog
 
+## Harness CLI v0.3.0 — 2026-11-10
+Release: https://github.com/strands-agents/harness-sdk/releases/tag/harness-cli/v0.3.0 · Package: https://www.npmjs.com/package/@strands-agents/cli/v/0.3.0
+
+### Features
+- organize sample guides by user goal (https://github.com/strands-agents/harness-sdk/pull/5761)
+- merge feature/cli-0.3.0 into main [cli] (https://github.com/strands-agents/harness-sdk/pull/5194)
+
+### Fixes
+- snapshot upstream content at deploy (https://github.com/strands-agents/harness-sdk/pull/5838)
+- add GPT-6 Cyber context window (py + ts + cli) [model] (https://github.com/strands-agents/harness-sdk/pull/5899)
+- never take the system prompt or agent definition from session files [sessions, cli] (https://github.com/strands-agents/harness-sdk/pull/5922)
+- include shell releases in the changelog (https://github.com/strands-agents/harness-sdk/pull/5918)
+- add Claude Fable 5.2 and Mythos 5.2 model info (py + ts + cli) [model] (https://github.com/strands-agents/harness-sdk/pull/5994)
+- unblock Windows agent import and export [server, cli] (https://github.com/strands-agents/harness-sdk/pull/6028)
+
+### Other
+- add glama.json to claim the MCP server on Glama [mcp] (https://github.com/strands-agents/harness-sdk/pull/5832)
+- fix Windows live integration assumptions [cli] (https://github.com/strands-agents/harness-sdk/pull/6024)
+
+## Box v0.2.2 — 2026-11-10
+Release: https://github.com/strands-agents/box/releases/tag/v0.2.2 · Package: https://github.com/strands-agents/box/releases/tag/v0.2.2
+
+### Features
+- connect the shell to tool grammars (https://github.com/strands-agents/box/pull/327)
+- stream responses with credential redaction (https://github.com/strands-agents/box/pull/345)
+- support MCP 2026-07-28 over stdio (https://github.com/strands-agents/box/pull/350)
+
+### Fixes
+- clear the degraded mark when a complete policy bundle installs (https://github.com/strands-agents/box/pull/225)
+- decide an undeclared name of a grammar-bound file as shell:spawn (https://github.com/strands-agents/box/pull/352)
+- decide a union MCP argument by policy (https://github.com/strands-agents/box/pull/360)
+- admit hard-linked commands outside workload write grants (https://github.com/strands-agents/box/pull/347)
+- keep Core diagnostics out of the active workload terminal (https://github.com/strands-agents/box/pull/353)
+- sanitize statfs for Codex database startup (https://github.com/strands-agents/box/pull/356)
+- allow root directory write grants (https://github.com/strands-agents/box/pull/348)
+- skip hard-link scans when Linux mount and filename checks pass (https://github.com/strands-agents/box/pull/381)
+- bind a tool grammar to how box cli binds tools (https://github.com/strands-agents/box/pull/358)
+- accept Linux namespace mounts during executable validation (https://github.com/strands-agents/box/pull/382)
+- keep a per-tool rule's history across a restart (https://github.com/strands-agents/box/pull/383)
+
+### Other
+- unslop docs/design and docs/dev (https://github.com/strands-agents/box/pull/335)
+- verify ::response events for tool grammar actions (https://github.com/strands-agents/box/pull/333)
+- add LOG\_ONLY mode design doc (https://github.com/strands-agents/box/pull/310)
+- fix the tool grammar fixtures for git, cargo and aws (https://github.com/strands-agents/box/pull/325)
+- ingress tcp relay design (https://github.com/strands-agents/box/pull/271)
+
 ## Box v0.2.1 — 2026-11-06
 Release: https://github.com/strands-agents/box/releases/tag/v0.2.1 · Package: https://github.com/strands-agents/box/releases/tag/v0.2.1
 
@@ -213,6 +260,58 @@ Release: https://github.com/strands-agents/evals/releases/tag/v1.9.0 · Package:
 
 ### Other
 - relax CI gate on workstream/optimizer-workflow branch (https://github.com/strands-agents/evals/pull/499)
+
+## Shell v0.6.0 — 2026-11-04
+Release: https://github.com/strands-agents/shell/releases/tag/v0.6.0 · Package: https://github.com/strands-agents/shell/releases/tag/v0.6.0
+
+### Features
+- accept legacy -N line counts in head and tail (https://github.com/strands-agents/shell/pull/171)
+- add the builtin builtin (https://github.com/strands-agents/shell/pull/174)
+- stop re-resolving every prefix of a missing path (https://github.com/strands-agents/shell/pull/175)
+- make the interactive CLI an optional default feature (https://github.com/strands-agents/shell/pull/172)
+- let a kernel run commands Shell doesn't implement (https://github.com/strands-agents/shell/pull/190)
+
+### Fixes
+- honor -- in unset and unalias (https://github.com/strands-agents/shell/pull/168)
+- report a failed redirect on a builtin (https://github.com/strands-agents/shell/pull/169)
+- treat localhost with a trailing dot like localhost (https://github.com/strands-agents/shell/pull/170)
+- report the timeout when a command succeeds past the deadline (https://github.com/strands-agents/shell/pull/173)
+- keep output truncation on a UTF-8 character boundary (https://github.com/strands-agents/shell/pull/176)
+- stop recursion through pipelines at the depth limit (https://github.com/strands-agents/shell/pull/177)
+- return real statuses from compounds in command substitution (https://github.com/strands-agents/shell/pull/179)
+- apply the input size limit to multiline input (https://github.com/strands-agents/shell/pull/178)
+- report removal refusals, including under -f (https://github.com/strands-agents/shell/pull/180)
+- run break, continue and exit inside command substitution (https://github.com/strands-agents/shell/pull/189)
+- fail a write that goes past max\_file\_size (https://github.com/strands-agents/shell/pull/198)
+
+### Other
+- bump pyo3 from 0.29.2 to 0.29.3 (https://github.com/strands-agents/shell/pull/128)
+- bump syn from 3.0.2 to 3.0.9 (https://github.com/strands-agents/shell/pull/153)
+- register empty\_pipeline\_stage\_no\_panic (https://github.com/strands-agents/shell/pull/152)
+- give each test its own temporary directory (https://github.com/strands-agents/shell/pull/154)
+- bump pyo3 from 0.29.3 to 0.30.1 (https://github.com/strands-agents/shell/pull/164)
+- pin the public Python API of strands\_shell (https://github.com/strands-agents/shell/pull/159)
+- pin the public TypeScript API of @strands-agents/shell (https://github.com/strands-agents/shell/pull/160)
+- fix three limit and credential tests (https://github.com/strands-agents/shell/pull/162)
+- wait for the bind\_direct write-back instead of sleeping 50 ms (https://github.com/strands-agents/shell/pull/163)
+- make three curl tests exercise the behavior they name (https://github.com/strands-agents/shell/pull/158)
+- make mcp\_shell\_timeout actually expire and check recovery (https://github.com/strands-agents/shell/pull/157)
+- pin the Rust API a custom Kernel depends on (https://github.com/strands-agents/shell/pull/161)
+- run MCP tests against the binary Cargo built (https://github.com/strands-agents/shell/pull/155)
+- run doc tests and node-feature unit tests in the Rust job (https://github.com/strands-agents/shell/pull/156)
+- make strands-box-maintainers the code owners (https://github.com/strands-agents/shell/pull/167)
+- bump rustls from 0.23.40 to 0.23.46 (https://github.com/strands-agents/shell/pull/141)
+- bump tokio from 1.53.1 to 1.53.3 (https://github.com/strands-agents/shell/pull/165)
+- bump toml from 1.1.2+spec-1.1.0 to 1.1.8+spec-1.1.0 (https://github.com/strands-agents/shell/pull/148)
+- bump serde\_json from 1.0.151 to 1.0.154 (https://github.com/strands-agents/shell/pull/149)
+- bump napi-derive from 3.6.11 to 3.6.12 (https://github.com/strands-agents/shell/pull/143)
+- bump rustyline from 18.0.0 to 19.0.0 (https://github.com/strands-agents/shell/pull/166)
+- bump inventory from 0.3.24 to 0.3.25 (https://github.com/strands-agents/shell/pull/146)
+- bump typescript from 6.0.3 to 7.0.2 (https://github.com/strands-agents/shell/pull/54)
+- bump actions/checkout from 6 to 7 (https://github.com/strands-agents/shell/pull/40)
+- bump napi from 3.14.2 to 3.15.0 (https://github.com/strands-agents/shell/pull/182)
+- bump tokio from 1.53.3 to 1.54.1 (https://github.com/strands-agents/shell/pull/183)
+- bump napi-derive from 3.6.12 to 3.6.13 (https://github.com/strands-agents/shell/pull/184)
 
 ## Harness Python v0.3.4 — 2026-11-04
 Release: https://github.com/strands-agents/harness-sdk/releases/tag/harness-python/v0.3.4 · Package: https://pypi.org/project/strands-harness/0.3.4/
@@ -753,6 +852,19 @@ Release: https://github.com/strands-agents/evals/releases/tag/v1.6.0 · Package:
 - move rich pin to \>=15.0.0,\<16.0.0 (https://github.com/strands-agents/evals/pull/413)
 - separate errored attacks from breaches in ASR [redteam] (https://github.com/strands-agents/evals/pull/296)
 
+## Shell v0.5.0 — 2026-10-14
+Release: https://github.com/strands-agents/shell/releases/tag/v0.5.0 · Package: https://github.com/strands-agents/shell/releases/tag/v0.5.0
+
+### Fixes
+- skip binary and non-UTF-8 input instead of aborting (https://github.com/strands-agents/shell/pull/124)
+
+### Other
+- bump napi from 3.12.2 to 3.14.1 (https://github.com/strands-agents/shell/pull/139)
+- bump napi-derive from 3.6.9 to 3.6.11 (https://github.com/strands-agents/shell/pull/140)
+- bump napi from 3.14.1 to 3.14.2 (https://github.com/strands-agents/shell/pull/142)
+- bump mlua from 0.12.1 to 0.12.2 (https://github.com/strands-agents/shell/pull/137)
+- bump clap from 4.6.6 to 4.6.7 (https://github.com/strands-agents/shell/pull/110)
+
 ## Harness Python v0.3.0 — 2026-10-14
 Release: https://github.com/strands-agents/harness-sdk/releases/tag/harness-python/v0.3.0 · Package: https://pypi.org/project/strands-harness/0.3.0/
 
@@ -867,6 +979,27 @@ Release: https://github.com/strands-agents/evals/releases/tag/v1.5.0 · Package:
 
 ### Other
 - support ReportT [cli] (https://github.com/strands-agents/evals/pull/406)
+
+## Shell v0.4.0 — 2026-10-08
+Release: https://github.com/strands-agents/shell/releases/tag/v0.4.0 · Package: https://github.com/strands-agents/shell/releases/tag/v0.4.0
+
+### Features
+- head: support -c/--bytes (https://github.com/strands-agents/shell/pull/135)
+- support the options the Strands web\_fetch harness uses (https://github.com/strands-agents/shell/pull/131)
+
+### Fixes
+- accept -f/--force (https://github.com/strands-agents/shell/pull/136)
+
+### Other
+- bump clap from 4.6.5 to 4.6.6 (https://github.com/strands-agents/shell/pull/88)
+- bump serde from 1.0.228 to 1.0.229 (https://github.com/strands-agents/shell/pull/74)
+- bump syn from 2.0.117 to 3.0.2 (https://github.com/strands-agents/shell/pull/71)
+- bump async-trait from 0.1.91 to 0.1.92 (https://github.com/strands-agents/shell/pull/90)
+- bump pyo3 from 0.29.0 to 0.29.2 (https://github.com/strands-agents/shell/pull/89)
+- bump napi from 3.12.0 to 3.12.2 (https://github.com/strands-agents/shell/pull/96)
+- bump mlua from 0.11.6 to 0.12.1 (https://github.com/strands-agents/shell/pull/99)
+- bump napi-derive from 3.6.2 to 3.6.4 (https://github.com/strands-agents/shell/pull/104)
+- bump napi-derive from 3.6.4 to 3.6.9 (https://github.com/strands-agents/shell/pull/120)
 
 ## Harness CLI v0.2.0 — 2026-10-08
 Release: https://github.com/strands-agents/harness-sdk/releases/tag/harness-cli/v0.2.0 · Package: https://www.npmjs.com/package/@strands-agents/cli/v/0.2.0
@@ -1732,6 +1865,19 @@ Release: https://github.com/strands-agents/evals/releases/tag/v1.1.0 · Package:
 ### Other
 - update ruff requirement from \<0.16.0,\>=0.13.0 to \>=0.13.0,\<0.17.0 (https://github.com/strands-agents/evals/pull/327)
 
+## Shell v0.3.3 — 2026-08-07
+Release: https://github.com/strands-agents/shell/releases/tag/v0.3.3 · Package: https://github.com/strands-agents/shell/releases/tag/v0.3.3
+
+### Other
+- bump napi from 3.11.0 to 3.12.0 (https://github.com/strands-agents/shell/pull/81)
+- bump actions/setup-node from 6 to 7 (https://github.com/strands-agents/shell/pull/60)
+- bump clap from 4.6.2 to 4.6.4 (https://github.com/strands-agents/shell/pull/79)
+- bump napi-derive from 3.6.0 to 3.6.1 (https://github.com/strands-agents/shell/pull/83)
+- bump serde\_json from 1.0.150 to 1.0.151 (https://github.com/strands-agents/shell/pull/69)
+- bump bytes from 1.11.1 to 1.12.1 (https://github.com/strands-agents/shell/pull/52)
+- bump napi-derive from 3.6.1 to 3.6.2 (https://github.com/strands-agents/shell/pull/86)
+- bump clap from 4.6.4 to 4.6.5 (https://github.com/strands-agents/shell/pull/85)
+
 ## SDK Python v1.50.2 — 2026-07-27
 Release: https://github.com/strands-agents/harness-sdk/releases/tag/python/v1.50.2 · Package: https://pypi.org/project/strands-agents/1.50.2/
 
@@ -1867,6 +2013,18 @@ Release: https://github.com/strands-agents/evals/releases/tag/v1.0.3 · Package:
 - align dependabot config with harness-sdk conventions (https://github.com/strands-agents/evals/pull/306)
 - bump actions/setup-python from 6 to 7 (https://github.com/strands-agents/evals/pull/318)
 
+## Shell v0.3.2 — 2026-07-23
+Release: https://github.com/strands-agents/shell/releases/tag/v0.3.2 · Package: https://github.com/strands-agents/shell/releases/tag/v0.3.2
+
+### Other
+- bump quinn-proto to 0.11.15 (RUSTSEC-2026-0185) (https://github.com/strands-agents/shell/pull/67)
+- bump proc-macro2 from 1.0.106 to 1.0.107 (https://github.com/strands-agents/shell/pull/73)
+- bump tokio from 1.52.3 to 1.53.1 (https://github.com/strands-agents/shell/pull/78)
+- bump async-trait from 0.1.89 to 0.1.91 (https://github.com/strands-agents/shell/pull/72)
+- bump quote from 1.0.45 to 1.0.47 (https://github.com/strands-agents/shell/pull/70)
+- align dependabot config with harness-sdk conventions (https://github.com/strands-agents/shell/pull/57)
+- synchronize napi dependencies (https://github.com/strands-agents/shell/pull/80)
+
 ## SDK Python v1.48.0 — 2026-07-17
 Release: https://github.com/strands-agents/harness-sdk/releases/tag/python/v1.48.0 · Package: https://pypi.org/project/strands-agents/1.48.0/
 
@@ -1921,6 +2079,24 @@ Release: https://github.com/strands-agents/harness-sdk/releases/tag/typescript/v
 - remove dead barrel and obsolete types package (https://github.com/strands-agents/harness-sdk/pull/3285)
 - deduplicate pr guidelines summary in sdk agents files (https://github.com/strands-agents/harness-sdk/pull/3293)
 - deduplicate testing guide and agents file (https://github.com/strands-agents/harness-sdk/pull/3291)
+
+## Shell v0.3.1 — 2026-07-17
+Release: https://github.com/strands-agents/shell/releases/tag/v0.3.1 · Package: https://github.com/strands-agents/shell/releases/tag/v0.3.1
+
+### Other
+- bump npm publish jobs to Node 24 (npm@latest EBADENGINE) (https://github.com/strands-agents/shell/pull/66)
+
+## Shell v0.3.0 — 2026-07-17
+Release: https://github.com/strands-agents/shell/releases/tag/v0.3.0 · Package: https://github.com/strands-agents/shell/releases/tag/v0.3.0
+
+### Features
+- add Windows support (https://github.com/strands-agents/shell/pull/44)
+
+### Other
+- added full release workflow (https://github.com/strands-agents/shell/pull/53)
+- add CODEOWNERS (https://github.com/strands-agents/shell/pull/56)
+- bump clap from 4.6.1 to 4.6.2 (https://github.com/strands-agents/shell/pull/64)
+- bump regex from 1.12.4 to 1.13.1 (https://github.com/strands-agents/shell/pull/63)
 
 ## SDK Python v1.47.0 — 2026-07-10
 Release: https://github.com/strands-agents/harness-sdk/releases/tag/python/v1.47.0 · Package: https://pypi.org/project/strands-agents/1.47.0/
@@ -2222,6 +2398,15 @@ Release: https://github.com/strands-agents/evals/releases/tag/v1.0.1 · Package:
 - bump actions/upload-artifact from 6 to 7 (https://github.com/strands-agents/evals/pull/149)
 - tighten dependabot versioning strategy (https://github.com/strands-agents/evals/pull/281)
 
+## Shell v0.2.0 — 2026-06-25
+Release: https://github.com/strands-agents/shell/releases/tag/v0.2.0 · Package: https://github.com/strands-agents/shell/releases/tag/v0.2.0
+
+### Features
+- expose read-only config snapshot via Shell.config (https://github.com/strands-agents/shell/pull/36)
+
+### Other
+- add aggregate CI Gate as the single required status check (https://github.com/strands-agents/shell/pull/37)
+
 ## SDK Python v1.44.0 — 2026-06-16
 Release: https://github.com/strands-agents/harness-sdk/releases/tag/python/v1.44.0 · Package: https://pypi.org/project/strands-agents/1.44.0/
 
@@ -2321,6 +2506,9 @@ Release: https://github.com/strands-agents/evals/releases/tag/v1.0.0 · Package:
 - shortened the docstrings [devx] (https://github.com/strands-agents/evals/pull/270)
 - add module README [redteam] (https://github.com/strands-agents/evals/pull/271)
 - updated AGENT.md, SKILL.md, README (https://github.com/strands-agents/evals/pull/273)
+
+## Shell v0.1.0 — 2026-06-16
+Release: https://github.com/strands-agents/shell/releases/tag/v0.1.0 · Package: https://github.com/strands-agents/shell/releases/tag/v0.1.0
 
 ## SDK Python v1.43.0 — 2026-06-12
 Release: https://github.com/strands-agents/harness-sdk/releases/tag/python/v1.43.0 · Package: https://pypi.org/project/strands-agents/1.43.0/

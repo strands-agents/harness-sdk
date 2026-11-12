@@ -8,6 +8,7 @@
 - [Harness quickstart](https://strandsagents.com/docs/user-guide/harness/quickstart/index.md): Start with a fully assembled agent.
 - [Build with AI coding agents](https://strandsagents.com/docs/user-guide/build-with-ai/index.md): Install the Strands plugin for Claude Code, Codex, or Cursor.
 - [Examples](https://strandsagents.com/examples/): Explore complete agent examples.
+- [Frequently asked questions](https://strandsagents.com/faq/index.md): Get practical answers about choosing, building, evaluating, and deploying with Strands.
 
 ## Official packages
 

@@ -103,4 +103,4 @@ The same accuracy as v21 within the intervals; POPE Brier is a little worse.
 
 With the image removed both fall to chance. v1 still answers: mean confidence 0.711 on NaturalBench and 0.834 on POPE (v21 0.722 and 0.792), ECE 0.211 and 0.334 (v21 0.222 and 0.292). On POPE it is more overconfident than v21 (ECE +0.042, 95% CI +0.039 to +0.044). Its confidence does not tell you that an image is missing: check that the image is there before you ask.
 
-The script is `evaluation/vision/run.py`; [evaluation/vision/README.md](https://github.com/strands-labs/strands-decider/blob/846b69ebe7603038caa3bfe250e50f1137b141d7/evaluation/vision/README.md) has the exact command and a link to the recorded runs: per-item probabilities for v19 and the base, and Mapika’s summary.
+The script is `evaluation/vision/run.py`; [evaluation/vision/README.md](https://github.com/strands-labs/strands-decider/blob/1ace5aaa86a8c59d949ac97810f9f2e3b79a1ff8/evaluation/vision/README.md) has the exact command and a link to the recorded runs: per-item probabilities for v19 and the base, and Mapika’s summary.

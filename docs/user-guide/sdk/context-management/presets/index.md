@@ -18,9 +18,11 @@ Preset expansions are internal defaults and may change between releases as tunin
 | --- | --- | --- |
 | Proactive summarization | `"proactiveSummarization"` | Summarizes the oldest 30% of messages when the context window reaches 70% capacity. |
 | Large tool offloading | `"largeToolOffloading"` | Truncates individual tool results over 2,500 tokens to a 1,000-token preview, eagerly on message arrival. |
-| Overflow protection | `"overflowProtection"` | Truncates the oldest messages when the context window is full, keeping the 4 most recent. |
+| Overflow protection | `"overflowProtection"` | Drops the oldest messages when the context window is full, keeping the 4 most recent. |
 | Stale tool cleanup | `"staleToolCleanup"` | Drops tool results more than 5 messages old. |
 (( /tab "TypeScript" ))
+
+On Claude models that preserve thinking, large tool offloading keeps thinking blocks valid, and so does proactive summarization when it runs server-side. Overflow protection and stale tool cleanup drop them. See [Models that preserve thinking](/docs/user-guide/sdk/context-management/custom-strategies/index.md#models-that-preserve-thinking).
 
 ## Using presets
 
@@ -86,7 +88,7 @@ const agent = new Agent({
     strategies: [
       'largeToolOffloading',
       Offload.summarize('*').when({
-        utilization: 0.9,
+        contextUtilization: '90%',
         preserveRecent: 2,
       }),
     ],

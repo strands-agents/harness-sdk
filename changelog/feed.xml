@@ -1,4 +1,12 @@
-<?xml version="1.0" encoding="UTF-8"?><rss version="2.0"><channel><title>Strands Agents Changelog</title><description>Releases across Strands Agents products.</description><link>https://strandsagents.com/</link><language>en-us</language><item><title>Box v0.2.1</title><link>https://strandsagents.com/changelog/box/v0.2.1/</link><guid isPermaLink="true">https://strandsagents.com/changelog/box/v0.2.1/</guid><description>• add Linux cloud deployment profiles
+<?xml version="1.0" encoding="UTF-8"?><rss version="2.0"><channel><title>Strands Agents Changelog</title><description>Releases across Strands Agents products.</description><link>https://strandsagents.com/</link><language>en-us</language><item><title>Harness CLI v0.3.0</title><link>https://strandsagents.com/changelog/cli/v0.3.0/</link><guid isPermaLink="true">https://strandsagents.com/changelog/cli/v0.3.0/</guid><description>• add glama.json to claim the MCP server on Glama
+• snapshot upstream content at deploy
+• organize sample guides by user goal
+• add GPT-6 Cyber context window (py + ts + cli)
+• never take the system prompt or agent definition from session files</description><pubDate>Tue, 10 Nov 2026 00:00:00 GMT</pubDate><category>mcp</category><category>model</category><category>sessions</category><category>cli</category><category>server</category></item><item><title>Box v0.2.2</title><link>https://strandsagents.com/changelog/box/v0.2.2/</link><guid isPermaLink="true">https://strandsagents.com/changelog/box/v0.2.2/</guid><description>• connect the shell to tool grammars
+• unslop docs/design and docs/dev
+• verify ::response events for tool grammar actions
+• add LOG_ONLY mode design doc
+• fix the tool grammar fixtures for git, cargo and aws</description><pubDate>Tue, 10 Nov 2026 00:00:00 GMT</pubDate></item><item><title>Box v0.2.1</title><link>https://strandsagents.com/changelog/box/v0.2.1/</link><guid isPermaLink="true">https://strandsagents.com/changelog/box/v0.2.1/</guid><description>• add Linux cloud deployment profiles
 • refuse Linux root sandbox directory writes
 • remove the startup opt-in requirement
 • demonstrate deployment retry cooldowns with Claude Code
@@ -17,7 +25,11 @@
 • add S3VectorSearchStrategy integration test (TypeScript)</description><pubDate>Wed, 04 Nov 2026 00:00:00 GMT</pubDate><category>model</category><category>mcp</category><category>hooks</category><category>language</category><category>persistence</category><category>multiagent</category><category>context</category></item><item><title>Evals v1.9.0</title><link>https://strandsagents.com/changelog/evals/v1.9.0/</link><guid isPermaLink="true">https://strandsagents.com/changelog/evals/v1.9.0/</guid><description>• add --case selector to run command
 • add extraction steps to session-converter skill
 • relax CI gate on workstream/optimizer-workflow branch
-• suggest evaluators and write experiment file in session-converter</description><pubDate>Wed, 04 Nov 2026 00:00:00 GMT</pubDate><category>cli</category><category>generators</category><category>tracing</category></item><item><title>Harness Python v0.3.4</title><link>https://strandsagents.com/changelog/harness/python-v0.3.4/</link><guid isPermaLink="true">https://strandsagents.com/changelog/harness/python-v0.3.4/</guid><description>• load samples in documentation previews
+• suggest evaluators and write experiment file in session-converter</description><pubDate>Wed, 04 Nov 2026 00:00:00 GMT</pubDate><category>cli</category><category>generators</category><category>tracing</category></item><item><title>Shell v0.6.0</title><link>https://strandsagents.com/changelog/shell/v0.6.0/</link><guid isPermaLink="true">https://strandsagents.com/changelog/shell/v0.6.0/</guid><description>• bump pyo3 from 0.29.2 to 0.29.3
+• bump syn from 3.0.2 to 3.0.9
+• register empty_pipeline_stage_no_panic
+• give each test its own temporary directory
+• bump pyo3 from 0.29.3 to 0.30.1</description><pubDate>Wed, 04 Nov 2026 00:00:00 GMT</pubDate></item><item><title>Harness Python v0.3.4</title><link>https://strandsagents.com/changelog/harness/python-v0.3.4/</link><guid isPermaLink="true">https://strandsagents.com/changelog/harness/python-v0.3.4/</guid><description>• load samples in documentation previews
 • render samples as documentation guides
 • add a product-aware docs footer and last-updated dates
 • link box discussions and the box repo from the issue chooser
@@ -93,7 +105,11 @@
 • bump source-map-js from 1.2.1 to 1.2.2</description><pubDate>Wed, 14 Oct 2026 00:00:00 GMT</pubDate><category>tool</category><category>context</category><category>model</category><category>multiagent</category><category>language</category><category>agent</category><category>mcp</category><category>sessions</category><category>devx</category><category>persistence</category><category>structured-output</category></item><item><title>Evals v1.6.0</title><link>https://strandsagents.com/changelog/evals/v1.6.0/</link><guid isPermaLink="true">https://strandsagents.com/changelog/evals/v1.6.0/</guid><description>• move rich pin to &gt;=15.0.0,&lt;16.0.0
 • add StructuredOutputSimilarity evaluator (stickler extra)
 • separate errored attacks from breaches in ASR
-• reframe attacker prompts to survive aligned attacker models</description><pubDate>Wed, 14 Oct 2026 00:00:00 GMT</pubDate><category>evaluators</category><category>redteam</category></item><item><title>Harness Python v0.3.0</title><link>https://strandsagents.com/changelog/harness/python-v0.3.0/</link><guid isPermaLink="true">https://strandsagents.com/changelog/harness/python-v0.3.0/</guid><description>• decision model primitive (TS-first rework of 0020)
+• reframe attacker prompts to survive aligned attacker models</description><pubDate>Wed, 14 Oct 2026 00:00:00 GMT</pubDate><category>evaluators</category><category>redteam</category></item><item><title>Shell v0.5.0</title><link>https://strandsagents.com/changelog/shell/v0.5.0/</link><guid isPermaLink="true">https://strandsagents.com/changelog/shell/v0.5.0/</guid><description>• bump napi from 3.12.2 to 3.14.1
+• bump napi-derive from 3.6.9 to 3.6.11
+• bump napi from 3.14.1 to 3.14.2
+• skip binary and non-UTF-8 input instead of aborting
+• bump mlua from 0.12.1 to 0.12.2</description><pubDate>Wed, 14 Oct 2026 00:00:00 GMT</pubDate></item><item><title>Harness Python v0.3.0</title><link>https://strandsagents.com/changelog/harness/python-v0.3.0/</link><guid isPermaLink="true">https://strandsagents.com/changelog/harness/python-v0.3.0/</guid><description>• decision model primitive (TS-first rework of 0020)
 • map Bedrock families to small web_fetch summarizers; enable Nova 2 thinking
 • support Anthropic native web search in TypeScript
 • bump codecov/codecov-action from 7.0.0 to 7.1.1
@@ -116,7 +132,11 @@
 • include cache tokens in totalTokens</description><pubDate>Thu, 08 Oct 2026 00:00:00 GMT</pubDate><category>devx</category><category>agent</category><category>mcp</category><category>context</category><category>model</category><category>hil</category><category>language</category><category>tool</category><category>a2a</category><category>otel</category><category>multiagent</category><category>sessions</category><category>config</category></item><item><title>Evals v1.5.0</title><link>https://strandsagents.com/changelog/evals/v1.5.0/</link><guid isPermaLink="true">https://strandsagents.com/changelog/evals/v1.5.0/</guid><description>• improve root cause detector parsing returned json
 • blank user query in CorrectnessEvaluator reference mode
 • support ReportT
-• skip ADK relayed agent messages when extracting user_pr…</description><pubDate>Thu, 08 Oct 2026 00:00:00 GMT</pubDate><category>detectors</category><category>evaluators</category><category>cli</category><category>tracing</category></item><item><title>Harness CLI v0.2.0</title><link>https://strandsagents.com/changelog/cli/v0.2.0/</link><guid isPermaLink="true">https://strandsagents.com/changelog/cli/v0.2.0/</guid><description>• update default model
+• skip ADK relayed agent messages when extracting user_pr…</description><pubDate>Thu, 08 Oct 2026 00:00:00 GMT</pubDate><category>detectors</category><category>evaluators</category><category>cli</category><category>tracing</category></item><item><title>Shell v0.4.0</title><link>https://strandsagents.com/changelog/shell/v0.4.0/</link><guid isPermaLink="true">https://strandsagents.com/changelog/shell/v0.4.0/</guid><description>• bump clap from 4.6.5 to 4.6.6
+• bump serde from 1.0.228 to 1.0.229
+• bump syn from 2.0.117 to 3.0.2
+• bump async-trait from 0.1.91 to 0.1.92
+• bump pyo3 from 0.29.0 to 0.29.2</description><pubDate>Thu, 08 Oct 2026 00:00:00 GMT</pubDate></item><item><title>Harness CLI v0.2.0</title><link>https://strandsagents.com/changelog/cli/v0.2.0/</link><guid isPermaLink="true">https://strandsagents.com/changelog/cli/v0.2.0/</guid><description>• update default model
 • add Human Overview sections to templates per AI usage reflection
 • remove context offloader plugin from harness in favor of context manager&apos;s stash
 • add Observability catalog type
@@ -248,7 +268,11 @@ Strands Harness SDK, with benchmarked defaults. See the
 • allow custom tools on judge-based evaluators (Trajectory, Output, Multimodal)
 • add ADK mapper
 • include prior tool results in session_history for tool-level evaluators
-• add integration tests for ADK mapper</description><pubDate>Fri, 07 Aug 2026 00:00:00 GMT</pubDate><category>evaluators</category><category>tracing</category><category>redteam</category></item><item><title>SDK Python v1.50.2</title><link>https://strandsagents.com/changelog/sdk/python-v1.50.2/</link><guid isPermaLink="true">https://strandsagents.com/changelog/sdk/python-v1.50.2/</guid><description>• add per-call MCP tool cancellation
+• add integration tests for ADK mapper</description><pubDate>Fri, 07 Aug 2026 00:00:00 GMT</pubDate><category>evaluators</category><category>tracing</category><category>redteam</category></item><item><title>Shell v0.3.3</title><link>https://strandsagents.com/changelog/shell/v0.3.3/</link><guid isPermaLink="true">https://strandsagents.com/changelog/shell/v0.3.3/</guid><description>• bump napi from 3.11.0 to 3.12.0
+• bump actions/setup-node from 6 to 7
+• bump clap from 4.6.2 to 4.6.4
+• bump napi-derive from 3.6.0 to 3.6.1
+• bump serde_json from 1.0.150 to 1.0.151</description><pubDate>Fri, 07 Aug 2026 00:00:00 GMT</pubDate></item><item><title>SDK Python v1.50.2</title><link>https://strandsagents.com/changelog/sdk/python-v1.50.2/</link><guid isPermaLink="true">https://strandsagents.com/changelog/sdk/python-v1.50.2/</guid><description>• add per-call MCP tool cancellation
 • bump google-genai floor to &gt;=1.67.0
 • gemini live mp to use updated api
 • consume reasoning signature per content block
@@ -274,7 +298,11 @@ Strands Harness SDK, with benchmarked defaults. See the
 • sha-pin third-party GitHub Actions
 • map type labels to native issue type
 • added pyproject classifiers
-• deflake async concurrency test by tracking in-flight tasks</description><pubDate>Thu, 23 Jul 2026 00:00:00 GMT</pubDate><category>core</category><category>tracing</category></item><item><title>SDK Python v1.48.0</title><link>https://strandsagents.com/changelog/sdk/python-v1.48.0/</link><guid isPermaLink="true">https://strandsagents.com/changelog/sdk/python-v1.48.0/</guid><description>• allow ports in either direction
+• deflake async concurrency test by tracking in-flight tasks</description><pubDate>Thu, 23 Jul 2026 00:00:00 GMT</pubDate><category>core</category><category>tracing</category></item><item><title>Shell v0.3.2</title><link>https://strandsagents.com/changelog/shell/v0.3.2/</link><guid isPermaLink="true">https://strandsagents.com/changelog/shell/v0.3.2/</guid><description>• bump quinn-proto to 0.11.15 (RUSTSEC-2026-0185)
+• bump proc-macro2 from 1.0.106 to 1.0.107
+• bump tokio from 1.52.3 to 1.53.1
+• bump async-trait from 0.1.89 to 0.1.91
+• bump quote from 1.0.45 to 1.0.47</description><pubDate>Thu, 23 Jul 2026 00:00:00 GMT</pubDate></item><item><title>SDK Python v1.48.0</title><link>https://strandsagents.com/changelog/sdk/python-v1.48.0/</link><guid isPermaLink="true">https://strandsagents.com/changelog/sdk/python-v1.48.0/</guid><description>• allow ports in either direction
 • bump actions/checkout from 6 to 7
 • group Python dev tooling by name pattern
 • scale description length to diff size
@@ -282,7 +310,11 @@ Strands Harness SDK, with benchmarked defaults. See the
 • trigger changelog sync directly from the release workflows
 • add unified storage interface
 • added gen_ai_span_attributes_only var to skip event attributes
-• place cache point before non-PDF document blocks</description><pubDate>Fri, 17 Jul 2026 00:00:00 GMT</pubDate><category>hooks</category><category>persistence</category><category>otel</category><category>model</category><category>context</category><category>async</category><category>multiagent</category></item><item><title>SDK Python v1.47.0</title><link>https://strandsagents.com/changelog/sdk/python-v1.47.0/</link><guid isPermaLink="true">https://strandsagents.com/changelog/sdk/python-v1.47.0/</guid><description>• validate the AWS region before building the Nova Sonic endpoint URL
+• place cache point before non-PDF document blocks</description><pubDate>Fri, 17 Jul 2026 00:00:00 GMT</pubDate><category>hooks</category><category>persistence</category><category>otel</category><category>model</category><category>context</category><category>async</category><category>multiagent</category></item><item><title>Shell v0.3.1</title><link>https://strandsagents.com/changelog/shell/v0.3.1/</link><guid isPermaLink="true">https://strandsagents.com/changelog/shell/v0.3.1/</guid><description>• bump npm publish jobs to Node 24 (npm@latest EBADENGINE)</description><pubDate>Fri, 17 Jul 2026 00:00:00 GMT</pubDate></item><item><title>Shell v0.3.0</title><link>https://strandsagents.com/changelog/shell/v0.3.0/</link><guid isPermaLink="true">https://strandsagents.com/changelog/shell/v0.3.0/</guid><description>• add Windows support
+• added full release workflow
+• add CODEOWNERS
+• bump clap from 4.6.1 to 4.6.2
+• bump regex from 1.12.4 to 1.13.1</description><pubDate>Fri, 17 Jul 2026 00:00:00 GMT</pubDate></item><item><title>SDK Python v1.47.0</title><link>https://strandsagents.com/changelog/sdk/python-v1.47.0/</link><guid isPermaLink="true">https://strandsagents.com/changelog/sdk/python-v1.47.0/</guid><description>• validate the AWS region before building the Nova Sonic endpoint URL
 • add changelog generator and sync workflow
 • remove duplicate client creation in Nova Sonic start()
 • fix typo and inconsistent error messages across model providers
@@ -312,7 +344,8 @@ Strands Harness SDK, with benchmarked defaults. See the
 • added fetch command to pull traces from different sources
 • bump actions/checkout from 6 to 7
 • update opentelemetry-instrumentation-langchain requirement from &lt;0.50.0,&gt;=0.40.0 to &gt;=0.40.0,&lt;0.62.0
-• provide tool parameters in evaluation prompt, update refusal and helpfulness prompts</description><pubDate>Thu, 25 Jun 2026 00:00:00 GMT</pubDate><category>cli</category><category>tracing</category><category>evaluators</category></item><item><title>SDK Python v1.44.0</title><link>https://strandsagents.com/changelog/sdk/python-v1.44.0/</link><guid isPermaLink="true">https://strandsagents.com/changelog/sdk/python-v1.44.0/</guid><description>• add turn-based eviction to InMemoryStorage
+• provide tool parameters in evaluation prompt, update refusal and helpfulness prompts</description><pubDate>Thu, 25 Jun 2026 00:00:00 GMT</pubDate><category>cli</category><category>tracing</category><category>evaluators</category></item><item><title>Shell v0.2.0</title><link>https://strandsagents.com/changelog/shell/v0.2.0/</link><guid isPermaLink="true">https://strandsagents.com/changelog/shell/v0.2.0/</guid><description>• add aggregate CI Gate as the single required status check
+• expose read-only config snapshot via Shell.config</description><pubDate>Thu, 25 Jun 2026 00:00:00 GMT</pubDate></item><item><title>SDK Python v1.44.0</title><link>https://strandsagents.com/changelog/sdk/python-v1.44.0/</link><guid isPermaLink="true">https://strandsagents.com/changelog/sdk/python-v1.44.0/</guid><description>• add turn-based eviction to InMemoryStorage
 • add message pinning section to conversation management page
 • design: add context management presets design doc
 • remove pin messaging barrel export
@@ -324,7 +357,7 @@ Strands Harness SDK, with benchmarked defaults. See the
 • add PAIR single-stream multi-turn attack strategy
 • updated markdown files and skills to know the CLI exists
 • added RedTeamExperiment round-trips
-• redteam multi-agent session</description><pubDate>Tue, 16 Jun 2026 00:00:00 GMT</pubDate><category>redteam</category><category>cli</category><category>simulation</category><category>devx</category></item><item><title>SDK Python v1.43.0</title><link>https://strandsagents.com/changelog/sdk/python-v1.43.0/</link><guid isPermaLink="true">https://strandsagents.com/changelog/sdk/python-v1.43.0/</guid><description>• commit LICENSE and NOTICE directly into package directories
+• redteam multi-agent session</description><pubDate>Tue, 16 Jun 2026 00:00:00 GMT</pubDate><category>redteam</category><category>cli</category><category>simulation</category><category>devx</category></item><item><title>Shell v0.1.0</title><link>https://strandsagents.com/changelog/shell/v0.1.0/</link><guid isPermaLink="true">https://strandsagents.com/changelog/shell/v0.1.0/</guid><description>Release 0.1.0</description><pubDate>Tue, 16 Jun 2026 00:00:00 GMT</pubDate></item><item><title>SDK Python v1.43.0</title><link>https://strandsagents.com/changelog/sdk/python-v1.43.0/</link><guid isPermaLink="true">https://strandsagents.com/changelog/sdk/python-v1.43.0/</guid><description>• commit LICENSE and NOTICE directly into package directories
 • resolve dependabot alerts and bump CI actions
 • add python wasm release workflow
 • workflow_dispatch step for python wasm release

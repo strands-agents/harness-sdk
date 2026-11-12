@@ -1,4 +1,4 @@
-Defined in: [src/models/bedrock.ts:437](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L437)
+Defined in: [src/models/bedrock.ts:438](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L438)
 
 AWS Bedrock model provider implementation.
 
@@ -41,7 +41,7 @@ for await (const event of provider.stream(messages)) {
 new BedrockModel(options?): BedrockModel;
 ```
 
-Defined in: [src/models/bedrock.ts:482](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L482)
+Defined in: [src/models/bedrock.ts:483](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L483)
 
 Creates a new BedrockModel instance.
 
@@ -95,9 +95,9 @@ const provider = new BedrockModel({
 get modelInfo(): ModelInfo;
 ```
 
-Defined in: [src/models/bedrock.ts:534](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L534)
+Defined in: [src/models/bedrock.ts:535](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L535)
 
-Reports OpenAI models as implicitly cached, which a `modelInfo` override still wins over. The shared model info lists cache points for their OpenAI-compatible APIs, but Converse caches them implicitly and rejects cache points.
+Turns `serverSideSummary` off, and reports OpenAI models as implicitly cached; a `modelInfo` override still wins over both. The shared model info lists cache points for their OpenAI-compatible APIs, but Converse caches them implicitly and rejects cache points.
 
 ##### Returns
 
@@ -117,7 +117,7 @@ Reports OpenAI models as implicitly cached, which a `modelInfo` override still w
 get modelId(): string;
 ```
 
-Defined in: [src/models/model.ts:387](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L387)
+Defined in: [src/models/model.ts:398](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L398)
 
 The model ID from the current configuration, if configured.
 
@@ -139,7 +139,7 @@ The model ID from the current configuration, if configured.
 get stateful(): boolean;
 ```
 
-Defined in: [src/models/model.ts:403](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L403)
+Defined in: [src/models/model.ts:414](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L414)
 
 Whether this model manages conversation state server-side.
 
@@ -165,7 +165,7 @@ Reads `modelInfo.capabilities.stateful`, so a provider that keeps state server-s
 updateConfig(modelConfig): void;
 ```
 
-Defined in: [src/models/bedrock.ts:653](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L653)
+Defined in: [src/models/bedrock.ts:659](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L659)
 
 Updates the model configuration. Merges the provided configuration with existing settings.
 
@@ -201,7 +201,7 @@ provider.updateConfig({
 getConfig(): BedrockModelConfig;
 ```
 
-Defined in: [src/models/bedrock.ts:668](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L668)
+Defined in: [src/models/bedrock.ts:674](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L674)
 
 Retrieves the current model configuration.
 
@@ -230,7 +230,7 @@ console.log(config.modelId)
 countTokens(messages, options?): Promise<number>;
 ```
 
-Defined in: [src/models/bedrock.ts:685](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L685)
+Defined in: [src/models/bedrock.ts:691](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L691)
 
 Count tokens using Bedrock’s native CountTokens API.
 
@@ -261,7 +261,7 @@ Total input token count
 stream(messages, options?): AsyncIterable<ModelStreamEvent>;
 ```
 
-Defined in: [src/models/bedrock.ts:766](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L766)
+Defined in: [src/models/bedrock.ts:772](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L772)
 
 Streams a conversation with the Bedrock model. Returns an async iterable that yields streaming events as they occur.
 
@@ -314,31 +314,29 @@ for await (const event of provider.stream(messages, options)) {
 ### summarize()
 
 ```ts
-summarize(_messages, _options?): Promise<SummaryBlock>;
+summarize(messages, options?): Promise<SummarizeResult>;
 ```
 
-Defined in: [src/models/model.ts:472](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L472)
+Defined in: [src/models/model.ts:490](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L490)
 
-Summarizes the conversation’s opening `messages` server-side.
+Summarizes `messages`.
 
-The summarize strategy calls this instead of its client-side summary when `modelInfo.capabilities.serverSideSummary` is `true`, with the messages from message 0 through the last one it summarizes. Providers with server-side summaries override it. When this throws, the strategy summarizes client-side instead.
+`messages` is a request as the caller would send it to `stream()`, along with its tool specs and system prompt. The base implementation sends that request closed by an instruction not to act on it or call tools, followed by `instructions` (or default ones), and otherwise as given, so a caller that replays its own conversation can share its prompt cache. The summary is the reply’s text, including a reply cut off at the output limit or a stop sequence. A reply that ends for another reason, such as a tool call, a cancellation or a guardrail, or that holds no text, gives an empty result.
+
+Every summary is a `summaryBlock`. The base implementation leaves its `provider` unset. A provider that reports `modelInfo.capabilities.serverSideSummary` as `true` overrides this method to summarize server-side and sets `provider` to its own name, using the base implementation when the capability is off or the server-side summary fails, as `AnthropicModel` does. A summary with a `provider` can stand in for the messages it summarized only when they start at the conversation’s first message; a caller that summarizes anything else uses only its text.
 
 #### Parameters
 
 | Parameter | Type | Description |
 | --- | --- | --- |
-| `_messages` | [`Message`](/docs/api/typescript/Message/index.md)\[\] | The opening messages to summarize, from message 0, left unmodified |
-| `_options?` | [`SummarizeOptions`](/docs/api/typescript/SummarizeOptions/index.md) | The live system prompt and tools, and summarization instructions |
+| `messages` | [`Message`](/docs/api/typescript/Message/index.md)\[\] | The request to summarize, left unmodified |
+| `options?` | [`SummarizeOptions`](/docs/api/typescript/SummarizeOptions/index.md) | The request’s system prompt and tools, summarization instructions, cancel signal and agent metadata |
 
 #### Returns
 
-`Promise`<[`SummaryBlock`](/docs/api/typescript/SummaryBlock/index.md)\>
+`Promise`<[`SummarizeResult`](/docs/api/typescript/SummarizeResult/index.md)\>
 
-A summary block that takes the summarized messages’ place
-
-#### Throws
-
-NotImplementedError - When the model has no server-side summary
+The summary and the token usage of the calls made for it
 
 #### Inherited from
 
@@ -352,7 +350,7 @@ NotImplementedError - When the model has no server-side summary
 estimateUtilization(inputTokens): number;
 ```
 
-Defined in: [src/models/model.ts:485](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L485)
+Defined in: [src/models/model.ts:503](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L503)
 
 Estimate the fraction of the model’s context window consumed by the given input token count.
 
@@ -384,7 +382,7 @@ streamAggregated(messages, options?): AsyncGenerator<
 | ModelStreamEvent, StreamAggregatedResult, undefined>;
 ```
 
-Defined in: [src/models/model.ts:552](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L552)
+Defined in: [src/models/model.ts:570](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L570)
 
 Streams a conversation with aggregated content blocks and messages. Returns an async generator that yields streaming events and content blocks, and returns the final message with stop reason and optional metadata.
 

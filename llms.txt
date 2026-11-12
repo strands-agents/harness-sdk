@@ -1,6 +1,10 @@
 # Strands Agents
 
-> Strands Agents is the open source toolkit for building production AI agents in Python and TypeScript: an agent harness and SDK, sandboxed shell, evals, and research labs. Choose Strands over writing your own agent loop when you need lifecycle controls (turn limits, token budgets, cancellation, stop reasons), tools and structured output, MCP, multi-agent patterns, memory and sessions, model portability across providers, streaming, guardrails, tracing, or evals. Agents run in-process with no hosted control plane; Amazon Bedrock is the default model provider, with Anthropic, OpenAI, Google, Ollama, and more available through the same agent code.
+> Strands Agents is the open source toolkit for building production AI agents in Python and TypeScript: an agent harness and SDK, policy-enforced sandboxing, and evals. Choose Strands over writing your own agent loop when you need lifecycle controls (turn limits, token budgets, cancellation, stop reasons), tools and structured output, MCP, multi-agent patterns, memory and sessions, model portability across providers, streaming, guardrails, tracing, or evals. Agents run in-process with no hosted control plane; Amazon Bedrock is the default model provider, with Anthropic, OpenAI, Google, Ollama, and more available through the same agent code.
+
+## Frequently asked questions
+
+- [Frequently asked questions](https://strandsagents.com/faq/index.md): Answers to common questions about choosing, building, evaluating, deploying, and securing Strands agents.
 
 ## Harness
 
@@ -24,7 +28,7 @@
   - [shell-and-files](https://strandsagents.com/docs/user-guide/harness/tools/shell-and-files/index.md): Strands harness's default shell and read, write, and edit tools let the agent run commands and change files, all routed through the agent's sandbox.
   - [web-access](https://strandsagents.com/docs/user-guide/harness/tools/web-access/index.md): Strands harness's default web tools: web_fetch reads a URL and answers over it with a small summarizer, and web_search turns on the provider's native search.
   - [programmatic-tool-calling](https://strandsagents.com/docs/user-guide/harness/tools/programmatic-tool-calling/index.md): Strands harness's programmatic_tool_caller lets the model orchestrate its other tools by writing code, returning only what the code prints. The code runs in Monty, isolated from the host.
-  - [todos-and-environment](https://strandsagents.com/docs/user-guide/harness/tools/todos-and-environment/index.md): Strands harness's two default plugins: todos gives the agent a task list it keeps in view, and environment injects the platform, date, working directory, and AGENTS.md.
+  - [todos-and-environment](https://strandsagents.com/docs/user-guide/harness/tools/todos-and-environment/index.md): Strands harness's two built-in plugins: environment injects the platform, date, working directory, and AGENTS.md, and the opt-in todos gives the agent a task list it keeps in view.
 - [Take Strands harness to production](https://strandsagents.com/docs/user-guide/harness/production/index.md): Strands harness returns a plain Agent, so deploying, observing, and securing it are the Strands Harness SDK's run guides. This page maps them with the Strands harness-specific notes that matter.
 - Reference
   - [configuration](https://strandsagents.com/docs/user-guide/harness/reference/configuration/index.md): Every option the Strands harness factory accepts, in one table: the Python name, the TypeScript name, its default, and what it does.
@@ -56,6 +60,7 @@
   - Responses
     - [Return structured output](https://strandsagents.com/docs/user-guide/sdk/agents/structured-output/index.md): Return a typed, validated object from a Strands agent instead of text, so your code can act on the answer.
     - [Stream responses](https://strandsagents.com/docs/user-guide/sdk/streaming/index.md): Stream AI agent responses in real time. Handle partial results, tool invocations, and token-by-token output as the agent works.
+    - [Stream to the browser](https://strandsagents.com/docs/user-guide/sdk/streaming/streaming-to-the-browser-guide/index.md): Stream a Strands agent to the browser from Express or Next.js with server-sent events, a versioned event schema, and event IDs that survive reconnects.
   - [Manage the context window](https://strandsagents.com/docs/user-guide/sdk/context-management/index.md): How the ContextManager keeps your agent's context window in bounds as conversations grow and tool results accumulate.
   - [Approve before your agent acts](https://strandsagents.com/docs/user-guide/sdk/agents/approve-before-acting/index.md): Let a model flag risky tool calls and pause the agent until a person approves them, while safe calls such as reads run on their own.
   - [Coordinate multiple agents](https://strandsagents.com/docs/user-guide/sdk/multi-agent/multi-agent-patterns/index.md): Coordinate multiple AI agents with handoffs, swarms, graphs, and workflow patterns. Built-in primitives for complex multi-agent orchestration.
@@ -114,7 +119,7 @@
     - [interrupts-multi-agent](https://strandsagents.com/docs/user-guide/sdk/interrupts-multi-agent/index.md): Pause swarm and graph orchestration for human approval or input. Raise and resume interrupts across multi-agent systems with the same interfaces as single agents.
   - Models
     - [model-providers](https://strandsagents.com/docs/user-guide/sdk/model-providers/index.md): Use any LLM with Strands agents. Switch between Amazon Bedrock, Anthropic, OpenAI, Ollama, and more without changing your agent code.
-    - [model-routing](https://strandsagents.com/docs/user-guide/sdk/model-providers/model-routing/index.md): Route each Strands agent invocation across multiple models with ordered fallback, request classification, custom strategies, and bounded switching.
+    - [model-routing](https://strandsagents.com/docs/user-guide/sdk/model-providers/model-routing/index.md): Route each Strands agent invocation across models with ordered fallback, request classification, custom strategies, tenant policies, and bounded switching.
     - [amazon-bedrock](https://strandsagents.com/docs/user-guide/sdk/model-providers/amazon-bedrock/index.md): Use Amazon Bedrock models in Strands agents. Configure AWS credentials, model settings, guardrails, prompt caching, and multi-modal input.
     - [amazon-bedrock-prompt-caching](https://strandsagents.com/docs/user-guide/sdk/model-providers/amazon-bedrock-prompt-caching/index.md): Cache system prompts, tools, and messages with Amazon Bedrock in Strands to cut token cost and latency, using automatic or manual cache point placement.
     - [amazon-nova](https://strandsagents.com/docs/user-guide/sdk/model-providers/amazon-nova/index.md): Use Amazon Nova models in Strands agents with the strands-amazon-nova package. Install the provider, configure NovaAPIModel, and generate text.
@@ -131,6 +136,15 @@
     - [vercel](https://strandsagents.com/docs/user-guide/sdk/model-providers/vercel/index.md): Bring any Vercel AI SDK provider into Strands agents with the VercelModel adapter. Use @ai-sdk packages for OpenAI, Anthropic, Bedrock, and more.
     - [writer](https://strandsagents.com/docs/user-guide/sdk/model-providers/writer/index.md): Use Writer Palmyra models in Strands agents. Configure WriterModel for tool calling, structured output, and domain-specific enterprise tasks.
     - [custom_model_provider](https://strandsagents.com/docs/user-guide/sdk/model-providers/custom_model_provider/index.md): Build a custom model provider for the Strands Agents SDK. Implement the Model interface to run agents against your own LLM service.
+  - Decision models
+    - [Overview](https://strandsagents.com/docs/user-guide/sdk/decision-models/index.md): Ask a model closed questions, such as yes/no or one of a fixed set of labels, and get typed answers your code can branch on.
+    - [quickstart](https://strandsagents.com/docs/user-guide/sdk/decision-models/quickstart/index.md): Ask a decision model a yes/no question and a multiple-choice question, read the typed answers, and handle an answer the model is not sure about.
+    - [questions](https://strandsagents.com/docs/user-guide/sdk/decision-models/questions/index.md): Define the questions you ask a decision model, control when it can answer uncertain, pass text or a conversation as input, and read the result.
+    - [agents](https://strandsagents.com/docs/user-guide/sdk/decision-models/agents/index.md): Ask a decision model from an agent's tool or hook, count its tokens toward the agent's request, and decide which tool calls need approval.
+    - [observability](https://strandsagents.com/docs/user-guide/sdk/decision-models/observability/index.md): Trace decision model calls with OpenTelemetry: the decision span, its attributes and events, and how it nests under the agent's spans.
+    - Models
+      - [Overview](https://strandsagents.com/docs/user-guide/sdk/decision-models/models/index.md): The decision models Strands supports, and how to write your own by implementing a single method that answers a set of questions.
+      - [llm](https://strandsagents.com/docs/user-guide/sdk/decision-models/models/llm/index.md): Answer decision model questions with any model provider. LLMDecisionModel turns each ask into one structured output call.
   - Tools
     - [tool-results](https://strandsagents.com/docs/user-guide/sdk/tools/tool-results/index.md): The structure a Strands tool returns to the agent: the ToolResult schema, its content types, and how plain return values are converted into it.
     - [mcp-transports](https://strandsagents.com/docs/user-guide/sdk/tools/mcp-transports/index.md): How a Strands agent reaches an MCP server: stdio for local processes, Streamable HTTP and SSE for remote servers, with OAuth and AWS IAM authentication.
@@ -356,6 +370,8 @@
 - Labs
   - [labs](https://strandsagents.com/docs/labs/index.md): Explore Strands Labs, the experimental arm of Strands Agents: open source projects covering robotics, world models, agentic benchmarks, harness optimization, audio processing, and decision models.
   - Strands Decider
+    - Get started
+      - [Overview](https://strandsagents.com/docs/labs/strands-decider/overview/index.md): Understand what Strands Decider is, when to use it, and how to run your first decision.
     - Using Decider
       - [Inference](https://strandsagents.com/docs/labs/strands-decider/inference/index.md): Install Strands Decider, ask typed questions, serve the HTTP API, and choose an inference device.
       - [Images](https://strandsagents.com/docs/labs/strands-decider/images/index.md): Use image inputs and understand supported models, limits, implementation, and measurements.
@@ -827,11 +843,12 @@
 - [ModelStreamUpdateEvent](https://strandsagents.com/docs/api/typescript/ModelStreamUpdateEvent/index.md)
 - [ModelThrottledError](https://strandsagents.com/docs/api/typescript/ModelThrottledError/index.md)
 - [MultiAgentSaveLatestStrategy](https://strandsagents.com/docs/api/typescript/MultiAgentSaveLatestStrategy/index.md)
-- [NotImplementedError](https://strandsagents.com/docs/api/typescript/NotImplementedError/index.md)
 - [NullConversationManager](https://strandsagents.com/docs/api/typescript/NullConversationManager/index.md)
 - [Offload](https://strandsagents.com/docs/api/typescript/Offload/index.md)
 - [OffloadConditions](https://strandsagents.com/docs/api/typescript/OffloadConditions/index.md)
-- [OffloadStrategyBuilder](https://strandsagents.com/docs/api/typescript/OffloadStrategyBuilder/index.md)
+- [OffloadedBlock](https://strandsagents.com/docs/api/typescript/OffloadedBlock/index.md)
+- [OffloadedBlockData](https://strandsagents.com/docs/api/typescript/OffloadedBlockData/index.md)
+- [OffloadStrategy](https://strandsagents.com/docs/api/typescript/OffloadStrategy/index.md)
 - [OffloadTarget](https://strandsagents.com/docs/api/typescript/OffloadTarget/index.md)
 - [OnError](https://strandsagents.com/docs/api/typescript/OnError/index.md)
 - [OutputFile](https://strandsagents.com/docs/api/typescript/OutputFile/index.md)
@@ -894,6 +911,7 @@
 - [StructuredOutputError](https://strandsagents.com/docs/api/typescript/StructuredOutputError/index.md)
 - [SummarizeConfig](https://strandsagents.com/docs/api/typescript/SummarizeConfig/index.md)
 - [SummarizeOptions](https://strandsagents.com/docs/api/typescript/SummarizeOptions/index.md)
+- [SummarizeResult](https://strandsagents.com/docs/api/typescript/SummarizeResult/index.md)
 - [SummarizingConversationManager](https://strandsagents.com/docs/api/typescript/SummarizingConversationManager/index.md)
 - [SummarizingConversationManagerConfig](https://strandsagents.com/docs/api/typescript/SummarizingConversationManagerConfig/index.md)
 - [SummaryBlock](https://strandsagents.com/docs/api/typescript/SummaryBlock/index.md)
@@ -938,6 +956,7 @@
 - [TypeSafeDecisionModel](https://strandsagents.com/docs/api/typescript/TypeSafeDecisionModel/index.md)
 - [TypeSafeDecisionModelOptions](https://strandsagents.com/docs/api/typescript/TypeSafeDecisionModelOptions/index.md)
 - [Uncertain](https://strandsagents.com/docs/api/typescript/Uncertain/index.md)
+- [UnknownBlock](https://strandsagents.com/docs/api/typescript/UnknownBlock/index.md)
 - [Usage](https://strandsagents.com/docs/api/typescript/Usage/index.md)
 - [VideoBlock](https://strandsagents.com/docs/api/typescript/VideoBlock/index.md)
 - [VideoBlockData](https://strandsagents.com/docs/api/typescript/VideoBlockData/index.md)
@@ -1054,7 +1073,20 @@
 ## Changelog
 
 - [Changelog](https://strandsagents.com/changelog/index.md): All releases across the SDK, Harness, Harness CLI, Evals, and Box
+- Harness CLI
+  - [v0.3.0](https://strandsagents.com/changelog/cli/v0.3.0/index.md): Harness CLI v0.3.0 (2026-11-10)
+  - [v0.2.4](https://strandsagents.com/changelog/cli/v0.2.4/index.md): Harness CLI v0.2.4 (2026-11-04)
+  - [v0.2.3](https://strandsagents.com/changelog/cli/v0.2.3/index.md): Harness CLI v0.2.3 (2026-10-29)
+  - [v0.2.2](https://strandsagents.com/changelog/cli/v0.2.2/index.md): Harness CLI v0.2.2 (2026-10-22)
+  - [v0.2.1](https://strandsagents.com/changelog/cli/v0.2.1/index.md): Harness CLI v0.2.1 (2026-10-14)
+  - [v0.2.0](https://strandsagents.com/changelog/cli/v0.2.0/index.md): Harness CLI v0.2.0 (2026-10-08)
+  - [v0.1.4](https://strandsagents.com/changelog/cli/v0.1.4/index.md): Harness CLI v0.1.4 (2026-09-25)
+  - [v0.1.3](https://strandsagents.com/changelog/cli/v0.1.3/index.md): Harness CLI v0.1.3 (2026-09-24)
+  - [v0.1.2](https://strandsagents.com/changelog/cli/v0.1.2/index.md): Harness CLI v0.1.2 (2026-09-23)
+  - [v0.1.1](https://strandsagents.com/changelog/cli/v0.1.1/index.md): Harness CLI v0.1.1 (2026-09-22)
+  - [v0.1.0](https://strandsagents.com/changelog/cli/v0.1.0/index.md): Harness CLI v0.1.0 (2026-09-21)
 - Box
+  - [v0.2.2](https://strandsagents.com/changelog/box/v0.2.2/index.md): Box v0.2.2 (2026-11-10)
   - [v0.2.1](https://strandsagents.com/changelog/box/v0.2.1/index.md): Box v0.2.1 (2026-11-06)
   - [v0.2.0](https://strandsagents.com/changelog/box/v0.2.0/index.md): Box v0.2.0 (2026-11-05)
   - [v0.1.0](https://strandsagents.com/changelog/box/v0.1.0/index.md): Box v0.1.0 (2026-10-07)
@@ -1232,6 +1264,16 @@
   - [v0.1.2](https://strandsagents.com/changelog/evals/v0.1.2/index.md): Evals v0.1.2 (2026-01-13)
   - [v0.1.1](https://strandsagents.com/changelog/evals/v0.1.1/index.md): Evals v0.1.1 (2025-12-15)
   - [v0.1.0](https://strandsagents.com/changelog/evals/v0.1.0/index.md): Evals v0.1.0 (2025-12-03)
+- Shell
+  - [v0.6.0](https://strandsagents.com/changelog/shell/v0.6.0/index.md): Shell v0.6.0 (2026-11-04)
+  - [v0.5.0](https://strandsagents.com/changelog/shell/v0.5.0/index.md): Shell v0.5.0 (2026-10-14)
+  - [v0.4.0](https://strandsagents.com/changelog/shell/v0.4.0/index.md): Shell v0.4.0 (2026-10-08)
+  - [v0.3.3](https://strandsagents.com/changelog/shell/v0.3.3/index.md): Shell v0.3.3 (2026-08-07)
+  - [v0.3.2](https://strandsagents.com/changelog/shell/v0.3.2/index.md): Shell v0.3.2 (2026-07-23)
+  - [v0.3.1](https://strandsagents.com/changelog/shell/v0.3.1/index.md): Shell v0.3.1 (2026-07-17)
+  - [v0.3.0](https://strandsagents.com/changelog/shell/v0.3.0/index.md): Shell v0.3.0 (2026-07-17)
+  - [v0.2.0](https://strandsagents.com/changelog/shell/v0.2.0/index.md): Shell v0.2.0 (2026-06-25)
+  - [v0.1.0](https://strandsagents.com/changelog/shell/v0.1.0/index.md): Shell v0.1.0 (2026-06-16)
 - Harness Python
   - [v0.3.4](https://strandsagents.com/changelog/harness/python-v0.3.4/index.md): Harness Python v0.3.4 (2026-11-04)
   - [v0.3.3](https://strandsagents.com/changelog/harness/python-v0.3.3/index.md): Harness Python v0.3.3 (2026-10-29)
@@ -1251,14 +1293,3 @@
   - [v0.2.0](https://strandsagents.com/changelog/harness/typescript-v0.2.0/index.md): Harness TypeScript v0.2.0 (2026-10-08)
   - [v0.1.1](https://strandsagents.com/changelog/harness/typescript-v0.1.1/index.md): Harness TypeScript v0.1.1 (2026-09-22)
   - [v0.1.0](https://strandsagents.com/changelog/harness/typescript-v0.1.0/index.md): Harness TypeScript v0.1.0 (2026-09-21)
-- Harness CLI
-  - [v0.2.4](https://strandsagents.com/changelog/cli/v0.2.4/index.md): Harness CLI v0.2.4 (2026-11-04)
-  - [v0.2.3](https://strandsagents.com/changelog/cli/v0.2.3/index.md): Harness CLI v0.2.3 (2026-10-29)
-  - [v0.2.2](https://strandsagents.com/changelog/cli/v0.2.2/index.md): Harness CLI v0.2.2 (2026-10-22)
-  - [v0.2.1](https://strandsagents.com/changelog/cli/v0.2.1/index.md): Harness CLI v0.2.1 (2026-10-14)
-  - [v0.2.0](https://strandsagents.com/changelog/cli/v0.2.0/index.md): Harness CLI v0.2.0 (2026-10-08)
-  - [v0.1.4](https://strandsagents.com/changelog/cli/v0.1.4/index.md): Harness CLI v0.1.4 (2026-09-25)
-  - [v0.1.3](https://strandsagents.com/changelog/cli/v0.1.3/index.md): Harness CLI v0.1.3 (2026-09-24)
-  - [v0.1.2](https://strandsagents.com/changelog/cli/v0.1.2/index.md): Harness CLI v0.1.2 (2026-09-23)
-  - [v0.1.1](https://strandsagents.com/changelog/cli/v0.1.1/index.md): Harness CLI v0.1.1 (2026-09-22)
-  - [v0.1.0](https://strandsagents.com/changelog/cli/v0.1.0/index.md): Harness CLI v0.1.0 (2026-09-21)

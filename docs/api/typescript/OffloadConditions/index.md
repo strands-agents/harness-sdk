@@ -1,58 +1,57 @@
-Defined in: [src/context-manager/strategies/offload/base.ts:54](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/context-manager/strategies/offload/base.ts#L54)
+Defined in: [src/context-manager/strategies/offload/conditions.ts:41](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/context-manager/strategies/offload/conditions.ts#L41)
 
 **`Experimental`**
 
-Conditions that determine when an offload strategy fires.
+Conditions that determine when and how an offload strategy fires.
 
-Granularity is determined by which conditions are set:
+-   `contextUtilization` sets when the strategy fires. `'80%'` fires at 80% of the context window; a whole number of 1,000 or more fires at that many conversation tokens, and throws if it exceeds the model’s context window.
+-   `blockThreshold` sets how large each block, or each message for target `'*'`, must be to act on. A whole number selects content larger than that many tokens; `'5%'` selects content larger than 5% of the context window (10,000 tokens of a 200,000-token window).
+-   `preserveRecent` sets which matching messages it never touches. A whole number keeps that many of the newest; `'70%'` keeps the newest 70% of them.
 
--   `threshold` only → per-block, eager (act on each block above this size on message arrival)
--   `utilization` only → message-level (remove/summarize oldest messages when utilization exceeded)
--   Both → message-level, targeting only messages with blocks over the threshold
+With no `contextUtilization`, the strategy runs before every model call, or on each message as it arrives when the target isn’t `'*'` and `preserveRecent` is unset or 0. `blockThreshold` doesn’t change when it runs.
 
-When multiple strategies target the same content, they don’t conflict — strategies run as an ordered pipeline, and once an earlier strategy shrinks a block, it falls below the next strategy’s threshold and gets skipped automatically.
+Granularity: target `'*'` acts on whole messages, and `blockThreshold` measures each message. Drop removes them, summarize merges each contiguous run, and truncate elides the middle and doesn’t take a `blockThreshold`. Any other target acts on each block, and `blockThreshold` measures each block. `contextUtilization` only gates when the strategy fires, and `preserveRecent` only protects the newest matching messages.
+
+Strategies run as an ordered pipeline, so once an earlier strategy shrinks a block, it falls below the next strategy’s threshold and gets skipped.
 
 ## Properties
 
-### threshold?
+### contextUtilization?
 
 ```ts
-threshold?: number;
+contextUtilization?: number | `${number}%`;
 ```
 
-Defined in: [src/context-manager/strategies/offload/base.ts:56](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/context-manager/strategies/offload/base.ts#L56)
+Defined in: [src/context-manager/strategies/offload/conditions.ts:46](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/context-manager/strategies/offload/conditions.ts#L46)
 
 **`Experimental`**
 
-Token threshold above which individual blocks are offloaded.
+Context usage at or above which the strategy fires: `'80%'` of the context window, or a whole number of 1,000 or more for conversation tokens, at most the model’s context window.
 
 ---
 
-### utilization?
+### blockThreshold?
 
 ```ts
-utilization?: number;
+blockThreshold?: number | `${number}%`;
 ```
 
-Defined in: [src/context-manager/strategies/offload/base.ts:59](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/context-manager/strategies/offload/base.ts#L59)
+Defined in: [src/context-manager/strategies/offload/conditions.ts:53](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/context-manager/strategies/offload/conditions.ts#L53)
 
 **`Experimental`**
 
-Context utilization ratio (0-1+) above which the strategy fires.
+Size above which a message (target `'*'`) or block is offloaded: a whole number of tokens above 0, or `'5%'` of the context window. Unset, there is no size check. Media the token count measures as 0, alone or in a tool result, always passes.
 
 ---
 
 ### preserveRecent?
 
 ```ts
-preserveRecent?: number;
+preserveRecent?: number | `${number}%`;
 ```
 
-Defined in: [src/context-manager/strategies/offload/base.ts:66](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/context-manager/strategies/offload/base.ts#L66)
+Defined in: [src/context-manager/strategies/offload/conditions.ts:59](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/context-manager/strategies/offload/conditions.ts#L59)
 
 **`Experimental`**
 
-How many recent matching messages to leave untouched.
-
--   Integer (1 or above): absolute count of messages to preserve.
--   Decimal (between 0 and 1 exclusive): ratio of matching messages to preserve (e.g. 0.7 = keep 70%).
+Newest matching messages never touched: a count, or `'70%'` of the matches, rounded up so a share above 0 keeps at least one.

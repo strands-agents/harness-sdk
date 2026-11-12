@@ -535,7 +535,7 @@ End a memory extraction span.
 def get_tracer() -> Tracer
 ```
 
-Defined in: [src/strands/telemetry/tracer.py:1435](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/telemetry/tracer.py#L1435)
+Defined in: [src/strands/telemetry/tracer.py:1437](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/telemetry/tracer.py#L1437)
 
 Get or create the global tracer.
 
@@ -549,7 +549,7 @@ The global tracer instance.
 def serialize(obj: Any) -> str
 ```
 
-Defined in: [src/strands/telemetry/tracer.py:1449](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/telemetry/tracer.py#L1449)
+Defined in: [src/strands/telemetry/tracer.py:1451](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/telemetry/tracer.py#L1451)
 
 Serialize an object to JSON with consistent settings.
 

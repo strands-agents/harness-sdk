@@ -19,7 +19,7 @@ def make_subagent(
         description: str = DEFAULT_SUBAGENT_DESCRIPTION) -> AgentTool
 ```
 
-Defined in: [src/strands/vended\_tools/subagent/subagent.py:340](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_tools/subagent/subagent.py#L340)
+Defined in: [src/strands/vended\_tools/subagent/subagent.py:343](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_tools/subagent/subagent.py#L343)
 
 Build a `subagent` tool whose schema is derived from the axis modes and presets.
 

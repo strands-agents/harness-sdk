@@ -1,4 +1,4 @@
-Defined in: [src/types/messages.ts:258](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L258)
+Defined in: [src/types/messages.ts:386](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L386)
 
 Data for a tool use block.
 
@@ -10,7 +10,7 @@ Data for a tool use block.
 name: string;
 ```
 
-Defined in: [src/types/messages.ts:262](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L262)
+Defined in: [src/types/messages.ts:390](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L390)
 
 The name of the tool to execute.
 
@@ -22,7 +22,7 @@ The name of the tool to execute.
 toolUseId: string;
 ```
 
-Defined in: [src/types/messages.ts:267](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L267)
+Defined in: [src/types/messages.ts:395](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L395)
 
 Unique identifier for this tool use instance.
 
@@ -34,7 +34,7 @@ Unique identifier for this tool use instance.
 input: JSONValue;
 ```
 
-Defined in: [src/types/messages.ts:273](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L273)
+Defined in: [src/types/messages.ts:401](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L401)
 
 The input parameters for the tool. This can be any JSON-serializable value.
 
@@ -46,6 +46,6 @@ The input parameters for the tool. This can be any JSON-serializable value.
 reasoningSignature?: string;
 ```
 
-Defined in: [src/types/messages.ts:279](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L279)
+Defined in: [src/types/messages.ts:407](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L407)
 
 Reasoning signature from thinking models (e.g., Gemini). Must be preserved and sent back to the model for multi-turn tool use.

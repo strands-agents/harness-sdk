@@ -1,6 +1,10 @@
-Defined in: [src/types/messages.ts:221](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L221)
+Defined in: [src/types/messages.ts:259](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L259)
 
 Text content block within a message.
+
+## Extended by
+
+-   [`OffloadedBlock`](/docs/api/typescript/OffloadedBlock/index.md)
 
 ## Implements
 
@@ -15,7 +19,7 @@ Text content block within a message.
 new TextBlock(data): TextBlock;
 ```
 
-Defined in: [src/types/messages.ts:232](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L232)
+Defined in: [src/types/messages.ts:270](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L270)
 
 #### Parameters
 
@@ -35,7 +39,7 @@ Defined in: [src/types/messages.ts:232](https://github.com/strands-agents/harnes
 readonly type: "textBlock";
 ```
 
-Defined in: [src/types/messages.ts:225](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L225)
+Defined in: [src/types/messages.ts:263](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L263)
 
 Discriminator for text content.
 
@@ -47,7 +51,7 @@ Discriminator for text content.
 readonly text: string;
 ```
 
-Defined in: [src/types/messages.ts:230](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L230)
+Defined in: [src/types/messages.ts:268](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L268)
 
 Plain text content.
 
@@ -63,7 +67,7 @@ Plain text content.
 toJSON(): TextBlockData;
 ```
 
-Defined in: [src/types/messages.ts:240](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L240)
+Defined in: [src/types/messages.ts:278](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L278)
 
 Serializes the TextBlock to a JSON-compatible TextBlockData object. Called automatically by JSON.stringify().
 
@@ -83,7 +87,7 @@ Serializes the TextBlock to a JSON-compatible TextBlockData object. Called autom
 static fromJSON(data): TextBlock;
 ```
 
-Defined in: [src/types/messages.ts:250](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L250)
+Defined in: [src/types/messages.ts:288](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L288)
 
 Creates a TextBlock instance from TextBlockData.
 

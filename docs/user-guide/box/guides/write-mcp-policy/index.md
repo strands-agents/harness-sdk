@@ -47,21 +47,23 @@ when { ["fetch", "github"].contains(context.input.server) };
 
 | Action | Field | Value |
 | --- | --- | --- |
-| `shell:spawn` | `context.input.program` | Element 0 of the server’s `command`. |
+| `shell:spawn` | `context.input.program` | The executable’s filename, which is the server’s alias name. |
 |  | `context.input.program_path` | The program’s file, with every link resolved. `~` is the operator’s home. |
 |  | `context.input.arg1`, `arg2`, `arg_count` | The server’s arguments. |
-|  | `context.input.command` | By default, the server’s full `command` as written in `box.toml`: the program and its arguments, joined by spaces. Use it with `like` to match an argument past the second. An argument that holds `${OTEL_EXPORTER_OTLP_*}` is the name here, and the value the box puts in its place in `arg1` and `arg2`. |
+|  | `context.input.command` | By default, the alias name and the arguments as written in `box.toml`, joined by spaces. Use it with `like` to match an argument past the second. An argument that holds `${OTEL_EXPORTER_OTLP_*}` is the name here, and the value the box puts in its place in `arg1` and `arg2`. |
 | `mcp:call` | `context.input.server` | The `[mcp.<name>]` table’s name. |
 |  | `context.input.method` | The MCP method, such as `tools/list` or `tools/call`. For the harness’s reply to a stdio server’s own request, the method of that request, such as `roots/list`. |
 |  | `context.input.tool` | The tool name, on `tools/call`. |
 
-For an enabled [wildcard command](../add-an-mcp-server/index.md#argument-wildcards), `command` instead holds the effective launch command, with received values in the `*` positions and fixed arguments expanded. `arg1`, `arg2`, and `arg_count` describe those same launch arguments. A permit that checks only `program`, as above, matches every value supplied in the `*` positions. To restrict those values, add conditions on the effective arguments.
+For modern stdio servers, an input answer inside a retried call is checked in the same way as a legacy reply. For example, a `forbid` on `context.input.method == "roots/list"` prevents either form of roots answer from reaching the server. The retried tool call also needs its own permit.
+
+For an enabled [wildcard command](../add-an-mcp-server/index.md#argument-wildcards), `command` instead holds the alias name and effective launch arguments, with received values in the `*` positions and fixed arguments expanded. `arg1`, `arg2`, and `arg_count` describe those same launch arguments. A permit that checks only `program`, as above, matches every value supplied in the `*` positions. To restrict those values, add conditions on the effective arguments.
 
 ## Step 2. Connect the harness
 
 Add each server to the harness’s own MCP configuration.
 
--   **A `stdio` server:** set its command to the server’s full `command` from `box.toml`: the program, then every argument, in the same order. The harness runs the alias with those arguments, and the box starts the server whose `command` matches. With `argument_wildcards = true` on that server, supply the runtime value for each `*` position.
+-   **A `stdio` server:** set its command to the executable’s filename, then every argument from `box.toml`, in the same order. The harness runs the alias with those arguments, and the box starts the matching server. With `argument_wildcards = true` on that server, supply the runtime value for each `*` position.
 -   **An `http` server:** set its URL. For a server with `secret.ref = "env://NAME"`, send the placeholder from `NAME` in the header, or set `secret.inject = "always"` and send no header.
 
 Use your client’s configuration format for these settings. For this `box.toml` table:
@@ -78,7 +80,9 @@ a client that takes a command and its arguments apart gets:
 { "mcpServers": { "playwright": { "command": "npx", "args": ["-y", "@playwright/mcp"] } } }
 ```
 
-A harness entry that sets only the program, `"command": "npx"` with no `args`, is refused for this server with `no MCP server declares "npx"; servers on npx: playwright`. Add the arguments to the harness entry. The same applies to every `stdio` server whose `command` has arguments.
+If the table instead uses `command = ["/opt/node/bin/npx", "-y", "@playwright/mcp"]`, the harness configuration stays the same. Box launches that absolute executable path when the harness calls the `npx` alias.
+
+A harness entry that sets only the program, `"command": "npx"` with no `args`, does not select this server. It attempts to run ordinary `npx` inside the agent’s sandbox. Add the declared arguments to the harness entry to select the MCP server. The same applies to every `stdio` server whose `command` has arguments.
 
 The server URL must match the server declared in `box.toml`.
 
@@ -156,6 +160,35 @@ when temporal {
 
 `::request` counts every attempt, including a refused one. `::response` counts calls that reached the server.
 
+A rule can also require that another tool call finished first, for the same argument, with a given answer. When `verify_identity` declares an `outputSchema` with a `verified` field, this rule refuses a password reset unless a `verify_identity` of the same user answered `verified: true` in the last hour:
+
+```text
+@id("reset_after_verify")
+forbid (principal, action == servicenow::Action::"reset_password", resource)
+unless temporal {
+  formerly within 1h (
+    servicenow::Action::"verify_identity"::response{
+      input.user_name: context.input.user_name,
+      output.reply: "result",
+      output.structured.verified: true }
+  )
+};
+```
+
+Key it on `::response`, and require `output.reply` to be `result`:
+
+-   A refused `verify_identity` still records `::request`, so a rule on `::request` is met by asking.
+-   Every call that ends records `::response`, so a budget counts it. `output.reply` says how it ended: `result`, `tool_error` when the result sets `isError`, `protocol_error` for a JSON-RPC error, `cancelled`, or `indeterminate` when its connection ended or Box didn’t read the reply. A reply that only accepts a background task (an MCP task), or that asks the client for input first (`resultType: "input_required"`), is also `indeterminate`, because it isn’t the call’s answer and Box doesn’t record the later one. Requiring `result` means this rule isn’t met by a call that failed, that the agent started and abandoned, or that is still running as a task.
+-   A `result` shows that the server answered without an error, not that the verification passed. `output.structured` is what the tool answered. It holds the reply’s `structuredContent`, keeping only the fields the tool’s `outputSchema` declares, so a misspelled field fails at load. An `outputSchema` that Box can’t turn into a policy type, such as one with a field named `if` or a `$ref` it can’t resolve, declares no `output.structured`, so a rule that reads it fails at load. The server’s other tools keep their outputs, unless the problem only appears when the outputs are read together; then no tool on that server declares one.
+-   Box records no `output.structured` when the tool declares no `outputSchema`, when the reply isn’t a `result`, or when a required field doesn’t match its declared type. An optional field that doesn’t match is left out, like an undeclared one. A JSON `number` field is read as a whole number, so a fractional value such as `22.5` doesn’t match. A rule that reads a field Box left out isn’t met; a rule on another field still is.
+-   Box reads the reply on stdio and http servers alike, including a streamed (Server-Sent Events) http reply. Box asks an http server for an uncompressed reply. An http reply over the gateway’s 16 MiB response limit, compressed anyway, or cut off records `indeterminate`, and so does a reply Box can’t copy because many tool calls’ replies are being read at once. A server that always compresses its replies therefore never meets a precondition, so every call that needs one is refused.
+-   The agent can make its own reply unreadable, for example by asking for an output over 16 MiB. So write a rule on a tool’s output as a precondition (`unless temporal`, as above), which an unreadable reply fails. A `forbid` that fires when an earlier output said something can be avoided that way.
+-   Tool outputs are stored in local history in `box_dir`, next to the inputs Box already stores. They never go to telemetry.
+
+Box doesn’t record `::error` for an MCP call, and the load refuses a rule that reads one, or that compares `output.reply` with a value other than the five above.
+
+The count carries over when the box restarts. That’s also true of a rule written on a tool’s own action, such as `github::Action::"create_issue"`, as long as the rule only decides tool calls and you didn’t edit it. Box keeps that rule while the server lists its tools again. It starts with an empty count if you edit it, if the server’s new tool list no longer fits it, or if the server doesn’t list its tools in that run. A rule that decides a Box action, such as `http:request`, and counts a tool’s calls in `when temporal` starts with an empty count at each run. Write that rule over `mcp:call` and its `tool` field, as above, to keep its count.
+
 ## Result
 
 Restart the box. The decision log records each decision with the rule’s `@id`. A call the server permit allows names that permit, such as `github_calls`. A call a per-tool `forbid` refuses names that `forbid` and the per-tool action. The agent gets each refusal as an MCP error.
@@ -165,7 +198,9 @@ Restart the box. The decision log records each decision with the rule’s `@id`.
 | Error message (excerpt) or symptom | What to do |
 | --- | --- |
 | `MCP server "<name>" may not start` | No `shell:spawn` permit for the program. |
-| `no MCP server declares "<command>"` | The harness command or arguments do not match a declared server. Copy its `command` from `box.toml`, as in [step 2](#step-2-connect-the-harness). With `argument_wildcards = true`, supply a value for each `*` argument. |
+| The harness starts an ordinary program instead of its MCP server | Its command does not match a declared server. Set the executable’s filename and every declared argument, as in [step 2](#step-2-connect-the-harness). With `argument_wildcards = true`, supply a value for each `*` argument. |
+| `strands.box.mcp.unmatched` in the telemetry records | No declared MCP command matched. Compare the harness command with the declared command. The diagnostic carries the program and redacted arguments, with no policy verdict or execution outcome. See [an unmatched MCP route](../record-telemetry/index.md#an-unmatched-mcp-route). |
+| `no MCP server declares "<command>"` | The program is undeclared, or a command on that program cannot expand. Check that the harness uses a declared program, and correct any command expansion named in the error. |
 | Two MCP tables `declare overlapping wildcard commands` | The wildcard entries can match the same request, so Box refuses to start. Give them fixed arguments that distinguish them. An exact entry may overlap a wildcard entry; the exact entry takes priority. |
 | `MCP command matches multiple servers` | No exact entry matched, and more than one wildcard entry matched the received command. The launch is refused. |
 | The harness shows the server with zero tools | A rule refuses `tools/list` for the server. |
@@ -231,5 +266,5 @@ Read the startup warning as the signal that a rule went inert, then check it aga
 ## See also
 
 -   [The `[mcp.<name>]` table](../add-an-mcp-server/index.md): the keys for a `stdio` and an `http` server.
--   [MCP servers in the design guide](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/docs/design/mcp.md): how the box starts a server and decides each call.
--   [Policy in the design guide](https://github.com/strands-agents/box/blob/f4180a035d2d164596135864604629529636bf1c/docs/design/policy.md): how the engine decides, and what refuses to load.
+-   [MCP servers in the design guide](https://github.com/strands-agents/box/blob/a2cf46ed6a9ea0a8144101bfdef3f2406390952b/docs/design/mcp.md): how the box starts a server and decides each call.
+-   [Policy in the design guide](https://github.com/strands-agents/box/blob/a2cf46ed6a9ea0a8144101bfdef3f2406390952b/docs/design/policy.md): how the engine decides, and what refuses to load.

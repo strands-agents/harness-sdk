@@ -17,7 +17,7 @@ This is the lookup layer for the Strands harness factory (`create_harness` in Py
 | `session={"id": ...}` | `session: { id }` | none | Persist and resume this conversation by id. |
 | `session={"dir": ...}` | `session: { dir }` | `./.agent/sessions` | Where session state and offloaded artifacts live. |
 | `skills` | `skills` | `./.agent/skills` | Directory (or list) scanned for Agent Skills; off to disable. |
-| `builtin_plugins` | `builtinPlugins` | `["todos", "environment"]` | Built-in feature plugins to enable, or `[]` for none. |
+| `builtin_plugins` | `builtinPlugins` | `["environment"]` | Built-in feature plugins to enable (`todos` is opt-in), or `[]` for none. |
 | `memory` | `memory` | on | File-based long-term memory; off to disable. |
 | `memory={"dir": ...}` | `memory: { dir }` | `./.agent/memory` | Where the default memory store’s files live. |
 | `memory={"stores": [...]}` | `memory: { stores }` | none | Swap the memory backend while keeping Strands harness’s policy. |

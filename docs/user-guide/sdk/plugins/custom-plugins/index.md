@@ -390,8 +390,8 @@ class AsyncConfigPlugin implements Plugin {
 - [Hooks](/docs/user-guide/sdk/agents/hooks/index.md) (2 shared tags)
 - [GoalLoop](/docs/user-guide/sdk/plugins/goal-loop/index.md) (2 shared tags)
 - [Interrupts](/docs/user-guide/sdk/interrupts/index.md) (2 shared tags)
-- [Steering](/docs/user-guide/sdk/agents/interventions/steering/index.md) (2 shared tags)
 - [Interrupts in Multi-Agent Systems](/docs/user-guide/sdk/interrupts-multi-agent/index.md) (2 shared tags)
+- [Steering](/docs/user-guide/sdk/agents/interventions/steering/index.md) (2 shared tags)
 - [Interventions](/docs/user-guide/sdk/agents/interventions/index.md) (2 shared tags)
 - [Hooks](/docs/user-guide/sdk/bidi/hooks/index.md) (1 shared tag)
 

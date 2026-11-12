@@ -1,6 +1,6 @@
 This tutorial demonstrates how to use the Strands Agents SDK to build and deploy a multi-agent system on Amazon Bedrock AgentCore. You will create three specialized agents, each running in its own managed runtime, that discover and communicate with one another through the Agent-to-Agent (A2A) protocol. To illustrate the pattern, the tutorial implements an e-commerce shopping assistant that includes cooperating agents: a product search agent, an order lookup agent, and an orchestration agent.
 
-![Architecture](https://raw.githubusercontent.com/strands-agents/samples/c59f0c1e6ac0dd7e87729c8082e195074eec124b/python/02-deploy/04-agentcore-multi-agent/01-a2a-orchestration/images/architecture.png)
+![Architecture](https://raw.githubusercontent.com/strands-agents/samples/fdb8c1e6e1349c517f36fee6604c959e65febd06/python/02-deploy/04-agentcore-multi-agent/01-a2a-orchestration/images/architecture.png)
 
 ## Tutorial Details
 
@@ -36,9 +36,9 @@ This tutorial demonstrates how to use the Strands Agents SDK to build and deploy
 
 | Notebook | Agent | Description |
 | --- | --- | --- |
-| [01-a2a-server-product-agent.ipynb](https://github.com/strands-agents/samples/blob/c59f0c1e6ac0dd7e87729c8082e195074eec124b/python/02-deploy/04-agentcore-multi-agent/01-a2a-orchestration/01-a2a-server-product-agent.ipynb) | Product Agent | A2A server with [DummyJSON](https://dummyjson.com) API tools for product catalog search |
-| [02-a2a-server-order-agent.ipynb](https://github.com/strands-agents/samples/blob/c59f0c1e6ac0dd7e87729c8082e195074eec124b/python/02-deploy/04-agentcore-multi-agent/01-a2a-orchestration/02-a2a-server-order-agent.ipynb) | Order Agent | A2A server with MCP integration for Amazon DynamoDB order lookup |
-| [03-a2a-client-orchestrator-agent.ipynb](https://github.com/strands-agents/samples/blob/c59f0c1e6ac0dd7e87729c8082e195074eec124b/python/02-deploy/04-agentcore-multi-agent/01-a2a-orchestration/03-a2a-client-orchestrator-agent.ipynb) | Orchestrator | User-facing HTTP endpoint that routes queries to specialist agents via A2A |
+| [01-a2a-server-product-agent.ipynb](https://github.com/strands-agents/samples/blob/fdb8c1e6e1349c517f36fee6604c959e65febd06/python/02-deploy/04-agentcore-multi-agent/01-a2a-orchestration/01-a2a-server-product-agent.ipynb) | Product Agent | A2A server with [DummyJSON](https://dummyjson.com) API tools for product catalog search |
+| [02-a2a-server-order-agent.ipynb](https://github.com/strands-agents/samples/blob/fdb8c1e6e1349c517f36fee6604c959e65febd06/python/02-deploy/04-agentcore-multi-agent/01-a2a-orchestration/02-a2a-server-order-agent.ipynb) | Order Agent | A2A server with MCP integration for Amazon DynamoDB order lookup |
+| [03-a2a-client-orchestrator-agent.ipynb](https://github.com/strands-agents/samples/blob/fdb8c1e6e1349c517f36fee6604c959e65febd06/python/02-deploy/04-agentcore-multi-agent/01-a2a-orchestration/03-a2a-client-orchestrator-agent.ipynb) | Orchestrator | User-facing HTTP endpoint that routes queries to specialist agents via A2A |
 
 ## Getting Started
 
@@ -102,4 +102,4 @@ Each notebook includes cleanup cells at the end that destroy its own resources. 
 
 ## Upstream source
 
-- [View this sample at the imported commit](https://github.com/strands-agents/samples/tree/c59f0c1e6ac0dd7e87729c8082e195074eec124b/python/02-deploy/04-agentcore-multi-agent/01-a2a-orchestration)
+- [View this sample at the imported commit](https://github.com/strands-agents/samples/tree/fdb8c1e6e1349c517f36fee6604c959e65febd06/python/02-deploy/04-agentcore-multi-agent/01-a2a-orchestration)

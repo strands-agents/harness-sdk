@@ -68,7 +68,7 @@ The keys:
 | `format` | The version of the grammar format. Write `1`. A grammar without it is refused. |
 | `version` | The version of this grammar’s own content. Version 1 gives the namespace `Tool::git`, and version 2 gives `Tool::git::v2`. |
 | `name` | The name in the policy namespace, so `name = "git"` gives `Tool::git::Action::"push"`. |
-| `program` | The program name the grammar reads. It must be the last part of `command[0]` in its own `[tool]`. |
+| `program` | The program name the grammar reads, which is the name the agent types. When it isn’t the last part of `command[0]` in its own `[tool]`, `program` on `PATH` must reach the same file as `command[0]`. |
 | `effects` | Each effect a command can have, with a one-line description. |
 | `global.options` | Options that come before the action’s words. Only an action whose `usage` has `[global options]` accepts them. |
 | `shell.<action>` | One action, such as `shell.push`. |
@@ -173,7 +173,7 @@ A temporal predicate names one action, and never a group. A predicate such as `T
 
 ## How a grammar decides a command
 
-A grammar binds a program: it decides each spawn of the file its `[tool]` runs, under the name in that `[tool]`’s `command`.
+A grammar binds a program: it decides each spawn of the file its `[tool]` runs, under the grammar’s `program`, the name the agent types.
 
 ### A grammar action replaces `shell:spawn`
 
@@ -201,7 +201,9 @@ A rule over `Tool::cargo::Action::"*"` can test `context.input.effects` for a ca
 
 ### One grammar covers every tool that runs its program
 
-A grammar names one `program`, and it binds every `[tool]` and every stdio `[mcp.<name>]` whose command runs that name. A grammar on `[tool.git]` with `program = "git"` also covers a `[tool.brew_git]` with `command = ["/opt/homebrew/bin/git"]`, and `run` prints a startup line for each. A second grammar with the same `program` is refused.
+A grammar names one `program`, and it binds its own `[tool]` under that name. It also binds every other `[tool]` and every stdio `[mcp.<name>]` whose `command[0]` ends in that name. A grammar on `[tool.git]` with `program = "git"` also covers a `[tool.brew_git]` with `command = ["/opt/homebrew/bin/git"]`, and `run` prints a startup line for each. A second grammar with the same `program` is refused.
+
+The grammar’s own `[tool]` may name the file that a link leads to. With `command = [".../npm/bin/npm-cli.js"]` and `program = "npm"`, the grammar binds that file under `npm`, the name the agent types. When the last part of `command[0]` is the `program`, as with `git`, the Shell runs that tool’s file for the bare name, whatever `PATH` finds first. When it isn’t, `run` finds `program` on its own `PATH` and starts only when that is the same file. The Shell then finds the bare name on that `PATH` too. If another `[tool]` whose file name is the `program` runs a different file, the Shell still uses `PATH` for that name, so the grammar keeps deciding it. To make the bare name run the grammar’s file whatever `PATH` finds, spell `command[0]` as a link whose name is the `program`, such as `.../v20/bin/npm`. Otherwise it refuses the grammar, so a `git` grammar can’t sit on a `[tool.gh]`. Another `[tool]` or `[mcp.<name>]` whose command names `npm-cli.js` calls the program by another name, so the npm grammar doesn’t bind it.
 
 ## Which program files a grammar binds
 
@@ -209,11 +211,12 @@ Links, other names, and copies are decided as follows:
 
 -   **A link called by the bound name is that file.** A hard link or a symbolic link to the bound `git`, called as `git`, is decided by the grammar.
 -   **Another name of a bound file is a `shell:spawn`.** One file can have several names. On macOS, `/usr/bin/git` is one launcher file that is also `make`, `clang`, and many other developer tools. A grammar for `git` decides only the name `git`, so a spawn of `make` is decided as `shell:spawn`. So is a link that the workload makes to the bound file under another name, such as `g`. This holds whether or not a `[tool]` declares the other name. The one exception is a name that only a stdio server declares, in the next item.
--   **A name that only a stdio server declares is for that server’s start alone.** When a stdio `[mcp.<name>]` runs a bound file under a name that no `[tool]` declares, `shell:spawn` decides the server’s start. If the agent calls the file by that name, Box refuses the spawn, and no policy can permit it, because the server’s start and the agent’s spawn would otherwise make the same `shell:spawn` request. A server on a file that no grammar binds isn’t affected.
+-   **A name that only a stdio server declares is for that server’s start alone.** When a stdio `[mcp.<name>]` runs a bound file under a name that no `[tool]` declares, `shell:spawn` decides the server’s start. If the agent calls the file by that name, Box refuses the spawn, and no policy can permit it, because the server’s start and the agent’s spawn would otherwise make the same `shell:spawn` request. This restriction on agent commands does not apply when no grammar binds the file. Server starts still follow the required-binding check below.
 -   **A replaced file is refused.** If the file at a bound path changes while the box runs, for example after an update, its bound names stay refused until the box restarts. Box also refuses a bare name, such as `git`, when the file bound under that name is gone or replaced. The denial has `[tool-grammar]` where a rule `@id` would be, and ends with `No policy can permit it.`
--   **A copy at another path is a different file.** When no `[tool]` runs a copy of `git` at another path, Box decides that copy as `shell:spawn`, and the grammar doesn’t decide it.
+-   **A local server must satisfy its required grammar binding.** When a stdio server’s configured program name matches an installed grammar, its start must use a file Box bound under that name before the workload started. A missing or unreadable server program does not prevent Box startup. When the server is requested, Box refuses its start if that binding is unavailable. A general `shell:spawn` permit cannot replace this check. The rest of Box keeps running. A later link to an already-bound file can satisfy the same file-and-name check on a retry. To use a new or previously unreadable executable, make it readable and executable by the user running Box, then restart Box.
+-   **A copy at another path is a different file.** For an ordinary agent command, when no `[tool]` runs a copy of `git` at another path, Box decides that copy as `shell:spawn`. A local server whose program name requires a grammar must satisfy the binding check above.
 
-So a broad `shell:spawn` permit lets another name or a copy of `git` past a `Tool::git` forbid. A link such as `g` resolves to the bound file, so a permit that matches only the bound file’s `context.input.program_path` admits every other name of it. Pin each `shell:spawn` permit on both `context.input.program` and `context.input.program_path`, such as `program == "make"` with `program_path == "/usr/bin/make"`.
+For ordinary agent commands, a broad `shell:spawn` permit lets another name or a copy of `git` past a `Tool::git` forbid. A link such as `g` resolves to the bound file, so a permit that matches only the bound file’s `context.input.program_path` admits every other name of it. Pin each `shell:spawn` permit on both `context.input.program` and `context.input.program_path`, such as `program == "make"` with `program_path == "/usr/bin/make"`.
 
 ## What a grammar governs
 
@@ -251,7 +254,9 @@ The effects are what the command line states, not what the program does. Write r
 
 ## Startup refusals
 
-`run` refuses a grammar problem before it writes any box state, and each message says what is wrong. [`[tool.<name>.grammar]`](../../reference/configuration/index.md#toolnamegrammar) lists each refusal with its message.
+`run` refuses invalid grammar definitions and tool configuration before the workload starts. Each message says what is wrong. Most of these refusals come before it writes any box state. The check that `program` on `PATH` reaches the tool’s file comes after `run` opens each tool’s program file. [`[tool.<name>.grammar]`](../../reference/configuration/index.md#toolnamegrammar) lists each refusal with its message.
+
+An unavailable server program does not stop startup. A later server-start request can be refused when its required grammar binding is unavailable, as described in [which program files a grammar binds](#which-program-files-a-grammar-binds).
 
 ## See also
 

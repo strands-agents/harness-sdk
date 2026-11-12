@@ -7,13 +7,19 @@ Anthropic Claude model provider.
 
 Beta that enables on-demand compaction, and compaction blocks in later requests.
 
+#### TURN\_SCOPED\_SYSTEM\_BETA
+
+Beta that lets a mid-conversation system message carry `clear_at`.
+
+See [https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages](https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages)
+
 ## AnthropicModel
 
 ```python
 class AnthropicModel(Model)
 ```
 
-Defined in: [src/strands/models/anthropic.py:168](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/anthropic.py#L168)
+Defined in: [src/strands/models/anthropic.py:223](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/anthropic.py#L223)
 
 Anthropic model provider implementation.
 
@@ -23,7 +29,7 @@ Anthropic model provider implementation.
 class AnthropicConfig(BaseModelConfig)
 ```
 
-Defined in: [src/strands/models/anthropic.py:188](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/anthropic.py#L188)
+Defined in: [src/strands/models/anthropic.py:243](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/anthropic.py#L243)
 
 Configuration options for Anthropic models.
 
@@ -46,7 +52,7 @@ def __init__(*,
              **model_config: Unpack[AnthropicConfig])
 ```
 
-Defined in: [src/strands/models/anthropic.py:223](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/anthropic.py#L223)
+Defined in: [src/strands/models/anthropic.py:278](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/anthropic.py#L278)
 
 Initialize provider instance.
 
@@ -67,13 +73,27 @@ Initialize provider instance.
 def update_config(**model_config: Unpack[AnthropicConfig]) -> None
 ```
 
-Defined in: [src/strands/models/anthropic.py:259](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/anthropic.py#L259)
+Defined in: [src/strands/models/anthropic.py:314](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/anthropic.py#L314)
 
 Update the Anthropic model configuration with the provided arguments.
 
 **Arguments**:
 
 -   `**model_config` - Configuration overrides.
+
+#### model\_info
+
+```python
+@property
+@override
+def model_info() -> ModelInfo
+```
+
+Defined in: [src/strands/models/anthropic.py:330](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/anthropic.py#L330)
+
+Everything the SDK knows about the configured model, with `temporary_messages` on for supported Claude.
+
+`temporary_messages` follows the model id, not the client, so it is also on through the Bedrock and Vertex clients. If those reject the turn-scoped system messages, set `model_info=ModelInfo(capabilities=ModelCapabilities(temporary_messages=False))`. See :attr:`strands.models.Model.model_info`.
 
 #### get\_config
 
@@ -82,7 +102,7 @@ Update the Anthropic model configuration with the provided arguments.
 def get_config() -> AnthropicConfig
 ```
 
-Defined in: [src/strands/models/anthropic.py:274](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/anthropic.py#L274)
+Defined in: [src/strands/models/anthropic.py:346](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/anthropic.py#L346)
 
 Get the Anthropic model configuration.
 
@@ -104,7 +124,7 @@ def format_request(
 ) -> dict[str, Any]
 ```
 
-Defined in: [src/strands/models/anthropic.py:635](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/anthropic.py#L635)
+Defined in: [src/strands/models/anthropic.py:710](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/anthropic.py#L710)
 
 Format an Anthropic streaming request.
 
@@ -132,7 +152,7 @@ An Anthropic streaming request.
 def format_chunk(event: dict[str, Any]) -> StreamEvent
 ```
 
-Defined in: [src/strands/models/anthropic.py:953](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/anthropic.py#L953)
+Defined in: [src/strands/models/anthropic.py:1036](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/anthropic.py#L1036)
 
 Format the Anthropic response events into standardized message chunks.
 
@@ -159,7 +179,7 @@ async def count_tokens(
         system_prompt_content: list[SystemContentBlock] | None = None) -> int
 ```
 
-Defined in: [src/strands/models/anthropic.py:1092](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/anthropic.py#L1092)
+Defined in: [src/strands/models/anthropic.py:1158](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/anthropic.py#L1158)
 
 Count tokens using Anthropic’s native count\_tokens API.
 
@@ -190,7 +210,7 @@ async def stream(messages: Messages,
                  **kwargs: Any) -> AsyncGenerator[StreamEvent, None]
 ```
 
-Defined in: [src/strands/models/anthropic.py:1145](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/anthropic.py#L1145)
+Defined in: [src/strands/models/anthropic.py:1211](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/anthropic.py#L1211)
 
 Stream conversation with the Anthropic model.
 
@@ -228,31 +248,31 @@ async def summarize(messages: Messages,
                     system_prompt_content: list[SystemContentBlock]
                     | None = None,
                     instructions: str | None = None,
-                    **kwargs: Any) -> ContentBlock
+                    cancel_signal: threading.Event | None = None,
+                    agent_metadata: "AgentMetadata | None" = None,
+                    **kwargs: Any) -> SummarizeResult
 ```
 
-Defined in: [src/strands/models/anthropic.py:1322](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/anthropic.py#L1322)
+Defined in: [src/strands/models/anthropic.py:1414](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/anthropic.py#L1414)
 
-Summarize the conversation’s opening `messages` with Anthropic on-demand compaction.
+Summarize `messages` with Anthropic on-demand compaction.
 
-Sends the live system prompt and tools unchanged under beta `compact-2026-09-04`, so the thinking kept after the summary stays valid. The returned compaction block is stored as a `summary` block holding its text and signature; later requests from a model with `server_side_summary` rebuild the compaction block from it and start from it, and requests without it send the summary text.
+Sends the request unchanged under beta `compact-2026-09-04`, so the thinking kept after a summary of the live conversation stays valid. The returned compaction block is stored as a `summary` block holding its text and signature; later requests from a model with `server_side_summary` rebuild the compaction block from it and start from it, and requests without it send the summary text. Uses the base :meth:`Model.summarize` when `model_info.capabilities.server_side_summary` is not True, when the compaction request fails with an API error (a rejection, an overload, a timeout or a connection error), or when the response holds no compaction block.
 
 **Arguments**:
 
--   `messages` - The opening messages to summarize, from message 0, left unmodified.
--   `tool_specs` - The live conversation’s tool specifications.
--   `system_prompt` - The live conversation’s plain string system prompt.
--   `system_prompt_content` - The live conversation’s structured system prompt.
+-   `messages` - The request to summarize, left unmodified.
+-   `tool_specs` - The request’s tool specifications.
+-   `system_prompt` - The request’s plain string system prompt.
+-   `system_prompt_content` - The request’s structured system prompt.
 -   `instructions` - Summarization instructions replacing the API’s own prompt.
+-   `cancel_signal` - Event that aborts the base implementation’s call.
+-   `agent_metadata` - Stable identity of the invoking agent, passed to the base implementation.
 -   `**kwargs` - Additional keyword arguments for future extensibility.
 
 **Returns**:
 
-The summary block.
-
-**Raises**:
-
--   `RuntimeError` - If the response holds no compaction block.
+The summary and the usage of every call made for it.
 
 #### structured\_output
 
@@ -265,7 +285,7 @@ async def structured_output(
         **kwargs: Any) -> AsyncGenerator[dict[str, T | Any], None]
 ```
 
-Defined in: [src/strands/models/anthropic.py:1418](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/anthropic.py#L1418)
+Defined in: [src/strands/models/anthropic.py:1550](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/anthropic.py#L1550)
 
 Get structured output from the model.
 

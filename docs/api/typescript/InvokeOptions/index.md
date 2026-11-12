@@ -1,4 +1,4 @@
-Defined in: [src/types/agent.ts:95](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/agent.ts#L95)
+Defined in: [src/types/agent.ts:96](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/agent.ts#L96)
 
 Options for a single agent invocation.
 
@@ -10,7 +10,7 @@ Options for a single agent invocation.
 structuredOutputSchema?: ZodSchema;
 ```
 
-Defined in: [src/types/agent.ts:99](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/agent.ts#L99)
+Defined in: [src/types/agent.ts:100](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/agent.ts#L100)
 
 Zod schema for structured output validation, overriding the constructor-provided schema for this invocation only.
 
@@ -22,7 +22,7 @@ Zod schema for structured output validation, overriding the constructor-provided
 invocationState?: InvocationState;
 ```
 
-Defined in: [src/types/agent.ts:108](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/agent.ts#L108)
+Defined in: [src/types/agent.ts:109](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/agent.ts#L109)
 
 Per-invocation state. Passed to lifecycle hook events and tools, and returned on [AgentResult.invocationState](/docs/api/typescript/AgentResult/index.md#invocationstate). Mutable — hooks and tools may read and write. See [InvocationState](/docs/api/typescript/InvocationState/index.md) for details.
 
@@ -36,7 +36,7 @@ Defaults to an empty object when omitted.
 cancelSignal?: AbortSignal;
 ```
 
-Defined in: [src/types/agent.ts:138](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/agent.ts#L138)
+Defined in: [src/types/agent.ts:139](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/agent.ts#L139)
 
 External AbortSignal for cancelling the agent invocation.
 
@@ -69,7 +69,7 @@ app.post('/chat', async (req, res) => {
 invocationContext?: InvocationContext;
 ```
 
-Defined in: [src/types/agent.ts:141](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/agent.ts#L141)
+Defined in: [src/types/agent.ts:142](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/agent.ts#L142)
 
 Runs this call as a nested call in the request a hook event’s or [ToolContext.invocationContext](/docs/api/typescript/ToolContext/index.md#invocationcontext) handle belongs to, sharing its limits and usage even after that request returned; `limits` set alongside it only add stricter limits.
 
@@ -81,7 +81,7 @@ Runs this call as a nested call in the request a hook event’s or [ToolContext.
 limits?: InvokeLimits;
 ```
 
-Defined in: [src/types/agent.ts:174](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/agent.ts#L174)
+Defined in: [src/types/agent.ts:175](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/agent.ts#L175)
 
 Limits for the whole request this `invoke()` / `stream()` call starts. They apply to this agent’s loop and to every nested call: agents passed as tools, and any Graph or Swarm you pass the request’s `invocationContext` to. A Graph or Swarm can also start a limited request itself through MultiAgentInvokeOptions.limits. An agent run by a hand-written tool joins only when the tool forwards [ToolContext.invocationContext](/docs/api/typescript/ToolContext/index.md#invocationcontext) as [InvokeOptions.invocationContext](#invocationcontext); otherwise it runs standalone under its own limits. A nested call can also set its own `limits`: it stops at whichever limit is reached first, its own or the request’s.
 

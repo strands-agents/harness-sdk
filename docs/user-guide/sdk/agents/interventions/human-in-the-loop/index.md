@@ -163,6 +163,90 @@ await agent.invoke('Delete the temp files')
 ```
 (( /tab "TypeScript" ))
 
+### Auto Mode
+
+Pass `"auto"``'auto'` to let the SDK decide which tool calls need a human, using the approval strategy it currently considers the best available. Today that is the built-in [risk classifier](#risk-classifier): low-risk calls run on their own and risky ones are escalated.
+
+(( tab "Python" ))
+```python
+agent = Agent(
+    tools=[read_file, delete_files],
+    interventions=[HumanInTheLoop("auto")],
+)
+
+agent("Read config.json then delete /tmp/old-logs")
+# read_file: rated safe -> runs on its own
+# delete_files: rated risky -> pauses for approval
+```
+(( /tab "Python" ))
+
+(( tab "TypeScript" ))
+```typescript
+import { Agent, tool } from '@strands-agents/sdk'
+import { HumanInTheLoop } from '@strands-agents/sdk/vended-interventions/hitl'
+import { z } from 'zod'
+
+// const readFile = tool({ ... })
+// const deleteFiles = tool({ ... })
+
+const agent = new Agent({
+  tools: [readFile, deleteFiles],
+  interventions: [new HumanInTheLoop('auto')],
+})
+
+await agent.invoke('Read config.json then delete /tmp/old-logs')
+// read_file: rated safe -> runs on its own
+// delete_files: rated risky -> pauses for approval
+```
+(( /tab "TypeScript" ))
+
+Two options compose with it, since neither decides the strategy: `ask` for how the human is reached, and `allowed_tools``allowedTools` for calls that skip the decision entirely. Like plain `HumanInTheLoop()``new HumanInTheLoop()`, auto mode uses interrupt/resume unless you pass `ask`.
+
+(( tab "Python" ))
+```python
+agent = Agent(
+    tools=[read_file, delete_files],
+    interventions=[
+        HumanInTheLoop(
+            "auto",
+            ask="stdio",  # prompt in the terminal
+            allowed_tools=["read_file"],  # skips the decision entirely
+        ),
+    ],
+)
+
+agent("Read config.json then delete /tmp/old-logs")
+```
+(( /tab "Python" ))
+
+(( tab "TypeScript" ))
+```typescript
+import { Agent, tool } from '@strands-agents/sdk'
+import { HumanInTheLoop } from '@strands-agents/sdk/vended-interventions/hitl'
+import { z } from 'zod'
+
+const agent = new Agent({
+  tools: [readFile, deleteFiles],
+  interventions: [
+    new HumanInTheLoop('auto', {
+      ask: 'stdio', // prompt in the terminal
+      allowedTools: ['read_file'], // skips the decision entirely
+    }),
+  ],
+})
+
+await agent.invoke('Read config.json then delete /tmp/old-logs')
+```
+(( /tab "TypeScript" ))
+
+The options that *do* decide the strategy — `classifier`, trust, and `evaluate` — are rejected alongside `"auto"``'auto'`: pick either the SDK’s judgment or your own, never both. To configure the strategy yourself, omit the mode and use the options below.
+
+Caution
+
+What `"auto"``'auto'` resolves to can change in a minor release as better approaches become available, and a change can move calls in either direction: some that used to run on their own may start asking, and some that used to ask may stop. Every change is named in that version’s release notes.
+
+To fix the mechanism, configure the strategy explicitly: `classifier=True``classifier: true` always means the built-in LLM classifier. Note that this pins the mechanism, not its verdicts — the default risk prompt is SDK-owned and can change, and the classifier runs on `agent.aux_model``agent.auxModel`. To fix the criteria as well, pass your own prompt and model (`LLMClassifierConfig``LlmClassifierConfig`) or your own `DecisionModel`.
+
 ### Risk Classifier
 
 Use the `classifier` option to let an LLM decide per-call whether a tool needs approval. Tools in `allowed_tools` bypass the classifier entirely (fast path for known-safe tools).
@@ -210,51 +294,19 @@ await agent.invoke('Read config.json then delete /tmp/old-logs')
 ```
 (( /tab "TypeScript" ))
 
-To classify with a System One model, pass it as the classifier. A System One model is a small decision model that picks between options instead of generating text, so it responds faster and costs less per tool call than the LLM judge. It answers one yes/no question per tool call, judged against the same risk criteria as the built-in classifier. An uncertain answer requires approval and shows its reason in the prompt. TypeScript ships `TypeSafeDecisionModel`, which calls TypeSafe’s hosted Jev model. In Python, subclass `DecisionModel` to wrap one, such as a local [Strands Decider](https://github.com/strands-labs/strands-decider) server:
+To classify with a System One model, pass it as the classifier. A System One model is a small decision model that picks between options instead of generating text, so it responds faster and costs less per tool call than the LLM judge. It answers one yes/no question per tool call, judged against the same risk criteria as the built-in classifier. An uncertain answer requires approval. `TypeSafeDecisionModel` calls TypeSafe’s hosted Jev model, and `DecisionsAPIDecisionModel` calls decisionapi.net. To use another one, such as a local [Strands Decider](https://github.com/strands-labs/strands-decider) server, subclass `DecisionModel`.
 
 (( tab "Python" ))
 ```python
-import asyncio
-import json
-import urllib.request
-
-from strands.decisions import DecisionMetadata, DecisionModel, DecisionResult
-
-class StrandsDecider(DecisionModel):
-    """Asks yes/no questions of a `strands-decider serve` server."""
-
-    def __init__(self, url="http://localhost:8000/v1/systemone"):
-        self.url = url
-
-    def _post(self, body):
-        request = urllib.request.Request(
-            self.url,
-            data=json.dumps(body).encode(),
-            headers={"content-type": "application/json"},
-        )
-        with urllib.request.urlopen(request) as response:
-            return json.loads(response.read())
-
-    async def _ask(self, state, questions, **kwargs):
-        wire = {
-            qid: {"type": "noul", "instructions": q["question"]}
-            for qid, q in questions.items()
-        }
-        reply = await asyncio.to_thread(
-            self._post, {"state": state, "questions": wire}
-        )
-        return DecisionResult(
-            # "noul" is the model's probability that the answer is yes
-            answers={qid: a["noul"] >= 0.5 for qid, a in reply["answers"].items()},
-            metadata=DecisionMetadata(latency_ms=int(reply["latency_ms"])),
-        )
+from strands.decisions import TypeSafeDecisionModel
 
 agent = Agent(
     tools=[read_file, delete_files],
     interventions=[
         HumanInTheLoop(
             allowed_tools=["read_file"],
-            classifier=StrandsDecider(),
+            # Reads the API key from TYPESAFE_API_KEY
+            classifier=TypeSafeDecisionModel(),
         ),
     ],
 )
@@ -276,7 +328,7 @@ const agent = new Agent({
     new HumanInTheLoop({
       allowedTools: ['read_file'],
       // Reads the API key from TYPESAFE_API_KEY
-      classifier: new TypeSafeDecisionModel(),
+      classifier: { decisionModel: new TypeSafeDecisionModel() },
     }),
   ],
 })
@@ -366,8 +418,9 @@ const agentCustom = new Agent({
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
+| `mode` | `"auto"``'auto'` | `None``undefined` | Positional. Lets the SDK pick the approval strategy; see [Auto Mode](#auto-mode). Only `ask` and `allowed_tools``allowedTools` may be passed alongside it. |
 | `allowed_tools``allowedTools` | `list[str]``string[]` | `None``undefined` | Tools that bypass approval. Supports `"*"` (all) and `"!tool_name"` (negation). |
-| `classifier` | `bool, LLMClassifierConfig, DecisionModel, or callable``boolean, LlmClassifierConfig, DecisionModel, or function` | `None``undefined` | Risk classifier. `True``true` for built-in defaults, a config object for a custom prompt or model, a decision model, or a custom function. |
+| `classifier` | `bool, LLMClassifierConfig, DecisionModel, or callable``boolean, LlmClassifierConfig, { decisionModel }, or function` | `None``undefined` | Risk classifier. `True``true` for built-in defaults, a config object for a custom prompt or model, a decision model, or a custom function. |
 | `enable_trust``enableTrust` | `bool``boolean` | `False``false` | When enabled, trust responses are remembered for the session. |
 | `evaluate_trust``evaluateTrust` | Function | Accepts `"t"` or `"trust"` | Custom validator for trust responses. Only evaluated when trust is enabled. |
 | `evaluate` | Function | Accepts `True, "y", or "yes"``true, 'y', or 'yes'` | Custom validator for approval responses. |
@@ -555,9 +608,13 @@ Use `HumanInTheLoop` when you want tool-level approval gating with minimal code:
 - [harness-sdk/strands-py/src/strands/vended_interventions/hitl/hitl.py](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_interventions/hitl/hitl.py)
 - [harness-sdk/strands-py/src/strands/vended_interventions/hitl/classifier.py](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_interventions/hitl/classifier.py)
 - [harness-sdk/strands-py/src/strands/decisions/llm_decision_model.py](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/decisions/llm_decision_model.py)
+- [harness-sdk/strands-py/src/strands/decisions/typesafe_decision_model.py](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/decisions/typesafe_decision_model.py)
+- [harness-sdk/strands-py/src/strands/decisions/decisions_api_decision_model.py](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/decisions/decisions_api_decision_model.py)
 
 ### TypeScript
 
 - [harness-sdk/strands-ts/src/vended-interventions/hitl/hitl.ts](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/vended-interventions/hitl/hitl.ts)
 - [harness-sdk/strands-ts/src/vended-interventions/hitl/classifier.ts](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/vended-interventions/hitl/classifier.ts)
 - [harness-sdk/strands-ts/src/decisions/llm-decision-model.ts](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/llm-decision-model.ts)
+- [harness-sdk/strands-ts/src/decisions/typesafe-decision-model.ts](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/typesafe-decision-model.ts)
+- [harness-sdk/strands-ts/src/decisions/decisions-api-decision-model.ts](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/decisions-api-decision-model.ts)

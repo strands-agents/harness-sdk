@@ -5,10 +5,11 @@ type OffloadTarget =
   | "toolResultErrors"
   | "assistantText"
   | "userText"
+  | "media"
   | string[];
 ```
 
-Defined in: [src/context-manager/strategies/offload/base.ts:38](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/context-manager/strategies/offload/base.ts#L38)
+Defined in: [src/context-manager/strategies/offload/target.ts:31](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/context-manager/strategies/offload/target.ts#L31)
 
 **`Experimental`**
 
@@ -18,5 +19,6 @@ Target for offload operations. This union is intentionally extensible — new st
 -   `"toolResultErrors"` — all failed tool result blocks
 -   `"assistantText"` — text blocks in assistant messages
 -   `"userText"` — text blocks in user messages (excluding tool results)
--   `string[]` — tool results from specific tools, namespaced with `tool::` (e.g. `['tool::bash']`); prefix with `!` to exclude
--   `"*"` — all content in the context window (tool results + text blocks)
+-   `"media"` — image, document, video, and audio blocks outside tool results
+-   `string[]` — tool results from tools to include (e.g. `['bash']` or `['tool::bash']`) and, prefixed with `!`, tools to exclude. A list of only exclusions acts on every other tool.
+-   `"*"` — whole messages

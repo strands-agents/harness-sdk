@@ -1216,12 +1216,13 @@ model_id=<...> | history edit invalidated replayed thinking blocks, retrying wit
 
 Claude models that preserve thinking bind each thinking block to the conversation that came before it. Summarizing or removing messages with [context management](/docs/user-guide/sdk/context-management/index.md) or a conversation manager, restoring a session, or editing messages from a hook changes that earlier conversation, so the thinking blocks that remain in the history no longer match it. Accounts that enforce this binding, the default for accounts created on or after August 31, 2026, reject the next request.
 
-The retry sets `prefix_mismatch_behavior` to `drop_block` in the `thinking.block_binding` request field and adds the `thinking-binding-controls-2026-08-01` beta to any betas already in `anthropic_beta`. Claude then skips the stale thinking blocks instead of rejecting the request. The stale blocks stay in the history, so the provider keeps sending `drop_block` for that model ID until the model instance is discarded. Requests before the first rejection are sent unchanged.
+The retry sets `prefix_mismatch_behavior` to `drop_block` in the `thinking.block_binding` request field, with `"type": "adaptive"` when no thinking is configured, and adds the `thinking-binding-controls-2026-08-01` beta to any betas already in `anthropic_beta`. Claude then skips the stale thinking blocks instead of rejecting the request. The stale blocks stay in the history, so the provider keeps sending `drop_block` for that model ID until the model instance is discarded. Requests before the first rejection are sent unchanged.
 
--   **Thinking must be configured.** The retry applies only when `thinking` is set in `additional_request_fields``additionalRequestFields`. Other errors, and this error without a thinking configuration, are raised as is.
 -   **Your `block_binding` wins.** If the thinking configuration already contains `block_binding`, the provider sends it as written and does not retry. Set it yourself to choose the behavior up front or to keep the error.
 -   **Dropping has a cost.** Claude loses the reasoning in the dropped blocks, the prompt cache restarts at the edited message, and responses can use more output tokens.
 -   **Some models require adaptive thinking.** Claude Sonnet 5.5 and Claude Haiku 5.5 accept `drop_block` only with `"type": "adaptive"`. With any other thinking type, the retry fails and its error is raised.
+
+`BedrockModel` does not support server-side summary, so a message-level summary from [context management](/docs/user-guide/sdk/context-management/index.md) is always client-side and rewrites that earlier conversation. To keep thinking, see [Models that preserve thinking](/docs/user-guide/sdk/context-management/custom-strategies/index.md#models-that-preserve-thinking).
 
 ## Related Resources
 
