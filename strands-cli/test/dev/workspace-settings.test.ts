@@ -1,15 +1,17 @@
 import { createElement, type ComponentProps, type ReactElement } from 'react'
-import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { lstat, mkdir, readFile, realpath, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it, vi, type Mock } from 'vitest'
-import { parseArgs } from '../../src/cli/arguments.js'
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
+import { parseArgs, type ParsedArgs } from '../../src/cli/arguments.js'
 import { CliConfigStore, type CliConfigSnapshot } from '../../src/config/store.js'
 import { bindWorkspace } from '../../src/dev/binding.js'
 import { bindExistingAgent } from '../../src/dev/create.js'
 import * as initial from '../../src/dev/initialize.js'
 import { prepareWorkspaceChange } from '../../src/dev/manage.js'
 import { HarnessPicker } from '../../src/dev/picker.js'
-import { WorkspaceReplacementConfirmation, confirmWorkspaceReplacement } from '../../src/dev/settings.js'
+import { WorkspaceReplacementConfirmation } from '../../src/dev/settings.js'
+import { strandsUserPath } from '../../src/paths.js'
 import { runInkChat } from '../../src/ui/run.js'
 import * as preparation from '../../src/project/preparation.js'
 import { ChatController } from '../../src/ui/chat/controller.js'
@@ -26,7 +28,6 @@ const info = {
 }
 
 type PickerProps = ComponentProps<typeof HarnessPicker>
-type ConfirmationProps = ComponentProps<typeof WorkspaceReplacementConfirmation>
 
 const project = async (root: string): Promise<string> => {
   await mkdir(root, { recursive: true })
@@ -58,11 +59,15 @@ const playground = async () => {
 
 const importFromSettings = async (
   { launch, directory }: { launch: string; directory: string },
-  overrides: { savedConfig?: CliConfigSnapshot; agent?: string } = {}
+  overrides: {
+    savedConfig?: CliConfigSnapshot
+    agent?: string
+    select?: (args: ParsedArgs, directory: string) => Promise<void>
+  } = {}
 ) => {
   const abort = new AbortController()
   const screen = { signal: abort.signal, show: vi.fn() }
-  const select = vi.fn(async () => undefined)
+  const select = vi.fn(overrides.select ?? (async () => undefined))
   const args = {
     ...parseArgs(['dev', '--workspace', directory]),
     ...(overrides.agent ? { agent: overrides.agent } : {}),
@@ -78,10 +83,8 @@ const importFromSettings = async (
   })
   const pickers = (): PickerProps[] =>
     shown<PickerProps>(screen.show, HarnessPicker).filter(({ discovery }) => discovery !== 'running')
-  const confirmations = (): ConfirmationProps[] =>
-    shown<ConfirmationProps>(screen.show, WorkspaceReplacementConfirmation)
   await vi.waitFor(() => expect(pickers()).toHaveLength(1))
-  return { abort, args, binding, change, select, pickers, confirmations }
+  return { abort, args, binding, change, select, picker: pickers()[0]! }
 }
 
 const withAgentProject = (agentProject: string): CliConfigSnapshot => ({
@@ -195,7 +198,17 @@ describe('workspace Settings', () => {
         config: CliConfigStore.memory({}, { animations: false }),
         renderApp: render as NonNullable<NonNullable<Parameters<typeof runInkChat>[1]>['renderApp']>,
         prepare: async (screen) => {
-          await confirmWorkspaceReplacement(info.root, 'Other agent · /agents/other/agent.ts', screen)
+          await new Promise<void>((resolve) => {
+            screen.show(
+              createElement(WorkspaceReplacementConfirmation, {
+                directory: info.root,
+                replacement: 'Other agent · /agents/other/agent.ts',
+                onConfirm: resolve,
+                onCancel: resolve,
+              }),
+              'Strands dev workspace'
+            )
+          })
           return false
         },
       }
@@ -240,33 +253,42 @@ describe('workspace Settings', () => {
 })
 
 describe('agent import from workspace Settings', () => {
-  afterEach(() => vi.restoreAllMocks())
+  const testDirectory = process.cwd()
+
+  beforeEach(async () => {
+    const home = await realpath(await temporaryDirectory())
+    vi.stubEnv('HOME', home)
+    vi.stubEnv('USERPROFILE', home)
+  })
+
+  afterEach(() => {
+    process.chdir(testDirectory)
+    vi.restoreAllMocks()
+    vi.unstubAllEnvs()
+  })
+
+  const prepared = (files: { launch: string }): void => {
+    vi.spyOn(preparation, 'executePreparation').mockResolvedValue(join(files.launch, 'setup.log'))
+    vi.spyOn(initial, 'ensureInitialCandidate').mockResolvedValue('copy')
+  }
+
+  const discovered = (picker: PickerProps, entrypoint: string) =>
+    ({ kind: 'discovered', harness: picker.harnesses.find((harness) => harness.entrypoint === entrypoint)! }) as const
 
   it('shouldOfferTheBaseCliAndOtherAgentsButNotTheCurrentAgent', async () => {
     const files = await playground()
     await bindExistingAgent(files.directory, files.current)
     const savedConfig = CliConfigStore.memory().snapshot()
-    const { binding, change, pickers, confirmations } = await importFromSettings(files, { savedConfig })
-    const picker = pickers()[0]!
+    const { change, picker } = await importFromSettings(files, { savedConfig })
 
     expect(picker.cli).toEqual({ name: savedConfig.profile.name, path: savedConfig.path })
-    expect(picker.folderFor).toBeUndefined()
     expect(picker.harnesses.map(({ entrypoint }) => entrypoint)).toEqual([files.other])
-    expect(picker.warning).toBe(
-      `When you select an agent, strands dev deletes your current agent (current) and the folder ${files.directory}. The project files in ${join(files.launch, 'current')} stay on disk.`
-    )
-    await picker.onSelect({ kind: 'discovered', harness: picker.harnesses[0]! })
-    await vi.waitFor(() => expect(confirmations()).toHaveLength(1))
-    expect(confirmations()[0]!.replacement).toBe(`Agent · ${files.other}`)
-    confirmations()[0]!.onConfirm()
-
-    await expect(change).resolves.toEqual(
-      expect.objectContaining({ apply: expect.any(Function), rollback: expect.any(Function) })
-    )
-    expect(await readFile(join(files.directory, '.config'), 'utf8')).toBe(binding)
+    expect(picker.warning).toBeUndefined()
+    await picker.onSelect(undefined)
+    await expect(change).resolves.toBeUndefined()
   })
 
-  it('shouldHideTheBaseCliWhenTheCurrentAgentCameFromIt', async () => {
+  it('shouldHideTheBaseCliWhenTheCurrentWorkspaceIsTheBaseCliWorkspace', async () => {
     const files = await playground()
     await project(join(files.directory, 'agent'))
     await bindWorkspace(files.directory, {
@@ -275,14 +297,10 @@ describe('agent import from workspace Settings', () => {
       agent: { path: 'agent', entrypoint: 'agent.ts', language: 'typescript' },
       origin: { kind: 'cli' },
     })
-    const { change, pickers } = await importFromSettings(files)
-    const picker = pickers()[0]!
+    const { change, picker } = await importFromSettings(files)
 
     expect(picker.cli).toBeUndefined()
     expect(picker.harnesses.map(({ entrypoint }) => entrypoint)).toEqual([files.current, files.other])
-    expect(picker.warning).toBe(
-      `When you select an agent, strands dev deletes your current agent (CLI copy) and all files in ${files.directory}.`
-    )
     await picker.onSelect(undefined)
     await expect(change).resolves.toBeUndefined()
   })
@@ -299,8 +317,7 @@ describe('agent import from workspace Settings', () => {
         modelModule: { kind: 'model', module: './models/custom.mjs' },
       },
     }
-    const { change, pickers } = await importFromSettings(files, { savedConfig })
-    const picker = pickers()[0]!
+    const { change, picker } = await importFromSettings(files, { savedConfig })
 
     expect(picker.modelNotice?.('python')).toBe(
       'Python cannot load the model module custom.mjs. The new harness uses bedrock/us.example.model.'
@@ -308,20 +325,6 @@ describe('agent import from workspace Settings', () => {
     expect(picker.modelNotice?.('typescript')).toBeUndefined()
     await picker.onSelect(undefined)
     await expect(change).resolves.toBeUndefined()
-  })
-
-  it('shouldHideProjectsThatContainOrSitInsideTheWorkspaceFolder', async () => {
-    const files = await playground()
-    await bindExistingAgent(files.directory, files.current)
-    await project(join(files.directory, 'nested'))
-    await writeFile(join(files.launch, 'package.json'), '{"type":"module"}')
-    await writeFile(
-      join(files.launch, 'agent.ts'),
-      "import { createHarness } from '@strands-agents/harness'\nexport const agent = await createHarness({ name: 'Root' })\n"
-    )
-    const { pickers } = await importFromSettings(files)
-
-    expect(pickers()[0]!.harnesses.map(({ entrypoint }) => entrypoint)).toEqual([files.other])
   })
 
   it('shouldHideTheRunningAgentAndOfferTheSavedDefaultOnlyAsTheBaseCli', async () => {
@@ -333,80 +336,175 @@ describe('agent import from workspace Settings', () => {
       "import { createHarness } from '@strands-agents/harness'\nexport const agent = await createHarness({ name: 'Second' })\n"
     )
     const saved = await project(join(files.launch, 'default'))
-    const { pickers } = await importFromSettings(files, { savedConfig: withAgentProject(saved), agent: running })
-    const picker = pickers()[0]!
+    const { change, picker } = await importFromSettings(files, { savedConfig: withAgentProject(saved), agent: running })
 
     expect(picker.cli?.path).toBe(saved)
     expect(picker.harnesses.map(({ entrypoint }) => entrypoint)).toEqual([files.other])
+    await picker.onSelect(undefined)
+    await expect(change).resolves.toBeUndefined()
   })
 
-  it.each([
-    ['the running agent', (launch: string) => join(launch, 'current', 'agent.ts')],
-    ['missing', (launch: string) => join(launch, 'missing', 'agent.ts')],
-  ])('shouldHideTheBaseCliWhenTheSavedDefaultIs%s', async (_case, savedDefault) => {
+  it('shouldHideTheBaseCliWhenItsSavedDefaultIsTheRunningAgent', async () => {
     const files = await playground()
     await bindExistingAgent(files.directory, files.current)
-    const { pickers } = await importFromSettings(files, { savedConfig: withAgentProject(savedDefault(files.launch)) })
+    const { change, picker } = await importFromSettings(files, { savedConfig: withAgentProject(files.current) })
 
-    expect(pickers()[0]!.cli).toBeUndefined()
-    expect(pickers()[0]!.harnesses.map(({ entrypoint }) => entrypoint)).toEqual([files.other])
+    expect(picker.cli).toBeUndefined()
+    expect(picker.harnesses.map(({ entrypoint }) => entrypoint)).toEqual([files.other])
+    await picker.onSelect(undefined)
+    await expect(change).resolves.toBeUndefined()
   })
 
-  it('shouldBindTheSavedCliDefaultWhenTheBaseCliReplacesTheWorkspace', async () => {
+  it('shouldCreateAWorkspaceNextToTheSelectedAgentAndKeepTheCurrentWorkspace', async () => {
+    const files = await playground()
+    await bindExistingAgent(files.directory, files.current)
+    prepared(files)
+    const { binding, change, select, picker } = await importFromSettings(files)
+    const choice = discovered(picker, files.other)
+    const folder = picker.folderFor?.(choice)
+    expect(folder).toEqual({ path: join(files.launch, 'other', 'strands-dev'), detected: false })
+
+    await picker.onSelect(choice, folder!.path)
+    const opened = await change
+    await opened!.apply()
+
+    expect(select).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agent: files.other,
+        dev: expect.objectContaining({ workspace: folder!.path, prepared: true }),
+      }),
+      join(files.launch, 'other')
+    )
+    expect(JSON.parse(await readFile(join(folder!.path, '.config'), 'utf8'))).toMatchObject({
+      agent: { path: join(files.launch, 'other') },
+      origin: { kind: 'discovered' },
+    })
+    expect(await readFile(join(files.directory, '.config'), 'utf8')).toBe(binding)
+  })
+
+  it('shouldOpenTheWorkspaceThatTheSelectedAgentAlreadyHas', async () => {
+    const files = await playground()
+    await bindExistingAgent(files.directory, files.current)
+    const existing = join(files.launch, 'other', 'strands-dev')
+    await mkdir(existing)
+    await bindExistingAgent(existing, files.other)
+    const before = await readFile(join(existing, '.config'), 'utf8')
+    prepared(files)
+    const { change, select, picker } = await importFromSettings(files)
+    const choice = discovered(picker, files.other)
+    expect(picker.folderFor?.(choice)).toEqual({ path: existing, detected: true })
+
+    await picker.onSelect(choice, existing)
+    await (await change)!.apply()
+
+    expect(select).toHaveBeenCalledWith(
+      expect.objectContaining({ agent: files.other, dev: expect.objectContaining({ workspace: existing }) }),
+      join(files.launch, 'other')
+    )
+    expect(await readFile(join(existing, '.config'), 'utf8')).toBe(before)
+  })
+
+  it('shouldCreateTheBaseCliWorkspaceFromTheSavedDefault', async () => {
     const files = await playground()
     await bindExistingAgent(files.directory, files.current)
     const saved = await project(join(files.launch, 'default'))
-    vi.spyOn(preparation, 'executePreparation').mockResolvedValue(join(files.launch, 'setup.log'))
-    vi.spyOn(initial, 'ensureInitialCandidate').mockResolvedValue('copy')
-    vi.spyOn(process, 'chdir').mockReturnValue()
-    const { args, change, select, pickers, confirmations } = await importFromSettings(files, {
-      savedConfig: withAgentProject(saved),
-    })
-    await pickers()[0]!.onSelect({ kind: 'cli' })
-    await vi.waitFor(() => expect(confirmations()).toHaveLength(1))
-    confirmations()[0]!.onConfirm()
-    const replacement = await change
+    prepared(files)
+    const { change, select, picker } = await importFromSettings(files, { savedConfig: withAgentProject(saved) })
+    const folder = picker.folderFor?.({ kind: 'cli' })
+    expect(folder).toEqual({ path: strandsUserPath('strands-dev'), detected: false })
 
-    await replacement!.apply()
-    await replacement!.finish()
+    await picker.onSelect({ kind: 'cli' }, folder!.path)
+    await (await change)!.apply()
 
     expect(select).toHaveBeenCalledWith(
-      expect.objectContaining({ agent: saved, dev: expect.objectContaining({ workspace: args.dev!.workspace }) }),
+      expect.objectContaining({ agent: saved, dev: expect.objectContaining({ workspace: folder!.path }) }),
       join(files.launch, 'default')
     )
-    expect(JSON.parse(await readFile(join(files.directory, '.config'), 'utf8'))).toMatchObject({
+    expect(JSON.parse(await readFile(join(folder!.path, '.config'), 'utf8'))).toMatchObject({
       agent: { path: join(files.launch, 'default') },
       origin: { kind: 'cli' },
     })
   })
 
-  it('shouldReturnToThePickerWhenTheDeleteConfirmationIsCancelled', async () => {
+  it('shouldRefuseToReplaceTheOpenWorkspace', async () => {
     const files = await playground()
-    await bindExistingAgent(files.directory, files.current)
-    const { binding, change, pickers, confirmations } = await importFromSettings(files)
-    await pickers()[0]!.onSelect({ kind: 'create', language: 'python', name: 'fresh' })
-    await vi.waitFor(() => expect(confirmations()).toHaveLength(1))
-    expect(confirmations()[0]!.replacement).toBe('New python agent · fresh')
+    const open = strandsUserPath('strands-dev')
+    await mkdir(open, { recursive: true })
+    await bindExistingAgent(open, files.current)
+    const { binding, change, picker } = await importFromSettings({ ...files, directory: open })
+    expect(picker.folderFor?.({ kind: 'cli' })).toEqual({ path: open, detected: false, open: true })
 
-    confirmations()[0]!.onCancel()
-    await vi.waitFor(() => expect(pickers()).toHaveLength(2))
-    await pickers()[1]!.onSelect(undefined)
+    await expect(picker.onSelect({ kind: 'cli' }, open)).rejects.toThrow('It holds the open workspace.')
+    await picker.onSelect(undefined)
 
     await expect(change).resolves.toBeUndefined()
-    expect(await readFile(join(files.directory, '.config'), 'utf8')).toBe(binding)
+    expect(await readFile(join(open, '.config'), 'utf8')).toBe(binding)
   })
 
-  it('shouldLeaveTheWorkspaceUnchangedWhenTheSessionStopsDuringConfirmation', async () => {
+  it('shouldDeleteTheNewWorkspaceAndSelectTheOldOneWhenTheChangeIsRolledBack', async () => {
     const files = await playground()
     await bindExistingAgent(files.directory, files.current)
-    const { abort, binding, change, pickers, confirmations } = await importFromSettings(files)
-    await pickers()[0]!.onSelect({ kind: 'discovered', harness: pickers()[0]!.harnesses[0]! })
-    await vi.waitFor(() => expect(confirmations()).toHaveLength(1))
+    prepared(files)
+    const before = process.cwd()
+    const { args, change, select, picker } = await importFromSettings(files)
+    const choice = discovered(picker, files.other)
+    const folder = picker.folderFor!(choice)!.path
+
+    await picker.onSelect(choice, folder)
+    const opened = await change
+    await opened!.apply()
+    await opened!.rollback()
+
+    await expect(lstat(folder)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(select).toHaveBeenLastCalledWith(args, before)
+    expect(process.cwd()).toBe(before)
+  })
+
+  it('shouldLeaveTheNewWorkspaceBeforeTheRollbackDeletesIt', async () => {
+    const files = await playground()
+    await bindExistingAgent(files.directory, files.current)
+    prepared(files)
+    const before = process.cwd()
+    const created = strandsUserPath('strands-dev')
+    const visits: { directory: string; createdExists: boolean }[] = []
+    const { change, picker } = await importFromSettings(files, {
+      select: async (_args, directory) => {
+        visits.push({ directory, createdExists: existsSync(created) })
+        process.chdir(directory)
+      },
+    })
+
+    await picker.onSelect({ kind: 'cli' }, created)
+    const opened = await change
+    await opened!.apply()
+    expect(process.cwd()).toBe(join(created, 'agent'))
+    await opened!.rollback()
+
+    expect(visits.at(-1)).toEqual({ directory: before, createdExists: true })
+    expect(existsSync(created)).toBe(false)
+    expect(process.cwd()).toBe(before)
+  })
+
+  it('shouldHideTheBaseCliWhenItsSavedDefaultIsMissing', async () => {
+    const files = await playground()
+    await bindExistingAgent(files.directory, files.current)
+    const missing = join(files.launch, 'missing', 'agent.ts')
+    const { change, picker } = await importFromSettings(files, { savedConfig: withAgentProject(missing) })
+
+    expect(picker.cli).toBeUndefined()
+    expect(picker.harnesses.map(({ entrypoint }) => entrypoint)).toEqual([files.other])
+    await picker.onSelect(undefined)
+    await expect(change).resolves.toBeUndefined()
+  })
+
+  it('shouldLeaveTheWorkspaceUnchangedWhenTheSessionStopsDuringSelection', async () => {
+    const files = await playground()
+    await bindExistingAgent(files.directory, files.current)
+    const { abort, binding, change } = await importFromSettings(files)
 
     abort.abort(new Error('closed'))
 
-    await expect(change).resolves.toBeUndefined()
-    expect(pickers()).toHaveLength(1)
+    await expect(change).rejects.toThrow('closed')
     expect(await readFile(join(files.directory, '.config'), 'utf8')).toBe(binding)
   })
 })

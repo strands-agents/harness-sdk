@@ -1,8 +1,7 @@
-import { createElement, useState, type ReactElement } from 'react'
+import { useState, type ReactElement } from 'react'
 import { Box, useInput } from 'ink'
 import { Text } from '../ui/theme.js'
 import { sanitizeTerminalText } from '../terminal/text.js'
-import type { StartupScreen } from '../ui/run.js'
 import { useCopyableError } from '../ui/clipboard.js'
 
 const APPROVAL = 'DELETE'
@@ -53,33 +52,4 @@ export const WorkspaceReplacementConfirmation = ({
       <Text dimColor>{['Enter confirm', errorCopyHint, 'Esc back'].filter(Boolean).join(' · ')}</Text>
     </Box>
   )
-}
-
-export const confirmWorkspaceReplacement = async (
-  directory: string,
-  replacement: string,
-  screen: StartupScreen
-): Promise<boolean> => {
-  screen.signal.throwIfAborted()
-  let complete: (confirmed: boolean) => void = () => undefined
-  const result = new Promise<boolean>((resolve) => {
-    complete = resolve
-  })
-  const cancel = (): void => complete(false)
-  screen.signal.addEventListener('abort', cancel, { once: true })
-  screen.show(
-    createElement(WorkspaceReplacementConfirmation, {
-      directory,
-      replacement,
-      onConfirm: () => complete(true),
-      onCancel: cancel,
-    }),
-    'Strands dev workspace'
-  )
-  try {
-    return await result
-  } finally {
-    screen.signal.removeEventListener('abort', cancel)
-    screen.show(undefined)
-  }
 }

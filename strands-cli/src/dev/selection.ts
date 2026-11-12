@@ -15,6 +15,7 @@ export interface BaseHarnessSelection {
   workspace: string
   excludedEntrypoints: readonly string[]
   holds(workspace: DevWorkspace): boolean
+  runs(entrypoint: string): boolean
 }
 
 export const baseHarnessProject = (snapshot: CliConfigSnapshot, cwd: string): ImportedAgentProject | undefined =>
@@ -48,6 +49,7 @@ export const baseHarnessSelection = async (
     workspace,
     excludedEntrypoints: [...(snapshot.agentProject ? [source] : []), ...(existing ? [existing.entrypoint] : [])],
     holds,
+    runs: (entrypoint) => snapshot.agentProject !== undefined && sameFile(entrypoint, source),
   }
 }
 

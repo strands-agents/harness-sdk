@@ -239,38 +239,15 @@ describe('HarnessPicker', () => {
     return { input, text: () => frame().join('\n'), selected }
   }
 
-  it('shouldOfferTheDetectedWorkspaceWhenTheChoiceAlreadyHasOne', async () => {
+  it('shouldOpenTheDetectedWorkspaceWithoutAskingForAFolder', async () => {
     const { input, text, selected } = withDetectedWorkspace()
     await vi.waitFor(() => expect(text()).toContain('Select a harness'))
-    input.write('\r')
+    expect(text()).toContain('Enter open')
 
-    await vi.waitFor(() => expect(text()).toContain('Select a workspace'))
-    expect(text()).toMatch(/Detected workspace: \/home\/test\/\.strands\/strands-dev▌?\s*$/m)
-    expect(text()).not.toContain('Create a workspace')
-    expect(text()).not.toContain('will be created')
     input.write('\r')
 
     await vi.waitFor(() => expect(selected).toHaveBeenCalledWith({ kind: 'cli' }, '/home/test/.strands/strands-dev'))
-  })
-
-  it.each([
-    ['-next', 'A strands-dev folder will be created in this path'],
-    ['-2', 'A strands-dev-2 folder will be created at this path'],
-  ])('shouldAskToCreateAWorkspaceWhenTheUserAppends%sToTheDetectedPath', async (typed, note) => {
-    const { input, text, selected } = withDetectedWorkspace()
-    await vi.waitFor(() => expect(text()).toContain('Select a harness'))
-    input.write('\r')
-    await vi.waitFor(() => expect(text()).toContain('Select a workspace'))
-
-    input.write(typed)
-
-    await vi.waitFor(() => expect(text()).toContain('Create a workspace'))
-    expect(text()).toContain(`Workspace folder: /home/test/.strands/strands-dev${typed}`)
-    expect(text()).toContain(note)
-    input.write('\r')
-    await vi.waitFor(() =>
-      expect(selected).toHaveBeenCalledWith({ kind: 'cli' }, `/home/test/.strands/strands-dev${typed}`)
-    )
+    expect(text()).not.toContain('Create a workspace')
   })
 
   it('shouldSubmitTheEditedFolderWhenTheUserChangesIt', async () => {
@@ -477,6 +454,32 @@ describe('HarnessPicker', () => {
       expect(text()).toContain('strands-dev in this path holds the workspace of Strands harness (/desk/agent.py).')
     )
     expect(text()).toContain('Enter asks you to confirm before it is replaced.')
+  })
+
+  it('shouldSayTheOpenWorkspaceCannotBeReplacedFromTheFolderStep', async () => {
+    const input = ttyInput()
+    const output = ttyOutput(100, 40)
+    const frame = captureFrame(output)
+    render(
+      createElement(HarnessPicker, {
+        cli: { name: 'Saved profile', path: '/home/test/.strands/cli.toml' },
+        harnesses: [],
+        folderFor: () => ({ path: '/home/test/.strands/strands-dev', detected: false, open: true as const }),
+        onSelect: vi.fn(),
+      }),
+      { stdin: input, stdout: output }
+    )
+    const text = (): string => frame().join('\n').replace(/\s+/gu, ' ')
+    await vi.waitFor(() => expect(text()).toContain('Select a harness'))
+
+    input.write('\r')
+
+    await vi.waitFor(() =>
+      expect(text()).toContain(
+        'strands-dev in this path is the open workspace. Choose another folder, or restart strands dev to replace it.'
+      )
+    )
+    expect(text()).not.toContain('Enter asks you to confirm')
   })
 
   it('shouldReplaceTheFolderOnlyAfterTheUserTypesDelete', async () => {
@@ -732,38 +735,31 @@ describe('HarnessPicker', () => {
   })
 
   it.each([
-    [9, false, false],
-    [10, false, true],
-    [7, true, false],
-    [8, true, true],
-  ])(
-    'shouldShowTheSelectedProjectOnlyWhenTheFolderStepFitsAt%sRowsWithDetected%s',
-    async (rows, detected, agentVisible) => {
-      const input = ttyInput()
-      const output = ttyOutput(120, 50)
-      const frame = captureFrame(output)
-      render(
-        createElement(
-          StartupContentRows,
-          { value: rows },
-          createElement(HarnessPicker, {
-            harnesses: [harness],
-            folderFor: () => ({ path: '/work/strands-dev', detected }),
-            onSelect: vi.fn(),
-          })
-        ),
-        { stdin: input, stdout: output }
-      )
-      await vi.waitFor(() => expect(frame().join('\n')).toContain('Select a harness'))
-      input.write('\r')
+    [9, false],
+    [10, true],
+  ])('shouldShowTheSelectedProjectOnlyWhenTheFolderStepFitsAt%sRows', async (rows, agentVisible) => {
+    const input = ttyInput()
+    const output = ttyOutput(120, 50)
+    const frame = captureFrame(output)
+    render(
+      createElement(
+        StartupContentRows,
+        { value: rows },
+        createElement(HarnessPicker, {
+          harnesses: [harness],
+          folderFor: () => ({ path: '/work/strands-dev', detected: false }),
+          onSelect: vi.fn(),
+        })
+      ),
+      { stdin: input, stdout: output }
+    )
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('Select a harness'))
+    input.write('\r')
 
-      await vi.waitFor(() =>
-        expect(frame().join('\n')).toContain(detected ? 'Select a workspace' : 'Create a workspace')
-      )
-      expect(frame().join('\n').includes('Selected project')).toBe(agentVisible)
-      expect(frame().length).toBeLessThanOrEqual(rows)
-    }
-  )
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('Create a workspace'))
+    expect(frame().join('\n').includes('Selected project')).toBe(agentVisible)
+    expect(frame().length).toBeLessThanOrEqual(rows)
+  })
 
   it('shouldShowTheSearchLineInsideDiscoveredProjectsBelowTheCliDefault', async () => {
     const output = ttyOutput(100, 36)
