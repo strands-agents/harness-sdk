@@ -7,7 +7,7 @@ import type { ExperimentSummary } from '../../../src/dev/panels/model.js'
 import { temporaryVenvPython, type TemporaryCommandRequest } from '../../../src/dev/temporary-evals-fork/environment.js'
 import type { TemporaryEvalsProcess } from '../../../src/dev/temporary-evals-fork/evals-process.js'
 import type { TemporarySessionDependencies } from '../../../src/dev/temporary-evals-fork/host.js'
-import { temporaryDevSessions } from '../../../src/dev/temporary-evals-fork/sessions.js'
+import { temporaryDevSessions, temporaryTestJobs } from '../../../src/dev/temporary-evals-fork/sessions.js'
 import type { DevWorkspace } from '../../../src/dev/workspace.js'
 import type { ChatNotice, DevChatCommandContext } from '../../../src/ui/chat/types.js'
 import { temporaryDirectory } from '../../fixtures/tempdir.js'
@@ -167,11 +167,24 @@ const sessionsFor = async (dependencies: Partial<TemporarySessionDependencies> =
   return { workspace, sessions, notices }
 }
 
-const savedExperiment = async (workspace: DevWorkspace, names: readonly string[]): Promise<ExperimentSummary> => {
-  const path = join(workspace.directory!, 'tmp/experiments/capital.json')
+const savedExperiment = async (
+  workspace: DevWorkspace,
+  names: readonly string[],
+  name = 'capital'
+): Promise<ExperimentSummary> => {
+  const path = join(workspace.directory!, `tmp/experiments/${name}.json`)
   await writeFileAt(path, JSON.stringify(experimentDocument(names)))
-  return { name: 'capital', path, caseCount: names.length }
+  return { name, path, caseCount: names.length }
 }
+
+const finished = (sessions: ReturnType<typeof temporaryDevSessions>, path: string) => {
+  const run = sessions.test.snapshot().runs.find(({ experiment }) => experiment.path === path)?.run
+  if (run?.status !== 'done') throw new Error(`expected finished results, got ${run?.status}`)
+  return run.results
+}
+
+const runStatus = (sessions: ReturnType<typeof temporaryDevSessions>, path: string) =>
+  sessions.test.snapshot().runs.find(({ experiment }) => experiment.path === path)?.run.status
 
 describe('TEMPORARY dev sessions', () => {
   it('shouldShareTheSessionsWhenTheSameWorkspaceOpensAgain', async () => {
@@ -186,13 +199,12 @@ describe('TEMPORARY dev sessions', () => {
     const { workspace, sessions, notices } = await sessionsFor({ spawnTests: testingProcess() })
     const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2'])
 
-    sessions.test.run(experiment)
-    await vi.waitFor(() => expect(sessions.test.snapshot().step).toBe('results'))
+    sessions.test.run([experiment])
+    await vi.waitFor(() => expect(runStatus(sessions, experiment.path)).toBe('done'))
 
-    const state = sessions.test.snapshot()
-    if (state.step !== 'results') throw new Error('expected results')
-    expect(state.results.cases.filter(({ passed }) => !passed).map(({ name }) => name)).toEqual(['c1'])
-    expect(state.results.cases.find(({ name }) => name === 'c1')?.verdicts[0]?.reason).toBe('named the wrong city')
+    const results = finished(sessions, experiment.path)
+    expect(results.cases.filter(({ passed }) => !passed).map(({ name }) => name)).toEqual(['c1'])
+    expect(results.cases.find(({ name }) => name === 'c1')?.verdicts[0]?.reason).toBe('named the wrong city')
     expect(notices.at(-1)).toEqual({
       status: 'success',
       text: 'test · capital · 2 of 3 cases passed · /test shows the results',
@@ -203,12 +215,12 @@ describe('TEMPORARY dev sessions', () => {
     const testing = testingProcess()
     const { workspace, sessions } = await sessionsFor({ spawnTests: testing })
     const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2'])
-    sessions.test.run(experiment)
-    await vi.waitFor(() => expect(sessions.test.snapshot().step).toBe('results'))
+    sessions.test.run([experiment])
+    await vi.waitFor(() => expect(runStatus(sessions, experiment.path)).toBe('done'))
 
-    sessions.test.rerunFailed()
+    sessions.test.rerunFailed(experiment.path)
     await vi.waitFor(() => expect(testing).toHaveBeenCalledTimes(2))
-    await vi.waitFor(() => expect(sessions.test.snapshot().step).toBe('results'))
+    await vi.waitFor(() => expect(runStatus(sessions, experiment.path)).toBe('done'))
 
     const rerun = JSON.parse(await readFile(testing.mock.calls.at(-1)![0].args[3]!, 'utf8')) as ReturnType<
       typeof experimentDocument
@@ -292,41 +304,56 @@ describe('TEMPORARY dev sessions', () => {
 })
 
 describe('TEMPORARY dev sessions on open', () => {
-  it.each([
-    ['test', 'results'],
-    ['optimize', 'setup'],
-  ] as const)('shouldUseTheOnlyExperimentWhenThe%sPanelOpens', async (which, step) => {
-    const { workspace, sessions } = await sessionsFor({ spawnTests: testingProcess() })
+  it.each(['test', 'optimize'] as const)('shouldWaitForAChoiceWhenThe%sPanelOpensWithOneExperiment', async (which) => {
+    const tests = testingProcess()
+    const { workspace, sessions } = await sessionsFor({ spawnTests: tests })
     await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
 
     sessions[which].show()
+    await sessions.experiments.reload()
 
-    await vi.waitFor(() => expect(sessions[which].snapshot().step).toBe(step))
+    expect(sessions.experiments.snapshot().saved).toHaveLength(1)
+    expect(tests).not.toHaveBeenCalled()
+    expect(sessions.optimize.snapshot().step).toBe('pick')
   })
 
-  it.each(['test', 'optimize'] as const)(
-    'shouldWaitForAChoiceWhenThe%sPanelOpensWhileAnExperimentIsStillGenerating',
-    async (which) => {
-      let release = (): void => undefined
-      const blocked = vi.fn(
-        () =>
-          new Promise<{ code: number; stdout: string; stderrTail: string[] }>((resolve) => {
-            release = () => resolve({ code: 1, stdout: '', stderrTail: [] })
-          })
-      )
-      const { workspace, sessions } = await sessionsFor({ spawnGenerator: blocked, spawnTests: testingProcess() })
-      await savedExperiment(workspace, ['c0', 'c1'])
-      await sessions.experiments.reload()
-      sessions.experiments.generate({ ...sessions.experiments.form().settings, task: 'Answer questions' })
-      await vi.waitFor(() => expect(blocked).toHaveBeenCalled())
+  it('shouldRunSeveralExperimentsAtOnceWhenTheUserPicksThem', async () => {
+    let release = (): void => undefined
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const testing = testingProcess()
+    const held = vi.fn(async (process: TemporaryEvalsProcess) => {
+      await gate
+      return testing(process)
+    })
+    const { workspace, sessions } = await sessionsFor({ spawnTests: held })
+    const capital = await savedExperiment(workspace, ['c0', 'c1'])
+    const cities = await savedExperiment(workspace, ['c0', 'c1', 'c2'], 'cities')
 
-      sessions[which].show()
-      await sessions.experiments.reload()
+    sessions.test.run([capital, cities])
+    await vi.waitFor(() => expect(held).toHaveBeenCalledTimes(2))
+    const jobs = temporaryTestJobs(sessions.test.snapshot())
+    release()
+    await vi.waitFor(() => expect(runStatus(sessions, cities.path)).toBe('done'))
+    await vi.waitFor(() => expect(runStatus(sessions, capital.path)).toBe('done'))
 
-      expect(sessions[which].snapshot().step).toBe('pick')
-      release()
-    }
-  )
+    expect(jobs.map(({ label }) => label).sort()).toEqual(['capital', 'cities'])
+    expect(finished(sessions, cities.path).cases).toHaveLength(3)
+    expect(finished(sessions, capital.path).cases).toHaveLength(2)
+  })
+
+  it('shouldStartOneRunWhenTheSameExperimentIsPickedTwiceQuickly', async () => {
+    const testing = testingProcess()
+    const { workspace, sessions } = await sessionsFor({ spawnTests: testing })
+    const experiment = await savedExperiment(workspace, ['c0'])
+
+    sessions.test.run([experiment])
+    sessions.test.run([experiment])
+    await vi.waitFor(() => expect(runStatus(sessions, experiment.path)).toBe('done'))
+
+    expect(testing).toHaveBeenCalledTimes(1)
+  })
 
   it('shouldKeepTheOriginalNamesWhenItRerunsFailedCasesThatHaveNoNames', async () => {
     const failing = new Set(['question q1', 'question q3'])
@@ -357,12 +384,12 @@ describe('TEMPORARY dev sessions on open', () => {
         evaluators: [{ evaluator_type: 'OutputEvaluator' }],
       })
     )
-    sessions.test.run({ name: 'plain', path, caseCount: 5 })
-    await vi.waitFor(() => expect(sessions.test.snapshot().step).toBe('results'))
+    sessions.test.run([{ name: 'plain', path, caseCount: 5 }])
+    await vi.waitFor(() => expect(runStatus(sessions, path)).toBe('done'))
 
-    sessions.test.rerunFailed()
+    sessions.test.rerunFailed(path)
     await vi.waitFor(() => expect(testing).toHaveBeenCalledTimes(2))
-    await vi.waitFor(() => expect(sessions.test.snapshot().step).toBe('results'))
+    await vi.waitFor(() => expect(runStatus(sessions, path)).toBe('done'))
 
     const rerun = JSON.parse(await readFile(testing.mock.calls[1]![0].args[3]!, 'utf8')) as {
       cases: { name: string; input: string }[]
@@ -371,9 +398,7 @@ describe('TEMPORARY dev sessions on open', () => {
       ['case_1', 'question q1'],
       ['case_3', 'question q3'],
     ])
-    const state = sessions.test.snapshot()
-    if (state.step !== 'results') throw new Error('expected results')
-    expect(state.results.cases.map(({ name }) => name)).toEqual(['case_1', 'case_3'])
+    expect(finished(sessions, path).cases.map(({ name }) => name)).toEqual(['case_1', 'case_3'])
   })
 
   it('shouldKeepTheReviewAndNameTheChangedFileWhenAnApplyStopsHalfway', async () => {

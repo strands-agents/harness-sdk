@@ -4,6 +4,7 @@ import { basename, join } from 'node:path'
 import { errorMessage } from '../../terminal/text.js'
 import type { DevChatJob } from '../../ui/chat/types.js'
 import {
+  type ExperimentRun,
   type ExperimentSummary,
   type Knob,
   type KnobKey,
@@ -13,7 +14,7 @@ import {
   type OptimizeSession,
   type OptimizeState,
   type ProposedEdit,
-  type TestResults,
+  type TestRun,
   type TestSession,
   type TestState,
 } from '../panels/model.js'
@@ -74,17 +75,10 @@ const MEASURED_ON: Record<TemporaryMeasurement, string> = {
   test: 'test cases',
 }
 
-const onlyReadyExperiment = (
-  experiments: TemporaryExperiments,
-  saved: readonly ExperimentSummary[]
-): ExperimentSummary | undefined => {
-  const [only] = saved
-  const waiting = experiments.snapshot().generations.some(({ phase }) => phase !== 'failed')
-  return saved.length === 1 && !waiting ? only : undefined
-}
-
-export const temporaryTestJobs = (state: TestState): DevChatJob[] =>
-  state.step === 'running' ? [{ id: 'test', label: state.experiment, done: state.done, total: state.cases }] : []
+export const temporaryTestJobs = ({ runs }: TestState): DevChatJob[] =>
+  runs.flatMap(({ experiment, run }) =>
+    run.status === 'running' ? [{ id: experiment.path, label: experiment.name, done: run.done, total: run.cases }] : []
+  )
 
 export const temporaryOptimizeJobs = (state: OptimizeState): DevChatJob[] =>
   state.step === 'running'
@@ -99,39 +93,47 @@ export const temporaryOptimizeJobs = (state: OptimizeState): DevChatJob[] =>
     : []
 
 export class TemporaryTest extends Store<TestState> implements TestSession {
-  private last: { experiment: ExperimentSummary; results: TestResults } | undefined
+  private readonly runs = new Map<string, ExperimentRun>()
 
   constructor(
     private readonly host: TemporaryHost,
     readonly experiments: TemporaryExperiments
   ) {
-    super({ step: 'pick' })
-  }
-
-  run(experiment: ExperimentSummary): void {
-    if (this.snapshot().step === 'running') return
-    void this.execute(experiment, experiment.path, false)
+    super({ runs: [] })
   }
 
   show(): void {
-    if (this.snapshot().step !== 'pick') return
-    void this.experiments.reload().then((saved) => {
-      const only = onlyReadyExperiment(this.experiments, saved)
-      if (only && this.snapshot().step === 'pick') this.run(only)
-    })
+    this.experiments.refresh()
   }
 
-  rerunFailed(): void {
-    const state = this.snapshot()
-    if (state.step !== 'results' || !this.last) return
-    const failed = state.results.cases.filter((item) => !item.passed).map((item) => item.name)
-    if (failed.length > 0) void this.rerun(this.last.experiment, failed)
+  run(experiments: readonly ExperimentSummary[]): void {
+    for (const experiment of experiments) {
+      if (this.isRunning(experiment.path)) continue
+      this.starting(experiment, experiment.caseCount, false)
+      void this.execute(experiment, experiment.path, false)
+    }
   }
 
-  reset(): void {
-    if (this.snapshot().step === 'running') return
-    this.set({ step: 'pick' })
-    this.show()
+  rerunFailed(path: string): void {
+    const entry = this.runs.get(path)
+    if (entry?.run.status !== 'done') return
+    const failed = entry.run.results.cases.filter((item) => !item.passed).map((item) => item.name)
+    if (failed.length === 0) return
+    this.starting(entry.experiment, failed.length, true)
+    void this.rerun(entry.experiment, failed)
+  }
+
+  private isRunning(path: string): boolean {
+    return this.runs.get(path)?.run.status === 'running'
+  }
+
+  private update(experiment: ExperimentSummary, run: TestRun): void {
+    this.runs.set(experiment.path, { experiment, run })
+    this.set({ runs: [...this.runs.values()] })
+  }
+
+  private starting(experiment: ExperimentSummary, cases: number, rerun: boolean): void {
+    this.update(experiment, { status: 'running', cases, evaluators: [], done: 0, startedAt: Date.now(), rerun })
   }
 
   private async rerun(experiment: ExperimentSummary, names: readonly string[]): Promise<void> {
@@ -147,7 +149,7 @@ export class TemporaryTest extends Store<TestState> implements TestSession {
       await writeTemporaryExperimentFile(path, named, names)
       await this.execute(experiment, path, true)
     } catch (error) {
-      this.set({ step: 'failed', message: errorMessage(error) })
+      this.update(experiment, { status: 'failed', message: errorMessage(error) })
     }
   }
 
@@ -157,15 +159,14 @@ export class TemporaryTest extends Store<TestState> implements TestSession {
     try {
       const { experiment: loaded } = await readTemporaryExperimentFile(cases)
       const running = {
-        step: 'running' as const,
-        experiment: experiment.name,
+        status: 'running' as const,
         cases: loaded.cases.length,
         evaluators: loaded.evaluators,
         done: 0,
         startedAt,
         rerun,
       }
-      this.set(running)
+      this.update(experiment, running)
       const outcome = await runTemporaryTest(
         {
           workspace: this.host().workspace,
@@ -173,9 +174,7 @@ export class TemporaryTest extends Store<TestState> implements TestSession {
           background: true,
           onStart: ({ cases: store }) => {
             stopCounting = watchTemporaryFileCount(store, (done) => {
-              const state = this.snapshot()
-              if (state.step !== 'running') return
-              this.set({ ...state, done })
+              if (this.isRunning(experiment.path)) this.update(experiment, { ...running, done })
             })
           },
         },
@@ -186,8 +185,7 @@ export class TemporaryTest extends Store<TestState> implements TestSession {
         experiment: experiment.name,
         seconds: (Date.now() - startedAt) / MILLISECONDS,
       })
-      this.last = { experiment, results }
-      this.set({ step: 'results', results })
+      this.update(experiment, { status: 'done', results })
       const passed = results.cases.filter((item) => item.passed).length
       announce(
         this.host(),
@@ -195,7 +193,7 @@ export class TemporaryTest extends Store<TestState> implements TestSession {
         `test · ${experiment.name} · ${passed} of ${plural(results.cases.length, 'case')} passed · /test shows the results`
       )
     } catch (error) {
-      this.set({ step: 'failed', message: errorMessage(error) })
+      this.update(experiment, { status: 'failed', message: errorMessage(error) })
       announce(this.host(), 'error', `test · ${experiment.name} stopped · /test shows why`)
     } finally {
       stopCounting()
@@ -221,11 +219,7 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
   }
 
   show(): void {
-    if (this.snapshot().step !== 'pick') return
-    void this.experiments.reload().then((saved) => {
-      const only = onlyReadyExperiment(this.experiments, saved)
-      if (only && this.snapshot().step === 'pick') this.plan(only)
-    })
+    this.experiments.refresh()
   }
 
   toggleKnob(key: KnobKey): void {
