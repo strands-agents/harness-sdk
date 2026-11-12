@@ -1359,7 +1359,10 @@ export class BedrockModel extends Model<BedrockModelConfig> {
     if (targetIdx !== placedIdx) {
       content.splice(placedIdx, 1)
       if (targetIdx === 0 && novaRules) {
-        logger.debug(`msg_idx=<${msgIdx}> | dropped cache point with no text ahead of it`)
+        warnOnce(
+          logger,
+          `model_id=<${this._config.modelId}> | dropped a caller-placed cache point with no text ahead of it, this model takes one only directly after text, placing it automatically instead`
+        )
         return false
       }
       if (targetIdx === 0) {

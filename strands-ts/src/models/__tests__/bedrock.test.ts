@@ -3902,24 +3902,25 @@ describe('BedrockModel', () => {
         expect(allCachePoints()).toStrictEqual([{ type: 'default' }])
       })
 
-      it('moves a caller-placed cache point with no text ahead of it to the prompt', () => {
+      it('moves a caller-placed cache point with no text ahead of it to the prompt and warns', () => {
         const provider = new BedrockModel({ modelId: NOVA, cacheConfig: {} })
-        const document = new DocumentBlock({ name: 'notes', format: 'txt', source: { bytes: new Uint8Array([1]) } })
+        const image = new ImageBlock({ format: 'png', source: { bytes: new Uint8Array([1]) } })
         const messages = [
           ...toolTurn,
-          new Message({ role: 'user', content: [toolResult, document, new CachePointBlock({ cacheType: 'default' })] }),
+          new Message({ role: 'user', content: [toolResult, image, new CachePointBlock({ cacheType: 'default' })] }),
         ]
 
         collectIterator(provider.stream(messages, { toolSpecs }))
 
-        expect(lastContent()).toStrictEqual([
-          formattedToolResult,
-          { document: { name: 'notes', format: 'txt', source: { bytes: new Uint8Array([1]) } } },
-        ])
+        expect(lastContent()).toStrictEqual([formattedToolResult, { image: expect.anything() }])
         expect(request()?.messages?.[0]?.content).toStrictEqual([
           { text: 'What is 6 x 7?' },
           { cachePoint: { type: 'default' } },
         ])
+        expect(warnOnce).toHaveBeenCalledWith(
+          expect.anything(),
+          `model_id=<${NOVA}> | dropped a caller-placed cache point with no text ahead of it, this model takes one only directly after text, placing it automatically instead`
+        )
       })
 
       describe('media at the end of the last user message', () => {
