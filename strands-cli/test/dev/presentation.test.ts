@@ -6,7 +6,12 @@ import * as projectWatch from '../../src/project/watch.js'
 import { idleBackend } from '../fixtures/chat-backend.js'
 import { snapshot } from '../fixtures/chat-snapshot.js'
 
-const devWorkspace = { root: '/workspace', entrypoint: '/workspace/agent.ts', origin: 'cli' }
+const devWorkspace = {
+  root: '/workspace',
+  entrypoint: '/workspace/agent.ts',
+  boundEntrypoint: '/workspace/agent.ts',
+  origin: 'cli',
+}
 
 afterEach(() => vi.restoreAllMocks())
 

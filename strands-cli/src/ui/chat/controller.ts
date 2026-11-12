@@ -410,11 +410,14 @@ export class ChatController implements ChatControllerApi {
   get resumeSession(): ResumeSession | undefined {
     const session = this._sessions?.currentTarget ?? this._backend.sessionIdentity
     if (!session?.sessionId) return undefined
+    const dev = this._runtime.devWorkspace
+    const ranBoundAgent = dev !== undefined && dev.entrypoint === dev.boundEntrypoint
     return {
       sessionId: session.sessionId,
       sessionDirectory: session.sessionDirectory,
       workspace: session.workspace,
-      ...(this._project ? { agentProject: this._project.entrypoint } : {}),
+      ...(dev ? { devWorkspace: dev.root } : {}),
+      ...(this._project && !ranBoundAgent ? { agentProject: this._project.entrypoint } : {}),
     }
   }
 

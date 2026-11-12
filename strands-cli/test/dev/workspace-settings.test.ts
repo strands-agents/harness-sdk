@@ -18,7 +18,12 @@ import { temporaryDirectory } from '../fixtures/tempdir.js'
 import { captureFrame, render, ttyInput, ttyOutput } from '../fixtures/terminal.js'
 import * as terminal from '../../src/terminal/terminal.js'
 
-const info = { root: '/workspace/strands-dev', entrypoint: '/agents/main/agent.ts', origin: 'discovered' }
+const info = {
+  root: '/workspace/strands-dev',
+  entrypoint: '/agents/main/agent.ts',
+  boundEntrypoint: '/agents/main/agent.ts',
+  origin: 'discovered',
+}
 
 type PickerProps = ComponentProps<typeof HarnessPicker>
 type ConfirmationProps = ComponentProps<typeof WorkspaceReplacementConfirmation>

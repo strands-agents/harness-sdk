@@ -35,6 +35,7 @@ export function cloneRuntime(runtime: ChatRuntimeInfo): ChatRuntimeInfo {
           devWorkspace: {
             root: sanitizeTerminalText(runtime.devWorkspace.root),
             entrypoint: sanitizeTerminalText(runtime.devWorkspace.entrypoint),
+            boundEntrypoint: sanitizeTerminalText(runtime.devWorkspace.boundEntrypoint),
             origin: sanitizeTerminalText(runtime.devWorkspace.origin),
           },
         }

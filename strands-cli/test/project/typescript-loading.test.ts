@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process'
 import { createServer, type ServerResponse } from 'node:http'
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { URL } from 'node:url'
@@ -648,6 +648,39 @@ const timer = setInterval(() => {
       await rm(archiveDirectory, { recursive: true, force: true })
     }
   }, 30000)
+
+  it.each([
+    ['TheBoundEntrypoint', 'agent.ts', false],
+    ['AnotherEntrypoint', 'other.ts', true],
+  ])(
+    'shouldResumeTheDevSessionInItsWorkspaceWhenItRuns%s',
+    async (_case, file, keepsAgent) => {
+      const agentSource = `import { createHarness } from '@strands-agents/harness'\nexport const agent = await createHarness(${JSON.stringify({ ...defaults, session: true, name: 'Dev' })})\n`
+      await writeFile(project().entrypoint, agentSource)
+      await writeFile(join(root, 'other.ts'), agentSource)
+      const directory = join(root, 'strands-dev')
+      await bindExistingAgent(directory, project().entrypoint)
+      const entrypoint = join(root, file)
+      const config = CliConfigStore.memory({}, { mcpDiscovery: false, skillDiscovery: false, agentMessaging: false })
+      const options = {
+        args: parseArgs(['dev', '--workspace', directory, '--agent', entrypoint]),
+        cwd: root,
+        initialWorkspace: root,
+        mcpPaths: [],
+        mcpStrictPaths: [],
+      }
+
+      const chat = await createTypescriptChat(entrypoint, config, options, AbortSignal.timeout(30000), vi.fn())
+
+      try {
+        expect(chat.resumeSession?.devWorkspace).toBe(await realpath(directory))
+        expect(chat.resumeSession?.agentProject).toBe(keepsAgent ? await realpath(entrypoint) : undefined)
+      } finally {
+        await chat.dispose()
+      }
+    },
+    30000
+  )
 
   it('keeps the old process usable after a replacement evaluates and fails', async () => {
     await writeFile(join(root, 'value.ts'), "export const value = 'original'\n")
