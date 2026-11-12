@@ -192,6 +192,10 @@
       "types": "./dist/src/vended-interventions/cedar/index.d.ts",
       "default": "./dist/src/vended-interventions/cedar/index.js"
     },
+    "./vended-interventions/dogwood": {
+      "types": "./dist/src/vended-interventions/dogwood/index.d.ts",
+      "default": "./dist/src/vended-interventions/dogwood/index.js"
+    },
     "./vended-tools": {
       "types": "./dist/src/vended-tools/index.d.ts",
       "default": "./dist/src/vended-tools/index.js"
@@ -354,6 +358,7 @@
     "@aws-sdk/client-s3vectors": "^3.1125.0",
     "@aws-sdk/client-sagemaker-runtime": "^3.1078.0",
     "@aws/bedrock-token-generator": "^1.1.0",
+    "@aws/dogwood-wasm": ">=0.1.0 <1.0.0",
     "@cedar-policy/cedar-wasm": "^4.0.0",
     "@cedar-policy/mcp-schema-generator-wasm": "^0.6.0",
     "@google/genai": "^2.6.0",
@@ -438,6 +443,9 @@
       "optional": true
     },
     "@cedar-policy/mcp-schema-generator-wasm": {
+      "optional": true
+    },
+    "@aws/dogwood-wasm": {
       "optional": true
     },
     "@tobilu/qmd": {
