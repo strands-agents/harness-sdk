@@ -6,7 +6,7 @@ import { ogImageResponse } from '../util/og-image'
 export const GET: APIRoute = async () => {
   // Headline omits "Strands" since the wordmark already carries it.
   return ogImageResponse({
-    title: 'Build agents you can put to work.',
+    title: 'Build AI agents.',
     description: 'Start with Strands harness. Add focused tools when you need them.',
   })
 }

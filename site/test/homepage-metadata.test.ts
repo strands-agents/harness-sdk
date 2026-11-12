@@ -25,8 +25,12 @@ describe('homepage machine-readable metadata', () => {
 
     expect(homepage.querySelector('.banner__halftone')).toBeNull()
     expect(homepage.querySelector('.starter')).toBeNull()
+    expect(hero?.querySelector('.banner__eyebrow')?.text.trim()).toBe('Open source')
+    expect(hero?.querySelector('.banner__summary')?.text.trim()).toBe(
+      'An open source framework for building production agents.'
+    )
     expect(hero?.querySelector('.banner__harness')?.text.trim()).toBe('/harness')
-    expect(hero?.querySelector('.banner__start-title')).toBeNull()
+    expect(hero?.querySelector('.banner__start-eyebrow')).toBeNull()
     expect(hero?.querySelector('[data-install-variant="Python"]')?.text.trim()).toBe('pip install strands-harness')
     expect(hero?.querySelector('[data-install-variant="TypeScript"]')?.text.trim()).toBe(
       'npm i @strands-agents/harness'
@@ -39,7 +43,7 @@ describe('homepage machine-readable metadata', () => {
       'Build production agents with an open source framework, a ready-to-use harness, and focused tools for decisions, security, and evaluation.'
     )
     expect(homepage.querySelector('meta[property="og:image:alt"]')?.getAttribute('content')).toBe(
-      'Strands Agents: build agents you can put to work'
+      'Strands Agents: build AI agents'
     )
   })
 
@@ -77,7 +81,7 @@ describe('homepage machine-readable metadata', () => {
 
     expect(main?.text.trim().length).toBeGreaterThan(500)
     expect(headings[0]?.tagName).toBe('H1')
-    expect(headings[0]?.text.trim()).toBe('Build agents you can put to work.')
+    expect(headings[0]?.text.trim()).toBe('Build AI agents.')
     expect(main?.querySelectorAll('h1')).toHaveLength(1)
   })
 
@@ -85,7 +89,7 @@ describe('homepage machine-readable metadata', () => {
     const primary = homepage.querySelector('.banner__action--primary')
     const hero = homepage.querySelector('.banner')
 
-    expect(primary?.text.trim()).toContain('Build your first agent')
+    expect(primary?.text.trim()).toContain('Quickstart')
     expect(primary?.getAttribute('href')).toBe(configuredPathWithBase('/docs/user-guide/harness/quickstart/'))
     expect(hero?.querySelectorAll('.banner__action')).toHaveLength(1)
     expect(hero?.querySelector('.banner__action--secondary')).toBeNull()
@@ -99,7 +103,11 @@ describe('homepage machine-readable metadata', () => {
     const modules = toolkit?.querySelectorAll('.module-card') ?? []
 
     expect(hero?.querySelector('.banner__harness')?.text.trim()).toBe('/harness')
-    expect(starter?.querySelector('.banner__start-title')).toBeNull()
+    expect(starter?.querySelector('.banner__start-title')?.tagName).toBe('H2')
+    expect(starter?.querySelector('.banner__start-title')?.text.trim()).toBe('/harness')
+    expect(starter?.querySelector('.banner__start-summary')?.text.trim()).toBe(
+      'A ready-to-use agent with tools, memory, sessions, and context management assembled.'
+    )
     expect(starter?.querySelector('.banner__action--primary')?.getAttribute('href')).toBe(
       configuredPathWithBase('/docs/user-guide/harness/quickstart/')
     )
@@ -166,7 +174,23 @@ describe('homepage machine-readable metadata', () => {
       expect(panel?.querySelector('pre')?.text.trim().length).toBeGreaterThan(30)
     }
 
-    expect(homepage.querySelectorAll('#harness-code-example [data-example-language]')).toHaveLength(2)
+    const harnessExamples = homepage.querySelectorAll('#harness-code-example [data-example-language]')
+
+    expect(harnessExamples).toHaveLength(2)
+    expect(harnessExamples.map((example) => example.querySelector('pre')?.getAttribute('data-language'))).toEqual([
+      'python',
+      'typescript',
+    ])
+    expect(harnessExamples.every((example) => example.querySelector('pre')?.innerHTML.includes('--shiki-light:'))).toBe(
+      true
+    )
+  })
+
+  it('labels the customer proof band', () => {
+    const logoFarm = homepage.querySelector('.logo-farm')
+
+    expect(logoFarm?.querySelector('.logo-farm__label')?.text.trim()).toBe('Used by')
+    expect(logoFarm?.querySelectorAll('.logo-farm__cell')).toHaveLength(7)
   })
 
   it('promotes distinct recent blog posts', async () => {

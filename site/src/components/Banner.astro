@@ -1,4 +1,6 @@
 ---
+import { createShikiHighlighter } from '@astrojs/markdown-remark/shiki';
+
 import arrow from '../assets/banner/arrow.svg?raw';
 import plus from '../assets/toolkit/plus.svg?raw';
 import InstallCommand from './InstallCommand.astro';
@@ -9,36 +11,43 @@ import { pathWithBase } from '../util/links';
 const harnessProduct = products.find((product) => product.label === 'Harness');
 if (!harnessProduct) throw new Error('Missing homepage product: Harness');
 
-const harnessExamples = [
+const highlighter = await createShikiHighlighter({
+  themes: {
+    light: 'github-light-high-contrast',
+    dark: 'github-dark-high-contrast',
+  },
+});
+
+const harnessExamples = await Promise.all([
   {
     language: 'Python',
+    syntax: 'python',
     code: `from strands_harness import create_harness
-
 agent = create_harness()
-agent("Summarize what this repository does")`,
+agent("Summarize this repository")`,
   },
   {
     language: 'TypeScript',
+    syntax: 'typescript',
     code: `import { createHarness } from '@strands-agents/harness'
-
 const agent = await createHarness()
-await agent.invoke('Summarize what this repository does')`,
+await agent.invoke('Summarize this repository')`,
   },
-];
+].map(async (example) => ({
+  ...example,
+  highlightedCode: await highlighter.codeToHtml(example.code, example.syntax, {
+    defaultColor: false,
+    attributes: { class: 'banner__highlighted-code' },
+  }),
+})));
 ---
 
 <section class="banner" aria-labelledby="homepage-hero-title">
   <div class="banner__inner">
     <div class="banner__content">
-      <p class="banner__eyebrow">Open source · Python + TypeScript</p>
-      <h1 id="homepage-hero-title" class="banner__headline">
-        Build agents you can put to work.
-      </h1>
-      <p class="banner__summary">
-        Strands is an open source framework for production agents. Start with
-        <span class="banner__harness">/harness</span>, where tools, memory, session management,
-        and context management come assembled.
-      </p>
+      <p class="banner__eyebrow">Open source</p>
+      <h1 id="homepage-hero-title" class="banner__headline">Build AI agents.</h1>
+      <p class="banner__summary">An open source framework for building production agents.</p>
 
       <div
         class="banner__start"
@@ -47,34 +56,43 @@ await agent.invoke('Summarize what this repository does')`,
         data-example-closed-label="View code example"
         data-example-card
       >
-        <div class="banner__install">
-          <InstallCommand
-            pip="pip install strands-harness"
-            npm="npm i @strands-agents/harness"
-            copyLabel="Copy Strands harness install command"
-          />
+        <div class="banner__start-heading">
+          <h2 class="banner__start-title">
+            <span class="banner__harness">/harness</span>
+          </h2>
+          <p class="banner__start-summary">
+            A ready-to-use agent with tools, memory, sessions, and context management assembled.
+          </p>
         </div>
 
-        <div class="banner__actions">
+        <div class="banner__start-row">
+          <div class="banner__install">
+            <InstallCommand
+              pip="pip install strands-harness"
+              npm="npm i @strands-agents/harness"
+              copyLabel="Copy Strands harness install command"
+            />
+          </div>
           <a
             href={pathWithBase('/docs/user-guide/harness/quickstart/')}
             class="banner__action banner__action--primary"
           >
-            Build your first agent
+            Quickstart
             <span class="banner__arrow" set:html={arrow} />
           </a>
-          <button
-            type="button"
-            class="banner__example-toggle"
-            aria-expanded="false"
-            aria-controls="harness-code-example"
-            aria-label="View code example for Strands harness"
-            data-example-toggle
-          >
-            <span data-example-toggle-label>View code example</span>
-            <span class="banner__example-icon" aria-hidden="true" set:html={plus} />
-          </button>
         </div>
+
+        <button
+          type="button"
+          class="banner__example-toggle"
+          aria-expanded="false"
+          aria-controls="harness-code-example"
+          aria-label="View code example for Strands harness"
+          data-example-toggle
+        >
+          <span data-example-toggle-label>View code example</span>
+          <span class="banner__example-icon" aria-hidden="true" set:html={plus} />
+        </button>
 
         <div id="harness-code-example" class="banner__code-drawer" data-example-panel hidden>
           <div class="banner__terminal" data-code-terminal data-switchable-code>
@@ -93,11 +111,14 @@ await agent.invoke('Summarize what this repository does')`,
             </header>
             {
               harnessExamples.map((example) => (
-                <pre
+                <div
                   class="banner__terminal-code"
                   data-example-language={example.language}
+                  data-code-value={example.code}
                   hidden={example.language !== DEFAULT_LANGUAGE_LABEL}
-                ><code>{example.code}</code></pre>
+                >
+                  <Fragment set:html={example.highlightedCode} />
+                </div>
               ))
             }
           </div>
@@ -132,7 +153,7 @@ await agent.invoke('Summarize what this repository does')`,
   .banner__eyebrow {
     margin: 0 0 18px;
     font-family: 'JetBrains Mono', ui-monospace, monospace;
-    font-size: 12px;
+    font-size: 14px;
     font-weight: 700;
     line-height: 1.3;
     color: var(--eyebrow);
@@ -153,13 +174,12 @@ await agent.invoke('Summarize what this repository does')`,
   }
 
   .banner__summary {
-    max-width: 720px;
     margin: 24px 0 0;
     font-family: 'Space Grotesk', system-ui, sans-serif;
     font-size: clamp(17px, 1.5vw, 20px);
     line-height: 1.5;
     color: var(--fg);
-    text-wrap: balance;
+    white-space: nowrap;
   }
 
   .banner__harness {
@@ -170,33 +190,61 @@ await agent.invoke('Summarize what this repository does')`,
 
   .banner__start {
     width: 100%;
-    max-width: 590px;
-    margin-top: 28px;
+    max-width: 620px;
+    margin-top: 36px;
+  }
+
+  .banner__start-heading {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .banner__start-title {
+    margin: 0;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 32px;
+    font-weight: 700;
+    line-height: 1.15;
+  }
+
+  .banner__start-summary {
+    max-width: 560px;
+    margin: 9px 0 0;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: 17px;
+    line-height: 1.45;
+    color: var(--toggle-inactive-fg);
+    text-wrap: balance;
+  }
+
+  .banner__start-row {
+    display: flex;
+    margin-top: 18px;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
   }
 
   .banner__install {
-    width: 100%;
-    margin: 0;
+    width: fit-content;
+    max-width: 100%;
+    margin: 0 auto;
     text-align: left;
   }
 
-  .banner__install :global(.install__cmd) {
-    font-size: 13px;
+  .banner__install :global(.install) {
+    width: auto;
   }
 
-  .banner__actions {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: center;
-    gap: 10px 22px;
-    margin-top: 18px;
+  .banner__install :global(.install__cmd) {
+    font-size: 14px;
   }
 
   .banner__action,
   .banner__example-toggle {
     font-family: 'JetBrains Mono', ui-monospace, monospace;
-    font-size: 13px;
+    font-size: 14px;
     font-weight: 700;
     line-height: 1.3;
   }
@@ -228,9 +276,10 @@ await agent.invoke('Summarize what this repository does')`,
   }
 
   .banner__action--primary {
-    background: var(--strands-green);
-    border-color: var(--strands-green);
-    color: var(--strands-black);
+    flex: none;
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--bg);
   }
 
   .banner__arrow {
@@ -247,7 +296,8 @@ await agent.invoke('Summarize what this repository does')`,
   .banner__example-toggle {
     display: inline-flex;
     min-height: 38px;
-    padding: 8px 0;
+    margin-top: 9px;
+    padding: 7px 0;
     align-items: center;
     gap: 9px;
     background: transparent;
@@ -298,9 +348,9 @@ await agent.invoke('Summarize what this repository does')`,
   }
 
   .banner__code-drawer {
-    margin-top: 18px;
-    padding-top: 18px;
-    border-top: 1px solid color-mix(in srgb, var(--card-border) 70%, transparent);
+    width: 100%;
+    max-width: 480px;
+    margin: 14px auto 0;
     animation: reveal-banner-code 0.2s ease both;
   }
 
@@ -330,8 +380,8 @@ await agent.invoke('Summarize what this repository does')`,
 
   .banner__terminal-header {
     display: flex;
-    min-height: 36px;
-    padding: 8px 10px 8px 13px;
+    min-height: 30px;
+    padding: 6px 8px 6px 12px;
     align-items: center;
     justify-content: space-between;
     gap: 16px;
@@ -367,14 +417,27 @@ await agent.invoke('Summarize what this repository does')`,
 
   .banner__terminal-code {
     margin: 0;
-    padding: 15px 17px 17px;
+    background: transparent;
+  }
+
+  .banner__terminal-code :global(.astro-code) {
+    margin: 0;
+    padding: 12px 14px 14px;
     overflow-x: auto;
     font-family: 'JetBrains Mono', ui-monospace, monospace;
     font-size: 11px;
-    line-height: 1.55;
-    color: var(--fg);
+    line-height: 1.5;
     background: transparent;
-    white-space: pre;
+    color: var(--shiki-light);
+  }
+
+  .banner__terminal-code :global(.astro-code span) {
+    color: var(--shiki-light);
+  }
+
+  :global([data-theme='dark']) .banner__terminal-code :global(.astro-code),
+  :global([data-theme='dark']) .banner__terminal-code :global(.astro-code span) {
+    color: var(--shiki-dark);
   }
 
   @media (max-width: 767px) {
@@ -385,7 +448,7 @@ await agent.invoke('Summarize what this repository does')`,
 
     .banner__eyebrow {
       margin-bottom: 14px;
-      font-size: 10px;
+      font-size: 12px;
     }
 
     .banner__headline {
@@ -397,37 +460,50 @@ await agent.invoke('Summarize what this repository does')`,
       margin-top: 18px;
       font-size: 16px;
       line-height: 1.45;
+      white-space: normal;
     }
 
     .banner__start {
-      margin-top: 24px;
+      margin-top: 30px;
+    }
+
+    .banner__start-title {
+      font-size: 28px;
+    }
+
+    .banner__start-summary {
+      margin-top: 8px;
+      font-size: 16px;
+    }
+
+    .banner__start-row {
+      display: grid;
+      width: 100%;
+      margin-top: 16px;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 9px;
     }
 
     .banner__install {
+      width: 100%;
+      min-width: 0;
       margin-top: 0;
     }
 
     .banner__install :global(.install) {
+      width: 100%;
       gap: 6px;
       padding: 8px 7px 8px 11px;
     }
 
     .banner__install :global(.install__cmd) {
       gap: 7px;
-      font-size: 11px;
+      font-size: 12px;
     }
 
     .banner__install :global(.install__copy) {
       padding: 6px 9px;
       font-size: 12px;
-    }
-
-    .banner__actions {
-      display: grid;
-      width: 100%;
-      margin-top: 16px;
-      grid-template-columns: 1fr;
-      gap: 4px;
     }
 
     .banner__action {
@@ -437,12 +513,12 @@ await agent.invoke('Summarize what this repository does')`,
 
     .banner__example-toggle {
       width: fit-content;
-      justify-self: center;
+      margin-top: 5px;
       font-size: 11px;
     }
 
-    .banner__terminal-code {
-      padding: 13px 14px 15px;
+    .banner__terminal-code :global(.astro-code) {
+      padding: 11px 12px 13px;
       font-size: 10px;
     }
   }
@@ -503,8 +579,8 @@ await agent.invoke('Summarize what this repository does')`,
     attachCopyButton(copyButton, {
       label: copyButton.querySelector<HTMLElement>('[data-code-copy-label]'),
       getText: () =>
-        terminal.querySelector<HTMLElement>('.banner__terminal-code:not([hidden]) code')
-          ?.textContent ?? '',
+        terminal.querySelector<HTMLElement>('.banner__terminal-code:not([hidden])')?.dataset
+          .codeValue ?? '',
       track: {
         surface: 'code:homepage',
         detail: () =>
