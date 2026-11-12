@@ -46,8 +46,8 @@ to it changes how you attach it and nothing about how the agent behaves:
   </Tab>
 </Tabs>
 
-Drop `"todos"` from `builtin_plugins` when you do, or the agent gets two copies of the
-plugin competing for the same tool name.
+Drop `"todos"` from `builtin_plugins` when you do. Both register a `todo_write` tool, so
+keeping each one leaves them in conflict over that name.
 
 ## environment
 

@@ -68,7 +68,7 @@ class Todos(Plugin):
     the list lives in per-agent state, not on the plugin.
 
     One agent takes one ``Todos``. The tool is always named ``todo_write``, so a second instance
-    on the same agent conflicts over that name no matter how ``name`` and ``state_key`` are set.
+    raises no matter how ``name`` and ``state_key`` are set.
 
     Because the list is re-rendered on every model call, it changes the tail of the request each
     turn. On a provider without explicit cache points that moves the cached prefix boundary, so
@@ -99,7 +99,16 @@ class Todos(Plugin):
         return self._name
 
     def init_agent(self, agent: Agent) -> None:
-        """Register the re-surfacing injector. The ``todo_write`` tool is auto-registered."""
+        """Register the re-surfacing injector. The ``todo_write`` tool is auto-registered.
+
+        Raises:
+            ValueError: If the agent already has a ``todo_write`` tool. The plugin registry's
+                duplicate check is on ``name``, which a second instance can set freely, so the
+                tool name is checked here instead.
+        """
+        if self.todo_write.tool_name in agent.tool_registry.registry:
+            raise ValueError(f"tool_name=<{self.todo_write.tool_name}> | tool already registered")
+
         ContextInjector(
             self._render_reminder,
             name=f"{self._name}:injector",

@@ -110,7 +110,7 @@ share across agents — each agent keeps its own list.
 | <Syntax py="state_key" ts="stateKey" /> | Agent-state key the list is stored under. Defaults to `'todos'`. Set it to avoid colliding with another consumer of that key. |
 
 One agent takes one `Todos`. The tool is always named `todo_write`, so adding a second
-instance to the same agent conflicts over that name whatever `name` and
+instance to the same agent raises whatever `name` and
 <Syntax py="state_key" ts="stateKey" /> are set to.
 
 :::caution[It re-injects on every model call]
