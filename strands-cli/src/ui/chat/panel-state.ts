@@ -379,6 +379,8 @@ export function makePanel(id: string, panel: NewChatPanel): ChatPanel {
         configuration: panel.configuration,
         language: panel.language,
       }
+    case 'dev':
+      return { ...common, kind: panel.kind, view: panel.view, close: panel.close }
     default:
       return { ...common, kind: panel.kind }
   }

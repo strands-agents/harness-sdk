@@ -1504,7 +1504,15 @@ export class ChatController implements ChatControllerApi {
       default: {
         const devCommand = this._devCommand(command)
         if (devCommand) {
-          devCommand.run(parseCommandInvocation(prompt)?.argument ?? '', this._devCommandContext())
+          const opened = this._openPanel({
+            kind: 'dev',
+            title: `/${devCommand.spec.name}`,
+            rows: [],
+            view: devCommand.open(this._devCommandContext()),
+            close: () => {
+              if (this._panel?.id === opened.id) this.dismissPanel()
+            },
+          })
           break
         }
         const turn = await this._activateSkillAndRun(command, prompt)

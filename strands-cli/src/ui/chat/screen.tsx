@@ -1371,6 +1371,9 @@ export function ChatApp({
         handleExit(character === 'c' ? 130 : 0)
         return
       }
+      if (snapshot.panel?.kind === 'dev') {
+        return
+      }
       if (frog && key.escape) {
         setFrog(undefined)
         return

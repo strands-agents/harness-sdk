@@ -1,31 +1,61 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { ChatController, type DevChatCommand, type DevChatCommandContext } from '../../src/ui/chat/controller.js'
+import {
+  ChatController,
+  type DevChatCommand,
+  type DevChatCommandContext,
+  type DevChatPanelView,
+} from '../../src/ui/chat/controller.js'
 import { idleBackend } from '../fixtures/chat-backend.js'
 
-const devCommand = (run: DevChatCommand['run'] = vi.fn()): DevChatCommand => ({
-  spec: { name: 'optimize', usage: '/optimize [experiment]', description: 'Tune this agent' },
-  run,
+const EmptyPanel: DevChatPanelView = () => null
+
+const devCommand = (open: DevChatCommand['open'] = vi.fn(() => EmptyPanel)): DevChatCommand => ({
+  spec: { name: 'optimize', usage: '/optimize', description: 'Tune this agent' },
+  open,
 })
 
-const capture = (): { command: DevChatCommand; context: () => DevChatCommandContext; argument: () => string } => {
-  let received: { argument: string; context: DevChatCommandContext } | undefined
-  const command = devCommand((argument, context) => {
-    received = { argument, context }
+const capture = (): { command: DevChatCommand; context: () => DevChatCommandContext } => {
+  let received: DevChatCommandContext | undefined
+  const command = devCommand((context) => {
+    received = context
+    return EmptyPanel
   })
-  return { command, context: () => received!.context, argument: () => received!.argument }
+  return { command, context: () => received! }
 }
 
 describe('dev chat commands', () => {
-  it('shouldRunTheDevCommandWithItsArgumentWhenTheUserTypesIt', async () => {
+  it('shouldOpenTheDevCommandPanelWhenTheUserTypesIt', async () => {
     const stream = vi.fn()
-    const { command, argument } = capture()
-    const controller = new ChatController(idleBackend({ stream }), { devCommands: [command] })
+    const open = vi.fn(() => EmptyPanel)
+    const controller = new ChatController(idleBackend({ stream }), { devCommands: [devCommand(open)] })
 
-    await controller.submit('/optimize support -- --tune effort')
+    await controller.submit('/optimize')
 
-    expect(argument()).toBe('support -- --tune effort')
+    expect(open).toHaveBeenCalledTimes(1)
+    expect(controller.getSnapshot().panel).toMatchObject({ kind: 'dev', title: '/optimize', view: EmptyPanel })
     expect(stream).not.toHaveBeenCalled()
+  })
+
+  it('shouldCloseTheDevPanelWhenTheViewAsksToClose', async () => {
+    const controller = new ChatController(idleBackend(), { devCommands: [devCommand()] })
+    await controller.submit('/optimize')
+    const panel = controller.getSnapshot().panel
+
+    if (panel?.kind === 'dev') panel.close()
+
+    expect(controller.getSnapshot().panel).toBeUndefined()
+  })
+
+  it('shouldKeepAnotherPanelWhenAnOldDevPanelAsksToClose', async () => {
+    const controller = new ChatController(idleBackend(), { devCommands: [devCommand()] })
+    await controller.submit('/optimize')
+    const panel = controller.getSnapshot().panel
+    await controller.submit('/help')
+
+    if (panel?.kind === 'dev') panel.close()
+
+    expect(controller.getSnapshot().panel?.kind).toBe('help')
   })
 
   it('shouldOfferTheDevCommandWhenTheUserTypesASlash', () => {
@@ -38,7 +68,7 @@ describe('dev chat commands', () => {
   it('shouldListTheDevCommandsBeforeTheBuiltInCommandsWhenTheUserTypesOnlyASlash', () => {
     const experiment = {
       ...devCommand(),
-      spec: { name: 'experiment', usage: '/experiment <name>', description: 'Make cases' },
+      spec: { name: 'experiment', usage: '/experiment', description: 'Make cases' },
     }
     const controller = new ChatController(idleBackend(), { devCommands: [experiment, devCommand()] })
 
@@ -53,18 +83,18 @@ describe('dev chat commands', () => {
     await controller.submit('/help')
 
     const rows = controller.getSnapshot().panel?.rows.filter((row) => row.section === 'Commands') ?? []
-    expect(rows[0]).toMatchObject({ label: '/optimize [experiment]', description: 'Tune this agent' })
+    expect(rows[0]).toMatchObject({ label: '/optimize', description: 'Tune this agent' })
   })
 
-  it('shouldShowTheUsageInsteadOfRunningWhenTheUserPicksADevCommandInHelp', async () => {
-    const run = vi.fn()
-    const controller = new ChatController(idleBackend(), { devCommands: [devCommand(run)] })
+  it('shouldShowTheUsageInsteadOfOpeningWhenTheUserPicksADevCommandInHelp', async () => {
+    const open = vi.fn(() => EmptyPanel)
+    const controller = new ChatController(idleBackend(), { devCommands: [devCommand(open)] })
     await controller.submit('/help')
-    const row = controller.getSnapshot().panel!.rows.find((candidate) => candidate.label === '/optimize [experiment]')!
+    const row = controller.getSnapshot().panel!.rows.find((candidate) => candidate.label === '/optimize')!
 
     await controller.activatePanelRow(row)
 
-    expect(run).not.toHaveBeenCalled()
+    expect(open).not.toHaveBeenCalled()
     expect(controller.getSnapshot().panel).toMatchObject({ kind: 'help-detail', body: 'Tune this agent' })
   })
 

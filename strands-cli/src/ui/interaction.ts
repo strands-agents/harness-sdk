@@ -61,6 +61,8 @@ const CONFIG_DOCK_MIN_WIDTH = 34
 const CONFIG_DOCK_MAX_WIDTH = 52
 const CONFIG_DOCK_WIDTH_RATIO = 0.42
 const SECTIONED_PANEL_SIDEBAR_DIVISOR = 3
+const DEV_PANEL_MIN_HEIGHT = 8
+const DEV_PANEL_TRANSCRIPT_ROWS = 3
 const SECTIONED_PANEL_CHROME_ROWS =
   PANEL_SECTION_BORDER_ROWS + PANEL_SECTION_HEADER_HEIGHT + PANEL_SECTION_HEADER_GAP + PANEL_HELP_FOOTER_HEIGHT
 /** Panels that share the plain sectioned layout and its row capacity. */
@@ -118,6 +120,12 @@ export function startupLockupTopPadding(fullLockup: boolean, height: number): nu
 /** The column that centers a `lockupWidth`-wide startup lockup in `width` columns, shared by chat and setup. */
 export function startupLockupLeft(width: number, lockupWidth: number, offset = 0): number {
   return Math.max(0, Math.min(width - lockupWidth, Math.round((width - lockupWidth) / 2 + offset)))
+}
+
+export function devPanelHeight(terminalHeight: number, commandDeckHeight: number): number {
+  const room = Math.max(0, terminalHeight - commandDeckHeight)
+  const half = Math.round(terminalHeight / 2)
+  return Math.min(room, Math.max(DEV_PANEL_MIN_HEIGHT, Math.min(half, room - DEV_PANEL_TRANSCRIPT_ROWS)))
 }
 
 export function composerPanelContentHeight(panel: ChatPanel | undefined, height: number): number {

@@ -1,4 +1,5 @@
 import type { Message } from '@strands-agents/sdk'
+import type { ComponentType } from 'react'
 import type {
   ChatAttachmentSummary,
   ChatBackend,
@@ -66,9 +67,17 @@ export interface DevChatCommandContext {
   fail(title: string, detail: string): void
 }
 
+export interface DevChatPanelProps {
+  readonly width: number
+  readonly height: number
+  readonly close: () => void
+}
+
+export type DevChatPanelView = ComponentType<DevChatPanelProps>
+
 export interface DevChatCommand {
   spec: LocalCommandSpec
-  run(argument: string, context: DevChatCommandContext): void
+  open(context: DevChatCommandContext): DevChatPanelView
   attach?(context: DevChatCommandContext): void
 }
 
@@ -188,6 +197,11 @@ export type NewChatPanel =
       configuration: ChatConfigurationSource
       language: ChatConfigurationLanguage
     })
+  | (ChatPanelBase & {
+      kind: 'dev'
+      view: DevChatPanelView
+      close: () => void
+    })
 
 export type ChatPanel = NewChatPanel & { id: string }
 export type ChatModelPanel = Extract<ChatPanel, { kind: 'models' }>
@@ -196,6 +210,7 @@ export type ChatTasksPanel = Extract<ChatPanel, { kind: 'tasks' }>
 export type ChatPermissionsPanel = Extract<ChatPanel, { kind: 'permissions' }>
 export type ChatPermissionPanel = Extract<ChatPanel, { kind: 'permission' }>
 export type ChatDetailPanel = Extract<ChatPanel, { kind: 'detail' | 'help-detail' }>
+export type ChatDevPanel = Extract<ChatPanel, { kind: 'dev' }>
 
 export interface ChatRuntimeInfo {
   agent: string

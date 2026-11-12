@@ -21,6 +21,7 @@ import {
   CONFIG_DOCK_GAP,
   CONFIG_DOCK_MIN_HEIGHT,
   CONFIG_DOCK_MIN_TERMINAL_WIDTH,
+  devPanelHeight,
   isComposerPanel,
   isOutlinedComposerPanel,
   type MetadataTarget,
@@ -29,6 +30,7 @@ import {
 } from '../interaction.js'
 import { PromptEditor, promptContentSize, CommandPalette } from './prompt.js'
 import { ResourcePanel } from '../panels/panel.js'
+import { DevPanelFrame } from '../panels/dev.js'
 import { AgentsPanel, agentGridLayout, clampAgentGridViewport } from '../panels/agents.js'
 import { FROG_ANIMATION_HEIGHT, FrogEasterEgg, type FrogVariant, VOICE_FROG_HEIGHT, VoiceFrog } from '../frog.js'
 import { StartupContentRows, StartupView, startupHeaderLayout, useBrandAnimation } from '../startup.js'
@@ -221,6 +223,7 @@ function ChatViewContent({
   const hasActivity =
     snapshot.completedTurns.length > 0 || snapshot.activeTurn !== undefined || snapshot.notices.length > 0
   const composerPanel = isComposerPanel(snapshot.panel?.kind) ? snapshot.panel : undefined
+  const devPanel = snapshot.panel?.kind === 'dev' ? snapshot.panel : undefined
   const maxEffort = composerPanel?.kind === 'effort' && isMaxEffort(composerPanel.slider)
   const composerPanelOutlined = isOutlinedComposerPanel(composerPanel)
   const showCommandPicker = resolvedCommandAssistance !== undefined && !snapshot.panel
@@ -281,9 +284,10 @@ function ChatViewContent({
   const restingEditorHeight = composerPanel
     ? promptEditorHeight('', 0, editorWidth, editorMaxRows, false, party, editorMaxHeight)
     : editorHeight
-  const commandDeckHeight = composerStatusRows + restingEditorHeight + 2
+  const devPanelRows = devPanel ? devPanelHeight(terminalHeight, composerStatusRows + restingEditorHeight + 2) : 0
+  const commandDeckHeight = composerStatusRows + restingEditorHeight + 2 + devPanelRows
   // A composer panel opens at full size and fades in; its contents carry the only animation.
-  const expandedCommandDeckHeight = composerStatusRows + suggestionRows + editorHeight + 2
+  const expandedCommandDeckHeight = composerStatusRows + suggestionRows + editorHeight + 2 + devPanelRows
   // The dock stays up after a configuration turn ends, until the next prompt starts a turn.
   const configurationTurn = (snapshot.activeTurn ?? snapshot.completedTurns.at(-1))?.entries.some(
     (entry) =>
@@ -404,7 +408,7 @@ function ChatViewContent({
     )
   }
   const panelView =
-    snapshot.panel && snapshot.panel.kind !== 'config' ? (
+    snapshot.panel && snapshot.panel.kind !== 'config' && snapshot.panel.kind !== 'dev' ? (
       <PanelHelpContext value={snapshot.panel}>
         <ResourcePanel
           panel={snapshot.panel}
@@ -533,6 +537,14 @@ function ChatViewContent({
           backgroundColor={canvas}
         >
           <Box width="100%" flexShrink={0} flexDirection="column">
+            {devPanel ? (
+              <DevPanelFrame
+                panel={devPanel}
+                width={editorWidth}
+                height={devPanelRows}
+                {...(onPanelElement ? { onElement: onPanelElement } : {})}
+              />
+            ) : null}
             {statusLayout.maxScroll > 0 ? (
               <Box height={1} paddingX={1} flexShrink={0}>
                 <Text dimColor wrap="truncate-end">
@@ -668,7 +680,7 @@ function ChatViewContent({
           </Box>
         </Box>
       ) : null}
-      {snapshot.panel && snapshot.panel.kind !== 'config' && !composerPanel ? (
+      {snapshot.panel && snapshot.panel.kind !== 'config' && !devPanel && !composerPanel ? (
         <FadeIn key={snapshot.panel.kind} animate={settings.animations} background={canvas}>
           {panelView}
         </FadeIn>
