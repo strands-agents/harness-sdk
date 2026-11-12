@@ -242,7 +242,13 @@ describe('TEMPORARY dev chat part', () => {
           settings: [{ name: 'tool_name', type: 'string', required: true, description: 'The tool' }],
         },
       ],
-      unavailable: [{ name: 'InteractionsEvaluator', limit: 'A dev run records no interactions.' }],
+      unavailable: [
+        {
+          name: 'InteractionsEvaluator',
+          description: 'Judges interactions',
+          limit: 'A dev run records no interactions.',
+        },
+      ],
     })
     expect(evaluators).toHaveBeenCalledOnce()
   })

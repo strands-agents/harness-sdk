@@ -281,7 +281,9 @@ const evaluatorsTool = (evaluators: Evaluators): DevChatTool => ({
       available: catalog
         .filter(({ available }) => available)
         .map(({ name, kind, description, settings }) => ({ name, kind, description, settings })),
-      unavailable: catalog.filter(({ available }) => !available).map(({ name, limit }) => defined({ name, limit })),
+      unavailable: catalog
+        .filter(({ available }) => !available)
+        .map(({ name, description, limit }) => defined({ name, description, limit })),
     })
   },
 })
